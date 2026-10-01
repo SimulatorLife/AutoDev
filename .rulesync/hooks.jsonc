@@ -1,0 +1,39 @@
+{
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "matcher": ".*",
+        "command": "node ~/.codex/src/hooks/session-start.ts"
+      }
+    ],
+    "subagentStart": [
+      {
+        "type": "command",
+        "matcher": ".*",
+        "command": "node ~/.codex/src/hooks/subagent-start.ts"
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "type": "command",
+        "command": "node ~/.codex/src/hooks/root-delegation.ts",
+        "statusMessage": "Applying root delegation policy"
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "matcher": "(?i)exec[_ -]?command|bash",
+        "command": "node ~/.codex/src/hooks/block-ccc-cli.ts",
+        "statusMessage": "Enforcing command policy"
+      },
+      {
+        "type": "command",
+        "matcher": "(?i)read[_ -]?file|read|exec[_ -]?command|bash",
+        "command": "node ~/.codex/src/hooks/skill-read-telemetry.ts",
+        "statusMessage": "Recording skill-read telemetry"
+      }
+    ]
+  }
+}

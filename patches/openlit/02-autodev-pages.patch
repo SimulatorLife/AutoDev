@@ -1,0 +1,32 @@
+diff --git a/src/client/src/constants/sidebar.tsx b/src/client/src/constants/sidebar.tsx
+index 34e39d37..b30c0cf9 100644
+--- a/src/client/src/constants/sidebar.tsx
++++ b/src/client/src/constants/sidebar.tsx
+@@ -133,6 +133,12 @@ export const SIDEBAR_ITEMS: SidebarItemProps[] = [
+ 						link: "/connectors",
+ 						type: "action",
+ 					},
++					{
++						icon: <SettingsIcon className={ICON_CLASSES} />,
++						text: "AutoDev Control",
++						link: "/autodev",
++						type: "action",
++					},
+ 					...getEnterpriseSidebarItems("configuration", ICON_CLASSES),
+ 				],
+ 			},
+diff --git a/src/client/src/middleware.ts b/src/client/src/middleware.ts
+index 80452e03..e05ad913 100644
+--- a/src/client/src/middleware.ts
++++ b/src/client/src/middleware.ts
+@@ -65,5 +65,10 @@ export const config = {
+ 		"/context/:path*",
+ 		"/coding-agents",
+ 		"/coding-agents/:path*",
++		// Isolated AutoDev control surface. The CSRF + auth middleware
++		// stack runs here too so the same-origin /autodev/api/* proxy
++		// inherits the stock security posture.
++		"/autodev",
++		"/autodev/:path*",
+ 	],
+ };

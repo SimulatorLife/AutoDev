@@ -1,0 +1,83 @@
+name = "default"
+description = "General-purpose developer."
+nickname_candidates = ["GeneralDev", "GeneralAgent", "GeneralCoder"]
+
+model_provider = "local_model_router"
+model = "autodev/default"
+
+developer_instructions = """
+{{AUTODEV_BASE_PROMPT}}
+
+{{AUTODEV_LEAF_PROMPT}}
+
+{{AUTODEV_CODE_SEARCH_PROMPT}}
+
+{{AUTODEV_ROLE_PROMPT}}
+"""
+
+[mcp_servers.lsp]
+enabled = true
+enabled_tools = [
+  "lsp_find_symbol",
+  "lsp_smart_search",
+  "lsp_goto_definition",
+  "lsp_goto_type_definition",
+  "lsp_find_references",
+  "lsp_find_implementations",
+  "lsp_type_hierarchy",
+  "lsp_hover",
+  "lsp_signature_help",
+  "lsp_document_symbols",
+  "lsp_diagnostics",
+  "lsp_index_files",
+  "lsp_workspace_diagnostics",
+  "lsp_rename",
+  "lsp_code_actions",
+  "lsp_format_document",
+]
+
+[[skills.config]]
+name = "orchestration"
+enabled = false
+
+[[skills.config]]
+name = "lsp-mcp-server"
+enabled = true
+
+[mcp_servers."cocoindex-code"]
+enabled = true
+default_tools_approval_mode = "approve"
+
+[mcp_servers.codegraphcontext]
+enabled = true
+default_tools_approval_mode = "approve"
+enabled_tools = [
+  "list_indexed_repositories",
+  "find_code",
+  "analyze_code_relationships",
+  "get_repository_stats",
+]
+
+[[skills.config]]
+name = "ccc"
+enabled = true
+
+[[skills.config]]
+name = "code-simplification"
+enabled = true
+
+[[skills.config]]
+name = "diagnosing-bugs"
+enabled = true
+
+[[skills.config]]
+name = "improve-codebase-architecture"
+enabled = true
+
+[[skills.config]]
+name = "remove-legacy-shims"
+enabled = true
+
+[[skills.config]]
+name = "resolve-merge-conflicts"
+enabled = true

@@ -1,0 +1,146 @@
+{
+  "cases": {
+    "client_metadata_dropped": {
+      "expected": {
+        "forwardedKeys": [
+          "input",
+          "model",
+          "prompt_cache_key",
+          "stream"
+        ]
+      },
+      "request": {
+        "client_metadata": {
+          "session_id": "local-session",
+          "x-codex-turn-metadata": "{\"workspaces\":{\"/Users/someone/private-repo\":{\"associated_remote_urls\":{\"origin\":\"git@example.invalid:private/repo.git\"}}}}"
+        },
+        "input": "hello",
+        "model": "MiniMax-M3",
+        "prompt_cache_key": "cache-key",
+        "stream": true
+      }
+    },
+    "freeform_coercion_non_streaming": {
+      "expected": {
+        "coercedType": "custom_tool_call",
+        "inputSource": {
+          "mentions": "wc -l README.md",
+          "startsWith": "const result = await tools.exec_command("
+        }
+      },
+      "request": {
+        "input": [
+          "exec with {'cmd':'wc -l README.md'}"
+        ],
+        "stream": false,
+        "tools": [
+          {
+            "name": "exec",
+            "type": "custom"
+          }
+        ]
+      },
+      "upstreamResponse": {
+        "response": {
+          "output": [
+            {
+              "arguments": "{\"cmd\":\"wc -l README.md\"}",
+              "call_id": "call-2",
+              "id": "call-2",
+              "name": "exec",
+              "type": "function_call"
+            }
+          ]
+        }
+      }
+    },
+    "freeform_unrecognised_feedback": {
+      "expected": {
+        "coercedType": "custom_tool_call",
+        "inputSource": {
+          "startsWith": "throw new Error(",
+          "mentions": "a JSON object with keys \"text\""
+        },
+        "neverContains": "do-not-echo-this-value"
+      },
+      "upstreamResponse": {
+        "output": [
+          {
+            "arguments": "{\"text\":\"do-not-echo-this-value\"}",
+            "call_id": "call-3",
+            "id": "06f8b0803f8f804f65cab7da91194351_fc_0",
+            "name": "exec",
+            "type": "function_call"
+          }
+        ]
+      }
+    },
+    "namespace_tools_forwarded": {
+      "expected": {
+        "responseOutputNamespaces": [
+          "multi_agent_v1"
+        ]
+      },
+      "request": {
+        "input": "hello",
+        "stream": true,
+        "tools": [
+          {
+            "name": "multi_agent_v1",
+            "tools": [
+              {
+                "name": "spawn_agent",
+                "type": "function"
+              }
+            ],
+            "type": "namespace"
+          },
+          {
+            "name": "send_message",
+            "namespace": "collaboration",
+            "type": "function"
+          },
+          {
+            "name": "read_file",
+            "type": "function"
+          }
+        ]
+      },
+      "upstreamResponse": {
+        "output": [
+          {
+            "arguments": "{}",
+            "call_id": "call-1",
+            "id": "06f8b01ee182095ac82a6ffe1c3604f5_fc_0",
+            "name": "spawn_agent",
+            "namespace": "multi_agent_v1",
+            "type": "function_call"
+          },
+          {
+            "content": [
+              {
+                "text": "ack",
+                "type": "output_text"
+              }
+            ],
+            "type": "message"
+          }
+        ]
+      }
+    },
+    "web_search_preserved": {
+      "request": {
+        "input": "summarize",
+        "stream": false,
+        "tools": [
+          {
+            "external_web_access": true,
+            "type": "web_search"
+          }
+        ]
+      }
+    }
+  },
+  "description": "Offline boundary invariants for the MiniMax Responses adapter: namespace and web-search tools are forwarded natively (the router owns flattening), body-embedded Codex turn metadata never leaves the machine, freeform exec calls answered as JSON function calls are coerced, and unrecognisable ones become an explanatory failing script that never echoes argument values.",
+  "schema": "autodev-minimax-responses-contract-v2"
+}

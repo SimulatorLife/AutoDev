@@ -1,0 +1,33 @@
+{
+  "name": "@simulatorlife/autodev-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./control-api": "./src/control-api/index.ts",
+    "./router": "./src/router/index.ts",
+    "./providers": "./src/providers/index.ts",
+    "./agents": "./src/agents/index.ts",
+    "./mcp": "./src/mcp/index.ts",
+    "./hooks": "./src/hooks/index.ts",
+    "./telemetry": "./src/telemetry/index.ts",
+    "./platform": "./src/platform/index.ts"
+  },
+  "dependencies": {
+    "@simulatorlife/autodev-core": "workspace:*",
+    "@simulatorlife/autodev-data": "workspace:*",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.222.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.222.0",
+    "@opentelemetry/resources": "^2.11.0",
+    "@opentelemetry/sdk-metrics": "^2.11.0",
+    "@opentelemetry/sdk-trace-base": "^2.11.0",
+    "@opentelemetry/sdk-trace-node": "^2.11.0",
+    "@opentelemetry/semantic-conventions": "^1.43.0",
+    "smol-toml": "^1.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0"
+  }
+}

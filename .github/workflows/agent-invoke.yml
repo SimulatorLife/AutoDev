@@ -15,12 +15,6 @@ on:
       agent:
         type: string
         required: true
-      agent_command:
-        type: string
-        required: false
-      agent_command_file:
-        type: string
-        required: false
       agent_setup_command:
         type: string
         required: false
@@ -108,6 +102,12 @@ jobs:
         run: |
           set -euo pipefail
 
+          if [ -z "${RAW_COMMENT}" ]; then
+            mention="@${AGENT_NAME}"
+            comments_json="$(gh api --paginate --slurp "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" | jq 'add')"
+            RAW_COMMENT="$(jq -r --arg mention "${mention}" '[.[] | select((.body // "") | startswith($mention))] | last | .body // empty' <<<"${comments_json}")"
+          fi
+
           if [ -n "${RAW_COMMENT}" ]; then
             mention="@${AGENT_NAME}"
             normalized_comment="$(
@@ -133,6 +133,9 @@ jobs:
             printf '%s' "$ADDITIONAL_CTX" >> "$GITHUB_OUTPUT"
             echo >> "$GITHUB_OUTPUT"
             echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "No ${mention} task comment was found on PR #${PR_NUMBER}; refusing to run without a user request." >&2
+            exit 1
           fi
 
           PR_JSON="$(gh pr view "${PR_NUMBER}" --repo "${REPOSITORY}" --json headRefName,headRefOid,title -q '.')"
@@ -175,6 +178,30 @@ jobs:
 
       - name: Stage AutoDev Node version
         run: cp .autodev/.nvmrc "$RUNNER_TEMP/autodev.nvmrc"
+
+      - name: Load pinned AutoDev provider tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=.autodev/.github/ci/provider-tools.json
+          test -f "$manifest" || { echo "Missing provider tool manifest: $manifest" >&2; exit 1; }
+          jq -e '.schemaVersion == 1 and (.tools | type == "object")' "$manifest" >/dev/null
+          for provider in claude gemini qwen codex; do
+            package="$(jq -er --arg provider "$provider" '.tools[$provider].package | select(type == "string" and length > 0)' "$manifest")"
+            key="$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')"
+            echo "AUTODEV_${key}_PACKAGE=$package" >> "$GITHUB_ENV"
+          done
+
+      - name: Read AutoDev package manager version
+        id: autodev_package_manager
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_manager="$(node -p "require('./.autodev/package.json').packageManager || ''")"
+          case "${package_manager}" in
+            pnpm@*) echo "pnpm_version=${package_manager#pnpm@}" >> "$GITHUB_OUTPUT" ;;
+            *) echo "AutoDev packageManager must be pnpm@<version>; got '${package_manager}'." >&2; exit 1 ;;
+          esac
 
       - name: Checkout target commit
         uses: actions/checkout@v6
@@ -244,15 +271,23 @@ jobs:
           chmod +x "$shim_dir/git"
           echo "PATH=$shim_dir:$PATH" >> "$GITHUB_ENV"
 
-      - name: Use PAT for pushes
+      - name: Authenticate git without a credential in the remote URL
         shell: bash
-        env:
-          GH_USER_TOKEN: ${{ secrets.GH_USER_TOKEN }}
         run: |
           set -euo pipefail
 
+          # Codex copies git remote URLs verbatim into the turn metadata it sends
+          # model providers (openai/codex#31588), and agents print remotes, so a
+          # credential must never live in a remote URL. Git asks this local helper
+          # at use time and it reads the PAT from the step environment (GH_TOKEN);
+          # neither .git/config nor any URL ever contains the token. The empty
+          # entry resets the helper list, so no helper configured elsewhere on the
+          # runner can answer for github.com instead.
           git config --local --unset-all http.https://github.com/.extraheader || true
-          git remote set-url origin "https://x-access-token:${GH_USER_TOKEN}@github.com/${{ inputs.target_repository }}.git"
+          git remote set-url origin "https://github.com/${{ inputs.target_repository }}.git"
+          git config --local --unset-all credential.https://github.com.helper || true
+          git config --local --add credential.https://github.com.helper ''
+          git config --local --add credential.https://github.com.helper '!f() { test "$1" = get || exit 0; echo username=x-access-token; echo "password=${GH_TOKEN:?GH_TOKEN is required for git authentication}"; }; f'
 
       - name: Detect target repository toolchain
         id: toolchain
@@ -260,20 +295,32 @@ jobs:
         run: |
           set -euo pipefail
           package_manager=none
-          if [ -f pnpm-lock.yaml ]; then
+          if [ -f package.json ]; then
+            configured_package_manager="$(node -p "require('./package.json').packageManager || ''")"
+            case "${configured_package_manager}" in
+              pnpm@*) package_manager=pnpm ;;
+              npm@*) package_manager=npm ;;
+            esac
+          fi
+          if [ "${package_manager}" = "none" ] && [ -f pnpm-lock.yaml ]; then
             package_manager=pnpm
-          elif [ -f package-lock.json ]; then
-            package_manager=npm
-          elif [ -f package.json ]; then
+          elif [ "${package_manager}" = "none" ] && { [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ] || [ -f package.json ]; }; then
             package_manager=npm
           fi
           echo "package_manager=${package_manager}" >> "$GITHUB_OUTPUT"
           echo "Detected target package manager: ${package_manager}"
 
-      - name: Setup pnpm
+      - name: Setup pnpm for target repository
         if: ${{ steps.toolchain.outputs.package_manager == 'pnpm' }}
         uses: pnpm/action-setup@v6
         with:
+          cache: false
+
+      - name: Setup pnpm for provider tooling
+        if: ${{ steps.toolchain.outputs.package_manager != 'pnpm' }}
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ steps.autodev_package_manager.outputs.pnpm_version }}
           cache: false
 
       - name: Setup node
@@ -289,9 +336,15 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${PACKAGE_MANAGER}" = "pnpm" ]; then
-            pnpm install --frozen-lockfile --recursive
-          else
+            if [ -f pnpm-lock.yaml ]; then
+              pnpm install --frozen-lockfile --recursive
+            else
+              pnpm install --recursive
+            fi
+          elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
             npm ci
+          else
+            npm install --no-package-lock
           fi
 
       - name: Build target TypeScript (best effort)
@@ -436,8 +489,8 @@ jobs:
 
           stdbuf -oL -eL bash "$setup_script" 2>&1 | tee "$RUNNER_TEMP/agent-setup.log"
 
-      - name: Run agent custom command with retries
-        if: ${{ inputs.agent_command != '' || inputs.agent_command_file != '' }}
+      - name: Run canonical AutoDev CI provider command with retries
+        if: ${{ inputs.agent != '' }}
         shell: bash
         id: run_agent
         continue-on-error: true
@@ -452,40 +505,20 @@ jobs:
           AGENT_NAME: ${{ inputs.agent }}
           MAX_AGENT_RETRIES: ${{ inputs.max_agent_retries }}
           WORKING_BRANCH: ${{ env.WORKING_BRANCH }}
-          AGENT_COMMAND: ${{ inputs.agent_command }}
-          AGENT_COMMAND_FILE: ${{ inputs.agent_command_file }}
+          AUTODEV_CI_PROVIDER: ${{ inputs.agent }}
+          AUTODEV_ROOT: ${{ github.workspace }}/.autodev
         run: |
           set -euo pipefail
 
           cd "${GITHUB_WORKSPACE}"
 
-          echo "Running agent command with retry support"
+          echo "Running canonical AutoDev provider command with retry support"
           echo "[agent] Workflow working directory: $(pwd)"
           echo "[agent] Workflow git root: $(git rev-parse --show-toplevel)"
           echo "[agent] Workflow branch: $(git branch --show-current)"
 
           script="$RUNNER_TEMP/agent_cmd.sh"
-
-          if [ -n "${AGENT_COMMAND_FILE:-}" ]; then
-            case "${AGENT_COMMAND_FILE}" in
-              /*|../*|*/../*|*/..|..)
-                echo "❌ agent_command_file must be a safe repository-relative path."
-                exit 1
-                ;;
-            esac
-
-            source_script="${GITHUB_WORKSPACE}/${AGENT_COMMAND_FILE}"
-
-            if [ ! -f "${source_script}" ]; then
-              echo "❌ agent_command_file does not exist: ${AGENT_COMMAND_FILE}"
-              exit 1
-            fi
-
-            cp "${source_script}" "$script"
-          else
-            printf '%s\n' "${AGENT_COMMAND}" > "$script"
-          fi
-
+          cp "${GITHUB_WORKSPACE}/.autodev/scripts/run-ci-provider.sh" "$script"
           sed -i 's/\r$//' "$script"
           chmod 700 "$script"
 
@@ -506,10 +539,6 @@ jobs:
 
           rm -f "$NO_CHANGE_SENTINEL"
           rm -f "$RETRY_COMMENT_SENTINEL"
-
-          redact_git_remote_credentials() {
-            sed -E 's#(https://)[^/@]+@#\1***@#g'
-          }
 
           is_stageable_untracked_path() {
             local candidate="$1"
@@ -598,7 +627,7 @@ jobs:
               printf '%s\n' 'Make one focused, minimal code change set for the user request.'
               printf '%s\n' 'Do not survey the entire repository exhaustively. Narrow to one candidate area first using targeted searches, then read only the files needed for that area.'
               printf '%s\n' 'Start from real command output and repository files you read; do not speculate.'
-              printf '%s\n' 'Keep command and tool output small. If lint is requested: run pnpm run lint, fix exactly one deterministic issue, then re-run pnpm run lint, pnpm run build:ts, and pnpm run lint:quiet.'
+              printf '%s\n' 'Keep command and tool output small. If lint is requested: discover the repository'\''s documented lint command, fix exactly one deterministic issue, then rerun the relevant lint, build, and test checks.'
               printf '%s\n' 'Do not finish with only analysis or a plan. Leave a concrete repository diff in the worktree.'
               printf '%s\n' 'When executing user-requested tasks, do not edit golden .gml fixtures, generated files, dist files, workflow files, or configuration files unless explicitly requested.'
               printf '\n'
@@ -626,7 +655,7 @@ jobs:
             echo "[agent] Attempt working directory before agent command: $(pwd)"
             echo "[agent] Attempt git root before agent command: $(git rev-parse --show-toplevel)"
             echo "[agent] Attempt git remotes before agent command:"
-            git remote -v | redact_git_remote_credentials
+            git remote -v
             echo "[agent] Attempt git branch before agent command: $(git branch --show-current)"
 
             set -x

@@ -1,4 +1,5 @@
 name: '▶️ MiniMax Invoke'
+run-name: Agent invoke — ${{ inputs.target_repository || github.repository }} PR #${{ inputs.pr_number || github.event.issue.number }}
 
 on:
   workflow_dispatch:
@@ -38,23 +39,3 @@ jobs:
       additional_context: ""
       agent: mini-max
       openai_base_url: 'https://api.minimax.io/v1'
-      agent_command: |
-        set -euo pipefail
-
-        set +e
-        stdbuf -oL -eL npx --yes @qwen-code/qwen-code@latest \
-          --approval-mode=yolo \
-          --auth-type openai \
-          --openai-api-key "${OPENAI_API_KEY}" \
-          --openai-base-url "${OPENAI_BASE_URL}" \
-          --model=MiniMax-M3 \
-          --experimental-lsp \
-          --output-format=stream-json \
-          --prompt "" < "${AGENT_PROMPT_FILE}" \
-          2>&1 | tee "$RUNNER_TEMP/agent-stream.jsonl"
-        agent_status="${PIPESTATUS[0]}"
-        set -e
-
-        if [ "${agent_status}" -ne 0 ]; then
-          exit "${agent_status}"
-        fi

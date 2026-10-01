@@ -1,0 +1,819 @@
+/**
+ * Shared state machine for session/agent activity that spans request gaps.
+ *
+ * A single HTTP request to the router only covers one model turn. What an
+ * orchestrator or role subagent is actually doing lives in the *gaps*
+ * between requests too: it can be waiting on a tool result the client has
+ * not sent back yet, waiting on a human, or waiting on a subagent it just
+ * spawned. None of that is visible to a naive "in-flight while the HTTP
+ * request is open" counter, which is why the router previously had no way
+ * to describe it. This module tracks that activity explicitly, keyed by a
+ * caller-chosen `subject` (typically a session key, or a synthetic id for a
+ * single ungrouped attempt), independent of any one HTTP request's lifetime.
+ *
+ * States:
+ *   active         a request is currently being served for this subject.
+ *   tool_wait      the last response ended with a tool call; the router is
+ *                  waiting for the continuation that carries the tool result.
+ *   user_wait      the subject is explicitly waiting on user input or the
+ *                  next turn (via lifecycle events or explicit input_required).
+ *   subagent_wait  the subject is waiting on a spawned subagent to report back.
+ *   resumed        a new request just arrived after a wait state; observable
+ *                  until the next explicit transition (begin/end/lifecycle).
+ *   finished       the activity ended successfully (normal final responses
+ *                  with no tool calls transition here). Terminal.
+ *   failed         the activity ended in failure. Terminal.
+ *   stale          derived, not stored: a non-terminal record whose state has
+ *                  not moved in longer than the TTL is reported as stale
+ *                  rather than left to describe a wait that will never end
+ *                  (a bridge crashed, a client disconnected without saying
+ *                  so, and so on).
+ *
+ * Every mutating method is idempotent against redelivery: applying the same
+ * event twice (matched by requestId, or by an explicit eventId for events
+ * that arrive over the network and may be retried) leaves the record exactly
+ * where the first application left it. A terminal record (finished/failed)
+ * never reopens.
+ *
+ * Records are grouped by an optional `kind` (what this activity represents --
+ * e.g. "session" for an orchestrator/role turn, "bridge_subagent" for a
+ * bridge-reported child turn, "subagent_slot" for a held concurrency slot)
+ * and an optional `tag` (a grouping key within that kind, e.g. a session
+ * key), so a caller can count "how many subagent slots are live for this
+ * session" without maintaining a parallel counter of its own.
+ *
+ * `subagent_slot` records describe *admission accounting* (a held
+ * concurrency slot), not an agent doing work that should show up in
+ * agent-facing counts -- a session already accounts for the work its slots
+ * gate. Every counting/aggregation method in this module (`countLive`,
+ * `countByState`, `snapshot`) therefore defaults to only the agent kinds
+ * (`AGENT_ACTIVITY_KINDS`: "session" and "bridge_subagent") unless a caller passes an
+ * explicit `kind` filter, which is how concurrency accounting opts back in to
+ * see its own `subagent_slot` records.
+ */
+
+export const AGENT_ACTIVITY_TTL_ENV = "CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS";
+export const DEFAULT_AGENT_ACTIVITY_TTL_MS = 300_000;
+
+export const AGENT_ACTIVITY_STATES = Object.freeze([
+  "active",
+  "tool_wait",
+  "user_wait",
+  "subagent_wait",
+  "resumed",
+  "finished",
+  "failed",
+  "stale"
+]);
+
+const TERMINAL_STATES = new Set(["finished", "failed"]);
+const WAIT_STATES = new Set(["tool_wait", "user_wait", "subagent_wait"]);
+// "Live" is every state that represents activity still in progress -- the
+// complement of terminal (finished/failed) and stale (abandoned).
+const LIVE_STATES = new Set([
+  "active",
+  "tool_wait",
+  "user_wait",
+  "subagent_wait",
+  "resumed"
+]);
+
+// The kinds that represent an agent actually doing work, as opposed to
+// bookkeeping records (e.g. `subagent_slot`, a held concurrency admission)
+// that ride the same tracker for TTL/staleness reuse but must not inflate
+// agent-facing live/usage/provider/top-level counts. See the module doc for
+// how this interacts with `matches()` and `snapshot()`.
+export const AGENT_ACTIVITY_KINDS = Object.freeze([
+  "session",
+  "bridge_subagent"
+]);
+
+const LIFECYCLE_EVENT_STATES = new Set([
+  "user_wait",
+  "subagent_wait",
+  "tool_wait",
+  "resumed",
+  "finished",
+  "failed"
+]);
+
+/** Bound on retained per-record idempotency markers, so a long-lived subject cannot grow without bound. */
+const MAX_TRACKED_EVENT_IDS = 64;
+type NullableText = string | null | undefined;
+
+/** The tracker's internal, mutable per-subject record. */
+interface ActivityRecord {
+  subject: string;
+  kind: string;
+  tag: string | null;
+  parentRequestId: string | null;
+  state: string;
+  provider: string | null;
+  model: string | null;
+  role: string | null;
+  origin: string | null;
+  workspace: string | null;
+  requestId: string | null;
+  startedAt: number;
+  updatedAt: number;
+  ttlMs: number;
+  openRequestId: string | null;
+  settledRequestIds: Set<string>;
+  lifecycleEventIds: Set<string>;
+}
+
+/** The read-only view of a record handed to callers. */
+interface AgentActivitySnapshot {
+  subject: string;
+  kind: string;
+  tag: string | null;
+  state: string;
+  provider: string | null;
+  model: string | null;
+  role: string | null;
+  origin: string | null;
+  workspace: string | null;
+  requestId: string | null;
+  startedAt: number;
+  updatedAt: number;
+}
+
+/** Options accepted by the tracker's mutators and filters. */
+interface AgentActivityOptions {
+  requestId?: NullableText;
+  provider?: NullableText;
+  model?: NullableText;
+  role?: NullableText;
+  origin?: NullableText;
+  workspace?: NullableText;
+  kind?: string | undefined;
+  tag?: NullableText;
+  parentRequestId?: NullableText;
+  timestamp?: number | undefined;
+  outcome?: string | undefined;
+  hasToolCalls?: boolean | undefined;
+  inputRequired?: boolean | undefined;
+  hasActiveSubagents?: boolean | undefined;
+}
+
+/** A normalized lifecycle event, as accepted over the agent-events endpoint. */
+interface AgentLifecycleEvent extends AgentActivityOptions {
+  state?: string | undefined;
+  eventId?: unknown;
+}
+
+const FILTER_FIELDS = [
+  "tag",
+  "provider",
+  "model",
+  "role",
+  "origin",
+  "workspace"
+] as const;
+
+function trackEventId(set: Set<string>, eventId: unknown): boolean {
+  if (!eventId) return false;
+  const id = String(eventId);
+  if (set.has(id)) return true;
+  set.add(id);
+  if (set.size > MAX_TRACKED_EVENT_IDS) {
+    const oldest = set.values().next().value;
+    if (oldest !== undefined) set.delete(oldest);
+  }
+  return false;
+}
+
+/** Reads the TTL from the environment, falling back to the documented default for anything unset or invalid. */
+export function resolveAgentActivityTtlMs(
+  env: Record<string, string | undefined> = process.env
+): number {
+  const parsed = Number.parseInt(env?.[AGENT_ACTIVITY_TTL_ENV] ?? "");
+  return Number.isInteger(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_AGENT_ACTIVITY_TTL_MS;
+}
+
+function snapshotRecord(
+  rec: ActivityRecord,
+  at: number
+): AgentActivitySnapshot {
+  return {
+    subject: rec.subject,
+    kind: rec.kind,
+    tag: rec.tag,
+    state: isStale(rec, at) ? "stale" : rec.state,
+    provider: rec.provider,
+    model: rec.model,
+    role: rec.role,
+    origin: rec.origin,
+    workspace: rec.workspace,
+    requestId: rec.requestId,
+    startedAt: rec.startedAt,
+    updatedAt: rec.updatedAt
+  };
+}
+
+function isStale(rec: ActivityRecord, at: number): boolean {
+  if (TERMINAL_STATES.has(rec.state)) return false;
+  // An agent-kind record with an open request has a stronger liveness signal
+  // than its last timestamp: the request/stream itself is still in flight.
+  // It will settle through endRequest/finish, while admission-slot records
+  // intentionally remain TTL-bound so an abandoned slot cannot leak forever.
+  if (AGENT_ACTIVITY_KINDS.includes(rec.kind) && rec.openRequestId)
+    return false;
+  return at - rec.updatedAt > rec.ttlMs;
+}
+
+function isFiniteInstant(value: number | undefined): value is number {
+  return Number.isFinite(value);
+}
+
+function emptyStateCounts(): Record<string, number> {
+  return Object.fromEntries(AGENT_ACTIVITY_STATES.map((state) => [state, 0]));
+}
+
+type StateCountsByKey = Record<string, Record<string, number>>;
+
+function addStateCount(
+  collection: StateCountsByKey,
+  key: string | null,
+  state: string,
+  { skipMissing = false }: { skipMissing?: boolean } = {}
+): void {
+  if (skipMissing && (key === null || key === "")) return;
+  const counts = (collection[key ?? "unattributed"] ??= emptyStateCounts());
+  counts[state] = (counts[state] ?? 0) + 1;
+}
+
+type RecordAttribution = Pick<
+  ActivityRecord,
+  | "provider"
+  | "model"
+  | "role"
+  | "origin"
+  | "workspace"
+  | "tag"
+  | "parentRequestId"
+>;
+
+/**
+ * An exact duplicate of the currently open attempt: not a new transition,
+ * but proof the same request is still genuinely open, so it refreshes the
+ * staleness clock exactly as an explicit touch() would -- the open leg stays
+ * live until it actually settles rather than going stale out from under a
+ * request the router knows perfectly well is still going.
+ */
+function refreshOpenAttempt(
+  rec: ActivityRecord,
+  at: number
+): AgentActivitySnapshot {
+  if (isStale(rec, at)) {
+    rec.state = "stale";
+    return snapshotRecord(rec, at);
+  }
+  rec.updatedAt = at;
+  return snapshotRecord(rec, at);
+}
+
+/** Starts a new activity span on a terminal record for a later, different request. */
+function reopenRecord(
+  rec: ActivityRecord,
+  requestId: string,
+  attribution: RecordAttribution,
+  at: number
+): void {
+  rec.state = "active";
+  rec.startedAt = at;
+  rec.updatedAt = at;
+  rec.provider = attribution.provider ?? rec.provider;
+  rec.model = attribution.model ?? rec.model;
+  rec.role = attribution.role ?? rec.role;
+  rec.origin = attribution.origin ?? rec.origin;
+  rec.workspace = attribution.workspace ?? rec.workspace;
+  rec.tag = attribution.tag ?? rec.tag;
+  rec.parentRequestId = attribution.parentRequestId ?? rec.parentRequestId;
+  rec.requestId = requestId;
+  rec.openRequestId = requestId;
+  rec.settledRequestIds.clear();
+  rec.lifecycleEventIds.clear();
+}
+
+/**
+ * Creates an independent tracker. Each caller (the router process, a test)
+ * gets its own instance rather than reaching into shared module state, which
+ * is what makes the TTL/stale behaviour testable with a fake clock.
+ */
+export function createAgentActivityTracker({
+  ttlMs = resolveAgentActivityTtlMs(),
+  now = () => Date.now()
+}: { ttlMs?: number; now?: () => number } = {}) {
+  const effectiveTtlMs =
+    Number.isInteger(ttlMs) && ttlMs > 0
+      ? ttlMs
+      : DEFAULT_AGENT_ACTIVITY_TTL_MS;
+  const subjects = new Map<string, ActivityRecord>();
+
+  /** A caller-supplied timestamp when it is a finite number, otherwise the tracker clock. */
+  function instantOf(timestamp: number | undefined): number {
+    return isFiniteInstant(timestamp) ? timestamp : now();
+  }
+
+  function ensure(
+    subject: string,
+    {
+      kind = "session",
+      tag = null,
+      parentRequestId = null
+    }: {
+      kind?: string;
+      tag?: string | null;
+      parentRequestId?: string | null;
+    } = {}
+  ): ActivityRecord {
+    let rec = subjects.get(subject);
+    if (!rec) {
+      rec = {
+        subject,
+        kind,
+        tag,
+        parentRequestId,
+        state: "active",
+        provider: null,
+        model: null,
+        role: null,
+        origin: null,
+        workspace: null,
+        requestId: null,
+        startedAt: now(),
+        updatedAt: now(),
+        ttlMs: effectiveTtlMs,
+        // requestId this record's "active" leg was last opened for, so a
+        // redelivered begin for the same attempt is a no-op rather than a
+        // spurious active -> resumed -> active bounce.
+        openRequestId: null,
+        settledRequestIds: new Set(),
+        lifecycleEventIds: new Set()
+      };
+      subjects.set(subject, rec);
+    }
+    return rec;
+  }
+
+  function transition(
+    rec: ActivityRecord,
+    state: string,
+    at: number | undefined
+  ): void {
+    rec.state = state;
+    rec.updatedAt = instantOf(at);
+  }
+
+  /**
+   * A request just started being served for `subject`. Idempotent against a
+   * redelivered begin for the same (subject, requestId) attempt while it is
+   * still open. If the subject was waiting on something, the transition is
+   * recorded as "resumed" rather than silently folded back into "active" --
+   * that distinction is what "derive tool waits from ... continuations" asks
+   * for: a continuation is observable as a resume, not indistinguishable
+   * from any other turn.
+   */
+  function beginRequest(
+    subject: string,
+    {
+      requestId = null,
+      provider = null,
+      model = null,
+      role = null,
+      origin = null,
+      workspace = null,
+      kind = "session",
+      tag = null,
+      parentRequestId = null,
+      timestamp
+    }: AgentActivityOptions = {}
+  ): AgentActivitySnapshot | null {
+    if (!subject) return null;
+    const rec = ensure(subject, { kind, tag, parentRequestId });
+    if (tag !== null && tag !== undefined) rec.tag = tag;
+    if (parentRequestId !== null && parentRequestId !== undefined)
+      rec.parentRequestId = parentRequestId;
+    if (
+      requestId &&
+      rec.openRequestId === requestId &&
+      !TERMINAL_STATES.has(rec.state)
+    ) {
+      return refreshOpenAttempt(rec, instantOf(timestamp));
+    }
+    if (TERMINAL_STATES.has(rec.state)) {
+      // A terminal record is closed for the request that settled it, but an
+      // identified session can receive a later turn under the same subject.
+      // A different requestId starts that new activity span; the same id
+      // remains an idempotent duplicate and never reopens.
+      if (requestId && requestId !== rec.requestId) {
+        const at = instantOf(timestamp);
+        reopenRecord(
+          rec,
+          requestId,
+          { provider, model, role, origin, workspace, tag, parentRequestId },
+          at
+        );
+        return snapshotRecord(rec, at);
+      }
+      return snapshotRecord(rec, timestamp ?? now());
+    }
+    const wasWaiting = WAIT_STATES.has(rec.state);
+    if (provider !== null) rec.provider = provider;
+    if (model !== null) rec.model = model;
+    if (role !== null) rec.role = role;
+    if (origin !== null) rec.origin = origin;
+    if (workspace !== null) rec.workspace = workspace;
+    rec.requestId = requestId ?? rec.requestId;
+    rec.openRequestId = requestId ?? rec.openRequestId;
+    transition(rec, wasWaiting ? "resumed" : "active", timestamp);
+    return snapshotRecord(rec, timestamp ?? now());
+  }
+
+  /**
+   * The request just settled. `hasToolCalls` -- derived by the caller from
+   * the router-visible response body -- decides the gap state: a response
+   * that ended with a tool call is followed by tool_wait. A response that
+   * failed ends in failed (terminal). A successful response with an explicit
+   * inputRequired protocol marker enters user_wait. If the subject has active
+   * subagents or subagent slots, it enters subagent_wait. Normal final responses
+   * (no tool calls, no explicit input_required, no active subagents) transition
+   * to finished (terminal), so user_wait and subagent_wait are reserved for explicit waits.
+   * Idempotent per (subject, requestId): a redelivered or duplicate result
+   * for a request already settled is a no-op, and a terminal record is
+   * never reopened by a later result.
+   */
+  function endRequest(
+    subject: string,
+    {
+      requestId = null,
+      outcome = "success",
+      hasToolCalls = false,
+      inputRequired = false,
+      hasActiveSubagents = false,
+      timestamp
+    }: AgentActivityOptions = {}
+  ): AgentActivitySnapshot | null {
+    const rec = subjects.get(subject);
+    if (!rec) return null;
+    if (TERMINAL_STATES.has(rec.state))
+      return snapshotRecord(rec, timestamp ?? now());
+    if (requestId && trackEventId(rec.settledRequestIds, requestId)) {
+      return snapshotRecord(rec, timestamp ?? now());
+    }
+    rec.openRequestId = null;
+    if (outcome !== "success") {
+      transition(rec, "failed", timestamp);
+    } else if (
+      hasActiveSubagents ||
+      (rec.role === "orchestrator" && hasLiveChildren(subject))
+    ) {
+      transition(rec, "subagent_wait", timestamp);
+    } else if (hasToolCalls) {
+      transition(rec, "tool_wait", timestamp);
+    } else if (inputRequired) {
+      transition(rec, "user_wait", timestamp);
+    } else {
+      transition(rec, "finished", timestamp);
+    }
+    return snapshotRecord(rec, timestamp ?? now());
+  }
+
+  /**
+   * Ends the activity outright -- finished on success, failed otherwise --
+   * regardless of whether the last response carried a tool call. This is
+   * distinct from endRequest: endRequest describes "the request settled, and
+   * here is what the subject is waiting on next" (a gap state), while finish
+   * describes "there is no next wait, this activity is over" (e.g. a held
+   * concurrency slot being released, or an explicit close). Idempotent per
+   * (subject, requestId) and never reopens a terminal record.
+   */
+  function finish(
+    subject: string,
+    {
+      requestId = null,
+      outcome = "success",
+      timestamp
+    }: AgentActivityOptions = {}
+  ): AgentActivitySnapshot | null {
+    const rec = subjects.get(subject);
+    if (!rec) return null;
+    if (TERMINAL_STATES.has(rec.state))
+      return snapshotRecord(rec, timestamp ?? now());
+    if (requestId && trackEventId(rec.settledRequestIds, requestId)) {
+      return snapshotRecord(rec, timestamp ?? now());
+    }
+    rec.openRequestId = null;
+    transition(rec, outcome === "success" ? "finished" : "failed", timestamp);
+    return snapshotRecord(rec, timestamp ?? now());
+  }
+
+  /**
+   * A heartbeat: `subject` is confirmed still genuinely in progress, so its
+   * staleness clock is postponed without otherwise changing anything. This is
+   * distinct from every other mutator here, which all describe *something
+   * happened* (a request began, ended, a lifecycle event arrived); `touch`
+   * describes *nothing happened, and that is expected* -- a long single
+   * upstream turn whose only signal is still-open bytes on the wire, or a
+   * held concurrency slot whose owning session was just observed to still be
+   * making requests. Without it, the TTL has no way to distinguish "legitimately
+   * still running" from "abandoned" for activity that can outlast the TTL, and
+   * either the TTL has to be weakened for everyone or genuine long-running
+   * work gets misreported as stale. A no-op for an unknown subject and never
+   * reopens or otherwise touches a terminal record -- a terminal record's
+   * staleness is moot, and touching it would misreport when it actually ended.
+   */
+  function touch(
+    subject: string,
+    { timestamp }: AgentActivityOptions = {}
+  ): AgentActivitySnapshot | null {
+    const rec = subjects.get(subject);
+    if (!rec) return null;
+    const at = timestamp ?? now();
+    if (TERMINAL_STATES.has(rec.state)) return snapshotRecord(rec, at);
+    if (isStale(rec, at)) {
+      rec.state = "stale";
+      return snapshotRecord(rec, at);
+    }
+    rec.updatedAt = isFiniteInstant(timestamp) ? timestamp : at;
+    return snapshotRecord(rec, at);
+  }
+
+  function hasLiveChildren(tag: string): boolean {
+    if (!tag) return false;
+    for (const rec of subjects.values()) {
+      if (
+        (rec.tag === tag || rec.parentRequestId === tag) &&
+        LIVE_STATES.has(rec.state) &&
+        (rec.origin === "subagent" ||
+          rec.kind === "subagent_slot" ||
+          rec.kind === "bridge_subagent" ||
+          String(rec.subject).startsWith("bridge-parent:"))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** The subject just spawned a subagent it is now waiting on. Idempotent (re-applying while already waiting is a no-op). */
+  function noteSubagentWait(
+    subject: string,
+    {
+      timestamp,
+      kind = "session",
+      tag = null,
+      provider = null,
+      model = null,
+      role = null,
+      workspace = null
+    }: AgentActivityOptions = {}
+  ): AgentActivitySnapshot | null {
+    if (!subject) return null;
+    const rec = ensure(subject, { kind, tag });
+    if (provider !== null && provider !== undefined) rec.provider = provider;
+    if (model !== null && model !== undefined) rec.model = model;
+    if (role !== null && role !== undefined) rec.role = role;
+    if (workspace !== null && workspace !== undefined)
+      rec.workspace = workspace;
+    const at = instantOf(timestamp);
+    if (rec.state === "subagent_wait") {
+      rec.updatedAt = at;
+      return snapshotRecord(rec, at);
+    }
+    transition(rec, "subagent_wait", at);
+    return snapshotRecord(rec, at);
+  }
+
+  /** The subagent the subject was waiting on reported back. A no-op unless the subject was actually in subagent_wait. */
+  function noteSubagentResolved(
+    subject: string,
+    { timestamp }: AgentActivityOptions = {}
+  ): AgentActivitySnapshot | null {
+    const rec = subjects.get(subject);
+    if (!rec) return null;
+    if (TERMINAL_STATES.has(rec.state) || rec.state !== "subagent_wait")
+      return rec ? snapshotRecord(rec, timestamp ?? now()) : null;
+    const at = instantOf(timestamp);
+    if (hasLiveChildren(subject)) {
+      rec.updatedAt = at;
+      return snapshotRecord(rec, at);
+    }
+    transition(rec, "resumed", at);
+    return snapshotRecord(rec, at);
+  }
+
+  /**
+   * Applies a normalized lifecycle event, as accepted over the existing
+   * agent-events endpoint: `{ state, eventId?, timestamp? }` where `state`
+   * is one of user_wait/subagent_wait/tool_wait/resumed/finished/failed.
+   * Unknown states are rejected (returns null) rather than silently ignored,
+   * so a caller can tell a malformed event from a legitimate no-op.
+   * Idempotent by eventId when the caller supplies one; a terminal record
+   * never reopens, including via a duplicated terminal event.
+   */
+  function applyLifecycleEvent(
+    subject: string,
+    event: AgentLifecycleEvent
+  ): AgentActivitySnapshot | null {
+    if (!subject || !event || typeof event !== "object") return null;
+    const state = event.state;
+    if (state === undefined || !LIFECYCLE_EVENT_STATES.has(state)) return null;
+    const rec = ensure(subject, {
+      kind: event.kind ?? "session",
+      tag: event.tag ?? null
+    });
+    if (event.provider !== undefined) rec.provider = event.provider;
+    if (event.model !== undefined) rec.model = event.model;
+    if (event.role !== undefined) rec.role = event.role;
+    if (event.origin !== undefined) rec.origin = event.origin;
+    if (event.workspace !== undefined) rec.workspace = event.workspace;
+    if (TERMINAL_STATES.has(rec.state))
+      return snapshotRecord(rec, event.timestamp ?? now());
+    const eventId =
+      typeof event.eventId === "string" && event.eventId.trim()
+        ? event.eventId.trim()
+        : null;
+    if (eventId && trackEventId(rec.lifecycleEventIds, eventId))
+      return snapshotRecord(rec, event.timestamp ?? now());
+    transition(rec, state, event.timestamp);
+    return snapshotRecord(rec, event.timestamp ?? now());
+  }
+
+  function getState(subject: string, at = now()): string | null {
+    const rec = subjects.get(subject);
+    if (!rec) return null;
+    return isStale(rec, at) ? "stale" : rec.state;
+  }
+
+  function getRecord(
+    subject: string,
+    at = now()
+  ): AgentActivitySnapshot | null {
+    const rec = subjects.get(subject);
+    return rec ? snapshotRecord(rec, at) : null;
+  }
+
+  /** Marks every matured non-terminal record stale as of `at`. Idempotent; returns the count actually swept. */
+  function sweep(at = now()): number {
+    let swept = 0;
+    for (const rec of subjects.values()) {
+      if (isStale(rec, at)) {
+        if (rec.role === "orchestrator" && hasLiveChildren(rec.subject)) {
+          rec.updatedAt = at;
+          rec.state = "subagent_wait";
+          continue;
+        }
+        rec.state = "stale";
+        swept += 1;
+      }
+    }
+    return swept;
+  }
+
+  function matches(
+    rec: ActivityRecord,
+    filter: AgentActivityOptions = {}
+  ): boolean {
+    if (Object.hasOwn(filter, "kind")) {
+      if (rec.kind !== filter.kind) return false;
+    } else if (!AGENT_ACTIVITY_KINDS.includes(rec.kind)) {
+      // No explicit kind requested: default every count to agent kinds only,
+      // so a held `subagent_slot` never inflates a provider/usage/top-level
+      // count. A caller that actually wants slot accounting passes `kind`
+      // explicitly (see activeSubagentThreads() and friends in the router).
+      return false;
+    }
+    for (const field of FILTER_FIELDS) {
+      if (!Object.hasOwn(filter, field)) continue;
+      if (rec[field] !== filter[field]) return false;
+    }
+    return true;
+  }
+
+  /** Count of subjects currently in a live (non-terminal, non-stale) state, optionally filtered. Never negative by construction: it is a fresh count over records, not a running counter. */
+  function countLive(filter: AgentActivityOptions = {}, at = now()): number {
+    sweep(at);
+    let count = 0;
+    for (const rec of subjects.values()) {
+      if (!LIVE_STATES.has(rec.state)) continue;
+      if (!matches(rec, filter)) continue;
+      count += 1;
+    }
+    return Math.max(0, count);
+  }
+
+  /** List of subjects currently in a live (non-terminal, non-stale) state, optionally filtered. Excludes bookkeeping kinds (e.g. subagent_slot) unless kind is explicitly filtered. */
+  function listLive(
+    filter: AgentActivityOptions = {},
+    at = now()
+  ): AgentActivitySnapshot[] {
+    sweep(at);
+    const live = [];
+    for (const rec of subjects.values()) {
+      if (!LIVE_STATES.has(rec.state)) continue;
+      if (!matches(rec, filter)) continue;
+      live.push(snapshotRecord(rec, at));
+    }
+    return live;
+  }
+
+  /** Count of subjects grouped by state, optionally filtered. */
+  function countByState(
+    filter: AgentActivityOptions = {},
+    at = now()
+  ): Record<string, number> {
+    sweep(at);
+    const counts = emptyStateCounts();
+    for (const rec of subjects.values()) {
+      if (!matches(rec, filter)) continue;
+      counts[rec.state] = (counts[rec.state] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  /** Distinct `tag` values with at least one live record of `kind`. */
+  function distinctTags(
+    { kind }: { kind?: string } = {},
+    at = now()
+  ): string[] {
+    sweep(at);
+    const tags = new Set<string>();
+    for (const rec of subjects.values()) {
+      if (kind !== undefined && rec.kind !== kind) continue;
+      if (!LIVE_STATES.has(rec.state)) continue;
+      if (rec.tag !== null) tags.add(rec.tag);
+    }
+    return [...tags];
+  }
+
+  /** A status-shaped snapshot: totals, live count, and per-provider/per-model state breakdowns, for surfacing on /status. */
+  function snapshot(at = now()) {
+    sweep(at);
+    const byProvider: StateCountsByKey = {};
+    const byModel: StateCountsByKey = {};
+    const byRole: StateCountsByKey = {};
+    const byOrigin: StateCountsByKey = {};
+    const byWorkspace: StateCountsByKey = {};
+    for (const rec of subjects.values()) {
+      // A held `subagent_slot` has no provider/model/role of its own -- it
+      // would otherwise fall into the "unattributed" bucket of byRole/
+      // byOrigin/byWorkspace and inflate them with bookkeeping, not agents.
+      if (!AGENT_ACTIVITY_KINDS.includes(rec.kind)) continue;
+      addStateCount(byProvider, rec.provider, rec.state, {
+        skipMissing: true
+      });
+      addStateCount(
+        byModel,
+        rec.provider && rec.model ? `${rec.provider}/${rec.model}` : null,
+        rec.state,
+        { skipMissing: true }
+      );
+      addStateCount(byRole, rec.role, rec.state);
+      addStateCount(byOrigin, rec.origin, rec.state);
+      addStateCount(byWorkspace, rec.workspace, rec.state);
+    }
+    const byState = countByState({}, at);
+    return {
+      ttlMs: effectiveTtlMs,
+      // Agent-kind subjects only (see AGENT_ACTIVITY_KINDS); a held
+      // subagent_slot is admission bookkeeping, not an agent, and must not
+      // inflate this top-level total.
+      total: Object.values(byState).reduce((sum, count) => sum + count, 0),
+      live: countLive({}, at),
+      byState,
+      byProvider,
+      byModel,
+      byRole,
+      byOrigin,
+      byWorkspace
+    };
+  }
+
+  function reset() {
+    subjects.clear();
+  }
+
+  return {
+    beginRequest,
+    endRequest,
+    finish,
+    touch,
+    noteSubagentWait,
+    noteSubagentResolved,
+    applyLifecycleEvent,
+    getState,
+    getRecord,
+    sweep,
+    hasLiveChildren,
+    countLive,
+    listLive,
+    countByState,
+    distinctTags,
+    snapshot,
+    reset
+  };
+}

@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "rewriteRelativeImportExtensions": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "jsx": "react-jsx",
+    "types": ["node", "react", "react-dom"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    ".rulesync/**/*.ts",
+    "core/src/**/*.ts",
+    "core/tests/**/*.ts",
+    "data/src/**/*.ts",
+    "data/tests/**/*.ts",
+    "console/src/**/*.ts",
+    "console/src/**/*.tsx",
+    "console/tests/**/*.ts",
+    "console/tests/**/*.tsx",
+    "runtime/src/**/*.ts",
+    "runtime/tests/**/*.ts"
+  ]
+}

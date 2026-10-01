@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.codex.antigravity-proxy</string>
+
+  <!-- Antigravity CLI Responses proxy on 127.0.0.1:4002, upstream for the
+       LiteLLM gateway (:4001). KeepAlive keeps it up across restarts, crashes,
+       and sleep. PATH includes nvm so `env node` resolves under launchd.
+       Invokes the installed hook copy under ~/.codex (outside Desktop). -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__CODEX_HOME__/hooks/run-codex-antigravity-proxy.sh</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <!-- The installer's native Node: PATH alone finds /usr/local/bin/node
+         first, an Intel build on many Apple Silicon Macs (run under Rosetta). -->
+    <key>AUTODEV_NODE_BIN</key>
+    <string>__AUTODEV_NODE_BIN__</string>
+    <key>CODEX_HOME</key>
+    <string>__CODEX_HOME__</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>__CODEX_HOME__/hooks/antigravity-proxy.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__CODEX_HOME__/hooks/antigravity-proxy.launchd.log</string>
+</dict>
+</plist>

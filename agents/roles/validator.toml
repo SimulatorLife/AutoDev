@@ -1,0 +1,55 @@
+name = "validator"
+description = "Validation agent."
+nickname_candidates = ["VerificationAgent", "VerificationChecker", "VerificationAuditor"]
+
+model_provider = "local_model_router"
+model = "autodev/validator"
+model_reasoning_summary = "none"
+sandbox_mode = "read-only"
+
+developer_instructions = """
+{{AUTODEV_BASE_PROMPT}}
+
+{{AUTODEV_LEAF_PROMPT}}
+
+{{AUTODEV_CODE_SEARCH_PROMPT}}
+
+{{AUTODEV_ROLE_PROMPT}}
+"""
+
+[mcp_servers.lsp]
+enabled = true
+
+[[skills.config]]
+name = "orchestration"
+enabled = false
+
+[[skills.config]]
+name = "lsp-mcp-server"
+enabled = true
+
+[mcp_servers."cocoindex-code"]
+enabled = true
+default_tools_approval_mode = "approve"
+
+[mcp_servers.codegraphcontext]
+enabled = true
+default_tools_approval_mode = "approve"
+enabled_tools = [
+  "list_indexed_repositories",
+  "find_code",
+  "analyze_code_relationships",
+  "get_repository_stats",
+]
+
+[[skills.config]]
+name = "ccc"
+enabled = true
+
+[[skills.config]]
+name = "diagnosing-bugs"
+enabled = true
+
+[[skills.config]]
+name = "doubt-driven-development"
+enabled = true

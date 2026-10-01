@@ -86,7 +86,6 @@ jobs:
           cp .autodev/.nvmrc "$RUNNER_TEMP/autodev.nvmrc"
           jq -e --arg repo "$TARGET_REPOSITORY" '.[$repo]' .autodev/.github/ci/validation-profiles.json > "$RUNNER_TEMP/profile.json"
           echo "package_manager=$(jq -r '.packageManager' "$RUNNER_TEMP/profile.json")" >> "$GITHUB_OUTPUT"
-          echo "pnpm_version=$(jq -r '.pnpmVersion // empty' "$RUNNER_TEMP/profile.json")" >> "$GITHUB_OUTPUT"
 
       - name: Checkout private target through AutoDev PAT
         uses: actions/checkout@v6
@@ -96,11 +95,25 @@ jobs:
           token: ${{ secrets.GH_USER_TOKEN }}
           fetch-depth: 0
 
+      - name: Detect target package manager version
+        id: toolchain
+        if: ${{ steps.profile.outputs.package_manager == 'pnpm' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f package.json || { echo "pnpm target is missing package.json; cannot resolve its package-manager version." >&2; exit 1; }
+          pm_field="$(node -p "require('./package.json').packageManager || ''")"
+          pm_clean="${pm_field%%+*}"
+          case "${pm_clean}" in
+            pnpm@*) echo "pnpm_version=${pm_clean#pnpm@}" >> "$GITHUB_OUTPUT" ;;
+            *) echo "pnpm target must declare packageManager as pnpm@<version> in its checked-out package.json; got '${pm_field}'." >&2; exit 1 ;;
+          esac
+
       - name: Setup pnpm
         if: ${{ steps.profile.outputs.package_manager == 'pnpm' }}
         uses: pnpm/action-setup@v6
         with:
-          version: ${{ steps.profile.outputs.pnpm_version }}
+          version: ${{ steps.toolchain.outputs.pnpm_version }}
           cache: false
 
       - name: Setup Node.js

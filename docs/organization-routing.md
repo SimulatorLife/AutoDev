@@ -30,4 +30,28 @@ The provider workflows are also dispatchable from AutoDev. A new PR's provider r
 1. Add `{ "name": "SimulatorLife/Example", "weight": 1 }` to `repositories`.
 2. Grant the AutoDev `GH_USER_TOKEN` write access to that repository.
 3. Confirm the target's default branch and set a workflow's `base_branch` only when it is not `main`.
-4. Run `npm test` and manually dispatch one small workflow with the target repository before enabling a larger weight.
+4. Run `pnpm test` and manually dispatch one small workflow with the target repository before enabling a larger weight.
+
+## AutoDev toolchain
+
+AutoDev's own checks and validation profile use pnpm `10.32.1` with the committed
+`pnpm-lock.yaml`. The generic target runner may still invoke npm when a different
+SimulatorLife target explicitly declares npm or has an npm lockfile; that is a
+target-repository compatibility path, not an AutoDev dependency.
+
+## CI provider tool versions
+
+The reusable `agent-invoke.yml` workflow loads provider CLI package versions from
+`.github/ci/provider-tools.json`. Provider workflows reference the exported
+manifest variables rather than `pnpm dlx ...@latest`, so a provider upgrade is a
+reviewed AutoDev policy change instead of an implicit supply-chain change on the
+next scheduled run.
+
+## Canonical CI execution entrypoint
+
+Provider-specific workflow files select the provider and any provider-specific
+setup policy only. Execution is centralized in
+`scripts/run-ci-provider.sh`, invoked by `agent-invoke.yml`; arbitrary
+provider command strings are not accepted by the reusable workflow. This keeps
+retry, checkout, prompt, push, and provider-command boundaries in one control
+path while retaining provider-specific CLI flags inside the canonical runner.

@@ -1,0 +1,57 @@
+name = "docs-researcher"
+description = "Documentation researcher with authoritative website access."
+nickname_candidates = ["DocsReader", "DocsInvestigator", "DocsResearcher"]
+
+model_provider = "local_model_router"
+model = "autodev/docs-researcher"
+sandbox_mode = "read-only"
+
+developer_instructions = """
+{{AUTODEV_BASE_PROMPT}}
+
+{{AUTODEV_LEAF_PROMPT}}
+
+{{AUTODEV_ROLE_PROMPT}}
+"""
+
+[mcp_servers.lsp]
+enabled = false
+
+[mcp_servers.openaiDeveloperDocs]
+enabled = true
+
+# General documentation research uses Codex's native web_search tool. The
+# browser automation MCP is for UI testing/debugging and is intentionally not
+# exposed to this role.
+[mcp_servers.playwright]
+enabled = false
+
+[mcp_servers."cocoindex-code"]
+enabled = false
+default_tools_approval_mode = "approve"
+
+[mcp_servers.codegraphcontext]
+enabled = false
+
+[tools]
+web_search = true
+
+
+[[skills.config]]
+name = "orchestration"
+enabled = false
+
+[[skills.config]]
+name = "lsp-mcp-server"
+enabled = false
+
+[[skills.config]]
+name = "remove-legacy-shims"
+enabled = false
+
+[[skills.config]]
+name = "ccc"
+enabled = false
+
+[mcp_servers.context7]
+enabled = true

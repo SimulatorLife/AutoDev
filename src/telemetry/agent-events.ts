@@ -1,0 +1,686 @@
+/**
+ * Reporting channel for subagents a provider bridge spawns inside its own CLI
+ * runtime.
+ *
+ * A CLI-delegation bridge (Claude, Antigravity) does not emit a Codex
+ * `function_call` when it delegates -- its CLI runs the child agent itself, and
+ * the model router never sees a request for it. Without a report, an
+ * orchestrator turn served by one of those providers shows zero subagents in
+ * `/status` and the dashboard, which is indistinguishable from a provider that
+ * refused to delegate at all.
+ *
+ * The router supplies everything needed per request: which tool names count as
+ * a spawn for the provider serving this request, where to post, and the
+ * request id that correlates the report. A bridge therefore needs no routing
+ * config, no provider identity, and no router address of its own; and because
+ * the request id is a router-generated UUID a bridge only learns by serving
+ * the request, presenting it is also what authorizes the report.
+ *
+ * Two event types travel this channel. `subagent_spawn` opens a child; the
+ * optional matching `subagent_result` closes it with the duration and outcome
+ * the CLI actually observed. Reporting the close is what lets a CLI-delegated
+ * child contribute a measured turn to the router's usage tables rather than
+ * only a spawn count. It is optional because a bridge that never sends one --
+ * or dies mid-turn -- must not strand an open child: the router closes any
+ * child still open when the parent request finishes, using the parent's
+ * outcome and the elapsed time since the spawn. Reporting the close only makes
+ * the measurement per child instead of per parent turn.
+ *
+ * Children carry an `id` that is unique within the request, so the close can
+ * name the same child the open did. A bridge that does not assign one gets a
+ * generated id, and a report that names no children at all is expanded into
+ * `count` anonymous children by the router.
+ */
+
+import { writeErrorLine } from "../shared/output.ts";
+
+export const REQUEST_ID_HEADER = "x-autodev-request-id";
+export const SUBAGENT_SPAWN_TOOLS_HEADER = "x-autodev-subagent-spawn-tools";
+export const AGENT_EVENTS_URL_HEADER = "x-autodev-agent-events-url";
+// A Codex hook that runs before a native tool call has no router-issued
+// request id to authorize a post. The router proves the post is from this
+// runtime -- not an out-of-tree caller -- by matching an in-flight session
+// it already opened via the parent /v1/responses request. Sessions without
+// a tracked server-side context are rejected, so this header is not a new
+// authorization token; it is a soft correlation key.
+export const SESSION_ID_HEADER = "x-autodev-session-id";
+// Source tag the skill-read telemetry hook attaches to every report. The
+// router uses it to distinguish explicit skill activations (still counted
+// as `skillUses`) from observed file reads, so the dashboard can show both
+// without inflating or undercounting either.
+export const SKILL_READ_SOURCE = "skill_read";
+
+function trimmedStringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function parseActivityInput(
+  stateOrOptions:
+    | string
+    | {
+        state?: string;
+        childIds?: unknown[];
+        child_ids?: unknown[];
+        minIntervalMs?: number;
+        timestamp?: number;
+      },
+  maybeChildIds: unknown[] | null
+): { cleanState: string; childIds: unknown[] | null } {
+  let state = null;
+  let childIds = null;
+  if (typeof stateOrOptions === "string") {
+    state = stateOrOptions;
+    childIds = maybeChildIds;
+  } else if (stateOrOptions && typeof stateOrOptions === "object") {
+    state = stateOrOptions.state;
+    childIds =
+      stateOrOptions.childIds ?? stateOrOptions.child_ids ?? maybeChildIds;
+  }
+  const cleanState = typeof state === "string" ? state.trim() : "";
+  return { cleanState, childIds };
+}
+
+function headerValue(
+  headers: Record<string, unknown> | undefined,
+  name: string
+): string | null {
+  if (!headers || typeof headers !== "object") return null;
+  // Node lowercases inbound header names, but LiteLLM and other intermediaries
+  // can preserve the case the router sent, so match without regard to it.
+  const key = Object.keys(headers).find(
+    (candidate) => candidate.toLowerCase() === name
+  );
+  const value = key === undefined ? undefined : headers[key];
+  const single = Array.isArray(value) ? value[0] : value;
+  return trimmedStringOrNull(single);
+}
+
+export const DEFAULT_HEARTBEAT_THROTTLE_MS = 15_000;
+
+/**
+ * What a bridge may report about its request's lifecycle: its own in-CLI
+ * delegation and liveness. The router settles each request itself -- tool
+ * waits, input waits, completion, failure -- from the response it relays; see
+ * REPORTABLE_AGENT_ACTIVITY_STATES in src/router/http.ts.
+ */
+export const VALID_ACTIVITY_STATES = Object.freeze(
+  new Set(["subagent_wait", "resumed", "heartbeat"])
+);
+
+export class AgentEventReporter {
+  private url: string;
+  private requestId: string;
+  private spawnTools: Set<string>;
+  private childSequence: number;
+  private lastActivityState: string | null;
+  private lastHeartbeatAt: number;
+  private heartbeatThrottleMs: number;
+  constructor(
+    url: string,
+    requestId: string,
+    spawnTools: Set<string>,
+    options: Record<string, unknown> = {}
+  ) {
+    this.url = url;
+    this.requestId = requestId;
+    this.spawnTools = spawnTools;
+    this.childSequence = 0;
+    this.lastActivityState = null;
+    this.lastHeartbeatAt = 0;
+    const envThrottle = Number.parseInt(
+      process.env.CODEX_AGENT_HEARTBEAT_THROTTLE_MS ?? ""
+    );
+    this.heartbeatThrottleMs =
+      typeof options?.heartbeatThrottleMs === "number" &&
+      Number.isFinite(options.heartbeatThrottleMs)
+        ? Math.max(0, options.heartbeatThrottleMs)
+        : Number.isInteger(envThrottle) && envThrottle >= 0
+          ? envThrottle
+          : DEFAULT_HEARTBEAT_THROTTLE_MS;
+  }
+
+  /** An id unique within this request, for callers that have no id of their own. */
+  nextChildId(): string {
+    this.childSequence += 1;
+    return `c${this.childSequence}`;
+  }
+
+  /** True when this tool name means the CLI just spawned a subagent. */
+  isSpawnTool(name: unknown): boolean {
+    return typeof name === "string" && this.spawnTools.has(name);
+  }
+
+  /**
+   * Post one spawn. Telemetry must never fail a model turn, so this resolves
+   * on transport errors and non-2xx replies instead of rejecting; a lost
+   * report costs a count, a thrown one would cost the turn.
+   */
+  async reportSpawn({
+    tool,
+    role = null,
+    status = "started",
+    count = 1
+  }: {
+    tool: string;
+    role?: string | null;
+    status?: string;
+    count?: number;
+  }) {
+    await this.reportSpawns({
+      tool,
+      children: Array.from({ length: Math.max(1, count) }, () => ({ role })),
+      status
+    });
+  }
+
+  /**
+   * Post every child one spawning tool call created. A CLI whose spawn tool
+   * takes a batch -- agy dispatches up to sixteen subagents per
+   * `invoke_subagent` call -- makes one tool call worth N subagents, so
+   * reporting the call rather than its children turns a wide fan-out into a
+   * count of one. Children are grouped by role so the router's `byRole` keeps
+   * the shape of the delegation, and the whole batch travels as one request.
+   */
+  async reportSpawns({
+    tool,
+    children,
+    status = "started"
+  }: {
+    tool: string;
+    children?: Array<Record<string, unknown>>;
+    status?: string;
+  }) {
+    await this.post(
+      this.childEvents("subagent_spawn", { tool, children, status })
+    );
+  }
+
+  /**
+   * Post the outcome of children a previous `reportSpawns` opened. The `id` on
+   * each child is what pairs it with its open; `durationMs` is how long the
+   * CLI ran the child, which is the only per-child turn measurement that
+   * exists -- the router never served a request for it.
+   */
+  async reportResults({
+    tool,
+    children,
+    outcome = "success",
+    durationMs = null,
+    status = null
+  }: {
+    tool: string;
+    children?: Array<Record<string, unknown>>;
+    outcome?: string;
+    durationMs?: number | null;
+    status?: string | null;
+  }) {
+    const extra = {
+      outcome: outcome === "success" ? "success" : "failure",
+      durationMs:
+        typeof durationMs === "number" && Number.isFinite(durationMs)
+          ? Math.max(0, Math.round(durationMs))
+          : null
+    };
+    await this.post(
+      this.childEvents(
+        "subagent_result",
+        { tool, children, status: status ?? extra.outcome },
+        extra
+      )
+    );
+  }
+
+  /**
+   * One event per role in a batch, carrying that role's children. Grouping by
+   * role keeps the router's spawn rows the shape of the delegation -- a
+   * twelve-way fan-out is not twelve rows -- while the per-child ids inside
+   * each group still address each child individually.
+   */
+  childEvents(
+    type: string,
+    {
+      tool,
+      children,
+      status
+    }: {
+      tool: string;
+      children: Array<Record<string, unknown>> | undefined;
+      status: string;
+    },
+    extra: Record<string, unknown> = {}
+  ): Array<Record<string, unknown>> {
+    const list =
+      Array.isArray(children) && children.length > 0
+        ? children
+        : [{ role: null }];
+    const byRole = new Map();
+    for (const child of list) {
+      const role = trimmedStringOrNull(child?.role);
+      const model = trimmedStringOrNull(child?.model);
+      const id = trimmedStringOrNull(child?.id) ?? this.nextChildId();
+      // A CLI-delegated child leaves no rollout the router can read, so where
+      // the bridge knows the CLI's own transcript path it is the only pointer
+      // to what the child actually did. Carried only when present.
+      const logUri = trimmedStringOrNull(child?.logUri);
+      if (!byRole.has(role)) byRole.set(role, []);
+      byRole.get(role).push({
+        id,
+        ...(model ? { model } : {}),
+        ...(logUri ? { logUri } : {})
+      });
+    }
+    return Array.from(byRole, ([role, group]) => ({
+      type,
+      tool,
+      role,
+      status,
+      count: group.length,
+      children: group,
+      ...extra
+    }));
+  }
+
+  /**
+   * Report that the CLI never offered a delegation tool at all.
+   *
+   * A workspace can remove the tool from under an orchestrator turn -- a
+   * project `.claude/settings.json` that lists `Agent` under
+   * `permissions.deny` strips it regardless of what this bridge allows -- and
+   * the turn then does the work itself and says nothing. Zero spawns is the
+   * same reading as a provider that simply chose not to delegate, so the
+   * absence has to be reported as its own fact.
+   */
+  async reportSpawnToolsUnavailable({
+    available = []
+  }: { available?: unknown[] } = {}) {
+    await this.post([
+      {
+        type: "subagent_tools_unavailable",
+        expected: [...this.spawnTools],
+        // Bounded and name-only: a tool inventory is a fingerprint of the
+        // workspace, and the router needs only enough to name the gap.
+        available: available
+          .filter((name) => typeof name === "string")
+          .slice(0, 100)
+      }
+    ]);
+  }
+
+  /**
+   * Post a single tool_executed observation.
+   *
+   * The provider bridge just ran a tool call for the model. This is the
+   * first-class evidence the router needs to mark a tool name as actually
+   * available on this workspace -- without it, per-workspace tool use must
+   * remain unavailable to honour the fail-closed contract. The tool name and
+   * optional call id are the only identifying metadata the router retains;
+   * arguments and outputs are deliberately not propagated.
+   */
+  async reportToolExecuted({
+    tool,
+    callId = null,
+    status = "ok",
+    server = null,
+    durationMs = null
+  }: {
+    tool?: string;
+    callId?: string | null;
+    status?: string;
+    server?: string | null;
+    durationMs?: number | null;
+  } = {}) {
+    if (typeof tool !== "string" || !tool.trim()) return;
+    await this.post([
+      {
+        type: "tool_executed",
+        tool: tool.trim(),
+        callId:
+          typeof callId === "string" && callId.trim() ? callId.trim() : null,
+        status:
+          status === "error" || status === "failure"
+            ? "error"
+            : status === "ok" || status === "success"
+              ? "ok"
+              : "unknown",
+        server:
+          typeof server === "string" && server.trim() ? server.trim() : null,
+        durationMs:
+          typeof durationMs === "number" && Number.isFinite(durationMs)
+            ? Math.max(0, Math.round(durationMs))
+            : null
+      }
+    ]);
+  }
+
+  /**
+   * Post a single tool_requested observation. The model asked the bridge to
+   * invoke a tool, but the bridge did not necessarily run it -- some
+   * requested tools fail closed at the bridge boundary. Reporting both
+   * requested and executed is what lets the router distinguish "the
+   * provider never offered the tool" from "the provider offered it but
+   * something stopped it from running".
+   */
+  async reportToolRequested({
+    tool,
+    callId = null,
+    server = null
+  }: { tool?: string; callId?: string | null; server?: string | null } = {}) {
+    if (typeof tool !== "string" || !tool.trim()) return;
+    await this.post([
+      {
+        type: "tool_requested",
+        tool: tool.trim(),
+        callId:
+          typeof callId === "string" && callId.trim() ? callId.trim() : null,
+        server:
+          typeof server === "string" && server.trim() ? server.trim() : null
+      }
+    ]);
+  }
+
+  /**
+   * Post a single tool_unavailable observation. The model asked for a tool
+   * the bridge does not have, or the workspace has explicitly denied the
+   * tool through its own settings. Reporting the gap is what stops the
+   * dashboard from rendering "the workspace never used this tool" when the
+   * truth is "the workspace was forbidden from using it".
+   */
+  async reportToolUnavailable({
+    tool,
+    callId = null,
+    reason = "denied",
+    server = null
+  }: {
+    tool?: string;
+    callId?: string | null;
+    reason?: string;
+    server?: string | null;
+  } = {}) {
+    if (typeof tool !== "string" || !tool.trim()) return;
+    await this.post([
+      {
+        type: "tool_unavailable",
+        tool: tool.trim(),
+        callId:
+          typeof callId === "string" && callId.trim() ? callId.trim() : null,
+        reason:
+          typeof reason === "string" && reason.trim()
+            ? reason.trim().slice(0, 64)
+            : "denied",
+        server:
+          typeof server === "string" && server.trim() ? server.trim() : null
+      }
+    ]);
+  }
+
+  /**
+   * Post a single skill_exposed observation. The bridge just made a skill
+   * available to the model -- either by resolving a `$skill` invocation or
+   * by surfacing the skill in the system prompt. This is the first-class
+   * event the router needs to mark the skill as available per workspace;
+   * without it, per-workspace skill attribution stays unavailable.
+   */
+  async reportSkillExposed({
+    skill,
+    source = null,
+    pluginId = null
+  }: {
+    skill?: string;
+    source?: string | null;
+    pluginId?: string | null;
+  } = {}) {
+    if (typeof skill !== "string" || !skill.trim()) return;
+    await this.post([
+      {
+        type: "skill_exposed",
+        skill: skill.trim(),
+        source:
+          typeof source === "string" && source.trim() ? source.trim() : null,
+        pluginId:
+          typeof pluginId === "string" && pluginId.trim()
+            ? pluginId.trim()
+            : null
+      }
+    ]);
+  }
+
+  /**
+   * Post a single mcp_exposed observation. The bridge just made an MCP
+   * server available to the model -- either by resolving it from the
+   * selected role's MCP list or by surfacing it in the runtime's tool
+   * inventory. This is the first-class event the router needs to mark the
+   * server as exposed per workspace; it is distinct from actually using the
+   * server (a discovery call or an executed tool), which the router derives
+   * from `tool_executed` and its own OTLP discovery-span telemetry instead.
+   */
+  async reportMcpExposed({
+    server,
+    source = null
+  }: { server?: string; source?: string | null } = {}) {
+    if (typeof server !== "string" || !server.trim()) return;
+    await this.post([
+      {
+        type: "mcp_exposed",
+        server: server.trim(),
+        source:
+          typeof source === "string" && source.trim() ? source.trim() : null
+      }
+    ]);
+  }
+
+  /**
+   * Post a single skill_used observation. The bridge (or a Codex hook
+   * observing a SKILL.md read) just saw the agent actually use a skill.
+   * The router keys dedupe on (requestId, skill, source, pluginId,
+   * workspace, eventId) so a tool retry, a citation in a chat reply, and
+   * repeated reads of the same skill in one turn collapse into one
+   * attributed use rather than overcounting.
+   */
+  async reportSkillUsed({
+    skill,
+    source = null,
+    pluginId = null,
+    eventId = null
+  }: {
+    skill?: string;
+    source?: string | null;
+    pluginId?: string | null;
+    eventId?: string | null;
+  } = {}) {
+    if (typeof skill !== "string" || !skill.trim()) return;
+    const payload = {
+      type: "skill_used",
+      skill: skill.trim(),
+      source:
+        typeof source === "string" && source.trim() ? source.trim() : null,
+      pluginId:
+        typeof pluginId === "string" && pluginId.trim() ? pluginId.trim() : null
+    };
+    if (typeof eventId === "string" && eventId.trim())
+      (payload as Record<string, unknown>).eventId = eventId
+        .trim()
+        .slice(0, 128);
+    await this.post([payload]);
+  }
+
+  /**
+   * Post a heartbeat activity observation to refresh staleness without
+   * transitioning lifecycle state.
+   */
+  async reportHeartbeat(options: number | { minIntervalMs?: number } = {}) {
+    const minIntervalMs =
+      typeof options === "number"
+        ? options
+        : typeof options?.minIntervalMs === "number"
+          ? options.minIntervalMs
+          : 0;
+    const now = Date.now();
+    if (
+      minIntervalMs > 0 &&
+      this.lastHeartbeatAt > 0 &&
+      now - this.lastHeartbeatAt < minIntervalMs
+    ) {
+      return;
+    }
+    this.lastHeartbeatAt = now;
+    await this.reportActivity({ state: "heartbeat" });
+  }
+
+  /**
+   * Post a single normalized activity observation.
+   *
+   * { type: "activity", state: "subagent_wait" | "resumed" | "heartbeat", childIds? }
+   */
+  private async reportHeartbeatActivity(
+    stateOrOptions:
+      | string
+      | {
+          minIntervalMs?: number;
+          timestamp?: number;
+        }
+  ): Promise<void> {
+    const minIntervalMs =
+      typeof stateOrOptions === "object" &&
+      typeof stateOrOptions.minIntervalMs === "number"
+        ? stateOrOptions.minIntervalMs
+        : 0;
+    const timestamp =
+      typeof stateOrOptions === "object"
+        ? stateOrOptions.timestamp
+        : undefined;
+    const now =
+      typeof timestamp === "number" && Number.isFinite(timestamp)
+        ? timestamp
+        : Date.now();
+    if (
+      minIntervalMs > 0 &&
+      this.lastHeartbeatAt > 0 &&
+      now - this.lastHeartbeatAt < minIntervalMs
+    ) {
+      return;
+    }
+    this.lastHeartbeatAt = now;
+    await this.post([{ type: "activity", state: "heartbeat" }]);
+  }
+
+  async reportActivity(
+    stateOrOptions:
+      | string
+      | {
+          state?: string;
+          childIds?: unknown[];
+          child_ids?: unknown[];
+          minIntervalMs?: number;
+          timestamp?: number;
+        },
+    maybeChildIds: unknown[] | null = null
+  ) {
+    const { cleanState, childIds } = parseActivityInput(
+      stateOrOptions,
+      maybeChildIds
+    );
+    if (!VALID_ACTIVITY_STATES.has(cleanState)) return;
+
+    if (cleanState === "heartbeat") {
+      await this.reportHeartbeatActivity(stateOrOptions);
+      return;
+    }
+
+    if (this.lastActivityState === cleanState && cleanState !== "resumed")
+      return;
+    this.lastActivityState = cleanState;
+    const event: Record<string, unknown> = {
+      type: "activity",
+      state: cleanState
+    };
+    if (Array.isArray(childIds)) {
+      const cleanIds = childIds
+        .map((id) => (typeof id === "string" ? id.trim() : String(id).trim()))
+        .filter(Boolean);
+      if (cleanIds.length > 0) event.childIds = cleanIds;
+    }
+    await this.post([event]);
+  }
+
+  async post(events: Array<Record<string, unknown>>): Promise<void> {
+    try {
+      const response = await fetch(this.url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ requestId: this.requestId, events })
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      // Best effort by design; see reportSpawn. Emit a bounded, credential-free
+      // loss record so an operator can distinguish "no children" from telemetry
+      // transport failure without turning observability into a turn failure.
+      writeErrorLine(
+        JSON.stringify({
+          schema: "autodev-agent-telemetry-v1",
+          event: "report_lost",
+          requestId: this.requestId,
+          reason: error instanceof Error ? error.message : String(error)
+        })
+      );
+    }
+  }
+}
+
+/**
+ * A reporter for this request, or null when the router asked for no reporting
+ * (a caller that is not the router).
+ *
+ * Spawn-tool availability is not a precondition for this channel: a provider
+ * with no spawn tools (minimax, copilot) still runs tools, exposes skills,
+ * and reaches MCP servers over the same request, and those observations must
+ * be reportable even when `spawnTools` is empty. Only the events URL and
+ * request id -- both router-issued -- authorize a post; the spawn-tool
+ * header is optional and, when absent, this reporter simply never
+ * recognizes a tool call as a spawn.
+ */
+export function resolveAgentEventReporter(
+  headers: Record<string, unknown> | undefined
+): AgentEventReporter | null {
+  const url = headerValue(headers, AGENT_EVENTS_URL_HEADER);
+  const requestId = headerValue(headers, REQUEST_ID_HEADER);
+  if (!url || !requestId) return null;
+  const tools = headerValue(headers, SUBAGENT_SPAWN_TOOLS_HEADER);
+  const spawnTools = new Set(
+    tools
+      ? tools
+          .split(",")
+          .map((tool) => tool.trim())
+          .filter(Boolean)
+      : []
+  );
+  return new AgentEventReporter(url, requestId, spawnTools);
+}
+
+/**
+ * A reporter used by Codex PreToolUse hooks that observe SKILL.md reads.
+ *
+ * Hooks run on the Codex side and so do not have a router-issued request id
+ * to authorize an agent-events post the way a bridge does. The router still
+ * receives them: a PreToolUse hook fires inside a session whose
+ * /v1/responses parent request the router already issued, and the
+ * orchestrator forwards the parent session id into the hook context
+ * (`x-codex-session-id`). The router keeps a short-lived session -> bridge
+ * context map for exactly this purpose; sessions that never opened a parent
+ * request resolve to no context and the router fails closed by dropping the
+ * post instead of inventing a workspace key.
+ *
+ * Returns null when the caller did not provide both an events URL and a
+ * session id, so a misconfigured hook is a no-op rather than a shadow
+ * authorization path.
+ */
+export function resolveSkillReadReporter(
+  headers: Record<string, unknown> | undefined
+): AgentEventReporter | null {
+  const url = headerValue(headers, AGENT_EVENTS_URL_HEADER);
+  const sessionId = headerValue(headers, SESSION_ID_HEADER);
+  if (!url || !sessionId) return null;
+  // The session id is used in place of the request id. The router records
+  // the post with the same request/bridge correlation machinery a bridge
+  // would use, attributed to whichever active request owns the session.
+  return new AgentEventReporter(url, sessionId, new Set());
+}

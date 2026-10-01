@@ -12,7 +12,7 @@
     },
     {
       "name": "codex",
-      "weight": 0,
+      "weight": 1,
       "cadenceTicks": 2,
       "category": [
         "code"
@@ -39,7 +39,7 @@
     },
     {
       "name": "mini-max",
-      "weight": 0,
+      "weight": 5,
       "cadenceTicks": 1,
       "category": [
         "code"
@@ -48,7 +48,7 @@
     },
     {
       "name": "claude",
-      "weight": 0,
+      "weight": 2,
       "cadenceTicks": 2,
       "category": [
         "code",
@@ -80,22 +80,22 @@
   "repositories": [
     {
       "name": "SimulatorLife/3DSpider",
-      "weight": 1,
+      "weight": 0,
       "baseBranch": "main"
     },
     {
       "name": "SimulatorLife/AutoDev",
-      "weight": 1,
+      "weight": 0,
       "baseBranch": "main"
     },
     {
       "name": "SimulatorLife/Colourful-Life",
-      "weight": 1,
+      "weight": 0.2,
       "baseBranch": "master"
     },
     {
       "name": "SimulatorLife/GMLoop",
-      "weight": 1,
+      "weight": 0.2,
       "baseBranch": "main"
     },
     {
@@ -107,39 +107,419 @@
   "prompts": [
     {
       "name": "dry",
-      "path": ".agents/prompts/dry.md",
+      "path": ".rulesync/commands/dry.md",
       "title": "Agent: Reduce duplication",
-      "weight": 1,
+      "weight": 0.7,
       "category": "code",
-      "complexity": 2,
-      "promptRepository": "SimulatorLife/AutoDev"
+      "complexity": 1
     },
     {
       "name": "kiss",
-      "path": ".agents/prompts/kiss.md",
+      "path": ".rulesync/commands/kiss.md",
       "title": "Agent: Keep the design simple",
-      "weight": 1,
+      "weight": 0.5,
       "category": "code",
-      "complexity": 2,
-      "promptRepository": "SimulatorLife/AutoDev"
+      "complexity": 2
     },
     {
       "name": "organization",
-      "path": ".agents/prompts/organization.md",
+      "path": ".rulesync/commands/organization.md",
       "title": "Agent: Improve ownership and organization",
       "weight": 1,
       "category": "code",
-      "complexity": 2,
-      "promptRepository": "SimulatorLife/AutoDev"
+      "complexity": 2
     },
     {
       "name": "bug-fix",
-      "path": ".agents/prompts/bug-fix.md",
+      "path": ".rulesync/commands/bug-fix.md",
       "title": "Agent: Fix one real defect",
+      "weight": 0.2,
+      "category": "code",
+      "complexity": 3
+    },
+    {
+      "name": "style-consistency",
+      "path": ".rulesync/commands/style-consistency.md",
+      "title": "Agent: Style Consistency",
+      "weight": 0.2,
+      "category": "code",
+      "complexity": 1
+    },
+    {
+      "name": "consolidate-files",
+      "path": ".rulesync/commands/consolidate-files.md",
+      "title": "Agent: Consolidate Files",
+      "weight": 0.5,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "decouple-architecture",
+      "path": ".rulesync/commands/decouple-architecture.md",
+      "title": "Agent: Decouple Architecture",
+      "weight": 0.2,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "dependency-hygiene",
+      "path": ".rulesync/commands/dependency-hygiene.md",
+      "title": "Agent: Dependency Hygiene",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "documentation-refresh",
+      "path": ".rulesync/commands/documentation-refresh.md",
+      "title": "Agent: Documentation Refresh",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 1
+    },
+    {
+      "name": "parameter-flexibility",
+      "path": ".rulesync/commands/parameter-flexibility.md",
+      "title": "Agent: Parameter Flexibility",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "dead-code-audit",
+      "path": ".rulesync/commands/dead-code-audit.md",
+      "title": "Agent: Dead Code Audit",
+      "weight": 0.33,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "error-handling",
+      "path": ".rulesync/commands/error-handling.md",
+      "title": "Agent: Error Handling",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "control-flow-clarity",
+      "path": ".rulesync/commands/control-flow-clarity.md",
+      "title": "Agent: Control Flow Clarity",
+      "weight": 0.25,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "micro-optimization",
+      "path": ".rulesync/commands/micro-optimization.md",
+      "title": "Agent: Micro Optimization",
+      "weight": 0.334,
+      "category": "code",
+      "complexity": 1
+    },
+    {
+      "name": "extensibility",
+      "path": ".rulesync/commands/extensibility.md",
+      "title": "Agent: Extensibility",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 3
+    },
+    {
+      "name": "lint-fix",
+      "path": ".rulesync/commands/lint-fix.md",
+      "title": "Agent: Lint Fix",
+      "weight": 0.33,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "duplicate-report",
+      "path": ".rulesync/commands/duplicate-report.md",
+      "title": "Agent: Duplicate Report",
+      "weight": 0.3,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "docstrings-comments",
+      "path": ".rulesync/commands/docstrings-comments.md",
+      "title": "Agent: Docstrings Comments",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 1
+    },
+    {
+      "name": "logic-deduplication",
+      "path": ".rulesync/commands/logic-deduplication.md",
+      "title": "Agent: Logic Deduplication",
+      "weight": 0.5,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "memory-footprint",
+      "path": ".rulesync/commands/memory-footprint.md",
+      "title": "Agent: Memory Footprint",
+      "weight": 0.2,
+      "category": "code",
+      "complexity": 3
+    },
+    {
+      "name": "validation-failure-recovery",
+      "path": ".rulesync/commands/validation-failure-recovery.md",
+      "title": "Agent: Validation Failure Recovery",
+      "weight": 0.3,
+      "category": "regressions",
+      "complexity": 3
+    },
+    {
+      "name": "todo-implementation",
+      "path": ".rulesync/commands/todo-implementation.md",
+      "title": "Agent: Todo Implementation",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "nullability-guardrails",
+      "path": ".rulesync/commands/nullability-guardrails.md",
+      "title": "Agent: Nullability Guardrails",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "loop-mutation",
+      "path": ".rulesync/commands/loop-mutation.md",
+      "title": "Agent: Loop Mutation",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "resource-leak",
+      "path": ".rulesync/commands/resource-leak.md",
+      "title": "Agent: Resource Leak",
+      "weight": 0.2,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "typed-flags",
+      "path": ".rulesync/commands/typed-flags.md",
+      "title": "Agent: Typed Flags",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "floating-point-safety",
+      "path": ".rulesync/commands/floating-point-safety.md",
+      "title": "Agent: Floating Point Safety",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "test-isolation",
+      "path": ".rulesync/commands/test-isolation.md",
+      "title": "Agent: Test Isolation",
+      "weight": 0.4,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "legacy-api-migration",
+      "path": ".rulesync/commands/legacy-api-migration.md",
+      "title": "Agent: Legacy Api Migration",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "usability",
+      "path": ".rulesync/commands/usability.md",
+      "title": "Agent: Usability",
+      "weight": 0.2,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "architectural-audit",
+      "path": ".rulesync/commands/architectural-audit.md",
+      "title": "Agent: Architectural Audit",
+      "weight": 0.15,
+      "category": "code",
+      "complexity": 3
+    },
+    {
+      "name": "cohesion-refactor",
+      "path": ".rulesync/commands/cohesion-refactor.md",
+      "title": "Agent: Cohesion Refactor",
+      "weight": 0.3,
+      "category": "code",
+      "complexity": 3
+    },
+    {
+      "name": "composition-over-inheritance",
+      "path": ".rulesync/commands/composition-over-inheritance.md",
+      "title": "Agent: Composition Over Inheritance",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "defensive-input",
+      "path": ".rulesync/commands/defensive-input.md",
+      "title": "Agent: Defensive Input",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "demeter",
+      "path": ".rulesync/commands/demeter.md",
+      "title": "Agent: Demeter",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "document-intent",
+      "path": ".rulesync/commands/document-intent.md",
+      "title": "Agent: Document Intent",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 1
+    },
+    {
+      "name": "interface-segregation",
+      "path": ".rulesync/commands/interface-segregation.md",
+      "title": "Agent: Interface Segregation",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "low-coupling",
+      "path": ".rulesync/commands/low-coupling.md",
+      "title": "Agent: Low Coupling",
+      "weight": 0.2,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "polymorphic-collaborators",
+      "path": ".rulesync/commands/polymorphic-collaborators.md",
+      "title": "Agent: Polymorphic Collaborators",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "pola",
+      "path": ".rulesync/commands/pola.md",
+      "title": "Agent: Pola",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "policy-mechanism",
+      "path": ".rulesync/commands/policy-mechanism.md",
+      "title": "Agent: Policy Mechanism",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "abstraction-layer",
+      "path": ".rulesync/commands/abstraction-layer.md",
+      "title": "Agent: Abstraction Layer",
+      "weight": 0.15,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "single-responsibility",
+      "path": ".rulesync/commands/single-responsibility.md",
+      "title": "Agent: Single Responsibility",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "test-duration",
+      "path": ".rulesync/commands/test-duration.md",
+      "title": "Agent: Test Duration",
       "weight": 1,
       "category": "code",
-      "complexity": 3,
-      "promptRepository": "SimulatorLife/AutoDev"
+      "complexity": 2
+    },
+    {
+      "name": "generalization",
+      "path": ".rulesync/commands/generalization.md",
+      "title": "Agent: Generalization",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "bloat-trimming",
+      "path": ".rulesync/commands/bloat-trimming.md",
+      "title": "Agent: Bloat Trimming",
+      "weight": 0.25,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "split-long-file",
+      "path": ".rulesync/commands/split-long-file.md",
+      "title": "Agent: Split Long File",
+      "weight": 0.125,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "legacy-shim-removal",
+      "path": ".rulesync/commands/legacy-shim-removal.md",
+      "title": "Agent: Legacy Shim Removal",
+      "weight": 0.2,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "test-deduplication",
+      "path": ".rulesync/commands/test-deduplication.md",
+      "title": "Agent: Test Deduplication",
+      "weight": 0.5,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "bad-test-remediation",
+      "path": ".rulesync/commands/bad-test-remediation.md",
+      "title": "Agent: Bad Test Remediation",
+      "weight": 0.15,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "test-coverage",
+      "path": ".rulesync/commands/test-coverage.md",
+      "title": "Agent: Improve test coverage and quality",
+      "weight": 0.5,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "configuration-improvement",
+      "path": ".rulesync/commands/configuration-improvement.md",
+      "title": "Agent: Improve one configuration surface",
+      "weight": 0.2,
+      "category": "code",
+      "complexity": 2
     }
   ]
 }

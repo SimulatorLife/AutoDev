@@ -1,0 +1,145 @@
+{
+  "providerGroups": {
+    "default": [
+      [
+        "claude",
+        "antigravity",
+        "minimax"
+      ],
+      [
+        "copilot"
+      ],
+      [
+        "codex"
+      ]
+    ],
+    "browser-tester": [
+      [
+        "claude",
+        "minimax",
+        "antigravity"
+      ],
+      [
+        "copilot"
+      ],
+      [
+        "codex"
+      ]
+    ],
+    "smart": [
+      [
+        "claude",
+        "antigravity"
+      ],
+      [
+        "codex"
+      ]
+    ],
+    "orchestrator": [
+      [
+        "codex"
+      ],
+      [
+        "claude",
+        "copilot",
+        "antigravity"
+      ]
+    ]
+  },
+  "routes": {
+    "claude": {
+      "pattern": "^(sonnet|opus|haiku|claude-[a-z0-9-]*[a-z0-9])$",
+      "baseUrl": "http://127.0.0.1:4000/v1",
+      "healthUrl": "http://127.0.0.1:4000/health/liveliness",
+      "envKey": "LITELLM_API_KEY"
+    },
+    "minimax": {
+      "pattern": "^MiniMax-[A-Za-z0-9][A-Za-z0-9.-]*$",
+      "baseUrl": "http://127.0.0.1:18765/v1",
+      "healthUrl": "http://127.0.0.1:18765/health",
+      "envKey": "MINIMAX_API_KEY"
+    },
+    "antigravity": {
+      "pattern": "^gemini-[A-Za-z0-9][A-Za-z0-9.-]*$",
+      "baseUrl": "http://127.0.0.1:4002/v1",
+      "healthUrl": "http://127.0.0.1:4002/health/liveliness",
+      "envKey": "LITELLM_API_KEY"
+    },
+    "codex": {
+      "pattern": "^(gpt-[A-Za-z0-9][A-Za-z0-9.-]*|o[1-9][A-Za-z0-9.-]*|codex-[A-Za-z0-9][A-Za-z0-9.-]*)$",
+      "baseUrl": "https://chatgpt.com/backend-api/codex",
+      "envKey": null
+    },
+    "copilot": {
+      "pattern": "^copilot$",
+      "baseUrl": "http://127.0.0.1:4003/v1",
+      "healthUrl": "http://127.0.0.1:4003/health/liveliness",
+      "envKey": "CODEX_ROUTER_COPILOT_API_KEY"
+    }
+  },
+  "providers": {
+    "antigravity": {
+      "models": {
+        "smart": "gemini-3.8-flash-high",
+        "orchestrator": "gemini-3.8-flash-high",
+        "default": "gemini-3.8-flash-medium"
+      }
+    },
+    "claude": {
+      "models": {
+        "smart": "claude-opus-5-5",
+        "orchestrator": "claude-opus-5-5",
+        "default": "sonnet"
+      }
+    },
+    "minimax": {
+      "models": {
+        "default": "MiniMax-M3"
+      }
+    },
+    "copilot": {
+      "models": {
+        "default": "copilot",
+        "orchestrator": "copilot"
+      }
+    },
+    "codex": {
+      "models": {
+        "smart": "gpt-6-sol",
+        "orchestrator": "gpt-6-luna",
+        "default": "gpt-6-luna"
+      }
+    }
+  },
+  "roles": {
+    "default": {
+      "tier": "default"
+    },
+    "docs-researcher": {
+      "tier": "default"
+    },
+    "browser-tester": {
+      "tier": "browser-tester"
+    },
+    "explorer": {
+      "tier": "default"
+    },
+    "worker": {
+      "tier": "default"
+    },
+    "validator": {
+      "tier": "default"
+    },
+    "smart": {
+      "tier": "smart"
+    }
+  },
+  "orchestrator": {
+    "alias": "autodev/orchestrator",
+    "tier": "orchestrator",
+    "reasoningEffort": {
+      "claude": "medium",
+      "antigravity": "high"
+    }
+  }
+}

@@ -1,0 +1,125 @@
+{
+  "_comment": "Phase 3 in-repo slice (docs/AUTODEV_PLATFORM_MIGRATION.md, Phase 3 'Then' -- Define AutoDev semantic attributes under an autodev.* namespace). This freezes the additive attribute *contract* for the seven migration keys (names, types, cardinality, scope, signal applicability) AND adds an opt-in router-side emitter behind the AUTODEV_OTEL_ATTRIBUTES=v1 env flag. When the flag is unset (the default), no autodev.* attribute is ever added; when the flag is set, a non-mutating enrichment helper decorates OTLP JSON in ingestOtelSignal. No collector.yaml, provider, launch-agent, or runtime release-mode emitter reads or writes these keys yet, and no prompt content is ever carried by them.",
+  "schema_version": "autodev-otel-attributes-v1",
+  "namespace_prefix": "autodev",
+  "compatibility": "additive-optional",
+  "emission": "opt-in",
+  "notes": [
+    "All attributes are optional/additive: existing telemetry consumers and existing unprefixed attribute keys (e.g. 'model', 'skill', 'workspace_id', 'server_name', 'mcp_servers') are untouched and continue to mean exactly what they mean today.",
+    "No attribute in this contract may carry prompt/response content; all values are short categorical identifiers (role names, workspace ids, provider ids, model ids, spawn mechanism names, skill names, mcp server names).",
+    "'scope: resource' means the attribute belongs on the OTLP Resource for a given resourceLogs/resourceSpans/resourceMetrics entry. 'scope: event' means the attribute belongs on a per-record data point: a logRecord attribute for logs, a span attribute for traces, or a data point attribute for metrics.",
+    "Emission is opt-in: the helper only runs when AUTODEV_OTEL_ATTRIBUTES=v1 is exported. The default ingestion path leaves every payload untouched. The helper is non-mutating: it always returns a fresh cloned payload, never the input.",
+    "Values are derived strictly from existing resource/session alias keys (e.g. role, workspace_id, provider, model on the resource; spawn_mechanism on a spawn log record; skill on a skill record; server_name on an MCP span/record). When an alias is unknown or empty, the corresponding autodev.* key is omitted.",
+    "No collector.yaml, provider, launch-agent, or other runtime wiring is added in this slice -- the helper is router-internal in scripts/codex-model-router.mjs and is gated by AUTODEV_OTEL_ATTRIBUTES=v1."
+  ],
+  "attributes": [
+    {
+      "key": "autodev.role",
+      "prefix": "autodev",
+      "type": "string",
+      "cardinality": "single",
+      "scope": "resource",
+      "signals": [
+        "logs",
+        "traces",
+        "metrics"
+      ],
+      "optional": true,
+      "compatibility": "additive",
+      "prompt_content": false,
+      "description": "The AutoDev agent role (e.g. orchestrator, subagent, reviewer) that produced the telemetry, attached at the resource level."
+    },
+    {
+      "key": "autodev.workspace",
+      "prefix": "autodev",
+      "type": "string",
+      "cardinality": "single",
+      "scope": "resource",
+      "signals": [
+        "logs",
+        "traces",
+        "metrics"
+      ],
+      "optional": true,
+      "compatibility": "additive",
+      "prompt_content": false,
+      "description": "The AutoDev workspace identifier associated with the telemetry-producing process, attached at the resource level."
+    },
+    {
+      "key": "autodev.provider",
+      "prefix": "autodev",
+      "type": "string",
+      "cardinality": "single",
+      "scope": "resource",
+      "signals": [
+        "logs",
+        "traces",
+        "metrics"
+      ],
+      "optional": true,
+      "compatibility": "additive",
+      "prompt_content": false,
+      "description": "The AutoDev-recognized model provider (e.g. openai, anthropic) backing the session, attached at the resource level."
+    },
+    {
+      "key": "autodev.model",
+      "prefix": "autodev",
+      "type": "string",
+      "cardinality": "single",
+      "scope": "resource",
+      "signals": [
+        "logs",
+        "traces",
+        "metrics"
+      ],
+      "optional": true,
+      "compatibility": "additive",
+      "prompt_content": false,
+      "description": "The AutoDev-normalized model identifier for the session, attached at the resource level, distinct from the existing unprefixed 'model' event attribute."
+    },
+    {
+      "key": "autodev.spawn.mechanism",
+      "prefix": "autodev",
+      "type": "string",
+      "cardinality": "single",
+      "scope": "event",
+      "signals": [
+        "logs"
+      ],
+      "optional": true,
+      "compatibility": "additive",
+      "prompt_content": false,
+      "description": "How a subagent/process was spawned (e.g. task-tool, launch-agent, cli-subprocess), attached to the specific log record event describing the spawn."
+    },
+    {
+      "key": "autodev.skill",
+      "prefix": "autodev",
+      "type": "string",
+      "cardinality": "single",
+      "scope": "event",
+      "signals": [
+        "logs",
+        "metrics"
+      ],
+      "optional": true,
+      "compatibility": "additive",
+      "prompt_content": false,
+      "description": "The AutoDev skill name attributed to a specific invocation event or metric data point, distinct from the existing unprefixed 'skill' metric attribute."
+    },
+    {
+      "key": "autodev.mcp.server",
+      "prefix": "autodev",
+      "type": "string",
+      "cardinality": "single",
+      "scope": "event",
+      "signals": [
+        "logs",
+        "traces"
+      ],
+      "optional": true,
+      "compatibility": "additive",
+      "prompt_content": false,
+      "description": "The MCP server name attributed to a specific event or span, distinct from the existing unprefixed 'server_name' span attribute and 'mcp_servers' resource attribute."
+    }
+  ]
+}

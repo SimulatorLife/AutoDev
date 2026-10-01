@@ -1,0 +1,264 @@
+import { writeErrorLine } from "../shared/output.ts";
+
+export type RouterLifecycleState = "ready" | "draining";
+
+export interface RouterLifecycleStatus {
+  state: RouterLifecycleState;
+  draining: boolean;
+  changedAt: string;
+  activeResponseRequests: number;
+}
+
+export interface RouterLifecycleOptions {
+  startedAt?: string;
+  drainTimeoutMs?: number;
+  routerInstanceId?: string;
+}
+
+export interface ShutdownServer {
+  close(cb: (err?: Error) => void): void;
+  closeAllConnections?(): void;
+}
+
+export interface ShutdownOptions {
+  signal?: string | undefined;
+  server?: ShutdownServer | null | undefined;
+  persistState?: (() => Promise<void>) | undefined;
+  drainTimeoutMs?: number | undefined;
+  routerInstanceId?: string | undefined;
+}
+
+export class RouterLifecycle {
+  private lifecycleState: RouterLifecycleState = "ready";
+  private lifecycleStateChangedAt: string;
+  private readonly activeRequestAborters = new Set<AbortController>();
+  private shutdownPromise: Promise<void> | null = null;
+  private readonly defaultDrainTimeoutMs: number;
+  private readonly routerInstanceId: string;
+
+  constructor(options: RouterLifecycleOptions = {}) {
+    this.lifecycleStateChangedAt =
+      options.startedAt ?? new Date().toISOString();
+    this.defaultDrainTimeoutMs =
+      options.drainTimeoutMs ??
+      Number.parseInt(process.env.CODEX_ROUTER_SHUTDOWN_DRAIN_MS ?? "30000");
+    this.routerInstanceId = options.routerInstanceId ?? "router-lifecycle";
+  }
+
+  isDraining(): boolean {
+    return this.lifecycleState !== "ready";
+  }
+
+  get state(): RouterLifecycleState {
+    return this.lifecycleState;
+  }
+
+  get changedAt(): string {
+    return this.lifecycleStateChangedAt;
+  }
+
+  get activeRequestCount(): number {
+    return this.activeRequestAborters.size;
+  }
+
+  getLifecycleStatus(): RouterLifecycleStatus {
+    return {
+      state: this.lifecycleState,
+      draining: this.isDraining(),
+      changedAt: this.lifecycleStateChangedAt,
+      activeResponseRequests: this.activeRequestAborters.size
+    };
+  }
+
+  setLifecycleState(next: RouterLifecycleState): void {
+    this.lifecycleState = next;
+    this.lifecycleStateChangedAt = new Date().toISOString();
+  }
+
+  registerActiveRequest(
+    abortController: AbortController | null | undefined
+  ): void {
+    if (!abortController) return;
+    this.activeRequestAborters.add(abortController);
+  }
+
+  unregisterActiveRequest(
+    abortController: AbortController | null | undefined
+  ): void {
+    if (!abortController) return;
+    this.activeRequestAborters.delete(abortController);
+  }
+
+  abortActiveResponseRequests(): void {
+    for (const controller of this.activeRequestAborters.values()) {
+      try {
+        controller.abort();
+      } catch {
+        /* best effort during shutdown */
+      }
+    }
+  }
+
+  beginShutdown(
+    optionsOrSignal: ShutdownOptions | string = {},
+    server?: ShutdownServer | null,
+    persistState?: () => Promise<void>
+  ): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+    const options: ShutdownOptions =
+      typeof optionsOrSignal === "string"
+        ? { signal: optionsOrSignal, server, persistState }
+        : optionsOrSignal;
+    this.setLifecycleState("draining");
+    const drainingStartedAt = Date.now();
+    const activeAtStart = this.activeRequestAborters.size;
+    const drainTimeoutMs = options.drainTimeoutMs ?? this.defaultDrainTimeoutMs;
+    const instanceId = options.routerInstanceId ?? this.routerInstanceId;
+    const signal = options.signal ?? "SIGTERM";
+
+    writeErrorLine(
+      JSON.stringify({
+        schema: "autodev-router-event-v1",
+        timestamp: new Date().toISOString(),
+        routerInstanceId: instanceId,
+        requestId: null,
+        phase: "shutdown_started",
+        signal,
+        inFlightRequests: activeAtStart,
+        drainTimeoutMs
+      })
+    );
+
+    this.shutdownPromise = (async () => {
+      await waitForActiveRequestsToDrain(
+        this,
+        drainingStartedAt,
+        drainTimeoutMs
+      );
+      if (this.activeRequestAborters.size > 0) {
+        this.abortActiveResponseRequests();
+      }
+      if (options.persistState) {
+        try {
+          await options.persistState();
+        } catch {
+          /* logging handled by persist callback */
+        }
+      }
+      if (options.server && typeof options.server.close === "function") {
+        const httpServer = options.server;
+        try {
+          await new Promise<void>((resolve) => {
+            httpServer.close(() => resolve());
+            // The drain window is over: a keep-alive or stuck stream socket
+            // would otherwise hold close() open, and the old process with it.
+            httpServer.closeAllConnections?.();
+          });
+        } catch {
+          /* best effort server close */
+        }
+      }
+      writeErrorLine(
+        JSON.stringify({
+          schema: "autodev-router-event-v1",
+          timestamp: new Date().toISOString(),
+          routerInstanceId: instanceId,
+          requestId: null,
+          phase: "shutdown_complete",
+          durationMs: Date.now() - drainingStartedAt,
+          abortedInFlight: this.activeRequestAborters.size > 0
+        })
+      );
+    })();
+    return this.shutdownPromise;
+  }
+
+  resetLifecycleForTests(): void {
+    this.setLifecycleState("ready");
+    this.activeRequestAborters.clear();
+    this.shutdownPromise = null;
+  }
+}
+
+async function waitForActiveRequestsToDrain(
+  lifecycle: RouterLifecycle,
+  drainingStartedAt: number,
+  drainTimeoutMs: number
+): Promise<void> {
+  if (
+    lifecycle.activeRequestCount === 0 ||
+    Date.now() - drainingStartedAt >= drainTimeoutMs
+  ) {
+    return undefined;
+  }
+  await new Promise((resolve) => {
+    setTimeout(resolve, 50);
+  });
+  await waitForActiveRequestsToDrain(
+    lifecycle,
+    drainingStartedAt,
+    drainTimeoutMs
+  );
+  return undefined;
+}
+
+let defaultRouterLifecycle: RouterLifecycle | null = null;
+
+export function getDefaultRouterLifecycle(
+  options?: RouterLifecycleOptions
+): RouterLifecycle {
+  if (!defaultRouterLifecycle) {
+    defaultRouterLifecycle = new RouterLifecycle(options);
+  }
+  return defaultRouterLifecycle;
+}
+
+export function setDefaultRouterLifecycle(
+  lifecycle: RouterLifecycle | null
+): void {
+  defaultRouterLifecycle = lifecycle;
+}
+
+export function isDraining(): boolean {
+  return getDefaultRouterLifecycle().isDraining();
+}
+
+export function getLifecycleStatus(): RouterLifecycleStatus {
+  return getDefaultRouterLifecycle().getLifecycleStatus();
+}
+
+export function setLifecycleState(next: RouterLifecycleState): void {
+  getDefaultRouterLifecycle().setLifecycleState(next);
+}
+
+export function registerActiveRequest(
+  abortController: AbortController | null | undefined
+): void {
+  getDefaultRouterLifecycle().registerActiveRequest(abortController);
+}
+
+export function unregisterActiveRequest(
+  abortController: AbortController | null | undefined
+): void {
+  getDefaultRouterLifecycle().unregisterActiveRequest(abortController);
+}
+
+export function abortActiveResponseRequests(): void {
+  getDefaultRouterLifecycle().abortActiveResponseRequests();
+}
+
+export function beginShutdown(
+  optionsOrSignal?: ShutdownOptions | string,
+  server?: ShutdownServer | null,
+  persistState?: () => Promise<void>
+): Promise<void> {
+  return getDefaultRouterLifecycle().beginShutdown(
+    optionsOrSignal,
+    server,
+    persistState
+  );
+}
+
+export function resetLifecycleForTests(): void {
+  getDefaultRouterLifecycle().resetLifecycleForTests();
+}

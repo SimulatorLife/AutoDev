@@ -6,7 +6,7 @@ AutoDev is the SimulatorLife organization control plane for autonomous GitHub de
 
 1. `.github/workflows/_scheduler.yml` reads `weights.json` on its 15-minute schedule.
 2. It selects a generic prompt, eligible agent, and target repository using the configured weights.
-3. `run-prompt.yml` reads either an AutoDev generic prompt or the target repository's `.agents/prompts/*.md`, then `_agent-open-pr-and-ping.yml` creates the target PR with `GH_USER_TOKEN`.
+3. `run-prompt.yml` reads either an AutoDev generic prompt from `.rulesync/commands/*.md` or the target repository's `.agents/prompts/*.md`, then `_agent-open-pr-and-ping.yml` creates the target PR with `GH_USER_TOKEN`.
 4. Provider workflows call `agent-invoke.yml`, which continues working against the target repository and pushes through the PAT.
 
 ## Required GitHub configuration
@@ -19,19 +19,69 @@ Configure these organization/repository secrets and variables on AutoDev:
 
 Keep tokens in GitHub Secrets or the local credential store. Never commit them to this repository.
 
+## Repository guidance
+
+`AGENTS.md` at the repository root is the only source for this workspace's agent
+instructions. Codex, Antigravity, and Copilot (cloud agent, code review, CLI, and
+VS Code chat) read it natively. `CLAUDE.md` is a symlink to it for Claude Code,
+and there is no `.github/copilot-instructions.md` copy, so Copilot Chat on
+github.com does not receive these instructions. The local `~/.codex/AGENTS.md`
+path should remain a symlink to this file so local and repository guidance stay
+in sync.
+
+## Local validation toolchain
+
+AutoDev itself is managed with pnpm `10.32.1`, declared by `packageManager` in
+`package.json` and locked in `pnpm-lock.yaml`. The local runtime baseline is
+Node 24.12+, declared by `.nvmrc` and the package engine constraint. Use
+`pnpm install --frozen-lockfile` before running the checks. The typed command
+boundary is available as `pnpm autodev -- <command>` (or
+`node src/cli/autodev.ts <command>`); native TypeScript is executed directly by
+Node and checked with `pnpm run typecheck`. The target-aware runner
+intentionally retains an npm compatibility branch for organization repositories
+that have not migrated their own package manager; that branch is not used to
+validate AutoDev. Run `pnpm autodev -- --help` to list the typed CLI commands;
+the help output uses this canonical pnpm invocation. Native Codex role MCP
+entries must use a complete stdio or streamable-HTTP transport shape; see
+[`docs/local-setup.md`](docs/local-setup.md) for the role and installer contract.
+
 ## Configure target repositories
 
 Edit `.github/workflows/weights.json` and add one `repositories` record per target in `owner/name` form. A non-positive weight disables a repository without invalidating the configuration. The scheduler combines repository, generic-prompt, and agent weights, so repository weights directly control the share of scheduled PRs.
 
 The migrated policy keeps the source repository's agent weights unchanged; a zero agent weight is an intentional disable switch. Set a positive weight for at least one configured provider before enabling the scheduler.
 
-Run the focused policy and local setup tests locally with:
+Run the focused policy, workflow, shell, and local setup checks locally with:
 
 ```bash
-npm test
-npm run test:python
+pnpm install --frozen-lockfile
+pnpm run format:check        # Prettier; `pnpm run format` rewrites
+pnpm run lint                # ESLint; `pnpm run lint:fix` applies safe fixes
+pnpm run typecheck
+pnpm test
+pnpm run validate:inventory  # migration gate; fails while legacy files remain
+pnpm run validate:actionlint
+pnpm run validate:shell
 ```
+
+The GitHub Actions validation job installs pinned actionlint and the runner's
+ShellCheck package, then runs both checks as mandatory gates. actionlint also
+passes embedded workflow shell through ShellCheck; the repository config ignores
+only the existing SC2016 and SC2129 style-only findings in workflow snippets.
+Install `actionlint` and `shellcheck` locally before running those commands.
+
+Formatting and lint follow SimulatorLife/RacingGame's configuration
+(`.prettierrc`, `eslint.config.js`), adapted to a Node-only codebase. Both are
+CI gates at zero warnings. The ESLint config also encodes AutoDev's module
+layers (`eslint-plugin-boundaries`): `shared` at the bottom; `agents`,
+`telemetry`, `config`, and `mcp` over it; the router and the provider bridges
+side by side, neither importing the other; `platform` over `config`; and the
+CLI and hooks on top. Process output goes through `src/shared/output.ts`
+(`writeLine` for command output on stdout, `writeErrorLine` for logs on
+stderr); `console` is a lint error everywhere else. Do not relax a rule to make
+a change pass: fix the code, or add a narrowly scoped disable with a
+`-- reason`.
 
 AutoDev owns the organization workflows and local AI/provider setup. RacingGame intentionally retains only product-specific tooling such as build, performance, CSS-token, and source-boundary scripts; those are not organization automation and are not duplicated here.
 
-See [`docs/organization-routing.md`](docs/organization-routing.md) for routing, [`docs/private-target-validation.md`](docs/private-target-validation.md) for private-repository validation, and [`docs/provider-routing.md`](docs/provider-routing.md) plus [`docs/local-setup.md`](docs/local-setup.md) for local AI/provider setup.
+See [`docs/README.md`](docs/README.md) for the documentation map and [`docs/autodev-console-target-state.md`](docs/autodev-console-target-state.md) for the canonical product/configuration/observability target. Operational references include [`docs/organization-routing.md`](docs/organization-routing.md), [`docs/private-target-validation.md`](docs/private-target-validation.md), [`docs/provider-routing.md`](docs/provider-routing.md), [`docs/local-setup.md`](docs/local-setup.md), and the canonical `resolve-merge-conflicts` skill under `.rulesync/skills/` for merge-conflict procedure. The GitHub issue metrics report remains at [issue #2](https://github.com/SimulatorLife/AutoDev/issues/2).

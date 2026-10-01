@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.codex.minimax-proxy</string>
+
+  <!-- MiniMax Responses compatibility proxy on 127.0.0.1:18765 (MiniMax-* child
+       route). --daemon runs the inline server in the foreground and waits on it,
+       so KeepAlive can supervise it. Invokes the installed hook copy under
+       ~/.codex (outside Desktop) to avoid launchd privacy restrictions. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__CODEX_HOME__/hooks/ensure-codex-minimax-proxy.sh</string>
+    <string>--daemon</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <!-- The installer's native Node: PATH alone finds /usr/local/bin/node
+         first, an Intel build on many Apple Silicon Macs (run under Rosetta). -->
+    <key>AUTODEV_NODE_BIN</key>
+    <string>__AUTODEV_NODE_BIN__</string>
+    <key>CODEX_HOME</key>
+    <string>__CODEX_HOME__</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>__CODEX_HOME__/hooks/minimax-proxy.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__CODEX_HOME__/hooks/minimax-proxy.launchd.log</string>
+</dict>
+</plist>

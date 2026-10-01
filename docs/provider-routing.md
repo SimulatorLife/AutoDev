@@ -1,32 +1,1153 @@
 # Codex agent and provider routing
 
 This is the canonical repository guide for choosing and invoking agents across
-the OpenAI, Claude, MiniMax, and Antigravity providers. Role files and scripts
+the OpenAI, Claude, MiniMax, Antigravity, and GitHub Copilot providers. Role files and scripts
 remain the source of truth for exact model settings; this document owns the
 routing policy, execution boundaries, and the setup needed to use the
 versioned local integration safely.
 
 ## Available roles
 
-| Roles | Provider | Use |
+Callers select a capability role, never a provider or model:
+
+| Role | Capability | Sandbox |
 | --- | --- | --- |
-| `default`, `docs-researcher`, `browser-tester` | OpenAI/Codex through the local router | Orchestration, focused research, and browser evidence. |
-| `explorer` | Claude | Read-only architecture, ownership, and dependency investigation. |
-| `worker` | MiniMax | Bounded implementation work. |
-| `validator` | Google/Antigravity | Independent build, test, and validation work. |
+| `default` | General-purpose development | workspace-write |
+| `docs-researcher` | Targeted documentation research | read-only |
+| `browser-tester` | Browser/runtime evidence | read-only |
+| `explorer` | Architecture and dependency exploration | read-only |
+| `worker` | Bounded implementation | workspace-write |
+| `validator` | Independent validation | workspace-write |
+| `smart` | Full-capability browser/docs/implementation agent | workspace-write |
 
-Bare `codex` starts with `gpt-5.6-luna` through the explicit
-`local_model_router` provider, which forwards GPT/Codex models to the Codex
-OAuth endpoint. Claude, MiniMax, and Antigravity are selected by model name
-through the same route or by their named profiles.
+Roles other than `browser-tester` and `smart` use the configured `default` model
+tier. `browser-tester` has a dedicated tier containing only providers that can
+isolate its required Playwright MCP; Antigravity now qualifies because each `agy`
+process receives a role-scoped temporary MCP home. `smart` uses the configured
+`smart` tier. Providers without a model override for a tier use their `default`
+model. Every role uses the `local_model_router` with an `autodev/<role>` model
+alias.
 
-The local Codex app-server now discovers all of these roles and can start a
-thread with an explicit custom `modelProvider`. The separate desktop
-multi-agent dispatcher (`spawn_agent`/fanout) still validates a child model
-against the ChatGPT account before it reaches the local app-server. It currently
-rejects `sonnet`, `MiniMax-M3`, and `gemini-3.6-flash-medium` with an account
-model error. This is a dispatcher limitation, not a missing gateway or role
-definition.
+### Single source of truth for model versions (DRY model architecture)
+
+Model version management is strictly DRY (Don't Repeat Yourself). The repository enforces that changing or adding a model version is performed in **ONE config file, ONE single value**: [`config/model-routing.json`](file://config/model-routing.json).
+
+- **Sole Source of Truth**: [`config/model-routing.json`](file://config/model-routing.json) defines all provider models under `providers.<provider>.models`. To change the Codex orchestrator model, edit `providers.codex.models.orchestrator` (and `default`). To change the smart model, edit `providers.codex.models.smart`.
+- **Derived Model Catalog**: The Codex model catalog ([`config/catalogs/codex-model-catalog.json`](file://config/catalogs/codex-model-catalog.json)) is an automatically generated artifact rendered directly from [`config/model-routing.json`](file://config/model-routing.json) via [`renderModelCatalog`](file://src/config/render-model-catalog.ts) (CLI: `autodev render catalog`). The platform installer materializes and validates this catalog during `bash scripts/install.sh` and `node src/cli/install.ts --check`.
+- **Dynamic Catalog Fallback**: The router's HTTP catalog endpoint (`GET /v1/models`) dynamically includes configured Codex models from the active [`RoutingPolicy`](file://src/router/routing.ts) even before the catalog file is re-rendered.
+- **Zero-Code-Change Model Upgrades**: Tests, contract fixtures, telemetry trackers, and hooks dynamically resolve model identifiers via [`RoutingPolicy.configuredModel`](file://src/router/routing.ts), [`CONFIGURED_ORCHESTRATOR_MODEL`](file://src/router/routing.ts), and [`CONFIGURED_SMART_MODEL`](file://src/router/routing.ts) rather than hardcoding concrete model names.
+- **Enforcement & Regressions**: The test suite [`tests/model-routing-dry.test.ts`](file://tests/model-routing-dry.test.ts) locks in this single-source-of-truth invariant, ensuring that updating model strings in configuration automatically propagates through routing, candidate generation, metadata synthesis, and catalog materialization without breaking tests or requiring compatibility wrappers.
+
+The editable provider/model choices live in
+`config/model-routing.json`: `providerGroups` defines ordered fallback groups per capability tier,
+`providers.<name>.models` contains named tiers such as `default` and `smart` (specific tiers like `smart` are optional and fall back to that provider's `default` model if omitted), and
+`roles.<role>.tier` selects the tier for each capability role. For example, set
+Claude's smart model to `claude-opus-5-5` or Codex's to `gpt-6-sol` there; providers like MiniMax or Copilot that use the same model across tiers only need to define `default`. The installer materializes this file as
+`$CODEX_HOME/codex-model-routing.json`.
+Every model listed under a provider must match that provider's route
+`pattern`, or the router refuses to load the file. The Claude route accepts
+the family aliases (`sonnet`, `opus`, `haiku`) and Anthropic's lowercase,
+hyphen-separated ids, so a mistyped `claude-opus-5.5` fails at startup (and in
+the test suite) instead of turning every Claude turn into a CLI error. A valid
+id still has to be supported by the installed Claude CLI: a newer model can
+need `claude update` first, which the bridge reports as `invalid_model`.
+For the `default` capability tier, the router randomizes Claude, Gemini/Antigravity, and MiniMax, then falls back to Copilot and OpenAI/Codex. For `smart`, it randomizes Claude and Gemini/Antigravity, then falls back directly to OpenAI/Codex Sol. Providers that are unavailable or return fallbackable limit errors are skipped and the next provider in the current group is tried before progressing to the next group. A skipped provider is not forgotten: if no candidate serves the turn, the router reconsiders the ones it skipped as a bounded last resort before giving up (see "Cooldowns and provider selection"):
+
+1. `default`: Claude, Gemini/Antigravity, MiniMax (randomized), then Copilot, then OpenAI/Codex Luna
+2. `smart`: Claude, Gemini/Antigravity (randomized), then OpenAI/Codex Sol
+
+### Orchestrator routing and fallback
+
+The root Codex orchestrator is not a leaf role, but it uses the same
+`providerGroups` fallback machinery through a dedicated `autodev/orchestrator`
+alias. `config/config.autodev.toml` sets the parent `model` to that alias
+(composed into `$CODEX_HOME/config.toml`), and `config/model-routing.json`
+defines its chain under the top-level
+`orchestrator` block (`alias`, `tier`, and an optional per-provider
+`reasoningEffort` map) plus a `providerGroups.orchestrator` tier and an
+`orchestrator` entry in each provider's `models`.
+
+The default order pins the primary provider and load-balances the rest:
+
+3. `orchestrator`: OpenAI/Codex Luna (pinned first), then Claude Opus, Copilot, and Gemini/Antigravity (randomized)
+
+Differences from a role request:
+
+- The orchestrator never consumes a per-session subagent slot; it is gated by
+  neither `max_concurrent_threads_per_session` nor the process-fallback bucket.
+- The primary provider is dispatched with the caller's own reasoning effort
+  (`model_reasoning_effort` in the parent config). Fallback providers with a
+  declared entry in `orchestrator.reasoningEffort` use that provider-specific
+  effort (`claude` medium and `antigravity` high by default); Copilot uses its
+  CLI-selected effort because its bridge has no compatible override.
+- Usage telemetry keeps orchestrator fallback traffic under the `orchestrator`
+  origin even when it lands on a non-Codex provider, rather than
+  reclassifying it as `direct`.
+- A direct concrete `gpt-*` request is still never rerouted. Only the
+  `autodev/orchestrator` alias degrades across providers.
+- The root-delegation `UserPromptSubmit` hook matches `autodev/orchestrator`
+  before its leaf-alias glob, so the parent still receives the delegation
+  policy while `autodev/<role>` leaves do not.
+- Every outbound provider request carries an `x-autodev-agent-role` header the
+  router generates from its own alias dispatch (`orchestrator` for the
+  orchestrator alias, the role name for an `autodev/<role>` alias). Provider
+  bridges select their role instructions from it, so an orchestrator turn that
+  degrades onto a bridge-backed provider receives the orchestrator policy
+  rather than the leaf policy. See "Agent role across the bridge boundary".
+
+#### Active-subagent routing protection
+
+When an orchestrator spawns subagents and then waits for their results, its
+response turn ends but its session is not idle. The router keeps the
+orchestrator in `subagent_wait` on its original provider as long as any of
+these hold:
+
+- The caller declared `hasActiveSubagents` (open concurrency slots or pending
+  bridge children) when it ended the request.
+- The orchestrator's session key has live child activity records (children
+  tagged with the session key or referencing it as `parentRequestId`).
+
+Because `subagent_wait` is a live state, `countLiveAgentActivity({ provider })`
+still reflects the waiting orchestrator. The candidate ranking's
+`liveProviderCount` therefore penalizes the occupied provider, and subsequent
+orchestrator requests route to idle providers first. This prevents the
+following cascade:
+
+1. Orchestrator A starts on Claude and spawns subagents.
+2. A's response turn ends; A waits for children.
+3. **Without the protection**: Claude appears idle; the router sends
+   Orchestrator B to Claude. A's children finish and A resumes — now two
+   concurrent Claude orchestrators trigger rate limits.
+4. **With the protection**: Claude reports `liveProviderCount: 1`; the
+   router sends B to MiniMax, Gemini, or Copilot instead.
+
+One agent is one Codex thread. A subagent shares its root's session key, so
+its requests use a distinct `thread:<threadId>` activity subject, taken from
+the `thread-id` header, `client_metadata.thread_id`, or the turn metadata
+Codex sends on every request, and tagged with the parent's session key. They
+refresh the parent's TTL without overwriting its provider or role, and all of
+one child's requests are one live agent: keying each request separately once
+counted a child making 45 tool calls as dozens of live agents, each parked in
+`tool_wait` until the TTL. The root's thread id equals its session key, so the
+root keeps that subject. A caller that sends no thread id falls back to a
+per-request `req:<requestId>` subject. When
+the last child settles (slots released and bridge subagents closed), the
+orchestrator transitions to `resumed` and continues its final integration
+turn. If no children remain and the orchestrator's own turn is also done, it
+transitions to `finished`.
+
+The staleness TTL still applies: an orchestrator in `subagent_wait` whose
+children all died without reporting back will age out of live counts once no
+heartbeat arrives within `CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS`, preventing
+abandoned sessions from permanently blocking a provider.
+
+### Diagnosing an agent that fails to create or stops unexpectedly
+
+The Desktop message `Failed to create an agent` is a wrapper around several
+independent failure boundaries; it is not evidence that the target repository's
+code failed. First check the router `/status` snapshot and the provider bridge
+logs, then classify the first failing boundary:
+
+- **Native spawn admission:** Codex's `multi_agent_v1__spawn_agent` can be
+  rejected by the app's available-thread limit or the configured
+  `max_concurrent_threads_per_session` (currently `2` in
+  `config/config.autodev.toml`). This is an admission/configuration failure, not
+  a child code failure. A batch uses `Promise.allSettled`, so a rejected entry is
+  returned as `Spawn failed: ...` and successful siblings remain trackable.
+- **Antigravity process startup/transport:** `agy` can exit without a terminal
+  result, return `status: ERROR`, or report `timeout waiting for response` / a
+  network issue. The bridge returns a retryable upstream response and logs the
+  terminal status, exit code, and a bounded stderr tail; it no longer reduces an
+  empty terminal response to the unhelpful `completed without a response`
+  message. A live `/health/liveliness` only proves the local adapter is alive,
+  not that the upstream Antigravity service answered a turn.
+- **Headless permissions and MCP scope:** read-only roles intentionally do not
+  receive `--dangerously-skip-permissions`. The bridge starts each `agy` turn in
+  a temporary home containing only that role's contracted MCP servers and exact
+  permissions. When a role contract declares a per-server tool list, the bridge
+  also filters the MCP `tools/list` response and rejects direct calls outside
+  that list. For a read-only turn, the temporary settings grant `read_file`
+  only beneath the request's validated workspace, preserve explicit denies,
+  and do not inherit command, write, or `unsandboxed(...)` grants.
+  User-configured `read_url(...)` rules remain separate from local file access.
+  Write-capable turns keep their existing user non-MCP permissions. The global
+  Antigravity settings and MCP registry are never modified by a request.
+  `AUTODEV_AGY_READ_ROOTS` still
+  configures installer-managed permissions for direct CLI use; router-managed
+  turns use their validated workspace instead. If a native tool is denied in
+  headless mode, the bridge returns an incomplete result with a typed,
+  path-free failure diagnostic. The parent treats it as failed work, reports
+  useful partial output, and does not retry a deterministic permission denial
+  until its cause is corrected.
+- **Workspace resolution:** bridge requests must carry structured workspace
+  metadata (or an explicit `CODEX_PROJECT_ROOT`). The bridge fails closed rather
+  than taking a repository path from task prose. Invalid requests are rejected
+  before delegation state is opened, so a failed pre-flight cannot leave a stale
+  spawn session attached to a later turn. The router also retains the last
+  successfully resolved workspace for an identified conversation and restores
+  it when a continuation drops the turn-metadata transport header. This is
+  session continuity, not process-cwd discovery: anonymous sessions and
+  invalid/ambiguous workspace claims still fail closed.
+
+The most useful evidence is the bridge log line immediately after `agy request`:
+`agy turn failed after ...: status ERROR; timeout waiting for response; ...`,
+`agy workspace resolution failed: ...`, or a successful turn line. Router
+`status` also separates provider failures from concurrency denials and records
+which provider/model was selected. A clean provider health check with a failed
+turn should be investigated as an upstream CLI/account/network or permission
+problem, not as a target-repository build failure.
+
+### Truncation reasons when an orchestrator turn cuts short
+
+The router and all four typed provider bridges share one vocabulary for
+why a turn stopped before it finished (`src/shared/provider-limits.ts`
+and the `tests/provider-limits.test.ts` mirroring test pin both sides).
+`provider_limit`, `provider_timeout`, and `provider_interrupted` were the only
+values through early 2026; the cluster of long-running antigravity-orchestrated
+turns that died with "The antigravity provider stopped unexpectedly" without
+any clue whether agy had crashed or the upstream had walked away led to the
+addition of `client_disconnected`. The antigravity bridge detects the new
+cause at the request handler -- it tracks the most recent delegator step in
+a closure-scoped state object and routes `response.on("close")` and
+`response.on("error")` to a `do-not-kill` branch that lets agy finish to its
+`--print-timeout` instead of `SIGTERM`-ing it mid-delegation. The launchd log
+distinguishes the two cases by name (`agy turn aborted-delegation` vs.
+`agy turn aborted`); the truncation notice carries the new reason to any
+future re-attach path.
+
+The delegator step is not the child lifetime. `invoke_subagent` reports `DONE`
+when its hand-off completes, while the child continues in the background and
+agy may report that the root agent is waiting for background tasks. The bridge
+therefore keeps a pending-child count separate from the active step: its
+heartbeat continues while that count is nonzero, and a client disconnect does
+not SIGTERM agy until the parent turn settles. This prevents the stream-idle or
+15-minute upstream timeout from killing the process that owns still-running
+children. A launchd line naming `agy turn aborted-delegation` confirms this
+protected path; `agy turn aborted` means no active or pending delegation was
+observed.
+
+Adding a new reason is a small but cross-cutting change: the JS-side
+the shared typed `INCOMPLETE_REASON_*` contract, each provider cause
+ladder, and the tests that assert all bridges agree.
+
+All providers are treated as capable of MCP, skills, and subagent spawning;
+role TOMLs remain the sole source for role MCP/skill exposure and normal Codex inheritance.
+Routing does not gate on duplicated provider capability declarations in
+`config/model-routing.json`. The orchestrator's entire job is delegating,
+so a provider serving it must have a viable delegation path. There are two
+delegation paths:
+- **Native Codex spawn** (`codex`, `minimax`): the parent drives Codex's own
+  `multi_agent_v1` spawn tool, which creates a child thread that asks this
+  router for an `autodev/<role>` alias.
+
+  Note how that call actually reaches Codex, because it is not what the model
+  catalog suggests. These models run in **code mode**: the request carries no
+  `tools` array at all, and the entire tool surface arrives as a single `exec`
+  tool -- declared `"type": "custom"` inside an `additional_tools` input item
+  -- whose payload is raw JavaScript evaluated in a V8 isolate. The spawn
+  function is reached from inside that script as
+  `tools.multi_agent_v1__spawn_agent({ agent_type, message })` and is never
+  named in the request. Two consequences worth knowing before changing
+  anything here:
+    - The role must travel as `agent_type`. `agent` is accepted and silently
+      ignored, and the child comes back as a generic agent rather than the
+      role that was asked for.
+    - Fan-out happens inside one script (`await Promise.allSettled(tasks.map(...))`),
+      which is why Codex sending `parallel_tool_calls: false` does not cap it. Settling
+      each child independently keeps successful siblings visible when the configured
+      concurrency limit rejects one child; the tool output names that rejected child
+      instead of collapsing the whole batch into an opaque `Failed creating` error.
+  The canonical `orchestration` skill documents this contract, and
+  `src/agents/spawn-tools.ts` builds the call for any component
+  that needs to emit one.
+- **Bridge-native spawn** (`antigravity`): the CLI behind the bridge
+  delegates inside its own runtime -- Antigravity's `invoke_subagent` -- and no
+  router request is made for the child. Claude is not in this category: it acts
+  only through Codex's tools (see "Claude bridge: Codex executes every tool"),
+  so a Claude orchestrator spawns with `tools.multi_agent_v1__spawn_agent`
+  inside `exec`, exactly like a Codex-served one. Watched spawn tool names are defined in the execution contract
+  (`providers.<provider>.spawnTools`); see "Counting subagents across providers".
+
+    Browser-capable bridge roles follow the same role contract as native Codex
+    roles. A Claude turn reaches its role's MCP servers through Codex's own
+    `tools` global, so Codex's role TOML -- including the Playwright tool
+    allowlist -- is the only MCP boundary it has. Claude keeps its native
+    `WebSearch` and `WebFetch` only on turns where Codex offered its hosted
+    `web_search` tool, which no tool script can perform.
+    Playwright is strictly reserved for UI and browser testing and is never exposed
+    to the orchestrator. Antigravity's CLI reads MCP configuration from a global
+    home directory, so the bridge gives each `agy` process an isolated temporary
+    home containing only the current role contract's MCP servers. For servers
+    with a tool allowlist, a stdio MCP policy process advertises and accepts only
+    those tools. It carries the user's existing Antigravity state through without
+    editing the global MCP registry or settings. The `browser-tester` tier now
+    includes Antigravity; `browser-tester` and `smart` can use only their declared
+    Playwright tools, while other roles (including the orchestrator) do not receive
+    that server.
+    A router-managed Antigravity leaf returns its report as visible final text;
+    the bridge turns the CLI's terminal response into the Responses `output_text`
+    received by the parent thread. Leaf instructions prohibit provider-local
+    messaging, interactive waits, nested delegation, and hidden artifacts. An
+    empty or failed CLI response remains incomplete rather than being presented
+    as a successful summary.
+    Antigravity also uses its native `search_web` and `read_url_content` tools
+    backed by pre-approved `read_url(*)` permissions.
+    Copilot explicitly allows `web_search` and `web_fetch` for research-capable roles
+    without granting blanket `allow-all` permissions. MiniMax's adapter forwards `web_search`
+     tool payloads unchanged; MiniMax's Responses API supports `web_search` natively.
+
+  Copilot's CLI is in the orchestrator tier through the per-request
+  `autodev_spawn` MCP shim. The shim collects the CLI's delegation request and
+  returns a synthetic Codex `exec` item, so the child is created by Codex and
+  counted as `router_alias` rather than as an invisible Copilot child. The
+  static Rulesync MCP projection intentionally does not expose this server:
+  its session-scoped URL and token are generated by the bridge for one root
+  turn only.
+- MiniMax remains a leaf/default-tier provider. It has no supported
+  orchestration path and is therefore not a root-orchestrator fallback.
+- Codex CLI defines subagent tools in a `type: "namespace"` structure (`multi_agent_v1`). The
+  router flattens namespaced tools into standard `type: "function"` definitions
+  (e.g., `multi_agent_v1__spawn_agent`) on every non-Codex route and re-expands
+  them in downstream responses. MiniMax's Responses API also accepts namespace
+  tools natively and answers with the `namespace` set (verified live
+  2026-09-15), so the MiniMax adapter forwards tools unchanged.
+
+  The MiniMax adapter (`src/providers/minimax.ts`) also
+  coerces **freeform tool calls**. MiniMax documents only `function` tools. It
+  now usually answers Codex's code-mode `exec` with a native `custom_tool_call`,
+  or calls the nested `exec_command` directly, which Codex executes. But it has
+  also answered `exec` with an ordinary `function_call` carrying JSON arguments
+  -- typically the `{cmd, workdir}` shape of `exec_command`. Local rollouts
+  show 1,049 such calls coerced between 2026-07-14 and 2026-09-10. Codex rejects
+  that outright with
+  `tool exec invoked with incompatible payload`, which meant a MiniMax-served
+  turn could reason but never actually run anything, and every such turn logged
+  a burst of those errors. The proxy now rewrites those calls into a
+  `custom_tool_call` whose script performs the same work, keeping the `event:`
+  header and the terminal `response.completed` snapshot in step with the
+  rewritten payload. Freeform tool names are learned from the request's own
+  `"type": "custom"` declarations rather than hard-coded, and an argument shape the adapter does not recognise is never guessed at -- a wrong guess would replace a visible failure with a script that runs and does the wrong thing. Such a call instead becomes a script that throws an explanation naming only the argument keys, so the model learns what `exec` expects instead of repeating the same broken call.
+
+### Item ids are corrected at the router, not in the adapters
+
+Every item in a Responses request carries an `id` whose prefix encodes its type
+-- `rs_` for `reasoning`, `ctc_` for `custom_tool_call`, `msg_` for `message`
+-- and the OpenAI backend rejects the whole request when a prefix and a type
+disagree:
+
+```
+Invalid 'input[18].id': '06ef3bc08924acade1facee14da0af2e_fc_0'.
+Expected an ID that begins with 'ctc'.
+```
+
+Not every provider honours that contract. MiniMax mints ids shaped
+`<32 hex>_rs` and `<32 hex>_fc_<n>`, and the freeform coercion above retypes a
+`function_call` as a `custom_tool_call` while keeping the id it arrived with.
+Codex stores whatever a provider hands back and replays it on every later turn,
+so a single turn served by a lax provider poisons the session for good: the
+next turn that lands on a provider which validates fails, and so does every
+turn after it, because the history only grows. Because the orchestrator tier is
+pinned to `codex` with `minimax` in its fallback group, and a fresh turn is not
+a continuation and so is not pinned to the provider that served the last one,
+one failover is enough to end a session.
+
+`upstreamPayload` in `src/router/responses.ts` therefore rewrites any
+non-conforming id, using `src/shared/responses-item-ids.ts`. The router
+is the right place for it rather than each adapter: it is the one point every
+upstream call passes through, and since stored history is re-sent rather than
+re-read, correcting outbound also repairs sessions that are already carrying
+bad ids -- no rollout file is touched. The MiniMax proxy's id passthrough is
+left deliberately alone; one normalisation layer is easier to reason about than
+two that can disagree.
+
+Three properties the rewrite has to keep:
+
+- The replacement is `<prefix><sha256(original)>`, not a random value. The same
+  item is re-sent every turn, and an id that moved between turns would change
+  the serialised request prefix each time and defeat upstream prompt caching.
+- `call_id` is never touched. A tool call and its output are paired by that
+  field alone, so rewriting one side would strand the other.
+- An item with no `id` does not acquire one. Codex legitimately omits it on
+  some tool outputs, and an invented id would name an item the upstream never
+  issued.
+
+Normalisation runs on every route for self-contained items (messages, tool calls, and tool outputs). Requests that need a correction emit an
+`item_ids_normalized` router event carrying the count, so upstream protocol
+drift is visible immediately rather than as a dead session weeks later.
+
+### Reasoning items are dropped when unresolvable, not rewritten
+
+Reasoning items are fundamentally different from tool calls. While a tool call
+carries its own name, input, and `call_id`, a reasoning item without
+`encrypted_content` is only a *reference* to an item the backend stored. Because
+Codex requests operate with `store: false`, the OpenAI backend persists nothing;
+an unencrypted reasoning item minted by a foreign provider (such as MiniMax's
+`<32 hex>_rs` or bridge-minted activity summaries) has nothing to resolve to.
+Rewriting its id to a conforming `rs_<32 hex>` simply converts a 400 format
+validation error into a 404 (`Item with id 'rs_...' not found. Items are not persisted
+when store is set to false`).
+
+Therefore, reasoning items are excluded from id rewriting. Instead:
+
+- On Codex routes (`route.provider === "codex"`), `dropUnresolvableReasoning`
+  drops foreign reasoning items lacking `encrypted_content`. Genuine OpenAI
+  reasoning items carrying `encrypted_content` are preserved. When foreign
+  reasoning items are removed, the router emits a `foreign_reasoning_dropped`
+  event with `droppedReasoningItems: <count>`.
+- On non-Codex routes, reasoning items are passed through untouched so the
+  provider that minted them retains its own reasoning continuity on subsequent
+  turns.
+
+When the orchestrator tier is genuinely exhausted, the router returns
+`503 router_provider_exhausted` exactly as it does for an exhausted role tier --
+but only after the last-resort pass and the bounded wait below have both failed.
+(It is a non-retryable `400` instead when every candidate failed for a
+configuration reason, such as a model the provider rejects; see below.)
+That distinction matters for the orchestrator specifically: its 503 ends the root
+turn and every child with it, so exhausting the tier is the most expensive
+failure in the system and worth the extra attempts to avoid.
+
+A subagent that comes back with `status: "incomplete"` is a normal, actionable
+outcome rather than a lost turn: the child hit a limit partway through, and the
+work it finished is in the response. An orchestrator reading one should use that
+work and decide whether to re-delegate, not treat the turn as having produced
+nothing. See "Partial results on provider exhaustion".
+
+Provider availability is checked through local health endpoints and credential
+checks. HTTP 429/5xx, quota, session-limit, high-demand, timeout, and
+unavailable responses cause the router to try the next provider. A malformed
+request is returned immediately rather than hidden by fallback. Streaming
+fallback happens before response headers are sent; a provider that fails after
+streaming has begun cannot be safely replayed. Claude's `rate_limit_event` is
+informational when `rate_limit_info.status` is `allowed`; only a non-allowed
+status is treated as a Claude limit.
+
+### Cooldowns and provider selection
+
+A cooldown is load-shedding advice, not proof a provider is dead. There are four
+kinds, and which one applies decides both how long it lasts and whether the
+provider can still be attempted when nothing else is left. `GET /status` reports
+the kind as `cooldownKind`, with `cooldownFailureClass`, `cooldownResetsAt` and
+`lastResortEligible` alongside it.
+
+| Kind | Applies to | Duration | Last resort? | Survives a restart? |
+| --- | --- | --- | --- | --- |
+| `transient` | any fallbackable failure, and any limit the router only inferred from prose | 30s doubling to 10min | yes | no |
+| `hard` | `quota_exhausted` / `session_limit` that the **provider itself declared** | until the declared reset, else a 15min floor, capped at 6h | only while no reset time is known | yes |
+| `probe` | a local bridge that did not answer its health check | 5s doubling to 30s | yes | no |
+| `config` | `authentication`, and `invalid_model` for the rejected **model only** | fixed 30s, never escalates | no | no |
+
+Five rules are load-bearing:
+
+- **A client leaving is not a provider failing.** A stream that stops because
+  the client disconnected (Codex Desktop archiving a thread mid-turn, a
+  cancelled turn) is recorded as `499 client_aborted` and cools nothing down.
+  Recording it as `upstream_error` once put Codex, the only orchestrator
+  provider, into a 30s cooldown and failed every other session's root turn.
+
+- **A rejected model is not a provider outage.** A provider answering
+  `invalid_model` (the Claude bridge returns `400` with `code: "invalid_model"`
+  when the CLI does not know the model or is too old for it) cools down that one
+  model; the provider's other models keep serving, so a bad Opus id does not
+  take Sonnet subagents down with it. If every candidate fails for such a
+  configuration reason, the router answers `400 router_provider_exhausted` with
+  `retryable: false`, `recommendedAction: "fix_configuration"`, no
+  `retry-after`, and the provider's own explanation in the message. A `5xx`
+  would only make Codex retry a request that cannot succeed.
+
+- **A hard cooldown needs corroboration.** `classifyProviderFailure` matches
+  keywords, and bridges put CLI stderr tails into error messages, so one stray
+  "quota" in an unrelated crash could otherwise take a provider out for fifteen
+  minutes. Only a provider *reporting* a limit -- `x-autodev-limit-source:
+  reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
+  headers -- produces a hard cooldown. An inferred limit stays on the transient
+  ladder.
+- **Probe failures ride their own ladder.** A local bridge restarting says
+  nothing about the provider behind it, and escalating the provider's own backoff
+  for it was how a one-minute outage became a ten-minute one.
+- **A cooldown only ever moves later.** A short probe cooldown landing on top of
+  a long declared limit must not shorten it.
+
+Selection then runs in up to three passes, and only reaches a 503 if all three
+come up empty:
+
+1. **Primary.** Every candidate that is not cooling, in tier order.
+2. **Last resort.** The candidates pass 1 skipped, capped at
+   `CODEX_ROUTER_LAST_RESORT_MAX_ATTEMPTS` (default 2). Providers with no live
+   agent go first, so concurrent exhausted requests spread over the skipped
+   providers rather than piling onto one (the caller's own agent, often still
+   live on the provider while it waits on its children, does not count); ties
+   go to the soonest-to-lapse cooldown. A busy provider is ordered last, never
+   excluded: Codex is the orchestrator tier's only provider and is nearly always
+   live in some other session, and excluding it once turned a single transient
+   failure into an instant 503 for every root turn for up to ten minutes, since
+   nothing could make the attempt whose success clears the cooldown. Excluded:
+   anything already attempted, a `config` cooldown, and
+   a `hard` cooldown with a declared reset still in the future -- that provider
+   has stated it will not serve yet, and attempting it anyway is exactly the
+   hammering cooldowns exist to prevent. A success clears the cooldown, so the
+   chain heals itself.
+3. **Bounded wait.** If a cooldown lapses within
+   `CODEX_ROUTER_EXHAUSTION_WAIT_MS` (default 20s), the router waits for it and
+   makes one more attempt rather than ending the caller's turn. It happens before
+   response headers, so the client sees a slow request rather than a stalled
+   stream, and it is cut short if the client disconnects. Keep it small: a role
+   request holds its subagent slot throughout, and the per-session limit is
+   typically 2. An orchestrator turn holds no slot and its failure ends every
+   child's work, so its window is at least one first-strike transient cooldown
+   (`CODEX_ROUTER_PROVIDER_COOLDOWN_MS`, 30s): otherwise a single-provider
+   orchestrator tier could never be rescued by waiting. Set it to `0` to disable
+   waiting entirely.
+
+`CODEX_ROUTER_CHAIN_SELECTION_DEADLINE_MS` (default 120s) bounds how long the
+router may spend *looking* for a provider. It is checked only before starting a
+candidate and never during one, so a long turn that lands on the last candidate
+still gets the full `CODEX_ROUTER_UPSTREAM_TIMEOUT_MS`. Without it, a tier of
+five hanging providers could hold a subagent slot for over an hour.
+
+All of these are positive-millisecond environment variables:
+`CODEX_ROUTER_PROVIDER_COOLDOWN_MS` (30_000),
+`CODEX_ROUTER_PROVIDER_COOLDOWN_MAX_MS` (600_000),
+`CODEX_ROUTER_HARD_COOLDOWN_MS` (900_000),
+`CODEX_ROUTER_HARD_COOLDOWN_MAX_MS` (21_600_000),
+`CODEX_ROUTER_PROBE_COOLDOWN_MS` (5_000),
+`CODEX_ROUTER_PROBE_COOLDOWN_MAX_MS` (30_000),
+`CODEX_ROUTER_PROBE_TIMEOUT_MS` (700),
+`CODEX_ROUTER_LAST_RESORT_MAX_ATTEMPTS` (2),
+`CODEX_ROUTER_EXHAUSTION_WAIT_MS` (20_000, `0` disables) and
+`CODEX_ROUTER_CHAIN_SELECTION_DEADLINE_MS` (120_000).
+
+### Declared limits
+
+A provider bridge that knows it hit a usage limit says so structurally rather
+than only in prose, on both the streamed and non-streamed paths:
+
+| Header | Value |
+| --- | --- |
+| `x-autodev-limit-class` | `quota_exhausted`, `session_limit`, `throttled`, `capacity` |
+| `x-autodev-limit-type` | the provider's own window name, e.g. `weekly`, `five_hour`, `session` |
+| `x-autodev-limit-resets-at` | ISO-8601 UTC |
+| `x-autodev-limit-source` | `reported` (the provider said so) or `inferred` (a bridge matched free text) |
+
+The same shape appears as `error.limit` in a non-streamed failure body and as
+`response.incomplete_details.provider_limit` on a streamed one, so the router
+reads one shape wherever it finds it. `src/shared/provider-limits.ts` is the single implementation imported by all
+typed bridges, with `tests/provider-limits.test.ts` guarding the boundary.
+
+Only `reported` corroborates a hard cooldown. A bridge classifying its CLI's
+error text always reports `inferred`, which is enough to pick a better HTTP
+status and a `Retry-After` but never enough to strand a provider for the hard
+window.
+
+### Partial results on provider exhaustion
+
+A turn cut short after streaming has begun cannot be replayed on another
+provider, so whatever the model already produced is all the caller will ever get
+for that turn. It used to be discarded: the bridges emitted a bare
+`response.failed` and threw away every token they had already sent, leaving the
+parent with an error string in place of a partial result it could have acted on.
+
+All three CLI bridges now close such a turn as an *incomplete* response instead,
+in this order:
+
+```
+response.output_text.delta          (a truncation notice, appended to what the client already saw)
+response.reasoning_summary_text.done / _part.done / output_item.done   (reasoning, status "incomplete")
+response.output_text.done / content_part.done / output_item.done       (message,   status "incomplete")
+response.completed { status: "incomplete", incomplete_details: { reason, provider_limit } }
+data: [DONE]
+```
+
+`incomplete_details.reason` is `provider_limit`, `provider_timeout` or
+`provider_interrupted`. The truncation notice is deliberately in the text a model
+will read, not only in metadata: a partial answer mistaken for a complete one is
+worse than a failure.
+
+This is not a way of reporting success. `responseWasNotCompleted` treats any
+status other than `completed` as a provider failure, so the turn still counts as
+a failure, still cools the provider, and now cools it on the class the provider
+reported rather than a generic `upstream_error`.
+
+The router applies the same contract as a backstop for what the bridges cannot
+cover -- the bridge process being killed, or the socket dropping under it. A
+stream that ends without a terminal event is closed by the router itself,
+carrying the text it had already forwarded. The invariant: **the router never
+ends a started stream without a terminal event.**
+
+The `codex` route is the exception to the *incomplete* shape, not to the
+invariant. Its upstream is the stateless Responses API: nothing ran outside
+Codex, so the request can simply be sent again, which is exactly what native
+Codex does when a chatgpt.com stream drops. A dropped or stalled Codex stream is
+therefore closed with a retryable `response.failed` and Codex replays it under
+its own `stream_max_retries`. Closing it as a finished incomplete turn instead
+stopped the orchestrator with "[Incomplete: The provider stopped unexpectedly
+...]" after every network blip (observed 2026-09-24).
+
+## Observability
+
+The router makes its effective choice visible in two ways:
+
+- Every response includes `x-autodev-provider`, `x-autodev-model`, and
+  `x-autodev-request-id`. For a role request such as `autodev/explorer`, these
+  identify the concrete provider/model selected after shuffling, load balancing,
+  health checks, and fallback.
+- An exhaustion response additionally carries `x-autodev-limit-class` and
+  `x-autodev-limit-resets-at` for the soonest-resetting candidate, alongside
+  `retry-after`.
+- Router events carry a `selection` field naming the pass that chose a provider:
+  `primary`, `last_resort`, or `exhaustion_wait`. The `phase` is unchanged, so
+  every existing counter keeps working; `selection` only says how hard the router
+  had to look. A waiting request also emits its own `exhaustion_wait` event.
+- Per-provider `/status` entries report `orchestratorEnabled` and `subagentEnabled`
+  (independent administrative booleans), `orchestratorStatus` and `subagentStatus`,
+  plus overall health `status` (`"ready"` or an active cooldown failure class), `cooldownKind`,
+  `cooldownFailureClass`, `cooldownResetsAt`, `cooldownUntil`, `cooldownRemainingMs`,
+  `lastResortEligible`, `failureStreak`, and `probeFailureStreak` alongside the
+  cooldown countdown, configured models, capabilities, and attempt/outcome counters.
+- The status payload exposes structured `routing` metadata (`status.routing`):
+  `configSource` (`"default_codex_home"` or `"env_override"`), `configFileExists`,
+  `orchestrator` (`alias`, `tier`, and pinned `reasoningEffort`), configured capability `roles`,
+  `providerGroups` (ordered priority groups per tier), `configuredProviders`,
+  `enabledOrchestratorProviders`, `disabledOrchestratorProviders`,
+  `enabledSubagentProviders`, `disabledSubagentProviders`, and the active route map (`routes[*]` with
+  pattern, `baseUrl`, `healthUrl`, `envKey`, and `credentialConfigured`). Secret API keys and
+  absolute configuration paths are strictly excluded.
+- The status payload exposes structured `limits` metadata (`status.limits`):
+  the active effective thresholds for provider cooldowns (`providerCooldownMs`,
+  `providerCooldownMaxMs`), hard limits (`hardCooldownMs`, `hardCooldownMaxMs`),
+  probe checks (`probeCooldownMs`, `probeCooldownMaxMs`, `probeTimeoutMs`),
+  `lastResortMaxAttempts`, `exhaustionWaitMs`, `chainSelectionDeadlineMs`,
+  `upstreamTimeoutMs`, retry parameters (`upstreamRetryBaseMs`,
+  `upstreamRetryMaxMs`, `concreteStatusMaxAttempts`, `upstreamTransportMaxAttempts`),
+  `shutdownDrainTimeoutMs`, and `maxConcurrentThreadsPerSession`.
+- The live `/status` payload reports the effective Codex per-session
+  concurrency limit, the number of active session buckets, active role-based
+  subagent slots, and denials caused by that limit. An active session is a
+  session currently holding at least one role-based subagent slot; it is not a
+  count of every Codex task or process connected to the router. The default
+  local configuration permits one active subagent per session; callers must
+  serialize additional work or deliberately raise the
+  configured limit after checking provider capacity. The deprecated `max_threads`
+  alias is no longer parsed, surfaced, or used as a fallback; only
+  the canonical Codex key `max_concurrent_threads_per_session` -- multiline
+  `[agents]` block or composer-generated inline `agents = { ... }` table --
+  feeds admission. Role requests are gated before provider selection;
+  direct concrete model requests
+  are not counted as subagent slots. Session identification resolves explicit session
+  headers or metadata (`session-id`, `x-codex-session-id`, `x-session-id`,
+  `x-conversation-id`, `payload.session_id`, or turn metadata `session_id`).
+  When explicit session fields are absent, the resolver falls back to the
+  canonical Codex `thread-id` (or `x-thread-id` / metadata `thread_id`) as an
+  identified session key (`scope: "identified"`), matching root Codex threads
+  where thread ID equals root session ID. Only if neither session nor thread
+  identifiers are supplied does the router fall back to the process-wide shared
+  bucket (`scope: "process-fallback"`), where unrelated anonymous sessions can
+  deny one another. `/status` exposes `processFallbackEnforcement` and
+  `processFallbackActiveThreads` to make this unsafe fallback visible.
+- They also aggregate usage by origin (`orchestrator`,
+  `subagent`, or `direct`), role, and resolved provider/model. Each bucket
+  includes attempts, outcomes, average/max turn duration, and tool-call counts
+  inferred from Responses output items. A `role` request is classified as a
+  subagent; a direct Codex model request is classified as orchestrator-originated.
+  This is an operational inference: the router sees HTTP turns, not the full
+  lifetime of a Codex session, and tool-call counts cover calls represented in
+  Responses events only. The JSON `/status` payload keeps `usage.byOrigin` and
+  `usage.byRole` as separate, unmodified buckets.
+- Usage is also aggregated under `status.usage.byWorkspace`. Each workspace
+  bucket contains a privacy-safe repository label (remote `owner/repository`
+  when available, otherwise the cwd basename), the cwd basename, totals, and
+  nested `byRole`, `byModel`, and `byProvider` dimensions. Full absolute paths,
+  prompts, credentials, and remote URLs are not stored. Missing workspace metadata is attributed to
+  `unknown` rather than guessed from the router daemon's cwd. The workspace
+  bucket's scalar `toolCalls` is a response-output count inferred from
+  Responses API tool-call items on that workspace's turns, the same inference
+  the top-level `usage.totals.toolCalls` uses -- it is not a count of
+  OTLP-named tool invocations. Historical/cross-workspace visualization belongs in the AutoDev Console **Usage** surface, not a router-local HTML dashboard.
+- A workspace bucket may additionally carry `byTool`, `bySkill`, `byMcp`, and
+  coverage counters. These rows come from local causally-linked evidence:
+  AutoDev request context, verified hooks, semantic OTLP `codex.tool_result`
+  records joined by `conversation.id` to the local Codex thread database, and
+  authenticated provider-bridge reports. When resolving telemetry context across
+  MCP, tool, hook, skill, and bridge events, the router applies canonical precedence:
+  (1) explicit event or resource attributes, (2) verified provider bridge or request context,
+  (3) verified `conversation.id` -> session/thread-state join, and (4) `unattributed`.
+  The router does not require Codex to emit `workspace_id`, does not distribute
+  global metrics by guesswork, never infers ownership from static configurations or
+  ambient concurrency, and attributes events lacking verified metadata to explicit
+  `unattributed` dimensions. Requested and executed provider events remain separate.
+- Role accounting keeps explicit Orchestrator, Subagent, and Unattributed buckets. Role-less activity stays `Unattributed` rather than being guessed into either role, and the buckets reconcile to `usage.totals.active`.
+- `status.subagents` counts every subagent spawned behind the router,
+  regardless of which provider spawned it and by which mechanism. This is
+  distinct from `usage.byRole`, which counts *router requests* made by
+  subagents: a bridge-native child makes no router request at all, so it
+  appears in `status.subagents` and nowhere else. `src/cli/router-status.ts` prints it under
+  `Subagents spawned:`. See "Counting subagents across providers".
+- The router-local HTML dashboard has been retired. Use `GET /status` or `pnpm autodev -- router status` for live diagnostics and the AutoDev Console **Usage** surface for historical/aggregate observability. Do not add new UI behavior to the router status endpoint.
+
+### Grouped usage sections in the human CLI report
+
+The human report from `src/cli/router-status.ts` renders the three usage
+breakdowns together as one ordered group rather than spacing them across the
+telemetry output. After a blank-line separator following the `Concurrency:`
+summary, the report prints
+`Usage by origin:`, `Usage by role:`, and `Usage by resolved model:` in that
+order before any Codex OTEL or skill telemetry section. Each heading is
+emitted even when its bucket is empty so the section order stays stable.
+
+All three sections share one formatter for their per-row layout:
+`<label>: <attempts> attempts, <successes> successes, <failures> failures, avg <avg-s>s, <toolCalls> tool calls`,
+where `<avg-s>` is `Math.round(averageDurationMs / 1000)`. The origin row is
+the only one that prepends an active-count prefix, yielding
+`<label>: <active ?? 0> active, <attempts> attempts, ...`; the role and model
+rows omit that prefix. The `--json` flag continues to print the unchanged wire
+JSON and does not render these headings.
+
+### Live agent activity vs. in-flight requests transport diagnostics
+
+The `/status` provider projection is limited to configured router routes. A
+missing provider identity is an attribution defect surfaced through
+`liveAgentAttribution`, not a synthetic `unattributed` provider row. Provider
+and model dimensions therefore contain only concrete router-selected values;
+`unattributed` remains reserved for non-provider residual dimensions.
+
+The router cleanly separates user-facing agent workflow activity from transport-level network requests:
+
+- **Live agent activity (`Active` badges, KPIs, provider rows):**
+- **Frozen `status.agents` reconciliation projection:**
+  The router emits `status.agents` with schema `autodev-agent-status-v1`.
+  `canonicalLiveCount` is the single canonical live-agent count, evaluated
+  from `projectLiveAgents(at)` at the same `now` `getRouterStatus(now)`
+  passes through. Live-status consumers must read this field exclusively rather than falling back to `status.liveActivity` or `status.usage.totals.active`. `byState`
+  is the complete tracker histogram (live states, terminal `finished`/
+  `failed`, and derived `stale`). `liveByKind` counts only actual agent
+  kinds (`session` and `bridge_subagent`), never `subagent_slot`
+  admission bookkeeping. `liveByRole`, `liveByOrigin`, and
+  `liveByWorkspace` are live-only numeric partitions and retain an
+  explicit `unattributed` residual; `liveByProvider` and `liveByModel`
+  contain only concrete routed values, while records without attribution
+  are surfaced through `missingProvider` / `missingModel`. `slotVsAgent` reconciles
+  `agentLive`, `admissionSlots`, `activeAdmissionSessions`, and
+  `processFallbackActiveThreads` against `status.concurrency`;
+  `reconciledWithConcurrency: true` confirms all counters were evaluated
+  at the same timestamp. The fixture and contract test in
+  `tests/fixtures/contracts/agent-reconciliation-contract.json` and
+  `tests/agent-reconciliation-contract.test.ts` freeze this shape.
+- **Canonical live-agent count and role breakdown:** Consumers read
+  `status.agents.canonicalLiveCount`, `status.agents.liveByRole`, and
+  `status.agents.liveByWorkspace` directly. It never takes a `Math.max()`
+  of that canonical count against provider active-request counts
+  (`status.providers[*].active`) or concurrency-slot counts
+  (`status.concurrency.activeSubagentThreads` / `activeSessions`),
+  because those are transport and scheduling counters, not agent identities.
+  The orchestrator/subagent/residual buckets sum to the canonical count;
+  role-less activity remains an explicit `unattributed` residual instead
+  of being guessed into a role.
+- **Parent orchestrators remain live while children work:** Authenticated
+  bridge spawn events may keep the explicitly identified parent request live,
+  carrying the concrete provider/model selected for that request. A workspace
+  containing children is not sufficient evidence to create a parent or provider row.
+- **Workspace attribution is non-additive context:** The KPI's
+  `workspaces with active agents` count comes directly from
+  `status.agents.liveByWorkspace`, excluding `unattributed`/`unknown`.
+  It is displayed next to `Active agents` as attribution context and is
+  never summed into the agent total.
+- **Concurrency slot counts are scheduling context, not agent counts:**
+  `status.concurrency.activeSubagentThreads` and `activeSessions` remain
+  admission counters. `status.agents.slotVsAgent` makes their relationship
+  with live agents explicit without folding slots into the KPI.
+- **In-flight requests transport diagnostics (`inFlightRequests`):**
+  Represents currently open HTTP connections between the router daemon and upstream model provider endpoints. It is surfaced separately in the Status CLI's dedicated `In-Flight` column and must not be conflated with live-agent identity.
+
+### Lifecycle event contract and configurable TTL
+
+The router coordinates with agents and tool hosts via an explicit lifecycle event contract:
+
+- **Normalized activity events (`{ type: "activity", state, childIds? }`):**
+  the router settles every request itself from the response it relays -- a response ending in a tool call leaves the agent in `tool_wait`, one needing input in `user_wait`, a final answer `finished` (or `subagent_wait` while its children are live), an error `failed`. Provider bridges add only what the router cannot see: `{ type: "activity", state: "subagent_wait", childIds? }` while their own in-CLI subagents run and `resumed` when the last reports back (Antigravity), plus non-transitioning `heartbeat` refreshes. The endpoint refuses bridge-reported `tool_wait`/`user_wait`/`finished`/`failed`: they repeated the router's settlement late, and a per-response `finished` arriving after the router's `tool_wait` ended a working agent between two tool calls. Every event applies to the agent the reporting request belongs to (its activity subject, one per Codex thread), never to the session key an orchestrator shares with its subagents -- keyed that way, a MiniMax-served explorer's reports overwrote its orchestrator's record (observed 2026-09-19). User waits are never inferred from arbitrary assistant text.
+- **Configurable freshness TTL (`CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS`):**
+  Configured via `CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS` (defaults to `300000` ms / 5 minutes).
+- **Activity states:**
+  - `active`, `resumed`, `tool_wait`, `user_wait`, and `subagent_wait` count as live activity.
+  - `finished` and `failed` are terminal.
+  - An open agent request remains live until it settles. Silent non-terminal wait activity older than the TTL is reported as `stale` and removed from live counts without killing or restarting active processes.
+- **Heartbeat freshness and the `Active agents` KPI:**
+  Every lifecycle event refreshes that agent's last-seen timestamp, acting
+  as a heartbeat. `status.agents.canonicalLiveCount` -- and therefore the
+  `Active agents` KPI total, its role breakdown, and the `workspaces with
+  active agents` context count -- only counts entries whose heartbeat is
+  still within the TTL window above. If an agent goes silent (its client
+  vanished, or a bridge crashed mid-request), that agent ages out of every one of those counts
+  once its heartbeat exceeds the TTL; there is no separate "stale but still
+  counted" bucket in the KPI -- stale activity simply stops contributing to
+  the canonical live count, and `status.agents.byState.stale` reports the
+  abandoned count separately for diagnostic visibility.
+- **Orchestrator `subagent_wait`:**
+  An orchestrator whose response turn has ended but whose children are still
+  active stays in `subagent_wait` on its original provider. Children's
+  streaming touches keep the parent's TTL fresh, and the parent transitions
+  to `resumed` only after all children settle. See "Active-subagent routing
+  protection" above for the routing implications.
+
+To verify the live router is receiving caller identities, inspect
+`.concurrency.lastDenial.sessionScope` in `/status`; `identified` means the
+per-session key was supplied, while `process-fallback` means anonymous callers
+are sharing one bucket.
+
+The router accepts the session/conversation identity from the explicit session
+headers and body metadata, and also from `session_id` or `conversation_id` in
+the structured `x-codex-turn-metadata` JSON. It never derives a session key
+from a workspace path or task text.
+
+The same status payload's `codexTelemetry` includes current Codex OTEL lifecycle and
+skill-injection observations (`codex.skill.injected` and
+`codex.thread.skills.*`). The canonical telemetry ownership, OpenLIT ingestion, and Usage semantics are defined in [`docs/autodev-console-target-state.md`](autodev-console-target-state.md).
+
+Read-only roles (`explorer`, `docs-researcher`, `validator`, and
+`browser-tester`) run with filesystem access broad enough to inspect approved
+runtime state such as `$CODEX_HOME`/`~/.codex` and localhost diagnostics. Their
+role instructions remain read-only: they must not edit, stage, commit, or push
+those paths. The broader sandbox is intentional because Codex's `read-only`
+policy restricts reads outside the active workspace; the parent must explicitly
+scope any external inspection.
+
+Router stderr is structured JSON (`autodev-router-event-v1`) and is retained by
+launchd in `$CODEX_HOME/run/codex-model-router.launchd.err.log` (stdout uses
+the sibling `*.out.log` so structured events are never interleaved with
+incidental output). Every event of a request carries the Codex `thread` that
+sent it (from the `thread-id` header or `client_metadata.thread_id`, noted
+once when the request arrives), so a subagent's requests can be told apart
+from a sibling's on the same role; the `autodev-session-diagnostics` skill
+relies on it. The direct ensure fallback writes its own log at
+`$CODEX_HOME/run/codex-model-router.fallback.log` and records its tracked
+PID at `$CODEX_HOME/run/codex-model-router.fallback.pid`; both files are
+created with mode 0600 inside a mode 0700 directory so the local user keeps
+sole read/write access. Override the fallback paths with
+`CODEX_MODEL_ROUTER_FALLBACK_LOG` / `CODEX_MODEL_ROUTER_FALLBACK_PID_FILE`
+when sandboxing requires a different writable location. The legacy world-
+writable `/tmp/codex-model-router.log` path is gone.
+
+The router ensure hook rotates the launchd and fallback logs to a `.1` sibling
+once they pass the same size budget, so a crash loop cannot fill the disk, and
+it prints the tail of `codex-model-router.launchd.err.log` when the router fails
+to come up under launchd. That tail is the first thing to read when an install
+reports a launchd start failure: a crash-looping router usually names its own
+cause there.
+
+`$CODEX_HOME/run/` is the canonical home for router run-time state. The
+installer creates it with mode 0700 on every run, and the launchd plist writes
+its logs there too, so all router
+operational data survives reboot, tmpfs clears, and `/tmp` rotation.
+
+Provider counters, recent events, and the
+versioned privacy-safe OTEL aggregate section are also persisted atomically in
+`$CODEX_HOME/codex-router-state.json`, so they survive router restarts. Active
+requests and in-flight sessions reset, and so do `transient`, `probe` and
+`config` cooldowns -- those are the router's own guesses about a moment that has
+passed, and a restart is a legitimate reason to go and look again. A `hard`
+cooldown survives: a provider that declared it is out of usage until Tuesday is
+still out of usage on Tuesday, and the router restarts often enough under launchd
+that dropping it would put it straight back to re-probing an exhausted account.
+Restored cooldowns are dropped if already past and re-clamped to
+`CODEX_ROUTER_HARD_COOLDOWN_MAX_MS` on the way back in.
+Failure classes include `session_limit`,
+`throttled`, `quota_exhausted`, `capacity`, `timeout`, `unavailable`,
+`authentication`, `invalid_model`, and `probe_unavailable` (a local bridge that
+did not answer its health check). Of these, only `session_limit` and
+`quota_exhausted` are *hard*, and only when the provider declared them. These are observations from upstream
+responses and local health checks, not a provider's authoritative quota API;
+the persisted counters remain available after the router process restarts. Use
+the router instance ID and request ID to correlate a turn with its fallback
+history. Rotate logs by restarting the router: launchd closes and reopens the
+log file handles, and the ensure hook reuses the same fallback PID file
+without leaking a stale tracker.
+
+### Provider administration and disable semantics
+
+Provider role enablement is mutable runtime/configuration state. The supported control boundary is the dedicated AutoDev Control API, not the model-router HTTP surface:
+
+- `GET /control/providers` returns provider configuration and current role enablement.
+- `PATCH /control/providers/:provider/roles/:role` accepts only `{"enabled": boolean}`.
+- Mutations require operator authorization, are audited, persist atomically, and roll back the in-memory change when persistence fails.
+
+The router may retain a loopback-only direct mutation endpoint temporarily as a compatibility implementation detail while callers migrate, but it is not an AutoDev Console/API contract and must not be used by new UI or automation. The canonical target is to remove duplicate mutation paths.
+
+#### Persistence and default behavior
+
+- **Default state:** Every configured provider starts enabled for both roles.
+- **Immediate atomic persistence:** A successful role mutation persists `disabledOrchestratorProviders` and `disabledSubagentProviders` atomically to `$CODEX_HOME/codex-router-state.json`.
+- **Survives restarts:** router-state loading restores both role-specific arrays.
+
+#### Disable semantics across routing tiers
+
+Role controls are independent:
+
+- **Subagent role:** A provider disabled for subagents is omitted from capability role
+  aliases and all subagent fallback passes. Direct concrete model requests use this role
+  and fail with HTTP 503 `router_provider_unavailable` when their provider is disabled.
+- **Orchestrator role:** A provider disabled for orchestrators is omitted from
+  `autodev/orchestrator` candidates, including session-continuation preference hoisting.
+- **Both roles:** Disabling both roles reproduces full provider exclusion. If every provider
+  for a requested role is disabled, the router returns HTTP 503
+  `router_provider_exhausted` with `failureClass: "provider_disabled"`.
+
+Each skipped candidate records skip reason `"disabled"` and failure class
+`"provider_disabled"`; disabled providers are never probed, attempted, or counted against
+attempt budgets for that role.
+
+#### Provider role controls
+
+The retired router HTML dashboard is not a control surface. Provider-role mutations belong to the dedicated AutoDev Control API:
+
+- `GET /control/providers` returns provider configuration/current role enablement.
+- `PATCH /control/providers/:provider/roles/:role` accepts only `{"enabled": boolean}`.
+- Mutations require the Control API's operator authorization, persist the role setting, audit success/failure, and roll back the in-memory value when persistence fails.
+- The AutoDev Console may render these controls under **Agents**/provider detail views, but browser UI code must call the authenticated Control API path rather than a router-local dashboard endpoint.
+
+
+### Local provider/workspace diagnostics
+
+The router extends the live `usage.byWorkspace` diagnostic contract with first-class event counters so attribution can fail closed on per-workspace tool and skill evidence. A workspace must receive a first-class event from a provider
+bridge before its `byTool` and `bySkill` rows move off the `unavailable`
+state; OTLP datapoints alone are not sufficient because the OTLP exporter
+only describes what Codex's own runtime emitted.
+
+The new fields on every `usage.byWorkspace[*]` bucket are:
+
+- `toolsExecuted`: count of `tool_executed` events the bridge reported for
+  this workspace. Reaching a positive value is what unlocks per-workspace
+  tool attribution.
+- `toolsRequested`: count of `tool_requested` events. A model that asked
+  for a tool but never ran it still moves this counter so diagnostics can
+  distinguish "the provider never offered the tool" from "the provider
+  offered it but something stopped it from running".
+- `toolsUnavailable`: count of `tool_unavailable` events with the workspace
+  where the bridge refused a tool (workspace settings, permission deny).
+- `skillsExposed`: count of `skill_exposed` events. The first `skill_exposed`
+  for a workspace is what unlocks per-workspace skill attribution.
+- `toolsUnattributed`, `skillsUnattributed`: coverage of OTLP datapoints that
+  could not be joined to a specific name (no `call_id`, no skill attribute)
+  on a workspace where the workspace_id itself resolved. Distinct from
+  `toolsExecuted`/`skillsExposed` because it counts unjoined coverage rather
+  than first-class evidence.
+- `bridgeTools`: the raw `tool_executed` rows the bridge reported for this
+  workspace (`{ tool, server, count, byStatus }`). It is bridge evidence and must not be summed with OTLP-sourced `byTool` into the same total.
+- `bridgeSkills`: the raw `skill_exposed` rows the bridge reported for this
+  workspace (`{ skill, count }`) -- evidence a skill was made available to the
+  workspace, not that it was used. This is a distinct claim from `bySkill`
+  (confirmed uses, the same source as `skillUses`): a workspace can have
+  `bridgeSkills` entries with zero `bySkill` entries. Consumers must keep exposure and confirmed use distinct rather than folding them into one count.
+
+The companion OTLP metric `codex.tool_result` is the runtime-causal "the
+tool call landed" signal. Each datapoint carries a `call_id` (the same id
+emitted on the originating `codex.tool.call`); the router dedupes the
+result against the call id and reports:
+
+- `executed`: number of tool results that were causally resolved to a
+  tool call (unique `call_id`).
+- `unattributed`: number of result events whose `call_id` was either missing
+  or had already been counted under another datapoint. This is the raw
+  coverage needed to distinguish observed result events from causally resolved executed tools.
+
+The router also persists a derived snapshot of the local Codex state
+database under `status.codexState`. The collector is read-only, opens
+`state_5.sqlite` via the Node `node:sqlite` binding (or reports
+`schema_only` when the binding is unavailable), and surfaces:
+
+- `localTelemetry`: a capability report describing the open outcome
+  (`ok`, `missing`, `schema_only`, `schema_unknown`, `error`, `pending`),
+  the schema fingerprint, the bounded recency window, and the recent
+  thread / project / edge counts.
+- `recentThreads`: the threads the collector could read inside the bounded
+  window, each normalized to a privacy-safe `owner/repository` workspace key,
+  a `cwdBasename`, and the resolved `projectId`. Raw absolute paths never
+  appear in the snapshot.
+- `conversationThreads`: a `conversation.id` -> thread id join. The
+  router cannot derive this from the request stream alone; the collector
+  is the only component that owns this lookup.
+- `spawnEdges`: `parent_thread_id` -> `child_thread_id` edges for the
+  recent window.
+- `projects`: the `projects` table rows Codex uses to group threads.
+
+The path defaults to `$CODEX_HOME/state_5.sqlite` and is overridable via
+`CODEX_STATE_DB_PATH`. The recency window defaults to 24h
+(`CODEX_STATE_COLLECTOR_WINDOW_MS`) and the bound defaults to 500
+(`CODEX_STATE_COLLECTOR_LIMIT`). A live poll refreshes the snapshot every
+5s by default (`CODEX_STATE_COLLECTOR_POLL_MS`); the snapshot is also
+refreshed on demand by `/status` calls. The persisted router state does
+not contain the collector snapshot -- it is rebuilt from the file on
+every router restart.
+
+The collector never writes to `state_5.sqlite`. The router persists the
+derived workspace counters and bridge observations under its own
+`codex-router-state.json`, never the Codex-owned state file.
+
+## Supervision, liveness, and graceful drain
+
+The router is supervised by a `KeepAlive` launchd job
+(`com.codex.model-router`) so it survives app restarts, crashes, and sleep. The launchd plist lives at
+`config/launchagents/com.codex.model-router.plist` and is materialized
+under `~/Library/LaunchAgents/` by the installer. Five provider services are
+materialized from portable templates, and the installer verifies their rendered
+content before restarting them. Three contracts separate
+"the process is alive" from "the process can serve":
+
+- **Liveness** — `GET /health/liveliness` (or `/health`) returns
+  `{"status":"ok","router":"codex-model-router"}` with HTTP 200 whenever the
+  router's HTTP server is bound to `127.0.0.1:4100`. It does *not* reflect
+  upstream provider health; it only certifies that the router itself is
+  alive enough to answer HTTP. Use it for `launchctl`-style "did the bind
+  succeed" checks and for the ensure hook's readiness probe.
+- **Readiness** — `GET /health/readiness` returns HTTP 200 while the router
+  accepts work and HTTP 503 with `router_draining` while it is shutting down.
+  It describes router lifecycle readiness, not the health of every upstream.
+  Use `GET /status` for the detailed per-provider health, cooldown countdowns,
+  live agent activity, in-flight request diagnostics, and `usage` snapshots needed to decide
+  whether an upstream is usable.
+- **In-flight drain** — on `SIGTERM`/`SIGINT` the router stops accepting new
+  `/v1/responses` work and gives in-flight requests up to
+  `CODEX_ROUTER_SHUTDOWN_DRAIN_MS` (30s by default) to finish before
+  forcefully aborting them. It then persists its state, closes any connection
+  still open, and exits. The plist sets `ExitTimeOut` to 45s
+  so launchd's SIGKILL lands after the drain window completes, not in the
+  middle of it. `ProcessType=Standard` keeps the router out of macOS's
+  throttled background tier: every Codex request passes through it, and a
+  `Background` job is starved of CPU and disk I/O whenever the machine is busy.
+
+The `scripts/ensure-codex-model-router.sh` hook prefers the installed launchd
+job and falls back to a direct `nohup` process only when launchd is genuinely
+unavailable (for example, from inside the Codex sandbox where `gui/$UID` is
+not reachable). It acquires an atomic private lock directory at
+`$CODEX_HOME/run/codex-model-router.ensure.lock.d` so concurrent invocations
+cannot race the bootstrap/nohup path. When the job is not loaded, the hook
+bootstraps it (`RunAtLoad` starts it); when launchd owns a job that is not
+answering, the hook `launchctl kickstart -k`s it; a healthy process is left
+alone; the direct fallback is never allowed to start a duplicate `nohup`
+next to a launchd job that is bound to the port. When launchd is the
+supervisor but the router never becomes ready, the hook fails loudly
+instead of masking the failure with a duplicate unmanaged process.
+
+The fallback path records its PID in `codex-model-router.fallback.pid`
+(mode 0600). A later ensure call reuses the recorded PID when it is still
+alive and healthy, recycles it via `SIGTERM` (so the router can drain)
+when it is alive but the port is unhealthy, and clears a stale PID file
+before starting a new one when the previous process is gone. When an
+untracked process already owns the port, the hook refuses to start a
+duplicate and surfaces the conflict in the log; an operator must stop
+the foreign owner (or hand the job to launchd) before the ensure hook
+will bind. Readiness polling is bounded (default 5s total budget,
+exponential backoff capped at 1s) so a slow bind surfaces quickly and the
+hook never burns CPU waiting.
+
+The installer respects the same preference: it links every launchd plist, then
+`bootout`/`bootstrap`/`kickstart` cycles each label on the `gui/$UID` domain.
+It does this on every run, not behind a flag -- installing new code and leaving
+the old code running is not an install, and it fails silently, because the ports
+stay healthy and the files on disk look correct either way. The router drains
+in-flight requests on the `SIGTERM` that `bootout` sends, so a turn in progress
+finishes rather than being cut off. The readiness probe loop in
+the installer waits for the router (and each provider bridge) to bind
+before the ensure hooks run, so the hooks observe healthy ports and
+no-op instead of racing the agents.
+
+## Retry and error correlation
+
+Every proxied router response carries correlation headers:
+
+- `x-autodev-provider` — the concrete provider selected after shuffling,
+  load balancing, health checks, and fallback.
+- `x-autodev-model` — the concrete model dispatched to that provider.
+- `x-autodev-request-id` — the per-router-request UUID. It remains stable
+  across provider fallback within one request; caller-side retries may have
+  a new ID. Pair it with `x-autodev-router-instance-id` and
+  `routerInstanceId` from `/status` to correlate a turn across restarts and
+  the structured stderr event stream.
+- `x-autodev-router-instance-id` — the router process instance that handled
+  the request, useful for detecting a restart during an incident.
+
+chatgpt.com's Codex backend has been observed recycling a pooled keep-alive
+connection without warning, including immediately after a prior request on
+that connection completed, which surfaces as an
+ECONNRESET/EPIPE/UND_ERR_SOCKET write failure while the router tries to reuse
+it for the next request. Rather than only retrying around this, every `codex`
+route request sets `Connection: close` on the outbound request so it always
+opens a fresh connection and is never drawn from Node's pooled keep-alive
+connections -- removing the race at its source instead of catching it
+downstream. Other routes run on the local loopback, are unaffected by this
+failure mode, and keep reusing pooled connections.
+
+A connection reset, broken pipe, connect timeout, or other pre-response
+transport failure is retried in place on the same provider -- for a direct
+concrete request and for every candidate of a role or orchestrator fallback
+chain alike -- up to 3 attempts in total (tunable with
+`CODEX_ROUTER_UPSTREAM_TRANSPORT_RETRY_LIMIT`). A severed connection says
+nothing about the provider, and native Codex simply reconnects; only once the
+attempts are spent is the provider cooled down and the chain moved on. Before
+this, each EPIPE on an upload to chatgpt.com cooled Codex, the orchestrator
+tier's only provider, and failed the root turn outright. Transient direct
+concrete provider failures additionally get one retry of a completed HTTP
+502/503/504 response, which is real signal, before the router returns a
+structured error. Retries use a jittered 200–400ms delay by default and can be
+tuned with `CODEX_ROUTER_UPSTREAM_RETRY_MS` and
+`CODEX_ROUTER_UPSTREAM_RETRY_MAX_MS`; the router never retries after response
+headers or client cancellation. The
+response includes
+`router_provider_unavailable`, the provider/model/request and router-instance
+correlation fields, and a `retry-after` header after the provider is cooled
+down. Concrete model requests are never silently rerouted.
+Router-generated provider errors include stable `code`, `retryable`,
+`failureClass`, `provider`, `model`, `requestId`, and `routerInstanceId`
+fields in the JSON error object. Transport failures are logged as structured
+`transport_error` events with only sanitized error name/code/syscall fields;
+raw exception text, credentials, prompts, and upstream bodies are not exposed.
+When no provider can complete a role request -- after the primary, last-resort
+and bounded-wait passes have all failed -- the router returns HTTP 503 with a
+`router_provider_exhausted` error code, the same `x-autodev-request-id` header,
+and a `retry-after` header sized to the provider cooldown window.
+
+The consumer of that error is a model deciding what to do next, so it carries
+enough to act on rather than four repetitions of "cooldown active". `error.details`
+holds `retryAfterMs`, `resetsAt`, `lastResortAttempts`, `selectionDeadlineReached`,
+the per-candidate `providers[]` summary (`state`, `failureClass`, `resetsAt`,
+`retryAfterMs`), and a `recommendedAction`:
+
+- `summarize_and_yield` when every candidate is hard-limited. There is nothing to
+  retry into; the right move is to return a summary of the work completed so far.
+- `retry_after` otherwise, with the wait in `retryAfterMs`.
+
+The message text says the same thing in prose, naming each provider and its reset
+time, because that is what a model actually reads. Concurrency denials return HTTP
+429 with `retry-after: 1` and the same `x-autodev-request-id`.
+
+A started stream never ends without a terminal event on any of these paths: an
+exhausted chain, a concrete-request failure, or an internal router error will
+close the stream rather than leaving the caller with a truncated body that is
+indistinguishable from a hung provider. Recent spawn failures retain request IDs and reasons in live status/event diagnostics so the same header can be traced from the API call through the router's event log.
+The router's `concurrency.scope` is `router-admitted-child-requests`:
+`activeSubagentThreads` reports only child requests currently admitted by the
+router, not open Codex app child handles or provider CLI processes. Cumulative
+`denials` and `spawnFailures` remain historical diagnostics. A Codex app
+`thread limit reached` error can therefore occur while this router reports zero
+active requests. The root delegation hook injects an executable current-parent
+recovery preflight: when Codex App `read_thread` is available, it reads only
+that parent's `collabAgentToolCall.receiverThreadIds`, waits each child, and
+calls `close_agent` only for terminal statuses. The same owner-scoped preflight
+is emitted before bridge-driven native spawn batches when the bridge has the
+parent session id. The owning orchestrator can therefore reclaim terminal
+handles before retrying; no global cleanup is safe.
+
+Its reasons are `provider_exhausted`, `selection_deadline` (the router spent its
+provider-selection budget without finding one),
+`max_concurrent_threads_per_session`, and `spawn_tool_unavailable`. Only child
+requests count: a root orchestrator turn that exhausts its tier spawned nothing,
+so it is reported through its `router_provider_exhausted` result, not here.
+
+### Streaming resilience and keep-alives
+
+Streaming responses (`stream: true`) to clients such as Codex Desktop are protected against idle disconnects and client disconnect cascades:
+
+- **Downstream SSE Keep-Alives**: The router automatically transmits periodic `: codex-router keep-alive\n\n` SSE comments every 2 seconds while streaming. This prevents the downstream HTTP client (e.g. Codex Desktop's reqwest transport) from triggering an `idle timeout waiting for SSE` during quiet intervals when an upstream model or bridge is busy running tools, spawning subagents, or reasoning.
+- **Client Disconnect Resilience**: When a downstream client disconnects or cancels mid-stream, write calls are guarded (`safeWrite`) against closed/destroyed response sockets, and the response stream absorbs socket errors (`EPIPE`, `ECONNRESET`, `ERR_STREAM_DESTROYED`, `ERR_STREAM_WRITE_AFTER_END`). Normal client socket drops are recorded as ignored transport events rather than escalating to fatal uncaught exceptions that would crash the router process. A disconnect also cancels the upstream request, whether or not the provider has answered yet, so a provider is never left working for a client that is gone; the request is recorded as `499 client_aborted` and never counts against the provider (see "A client leaving is not a provider failing").
+
 
 ## External-provider execution
 
@@ -34,93 +1155,709 @@ The normal CLI path for an external role remains the repository launcher. It
 starts the selected provider hook and local CLI profile:
 
 ```sh
-/Users/henrykirk/AutoDev/scripts/codex/run-provider-agent.sh \
-  --provider claude --role explorer --prompt 'Bounded task; report evidence.'
+scripts/run-provider-agent.sh \
+  --role explorer --prompt 'Bounded task; report evidence.'
 ```
 
-Use `--provider minimax` or `--provider antigravity` as appropriate. Direct
-terminal sessions can instead use `codex --profile claude`,
-`codex --profile minimax`, or `codex --profile antigravity` from the repository.
+The caller specifies only the role. Direct terminal sessions use the tracked
+`autodev/<role>` aliases through `local_model_router`; provider selection and
+fallback remain inside the router. The launcher applies an explicitly configured role reasoning effort when one is
+present, plus summary mode and sandbox settings; otherwise it leaves reasoning
+effort unset so the active model or provider profile supplies the compatible
+default.
 The native app-server path is also configured and verified, but the desktop
 high-level fanout service does not currently delegate through it.
 
-The Claude bridge is intentionally a leaf-provider gateway: when it launches
-the real Claude Code CLI, it passes `--disallowed-tools Agent,Task`. `Agent` is
-the current Claude Code subagent tool and `Task` is the legacy name. The same
-boundary is declared in `.claude/settings.json` with both tools in
-`permissions.deny`, so a direct Claude Code session from this repository has
-the same behavior. The root-delegation hook also exempts Claude model aliases,
-so leaf providers do not receive the parent-only instruction to spawn more
-agents. Keep these restrictions at the CLI/gateway boundary rather than
-relying only on role prompt text.
+The router can reroute a role request only after the Codex process has reached
+the configured `local_model_router` and sent a request for an `autodev/<role>`
+alias. It can retry another provider when that provider returns a fallbackable
+response or becomes unavailable. A failure in the app-server before its model
+request is emitted (for example, failure to create the child thread or resolve
+its environment) never reaches AutoDev and cannot be redirected by this
+router. Concrete provider model requests are intentionally not rerouted because
+they represent an explicit provider choice; use a role alias for fallback.
+
+All spawned roles are leaf agents. Native role aliases (`autodev/<role>`) and
+external-provider model aliases are therefore excluded from the root
+delegation hook; only the configured parent model receives that instruction.
+For a Claude turn the bridge launches the real Claude Code CLI with
+`--tools ""` (only `WebSearch,WebFetch` when Codex offered web search), so the
+CLI has no `Agent`/`Task` tool and no other built-in tool at all. That CLI flag
+is the enforcement: this repository carries no `.claude/settings.json`, so a
+direct Claude Code session opened here is not bounded by it. Whether a Claude
+turn may spawn is decided by Codex, exactly as for a Codex-served turn: only
+the orchestrator's `tools` global carries `multi_agent_v1__spawn_agent`.
+The root-delegation hook also exempts Claude model aliases,
+while native `autodev/*` roles are excluded by their role alias, so leaf
+providers do not receive the parent-only instruction to spawn more agents.
+Keep these restrictions at the CLI/gateway boundary rather than
+relying only on role prompt text. Provider bridges must treat the active
+working directory as transport metadata and must never infer it from arbitrary
+task prose. If no valid structured workspace is present, the bridge fails
+closed with a diagnostic instead of silently selecting AutoDev; an explicit
+`CODEX_PROJECT_ROOT` remains available only as an operator-controlled fallback
+for intentionally pinned, single-repository service deployments.
+
+### Agent role across the bridge boundary
+
+The orchestrator tier can land the root turn on Claude, MiniMax, or
+Antigravity. A bridge that assumes every request is a delegated leaf then tells
+the parent it is a bounded leaf agent that must not spawn child agents, which
+suppresses exactly the delegation the root turn exists to perform: the parent
+announces a delegation and then silently does the work itself.
+
+The router therefore names the role of every outbound request in the
+router-generated `x-autodev-agent-role` header. The value comes from the
+router's own alias dispatch, never from the inbound request: `downstreamHeaders`
+builds its header set from scratch, so a client claiming
+`x-autodev-agent-role: orchestrator` on a leaf request cannot escape the leaf
+policy. Every bridge receives it as an ordinary request header; Antigravity
+once also received it in the Responses `extra_headers` body field because the
+LiteLLM hop that used to sit in front of that adapter dropped raw headers.
+
+Every provider receives the same shared prompt layers, with the outer
+transport responsible only for composing them:
+
+| Consumer | Shared composition | Provider-specific boundary |
+| --- | --- | --- |
+| Native Codex child | `base.md` + `leaf.md` + optional `code-search.md` + role-specific `developer_instructions` | `src/config/render-agent-configs.ts` materializes the complete role TOML under `~/.codex/agents`; `agent_type` selects it at spawn time |
+| Antigravity/Copilot bridge | `base.md` + workspace + `leaf.md` (or `orchestrator.md` + orchestration skill) + optional `code-search.md` + role fragment + capability metadata | `composeProviderPrompt(role, cwd)` then appends the delegated task |
+| Claude bridge | Codex's own request context, like a native child: the role TOML's `developer_instructions`, the root bootstrap hook, and the conversation | `renderCodexTranscript()` feeds Codex's input to the CLI on stdin; `systemPrompt()` replaces the CLI's system prompt with only how to act through Codex's tools, plus the workspace |
+| MiniMax pass-through | Native Codex request, including the rendered role configuration | The proxy remains transport-only and does not author a competing prompt |
+
+The orchestration skill is the single source of truth for delegation procedure,
+child lifecycle, recovery, and role selection. The orchestrator prompt is only a
+small bootstrap of root identity and a pointer to the canonical policy. The native root
+hook injects the same skill content and recovery preflight; the Antigravity and
+Copilot bridges use `src/agents/bridge-role.ts` to assemble the same role prompt,
+and the Claude bridge passes Codex's own context through unchanged. Execution-contract JSON is a
+generated projection for provider diagnostics; it is not a second editable role
+capability list. Native child calls carry only `agent_type` and the task message.
+Codex must load the selected role TOML before the first child turn and expose that
+TOML's enabled MCP servers and skills; bridges must not attach skill paths or MCP
+lists per invocation.
+
+`agents/prompts/code-search.md` is the single shared CGC-first
+code-navigation prompt. The bridge injects it only when the role contract
+exposes `codegraphcontext`, `cocoindex-code`, and `lsp`; native role TOMLs use
+`{{AUTODEV_CODE_SEARCH_PROMPT}}`, and the root hook loads the same file for the
+orchestrator. Native Codex, Claude, Copilot, and MiniMax enforce role-specific
+MCP surfaces directly. Antigravity's bridge builds a per-invocation MCP registry
+and permission profile from that same execution contract, so the global CLI
+registry does not expose code-search tools to `docs-researcher` or Playwright to
+roles that do not declare it.
+
+The tracked role TOMLs contain only role-specific policy plus composition markers;
+they do not copy the universal base/leaf text. The installer renders them before
+Codex can load them, and tests compare the installed files with the renderer's
+output. A change to `base.md` or `leaf.md` therefore propagates to native and
+bridge-backed children through their actual prompt path.
+
+The Antigravity bridge has no equivalent CLI flag: `agy` exposes its subagent
+tools unconditionally, so a leaf turn there is bounded by `leaf.md` prompt
+policy alone rather than at the CLI boundary. `agy`'s own subagent definitions
+do carry an `EnableSubagentTools` field ("Grant tools to define and invoke its
+own subagents"), but the model sets it when it spawns a child, so it bounds
+depth below the orchestrator rather than bounding the turn the bridge starts;
+The canonical `orchestration` skill requires it to be withheld by default.
+
+#### Isolation between concurrently running orchestrators
+
+Several orchestrators can run on this machine at once, each with its own agent
+tree. An agent's reach is meant to stop at that tree, in both directions.
+
+- **Claude.** The CLI runs with `--tools ""` (web research aside), so it has
+  no `SendMessage`, `ListAgents`, or any other built-in tool that could reach
+  another session, whatever a future release exposes in print mode. Its reach
+  is exactly Codex's tool surface for the turn, the same as a Codex-served
+  agent's. Peer messaging between the user's own *interactive* sessions is a
+  separate, deliberate Claude Code feature that AutoDev neither creates nor can
+  disable.
+- **Antigravity.** `manage_subagents` is already scoped by `agy`: `list`
+  reports "active **direct** subagents", and `kill` refuses an id that "is not a
+  known active subagent". `send_message` takes an arbitrary "Conversation ID of
+  the agent to message" and resolves it at run time (`recipient %q not found`);
+  its documented use is parent/child within one run. No cross-run delivery has
+  been demonstrated, but `~/.gemini/antigravity-cli/presence/` is a
+  machine-wide registry of live conversation ids that an agent with shell
+  access could read, so `leaf.md` and `orchestrator.md` both forbid acting on
+  any agent id that did not come from spawning it or from the runtime-supplied
+  parent id.
+
+### The Claude bridge serves Codex's own context
+
+The Claude bridge passes `--system-prompt`, which *replaces* the Claude CLI's
+default prompt, rather than `--append-system-prompt`, which leaves it in force
+underneath. The default prompt's harness guidance describes tools a bridged
+turn does not have and competes with the role policy.
+
+The replacement prompt (`systemPrompt()` in `src/providers/claude.ts`) says only
+how to act: the conversation that follows is the Codex agent's own context,
+every action goes through the session's Codex tools, and the final message is
+the agent's reply. It also states the workspace the bridge resolved from
+structured request metadata, because a replaced prompt loses the CLI's
+per-machine sections (`--exclude-dynamic-system-prompt-sections` is ignored
+with `--system-prompt`).
+
+Role policy is not in that prompt. It arrives in Codex's own context, which the
+bridge renders with `renderCodexTranscript()` and writes to the CLI's stdin:
+the role TOML's `developer_instructions` (`base.md` + `leaf.md` + optional
+`code-search.md` + role fragment, as rendered for every Codex child), the root
+bootstrap the `UserPromptSubmit` hook injects, Codex's skills catalogue and
+environment context, `AGENTS.md`, and the whole conversation so far, including
+every tool call and its output. A Claude turn therefore gets exactly the policy
+a Codex-served turn gets, from the same source, with no second composed copy
+to drift from it.
+
+The bridge also exports `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1`. Claude Code's
+bundled skill catalogue is a second, unversioned source of instructions; a
+bridged turn reads the skills Codex lists, through Codex's tools.
+
+Anything that is not exactly `orchestrator` is treated as a leaf, so a missing
+or unrecognized header fails closed to the bounded policy. The
+`enforce-root-delegation.sh` `UserPromptSubmit` hook injects the orchestrator
+bootstrap and the canonical `orchestration` skill, so the root agent gets one
+delegation policy no matter which provider serves it. The Antigravity and
+Copilot bridges share `src/agents/bridge-role.ts`; the Claude bridge takes the
+same prompts from Codex's context. The installer copies `src/` runtime modules
+under `$CODEX_HOME/src/` and script-backed bridge assets under the hooks
+runtime, so a bridge uses the same relative layout in a checkout and an
+installation: `../src/…` for typed modules and `./codex/prompts/…` for prompt
+assets. That is what makes the bridges runnable and importable straight from a
+checkout, so their pure request-shaping helpers can be unit-tested rather than
+asserted against source text.
+
+Because the copies keep their relative layout, the `RUNTIME_MODULES` manifest in
+`src/platform/install-materializer.ts` must be closed under relative imports: a
+module listed there whose own import is missing resolves in a checkout and fails
+with `ERR_MODULE_NOT_FOUND` under `$CODEX_HOME`, which crash-loops the service
+that imports it. `tests/platform/runtime-manifest.test.ts` walks the manifest's
+transitive relative imports and fails with the exact entries to add, so adding a
+new module under `src/` means adding it to the manifest in the same change.
+
+A Claude turn has no delegation tool of its own to bound: the CLI runs without
+`Agent`/`Task`, and delegation is Codex's `multi_agent_v1__spawn_agent`, which
+Codex offers only to the orchestrator. A target repository's
+`.claude/settings.json` deny list likewise no longer guards anything a bridged
+turn does, because shell commands and file edits run in Codex under the role's
+sandbox mode and AutoDev's Codex rules (`agents/rules/`), exactly as they do
+for a Codex-served turn.
+
+MiniMax is the exception, and it needs no role prompt: its adapter
+(`src/providers/minimax.ts`) is a pass-through to
+`https://api.minimax.io` rather than a local CLI gateway. It changes only the machine boundary (allowlisted headers, no `client_metadata`) and freeform `exec` calls. CI's `mini-max-codex` workflow starts the same adapter on loopback with the tracked `minimax` profile and catalog, so CI never sends Codex's turn metadata to MiniMax either; CI git authentication uses an env-backed credential helper, never a token in a remote URL. It forwards the
+parent's own Responses payload, so the root turn arrives with the real Codex
+context and the delegation policy the `UserPromptSubmit` hook already injected;
+there is no bridge-authored prompt that could override it. That proxy therefore
+strips `x-autodev-agent-role` and `x-codex-turn-metadata` instead of honouring
+them: both are local routing metadata (the latter carries absolute workspace
+paths and git remote URLs) with no meaning to a remote API.
+
+### Counting subagents across providers
+
+A native Codex spawn is visible to the router for free: the child thread's
+`autodev/<role>` request *is* the spawn. A bridge-native spawn is not visible at
+all -- the CLI runs the child in-process and no request is ever made -- so an
+orchestrator turn served by Claude or Antigravity reported zero subagents,
+which is indistinguishable from a provider that refused to delegate.
+
+The router therefore hands every spawn-capable bridge three generated headers
+per request:
+
+| Header | Value |
+| --- | --- |
+| `x-autodev-request-id` | the router's own request UUID |
+| `x-autodev-subagent-spawn-tools` | comma-separated tool names to watch, from the execution contract provider specification |
+| `x-autodev-agent-events-url` | `http://127.0.0.1:4100/v1/agent-events` |
+
+A bridge matches the tool names its CLI reports against the watchlist and
+`POST`s `{ requestId, events: [ { type: "subagent_spawn", tool, role, status, count, children } ] }`,
+where `children` is one `{ id, model }` per subagent the call created.
+The bridge therefore needs no routing config, no provider identity, and no
+router address of its own; and because the request id is an unguessable UUID a
+bridge only learns by serving the request, presenting it is also what
+authorizes the report. A report naming an unknown request id is rejected with
+`404 router_unknown_request` and counted nowhere. Reporting is best effort in
+the bridge: a transport failure costs a count, never the model turn.
+
+Codex receives none of these headers, and MiniMax receives no spawn-tool
+watchlist -- the router already observes their children as role requests, so
+reporting them again would double-count. MiniMax's adapter uses the request id
+and events URL only for its tool telemetry and never forwards them upstream.
+
+The watchlist names only tools that actually start a child. Antigravity's
+`manage_subagents` lists and stops existing children and `define_subagent`
+declares a type for later use; neither spawns, and `manage_subagents` in
+particular is called far more often than any delegation happens -- in one
+sampled proxy log, 104 `manage_subagents` calls against 4 `invoke_subagent`
+calls. Adding it to the watchlist would turn every status poll into a spawn.
+
+One `invoke_subagent` call dispatches a *batch*: agy is instructed to send
+"subagents in batches of at most 16 per `invoke_subagent` call", and the tool
+arguments are `{"Subagents":[{"TypeName":...,"Model":...,"Prompt":...}, ...]}`.
+The bridge therefore reports one count per entry in that batch and takes each
+child's role from its `TypeName` (falling back to the `name` a
+`define_subagent` archetype registers), rather than reporting one roleless
+spawn per call. A model id is never used as a role: it is the model, not the
+role, and would fill `byRole` with model names.
+
+Where those arguments sit inside the CLI's stream-json step update is agy's
+business and has moved between versions, so the bridge finds the `Subagents`
+array by shape anywhere in the update instead of pinning one path. A step that
+exports no arguments still reports one roleless spawn -- the pre-batch
+behaviour -- so a CLI change costs role detail and batch width, never the
+spawn itself. Set `AGY_LOG_SPAWN_STEPS=1` on the Antigravity proxy to print the
+structure of each spawn step (keys kept, string values truncated, so delegation
+prompts stay out of the log) when confirming the shape against a new agy build.
+
+#### When the workspace removes the delegation tool
+
+A bridge-native CLI's own settings can remove its delegation tool from under an
+orchestrator turn, which then does all the work itself and reports zero
+subagents -- the exact reading as a provider that chose not to delegate. (A
+Claude turn cannot hit this: it delegates through Codex's spawn tool, not a
+CLI tool.)
+
+The CLI's tool inventory is the only place that absence is observable: a
+denied tool is simply missing from it and nothing later mentions it. On an
+orchestrator turn the bridge compares that list against the router's
+watchlist and, when none of the spawn tools are present, logs the workspace and
+posts `{ type: "subagent_tools_unavailable", expected, available }`. The router
+records it as a `spawn_tool_unavailable` spawn failure -- with the model that
+was left unable to delegate -- so it appears in **Subagent spawn failure
+telemetry** rather than vanishing into a zero. It is not a spawn, so it moves no
+spawn counter.
+
+Only the tool names are sent, capped at 100: a full tool inventory fingerprints
+the workspace, and the router needs only enough to name the gap. The check runs
+for the orchestrator alone, since a leaf having no delegation tool is the
+policy working.
+
+Both mechanisms land in one `status.subagents` aggregate: `total`,
+`byMechanism` (`router_alias` / `bridge_native`), `byProvider`, `byRole`,
+`byStatus`, and the 50 most recent spawns. `router_alias` spawns are attributed
+to the provider that served the `autodev/orchestrator` turn for the same
+session, which is the only join available: a child thread's request carries no
+trace of which provider ran its parent. The join is skipped for callers that
+supply no session id, because they all share one fallback bucket and would
+otherwise be credited to an unrelated caller's parent turn. A role request with
+no joinable parent turn is attributed to `unattributed` rather than guessed. `codexNativeSpawns` reports Codex's own OTLP
+`codex.multi_agent.spawn` counter beside the router's count rather than merged
+into it, because it covers only Codex-exported threads and adding the two would
+double-count every `router_alias` spawn.
+
+#### CLI-delegated children as measured turns
+
+A spawn count says a child existed; it does not say the provider did the work.
+Counting only spawns left the provider that actually ran a twelve-way fan-out
+showing exactly one turn in **Provider health and usage**, and no subagent row
+at all in **Usage by orchestrator and subagents** -- both tables are built from
+router requests, and a CLI child never makes one.
+
+The bridge's report is the only evidence those turns happened, so it is also
+what opens a usage bucket for each child. A `subagent_spawn` opens one turn per
+child, attributed to the provider, workspace, and model of the request the
+bridge was serving; the matching `subagent_result`
+(`{ type: "subagent_result", tool, role, outcome, durationMs, children }`)
+closes it with the duration the CLI actually spent. The `id` on each child is
+what pairs the close with its open, and is unique within the request.
+
+Closing is an accuracy improvement, not a requirement. A CLI child cannot
+outlive the parent turn that spawned it, so the router closes any child still
+open when the parent request finishes, measured against the time elapsed since
+its spawn. A bridge that never reports a close -- or dies mid-turn -- therefore
+still has its children counted; only the per-child duration is lost. A report
+that lands after the parent turn already ended is opened and settled at once
+rather than dropped, because bridges post without awaiting.
+
+##### What a spawn tool's completion does and does not mean
+
+For Antigravity, closing on the dispatch step is *wrong*, and the parent-turn
+bound above is the accurate path rather than the fallback. Captured directly
+from `agy -p ... --output-format stream-json`, one `invoke_subagent` dispatch
+emits exactly two updates:
+
+```jsonc
+{ "step_index": 2, "state": "ACTIVE", "step_type": "subagent", "tool_name": "invoke_subagent",
+  "subagent_info": { "subagents": [ { "type_name": "research", "role": "Line Counter",
+                                      "conversation_id": "b1655ed9-…", "log_uri": "file:///…" } ] } }
+{ "step_index": 2, "state": "DONE",   "duration_seconds": 0.043191, … }
+```
+
+The turn containing that dispatch ran 45.2 seconds and the child genuinely did
+the work. `invoke_subagent` is fire-and-forget: `DONE` reports that the
+*hand-off* finished in 43ms, and agy emits no later step when a child completes
+-- the child's result reaches the parent as context, invisibly. The child's true
+runtime is therefore not observable from this stream at all, and
+`manage_subagents` is how agy tends children afterwards rather than a completion
+signal.
+
+So a bridge must not treat a spawn tool's `DONE` as its children finishing. Doing
+so reported ~40ms for children that ran for minutes, which is worse than
+reporting nothing: it fills the usage tables with a number that looks like a
+measurement. Antigravity children stay open and close with the parent turn,
+which bounds them honestly -- the child ran somewhere inside that window. A
+terminal state other than `DONE` does close immediately, because that means the
+hand-off itself failed and there was never a child to wait for.
+
+Read a bridge-native child's duration as an upper bound, not a measurement.
+
+These turns are deliberately *not* fed through the router's event path.
+Provider health, cooldown, and the fallback chain describe routing decisions
+this router made, and a child it never routed must not move them. Only the
+usage buckets -- which measure work done behind the router, not routing --
+count them, tagged with the `subagent` origin.
+
+Two details follow from that:
+
+- `status.subagents.byStatus` is the breakdown of how spawns *ended*: a close
+  moves a child from `started` to `success` or `failure`, and each row in
+  `recent` carries its own `settled` tally so a batch shows how its children
+  finished rather than only how many it began. It previously reported
+  `{ started: N }` forever, which read as "none of these ever finished" about
+  children that had all completed.
+- A child whose spawn step exported no role is counted under
+  `unattributed-subagent`, never the bare `unattributed` role. That key is
+  roleless *orchestrator* traffic, so folding children into it would credit a delegation to its parent. `status.subagents.byRole` still says `unattributed` for the same
+  children; each key is unambiguous within its own table.
+- A child's model is its own only when the batch entry names a concrete one.
+  agy writes `inherit` when the child runs on whatever the parent was routed
+  to, which is not a model id, so the router resolves it to the parent's model.
+  A concrete child model that no tier configures still remains attributed to that provider in status/telemetry; accounting must not silently drop models merely because they are absent from the configured catalog. The cumulative `status.subagents.total` is distinct from
+  the bounded newest-first `status.subagents.recent` window (capped at 50).
+  When recent history cannot cover the cumulative count, the status CLI labels the summary and totals as `X recent / Y total`; it never inflates the recent subtotal to match all-time history.
+
+The shared reporter is `src/telemetry/agent-events.ts`; the bridges import it
+directly, and the installer ships the module beside them. The native spawn
+script/SSE helper is `src/agents/spawn-tools.ts`, and the Antigravity and
+Copilot bridges' per-turn `autodev_spawn` server launches the shared
+`src/mcp/spawn-shim.ts`. Claude children are `router_alias` spawns: a Claude
+orchestrator spawns through Codex, so its children are ordinary
+`autodev/<role>` requests.
+
+### Reasoning effort on the Antigravity bridge
+
+`agy` encodes reasoning depth in the model id itself (`gemini-3.8-flash-high`)
+and rejects the whole invocation when a separate `--effort` disagrees:
+
+```
+Error: invalid model selection (--model "gemini-3.8-flash-high" --effort "medium"):
+--model gemini-3.8-flash-high conflicts with --effort=medium
+```
+
+The router picks the model per tier and the caller's reasoning effort is an
+independent value, so the two routinely disagree and the turn fails before the
+CLI starts. The model id is the more specific choice, so it wins: the bridge
+omits `--effort` entirely for any model whose id already carries a
+`-low`/`-medium`/`-high` suffix, and passes it only for models that do not
+(`claude-sonnet-4-6`, for example). `orchestrator.reasoningEffort.antigravity`
+therefore has effect only through the model the orchestrator tier selects.
+
+### Reasoning effort on MiniMax
+
+MiniMax-M3 supports only `none` or `high` reasoning effort, as declared in its
+model catalog entries (`config/catalogs/minimax-model-catalog.json` and
+`config/catalogs/codex-model-catalog.json`). It does not support `medium`
+or `low` reasoning levels.
+
+Agent config TOML files under `agents/roles/` omit role-level
+`model_reasoning_effort` declarations so each child agent inherits
+the configured model reasoning effort (e.g. `default_subagent_reasoning_effort = "high"`
+under the MiniMax profile, or the orchestrator's pinned fallback effort). All
+roles inherit their model's effort cleanly without triggering invalid effort
+rejections on MiniMax. Similarly, `scripts/run-provider-agent.sh` omits
+`-c model_reasoning_effort=...` when role effort is absent, allowing configured
+model/profile effort to inherit rather than forcing a fallback medium effort.
+
+### Streaming provider progress back to the parent
+
+A bridge that reports only the final assistant message leaves the parent (and
+the operator watching it) with a silent gap for the whole turn. The Antigravity
+and Copilot bridges therefore stream the provider's intermediate output as
+Responses reasoning summary events (`response.reasoning_summary_text.delta` on
+a `reasoning` item at output index 0) alongside the answer text at output
+index 1. The Claude bridge instead emits each item as it finishes -- see
+"Claude bridge: Codex executes every tool":
+
+- Antigravity: `step_update` tool and step activity.
+- Copilot: `commentary`-phase message deltas, `report_intent` narration, and
+  each `tool.execution_start`, parsed from the CLI's `--output-format json`
+  JSONL stream.
+
+Each bridge holds its SSE headers back until the provider produces real output
+(reasoning, a tool call, or answer text). Until that point a provider failure
+is still reported as an HTTP status the router can fall back on; after it, the
+turn is genuinely under way and the parent watches it live. Synthetic
+pre-run activity is buffered and flushed when the stream opens, so it never
+commits the response on its own.
+
+### Canonical turn metadata and `workspaces` map contract
+
+Codex's canonical transport carries turn metadata as the
+`x-codex-turn-metadata` request header (the local model router forwards this
+verbatim to the chosen provider bridge). The metadata contains a
+`workspaces` map whose key is the absolute repo/workspace path (the
+Codex source inserts `repo_root` as the map key); each value carries
+only git metadata. Provider bridges therefore consult each `workspaces`
+map key as an absolute-path candidate first, and only fall back to the
+legacy structured `cwd`/`project_root`/`working_directory`/`path` fields
+inside each value when no key is a directory that exists on this host.
+This matches the upstream Codex contract: values do not carry the path.
+
+Callers that cannot set custom headers may instead embed the same JSON
+under `client_metadata["x-codex-turn-metadata"]` in the request body;
+the local router normalizes that back into the canonical header shape
+so provider bridges only ever have to parse one form. A caller-supplied
+`extra_headers` field is discarded outright rather than forwarded: it is an
+SDK escape hatch that would bypass the router's credential and header
+allowlist. The resolution
+order inside `resolve_cwd` / `resolveCwd` is therefore:
+
+1. Top-level `cwd`, `project_root`, or `working_directory` on the request.
+2. The same fields inside `metadata`.
+3. The canonical `workspaces` map keys (absolute paths).
+4. The structured path fields inside each `workspaces` value.
+5. The explicit `CODEX_PROJECT_ROOT` operator override.
+6. Fail closed with a `400 invalid_request_error` (and a `WorkspaceResolutionError`
+   in the bridge) listing the fields the request did carry, instead of
+   silently defaulting to an unrelated parent in this repository.
+
+Steps 3 and 4 refuse an ambiguity rather than resolving one. If more than one
+listed workspace exists on this host and the request does not say which is
+active, the bridge raises `AmbiguousWorkspaceError` (a `WorkspaceResolutionError`,
+so it still surfaces as the same `400`). Taking the first would let JSON key
+order -- which carries no meaning and which the caller does not control --
+decide which repository a coding agent edits, so a turn rooted in one repo
+could land in another with nothing but a changed working tree to show for it.
+`CODEX_PROJECT_ROOT` is the documented tiebreak and settles the ambiguity when
+a multi-root turn is legitimate.
+
+The router's telemetry label reads the same map from the other end, and the two
+must agree: a label naming a different repository than the one the agent edited
+is worse than no label. The router imports `WORKSPACE_KEYS` and `isDirectory`
+from the shared resolver rather than reimplementing the path check. It also
+imports `parseTurnMetadataJson` there, so turn-metadata object validation has
+one owner. The router previously took the first non-empty key while the bridges
+took the first key that is a directory here, so a stale first entry made
+telemetry and execution disagree silently. Where the bridge refuses an
+ambiguity, the router records no workspace instead of inventing one.
+`tests/workspace-resolution.test.ts` and
+`test_all_provider_bridges_resolve_a_workspace_identically` pin both halves,
+the latter by running the shared resolver over the same inputs
+and asserting identical answers.
+
+The JavaScript CLI adapters share this resolver in
+`src/shared/resolve-workspace.ts`; the installer deploys that module
+alongside the runtime adapter copies, at `codex/lib/` beneath the hooks
+directory so the same `./codex/lib/…` specifier resolves in a checkout too. The typed Claude bridge imports the shared resolver and is covered by the same
+workspace-resolution tests. Provider-specific code should pass its
+operator override into the shared resolver rather than reimplementing request
+metadata parsing or workspace selection.
+
+Provider bridges also forward only delegated user-task content and add their
+role boundary as provider-controlled instructions. Parent system/developer
+messages are not serialized as fake `[system]` or `[developer]` turns, which
+prevents a leaf model from mistaking orchestration context for a user prompt
+injection. Agent creation failures that occur in the Codex app-server before a
+request reaches the local router cannot be repaired or intercepted by AutoDev;
+use an explicit `autodev/<role>` model, keep the parent task rooted in the
+intended repository, and inspect the app task/log event for those failures.
 
 ## Provider paths and constraints
 
 | Provider    | Local path                                                           | Important constraint                                                                                                                                 |
 | ----------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Claude      | Codex -> Claude Responses bridge on `127.0.0.1:4000` -> Claude CLI   | Uses `CLAUDE_CODE_OAUTH_TOKEN`; the selected role model and reasoning effort are forwarded.                                                          |
-| MiniMax     | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                | Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them.                                                      |
-| Antigravity | Codex -> LiteLLM `:4001` -> Antigravity adapter `:4002` -> `agy` CLI | `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode. |
+| MiniMax     | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                | Pass-through to the remote API, not a CLI gateway; only `accept`, `authorization`, and `content-type` headers are forwarded, and `client_metadata` is dropped. MiniMax-M3 supports only `none` or `high` reasoning effort. Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them. |
+| Antigravity | Codex -> Antigravity adapter `:4002` -> `agy` CLI | `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode. |
+| GitHub Copilot | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI | Requires an authenticated local Copilot CLI; unavailable adapters are skipped by fallback. |
 | Local router | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges. |
 
 The Claude Responses adapter is not the GPT passthrough: it launches the
-authenticated Claude CLI and translates Claude's stream into Responses events.
+OAuth-authenticated Claude CLI. The `LITELLM_API_KEY` used between the local
+router and local bridge is only a localhost gateway credential; it is removed,
+along with Anthropic API-key variables, before the Claude CLI subprocess starts.
+The bridge intentionally does not pass Claude's `--bare` flag: Claude documents
+that mode as skipping OAuth/keychain authentication, while AutoDev relies on
+`CLAUDE_CODE_OAUTH_TOKEN` and the first-party subscription flow.
+
+### Claude bridge: Codex executes every tool
+
+Claude is served as the model behind a Codex agent turn, not as a second agent
+runtime. Before this design the CLI ran its own `Read`, `Edit`, `Bash`, `Skill`,
+and `Agent` tools inside its process: Codex saw none of them, the app showed a
+Claude-served thread with no tool calls, skills, or thinking, an interrupted
+turn left no trace in the thread history, and a later provider continuing the
+thread truthfully reported that nothing had been done while the edits sat in
+the workspace (observed 2026-09-18, worker thread
+`01a0b664-aa5f-7dd0-b848-3f321b1f680a`).
+
+- **Tool surface.** `src/providers/claude-codex-tools.ts` mirrors the tools on
+  Codex's request -- in code mode the `functions` namespace inside the
+  `additional_tools` input item: the `exec` custom tool (JavaScript against a
+  `tools` global carrying `exec_command`, `apply_patch`, the role's MCP servers,
+  and, for an orchestrator, `multi_agent_v1__*`) and function tools such as
+  `wait` -- into an MCP server, `src/mcp/codex-tools-shim.ts`, that the CLI is
+  given with `--strict-mcp-config`. The CLI runs with `--tools ""`: no built-in
+  tool, except `WebSearch`/`WebFetch` on turns where Codex offered its hosted
+  `web_search`, which no tool script can perform.
+- **Parking.** When Claude calls a mirrored tool, the shim blocks and the bridge
+  (`src/providers/claude-turn.ts`) emits the call as a `custom_tool_call` or
+  `function_call` item, completes the response, and keeps the CLI parked. Codex
+  runs the call in the turn's sandbox with its approvals and hooks, the app
+  renders it, and Codex's next request carries the output; the bridge matches
+  its `call_id`, resolves the shim call, and streams the rest of the turn into
+  that request's response. Calls from one assistant message go out together.
+  Codex appends its own messages after a call's output -- a
+  `<subagent_notification>`, a user's steer, a `<turn_aborted>` notice -- so the
+  awaited results are the outputs in the input's tail, allowing such messages
+  (`src/shared/responses-continuation.ts`), and those messages reach the parked
+  turn with the results rather than being lost.
+  `CLAUDE_CODE_BRIDGE_PARK_SECONDS` (default 1800) bounds how long a parked turn
+  waits; the CLI's idle timeout does not run while Codex holds a call.
+- **Resuming without the CLI.** A continuation whose calls the bridge no longer
+  holds (a restart, or a park timeout) starts a fresh CLI from the rendered
+  transcript, which includes every earlier tool call and output, so the turn
+  continues rather than starting over blind.
+- **Incremental items.** Each thinking block, text block, tool call, and native
+  web-research step (`Searched the web: …`) is emitted as its own item and
+  finished as soon as it ends, so Codex records it immediately and an
+  interrupted turn keeps what already happened. A failure after output has
+  streamed ends the response `incomplete` with the shared limit notice.
+- **Cancellation.** A client that disconnects mid-response cancels the turn and
+  kills the CLI; nothing keeps working after its client went away. Stopping the
+  bridge (SIGTERM/SIGINT, as a launchd restart or reinstall does) cancels every
+  live turn first, so no parked CLI survives as an orphan.
+- **Telemetry.** A call is reported `tool_requested` on the request that emits
+  it and `tool_executed` (with the exact wait) on the request that returns its
+  output, as the MiniMax adapter does. Skill reads go through Codex's tools and
+  are observed by Codex's own skill-read hook.
+- **Routing.** The router prefers the provider that issued the calls a request
+  is answering (see "Tool-result affinity"), so the continuation reaches the
+  parked turn.
+
+### Tool-result affinity
+
+The router picks a provider per request, and Codex sends a tool's output on a
+new request. Without affinity that request can land on a different provider
+from the one that asked for the call, so a single turn hops providers mid-step
+(the 2026-09-18 worker turn went Antigravity → MiniMax → Claude). The router
+therefore records the `call_id` of every tool call a provider streams
+(`src/router/tool-call-ownership.ts`, bounded to the most recent 4096), and a
+request whose input ends in outputs for those calls -- after which Codex may
+have appended its own user or developer messages -- moves the issuing provider
+to the front of its candidates, for role and orchestrator turns alike.
+It is a preference, not a pin: a disabled or cooling provider is skipped as
+usual and the next provider continues from the replayed history. An
+orchestrator with no owned calls to answer keeps its existing session
+preference.
+
 The local router owns the GPT branch separately and forwards it to
 `https://chatgpt.com/backend-api/codex/responses` with the existing Codex OAuth
 token and account ID from `auth.json`.
 
-The five LaunchAgents under `scripts/codex/launchagents/` are the supported
+The five LaunchAgents under `config/launchagents/` are the supported
 persistence path for this Desktop host. The installer loads them with `KeepAlive`
 and also retains idempotent direct-start hooks as a fallback when `launchctl` is
 inaccessible.
 
+Long-running agent turns are supported with two complementary watchdog mechanisms:
+an inactivity watchdog (`CODEX_ROUTER_STREAM_IDLE_TIMEOUT_MS`, default 15 minutes / 900,000 ms)
+that monitors data flow on active streams and resets every time chunks or synthetic reasoning
+heartbeats arrive, and an overall wall-clock ceiling (`CODEX_ROUTER_UPSTREAM_TIMEOUT_MS`, default
+2 hours / 7,200,000 ms; set to `0` for unbounded). If an upstream timeout occurs, the router
+retains the downstream connection and cleanly emits a terminal `response.failed` SSE event
+with the failure detail rather than abruptly dropping the socket. In addition, the Antigravity
+CLI bridge sets `--print-timeout 0` by default (`AGY_PRINT_TIMEOUT`, 0 = wait until turn completes)
+and detects background task waiting loops on CLI stderr, maintaining active heartbeat pulses
+so long delegating turns remain live throughout.
+
 ## Versioned integration, source of truth, and setup
 
-`scripts/codex/` owns the versioned machine-local Codex integration materialized
-into `/Users/henrykirk/.codex` through managed symlinks and runtime copies. Keep provider credentials in
-`/Users/henrykirk/.codex/.env` or Keychain; no secret belongs in this
+`agents/` and `config/` own the versioned machine-local Codex integration materialized
+into `$CODEX_HOME` through managed symlinks and runtime copies. Keep provider credentials in
+`$CODEX_HOME/.env` or Keychain; no secret belongs in this
 repository.
 
 All non-secret user-level provider configuration, profiles, model catalogs,
-provider adapters, startup hooks, and installer logic are versioned in this
-repository under `scripts/codex/` and `scripts/`. The installer is the only
-supported materialization path into `/Users/henrykirk/.codex`; runtime copies,
-symlinks, logs, and `.env` credentials remain machine-local and are not
-versioned.
+provider adapters, startup hooks, shared skill content, and installer logic
+are versioned in this repository under `agents/`, `config/`, and `scripts/`. The
+installer is the only supported materialization path into
+`$CODEX_HOME`; materialized runtime copies and symlinks, logs, and
+`.env` credentials remain machine-local and are not versioned.
 
-- User-level role definitions: `scripts/codex/agents/*.toml`, materialized as
-  managed regular-file copies under `$CODEX_HOME/agents/`. The role loader must
-  receive regular files rather than symlinks; the installer replaces symlinks and
-  verifies exact content matches. There is one flat role registry;
+- User-level skills: `.rulesync/skills/{lsp-mcp-server,orchestration,remove-legacy-shims}`
+  are versioned directories owned by AutoDev in the single canonical skill
+  source (also the Rulesync input). The installer creates absolute,
+  directory-level symlinks under `$HOME/.agents/skills/`, so Codex reads the
+  canonical skill files without a second copied source of truth. Keep each
+  source `SKILL.md` as a regular file; `--check` rejects file-level or relative
+  skill links because Codex currently skips symlinked `SKILL.md` files.
+- Native command rules: `agents/rules/default.rules` is the versioned
+  source for restrictive Codex `prefix_rule` entries. The installer symlinks it
+  to `$CODEX_HOME/rules/default.rules`; it replaces the old custom Git hook and
+  is testable with `codex execpolicy check` before restart. These prefix rules
+  cover direct command tokens and the native engine's supported shell parsing;
+  they are not a general-purpose parser for arbitrary environment wrappers or
+  global-option placement. Explicit localhost diagnostic URLs are allowed for
+  `curl`; remote curl commands remain subject to the normal approval policy.
+  Destructive `git clean`, `git rebase`, whole-tree `git restore`, force branch
+  deletion, force push, superuser/raw-disk formatting, and root/home wildcard
+  deletion commands are forbidden.
+- Current user-level role projection: `agents/roles/*.toml`, rendered from
+  the shared `base.md` + `leaf.md` prompt layers and materialized as managed
+  regular-file copies under `$CODEX_HOME/agents/`. These files remain a transitional input while RuleSync subagent/agent-role parity is completed; the target is canonical RuleSync ownership with Codex TOML as a generated projection, not a second editable authority. The role loader must receive
+  regular files rather than symlinks; the installer replaces symlinks and
+  verifies exact rendered content matches. Code-oriented roles (`default`,
+  `explorer`, `worker`, `validator`, and `smart`) enable the `codegraphcontext`,
+  `cocoindex-code`, and `lsp` servers with the `ccc` and `lsp-mcp-server`
+  skills. The shared prompt makes CGC primary, CocoIndex the unknown-location
+  fallback, and LSP the exact-semantics fallback. `browser-tester` and `smart`
+  explicitly
+  enable the user-level `playwright` MCP server with the approved browser tool
+  allowlist; the role-local `enabled = true` is intentional because a role block
+  otherwise overrides the user-level server entry. `browser-tester` and
+  `docs-researcher` explicitly disable `lsp`. There is one flat role registry;
   provider assignment is expressed by each role's `model_provider` and
   `model`, not by a provider-specific directory, launcher-specific role name,
   or duplicated role definition.
 - `.codex/config.toml` is project execution configuration only. It does not
   register agents or own provider role definitions.
-- User-level provider/role configuration: `scripts/codex/config.toml`, which
-  is symlinked to `/Users/henrykirk/.codex/config.toml`. This is required by
-  Codex because project-local config cannot override provider/auth keys. The
-  user layer registers the same codebase-agnostic roles with paths relative to
-  `$CODEX_HOME/agents/` for use from any repository. Every custom provider must set
-  `model_provider` at the active user/profile layer, define a matching
-  `[model_providers.<id>]` entry with `wire_api = "responses"`, and set
-  `requires_openai_auth = false` when it uses its own credential or local
+- MCP servers: `.rulesync/mcp.jsonc` is the only source.
+  - The installer writes `~/.claude.json`, `~/.copilot/mcp-config.json`, and
+    `~/.gemini/config/mcp_config.json` from it with `rulesync generate --global`.
+  - It merges the Codex projection into `$CODEX_HOME/config.toml`.
+  - Role TOMLs, and the Antigravity and Copilot bridges, take their launch
+    definitions from that generated output. A Claude turn reaches MCP servers
+    through Codex's tools, so it needs none.
+- User-level provider/runtime configuration: `config/config.autodev.toml` is
+  the authoritative portable source for AutoDev-owned provider/runtime settings that RuleSync does not model, composed into `$CODEX_HOME/config.toml`
+  as an atomic regular file by `src/config/compose-user-config.ts`. The former
+  `config/config.toml` seed is retired; valid legacy symlink
+  targets are migrated once and broken targets fail closed.
+  Composition is required because Codex loads user-level settings at startup and
+  project-local config cannot override provider/auth keys. The user layer registers
+  the same codebase-agnostic roles with paths relative to `$CODEX_HOME/agents/` for
+  use from any repository while preserving machine-local settings (notify targets,
+  trusted hook hashes, project trust entries, non-AutoDev MCP servers and skills).
+  Every custom provider must set `model_provider` at the active user/profile layer,
+  define a matching `[model_providers.<id>]` entry with `wire_api = "responses"`,
+  and set `requires_openai_auth = false` when it uses its own credential or local
   gateway.
-- CLI profiles: `scripts/codex/profiles/*.config.toml`; these remain useful for
+- CLI profiles: `config/profiles/*.config.toml`; these remain useful for
   direct turns and provider-specific defaults, while the role registry remains
   shared across profiles. `run-provider-agent.sh` reads roles from
   `$CODEX_HOME/agents/`, just like the normal user-level Codex registry.
-- Model catalogs: `scripts/codex/catalogs/*.json`; the per-provider catalogs
+- Model catalogs: `config/catalogs/*.json`; the per-provider catalogs
   support CLI profiles and `codex-model-catalog.json` is the combined user
   catalog used by native app-server configuration.
 - Hooks, adapters, and direct-start scripts: `scripts/ensure-*`,
-  `scripts/run-*`, and the corresponding files in `scripts/codex/`; the
+  `scripts/run-*`, and the runtime files; the
   provider shell wrappers and Responses adapters from `scripts/` are
-  checksum-checked runtime copies in `/Users/henrykirk/.codex/hooks/`. A
+  checksum-checked runtime copies in `$CODEX_HOME/hooks/`. A
   direct symlink would be denied by macOS Desktop privacy controls when the
   ChatGPT app launches it; the installer rematerializes the copy whenever the
   versioned source changes.
-- LiteLLM model mapping: `scripts/codex/litellm/antigravity.yaml`.
 
 ### Operational notes
 
@@ -145,23 +1882,115 @@ versioned.
 - The active parent provider is the tracked `local_model_router` at
   `http://127.0.0.1:4100/v1`. It dispatches by `model`: GPT/Codex models go to
   the Codex OAuth Responses endpoint, while `sonnet`, MiniMax, and Gemini
-  models go to the existing provider bridges. This preserves the OpenAI/Codex
-  parent model while making dropped child provider bindings harmless.
+  models go to the existing provider bridges. The parent runs on the
+  `autodev/orchestrator` alias (see **Orchestrator routing and fallback**),
+  which keeps orchestration on the primary Codex model while allowing the
+  router to degrade to another provider when Codex is out of usage.
+  `default_subagent_model = "autodev/default"` likewise ensures native default
+  child work enters the multi-provider priority groups instead of bypassing
+  them with a concrete Codex model.
 - `[agents].max_depth = 1` in the Codex config limits native Codex child
-  creation; it does not remove tools from the separate Claude Code process
-  launched by the Claude bridge. `--disallowed-tools Agent,Task` and the
-  Claude settings deny list are the authoritative no-descendant controls for
-  that process.
-- The five launchd plist sources are active and managed by the installer.
-  `launchctl bootout`/`bootstrap`/`kickstart` refresh them during `--restart`,
-  while direct-start hooks remain an idempotent fallback.
+  creation, including a Claude turn's: the Claude CLI runs with no built-in
+  tools, so it can only delegate through Codex's own spawn tool.
+- All five services -- the router and the four provider bridges -- are launchd
+  agents with `RunAtLoad` and `KeepAlive`, managed by the installer.
+  `launchctl bootout`/`bootstrap`/`kickstart` refresh every one of them on each
+  install, while direct-start hooks remain an idempotent fallback for a
+  sandboxed run where `launchctl` is unreachable. Those hooks adopt the agent
+  when one is loaded rather than backgrounding a rival copy beside it: a process
+  launchd does not own is one nothing restarts, so it survives installs still
+  running the code it loaded days earlier.
 
 Install or repair the managed machine integration with:
 
 ```sh
-bash /Users/henrykirk/AutoDev/scripts/codex/install-codex-integration.sh --restart
-bash /Users/henrykirk/AutoDev/scripts/codex/install-codex-integration.sh --check
+bash scripts/install.sh
+bash scripts/install.sh --check
 ```
+
+## Build vs. delegate
+
+This integration sits next to two off-the-shelf components that advertise
+overlapping capabilities -- LiteLLM (native Anthropic/OpenAI/Gemini providers,
+routing, fallbacks, cooldowns) and the Codex app-server. What is custom here is
+custom deliberately. This section records why, so the question does not have to
+be re-derived.
+
+### The provider bridges are not model gateways
+
+Three of the four bridges spawn a subscription-authenticated coding-agent CLI.
+The Antigravity and Copilot bridges return a *completed agent turn* -- file
+edits, tool calls, and for Antigravity its own subagents -- not a model
+completion. The Claude bridge is the exception: it serves Claude as a model
+whose every tool call Codex executes (see "Claude bridge: Codex executes every
+tool"):
+
+| Bridge | Authenticates as |
+| --- | --- |
+| `src/providers/claude.ts` | the `claude` CLI's Claude Code OAuth subscription. `claudeEnvironment()` **removes** `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment so the CLI cannot silently fall back to metered API billing. |
+| `src/providers/antigravity.ts` | the `agy` CLI's Antigravity subscription. `ensure-codex-antigravity-proxy.sh` refuses to start unless `useAiCredits=false` and `useG1Credits=false`. |
+| `src/providers/copilot.ts` | the `copilot` CLI's own login. |
+| `src/providers/minimax.ts` | a plain `MINIMAX_API_KEY`; no subprocess. |
+
+LiteLLM's `anthropic/*` and `gemini/*` providers speak HTTPS with an API key:
+a different account, a different meter, and per-token billing where these have
+a flat subscription. They would also return a completion where these return an
+agent turn, so delegation across provider bridges could not hold. MiniMax
+is the one bridge whose *auth* would suit a LiteLLM deployment, but most of it
+is the `multi_agent_v1` namespace flatten/re-expand round-trip that LiteLLM has
+no equivalent for; without that the orchestrator emits plain text instead of
+delegating.
+
+### The router owns routing, not LiteLLM
+
+LiteLLM genuinely implements fallbacks, cooldowns, retries, load balancing, and
+model aliases, so that part of the router overlaps it on paper. The router keeps
+the job because its fallback is entangled with semantics LiteLLM cannot express:
+
+- per-provider orchestrator `reasoningEffort`, applied per fallback candidate;
+- the spawn-capability validation that fails the process at config load;
+- the session-to-provider join that attributes `router_alias` subagents to the
+  provider that ran the parent turn;
+- namespaced-tool flattening for every non-Codex provider;
+- the declared-limit contract: cooldowns keyed to a provider's own stated reset
+  time rather than a generic backoff curve, and a last-resort pass that treats a
+  cooldown as advice rather than a bar so an orchestrator turn survives a tier
+  that is briefly all cooling at once;
+- the `x-autodev-*` headers, which the router **generates** per request from its
+  own alias dispatch. LiteLLM can forward allowlisted client headers; it cannot
+  mint them, and a forwarded client value would be exactly the spoofable input
+  `downstreamHeaders` refuses to trust.
+
+LiteLLM was previously deployed in front of the Antigravity adapter. It routed
+nothing -- one upstream, an identity model map, `num_retries: 0`, no callbacks,
+budgets, caching, or provider translation -- and it cost a config-drift
+self-healer (LiteLLM reads its YAML once at start), a header workaround (it
+dropped raw headers, so the router smuggled its own through the Responses body),
+and a correctness bug (it mistranslated `response.failed`, so the adapter faked
+a *completed* response carrying the error as assistant text). The router calls
+the adapter directly now and all three are gone.
+
+### What the Codex app-server does and does not offer
+
+The app-server exposes thread, turn, `command/exec`, `model/list`, filesystem,
+and approval methods over JSON-RPC. It has no provider selection, fallback,
+retry, model aliasing, usage telemetry, OTLP export, or concurrency limiting;
+`thread/start` accepts a `model` but no provider orchestration. It therefore
+does not overlap the router's job. A `thread/list` snapshot was surfaced in
+`/status` for a while; nothing in routing, concurrency, or fallback ever read
+it, and it cold-spawned a `codex app-server` process on every refresh, so it
+was removed rather than reworked.
+
+### Why the OTLP receiver lives in the router
+
+Codex's exporter posts logs, traces, and metrics to one endpoint, and the
+router is the only always-on local service on the request path, so it receives
+them. Co-location also lets `/status` present router-owned request telemetry
+and Codex-native metrics together while keeping them separately sourced --
+`codexNativeSpawns` sits *beside* the router's subagent count rather than being
+summed into it, because adding the two would double-count every `router_alias`
+spawn. The router owns provider selection, fallback, cooldown, concurrency, and
+origin telemetry because Codex emits none of those semantics.
 
 ## Distribution and validation strategy
 
@@ -177,8 +2006,9 @@ Target state and current verification:
 
 | Requirement | State |
 | --- | --- |
-| OpenAI/Codex orchestrator and tracked user-level cross-provider TOMLs | Configured under `scripts/codex/agents/` and materialized as verified regular-file copies under `~/.codex/agents/`. |
-| Versioned scripts/hooks/config installed into `~/.codex` | Configured; profiles/catalogs/config are symlinked and app-executed hooks are checksum-checked runtime copies; `install-codex-integration.sh --check` passes. |
+| OpenAI/Codex orchestrator and tracked user-level cross-provider TOMLs | Configured under `agents/roles/` and materialized as verified regular-file copies under `~/.codex/agents/`. The orchestrator runs on the `autodev/orchestrator` alias so it degrades to Claude Opus, MiniMax, then Gemini when Codex is out of usage. |
+| Shared user-level skills | Configured under the canonical `.rulesync/skills/` source as AutoDev-owned versioned directories and materialized under `~/.agents/skills/`; `scripts/install.sh --check` verifies every managed skill link. |
+| Versioned scripts/hooks/config installed into `~/.codex` | Configured; profiles/catalogs/config are symlinked and app-executed hooks are checksum-checked runtime copies; `scripts/install.sh --check` passes. |
 | Native app-server custom-provider routing | Verified: `thread/start` selects the custom provider; Claude reached its upstream session-limit response. |
 | Direct CLI provider turns | Transport paths verified; Claude was session-limited, MiniMax was upstream high-demand limited, and Antigravity was quota-limited. |
 | Desktop high-level native fanout across external models | Tracked model-router and user-level role/config wiring is installed; requires a fully restarted Desktop app and a new thread for fresh `spawn_agent` verification through `127.0.0.1:4100`. |
@@ -188,3 +2018,34 @@ after the user-level provider configuration reload. The repository’s roles,
 user-level provider registry, explicit non-OpenAI auth boundaries, combined
 model catalog, hooks, gateways, and direct CLI/app-server transports are
 configured and validated.
+
+### Cross-provider execution contract
+
+`config/execution-contract.json` is the current generated runtime contract for role kind, read-only intent, expected MCP/skill capabilities, and adapter spawn-tool metadata. Today it is projected from native role TOMLs by `src/config/render-execution-contract.ts`; the installer rejects drift. This is a transitional projection path, not a long-term competing source of truth: once RuleSync owns the corresponding agent/subagent semantics losslessly, generate/validate the runtime contract from that canonical RuleSync state and remove duplicate editable role authority. The Antigravity and Copilot bridge prompt paths append the canonical
+role fragment from `agents/prompts/roles/` and use this JSON only for
+capability metadata; the Claude bridge receives the rendered role TOML's
+instructions in Codex's own context. The installer deploys both beside the bridge runtime
+modules. Native TOML role files remain the current Codex runtime configuration surface; the target is for them to become generated RuleSync projections once parity is proven. Prompt or
+capability changes must be validated with the bridge-role matrix and native
+prompt-rendering tests.
+
+### Route manifest ownership
+
+`config/model-routing.json` now owns provider
+route metadata: model-family patterns, local bridge URLs, health probes, and
+credential environment keys. The router derives its route table from that
+manifest and validates every provider entry. Native model capability metadata
+(such as supported reasoning levels) remains in `config/catalogs/`, while
+role MCP and skill exposure is currently projected through the native role TOMLs/execution contract, but the canonical target moves these RuleSync-supported agent-facing definitions into RuleSync and removes duplicate editable authority. Older installed routing files that lack the new `routes`
+block temporarily use the built-in migration defaults until the installer is
+rerun; the versioned source is the authoritative routing configuration.
+
+### Optional local router authentication
+
+The router supports an opt-in Bearer-token boundary for `/v1/responses` via
+`CODEX_ROUTER_AUTH_TOKEN`. Set the same token in the provider client environment
+(`CODEX_ROUTER_AUTH_TOKEN`) and keep it in the private `$CODEX_HOME/.env`; the
+launcher loads that file without printing it. Authentication is disabled when
+unset so existing installations remain operational during migration. After
+setting it, restart the router and Codex together and confirm
+`/status.authentication.responseRequests` is `true`.

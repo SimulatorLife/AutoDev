@@ -1,0 +1,263 @@
+# Portable, AutoDev-owned slice of the Codex user-level configuration.
+#
+# This file is the Phase 1 "portable source" described in
+# docs/AUTODEV_PLATFORM_MIGRATION.md: it holds only the AutoDev-owned scalars,
+# provider definitions, and declarations that are safe to regenerate on any
+# machine. It intentionally excludes machine-local state (notify targets,
+# hooks.state trusted hashes, projects trust entries, marketplaces, TUI/
+# notice/desktop/apps/plugins/memories settings, node_repl/cua_repl servers,
+# Composed into $CODEX_HOME/config.toml by src/config/compose-user-config.ts; preserve AutoDev-owned keys here only.
+model = "autodev/orchestrator"
+model_provider = "local_model_router"
+openai_base_url = "http://127.0.0.1:4100/v1"
+model_verbosity = "low"
+approval_policy = "never"
+model_reasoning_effort = "xhigh"
+personality = "pragmatic"
+sandbox_mode = "workspace-write"
+suppress_unstable_features_warning = true
+service_tier = "default"
+model_catalog_json = "./codex-model-catalog.json"
+approvals_reviewer = "user"
+background_terminal_max_timeout = 600000
+
+[sandbox_workspace_write]
+# Permit diagnostics against localhost services from workspace-write sessions.
+# External filesystem inspection for read-only roles is granted explicitly by
+# those roles' danger-full-access policy and read-only instructions.
+network_access = true
+
+[otel]
+environment = "autodev"
+exporter = { otlp-http = { endpoint = "http://127.0.0.1:4100/v1/logs", protocol = "json" } }
+trace_exporter = { otlp-http = { endpoint = "http://127.0.0.1:4100/v1/traces", protocol = "json" } }
+metrics_exporter = { otlp-http = { endpoint = "http://127.0.0.1:4100/v1/metrics", protocol = "json" } }
+log_user_prompt = false
+
+[analytics]
+enabled = true
+
+[features]
+shell_snapshot = true
+unified_exec = true
+steer = true
+multi_agent = true
+multi_agent_v2 = false
+js_repl = false
+memories = false
+respect_system_proxy = true
+chronicle = false
+goals = true
+hooks = true
+fast_mode = false
+prevent_idle_sleep = true
+personality = true
+image_generation = false
+
+[tools]
+# Website research is a native Codex capability. Browser automation is not a
+# root-turn tool; browser-tester/smart role configs enable Playwright only when
+# their bounded UI-testing work requires it.
+web_search = true
+
+[model_providers.claude_code_subscription]
+name = "Claude Code OAuth subscription bridge"
+base_url = "http://127.0.0.1:4000/v1"
+env_key = "LITELLM_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 1
+stream_max_retries = 2
+stream_idle_timeout_ms = 300000
+
+[model_providers.local_model_router]
+name = "Local model-aware Codex Responses router"
+base_url = "http://127.0.0.1:4100/v1"
+env_key = "CODEX_ROUTER_AUTH_TOKEN"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 1
+stream_max_retries = 2
+stream_idle_timeout_ms = 300000
+
+[model_providers.minimax]
+name = "MiniMax"
+base_url = "http://127.0.0.1:18765/v1"
+env_key = "MINIMAX_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 4
+stream_max_retries = 10
+stream_idle_timeout_ms = 300000
+
+[model_providers.antigravity_cli]
+name = "Antigravity CLI subscription through the local Responses adapter"
+base_url = "http://127.0.0.1:4002/v1"
+env_key = "LITELLM_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 1
+stream_max_retries = 2
+stream_idle_timeout_ms = 300000
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 2
+max_depth = 1
+default_subagent_model = "autodev/default"
+default_subagent_reasoning_effort = "medium"
+
+[agents.explorer]
+description = "Read-only codebase explorer."
+config_file = "./agents/explorer.toml"
+[agents.worker]
+description = "General-purpose worker/coder."
+config_file = "./agents/worker.toml"
+[agents.validator]
+description = "Validation agent."
+config_file = "./agents/validator.toml"
+[agents.smart]
+description = "Full-capability smart agent with browser, documentation, and workspace-write access."
+config_file = "./agents/smart.toml"
+[agents.default]
+description = "General-purpose developer."
+config_file = "./agents/default.toml"
+[agents."docs-researcher"]
+description = "Documentation researcher with authoritative website access."
+config_file = "./agents/docs-researcher.toml"
+[agents."browser-tester"]
+description = "Read-only browser tester."
+config_file = "./agents/browser-tester.toml"
+
+# MCP servers are not declared here. `.rulesync/mcp.jsonc` is their only source;
+# the installer generates the Codex projection from it and the composer merges
+# those servers into the user config.
+
+[[skills.config]]
+name = "lsp-mcp-server"
+enabled = true
+
+[[skills.config]]
+name = "ccc"
+enabled = true
+[[skills.config]]
+name = "orchestration"
+enabled = true
+
+# Skill-surface lockdown for the root orchestrator turn.
+#
+# Codex 0.154.0 distinguishes two skill-discovery surfaces for plugins:
+#
+#   * `.system/` and user-level skill directories resolve through
+#     `[[skills.config]] name = "<skill>" enabled = false`. Confirmed by
+#     capturing the rendered request from an isolated CODEX_HOME pointed at
+#     the live plugin cache; that capture showed imagegen, plugin-creator,
+#     skill-creator, and skill-installer disappear from the model's
+#     "Available skills" list when disabled this way.
+#
+#   * Plugin-provided skills are surfaced directly by the plugin manifest
+#     and resolved through the marketplace root. `[[skills.config]]` does
+#     NOT gate them in 0.154.0 — the only effective mechanism is
+#     `[plugins."<plugin>@<marketplace>"] enabled = false`, which removes
+#     the entire marketplace from the skill roots. Captured evidence: with
+#     all five openai-primary-runtime plugins disabled, the rendered
+#     request's `### Skill roots` no longer mentions the marketplace and
+#     the five plugin skills vanish from `### Available skills`.
+#
+# The lockdown below suppresses the plugin families that are irrelevant
+# noise for AutoDev (OpenAI artifact builders, Sites, the OpenAI
+# developers skill bundle) plus the four irrelevant Codex `.system/`
+# skills. `openai-docs` is intentionally kept — Codex self-knowledge is
+# directly relevant to AutoDev's own configuration surface. Whole-plugin
+# disables are preferred where they fully remove a family; per-skill
+# `[[skills.config]]` entries are used for the `.system/` skills because
+# `[skills.bundled] enabled = false` would also suppress `openai-docs`.
+#
+# Whole-plugin disables are written under `[plugins."<plugin>@<marketplace>"]`
+# so compose re-asserts them on every install even if Codex Desktop
+# regenerates the user's local config; the resulting $CODEX_HOME/config.toml
+# wins the merge against the operator's existing plugin entries because
+# the composer treats AutoDev-owned keys as authoritative.
+[plugins."pdf@openai-primary-runtime"]
+enabled = false
+
+[plugins."documents@openai-primary-runtime"]
+enabled = false
+
+[plugins."presentations@openai-primary-runtime"]
+enabled = false
+
+[plugins."spreadsheets@openai-primary-runtime"]
+enabled = false
+
+[plugins."template-creator@openai-primary-runtime"]
+enabled = false
+
+[plugins."sites@openai-curated-remote"]
+enabled = false
+
+[plugins."openai-developers@openai-curated-remote"]
+enabled = false
+
+# `sites` ships from two marketplaces and both declare the same
+# `sites-building`/`sites-hosting` skill names, so suppressing only the
+# curated-remote copy would let the bundled copy resurface them.
+[plugins."sites@openai-bundled"]
+enabled = false
+
+# The remaining skill-declaring plugins AutoDev does not use. These are
+# already disabled in most machine-local configs, but pinning them here is
+# what makes the lockdown durable: compose re-asserts AutoDev-owned keys on
+# every install, so a Codex Desktop plugin-cache regeneration cannot quietly
+# re-expose them. `plugin-management` is deliberately NOT disabled - it is
+# the operator's escape hatch for re-enabling any of the above locally.
+[plugins."openai-templates@openai-curated-remote"]
+enabled = false
+
+[plugins."browser@openai-bundled"]
+enabled = false
+
+[plugins."computer-use@openai-bundled"]
+enabled = false
+
+[plugins."visualize@openai-bundled"]
+enabled = false
+
+# Per-skill disables for the irrelevant Codex `.system/` skills. Each
+# `imagegen`, `plugin-creator`, `skill-creator`, and `skill-installer` is
+# noise for AutoDev; only `openai-docs` is kept.
+[[skills.config]]
+name = "imagegen"
+enabled = false
+
+[[skills.config]]
+name = "plugin-creator"
+enabled = false
+
+[[skills.config]]
+name = "skill-creator"
+enabled = false
+
+[[skills.config]]
+name = "skill-installer"
+enabled = false
+
+[shell_environment_policy.set]
+NODE_OPTIONS = "--disable-warning=ExperimentalWarning"
+
+[shell_environment_policy.filters]
+"PATH" = "include"
+"HOME" = "include"
+
+# The bundled Codex App tools plugin owns request_user_input, which Plan mode
+# instructs the model to call. AutoDev enables the plugin and narrows it to that
+# single tool: thread lifecycle (create/fork/handoff/read/wait/list/archive) is
+# owned by the role-based delegation surface (autodev_spawn), not by codex_app.
+# Declaring it here makes compose re-assert both gates on every install, even
+# after Codex Desktop regenerates its plugin cache.
+[plugins."codex-app-tools@openai-bundled"]
+enabled = true
+
+[plugins."codex-app-tools@openai-bundled".mcp_servers.codex_app]
+enabled = true
+enabled_tools = [ "request_user_input" ]

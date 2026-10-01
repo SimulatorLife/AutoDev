@@ -1,0 +1,187 @@
+{
+  "version": 1,
+  "roles": {
+    "browser-tester": {
+      "kind": "leaf",
+      "readOnly": true,
+      "mcp": [
+        "playwright"
+      ],
+      "skills": [],
+      "mcpTools": {
+        "playwright": [
+          "browser_navigate",
+          "browser_tabs",
+          "browser_snapshot",
+          "browser_take_screenshot",
+          "browser_click",
+          "browser_type",
+          "browser_fill_form",
+          "browser_press_key",
+          "browser_wait_for",
+          "browser_console_messages",
+          "browser_network_requests",
+          "browser_find",
+          "browser_hover",
+          "browser_select_option",
+          "browser_drag",
+          "browser_handle_dialog",
+          "browser_resize",
+          "browser_close"
+        ]
+      }
+    },
+    "default": {
+      "kind": "leaf",
+      "readOnly": false,
+      "mcp": [
+        "lsp",
+        "cocoindex-code"
+      ],
+      "skills": [
+        "ccc",
+        "lsp-mcp-server"
+      ]
+    },
+    "docs-researcher": {
+      "kind": "leaf",
+      "readOnly": true,
+      "mcp": [
+        "openaiDeveloperDocs"
+      ],
+      "skills": [],
+      "webResearch": {
+        "search": true,
+        "fetch": true,
+        "optionalMcp": []
+      }
+    },
+    "explorer": {
+      "kind": "leaf",
+      "readOnly": true,
+      "mcp": [
+        "lsp",
+        "cocoindex-code"
+      ],
+      "skills": [
+        "ccc",
+        "lsp-mcp-server"
+      ]
+    },
+    "orchestrator": {
+      "kind": "orchestrator",
+      "readOnly": false,
+      "mcp": [
+        "lsp",
+        "cocoindex-code",
+        "autodev_spawn"
+      ],
+      "skills": [
+        "orchestration",
+        "ccc",
+        "lsp-mcp-server"
+      ],
+      "webResearch": {
+        "search": true,
+        "fetch": true,
+        "optionalMcp": []
+      }
+    },
+    "smart": {
+      "kind": "leaf",
+      "readOnly": false,
+      "mcp": [
+        "lsp",
+        "cocoindex-code",
+        "playwright",
+        "openaiDeveloperDocs"
+      ],
+      "skills": [
+        "ccc",
+        "lsp-mcp-server"
+      ],
+      "mcpTools": {
+        "playwright": [
+          "browser_navigate",
+          "browser_tabs",
+          "browser_snapshot",
+          "browser_take_screenshot",
+          "browser_click",
+          "browser_type",
+          "browser_fill_form",
+          "browser_press_key",
+          "browser_wait_for",
+          "browser_console_messages",
+          "browser_network_requests",
+          "browser_find",
+          "browser_hover",
+          "browser_select_option",
+          "browser_drag",
+          "browser_handle_dialog",
+          "browser_resize",
+          "browser_close"
+        ]
+      },
+      "webResearch": {
+        "search": true,
+        "fetch": true,
+        "optionalMcp": [
+          "playwright"
+        ]
+      }
+    },
+    "validator": {
+      "kind": "leaf",
+      "readOnly": true,
+      "mcp": [
+        "lsp",
+        "cocoindex-code"
+      ],
+      "skills": [
+        "ccc",
+        "lsp-mcp-server"
+      ]
+    },
+    "worker": {
+      "kind": "leaf",
+      "readOnly": false,
+      "mcp": [
+        "lsp",
+        "cocoindex-code"
+      ],
+      "skills": [
+        "ccc",
+        "lsp-mcp-server"
+      ]
+    }
+  },
+  "providers": {
+    "claude": {
+      "spawnTools": [],
+      "permissionMode": "native",
+      "delegation": "native"
+    },
+    "antigravity": {
+      "spawnTools": [
+        "invoke_subagent"
+      ],
+      "permissionMode": "configured",
+      "delegation": "codex-shim"
+    },
+    "minimax": {
+      "spawnTools": [],
+      "permissionMode": "upstream",
+      "delegation": "none"
+    },
+    "copilot": {
+      "spawnTools": [],
+      "permissionMode": "configured",
+      "delegation": "codex-shim"
+    },
+    "codex": {
+      "spawnTools": [],
+      "permissionMode": "native",
+      "delegation": "native"
+    }
+  }
+}

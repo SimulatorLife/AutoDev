@@ -1,42 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-is_claude_model="$(node -e '
-  try {
-    const input = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
-    const model = typeof input.model === "string" ? input.model.trim().toLowerCase() : "";
-    process.stdout.write(/^(sonnet|opus|haiku|claude-[a-z0-9][a-z0-9.-]*)$/.test(model) ? "1" : "0");
-  } catch { process.stdout.write("0"); }
-')"
-[[ "$is_claude_model" == "1" ]] || exit 0
-
-set -a
-source "$HOME/.codex/.env"
-set +a
-
-claude_oauth_token="${CLAUDE_CODE_OAUTH_TOKEN:-}"
-if [[ -z "$claude_oauth_token" ]]; then
-  claude_oauth_token="$(/usr/bin/security find-generic-password -a "$USER" -s "com.codex.claude-bridge.oauth-token" -w 2>/dev/null || true)"
+# Process-dispatch shim. Model matching, OAuth validation, launchd ownership,
+# readiness, and fallback policy live in the typed platform owner.
+if [[ -f "${CODEX_ENV_FILE:-$HOME/.codex/.env}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${CODEX_ENV_FILE:-$HOME/.codex/.env}"
+  set +a
 fi
 
-if curl --silent --fail --max-time 1 http://127.0.0.1:4000/health/liveliness >/dev/null 2>&1; then
-  exit 0
-fi
-[[ -n "$claude_oauth_token" ]] || { echo "Claude Code bridge requires a Keychain-backed Claude OAuth token." >&2; exit 1; }
-
-domain="gui/$(id -u)"
-label="com.codex.claude-bridge"
-# The repository lives under Desktop, where launchd can be denied access by
-# macOS privacy controls. Start the canonical versioned launcher directly from
-# the Codex lifecycle process instead.
-launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
-direct_launcher="$HOME/.codex/hooks/run-codex-claude-bridge.sh"
-if [[ -L "$direct_launcher" ]]; then direct_launcher="$(readlink "$direct_launcher")"; fi
-nohup /bin/bash "$direct_launcher" \
-  >"${TMPDIR:-/tmp}/codex-claude-bridge.log" 2>&1 </dev/null &
-for _ in {1..50}; do
-  if curl --silent --fail --max-time 1 http://127.0.0.1:4000/health/liveliness >/dev/null 2>&1; then exit 0; fi
-  sleep 0.1
-done
-echo "Claude Code bridge failed to start." >&2
-exit 1
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+resolve_node() {
+  if command -v node >/dev/null 2>&1; then command -v node; return 0; fi
+  local candidate
+  for candidate in "$(ls -d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | sort -V | tail -1)" /opt/homebrew/bin/node /usr/local/bin/node; do
+    [[ -x "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  return 1
+}
+node_bin="$(resolve_node)" || { echo "ensure-codex-claude-bridge: node not found" >&2; exit 127; }
+exec "$node_bin" "$codex_home/src/platform/claude-ensure.ts"

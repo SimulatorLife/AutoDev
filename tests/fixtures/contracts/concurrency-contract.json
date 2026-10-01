@@ -1,0 +1,273 @@
+{
+  "schema": "autodev-concurrency-contract-v1",
+  "description": "Deterministic boundary for the router per-session concurrency contract exercised by `parseConcurrencyConfig`, `effectivePerSessionLimit`, `tryAcquireSubagentSlot`, `releaseSubagentSlot`, `recordConcurrencyDenial`, `resetConcurrencyTelemetry`, and `concurrencyStatus` in scripts/codex-model-router.mjs. The fixture pins every observable shape the router produces today: the canonical Codex key `max_concurrent_threads_per_session` parsed from both the multiline `[agents]` table and the composer-generated inline `agents = { ... }` form (including the full composer-emitted format with seven nested role tables the prior regex could not span), the legacy `max_threads` alias deliberately ignored with no fallback so admission never silently enables itself, the absent/invalid canonical config behaviour that surfaces `null` rather than throwing or coercing, the explicit zero-value behaviour (parsed as the integer 0; the admission code reads `perSessionLimit !== null && sessionActive >= perSessionLimit` so a 0 limit denies every acquire since `sessionActive >= 0` is always true -- this is the documented literal behaviour, not a misread of the cap), the sanitized `/status` projection (which omits the legacy alias and never leaks the absolute config path), the identified-session admission/denial flow that returns the canonical reason string, and the process-fallback shared-bucket enforcement that makes the documented over-denial risk visible. Each admission scenario declares its expected `configuredLimit`; it runs only when the imported router has that effective limit and is explicitly skipped otherwise, so a host without `$CODEX_HOME/config.toml` cannot produce a false pass or false failure. The parser scenarios exercise the source-level parser against every shape the Codex composer can emit. Refreshing the fixture is itself the documented, intentional signal that the canonical key, parser, sanitized status shape, or admission semantics are meant to change.",
+  "canonicalKey": "max_concurrent_threads_per_session",
+  "legacyAlias": "max_threads",
+  "denialReason": "max_concurrent_threads_per_session",
+  "scenarios": {
+    "parse_multiline_agents_block": {
+      "source": "[agents]\nenabled = true\nmax_concurrent_threads_per_session = 2\nmax_depth = 1\n",
+      "expected": {
+        "maxConcurrentThreadsPerSession": 2
+      }
+    },
+    "parse_canonical_value_zero_surfaces_as_zero": {
+      "source": "[agents]\nmax_concurrent_threads_per_session = 0\n",
+      "expected": {
+        "maxConcurrentThreadsPerSession": 0
+      }
+    },
+    "parse_canonical_value_zero_inline_surfaces_as_zero": {
+      "source": "agents = { max_concurrent_threads_per_session = 0 }\n",
+      "expected": {
+        "maxConcurrentThreadsPerSession": 0
+      }
+    },
+    "parse_composer_emitted_full_inline_with_seven_nested_roles": {
+      "source": "agents = { enabled = true, max_concurrent_threads_per_session = 2, max_depth = 1, default_subagent_model = \"autodev/default\", default_subagent_reasoning_effort = \"medium\", explorer = { description = \"Read-only codebase explorer.\", config_file = \"./agents/explorer.toml\" }, worker = { description = \"General-purpose worker/coder.\", config_file = \"./agents/worker.toml\" }, validator = { description = \"Validation agent.\", config_file = \"./agents/validator.toml\" }, smart = { description = \"Full-capability smart agent.\", config_file = \"./agents/smart.toml\" }, default = { description = \"General-purpose developer.\", config_file = \"./agents/default.toml\" }, docs-researcher = { description = \"Documentation researcher.\", config_file = \"./agents/docs-researcher.toml\" }, browser-tester = { description = \"Read-only browser tester.\", config_file = \"./agents/browser-tester.toml\" } }\n",
+      "expected": {
+        "maxConcurrentThreadsPerSession": 2
+      }
+    },
+    "parse_inline_agents_table_with_nested_roles": {
+      "source": "agents = { enabled = true, max_concurrent_threads_per_session = 3, explorer = { description = \"Read-only codebase explorer.\", config_file = \"./agents/explorer.toml\" } }\n",
+      "expected": {
+        "maxConcurrentThreadsPerSession": 3
+      }
+    },
+    "parse_inline_agents_table_compact_no_spaces": {
+      "source": "agents = {max_concurrent_threads_per_session=4,enabled=true}\n",
+      "expected": {
+        "maxConcurrentThreadsPerSession": 4
+      }
+    },
+    "parse_multiline_with_blank_lines_and_comments": {
+      "source": "[agents]\n# a comment\n\nenabled = true\n# another comment\nmax_concurrent_threads_per_session = 5\n\n",
+      "expected": {
+        "maxConcurrentThreadsPerSession": 5
+      }
+    },
+    "parse_missing_canonical_key_returns_null": {
+      "source": "[agents]\nenabled = true\n",
+      "expected": {
+        "maxConcurrentThreadsPerSession": null
+      }
+    },
+    "parse_legacy_alias_only_returns_null": {
+      "source": "[agents]\nmax_threads = 7\n",
+      "expected": {
+        "maxConcurrentThreadsPerSession": null
+      }
+    },
+    "parse_canonical_wins_over_legacy_alias": {
+      "source": "[agents]\nmax_threads = 5\nmax_concurrent_threads_per_session = 6\n",
+      "expected": {
+        "maxConcurrentThreadsPerSession": 6
+      }
+    },
+    "parse_canonical_in_unrelated_section_is_ignored": {
+      "source": "[unrelated]\nmax_concurrent_threads_per_session = 9\n",
+      "expected": {
+        "maxConcurrentThreadsPerSession": null
+      }
+    },
+    "parse_sibling_agents_explorer_does_not_bleed": {
+      "source": "[agents]\nmax_concurrent_threads_per_session = 2\n\n[agents.explorer]\ndescription = \"x\"\nmax_concurrent_threads_per_session = 99\n",
+      "expected": {
+        "maxConcurrentThreadsPerSession": 2
+      }
+    },
+    "parse_invalid_string_value_returns_null": {
+      "source": "[agents]\nmax_concurrent_threads_per_session = \"two\"\n",
+      "expected": {
+        "maxConcurrentThreadsPerSession": null
+      }
+    },
+    "parse_invalid_bareword_value_returns_null": {
+      "source": "[agents]\nmax_concurrent_threads_per_session = not_a_number\n",
+      "expected": {
+        "maxConcurrentThreadsPerSession": null
+      }
+    },
+    "parse_missing_config_file_returns_null": {
+      "source": null,
+      "missing": true,
+      "expected": {
+        "maxConcurrentThreadsPerSession": null
+      }
+    },
+    "parse_indented_multiline_agents_block": {
+      "source": "  [agents]\n  max_concurrent_threads_per_session = 8\n",
+      "expected": {
+        "maxConcurrentThreadsPerSession": 8
+      }
+    },
+    "admission_identified_session_under_limit_admits": {
+      "configuredLimit": 2,
+      "operations": [
+        {
+          "op": "acquire",
+          "sessionKey": "identified-a",
+          "expected": null
+        },
+        {
+          "op": "acquire",
+          "sessionKey": "identified-b",
+          "expected": null
+        },
+        {
+          "op": "status_field",
+          "field": "activeSubagentThreads",
+          "expected": 2
+        },
+        {
+          "op": "status_field",
+          "field": "activeSessions",
+          "expected": 2
+        }
+      ]
+    },
+    "admission_identified_session_over_limit_denies_with_canonical_reason": {
+      "configuredLimit": 2,
+      "operations": [
+        {
+          "op": "acquire",
+          "sessionKey": "identified-a",
+          "expected": null
+        },
+        {
+          "op": "acquire",
+          "sessionKey": "identified-a",
+          "expected": null
+        },
+        {
+          "op": "acquire",
+          "sessionKey": "identified-a",
+          "expected": "max_concurrent_threads_per_session"
+        }
+      ]
+    },
+    "admission_process_fallback_shares_a_single_bucket": {
+      "configuredLimit": 2,
+      "operations": [
+        {
+          "op": "acquire",
+          "sessionKey": "process-scope",
+          "expected": null
+        },
+        {
+          "op": "acquire",
+          "sessionKey": "process-scope",
+          "expected": null
+        },
+        {
+          "op": "status_field",
+          "field": "processFallbackActiveThreads",
+          "expected": 2
+        },
+        {
+          "op": "status_field",
+          "field": "processFallbackEnforcement",
+          "expected": true
+        },
+        {
+          "op": "acquire",
+          "sessionKey": "process-scope",
+          "expected": "max_concurrent_threads_per_session"
+        }
+      ]
+    },
+    "admission_release_drops_active_counts": {
+      "configuredLimit": 2,
+      "operations": [
+        {
+          "op": "acquire",
+          "sessionKey": "release-a",
+          "expected": null
+        },
+        {
+          "op": "acquire",
+          "sessionKey": "release-a",
+          "expected": null
+        },
+        {
+          "op": "release",
+          "sessionKey": "release-a"
+        },
+        {
+          "op": "release",
+          "sessionKey": "release-a"
+        },
+        {
+          "op": "status_field",
+          "field": "activeSessions",
+          "expected": 0
+        },
+        {
+          "op": "status_field",
+          "field": "activeSubagentThreads",
+          "expected": 0
+        }
+      ]
+    },
+    "admission_denied_request_records_sanitized_status": {
+      "configuredLimit": 2,
+      "operations": [
+        {
+          "op": "acquire",
+          "sessionKey": "denial-a",
+          "expected": null
+        },
+        {
+          "op": "recordDenial",
+          "requestId": "req-denied",
+          "role": "worker",
+          "requestedModel": "autodev/worker",
+          "sessionScope": "identified",
+          "reason": "max_concurrent_threads_per_session"
+        },
+        {
+          "op": "status_field",
+          "field": "denials",
+          "expected": 1
+        },
+        {
+          "op": "status_field",
+          "field": "lastDenial.reason",
+          "expected": "max_concurrent_threads_per_session"
+        },
+        {
+          "op": "status_field",
+          "field": "lastDenial.requestId",
+          "expected": "req-denied"
+        }
+      ]
+    },
+    "sanitized_status_omits_legacy_alias_and_absolute_path": {
+      "configuredLimit": 2,
+      "operations": [
+        {
+          "op": "status_shape",
+          "expected": [
+            "scope",
+            "configSource",
+            "configFileExists",
+            "maxConcurrentThreadsPerSession",
+            "effectivePerSessionLimit",
+            "activeSubagentThreads",
+            "activeSessions",
+            "processFallbackActiveThreads",
+            "processFallbackEnforcement",
+            "denials",
+            "denialsByReason",
+            "lastDenial"
+          ]
+        },
+        {
+          "op": "status_no_key",
+          "key": "maxThreads"
+        }
+      ]
+    }
+  }
+}

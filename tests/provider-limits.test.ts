@@ -1,0 +1,262 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+import {
+  classifyCliLimit,
+  INCOMPLETE_REASON_CLIENT_DISCONNECTED,
+  INCOMPLETE_REASON_INTERRUPTED,
+  INCOMPLETE_REASON_PROVIDER_LIMIT,
+  INCOMPLETE_REASON_TIMEOUT,
+  incompleteDetails,
+  isHardLimitClass,
+  LIMIT_HEADER_CLASS,
+  LIMIT_HEADER_RESETS_AT,
+  LIMIT_HEADER_SOURCE,
+  LIMIT_HEADER_TYPE,
+  LIMIT_SOURCE_INFERRED,
+  LIMIT_SOURCE_REPORTED,
+  limitPayload,
+  limitResponseHeaders,
+  normalizeResetsAt,
+  type ProviderLimit,
+  readLimitHeaders,
+  retryAfterSecondsFromLimit,
+  terminalIncompleteEvents,
+  truncationNotice
+} from "../src/shared/provider-limits.ts";
+import { normalizedSource } from "./source-text.ts";
+
+const read = (path: string) => {
+  const text = readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+  return path.endsWith(".ts") ? normalizedSource(text) : text;
+};
+
+test("normalizes the shapes providers actually state a reset in", () => {
+  assert.equal(normalizeResetsAt(1_757_174_400), "2025-09-06T16:00:00.000Z");
+  assert.equal(
+    normalizeResetsAt(1_757_174_400_000),
+    "2025-09-06T16:00:00.000Z"
+  );
+  assert.equal(normalizeResetsAt("1757174400"), "2025-09-06T16:00:00.000Z");
+  assert.equal(
+    normalizeResetsAt("2026-09-06T15:40:00Z"),
+    "2026-09-06T15:40:00.000Z"
+  );
+  // A wrong reset time is worse than none: the router stops routing to a
+  // provider until whatever it is handed, so anything unparseable is dropped
+  // rather than guessed.
+  for (const rubbish of ["garbage", "", null, undefined, {}, Number.NaN]) {
+    assert.equal(normalizeResetsAt(rubbish), null);
+  }
+});
+
+test("a limit read out of a CLI error message is only ever inferred", () => {
+  const quota = classifyCliLimit(
+    "agy exited with code 1: quota exceeded for this account"
+  );
+  assert.ok(quota);
+  assert.equal(quota.limitClass, "quota_exhausted");
+  assert.equal(quota.source, LIMIT_SOURCE_INFERRED);
+
+  const throttled = classifyCliLimit("copilot: 429 too many requests");
+  assert.ok(throttled);
+  assert.equal(throttled.limitClass, "throttled");
+
+  const session = classifyCliLimit("session limit reached for this account");
+  assert.ok(session);
+  assert.equal(session.limitClass, "session_limit");
+
+  assert.equal(classifyCliLimit("agy exited on SIGSEGV"), null);
+  assert.equal(classifyCliLimit(""), null);
+
+  // Hard classes hold a provider back for a long window, and a bridge shipping a
+  // 4000-character stderr tail must never be able to trigger one. Two things
+  // stop it, and both are load-bearing: a bare mention is not a match at all,
+  // and even a real match is only ever `inferred`.
+  assert.equal(
+    classifyCliLimit("Traceback ... KeyError: 'quota' ... at line 22"),
+    null
+  );
+  assert.equal(classifyCliLimit("wrote quota.json and exited"), null);
+  assert.ok(isHardLimitClass(quota.limitClass));
+  assert.notEqual(quota.source, LIMIT_SOURCE_REPORTED);
+});
+
+test("limit headers round-trip through the reader the router uses", () => {
+  const limit: ProviderLimit = {
+    limitClass: "quota_exhausted",
+    limitType: "weekly",
+    resetsAt: "2026-09-06T15:40:00.000Z",
+    source: LIMIT_SOURCE_REPORTED
+  };
+  const headers = limitResponseHeaders(limit);
+  assert.deepEqual(headers, {
+    [LIMIT_HEADER_CLASS]: "quota_exhausted",
+    [LIMIT_HEADER_TYPE]: "weekly",
+    [LIMIT_HEADER_RESETS_AT]: "2026-09-06T15:40:00.000Z",
+    [LIMIT_HEADER_SOURCE]: LIMIT_SOURCE_REPORTED
+  });
+  assert.deepEqual(readLimitHeaders(new Headers(headers)), limit);
+  assert.deepEqual(limitResponseHeaders(null), {});
+  assert.equal(readLimitHeaders(new Headers()), null);
+
+  // An absent reset stays absent rather than becoming an empty header the
+  // reader would have to treat as a value.
+  assert.equal(
+    LIMIT_HEADER_RESETS_AT in limitResponseHeaders({ limitClass: "throttled" }),
+    false
+  );
+  assert.equal(retryAfterSecondsFromLimit({ limitClass: "throttled" }), null);
+  assert.equal(
+    retryAfterSecondsFromLimit(limit, Date.parse("2026-09-06T15:39:00.000Z")),
+    60
+  );
+});
+
+test("an incomplete turn carries its work, and says plainly that it is partial", () => {
+  const limit: ProviderLimit = {
+    limitClass: "session_limit",
+    limitType: "session",
+    resetsAt: "2026-09-06T15:40:00.000Z",
+    source: LIMIT_SOURCE_REPORTED
+  };
+  const events = terminalIncompleteEvents({
+    responseId: "resp_1",
+    itemId: "msg_1",
+    reasoningId: "rs_1",
+    text: "the work so far",
+    reasoningText: "thinking",
+    reason: INCOMPLETE_REASON_PROVIDER_LIMIT,
+    limit,
+    provider: "claude"
+  });
+  assert.deepEqual(
+    events.map(([name]) => name),
+    [
+      "response.output_text.delta",
+      "response.reasoning_summary_text.done",
+      "response.reasoning_summary_part.done",
+      "response.output_item.done",
+      "response.output_text.done",
+      "response.content_part.done",
+      "response.output_item.done",
+      "response.completed"
+    ]
+  );
+  const completed = events.at(-1)?.[1].response as {
+    status: string;
+    incomplete_details: Record<string, unknown>;
+    output_text: string;
+    output: Array<{ status: string }>;
+  };
+  assert.ok(completed);
+  assert.equal(completed.status, "incomplete");
+  assert.deepEqual(completed.incomplete_details, {
+    reason: INCOMPLETE_REASON_PROVIDER_LIMIT,
+    provider_limit: limitPayload(limit)
+  });
+  assert.match(completed.output_text, /^the work so far/);
+  // A partial answer read as a complete one is worse than a failure, so the
+  // notice has to be in the text a model will actually read.
+  assert.match(
+    completed.output_text,
+    /\[Incomplete: The claude provider reached its session limit/
+  );
+  assert.match(completed.output_text, /nothing after it ran/);
+  assert.match(completed.output_text, /resets at 2026-09-06T15:40:00\.000Z/);
+  for (const item of completed.output) assert.equal(item.status, "incomplete");
+
+  assert.match(
+    truncationNotice({ reason: INCOMPLETE_REASON_TIMEOUT }),
+    /timed out/
+  );
+  assert.match(
+    truncationNotice({ reason: INCOMPLETE_REASON_INTERRUPTED }),
+    /stopped unexpectedly/
+  );
+  // The new client-disconnected reason names the cause precisely so a model
+  // reading the partial turn can tell that the upstream went away mid-
+  // delegation rather than chase a phantom provider stall.
+  const disconnectedNotice = truncationNotice({
+    reason: INCOMPLETE_REASON_CLIENT_DISCONNECTED,
+    provider: "antigravity"
+  });
+  assert.match(
+    disconnectedNotice,
+    /The antigravity provider was disconnected mid-delegation/
+  );
+  assert.match(disconnectedNotice, /nothing after it ran/);
+  assert.deepEqual(incompleteDetails(INCOMPLETE_REASON_INTERRUPTED), {
+    reason: INCOMPLETE_REASON_INTERRUPTED
+  });
+  assert.deepEqual(incompleteDetails(INCOMPLETE_REASON_CLIENT_DISCONNECTED), {
+    reason: INCOMPLETE_REASON_CLIENT_DISCONNECTED
+  });
+});
+
+test("a classified Antigravity permission denial survives the incomplete boundary", () => {
+  const providerFailure = {
+    code: "AGY_PERMISSION_DENIED",
+    phase: "tool_permission",
+    tool: "read_file"
+  };
+  const events = terminalIncompleteEvents({
+    responseId: "resp_permission",
+    itemId: "msg_permission",
+    reasoningId: "rs_permission",
+    text: "partial work",
+    reason: INCOMPLETE_REASON_INTERRUPTED,
+    provider: "antigravity",
+    providerFailure
+  });
+  const completed = events.at(-1)?.[1].response as {
+    status: string;
+    incomplete_details: Record<string, unknown>;
+    output_text: string;
+  };
+
+  assert.equal(completed.status, "incomplete");
+  assert.deepEqual(completed.incomplete_details, {
+    reason: INCOMPLETE_REASON_INTERRUPTED,
+    provider_failure: providerFailure
+  });
+  assert.match(completed.output_text, /^partial work/);
+  assert.match(
+    completed.output_text,
+    /read_file permission was denied in headless mode/
+  );
+  assert.match(completed.output_text, /nothing after it ran/);
+  assert.doesNotMatch(
+    completed.output_text,
+    /stderr:|\/Users\/|settings\.json/
+  );
+
+  // An unclassified interruption keeps its established generic diagnosis.
+  const generic = terminalIncompleteEvents({
+    responseId: "resp_generic",
+    itemId: "msg_generic",
+    reasoningId: "rs_generic",
+    reason: INCOMPLETE_REASON_INTERRUPTED,
+    provider: "antigravity"
+  }).at(-1)?.[1].response as { output_text: string };
+  assert.match(generic.output_text, /stopped unexpectedly/);
+});
+
+test("the typed Claude bridge uses the shared limit boundary", () => {
+  const bridge = read("src/providers/claude.ts");
+  assert.match(bridge, /from "\.\.\/shared\/provider-limits\.ts"/);
+  assert.match(bridge, /classifyCliLimit/);
+  assert.match(bridge, /ClaudeRateLimitError/);
+  assert.match(bridge, /INCOMPLETE_REASON_PROVIDER_LIMIT/);
+  assert.match(bridge, /limitResponseHeaders/);
+  // A Claude turn emits its items as they finish, so it ends an interrupted
+  // response from the shared details and notice rather than a fixed layout.
+  const turn = read("src/providers/claude-turn.ts");
+  assert.match(turn, /from "\.\.\/shared\/provider-limits\.ts"/);
+  assert.match(turn, /incompleteDetails\(failure\.reason, failure\.limit\)/);
+  assert.match(
+    turn,
+    /truncationNotice\(\{ provider, limit: failure\.limit, reason: failure\.reason \}\)/
+  );
+});

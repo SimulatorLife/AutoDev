@@ -1,0 +1,263 @@
+{
+  "schema": "autodev-portable-autodev-config-v1",
+  "description": "Deterministic portable-source contract for config/config.autodev.toml. Rulesync owns hook declarations and generated hook files; this fixture pins AutoDev's portable scalars, provider entries, required sections, explicit absence of hooks and mcp_servers, and the skills.config name set. src/config/compose-user-config.ts removes legacy hook event arrays while preserving machine-local hooks.state trusted hashes. The portable source suppresses Codex plugin families that are irrelevant noise for AutoDev (openai-primary-runtime and openai-curated-remote artifact/site/dev skills) via whole-plugin `[plugins.\"<plugin>@<marketplace>\"]` disables, and disables the irrelevant Codex `.system/` skills (imagegen, plugin-creator, skill-creator, skill-installer) per-skill while keeping openai-docs. Codex 0.154.0 only honours `[[skills.config]]` against user-level skills; plugin-provided skills require whole-plugin disable. `[skills.bundled] enabled = false` would also suppress openai-docs, so it is not used at the user level.",
+  "source": "config/config.autodev.toml",
+  "portableScalars": [
+    "approval_policy",
+    "approvals_reviewer",
+    "background_terminal_max_timeout",
+    "model",
+    "model_catalog_json",
+    "model_provider",
+    "model_reasoning_effort",
+    "model_verbosity",
+    "openai_base_url",
+    "personality",
+    "sandbox_mode",
+    "service_tier",
+    "suppress_unstable_features_warning"
+  ],
+  "scalars": {
+    "model": "autodev/orchestrator",
+    "model_provider": "local_model_router",
+    "openai_base_url": "http://127.0.0.1:4100/v1",
+    "model_verbosity": "low",
+    "approval_policy": "never",
+    "model_reasoning_effort": "xhigh",
+    "personality": "pragmatic",
+    "sandbox_mode": "workspace-write",
+    "suppress_unstable_features_warning": true,
+    "service_tier": "default",
+    "model_catalog_json": "./codex-model-catalog.json",
+    "approvals_reviewer": "user",
+    "background_terminal_max_timeout": 600000
+  },
+  "requiredSections": [
+    "sandbox_workspace_write",
+    "otel",
+    "analytics",
+    "features",
+    "tools",
+    "skills",
+    "shell_environment_policy",
+    "plugins"
+  ],
+  "sectionShapes": {
+    "sandbox_workspace_write": {
+      "network_access": true
+    },
+    "otel": {
+      "environment": "autodev",
+      "exporter": {
+        "otlp-http": {
+          "endpoint": "http://127.0.0.1:4100/v1/logs",
+          "protocol": "json"
+        }
+      },
+      "trace_exporter": {
+        "otlp-http": {
+          "endpoint": "http://127.0.0.1:4100/v1/traces",
+          "protocol": "json"
+        }
+      },
+      "metrics_exporter": {
+        "otlp-http": {
+          "endpoint": "http://127.0.0.1:4100/v1/metrics",
+          "protocol": "json"
+        }
+      },
+      "log_user_prompt": false
+    },
+    "analytics": {
+      "enabled": true
+    },
+    "features": {
+      "shell_snapshot": true,
+      "unified_exec": true,
+      "steer": true,
+      "multi_agent": true,
+      "multi_agent_v2": false,
+      "js_repl": false,
+      "memories": false,
+      "respect_system_proxy": true,
+      "chronicle": false,
+      "goals": true,
+      "hooks": true,
+      "fast_mode": false,
+      "prevent_idle_sleep": true,
+      "personality": true,
+      "image_generation": false
+    },
+    "tools": {
+      "web_search": true
+    },
+    "skills": {
+      "config": [
+        {
+          "name": "lsp-mcp-server",
+          "enabled": true
+        },
+        {
+          "name": "ccc",
+          "enabled": true
+        },
+        {
+          "name": "orchestration",
+          "enabled": true
+        },
+        {
+          "name": "imagegen",
+          "enabled": false
+        },
+        {
+          "name": "plugin-creator",
+          "enabled": false
+        },
+        {
+          "name": "skill-creator",
+          "enabled": false
+        },
+        {
+          "name": "skill-installer",
+          "enabled": false
+        }
+      ]
+    },
+    "shell_environment_policy": {
+      "set": {
+        "NODE_OPTIONS": "--disable-warning=ExperimentalWarning"
+      },
+      "filters": {
+        "PATH": "include",
+        "HOME": "include"
+      }
+    },
+    "plugins": {
+      "codex-app-tools@openai-bundled": {
+        "enabled": true,
+        "mcp_servers": {
+          "codex_app": {
+            "enabled": true,
+            "enabled_tools": [
+              "request_user_input"
+            ]
+          }
+        }
+      },
+      "pdf@openai-primary-runtime": {
+        "enabled": false
+      },
+      "documents@openai-primary-runtime": {
+        "enabled": false
+      },
+      "presentations@openai-primary-runtime": {
+        "enabled": false
+      },
+      "spreadsheets@openai-primary-runtime": {
+        "enabled": false
+      },
+      "template-creator@openai-primary-runtime": {
+        "enabled": false
+      },
+      "sites@openai-curated-remote": {
+        "enabled": false
+      },
+      "openai-developers@openai-curated-remote": {
+        "enabled": false
+      },
+      "sites@openai-bundled": {
+        "enabled": false
+      },
+      "openai-templates@openai-curated-remote": {
+        "enabled": false
+      },
+      "browser@openai-bundled": {
+        "enabled": false
+      },
+      "computer-use@openai-bundled": {
+        "enabled": false
+      },
+      "visualize@openai-bundled": {
+        "enabled": false
+      }
+    }
+  },
+  "modelProviders": [
+    {
+      "name": "claude_code_subscription",
+      "attributes": {
+        "name": "Claude Code OAuth subscription bridge",
+        "base_url": "http://127.0.0.1:4000/v1",
+        "env_key": "LITELLM_API_KEY",
+        "wire_api": "responses",
+        "requires_openai_auth": false,
+        "request_max_retries": 1,
+        "stream_max_retries": 2,
+        "stream_idle_timeout_ms": 300000
+      }
+    },
+    {
+      "name": "local_model_router",
+      "attributes": {
+        "name": "Local model-aware Codex Responses router",
+        "base_url": "http://127.0.0.1:4100/v1",
+        "env_key": "CODEX_ROUTER_AUTH_TOKEN",
+        "wire_api": "responses",
+        "requires_openai_auth": false,
+        "request_max_retries": 1,
+        "stream_max_retries": 2,
+        "stream_idle_timeout_ms": 300000
+      }
+    },
+    {
+      "name": "minimax",
+      "attributes": {
+        "name": "MiniMax",
+        "base_url": "http://127.0.0.1:18765/v1",
+        "env_key": "MINIMAX_API_KEY",
+        "wire_api": "responses",
+        "requires_openai_auth": false,
+        "request_max_retries": 4,
+        "stream_max_retries": 10,
+        "stream_idle_timeout_ms": 300000
+      }
+    },
+    {
+      "name": "antigravity_cli",
+      "attributes": {
+        "name": "Antigravity CLI subscription through the local Responses adapter",
+        "base_url": "http://127.0.0.1:4002/v1",
+        "env_key": "LITELLM_API_KEY",
+        "wire_api": "responses",
+        "requires_openai_auth": false,
+        "request_max_retries": 1,
+        "stream_max_retries": 2,
+        "stream_idle_timeout_ms": 300000
+      }
+    }
+  ],
+  "modelProviderOrder": [
+    "claude_code_subscription",
+    "local_model_router",
+    "minimax",
+    "antigravity_cli"
+  ],
+  "skillsConfigNames": [
+    "ccc",
+    "imagegen",
+    "lsp-mcp-server",
+    "orchestration",
+    "plugin-creator",
+    "skill-creator",
+    "skill-installer"
+  ],
+  "skillsConfigNamesRequired": [
+    "ccc",
+    "imagegen",
+    "lsp-mcp-server",
+    "orchestration",
+    "plugin-creator",
+    "skill-creator",
+    "skill-installer"
+  ]
+}

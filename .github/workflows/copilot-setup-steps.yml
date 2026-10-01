@@ -4,18 +4,24 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - ".agents/prompts/**"
       - ".github/**"
+      - ".rulesync/**"
       - "scripts/**"
       - "tests/**"
+      - ".nvmrc"
       - "package.json"
+      - "pnpm-lock.yaml"
+      - "tsconfig.json"
   pull_request:
     paths:
-      - ".agents/prompts/**"
       - ".github/**"
+      - ".rulesync/**"
       - "scripts/**"
       - "tests/**"
+      - ".nvmrc"
       - "package.json"
+      - "pnpm-lock.yaml"
+      - "tsconfig.json"
 
 jobs:
   copilot-setup-steps:
@@ -27,20 +33,63 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install actionlint and ShellCheck
+        shell: bash
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y shellcheck
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl --fail --silent --show-error --location \
+            --output "$RUNNER_TEMP/$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/$archive"
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$RUNNER_TEMP/$archive" | sha256sum --check --strict
+          tar --extract --gzip --file "$RUNNER_TEMP/$archive" --directory "$RUNNER_TEMP" actionlint
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Install AutoDev dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `.github/skills/` is not tracked: `.rulesync/skills/` is the only skill
+      # source, so the cloud agent's skills are generated here before it starts.
+      # rulesync.jsonc supplies the feature, output root, and delete behaviour.
+      - name: Generate repository skills for Copilot
+        run: pnpm exec rulesync generate --targets copilot --silent
+
+      - name: Validate GitHub workflows
+        run: pnpm run validate:actionlint
+
+      - name: Validate Shell scripts
+        run: pnpm run validate:shell
+
+      - name: Validate formatting and lint
+        run: |
+          pnpm run format:check
+          pnpm run lint:ci
 
       - name: Validate AutoDev tests
         run: |
-          npm test
-          npm run test:python
+          pnpm run typecheck
+          pnpm run test:ts
+          pnpm test
 
       - name: Validate provider scripts
         shell: bash
         run: |
           set -euo pipefail
           while IFS= read -r file; do bash -n "$file"; done < <(find scripts -type f -name '*.sh' -print)
-          while IFS= read -r file; do node --check "$file"; done < <(find scripts -type f -name '*.mjs' -print)
-          python3 -m py_compile scripts/*.py
+          while IFS= read -r file; do node --check "$file"; done < <(find scripts -type f \( -name '*.mjs' -o -name '*.cjs' \) -print)
+

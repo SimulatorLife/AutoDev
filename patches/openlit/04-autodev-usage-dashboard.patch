@@ -1,0 +1,1193 @@
+diff --git a/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
+new file mode 100644
+index 00000000..2efcb21e
+--- /dev/null
++++ b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
+@@ -0,0 +1,289 @@
++import dashboard from "@/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json";
++
++type SeedWidget = {
++	title: string;
++	description?: string;
++	properties: Record<string, unknown>;
++	config: {
++		query?: unknown;
++		structuredQuery?: {
++			query?: {
++				filters?: unknown[];
++				aggregations?: unknown[];
++				groupBy?: string[];
++				limit?: number;
++			};
++		};
++	};
++};
++
++const widgets = Object.values(dashboard.widgets) as SeedWidget[];
++
++// Each Usage widget must use a structured query scoped to a single
++// AutoDev-owned service.name. The router widgets (logical/attempt
++// activity) scope to autodev-router; the G10 source-owned MCP server
++// widget scopes to autodev-codex-tools-mcp. No widget may use a
++// different owner and no widget may use raw SQL.
++const ALLOWED_SERVICE_NAMES = new Set([
++	"autodev-router",
++	"autodev-codex-tools-mcp"
++]);
++
++describe("AutoDev Usage dashboard seed", () => {
++	it("declares the shared non-time trace filters and structured widgets", () => {
++		expect(dashboard.title).toBe("Usage");
++		expect(dashboard.variables?.map((variable) => variable.id)).toEqual([
++			"workspace",
++			"provider",
++			"model",
++			"agent",
++		]);
++		expect(
++			dashboard.variables?.find((variable) => variable.id === "model"),
++	).toMatchObject({
++			label: "Requested model",
++			key: "autodev.requested_model",
++		});
++		for (const widget of widgets) {
++			expect(widget.config.structuredQuery).toBeDefined();
++			expect(widget.config.query).toBeUndefined();
++			const serviceNameFilter = (
++				widget.config.structuredQuery?.query?.filters ?? []
++			).find(
++				(filter) =>
++					filter !== null &&
++					typeof filter === "object" &&
++					"key" in filter &&
++					(filter as { key: unknown }).key === "service.name",
++			) as { value?: unknown } | undefined;
++			expect(serviceNameFilter).toBeDefined();
++			expect(ALLOWED_SERVICE_NAMES.has(serviceNameFilter?.value as string)).toBe(
++				true,
++			);
++		}
++	});
++
++	it("filters cache-rate evidence and calculates the ratio from weighted sums", () => {
++		const widget = widgets.find(
++			(candidate) => candidate.title === "Cache-read rate",
++		);
++		expect(widget).toBeDefined();
++		expect(widget?.properties.ratio).toEqual({
++			numerator: "0.cache_read_tokens",
++			denominator: "0.input_tokens",
++			multiplier: 100,
++		});
++		expect(widget?.properties.optInVariables).toEqual([
++			"workspace",
++			"provider",
++			"model",
++			"agent",
++		]);
++		const query = widget?.config.structuredQuery?.query;
++		expect(query?.filters).toEqual(
++			expect.arrayContaining([
++				expect.objectContaining({
++					key: "gen_ai.usage.input_tokens",
++					op: "exists",
++				}),
++				expect.objectContaining({
++					key: "gen_ai.usage.cache_read.input_tokens",
++					op: "exists",
++				}),
++			]),
++		);
++		expect(query?.aggregations).toEqual([
++			{
++				fn: "sum",
++				field: "gen_ai.usage.cache_read.input_tokens",
++				as: "cache_read_tokens",
++			},
++			{
++				fn: "sum",
++				field: "gen_ai.usage.input_tokens",
++				as: "input_tokens",
++			},
++		]);
++	});
++
++	it("keeps logical requests separate from provider-attempt filters", () => {
++		const widget = widgets.find(
++			(candidate) => candidate.title === "Logical routed requests",
++		);
++		expect(widget?.properties.optInVariables).toEqual([
++			"workspace",
++			"model",
++			"agent",
++		]);
++		expect(widget?.description).toMatch(/multiple providers/);
++		expect(widget?.config.structuredQuery?.query?.filters).toEqual([
++			{
++				target: "attribute",
++				scope: "resource",
++				key: "service.name",
++				op: "eq",
++				value: "autodev-router",
++			},
++			{
++				target: "spanName",
++				op: "eq",
++				value: "autodev.routed_request",
++			},
++		]);
++	});
++
++	it("shows logical request activity by role without claiming agent sessions", () => {
++		const widget = widgets.find(
++			(candidate) => candidate.title === "Logical requests by agent/role",
++		);
++		expect(widget?.properties.optInVariables).toEqual([
++			"workspace",
++			"model",
++			"agent",
++		]);
++		expect(widget?.description).toMatch(/not unique agent sessions/);
++		expect(widget?.config.structuredQuery?.query?.groupBy).toEqual([
++			"autodev.agent.role",
++		]);
++	});
++
++	it("scopes the G10 source-owned MCP tool-call widgets to autodev-codex-tools-mcp", () => {
++		// Every G10 widget MUST filter on the shim's resource
++		// service.name AND on the MCP method name span attribute,
++		// because the source-owned observation is uniquely identified
++		// by the combination. Provider and requested-model are
++		// intentionally NOT in optInVariables because the shim does
++		// not emit those fields.
++		const g10Titles = [
++			"MCP tool calls",
++			"P95 tool-call duration",
++			"MCP tool-call errors",
++			"MCP tool calls by tool name",
++		];
++		for (const title of g10Titles) {
++			const widget = widgets.find((candidate) => candidate.title === title);
++			expect(widget).toBeDefined();
++			expect(widget?.config.structuredQuery?.query?.filters).toEqual(
++				expect.arrayContaining([
++					{
++						target: "attribute",
++						scope: "resource",
++						key: "service.name",
++						op: "eq",
++						value: "autodev-codex-tools-mcp",
++					},
++					{
++						target: "attribute",
++						scope: "span",
++						key: "mcp.method.name",
++						op: "eq",
++						value: "tools/call",
++					},
++				]),
++			);
++			expect(widget?.description).toMatch(/Resource scope override/u);
++		}
++	});
++
++	it("opts every G10 widget into workspace + agent at Resource scope only", () => {
++		// The G10 widgets honor the dashboard's workspace and
++		// agent/role variables by overriding their scope to
++		// "resource" at the widget level so the shim's validated
++		// Resource attributes are matched without duplicating
++		// Resource values onto spans. The provider and model
++		// variables remain unselected because the shim does not
++		// emit those attributes; declaring an override for them
++		// would silently filter against empty data.
++		const g10Titles = [
++			"MCP tool calls",
++			"P95 tool-call duration",
++			"MCP tool-call errors",
++			"MCP tool calls by tool name",
++		];
++		for (const title of g10Titles) {
++			const widget = widgets.find((candidate) => candidate.title === title);
++			expect(widget).toBeDefined();
++			expect(widget?.properties.optInVariables).toEqual([
++				"workspace",
++				"agent",
++			]);
++			expect(widget?.properties.variableScopeOverrides).toEqual({
++				workspace: "resource",
++				agent: "resource",
++			});
++			// The override must not invent scopes for variables the
++			// widget does not opt into; that would silently empty
++			// out non-Resource attributes when no value matches.
++			const overrides = (widget?.properties.variableScopeOverrides ??
++				{}) as Record<string, unknown>;
++			expect(Object.keys(overrides).sort()).toEqual([
++				"agent",
++				"workspace",
++			]);
++		}
++	});
++
++	it("counts MCP tool calls and emits the duration/error/status contract", () => {
++		// The G10 widgets must cover the four axes documented in the
++		// task: service.name, mcp.method.name, gen_ai.tool.name, and
++		// span duration/status. Each axis is asserted below so a
++		// future change that drops one is caught by the seed tests.
++		const callCount = widgets.find(
++			(candidate) => candidate.title === "MCP tool calls",
++		);
++		expect(callCount?.config.structuredQuery?.query?.aggregations).toEqual([
++			{
++				fn: "count",
++				as: "calls",
++			},
++		]);
++
++		const latency = widgets.find(
++			(candidate) => candidate.title === "P95 tool-call duration",
++		);
++		expect(latency?.config.structuredQuery?.query?.aggregations).toEqual([
++			{
++				fn: "p95",
++				field: "duration",
++				as: "p95_seconds",
++			},
++		]);
++
++		const errors = widgets.find(
++			(candidate) => candidate.title === "MCP tool-call errors",
++		);
++		expect(errors?.config.structuredQuery?.query?.filters).toEqual(
++			expect.arrayContaining([
++				{
++					target: "status",
++					op: "eq",
++					value: "ERROR",
++				},
++			]),
++		);
++		expect(errors?.config.structuredQuery?.query?.aggregations).toEqual([
++			{
++				fn: "count",
++				as: "errors",
++			},
++		]);
++	});
++
++	it("groups MCP tool calls by gen_ai.tool.name without filtering raw tool content", () => {
++		const grouped = widgets.find(
++			(candidate) => candidate.title === "MCP tool calls by tool name",
++		);
++		expect(grouped?.properties.xAxis).toBe("g0");
++		expect(grouped?.properties.yAxis).toBe("calls");
++		expect(grouped?.config.structuredQuery?.query?.groupBy).toEqual([
++			"gen_ai.tool.name",
++		]);
++		expect(grouped?.config.structuredQuery?.query?.limit).toBe(20);
++		expect(grouped?.config.structuredQuery?.query?.aggregations).toEqual([
++			{
++				fn: "count",
++				as: "calls",
++			},
++		]);
++	});
++});
+diff --git a/src/client/src/__tests__/lib/platform/manage-dashboard/derived-value.test.ts b/src/client/src/__tests__/lib/platform/manage-dashboard/derived-value.test.ts
+new file mode 100644
+index 00000000..fed110ec
+--- /dev/null
++++ b/src/client/src/__tests__/lib/platform/manage-dashboard/derived-value.test.ts
+@@ -0,0 +1,37 @@
++import { resolveRatioDisplay } from "@/lib/platform/manage-dashboard/derived-value";
++
++describe("resolveRatioDisplay", () => {
++	const ratio = {
++		numerator: "0.cache_read_tokens",
++		denominator: "0.input_tokens",
++		multiplier: 100,
++	};
++
++	it("computes ratios from aggregated sums rather than averaging row rates", () => {
++		expect(
++			resolveRatioDisplay(
++				[{ cache_read_tokens: 91, input_tokens: 102 }],
++				ratio,
++			),
++		).toBeCloseTo((91 / 102) * 100);
++	});
++
++	it("returns unavailable when the denominator or source evidence is absent", () => {
++		expect(
++			resolveRatioDisplay(
++				[{ cache_read_tokens: 0, input_tokens: 0 }],
++				ratio,
++			),
++		).toBeNull();
++		expect(resolveRatioDisplay([], ratio)).toBeNull();
++	});
++
++	it("does not interpret executable or prototype property paths", () => {
++		expect(
++			resolveRatioDisplay(
++				[{ cache_read_tokens: 1, input_tokens: 2 }],
++				{ ...ratio, numerator: "0.constructor" },
++			),
++		).toBeNull();
++	});
++});
+diff --git a/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json b/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
+new file mode 100644
+index 00000000..4f18924d
+--- /dev/null
++++ b/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
+@@ -0,0 +1,717 @@
++{
++  "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b001",
++  "title": "Usage",
++  "description": "AutoDev routed-request and GenAI usage. Requests count logical routes; tokens and latency count physical provider/model attempts.",
++  "parentId": null,
++  "isMainDashboard": false,
++  "isPinned": true,
++  "createdAt": "2026-09-30 00:00:00",
++  "updatedAt": "2026-09-30 00:00:00",
++  "variables": [
++    {
++      "id": "workspace",
++      "label": "Workspace",
++      "signal": "traces",
++      "scope": "span",
++      "key": "autodev.workspace",
++      "multi": true,
++      "supportsAll": true,
++      "defaultValues": []
++    },
++    {
++      "id": "provider",
++      "label": "Provider",
++      "signal": "traces",
++      "scope": "span",
++      "key": "gen_ai.provider.name",
++      "multi": true,
++      "supportsAll": true,
++      "defaultValues": []
++    },
++    {
++      "id": "model",
++      "label": "Requested model",
++      "signal": "traces",
++      "scope": "span",
++      "key": "autodev.requested_model",
++      "multi": true,
++      "supportsAll": true,
++      "defaultValues": []
++    },
++    {
++      "id": "agent",
++      "label": "Agent / role",
++      "signal": "traces",
++      "scope": "span",
++      "key": "autodev.agent.role",
++      "multi": true,
++      "supportsAll": true,
++      "defaultValues": []
++    }
++  ],
++  "widgets": {
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b101": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b101",
++      "title": "Logical routed requests",
++      "description": "One count per AutoDev logical route, including failures and fallback attempts. A fallback chain is not counted once per provider attempt. Provider is intentionally not an opt-in filter because one logical route may try multiple providers.",
++      "type": "STAT_CARD",
++      "properties": {
++        "value": "0.requests",
++        "color": "#F36C06",
++        "optInVariables": [
++          "workspace",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "autodev.routed_request"
++              }
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "requests"
++              }
++            ]
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b102": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b102",
++      "title": "Input tokens",
++      "description": "Sum of reported input tokens across physical GenAI provider/model attempts.",
++      "type": "STAT_CARD",
++      "properties": {
++        "value": "0.input_tokens",
++        "color": "#10b981",
++        "optInVariables": [
++          "workspace",
++          "provider",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "gen_ai.client_operation"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "gen_ai.usage.input_tokens",
++                "op": "exists"
++              }
++            ],
++            "aggregations": [
++              {
++                "fn": "sum",
++                "field": "gen_ai.usage.input_tokens",
++                "as": "input_tokens"
++              }
++            ]
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b103": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b103",
++      "title": "Output tokens",
++      "description": "Sum of reported output tokens across physical GenAI provider/model attempts.",
++      "type": "STAT_CARD",
++      "properties": {
++        "value": "0.output_tokens",
++        "color": "#F36C06",
++        "optInVariables": [
++          "workspace",
++          "provider",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "gen_ai.client_operation"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "gen_ai.usage.output_tokens",
++                "op": "exists"
++              }
++            ],
++            "aggregations": [
++              {
++                "fn": "sum",
++                "field": "gen_ai.usage.output_tokens",
++                "as": "output_tokens"
++              }
++            ]
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b104": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b104",
++      "title": "Cache-read rate",
++      "description": "Reported cache-read input tokens divided by reported input tokens, summed across attempts where both values are present. Unreported cache usage remains unavailable rather than zero.",
++      "type": "STAT_CARD",
++      "properties": {
++        "color": "#8b5cf6",
++        "suffix": "%",
++        "ratio": {
++          "numerator": "0.cache_read_tokens",
++          "denominator": "0.input_tokens",
++          "multiplier": 100
++        },
++        "optInVariables": [
++          "workspace",
++          "provider",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "gen_ai.client_operation"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "gen_ai.usage.input_tokens",
++                "op": "exists"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "gen_ai.usage.cache_read.input_tokens",
++                "op": "exists"
++              }
++            ],
++            "aggregations": [
++              {
++                "fn": "sum",
++                "field": "gen_ai.usage.cache_read.input_tokens",
++                "as": "cache_read_tokens"
++              },
++              {
++                "fn": "sum",
++                "field": "gen_ai.usage.input_tokens",
++                "as": "input_tokens"
++              }
++            ]
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b105": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b105",
++      "title": "P95 attempt latency",
++      "description": "95th percentile duration of physical provider/model attempts, not end-to-end logical request latency.",
++      "type": "STAT_CARD",
++      "properties": {
++        "value": "0.p95_seconds",
++        "suffix": "s",
++        "color": "#0ea5e9",
++        "optInVariables": [
++          "workspace",
++          "provider",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "gen_ai.client_operation"
++              }
++            ],
++            "aggregations": [
++              {
++                "fn": "p95",
++                "field": "duration",
++                "as": "p95_seconds"
++              }
++            ]
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b106": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b106",
++      "title": "Physical attempts by provider",
++      "description": "Provider/model attempt volume. Compare with logical routed requests to diagnose fallbacks and retries.",
++      "type": "BAR_CHART",
++      "properties": {
++        "xAxis": "g0",
++        "yAxis": "attempts",
++        "color": "#F36C06",
++        "optInVariables": [
++          "workspace",
++          "provider",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "gen_ai.client_operation"
++              }
++            ],
++            "groupBy": [
++              "gen_ai.provider.name"
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "attempts"
++              }
++            ],
++            "limit": 20
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b107": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b107",
++      "title": "Logical requests by agent/role",
++      "description": "Logical routed requests grouped by agent role. This counts parent request spans, not unique agent sessions, and intentionally ignores provider because one route may fall back across providers.",
++      "type": "BAR_CHART",
++      "properties": {
++        "xAxis": "g0",
++        "yAxis": "requests",
++        "color": "#0ea5e9",
++        "optInVariables": [
++          "workspace",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "autodev.routed_request"
++              }
++            ],
++            "groupBy": [
++              "autodev.agent.role"
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "requests"
++              }
++            ],
++            "limit": 20
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b201": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b201",
++      "title": "MCP tool calls",
++      "description": "Count of source-owned MCP server `tools/call` spans emitted by the AutoDev codex-tools shim (service.name=autodev-codex-tools-mcp, mcp.method.name=tools/call). One count per shim-side observation; tool arguments, results, prompts, and JSON-RPC ids are never exported. The widget opts into the workspace and agent/role variables at Resource scope override so the shim's validated resource attributes are honored without duplicating resource fields onto spans; provider and requested-model variables are intentionally excluded because the shim does not emit those fields.",
++      "type": "STAT_CARD",
++      "properties": {
++        "value": "0.calls",
++        "color": "#F36C06",
++        "optInVariables": [
++          "workspace",
++          "agent"
++        ],
++        "variableScopeOverrides": {
++          "workspace": "resource",
++          "agent": "resource"
++        }
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-codex-tools-mcp"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "mcp.method.name",
++                "op": "eq",
++                "value": "tools/call"
++              }
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "calls"
++              }
++            ]
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b202": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b202",
++      "title": "P95 tool-call duration",
++      "description": "95th percentile span duration of source-owned MCP `tools/call` spans (service.name=autodev-codex-tools-mcp, mcp.method.name=tools/call). This is the bridge round-trip plus shim overhead, not the Codex-side tool execution latency. The widget opts into the workspace and agent/role variables at Resource scope override; provider and requested-model variables are intentionally excluded because the shim does not emit them.",
++      "type": "STAT_CARD",
++      "properties": {
++        "value": "0.p95_seconds",
++        "suffix": "s",
++        "color": "#0ea5e9",
++        "optInVariables": [
++          "workspace",
++          "agent"
++        ],
++        "variableScopeOverrides": {
++          "workspace": "resource",
++          "agent": "resource"
++        }
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-codex-tools-mcp"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "mcp.method.name",
++                "op": "eq",
++                "value": "tools/call"
++              }
++            ],
++            "aggregations": [
++              {
++                "fn": "p95",
++                "field": "duration",
++                "as": "p95_seconds"
++              }
++            ]
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b203": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b203",
++      "title": "MCP tool-call errors",
++      "description": "Count of source-owned MCP `tools/call` spans whose span status is ERROR (service.name=autodev-codex-tools-mcp, mcp.method.name=tools/call). ERROR includes HTTP/transport failures and tool-level failures reported as `error.type=tool_error`; raw error messages and tool content are never exported. The widget opts into the workspace and agent/role variables at Resource scope override; provider and requested-model variables are intentionally excluded because the shim does not emit them.",
++      "type": "STAT_CARD",
++      "properties": {
++        "value": "0.errors",
++        "color": "#dc2626",
++        "optInVariables": [
++          "workspace",
++          "agent"
++        ],
++        "variableScopeOverrides": {
++          "workspace": "resource",
++          "agent": "resource"
++        }
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-codex-tools-mcp"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "mcp.method.name",
++                "op": "eq",
++                "value": "tools/call"
++              },
++              {
++                "target": "status",
++                "op": "eq",
++                "value": "ERROR"
++              }
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "errors"
++              }
++            ]
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b204": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b204",
++      "title": "MCP tool calls by tool name",
++      "description": "Source-owned MCP `tools/call` spans grouped by `gen_ai.tool.name` (service.name=autodev-codex-tools-mcp, mcp.method.name=tools/call). Each tool name comes from the bounded MCP tool list exposed by the bridge; arguments and results are never exported. The widget opts into the workspace and agent/role variables at Resource scope override; provider and requested-model variables are intentionally excluded because the shim does not emit them.",
++      "type": "BAR_CHART",
++      "properties": {
++        "xAxis": "g0",
++        "yAxis": "calls",
++        "color": "#0ea5e9",
++        "optInVariables": [
++          "workspace",
++          "agent"
++        ],
++        "variableScopeOverrides": {
++          "workspace": "resource",
++          "agent": "resource"
++        }
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-codex-tools-mcp"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "mcp.method.name",
++                "op": "eq",
++                "value": "tools/call"
++              }
++            ],
++            "groupBy": [
++              "gen_ai.tool.name"
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "calls"
++              }
++            ],
++            "limit": 20
++          }
++        }
++      }
++    }
++  },
++  "tags": "[\"autodev\",\"usage\"]",
++  "layouts": {
++    "lg": [
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b101",
++        "x": 0,
++        "y": 0,
++        "w": 1,
++        "h": 1
++      },
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b102",
++        "x": 1,
++        "y": 0,
++        "w": 1,
++        "h": 1
++      },
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b103",
++        "x": 2,
++        "y": 0,
++        "w": 1,
++        "h": 1
++      },
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b104",
++        "x": 3,
++        "y": 0,
++        "w": 1,
++        "h": 1
++      },
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b105",
++        "x": 0,
++        "y": 1,
++        "w": 1,
++        "h": 1
++      },
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b106",
++        "x": 1,
++        "y": 1,
++        "w": 3,
++        "h": 2
++      },
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b107",
++        "x": 0,
++        "y": 3,
++        "w": 4,
++        "h": 2
++      },
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b201",
++        "x": 0,
++        "y": 5,
++        "w": 1,
++        "h": 1
++      },
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b202",
++        "x": 1,
++        "y": 5,
++        "w": 1,
++        "h": 1
++      },
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b203",
++        "x": 2,
++        "y": 5,
++        "w": 1,
++        "h": 1
++      },
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b204",
++        "x": 0,
++        "y": 6,
++        "w": 4,
++        "h": 2
++      }
++    ]
++  }
++}
+diff --git a/src/client/src/clickhouse/seed/dashboards.ts b/src/client/src/clickhouse/seed/dashboards.ts
+index 2a570c28..da5458b6 100644
+--- a/src/client/src/clickhouse/seed/dashboards.ts
++++ b/src/client/src/clickhouse/seed/dashboards.ts
+@@ -12,6 +12,7 @@ import llmDashboard from "../seed-data/openlit-dashboard-LLM-dashboard-layout.js
+ import vectorDbDashboard from "../seed-data/openlit-dashboard-Vector-DB-layout.json";
+ import gpuDashboard from "../seed-data/openlit-dashboard-GPU-dashboard-layout.json";
+ import codingAgentsDashboard from "../seed-data/openlit-dashboard-coding-agents-layout.json";
++import autoDevUsageDashboard from "../seed-data/openlit-dashboard-AutoDev-Usage-layout.json";
+ 
+ /**
+  * Per-board seed entry. We treat the JSON file's `title` as the
+@@ -35,6 +36,7 @@ const SEEDED_DASHBOARDS: ReadonlyArray<{
+ 	{ seedTitle: "Vector DB", layout: vectorDbDashboard },
+ 	{ seedTitle: "GPU dashboard", layout: gpuDashboard },
+ 	{ seedTitle: "Coding Agents", layout: codingAgentsDashboard },
++	{ seedTitle: "Usage", layout: autoDevUsageDashboard },
+ ];
+ 
+ export default async function CreateCustomDashboardsSeed(
+diff --git a/src/client/src/components/(playground)/manage-dashboard/board-creator/types.ts b/src/client/src/components/(playground)/manage-dashboard/board-creator/types.ts
+index c3a4ffcf..08d5a878 100644
+--- a/src/client/src/components/(playground)/manage-dashboard/board-creator/types.ts
++++ b/src/client/src/components/(playground)/manage-dashboard/board-creator/types.ts
+@@ -42,6 +42,8 @@ export interface StatCardWidget extends BaseWidgetProps {
+ 		trendPrefix?: string;
+ 		textSize?: "small" | "medium" | "large";
+ 		autoRefresh?: boolean;
++		/** Optional ratio over already-aggregated query result fields. */
++		ratio?: import("@/lib/platform/manage-dashboard/derived-value").RatioDisplay;
+ 	};
+ }
+ 
+diff --git a/src/client/src/components/(playground)/manage-dashboard/board-creator/widgets/stat-card-widget.tsx b/src/client/src/components/(playground)/manage-dashboard/board-creator/widgets/stat-card-widget.tsx
+index 0fc1a8e7..a2157c44 100644
+--- a/src/client/src/components/(playground)/manage-dashboard/board-creator/widgets/stat-card-widget.tsx
++++ b/src/client/src/components/(playground)/manage-dashboard/board-creator/widgets/stat-card-widget.tsx
+@@ -4,6 +4,7 @@ import { TrendingDown } from "lucide-react";
+ import { TrendingUp } from "lucide-react";
+ import { isNil } from "lodash";
+ import { formatCompactNumber } from "../utils/formatters";
++import { resolveRatioDisplay } from "@/lib/platform/manage-dashboard/derived-value";
+ 
+ interface StatCardProps {
+ 	widget: StatCardWidget;
+@@ -12,22 +13,27 @@ interface StatCardProps {
+ 
+ const StatCardWidget: React.FC<StatCardProps> = ({ widget, data }) => {
+ 	let value: unknown = "";
+-	let trend: number = 0;
++	let trend: number | null = 0;
+ 
+ 	try {
+-		value = (widget.properties.value || "")
+-			.split(".")
+-			.reduce((acc: any, curr: string) => acc?.[curr], data);
+-		value = value || 0;
+-		trend = (widget.properties.trend || "")
+-			.split(".")
+-			.reduce((acc: any, curr: string) => acc?.[curr], data);
++		value = widget.properties.ratio
++			? resolveRatioDisplay(data, widget.properties.ratio)
++			: (widget.properties.value || "")
++					.split(".")
++					.reduce((acc: any, curr: string) => acc?.[curr], data) || 0;
++		trend = widget.properties.ratio
++			? null
++			: (widget.properties.trend || "")
++					.split(".")
++					.reduce((acc: any, curr: string) => acc?.[curr], data);
+ 		trend = isNil(trend) ? trend : parseFloat(trend?.toString() || "0");
+ 	} catch (error) {
+ 		console.error(error);
+ 	}
+-	const displayValue = formatCompactNumber(value);
+-	const fullValue = `${widget.properties.prefix}${String(value)}${widget.properties.suffix}`;
++	const displayValue = isNil(value) ? "—" : formatCompactNumber(value);
++	const fullValue = isNil(value)
++		? "Unavailable"
++		: `${widget.properties.prefix}${String(value)}${widget.properties.suffix}`;
+ 
+ 	return (
+ 		<div className="flex min-w-0 flex-col justify-center items-center h-full overflow-hidden px-2">
+diff --git a/src/client/src/lib/platform/manage-dashboard/derived-value.ts b/src/client/src/lib/platform/manage-dashboard/derived-value.ts
+new file mode 100644
+index 00000000..9d3c8c3b
+--- /dev/null
++++ b/src/client/src/lib/platform/manage-dashboard/derived-value.ts
+@@ -0,0 +1,43 @@
++export interface RatioDisplay {
++	numerator: string;
++	denominator: string;
++	multiplier?: number;
++}
++
++const VALUE_PATH_SEGMENT = /^(?:[A-Za-z][A-Za-z0-9_-]*|0|[1-9][0-9]*)$/;
++
++function readValuePath(data: unknown, path: string): unknown {
++	const parts = path.split(".");
++	if (!parts.length || parts.some((part) => !VALUE_PATH_SEGMENT.test(part))) {
++		return undefined;
++	}
++	return parts.reduce<unknown>((value, part) => {
++		if (Array.isArray(value) && /^(?:0|[1-9][0-9]*)$/.test(part)) {
++			return value[Number(part)];
++		}
++		if (!value || typeof value !== "object" || !Object.hasOwn(value, part)) {
++			return undefined;
++		}
++		return (value as Record<string, unknown>)[part];
++	}, data);
++}
++
++/** Calculate a display-only ratio from already-aggregated query results. */
++export function resolveRatioDisplay(
++	data: unknown,
++	ratio: RatioDisplay,
++): number | null {
++	const numerator = Number(readValuePath(data, ratio.numerator));
++	const denominator = Number(readValuePath(data, ratio.denominator));
++	const multiplier = ratio.multiplier ?? 1;
++	if (
++		!Number.isFinite(numerator) ||
++		!Number.isFinite(denominator) ||
++		denominator <= 0 ||
++		!Number.isFinite(multiplier)
++	) {
++		return null;
++	}
++	const result = (numerator / denominator) * multiplier;
++	return Number.isFinite(result) ? result : null;
++}

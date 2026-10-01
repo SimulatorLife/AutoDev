@@ -1,0 +1,299 @@
+{
+  "version": 1,
+  "roles": {
+    "browser-tester": {
+      "kind": "leaf",
+      "readOnly": true,
+      "mcp": [
+        "playwright"
+      ],
+      "skills": [],
+      "mcpTools": {
+        "playwright": [
+          "browser_navigate",
+          "browser_tabs",
+          "browser_snapshot",
+          "browser_take_screenshot",
+          "browser_click",
+          "browser_type",
+          "browser_fill_form",
+          "browser_press_key",
+          "browser_wait_for",
+          "browser_console_messages",
+          "browser_network_requests",
+          "browser_find",
+          "browser_hover",
+          "browser_select_option",
+          "browser_drag",
+          "browser_handle_dialog",
+          "browser_resize",
+          "browser_close"
+        ]
+      }
+    },
+    "default": {
+      "kind": "leaf",
+      "readOnly": false,
+      "mcp": [
+        "lsp",
+        "cocoindex-code",
+        "codegraphcontext"
+      ],
+      "skills": [
+        "ccc",
+        "lsp-mcp-server",
+        "code-simplification",
+        "diagnosing-bugs",
+        "improve-codebase-architecture",
+        "remove-legacy-shims",
+        "resolve-merge-conflicts"
+      ],
+      "mcpTools": {
+        "lsp": [
+          "lsp_find_symbol",
+          "lsp_smart_search",
+          "lsp_goto_definition",
+          "lsp_goto_type_definition",
+          "lsp_find_references",
+          "lsp_find_implementations",
+          "lsp_type_hierarchy",
+          "lsp_hover",
+          "lsp_signature_help",
+          "lsp_document_symbols",
+          "lsp_diagnostics",
+          "lsp_index_files",
+          "lsp_workspace_diagnostics",
+          "lsp_rename",
+          "lsp_code_actions",
+          "lsp_format_document"
+        ],
+        "codegraphcontext": [
+          "list_indexed_repositories",
+          "find_code",
+          "analyze_code_relationships",
+          "get_repository_stats"
+        ]
+      }
+    },
+    "docs-researcher": {
+      "kind": "leaf",
+      "readOnly": true,
+      "mcp": [
+        "openaiDeveloperDocs",
+        "context7"
+      ],
+      "skills": [],
+      "webResearch": {
+        "search": true,
+        "fetch": true,
+        "optionalMcp": []
+      }
+    },
+    "explorer": {
+      "kind": "leaf",
+      "readOnly": true,
+      "mcp": [
+        "lsp",
+        "cocoindex-code",
+        "codegraphcontext",
+        "context7"
+      ],
+      "skills": [
+        "ccc",
+        "lsp-mcp-server"
+      ],
+      "mcpTools": {
+        "codegraphcontext": [
+          "list_indexed_repositories",
+          "find_code",
+          "analyze_code_relationships",
+          "get_repository_stats"
+        ]
+      }
+    },
+    "orchestrator": {
+      "kind": "orchestrator",
+      "readOnly": false,
+      "mcp": [
+        "lsp",
+        "cocoindex-code",
+        "codegraphcontext",
+        "autodev_spawn",
+        "codex_app"
+      ],
+      "skills": [
+        "orchestration",
+        "ccc",
+        "lsp-mcp-server"
+      ],
+      "mcpTools": {
+        "codegraphcontext": [
+          "list_indexed_repositories",
+          "find_code",
+          "analyze_code_relationships",
+          "get_repository_stats"
+        ],
+        "codex_app": [
+          "request_user_input"
+        ]
+      },
+      "webResearch": {
+        "search": true,
+        "fetch": true,
+        "optionalMcp": []
+      }
+    },
+    "smart": {
+      "kind": "leaf",
+      "readOnly": false,
+      "mcp": [
+        "lsp",
+        "cocoindex-code",
+        "codegraphcontext",
+        "playwright",
+        "openaiDeveloperDocs"
+      ],
+      "skills": [
+        "ccc",
+        "lsp-mcp-server",
+        "code-simplification",
+        "improve-codebase-architecture",
+        "remove-legacy-shims",
+        "resolve-merge-conflicts",
+        "doubt-driven-development"
+      ],
+      "mcpTools": {
+        "playwright": [
+          "browser_navigate",
+          "browser_tabs",
+          "browser_snapshot",
+          "browser_take_screenshot",
+          "browser_click",
+          "browser_type",
+          "browser_fill_form",
+          "browser_press_key",
+          "browser_wait_for",
+          "browser_console_messages",
+          "browser_network_requests",
+          "browser_find",
+          "browser_hover",
+          "browser_select_option",
+          "browser_drag",
+          "browser_handle_dialog",
+          "browser_resize",
+          "browser_close"
+        ],
+        "codegraphcontext": [
+          "list_indexed_repositories",
+          "find_code",
+          "analyze_code_relationships",
+          "get_repository_stats"
+        ]
+      },
+      "webResearch": {
+        "search": true,
+        "fetch": true,
+        "optionalMcp": [
+          "playwright"
+        ]
+      }
+    },
+    "validator": {
+      "kind": "leaf",
+      "readOnly": true,
+      "mcp": [
+        "lsp",
+        "cocoindex-code",
+        "codegraphcontext"
+      ],
+      "skills": [
+        "ccc",
+        "lsp-mcp-server",
+        "diagnosing-bugs",
+        "doubt-driven-development"
+      ],
+      "mcpTools": {
+        "codegraphcontext": [
+          "list_indexed_repositories",
+          "find_code",
+          "analyze_code_relationships",
+          "get_repository_stats"
+        ]
+      }
+    },
+    "worker": {
+      "kind": "leaf",
+      "readOnly": false,
+      "mcp": [
+        "lsp",
+        "cocoindex-code",
+        "codegraphcontext"
+      ],
+      "skills": [
+        "ccc",
+        "lsp-mcp-server",
+        "code-simplification",
+        "diagnosing-bugs",
+        "improve-codebase-architecture",
+        "remove-legacy-shims",
+        "resolve-merge-conflicts",
+        "doubt-driven-development"
+      ],
+      "mcpTools": {
+        "lsp": [
+          "lsp_find_symbol",
+          "lsp_smart_search",
+          "lsp_goto_definition",
+          "lsp_goto_type_definition",
+          "lsp_find_references",
+          "lsp_find_implementations",
+          "lsp_type_hierarchy",
+          "lsp_hover",
+          "lsp_signature_help",
+          "lsp_document_symbols",
+          "lsp_diagnostics",
+          "lsp_index_files",
+          "lsp_workspace_diagnostics",
+          "lsp_rename",
+          "lsp_code_actions",
+          "lsp_format_document"
+        ],
+        "codegraphcontext": [
+          "list_indexed_repositories",
+          "find_code",
+          "analyze_code_relationships",
+          "get_repository_stats"
+        ]
+      }
+    }
+  },
+  "providers": {
+    "claude": {
+      "spawnTools": [],
+      "permissionMode": "native",
+      "delegation": "native"
+    },
+    "antigravity": {
+      "spawnTools": [
+        "invoke_subagent"
+      ],
+      "permissionMode": "configured",
+      "delegation": "codex-shim"
+    },
+    "minimax": {
+      "spawnTools": [],
+      "permissionMode": "upstream",
+      "delegation": "none"
+    },
+    "copilot": {
+      "spawnTools": [],
+      "permissionMode": "configured",
+      "delegation": "codex-shim"
+    },
+    "codex": {
+      "spawnTools": [],
+      "permissionMode": "native",
+      "delegation": "native"
+    }
+  }
+}
