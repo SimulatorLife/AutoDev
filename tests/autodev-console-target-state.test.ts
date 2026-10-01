@@ -176,3 +176,43 @@ test("monorepo layout, console features, and control API match target state exac
     );
   }
 });
+
+
+test("canonical target tracks migration gaps without claiming premature cutover", () => {
+  const target = readFileSync(targetStatePath, "utf8");
+
+  assert.match(target, /## 12\. Current migration state and gap ledger/);
+  assert.match(target, /Flat monorepo \| \*\*Partial\*\*/);
+  assert.match(target, /Console \| \*\*Prototype\*\*/);
+  assert.match(target, /RuleSync ownership \| \*\*Partial\*\*/);
+  assert.match(target, /Telemetry cutover \| \*\*Incomplete cleanup\*\*/);
+  assert.match(target, /unknown must remain unknown/i);
+  assert.match(target, /Move implementation out of legacy `src\/`/);
+  assert.match(target, /Finish RuleSync canonical ownership/);
+  assert.match(target, /Remaining OpenLIT subtraction/);
+  assert.match(target, /Remaining telemetry cleanup/);
+  assert.match(target, /Remaining retained-feature integrations/);
+  assert.match(target, /Ordered migration sequence/);
+  assert.doesNotMatch(target, /original M0-M6 observability migration is complete/i);
+});
+
+test("canonical target records the remaining external-project adaptations", () => {
+  const target = readFileSync(targetStatePath, "utf8");
+
+  for (const project of [
+    "OpenLIT",
+    "LiteLLM",
+    "LangWatch",
+    "MCPJam Inspector",
+    "Unleash",
+    "Argo CD",
+    "Backstage"
+  ]) {
+    assert.match(target, new RegExp(project.replaceAll(/[.*+?^$(){}|[\]\\]/g, "\\$&")));
+  }
+
+  assert.match(target, /provider\/model availability, priority, fallback order/);
+  assert.match(target, /connection\/probe state, Tools, Resources, Prompts/);
+  assert.match(target, /desired vs actual, generations, diff, health/);
+  assert.match(target, /lightweight typed feature\/route registry/);
+});

@@ -591,37 +591,311 @@ Do not rewrite foundational OpenLIT storage/query abstractions merely to remove 
 
 Receiver authentication remains mandatory. The pinned upstream receiver does not natively enforce the AutoDev bearer requirement; retain the local `bearertokenauth` patch for OTLP/HTTP and OTLP/gRPC until the pinned upstream behavior genuinely replaces it.
 
-## 12. Current verified implementation state
+## 12. Current migration state and gap ledger
 
-The original M0-M6 observability migration is complete.
+This section records the **observed repository state**, not the desired target. It must be updated as migration slices land so target-state statements do not get mistaken for completed implementation.
 
-- The legacy `/dashboard`, `src/router/dashboard.html`, Chart.js dashboard asset, lookback aggregator/history-only dashboard pipeline, and pass-through AutoDev Collector are decommissioned.
-- AutoDev producers emit logical-request/physical-attempt telemetry and owned MCP/skill observations.
-- The Control API has a dedicated control-only listener (default `4101` in the current local integration); the model/OTLP router remains separate.
-- OpenLIT receiver authentication, ClickHouse persistence/TTL, generic dashboard variables, Usage queries, and the current `/autodev` control surfaces have been verified.
-- All 11 Usage widgets (7 router + 4 MCP) have live-query evidence with the expected variable/scope behavior.
-- RuleSync prompt, agent, model, and workspace projections are currently synchronized into OpenLIT for visibility. The **target** is to finish making RuleSync itself authoritative for all supported agent-facing configuration surfaces rather than preserving parallel native authorities.
-- AutoDev uses one canonical OpenLIT project/workspace boundary internally; AutoDev workspaces remain OTel analytical attributes.
-- The latest recorded repository validation for the completed migration was 1163 passed, 0 failed, 2 skipped, with focused patch/variable checks green.
-- Patch 06 (`06-autodev-branding.patch`) rebrands all user-facing "OpenLIT" wording to "AutoDev" across 17 OpenLIT source files (layout metadata, sidebar brand/search, version label, getting-started/onboarding pages, AutoDev tab pages, message catalog, API error messages, API key references). Internal identifiers, table names, env vars, headers, and TypeScript types are preserved unchanged.
+Current review baseline: `main` at `4b6668d381962950f3035183b074487f35a35002`.
 
-### Remaining product-fork work
+### Migration status
 
-The next phase is deliberate product subtraction and reassembly, not restoration of old observability paths:
+| Area | Current state | Remaining gap |
+| --- | --- | --- |
+| Flat monorepo | **Partial** | `console/`, `runtime/`, `core/`, and `data/` exist and are registered pnpm workspaces, but most substantive runtime implementation still lives under legacy `src/` |
+| Console | **Prototype** | Shared React components and all 11 feature folders exist, but `console/` is not yet a runnable Next.js application: no Next app/router, web build/start path, same-origin server routes, or real data loading |
+| Workspace boundaries | **Partial** | `runtime/` declares workspace dependencies, but Console/Data still use direct source-tree imports in places; root tooling/dependencies still carry transitional responsibilities |
+| RuleSync ownership | **Partial** | Skills, hooks, commands/prompts, and MCP declarations are established; subagent/agent-role and permissions generation remain explicitly deferred |
+| Control API | **Partial** | Typed read surfaces cover most control resources; provider-role enablement is a real mutation, but most RuleSync-owned resources remain read-only |
+| Data layer | **Early** | Basic RuleSync/config/ClickHouse adapters exist; OpenLIT, Usage, Memory, Evaluations, runtime-state, and effective-tool adapters are still missing or incomplete |
+| Usage | **Prototype** | The Console Usage view exists but still defaults to hard-coded sample values instead of live OpenLIT queries |
+| Memory | **UI shell** | Feature view exists; retained OpenLIT Memory/connectors are not yet integrated |
+| Evaluations | **UI shell** | Feature view exists; retained OpenLIT evaluation execution/history/query paths are not yet integrated |
+| MCPs | **Prototype** | Configuration/exposure list exists; MCPJam-style connection, tool/resource/prompt inspection, diagnostics, and activity are not yet implemented |
+| Prompts | **Read-oriented prototype** | Canonical RuleSync prompts can be surfaced, but edit/validate/save/version/diff/generate/apply and usage/evaluation linkage are missing |
+| Tools | **Prototype/read model** | UI exists; the effective catalog across native, MCP, plugin/provider, permission, runtime-health, and usage sources is incomplete |
+| Desired/actual state | **Mostly conceptual** | Domain types exist, but multiple resource states are still inferred or hard-coded instead of reconciled from desired and observed generations |
+| OpenLIT product fork | **Partial/additive** | Receiver auth, dashboard variables, Usage, login/signup removal, branding, and old AutoDev pages are patched; the unwanted OpenLIT product modules are not yet comprehensively removed |
+| Telemetry cutover | **Incomplete cleanup** | Direct OpenLIT ingestion exists, but legacy AutoDev Collector files and router-side OTLP ingestion/history machinery still remain in the repository |
+| CI evidence | **Incomplete** | Local test evidence has been recorded in commits/docs, but the reviewed `main` SHA has no GitHub combined status or workflow run attached |
 
-1. Replace OpenLIT navigation with the exact AutoDev left-nav defined in §2.
-2. Remove account/user, organization, environment and project product concepts and their UI/API paths; keep only temporary hidden compatibility data where unavoidable during migration.
-3. Remove Rule Engine, OpenGround and GPU dashboard/product code from the AutoDev distribution.
-4. Remove the OpenLIT Go Controller/eBPF discovery/instrumentation runtime; preserve only useful desired-state/convergence concepts in AutoDev's TypeScript control layer.
-5. Replace OpenLIT's discovered/instrumented Agents model with RuleSync-configured AutoDev agents/roles.
-6. Make MCPs, Skills, Hooks, Permissions, Tools, Prompts and Workspaces first-class TypeScript modules using canonical RuleSync/AutoDev sources.
-7. Keep/adapt OpenLIT Memory, Evaluations, Agents UI patterns, Usage/telemetry foundations, and Prompt Hub interaction patterns where they fit the target.
-8. Move provider/model/routing/runtime controls into Agents and relevant detail surfaces rather than top-level navigation.
-9. Complete RuleSync canonical ownership for all supported agent-facing configuration still held in duplicate native sources.
-10. Route RuleSync-owned console mutations through typed Control API operations that edit/validate/generate/apply canonical RuleSync state.
-11. Consolidate every retained/borrowed surface onto one shared TypeScript/TSX design system and component library.
-12. Add desired/actual/pending/error state consistently across mutable resources.
-13. Delete superseded OpenLIT routes/components/stores/APIs/migrations after each replacement reaches parity; do not retain hidden permanent feature forks.
+### Correctness rule: unknown must remain unknown
+
+The Console must never turn missing integration data into optimistic state. Transitional code currently contains examples such as sample Usage metrics and synthesized `ready`/`converged`/healthy values.
+
+Replace these with explicit states such as:
+
+```text
+unknown
+not observed
+unavailable
+pending
+error
+```
+
+until the owning source reports the value.
+
+Examples that must not survive cutover:
+
+- hard-coded Usage request/token/provider counts;
+- MCP rows that report `Connected` or `100%` health without a runtime probe;
+- agent definitions that become `ready`/`converged` merely because a config file exists;
+- permission/config values duplicated as constants instead of read from canonical/effective state.
+
+### Remaining structural cutover
+
+#### 1. Move implementation out of legacy `src/`
+
+The four root workspaces are the target architecture, but `runtime/` still re-exports substantial implementations from `src/router`, `src/providers`, and related legacy directories.
+
+Migrate coherent slices into their final owners:
+
+```text
+src/router/*       → runtime/src/router/*
+src/providers/*    → runtime/src/providers/*
+src/agents/*       → runtime/src/agents/*
+src/mcp/*          → runtime/src/mcp/*
+src/hooks/*        → runtime/src/hooks/*
+src/platform/*     → runtime/src/platform/* and/or data/*
+src/shared/*       → core/* or runtime/*
+src/telemetry/*    → runtime/src/telemetry/*
+```
+
+After each slice reaches parity, update imports to workspace package contracts and delete the old path. A permanent `runtime/ → ../../../src/*` facade is not acceptable.
+
+Also complete workspace hygiene:
+
+- declare actual workspace dependencies in each package manifest;
+- import `@simulatorlife/autodev-core` / `@simulatorlife/autodev-data` rather than crossing package boundaries through `../src` paths;
+- update root lint/format/typecheck/test scripts so all four workspaces are first-class rather than relying on root dependency hoisting or `src/`-only globs;
+- remove root dependencies once ownership moves to the appropriate workspace.
+
+#### 2. Make `console/` the one real product application
+
+The Console must become the deployed AutoDev application rather than a component/test shell.
+
+Required cutover includes:
+
+- real Next.js application/router;
+- canonical 11-route left navigation;
+- shared AutoDev design system and styles;
+- server-side/same-origin adapters for Control API and retained OpenLIT reads;
+- URL-addressable resource/detail pages;
+- real loading/error/empty/unknown states;
+- real data loading rather than demo/default props;
+- no iframe or embedded foreign dashboard surfaces.
+
+Once it reaches parity, retire the older OpenLIT `/autodev/providers`, `/autodev/runtime`, `/autodev/skills`, and `/autodev/mcps` product shell from `02-autodev-pages.patch`.
+
+#### 3. Finish RuleSync canonical ownership
+
+Current RuleSync generation still omits `permissions` and `subagents`, while editable agent-role definitions remain under `agents/roles/*.toml`.
+
+Target migration:
+
+```text
+.rulesync/
+├── subagents/
+├── permissions.jsonc
+├── commands/
+├── skills/
+├── hooks.jsonc
+└── mcp.jsonc
+        │
+        ▼
+      RuleSync
+        │
+        ▼
+provider-native generated projections
+```
+
+After parity is proven:
+
+- remove duplicate editable agent-role authority from `agents/roles/`;
+- remove duplicate editable role-prompt authority where RuleSync can represent it;
+- keep `config/execution-contract.json` only if useful as a deterministic generated runtime artifact, never as another editable source;
+- update tests that currently assert RuleSync permissions/subagents remain deferred.
+
+#### 4. Finish the data/integration layer
+
+Expand `data/` around typed adapters, not a second observability backend:
+
+```text
+data/src/
+├── rulesync/
+├── openlit/
+├── usage/
+├── memory/
+├── evaluations/
+├── runtime/
+├── tools/
+└── configuration/
+```
+
+Prefer retained OpenLIT query/storage abstractions to building an AutoDev-specific raw-ClickHouse observability engine.
+
+Clarify Workspace authority as well: scheduler `weights.json` may provide scheduling weight, but should not silently become the complete workspace registry unless it intentionally owns repository identity, base branch, enabled state, configuration health, and related workspace metadata.
+
+### Remaining OpenLIT subtraction
+
+The current OpenLIT patch set is still substantially:
+
+```text
+stock OpenLIT
++ AutoDev additions
++ branding/auth changes
+```
+
+The target is a reduced AutoDev distribution. Remove dead product code, not only sidebar entries, after dependency verification.
+
+Still to remove/collapse:
+
+- account/user product flows and session assumptions that exist only for OpenLIT's account model;
+- Organizations/organisations and membership/switching;
+- OpenLIT Projects and project isolation/selectors as user concepts;
+- OpenLIT Environments and environment selectors/management;
+- Rule Engine UI, APIs, persistence, and runtime coupling;
+- OpenGround UI/APIs/stores/persistence;
+- GPU dashboard/monitoring product surface;
+- discovered/instrumented Agent concepts, instrumentation toggles, and related workload-discovery UX;
+- generic OpenLIT onboarding/navigation that does not map to the canonical AutoDev product;
+- the old additive AutoDev page patch once `console/` replaces it.
+
+OpenLIT login/signup removal and AutoDev branding are already present, but the older AutoDev proxy still derives actors from an OpenLIT session. Replace that dependency with the single-user/local deployment auth model from §10. Optional reverse-proxy/SSO authentication may protect remote deployments without restoring an AutoDev account database.
+
+The OpenLIT Go Controller/eBPF discovery/instrumentation runtime must not become an AutoDev dependency. Preserve only useful desired-state/convergence interaction patterns in the TypeScript Runtime/Control API.
+
+### Remaining telemetry cleanup
+
+Direct authenticated OpenLIT ingestion is the target and already exists, but the repository still contains rollback/legacy telemetry paths:
+
+```text
+config/otel/collector.yaml
+config/otel/collector.version
+config/otel/collector-artifacts.json
+src/platform/otel-collector.ts
+src/platform/otel-provision.ts
+src/router/otel.ts
+router OTLP endpoints / ingestOtelSignal(...)
+```
+
+Before deletion, separate the router state that is genuinely required for live routing/control from historical observability aggregation.
+
+Then remove:
+
+- standalone AutoDev Collector provisioning/config once direct OpenLIT ingestion is proven sufficient;
+- router-owned historical OTLP aggregation, metric series, lookback history, and persistence that OpenLIT now owns;
+- duplicate telemetry receiver routes that are no longer required;
+- dead dashboard dependencies such as `chart.js` when no retained code needs them.
+
+Do not remove runtime state merely because it currently lives in the same legacy telemetry module; move the small live-control subset first if it is still required.
+
+### Remaining Control API and reconciliation work
+
+Current reads cover:
+
+```text
+/control/agents
+/control/providers
+/control/models
+/control/mcps
+/control/skills
+/control/hooks
+/control/permissions
+/control/prompts
+/control/workspaces
+/control/routing
+/control/runtime
+```
+
+Provider-role enablement is the main fully implemented mutation. The target requires typed mutation/reconciliation flows for RuleSync-owned and runtime-owned resources where editing is supported.
+
+For RuleSync-owned changes:
+
+```text
+Console
+  ↓
+Control API
+  ↓
+edit canonical RuleSync source
+  ↓
+validate
+  ↓
+RuleSync generate
+  ↓
+apply
+  ↓
+observe runtime
+  ↓
+converged | pending | error
+```
+
+Use a reusable desired/actual state contract with at least:
+
+```text
+desired state
+actual state
+desired generation
+observed generation
+diff
+convergence status
+last apply
+last observation
+last error
+operation history
+```
+
+`Tools` remains primarily a composite read model rather than another mutation authority. Memory and Evaluations may retain/adapt their own OpenLIT TypeScript APIs where appropriate.
+
+### Remaining retained-feature integrations
+
+The following selected OpenLIT capabilities are still mostly placeholders in the new Console and need real integration:
+
+**Memory**
+- real connector-backed records/search/write/copy behavior;
+- source/connector and workspace/agent scope;
+- activity/history where available;
+- no organization/project/environment tenancy dependencies.
+
+**Evaluations**
+- evaluation definitions/suites;
+- runs/results/history;
+- prompt/agent/model targets;
+- trace linkage and comparisons;
+- rerun actions;
+- no Rule Engine or OpenGround prerequisite.
+
+**Prompts**
+- RuleSync remains canonical;
+- add edit, validate, save, version/diff, preview, generate/apply;
+- link prompt versions to usage, traces, and evaluations;
+- do not create an independent OpenLIT prompt authority.
+
+**Usage**
+- replace all sample/default metrics with live OpenLIT data;
+- retain logical-request versus physical-attempt semantics;
+- add real time/workspace/provider/model/role/skill filters;
+- connect request/token/cache/cost/latency/failure/MCP/skill metrics to retained query infrastructure.
+
+**Tools**
+- build the effective catalog across native tools, MCP tools, plugin/provider capabilities, permissions, runtime availability, and telemetry;
+- expose role eligibility, health/availability when known, use/error counts, and trace linkage.
+
+### Ordered migration sequence
+
+Use this order unless a dependency requires a narrower prerequisite slice:
+
+1. **Eliminate duplicate Console architecture:** make `console/` the canonical UI and stop expanding the old OpenLIT AutoDev pages.
+2. **Make Console runnable:** add Next.js routing/build/start, the shared design system, same-origin adapters, and real data loading; remove fake/default state.
+3. **Finish RuleSync ownership:** migrate subagents/roles and permissions, generate provider projections, and remove duplicate editable authorities.
+4. **Finish the physical monorepo migration:** move implementation from `src/` into `runtime/`, `core/`, and `data/`; use package imports; delete migrated legacy slices.
+5. **Complete OpenLIT product subtraction:** remove accounts/session product assumptions, Organizations, Projects, Environments, Rule Engine, OpenGround, GPU, discovered/instrumented Agents, and obsolete onboarding/navigation.
+6. **Complete telemetry cleanup:** verify direct OpenLIT ingestion, then remove the standalone Collector and router-owned historical OTLP aggregation/receiver paths no longer needed.
+7. **Complete the Data layer:** integrate OpenLIT/Usage/Memory/Evaluations/runtime/tools without recreating a parallel observability backend.
+8. **Implement real mutation and reconciliation:** desired/actual generations, diff, pending/error state, apply/history across mutable resources.
+9. **Implement the selected reference-project interaction patterns** from §14 inside the one AutoDev TypeScript UI.
+10. **Finish retained OpenLIT feature integration:** Memory, Evaluations, Prompts, Usage, trace/resource linkage.
+11. **Delete transitional synchronization and compatibility paths:** reassess `openlit:sync-agents`, `openlit:sync-prompts`, `openlit:sync-workspaces`, old proxies/facades, obsolete patches, and dead dependencies once their consumers are gone.
+12. **Keep repository hygiene current:** close or supersede deeply stale/diverged migration PRs and branches rather than treating them as permanent backlog.
 
 ## 13. Operational entry points
 
@@ -645,21 +919,89 @@ These sync commands populate OpenLIT read models; they do not supersede canonica
 
 The asynchronous GitHub issue metrics workflow remains a separate GitHub-development reporting surface (`.github/workflows/metrics-dashboard.yml`, issue #2). It is not a replacement observability backend for AutoDev runtime telemetry.
 
-## 14. Reference projects and patterns
+## 14. Reference projects and remaining integrations
 
-Use existing projects as architecture/interaction references rather than inventing each control surface from scratch.
+Use these projects as **interaction/architecture references**, not as embedded applications. Reimplement/adapt the useful patterns inside AutoDev's shared TypeScript/TSX component system.
 
-| Project | Primary use | Borrow |
-| --- | --- | --- |
-| **OpenLIT** | observability foundation | OTel ingestion, ClickHouse/querying, traces/metrics/logs, dashboards, cost/usage, Controller desired-state patterns |
-| **LiteLLM** | Providers, Models, MCP Servers | provider/model catalogs, deployments, enablement, routing/fallbacks, MCP management, limits |
-| **LangWatch** | overall product UX | unified AI observability + operational/provider/gateway controls |
-| **MCPJam Inspector** | MCP detail/debugging | tools/resources/prompts, connection state, requests, logs, auth/activity inspection |
-| **Unleash** | Skills/scoped capabilities | enabled state plus targeting/constraints/role/workspace scope |
-| **Argo CD** | desired versus actual state | desired/live state, health, pending operations, convergence, errors/history |
-| **Backstage** | modular console architecture | cohesive top-level modules/routes instead of one monolithic settings area |
+| Project | AutoDev use | Current gap | Remaining adaptation |
+| --- | --- | --- | --- |
+| **OpenLIT** | telemetry/storage/query foundation plus retained Memory, Evaluations, Usage, and useful Prompt/Agent UI patterns | Backend foundation is present, but the retained product features are not yet wired into the new Console and unwanted product modules remain | Reuse/query retained infrastructure; integrate Memory/Evaluations/Usage/Prompt behavior; subtract accounts/tenancy/Rule Engine/OpenGround/GPU/discovery UX |
+| **LiteLLM** | provider/model/routing/MCP control patterns | AutoDev currently has only limited provider-role mutation and basic provider/model views | Add provider/model availability, priority, fallback order, concurrency, limits, cooldown/circuit health, effective routing, and usage/health detail under Agents/resource detail views |
+| **LangWatch** | unified control + observability resource UX | Console list pages largely separate configuration from runtime evidence | Compose configuration, actual health/state, requests/tokens/cost/failures/latency, and recent traces on the same Agent/provider/MCP/skill/workspace pages |
+| **MCPJam Inspector** | MCP inspection/debugging | AutoDev MCP UI is mainly server + role exposure | Add connection/probe state, Tools, Resources, Prompts, schemas, read/preview operations, diagnostics, activity, authorization/config context, and error/log views |
+| **Unleash** | scoped capability enablement | Skills/MCP capability scope is mostly display-only and often falls back to broad defaults | Add explicit enabled state, agent-role/workspace targeting, constraints, effective state, and clear configured/eligible/observed distinctions |
+| **Argo CD** | desired/live state and convergence | AutoDev has convergence types but not a robust reconciliation/diff model | Add desired vs actual, generations, diff, health, pending/applying/error, last apply/observation, and operation history across mutable resources |
+| **Backstage** | lightweight modular frontend composition | `ConsoleApp` still centralizes feature switching | Add a small typed feature/route registry so each Console feature contributes route/nav/component/data requirements without creating separate packages or adopting Backstage's full plugin framework |
 
-Use interaction models and architecture; copy source only after reviewing the exact license/dependency boundary.
+### Provider/model/routing detail
+
+Provider/model configuration remains secondary to Agents rather than new top-level navigation.
+
+Target resource detail should combine:
+
+```text
+Configuration                  Runtime / Observability
+────────────────────           ─────────────────────────
+Enabled                        Health / circuit state
+Allowed agent roles            Requests
+Models                         Tokens
+Priority / routing             Cost
+Fallbacks                      Failure rate
+Concurrency / limits           Latency
+Cooldown                       Recent traces
+```
+
+Model detail should surface provider, availability, role eligibility, relevant capabilities/context metadata, pricing where used, usage, failures, and routing position.
+
+### MCP detail
+
+Target MCP server detail:
+
+```text
+Overview
+Configuration
+Connection / Health
+Tools
+Resources
+Prompts
+Role Access
+Activity
+Errors / Logs
+```
+
+Useful operations include ping/test, list tools, inspect schemas, list/read resources, list/preview prompts, inspect effective authorization/configuration, and view recent calls/errors.
+
+### Scoped capability targeting
+
+For Skills and other capability assignments, keep configuration state distinct from runtime evidence:
+
+```text
+Enabled
+   ↓
+Eligible for role/workspace
+   ↓
+Selected / Exposed
+   ↓
+Injected
+   ↓
+Used
+```
+
+Do not infer one stage from another. Use Unleash-style targeting/constraint UX only as an interaction model; RuleSync remains the canonical configuration source.
+
+### Modular Console composition
+
+The Console remains one application and one package. If central routing becomes unwieldy, use a lightweight typed registry such as:
+
+```ts
+interface ConsoleFeature {
+  id: CanonicalNavSection;
+  route: string;
+  component: React.ComponentType;
+}
+```
+
+Do not turn each feature into a package merely to achieve modularity.
 
 ## 15. Tests and acceptance
 
@@ -705,6 +1047,30 @@ Use interaction models and architecture; copy source only after reviewing the ex
 - all AutoDev-owned application/control modules are TypeScript/TSX and use the shared component/design system; the OpenLIT Go Controller is not shipped;
 - Memory/Evaluations/Agents/Prompt patterns retained only where they no longer depend on removed OpenLIT product concepts;
 - storage/query/receiver behavior remains intact unless explicitly approved.
+
+### Migration/cutover
+
+- `console/` is a runnable TypeScript/Next.js product, not only render-test components;
+- no production Console view relies on hard-coded sample usage/health/convergence data;
+- cross-workspace imports use declared workspace package contracts rather than reaching into sibling `src/` trees;
+- `runtime/` owns migrated implementations directly; no permanent re-export facade into legacy root `src/`;
+- every migrated legacy `src/` slice is deleted after parity;
+- RuleSync `subagents` and `permissions` are enabled only after lossless parity, then duplicate editable authorities are removed;
+- old OpenLIT AutoDev pages are removed once the unified Console replaces them;
+- direct OpenLIT ingestion is proven before Collector/router historical OTLP paths are deleted;
+- retained live runtime/control state is separated from historical observability before deleting legacy telemetry modules;
+- obsolete OpenLIT sync jobs, patches, endpoints, and dependencies are removed once they have no consumers;
+- current `main` receives visible CI/workflow evidence for the monorepo and OpenLIT acceptance gates.
+
+### Resource-state correctness
+
+- missing data renders `unknown`/`not observed`/`unavailable`, never synthetic success;
+- desired and actual state have independent provenance;
+- convergence is computed from observed generations/state rather than config presence;
+- health reflects a real runtime probe or authoritative observed state;
+- configuration does not count as runtime use;
+- tool/skill/MCP exposure does not count as execution;
+- Usage widgets contain no production fallback/demo values.
 
 Do not remove an incumbent path until the replacement has end-to-end evidence. Do not keep permanent compatibility paths after cutover.
 
