@@ -1,0 +1,22 @@
+services:
+  memory-postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${AUTODEV_MEMORY_DB_USER:-autodev_memory}
+      POSTGRES_DB: ${AUTODEV_MEMORY_DB_NAME:-autodev_memory}
+      POSTGRES_PASSWORD: ${AUTODEV_MEMORY_DB_PASSWORD:?Set AUTODEV_MEMORY_DB_PASSWORD outside version control}
+    ports:
+      - "127.0.0.1:${AUTODEV_MEMORY_DB_PORT:-5433}:5432"
+    volumes:
+      - autodev-memory-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  autodev-memory-postgres:

@@ -2,7 +2,7 @@
 
 > **Authority:** This is the single living source of truth for AutoDev's OpenLIT fork, observability architecture, control-plane/UI ownership, RuleSync configuration ownership, migration state, acceptance evidence, and future console work.
 >
-> **Last reviewed:** 2026-09-30.
+> **Last reviewed:** 2026-10-01.
 >
 > **Runtime status:** The original observability migration is complete: the local router dashboard, in-process history aggregation, and pass-through AutoDev Collector are decommissioned. OpenLIT and the AutoDev Control API are the active observability/control foundation. The next target is to evolve the maintained OpenLIT distribution into the AutoDev Console described here.
 
@@ -161,7 +161,12 @@ packages:
   - "data"
 ```
 
-**Current state:** AutoDev still has one root package with implementation under `src/`, and `pnpm-workspace.yaml` does not yet enumerate code workspaces. The structure above is the migration target, not a claim about the current checkout.
+**Current state:** `pnpm-workspace.yaml` already registers the four root
+workspaces. The root package still carries substantial implementation under
+legacy `src/`; `runtime/` remains largely a re-export facade to that tree.
+Console and the transitional root package now declare Core through the
+`@simulatorlife/autodev-core` workspace contract, but the physical migration
+and Runtime/Data boundary cleanup are incomplete.
 
 Do not reorganize code merely to satisfy this shape in one large move. Migrate by coherent slices, preserve behavior, and remove each old `src/` path after its replacement is validated.
 
@@ -472,7 +477,7 @@ Use OpenLIT's stock time-range control. Generic dashboard variables should suppo
 - agent/role;
 - skill where the queried telemetry actually carries skill identity safely.
 
-Widgets opt in only to variables whose semantics apply. Bind user selections through typed parameterized query inputs; never concatenate user-controlled SQL.
+Widgets opt in only to variables whose semantics apply. Bind user selections through typed parameterized query inputs; never concatenate user-controlled SQL. The unified Console's same-origin server adapter calls only a fixed, read-only OpenLIT Usage endpoint with a dedicated server-to-server credential. It accepts bounded time/filter selections, never raw SQL or arbitrary widget IDs, and does not reuse Control API mutation credentials or browser sessions.
 
 ## 8. Telemetry contract
 
@@ -506,6 +511,85 @@ For a failed OpenAI attempt followed by successful Anthropic fallback, count **o
 ### MCP
 
 The AutoDev Codex-tools MCP shim owns the server-side `tools/call` round trip. Its span duration is the MCP shim's round-trip duration, not Codex's downstream tool execution duration. Preserve W3C trace context where available and export only bounded categorical/error metadata.
+
+### Memory
+
+The owning Runtime `MemoryService` emits one `memory.research` parent span with
+bounded child spans for `memory.query`, `memory.retrieve`, `memory.rerank`,
+`memory.validate`, `memory.reconstruct`, and `memory.packet`; `memory.embed` is
+present only when an embedding adapter is configured. Span attributes are
+bounded categories and counts (memory kind, validation/review disposition,
+rejection category, candidate counts, packet character/token counts). Never
+attach task/query text, claims, transcript contents, file paths, repository or
+memory IDs, or free-form verifier/model errors. These spans observe the memory
+operation; they do not replace MemoryService authorization or state. The
+MemoryService also emits `autodev.memory.operations` and
+`autodev.memory.operation.duration` with only the fixed operation name and
+success/error outcome; `autodev.memory.candidates` counts retrieved, retained,
+revised, rejected, packet-included, and packet-omitted candidates with bounded
+kind/reason dimensions. `autodev.memory.packet.characters` and
+`autodev.memory.packet.tokens` record packet size, with the token histogram
+omitted when no token counter is configured. The router registers its configured
+MeterProvider before constructing its shared MemoryService host, so Runtime-owned
+meters use the same OTLP exporter. Operation-duration observations are per-span;
+nested stages overlap and must not be summed into a total. These metrics
+contain no task, repository, memory, claim, path, or actor identifiers; the existing GenAI attempt
+spans remain the source for model cost rather than duplicating it here.
+
+The explicit procedure-to-skill transaction emits `memory.promote` with only bounded target
+and outcome categories; the skill name, body, evidence URI, and memory id stay out
+of span attributes. The root reconstructor calls the existing orchestrator alias through the loopback router,
+with developer-only input to avoid recursive JIT. W3C context is injected on that
+HTTP request and extracted at the router boundary so the nested routed-request
+and GenAI attempt spans remain children of `memory.reconstruct`; prompt and
+claim text remain out of span attributes.
+
+The root router now calls `MemoryService.research` in-process before provider
+selection for a user-authored orchestrator turn when `AUTODEV_MEMORY_DATABASE_URL`
+and a validated repository workspace are available. The bounded packet is
+appended as advisory `instructions`; tool-result continuations without a new
+user steer are not re-researched. The Git verifier only retains a
+claim when its cited source commit is ancestral and every cited tracked source
+file—including canonical `rulesync://skills/.../SKILL.md` evidence—is unchanged
+in the current working tree. The root path then reconstructs at most
+two candidates through the existing orchestrator model over the local router;
+invalid or unavailable outputs fail closed as uncertain. This is current-file/
+commit validation plus routed reconstruction, not a complete RuleSync, PR/issue,
+runtime-config, or provider-model curator.
+
+The authenticated Control API now has scoped, paginated read routes for memory
+records/experiences and record history/provenance. It shares the router's
+in-process MemoryService and trusted repository-root registry; reads require an
+explicit workspace scope and continue to pass through the canonical visibility
+checks. Run-bound experiences remain private unless an operator explicitly
+requests workspace/repository-bounded task history and the Control API is
+configured with `AUTODEV_MEMORY_READ_TASK_HISTORY=1`; this grant does not widen
+durable-memory visibility. Operator-only actions expose propose, revise, current-state verify and
+promotion, invalidation, supersession, guarded procedure-to-skill promotion, and
+curator-gated raw-experience purge through MemoryService. Each action is audited
+without recording claims or evidence payloads. Purge refuses experiences cited
+by any durable memory and keeps only a hashed append-only tombstone. Skill promotion requires two distinct successful runs with passing
+validation, rechecks current Git state, writes a non-overwriting canonical
+RuleSync skill, and invalidates the redundant fuzzy memory while retaining
+source history. Codex SessionEnd is wired to a
+best-effort native capture hook; the server validates an observed session/root
+pair and stores only normalized metadata, digest, and a source reference. Other
+harness capture adapters remain unimplemented, and the installed Codex hook
+trust/runtime path still needs live verification. OpenLIT patch 08 adds a read-only-CRUD AutoDev connector to its retained Memory
+registry/page; patch 09 adds a generic descriptor-driven lifecycle action path
+and an evidence-backed invalidate action for live records. Mutations still use
+server-side credentials and AutoDev MemoryService governance. Verification,
+revision, supersession, promotion controls, and memory analytics remain unwired.
+The patches apply to the pinned source, but the full OpenLIT build/runtime path
+remains unverified.
+
+OpenLIT can display these spans after trace links and memory analytics are
+wired. The repository does not yet have a memory-specific dashboard, a
+provider-backed embedding adapter, additional native-harness capture calls, a
+root workspace resolver for every deployment, or an automated retention policy
+runner. Raw-experience purge is an explicit audited operation, not a scheduled
+retention job. Configured telemetry must not be described as an observed
+dashboard or as memory use when no packet was injected.
 
 ### Skills
 
@@ -558,6 +642,14 @@ For RuleSync-owned resources, mutations change the canonical RuleSync source and
 
 The AutoDev Console browser should use same-origin TypeScript server routes/proxies. The private AutoDev control listener remains separate from the model/OTLP router listener.
 
+**Local single-user identity:** when no viewer/operator actor allowlists are
+configured, the Control API accepts only the fixed `autodev-local` actor as an
+operator, and only alongside its server-side service credential. The Console
+must attach that actor on the server; browser-provided actor or role headers are
+never trusted. Configuring either allowlist disables this local identity and
+requires an explicit actor. The legacy OpenLIT proxy still forwards its
+verified session actor until that UI is retired.
+
 Security requirements:
 
 - no built-in AutoDev user/account system;
@@ -585,7 +677,7 @@ Current verified baseline:
 - lock file `$CODEX_HOME/openlit-patched.lock`;
 - telemetry retention currently 730 hours (~30 days) with durable local volumes and no automated backup.
 
-The current patch set established receiver bearer auth, generic dashboard variable/query bindings, Usage widgets, isolated AutoDev control UI, login/signup removal, and user-facing OpenLIT→AutoDev branding. The target fork may diverge further in **product shell, navigation, AutoDev domain modules, and control pages**, while keeping ingestion, OTel semantics, storage schemas, and generic query execution as close to upstream as practical.
+The current patch set establishes receiver bearer auth, generic dashboard variable/query bindings, Usage widgets, a dedicated read-only Usage query endpoint, isolated AutoDev control UI, login/signup removal, and user-facing OpenLIT→AutoDev branding. The Usage endpoint and Console adapter are source-integrated and unit/type checked; building the pinned patched image and querying live telemetry remain unverified. The target fork may diverge further in **product shell, navigation, AutoDev domain modules, and control pages**, while keeping ingestion, OTel semantics, storage schemas, and generic query execution as close to upstream as practical.
 
 Do not rewrite foundational OpenLIT storage/query abstractions merely to remove hidden singleton organisation/project/environment concepts.
 
@@ -595,28 +687,28 @@ Receiver authentication remains mandatory. The pinned upstream receiver does not
 
 This section records the **observed repository state**, not the desired target. It must be updated as migration slices land so target-state statements do not get mistaken for completed implementation.
 
-Current review baseline: `main` at `4b6668d381962950f3035183b074487f35a35002`.
+Current review baseline: `main` at `a7e0f370c536411141a8555320f59c97d6f45251`.
 
 ### Migration status
 
 | Area | Current state | Remaining gap |
 | --- | --- | --- |
 | Flat monorepo | **Partial** | `console/`, `runtime/`, `core/`, and `data/` exist and are registered pnpm workspaces, but most substantive runtime implementation still lives under legacy `src/` |
-| Console | **Prototype** | Shared React components and all 11 feature folders exist, but `console/` is not yet a runnable Next.js application: no Next app/router, web build/start path, same-origin server routes, or real data loading |
-| Workspace boundaries | **Partial** | `runtime/` declares workspace dependencies, but Console/Data still use direct source-tree imports in places; root tooling/dependencies still carry transitional responsibilities |
+| Console | **Runnable foundation** | Next.js App Router and all 11 canonical routes build and run. Seven resource views use server-side Control API reads; Agent and Prompt detail routes use the existing typed detail endpoints. Memory uses the retained OpenLIT page with read-only CRUD and a capability-driven evidence-backed invalidation action; other lifecycle UI actions remain missing. Evaluations and Tools remain unavailable pending adapters. Usage has a typed OpenLIT query adapter and dedicated service-auth endpoint, but patched-image/live-query acceptance remains unverified. Other detail integrations and full OpenLIT features remain. |
+| Workspace boundaries | **Partial** | Console and Data declare Core through workspace packages, and the root transitional package declares Core/Data for legacy runtime code. Runtime still contains facades into `src/`; physical migration remains incomplete. |
 | RuleSync ownership | **Partial** | Skills, hooks, commands/prompts, and MCP declarations are established; subagent/agent-role and permissions generation remain explicitly deferred |
-| Control API | **Partial** | Typed read surfaces cover most control resources; provider-role enablement is a real mutation, but most RuleSync-owned resources remain read-only |
-| Data layer | **Early** | Basic RuleSync/config/ClickHouse adapters exist; OpenLIT, Usage, Memory, Evaluations, runtime-state, and effective-tool adapters are still missing or incomplete |
-| Usage | **Prototype** | The Console Usage view exists but still defaults to hard-coded sample values instead of live OpenLIT queries |
-| Memory | **UI shell** | Feature view exists; retained OpenLIT Memory/connectors are not yet integrated |
+| Control API | **Partial** | Typed reads cover configuration resources; local single-user access uses the fixed `autodev-local` actor with the private service credential. Provider-role enablement and governed Memory propose/revise/verify/invalidate/supersede/procedure-to-skill promotion actions are audited mutations. |
+| Data layer | **Early** | RuleSync/config/ClickHouse adapters remain; the new PostgreSQL/pgvector memory schema and repository are implemented. The v4 audited raw-experience purge migration is covered by SQL-shape and fake-repository tests; live PostgreSQL/pgvector execution of that migration remains environment-gated. The typed OpenLIT Usage client and scoped Memory Control API are implemented and tested. RuleSync skill writes now use a no-overwrite Data API behind Runtime promotion policy. OpenLIT patches 08/09 add the AutoDev Memory connector and a descriptor-driven invalidation action; verification/revision/supersession/promotion UI, memory analytics, evaluations, runtime-state, and effective-tool integrations remain incomplete. |
+| Usage | **Adapter wired; deployment unverified** | Sample values have been removed. URL-persisted typed filters call a dedicated OpenLIT service endpoint that executes only the seeded Usage widgets through `runWidgetQuery` and typed distinct-value adapters; unsupported/partial metrics remain unknown. The Console now exposes OpenLIT's 24H/7D/1M/3M/CUSTOM range model with URL-persisted UTC date bounds; its 90-day query limit and approximately 30-day retention are stated in the UI. Patched-image build and live telemetry-query acceptance are still required. |
+| Memory | **Backend foundation + root JIT; Control API** | Core scopes/lifecycle, PostgreSQL+pgvector/full-text storage, trajectory capture API, governed Runtime service, Git current-state verifier, bounded routed orchestrator-model reconstruction with deterministic test fallback, official MCP facade/stdio CLI, root-router pre-provider JIT, and scoped/paginated Memory Control API with operator lifecycle actions are implemented. Targeted unit suites pass; live PostgreSQL/pgvector retention acceptance remains environment-gated unless a disposable database URL is configured. Still missing Claude/Copilot/Gemini native capture adapters, a provider-backed embedding adapter, complete RuleSync/PR/issue/runtime validators, automated retention scheduling and broader memory-class erasure, default per-run MCP launch configuration, the remaining lifecycle actions in the retained OpenLIT Memory UI, memory analytics, and verified OpenLIT deployment. Explicit audited raw-experience purge is implemented in MemoryService/Control API and refuses to erase referenced provenance. |
 | Evaluations | **UI shell** | Feature view exists; retained OpenLIT evaluation execution/history/query paths are not yet integrated |
-| MCPs | **Prototype** | Configuration/exposure list exists; MCPJam-style connection, tool/resource/prompt inspection, diagnostics, and activity are not yet implemented |
+| MCPs | **Configuration view** | The Console reads configured server/role exposure and no longer invents connected/healthy state; probes, tool/resource/prompt inspection, diagnostics, and activity are not yet implemented |
 | Prompts | **Read-oriented prototype** | Canonical RuleSync prompts can be surfaced, but edit/validate/save/version/diff/generate/apply and usage/evaluation linkage are missing |
 | Tools | **Prototype/read model** | UI exists; the effective catalog across native, MCP, plugin/provider, permission, runtime-health, and usage sources is incomplete |
-| Desired/actual state | **Mostly conceptual** | Domain types exist, but multiple resource states are still inferred or hard-coded instead of reconciled from desired and observed generations |
+| Desired/actual state | **Mostly conceptual** | Agent configuration is labeled configured, with validity unknown and convergence not observed; most other resource state still lacks reconciled desired/observed generations |
 | OpenLIT product fork | **Partial/additive** | Receiver auth, dashboard variables, Usage, login/signup removal, branding, and old AutoDev pages are patched; the unwanted OpenLIT product modules are not yet comprehensively removed |
 | Telemetry cutover | **Incomplete cleanup** | Direct OpenLIT ingestion exists, but legacy AutoDev Collector files and router-side OTLP ingestion/history machinery still remain in the repository |
-| CI evidence | **Incomplete** | Local test evidence has been recorded in commits/docs, but the reviewed `main` SHA has no GitHub combined status or workflow run attached |
+| CI evidence | **Incomplete** | `main` still has no GitHub combined status or workflow run attached. Full `pnpm test` passes: root 1186/1189 (3 skipped), Core 7, Data 53/54 (one env-gated live test skipped), Console 29, Runtime 41/43 (two env-gated PostgreSQL/MCP tests skipped). Previously run disposable pgvector foundation, Runtime JIT, root-router injection, and MCP stdio integration checks passed; the new v4 purge-migration live exercise remains environment-gated. Core/Data and focused memory TypeScript/ESLint checks pass; Runtime package typecheck still reports legacy `src/router/*` errors, and root lint/format remain non-green outside memory files. |
 
 ### Correctness rule: unknown must remain unknown
 
@@ -669,17 +761,19 @@ Also complete workspace hygiene:
 - update root lint/format/typecheck/test scripts so all four workspaces are first-class rather than relying on root dependency hoisting or `src/`-only globs;
 - remove root dependencies once ownership moves to the appropriate workspace.
 
-#### 2. Make `console/` the one real product application
+#### 2. Complete `console/` as the one real product application
 
-The Console must become the deployed AutoDev application rather than a component/test shell.
+The Console now has an App Router, same-origin server-rendered routes, a
+shared shell, and a build/start path. It remains a foundation rather than full
+feature parity.
 
 Required cutover includes:
 
-- real Next.js application/router;
+- production deployment and lifecycle integration for the Next.js application;
 - canonical 11-route left navigation;
 - shared AutoDev design system and styles;
-- server-side/same-origin adapters for Control API and retained OpenLIT reads;
-- URL-addressable resource/detail pages;
+- server-side/same-origin adapters for retained OpenLIT reads and missing Data features;
+- URL-addressable resource/detail pages wherever typed Control API or retained-feature APIs exist;
 - real loading/error/empty/unknown states;
 - real data loading rather than demo/default props;
 - no iframe or embedded foreign dashboard surfaces.
@@ -689,6 +783,25 @@ Once it reaches parity, retire the older OpenLIT `/autodev/providers`, `/autodev
 #### 3. Finish RuleSync canonical ownership
 
 Current RuleSync generation still omits `permissions` and `subagents`, while editable agent-role definitions remain under `agents/roles/*.toml`.
+
+**Pinned-generator verification (RuleSync 16.30.2):** both features are
+recognized for the configured targets, but feature availability is not
+lossless semantic parity. The subagent/permission schemas and target
+projections do not preserve the current role contract, including the
+orchestrator role kind, router provider alias, nickname candidates, reasoning
+summary, per-role skill enablement/bundling, per-role web-search policy, and
+per-MCP `enabled_tools` for Claude and Copilot. The generated
+`config/execution-contract.json` also carries runtime-specific provider
+delegation/spawn/permission-mode policy that RuleSync does not model.
+
+Generation scope differs by target: Antigravity CLI permissions are global-only
+and Copilot permissions are project-only; Antigravity CLI permission generation
+targets the user home rather than repository output roots. Enabling both
+features now would therefore produce incomplete or non-portable projections.
+Keep the current TOML source and generated runtime contract until every
+agent-facing field has an explicit owner and deterministic parity is proven
+across targets. Do not introduce a second AutoDev schema merely to force these
+fields into RuleSync.
 
 Target migration:
 
@@ -906,6 +1019,24 @@ bash scripts/openlit/up.sh
 bash scripts/openlit/down.sh
 ```
 
+Run the AutoDev Console independently while the old OpenLIT UI still occupies
+port 3000:
+
+```bash
+pnpm --filter @simulatorlife/autodev-console dev
+pnpm --filter @simulatorlife/autodev-console build
+pnpm --filter @simulatorlife/autodev-console start
+```
+
+The Console defaults to port 3300 (`AUTODEV_CONSOLE_PORT` overrides it). Set
+`AUTODEV_CONTROL_API_TOKEN` only in the Console server environment; the
+Control API base defaults to `http://127.0.0.1:4101` and can be configured with
+`AUTODEV_CONTROL_API_BASE_URL`. To query Usage, set
+`AUTODEV_OPENLIT_USAGE_TOKEN` in the Console server environment to the
+separately generated value in `$CODEX_HOME/openlit-secrets.env`;
+`AUTODEV_OPENLIT_USAGE_URL` defaults to `http://127.0.0.1:3000`. Do not source
+or expose the full secret file to browser code.
+
 Current out-of-band OpenLIT projections:
 
 ```bash
@@ -991,7 +1122,8 @@ Do not infer one stage from another. Use Unleash-style targeting/constraint UX o
 
 ### Modular Console composition
 
-The Console remains one application and one package. If central routing becomes unwieldy, use a lightweight typed registry such as:
+The Console remains one application and one package. If central routing becomes
+unwieldy, use a lightweight typed feature/route registry such as:
 
 ```ts
 interface ConsoleFeature {
@@ -1006,6 +1138,7 @@ Do not turn each feature into a package merely to achieve modularity.
 ## 15. Tests and acceptance
 
 ### Generic dashboard/filtering
+
 - stock OpenLIT time range;
 - typed workspace/provider/model/role/skill bindings where supported;
 - All/multi-select;
@@ -1015,6 +1148,7 @@ Do not turn each feature into a package merely to achieve modularity.
 - fail-closed unsupported scopes/signals.
 
 ### Telemetry
+
 - one logical request versus N physical attempts;
 - no duplicated token/cost/latency accounting;
 - cache-read unavailable semantics;
@@ -1024,6 +1158,7 @@ Do not turn each feature into a package merely to achieve modularity.
 - MCP and skill observations only when evidence exists.
 
 ### RuleSync/configuration
+
 - canonical RuleSync sources round-trip through the pinned generator;
 - generated provider configs are deterministic projections;
 - no editable duplicate authority remains after each migration slice;
@@ -1031,6 +1166,7 @@ Do not turn each feature into a package merely to achieve modularity.
 - console mutations update canonical RuleSync state and then reconcile runtime state.
 
 ### Control
+
 - authenticated/authorized reads and mutations;
 - CSRF and scoped service credential;
 - viewer/operator boundaries;
@@ -1039,6 +1175,7 @@ Do not turn each feature into a package merely to achieve modularity.
 - OTLP/query paths cannot mutate AutoDev.
 
 ### Fork/upgrades
+
 - pinned OpenLIT revision and patch application;
 - upstream upgrade regression suite;
 - no user/account/organization/environment/project UX remains;

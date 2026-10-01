@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
+import { LOCAL_CONTROL_API_ACTOR } from "@simulatorlife/autodev-core";
 
 import {
   CONTROL_API_PATHS,
@@ -27,7 +28,10 @@ import type { ExecutionContract } from "../../src/shared/execution-contract.ts";
 const ENV_KEYS = [
   "AUTODEV_CONTROL_API_TOKEN",
   "AUTODEV_CONTROL_VIEWERS",
-  "AUTODEV_CONTROL_OPERATORS"
+  "AUTODEV_CONTROL_OPERATORS",
+  "AUTODEV_MEMORY_DATABASE_URL",
+  "AUTODEV_MEMORY_READ_GLOBAL",
+  "AUTODEV_MEMORY_READ_TASK_HISTORY"
 ] as const;
 const SERVICE_TOKEN = "unit-test-secret-token-0123456789abcdef";
 const telemetryExporter = new InMemorySpanExporter();
@@ -133,7 +137,7 @@ async function call(
   const handled = await handleControlApiRequest(
     makeRequest(method, url, options) as any,
     response as any,
-    url
+    new URL(url, "http://127.0.0.1").pathname
   );
   return {
     handled,
@@ -159,7 +163,7 @@ async function captureAudit<T>(action: () => Promise<T>): Promise<{
   }
 }
 
-test("Control API requires both a service credential and an actor allowlist", async () => {
+test("Control API requires a service credential and rejects missing or untrusted actors", async () => {
   const saved = saveEnv();
   try {
     for (const key of ENV_KEYS) delete process.env[key];
@@ -182,6 +186,35 @@ test("Control API requires both a service credential and an actor allowlist", as
       actor: "intruder"
     });
     assert.equal(unknownActor.response.statusCode, 403);
+  } finally {
+    restoreEnv(saved);
+  }
+});
+
+test("Control API grants local single-user operator access only when no external actor allowlist is configured", async () => {
+  const saved = saveEnv();
+  try {
+    process.env.AUTODEV_CONTROL_API_TOKEN = SERVICE_TOKEN;
+    delete process.env.AUTODEV_CONTROL_VIEWERS;
+    delete process.env.AUTODEV_CONTROL_OPERATORS;
+
+    const local = await call("GET", CONTROL_API_PATHS.providers, {
+      actor: LOCAL_CONTROL_API_ACTOR
+    });
+    assert.equal(local.response.statusCode, 200);
+
+    const impersonated = await call("GET", CONTROL_API_PATHS.providers, {
+      actor: "different-local-actor"
+    });
+    assert.equal(impersonated.response.statusCode, 403);
+
+    process.env.AUTODEV_CONTROL_VIEWERS = "viewer-a";
+    const localWithExternalPolicy = await call(
+      "GET",
+      CONTROL_API_PATHS.providers,
+      { actor: LOCAL_CONTROL_API_ACTOR }
+    );
+    assert.equal(localWithExternalPolicy.response.statusCode, 403);
   } finally {
     restoreEnv(saved);
   }
@@ -432,87 +465,327 @@ test("Control API surfaces all 11 canonical resource families", async () => {
     configure();
 
     // 1. Agents collection and detail
-    const agents = await call("GET", CONTROL_API_PATHS.agents, { actor: "viewer-a" });
+    const agents = await call("GET", CONTROL_API_PATHS.agents, {
+      actor: "viewer-a"
+    });
     assert.equal(agents.response.statusCode, 200);
     assert.equal(agents.body.schema, "autodev-control-agents-v1");
     assert.ok(agents.body.totalAgents > 0);
     assert.ok(Array.isArray(agents.body.agents));
+    const configuredAgent = agents.body.agents.find(
+      (agent: { role: string }) => agent.role === "orchestrator"
+    );
+    assert.ok(configuredAgent);
+    assert.equal(configuredAgent.status, "configured");
+    assert.equal(configuredAgent.valid, null);
+    assert.equal(configuredAgent.convergence, "not-observed");
 
-    const agentDetail = await call("GET", CONTROL_API_PATHS.agents + "/orchestrator", { actor: "viewer-a" });
+    const agentDetail = await call(
+      "GET",
+      CONTROL_API_PATHS.agents + "/orchestrator",
+      { actor: "viewer-a" }
+    );
     assert.equal(agentDetail.response.statusCode, 200);
     assert.equal(agentDetail.body.schema, "autodev-control-agent-detail-v1");
     assert.equal(agentDetail.body.role, "orchestrator");
     assert.equal(agentDetail.body.kind, "orchestrator");
+    assert.equal(agentDetail.body.status, "configured");
+    assert.equal(agentDetail.body.valid, null);
+    assert.equal(agentDetail.body.convergence, "not-observed");
 
-    const unknownAgent = await call("GET", CONTROL_API_PATHS.agents + "/nonexistent-role-xyz", { actor: "viewer-a" });
+    const unknownAgent = await call(
+      "GET",
+      CONTROL_API_PATHS.agents + "/nonexistent-role-xyz",
+      { actor: "viewer-a" }
+    );
     assert.equal(unknownAgent.response.statusCode, 404);
 
-    const agentPost = await call("POST", CONTROL_API_PATHS.agents, { actor: "operator-a", body: {} });
+    const agentPost = await call("POST", CONTROL_API_PATHS.agents, {
+      actor: "operator-a",
+      body: {}
+    });
     assert.equal(agentPost.response.statusCode, 405);
 
     // 2. Providers
-    const providers = await call("GET", CONTROL_API_PATHS.providers, { actor: "viewer-a" });
+    const providers = await call("GET", CONTROL_API_PATHS.providers, {
+      actor: "viewer-a"
+    });
     assert.equal(providers.response.statusCode, 200);
     assert.equal(providers.body.schema, "autodev-control-providers-v1");
 
     // 3. Models
-    const models = await call("GET", CONTROL_API_PATHS.models, { actor: "viewer-a" });
+    const models = await call("GET", CONTROL_API_PATHS.models, {
+      actor: "viewer-a"
+    });
     assert.equal(models.response.statusCode, 200);
     assert.equal(models.body.schema, "autodev-control-models-v1");
     assert.ok(models.body.totalModels > 0);
 
     // 4. MCPs
-    const mcps = await call("GET", CONTROL_API_PATHS.mcps, { actor: "viewer-a" });
+    const mcps = await call("GET", CONTROL_API_PATHS.mcps, {
+      actor: "viewer-a"
+    });
     assert.equal(mcps.response.statusCode, 200);
     assert.equal(mcps.body.schema, "autodev-control-mcps-v1");
 
     // 5. Skills
-    const skills = await call("GET", CONTROL_API_PATHS.skills, { actor: "viewer-a" });
+    const skills = await call("GET", CONTROL_API_PATHS.skills, {
+      actor: "viewer-a"
+    });
     assert.equal(skills.response.statusCode, 200);
     assert.equal(skills.body.schema, "autodev-control-skills-v1");
 
     // 6. Hooks
-    const hooks = await call("GET", CONTROL_API_PATHS.hooks, { actor: "viewer-a" });
+    const hooks = await call("GET", CONTROL_API_PATHS.hooks, {
+      actor: "viewer-a"
+    });
     assert.equal(hooks.response.statusCode, 200);
     assert.equal(hooks.body.schema, "autodev-control-hooks-v1");
     assert.equal(hooks.body.valid, true);
 
     // 7. Permissions
-    const permissions = await call("GET", CONTROL_API_PATHS.permissions, { actor: "viewer-a" });
+    const permissions = await call("GET", CONTROL_API_PATHS.permissions, {
+      actor: "viewer-a"
+    });
     assert.equal(permissions.response.statusCode, 200);
     assert.equal(permissions.body.schema, "autodev-control-permissions-v1");
     assert.equal(permissions.body.policy.approvalPolicy, "never");
     assert.equal(permissions.body.policy.sandboxMode, "workspace-write");
 
     // 8. Prompts collection and detail
-    const prompts = await call("GET", CONTROL_API_PATHS.prompts, { actor: "viewer-a" });
+    const prompts = await call("GET", CONTROL_API_PATHS.prompts, {
+      actor: "viewer-a"
+    });
     assert.equal(prompts.response.statusCode, 200);
     assert.equal(prompts.body.schema, "autodev-control-prompts-v1");
     assert.ok(prompts.body.totalCommands > 0);
 
-    const promptDetail = await call("GET", CONTROL_API_PATHS.prompts + "/dry", { actor: "viewer-a" });
+    const promptDetail = await call("GET", CONTROL_API_PATHS.prompts + "/dry", {
+      actor: "viewer-a"
+    });
     assert.equal(promptDetail.response.statusCode, 200);
     assert.equal(promptDetail.body.schema, "autodev-control-prompt-detail-v1");
     assert.equal(promptDetail.body.name, "dry");
 
-    const unknownPrompt = await call("GET", CONTROL_API_PATHS.prompts + "/nonexistent-prompt-xyz", { actor: "viewer-a" });
+    const unknownPrompt = await call(
+      "GET",
+      CONTROL_API_PATHS.prompts + "/nonexistent-prompt-xyz",
+      { actor: "viewer-a" }
+    );
     assert.equal(unknownPrompt.response.statusCode, 404);
 
     // 9. Workspaces
-    const workspaces = await call("GET", CONTROL_API_PATHS.workspaces, { actor: "viewer-a" });
+    const workspaces = await call("GET", CONTROL_API_PATHS.workspaces, {
+      actor: "viewer-a"
+    });
     assert.equal(workspaces.response.statusCode, 200);
     assert.equal(workspaces.body.schema, "autodev-control-workspaces-v1");
 
     // 10. Routing
-    const routing = await call("GET", CONTROL_API_PATHS.routing, { actor: "viewer-a" });
+    const routing = await call("GET", CONTROL_API_PATHS.routing, {
+      actor: "viewer-a"
+    });
     assert.equal(routing.response.statusCode, 200);
     assert.equal(routing.body.schema, "autodev-control-routing-v1");
     assert.ok(Array.isArray(routing.body.routes));
 
     // 11. Runtime
-    const runtime = await call("GET", CONTROL_API_PATHS.runtime, { actor: "viewer-a" });
+    const runtime = await call("GET", CONTROL_API_PATHS.runtime, {
+      actor: "viewer-a"
+    });
     assert.equal(runtime.response.statusCode, 200);
     assert.equal(runtime.body.schema, "autodev-control-runtime-v1");
+  } finally {
+    restoreEnv(saved);
+  }
+});
+
+test("Memory Control API requires an explicit workspace scope and configured storage", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    delete process.env.AUTODEV_MEMORY_DATABASE_URL;
+    const missingScope = await call("GET", "/control/memory/records", {
+      actor: "viewer-a"
+    });
+    assert.equal(missingScope.response.statusCode, 400);
+    assert.equal(missingScope.body.error.code, "autodev_memory_invalid_filter");
+
+    const unavailable = await call(
+      "GET",
+      "/control/memory/records?workspaceId=workspace-a&repositoryId=owner%2Frepo",
+      { actor: "viewer-a" }
+    );
+    assert.equal(unavailable.response.statusCode, 503);
+    assert.equal(unavailable.body.error.code, "autodev_memory_unavailable");
+  } finally {
+    restoreEnv(saved);
+  }
+});
+
+test("native transcript capture requires an operator and an observed session scope", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    delete process.env.AUTODEV_MEMORY_DATABASE_URL;
+    const denied = await call("POST", "/control/memory/capture", {
+      actor: "viewer-a",
+      body: {
+        sessionId: "session-a",
+        transcriptPath: "/tmp/codex/sessions/session.jsonl",
+        cwd: "/workspace/repo"
+      }
+    });
+    assert.equal(denied.response.statusCode, 403);
+    assert.equal(denied.body.error.code, "autodev_memory_capture_forbidden");
+
+    const unknownSession = await call("POST", "/control/memory/capture", {
+      actor: "operator-a",
+      body: {
+        sessionId: "session-a",
+        transcriptPath: "/tmp/codex/sessions/session.jsonl",
+        cwd: "/workspace/repo"
+      }
+    });
+    assert.equal(unknownSession.response.statusCode, 403);
+    assert.equal(
+      unknownSession.body.error.code,
+      "autodev_memory_capture_scope_forbidden"
+    );
+  } finally {
+    restoreEnv(saved);
+  }
+});
+
+test("Memory Control API rejects invalid filters before opening the memory host", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    delete process.env.AUTODEV_MEMORY_DATABASE_URL;
+    const invalidKind = await call(
+      "GET",
+      "/control/memory/records?workspaceId=workspace-a&kind=prompt",
+      { actor: "viewer-a" }
+    );
+    assert.equal(invalidKind.response.statusCode, 400);
+
+    const invalidScope = await call(
+      "GET",
+      "/control/memory/experiences?workspaceId=workspace-a&taskId=task-a",
+      { actor: "viewer-a" }
+    );
+    assert.equal(invalidScope.response.statusCode, 400);
+  } finally {
+    restoreEnv(saved);
+  }
+});
+
+test("Memory Control API audits denied lifecycle writes and gates global reads", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    delete process.env.AUTODEV_MEMORY_DATABASE_URL;
+    process.env.AUTODEV_MEMORY_READ_GLOBAL = "1";
+    const write = await captureAudit(() =>
+      call("POST", "/control/memory/records?workspaceId=workspace-a", {
+        actor: "viewer-a",
+        body: {}
+      })
+    );
+    assert.equal(write.result.response.statusCode, 403);
+    assert.equal(write.lines.length, 1);
+    const audit = JSON.parse(write.lines[0] ?? "null") as {
+      outcome: string;
+      reason: string;
+      resource: string;
+    };
+    assert.equal(audit.outcome, "denied");
+    assert.equal(audit.reason, "viewer_cannot_mutate");
+    assert.equal(audit.resource, "/control/memory/records");
+
+    const getPurge = await call(
+      "GET",
+      "/control/memory/experiences/experience-a/purge?workspaceId=workspace-a&repositoryId=owner%2Frepo",
+      { actor: "operator-a" }
+    );
+    assert.equal(getPurge.response.statusCode, 405);
+    assert.equal(getPurge.response.headers.allow, "POST");
+
+    const viewerPurge = await captureAudit(() =>
+      call(
+        "POST",
+        "/control/memory/experiences/experience-a/purge?workspaceId=workspace-a&repositoryId=owner%2Frepo",
+        {
+          actor: "viewer-a",
+          body: { reason: "privacy_request" }
+        }
+      )
+    );
+    assert.equal(viewerPurge.result.response.statusCode, 403);
+    assert.equal(viewerPurge.lines.length, 1);
+    const purgeAudit = JSON.parse(viewerPurge.lines[0] ?? "null") as {
+      action: string;
+      outcome: string;
+      resource: string;
+      reason: string;
+    };
+    assert.equal(purgeAudit.action, "purge");
+    assert.equal(purgeAudit.outcome, "denied");
+    assert.equal(purgeAudit.resource, "/control/memory/experiences");
+    assert.equal(purgeAudit.reason, "viewer_cannot_mutate");
+
+    const unavailablePurge = await captureAudit(() =>
+      call(
+        "POST",
+        "/control/memory/experiences/experience-a/purge?workspaceId=workspace-a&repositoryId=owner%2Frepo",
+        {
+          actor: "operator-a",
+          body: { reason: "privacy_request" }
+        }
+      )
+    );
+    assert.equal(unavailablePurge.result.response.statusCode, 503);
+    assert.equal(unavailablePurge.lines.length, 1);
+    const unavailableAudit = JSON.parse(
+      unavailablePurge.lines[0] ?? "null"
+    ) as { action: string; outcome: string; resource: string; reason: string };
+    assert.equal(unavailableAudit.action, "purge");
+    assert.equal(unavailableAudit.outcome, "error");
+    assert.equal(unavailableAudit.resource, "/control/memory/experiences");
+    assert.equal(unavailableAudit.reason, "memory_unavailable");
+
+    const malformed = await call(
+      "POST",
+      "/control/memory/records?workspaceId=workspace-a",
+      { actor: "operator-a", body: "not-json" }
+    );
+    assert.equal(malformed.response.statusCode, 400);
+    assert.equal(malformed.body.error.code, "autodev_control_api_bad_body");
+
+    const viewerGlobal = await call(
+      "GET",
+      "/control/memory/records?workspaceId=workspace-a&includeGlobal=true",
+      { actor: "viewer-a" }
+    );
+    assert.equal(viewerGlobal.response.statusCode, 403);
+    assert.equal(
+      viewerGlobal.body.error.code,
+      "autodev_memory_scope_forbidden"
+    );
+    process.env.AUTODEV_MEMORY_READ_TASK_HISTORY = "1";
+    const viewerTaskHistory = await call(
+      "GET",
+      "/control/memory/experiences?workspaceId=workspace-a&includeTaskHistory=true",
+      { actor: "viewer-a" }
+    );
+    assert.equal(viewerTaskHistory.response.statusCode, 403);
+    const operatorGrantRequired = await call(
+      "GET",
+      "/control/memory/experiences?workspaceId=workspace-a&includeTaskHistory=true",
+      { actor: "operator-a" }
+    );
+    assert.equal(operatorGrantRequired.response.statusCode, 503);
+    delete process.env.AUTODEV_MEMORY_READ_TASK_HISTORY;
   } finally {
     restoreEnv(saved);
   }

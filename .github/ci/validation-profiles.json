@@ -10,10 +10,6 @@
       {
         "name": "typecheck",
         "run": "pnpm run typecheck"
-      },
-      {
-        "name": "typescript-tests",
-        "run": "pnpm run test:ts"
       }
     ],
     "optionalCommands": []

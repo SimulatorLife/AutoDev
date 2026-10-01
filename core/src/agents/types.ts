@@ -12,13 +12,10 @@ export type AgentRole =
 export type AgentKind = "orchestrator" | "leaf";
 
 export type AgentStatus =
-  | "configured"
-  | "valid"
-  | "invalid"
-  | "ready"
-  | "unavailable";
+  "configured" | "valid" | "invalid" | "ready" | "unavailable";
 
-export type AgentConvergence = "converged" | "pending" | "error";
+export type AgentConvergence =
+  "converged" | "pending" | "error" | "not-observed";
 
 export interface AgentToolEntry {
   readonly name: string;
@@ -32,7 +29,7 @@ export interface AgentDefinition {
   readonly kind: AgentKind;
   readonly readOnly: boolean;
   readonly configured: boolean;
-  readonly valid: boolean;
+  readonly valid: boolean | null;
   readonly status: AgentStatus;
   readonly convergence: AgentConvergence;
   readonly primaryModel: string;

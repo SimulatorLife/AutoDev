@@ -1,18 +1,25 @@
+/**
+ * Public Console component/utility surface.
+ *
+ * The URL-addressable shell components are server-renderable and use native
+ * anchor links. The legacy client-side section-switching wrapper was removed.
+ */
+
 export * from "./components/cards/StatCard.ts";
 export * from "./components/layout/AppShell.ts";
 export * from "./components/navigation/AppNav.ts";
 export * from "./components/status/StatusBadge.ts";
 export * from "./components/tables/DataTable.ts";
+export * from "./features/agents/AgentDetailView.ts";
 export * from "./features/agents/AgentsView.ts";
-export * from "./features/ConsoleApp.ts";
 export * from "./features/evaluations/EvaluationsView.ts";
 export * from "./features/hooks/HooksView.ts";
 export * from "./features/mcps/McpsView.ts";
 export * from "./features/memory/MemoryView.ts";
 export * from "./features/permissions/PermissionsView.ts";
+export * from "./features/prompts/PromptDetailView.ts";
 export * from "./features/prompts/PromptsView.ts";
 export * from "./features/skills/SkillsView.ts";
 export * from "./features/tools/ToolsView.ts";
 export * from "./features/usage/UsageView.ts";
 export * from "./features/workspaces/WorkspacesView.ts";
-export * from "./lib/control-api-client.ts";

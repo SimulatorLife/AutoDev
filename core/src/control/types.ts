@@ -1,5 +1,8 @@
 export type ControlApiRole = "viewer" | "operator";
 
+/** Fixed installation identity used by the single-user local Console. */
+export const LOCAL_CONTROL_API_ACTOR = "autodev-local";
+
 export interface ControlApiActor {
   readonly actor: string;
   readonly role: ControlApiRole;

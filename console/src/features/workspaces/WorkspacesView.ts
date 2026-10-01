@@ -1,9 +1,21 @@
+import type { WorkspaceEntry } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import type { WorkspaceEntry } from "../../../../core/src/index.ts";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
-import { type ColumnDef, DataTable } from "../../components/tables/DataTable.ts";
+import {
+  type ColumnDef,
+  DataTable
+} from "../../components/tables/DataTable.ts";
+
+/**
+ * Workspaces resource view.
+ *
+ * Each workspace has a configured `name`, `baseBranch`, and scheduling
+ * `weight`. Its actual availability/health is a runtime concern that must be
+ * reported by an authoritative runtime probe; until that adapter exists, the
+ * status column renders `Unknown` rather than `Available`.
+ */
 
 export interface WorkspacesViewProps {
   readonly workspaces: readonly WorkspaceEntry[];
@@ -50,22 +62,29 @@ export function WorkspacesView({
     },
     {
       id: "status",
-      header: "Status",
+      header: "Availability",
       cell: () =>
         React.createElement(StatusBadge, {
-          status: "ready",
-          label: "Available"
+          status: "unavailable",
+          label: "Unknown"
         })
     }
   ];
 
   return React.createElement(
     "div",
-    { className: "flex flex-col gap-6", "data-feature": "workspaces" },
+    {
+      className: "flex flex-col gap-6",
+      "data-feature": "workspaces",
+      "data-workspace-availability-observed": "false"
+    },
     React.createElement(
       "div",
       { className: "grid grid-cols-1 md:grid-cols-3 gap-4" },
-      React.createElement(StatCard, { title: "Configured Workspaces", value: workspaces.length }),
+      React.createElement(StatCard, {
+        title: "Configured Workspaces",
+        value: workspaces.length
+      }),
       React.createElement(StatCard, {
         title: "Total Weight",
         value: totalWeight,
@@ -91,7 +110,9 @@ export function WorkspacesView({
       DataTable({
         data: workspaces,
         columns,
-        keyExtractor: (w: WorkspaceEntry) => w.name
+        keyExtractor: (w: WorkspaceEntry) => w.name,
+        emptyMessage:
+          "No workspaces configured. `weights.json` is the canonical registry."
       })
     )
   );

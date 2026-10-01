@@ -135,6 +135,7 @@ import {
   SubagentRegistry,
   subagentStatus
 } from "./subagents.ts";
+import { withExtractedTraceContext } from "./telemetry.ts";
 import {
   attributionDiagnostics,
   attributionDiagnosticsStatus,
@@ -2263,7 +2264,9 @@ export async function handle(
   response: ServerResponse
 ): Promise<void> {
   try {
-    await handleRequest(request, response);
+    await withExtractedTraceContext(request.headers, () =>
+      handleRequest(request, response)
+    );
   } catch (error) {
     const info = transportErrorInfo(error);
     writeErrorLine(

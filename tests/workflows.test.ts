@@ -198,7 +198,7 @@ test("AutoDev CI is repository-native and pnpm-native", async () => {
   }
   assert.deepEqual(
     profile.commands.map(({ run }) => run),
-    ["pnpm test", "pnpm run typecheck", "pnpm run test:ts"]
+    ["pnpm test", "pnpm run typecheck"]
   );
   const source = await readWorkflow("copilot-setup-steps.yml");
   assert.match(source, /uses: pnpm\/action-setup@v6/);

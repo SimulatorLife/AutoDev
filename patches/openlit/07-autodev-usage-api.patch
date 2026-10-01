@@ -1,0 +1,502 @@
+diff --git a/src/client/src/__tests__/lib/autodev/usage-api.test.ts b/src/client/src/__tests__/lib/autodev/usage-api.test.ts
+new file mode 100644
+index 0000000..741e826
+--- /dev/null
++++ b/src/client/src/__tests__/lib/autodev/usage-api.test.ts
+@@ -0,0 +1,96 @@
++import {
++	isUsageServiceRequestAuthorized,
++	parseUsageSelection,
++	usageTimeRange,
++} from "@/lib/autodev/usage-api";
++
++describe("AutoDev Usage service API contract", () => {
++	it("requires the exact dedicated bearer token", () => {
++		expect(
++			isUsageServiceRequestAuthorized("Bearer usage-secret", "usage-secret"),
++		).toBe(true);
++		expect(
++			isUsageServiceRequestAuthorized("Bearer wrong-secret", "usage-secret"),
++		).toBe(false);
++		expect(isUsageServiceRequestAuthorized(null, "usage-secret")).toBe(false);
++		expect(isUsageServiceRequestAuthorized("Bearer usage-secret", "")).toBe(
++			false,
++		);
++	});
++
++	it("accepts OpenLIT time presets and bounded board variables", () => {
++		const customRange = { startDate: "2026-09-17", endDate: "2026-10-01" };
++		expect(
++			parseUsageSelection({
++				range: "7D",
++				values: { provider: ["openai"] },
++				customRange,
++			}),
++		).toEqual({ range: "7D", values: { provider: ["openai"] }, customRange });
++		expect(
++			parseUsageSelection({ range: "7D", values: { skill: ["agent-skill"] } }),
++		).toBeNull();
++		expect(parseUsageSelection({ range: "all", values: {} })).toBeNull();
++		expect(
++			parseUsageSelection({
++				range: "24H",
++				values: { provider: ["x".repeat(257)] },
++			}),
++		).toBeNull();
++	});
++
++	it("accepts bounded custom calendar dates and rejects malformed or overlong windows", () => {
++		expect(
++			parseUsageSelection({
++				range: "CUSTOM",
++				values: {},
++				customRange: { startDate: "2026-09-17", endDate: "2026-10-01" },
++			}),
++		).toEqual({
++			range: "CUSTOM",
++			values: {},
++			customRange: { startDate: "2026-09-17", endDate: "2026-10-01" },
++		});
++		expect(
++			parseUsageSelection({
++				range: "CUSTOM",
++				values: {},
++				customRange: { startDate: "2026-02-30", endDate: "2026-03-01" },
++			}),
++		).toBeNull();
++		expect(
++			parseUsageSelection({
++				range: "CUSTOM",
++				values: {},
++				customRange: { startDate: "2026-06-01", endDate: "2026-10-01" },
++			}),
++		).toBeNull();
++		const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1_000)
++			.toISOString()
++			.slice(0, 10);
++		const today = new Date().toISOString().slice(0, 10);
++		expect(
++			parseUsageSelection({
++				range: "CUSTOM",
++				values: {},
++				customRange: { startDate: today, endDate: tomorrow },
++			}),
++		).toBeNull();
++	});
++
++	it("translates preset and custom dates to explicit UTC query timestamps", () => {
++		const end = new Date("2026-10-01T12:00:00.000Z");
++		const preset = usageTimeRange({ range: "24H", values: {} }, end);
++		expect(preset.end).toEqual(end);
++		expect(end.getTime() - preset.start.getTime()).toBe(24 * 60 * 60 * 1_000);
++
++		const custom = usageTimeRange({
++			range: "CUSTOM",
++			values: {},
++			customRange: { startDate: "2026-09-17", endDate: "2026-10-01" },
++		});
++		expect(custom.start.toISOString()).toBe("2026-09-17T00:00:00.000Z");
++		expect(custom.end.toISOString()).toBe("2026-10-01T23:59:59.999Z");
++		expect(custom.type).toBe("CUSTOM");
++	});
++});
+diff --git a/src/client/src/app/api/autodev/usage/route.ts b/src/client/src/app/api/autodev/usage/route.ts
+new file mode 100644
+index 0000000..a6d18b9
+--- /dev/null
++++ b/src/client/src/app/api/autodev/usage/route.ts
+@@ -0,0 +1,206 @@
++import { NextRequest } from "next/server";
++import usageDashboard from "@/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json";
++import type { MetricParams } from "@/lib/platform/common";
++import {
++	getTelemetryAdapter,
++	resolveTelemetrySourceDescriptor,
++} from "@/lib/telemetry-source";
++import { fetchVariableAllowedValues } from "@/lib/platform/dashboard-variables";
++import type { DashboardVariableSpec } from "@/lib/platform/dashboard-variables";
++import { runWidgetQuery } from "@/lib/platform/manage-dashboard/widget";
++import type { Widget } from "@/types/manage-dashboard";
++import {
++	isUsageServiceRequestAuthorized,
++	parseUsageSelection,
++	usageTimeRange,
++	USAGE_VARIABLE_IDS,
++	type UsageVariableId,
++} from "@/lib/autodev/usage-api";
++
++export const runtime = "nodejs";
++
++const SERVICE_TOKEN = process.env.AUTODEV_OPENLIT_USAGE_TOKEN ?? "";
++const USAGE_WIDGET_IDS = {
++	"logical-requests": "47c52af8-0c4a-4e85-8a9e-a8f85745b101",
++	"input-tokens": "47c52af8-0c4a-4e85-8a9e-a8f85745b102",
++	"output-tokens": "47c52af8-0c4a-4e85-8a9e-a8f85745b103",
++	"cache-rate": "47c52af8-0c4a-4e85-8a9e-a8f85745b104",
++	"p95-latency": "47c52af8-0c4a-4e85-8a9e-a8f85745b105",
++	"attempts-by-provider": "47c52af8-0c4a-4e85-8a9e-a8f85745b106",
++	"requests-by-agent": "47c52af8-0c4a-4e85-8a9e-a8f85745b107",
++	"mcp-calls": "47c52af8-0c4a-4e85-8a9e-a8f85745b201",
++	"mcp-duration": "47c52af8-0c4a-4e85-8a9e-a8f85745b202",
++	"mcp-errors": "47c52af8-0c4a-4e85-8a9e-a8f85745b203",
++	"mcp-by-tool": "47c52af8-0c4a-4e85-8a9e-a8f85745b204",
++} as const;
++
++type UsageWidgetId = keyof typeof USAGE_WIDGET_IDS;
++type SeedWidget = {
++	readonly id: string;
++	readonly properties: Readonly<Record<string, unknown>>;
++	readonly config: Widget["config"];
++};
++
++const WIDGETS = usageDashboard.widgets as Record<string, SeedWidget>;
++const DASHBOARD_VARIABLES =
++	usageDashboard.variables as unknown as DashboardVariableSpec[];
++
++export async function POST(request: NextRequest): Promise<Response> {
++	if (!SERVICE_TOKEN) {
++		return Response.json(
++			{ error: "Usage service is not configured" },
++			{ status: 503 },
++		);
++	}
++	if (
++		!isUsageServiceRequestAuthorized(
++			request.headers.get("authorization"),
++			SERVICE_TOKEN,
++		)
++	) {
++		return Response.json({ error: "Unauthorized" }, { status: 401 });
++	}
++
++	const contentLength = Number(request.headers.get("content-length") ?? 0);
++	if (Number.isFinite(contentLength) && contentLength > 16_384) {
++		return Response.json(
++			{ error: "Request body is too large" },
++			{ status: 413 },
++		);
++	}
++
++	let body: unknown;
++	try {
++		const bodyText = await request.text();
++		if (Buffer.byteLength(bodyText) > 16_384) {
++			return Response.json(
++				{ error: "Request body is too large" },
++				{ status: 413 },
++			);
++		}
++		body = JSON.parse(bodyText);
++	} catch {
++		return Response.json({ error: "Invalid JSON body" }, { status: 400 });
++	}
++	if (!isRecord(body)) {
++		return Response.json({ error: "Invalid request body" }, { status: 400 });
++	}
++	const selection = parseUsageSelection(body.selection);
++	if (!selection) {
++		return Response.json(
++			{ error: "Invalid Usage filter selection" },
++			{ status: 400 },
++		);
++	}
++
++	let descriptor;
++	let adapter;
++	try {
++		descriptor = await resolveTelemetrySourceDescriptor({ signal: "traces" });
++		adapter = await getTelemetryAdapter({
++			signal: "traces",
++			sourceId: descriptor.id,
++		});
++	} catch {
++		return Response.json(
++			{ error: "Telemetry source is unavailable" },
++			{ status: 503 },
++		);
++	}
++
++	const timeRange = usageTimeRange(selection);
++	const selectedValues = Object.fromEntries(
++		USAGE_VARIABLE_IDS.map((id) => [id, [...(selection.values[id] ?? [])]]),
++	);
++	const filterOptions = await fetchFilterOptions(adapter, timeRange);
++	const widgets = await Promise.all(
++		(Object.entries(USAGE_WIDGET_IDS) as [UsageWidgetId, string][]).map(
++			async ([key, widgetId]) => {
++				const seedWidget = WIDGETS[widgetId];
++				const properties = seedWidget?.properties ?? {};
++				let data: unknown;
++				let err: string | undefined;
++				if (seedWidget) {
++					try {
++						({ data, err } = await runWidgetQuery(widgetId, {
++							filter: { timeLimit: usageTimeRange(selection) } as MetricParams,
++							sourceId: descriptor.id,
++							signal: "traces",
++							structuredQuery: seedWidget.config?.structuredQuery,
++							dashboardVariables: {
++								specs: DASHBOARD_VARIABLES,
++								state: { values: selectedValues },
++							},
++						}));
++					} catch {
++						err = "Widget query failed";
++					}
++				} else {
++					err = "Widget missing from the Usage seed";
++				}
++				const rows = Array.isArray(data) ? data : [];
++				return {
++					key,
++					observed: !err && Array.isArray(data),
++					rows,
++					...(typeof properties.value === "string"
++						? { valuePath: properties.value }
++						: {}),
++					...(isRecord(properties.ratio) ? { ratio: properties.ratio } : {}),
++					...(typeof properties.xAxis === "string"
++						? { xAxis: properties.xAxis }
++						: {}),
++					...(typeof properties.yAxis === "string"
++						? { yAxis: properties.yAxis }
++						: {}),
++				};
++			},
++		),
++	);
++
++	return Response.json({
++		schema: "autodev-openlit-usage-v1",
++		widgets,
++		filterOptions,
++	});
++}
++
++async function fetchFilterOptions(
++	adapter: Awaited<ReturnType<typeof getTelemetryAdapter>>,
++	timeRange: { readonly start: Date; readonly end: Date },
++): Promise<
++	Readonly<
++		Record<
++			UsageVariableId,
++			{ readonly supported: boolean; readonly values: readonly string[] }
++		>
++	>
++> {
++	const entries = await Promise.all(
++		DASHBOARD_VARIABLES.map(async (spec) => {
++			try {
++				const result = await fetchVariableAllowedValues({
++					adapter,
++					signal: spec.signal,
++					scope: spec.scope,
++					key: spec.key,
++					timeRange,
++					limit: 256,
++				});
++				return [spec.id, result] as const;
++			} catch {
++				return [spec.id, { supported: false, values: [] }] as const;
++			}
++		}),
++	);
++	return Object.fromEntries(entries) as Readonly<
++		Record<
++			UsageVariableId,
++			{ readonly supported: boolean; readonly values: readonly string[] }
++		>
++	>;
++}
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++	return value !== null && typeof value === "object" && !Array.isArray(value);
++}
+diff --git a/src/client/src/lib/autodev/usage-api.ts b/src/client/src/lib/autodev/usage-api.ts
+new file mode 100644
+index 0000000..1ef321b
+--- /dev/null
++++ b/src/client/src/lib/autodev/usage-api.ts
+@@ -0,0 +1,163 @@
++import { timingSafeEqual } from "node:crypto";
++
++export const USAGE_VARIABLE_IDS = [
++	"workspace",
++	"provider",
++	"model",
++	"agent",
++] as const;
++
++export type UsageVariableId = (typeof USAGE_VARIABLE_IDS)[number];
++export type UsageTimeRange = "24H" | "7D" | "1M" | "3M" | "CUSTOM";
++type UsagePresetRange = Exclude<UsageTimeRange, "CUSTOM">;
++
++export interface UsageCustomRange {
++	readonly startDate: string;
++	readonly endDate: string;
++}
++
++interface UsageFilterValues {
++	readonly values: Readonly<
++		Partial<Record<UsageVariableId, readonly string[]>>
++	>;
++}
++
++export type UsageSelection = UsageFilterValues &
++	(
++		| { readonly range: "CUSTOM"; readonly customRange: UsageCustomRange }
++		| {
++				readonly range: UsagePresetRange;
++				readonly customRange?: UsageCustomRange;
++		  }
++	);
++
++const USAGE_TIME_RANGE_MS: Readonly<Record<UsageTimeRange, number>> = {
++	"24H": 24 * 60 * 60 * 1_000,
++	"7D": 7 * 24 * 60 * 60 * 1_000,
++	"1M": 30 * 24 * 60 * 60 * 1_000,
++	"3M": 90 * 24 * 60 * 60 * 1_000,
++	CUSTOM: 0,
++};
++
++export function isUsageServiceRequestAuthorized(
++	authorization: string | null,
++	expectedToken: string,
++): boolean {
++	if (!authorization?.startsWith("Bearer ") || expectedToken.length === 0) {
++		return false;
++	}
++	const supplied = Buffer.from(authorization.slice("Bearer ".length));
++	const expected = Buffer.from(expectedToken);
++	return (
++		supplied.length === expected.length && timingSafeEqual(supplied, expected)
++	);
++}
++
++export function parseUsageSelection(value: unknown): UsageSelection | null {
++	if (!isRecord(value) || !isRecord(value.values)) return null;
++	if (
++		Object.keys(value).some(
++			(key) => key !== "range" && key !== "values" && key !== "customRange",
++		)
++	) {
++		return null;
++	}
++	if (!isUsageTimeRange(value.range)) return null;
++	if (Object.keys(value.values).some((key) => !isUsageVariableId(key))) {
++		return null;
++	}
++
++	const values: Partial<Record<UsageVariableId, readonly string[]>> = {};
++	for (const id of USAGE_VARIABLE_IDS) {
++		const selected = value.values[id];
++		if (selected === undefined) continue;
++		if (
++			!Array.isArray(selected) ||
++			selected.length > 32 ||
++			!selected.every(
++				(item) =>
++					typeof item === "string" &&
++					item.length > 0 &&
++					item.length <= 256 &&
++					item.trim() === item,
++			)
++		) {
++			return null;
++		}
++		values[id] = Array.from(new Set(selected));
++	}
++
++	if (value.range === "CUSTOM") {
++		const customRange = parseCustomRange(value.customRange);
++		return customRange ? { range: value.range, values, customRange } : null;
++	}
++	const customRange = parseCustomRange(value.customRange);
++	return customRange
++		? { range: value.range, values, customRange }
++		: { range: value.range, values };
++}
++
++export function usageTimeRange(
++	selection: UsageSelection,
++	end = new Date(),
++): { readonly start: Date; readonly end: Date; readonly type: UsageTimeRange } {
++	if (selection.range === "CUSTOM") {
++		return {
++			start: new Date(`${selection.customRange.startDate}T00:00:00.000Z`),
++			end: new Date(`${selection.customRange.endDate}T23:59:59.999Z`),
++			type: selection.range,
++		};
++	}
++	const start = new Date(end.getTime() - USAGE_TIME_RANGE_MS[selection.range]);
++	return { start, end, type: selection.range };
++}
++
++function parseCustomRange(value: unknown): UsageCustomRange | null {
++	if (
++		!isRecord(value) ||
++		!isCalendarDate(value.startDate) ||
++		!isCalendarDate(value.endDate)
++	) {
++		return null;
++	}
++	const start = new Date(`${value.startDate}T00:00:00.000Z`);
++	const end = new Date(`${value.endDate}T23:59:59.999Z`);
++	const duration = end.getTime() - start.getTime();
++	const currentUtcDate = new Date().toISOString().slice(0, 10);
++	if (
++		duration < 0 ||
++		duration > USAGE_TIME_RANGE_MS["3M"] ||
++		value.endDate > currentUtcDate
++	) {
++		return null;
++	}
++	return { startDate: value.startDate, endDate: value.endDate };
++}
++
++function isCalendarDate(value: unknown): value is string {
++	if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
++		return false;
++	}
++	const date = new Date(`${value}T00:00:00.000Z`);
++	return (
++		Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
++	);
++}
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++	return value !== null && typeof value === "object" && !Array.isArray(value);
++}
++
++function isUsageTimeRange(value: unknown): value is UsageTimeRange {
++	return (
++		value === "24H" ||
++		value === "7D" ||
++		value === "1M" ||
++		value === "3M" ||
++		value === "CUSTOM"
++	);
++}
++
++function isUsageVariableId(value: string): value is UsageVariableId {
++	return USAGE_VARIABLE_IDS.some((id) => id === value);
++}
+diff --git a/src/client/src/middleware/check-auth.ts b/src/client/src/middleware/check-auth.ts
+index 3f5bf38..0a238b4 100644
+--- a/src/client/src/middleware/check-auth.ts
++++ b/src/client/src/middleware/check-auth.ts
+@@ -118,6 +118,14 @@ export default function checkAuth(next: NextMiddleware) {
+ 					request: { headers: requestHeaders },
+ 				});
+ 
++			// This one read-only AutoDev endpoint has its own dedicated
++			// server-to-server bearer credential. It deliberately does not
++			// accept NextAuth sessions or OpenLIT API keys; the route handler
++			// validates AUTODEV_OPENLIT_USAGE_TOKEN before querying telemetry.
++			if (pathname === "/api/autodev/usage") {
++				return continueWithoutClientTenant();
++			}
++
+ 			const isWithTokenRoute =
+ 				ALLOWED_OPENLIT_ROUTES_WITH_TOKEN.includes(pathname) ||
+ 				ALLOWED_OPENLIT_ROUTE_PREFIXES_WITH_TOKEN.some((prefix) =>

@@ -1,9 +1,14 @@
+import type {
+  PermissionPolicy,
+  RoleCapabilityMatrix
+} from "@simulatorlife/autodev-core";
 import React from "react";
 
-import type { PermissionPolicy, RoleCapabilityMatrix } from "../../../../core/src/index.ts";
 import { StatCard } from "../../components/cards/StatCard.ts";
-import { StatusBadge } from "../../components/status/StatusBadge.ts";
-import { type ColumnDef, DataTable } from "../../components/tables/DataTable.ts";
+import {
+  type ColumnDef,
+  DataTable
+} from "../../components/tables/DataTable.ts";
 
 export interface PermissionsViewProps {
   readonly policy: PermissionPolicy;
@@ -42,10 +47,14 @@ export function PermissionsView({
       id: "readOnly",
       header: "Capability",
       cell: (r) =>
-        React.createElement(StatusBadge, {
-          status: r.readOnly ? "unavailable" : "valid",
-          label: r.readOnly ? "Read-Only" : "Workspace-Write"
-        })
+        React.createElement(
+          "span",
+          {
+            className: "text-xs text-slate-300",
+            "data-permission-mode": r.readOnly ? "read-only" : "workspace-write"
+          },
+          r.readOnly ? "Read-Only" : "Workspace-Write"
+        )
     },
     {
       id: "mcps",
@@ -109,8 +118,14 @@ export function PermissionsView({
     React.createElement(
       "div",
       { className: "grid grid-cols-1 md:grid-cols-4 gap-4" },
-      React.createElement(StatCard, { title: "Approval Policy", value: policy.approvalPolicy }),
-      React.createElement(StatCard, { title: "Default Sandbox", value: policy.sandboxMode }),
+      React.createElement(StatCard, {
+        title: "Approval Policy",
+        value: policy.approvalPolicy
+      }),
+      React.createElement(StatCard, {
+        title: "Default Sandbox",
+        value: policy.sandboxMode
+      }),
       React.createElement(StatCard, {
         title: "Network Access",
         value: policy.networkAccess ? "Allowed" : "Blocked"

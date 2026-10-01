@@ -1,161 +1,269 @@
-import React, { useState } from "react";
+import type {
+  UsageFilterOptions,
+  UsageFilterSelection,
+  UsageMetricsData
+} from "@simulatorlife/autodev-core";
+import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 
-export interface UsageMetricsData {
-  readonly logicalRequests: number;
-  readonly totalInputTokens: number;
-  readonly totalOutputTokens: number;
-  readonly cacheReadRate: number | null;
-  readonly p95LatencyMs: number;
-  readonly physicalAttempts: number;
-  readonly mcpCalls: number;
-  readonly p95McpDurationMs: number;
-  readonly mcpErrors: number;
-  readonly requestsByRole: readonly { readonly role: string; readonly count: number }[];
-  readonly attemptsByProvider: readonly { readonly provider: string; readonly count: number }[];
-  readonly callsByTool: readonly { readonly tool: string; readonly count: number }[];
-}
+/**
+ * Observability Usage view.
+ *
+ * Per the AutoDev Console target, the Usage dashboard renders logical-request,
+ * token, cache-read, latency, attempt, and MCP-tool-call telemetry. Metrics and
+ * filter options are supplied by the server-side OpenLIT adapter; missing or
+ * malformed observations remain explicitly unknown rather than defaulting to
+ * sample counts, rates, or healthy values.
+ *
+ * Filter selections are GET form state in the URL. The server page uses that
+ * state to query OpenLIT; this component never performs browser-side telemetry
+ * requests or infers filter values.
+ */
 
 export interface UsageViewProps {
-  readonly metrics?: UsageMetricsData;
-  readonly workspaces?: readonly string[];
-  readonly providers?: readonly string[];
-  readonly models?: readonly string[];
-  readonly roles?: readonly string[];
+  readonly metrics?: UsageMetricsData | undefined;
+  readonly filterOptions?: UsageFilterOptions | undefined;
+  readonly selection?: UsageFilterSelection | undefined;
 }
 
-const DEFAULT_METRICS: UsageMetricsData = {
-  logicalRequests: 420,
-  totalInputTokens: 1_250_000,
-  totalOutputTokens: 380_000,
-  cacheReadRate: 48.5,
-  p95LatencyMs: 1420,
-  physicalAttempts: 450,
-  mcpCalls: 312,
-  p95McpDurationMs: 42,
-  mcpErrors: 0,
-  requestsByRole: [
-    { role: "orchestrator", count: 180 },
-    { role: "worker", count: 140 },
-    { role: "explorer", count: 65 },
-    { role: "smart", count: 35 }
-  ],
-  attemptsByProvider: [
-    { provider: "codex", count: 260 },
-    { provider: "claude", count: 120 },
-    { provider: "antigravity", count: 45 },
-    { provider: "minimax", count: 25 }
-  ],
-  callsByTool: [
-    { tool: "read_file", count: 140 },
-    { tool: "exec_command", count: 95 },
-    { tool: "lsp_find_symbol", count: 45 },
-    { tool: "web_search", count: 32 }
-  ]
-};
+const NOT_OBSERVED_LABEL = "Not observed";
 
 const SELECT_CLASS =
   "bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-slate-200";
 const FILTER_GROUP_CLASS = "flex items-center gap-1.5 text-xs text-slate-400";
+const EMPTY_STATE_CLASS = "text-xs text-slate-500 italic py-2";
+
+export function formatTokenCount(value: number | null): string {
+  if (value === null) return NOT_OBSERVED_LABEL;
+  return `${(value / 1000).toFixed(0)}k`;
+}
+
+export function formatCacheRate(value: number | null): string {
+  if (value === null) return NOT_OBSERVED_LABEL;
+  return `${value.toFixed(1)}%`;
+}
+
+export function formatLatency(value: number | null): string {
+  if (value === null) return NOT_OBSERVED_LABEL;
+  return `${value} ms`;
+}
+
+export function formatCount(value: number | null): string {
+  return value === null ? NOT_OBSERVED_LABEL : String(value);
+}
+
+const DEFAULT_SELECTION: UsageFilterSelection = {
+  range: "24H",
+  values: {}
+};
+
+const UNKNOWN_FILTER_OPTIONS: UsageFilterOptions = {
+  workspace: null,
+  provider: null,
+  model: null,
+  agent: null,
+  skill: null
+};
+
+function renderFilterSelect(
+  name: "workspace" | "provider" | "model" | "agent",
+  label: string,
+  options: readonly string[] | null,
+  selected: readonly string[]
+): React.JSX.Element {
+  if (options === null) {
+    return React.createElement(
+      "label",
+      { className: FILTER_GROUP_CLASS },
+      React.createElement("span", null, `${label}:`),
+      React.createElement(
+        "select",
+        {
+          disabled: true,
+          className: SELECT_CLASS,
+          "data-filter-options-observed": "false"
+        },
+        React.createElement("option", null, "Not observed")
+      ),
+      ...selected.map((value) =>
+        React.createElement("input", {
+          key: value,
+          type: "hidden",
+          name,
+          value
+        })
+      )
+    );
+  }
+
+  const values = [...new Set([...options, ...selected])];
+  const selectedValues = selected.length === 0 ? [""] : selected;
+  return React.createElement(
+    "label",
+    { className: FILTER_GROUP_CLASS },
+    React.createElement("span", null, `${label}:`),
+    React.createElement(
+      "select",
+      {
+        name,
+        multiple: true,
+        size: 1,
+        defaultValue: selectedValues,
+        className: SELECT_CLASS,
+        "aria-label": label,
+        "data-filter-options-observed": "true"
+      },
+      React.createElement("option", { value: "" }, "All"),
+      ...values.map((value) =>
+        React.createElement("option", { key: value, value }, value)
+      )
+    )
+  );
+}
 
 export function UsageView({
-  metrics = DEFAULT_METRICS,
-  workspaces = ["All", "SimulatorLife/AutoDev", "SimulatorLife/RacingGame"],
-  providers = ["All", "codex", "claude", "antigravity", "copilot", "minimax"],
-  models = ["All", "gpt-5.6-terra", "claude-3-5-sonnet", "gemini-1.5-pro"],
-  roles = ["All", "orchestrator", "worker", "explorer", "smart"]
+  metrics,
+  filterOptions = UNKNOWN_FILTER_OPTIONS,
+  selection = DEFAULT_SELECTION
 }: UsageViewProps): React.JSX.Element {
-  const [selectedWorkspace, setSelectedWorkspace] = useState("All");
-  const [selectedProvider, setSelectedProvider] = useState("All");
-  const [selectedModel, setSelectedModel] = useState("All");
-  const [selectedRole, setSelectedRole] = useState("All");
+  const safeMetrics = metrics;
+  const requestsByRole = safeMetrics?.requestsByRole;
+  const attemptsByProvider = safeMetrics?.attemptsByProvider;
+  const callsByTool = safeMetrics?.callsByTool;
+  const selectedValues = selection.values;
+  const todayUtc = new Date().toISOString().slice(0, 10);
+  const observed =
+    safeMetrics !== undefined &&
+    safeMetrics !== null &&
+    Object.values(safeMetrics).some((value) => value !== null);
 
   return React.createElement(
     "div",
-    { className: "flex flex-col gap-6", "data-feature": "usage" },
+    {
+      className: "flex flex-col gap-6",
+      "data-feature": "usage",
+      "data-usage-observed": observed ? "true" : "false"
+    },
     React.createElement(
-      "div",
+      "form",
       {
         className:
-          "bg-slate-900 border border-slate-800 p-4 rounded-lg flex flex-wrap gap-4 items-center justify-between shadow"
+          "bg-slate-900 border border-slate-800 p-4 rounded-lg flex flex-wrap gap-4 items-center justify-between shadow",
+        action: "/usage",
+        method: "get",
+        "aria-label": "Usage filters"
       },
       React.createElement(
         "div",
         { className: "flex flex-wrap gap-3 items-center" },
         React.createElement(
-          "div",
+          "label",
           { className: FILTER_GROUP_CLASS },
-          React.createElement("span", null, "Workspace:"),
+          React.createElement("span", null, "Time range:"),
           React.createElement(
             "select",
             {
-              value: selectedWorkspace,
-              onChange: (e: React.ChangeEvent<HTMLSelectElement>) =>
-                setSelectedWorkspace(e.target.value),
-              className: SELECT_CLASS
+              name: "range",
+              defaultValue: selection.range,
+              className: SELECT_CLASS,
+              "aria-label": "Time range"
             },
-            workspaces.map((w) =>
-              React.createElement("option", { key: w, value: w }, w)
+            ...(
+              [
+                ["24H", "Last 24 hours"],
+                ["7D", "Last 7 days"],
+                ["1M", "Last 30 days"],
+                ["3M", "Last 90 days"],
+                ["CUSTOM", "Custom range"]
+              ] as const
+            ).map(([range, label]) =>
+              React.createElement("option", { key: range, value: range }, label)
             )
           )
         ),
         React.createElement(
-          "div",
-          { className: FILTER_GROUP_CLASS },
-          React.createElement("span", null, "Provider:"),
+          "details",
+          {
+            className: "flex items-center gap-2 text-xs text-slate-400",
+            open: selection.range === "CUSTOM"
+          },
           React.createElement(
-            "select",
-            {
-              value: selectedProvider,
-              onChange: (e: React.ChangeEvent<HTMLSelectElement>) =>
-                setSelectedProvider(e.target.value),
+            "summary",
+            { className: "cursor-pointer" },
+            "Custom dates"
+          ),
+          React.createElement(
+            "label",
+            { className: FILTER_GROUP_CLASS },
+            React.createElement("span", null, "From (UTC):"),
+            React.createElement("input", {
+              type: "date",
+              name: "startDate",
+              defaultValue: selection.customRange?.startDate ?? "",
+              max: selection.customRange?.endDate ?? todayUtc,
+              "aria-label": "Custom range start date",
               className: SELECT_CLASS
-            },
-            providers.map((p) =>
-              React.createElement("option", { key: p, value: p }, p)
-            )
+            })
+          ),
+          React.createElement(
+            "label",
+            { className: FILTER_GROUP_CLASS },
+            React.createElement("span", null, "To (UTC):"),
+            React.createElement("input", {
+              type: "date",
+              name: "endDate",
+              defaultValue: selection.customRange?.endDate ?? "",
+              min: selection.customRange?.startDate,
+              max: todayUtc,
+              "aria-label": "Custom range end date",
+              className: SELECT_CLASS
+            })
+          ),
+          React.createElement(
+            "span",
+            null,
+            "Custom range accepts up to 90 days; current OpenLIT retention is about 30 days."
           )
         ),
-        React.createElement(
-          "div",
-          { className: FILTER_GROUP_CLASS },
-          React.createElement("span", null, "Model:"),
-          React.createElement(
-            "select",
-            {
-              value: selectedModel,
-              onChange: (e: React.ChangeEvent<HTMLSelectElement>) =>
-                setSelectedModel(e.target.value),
-              className: SELECT_CLASS
-            },
-            models.map((m) =>
-              React.createElement("option", { key: m, value: m }, m)
-            )
-          )
+        renderFilterSelect(
+          "workspace",
+          "Workspace",
+          filterOptions.workspace,
+          selectedValues.workspace ?? []
+        ),
+        renderFilterSelect(
+          "provider",
+          "Provider",
+          filterOptions.provider,
+          selectedValues.provider ?? []
+        ),
+        renderFilterSelect(
+          "model",
+          "Requested model",
+          filterOptions.model,
+          selectedValues.model ?? []
+        ),
+        renderFilterSelect(
+          "agent",
+          "Agent / role",
+          filterOptions.agent,
+          selectedValues.agent ?? []
         ),
         React.createElement(
-          "div",
-          { className: FILTER_GROUP_CLASS },
-          React.createElement("span", null, "Role:"),
-          React.createElement(
-            "select",
-            {
-              value: selectedRole,
-              onChange: (e: React.ChangeEvent<HTMLSelectElement>) =>
-                setSelectedRole(e.target.value),
-              className: SELECT_CLASS
-            },
-            roles.map((r) =>
-              React.createElement("option", { key: r, value: r }, r)
-            )
-          )
+          "button",
+          {
+            type: "submit",
+            className:
+              "rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"
+          },
+          "Apply filters"
         )
       ),
       React.createElement(
         "span",
         { className: "text-xs text-slate-500 font-mono" },
-        "Last 24 Hours"
+        "Filters are stored in the URL"
       )
     ),
     React.createElement(
@@ -172,30 +280,26 @@ export function UsageView({
       React.createElement(
         "div",
         {
-          className:
-            "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
+          className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
         },
         React.createElement(StatCard, {
           title: "Logical Routed Requests",
-          value: metrics.logicalRequests,
+          value: formatCount(safeMetrics?.logicalRequests ?? null),
           subtitle: "autodev.routed_request"
         }),
         React.createElement(StatCard, {
           title: "Input / Output Tokens",
-          value: `${(metrics.totalInputTokens / 1000).toFixed(0)}k / ${(metrics.totalOutputTokens / 1000).toFixed(0)}k`,
+          value: `${formatTokenCount(safeMetrics?.totalInputTokens ?? null)} / ${formatTokenCount(safeMetrics?.totalOutputTokens ?? null)}`,
           subtitle: "Physical attempt totals"
         }),
         React.createElement(StatCard, {
           title: "Cache-read Rate",
-          value:
-            metrics.cacheReadRate === null
-              ? "Unavailable"
-              : `${metrics.cacheReadRate.toFixed(1)}%`,
+          value: formatCacheRate(safeMetrics?.cacheReadRate ?? null),
           subtitle: "Cached / Input tokens"
         }),
         React.createElement(StatCard, {
           title: "P95 Latency",
-          value: `${metrics.p95LatencyMs} ms`,
+          value: formatLatency(safeMetrics?.p95LatencyMs ?? null),
           subtitle: "Physical attempt duration"
         })
       )
@@ -212,34 +316,45 @@ export function UsageView({
         React.createElement(
           "h4",
           {
-            className:
-              "text-xs font-semibold uppercase text-slate-400 mb-3"
+            className: "text-xs font-semibold uppercase text-slate-400 mb-3"
           },
           "Requests by Agent Role"
         ),
         React.createElement(
           "div",
           { className: "flex flex-col gap-2" },
-          metrics.requestsByRole.map((item) =>
-            React.createElement(
-              "div",
-              {
-                key: item.role,
-                className:
-                  "flex items-center justify-between text-xs py-1 border-b border-slate-800/60 last:border-none"
-              },
-              React.createElement(
-                "span",
-                { className: "font-mono text-slate-200" },
-                item.role
-              ),
-              React.createElement(
-                "span",
-                { className: "font-semibold text-emerald-400" },
-                item.count
+          requestsByRole === null || requestsByRole === undefined
+            ? React.createElement(
+                "p",
+                { className: EMPTY_STATE_CLASS },
+                "Role telemetry not observed."
               )
-            )
-          )
+            : requestsByRole.length === 0
+              ? React.createElement(
+                  "p",
+                  { className: EMPTY_STATE_CLASS },
+                  "No logical requests were observed in this time range."
+                )
+              : requestsByRole.map((item) =>
+                  React.createElement(
+                    "div",
+                    {
+                      key: item.role,
+                      className:
+                        "flex items-center justify-between text-xs py-1 border-b border-slate-800/60 last:border-none"
+                    },
+                    React.createElement(
+                      "span",
+                      { className: "font-mono text-slate-200" },
+                      item.role
+                    ),
+                    React.createElement(
+                      "span",
+                      { className: "font-semibold text-emerald-400" },
+                      item.count
+                    )
+                  )
+                )
         )
       ),
       React.createElement(
@@ -251,34 +366,45 @@ export function UsageView({
         React.createElement(
           "h4",
           {
-            className:
-              "text-xs font-semibold uppercase text-slate-400 mb-3"
+            className: "text-xs font-semibold uppercase text-slate-400 mb-3"
           },
           "Physical Attempts by Provider"
         ),
         React.createElement(
           "div",
           { className: "flex flex-col gap-2" },
-          metrics.attemptsByProvider.map((item) =>
-            React.createElement(
-              "div",
-              {
-                key: item.provider,
-                className:
-                  "flex items-center justify-between text-xs py-1 border-b border-slate-800/60 last:border-none"
-              },
-              React.createElement(
-                "span",
-                { className: "font-mono text-slate-200" },
-                item.provider
-              ),
-              React.createElement(
-                "span",
-                { className: "font-semibold text-cyan-400" },
-                item.count
+          attemptsByProvider === null || attemptsByProvider === undefined
+            ? React.createElement(
+                "p",
+                { className: EMPTY_STATE_CLASS },
+                "Provider attempt telemetry not observed."
               )
-            )
-          )
+            : attemptsByProvider.length === 0
+              ? React.createElement(
+                  "p",
+                  { className: EMPTY_STATE_CLASS },
+                  "No provider attempts were observed in this time range."
+                )
+              : attemptsByProvider.map((item) =>
+                  React.createElement(
+                    "div",
+                    {
+                      key: item.provider,
+                      className:
+                        "flex items-center justify-between text-xs py-1 border-b border-slate-800/60 last:border-none"
+                    },
+                    React.createElement(
+                      "span",
+                      { className: "font-mono text-slate-200" },
+                      item.provider
+                    ),
+                    React.createElement(
+                      "span",
+                      { className: "font-semibold text-cyan-400" },
+                      item.count
+                    )
+                  )
+                )
         )
       )
     ),
@@ -298,17 +424,17 @@ export function UsageView({
         { className: "grid grid-cols-1 md:grid-cols-3 gap-4" },
         React.createElement(StatCard, {
           title: "MCP Tool Calls",
-          value: metrics.mcpCalls,
+          value: formatCount(safeMetrics?.mcpCalls ?? null),
           subtitle: "Shim tools/call round trips"
         }),
         React.createElement(StatCard, {
           title: "P95 Tool-call Duration",
-          value: `${metrics.p95McpDurationMs} ms`,
+          value: formatLatency(safeMetrics?.p95McpDurationMs ?? null),
           subtitle: "Shim-owned round trip"
         }),
         React.createElement(StatCard, {
           title: "MCP Tool Errors",
-          value: metrics.mcpErrors,
+          value: formatCount(safeMetrics?.mcpErrors ?? null),
           subtitle: "Errored tools/call spans"
         })
       )
@@ -316,42 +442,56 @@ export function UsageView({
     React.createElement(
       "div",
       {
-        className:
-          "bg-slate-900 border border-slate-800 rounded-lg p-5 shadow"
+        className: "bg-slate-900 border border-slate-800 rounded-lg p-5 shadow"
       },
       React.createElement(
         "h4",
         {
-          className:
-            "text-xs font-semibold uppercase text-slate-400 mb-3"
+          className: "text-xs font-semibold uppercase text-slate-400 mb-3"
         },
         "MCP Calls by Tool Name"
       ),
       React.createElement(
         "div",
         { className: "grid grid-cols-2 md:grid-cols-4 gap-4" },
-        metrics.callsByTool.map((item) =>
-          React.createElement(
-            "div",
-            {
-              key: item.tool,
-              className:
-                "bg-slate-950 p-3 rounded border border-slate-800 flex flex-col justify-between"
-            },
-            React.createElement(
-              "span",
+        callsByTool === null || callsByTool === undefined
+          ? React.createElement(
+              "p",
               {
-                className: "text-xs font-mono text-slate-400 truncate"
+                className: "text-xs text-slate-500 italic col-span-full"
               },
-              item.tool
-            ),
-            React.createElement(
-              "span",
-              { className: "text-lg font-bold text-slate-100 mt-1" },
-              item.count
+              "Tool-call telemetry not observed."
             )
-          )
-        )
+          : callsByTool.length === 0
+            ? React.createElement(
+                "p",
+                {
+                  className: "text-xs text-slate-500 italic col-span-full"
+                },
+                "No MCP tool calls were observed in this time range."
+              )
+            : callsByTool.map((item) =>
+                React.createElement(
+                  "div",
+                  {
+                    key: item.tool,
+                    className:
+                      "bg-slate-950 p-3 rounded border border-slate-800 flex flex-col justify-between"
+                  },
+                  React.createElement(
+                    "span",
+                    {
+                      className: "text-xs font-mono text-slate-400 truncate"
+                    },
+                    item.tool
+                  ),
+                  React.createElement(
+                    "span",
+                    { className: "text-lg font-bold text-slate-100 mt-1" },
+                    item.count
+                  )
+                )
+              )
       )
     )
   );

@@ -22,7 +22,7 @@ test("CANONICAL_NAVIGATION contains exact 11 sections in order", () => {
     "Usage",
     "Prompts",
     "Workspaces"
-  ];
+  ] as const;
   assert.deepEqual(CANONICAL_NAVIGATION, expected);
   assert.equal(CANONICAL_NAVIGATION.length, 11);
 
@@ -54,7 +54,13 @@ test("isSkillEligibleForRole checks role list accurately", () => {
     { skill: "orchestration", roles: ["orchestrator", "worker"] },
     { skill: "debug", roles: ["smart"] }
   ];
-  assert.equal(isSkillEligibleForRole("orchestration", "orchestrator", list), true);
-  assert.equal(isSkillEligibleForRole("orchestration", "explorer", list), false);
+  assert.equal(
+    isSkillEligibleForRole("orchestration", "orchestrator", list),
+    true
+  );
+  assert.equal(
+    isSkillEligibleForRole("orchestration", "explorer", list),
+    false
+  );
   assert.equal(isSkillEligibleForRole("unknown", "orchestrator", list), false);
 });

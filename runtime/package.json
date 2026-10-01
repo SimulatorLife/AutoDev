@@ -10,13 +10,19 @@
     "./providers": "./src/providers/index.ts",
     "./agents": "./src/agents/index.ts",
     "./mcp": "./src/mcp/index.ts",
+    "./memory": "./src/memory/index.ts",
     "./hooks": "./src/hooks/index.ts",
     "./telemetry": "./src/telemetry/index.ts",
     "./platform": "./src/platform/index.ts"
   },
+  "scripts": {
+    "test": "node --test tests/**/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "memory:mcp": "node src/memory/mcp-main.ts"
+  },
   "dependencies": {
-    "@simulatorlife/autodev-core": "workspace:*",
-    "@simulatorlife/autodev-data": "workspace:*",
+    "@letta-ai/trajectory": "^0.4.3",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/exporter-metrics-otlp-http": "^0.222.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.222.0",
@@ -25,7 +31,10 @@
     "@opentelemetry/sdk-trace-base": "^2.11.0",
     "@opentelemetry/sdk-trace-node": "^2.11.0",
     "@opentelemetry/semantic-conventions": "^1.43.0",
-    "smol-toml": "^1.8.0"
+    "@simulatorlife/autodev-core": "workspace:*",
+    "@simulatorlife/autodev-data": "workspace:*",
+    "smol-toml": "^1.8.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^24.0.0"

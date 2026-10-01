@@ -128,7 +128,7 @@ function document(target: (typeof targets)[number]): JsonObject {
 
 test("Rulesync hook source is the canonical four-section command subset", () => {
   const source = readJson(hookSourcePath);
-  assert.deepEqual(Object.keys(source), ["hooks"]);
+  assert.deepEqual(Object.keys(source).sort(), ["codexcli", "hooks"].sort());
   assert.deepEqual(Object.keys(asObject(source.hooks)).sort(), [
     "beforeSubmitPrompt",
     "preToolUse",
@@ -243,27 +243,39 @@ test("configured Rulesync generation writes hooks alongside skills", () => {
   }
 });
 
-test("Codex and Claude carry every hook with matcher and status metadata", () => {
+test("Codex gets native memory capture without adding an unsupported Claude/Copilot hook", () => {
   const source = hooksAt(readJson(hookSourcePath).hooks);
-  for (const target of ["codexcli", "claudecode"] as const) {
-    const hooks = hooksAt(document(target).hooks);
-    assert.deepEqual(
-      Object.keys(hooks).sort(),
-      ["PreToolUse", "SessionStart", "SubagentStart", "UserPromptSubmit"].sort()
-    );
-    assert.deepEqual(groupedCommands(hooks), sourceCommands);
-    const targetPromptHooks = Array.isArray(hooks.UserPromptSubmit?.[0]?.hooks)
-      ? (hooks.UserPromptSubmit[0].hooks as unknown[])
-      : [];
-    assert.equal(
-      asObject(targetPromptHooks[0]).statusMessage,
-      source.beforeSubmitPrompt?.[0]?.statusMessage
-    );
-    assert.equal(
-      hooks.PreToolUse?.[0]?.matcher,
-      source.preToolUse?.[0]?.matcher
-    );
-  }
+  const codex = hooksAt(document("codexcli").hooks);
+  assert.deepEqual(
+    Object.keys(codex).sort(),
+    [
+      "PreToolUse",
+      "SessionEnd",
+      "SessionStart",
+      "SubagentStart",
+      "UserPromptSubmit"
+    ].sort()
+  );
+  assert.deepEqual(
+    groupedCommands(codex).filter(
+      (command) => !sourceCommands.includes(command)
+    ),
+    ["node ~/.codex/src/hooks/memory-session-end.ts"]
+  );
+  const claude = hooksAt(document("claudecode").hooks);
+  assert.deepEqual(
+    Object.keys(claude).sort(),
+    ["PreToolUse", "SessionStart", "SubagentStart", "UserPromptSubmit"].sort()
+  );
+  assert.deepEqual(groupedCommands(claude), sourceCommands);
+  const targetPromptHooks = Array.isArray(codex.UserPromptSubmit?.[0]?.hooks)
+    ? (codex.UserPromptSubmit[0].hooks as unknown[])
+    : [];
+  assert.equal(
+    asObject(targetPromptHooks[0]).statusMessage,
+    source.beforeSubmitPrompt?.[0]?.statusMessage
+  );
+  assert.equal(codex.PreToolUse?.[0]?.matcher, source.preToolUse?.[0]?.matcher);
 });
 
 test("Copilot and Antigravity retain their documented parity limits", () => {

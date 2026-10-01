@@ -1,9 +1,23 @@
+"use client";
+
+import type { ToolCatalogItem } from "@simulatorlife/autodev-core";
 import React, { useState } from "react";
 
-import type { ToolCatalogItem } from "../../../../core/src/index.ts";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
-import { type ColumnDef, DataTable } from "../../components/tables/DataTable.ts";
+import {
+  type ColumnDef,
+  DataTable
+} from "../../components/tables/DataTable.ts";
+
+/**
+ * Tools resource view.
+ *
+ * The Tools table aggregates native, MCP, plugin, and effective capabilities.
+ * When the upstream source does not report a runtime status for a tool, the
+ * view must render `Unknown` rather than fall back to `ready`. Configuration
+ * presence is not runtime readiness.
+ */
 
 export interface ToolsViewProps {
   readonly tools: readonly ToolCatalogItem[];
@@ -89,22 +103,46 @@ export function ToolsView({ tools }: ToolsViewProps): React.JSX.Element {
     },
     {
       id: "status",
-      header: "Status",
+      header: "Availability",
       cell: (tool) =>
-        React.createElement(StatusBadge, { status: tool.status ?? "ready" })
+        tool.status === "ready"
+          ? React.createElement(StatusBadge, { status: "ready" })
+          : tool.status === "unavailable"
+            ? React.createElement(StatusBadge, { status: "unavailable" })
+            : React.createElement(StatusBadge, {
+                status: "unavailable",
+                label: "Unknown"
+              })
     }
   ];
 
   return React.createElement(
     "div",
-    { className: "flex flex-col gap-6", "data-feature": "tools" },
+    {
+      className: "flex flex-col gap-6",
+      "data-feature": "tools",
+      "data-tools-availability-observed": tools.some(
+        (t) => t.status === "ready" || t.status === "unavailable"
+      )
+        ? "true"
+        : "false"
+    },
     React.createElement(
       "div",
       { className: "grid grid-cols-1 md:grid-cols-4 gap-4" },
-      React.createElement(StatCard, { title: "Total Tools", value: tools.length }),
-      React.createElement(StatCard, { title: "Native Tools", value: nativeCount }),
+      React.createElement(StatCard, {
+        title: "Total Tools",
+        value: tools.length
+      }),
+      React.createElement(StatCard, {
+        title: "Native Tools",
+        value: nativeCount
+      }),
       React.createElement(StatCard, { title: "MCP Tools", value: mcpCount }),
-      React.createElement(StatCard, { title: "Plugin Tools", value: pluginCount })
+      React.createElement(StatCard, {
+        title: "Plugin Tools",
+        value: pluginCount
+      })
     ),
     React.createElement(
       "div",
@@ -144,7 +182,9 @@ export function ToolsView({ tools }: ToolsViewProps): React.JSX.Element {
     DataTable({
       data: filtered,
       columns,
-      keyExtractor: (t: ToolCatalogItem) => t.name
+      keyExtractor: (t: ToolCatalogItem) => t.name,
+      emptyMessage:
+        "No tools observed. The effective catalog is built from native, MCP, plugin, and capability sources."
     })
   );
 }

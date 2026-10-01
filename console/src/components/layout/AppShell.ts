@@ -1,11 +1,10 @@
+import type { CanonicalNavSection } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import type { CanonicalNavSection } from "../../../../core/src/index.ts";
 import { AppNav } from "../navigation/AppNav.ts";
 
 export interface AppShellProps {
   readonly activeSection: CanonicalNavSection;
-  readonly onSelectSection: (section: CanonicalNavSection) => void;
   readonly counts?: Partial<Record<CanonicalNavSection, number>> | undefined;
   readonly children?: React.ReactNode | undefined;
   readonly actions?: React.ReactNode | undefined;
@@ -13,7 +12,6 @@ export interface AppShellProps {
 
 export function AppShell({
   activeSection,
-  onSelectSection,
   counts,
   children,
   actions
@@ -26,7 +24,6 @@ export function AppShell({
     },
     React.createElement(AppNav, {
       activeSection,
-      onSelectSection,
       counts
     }),
     React.createElement(

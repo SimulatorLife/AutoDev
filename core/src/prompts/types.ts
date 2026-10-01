@@ -5,6 +5,13 @@ export interface PromptAsset {
   readonly content?: string;
 }
 
+export interface PromptDocument {
+  readonly name: string;
+  readonly kind: "command" | "role";
+  readonly path: string;
+  readonly content: string;
+}
+
 export interface PromptVersion {
   readonly name: string;
   readonly versionHash: string;

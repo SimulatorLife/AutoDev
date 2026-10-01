@@ -1,9 +1,5 @@
 export type UsageVariableId =
-  | "workspace"
-  | "provider"
-  | "model"
-  | "agent"
-  | "skill";
+  "workspace" | "provider" | "model" | "agent" | "skill";
 
 export interface UsageVariable {
   readonly id: UsageVariableId;
@@ -19,7 +15,8 @@ export interface UsageVariable {
 export type UsageWidgetId =
   | "logical-requests"
   | "requests-by-agent"
-  | "tokens"
+  | "input-tokens"
+  | "output-tokens"
   | "cache-rate"
   | "p95-latency"
   | "attempts-by-provider"
@@ -33,5 +30,59 @@ export interface UsageWidgetConfig {
   readonly title: string;
   readonly description?: string;
   readonly optInVariables: readonly UsageVariableId[];
-  readonly variableScopeOverrides?: Partial<Record<UsageVariableId, "resource" | "span">>;
+  readonly variableScopeOverrides?: Partial<
+    Record<UsageVariableId, "resource" | "span">
+  >;
+}
+
+export type UsageTimeRange = "24H" | "7D" | "1M" | "3M" | "CUSTOM";
+
+export interface UsageCustomRange {
+  /** ISO calendar dates (YYYY-MM-DD), interpreted as full UTC days. */
+  readonly startDate: string;
+  readonly endDate: string;
+}
+
+export type UsageFilterValues = Partial<
+  Record<UsageVariableId, readonly string[]>
+>;
+
+export type UsageFilterSelection =
+  | {
+      readonly range: "CUSTOM";
+      readonly values: UsageFilterValues;
+      readonly customRange: UsageCustomRange;
+    }
+  | {
+      readonly range: Exclude<UsageTimeRange, "CUSTOM">;
+      readonly values: UsageFilterValues;
+      readonly customRange?: UsageCustomRange;
+    };
+
+export type UsageFilterOptions = Readonly<
+  Record<UsageVariableId, readonly string[] | null>
+>;
+
+/** Logical-request, physical-attempt, and MCP observations from the Usage board. */
+export interface UsageMetricsData {
+  readonly logicalRequests: number | null;
+  readonly totalInputTokens: number | null;
+  readonly totalOutputTokens: number | null;
+  readonly cacheReadRate: number | null;
+  readonly p95LatencyMs: number | null;
+  readonly physicalAttempts: number | null;
+  readonly mcpCalls: number | null;
+  readonly p95McpDurationMs: number | null;
+  readonly mcpErrors: number | null;
+  readonly requestsByRole:
+    readonly { readonly role: string; readonly count: number }[] | null;
+  readonly attemptsByProvider:
+    readonly { readonly provider: string; readonly count: number }[] | null;
+  readonly callsByTool:
+    readonly { readonly tool: string; readonly count: number }[] | null;
+}
+
+export interface UsageSnapshot {
+  readonly metrics: UsageMetricsData;
+  readonly filterOptions: UsageFilterOptions;
 }

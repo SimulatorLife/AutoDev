@@ -1,15 +1,24 @@
+import type { HookDefinition } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import type { HookDefinition } from "../../../../core/src/index.ts";
 import { StatCard } from "../../components/cards/StatCard.ts";
-import { StatusBadge } from "../../components/status/StatusBadge.ts";
 
 export interface HooksViewProps {
   readonly hooks: readonly HookDefinition[];
+  readonly sourceValidity?: boolean | null | undefined;
 }
 
-export function HooksView({ hooks }: HooksViewProps): React.JSX.Element {
+export function HooksView({
+  hooks,
+  sourceValidity = null
+}: HooksViewProps): React.JSX.Element {
   const totalActions = hooks.reduce((acc, h) => acc + h.actions.length, 0);
+  const validityLabel =
+    sourceValidity === null
+      ? "Not observed"
+      : sourceValidity
+        ? "Valid"
+        : "Invalid";
 
   return React.createElement(
     "div",
@@ -26,8 +35,8 @@ export function HooksView({ hooks }: HooksViewProps): React.JSX.Element {
         value: totalActions
       }),
       React.createElement(StatCard, {
-        title: "Source",
-        value: "RuleSync",
+        title: "Source validation",
+        value: validityLabel,
         subtitle: ".rulesync/hooks.jsonc"
       })
     ),
@@ -42,80 +51,97 @@ export function HooksView({ hooks }: HooksViewProps): React.JSX.Element {
         },
         "Configured Lifecycle Hooks"
       ),
-      hooks.map((h) =>
-        React.createElement(
-          "div",
-          {
-            key: h.event,
-            className:
-              "bg-slate-900 border border-slate-800 rounded-lg p-5 flex flex-col gap-3 shadow"
-          },
-          React.createElement(
-            "div",
+      hooks.length === 0
+        ? React.createElement(
+            "p",
             {
               className:
-                "flex items-center justify-between border-b border-slate-800 pb-2"
+                "rounded-lg border border-slate-800 bg-slate-900 p-5 text-sm text-slate-400",
+              "data-hook-state":
+                sourceValidity === null
+                  ? "not-observed"
+                  : sourceValidity
+                    ? "empty"
+                    : "invalid"
             },
+            sourceValidity === null
+              ? "Hook source not observed."
+              : sourceValidity
+                ? "No hook actions configured."
+                : "Hook source is invalid; actions are not shown."
+          )
+        : hooks.map((h) =>
             React.createElement(
-              "span",
+              "div",
               {
+                key: h.event,
                 className:
-                  "font-mono font-semibold text-emerald-400 text-sm"
+                  "bg-slate-900 border border-slate-800 rounded-lg p-5 flex flex-col gap-3 shadow"
               },
-              h.event
-            ),
-            React.createElement(StatusBadge, { status: "valid", label: "Valid" })
-          ),
-          React.createElement(
-            "div",
-            { className: "flex flex-col gap-2" },
-            h.actions.map((act, index) =>
               React.createElement(
                 "div",
                 {
-                  key: index,
                   className:
-                    "bg-slate-950 p-3 rounded border border-slate-800/80 flex flex-col gap-1 text-xs font-mono"
+                    "flex items-center justify-between border-b border-slate-800 pb-2"
                 },
                 React.createElement(
-                  "div",
+                  "span",
                   {
-                    className:
-                      "flex items-center justify-between text-slate-400"
+                    className: "font-mono font-semibold text-slate-200 text-sm"
                   },
+                  h.event
+                )
+              ),
+              React.createElement(
+                "div",
+                { className: "flex flex-col gap-2" },
+                h.actions.map((act, index) =>
                   React.createElement(
-                    "span",
-                    null,
-                    "Matcher: ",
+                    "div",
+                    {
+                      key: index,
+                      className:
+                        "bg-slate-950 p-3 rounded border border-slate-800/80 flex flex-col gap-1 text-xs font-mono"
+                    },
                     React.createElement(
-                      "span",
-                      { className: "text-amber-300" },
-                      act.matcher ?? ".*"
-                    )
-                  ),
-                  act.statusMessage
-                    ? React.createElement(
+                      "div",
+                      {
+                        className:
+                          "flex items-center justify-between text-slate-400"
+                      },
+                      React.createElement(
                         "span",
-                        { className: "text-slate-500 italic" },
-                        act.statusMessage
-                      )
-                    : null
-                ),
-                React.createElement(
-                  "div",
-                  { className: "text-slate-200" },
-                  React.createElement(
-                    "span",
-                    { className: "text-slate-500" },
-                    "$ "
-                  ),
-                  act.command
+                        null,
+                        "Matcher: ",
+                        React.createElement(
+                          "span",
+                          { className: "text-amber-300" },
+                          act.matcher ?? ".*"
+                        )
+                      ),
+                      act.statusMessage
+                        ? React.createElement(
+                            "span",
+                            { className: "text-slate-500 italic" },
+                            act.statusMessage
+                          )
+                        : null
+                    ),
+                    React.createElement(
+                      "div",
+                      { className: "text-slate-200" },
+                      React.createElement(
+                        "span",
+                        { className: "text-slate-500" },
+                        "$ "
+                      ),
+                      act.command
+                    )
+                  )
                 )
               )
             )
           )
-        )
-      )
     )
   );
 }

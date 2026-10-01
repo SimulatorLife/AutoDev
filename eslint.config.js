@@ -27,19 +27,30 @@ import pluginUnicorn from "eslint-plugin-unicorn";
 import pluginUnusedImports from "eslint-plugin-unused-imports";
 import { defineConfig } from "eslint/config";
 import globals from "globals";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import tseslint from "typescript-eslint";
 
+const REPOSITORY_ROOT = path.dirname(fileURLToPath(import.meta.url));
+const workspaceTypeScriptProjects = [
+  "./tsconfig.json",
+  "./core/tsconfig.json",
+  "./data/tsconfig.json",
+  "./runtime/tsconfig.json",
+  "./console/tsconfig.json"
+];
 const tsImportResolver = createTypeScriptImportResolver({
-  project: ["./tsconfig.json"]
+  project: workspaceTypeScriptProjects
 });
 
 const typeScriptPlugin = { "@typescript-eslint": tseslint.plugin };
-const TEST_FILES = ["tests/**/*.ts"];
+const TEST_FILES = ["**/tests/**/*.ts", "**/tests/**/*.tsx"];
 
 const baseIgnorePatterns = [
   "**/*.d.ts",
   "**/node_modules/**",
   "**/coverage/**",
+  "**/.next/**",
   ".tmp/**",
   "**/*.md",
   ".DS_Store",
@@ -74,19 +85,34 @@ const focusedTestRestrictedSyntax = [
 // docs/typescript-target-state.md: shared primitives at the bottom, the
 // router and the provider bridges side by side (neither imports the other),
 // platform lifecycle over config, and the CLI and hooks on top.
+const element = (type, pattern) => ({ type, pattern, partialMatch: false });
+const architectureFiles = [
+  { category: "console-entrypoint", pattern: "console/src/index.ts" },
+  { category: "package-config", pattern: "console/next.config.ts" }
+];
 const architectureElements = [
-  { type: "shared", pattern: "src/shared/**" },
-  { type: "telemetry", pattern: "src/telemetry/**" },
-  { type: "agents", pattern: "src/agents/**" },
-  { type: "config", pattern: "src/config/**" },
-  { type: "mcp", pattern: "src/mcp/**" },
-  { type: "router", pattern: "src/router/**" },
-  { type: "providers", pattern: "src/providers/**" },
-  { type: "platform", pattern: "src/platform/**" },
-  { type: "hooks", pattern: "src/hooks/**" },
-  { type: "cli", pattern: "src/cli/**" },
-  { type: "skill-script", pattern: ".rulesync/skills/**" },
-  { type: "test", pattern: "tests/**" }
+  element("core", "core/src/**"),
+  element("data", "data/src/**"),
+  element("runtime-memory", "runtime/src/memory/**"),
+  element("shared", "src/shared/**"),
+  element("telemetry", "src/telemetry/**"),
+  element("agents", "src/agents/**"),
+  element("config", "src/config/**"),
+  element("mcp", "src/mcp/**"),
+  element("router", "src/router/**"),
+  element("providers", "src/providers/**"),
+  element("platform", "src/platform/**"),
+  element("hooks", "src/hooks/**"),
+  element("cli", "src/cli/**"),
+  element("console-app", "console/app/**"),
+  element("console-components", "console/src/components/**"),
+  element("console-features", "console/src/features/**"),
+  element("console-lib", "console/src/lib/**"),
+  element("test", "core/tests/**"),
+  element("test", "data/tests/**"),
+  element("test", "console/tests/**"),
+  element("skill-script", ".rulesync/skills/**"),
+  element("test", "tests/**")
 ];
 
 const allSourceElements = [
@@ -99,12 +125,29 @@ const allSourceElements = [
   "providers",
   "platform",
   "hooks",
-  "cli"
+  "cli",
+  "core",
+  "data",
+  "runtime-memory",
+  "console-app",
+  "console-components",
+  "console-features",
+  "console-lib"
 ];
 
 const allowOnly = (from, to) => ({
   from: { element: { type: from } },
   allow: { to: { element: { types: { anyOf: [from, ...to] } } } }
+});
+
+const allowOnlyElementPaths = (from, paths) => ({
+  from: { element: { type: from } },
+  allow: { to: { element: { path: paths } } }
+});
+
+const allowFileOnly = (category, to) => ({
+  from: { file: { categories: category } },
+  allow: { to: { element: { types: { anyOf: to } } } }
 });
 
 const architecturePolicies = [
@@ -113,18 +156,47 @@ const architecturePolicies = [
   allowOnly("agents", ["shared"]),
   allowOnly("config", ["shared"]),
   allowOnly("mcp", ["shared"]),
-  allowOnly("router", ["shared", "agents", "telemetry"]),
+  allowOnly("router", [
+    "shared",
+    "agents",
+    "telemetry",
+    "core",
+    "data",
+    "runtime-memory"
+  ]),
   allowOnly("providers", ["shared", "agents", "telemetry"]),
   allowOnly("platform", ["shared", "config"]),
   allowOnly("hooks", ["shared", "agents", "telemetry", "platform"]),
   allowOnly("cli", ["shared", "config", "platform", "router"]),
+  allowOnlyElementPaths("core", "core/src"),
+  allowOnlyElementPaths("data", ["data/src", "core/src"]),
+  allowOnly("runtime-memory", ["core", "data"]),
+  allowOnly("console-app", [
+    "core",
+    "console-components",
+    "console-features",
+    "console-lib"
+  ]),
+  allowOnly("console-components", ["core", "console-lib"]),
+  allowOnly("console-features", ["core", "console-components"]),
+  allowOnly("console-lib", ["core", "data"]),
+  allowFileOnly("console-entrypoint", [
+    "console-app",
+    "console-components",
+    "console-features",
+    "console-lib"
+  ]),
+  {
+    from: { element: { type: "test" } },
+    allow: { to: { file: { categories: "console-entrypoint" } } }
+  },
   // Skill scripts ship inside a skill folder and run standalone.
   allowOnly("skill-script", []),
   allowOnly("test", [...allSourceElements, "skill-script"])
 ];
 
 const tsConfig = defineConfig({
-  files: ["**/*.ts"],
+  files: ["**/*.{ts,tsx}"],
   languageOptions: {
     ecmaVersion: 2024,
     sourceType: "module",
@@ -237,7 +309,13 @@ const tsConfig = defineConfig({
     ],
     "import/no-mutable-exports": "error",
     "import/no-self-import": "error",
-    "import/no-unresolved": "error",
+    // MCP SDK wildcard export declarations use NodeNext `.js` substitution; the
+    // import plugin resolver cannot map that declaration suffix. Runtime's
+    // package typecheck and MCP protocol tests cover these direct imports.
+    "import/no-unresolved": [
+      "error",
+      { ignore: ["^@modelcontextprotocol/sdk/"] }
+    ],
     "import/no-useless-path-segments": "error",
     "simple-import-sort/exports": "error",
     "simple-import-sort/imports": "error",
@@ -353,16 +431,47 @@ export default defineConfig([
 
   /* Classified source dependencies are default-deny and mirror the documented layers. */
   {
-    files: ["src/**/*.ts", "tests/**/*.ts", ".rulesync/skills/**/*.ts"],
+    files: [
+      "src/**/*.ts",
+      "tests/**/*.ts",
+      ".rulesync/skills/**/*.ts",
+      "core/**/*.ts",
+      "data/**/*.ts",
+      "runtime/src/memory/**/*.ts",
+      "console/app/**/*.{ts,tsx}",
+      "console/next.config.ts",
+      "console/src/index.ts",
+      "console/src/components/**/*.{ts,tsx}",
+      "console/src/features/**/*.{ts,tsx}",
+      "console/src/lib/**/*.{ts,tsx}",
+      "console/tests/**/*.{ts,tsx}"
+    ],
     plugins: { boundaries: pluginBoundaries },
     settings: {
       "boundaries/elements": architectureElements,
+      "boundaries/files": architectureFiles,
+      "boundaries/root-path": REPOSITORY_ROOT,
       "boundaries/elements-single-type": true,
-      "boundaries/include": ["src/**/*", "tests/**/*", ".rulesync/skills/**/*"],
+      "boundaries/include": [
+        "src/**/*",
+        "tests/**/*",
+        ".rulesync/skills/**/*",
+        "core/**/*",
+        "data/**/*",
+        "runtime/src/memory/**/*",
+        "console/app/**/*",
+        "console/next.config.ts",
+        "console/src/index.ts",
+        "console/src/components/**/*",
+        "console/src/features/**/*",
+        "console/src/lib/**/*",
+        "console/tests/**/*"
+      ],
       // eslint-plugin-boundaries resolves imports through eslint-module-utils,
       // which uses the legacy resolver settings rather than import-x's resolver-next API.
       "import/resolver": {
-        typescript: { project: ["./tsconfig.json"] }
+        typescript: { project: workspaceTypeScriptProjects },
+        node: { moduleDirectory: ["node_modules", "runtime/node_modules"] }
       },
       "boundaries/legacy-warnings": false
     },

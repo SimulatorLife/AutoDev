@@ -37,6 +37,7 @@ import {
   INVALID_MODEL_PATTERN,
   recordRouterEvent
 } from "./events.ts";
+import { injectOrchestratorMemory } from "./memory-injection.ts";
 import { recordMcpExposure } from "./otel.ts";
 import {
   collectToolCallIds,
@@ -3614,16 +3615,23 @@ export function proxyRoleResponse(
   );
 }
 
-export function proxyOrchestratorResponse(
+export async function proxyOrchestratorResponse(
   response: ServerResponse,
   payload: Record<string, unknown>,
   wantsStream: boolean,
   requestId: string,
   turnMetadataHeader: string | null,
-  workspace: { key: string; cwd?: string | null } | null,
+  workspace: { key: string; cwd?: string | null; workspace_id?: string } | null,
   clientSignal: AbortSignal | null = null,
   session: RouterSession | null = null
 ): Promise<void> {
+  const memoryPayload = await injectOrchestratorMemory({
+    payload,
+    requestId,
+    sessionKey: session?.key ?? null,
+    threadId: session?.thread ?? null,
+    workspace
+  });
   const sessionKey = session?.key ?? null;
   // The provider that issued the calls being answered comes first; otherwise
   // an orchestrator mid-session stays with the provider it started on.
@@ -3643,7 +3651,7 @@ export function proxyOrchestratorResponse(
       sessionKey,
       session
     },
-    payload,
+    memoryPayload,
     wantsStream,
     requestId,
     turnMetadataHeader,

@@ -1,4 +1,14 @@
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import {
+  link,
+  lstat,
+  mkdir,
+  readFile,
+  realpath,
+  unlink,
+  writeFile
+} from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,12 +18,121 @@ import type {
   HookEvent,
   PromptAsset,
   SkillDefinition
-} from "../../../core/src/index.ts";
+} from "@simulatorlife/autodev-core";
+import { parse, type ParseError } from "jsonc-parser";
 
 const DEFAULT_REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const COLLATOR = new Intl.Collator();
 const MD_EXTENSION_PATTERN = /\.md$/u;
 const SKILL_DESCRIPTION_PATTERN = /description:\s*([^\n]+)/i;
+const SKILL_NAME_PATTERN = /^[a-z0-9-]{1,64}$/u;
+const SKILL_DESCRIPTION_MAX = 512;
+const SKILL_CONTENT_MAX = 20_000;
+const HOOK_EVENTS: ReadonlySet<string> = new Set([
+  "sessionStart",
+  "subagentStart",
+  "beforeSubmitPrompt",
+  "preToolUse"
+]);
+
+export interface RuleSyncHooksState {
+  readonly source: ".rulesync/hooks.jsonc";
+  readonly valid: boolean | null;
+  readonly hooks: readonly HookDefinition[];
+}
+
+export interface RuleSyncSkillPromotionInput {
+  readonly name: string;
+  readonly description: string;
+  readonly content: string;
+}
+
+export interface RuleSyncSkillArtifact {
+  readonly name: string;
+  readonly path: string;
+  readonly uri: string;
+  readonly revision: string;
+}
+
+export class RuleSyncSkillConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RuleSyncSkillConflictError";
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isHookEvent(value: string): value is HookEvent {
+  return HOOK_EVENTS.has(value);
+}
+
+function parseHookActions(value: unknown): HookAction[] | null {
+  if (!Array.isArray(value)) return null;
+  const actions: HookAction[] = [];
+  for (const entry of value) {
+    if (
+      !isRecord(entry) ||
+      entry.type !== "command" ||
+      typeof entry.command !== "string" ||
+      entry.command.trim().length === 0 ||
+      (entry.matcher !== undefined && typeof entry.matcher !== "string") ||
+      (entry.statusMessage !== undefined &&
+        typeof entry.statusMessage !== "string")
+    ) {
+      return null;
+    }
+    actions.push({
+      type: "command",
+      command: entry.command,
+      ...(typeof entry.matcher === "string" ? { matcher: entry.matcher } : {}),
+      ...(typeof entry.statusMessage === "string"
+        ? { statusMessage: entry.statusMessage }
+        : {})
+    });
+  }
+  return actions;
+}
+
+function hasControlCharacters(value: string): boolean {
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 32 && character !== "\n" && character !== "\t") return true;
+  }
+  return false;
+}
+
+async function ensureChildDirectory(
+  parent: string,
+  name: string
+): Promise<string> {
+  const directory = path.join(parent, name);
+  try {
+    await mkdir(directory);
+  } catch (error) {
+    if (!isExistingFileError(error)) throw error;
+  }
+  const metadata = await lstat(directory);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink())
+    throw new RuleSyncSkillConflictError(
+      "RuleSync skill directory is not a real directory."
+    );
+  return directory;
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return isNodeError(error) && error.code === "ENOENT";
+}
+
+function isExistingFileError(error: unknown): boolean {
+  return isNodeError(error) && error.code === "EEXIST";
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
 
 export class RuleSyncRepository {
   readonly repositoryRoot: string;
@@ -51,35 +170,157 @@ export class RuleSyncRepository {
     }
   }
 
-  loadHooks(): HookDefinition[] {
-    const hooksPath = path.join(this.repositoryRoot, ".rulesync", "hooks.jsonc");
-    if (!existsSync(hooksPath)) return [];
+  loadHooksState(): RuleSyncHooksState {
+    const hooksPath = path.join(
+      this.repositoryRoot,
+      ".rulesync",
+      "hooks.jsonc"
+    );
+    const source = ".rulesync/hooks.jsonc" as const;
+    if (!existsSync(hooksPath)) return { source, valid: null, hooks: [] };
+
+    let content: string;
     try {
-      const raw = JSON.parse(readFileSync(hooksPath, "utf8")) as {
-        hooks?: Record<string, HookAction[]>;
-      };
-      const hooksRecord = raw.hooks ?? {};
-      const result: HookDefinition[] = [];
-      for (const [event, actions] of Object.entries(hooksRecord)) {
-        result.push({
-          event: event as HookEvent,
-          actions: Array.isArray(actions) ? actions : []
-        });
-      }
-      return result;
+      content = readFileSync(hooksPath, "utf8");
     } catch {
-      return [];
+      return { source, valid: null, hooks: [] };
     }
+
+    const errors: ParseError[] = [];
+    const document: unknown = parse(content, errors, {
+      allowTrailingComma: true
+    });
+    if (errors.length > 0 || !isRecord(document) || !isRecord(document.hooks)) {
+      return { source, valid: false, hooks: [] };
+    }
+
+    const hooks: HookDefinition[] = [];
+    for (const [event, value] of Object.entries(document.hooks)) {
+      if (!isHookEvent(event)) return { source, valid: false, hooks: [] };
+      const actions = parseHookActions(value);
+      if (!actions) return { source, valid: false, hooks: [] };
+      hooks.push({ event, actions });
+    }
+    return { source, valid: true, hooks };
   }
 
   loadMcp(): Record<string, unknown> {
     const mcpPath = path.join(this.repositoryRoot, ".rulesync", "mcp.jsonc");
     if (!existsSync(mcpPath)) return {};
     try {
-      return JSON.parse(readFileSync(mcpPath, "utf8")) as Record<string, unknown>;
+      return JSON.parse(readFileSync(mcpPath, "utf8")) as Record<
+        string,
+        unknown
+      >;
     } catch {
       return {};
     }
+  }
+
+  async createSkill(
+    input: RuleSyncSkillPromotionInput
+  ): Promise<RuleSyncSkillArtifact> {
+    const name = input.name.trim();
+    const description = input.description.trim();
+    const content = input.content
+      .trim()
+      .replaceAll("\r\n", "\n")
+      .replaceAll("\r", "\n");
+    if (
+      !SKILL_NAME_PATTERN.test(name) ||
+      name.startsWith("-") ||
+      name.endsWith("-") ||
+      name.includes("--")
+    )
+      throw new TypeError("Skill name must be a lowercase hyphenated slug.");
+    if (
+      !description ||
+      description.length > SKILL_DESCRIPTION_MAX ||
+      hasControlCharacters(description)
+    ) {
+      throw new TypeError("Skill description is invalid.");
+    }
+    if (
+      !content ||
+      content.length > SKILL_CONTENT_MAX ||
+      hasControlCharacters(content)
+    ) {
+      throw new TypeError("Skill content is empty or exceeds its size bound.");
+    }
+
+    const root = await realpath(this.repositoryRoot);
+    const rulesyncDir = await ensureChildDirectory(root, ".rulesync");
+    const skillsDir = await ensureChildDirectory(rulesyncDir, "skills");
+    const skillDir = await ensureChildDirectory(skillsDir, name);
+    const skillPath = path.join(skillDir, "SKILL.md");
+    const source = [
+      "---",
+      `name: ${name}`,
+      `description: ${JSON.stringify(description)}`,
+      "---",
+      "",
+      "<!-- Promoted from verified AutoDev procedural memory. -->",
+      "",
+      content,
+      ""
+    ].join("\n");
+    const revision = createHash("sha256").update(source, "utf8").digest("hex");
+
+    try {
+      const existing = await lstat(skillPath);
+      if (!existing.isFile() || existing.isSymbolicLink())
+        throw new RuleSyncSkillConflictError(
+          "Skill destination is not a regular file."
+        );
+      const existingSource = await readFile(skillPath, "utf8");
+      if (existingSource !== source)
+        throw new RuleSyncSkillConflictError(
+          "A different canonical skill already uses this name."
+        );
+    } catch (error) {
+      if (!isMissingFileError(error)) throw error;
+      const temporaryPath = path.join(skillDir, `.${name}.${randomUUID()}.tmp`);
+      try {
+        await writeFile(temporaryPath, source, {
+          encoding: "utf8",
+          flag: "wx",
+          mode: 0o644
+        });
+        try {
+          // A hard link publishes the fully-written file atomically without
+          // replacing a skill another process created concurrently.
+          await link(temporaryPath, skillPath);
+        } catch (writeError) {
+          if (!isExistingFileError(writeError)) throw writeError;
+          const existingSource = await readFile(skillPath, "utf8");
+          if (existingSource !== source)
+            throw new RuleSyncSkillConflictError(
+              "A different canonical skill already uses this name."
+            );
+        }
+      } finally {
+        await unlink(temporaryPath).catch(() => undefined);
+      }
+    }
+
+    const canonicalPath = await realpath(skillPath);
+    const relativePath = path.relative(root, canonicalPath);
+    if (
+      !relativePath ||
+      relativePath === ".." ||
+      relativePath.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relativePath)
+    ) {
+      throw new RuleSyncSkillConflictError(
+        "Skill destination escaped the repository root."
+      );
+    }
+    return {
+      name,
+      path: `.rulesync/skills/${name}/SKILL.md`,
+      uri: `rulesync://skills/${name}/SKILL.md`,
+      revision
+    };
   }
 
   loadSkills(): SkillDefinition[] {
@@ -97,7 +338,19 @@ export class RuleSyncRepository {
             try {
               const text = readFileSync(skillMd, "utf8");
               const descMatch = text.match(SKILL_DESCRIPTION_PATTERN);
-              if (descMatch?.[1]) description = descMatch[1].trim();
+              if (descMatch?.[1]) {
+                const rawDescription = descMatch[1].trim();
+                if (rawDescription.startsWith('"')) {
+                  try {
+                    const parsed: unknown = JSON.parse(rawDescription);
+                    if (typeof parsed === "string") description = parsed;
+                  } catch {
+                    description = rawDescription;
+                  }
+                } else {
+                  description = rawDescription;
+                }
+              }
             } catch {
               // Ignore unreadable SKILL.md
             }

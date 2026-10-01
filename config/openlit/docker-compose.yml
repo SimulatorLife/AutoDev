@@ -8,7 +8,7 @@
 # Notable differences from upstream:
 #   - NO additional sidecar Collector. OpenLIT 2.1.0 ships its own OTLP
 #     receiver; a sidecar would be a parallel pass-through and is excluded
-#     from the target (see docs/observability-target-state.md §6, G1).
+#     from the target (see docs/autodev-console-target-state.md §8).
 #   - Image is pinned by digest. Set OPENLIT_IMAGE in openlit.env to pin a
 #     different build (e.g. one that has the AutoDev patches baked in).
 #     The `scripts/openlit/up.sh` runner overrides OPENLIT_IMAGE with the
@@ -81,6 +81,10 @@ services:
       AUTODEV_CONTROL_API_URL: ${AUTODEV_CONTROL_API_URL:-http://host.docker.internal:4101}
       AUTODEV_CONTROL_API_TOKEN: ${AUTODEV_CONTROL_API_TOKEN:?AUTODEV_CONTROL_API_TOKEN must be set in the out-of-repo secret env file}
       AUTODEV_CONTROL_API_DISABLED: ${AUTODEV_CONTROL_API_DISABLED:-}
+
+      # The read-only unified Console Usage adapter authenticates with its
+      # own server-to-server credential; it does not use OpenLIT user sessions.
+      AUTODEV_OPENLIT_USAGE_TOKEN: ${AUTODEV_OPENLIT_USAGE_TOKEN:?AUTODEV_OPENLIT_USAGE_TOKEN must be set in the out-of-repo secret env file}
 
     ports:
       - "127.0.0.1:${PORT:-3000}:3000" # Local-only OpenLIT UI/control proxy

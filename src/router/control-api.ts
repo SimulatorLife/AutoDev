@@ -5,11 +5,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { SpanStatusCode } from "@opentelemetry/api";
+import { LOCAL_CONTROL_API_ACTOR } from "@simulatorlife/autodev-core";
+import { RuleSyncRepository } from "@simulatorlife/autodev-data";
 
 import { writeErrorLine } from "../shared/output.ts";
 import { getDefaultConcurrencyManager } from "./concurrency.ts";
+import { readControlApiJsonObject } from "./control-api-body.ts";
 import { COOLDOWNS } from "./cooldown.ts";
 import { getDefaultRouterLifecycle } from "./lifecycle.ts";
+import { handleMemoryControlApiRequest } from "./memory-control-api.ts";
 import { getDefaultPersistenceManager } from "./persistence.ts";
 import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "./proxy.ts";
 import { type ProviderRole, ROUTES, ROUTING_POLICY } from "./routing.ts";
@@ -28,7 +32,8 @@ export const CONTROL_API_PATHS = {
   prompts: "/control/prompts",
   workspaces: "/control/workspaces",
   routing: "/control/routing",
-  runtime: "/control/runtime"
+  runtime: "/control/runtime",
+  memory: "/control/memory"
 } as const;
 
 const PROVIDER_ROLE_PATH =
@@ -36,7 +41,6 @@ const PROVIDER_ROLE_PATH =
 const AGENT_DETAIL_PATH = /^\/control\/agents\/([a-zA-Z0-9._-]+)$/u;
 const PROMPT_DETAIL_PATH = /^\/control\/prompts\/([a-zA-Z0-9._-]+)$/u;
 const ACTOR_ID_PATTERN = /^[A-Za-z0-9@._:+-]{1,128}$/u;
-const MAX_CONTROL_BODY_BYTES = 65_536;
 const CONTROL_API_COLLATOR = new Intl.Collator();
 const MD_EXTENSION_PATTERN = /\.md$/u;
 const CONTROL_VARY_HEADER = "Authorization, X-AutoDev-Actor";
@@ -78,13 +82,16 @@ export function getControlApiAvailability(
   const serviceToken = env.AUTODEV_CONTROL_API_TOKEN?.trim() ?? "";
   const viewers = actorSet(env.AUTODEV_CONTROL_VIEWERS);
   const operators = actorSet(env.AUTODEV_CONTROL_OPERATORS);
-  if (!serviceToken || (viewers.size === 0 && operators.size === 0)) {
+  if (!serviceToken) {
     return {
       enabled: false,
-      reason:
-        "Configure AUTODEV_CONTROL_API_TOKEN and at least one authorized viewer or operator."
+      reason: "Configure AUTODEV_CONTROL_API_TOKEN."
     };
   }
+  // A private, service-authenticated request from the Console is the local
+  // single-user identity. Explicit actor allowlists replace this local mode.
+  if (viewers.size === 0 && operators.size === 0)
+    operators.add(LOCAL_CONTROL_API_ACTOR);
   return { enabled: true, config: { serviceToken, viewers, operators } };
 }
 
@@ -229,63 +236,6 @@ function sendControlError(
       vary: CONTROL_VARY_HEADER
     }
   );
-}
-
-async function readJsonObject(
-  request: IncomingMessage,
-  response: ServerResponse
-): Promise<Record<string, unknown> | null> {
-  const contentType = header(request, "content-type");
-  let mediaType: string | null = null;
-  if (contentType !== null) {
-    const separator = contentType.indexOf(";");
-    mediaType = (
-      separator === -1 ? contentType : contentType.slice(0, separator)
-    )
-      .trim()
-      .toLowerCase();
-  }
-  if (mediaType !== "application/json") {
-    sendControlError(
-      response,
-      415,
-      "autodev_control_api_content_type",
-      "Control API mutations require application/json."
-    );
-    return null;
-  }
-
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of request) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += bytes.length;
-    if (size > MAX_CONTROL_BODY_BYTES) {
-      sendControlError(
-        response,
-        413,
-        "autodev_control_api_payload_too_large",
-        "Control API body exceeds 64 KiB."
-      );
-      return null;
-    }
-    chunks.push(bytes);
-  }
-
-  try {
-    const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-      throw new Error("not_object");
-    return parsed as Record<string, unknown>;
-  } catch {
-    sendControlError(
-      response,
-      400,
-      "autodev_control_api_bad_body",
-      "Control API body must be a JSON object."
-    );
-    return null;
-  }
 }
 
 function providersView(): Record<string, unknown> {
@@ -459,9 +409,9 @@ function agentsView(
       kind,
       readOnly,
       configured: true,
-      valid: true,
-      status: "ready",
-      convergence: "converged",
+      valid: null,
+      status: "configured",
+      convergence: "not-observed",
       primaryModel: isOrchestrator
         ? "autodev/orchestrator"
         : "autodev/subagent",
@@ -530,12 +480,10 @@ function agentDetailView(
     kind,
     readOnly,
     configured: true,
-    valid: true,
-    status: "ready",
-    convergence: "converged",
-    primaryModel: isOrchestrator
-      ? "autodev/orchestrator"
-      : "autodev/subagent",
+    valid: null,
+    status: "configured",
+    convergence: "not-observed",
+    primaryModel: isOrchestrator ? "autodev/orchestrator" : "autodev/subagent",
     allowedProviders,
     mcps,
     skills,
@@ -580,24 +528,16 @@ function modelsView(
 function hooksView(
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> {
-  const hooksPath = path.join(repositoryRoot, ".rulesync", "hooks.jsonc");
-  let hooks: Record<string, unknown> = {};
-  if (existsSync(hooksPath)) {
-    try {
-      hooks = JSON.parse(readFileSync(hooksPath, "utf8")) as Record<
-        string,
-        unknown
-      >;
-    } catch {
-      // Ignore unparseable hooks file
-    }
-  }
+  const state = new RuleSyncRepository(repositoryRoot).loadHooksState();
+  const hooks = Object.fromEntries(
+    state.hooks.map((hook) => [hook.event, hook.actions])
+  );
   return {
     schema: "autodev-control-hooks-v1",
-    source: ".rulesync/hooks.jsonc",
+    source: state.source,
     readOnly: true,
-    valid: true,
-    hooks: (hooks as { hooks?: Record<string, unknown> }).hooks ?? hooks
+    valid: state.valid,
+    hooks
   };
 }
 
@@ -789,8 +729,8 @@ async function patchProviderRole(
     return;
   }
 
-  const body = await readJsonObject(request, response);
-  if (!body) {
+  const parsedBody = await readControlApiJsonObject(request);
+  if (!parsedBody.ok) {
     auditMutation({
       actor: actor.actor,
       actorVerified: true,
@@ -801,8 +741,15 @@ async function patchProviderRole(
       changes: null,
       reason: "invalid_body"
     });
+    sendControlError(
+      response,
+      parsedBody.status,
+      parsedBody.code,
+      parsedBody.message
+    );
     return;
   }
+  const body = parsedBody.body;
   if (Object.keys(body).length !== 1 || typeof body.enabled !== "boolean") {
     auditMutation({
       actor: actor.actor,
@@ -946,38 +893,32 @@ function authorizeRequest(
   return null;
 }
 
+const READ_ONLY_COLLECTIONS: ReadonlyMap<
+  string,
+  () => Record<string, unknown>
+> = new Map([
+  [CONTROL_API_PATHS.agents, agentsView],
+  [CONTROL_API_PATHS.providers, providersView],
+  [CONTROL_API_PATHS.models, modelsView],
+  [CONTROL_API_PATHS.mcps, mcpsView],
+  [CONTROL_API_PATHS.skills, skillsView],
+  [CONTROL_API_PATHS.hooks, hooksView],
+  [CONTROL_API_PATHS.permissions, permissionsView],
+  [CONTROL_API_PATHS.prompts, promptsView],
+  [CONTROL_API_PATHS.workspaces, workspacesView],
+  [CONTROL_API_PATHS.routing, () => routingView(Date.now())],
+  [CONTROL_API_PATHS.runtime, () => runtimeView(Date.now())]
+]);
+
 function readOnlyCollection(
   pathname: string,
   method: string,
   response: ServerResponse,
   actor: ControlApiActor
 ): boolean {
-  const now = Date.now();
-  const body =
-    pathname === CONTROL_API_PATHS.agents
-      ? agentsView()
-      : pathname === CONTROL_API_PATHS.providers
-        ? providersView()
-        : pathname === CONTROL_API_PATHS.models
-          ? modelsView()
-          : pathname === CONTROL_API_PATHS.mcps
-            ? mcpsView()
-            : pathname === CONTROL_API_PATHS.skills
-              ? skillsView()
-              : pathname === CONTROL_API_PATHS.hooks
-                ? hooksView()
-                : pathname === CONTROL_API_PATHS.permissions
-                  ? permissionsView()
-                  : pathname === CONTROL_API_PATHS.prompts
-                    ? promptsView()
-                    : pathname === CONTROL_API_PATHS.workspaces
-                      ? workspacesView()
-                      : pathname === CONTROL_API_PATHS.routing
-                        ? routingView(now)
-                        : pathname === CONTROL_API_PATHS.runtime
-                          ? runtimeView(now)
-                          : null;
-  if (!body) return false;
+  const renderCollection = READ_ONLY_COLLECTIONS.get(pathname);
+  if (!renderCollection) return false;
+  const body = renderCollection();
   if (method !== "GET") {
     auditMutation({
       actor: actor.actor,
@@ -1040,6 +981,71 @@ async function providerRoleRoute(
   return true;
 }
 
+interface ReadOnlyDetailRoute {
+  readonly action: string;
+  readonly unknownReason: string;
+  readonly unknownCode: string;
+  readonly unknownMessage: string;
+  readonly read: (identifier: string) => Record<string, unknown> | null;
+}
+
+function readOnlyDetailRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  method: string,
+  pathname: string,
+  identifier: string,
+  route: ReadOnlyDetailRoute
+): boolean {
+  if (method !== "GET") {
+    auditRejectedRequest(
+      request,
+      method,
+      pathname,
+      "method_not_allowed",
+      actor
+    );
+    response.setHeader("allow", "GET");
+    sendControlError(
+      response,
+      405,
+      "autodev_control_api_method_not_allowed",
+      `${route.action} detail is read-only via GET.`
+    );
+    return true;
+  }
+
+  const detail = route.read(identifier);
+  if (!detail) {
+    auditRejectedRequest(request, method, pathname, route.unknownReason, actor);
+    sendControlError(response, 404, route.unknownCode, route.unknownMessage);
+    return true;
+  }
+
+  sendJson(response, 200, detail, {
+    "cache-control": "no-store",
+    vary: CONTROL_VARY_HEADER
+  });
+  return true;
+}
+
+const AGENT_DETAIL_ROUTE: ReadOnlyDetailRoute = {
+  action: "Agent",
+  unknownReason: "unknown_agent",
+  unknownCode: "autodev_control_api_unknown_agent",
+  unknownMessage: "Unknown agent role.",
+  read: agentDetailView
+};
+
+const PROMPT_DETAIL_ROUTE: ReadOnlyDetailRoute = {
+  action: "Prompt",
+  unknownReason: "unknown_prompt",
+  unknownCode: "autodev_control_api_unknown_prompt",
+  unknownMessage: "Unknown prompt.",
+  read: promptDetailView
+};
+
 export async function handleControlApiRequest(
   request: IncomingMessage,
   response: ServerResponse,
@@ -1049,6 +1055,26 @@ export async function handleControlApiRequest(
   const method = request.method ?? "GET";
   const actor = authorizeRequest(request, response, method, pathname);
   if (!actor) return true;
+  if (pathname.startsWith(CONTROL_API_PATHS.memory + "/")) {
+    await handleMemoryControlApiRequest(
+      request,
+      response,
+      pathname,
+      actor,
+      (event) =>
+        auditMutation({
+          actor: actor.actor,
+          actorVerified: true,
+          role: actor.role,
+          action: event.action,
+          resource: event.resource,
+          outcome: event.outcome,
+          changes: event.changes,
+          ...(event.reason ? { reason: event.reason } : {})
+        })
+    );
+    return true;
+  }
   const providerMatch = pathname.match(PROVIDER_ROLE_PATH);
   if (providerMatch) {
     await providerRoleRoute(
@@ -1062,77 +1088,27 @@ export async function handleControlApiRequest(
     return true;
   }
   const agentMatch = pathname.match(AGENT_DETAIL_PATH);
-  if (agentMatch) {
-    if (method !== "GET") {
-      auditRejectedRequest(
-        request,
-        method,
-        pathname,
-        "method_not_allowed",
-        actor
-      );
-      response.setHeader("allow", "GET");
-      sendControlError(
-        response,
-        405,
-        "autodev_control_api_method_not_allowed",
-        "Agent detail is read-only via GET."
-      );
-      return true;
-    }
-    const detail = agentDetailView(agentMatch[1]!);
-    if (!detail) {
-      auditRejectedRequest(request, method, pathname, "unknown_agent", actor);
-      sendControlError(
-        response,
-        404,
-        "autodev_control_api_unknown_agent",
-        "Unknown agent role."
-      );
-      return true;
-    }
-    sendJson(response, 200, detail, {
-      "cache-control": "no-store",
-      vary: CONTROL_VARY_HEADER
-    });
-    return true;
-  }
+  if (agentMatch)
+    return readOnlyDetailRoute(
+      request,
+      response,
+      actor,
+      method,
+      pathname,
+      agentMatch[1]!,
+      AGENT_DETAIL_ROUTE
+    );
   const promptMatch = pathname.match(PROMPT_DETAIL_PATH);
-  if (promptMatch) {
-    if (method !== "GET") {
-      auditRejectedRequest(
-        request,
-        method,
-        pathname,
-        "method_not_allowed",
-        actor
-      );
-      response.setHeader("allow", "GET");
-      sendControlError(
-        response,
-        405,
-        "autodev_control_api_method_not_allowed",
-        "Prompt detail is read-only via GET."
-      );
-      return true;
-    }
-    const detail = promptDetailView(promptMatch[1]!);
-    if (!detail) {
-      auditRejectedRequest(request, method, pathname, "unknown_prompt", actor);
-      sendControlError(
-        response,
-        404,
-        "autodev_control_api_unknown_prompt",
-        "Unknown prompt."
-      );
-      return true;
-    }
-    sendJson(response, 200, detail, {
-      "cache-control": "no-store",
-      vary: CONTROL_VARY_HEADER
-    });
-    return true;
-  }
+  if (promptMatch)
+    return readOnlyDetailRoute(
+      request,
+      response,
+      actor,
+      method,
+      pathname,
+      promptMatch[1]!,
+      PROMPT_DETAIL_ROUTE
+    );
   if (readOnlyCollection(pathname, method, response, actor)) return true;
   auditRejectedRequest(
     request,

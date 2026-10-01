@@ -42,8 +42,7 @@ export function DataTable<T>({
     React.createElement(
       "table",
       {
-        className:
-          "min-w-full divide-y divide-slate-800 text-left text-sm"
+        className: "min-w-full divide-y divide-slate-800 text-left text-sm"
       },
       React.createElement(
         "thead",

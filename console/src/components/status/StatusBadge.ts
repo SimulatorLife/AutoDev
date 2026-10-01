@@ -8,7 +8,8 @@ export type StatusBadgeVariant =
   | "unavailable"
   | "converged"
   | "pending"
-  | "error";
+  | "error"
+  | "not-observed";
 
 export interface StatusBadgeProps {
   readonly status: StatusBadgeVariant;
@@ -23,10 +24,14 @@ const BADGE_STYLES: Record<StatusBadgeVariant, string> = {
   unavailable: "bg-amber-900/40 text-amber-300 border-amber-700/60",
   converged: "bg-teal-900/40 text-teal-300 border-teal-700/60",
   pending: "bg-indigo-900/40 text-indigo-300 border-indigo-700/60",
-  error: "bg-rose-900/40 text-rose-300 border-rose-700/60"
+  error: "bg-rose-900/40 text-rose-300 border-rose-700/60",
+  "not-observed": "bg-slate-800 text-slate-300 border-slate-700"
 };
 
-export function StatusBadge({ status, label }: StatusBadgeProps): React.JSX.Element {
+export function StatusBadge({
+  status,
+  label
+}: StatusBadgeProps): React.JSX.Element {
   const style =
     BADGE_STYLES[status] ?? "bg-slate-800 text-slate-300 border-slate-700";
   const displayLabel =

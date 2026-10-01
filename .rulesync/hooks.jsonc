@@ -35,5 +35,15 @@
         "statusMessage": "Recording skill-read telemetry"
       }
     ]
+  },
+  "codexcli": {
+    "hooks": {
+      "sessionEnd": [
+        {
+          "type": "command",
+          "command": "node ~/.codex/src/hooks/memory-session-end.ts"
+        }
+      ]
+    }
   }
 }

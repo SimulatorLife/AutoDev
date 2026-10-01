@@ -1,0 +1,921 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  MemoryConflictError,
+  MemoryLifecycleError,
+  MemoryProvenanceError,
+  MemoryVectorError
+} from "../../src/memory/errors.ts";
+import { PostgresMemoryRepository } from "../../src/memory/postgres-memory-repository.ts";
+import { MEMORY_EMBEDDING_DIMENSIONS } from "../../src/memory/schema.ts";
+import {
+  makeContext,
+  makeExperience,
+  makeLifecycleEvent,
+  makeMemoryRecord
+} from "./fixtures/builders.ts";
+import { FakeMemoryPool } from "./fixtures/fake-memory-pool.ts";
+
+function repoWith(pool: FakeMemoryPool): PostgresMemoryRepository {
+  return new PostgresMemoryRepository({ pool });
+}
+
+test("appendExperience persists and getExperience enforces scope visibility", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  const experience = makeExperience({
+    scope: {
+      kind: "task",
+      workspaceId: "ws-1",
+      taskId: "task-1",
+      runId: "run-1"
+    }
+  });
+  await repo.appendExperience(experience);
+
+  const sameTask = await repo.getExperience(
+    experience.id,
+    makeContext({ workspaceId: "ws-1", taskId: "task-1", runId: "run-1" })
+  );
+  assert.deepEqual(sameTask, experience);
+
+  const otherTask = await repo.getExperience(
+    experience.id,
+    makeContext({ workspaceId: "ws-1", taskId: "task-2", runId: "run-2" })
+  );
+  assert.equal(otherTask, null);
+
+  // canReadGlobal only grants access to globally-scoped memories, never to another
+  // task/run's private experiences, so it must not unlock this task-scoped row.
+  const elevatedButWrongTask = await repo.getExperience(
+    experience.id,
+    makeContext({ workspaceId: "ws-1", canReadGlobal: true })
+  );
+  assert.equal(elevatedButWrongTask, null);
+});
+
+test("appendExperience rejects a duplicate id instead of silently overwriting history", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  const experience = makeExperience();
+  await repo.appendExperience(experience);
+
+  await assert.rejects(
+    () => repo.appendExperience(experience),
+    MemoryConflictError
+  );
+  assert.equal(pool.tables.memory_experiences.size, 1);
+});
+
+test("proposeMemory rejects a candidate whose provenance references an unknown experience, atomically", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  const candidate = makeMemoryRecord({
+    provenance: {
+      experienceIds: ["exp-does-not-exist"],
+      evidence: [],
+      createdBy: "agent-1",
+      createdAt: "2026-01-01T00:00:00.000Z"
+    }
+  });
+
+  await assert.rejects(
+    () => repo.proposeMemory(candidate, makeLifecycleEvent()),
+    MemoryProvenanceError
+  );
+  assert.equal(
+    pool.tables.memory_records.size,
+    0,
+    "no record row should be left behind"
+  );
+  assert.equal(
+    pool.tables.memory_lifecycle_events.length,
+    0,
+    "no lifecycle event should be left behind"
+  );
+});
+
+test("proposeMemory rejects a lifecycle event that does not describe the same proposal", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+  const candidate = makeMemoryRecord();
+
+  await assert.rejects(
+    () =>
+      repo.proposeMemory(
+        candidate,
+        makeLifecycleEvent({ memoryId: "some-other-memory" })
+      ),
+    MemoryLifecycleError
+  );
+  await assert.rejects(
+    () =>
+      repo.proposeMemory(
+        candidate,
+        makeLifecycleEvent({ action: "verified", toStatus: "active" })
+      ),
+    MemoryLifecycleError
+  );
+  await assert.rejects(
+    () =>
+      repo.proposeMemory(candidate, makeLifecycleEvent({ toStatus: "active" })),
+    MemoryLifecycleError
+  );
+  assert.equal(pool.tables.memory_records.size, 0);
+});
+
+test("proposeMemory inserts the record and its lifecycle event together", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+  const candidate = makeMemoryRecord();
+  const event = makeLifecycleEvent();
+
+  await repo.proposeMemory(candidate, event);
+
+  const stored = await repo.getMemory(
+    candidate.id,
+    makeContext({ workspaceId: "ws-1", canReadGlobal: true })
+  );
+  assert.deepEqual(stored, candidate);
+  assert.equal(pool.tables.memory_lifecycle_events.length, 1);
+  assert.equal(pool.tables.memory_lifecycle_events[0]?.id, event.id);
+});
+
+test("proposeMemory locks cited experiences in stable order until provenance commits", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience({ id: "exp-z" }));
+  await repo.appendExperience(makeExperience({ id: "exp-a" }));
+  const candidate = makeMemoryRecord({
+    provenance: {
+      experienceIds: ["exp-z", "exp-a", "exp-z"],
+      evidence: [{ kind: "commit", uri: "git://ws-1/repo/commit/abc" }],
+      createdBy: "agent-1",
+      createdAt: "2026-01-01T00:00:00.000Z"
+    }
+  });
+
+  await repo.proposeMemory(candidate, makeLifecycleEvent());
+
+  const lockCall = pool.calls.find((call) =>
+    call.sql.includes("ORDER BY id FOR KEY SHARE")
+  );
+  const lockIndex = pool.executed.findIndex((sql) =>
+    sql.includes("ORDER BY id FOR KEY SHARE")
+  );
+  const insertIndex = pool.executed.findIndex((sql) =>
+    sql.startsWith("INSERT INTO memory_records")
+  );
+  assert.notEqual(lockIndex, -1);
+  assert.ok(lockIndex < insertIndex);
+  assert.deepEqual(lockCall?.params[0], ["exp-a", "exp-z"]);
+});
+
+test("proposeMemory accepts an evidence-backed revision without mutating its active predecessor", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+  const prior = makeMemoryRecord();
+  await repo.proposeMemory(prior, makeLifecycleEvent());
+  await repo.transitionMemories(
+    [
+      {
+        expectedUpdatedAt: prior.updatedAt,
+        next: {
+          ...prior,
+          status: "active",
+          validity: { state: "verified", evidence: prior.provenance.evidence },
+          updatedAt: "2026-01-02T00:00:00.000Z"
+        }
+      }
+    ],
+    [
+      makeLifecycleEvent({
+        id: "evt-activate",
+        action: "verified",
+        fromStatus: "proposed",
+        toStatus: "active",
+        reasonCode: "verified_current_state"
+      })
+    ]
+  );
+
+  const revision = makeMemoryRecord({
+    id: "mem-revision",
+    claim: "The current config loader uses typed filters.",
+    updatedAt: "2026-01-03T00:00:00.000Z"
+  });
+  const event = makeLifecycleEvent({
+    id: "evt-revision",
+    memoryId: revision.id,
+    action: "revised",
+    reasonCode: "revised_after_review",
+    relatedMemoryIds: [prior.id]
+  });
+  await repo.proposeMemory(revision, event);
+
+  assert.equal(
+    (await repo.getMemory(prior.id, makeContext({ workspaceId: "ws-1" })))
+      ?.status,
+    "active"
+  );
+  assert.equal(
+    (await repo.getMemory(revision.id, makeContext({ workspaceId: "ws-1" })))
+      ?.status,
+    "proposed"
+  );
+  assert.equal(pool.tables.memory_lifecycle_events.at(-1)?.action, "revised");
+  const priorHistory = await repo.getMemoryHistory(
+    prior.id,
+    makeContext({ workspaceId: "ws-1" })
+  );
+  assert.ok(priorHistory?.events.some((entry) => entry.id === event.id));
+  assert.ok(
+    priorHistory?.relatedMemories.some((entry) => entry.id === revision.id)
+  );
+});
+
+test("proposeMemory rejects a duplicate memory id", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+  const candidate = makeMemoryRecord();
+  await repo.proposeMemory(candidate, makeLifecycleEvent());
+
+  await assert.rejects(
+    () => repo.proposeMemory(candidate, makeLifecycleEvent({ id: "evt-2" })),
+    MemoryConflictError
+  );
+});
+
+test("getMemory enforces scope visibility before returning a record", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+  const candidate = makeMemoryRecord({
+    scope: { kind: "repository", workspaceId: "ws-1", repositoryId: "repo-1" }
+  });
+  await repo.proposeMemory(candidate, makeLifecycleEvent());
+
+  const visible = await repo.getMemory(
+    candidate.id,
+    makeContext({ workspaceId: "ws-1", repositoryId: "repo-1" })
+  );
+  assert.deepEqual(visible, candidate);
+
+  const invisible = await repo.getMemory(
+    candidate.id,
+    makeContext({ workspaceId: "ws-1", repositoryId: "repo-2" })
+  );
+  assert.equal(invisible, null);
+
+  const wrongWorkspace = await repo.getMemory(
+    candidate.id,
+    makeContext({ workspaceId: "ws-2", canReadGlobal: true })
+  );
+  assert.equal(
+    wrongWorkspace,
+    null,
+    "repository scope must not leak via a global grant from another workspace"
+  );
+});
+
+test("transitionMemories applies a compare-and-set update together with its lifecycle event", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+  const candidate = makeMemoryRecord();
+  await repo.proposeMemory(candidate, makeLifecycleEvent());
+
+  const activated = {
+    ...candidate,
+    status: "active" as const,
+    validity: { state: "verified" as const, evidence: [] },
+    updatedAt: "2026-01-02T00:00:00.000Z"
+  };
+  const ok = await repo.transitionMemories(
+    [{ expectedUpdatedAt: candidate.updatedAt, next: activated }],
+    [
+      makeLifecycleEvent({
+        id: "evt-verify",
+        action: "verified",
+        fromStatus: "proposed",
+        toStatus: "active",
+        reasonCode: "verified_current_state"
+      })
+    ]
+  );
+
+  assert.equal(ok, true);
+  const stored = await repo.getMemory(
+    candidate.id,
+    makeContext({ workspaceId: "ws-1", canReadGlobal: true })
+  );
+  assert.equal(stored?.status, "active");
+  assert.equal(pool.tables.memory_lifecycle_events.length, 2);
+});
+
+test("transitionMemories rejects status changes without an append-only audit event", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+  const candidate = makeMemoryRecord();
+  await repo.proposeMemory(candidate, makeLifecycleEvent());
+
+  await assert.rejects(
+    () =>
+      repo.transitionMemories(
+        [
+          {
+            expectedUpdatedAt: candidate.updatedAt,
+            next: { ...candidate, status: "invalidated" }
+          }
+        ],
+        []
+      ),
+    /append-only lifecycle event/
+  );
+  assert.equal(
+    (await repo.getMemory(candidate.id, makeContext({ workspaceId: "ws-1" })))
+      ?.status,
+    "proposed"
+  );
+});
+
+test("transitionMemories rejects a stale compare-and-set update atomically, applying none of the batch", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+  const candidate = makeMemoryRecord();
+  await repo.proposeMemory(candidate, makeLifecycleEvent());
+
+  const otherCandidate = makeMemoryRecord({ id: "mem-2" });
+  await repo.proposeMemory(
+    otherCandidate,
+    makeLifecycleEvent({ id: "evt-2", memoryId: "mem-2" })
+  );
+
+  const staleUpdate = {
+    ...candidate,
+    status: "active" as const,
+    validity: { state: "verified" as const, evidence: [] },
+    updatedAt: "2026-01-02T00:00:00.000Z"
+  };
+  const validUpdate = {
+    ...otherCandidate,
+    status: "active" as const,
+    validity: { state: "verified" as const, evidence: [] },
+    updatedAt: "2026-01-02T00:00:00.000Z"
+  };
+
+  const ok = await repo.transitionMemories(
+    [
+      { expectedUpdatedAt: "2099-01-01T00:00:00.000Z", next: staleUpdate },
+      { expectedUpdatedAt: otherCandidate.updatedAt, next: validUpdate }
+    ],
+    [
+      makeLifecycleEvent({
+        id: "evt-stale",
+        memoryId: candidate.id,
+        action: "verified",
+        fromStatus: "proposed",
+        toStatus: "active",
+        reasonCode: "verified_current_state"
+      }),
+      makeLifecycleEvent({
+        id: "evt-valid",
+        memoryId: otherCandidate.id,
+        action: "verified",
+        fromStatus: "proposed",
+        toStatus: "active",
+        reasonCode: "verified_current_state"
+      })
+    ]
+  );
+
+  assert.equal(ok, false);
+  const first = await repo.getMemory(
+    candidate.id,
+    makeContext({ workspaceId: "ws-1", canReadGlobal: true })
+  );
+  const second = await repo.getMemory(
+    otherCandidate.id,
+    makeContext({ workspaceId: "ws-1", canReadGlobal: true })
+  );
+  assert.equal(first?.status, "proposed", "the stale change must not apply");
+  assert.equal(
+    second?.status,
+    "proposed",
+    "a valid change in the same batch must also roll back"
+  );
+});
+
+test("getMemoryHistory returns the current record, lineage, and ordered governance events", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+
+  const predecessor = makeMemoryRecord({
+    id: "mem-old",
+    status: "superseded",
+    supersededBy: ["mem-1"]
+  });
+  await repo.proposeMemory(
+    (() => {
+      const { supersededBy: _omit, ...rest } = predecessor;
+      return { ...rest, status: "proposed" as const };
+    })(),
+    makeLifecycleEvent({ id: "evt-old", memoryId: "mem-old" })
+  );
+  await repo.transitionMemories(
+    [{ expectedUpdatedAt: predecessor.updatedAt, next: predecessor }],
+    [
+      makeLifecycleEvent({
+        id: "evt-supersede-old",
+        memoryId: "mem-old",
+        action: "superseded",
+        fromStatus: "proposed",
+        toStatus: "superseded",
+        reasonCode: "superseded_by_newer_evidence",
+        relatedMemoryIds: ["mem-1"]
+      })
+    ]
+  );
+
+  const current = makeMemoryRecord({ supersedes: ["mem-old"] });
+  await repo.proposeMemory(
+    current,
+    makeLifecycleEvent({ occurredAt: "2026-01-01T00:06:00.000Z" })
+  );
+
+  const context = makeContext({ workspaceId: "ws-1", canReadGlobal: true });
+  const history = await repo.getMemoryHistory(current.id, context);
+
+  assert.ok(history);
+  assert.deepEqual(history?.memory, current);
+  assert.equal(history?.relatedMemories.length, 1);
+  assert.equal(history?.relatedMemories[0]?.id, "mem-old");
+  assert.equal(history?.events.length, 2);
+  assert.deepEqual(history?.events.map((event) => event.id).sort(), [
+    "evt-1",
+    "evt-supersede-old"
+  ]);
+});
+
+test("getMemoryHistory returns null when the memory itself is not visible", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+  const candidate = makeMemoryRecord({
+    scope: { kind: "repository", workspaceId: "ws-1", repositoryId: "repo-1" }
+  });
+  await repo.proposeMemory(candidate, makeLifecycleEvent());
+
+  const history = await repo.getMemoryHistory(
+    candidate.id,
+    makeContext({ workspaceId: "ws-1", repositoryId: "repo-2" })
+  );
+  assert.equal(history, null);
+});
+
+test("searchMemories excludes memories outside the caller's scope before any item is ranked", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+
+  const visible = makeMemoryRecord({ id: "mem-visible", status: "proposed" });
+  await repo.proposeMemory(
+    visible,
+    makeLifecycleEvent({ memoryId: "mem-visible" })
+  );
+  await repo.transitionMemories(
+    [
+      {
+        expectedUpdatedAt: visible.updatedAt,
+        next: {
+          ...visible,
+          status: "active",
+          validity: { state: "verified", evidence: [] },
+          updatedAt: "2026-01-02T00:00:00.000Z"
+        }
+      }
+    ],
+    [
+      makeLifecycleEvent({
+        id: "evt-visible",
+        memoryId: visible.id,
+        action: "verified",
+        fromStatus: "proposed",
+        toStatus: "active",
+        reasonCode: "verified_current_state"
+      })
+    ]
+  );
+
+  const otherWorkspace = makeMemoryRecord({
+    id: "mem-other-ws",
+    scope: { kind: "workspace", workspaceId: "ws-2" }
+  });
+  await repo.proposeMemory(
+    otherWorkspace,
+    makeLifecycleEvent({ memoryId: "mem-other-ws" })
+  );
+  await repo.transitionMemories(
+    [
+      {
+        expectedUpdatedAt: otherWorkspace.updatedAt,
+        next: {
+          ...otherWorkspace,
+          status: "active",
+          validity: { state: "verified", evidence: [] },
+          updatedAt: "2026-01-02T00:00:00.000Z"
+        }
+      }
+    ],
+    [
+      makeLifecycleEvent({
+        id: "evt-other-ws",
+        memoryId: otherWorkspace.id,
+        action: "verified",
+        fromStatus: "proposed",
+        toStatus: "active",
+        reasonCode: "verified_current_state"
+      })
+    ]
+  );
+
+  const hits = await repo.searchMemories({
+    query: "config loader",
+    context: makeContext({ workspaceId: "ws-1" }),
+    limit: 10
+  });
+
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0]?.memory.id, "mem-visible");
+  assert.deepEqual(hits[0]?.matchedSignals, ["lexical"]);
+});
+
+test("searchMemories hard-filters relevant file evidence before ranking", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+  const match = makeMemoryRecord({
+    id: "mem-path-match",
+    provenance: {
+      ...makeMemoryRecord().provenance,
+      evidence: [
+        { kind: "file", uri: "file:///workspace/repo/src/router/proxy.ts" }
+      ]
+    }
+  });
+  const mismatch = makeMemoryRecord({ id: "mem-path-mismatch" });
+  await repo.proposeMemory(match, makeLifecycleEvent({ memoryId: match.id }));
+  await repo.proposeMemory(
+    mismatch,
+    makeLifecycleEvent({ memoryId: mismatch.id })
+  );
+  for (const candidate of [match, mismatch]) {
+    await repo.transitionMemories(
+      [
+        {
+          expectedUpdatedAt: candidate.updatedAt,
+          next: {
+            ...candidate,
+            status: "active",
+            validity: { state: "verified", evidence: [] },
+            updatedAt: "2026-01-02T00:00:00.000Z"
+          }
+        }
+      ],
+      [
+        makeLifecycleEvent({
+          id: `evt-${candidate.id}`,
+          memoryId: candidate.id,
+          action: "verified",
+          fromStatus: "proposed",
+          toStatus: "active",
+          reasonCode: "verified_current_state"
+        })
+      ]
+    );
+  }
+
+  const hits = await repo.searchMemories({
+    query: "fallback routing",
+    context: makeContext({ workspaceId: "ws-1" }),
+    relevantPaths: ["file:///workspace/repo/src/router/proxy.ts"],
+    asOf: "2026-09-30T12:00:00.000Z"
+  });
+  assert.deepEqual(
+    hits.map((hit) => hit.memory.id),
+    ["mem-path-match"]
+  );
+  assert.ok(hits[0]?.matchedSignals.includes("path"));
+});
+
+test("searchMemories excludes proposed (unpromoted) memories from results", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+  const stillProposed = makeMemoryRecord();
+  await repo.proposeMemory(stillProposed, makeLifecycleEvent());
+
+  const hits = await repo.searchMemories({
+    query: "config loader",
+    context: makeContext({ workspaceId: "ws-1", canReadGlobal: false }),
+    limit: 10
+  });
+  assert.equal(hits.length, 0);
+});
+
+test("proposeMemory rejects an embedding when no pgvector support is configured", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+  const candidate = makeMemoryRecord();
+
+  await assert.rejects(
+    () => repo.proposeMemory(candidate, makeLifecycleEvent(), [0.1, 0.2, 0.3]),
+    /pgvector support/
+  );
+  assert.equal(
+    pool.tables.memory_records.size,
+    0,
+    "the record must not be left behind"
+  );
+});
+
+test("proposeMemory rejects a non-finite or empty embedding instead of silently coercing it", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = new PostgresMemoryRepository({
+    pool,
+    vectorSupport: { dimensions: MEMORY_EMBEDDING_DIMENSIONS }
+  });
+  await repo.appendExperience(makeExperience());
+  const candidate = makeMemoryRecord();
+
+  await assert.rejects(
+    () => repo.proposeMemory(candidate, makeLifecycleEvent(), []),
+    /empty/
+  );
+  await assert.rejects(
+    () => repo.proposeMemory(candidate, makeLifecycleEvent(), [Number.NaN]),
+    /finite/
+  );
+  await assert.rejects(
+    () => repo.proposeMemory(candidate, makeLifecycleEvent(), [0.1, 0.2]),
+    /dimensions/
+  );
+  assert.equal(pool.tables.memory_records.size, 0);
+});
+
+test("proposeMemory stores a valid embedding, and searchMemories uses it as an additional ranking signal", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = new PostgresMemoryRepository({
+    pool,
+    vectorSupport: { dimensions: MEMORY_EMBEDDING_DIMENSIONS }
+  });
+  await repo.appendExperience(makeExperience());
+  const candidate = makeMemoryRecord();
+  const embedding = Array.from(
+    { length: MEMORY_EMBEDDING_DIMENSIONS },
+    (_, index) => (index === 0 ? 0.1 : 0)
+  );
+  await repo.proposeMemory(candidate, makeLifecycleEvent(), embedding);
+  await repo.transitionMemories(
+    [
+      {
+        expectedUpdatedAt: candidate.updatedAt,
+        next: {
+          ...candidate,
+          status: "active",
+          validity: { state: "verified", evidence: [] },
+          updatedAt: "2026-01-02T00:00:00.000Z"
+        }
+      }
+    ],
+    [
+      makeLifecycleEvent({
+        id: "evt-verify",
+        action: "verified",
+        fromStatus: "proposed",
+        toStatus: "active",
+        reasonCode: "verified_current_state"
+      })
+    ]
+  );
+
+  const stored = pool.tables.memory_records.get(candidate.id);
+  assert.equal(stored?.embedding, `[${embedding.join(",")}]`);
+
+  const hits = await repo.searchMemories({
+    query: "config loader",
+    context: makeContext({ workspaceId: "ws-1" }),
+    queryEmbedding: embedding,
+    limit: 5
+  });
+  assert.equal(hits.length, 1);
+  assert.deepEqual(hits[0]?.matchedSignals, ["lexical", "semantic"]);
+});
+
+test("searchMemories rejects query embeddings when vector ranking is not configured", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+
+  await assert.rejects(
+    () =>
+      repo.searchMemories({
+        query: "config loader",
+        context: makeContext({ workspaceId: "ws-1" }),
+        queryEmbedding: [0.1, 0.2, 0.3],
+        limit: 5
+      }),
+    MemoryVectorError
+  );
+});
+
+test("searchMemories rejects a non-finite queryEmbedding instead of silently coercing it", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = new PostgresMemoryRepository({
+    pool,
+    vectorSupport: { dimensions: MEMORY_EMBEDDING_DIMENSIONS }
+  });
+  await assert.rejects(
+    () =>
+      repo.searchMemories({
+        query: "x",
+        context: makeContext(),
+        queryEmbedding: [Number.POSITIVE_INFINITY]
+      }),
+    /finite/
+  );
+});
+
+test("listMemories returns scoped lifecycle pages and an exact total beyond the last row", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+  const visible = makeMemoryRecord({ id: "visible-memory" });
+  const hidden = makeMemoryRecord({
+    id: "hidden-memory",
+    scope: { kind: "workspace", workspaceId: "ws-other" }
+  });
+  await repo.proposeMemory(
+    visible,
+    makeLifecycleEvent({ memoryId: visible.id })
+  );
+  await repo.proposeMemory(hidden, makeLifecycleEvent({ memoryId: hidden.id }));
+
+  const firstPage = await repo.listMemories({
+    context: makeContext({ workspaceId: "ws-1" }),
+    statuses: ["proposed"],
+    limit: 1,
+    offset: 0
+  });
+  assert.deepEqual(
+    firstPage.items.map(({ id }) => id),
+    [visible.id]
+  );
+  assert.equal(firstPage.total, 1);
+  assert.equal(firstPage.limit, 1);
+  assert.equal(firstPage.offset, 0);
+
+  const pastEnd = await repo.listMemories({
+    context: makeContext({ workspaceId: "ws-1" }),
+    statuses: ["proposed"],
+    limit: 1,
+    offset: 1
+  });
+  assert.deepEqual(pastEnd.items, []);
+  assert.equal(pastEnd.total, 1);
+});
+
+test("listExperiences can read prior task history only in a workspace-bounded curator context", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  const visible = makeExperience({ id: "visible-experience" });
+  const hidden = makeExperience({
+    id: "hidden-experience",
+    taskId: "task-other",
+    runId: "run-other",
+    repositoryId: "repo-1",
+    scope: {
+      kind: "task",
+      workspaceId: "ws-1",
+      taskId: "task-other",
+      runId: "run-other"
+    }
+  });
+  const foreignRepository = makeExperience({
+    id: "foreign-repository-experience",
+    taskId: "task-foreign",
+    runId: "run-foreign",
+    repositoryId: "repo-2",
+    scope: {
+      kind: "task",
+      workspaceId: "ws-1",
+      taskId: "task-foreign",
+      runId: "run-foreign"
+    }
+  });
+  await repo.appendExperience(visible);
+  await repo.appendExperience(hidden);
+  await repo.appendExperience(foreignRepository);
+  const exactContext = makeContext({
+    workspaceId: "ws-1",
+    repositoryId: "repo-1",
+    taskId: "task-1",
+    runId: "run-1"
+  });
+
+  const privatePage = await repo.listExperiences({
+    context: exactContext,
+    limit: 10,
+    offset: 0
+  });
+  assert.deepEqual(
+    privatePage.items.map(({ id }) => id),
+    [visible.id]
+  );
+  assert.equal(privatePage.total, 1);
+
+  const curatorPage = await repo.listExperiences({
+    context: { ...exactContext, canReadTaskHistory: true },
+    limit: 10,
+    offset: 0
+  });
+  assert.deepEqual(
+    curatorPage.items.map(({ id }) => id).sort(),
+    [visible.id, hidden.id].sort()
+  );
+  assert.equal(curatorPage.total, 2);
+});
+
+test("purgeExperience erases only unreferenced runs and writes a fingerprinted privacy event", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  const experience = makeExperience({ id: "exp-privacy-1" });
+  await repo.appendExperience(experience);
+  const result = await repo.purgeExperience({
+    experienceId: experience.id,
+    context: makeContext({
+      workspaceId: "ws-1",
+      taskId: "task-1",
+      runId: "run-1"
+    }),
+    eventId: "privacy-event-1",
+    actorId: "curator-1",
+    reason: "privacy_request",
+    occurredAt: "2026-10-01T12:00:00.000Z"
+  });
+
+  assert.equal(result, "purged");
+  assert.equal(
+    await repo.getExperience(
+      experience.id,
+      makeContext({ workspaceId: "ws-1", taskId: "task-1", runId: "run-1" })
+    ),
+    null
+  );
+  const event = pool.tables.memory_experience_privacy_events[0];
+  assert.ok(event);
+  assert.equal(event.actor_id, "curator-1");
+  assert.equal(event.reason, "privacy_request");
+  assert.notEqual(event.experience_fingerprint, experience.id);
+  assert.equal(String(event.experience_fingerprint).length, 64);
+});
+
+test("purgeExperience refuses to break memory provenance and denies invisible runs", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+  const memory = makeMemoryRecord();
+  await repo.proposeMemory(memory, makeLifecycleEvent({ memoryId: memory.id }));
+  const request = {
+    experienceId: "exp-1",
+    context: makeContext({
+      workspaceId: "ws-1",
+      taskId: "task-1",
+      runId: "run-1"
+    }),
+    eventId: "privacy-event-2",
+    actorId: "curator-1",
+    reason: "retention_expired" as const,
+    occurredAt: "2026-10-01T12:00:00.000Z"
+  };
+
+  assert.equal(await repo.purgeExperience(request), "referenced_by_memory");
+  assert.equal(pool.tables.memory_experiences.has("exp-1"), true);
+  assert.equal(pool.tables.memory_experience_privacy_events.length, 0);
+  assert.equal(
+    await repo.purgeExperience({
+      ...request,
+      experienceId: "not-visible",
+      context: makeContext({ workspaceId: "ws-other" })
+    }),
+    "not_visible"
+  );
+});

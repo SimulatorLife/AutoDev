@@ -32,9 +32,9 @@ The OpenLIT Collector accepts OTLP/HTTP JSON and Protobuf as supported by its
 receiver. Producers use standard OTLP protocol settings; no AutoDev telemetry
 translation layer is inserted. The separate AutoDev Collector remains an
 incumbent rollback path only until the end-to-end cutover gates in
-`docs/observability-target-state.md` pass.
+`docs/autodev-console-target-state.md` pass.
 
 OpenLIT Community Edition provides session identity but no granular
 viewer/operator RBAC for `/autodev`. The Control API proxy and authorization
 contract are documented in `scripts/openlit/README.md` and the canonical
-observability target-state document.
+AutoDev Console target-state document.

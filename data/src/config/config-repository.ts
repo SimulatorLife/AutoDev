@@ -7,7 +7,7 @@ import type {
   AgentRole,
   PermissionPolicy,
   WorkspaceEntry
-} from "../../../core/src/index.ts";
+} from "@simulatorlife/autodev-core";
 
 const DEFAULT_REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -40,10 +40,16 @@ export class ConfigRepository {
               : "leaf";
         const readOnly = Boolean(raw.readOnly);
         const mcps = Array.isArray(raw.mcp) ? (raw.mcp as string[]) : [];
-        const skills = Array.isArray(raw.skills) ? (raw.skills as string[]) : [];
-        const tools: Array<{ name: string; type: "mcp" | "skill"; server?: string }> =
-          [];
-        for (const mcp of mcps) tools.push({ name: mcp, type: "mcp", server: mcp });
+        const skills = Array.isArray(raw.skills)
+          ? (raw.skills as string[])
+          : [];
+        const tools: Array<{
+          name: string;
+          type: "mcp" | "skill";
+          server?: string;
+        }> = [];
+        for (const mcp of mcps)
+          tools.push({ name: mcp, type: "mcp", server: mcp });
         for (const skill of skills) tools.push({ name: skill, type: "skill" });
 
         return {

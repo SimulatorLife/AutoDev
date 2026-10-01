@@ -32,6 +32,7 @@ import {
   context,
   type Meter,
   metrics,
+  propagation,
   type Span,
   SpanKind,
   SpanStatusCode,
@@ -271,6 +272,9 @@ function initializeMetrics(): void {
         }),
         readers
       });
+      if (!metrics.setGlobalMeterProvider(state.meterProvider)) {
+        logTelemetryError("global_meter_provider_already_registered");
+      }
       state.meter = state.meterProvider.getMeter(TRACER_NAME, TRACER_VERSION);
     }
     instruments = createMetricInstruments(state.meter);
@@ -804,6 +808,19 @@ export function withLogicalSpan<T>(
   ensureOtelInitialized();
   const ctxWithSpan: Context = trace.setSpan(context.active(), span);
   return context.with(ctxWithSpan, callback);
+}
+
+export function withExtractedTraceContext<T>(
+  carrier: Record<string, string | string[] | undefined>,
+  callback: () => T
+): T {
+  try {
+    const remoteContext = propagation.extract(context.active(), carrier);
+    return context.with(remoteContext, callback);
+  } catch {
+    // Trace propagation is observational and must not affect the routed task.
+    return callback();
+  }
 }
 
 export function routerTelemetryTracer(): Tracer {

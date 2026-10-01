@@ -1,7 +1,7 @@
 # OpenLIT local build / pin scripts
 
 These scripts implement the OpenLIT integration described in
-[`docs/observability-target-state.md`](../../docs/observability-target-state.md).
+[`docs/autodev-console-target-state.md`](../../docs/autodev-console-target-state.md).
 The split is deliberate:
 
 - `apply-patches.sh` — checkout the pinned upstream commit, run `git apply
@@ -39,19 +39,20 @@ configuration; it does not add a sidecar or second telemetry path. See
 
 ## Control/API ownership
 
-The canonical Control API resource model, request/response schemas, authorization,
-CSRF, and audit contract are maintained only in
-[`docs/observability-target-state.md`](../../docs/observability-target-state.md) §5.
+The canonical Control API resource model, authorization, and audit contract are
+maintained only in
+[`docs/autodev-console-target-state.md`](../../docs/autodev-console-target-state.md) §10.
 The `/autodev` patch is a same-origin UI/proxy client of that API, not a second
 source of control semantics. This README documents only deployment wiring.
 
 ### OpenLIT-side environment
 
-| Variable                       | Required | Notes                                                                   |
-| ------------------------------ | -------- | ----------------------------------------------------------------------- |
-| `AUTODEV_CONTROL_API_URL`      | yes      | Control-only AutoDev listener; defaults to `host.docker.internal:4101`. |
-| `AUTODEV_CONTROL_API_TOKEN`    | yes      | Service credential used by the proxy. Server-only.                      |
-| `AUTODEV_CONTROL_API_DISABLED` | no       | Set to `1` to short-circuit the proxy with 503 during cutover.          |
+| Variable                       | Required | Notes                                                                      |
+| ------------------------------ | -------- | -------------------------------------------------------------------------- |
+| `AUTODEV_CONTROL_API_URL`      | yes      | Control-only AutoDev listener; defaults to `host.docker.internal:4101`.    |
+| `AUTODEV_CONTROL_API_TOKEN`    | yes      | Service credential used by the proxy. Server-only.                         |
+| `AUTODEV_CONTROL_API_DISABLED` | no       | Set to `1` to short-circuit the proxy with 503 during cutover.             |
+| `AUTODEV_OPENLIT_USAGE_TOKEN`  | yes      | Dedicated bearer credential accepted only by the read-only Usage endpoint. |
 
 Viewer/operator allowlists (`AUTODEV_CONTROL_VIEWERS` /
 `AUTODEV_CONTROL_OPERATORS`) are configured on the AutoDev side and read
@@ -63,18 +64,39 @@ For container reachability, OpenLIT calls the separate Control-API-only
 listener at `host.docker.internal:4101`. When
 `--enable-openlit-ingress` is selected, `scripts/run-codex-model-router.sh`
 starts that listener only for `/control/*`; each request independently requires
-the service token and a configured actor allowlist (otherwise the API fails
-closed with 503). It does not expose `/v1/responses`, `/v1/traces`, or the
-local dashboard on that listener. Compose maps `host.docker.internal`
-to the host gateway for Linux as well as Docker Desktop. The 4101 listener
-binds to the configured interface (default `0.0.0.0` in OpenLIT mode); use the
-host firewall appropriate to the environment in addition to the service token
-and actor allowlists.
+the service token. With no viewer/operator allowlists configured, the API
+authorizes only the fixed `autodev-local` actor as the single local operator.
+Configuring either allowlist disables that local identity and requires an
+explicitly listed actor. The listener does not expose `/v1/responses`,
+`/v1/traces`, or the local dashboard. Compose maps `host.docker.internal` to
+the host gateway for Linux as well as Docker Desktop. The 4101 listener binds
+to the configured interface (default `0.0.0.0` in OpenLIT mode); use the host
+firewall appropriate to the environment in addition to the server-only service
+token. For remote deployments, configure viewer/operator actor allowlists from
+a trusted reverse-proxy/SSO integration.
 
 Viewer/operator actor IDs are configured on AutoDev in `$CODEX_HOME/.env` as
-`AUTODEV_CONTROL_VIEWERS` and `AUTODEV_CONTROL_OPERATORS`. OpenLIT forwards only
-the verified session actor; it does not assign a role. See the canonical
-observability target for the authorization boundary and mutation audit rules.
+`AUTODEV_CONTROL_VIEWERS` and `AUTODEV_CONTROL_OPERATORS` when external identity
+is in use. The legacy OpenLIT proxy forwards only its verified session actor; it
+does not assign a role. The unified Console uses the fixed `autodev-local`
+identity only in local single-user mode, and sends it from its server together
+with the service credential. See the canonical AutoDev Console target for the
+authorization boundary and mutation audit rules.
+
+## Usage query endpoint
+
+The patched OpenLIT server exposes a read-only `POST /api/autodev/usage`
+contract for the unified Console. It uses the existing typed `runWidgetQuery`,
+board variable specs, and datasource `distinctValues` adapter. Request input is
+limited to the seeded time range and workspace/provider/model/agent values;
+there is no raw SQL or arbitrary widget selector. The endpoint has a dedicated
+`AUTODEV_OPENLIT_USAGE_TOKEN` and does not accept OpenLIT sessions or API keys.
+The standalone Console reads the same secret from its server environment as
+`AUTODEV_OPENLIT_USAGE_TOKEN`; it must never be forwarded to browser code.
+
+The endpoint only reports metrics for successful individual widget queries.
+Query errors remain explicitly unobserved, and unsupported distinct-value
+capabilities produce unavailable filters rather than fabricated options.
 
 ## Usage
 
@@ -95,22 +117,22 @@ scripts/openlit/build-local.sh
 source, builds the patched image, creates secrets under `$CODEX_HOME`, writes
 the OTLP token material to a mode-0600 file, and starts Compose. The tracked
 `config/openlit/openlit.env` remains a non-secret template. Generated database,
-Control API, and receiver tokens are stored together in
+Control API, receiver, and Usage tokens are stored together in
 `$CODEX_HOME/openlit-secrets.env`; the OTLP token is also materialized at
 `$CODEX_HOME/openlit-otlp-api-key`. Neither file is in the repository.
 
-| Script                  | Responsibility                                                                                    |
-| ----------------------- | ------------------------------------------------------------------------------------------------- |
-| `apply-patches.sh`      | Apply all local patches to the exact pinned OpenLIT commit.                                       |
-| `build-local.sh`        | Build the patched image and record source, patch, image-ID, and digest metadata outside the repo. |
-| `bootstrap-secrets.sh`  | Generate/preserve strong DB, Control API, and OTLP receiver tokens in the CODEX_HOME secret file. |
-| `bootstrap-otlp-key.sh` | Materialize the same generated receiver token for producers; it does not call an OpenLIT API.     |
-| `up.sh`                 | Build, prepare secrets, then start the locally patched image with the non-secret template.        |
+| Script                  | Responsibility                                                                                                   |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `apply-patches.sh`      | Apply all local patches to the exact pinned OpenLIT commit.                                                      |
+| `build-local.sh`        | Build the patched image and record source, patch, image-ID, and digest metadata outside the repo.                |
+| `bootstrap-secrets.sh`  | Generate/preserve strong DB, Control API, OTLP receiver, and Console Usage tokens in the CODEX_HOME secret file. |
+| `bootstrap-otlp-key.sh` | Materialize the same generated receiver token for producers; it does not call an OpenLIT API.                    |
+| `up.sh`                 | Build, prepare secrets, then start the locally patched image with the non-secret template.                       |
 
 The runner cleans up only its own fresh scratch clone. It never edits the
 tracked env template or removes pre-existing `.tmp` data. Current patched-image
 and runtime acceptance evidence, including remaining gates, lives only in the
-[canonical observability ledger](../../docs/observability-target-state.md) §6;
+[canonical AutoDev Console target](../../docs/autodev-console-target-state.md) §§11–12;
 source patch application alone is not deployment or cutover proof.
 
 The Docker-built image is the one rendered in the UI: `OPENLIT_IMAGE` is

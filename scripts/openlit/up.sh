@@ -71,7 +71,7 @@ if [[ "$ACTUAL_IMAGE_ID" != "$LOCKED_IMAGE_ID" ]]; then
 	exit 4
 fi
 
-# Generate three random secrets in an out-of-repository CODEX_HOME file;
+# Generate strong secrets in an out-of-repository CODEX_HOME file;
 # the checked-in env template is never modified.
 echo "==> Preparing out-of-repository secrets"
 "$REPO_ROOT/scripts/openlit/bootstrap-secrets.sh" --secret-file "$SECRET_FILE"

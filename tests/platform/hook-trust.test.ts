@@ -25,11 +25,12 @@ function withTempDir<T>(callback: (directory: string) => T): T {
   }
 }
 
-test("CANONICAL_HOOK_HASHES contains the 5 required hooks", () => {
+test("CANONICAL_HOOK_HASHES contains the 6 required hooks", () => {
   const keys = Object.keys(CANONICAL_HOOK_HASHES).sort();
   assert.deepEqual(keys, [
     "pre_tool_use:0:0",
     "pre_tool_use:1:0",
+    "session_end:0:0",
     "session_start:0:0",
     "subagent_start:0:0",
     "user_prompt_submit:0:0"

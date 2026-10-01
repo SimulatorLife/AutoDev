@@ -1,118 +1,100 @@
-import React, { useState } from "react";
+import type { MemoryRecord } from "@simulatorlife/autodev-core";
+import React from "react";
 
-import type { MemoryConnectorType, MemoryRecord } from "../../../../core/src/index.ts";
 import { StatCard } from "../../components/cards/StatCard.ts";
 
 export interface MemoryViewProps {
-  readonly records?: readonly MemoryRecord[] | undefined;
-  readonly connectors?: readonly MemoryConnectorType[] | undefined;
+  readonly records?: readonly MemoryRecord[] | null | undefined;
 }
 
-export function MemoryView({
-  records = [],
-  connectors = ["local", "sqlite"]
-}: MemoryViewProps): React.JSX.Element {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedConnector, setSelectedConnector] = useState<MemoryConnectorType>(
-    connectors[0] ?? "local"
-  );
-
-  const filtered = records.filter((r) =>
-    r.content.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+export function MemoryView({ records }: MemoryViewProps): React.JSX.Element {
+  const observed = records !== null && records !== undefined;
+  const availableRecords = records ?? [];
 
   return React.createElement(
     "div",
     { className: "flex flex-col gap-6", "data-feature": "memory" },
     React.createElement(
       "div",
-      { className: "grid grid-cols-1 md:grid-cols-3 gap-4" },
-      React.createElement(StatCard, { title: "Memory Records", value: records.length }),
-      React.createElement(StatCard, { title: "Active Connector", value: selectedConnector }),
+      { className: "grid grid-cols-1 gap-4 md:grid-cols-3" },
       React.createElement(StatCard, {
-        title: "Storage Scope",
-        value: "AutoDev Local",
-        subtitle: "No cloud tenancy"
+        title: "Memory Records",
+        value: observed ? availableRecords.length : "Not observed"
+      }),
+      React.createElement(StatCard, {
+        title: "Connector",
+        value: "Not observed",
+        subtitle: "Connector integration is not wired"
+      }),
+      React.createElement(StatCard, {
+        title: "Scope",
+        value: "Per-record",
+        subtitle: "Workspace and agent scope are shown with each record"
       })
     ),
     React.createElement(
-      "div",
+      "section",
       {
         className:
-          "bg-slate-900 border border-slate-800 rounded-lg p-5 flex flex-col gap-4 shadow"
+          "flex flex-col gap-4 rounded-lg border border-slate-800 bg-slate-900 p-5 shadow",
+        "aria-label": "Memory records"
       },
-      React.createElement(
-        "div",
-        {
-          className:
-            "flex flex-col sm:flex-row gap-3 items-center justify-between"
-        },
-        React.createElement("input", {
-          type: "text",
-          value: searchQuery,
-          onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
-            setSearchQuery(e.target.value),
-          placeholder: "Search memory records...",
-          className:
-            "w-full sm:w-80 bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-        }),
-        React.createElement(
-          "div",
-          { className: "flex items-center gap-2" },
-          React.createElement(
-            "span",
-            { className: "text-xs text-slate-400 font-medium" },
-            "Connector:"
-          ),
-          React.createElement(
-            "select",
-            {
-              value: selectedConnector,
-              onChange: (e: React.ChangeEvent<HTMLSelectElement>) =>
-                setSelectedConnector(e.target.value as MemoryConnectorType),
-              className:
-                "bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-xs text-slate-300 focus:outline-none focus:border-emerald-500"
-            },
-            connectors.map((c) =>
-              React.createElement("option", { key: c, value: c }, c)
-            )
-          )
-        )
-      ),
-      React.createElement(
-        "div",
-        { className: "flex flex-col gap-2 mt-2" },
-        filtered.length === 0
+      observed
+        ? availableRecords.length === 0
           ? React.createElement(
-              "div",
-              { className: "p-8 text-center text-slate-500 text-sm" },
+              "p",
+              {
+                className: "p-8 text-center text-sm text-slate-500",
+                "data-memory-state": "empty"
+              },
               "No memory records found."
             )
-          : filtered.map((record) =>
+          : availableRecords.map((record) =>
               React.createElement(
-                "div",
+                "article",
                 {
                   key: record.id,
                   className:
-                    "p-3 bg-slate-950 rounded border border-slate-800/80 flex flex-col gap-1 text-xs"
+                    "flex flex-col gap-2 rounded border border-slate-800 bg-slate-950 p-4",
+                  "data-memory-id": record.id
                 },
                 React.createElement(
                   "div",
                   {
                     className:
-                      "flex items-center justify-between text-slate-500 font-mono text-[11px]"
+                      "flex flex-wrap items-center justify-between gap-2"
                   },
-                  React.createElement("span", null, `ID: ${record.id}`),
-                  React.createElement("span", null, record.createdAt)
+                  React.createElement(
+                    "h3",
+                    { className: "font-medium text-slate-200" },
+                    record.claim
+                  ),
+                  React.createElement(
+                    "span",
+                    { className: "font-mono text-xs text-slate-400" },
+                    `${record.kind} · ${record.status}`
+                  )
                 ),
                 React.createElement(
                   "p",
-                  { className: "text-slate-300 whitespace-pre-wrap mt-1" },
-                  record.content
+                  { className: "font-mono text-xs text-slate-500" },
+                  `Scope: ${record.scope.kind}`
+                ),
+                React.createElement(
+                  "p",
+                  { className: "text-xs text-slate-500" },
+                  `${record.provenance.experienceIds.length} provenance experiences`
                 )
               )
             )
-      )
+        : React.createElement(
+            "p",
+            {
+              className: "p-8 text-center text-sm text-slate-400",
+              "data-memory-state": "not-observed"
+            },
+            "Memory records are not observed because no connector adapter is configured."
+          )
     )
   );
 }

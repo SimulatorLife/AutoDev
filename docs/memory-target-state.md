@@ -223,6 +223,9 @@ Use graph indexes only where relationships materially help: ownership, dependenc
 
 Memory must not become an unbounded secret/context copy: redact credentials and unnecessary sensitive payloads, prefer references over duplication, retain provenance, and support retention/deletion by memory class.
 
+Raw experiences are append-only during their useful retention period. Privacy or retention erasure is a curator-only operation, scoped to the authorized workspace/repository, and is refused while any durable memory cites the experience. Successful erasure removes the raw envelope and retains only an append-only tombstone containing a one-way fingerprint, actor, reason, and timestamp. Durable memory is invalidated or superseded by default rather than physically erased; its source history remains available for governance unless a separate privacy process explicitly handles it.
+The operator Control API exposes `POST /control/memory/experiences/:id/purge` with `privacy_request` or `retention_expired`; invisible experiences return not-found, and provenance references return conflict rather than being broken.
+
 ## 10. Implementation and dependency strategy
 
 AutoDev should own the **memory lifecycle and semantics**, not adopt a second agent framework merely to obtain memory. Reuse mature components for telemetry, transcript normalization, persistence, indexing, and protocol transport; keep repository-aware governance, validation, reconstruction, and promotion in AutoDev.
@@ -388,6 +391,8 @@ Emit bounded attributes/metrics sufficient to answer:
 - procedures promoted into skills/rules/tests/docs.
 
 Prefer OpenLIT's retained trace, dashboard, widget, filtering, and resource-detail infrastructure for these views rather than a parallel memory analytics backend.
+
+The current Runtime producer exports bounded operation/duration, candidate-stage, and packet-size metrics through the OpenTelemetry API. Their dimensions are fixed operation/outcome, memory kind, lifecycle stage, and reason-code categories; packet tokens are reported only when a token counter exists. Model cost remains owned by GenAI attempt telemetry. Retrieval-to-use rates and no-memory ablations still require trustworthy downstream task outcome/injection correlation and are not inferred from retrieval alone.
 
 
 ### Optional secondary dependency: Graphiti

@@ -1,9 +1,12 @@
+import type { EvaluationResult } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import type { EvaluationResult } from "../../../../core/src/index.ts";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
-import { type ColumnDef, DataTable } from "../../components/tables/DataTable.ts";
+import {
+  type ColumnDef,
+  DataTable
+} from "../../components/tables/DataTable.ts";
 
 export interface EvaluationsViewProps {
   readonly evaluations?: readonly EvaluationResult[] | undefined;
@@ -14,7 +17,8 @@ export function EvaluationsView({
 }: EvaluationsViewProps): React.JSX.Element {
   const total = evaluations.length;
   const passed = evaluations.filter((e) => e.passed).length;
-  const passRate = total > 0 ? Math.round((passed / total) * 100) : 100;
+  const passRate =
+    total > 0 ? `${Math.round((passed / total) * 100)}%` : "Not observed";
 
   const columns: ColumnDef<EvaluationResult>[] = [
     {
@@ -83,15 +87,22 @@ export function EvaluationsView({
 
   return React.createElement(
     "div",
-    { className: "flex flex-col gap-6", "data-feature": "evaluations" },
+    {
+      className: "flex flex-col gap-6",
+      "data-feature": "evaluations",
+      "data-evaluation-pass-rate-observed": total > 0 ? "true" : "false"
+    },
     React.createElement(
       "div",
       { className: "grid grid-cols-1 md:grid-cols-3 gap-4" },
-      React.createElement(StatCard, { title: "Total Evaluations", value: total }),
+      React.createElement(StatCard, {
+        title: "Total Evaluations",
+        value: total
+      }),
       React.createElement(StatCard, { title: "Passed", value: passed }),
       React.createElement(StatCard, {
         title: "Pass Rate",
-        value: `${passRate}%`,
+        value: passRate,
         subtitle: "Direct resource evaluation"
       })
     ),

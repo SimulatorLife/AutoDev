@@ -24,3 +24,6 @@ tmp/
 /.github/hooks/
 /.agents/hooks.json
 .eslintcache
+
+# Next.js build output
+console/.next/

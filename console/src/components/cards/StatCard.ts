@@ -43,8 +43,7 @@ export function StatCard({
       React.createElement(
         "span",
         {
-          className:
-            "text-2xl font-bold text-slate-100 tracking-tight"
+          className: "text-2xl font-bold text-slate-100 tracking-tight"
         },
         value
       ),

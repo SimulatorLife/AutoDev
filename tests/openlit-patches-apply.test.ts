@@ -1,7 +1,7 @@
 /**
  * Patch-set integrity test.
  *
- * Verifies the six AutoDev patches apply cleanly to a fresh clone of the
+ * Verifies the nine AutoDev patches apply cleanly to a fresh clone of the
  * pinned upstream OpenLIT revision (openlit-2.1.0, commit
  * 9938c66638666ca5d3bcb850350faa82e510924b).
  *
@@ -145,7 +145,8 @@ test(
   () => {
     const dir = freshClone();
 
-    // Every patch must pass `git apply --check` BEFORE we touch any file.
+    // Check and apply each patch against the tree produced by all predecessors.
+    // Later patches intentionally modify files created by earlier patches.
     const ls = run("ls", ["-1", PATCHES_DIR], repositoryRoot);
     assert.equal(ls.status, 0, `patches dir not readable: ${ls.stderr}`);
     const patches = ls.stdout
@@ -166,10 +167,6 @@ test(
         0,
         `git apply --check failed for ${patch}: ${check.stderr}`
       );
-    }
-
-    // Apply for real so we can inspect the resulting tree.
-    for (const patch of patches) {
       const apply = run("git", ["apply", join(PATCHES_DIR, patch)], dir);
       assert.equal(
         apply.status,
@@ -225,12 +222,46 @@ test(
       "src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json",
       "src/client/src/lib/platform/manage-dashboard/derived-value.ts",
       "src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts",
-      "src/client/src/__tests__/lib/platform/manage-dashboard/derived-value.test.ts"
+      "src/client/src/__tests__/lib/platform/manage-dashboard/derived-value.test.ts",
+      // 07-autodev-usage-api
+      "src/client/src/lib/autodev/usage-api.ts",
+      "src/client/src/app/api/autodev/usage/route.ts",
+      "src/client/src/__tests__/lib/autodev/usage-api.test.ts",
+      // 08-autodev-memory-connector
+      "src/client/src/lib/platform/connectors/memory/autodev/adapter.ts",
+      "src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts",
+      // 09-autodev-memory-lifecycle-actions
+      "src/client/src/components/(playground)/memory/memory-action-dialog.tsx",
+      "src/client/src/app/api/memory/[id]/actions/route.ts",
+      "src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts",
+      "src/client/src/__tests__/components/memory-action-dialog.test.tsx"
     ];
     for (const rel of expected) {
       const full = join(dir, rel);
       assert.ok(statSync(full).isFile(), `expected file after patch: ${rel}`);
     }
+    const autoDevMemoryAdapter = readFileSync(
+      join(
+        dir,
+        "src/client/src/lib/platform/connectors/memory/autodev/adapter.ts"
+      ),
+      "utf8"
+    );
+    assert.match(autoDevMemoryAdapter, /forwardToControlApi/u);
+    assert.match(
+      autoDevMemoryAdapter,
+      /add: false[\s\S]*update: false[\s\S]*delete: false/u
+    );
+    assert.match(autoDevMemoryAdapter, /workspaceId/u);
+    assert.doesNotMatch(
+      autoDevMemoryAdapter,
+      /from ["']pg["']|postgres-memory-repository/u
+    );
+    const memoryBootstrap = readFileSync(
+      join(dir, "src/client/src/lib/platform/connectors/memory/bootstrap.ts"),
+      "utf8"
+    );
+    assert.match(memoryBootstrap, /autoDevMemoryAdapterFactory/u);
 
     const usageDashboard = JSON.parse(
       readFileSync(
@@ -449,6 +480,20 @@ test(
       /\.\.\.\(query_params\s*\?\s*\{\s*query_params\s*\}\s*:\s*\{\}\)/u,
       "the native ClickHouse client must receive typed query_params separately"
     );
+
+    const usageEndpoint = readFileSync(
+      join(dir, "src/client/src/app/api/autodev/usage/route.ts"),
+      "utf8"
+    );
+    assert.match(usageEndpoint, /runWidgetQuery/u);
+    assert.match(usageEndpoint, /fetchVariableAllowedValues/u);
+    assert.match(usageEndpoint, /AUTODEV_OPENLIT_USAGE_TOKEN/u);
+    assert.doesNotMatch(usageEndpoint, /userQuery\s*:/u);
+    const usageMiddleware = readFileSync(
+      join(dir, "src/client/src/middleware/check-auth.ts"),
+      "utf8"
+    );
+    assert.match(usageMiddleware, /pathname === "\/api\/autodev\/usage"/u);
 
     const collectorConfig = readFileSync(
       join(dir, "assets/otel-collector-config.yaml"),
@@ -1002,6 +1047,11 @@ test("openlit pin metadata matches the published digest and image tag", () => {
     /\$\{OPENLIT_OTLP_API_KEY:\?[^}]+\}/u,
     "docker-compose must require the receiver token from the secret file"
   );
+  assert.match(
+    compose,
+    /\$\{AUTODEV_OPENLIT_USAGE_TOKEN:\?[^}]+\}/u,
+    "docker-compose must require the dedicated Usage service token"
+  );
   assert.match(compose, /127\.0\.0\.1:4318:4318/u);
   assert.match(compose, /127\.0\.0\.1:4317:4317/u);
   assert.match(compose, /\.\/assets\/clickhouse-init\.sh/u);
@@ -1148,7 +1198,7 @@ test("openlit pin metadata matches the published digest and image tag", () => {
   );
   assert.match(
     bootstrapSecrets,
-    /OPENLIT_DB_PASSWORD|AUTODEV_CONTROL_API_TOKEN|OPENLIT_OTLP_API_KEY/u,
+    /OPENLIT_DB_PASSWORD|AUTODEV_CONTROL_API_TOKEN|OPENLIT_OTLP_API_KEY|AUTODEV_OPENLIT_USAGE_TOKEN/u,
     "bootstrap-secrets.sh must generate all required secrets"
   );
   assert.match(bootstrapSecrets, /--secret-file/u);

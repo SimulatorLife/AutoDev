@@ -22,7 +22,7 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
     "Tools",
     "Usage",
     "Prompts",
-    "Workspaces",
+    "Workspaces"
   ];
 
   let previousIndex = -1;
@@ -45,9 +45,12 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
     "**Rule Engine**",
     "**OpenGround**",
     "**GPU monitoring/dashboard**",
-    "**OpenLIT agent discovery/instrumentation and Controller daemon**",
+    "**OpenLIT agent discovery/instrumentation and Controller daemon**"
   ]) {
-    assert.match(target, new RegExp(removed.replaceAll(/[*/]/g, String.raw`\$&`)));
+    assert.match(
+      target,
+      new RegExp(removed.replaceAll(/[*/]/g, String.raw`\$&`))
+    );
   }
 
   assert.match(
@@ -64,7 +67,6 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
   assert.match(target, /RuleSync tool \*\*as the single source of truth/);
 });
 
-
 test("documentation keeps one broad target-state authority", () => {
   const removed = [
     "docs/AUTODEV_PLATFORM_MIGRATION.md",
@@ -72,7 +74,7 @@ test("documentation keeps one broad target-state authority", () => {
     "docs/typescript-target-state.md",
     "docs/prompt-catalog-migration.md",
     "docs/observability-target-state.md",
-    "docs/metrics-dashboard.md",
+    "docs/metrics-dashboard.md"
   ];
 
   for (const path of removed) {
@@ -83,7 +85,10 @@ test("documentation keeps one broad target-state authority", () => {
     );
   }
 
-  const docsIndex = readFileSync(new URL("docs/README.md", repositoryRoot), "utf8");
+  const docsIndex = readFileSync(
+    new URL("docs/README.md", repositoryRoot),
+    "utf8"
+  );
   assert.match(docsIndex, /one broad target-state authority/i);
   assert.match(docsIndex, /autodev-console-target-state\.md/);
 
@@ -92,7 +97,7 @@ test("documentation keeps one broad target-state authority", () => {
     "docs/local-setup.md",
     "docs/provider-routing.md",
     "docs/antigravity-codex-tool-loop.md",
-    "docs/prompt-ownership.md",
+    "docs/prompt-ownership.md"
   ]) {
     const content = readFileSync(new URL(path, repositoryRoot), "utf8");
     assert.doesNotMatch(content, /docs\/AUTODEV_PLATFORM_MIGRATION\.md/);
@@ -103,22 +108,30 @@ test("documentation keeps one broad target-state authority", () => {
   }
 });
 
-
 test("canonical target defines the flat four-module monorepo", () => {
   const target = readFileSync(targetStatePath, "utf8");
 
   for (const module of ["console/", "runtime/", "core/", "data/"]) {
-    assert.match(target, new RegExp(String.raw`\b${module.replace("/", String.raw`\/`)}`));
+    assert.match(
+      target,
+      new RegExp(String.raw`\b${module.replace("/", String.raw`\/`)}`)
+    );
   }
 
   assert.match(target, /small, flat pnpm TypeScript monorepo/);
-  assert.match(target, /Do not introduce `apps\/`, `packages\/`, or `modules\/` wrapper directories/);
+  assert.match(
+    target,
+    /Do not introduce `apps\/`, `packages\/`, or `modules\/` wrapper directories/
+  );
   assert.match(target, /do not create a package per left-navigation resource/i);
   assert.match(target, /console\/src\/features\//);
   assert.match(target, /runtime\/src\/telemetry\//);
   assert.match(target, /core\/.*infrastructure-independent/s);
   assert.match(target, /Console must not bypass the Control API/);
-  assert.match(target, /Do not create a separate `ui\/` workspace until there is a real second UI consumer/);
+  assert.match(
+    target,
+    /Do not create a separate `ui\/` workspace until there is a real second UI consumer/
+  );
 });
 
 test("monorepo layout, console features, and control API match target state exactly", () => {
@@ -177,15 +190,28 @@ test("monorepo layout, console features, and control API match target state exac
   }
 });
 
+test("root quality scripts validate legacy sources and all code workspaces", () => {
+  const manifest = JSON.parse(
+    readFileSync(new URL("package.json", repositoryRoot), "utf8")
+  ) as { scripts: Record<string, string> };
+
+  assert.match(manifest.scripts.test ?? "", /test:root.*--recursive.*test/u);
+  assert.match(
+    manifest.scripts.typecheck ?? "",
+    /typecheck:root.*--recursive.*typecheck/u
+  );
+  for (const workspace of ["core", "data", "console", "runtime"])
+    assert.match(manifest.scripts.format ?? "", new RegExp(`${workspace}`));
+});
 
 test("canonical target tracks migration gaps without claiming premature cutover", () => {
   const target = readFileSync(targetStatePath, "utf8");
 
   assert.match(target, /## 12\. Current migration state and gap ledger/);
-  assert.match(target, /Flat monorepo \| \*\*Partial\*\*/);
-  assert.match(target, /Console \| \*\*Prototype\*\*/);
-  assert.match(target, /RuleSync ownership \| \*\*Partial\*\*/);
-  assert.match(target, /Telemetry cutover \| \*\*Incomplete cleanup\*\*/);
+  assert.match(target, /Flat monorepo\s+\|\s+\*\*Partial\*\*/);
+  assert.match(target, /Console\s+\|\s+\*\*Runnable foundation\*\*/);
+  assert.match(target, /RuleSync ownership\s+\|\s+\*\*Partial\*\*/);
+  assert.match(target, /Telemetry cutover\s+\|\s+\*\*Incomplete cleanup\*\*/);
   assert.match(target, /unknown must remain unknown/i);
   assert.match(target, /Move implementation out of legacy `src\/`/);
   assert.match(target, /Finish RuleSync canonical ownership/);
@@ -193,7 +219,10 @@ test("canonical target tracks migration gaps without claiming premature cutover"
   assert.match(target, /Remaining telemetry cleanup/);
   assert.match(target, /Remaining retained-feature integrations/);
   assert.match(target, /Ordered migration sequence/);
-  assert.doesNotMatch(target, /original M0-M6 observability migration is complete/i);
+  assert.doesNotMatch(
+    target,
+    /original M0-M6 observability migration is complete/i
+  );
 });
 
 test("canonical target records the remaining external-project adaptations", () => {
@@ -208,10 +237,16 @@ test("canonical target records the remaining external-project adaptations", () =
     "Argo CD",
     "Backstage"
   ]) {
-    assert.match(target, new RegExp(project.replaceAll(/[.*+?^$(){}|[\]\\]/g, "\\$&")));
+    assert.match(
+      target,
+      new RegExp(project.replaceAll(/[.*+?^$(){}|[\]\\]/g, String.raw`\$&`))
+    );
   }
 
-  assert.match(target, /provider\/model availability, priority, fallback order/);
+  assert.match(
+    target,
+    /provider\/model availability, priority, fallback order/
+  );
   assert.match(target, /connection\/probe state, Tools, Resources, Prompts/);
   assert.match(target, /desired vs actual, generations, diff, health/);
   assert.match(target, /lightweight typed feature\/route registry/);

@@ -1,0 +1,778 @@
+diff --git a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
+new file mode 100644
+index 00000000..fdbd162b
+--- /dev/null
++++ b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
+@@ -0,0 +1,180 @@
++import { _setActorResolverForTesting } from "@/lib/autodev/control-api";
++import { AutoDevMemoryAdapter } from "@/lib/platform/connectors/memory/autodev/adapter";
++import type { MemorySourceDescriptor } from "@/lib/platform/connectors/memory/types";
++
++const originalControlEnv = {
++	url: process.env.AUTODEV_CONTROL_API_URL,
++	token: process.env.AUTODEV_CONTROL_API_TOKEN
++};
++
++const descriptor: MemorySourceDescriptor = {
++	type: "autodev",
++	id: "memory:autodev",
++	name: "AutoDev Memory",
++	settings: { workspaceId: "workspace-a", repositoryId: "owner/repo" }
++};
++
++beforeEach(() => {
++	process.env.AUTODEV_CONTROL_API_URL = "http://127.0.0.1:4101";
++	process.env.AUTODEV_CONTROL_API_TOKEN = "server-only-token";
++	_setActorResolverForTesting(async () => "operator-a");
++});
++
++afterEach(() => {
++	_setActorResolverForTesting(null);
++	if (originalControlEnv.url === undefined)
++		delete process.env.AUTODEV_CONTROL_API_URL;
++	else process.env.AUTODEV_CONTROL_API_URL = originalControlEnv.url;
++	if (originalControlEnv.token === undefined)
++		delete process.env.AUTODEV_CONTROL_API_TOKEN;
++	else process.env.AUTODEV_CONTROL_API_TOKEN = originalControlEnv.token;
++	jest.restoreAllMocks();
++});
++
++test("AutoDev adapter reads scoped memory through the authenticated Control API", async () => {
++	const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
++		new Response(
++			JSON.stringify({
++				schema: "autodev-memory-records-v1",
++				items: [
++					{
++						id: "memory-a",
++						kind: "procedural",
++						claim: "Use the canonical validator.",
++						status: "active",
++						scope: {
++							kind: "repository",
++							workspaceId: "workspace-a",
++							repositoryId: "owner/repo"
++						},
++						provenance: {
++							experienceIds: ["experience-a"],
++							evidence: []
++						},
++						validity: { state: "verified" },
++						createdAt: "2026-10-01T00:00:00.000Z",
++						updatedAt: "2026-10-01T00:00:00.000Z"
++					}
++				],
++				total: 1,
++				limit: 20,
++				offset: 0
++			}),
++			{ status: 200, headers: { "content-type": "application/json" } }
++		)
++	);
++
++	const adapter = new AutoDevMemoryAdapter(descriptor);
++	const results = await adapter.search({
++		query: "canonical validator",
++		limit: 20
++	});
++	expect(results).toHaveLength(1);
++	expect(results[0]).toMatchObject({
++		id: "memory-a",
++		content: "Use the canonical validator.",
++		categories: ["procedural"],
++		lifecycleState: "active",
++		metadata: {
++			autodev: {
++				kind: "procedural",
++				status: "active",
++				scope: { kind: "repository", workspaceId: "workspace-a" }
++			}
++		}
++	});
++	expect(fetchSpy).toHaveBeenCalledTimes(1);
++	const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
++	const parsed = new URL(url);
++	expect(parsed.pathname).toBe("/control/memory/records");
++	expect(parsed.searchParams.get("workspaceId")).toBe("workspace-a");
++	expect(parsed.searchParams.get("repositoryId")).toBe("owner/repo");
++	expect(parsed.searchParams.get("query")).toBe("canonical validator");
++	expect(new Headers(init.headers).get("authorization")).toBe(
++		"Bearer server-only-token"
++	);
++	expect(new Headers(init.headers).get("x-autodev-actor")).toBe("operator-a");
++});
++
++test("AutoDev connector advertises no CRUD mutation capability", async () => {
++	const adapter = new AutoDevMemoryAdapter(descriptor);
++	await expect(adapter.add({ content: "claim" })).rejects.toMatchObject({
++		capability: "add"
++	});
++	await expect(
++		adapter.update("memory-a", { content: "revised" })
++	).rejects.toMatchObject({ capability: "update" });
++	await expect(adapter.delete("memory-a")).rejects.toMatchObject({
++		capability: "delete"
++	});
++});
++
++test("AutoDev connector lists source experiences only when task-history access is explicitly configured", async () => {
++	const fetchSpy = jest
++		.spyOn(global, "fetch")
++		.mockResolvedValueOnce(
++			Response.json({
++				items: [],
++				total: 0,
++				limit: 5,
++				offset: 0
++			})
++		)
++		.mockResolvedValueOnce(
++			Response.json({
++				items: [
++					{
++						id: "experience-a",
++						workspaceId: "workspace-a",
++						repositoryId: "owner/repo",
++						scope: {
++							kind: "task",
++							workspaceId: "workspace-a",
++							taskId: "task-a",
++							runId: "run-a"
++						},
++						taskId: "task-a",
++						runId: "run-a",
++						agentId: "agent-a",
++						agentRole: "orchestrator",
++						startedAt: "2026-10-01T00:00:00.000Z",
++						outcome: "success",
++						trajectory: {
++							format: "letta-trajectory-v1",
++							uri: "codex://session/session-a"
++						},
++						evidence: [
++							{
++								kind: "trajectory",
++								uri: "codex://session/session-a"
++							}
++						]
++					}
++				],
++				total: 1,
++				limit: 5,
++				offset: 0
++			})
++		);
++	const adapter = new AutoDevMemoryAdapter({
++		...descriptor,
++		settings: { ...descriptor.settings, includeTaskHistory: true }
++	});
++
++	const result = await adapter.list({ limit: 5 });
++	expect(result).toHaveLength(1);
++	expect(result[0]).toMatchObject({
++		id: "experience:experience-a",
++		categories: ["episodic"],
++		lifecycleState: "historical",
++		metadata: {
++			autodev: {
++				kind: "episodic",
++				experience: { taskId: "task-a", runId: "run-a" }
++			}
++		}
++	});
++	const experienceRequest = fetchSpy.mock.calls[1]?.[0];
++	expect(String(experienceRequest)).toContain("/control/memory/experiences?");
++	expect(String(experienceRequest)).toContain("includeTaskHistory=true");
++});
+diff --git a/src/client/src/__tests__/lib/platform/connectors/memory-bootstrap.test.ts b/src/client/src/__tests__/lib/platform/connectors/memory-bootstrap.test.ts
+index e3a23dab..b9ba255f 100644
+--- a/src/client/src/__tests__/lib/platform/connectors/memory-bootstrap.test.ts
++++ b/src/client/src/__tests__/lib/platform/connectors/memory-bootstrap.test.ts
+@@ -13,6 +13,7 @@ import {
+ 	listConnectorTypes,
+ } from "@/lib/platform/connectors/registry";
+ import { Mem0Adapter } from "@/lib/platform/connectors/memory/mem0/adapter";
++import { AutoDevMemoryAdapter } from "@/lib/platform/connectors/memory/autodev/adapter";
+ import type { MemorySourceDescriptor } from "@/lib/platform/connectors/memory/types";
+ 
+ jest.mock("@/lib/session", () => ({ getCurrentUser: jest.fn() }));
+@@ -24,19 +25,32 @@ beforeEach(() => {
+ });
+ 
+ describe("memory connector bootstrap", () => {
+-	it("registers Claude, Mem0, and Zep exactly once", () => {
++	it("registers AutoDev, Claude, Mem0, and Zep exactly once", () => {
+ 		ensureMemoryAdaptersRegistered();
+ 		ensureMemoryAdaptersRegistered();
++		expect(hasMemoryAdapterFactory("autodev")).toBe(true);
+ 		expect(hasMemoryAdapterFactory("claude")).toBe(true);
+ 		expect(hasMemoryAdapterFactory("mem0")).toBe(true);
+ 		expect(hasMemoryAdapterFactory("zep")).toBe(true);
+ 		expect(listMemoryTypeDescriptors().map((item) => item.type).sort()).toEqual([
++			"autodev",
+ 			"claude",
+ 			"mem0",
+ 			"zep",
+ 		]);
+ 	});
+ 
++	it("creates an AutoDev Memory adapter from a workspace-scoped descriptor", () => {
++		ensureMemoryAdaptersRegistered();
++		const descriptor: MemorySourceDescriptor = {
++			type: "autodev",
++			id: "memory:autodev",
++			settings: { workspaceId: "workspace-a", repositoryId: "owner/repo" },
++			name: "AutoDev Memory",
++		};
++		expect(createMemoryAdapter(descriptor)).toBeInstanceOf(AutoDevMemoryAdapter);
++	});
++
+ 	it("creates a Mem0 adapter from a descriptor", () => {
+ 		ensureMemoryAdaptersRegistered();
+ 		const descriptor: MemorySourceDescriptor = {
+@@ -59,6 +73,7 @@ describe("memory connector bootstrap", () => {
+ 	it("exposes memory types through the generic connector registry", () => {
+ 		ensureMemoryAdaptersRegistered();
+ 		expect(listConnectorTypes("memory").map((item) => item.type).sort()).toEqual([
++			"autodev",
+ 			"claude",
+ 			"mem0",
+ 			"zep",
+@@ -75,7 +90,19 @@ describe("memory connector bootstrap", () => {
+ 				expect(field.label).toBeTruthy();
+ 				expect(["settings", "credentials"]).toContain(field.group);
+ 			}
+-			expect(descriptor.authStyle).toBe("api-key");
++			expect(["none", "api-key"]).toContain(descriptor.authStyle);
++			if (descriptor.type === "autodev") {
++				expect(descriptor.scope).toBe("either");
++				expect(descriptor.capabilities).toEqual({
++					add: false,
++					search: true,
++					get: true,
++					list: true,
++					update: false,
++					delete: false,
++					feedback: false,
++				});
++			}
+ 		}
+ 	});
+ });
+diff --git a/src/client/src/lib/platform/connectors/memory/README.md b/src/client/src/lib/platform/connectors/memory/README.md
+index 5a274ef5..69dd26e3 100644
+--- a/src/client/src/lib/platform/connectors/memory/README.md
++++ b/src/client/src/lib/platform/connectors/memory/README.md
+@@ -13,7 +13,7 @@ editing shared forms, the schema, or any UI**.
+    that implements the `MemoryAdapter` methods its `capabilities()` advertises.
+    Reuse `http.ts` (which calls `http/safe-fetch`) for every outbound call and
+    resolve credentials with `http/secret`. Methods for unsupported capabilities
+-   should throw `UnsupportedMemoryCapabilityError`.    Override `listFilters()` when
++   should throw `UnsupportedMemoryCapabilityError`. Override `listFilters()` when
+    the vendor can enumerate users, sessions, or agents for Memory page dropdowns.
+    Typed and used filter ids are also remembered on the connector
+    (`metadata.memoryFilters`, stripped from public responses) so vendors without
+@@ -32,14 +32,14 @@ editing shared forms, the schema, or any UI**.
+    RBAC and audit apply the same way as the HTTP routes.
+ 2. **A `describe(): MemoryTypeDescriptor`** on the factory. This is the single
+    source of truth for the add/edit form. Set:
+-   - `type`, `displayName`, `capabilities`
+-   - `configFields` — reuse `config-fields.ts` helpers (`memoryHttpVendorFields`)
+-     so labels come from `constants/messages/en.ts`
+-   - `filterFields` — Memory page filters for this vendor (`memoryPageFilters`).
+-     Empty means the page shows no user/session/agent controls. Set `allowCustom`
+-     so operators can type ids the vendor did not enumerate.
+-   - `authStyle` (`"api-key"` for hosted memory APIs) plus optional `authHelp`
+-     and `docsUrl`
++    - `type`, `displayName`, `capabilities`
++    - `configFields` — reuse `config-fields.ts` helpers (`memoryHttpVendorFields`)
++      so labels come from `constants/messages/en.ts`
++    - `filterFields` — Memory page filters for this vendor (`memoryPageFilters`).
++      Empty means the page shows no user/session/agent controls. Set `allowCustom`
++      so operators can type ids the vendor did not enumerate.
++    - `authStyle` (`"api-key"` for hosted memory APIs) plus optional `authHelp`
++      and `docsUrl`
+ 3. **Register the factory** in `bootstrap.ts` (`VENDOR_FACTORIES`), or ship it
+    from the private repo via the `getExternalMemoryAdapters()` hook for
+    EE-only vendors.
+@@ -54,3 +54,18 @@ memory connectors do not depend on the ClickHouse vault.
+   `category` is `"memory"`.
+ - No per-vendor `switch` anywhere — capability gating + descriptors handle it.
+ - No `@/ee/**` import from CE; keep vendor strings in `constants/messages/en.ts`.
++
++## AutoDev Memory
++
++The `autodev` connector is a read-only adapter to the authenticated AutoDev
++Control API. Configure a workspace ID and, when needed, repository/role/task/run/agent
++scope on the connector. The Control API URL and service credential are resolved
++from OpenLIT's server environment; credentials are never stored in connector
++settings or sent to the browser. The adapter exposes list, exact-text search,
++get, and health-check only. Proposals and lifecycle transitions stay in
++AutoDev's operator Control API and MemoryService, and PostgreSQL remains the
++canonical store. Its optional task-history setting requests historical task/agent
++experience envelopes, but only succeeds for an operator actor when
++`AUTODEV_MEMORY_READ_TASK_HISTORY=1` is set in the AutoDev Control API process.
++The Control API still constrains those reads to the selected workspace and
++repository.
+diff --git a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
+new file mode 100644
+index 00000000..156d7ebb
+--- /dev/null
++++ b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
+@@ -0,0 +1,400 @@
++/**
++ * Read-only OpenLIT Memory connector over AutoDev's governed Control API.
++ * AutoDev PostgreSQL remains canonical; this adapter translates the typed
++ * AutoDev records into the retained OpenLIT Memory page's presentation model.
++ */
++
++import { forwardToControlApi } from "@/lib/autodev/control-api";
++import type { ConnectorHealthResult } from "../../types";
++import { BaseMemoryAdapter } from "../base-adapter";
++import type {
++	MemoryCapabilities,
++	MemoryListFilter,
++	MemoryRecord,
++	MemorySearchQuery,
++	MemorySourceDescriptor,
++	MemoryTypeDescriptor
++} from "../types";
++
++interface AutoDevMemoryRecord {
++	id: string;
++	kind: "episodic" | "semantic" | "procedural";
++	claim: string;
++	status: string;
++	scope: Record<string, unknown>;
++	provenance: Record<string, unknown>;
++	validity: Record<string, unknown>;
++	supersedes?: string[];
++	supersededBy?: string[];
++	createdAt: string;
++	updatedAt: string;
++}
++
++interface AutoDevMemoryPage {
++	items: AutoDevMemoryRecord[];
++	total: number;
++}
++
++interface AutoDevExperience {
++	id: string;
++	workspaceId: string;
++	repositoryId?: string;
++	scope: Record<string, unknown>;
++	taskId: string;
++	runId: string;
++	agentId: string;
++	agentRole?: string;
++	startedAt: string;
++	completedAt?: string;
++	outcome: string;
++	trajectory: Record<string, unknown>;
++	evidence: unknown[];
++}
++
++interface AutoDevExperiencePage {
++	items: AutoDevExperience[];
++	total: number;
++}
++
++const READ_ONLY_CAPABILITIES: MemoryCapabilities = {
++	add: false,
++	search: true,
++	get: true,
++	list: true,
++	update: false,
++	delete: false,
++	feedback: false
++};
++const MAX_PAGE_SIZE = 100;
++
++class AutoDevMemoryApiError extends Error {
++	readonly status: number;
++
++	constructor(status: number) {
++		super(`AutoDev Memory Control API returned status ${status}.`);
++		this.name = "AutoDevMemoryApiError";
++		this.status = status;
++	}
++}
++
++function setting(descriptor: MemorySourceDescriptor, key: string): string {
++	const value = descriptor.settings[key];
++	return typeof value === "string" ? value.trim() : "";
++}
++
++function pageLimit(value: number | undefined): number {
++	return typeof value === "number" && Number.isFinite(value)
++		? Math.min(Math.max(Math.floor(value), 1), MAX_PAGE_SIZE)
++		: 50;
++}
++
++function autoDevMemory(value: unknown): AutoDevMemoryRecord | null {
++	if (!value || typeof value !== "object" || Array.isArray(value))
++		return null;
++	const record = value as Record<string, unknown>;
++	if (
++		typeof record.id !== "string" ||
++		typeof record.claim !== "string" ||
++		!record.scope ||
++		typeof record.scope !== "object" ||
++		!record.provenance ||
++		typeof record.provenance !== "object" ||
++		!record.validity ||
++		typeof record.validity !== "object" ||
++		typeof record.createdAt !== "string" ||
++		typeof record.updatedAt !== "string" ||
++		!(["episodic", "semantic", "procedural"] as unknown[]).includes(
++			record.kind
++		) ||
++		typeof record.status !== "string"
++	) {
++		return null;
++	}
++	return record as unknown as AutoDevMemoryRecord;
++}
++
++function autoDevExperience(value: unknown): AutoDevExperience | null {
++	if (!value || typeof value !== "object" || Array.isArray(value))
++		return null;
++	const record = value as Record<string, unknown>;
++	if (
++		typeof record.id !== "string" ||
++		typeof record.workspaceId !== "string" ||
++		typeof record.taskId !== "string" ||
++		typeof record.runId !== "string" ||
++		typeof record.agentId !== "string" ||
++		typeof record.startedAt !== "string" ||
++		typeof record.outcome !== "string" ||
++		!record.scope ||
++		typeof record.scope !== "object" ||
++		!record.trajectory ||
++		typeof record.trajectory !== "object" ||
++		!Array.isArray(record.evidence)
++	) {
++		return null;
++	}
++	return record as unknown as AutoDevExperience;
++}
++
++function presentExperience(experience: AutoDevExperience): MemoryRecord {
++	const role = experience.agentRole?.trim() || "agent";
++	return {
++		id: `experience:${experience.id}`,
++		content: `Captured ${role} trajectory (${experience.outcome}).`,
++		categories: ["episodic"],
++		metadata: {
++			autodev: {
++				kind: "episodic",
++				status: "historical",
++				experience
++			}
++		},
++		agentId: experience.agentId,
++		sessionId: experience.runId,
++		createdAt: experience.startedAt,
++		updatedAt: experience.completedAt || experience.startedAt,
++		lifecycleState: "historical"
++	};
++}
++
++function present(record: AutoDevMemoryRecord): MemoryRecord {
++	const autodev = {
++		kind: record.kind,
++		scope: record.scope,
++		status: record.status,
++		provenance: record.provenance,
++		validity: record.validity,
++		...(record.supersedes ? { supersedes: record.supersedes } : {}),
++		...(record.supersededBy ? { supersededBy: record.supersededBy } : {})
++	};
++	return {
++		id: record.id,
++		content: record.claim,
++		categories: [record.kind],
++		metadata: { autodev },
++		createdAt: record.createdAt,
++		updatedAt: record.updatedAt,
++		lifecycleState: record.status
++	};
++}
++
++export class AutoDevMemoryAdapter extends BaseMemoryAdapter {
++	readonly type = "autodev";
++	private readonly workspaceId: string;
++	private readonly repositoryId: string;
++	private readonly role: string;
++	private readonly taskId: string;
++	private readonly runId: string;
++	private readonly agentId: string;
++	private readonly includeTaskHistory: boolean;
++
++	constructor(descriptor: MemorySourceDescriptor) {
++		super(descriptor);
++		this.workspaceId = setting(descriptor, "workspaceId");
++		this.repositoryId = setting(descriptor, "repositoryId");
++		this.role = setting(descriptor, "role");
++		this.taskId = setting(descriptor, "taskId");
++		this.runId = setting(descriptor, "runId");
++		this.agentId = setting(descriptor, "agentId");
++		this.includeTaskHistory =
++			descriptor.settings.includeTaskHistory === true;
++	}
++
++	capabilities(): MemoryCapabilities {
++		return { ...READ_ONLY_CAPABILITIES };
++	}
++
++	async healthCheck(): Promise<ConnectorHealthResult> {
++		if (!this.workspaceId) {
++			return {
++				ok: false,
++				message: "Configure the AutoDev workspace ID."
++			};
++		}
++		try {
++			await this.list({ limit: 1 });
++			return { ok: true, message: "AutoDev Memory is available." };
++		} catch {
++			return {
++				ok: false,
++				message: "AutoDev Memory Control API is unavailable."
++			};
++		}
++	}
++
++	async list(filter: MemoryListFilter): Promise<MemoryRecord[]> {
++		return this.readRecords({ limit: pageLimit(filter.limit) });
++	}
++
++	async search(query: MemorySearchQuery): Promise<MemoryRecord[]> {
++		const text = query.query.trim();
++		if (!text) return this.list({ limit: query.limit });
++		return this.readRecords({ query: text, limit: pageLimit(query.limit) });
++	}
++
++	async get(id: string): Promise<MemoryRecord | null> {
++		if (id.startsWith("experience:")) {
++			const params = this.scopeParams(this.includeTaskHistory);
++			const experienceId = id.slice("experience:".length);
++			const result = await forwardToControlApi<{ experience?: unknown }>({
++				method: "GET",
++				path: `memory/experiences/${encodeURIComponent(experienceId)}?${params.toString()}`
++			});
++			if (!result.ok) {
++				if (result.status === 404) return null;
++				throw new AutoDevMemoryApiError(result.status);
++			}
++			const experience = autoDevExperience(result.body.experience);
++			return experience ? presentExperience(experience) : null;
++		}
++		const params = this.scopeParams();
++		const result = await forwardToControlApi<{
++			memory?: unknown;
++		}>({
++			method: "GET",
++			path: `memory/records/${encodeURIComponent(id)}?${params.toString()}`
++		});
++		if (!result.ok) {
++			if (result.status === 404) return null;
++			throw new AutoDevMemoryApiError(result.status);
++		}
++		const record = autoDevMemory(result.body.memory);
++		return record ? present(record) : null;
++	}
++
++	private scopeParams(includeTaskHistory = false): URLSearchParams {
++		if (!this.workspaceId)
++			throw new Error("AutoDev workspace ID is required.");
++		const params = new URLSearchParams({ workspaceId: this.workspaceId });
++		if (this.repositoryId) params.set("repositoryId", this.repositoryId);
++		if (this.role) params.set("role", this.role);
++		if (Boolean(this.taskId) !== Boolean(this.runId))
++			throw new Error("Configure both AutoDev task and run IDs.");
++		if (this.agentId && !this.taskId)
++			throw new Error("AutoDev agent scope requires task and run IDs.");
++		if (this.taskId && this.runId) {
++			params.set("taskId", this.taskId);
++			params.set("runId", this.runId);
++		}
++		if (this.agentId && this.taskId && this.runId)
++			params.set("agentId", this.agentId);
++		if (includeTaskHistory) params.set("includeTaskHistory", "true");
++		return params;
++	}
++
++	private async readRecords(options: {
++		query?: string;
++		limit: number;
++	}): Promise<MemoryRecord[]> {
++		const params = this.scopeParams();
++		params.set("limit", String(options.limit));
++		if (options.query) params.set("query", options.query);
++		const result = await forwardToControlApi<AutoDevMemoryPage>({
++			method: "GET",
++			path: `memory/records?${params.toString()}`
++		});
++		if (!result.ok) throw new AutoDevMemoryApiError(result.status);
++		if (!Array.isArray(result.body.items))
++			throw new Error("AutoDev Memory response is malformed.");
++		const memories = result.body.items.flatMap((item) => {
++			const record = autoDevMemory(item);
++			return record ? [present(record)] : [];
++		});
++		if (!this.includeTaskHistory) return memories;
++
++		const experienceParams = this.scopeParams(true);
++		experienceParams.set("limit", String(options.limit));
++		if (options.query) experienceParams.set("query", options.query);
++		const experienceResult =
++			await forwardToControlApi<AutoDevExperiencePage>({
++				method: "GET",
++				path: `memory/experiences?${experienceParams.toString()}`
++			});
++		if (!experienceResult.ok)
++			throw new AutoDevMemoryApiError(experienceResult.status);
++		if (!Array.isArray(experienceResult.body.items))
++			throw new Error("AutoDev experience response is malformed.");
++		const experiences = experienceResult.body.items.flatMap((item) => {
++			const experience = autoDevExperience(item);
++			return experience ? [presentExperience(experience)] : [];
++		});
++		return [...memories, ...experiences]
++			.sort((left, right) =>
++				String(right.createdAt ?? "").localeCompare(
++					String(left.createdAt ?? "")
++				)
++			)
++			.slice(0, options.limit);
++	}
++}
++
++export const autoDevMemoryAdapterFactory = {
++	type: "autodev",
++	create: (descriptor: MemorySourceDescriptor) =>
++		new AutoDevMemoryAdapter(descriptor),
++	describe: (): MemoryTypeDescriptor => ({
++		type: "autodev",
++		displayName: "AutoDev Memory",
++		description:
++			"Read governed episodic, semantic, and procedural memories from AutoDev.",
++		scope: "either",
++		capabilities: { ...READ_ONLY_CAPABILITIES },
++		configFields: [
++			{
++				key: "workspaceId",
++				label: "AutoDev workspace ID",
++				kind: "text",
++				group: "settings",
++				description:
++					"Workspace scope used for every read. The AutoDev Control API credential stays server-side."
++			},
++			{
++				key: "repositoryId",
++				label: "Repository ID",
++				kind: "text",
++				group: "settings",
++				description: "Optional repository scope within the workspace."
++			},
++			{
++				key: "role",
++				label: "Agent role",
++				kind: "text",
++				group: "settings",
++				description: "Optional role scope."
++			},
++			{
++				key: "taskId",
++				label: "Task ID",
++				kind: "text",
++				group: "settings",
++				description: "Set together with Run ID to inspect a task scope."
++			},
++			{
++				key: "runId",
++				label: "Run ID",
++				kind: "text",
++				group: "settings",
++				description:
++					"Set together with Task ID to inspect a task scope."
++			},
++			{
++				key: "agentId",
++				label: "Agent ID",
++				kind: "text",
++				group: "settings",
++				description:
++					"Optional agent scope; requires Task ID and Run ID."
++			},
++			{
++				key: "includeTaskHistory",
++				label: "Include prior task/agent experiences",
++				kind: "switch",
++				group: "settings",
++				defaultValue: false,
++				description:
++					"Requires AUTODEV_MEMORY_READ_TASK_HISTORY=1 and an AutoDev operator actor."
++			}
++		],
++		authStyle: "none"
++	})
++};
+diff --git a/src/client/src/lib/platform/connectors/memory/bootstrap.ts b/src/client/src/lib/platform/connectors/memory/bootstrap.ts
+index b18261e0..bd0332e0 100644
+--- a/src/client/src/lib/platform/connectors/memory/bootstrap.ts
++++ b/src/client/src/lib/platform/connectors/memory/bootstrap.ts
+@@ -1,5 +1,5 @@
+ /**
+- * Adapter bootstrap for CE memory connectors: Claude, Mem0, and Zep.
++ * Adapter bootstrap for AutoDev and CE memory connectors: Claude, Mem0, and Zep.
+  * Enterprise builds may contribute additional factories through the
+  * neutral extension hook.
+  */
+@@ -12,9 +12,11 @@ import {
+ 	registerMemoryAdapterFactory,
+ } from "./registry";
+ import { zepAdapterFactory } from "./zep/adapter";
++import { autoDevMemoryAdapterFactory } from "./autodev/adapter";
+ import { registerMemoryConnectorTypes } from "./index";
+ 
+ const VENDOR_FACTORIES = [
++	autoDevMemoryAdapterFactory,
+ 	claudeAdapterFactory,
+ 	mem0AdapterFactory,
+ 	zepAdapterFactory,
+@@ -31,6 +33,7 @@ let registered = false;
+ export function ensureMemoryAdaptersRegistered(): void {
+ 	if (
+ 		registered &&
++		hasMemoryAdapterFactory("autodev") &&
+ 		hasMemoryAdapterFactory("claude") &&
+ 		hasMemoryAdapterFactory("mem0") &&
+ 		hasMemoryAdapterFactory("zep")
+diff --git a/src/client/src/lib/platform/connectors/memory/index.ts b/src/client/src/lib/platform/connectors/memory/index.ts
+index 09f42171..73077b0f 100644
+--- a/src/client/src/lib/platform/connectors/memory/index.ts
++++ b/src/client/src/lib/platform/connectors/memory/index.ts
+@@ -72,7 +72,7 @@ export function registerMemoryConnectorTypes(): void {
+ 					descriptor.description ||
+ 					connectorDescription(descriptor.type, descriptor.displayName),
+ 				icon: descriptor.icon || connectorIconPath(descriptor.type),
+-				scope: "project",
++				scope: descriptor.scope ?? "project",
+ 				configFields: fields(descriptor),
+ 				capabilities: { ...descriptor.capabilities },
+ 				internal: descriptor.internal,
+diff --git a/src/client/src/lib/platform/connectors/memory/types.ts b/src/client/src/lib/platform/connectors/memory/types.ts
+index e76d2b28..2b69d582 100644
+--- a/src/client/src/lib/platform/connectors/memory/types.ts
++++ b/src/client/src/lib/platform/connectors/memory/types.ts
+@@ -184,6 +184,7 @@ export interface MemorySourceDescriptor {
+ 
+ export interface MemoryTypeDescriptor {
+ 	type: string;
++	scope?: "organisation" | "project" | "either";
+ 	displayName: string;
+ 	description?: string;
+ 	internal?: boolean;

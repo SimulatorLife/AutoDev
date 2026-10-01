@@ -63,6 +63,10 @@ export const RUNTIME_MODULES = [
   "src/router/responses.ts",
   "src/router/concurrency.ts",
   "src/router/lifecycle.ts",
+  "src/router/memory-injection.ts",
+  "src/router/memory-control-api.ts",
+  "src/router/control-api-body.ts",
+  "src/router/memory-reconstruction.ts",
   "src/router/auth.ts",
   "src/router/control-api.ts",
   "src/router/events.ts",
@@ -107,6 +111,7 @@ export const RUNTIME_MODULES = [
   "src/hooks/skill-read-telemetry.ts",
   "src/hooks/session-start.ts",
   "src/hooks/subagent-start.ts",
+  "src/hooks/memory-session-end.ts",
   "src/platform/macos/launchd.ts",
   "src/platform/host-arch.ts",
   "src/platform/macos/launchagent.ts",
@@ -293,6 +298,8 @@ export const OBSOLETE_HOOKS = [
 ] as const;
 export const OBSOLETE_DIRS = ["scripts", "codex", "codex/skills"] as const;
 export const CANONICAL_HOOK_HASHES = {
+  "session_end:0:0":
+    "sha256:4f2e98c3213948038c7ac8c69c750121d5ec4a80dd6fb9661778d608b6b7865d",
   "pre_tool_use:0:0":
     "sha256:5f1d5b28fdc75a6290e2dc8deecebe92ffaad5e7352e1122f02a1680e10f0567",
   "pre_tool_use:1:0":

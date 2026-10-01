@@ -1,10 +1,22 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
   ClickHouseTelemetryClient,
   ConfigRepository,
-  RuleSyncRepository
+  RuleSyncRepository,
+  RuleSyncSkillConflictError
 } from "../src/index.ts";
 
 test("RuleSyncRepository loads canonical RuleSync sources", () => {
@@ -13,13 +25,55 @@ test("RuleSyncRepository loads canonical RuleSync sources", () => {
   assert.ok(commands.length > 0);
   assert.ok(commands.some((c) => c.name === "dry"));
 
-  const hooks = repo.loadHooks();
-  assert.ok(hooks.length > 0);
-  assert.ok(hooks.some((h) => h.event === "sessionStart"));
+  const hooks = repo.loadHooksState();
+  assert.equal(hooks.valid, true);
+  assert.ok(hooks.hooks.length > 0);
+  assert.ok(hooks.hooks.some((hook) => hook.event === "sessionStart"));
 
   const skills = repo.loadSkills();
   assert.ok(skills.length > 0);
   assert.ok(skills.some((s) => s.name === "orchestration"));
+});
+
+test("RuleSync hook state distinguishes absent, valid JSONC, and invalid source", async () => {
+  const repositoryRoot = await mkdtemp(path.join(tmpdir(), "autodev-hooks-"));
+  const sourcePath = path.join(repositoryRoot, ".rulesync", "hooks.jsonc");
+  const repo = new RuleSyncRepository(repositoryRoot);
+  try {
+    assert.equal(repo.loadHooksState().valid, null);
+
+    await mkdir(path.dirname(sourcePath), { recursive: true });
+    await writeFile(
+      sourcePath,
+      `{
+        // JSONC comments and trailing commas are valid RuleSync source.
+        "hooks": {
+          "sessionStart": [{
+            "type": "command",
+            "command": "node hook.ts",
+          }],
+        },
+      }`,
+      "utf8"
+    );
+    const valid = repo.loadHooksState();
+    assert.equal(valid.valid, true);
+    assert.equal(valid.hooks[0]?.actions[0]?.command, "node hook.ts");
+
+    await writeFile(
+      sourcePath,
+      `{"hooks":{"sessionStart":[{"type":"command"}]}}`,
+      "utf8"
+    );
+    const invalid = repo.loadHooksState();
+    assert.equal(invalid.valid, false);
+    assert.deepEqual(invalid.hooks, []);
+
+    await writeFile(sourcePath, "{", "utf8");
+    assert.equal(repo.loadHooksState().valid, false);
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
 });
 
 test("ConfigRepository loads agent definitions and workspaces", () => {
@@ -52,4 +106,79 @@ test("ClickHouseTelemetryClient constructs safe parameterized queries", () => {
   assert.match(pq.query, SPAN_ATTR_PATTERN);
   assert.equal(pq.params.service, "autodev-router");
   assert.equal(pq.params.f_0, "openai");
+});
+
+test("RuleSyncRepository promotes skills by creating an idempotent canonical source file", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-skill-promotion-")
+  );
+  try {
+    const repo = new RuleSyncRepository(repositoryRoot);
+    const input = {
+      name: "verified-memory-workflow",
+      description: "Validate current evidence before changing memory.",
+      content:
+        "## Steps\n\n1. Re-check the repository evidence.\n2. Run the focused tests."
+    };
+    const artifact = await repo.createSkill(input);
+    assert.equal(
+      artifact.path,
+      ".rulesync/skills/verified-memory-workflow/SKILL.md"
+    );
+    assert.equal(
+      artifact.uri,
+      "rulesync://skills/verified-memory-workflow/SKILL.md"
+    );
+    assert.match(artifact.revision, /^[a-f0-9]{64}$/u);
+    assert.equal(
+      (
+        await readFile(path.join(repositoryRoot, artifact.path), "utf8")
+      ).includes(input.content),
+      true
+    );
+    const promoted = repo
+      .loadSkills()
+      .find((skill) => skill.name === input.name);
+    assert.equal(promoted?.description, input.description);
+
+    const repeated = await repo.createSkill(input);
+    assert.deepEqual(repeated, artifact);
+    await assert.rejects(
+      repo.createSkill({ ...input, content: "Different instructions." }),
+      RuleSyncSkillConflictError
+    );
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test("RuleSyncRepository refuses unsafe skill names and symlinked canonical directories", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-skill-promotion-safe-")
+  );
+  const externalRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-skill-external-")
+  );
+  try {
+    const repo = new RuleSyncRepository(repositoryRoot);
+    const valid = {
+      name: "safe-skill",
+      description: "A safe skill.",
+      content: "Do the documented safe steps."
+    };
+    await assert.rejects(
+      repo.createSkill({ ...valid, name: "../escape" }),
+      TypeError
+    );
+    await mkdir(path.join(repositoryRoot, ".rulesync"), { recursive: true });
+    await symlink(
+      externalRoot,
+      path.join(repositoryRoot, ".rulesync", "skills")
+    );
+    await assert.rejects(repo.createSkill(valid), RuleSyncSkillConflictError);
+    assert.equal(existsSync(path.join(externalRoot, "safe-skill")), false);
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+    await rm(externalRoot, { recursive: true, force: true });
+  }
 });

@@ -1,0 +1,799 @@
+diff --git a/src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts b/src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts
+new file mode 100644
+index 00000000..33ce5490
+--- /dev/null
++++ b/src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts
+@@ -0,0 +1,106 @@
++jest.mock("@/lib/session", () => ({ getCurrentUser: jest.fn() }));
++jest.mock("@/lib/platform/connectors/memory/write", () => ({
++	executeProjectMemoryAction: jest.fn(),
++}));
++jest.mock("@/utils/asaw", () =>
++	jest.fn(async (promise: Promise<unknown>) => {
++		try {
++			return [null, await promise];
++		} catch (error) {
++			return [error, null];
++		}
++	}),
++);
++
++import { POST } from "@/app/api/memory/[id]/actions/route";
++import { getCurrentUser } from "@/lib/session";
++import { executeProjectMemoryAction } from "@/lib/platform/connectors/memory/write";
++import { MEMORY_INVALID_FILTER, MEMORY_INVALID_JSON } from "@/constants/messages/en";
++
++(globalThis as unknown as { Response: { json: unknown } }).Response = {
++	json: (body: unknown, init?: ResponseInit) => ({
++		status: init?.status ?? 200,
++		json: async () => body,
++	}),
++};
++
++function makeRequest(body: unknown) {
++	const url = "http://localhost/api/memory/memory-a/actions";
++	return {
++		url,
++		nextUrl: { searchParams: new URL(url).searchParams },
++		json: async () => {
++			if (body === "__invalid__") throw new SyntaxError("bad JSON");
++			return body;
++		},
++	} as any;
++}
++
++describe("POST /api/memory/[id]/actions", () => {
++	beforeEach(() => {
++		jest.clearAllMocks();
++		(getCurrentUser as jest.Mock).mockResolvedValue({ id: "operator-a" });
++	});
++
++	it("requires authentication", async () => {
++		(getCurrentUser as jest.Mock).mockResolvedValue(null);
++		const response = await POST(makeRequest({ action: "invalidate", payload: {} }), {
++			params: { id: "memory-a" },
++		});
++		expect(response.status).toBe(401);
++		expect(executeProjectMemoryAction).not.toHaveBeenCalled();
++	});
++
++	it("rejects malformed or extra action fields", async () => {
++		const malformed = await POST(makeRequest("__invalid__"), {
++			params: { id: "memory-a" },
++		});
++		expect(malformed.status).toBe(400);
++		await expect(malformed.json()).resolves.toBe(MEMORY_INVALID_JSON);
++
++		const extra = await POST(
++			makeRequest({ action: "invalidate", payload: {}, actor: "forged" }),
++			{ params: { id: "memory-a" } },
++		);
++		expect(extra.status).toBe(400);
++		await expect(extra.json()).resolves.toBe(MEMORY_INVALID_FILTER);
++		expect(executeProjectMemoryAction).not.toHaveBeenCalled();
++	});
++
++	it("dispatches a capability action through the connector service", async () => {
++		(executeProjectMemoryAction as jest.Mock).mockResolvedValue({
++			connector: { id: "memory:autodev" },
++			capabilities: { actions: [] },
++			memory: { id: "memory-a", lifecycleState: "invalidated" },
++		});
++		const payload = {
++			evidence: [{ kind: "commit", uri: "git://owner/repo/commit/abc" }],
++		};
++		const response = await POST(
++			makeRequest({
++				action: "invalidate",
++				connectorId: "memory:autodev",
++				payload,
++			}),
++			{ params: { id: "memory-a" } },
++		);
++		expect(response.status).toBe(200);
++		expect(executeProjectMemoryAction).toHaveBeenCalledWith({
++			id: "memory-a",
++			connectorId: "memory:autodev",
++			action: "invalidate",
++			payload,
++		});
++	});
++
++	it("preserves the Control API conflict status", async () => {
++		(executeProjectMemoryAction as jest.Mock).mockRejectedValue(
++			Object.assign(new Error("conflict"), { status: 409 }),
++		);
++		const response = await POST(
++			makeRequest({ action: "invalidate", payload: { evidence: [] } }),
++			{ params: { id: "memory-a" } },
++		);
++		expect(response.status).toBe(409);
++	});
++});
+diff --git a/src/client/src/__tests__/components/memory-action-dialog.test.tsx b/src/client/src/__tests__/components/memory-action-dialog.test.tsx
+new file mode 100644
+index 00000000..074e8a3d
+--- /dev/null
++++ b/src/client/src/__tests__/components/memory-action-dialog.test.tsx
+@@ -0,0 +1,55 @@
++import { fireEvent, render, screen } from "@testing-library/react";
++import MemoryActionDialog from "@/components/(playground)/memory/memory-action-dialog";
++import type { MemoryActionDescriptor } from "@/lib/platform/connectors/memory/types";
++
++const action: MemoryActionDescriptor = {
++	id: "invalidate",
++	label: "Invalidate memory",
++	description: "Add current evidence.",
++	payloadTemplate: { evidence: [] },
++};
++
++test("capability action dialog parses a JSON payload before dispatch", () => {
++	const onSubmit = jest.fn();
++	render(
++		<MemoryActionDialog
++			open
++			action={action}
++			saving={false}
++			onOpenChange={jest.fn()}
++			onSubmit={onSubmit}
++		/>,
++	);
++
++	fireEvent.change(screen.getByRole("textbox", { name: /lifecycle action json/i }), {
++		target: {
++			value: JSON.stringify({ evidence: [{ kind: "commit", uri: "git://repo/commit/abc" }] }),
++		},
++	});
++	fireEvent.click(screen.getByRole("button", { name: "Invalidate memory" }));
++
++	expect(onSubmit).toHaveBeenCalledWith({
++		evidence: [{ kind: "commit", uri: "git://repo/commit/abc" }],
++	});
++});
++
++test("capability action dialog rejects malformed payload JSON", () => {
++	const onSubmit = jest.fn();
++	render(
++		<MemoryActionDialog
++			open
++			action={action}
++			saving={false}
++			onOpenChange={jest.fn()}
++			onSubmit={onSubmit}
++		/>,
++	);
++
++	fireEvent.change(screen.getByRole("textbox", { name: /lifecycle action json/i }), {
++		target: { value: "not-json" },
++	});
++	fireEvent.click(screen.getByRole("button", { name: "Invalidate memory" }));
++
++	expect(onSubmit).not.toHaveBeenCalled();
++	expect(screen.getByText("Request body must be valid JSON.")).toBeTruthy();
++});
+diff --git a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
+index fdbd162b..7231dd72 100644
+--- a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
++++ b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
+@@ -178,3 +178,59 @@ test("AutoDev connector lists source experiences only when task-history access i
+ 	expect(String(experienceRequest)).toContain("/control/memory/experiences?");
+ 	expect(String(experienceRequest)).toContain("includeTaskHistory=true");
+ });
++
++
++test("AutoDev advertises invalidation only for live durable memory records", () => {
++	const adapter = new AutoDevMemoryAdapter(descriptor);
++	const active = {
++		id: "memory-a",
++		content: "A durable claim.",
++		metadata: { autodev: { status: "active" } }
++	};
++	const invalidated = {
++		...active,
++		metadata: { autodev: { status: "invalidated" } }
++	};
++	const experience = {
++		...active,
++		id: "experience:experience-a",
++		metadata: { autodev: { status: "historical" } }
++	};
++	expect(adapter.actionsFor(active)).toEqual([
++		expect.objectContaining({ id: "invalidate" })
++	]);
++	expect(adapter.actionsFor(invalidated)).toEqual([]);
++	expect(adapter.actionsFor(experience)).toEqual([]);
++});
++
++test("AutoDev lifecycle actions use the authenticated Control API without enabling CRUD writes", async () => {
++	const updatedMemory = {
++		id: "memory-a",
++		kind: "semantic",
++		claim: "A durable claim.",
++		status: "invalidated",
++		scope: { kind: "repository", workspaceId: "workspace-a", repositoryId: "owner/repo" },
++		provenance: { experienceIds: ["experience-a"], evidence: [] },
++		validity: { state: "unverified" },
++		createdAt: "2026-10-01T00:00:00.000Z",
++		updatedAt: "2026-10-01T00:00:00.000Z"
++	};
++	const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
++		Response.json({ schema: "autodev-memory-record-v1", memory: updatedMemory })
++	);
++	const adapter = new AutoDevMemoryAdapter(descriptor);
++	const result = await adapter.executeAction("memory-a", "invalidate", {
++		evidence: [{ kind: "commit", uri: "git://owner/repo/commit/abc" }]
++	});
++
++	expect(result.lifecycleState).toBe("invalidated");
++	expect(adapter.actionsFor(result)).toEqual([]);
++	const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
++	const parsed = new URL(url);
++	expect(parsed.pathname).toBe("/control/memory/records/memory-a/invalidate");
++	expect(parsed.searchParams.get("workspaceId")).toBe("workspace-a");
++	expect(JSON.parse(String(init.body))).toEqual({
++		evidence: [{ kind: "commit", uri: "git://owner/repo/commit/abc" }]
++	});
++	expect(new Headers(init.headers).get("x-autodev-actor")).toBe("operator-a");
++});
+diff --git a/src/client/src/app/api/memory/[id]/actions/route.ts b/src/client/src/app/api/memory/[id]/actions/route.ts
+new file mode 100644
+index 00000000..fa336a56
+--- /dev/null
++++ b/src/client/src/app/api/memory/[id]/actions/route.ts
+@@ -0,0 +1,105 @@
++import { NextRequest } from "next/server";
++import { getCurrentUser } from "@/lib/session";
++import { errorResponse } from "@/utils/api-response";
++import asaw from "@/utils/asaw";
++import { withMemoryAccess, withMemoryAudit } from "@/lib/access/memory-route";
++import { isMemoryConnectorId, memoryConnectorId } from "@/lib/platform/connectors/memory/crud";
++import { executeProjectMemoryAction } from "@/lib/platform/connectors/memory/write";
++import { UnsupportedMemoryCapabilityError } from "@/lib/platform/connectors/memory/types";
++import {
++	MEMORY_CONNECTOR_NOT_FOUND,
++	MEMORY_DETAIL_NOT_FOUND,
++	MEMORY_EDIT_FAILED,
++	MEMORY_INVALID_FILTER,
++	MEMORY_INVALID_JSON,
++} from "@/constants/messages/en";
++
++const ID_MAX = 200;
++const ACTION_MAX = 64;
++const PAYLOAD_MAX = 4_000;
++
++function parseId(value: string): string {
++	const id = String(value || "").trim();
++	if (!id || id.length > ID_MAX || /[\u0000-\u001f]/.test(id)) {
++		throw new Error(MEMORY_INVALID_FILTER);
++	}
++	return id;
++}
++
++function parseConnectorId(value: unknown): string | undefined {
++	if (value == null) return undefined;
++	if (typeof value !== "string") throw new Error(MEMORY_INVALID_FILTER);
++	const trimmed = value.trim();
++	if (!trimmed) return undefined;
++	if (trimmed.length > 120 || /[\u0000-\u001f]/.test(trimmed)) {
++		throw new Error(MEMORY_INVALID_FILTER);
++	}
++	const id = memoryConnectorId(trimmed);
++	if (!isMemoryConnectorId(id)) throw new Error(MEMORY_CONNECTOR_NOT_FOUND);
++	return id;
++}
++
++function parseBody(value: unknown): {
++	action: string;
++	connectorId?: string;
++	payload: Record<string, unknown>;
++} {
++	if (!value || typeof value !== "object" || Array.isArray(value)) {
++		throw new Error(MEMORY_INVALID_JSON);
++	}
++	const body = value as Record<string, unknown>;
++	if (Object.keys(body).some((key) => !["action", "connectorId", "payload"].includes(key))) {
++		throw new Error(MEMORY_INVALID_FILTER);
++	}
++	if (
++		typeof body.action !== "string" ||
++		!body.action.trim() ||
++		body.action.trim().length > ACTION_MAX ||
++		/[\u0000-\u001f]/.test(body.action)
++	) {
++		throw new Error(MEMORY_INVALID_FILTER);
++	}
++	if (!body.payload || typeof body.payload !== "object" || Array.isArray(body.payload)) {
++		throw new Error(MEMORY_INVALID_JSON);
++	}
++	if (JSON.stringify(body.payload).length > PAYLOAD_MAX) {
++		throw new Error(MEMORY_INVALID_JSON);
++	}
++	return {
++		action: body.action.trim(),
++		connectorId: parseConnectorId(body.connectorId),
++		payload: body.payload as Record<string, unknown>,
++	};
++}
++
++function statusFor(error: unknown): number {
++	if (error instanceof UnsupportedMemoryCapabilityError) return 400;
++	if (error instanceof Error && error.message === MEMORY_DETAIL_NOT_FOUND) return 404;
++	if (error && typeof error === "object" && "status" in error) {
++		const status = Number((error as { status?: unknown }).status);
++		if ([400, 401, 403, 404, 409, 503].includes(status)) return status;
++	}
++	return 503;
++}
++
++async function POSTHandler(request: NextRequest, { params }: { params: { id: string } }) {
++	const user = await getCurrentUser();
++	if (!user) return Response.json("Unauthorized", { status: 401 });
++
++	let id: string;
++	let input: ReturnType<typeof parseBody>;
++	try {
++		id = parseId(params.id);
++		input = parseBody(await request.json());
++	} catch (error) {
++		return errorResponse(error, MEMORY_INVALID_JSON, 400);
++	}
++
++	const [error, result] = await asaw(executeProjectMemoryAction({ id, ...input }));
++	if (error) {
++		return errorResponse(error, MEMORY_EDIT_FAILED, statusFor(error));
++	}
++	return Response.json(result);
++}
++
++export const POST = withMemoryAudit(withMemoryAccess("update", POSTHandler));
+diff --git a/src/client/src/components/(playground)/memory/memory-action-dialog.tsx b/src/client/src/components/(playground)/memory/memory-action-dialog.tsx
+new file mode 100644
+index 00000000..ff4fc22a
+--- /dev/null
++++ b/src/client/src/components/(playground)/memory/memory-action-dialog.tsx
+@@ -0,0 +1,90 @@
++"use client";
++
++import { useEffect, useState } from "react";
++import {
++	AlertDialog,
++	AlertDialogAction,
++	AlertDialogCancel,
++	AlertDialogContent,
++	AlertDialogDescription,
++	AlertDialogFooter,
++	AlertDialogHeader,
++	AlertDialogTitle,
++} from "@/components/ui/alert-dialog";
++import { Textarea } from "@/components/ui/textarea";
++import getMessage from "@/constants/messages";
++import type { MemoryActionDescriptor } from "@/lib/platform/connectors/memory/types";
++
++export default function MemoryActionDialog({
++	open,
++	action,
++	saving,
++	onOpenChange,
++	onSubmit,
++}: {
++	open: boolean;
++	action: MemoryActionDescriptor | null;
++	saving: boolean;
++	onOpenChange: (open: boolean) => void;
++	onSubmit: (payload: Record<string, unknown>) => void;
++}) {
++	const messages = getMessage();
++	const [payloadText, setPayloadText] = useState("");
++	const [error, setError] = useState<string | null>(null);
++
++	useEffect(() => {
++		setPayloadText(action ? JSON.stringify(action.payloadTemplate, null, 2) : "");
++		setError(null);
++	}, [action]);
++
++	function submit() {
++		if (!action || saving) return;
++		try {
++			const parsed: unknown = JSON.parse(payloadText);
++			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
++				throw new Error(messages.MEMORY_INVALID_JSON);
++			}
++			setError(null);
++			onSubmit(parsed as Record<string, unknown>);
++		} catch {
++			setError(messages.MEMORY_INVALID_JSON);
++		}
++	}
++
++	return (
++		<AlertDialog open={open} onOpenChange={onOpenChange}>
++			<AlertDialogContent>
++				<AlertDialogHeader>
++					<AlertDialogTitle>{action?.label}</AlertDialogTitle>
++					<AlertDialogDescription>{action?.description}</AlertDialogDescription>
++				</AlertDialogHeader>
++				<label className="text-xs font-medium text-stone-700 dark:text-stone-300">
++					Lifecycle action JSON
++					<Textarea
++						value={payloadText}
++						onChange={(event) => setPayloadText(event.target.value)}
++						className="mt-1 min-h-40 font-mono text-xs"
++						maxLength={4_000}
++						disabled={saving}
++					/>
++				</label>
++				{error ? <p className="text-xs text-error">{error}</p> : null}
++				<AlertDialogFooter>
++					<AlertDialogCancel disabled={saving} size="sm">
++						{messages.MEMORY_CANCEL}
++					</AlertDialogCancel>
++					<AlertDialogAction
++						disabled={saving || !action}
++						size="sm"
++						onClick={(event) => {
++							event.preventDefault();
++							submit();
++						}}
++					>
++						{action?.label}
++					</AlertDialogAction>
++				</AlertDialogFooter>
++			</AlertDialogContent>
++		</AlertDialog>
++	);
++}
+diff --git a/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx b/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx
+index cd41a29f..7c34a770 100644
+--- a/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx
++++ b/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx
+@@ -26,12 +26,14 @@ import { getRequestHeaders } from "@/utils/api";
+ import type { MemoryDetailResult, MemoryListItem } from "@/lib/platform/connectors/memory/read";
+ import type { MemoryKind } from "@/lib/platform/connectors/memory/graph";
+ import type {
++	MemoryActionDescriptor,
+ 	MemoryCapabilities,
+ 	MemoryFeedback,
+ 	MemoryFeedbackRating,
+ 	MemoryHistoryEvent,
+ 	MemoryMessage,
+ } from "@/lib/platform/connectors/memory/types";
++import MemoryActionDialog from "./memory-action-dialog";
+ import MemoryWriteDialog from "./memory-write-dialog";
+ 
+ const DETAIL_SHEET_CONTENT_CLASS =
+@@ -88,6 +90,11 @@ export default function MemoryDetailSheet({
+ 	const [canFeedback, setCanFeedback] = useState(false);
+ 	const [canUpdate, setCanUpdate] = useState(!!capabilities?.update);
+ 	const [canDelete, setCanDelete] = useState(!!capabilities?.delete);
++	const [actions, setActions] = useState<readonly MemoryActionDescriptor[]>(
++		capabilities?.actions ?? []
++	);
++	const [activeAction, setActiveAction] = useState<MemoryActionDescriptor | null>(null);
++	const [actionOpen, setActionOpen] = useState(false);
+ 	const [editOpen, setEditOpen] = useState(false);
+ 	const [deleteOpen, setDeleteOpen] = useState(false);
+ 	const [saving, setSaving] = useState(false);
+@@ -101,6 +108,9 @@ export default function MemoryDetailSheet({
+ 			setCanFeedback(false);
+ 			setCanUpdate(!!capabilities?.update);
+ 			setCanDelete(!!capabilities?.delete);
++			setActions(capabilities?.actions ?? []);
++			setActiveAction(null);
++			setActionOpen(false);
+ 			setEditOpen(false);
+ 			setDeleteOpen(false);
+ 			setLoading(false);
+@@ -141,6 +151,7 @@ export default function MemoryDetailSheet({
+ 				setCanFeedback(!!payload.capabilities?.feedback);
+ 				setCanUpdate(!!(payload.capabilities?.update ?? capabilities?.update));
+ 				setCanDelete(!!(payload.capabilities?.delete ?? capabilities?.delete));
++				setActions(payload.capabilities?.actions ?? []);
+ 				if (payload.memory) setDetail(payload.memory);
+ 			})
+ 			.catch((caught: unknown) => {
+@@ -151,7 +162,7 @@ export default function MemoryDetailSheet({
+ 			})
+ 			.finally(() => setLoading(false));
+ 		return () => controller.abort();
+-	}, [capabilities?.delete, capabilities?.update, connectorId, memoryId, messages.MEMORY_DETAIL_LOAD_FAILED, open, preview]);
++	}, [capabilities?.actions, capabilities?.delete, capabilities?.update, connectorId, memoryId, messages.MEMORY_DETAIL_LOAD_FAILED, open, preview]);
+ 
+ 	const memory = detail || preview;
+ 	const title = memory?.content?.trim() || messages.MEMORY_DETAIL_TITLE;
+@@ -222,8 +233,39 @@ export default function MemoryDetailSheet({
+ 			.finally(() => setSaving(false));
+ 	}
+ 
++	function handleMemoryAction(payload: Record<string, unknown>) {
++		if (!memoryId || !activeAction || saving) return;
++		setSaving(true);
++		fetch(`/api/memory/${encodeURIComponent(memoryId)}/actions`, {
++			method: "POST",
++			headers: getRequestHeaders({ "Content-Type": "application/json" }),
++			body: JSON.stringify({ connectorId, action: activeAction.id, payload }),
++		})
++			.then(async (response) => {
++				const body = await response.json().catch(() => null);
++				if (!response.ok) {
++					throw new Error(apiError(body, messages.MEMORY_EDIT_FAILED));
++				}
++				return body as MemoryDetailResult;
++			})
++			.then((result) => {
++				if (result.memory) setDetail(result.memory);
++				setActions(result.capabilities?.actions ?? []);
++				toast.success(`${activeAction.label} completed.`);
++				setActiveAction(null);
++				onNestedOpenChange(setActionOpen, false);
++				onChanged?.();
++			})
++			.catch((caught: unknown) => {
++				toast.error(
++					caught instanceof Error ? caught.message : messages.MEMORY_EDIT_FAILED
++				);
++			})
++			.finally(() => setSaving(false));
++	}
++
+ 	function dismissBlocked() {
+-		if (suppressSheetDismissRef.current || editOpen || deleteOpen) return true;
++		if (suppressSheetDismissRef.current || editOpen || deleteOpen || actionOpen) return true;
+ 		if (typeof document === "undefined") return false;
+ 		return (
+ 			document.querySelectorAll('[role="dialog"][data-state="open"]').length > 1 ||
+@@ -389,6 +431,23 @@ export default function MemoryDetailSheet({
+ 										</Button>
+ 									) : null}
+ 								</FeatureAccess>
++								<FeatureAccess access="memory.update" hideWhenDenied>
++									{actions.map((action) => (
++										<Button
++											key={action.id}
++											variant="outline"
++											size="sm"
++											className="h-7 border-stone-200 bg-white px-2 text-xs text-stone-600 hover:bg-stone-100 hover:text-stone-950 disabled:opacity-40 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-stone-50"
++											disabled={!memory || saving}
++											onClick={() => {
++											setActiveAction(action);
++											openNestedDialog(setActionOpen);
++										}}
++										>
++											{action.label}
++										</Button>
++									))}
++								</FeatureAccess>
+ 								<Button
+ 									variant="outline"
+ 									size="sm"
+@@ -493,6 +552,15 @@ export default function MemoryDetailSheet({
+ 				</ResizableDetailSheet>
+ 			</SheetContent>
+ 		</Sheet>
++			<MemoryActionDialog
++				open={actionOpen}
++				action={activeAction}
++				saving={saving}
++				onOpenChange={(next) => {
++					if (!saving) onNestedOpenChange(setActionOpen, next);
++				}}
++				onSubmit={handleMemoryAction}
++			/>
+ 			<MemoryWriteDialog
+ 				open={editOpen}
+ 				mode="edit"
+diff --git a/src/client/src/lib/platform/connectors/memory/README.md b/src/client/src/lib/platform/connectors/memory/README.md
+index 69dd26e3..4e68d9ef 100644
+--- a/src/client/src/lib/platform/connectors/memory/README.md
++++ b/src/client/src/lib/platform/connectors/memory/README.md
+@@ -57,14 +57,17 @@ memory connectors do not depend on the ClickHouse vault.
+ 
+ ## AutoDev Memory
+ 
+-The `autodev` connector is a read-only adapter to the authenticated AutoDev
+-Control API. Configure a workspace ID and, when needed, repository/role/task/run/agent
+-scope on the connector. The Control API URL and service credential are resolved
+-from OpenLIT's server environment; credentials are never stored in connector
+-settings or sent to the browser. The adapter exposes list, exact-text search,
+-get, and health-check only. Proposals and lifecycle transitions stay in
+-AutoDev's operator Control API and MemoryService, and PostgreSQL remains the
+-canonical store. Its optional task-history setting requests historical task/agent
++The `autodev` connector reads through the authenticated AutoDev Control API.
++Configure a workspace ID and, when needed, repository/role/task/run/agent scope
++on the connector. The Control API URL and service credential are resolved from
++OpenLIT's server environment; credentials are never stored in connector settings
++or sent to the browser. The adapter exposes list, exact-text search, get, and
++health-check as read capabilities, not generic CRUD writes. It also advertises
++governed lifecycle actions through the shared capability-driven action interface.
++The initial action is evidence-backed invalidation; proposals, verification,
++revision, supersession, and promotion remain unexposed in the UI until their
++operator forms are implemented. Actions call AutoDev's Control API and
++MemoryService, and PostgreSQL remains the canonical store. Its optional task-history setting requests historical task/agent
+ experience envelopes, but only succeeds for an operator actor when
+ `AUTODEV_MEMORY_READ_TASK_HISTORY=1` is set in the AutoDev Control API process.
+ The Control API still constrains those reads to the selected workspace and
+diff --git a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
+index 156d7ebb..e7f41673 100644
+--- a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
++++ b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
+@@ -7,7 +7,9 @@
+ import { forwardToControlApi } from "@/lib/autodev/control-api";
+ import type { ConnectorHealthResult } from "../../types";
+ import { BaseMemoryAdapter } from "../base-adapter";
++import { UnsupportedMemoryCapabilityError } from "../types";
+ import type {
++	MemoryActionDescriptor,
+ 	MemoryCapabilities,
+ 	MemoryListFilter,
+ 	MemoryRecord,
+@@ -66,6 +68,16 @@ const READ_ONLY_CAPABILITIES: MemoryCapabilities = {
+ 	feedback: false
+ };
+ const MAX_PAGE_SIZE = 100;
++const INVALIDATE_ACTION: MemoryActionDescriptor = {
++	id: "invalidate",
++	label: "Invalidate memory",
++	description:
++		"Invalidation is a soft lifecycle change. Add current evidence; source experiences and lifecycle history remain preserved.",
++	payloadTemplate: {
++		evidence: [],
++		reasonCode: "invalidated_by_curator"
++	}
++};
+ 
+ class AutoDevMemoryApiError extends Error {
+ 	readonly status: number;
+@@ -204,6 +216,37 @@ export class AutoDevMemoryAdapter extends BaseMemoryAdapter {
+ 		return { ...READ_ONLY_CAPABILITIES };
+ 	}
+ 
++	actionsFor(memory: MemoryRecord): readonly MemoryActionDescriptor[] {
++		if (memory.id.startsWith("experience:")) return [];
++		const metadata = memory.metadata?.autodev;
++		if (!metadata || typeof metadata !== "object" || Array.isArray(metadata))
++			return [];
++		const status = (metadata as Record<string, unknown>).status;
++		return ["proposed", "active", "uncertain"].includes(String(status))
++			? [INVALIDATE_ACTION]
++			: [];
++	}
++
++	async executeAction(
++		id: string,
++		action: string,
++		payload: Record<string, unknown>
++	): Promise<MemoryRecord> {
++		if (action !== INVALIDATE_ACTION.id) {
++			throw new UnsupportedMemoryCapabilityError(this.type, "actions");
++		}
++		const params = this.scopeParams();
++		const result = await forwardToControlApi<{ memory?: unknown }>({
++			method: "POST",
++			path: `memory/records/${encodeURIComponent(id)}/${action}?${params.toString()}`,
++			body: payload
++		});
++		if (!result.ok) throw new AutoDevMemoryApiError(result.status);
++		const record = autoDevMemory(result.body.memory);
++		if (!record) throw new Error("AutoDev lifecycle response is malformed.");
++		return present(record);
++	}
++
+ 	async healthCheck(): Promise<ConnectorHealthResult> {
+ 		if (!this.workspaceId) {
+ 			return {
+diff --git a/src/client/src/lib/platform/connectors/memory/read.ts b/src/client/src/lib/platform/connectors/memory/read.ts
+index 4ec3499c..78a01671 100644
+--- a/src/client/src/lib/platform/connectors/memory/read.ts
++++ b/src/client/src/lib/platform/connectors/memory/read.ts
+@@ -471,11 +471,15 @@ export async function getProjectMemory(input: {
+ 		[record],
+ 		await readMemoryPortLinks(String(connector.id)).catch(() => [])
+ 	);
++	const memory = asMemoryListItem(withPort);
++	const detailCapabilities = adapter.actionsFor
++		? { ...capabilities, actions: adapter.actionsFor(memory) }
++		: capabilities;
+ 
+ 	return {
+ 		connector,
+-		capabilities,
+-		memory: asMemoryListItem(withPort),
++		capabilities: detailCapabilities,
++		memory,
+ 	};
+ }
+ 
+diff --git a/src/client/src/lib/platform/connectors/memory/types.ts b/src/client/src/lib/platform/connectors/memory/types.ts
+index 2b69d582..70e9bc9a 100644
+--- a/src/client/src/lib/platform/connectors/memory/types.ts
++++ b/src/client/src/lib/platform/connectors/memory/types.ts
+@@ -10,6 +10,13 @@
+ import type { ConnectorHealthResult, ConnectorRuntime } from "../types";
+ import type { AuthStyle, FieldDef } from "../datasource/types";
+ 
++export interface MemoryActionDescriptor {
++	id: string;
++	label: string;
++	description: string;
++	payloadTemplate: Record<string, unknown>;
++}
++
+ export interface MemoryCapabilities {
+ 	add: boolean;
+ 	search: boolean;
+@@ -18,6 +25,7 @@ export interface MemoryCapabilities {
+ 	update: boolean;
+ 	delete: boolean;
+ 	feedback: boolean;
++	actions?: readonly MemoryActionDescriptor[];
+ }
+ 
+ export const MEMORY_FEEDBACK_RATINGS = [
+@@ -210,6 +218,12 @@ export interface MemoryAdapter extends ConnectorRuntime {
+ 	update(id: string, input: MemoryUpdateInput): Promise<MemoryRecord>;
+ 	delete(id: string): Promise<void>;
+ 	feedback(id: string, input: MemoryFeedbackInput): Promise<MemoryFeedback>;
++	actionsFor?(memory: MemoryRecord): readonly MemoryActionDescriptor[];
++	executeAction?(
++		id: string,
++		action: string,
++		payload: Record<string, unknown>
++	): Promise<MemoryRecord>;
+ }
+ 
+ export interface MemoryAdapterFactory {
+diff --git a/src/client/src/lib/platform/connectors/memory/write.ts b/src/client/src/lib/platform/connectors/memory/write.ts
+index e663e6fa..45efb5bd 100644
+--- a/src/client/src/lib/platform/connectors/memory/write.ts
++++ b/src/client/src/lib/platform/connectors/memory/write.ts
+@@ -47,6 +47,12 @@ export interface MemoryDeleteResult {
+ 	ok: true;
+ }
+ 
++export interface MemoryActionResult {
++	connector: MemoryQueryResult["connector"];
++	capabilities: MemoryCapabilities;
++	memory: MemoryListItem;
++}
++
+ function trim(value?: string): string | undefined {
+ 	const next = String(value || "").trim();
+ 	return next || undefined;
+@@ -223,3 +229,38 @@ export async function deleteProjectMemory(input: {
+ 
+ 	return { connector, capabilities, ok: true };
+ }
++
++export async function executeProjectMemoryAction(input: {
++	id: string;
++	connectorId?: string;
++	action: string;
++	payload: Record<string, unknown>;
++}): Promise<MemoryActionResult> {
++	const id = trim(input.id);
++	const action = trim(input.action);
++	if (!id || !action) throw new Error(MEMORY_DETAIL_NOT_FOUND);
++	const { connector, adapter, capabilities } = await resolveProjectMemoryAdapter(
++		input.connectorId
++	);
++	if (!adapter.actionsFor || !adapter.executeAction) {
++		throw new UnsupportedMemoryCapabilityError(adapter.type, "actions");
++	}
++	const current = await adapter.get(id);
++	if (!current) throw new Error(MEMORY_DETAIL_NOT_FOUND);
++	if (!adapter.actionsFor(current).some((candidate) => candidate.id === action)) {
++		throw new UnsupportedMemoryCapabilityError(
++			adapter.type,
++			"actions",
++			`Action "${action}" is not available for this memory record.`
++		);
++	}
++	const updated = await adapter.executeAction(id, action, input.payload);
++	return {
++		connector,
++		capabilities: {
++			...capabilities,
++			actions: adapter.actionsFor(updated)
++		},
++		memory: asMemoryListItem(updated)
++	};
++}

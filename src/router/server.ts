@@ -12,6 +12,7 @@ import { writeErrorLine } from "../shared/output.ts";
 import { handleControlApiRequest } from "./control-api.ts";
 import { codexState, handle, HOST, PORT, refreshCodexState } from "./http.ts";
 import { beginShutdown } from "./lifecycle.ts";
+import { closeOrchestratorMemoryHost } from "./memory-injection.ts";
 import { loadRouterState, persistRouterStateNow } from "./persistence.ts";
 import {
   isClientDisconnectError,
@@ -58,6 +59,26 @@ export function handleFatalProcessError(phase: string, reason: unknown): void {
   fatalExitPromise = persistRouterStateNow()
     .catch(() => undefined)
     .finally(() => process.exit(1));
+}
+
+async function closeMemoryHostSafely(): Promise<void> {
+  try {
+    await closeOrchestratorMemoryHost();
+  } catch (error) {
+    const info = transportErrorInfo(error);
+    writeErrorLine(
+      JSON.stringify({
+        schema: "autodev-router-event-v1",
+        timestamp: new Date().toISOString(),
+        routerInstanceId: ROUTER_INSTANCE_ID,
+        requestId: null,
+        phase: "memory_pool_close_failed",
+        errorName: info.name,
+        errorCode: info.code,
+        syscall: info.syscall
+      })
+    );
+  }
 }
 
 export function createControlApiServer(): Server {
@@ -120,23 +141,26 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   let cleanedUp = false;
 
   const sigtermHandler = (signal: string) => {
-    void beginShutdown(signal, server, persistRouterStateNow).then(() => {
+    void beginShutdown(signal, server, persistRouterStateNow).then(async () => {
       cleanup();
+      await closeMemoryHostSafely();
       process.exit(0);
     });
   };
   const onSigint = () => sigtermHandler("SIGINT");
   const onSigterm = () => sigtermHandler("SIGTERM");
-  const onUncaughtException = (error: Error) => {
+  const onUncaughtException = async (error: Error) => {
     // Client disconnects are intentionally ignored; keep the live server resources.
     if (isClientDisconnectError(error)) {
       handleFatalProcessError("uncaught_exception", error);
       return;
     }
+    await closeMemoryHostSafely();
     cleanup();
     handleFatalProcessError("uncaught_exception", error);
   };
-  const onUnhandledRejection = (reason: unknown) => {
+  const onUnhandledRejection = async (reason: unknown) => {
+    await closeMemoryHostSafely();
     cleanup();
     handleFatalProcessError("unhandled_rejection", reason);
   };
@@ -148,6 +172,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
       codexState.livePollStarted = false;
     }
     if (controlServer?.listening) controlServer.close();
+    void closeMemoryHostSafely();
     process.off("uncaughtException", onUncaughtException);
     process.off("unhandledRejection", onUnhandledRejection);
     process.off("SIGINT", onSigint);
