@@ -1048,6 +1048,30 @@ Do not turn each feature into a package merely to achieve modularity.
 - Memory/Evaluations/Agents/Prompt patterns retained only where they no longer depend on removed OpenLIT product concepts;
 - storage/query/receiver behavior remains intact unless explicitly approved.
 
+### Migration/cutover
+
+- `console/` is a runnable TypeScript/Next.js product, not only render-test components;
+- no production Console view relies on hard-coded sample usage/health/convergence data;
+- cross-workspace imports use declared workspace package contracts rather than reaching into sibling `src/` trees;
+- `runtime/` owns migrated implementations directly; no permanent re-export facade into legacy root `src/`;
+- every migrated legacy `src/` slice is deleted after parity;
+- RuleSync `subagents` and `permissions` are enabled only after lossless parity, then duplicate editable authorities are removed;
+- old OpenLIT AutoDev pages are removed once the unified Console replaces them;
+- direct OpenLIT ingestion is proven before Collector/router historical OTLP paths are deleted;
+- retained live runtime/control state is separated from historical observability before deleting legacy telemetry modules;
+- obsolete OpenLIT sync jobs, patches, endpoints, and dependencies are removed once they have no consumers;
+- current `main` receives visible CI/workflow evidence for the monorepo and OpenLIT acceptance gates.
+
+### Resource-state correctness
+
+- missing data renders `unknown`/`not observed`/`unavailable`, never synthetic success;
+- desired and actual state have independent provenance;
+- convergence is computed from observed generations/state rather than config presence;
+- health reflects a real runtime probe or authoritative observed state;
+- configuration does not count as runtime use;
+- tool/skill/MCP exposure does not count as execution;
+- Usage widgets contain no production fallback/demo values.
+
 Do not remove an incumbent path until the replacement has end-to-end evidence. Do not keep permanent compatibility paths after cutover.
 
 ## 16. Secondary-document policy
