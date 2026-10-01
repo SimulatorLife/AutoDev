@@ -1,15 +1,16 @@
-import "../../src/router/http.ts";
+import "@simulatorlife/autodev-runtime/router/http";
 
 import assert from "node:assert/strict";
 import test from "node:test";
-
-import { AUTODEV_WORKSPACE_KEY_HEADER } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
 import {
   COOLDOWN_CONFIG,
   COOLDOWNS,
   type CooldownSummary
 } from "@simulatorlife/autodev-runtime/router/cooldown";
+import { TOOL_CALL_OWNERSHIP } from "@simulatorlife/autodev-runtime/router/tool-call-ownership";
+import { AUTODEV_WORKSPACE_KEY_HEADER } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
+
 import {
   CONCRETE_STATUS_MAX_ATTEMPTS,
   declaredLimit,
@@ -24,19 +25,18 @@ import {
   proxyFallbackChain,
   proxyOrchestratorResponse,
   proxyRoleResponse
-} from "../../src/router/proxy.ts";
+} from "@simulatorlife/autodev-runtime/router/proxy";
 import {
   CONFIGURED_ORCHESTRATOR_MODEL,
   type ProviderRoute,
   ROUTES
-} from "../../src/router/routing.ts";
-import { agentActivity, ingestAgentEvents } from "../../src/router/server.ts";
+} from "@simulatorlife/autodev-runtime/router/routing";
+import { agentActivity, ingestAgentEvents } from "@simulatorlife/autodev-runtime/router/server";
 import {
   noteOrchestratorSession,
   resetSubagentTelemetry
-} from "../../src/router/subagents.ts";
-import { TOOL_CALL_OWNERSHIP } from "@simulatorlife/autodev-runtime/router/tool-call-ownership";
-import { countLiveAgentActivity } from "../../src/router/usage.ts";
+} from "@simulatorlife/autodev-runtime/router/subagents";
+import { countLiveAgentActivity } from "@simulatorlife/autodev-runtime/router/usage";
 
 function responseRecorder(): any {
   const chunks: Buffer[] = [];
@@ -630,7 +630,7 @@ test(
 
 test("extractSelectedSkillContext returns the body of the selected-skill input item", async () => {
   const { extractSelectedSkillContext } =
-    await import("../../src/router/proxy.ts");
+    await import("@simulatorlife/autodev-runtime/router/proxy");
   const body = "<skill>...</skill>";
   assert.equal(
     extractSelectedSkillContext({
@@ -677,7 +677,7 @@ test("extractSelectedSkillContext returns the body of the selected-skill input i
 
 test("downstreamHeadersWithSkillContext forwards skill context and codex session id", async () => {
   const { downstreamHeadersWithSkillContext } =
-    await import("../../src/router/proxy.ts");
+    await import("@simulatorlife/autodev-runtime/router/proxy");
   const claude = ROUTES.find((candidate) => candidate.provider === "claude")!;
   const headers = downstreamHeadersWithSkillContext(
     { ...claude, envKey: "TEST_PROVIDER_KEY" },

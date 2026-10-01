@@ -9,7 +9,7 @@ import {
   getDefaultConcurrencyManager,
   parseConcurrencyConfig,
   PROCESS_FALLBACK_SESSION_KEY
-} from "../src/router/concurrency.ts";
+} from "@simulatorlife/autodev-runtime/router/concurrency";
 
 type JsonRecord = Record<string, any>;
 

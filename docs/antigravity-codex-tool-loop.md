@@ -68,7 +68,7 @@ Antigravity still executes much more inside the `agy` runtime. This forces the b
 - Pending child lifetime
 - Provider-specific tool event shapes
 
-That reconstruction is both provider-specific and fragile. `src/providers/antigravity.ts` already tolerates multiple historical `stream-json` shapes because tool output and subagent argument locations have changed between `agy` versions
+That reconstruction is both provider-specific and fragile. `runtime/src/providers/antigravity.ts` already tolerates multiple historical `stream-json` shapes because tool output and subagent argument locations have changed between `agy` versions
 
 A Codex-driven tool loop would make the Codex Responses boundary authoritative instead of inferring equivalent state from Antigravity events
 
@@ -94,11 +94,11 @@ The `autodev_spawn` MCP shim lets an Antigravity orchestrator request delegation
 
 Relevant implementation:
 
-- `src/agents/bridge-spawn-session.ts`
-- `src/agents/spawn-tools.ts`
-- `src/mcp/spawn-shim.ts`
+- `runtime/src/agents/bridge-spawn-session.ts`
+- `runtime/src/agents/spawn-tools.ts`
+- `runtime/src/mcp/spawn-shim.ts`
 - `.rulesync/mcp.jsonc`
-- `src/providers/antigravity.ts`
+- `runtime/src/providers/antigravity.ts`
 
 This is preferable to an `agy`-native child because the child becomes a real Codex session, is visible in the app, routes through AutoDev normally, and inherits the same lifecycle/accounting semantics as other Codex subagents
 
@@ -679,8 +679,8 @@ Reuse Claude bridge machinery where the protocol abstractions are genuinely shar
 
 Prefer extracting provider-neutral components from:
 
-- `src/providers/claude-codex-tools.ts`
-- `src/providers/claude-turn.ts`
+- `runtime/src/providers/claude-codex-tools.ts`
+- `runtime/src/providers/claude-turn.ts`
 - `@simulatorlife/autodev-runtime/shared/responses-continuation`
 
 Candidate shared responsibilities:
@@ -951,12 +951,12 @@ Provider bridges may retain transport-specific capabilities that cannot be repre
 
 AutoDev:
 
-- `src/providers/antigravity.ts`
-- `src/providers/claude.ts`
-- `src/providers/claude-codex-tools.ts`
-- `src/providers/claude-turn.ts`
-- `src/agents/bridge-spawn-session.ts`
-- `src/agents/spawn-tools.ts`
+- `runtime/src/providers/antigravity.ts`
+- `runtime/src/providers/claude.ts`
+- `runtime/src/providers/claude-codex-tools.ts`
+- `runtime/src/providers/claude-turn.ts`
+- `runtime/src/agents/bridge-spawn-session.ts`
+- `runtime/src/agents/spawn-tools.ts`
 - `src/platform/antigravity-settings.ts`
 - `config/execution-contract.json`
 - `.rulesync/hooks.jsonc`

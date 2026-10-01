@@ -60,7 +60,7 @@ test("Claude bridge acts only through Codex tools", () => {
   // approvals, because every action a Claude turn takes is a Codex tool call.
   // The CLI keeps no built-in tool except web research, and only when Codex
   // offered its hosted web search, which no tool script can perform.
-  const source = read("src/providers/claude.ts");
+  const source = read("runtime/src/providers/claude.ts");
   for (const marker of [
     'const CLAUDE_WEB_TOOLS = ["WebSearch", "WebFetch"]',
     "const builtIns = options.webSearch ? CLAUDE_WEB_TOOLS : []",
@@ -169,7 +169,7 @@ test("Rulesync permissions and subagent generation remain deferred", () => {
 test("the permission inventory reads sources without changing them", () => {
   const paths = [
     "config/config.autodev.toml",
-    "src/providers/claude.ts",
+    "runtime/src/providers/claude.ts",
     "scripts/install.sh",
     "rulesync.jsonc",
     ".rulesync/mcp.jsonc"

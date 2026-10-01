@@ -34,8 +34,8 @@ Model version management is strictly DRY (Don't Repeat Yourself). The repository
 
 - **Sole Source of Truth**: [`config/model-routing.json`](file://config/model-routing.json) defines all provider models under `providers.<provider>.models`. To change the Codex orchestrator model, edit `providers.codex.models.orchestrator` (and `default`). To change the smart model, edit `providers.codex.models.smart`.
 - **Derived Model Catalog**: The Codex model catalog ([`config/catalogs/codex-model-catalog.json`](file://config/catalogs/codex-model-catalog.json)) is an automatically generated artifact rendered directly from [`config/model-routing.json`](file://config/model-routing.json) via [`renderModelCatalog`](file://src/config/render-model-catalog.ts) (CLI: `autodev render catalog`). The platform installer materializes and validates this catalog during `bash scripts/install.sh` and `node src/cli/install.ts --check`.
-- **Dynamic Catalog Fallback**: The router's HTTP catalog endpoint (`GET /v1/models`) dynamically includes configured Codex models from the active [`RoutingPolicy`](file://src/router/routing.ts) even before the catalog file is re-rendered.
-- **Zero-Code-Change Model Upgrades**: Tests, contract fixtures, telemetry trackers, and hooks dynamically resolve model identifiers via [`RoutingPolicy.configuredModel`](file://src/router/routing.ts), [`CONFIGURED_ORCHESTRATOR_MODEL`](file://src/router/routing.ts), and [`CONFIGURED_SMART_MODEL`](file://src/router/routing.ts) rather than hardcoding concrete model names.
+- **Dynamic Catalog Fallback**: The router's HTTP catalog endpoint (`GET /v1/models`) dynamically includes configured Codex models from the active [`RoutingPolicy`](file://runtime/src/router/routing.ts) even before the catalog file is re-rendered.
+- **Zero-Code-Change Model Upgrades**: Tests, contract fixtures, telemetry trackers, and hooks dynamically resolve model identifiers via [`RoutingPolicy.configuredModel`](file://runtime/src/router/routing.ts), [`CONFIGURED_ORCHESTRATOR_MODEL`](file://runtime/src/router/routing.ts), and [`CONFIGURED_SMART_MODEL`](file://runtime/src/router/routing.ts) rather than hardcoding concrete model names.
 - **Enforcement & Regressions**: The test suite [`tests/model-routing-dry.test.ts`](file://tests/model-routing-dry.test.ts) locks in this single-source-of-truth invariant, ensuring that updating model strings in configuration automatically propagates through routing, candidate generation, metadata synthesis, and catalog materialization without breaking tests or requiring compatibility wrappers.
 
 The editable provider/model choices live in
@@ -259,7 +259,7 @@ delegation paths:
     concurrency limit rejects one child; the tool output names that rejected child
     instead of collapsing the whole batch into an opaque `Failed creating` error.
     The canonical `orchestration` skill documents this contract, and
-    `src/agents/spawn-tools.ts` builds the call for any component
+    `runtime/src/agents/spawn-tools.ts` builds the call for any component
     that needs to emit one.
 
 - **Bridge-native spawn** (`antigravity`): the CLI behind the bridge
@@ -354,7 +354,7 @@ pinned to `codex` with `minimax` in its fallback group, and a fresh turn is not
 a continuation and so is not pinned to the provider that served the last one,
 one failover is enough to end a session.
 
-`upstreamPayload` in `src/router/responses.ts` therefore rewrites any
+`upstreamPayload` in `runtime/src/router/responses.ts` therefore rewrites any
 non-conforming id, using `@simulatorlife/autodev-runtime/shared/responses-item-ids`. The router
 is the right place for it rather than each adapter: it is the one point every
 upstream call passes through, and since stored history is re-sent rather than
@@ -1230,7 +1230,7 @@ The orchestration skill is the single source of truth for delegation procedure,
 child lifecycle, recovery, and role selection. The orchestrator prompt is only a
 small bootstrap of root identity and a pointer to the canonical policy. The native root
 hook injects the same skill content and recovery preflight; the Antigravity and
-Copilot bridges use `src/agents/bridge-role.ts` to assemble the same role prompt,
+Copilot bridges use `runtime/src/agents/bridge-role.ts` to assemble the same role prompt,
 and the Claude bridge passes Codex's own context through unchanged. Execution-contract JSON is a
 generated projection for provider diagnostics; it is not a second editable role
 capability list. Native child calls carry only `agent_type` and the task message.
@@ -1292,7 +1292,7 @@ default prompt, rather than `--append-system-prompt`, which leaves it in force
 underneath. The default prompt's harness guidance describes tools a bridged
 turn does not have and competes with the role policy.
 
-The replacement prompt (`systemPrompt()` in `src/providers/claude.ts`) says only
+The replacement prompt (`systemPrompt()` in `runtime/src/providers/claude.ts`) says only
 how to act: the conversation that follows is the Codex agent's own context,
 every action goes through the session's Codex tools, and the final message is
 the agent's reply. It also states the workspace the bridge resolved from
@@ -1319,7 +1319,7 @@ or unrecognized header fails closed to the bounded policy. The
 `enforce-root-delegation.sh` `UserPromptSubmit` hook injects the orchestrator
 bootstrap and the canonical `orchestration` skill, so the root agent gets one
 delegation policy no matter which provider serves it. The Antigravity and
-Copilot bridges share `src/agents/bridge-role.ts`; the Claude bridge takes the
+Copilot bridges share `runtime/src/agents/bridge-role.ts`; the Claude bridge takes the
 same prompts from Codex's context. The installer copies `src/` runtime modules
 under `$CODEX_HOME/src/` and script-backed bridge assets under the hooks
 runtime, so a bridge uses the same relative layout in a checkout and an
@@ -1532,9 +1532,9 @@ The shared reporter is `runtime/src/telemetry/agent-events.ts`, exported as
 `@simulatorlife/autodev-runtime/telemetry`. Provider bridges consume that
 workspace contract; the installer links `CODEX_HOME/node_modules` to the
 workspace rather than copying a second telemetry source file. The native spawn
-script/SSE helper is `src/agents/spawn-tools.ts`, and the Antigravity and
+script/SSE helper is `runtime/src/agents/spawn-tools.ts`, and the Antigravity and
 Copilot bridges' per-turn `autodev_spawn` server launches the shared
-`src/mcp/spawn-shim.ts`. Claude children are `router_alias` spawns: a Claude
+`runtime/src/mcp/spawn-shim.ts`. Claude children are `router_alias` spawns: a Claude
 orchestrator spawns through Codex, so its children are ordinary
 `autodev/<role>` requests.
 
@@ -1695,17 +1695,17 @@ thread truthfully reported that nothing had been done while the edits sat in
 the workspace (observed 2026-09-18, worker thread
 `01a0b664-aa5f-7dd0-b848-3f321b1f680a`).
 
-- **Tool surface.** `src/providers/claude-codex-tools.ts` mirrors the tools on
+- **Tool surface.** `runtime/src/providers/claude-codex-tools.ts` mirrors the tools on
   Codex's request -- in code mode the `functions` namespace inside the
   `additional_tools` input item: the `exec` custom tool (JavaScript against a
   `tools` global carrying `exec_command`, `apply_patch`, the role's MCP servers,
   and, for an orchestrator, `multi_agent_v1__*`) and function tools such as
-  `wait` -- into an MCP server, `src/mcp/codex-tools-shim.ts`, that the CLI is
+  `wait` -- into an MCP server, `runtime/src/mcp/codex-tools-shim.ts`, that the CLI is
   given with `--strict-mcp-config`. The CLI runs with `--tools ""`: no built-in
   tool, except `WebSearch`/`WebFetch` on turns where Codex offered its hosted
   `web_search`, which no tool script can perform.
 - **Parking.** When Claude calls a mirrored tool, the shim blocks and the bridge
-  (`src/providers/claude-turn.ts`) emits the call as a `custom_tool_call` or
+  (`runtime/src/providers/claude-turn.ts`) emits the call as a `custom_tool_call` or
   `function_call` item, completes the response, and keeps the CLI parked. Codex
   runs the call in the turn's sandbox with its approvals and hooks, the app
   renders it, and Codex's next request carries the output; the bridge matches
@@ -1930,8 +1930,8 @@ tool"):
 
 | Bridge                             | Authenticates as                                                                                                                                                                                                            |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/providers/claude.ts`          | the `claude` CLI's Claude Code OAuth subscription. `claudeEnvironment()` **removes** `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment so the CLI cannot silently fall back to metered API billing. |
-| `src/providers/antigravity.ts`     | the `agy` CLI's Antigravity subscription. `ensure-codex-antigravity-proxy.sh` refuses to start unless `useAiCredits=false` and `useG1Credits=false`.                                                                        |
+| `runtime/src/providers/claude.ts`          | the `claude` CLI's Claude Code OAuth subscription. `claudeEnvironment()` **removes** `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment so the CLI cannot silently fall back to metered API billing. |
+| `runtime/src/providers/antigravity.ts`     | the `agy` CLI's Antigravity subscription. `ensure-codex-antigravity-proxy.sh` refuses to start unless `useAiCredits=false` and `useG1Credits=false`.                                                                        |
 | `runtime/src/providers/copilot.ts` | the `copilot` CLI's own login.                                                                                                                                                                                              |
 | `runtime/src/providers/minimax.ts` | a plain `MINIMAX_API_KEY`; no subprocess.                                                                                                                                                                                   |
 

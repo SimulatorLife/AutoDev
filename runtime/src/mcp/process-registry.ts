@@ -10,7 +10,7 @@
  * hold it against the session key, reap any whose owner has not been seen
  * for too long, and hand the rest back to SIGTERM/SIGINT cleanup.
  *
- * The contract mirrors `SpawnSessionRegistry` in `src/agents/bridge-spawn-session.ts`:
+ * The contract mirrors `SpawnSessionRegistry` in `runtime/src/agents/bridge-spawn-session.ts`:
  *
  *   - bounded: at most `maxEntries` children held at once. Older entries are
  *     evicted by last-activity when a new registration would exceed the cap,

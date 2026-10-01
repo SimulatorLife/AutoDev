@@ -5,10 +5,11 @@ import {
   classifyProviderFailure,
   type RouterEvent,
   RouterEventRecorder
-} from "../../src/router/events.ts";
-import { activitySubjectFor } from "../../src/router/proxy.ts";
-import { CONFIGURED_SMART_MODEL } from "../../src/router/routing.ts";
-import { UsageTracker } from "../../src/router/usage.ts";
+} from "@simulatorlife/autodev-runtime/router/events";
+
+import { activitySubjectFor } from "@simulatorlife/autodev-runtime/router/proxy";
+import { CONFIGURED_SMART_MODEL } from "@simulatorlife/autodev-runtime/router/routing";
+import { UsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
 
 test("classifyProviderFailure accurately classifies status codes and error bodies", () => {
   assert.equal(classifyProviderFailure(429, "too many requests"), "throttled");

@@ -48,27 +48,27 @@ import {
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
 import {
-  composeProviderPrompt,
-  isOrchestratorRole,
-  resolveAgentRole
-} from "../agents/bridge-role.ts";
-import {
   bridgeSkillContext,
-  readOnlySystemPromptInjection
-} from "../agents/bridge-sandbox.ts";
-import { SpawnSessionRegistry } from "../agents/bridge-spawn-session.ts";
-import {
   buildSpawnScript,
+  composeProviderPrompt,
   execToolCallSseEvents,
+  isOrchestratorRole,
   mintCallId,
-  mintCallItemId
-} from "../agents/spawn-tools.ts";
+  mintCallItemId,
+  readOnlySystemPromptInjection,
+  resolveAgentRole,
+  SpawnSessionRegistry
+} from "@simulatorlife/autodev-runtime/agents";
 import {
   type AgentEventReporter,
   REQUEST_ID_HEADER,
   resolveAgentEventReporter,
   SKILL_READ_SOURCE
 } from "@simulatorlife/autodev-runtime/telemetry";
+import {
+  resolveRuntimeSourcePath,
+  resolveRuntimeSourceRoot
+} from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
 // Bind the port only when run as a program. The shared request-shaping helpers
 // below are pure and worth testing directly; importing this file must not take
@@ -384,9 +384,10 @@ const ANTIGRAVITY_MCP_EXPOSURE_SOURCE = "role_contract";
 // the only place a `read_file`/`view_file` or shell read of one of these
 // files is observable at all.
 const HOME = homedir();
-const REPO_ROOT =
-  process.env.AUTODEV_REPO_ROOT ||
-  resolvePath(join(import.meta.dirname, "..", ".."));
+const REPO_ROOT = resolveRuntimeSourceRoot(
+  import.meta.dirname,
+  process.env.AUTODEV_REPO_ROOT
+);
 const SKILL_ROOTS = [
   join(HOME, ".agents", "skills"),
   join(HOME, ".codex", "skills"),
@@ -1428,7 +1429,7 @@ function activityText(event: JsonValue): string {
 }
 
 // Delegation requests the shim collects while a turn is in flight. See
-// src/agents/bridge-spawn-session.ts for why the session key matters.
+// runtime/src/agents/bridge-spawn-session.ts for why the session key matters.
 const spawnSessions = new SpawnSessionRegistry();
 
 interface IsolatedHomeOptions {
@@ -1544,8 +1545,9 @@ function bridgeStdioMcpEntry(
   }
   if (!Array.isArray(tools) || !tools.every((tool) => typeof tool === "string"))
     throw new Error(`MCP server ${name} has an invalid role tool allowlist`);
-  const filterScript = resolvePath(
-    join(import.meta.dirname, "..", "mcp", "tool-filter.ts")
+  const filterScript = resolveRuntimeSourcePath(
+    REPO_ROOT,
+    "mcp/tool-filter.ts"
   );
   if (!existsSync(filterScript))
     throw new Error(
@@ -1566,9 +1568,7 @@ function bridgeSpawnMcpEntry(options?: IsolatedHomeOptions): JsonRecord {
     options?.codexHome ??
     process.env.CODEX_HOME ??
     join(options?.originalHome ?? process.env.HOME ?? homedir(), ".codex");
-  const repoShim = resolvePath(
-    join(import.meta.dirname, "..", "mcp", "spawn-shim.ts")
-  );
+  const repoShim = resolveRuntimeSourcePath(REPO_ROOT, "mcp/spawn-shim.ts");
   const codexShim = join(codexHome, "src", "mcp", "spawn-shim.ts");
   const targetShim = existsSync(repoShim) ? repoShim : codexShim;
   return {

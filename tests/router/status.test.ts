@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseRouterRuntimeStatus } from "../../src/router/status.ts";
+import { parseRouterRuntimeStatus } from "@simulatorlife/autodev-runtime/router/status";
 
 test("router runtime status selects operational fields and excludes history", () => {
   const status = parseRouterRuntimeStatus({

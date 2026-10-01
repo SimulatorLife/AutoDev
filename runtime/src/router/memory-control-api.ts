@@ -21,6 +21,7 @@ import {
 import {
   MemoryAuthorizationError,
   MemoryConflictError,
+  type MemoryExperienceCaptureInput,
   type MemoryProposalInput,
   type MemoryService,
   type MemorySkillPromotionArtifact,
@@ -1005,23 +1006,10 @@ async function captureCodexExperience(
     const experienceId = `codex-session-${createHash("sha256")
       .update(sessionId)
       .digest("hex")}`;
-    const existing = await service.getExperience(experienceId, context);
-    if (existing) {
-      audit({
-        action: MEMORY_CAPTURE_ACTION,
-        resource: MEMORY_EXPERIENCE_RESOURCE,
-        outcome: "ok",
-        changes: { source: "codex", duplicate: true }
-      });
-      sendJson(
-        response,
-        200,
-        { schema: "autodev-memory-capture-v1", captured: false },
-        { "cache-control": "no-store" }
-      );
-      return;
-    }
     const trajectoryUri = `codex://session/${encodeURIComponent(sessionId)}`;
+    const transcriptDigest = createHash("sha256")
+      .update(transcript, "utf8")
+      .digest("hex");
     const startedAt =
       Number.isFinite(metadata.birthtimeMs) && metadata.birthtimeMs > 0
         ? new Date(metadata.birthtimeMs).toISOString()
@@ -1047,16 +1035,16 @@ async function captureCodexExperience(
       outcome: "unknown",
       evidence: [{ kind: "trajectory", uri: trajectoryUri }]
     };
-    await service.captureExperience(
-      {
-        source: "codex",
-        transcript,
-        trajectoryUri,
-        experience
-      },
-      { id: "autodev-codex-session-end", authority: "system" },
+    const captured = await captureCodexExperienceIdempotently(
+      service,
+      { source: "codex", transcript, trajectoryUri, experience },
+      transcriptDigest,
       context
     );
+    if (!captured) {
+      respondToDuplicateCodexCapture(response, audit);
+      return;
+    }
     audit({
       action: MEMORY_CAPTURE_ACTION,
       resource: MEMORY_EXPERIENCE_RESOURCE,
@@ -1086,15 +1074,28 @@ async function captureCodexExperience(
       );
       return;
     }
+    if (error instanceof MemoryConflictError) {
+      audit({
+        action: MEMORY_CAPTURE_ACTION,
+        resource: MEMORY_EXPERIENCE_RESOURCE,
+        outcome: "error",
+        changes: null,
+        reason: "captured_transcript_conflict"
+      });
+      sendMemoryError(
+        response,
+        409,
+        "autodev_memory_capture_conflict",
+        "Native transcript conflicts with the previously captured session."
+      );
+      return;
+    }
     audit({
       action: MEMORY_CAPTURE_ACTION,
       resource: MEMORY_EXPERIENCE_RESOURCE,
       outcome: "error",
       changes: null,
-      reason:
-        error instanceof MemoryConflictError
-          ? "duplicate_capture_race"
-          : "capture_failed"
+      reason: "capture_failed"
     });
     sendMemoryError(
       response,
@@ -1103,6 +1104,59 @@ async function captureCodexExperience(
       "Native trajectory capture could not be completed."
     );
   }
+}
+
+async function captureCodexExperienceIdempotently(
+  service: MemoryService,
+  input: MemoryExperienceCaptureInput,
+  transcriptDigest: string,
+  context: MemoryReadContext
+): Promise<boolean> {
+  const matchesCapture = (existing: ExperienceEnvelope | null): boolean =>
+    existing?.trajectory.uri === input.trajectoryUri &&
+    existing.trajectory.digest === transcriptDigest;
+  const existing = await service.getExperience(input.experience.id, context);
+  if (existing) {
+    if (matchesCapture(existing)) return false;
+    throw new MemoryConflictError(
+      "Codex session transcript differs from its captured version."
+    );
+  }
+
+  try {
+    await service.captureExperience(
+      input,
+      { id: "autodev-codex-session-end", authority: "system" },
+      context
+    );
+    return true;
+  } catch (error) {
+    if (!(error instanceof MemoryConflictError)) throw error;
+    const concurrentlyCaptured = await service.getExperience(
+      input.experience.id,
+      context
+    );
+    if (matchesCapture(concurrentlyCaptured)) return false;
+    throw error;
+  }
+}
+
+function respondToDuplicateCodexCapture(
+  response: ServerResponse,
+  audit: MemoryControlAudit
+): void {
+  audit({
+    action: MEMORY_CAPTURE_ACTION,
+    resource: MEMORY_EXPERIENCE_RESOURCE,
+    outcome: "ok",
+    changes: { source: "codex", duplicate: true }
+  });
+  sendJson(
+    response,
+    200,
+    { schema: "autodev-memory-capture-v1", captured: false },
+    { "cache-control": "no-store" }
+  );
 }
 
 function auditMemoryFailure(

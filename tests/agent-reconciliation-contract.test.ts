@@ -5,10 +5,11 @@ import { describe, test } from "node:test";
 import {
   AGENT_ACTIVITY_KINDS,
   AGENT_ACTIVITY_STATES
-} from "../src/agents/agent-activity.ts";
-import { getDefaultConcurrencyManager } from "../src/router/concurrency.ts";
-import { agentActivity, agentsStatus } from "../src/router/http.ts";
-import { projectLiveAgents } from "../src/router/usage.ts";
+} from "@simulatorlife/autodev-runtime/agents";
+import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
+
+import { agentActivity, agentsStatus } from "@simulatorlife/autodev-runtime/router/http";
+import { projectLiveAgents } from "@simulatorlife/autodev-runtime/router/usage";
 
 type AgentActivityState = (typeof AGENT_ACTIVITY_STATES)[number];
 

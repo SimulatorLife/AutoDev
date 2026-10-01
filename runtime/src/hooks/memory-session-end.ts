@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Control API's fixed local identity; hooks cannot import Core under the layer rules.
 const LOCAL_CONTROL_API_ACTOR = "autodev-local";
@@ -164,6 +165,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export const runMemorySessionEnd = createMemorySessionEndHandler();
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+function isEntrypoint(): boolean {
+  const argument = process.argv[1];
+  if (!argument) return false;
+  const modulePath = fileURLToPath(import.meta.url);
+  try {
+    // macOS resolves /tmp to /private/tmp in import.meta.url. Compare real
+    // paths so the materialized CODEX_HOME copy still runs from either path.
+    return realpathSync(argument) === realpathSync(modulePath);
+  } catch {
+    return path.resolve(argument) === path.resolve(modulePath);
+  }
+}
+
+if (isEntrypoint()) {
   process.exitCode = await runMemorySessionEnd();
 }

@@ -10,6 +10,7 @@ import {
 } from "@simulatorlife/autodev-runtime/memory";
 import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
 
+import { configuredMemoryEmbeddingProvider } from "./memory-embedding.ts";
 import { RoutedMemoryReconstructor } from "./memory-reconstruction.ts";
 import { routerTelemetryTracer } from "./telemetry.ts";
 
@@ -200,8 +201,10 @@ function configuredMemoryHost(): PostgresMemoryHost | null {
   try {
     const useExistingOrchestratorModel =
       process.env.AUTODEV_MEMORY_RECONSTRUCTION !== "deterministic";
+    const embedder = configuredMemoryEmbeddingProvider();
     memoryHost = createPostgresMemoryHost({
       databaseUrl,
+      ...(embedder ? { embedder } : {}),
       ...(useExistingOrchestratorModel
         ? {
             reconstructor: new RoutedMemoryReconstructor(),

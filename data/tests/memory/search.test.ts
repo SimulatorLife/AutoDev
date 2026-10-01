@@ -52,7 +52,10 @@ test("buildMemorySearchQuery applies hard scope/status/validity filters before r
   );
   assert.match(cteBody, /kind = ANY\(\$\d+::text\[\]\)/);
   assert.match(cteBody, /scope_kind = 'workspace'/);
-  assert.match(cteBody, /claim_search @@ plainto_tsquery\('english', \$\d+\)/);
+  assert.match(
+    cteBody,
+    /claim_search @@ replace\(plainto_tsquery\('english', \$\d+\)::text, ' & ', ' \| '\)::tsquery/
+  );
 
   // Ranking expressions must never appear inside the filter stage.
   assert.doesNotMatch(cteBody, /ts_rank|<=>/);

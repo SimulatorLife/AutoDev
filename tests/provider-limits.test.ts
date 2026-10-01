@@ -245,7 +245,7 @@ test("a classified Antigravity permission denial survives the incomplete boundar
 });
 
 test("typed bridges consume the Runtime-owned provider-limit contract", () => {
-  const bridge = read("src/providers/claude.ts");
+  const bridge = read("runtime/src/providers/claude.ts");
   assert.match(
     bridge,
     /@simulatorlife\/autodev-runtime\/shared\/provider-limits/u
@@ -256,7 +256,7 @@ test("typed bridges consume the Runtime-owned provider-limit contract", () => {
   assert.match(bridge, /limitResponseHeaders/);
   // A Claude turn emits its items as they finish, so it ends an interrupted
   // response from the shared details and notice rather than a fixed layout.
-  const turn = read("src/providers/claude-turn.ts");
+  const turn = read("runtime/src/providers/claude-turn.ts");
   assert.match(
     turn,
     /@simulatorlife\/autodev-runtime\/shared\/provider-limits/u

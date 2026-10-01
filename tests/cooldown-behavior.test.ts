@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { describe, test } from "node:test";
 
 import { COOLDOWNS as cooldowns } from "@simulatorlife/autodev-runtime/router/cooldown";
-import { ROUTING_POLICY as routing } from "../src/router/routing.ts";
+import { ROUTING_POLICY as routing } from "@simulatorlife/autodev-runtime/router/routing";
 
 type JsonRecord = Record<string, any>;
 cooldowns.setRuntime({

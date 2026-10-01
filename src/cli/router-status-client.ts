@@ -1,7 +1,7 @@
 import {
   parseRouterRuntimeStatus,
   type RouterRuntimeStatus
-} from "../router/status.ts";
+} from "@simulatorlife/autodev-runtime/router/status";
 
 export async function fetchRouterStatus(): Promise<RouterRuntimeStatus> {
   const host = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";

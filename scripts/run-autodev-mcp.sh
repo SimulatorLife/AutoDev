@@ -12,4 +12,4 @@ done
 repo_root="${AUTODEV_REPO_ROOT:-$(cd -- "$(dirname -- "$target")/.." && pwd)}"
 node_bin="${AUTODEV_NODE_BIN:-$(command -v node || true)}"
 [[ -x "$node_bin" ]] || { echo "AutoDev MCP launcher: node not found" >&2; exit 127; }
-exec env AUTODEV_REPO_ROOT="$repo_root" "$node_bin" "$repo_root/src/mcp/launcher.ts" "$@"
+exec env AUTODEV_REPO_ROOT="$repo_root" "$node_bin" "$repo_root/runtime/src/mcp/launcher.ts" "$@"

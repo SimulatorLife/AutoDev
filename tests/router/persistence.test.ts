@@ -12,7 +12,7 @@ import {
   RouterPersistence,
   serializeRouterState,
   setDefaultPersistenceManager
-} from "../../src/router/persistence.ts";
+} from "@simulatorlife/autodev-runtime/router/persistence";
 
 test("effectiveStateFile resolves custom, environment, or default path", () => {
   assert.equal(effectiveStateFile("/custom/file.json"), "/custom/file.json");

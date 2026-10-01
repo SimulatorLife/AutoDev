@@ -16,7 +16,7 @@ import { AUTODEV_WORKSPACE_KEY_HEADER } from "@simulatorlife/autodev-runtime/tel
 // speaks MCP exactly as the CLI does, across the requests Codex would send.
 
 const REPO_ROOT = resolvePath(import.meta.dirname, "..");
-const BRIDGE = join(REPO_ROOT, "src/providers/claude.ts");
+const BRIDGE = join(REPO_ROOT, "runtime/src/providers/claude.ts");
 type JsonRecord = Record<string, any>;
 
 // A stand-in for `claude -p --output-format stream-json`: reads the prompt on

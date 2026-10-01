@@ -14,7 +14,7 @@ import {
   ROUTING_POLICY,
   RoutingPolicy,
   type RoutingPolicyConfig
-} from "../src/router/routing.ts";
+} from "@simulatorlife/autodev-runtime/router/routing";
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const ROUTING_CONFIG_PATH = join(REPO_ROOT, "config/model-routing.json");
@@ -40,10 +40,7 @@ test("config/model-routing.json is the single source of truth for model versions
     ROUTING_POLICY.orchestratorModel,
     config.providers.codex.models.orchestrator
   );
-  assert.equal(
-    ROUTING_POLICY.smartModel,
-    config.providers.codex.models.smart
-  );
+  assert.equal(ROUTING_POLICY.smartModel, config.providers.codex.models.smart);
   assert.equal(
     ROUTING_POLICY.configuredModel("codex", "orchestrator"),
     config.providers.codex.models.orchestrator
@@ -55,7 +52,9 @@ test("config/model-routing.json is the single source of truth for model versions
 });
 
 test("changing model in a single config field dynamically propagates through RoutingPolicy without code changes", () => {
-  const baseConfig = JSON.parse(JSON.stringify(ROUTING_POLICY.config)) as RoutingPolicyConfig;
+  const baseConfig = JSON.parse(
+    JSON.stringify(ROUTING_POLICY.config)
+  ) as RoutingPolicyConfig;
 
   // Simulate updating the model versions in ONE config file, ONE field each
   const customOrchestrator = "gpt-future-orchestrator-9000";
@@ -68,7 +67,10 @@ test("changing model in a single config field dynamically propagates through Rou
   const dynamicPolicy = new RoutingPolicy(baseConfig);
 
   // 1. Configured model accessors reflect the new model immediately
-  assert.equal(dynamicPolicy.configuredModel("codex", "orchestrator"), customOrchestrator);
+  assert.equal(
+    dynamicPolicy.configuredModel("codex", "orchestrator"),
+    customOrchestrator
+  );
   assert.equal(dynamicPolicy.configuredModel("codex", "smart"), customSmart);
   assert.equal(dynamicPolicy.orchestratorModel, customOrchestrator);
   assert.equal(dynamicPolicy.smartModel, customSmart);
@@ -80,12 +82,17 @@ test("changing model in a single config field dynamically propagates through Rou
   assert.equal(orchestratorCandidates[0]!.model, customOrchestrator);
 
   const smartCandidates = dynamicPolicy.roleCandidates("smart");
-  const codexSmartCandidate = smartCandidates.find((c) => c.provider === "codex");
+  const codexSmartCandidate = smartCandidates.find(
+    (c) => c.provider === "codex"
+  );
   assert.ok(codexSmartCandidate, "codex candidate must exist for smart role");
   assert.equal(codexSmartCandidate.model, customSmart);
 
   // 3. Concrete routing resolves the new models to the codex provider
-  assert.equal(dynamicPolicy.routeForModel(customOrchestrator)?.provider, "codex");
+  assert.equal(
+    dynamicPolicy.routeForModel(customOrchestrator)?.provider,
+    "codex"
+  );
   assert.equal(dynamicPolicy.routeForModel(customSmart)?.provider, "codex");
 
   // 4. Provider model metadata synthesizes correctly
@@ -104,7 +111,10 @@ test("changing model in a single config field dynamically propagates through Rou
 test("renderModelCatalog dynamically generates complete codex-model-catalog from model-routing.json", async () => {
   const renderedJson = renderModelCatalog(ROUTING_CONFIG_PATH, CATALOGS_DIR);
   const rendered = JSON.parse(renderedJson);
-  const models = rendered.models as Array<{ slug: string; default_reasoning_level?: string }>;
+  const models = rendered.models as Array<{
+    slug: string;
+    default_reasoning_level?: string;
+  }>;
   const slugs = new Set(models.map((m) => m.slug));
 
   // Both configured models must be rendered in the catalog
@@ -118,7 +128,9 @@ test("renderModelCatalog dynamically generates complete codex-model-catalog from
   );
 
   // Verify reasoning levels match requirements
-  const orchestratorEntry = models.find((m) => m.slug === CONFIGURED_ORCHESTRATOR_MODEL);
+  const orchestratorEntry = models.find(
+    (m) => m.slug === CONFIGURED_ORCHESTRATOR_MODEL
+  );
   assert.ok(orchestratorEntry);
   assert.equal(orchestratorEntry.default_reasoning_level, "xhigh");
 
@@ -141,7 +153,11 @@ test("codex-model-catalog.json on disk is in sync with model-routing.json", asyn
     CODEX_CATALOG_OUTPUT,
     true
   );
-  assert.equal(exitCode, 0, "codex-model-catalog.json must match renderModelCatalog output");
+  assert.equal(
+    exitCode,
+    0,
+    "codex-model-catalog.json must match renderModelCatalog output"
+  );
 });
 
 test("renderModelCatalog dynamically handles arbitrary new model additions without code changes", async () => {
@@ -155,14 +171,26 @@ test("renderModelCatalog dynamically handles arbitrary new model additions witho
     const customConfig = JSON.parse(raw);
     customConfig.providers.codex.models.orchestrator = "gpt-next-alpha";
     customConfig.providers.codex.models.smart = "gpt-next-beta";
-    await writeFile(mockRoutingPath, JSON.stringify(customConfig, null, 2), "utf8");
+    await writeFile(
+      mockRoutingPath,
+      JSON.stringify(customConfig, null, 2),
+      "utf8"
+    );
 
     const renderedJson = renderModelCatalog(mockRoutingPath, CATALOGS_DIR);
     const rendered = JSON.parse(renderedJson);
-    const slugs = (rendered.models as Array<{ slug: string }>).map((m) => m.slug);
+    const slugs = (rendered.models as Array<{ slug: string }>).map(
+      (m) => m.slug
+    );
 
-    assert.ok(slugs.includes("gpt-next-alpha"), "Catalog must contain newly configured orchestrator model");
-    assert.ok(slugs.includes("gpt-next-beta"), "Catalog must contain newly configured smart model");
+    assert.ok(
+      slugs.includes("gpt-next-alpha"),
+      "Catalog must contain newly configured orchestrator model"
+    );
+    assert.ok(
+      slugs.includes("gpt-next-beta"),
+      "Catalog must contain newly configured smart model"
+    );
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

@@ -10,7 +10,7 @@
  * history -- which is exactly the failure this module exists to prevent.
  *
  * The CLI cannot reach Codex itself, so the bridge mirrors the request's tool
- * surface into an MCP server (`src/mcp/codex-tools-shim.ts`). A call the
+ * surface into an MCP server (`runtime/src/mcp/codex-tools-shim.ts`). A call the
  * model makes through that server parks inside the bridge until Codex returns
  * the call's output on its next request.
  *

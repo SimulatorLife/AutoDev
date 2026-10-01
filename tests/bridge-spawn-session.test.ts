@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   SpawnSessionRegistry,
   UNIDENTIFIED_SESSION_SCOPE
-} from "../src/agents/bridge-spawn-session.ts";
+} from "@simulatorlife/autodev-runtime/agents";
 
 const registry = (
   overrides: Record<string, unknown> = {}

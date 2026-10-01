@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createAgentActivityTracker } from "../../src/agents/agent-activity.ts";
+import { createAgentActivityTracker } from "@simulatorlife/autodev-runtime/agents";
+
 import {
   clearWorkspaceCapabilities,
   emptyUsageBucket,
@@ -28,7 +29,7 @@ import {
   usagePersistenceSnapshot,
   usageStatus,
   UsageTracker
-} from "../../src/router/usage.ts";
+} from "@simulatorlife/autodev-runtime/router/usage";
 
 test("emptyUsageBucket produces standard zeroed telemetry counters", () => {
   const bucket = emptyUsageBucket();
@@ -423,7 +424,10 @@ test("projectLiveAgents and usageStatus reflect live agent activity", () => {
 
   const status = tracker.usageStatus(1000, projection);
   assert.equal(status.totals.active, 1);
-  assert.equal((status.byWorkspace.RepoX as Record<string, unknown>)?.active, 1);
+  assert.equal(
+    (status.byWorkspace.RepoX as Record<string, unknown>)?.active,
+    1
+  );
   assert.equal(status.byRole.explorer!.active, 1);
 });
 
@@ -473,7 +477,9 @@ test("usagePersistenceSnapshot and restoreUsagePersistenceSnapshot preserve full
 
   // Restore into a clean tracker
   const cleanTracker = new UsageTracker();
-  cleanTracker.restoreUsagePersistenceSnapshot(snapshot as unknown as Record<string, unknown>);
+  cleanTracker.restoreUsagePersistenceSnapshot(
+    snapshot as unknown as Record<string, unknown>
+  );
 
   assert.equal(cleanTracker.usageTelemetry.totals.attempts, 1);
   assert.equal(cleanTracker.usageTelemetry.totals.successes, 1);

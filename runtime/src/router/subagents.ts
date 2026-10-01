@@ -6,7 +6,7 @@ import type { ExecutionContract } from "@simulatorlife/autodev-runtime/shared/ex
 import {
   type AgentActivityTracker,
   PROCESS_FALLBACK_SESSION_KEY
-} from "./concurrency.ts";
+} from "@simulatorlife/autodev-runtime/router/concurrency";
 
 // Normalise the persisted `settled` counter block. The router records it
 // as `{ success, failure }`; persistence may hand back an object whose
@@ -1364,4 +1364,4 @@ export function resetSpawnFailureTelemetry(): void {
   getDefaultSubagentRegistry().resetSpawnFailureTelemetry();
 }
 
-export { PROCESS_FALLBACK_SESSION_KEY } from "./concurrency.ts";
+export { PROCESS_FALLBACK_SESSION_KEY } from "@simulatorlife/autodev-runtime/router/concurrency";

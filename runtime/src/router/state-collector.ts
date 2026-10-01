@@ -226,10 +226,7 @@ function parseRepositoryPathname(normalized: string): string {
 
 function repositoryIdentity(remote: unknown): string | null {
   if (typeof remote !== "string" || !remote.trim()) return null;
-  const normalized = remote.trim().replace(
-    REPO_GIT_SCP_REGEX,
-    "https://$1/"
-  );
+  const normalized = remote.trim().replace(REPO_GIT_SCP_REGEX, "https://$1/");
   const pathname = parseRepositoryPathname(normalized);
   const parts = pathname
     .split("/")
@@ -278,9 +275,7 @@ function stripAsciiControlCharacters(value: string): string {
 
 function safeMetricLabel(value: unknown, fallback = "unknown"): string {
   if (typeof value !== "string" || !value.trim()) return fallback;
-  return (
-    stripAsciiControlCharacters(value.trim()).slice(0, 100) || fallback
-  );
+  return stripAsciiControlCharacters(value.trim()).slice(0, 100) || fallback;
 }
 
 function isRow(value: unknown): value is SqliteRow {
@@ -822,9 +817,7 @@ function projectThreadWorkspaceMetadata(
   workspaceKey: string;
   workspaceSource: "git_origin_url" | "cwd" | "unknown";
   attributionConfidence:
-    | "confirmed_git_origin"
-    | "cwd_fallback"
-    | "unattributed";
+    "confirmed_git_origin" | "cwd_fallback" | "unattributed";
 } {
   const projectKey = repository ?? basenameLabel ?? "unknown";
   const workspaceSource: "git_origin_url" | "cwd" | "unknown" = repository
@@ -833,9 +826,7 @@ function projectThreadWorkspaceMetadata(
       ? "cwd"
       : "unknown";
   const attributionConfidence:
-    | "confirmed_git_origin"
-    | "cwd_fallback"
-    | "unattributed" = repository
+    "confirmed_git_origin" | "cwd_fallback" | "unattributed" = repository
     ? "confirmed_git_origin"
     : basenameLabel
       ? "cwd_fallback"
@@ -885,12 +876,7 @@ function projectThreadRow(
     source: readOptionalLabelColumn(row, present, "source", null),
     threadSource: readOptionalLabelColumn(row, present, "thread_source", null),
     agentRole: readOptionalLabelColumn(row, present, "agent_role", "unknown"),
-    agentNickname: readOptionalLabelColumn(
-      row,
-      present,
-      "agent_nickname",
-      ""
-    ),
+    agentNickname: readOptionalLabelColumn(row, present, "agent_nickname", ""),
     model: readOptionalLabelColumn(row, present, "model", "unknown"),
     reasoningEffort: readOptionalLabelColumn(
       row,
@@ -898,12 +884,9 @@ function projectThreadRow(
       "reasoning_effort",
       ""
     ),
-    historyMode: readOptionalLabelColumn(
-      row,
-      present,
-      "history_mode",
-      "legacy"
-    ) ?? "legacy",
+    historyMode:
+      readOptionalLabelColumn(row, present, "history_mode", "legacy") ??
+      "legacy",
     archived: readOptionalBooleanColumn(row, present, "archived"),
     archivedAtMs: readOptionalMsColumn(
       row,

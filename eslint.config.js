@@ -88,17 +88,36 @@ const focusedTestRestrictedSyntax = [
 const element = (type, pattern) => ({ type, pattern, partialMatch: false });
 const architectureFiles = [
   { category: "console-entrypoint", pattern: "console/src/index.ts" },
-  { category: "package-config", pattern: "console/next.config.ts" }
+  { category: "package-config", pattern: "console/next.config.ts" },
+  {
+    category: "runtime-router-status",
+    pattern: "runtime/src/router/status.ts"
+  },
+  {
+    category: "runtime-router-events",
+    pattern: "runtime/src/router/events.ts"
+  },
+  {
+    category: "runtime-router-live-feed",
+    pattern: "runtime/src/router/live-feed.ts"
+  },
+  {
+    category: "runtime-router-state-collector",
+    pattern: "runtime/src/router/state-collector.ts"
+  }
 ];
 const architectureElements = [
   element("core", "core/src/**"),
   element("data", "data/src/**"),
   element("runtime-memory", "runtime/src/memory/**"),
+  element("runtime-mcp", "runtime/src/mcp/**"),
   element("runtime-agents", "runtime/src/agents/**"),
   element("runtime-providers", "runtime/src/providers/**"),
   element("runtime-platform", "runtime/src/platform/**"),
+  element("runtime-router-concurrency", "runtime/src/router/concurrency/**"),
   element("runtime-router-cooldown", "runtime/src/router/cooldown/**"),
   element("runtime-router-lifecycle", "runtime/src/router/lifecycle/**"),
+  element("runtime-router-persistence", "runtime/src/router/persistence/**"),
   element(
     "runtime-router-tool-ownership",
     "runtime/src/router/tool-call-ownership/**"
@@ -109,11 +128,8 @@ const architectureElements = [
     "runtime/src/telemetry/resource-context/**"
   ),
   element("runtime-telemetry", "runtime/src/telemetry/**"),
-  element("agents", "src/agents/**"),
   element("config", "src/config/**"),
-  element("mcp", "src/mcp/**"),
   element("router", "src/router/**"),
-  element("providers", "src/providers/**"),
   element("platform", "src/platform/**"),
   element("runtime-hooks", "runtime/src/hooks/**"),
   element("cli", "src/cli/**"),
@@ -129,21 +145,21 @@ const architectureElements = [
 ];
 
 const allSourceElements = [
-  "agents",
   "config",
-  "mcp",
   "router",
-  "providers",
   "platform",
   "cli",
   "core",
   "data",
   "runtime-memory",
+  "runtime-mcp",
   "runtime-agents",
   "runtime-providers",
   "runtime-platform",
+  "runtime-router-concurrency",
   "runtime-router-cooldown",
   "runtime-router-lifecycle",
+  "runtime-router-persistence",
   "runtime-router-tool-ownership",
   "runtime-shared",
   "runtime-hooks",
@@ -177,41 +193,34 @@ const architecturePolicies = [
   ]),
   allowOnly("runtime-hooks", [
     "core",
+    "runtime-agents",
     "runtime-platform",
     "runtime-shared",
     "runtime-telemetry"
   ]),
   allowOnly("runtime-platform", ["platform", "runtime-shared"]),
-  allowOnly("runtime-agents", ["agents", "runtime-shared"]),
+  allowOnly("runtime-mcp", ["runtime-shared"]),
+  allowOnly("runtime-agents", ["runtime-shared"]),
   allowOnly("runtime-providers", [
-    "providers",
     "runtime-agents",
     "runtime-shared",
     "runtime-telemetry",
     "runtime-telemetry-context"
   ]),
-  allowOnly("agents", ["runtime-shared"]),
   allowOnly("config", ["runtime-shared"]),
-  allowOnly("mcp", [
-    "runtime-shared",
-    "runtime-telemetry",
-    "runtime-telemetry-context"
-  ]),
   allowOnly("router", [
-    "agents",
+    "runtime-agents",
     "runtime-telemetry",
     "core",
     "data",
     "runtime-memory",
     "runtime-router-cooldown",
     "runtime-router-lifecycle",
+    "runtime-router-state-collector",
+    "runtime-router-persistence",
     "runtime-router-tool-ownership",
-    "runtime-shared",
-    "runtime-telemetry-context"
-  ]),
-  allowOnly("providers", [
-    "agents",
-    "runtime-telemetry",
+    "runtime-mcp",
+    "runtime-router-concurrency",
     "runtime-shared",
     "runtime-telemetry-context"
   ]),
@@ -220,8 +229,10 @@ const architecturePolicies = [
   allowOnlyElementPaths("core", "core/src"),
   allowOnlyElementPaths("data", ["data/src", "core/src"]),
   allowOnly("runtime-memory", ["core", "data"]),
+  allowOnly("runtime-router-concurrency", ["runtime-agents", "runtime-shared"]),
   allowOnly("runtime-router-cooldown", ["core", "runtime-shared"]),
   allowOnly("runtime-router-lifecycle", ["runtime-shared"]),
+  allowOnly("runtime-router-persistence", ["runtime-shared"]),
   allowOnly("runtime-router-tool-ownership", ["runtime-shared"]),
   allowOnly("runtime-shared", []),
   allowOnly("runtime-telemetry-context", []),
@@ -234,6 +245,22 @@ const architecturePolicies = [
   allowOnly("console-components", ["core", "console-lib"]),
   allowOnly("console-features", ["core", "console-components"]),
   allowOnly("console-lib", ["core", "data"]),
+  allowFileOnly("runtime-router-state-collector", []),
+  allowFileOnly("runtime-router-status", []),
+  allowFileOnly("runtime-router-events", ["runtime-shared"]),
+  allowFileOnly("runtime-router-live-feed", []),
+  allowFileOnly("router", [
+    "runtime-router-events",
+    "runtime-router-live-feed"
+  ]),
+  allowFileOnly("test", ["runtime-router-events", "runtime-router-live-feed"]),
+  allowFileOnly("runtime-router-auth", []),
+  allowFileOnly("router", ["runtime-router-auth"]),
+  allowFileOnly("test", ["runtime-router-auth"]),
+  allowFileOnly("cli", ["runtime-router-status"]),
+  allowFileOnly("test", ["runtime-router-status"]),
+  allowFileOnly("router", ["runtime-router-state-collector"]),
+  allowFileOnly("test", ["runtime-router-state-collector"]),
   allowFileOnly("console-entrypoint", [
     "console-app",
     "console-components",

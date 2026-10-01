@@ -30,7 +30,12 @@ the bounded call, and invalid/unavailable model output is classified uncertain
 and excluded. `AUTODEV_MEMORY_RECONSTRUCTION=deterministic` selects the
 verified-claim baseline for isolated tests. Embedding generation is still not
 configured, so retrieval remains PostgreSQL full-text until the existing
-provider layer exposes a compatible embedding capability.
+provider layer exposes a compatible embedding capability. A recoverable failure
+from an optional embedding provider records a failed embedding span and falls
+back to full-text retrieval; malformed vectors remain errors. Full-text
+matching allows partial task/claim term overlap so JIT validation can evaluate
+candidates whose wording differs from the task; zero-signal records remain
+excluded.
 
 Data migration v6 adds repository, commit, task/plan, validation, and evidence
 references to the experience GIN search vector. This enables exact full-text
@@ -59,6 +64,31 @@ age or schedule is enabled by default. Schedule this one-shot command only after
 selecting a policy appropriate for the deployment; durable claims remain soft
 invalidations rather than part of this raw-experience sweep.
 
+## Explicit native transcript capture
+
+For a run whose host can identify its provider transcript, Runtime also exposes a
+one-shot importer: `pnpm --filter @simulatorlife/autodev-runtime memory:capture`.
+It supports Codex, Claude Code, Copilot CLI, Gemini CLI, OpenHands, Letta Code,
+OpenCode, and Cursor through `@letta-ai/trajectory`. This is an explicit import path, not a background
+scanner or default hook. Set `AUTODEV_MEMORY_CAPTURE_ENABLED=1`,
+`AUTODEV_MEMORY_DATABASE_URL`, `AUTODEV_MEMORY_WORKSPACE_ID`,
+`AUTODEV_MEMORY_REPOSITORY_ID`, `AUTODEV_MEMORY_REPOSITORY_ROOT`,
+`AUTODEV_MEMORY_CAPTURE_ROOT`, `AUTODEV_MEMORY_CAPTURE_PATH` (relative to the
+root), `AUTODEV_MEMORY_CAPTURE_SOURCE`, `AUTODEV_MEMORY_TASK_ID`,
+`AUTODEV_MEMORY_RUN_ID`, and `AUTODEV_MEMORY_AGENT_ID`. The source path must
+resolve to a non-empty regular file beneath the configured root and is limited
+to 32 MiB. Optional `AUTODEV_MEMORY_CAPTURE_TASK_KIND`, `_PROVIDER`, `_MODEL`,
+`_BRANCH`, `_BASE_COMMIT`, and `_HEAD_COMMIT` attach bounded execution metadata.
+
+The importer normalizes the transcript in memory and persists only the scoped
+experience envelope, a source URI, and digests/counts; it does not store
+transcript contents. Source timestamps are used only when the normalizer reports
+them as native; its deterministic synthesized timestamps are never persisted as
+historical run times. The transcript root should therefore be the narrowest
+provider-history directory appropriate for the selected run, and the host must
+not point it at unrelated session history. Re-running the same capture is
+idempotent.
+
 ## Automatic router JIT
 
 When `AUTODEV_MEMORY_DATABASE_URL` is present in the router environment (the
@@ -67,9 +97,11 @@ with a trusted, absolute workspace path call `MemoryService.research` before
 provider selection. A bounded JSON-quoted advisory packet is appended to the
 request instructions; tool-result continuations without a new human steer are
 not re-researched. The default verifier requires a source commit in current Git
-history and unchanged cited tracked files; canonical RuleSync skill URIs resolve
-to their `.rulesync/skills/.../SKILL.md` source files. Missing evidence, stale files, or a storage
-failure yields no packet and does not block the task. Global memory reads are
+history and unchanged cited tracked files; canonical RuleSync skill, command,
+hook, and MCP references resolve to tracked source files. Pull-request revision
+SHAs can establish Git lineage, but the verifier does not query live GitHub
+review/merge status. Missing evidence, stale files, or a storage failure yields
+no packet and does not block the task. Global memory reads are
 disabled by default; set `AUTODEV_MEMORY_READ_GLOBAL=1` only when the operator
 intends to grant that scope.
 
@@ -121,8 +153,10 @@ observed on a trusted request and the resolved file remains inside
 `$CODEX_HOME/sessions`; transcript contents are normalized in memory and are
 not stored, only a digest, bounded metadata, and a `codex://session/...`
 reference. Claude Code, Copilot CLI, Gemini CLI, and other harnesses do not yet
-have native capture hooks. The real installed Codex hook-trust/runtime path is
-not yet independently verified.
+have automatic native capture hooks. The installed Runtime hook file is now
+materialized and executed in an isolated CODEX_HOME test against a local
+Control API stub; actual Codex desktop hook trust/approval still needs live
+operator verification.
 
 The MCP stdio factory is likewise an adapter surface, not a configured global
 server: it requires a trusted host to supply the repository, task, and agent
@@ -134,7 +168,7 @@ full target architecture and remaining integration requirements.
 
 - Data migration/repository test: set `AUTODEV_MEMORY_TEST_DATABASE_URL` and run
   `pnpm --filter @simulatorlife/autodev-data test`.
-- Runtime PostgreSQL + Git-curation test: set
+- Runtime PostgreSQL + Git-curation + native-capture test: set
   `AUTODEV_MEMORY_RUNTIME_TEST_DATABASE_URL` and run
   `pnpm --filter @simulatorlife/autodev-runtime test`.
 - Official stdio MCP process test: set `AUTODEV_MEMORY_MCP_TEST_DATABASE_URL`

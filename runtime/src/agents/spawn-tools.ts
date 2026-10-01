@@ -33,23 +33,11 @@
 import { createHash, randomBytes } from "node:crypto";
 
 import {
-  EXEC_TOOL as TOOL_EXEC,
-  MULTI_AGENT_CLOSE_TOOL as CLOSE_TOOL,
-  MULTI_AGENT_SPAWN_TOOL as SPAWN_TOOL,
-  MULTI_AGENT_WAIT_TOOL as WAIT_TOOL} from "@simulatorlife/autodev-runtime/shared/tool-names";
-
-/**
- * Re-exports of the canonical tool names. Importers that need a single
- * string constant should pull from `@simulatorlife/autodev-runtime/shared/tool-names` directly so
- * they get every other family at the same time; this re-export keeps the
- * historical SPAWN_TOOL / EXEC_TOOL identifiers working for older callers
- * and the spawned-code-template builder that lives below.
- */
-export const EXEC_TOOL = TOOL_EXEC;
-// SPAWN_TOOL, WAIT_TOOL and CLOSE_TOOL are already in scope from the import
-// alias above; re-export them so historical `import { SPAWN_TOOL } from
-// "../agents/spawn-tools.ts"` callers keep working.
-export { CLOSE_TOOL,SPAWN_TOOL, WAIT_TOOL };
+  EXEC_TOOL,
+  MULTI_AGENT_CLOSE_TOOL,
+  MULTI_AGENT_SPAWN_TOOL,
+  MULTI_AGENT_WAIT_TOOL
+} from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 // How long `exec` may run before Codex yields the script back. Spawning is
 // effectively instantaneous -- the observed wall time for a three-agent batch
@@ -152,14 +140,14 @@ export function buildRecoveryScript(parentId: string): string {
     "  const parsed = [history, ...(history?.content ?? [])].flatMap((value) => { const object = recoveryParse(value?.text ?? value); return object ? [object] : []; });",
     '  const calls = recoveryObjects(parsed).filter((item) => item?.type === "collabAgentToolCall" && item.senderThreadId === recoveryParentId && Array.isArray(item.receiverThreadIds));',
     '  const childIds = [...new Set(calls.flatMap((item) => item.receiverThreadIds.filter((id) => typeof id === "string" && id.trim())))];',
-    '  if (typeof tools.multi_agent_v1__wait_agent !== "function" || typeof tools.multi_agent_v1__close_agent !== "function") return;',
+    `  if (typeof tools.${MULTI_AGENT_WAIT_TOOL} !== "function" || typeof tools.${MULTI_AGENT_CLOSE_TOOL} !== "function") return;`,
     "  for (const childId of childIds) {",
     "    let waited;",
-    "    try { waited = await tools.multi_agent_v1__wait_agent({ targets: [childId], timeout_ms: 30000 }); } catch { continue; }",
+    `    try { waited = await tools.${MULTI_AGENT_WAIT_TOOL}({ targets: [childId], timeout_ms: 30000 }); } catch { continue; }`,
     "    const status = waited?.status?.[childId];",
     '    const terminal = typeof status === "string" ? recoveryTerminal.has(status) : Boolean(status && typeof status === "object" && Object.keys(status).some((key) => recoveryTerminal.has(key)));',
     "    if (!terminal) continue;",
-    '    try { await tools.multi_agent_v1__close_agent({ target: childId }); text(JSON.stringify({ recovery_status: "closed", child_id: childId, previous_status: status })); } catch { }',
+    `    try { await tools.${MULTI_AGENT_CLOSE_TOOL}({ target: childId }); text(JSON.stringify({ recovery_status: "closed", child_id: childId, previous_status: status })); } catch { }`,
     "  }",
     "};",
     "await recoverOwnedTerminalChildren();",
@@ -195,7 +183,7 @@ export function buildSpawnScript(
     `// @exec: ${JSON.stringify({ yield_time_ms: yieldTimeMs })}`,
     ...(recovery ? [recovery] : []),
     `const tasks = [${tasks.join(", ")}];`,
-    `const out = await Promise.allSettled(tasks.map((t) => tools.${SPAWN_TOOL}(t)));`,
+    `const out = await Promise.allSettled(tasks.map((t) => tools.${MULTI_AGENT_SPAWN_TOOL}(t)));`,
     `out.forEach((result) => text(JSON.stringify(result.status === "fulfilled" ? { spawn_status: "created", ...(result.value && typeof result.value === "object" ? result.value : {}) } : { spawn_status: "rejected", agent_id: null, error: String(result.reason?.message ?? result.reason) })));`,
     ""
   ].join("\n");
@@ -289,7 +277,7 @@ export function execToolCallSseEvents({
     id: itemId,
     type: "custom_tool_call" as const,
     call_id: callId,
-    name: EXEC_TOOL as typeof EXEC_TOOL
+    name: EXEC_TOOL
   };
   const completed: CustomToolCallItem = {
     ...base,

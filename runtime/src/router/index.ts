@@ -1,11 +1,5 @@
-export * from "../../../src/router/concurrency.ts";
-export * from "./cooldown/index.ts";
-export * from "./tool-call-ownership/index.ts";
-export * from "./lifecycle/index.ts";
-export * from "../../../src/router/persistence.ts";
-export * from "../../../src/router/proxy.ts";
-export * from "../../../src/router/routing.ts";
-export * from "../../../src/router/status.ts";
+export * from "./proxy.ts";
+export * from "./routing.ts";
 export {
   type BridgeParentActivityEntry,
   type BridgeRequestContext,
@@ -50,5 +44,15 @@ export {
   type SubagentStatus,
   subagentStatus,
   type SubagentTelemetry
-} from "../../../src/router/subagents.ts";
-export * from "../../../src/router/telemetry.ts";
+} from "./subagents.ts";
+export * from "./telemetry.ts";
+export * from "./auth.ts";
+export * from "./concurrency/index.ts";
+export * from "./cooldown/index.ts";
+export * from "./events.ts";
+export * from "./lifecycle/index.ts";
+export * from "./live-feed.ts";
+export * from "./persistence/index.ts";
+export * from "./state-collector.ts";
+export * from "./status.ts";
+export * from "./tool-call-ownership/index.ts";

@@ -1,4 +1,4 @@
-import "../../src/router/http.ts";
+import "@simulatorlife/autodev-runtime/router/http";
 
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -8,20 +8,20 @@ import {
   InMemoryMetricExporter
 } from "@opentelemetry/sdk-metrics";
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
-
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
+
 import {
   recordBridgeSkillExposure,
   recordBridgeSkillUsed
-} from "../../src/router/otel.ts";
+} from "@simulatorlife/autodev-runtime/router/otel";
 import {
   EXHAUSTION_WAIT_MS,
   fetchUpstream,
   proxyConcreteResponse,
   proxyFallbackChain,
   writeResponseStream
-} from "../../src/router/proxy.ts";
-import type { ProviderRoute } from "../../src/router/routing.ts";
+} from "@simulatorlife/autodev-runtime/router/proxy";
+import type { ProviderRoute } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   endAttemptSpan,
   endLogicalRequestSpan,
@@ -34,7 +34,7 @@ import {
   startAttemptSpan,
   startLogicalRequestSpan,
   withLogicalSpan
-} from "../../src/router/telemetry.ts";
+} from "@simulatorlife/autodev-runtime/router/telemetry";
 
 function jsonResponse(value: unknown, status = 200): Response {
   return Response.json(value, {
@@ -1229,7 +1229,7 @@ test("the OTLP exporter is not installed when OTEL_EXPORTER_OTLP_ENDPOINT is uns
   delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   try {
     const { ensureOtelInitialized, isOtlpExporterInstalled } =
-      await import("../../src/router/telemetry.ts");
+      await import("@simulatorlife/autodev-runtime/router/telemetry");
     const tracer = ensureOtelInitialized();
     assert.ok(tracer, "tracer must be returned even without an endpoint");
     assert.equal(isOtlpExporterInstalled(), false);

@@ -20,7 +20,7 @@ function compileCondition(
   let expr = sql.trim();
 
   expr = expr.replaceAll(
-    /claim_search @@ plainto_tsquery\('english', \$(\d+)\)/g,
+    /claim_search @@ replace\(plainto_tsquery\('english', \$(\d+)\)::text, ' & ', ' \| '\)::tsquery/g,
     (_all, index: string) =>
       `hasLexicalMatch(row.claim, params[${Number(index) - 1}])`
   );
@@ -77,12 +77,36 @@ function compileCondition(
 
 function hasLexicalMatch(claim: unknown, query: unknown): boolean {
   if (typeof claim !== "string" || typeof query !== "string") return false;
-  const tokens = query.toLowerCase().match(/[a-z0-9]+/gu) ?? [];
-  const searchableClaim = claim.toLowerCase();
-  return (
-    tokens.length > 0 &&
-    tokens.every((token) => searchableClaim.includes(token))
+  const stopWords = new Set([
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "but",
+    "by",
+    "for",
+    "from",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "to",
+    "was",
+    "were",
+    "with"
+  ]);
+  const tokens = (query.toLowerCase().match(/[a-z0-9]+/gu) ?? []).filter(
+    (token) => !stopWords.has(token)
   );
+  const searchableClaim = new Set(claim.toLowerCase().match(/[a-z0-9]+/gu));
+  return tokens.some((token) => searchableClaim.has(token));
 }
 
 interface UniqueViolation extends Error {

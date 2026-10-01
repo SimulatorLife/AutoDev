@@ -10,7 +10,7 @@ import {
   roleCapabilityRequirements,
   SubagentRegistry,
   subagentSpawnToolsFor
-} from "../../src/router/subagents.ts";
+} from "@simulatorlife/autodev-runtime/router/subagents";
 
 test("SubagentRegistry records spawns and maintains ring buffer and aggregations", () => {
   const recordedRouterEvents: any[] = [];
@@ -299,7 +299,7 @@ test("convenience functions delegate to default SubagentRegistry", async () => {
     recordSubagentSpawn,
     subagentStatus,
     resetSubagentTelemetry
-  } = await import("../../src/router/subagents.ts");
+  } = await import("@simulatorlife/autodev-runtime/router/subagents");
 
   const custom = new SubagentRegistry();
   setDefaultSubagentRegistry(custom);

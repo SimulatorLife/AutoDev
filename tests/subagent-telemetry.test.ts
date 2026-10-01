@@ -9,6 +9,24 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  agyArgs,
+  agyErrorDetails,
+  agyFailureMessage,
+  agyPermissionFailure,
+  ANTIGRAVITY_MCP_EXPOSURE_SOURCE,
+  ANTIGRAVITY_SKILL_EXPOSURE_SOURCE,
+  antigravityToolServer,
+  createSpawnTracker,
+  createToolObserver,
+  extractSkillReadPath as agySkillReadPath,
+  matchSkillReadPath as agyMatchSkillReadPath,
+  modelEffort,
+  resolveEffort,
+  resolveModel,
+  spawnedChildren,
+  subagentModel
+} from "@simulatorlife/autodev-runtime/providers/antigravity";
+import {
   copilotToolOutcome,
   extractSkillReadPath as copilotSkillReadPath,
   matchSkillReadPath as copilotMatchSkillReadPath,
@@ -29,24 +47,6 @@ import {
   VALID_ACTIVITY_STATES
 } from "@simulatorlife/autodev-runtime/telemetry";
 
-import {
-  agyArgs,
-  agyErrorDetails,
-  agyFailureMessage,
-  agyPermissionFailure,
-  ANTIGRAVITY_MCP_EXPOSURE_SOURCE,
-  ANTIGRAVITY_SKILL_EXPOSURE_SOURCE,
-  antigravityToolServer,
-  createSpawnTracker,
-  createToolObserver,
-  extractSkillReadPath as agySkillReadPath,
-  matchSkillReadPath as agyMatchSkillReadPath,
-  modelEffort,
-  resolveEffort,
-  resolveModel,
-  spawnedChildren,
-  subagentModel
-} from "../src/providers/antigravity.ts";
 import { normalizedSource } from "./source-text.ts";
 
 const listen = (server: Server): Promise<number> =>
@@ -507,7 +507,7 @@ test("the router's request id reaches agyErrorDetails and logTurnEnd without any
   // request id the router already issues on every request (the same header
   // AgentEventReporter is authorized from) is what closes that gap -- it
   // carries no prompt text, only an id the router itself assigned.
-  const source = read("src/providers/antigravity.ts");
+  const source = read("runtime/src/providers/antigravity.ts");
   assert.match(source, /from "@simulatorlife\/autodev-runtime\/telemetry"/);
   assert.match(
     source,
@@ -646,7 +646,7 @@ test("agyArgs sandboxes read-only roles instead of granting them permission bypa
 });
 
 test("the Antigravity bridge reports the subagents its own CLI spawns", () => {
-  const source = read("src/providers/antigravity.ts");
+  const source = read("runtime/src/providers/antigravity.ts");
   // Reached only from inside handle(), so this stays a source assertion.
   assert.match(source, /from "@simulatorlife\/autodev-runtime\/telemetry"/);
   assert.match(source, /resolveAgentEventReporter\(request\.headers\)/);
@@ -672,7 +672,7 @@ test("an Antigravity turn that dies names its own cause in the log", () => {
   // router as `upstream_error` at HTTP 200 and leaving nothing in the bridge
   // log but the step lines that happened to precede it. The turn logged its
   // start and never its end, so the reason it died was written down nowhere.
-  const source = read("src/providers/antigravity.ts");
+  const source = read("runtime/src/providers/antigravity.ts");
 
   // Every exit from a turn names itself and how long it took.
   assert.match(
@@ -721,7 +721,7 @@ test("a Claude orchestrator delegates through Codex, not inside its CLI", () => 
   // Codex's own multi_agent_v1__spawn_agent inside an `exec` call, exactly as
   // a Codex-served orchestrator does. The CLI has no Agent/Task tool to spawn
   // invisible children with, and the bridge holds no delegation state.
-  const source = read("src/providers/claude.ts");
+  const source = read("runtime/src/providers/claude.ts");
   assert.match(source, /"--tools", builtIns\.join\(","\)/);
   for (const obsolete of [
     "SpawnSessionRegistry",
@@ -742,8 +742,8 @@ test("a Claude orchestrator delegates through Codex, not inside its CLI", () => 
 
 test("provider bridges import the Runtime-owned telemetry contract", () => {
   for (const sourcePath of [
-    "src/providers/antigravity.ts",
-    "src/providers/claude.ts",
+    "runtime/src/providers/antigravity.ts",
+    "runtime/src/providers/claude.ts",
     "runtime/src/providers/copilot.ts",
     "runtime/src/providers/minimax.ts"
   ]) {
@@ -993,7 +993,7 @@ test("a known transcript path travels with the child, and its absence costs noth
 });
 
 test("the Antigravity bridge delegates through Codex when the turn can reach it", () => {
-  const source = read("src/providers/antigravity.ts");
+  const source = read("runtime/src/providers/antigravity.ts");
   // agy reads MCP servers from the invocation's HOME. The bridge isolates that
   // registry and passes the session identity to its spawned MCP servers through
   // the process environment rather than persisting the token/session in config.
@@ -1038,7 +1038,7 @@ test("agy's own in-CLI spawns are still reported, because they cannot be denied"
   // the prompt says and one turn can produce both kinds of child. Dropping the
   // bridge-native reporting would make those children vanish from /status
   // entirely rather than merely being invisible in the app.
-  const source = read("src/providers/antigravity.ts");
+  const source = read("runtime/src/providers/antigravity.ts");
   assert.match(source, /createSpawnTracker\(agentEvents\)/);
   assert.match(source, /observeSpawnStep\(event\.step_update \?\? \{\}\)/);
 });
@@ -1051,7 +1051,7 @@ test("pending children from the spawn tracker gate the bridge's disconnect kill 
   // agy out from under still-running children. These assertions pin the
   // wiring that folds the spawn tracker's openSpawnCount() into the
   // delegation state both decisions read.
-  const source = read("src/providers/antigravity.ts");
+  const source = read("runtime/src/providers/antigravity.ts");
   assert.match(source, /pendingChildren: 0,/);
   assert.match(source, /delegation\.pendingChildren = openSpawnCount\(\);/);
   assert.match(
@@ -1262,7 +1262,7 @@ test("the Antigravity bridge observes and reports tool requests, executions, and
 test("the Antigravity bridge reports skill exposure from actual role contract", () => {
   assert.equal(ANTIGRAVITY_SKILL_EXPOSURE_SOURCE, "role_contract");
   assert.equal(ANTIGRAVITY_MCP_EXPOSURE_SOURCE, "role_contract");
-  const source = read("src/providers/antigravity.ts");
+  const source = read("runtime/src/providers/antigravity.ts");
   assert.match(
     source,
     /for \(const skill of bootstrapContract\.skills \?\? \[\]\)/
@@ -1348,7 +1348,7 @@ test("the Copilot bridge evaluates tool outcomes and reports telemetry", () => {
 });
 
 test("the Claude bridge reports each Codex tool call it emits and each result Codex returns", () => {
-  const source = read("src/providers/claude.ts");
+  const source = read("runtime/src/providers/claude.ts");
   for (const marker of [
     "resolveAgentEventReporter",
     String.raw`reportToolRequested\(\{ tool, callId, server: null \}\)`,
@@ -1356,7 +1356,7 @@ test("the Claude bridge reports each Codex tool call it emits and each result Co
     String.raw`reportMcpExposed\(\{ server, source: CLAUDE_MCP_EXPOSURE_SOURCE \}\)`
   ])
     assert.match(source, new RegExp(marker));
-  const turn = read("src/providers/claude-turn.ts");
+  const turn = read("runtime/src/providers/claude-turn.ts");
   assert.match(
     turn,
     /this\.reporter\?\.toolRequested\(call\.tool\.name, callId\)/
@@ -1790,7 +1790,7 @@ test("AgentEventReporter delivers repeated heartbeats and throttles on request",
 test("bridges report only their own delegation; the router settles every request", () => {
   // Antigravity delegates inside agy, which the router cannot see: it reports
   // the wait when children start and the resumption when the last one closes.
-  const agySource = read("src/providers/antigravity.ts");
+  const agySource = read("runtime/src/providers/antigravity.ts");
   assert.match(
     agySource,
     /void agentEvents\.reportActivity\(\{ state: "subagent_wait", childIds: children\.map\(/
@@ -1804,8 +1804,8 @@ test("bridges report only their own delegation; the router settles every request
   for (const path of [
     "runtime/src/providers/copilot.ts",
     "runtime/src/providers/minimax.ts",
-    "src/providers/claude.ts",
-    "src/providers/claude-turn.ts"
+    "runtime/src/providers/claude.ts",
+    "runtime/src/providers/claude-turn.ts"
   ]) {
     assert.doesNotMatch(read(path), /reportActivity\(/, path);
   }
@@ -2076,7 +2076,7 @@ test("a Claude turn reads skills through Codex, where Codex's own hooks observe 
   // The CLI has no Read or Bash of its own, so a SKILL.md read is a Codex tool
   // call and reaches the same skill-read hook as any Codex-served model's.
   // The bridge therefore keeps no second, CLI-specific detector.
-  const source = read("src/providers/claude.ts");
+  const source = read("runtime/src/providers/claude.ts");
   for (const obsolete of [
     "extractSkillReadPath",
     "matchSkillReadPath",

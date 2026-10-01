@@ -28,15 +28,15 @@ import {
   createOrchestratorMemoryService,
   injectOrchestratorMemory,
   trustedMemoryContextForSession
-} from "../../src/router/memory-injection.ts";
+} from "@simulatorlife/autodev-runtime/router/memory-injection";
 import {
   flushTelemetryMetrics,
   setTelemetryMetricExporterForTest
-} from "../../src/router/telemetry.ts";
+} from "@simulatorlife/autodev-runtime/router/telemetry";
 
 const evidence: EvidenceReference = {
   kind: "file",
-  uri: "file:///workspace/repo/src/router/proxy.ts"
+  uri: "file:///workspace/repo/runtime/src/router/proxy.ts"
 };
 
 class MemoryRepositoryStub implements MemoryRepository {

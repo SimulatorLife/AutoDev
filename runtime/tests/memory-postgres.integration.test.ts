@@ -19,6 +19,10 @@ import {
   createPgMemoryPool
 } from "@simulatorlife/autodev-data";
 
+import {
+  memoryCaptureConfiguration,
+  runMemoryCapture
+} from "../src/memory/capture-main.ts";
 import { createPostgresMemoryRuntime } from "../src/memory/postgres.ts";
 import type { MemoryProposalInput } from "../src/memory/service.ts";
 
@@ -149,6 +153,69 @@ test(
         },
         worker,
         readContext
+      );
+      const transcriptRoot = join(repositoryRoot, "provider-transcripts");
+      await mkdir(transcriptRoot);
+      const nativeTranscriptPath = join(transcriptRoot, "claude-session.jsonl");
+      await writeFile(
+        nativeTranscriptPath,
+        [
+          {
+            type: "user",
+            uuid: "claude-user",
+            sessionId: "claude-session",
+            cwd: repositoryRoot,
+            message: { role: "user", content: "private native prompt" }
+          },
+          {
+            type: "assistant",
+            uuid: "claude-assistant",
+            sessionId: "claude-session",
+            message: { role: "assistant", content: "private native answer" }
+          }
+        ]
+          .map((record) => JSON.stringify(record))
+          .join("\n")
+      );
+      const captureConfiguration = memoryCaptureConfiguration({
+        AUTODEV_MEMORY_CAPTURE_ENABLED: "1",
+        AUTODEV_MEMORY_DATABASE_URL: databaseUrl!,
+        AUTODEV_MEMORY_WORKSPACE_ID: workspaceId,
+        AUTODEV_MEMORY_REPOSITORY_ID: repositoryId,
+        AUTODEV_MEMORY_REPOSITORY_ROOT: repositoryRoot,
+        AUTODEV_MEMORY_CAPTURE_ROOT: transcriptRoot,
+        AUTODEV_MEMORY_CAPTURE_PATH: "claude-session.jsonl",
+        AUTODEV_MEMORY_CAPTURE_SOURCE: "claude-code",
+        AUTODEV_MEMORY_TASK_ID: `${taskId}-native-capture`,
+        AUTODEV_MEMORY_RUN_ID: `${runId}-native-capture`,
+        AUTODEV_MEMORY_AGENT_ID: "worker-native-capture",
+        AUTODEV_MEMORY_ROLE: "worker",
+        AUTODEV_MEMORY_CAPTURE_TASK_KIND: "bugfix"
+      });
+      const imported = await runMemoryCapture(
+        runtime.service,
+        captureConfiguration
+      );
+      assert.equal(imported.appended, true);
+      assert.equal(imported.source, "claude-code");
+      const importedExperience = await runtime.service.getExperience(
+        imported.id,
+        captureConfiguration.context
+      );
+      assert.equal(
+        importedExperience?.trajectory.format,
+        "letta-trajectory-v1"
+      );
+      assert.equal(importedExperience?.taskKind, "bugfix");
+      assert.equal(importedExperience?.outcome, "unknown");
+      assert.doesNotMatch(
+        JSON.stringify(importedExperience),
+        /private native prompt|private native answer/
+      );
+      assert.equal(
+        (await runMemoryCapture(runtime.service, captureConfiguration))
+          .appended,
+        false
       );
 
       const proposalInput: MemoryProposalInput = {

@@ -29,6 +29,7 @@ import {
   type MemorySearchRequest,
   type MemoryVersionedUpdate
 } from "@simulatorlife/autodev-core";
+import { MemoryConflictError as RepositoryMemoryConflictError } from "@simulatorlife/autodev-data";
 
 import { injectMemoryContext } from "../src/memory/context-injection.ts";
 import { createMemoryMcpServer } from "../src/memory/mcp.ts";
@@ -37,6 +38,7 @@ import {
   type CurrentStateAssessment,
   MemoryAuthorizationError,
   MemoryConflictError,
+  MemoryEmbeddingUnavailableError,
   MemoryService,
   type MemorySkillPromotionWriter,
   MemoryValidationError
@@ -77,7 +79,7 @@ class FakeMemoryRepository implements MemoryRepository {
 
   async appendExperience(envelope: ExperienceEnvelope): Promise<void> {
     if (this.experiences.has(envelope.id))
-      throw new MemoryConflictError("duplicate experience");
+      throw new RepositoryMemoryConflictError("duplicate experience");
     this.experiences.set(envelope.id, envelope);
   }
 
@@ -466,6 +468,50 @@ test("captureExperience normalizes a native transcript and persists only its sou
     JSON.stringify(stored),
     /private task prompt|private assistant response|do-not-persist/
   );
+});
+
+test("captureExperience does not persist library-synthesized timestamps as source time", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const {
+    trajectory: _trajectory,
+    startedAt: _startedAt,
+    completedAt: _completedAt,
+    ...metadata
+  } = experience();
+  const transcript = [
+    {
+      type: "user",
+      uuid: "user-record",
+      sessionId: "session-a",
+      cwd: "/workspace/repo",
+      message: { role: "user", content: "private prompt" }
+    },
+    {
+      type: "assistant",
+      uuid: "assistant-record",
+      sessionId: "session-a",
+      message: { role: "assistant", content: "private response" }
+    }
+  ]
+    .map((normalizedRecord) => JSON.stringify(normalizedRecord))
+    .join("\n");
+
+  const normalized = await service.captureExperience(
+    {
+      source: "claude-code",
+      transcript,
+      trajectoryUri: "file:///workspace/session.jsonl",
+      experience: metadata
+    },
+    worker,
+    { ...context, taskId: "task-old", runId: "run-old" }
+  );
+
+  const stored = repository.experiences.get(metadata.id);
+  assert.equal(normalized.timestampsInferred, true);
+  assert.equal(stored?.startedAt, "2026-09-30T10:00:00.000Z");
+  assert.equal(stored?.completedAt, undefined);
 });
 
 test("durable claims are redacted proposals with append-only provenance", async () => {
@@ -1224,6 +1270,69 @@ test("embedding vectors are optional retrieval signals and never become record c
       embedder: { embed: async () => [Number.NaN] }
     }).research(researchRequest()),
     MemoryValidationError
+  );
+});
+
+test("unavailable optional embeddings fall back to lexical memory operations", async () => {
+  const repository = new FakeMemoryRepository();
+  const embeddingSpanAttributes: Map<string, unknown>[] = [];
+  const tracer = {
+    startActiveSpan(name: string, callback: (span: never) => Promise<unknown>) {
+      const attributes = new Map<string, unknown>();
+      if (name === "memory.embed") embeddingSpanAttributes.push(attributes);
+      return callback({
+        setAttribute: (key: string, value: unknown) =>
+          attributes.set(key, value),
+        setStatus: () => undefined,
+        end: () => undefined
+      } as never);
+    }
+  } as unknown as Tracer;
+  await repository.appendExperience(experience(), worker, {
+    ...context,
+    taskId: "task-old",
+    runId: "run-old"
+  });
+  const service = makeService(repository, {
+    embedder: {
+      embed: async () => {
+        throw new MemoryEmbeddingUnavailableError();
+      }
+    },
+    tracer
+  });
+
+  await service.propose(
+    {
+      kind: "semantic",
+      scope: {
+        kind: "repository",
+        workspaceId: "workspace-a",
+        repositoryId: "repo-a"
+      },
+      claim: "Keep lexical retrieval available during provider outages.",
+      experienceIds: ["experience-1"],
+      evidence: [source]
+    },
+    worker,
+    context
+  );
+  assert.equal(repository.proposalEmbeddings.at(-1), undefined);
+
+  const recalled = record("lexical-fallback");
+  repository.hits = [
+    { memory: recalled, score: 1, matchedSignals: ["lexical"] }
+  ];
+  const packet = await service.research(researchRequest());
+  assert.deepEqual(
+    packet.entries.map((entry) => entry.memoryId),
+    [recalled.id]
+  );
+  assert.equal(repository.searchRequests.at(-1)?.queryEmbedding, undefined);
+  assert.ok(
+    embeddingSpanAttributes.some(
+      (attributes) => attributes.get("memory.embedding.fallback") === "lexical"
+    )
   );
 });
 

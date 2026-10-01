@@ -8,13 +8,16 @@ import {
 } from "node:http";
 import { pathToFileURL } from "node:url";
 
+import { beginShutdown } from "@simulatorlife/autodev-runtime/router/lifecycle";
+import {
+  loadRouterState,
+  persistRouterStateNow
+} from "@simulatorlife/autodev-runtime/router/persistence";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { handleControlApiRequest } from "./control-api.ts";
 import { codexState, handle, HOST, PORT, refreshCodexState } from "./http.ts";
-import { beginShutdown } from "@simulatorlife/autodev-runtime/router/lifecycle";
 import { closeOrchestratorMemoryHost } from "./memory-injection.ts";
-import { loadRouterState, persistRouterStateNow } from "./persistence.ts";
 import {
   isClientDisconnectError,
   ROUTER_INSTANCE_ID,
@@ -235,16 +238,6 @@ if (IS_MAIN) {
 }
 
 export {
-  isLoopbackAddress,
-  routerAuthorizationValid,
-  setRouterAuthTokenForTests
-} from "./auth.ts";
-export {
-  parseConcurrencyConfig,
-  PROCESS_FALLBACK_SESSION_KEY
-} from "./concurrency.ts";
-export { classifyProviderFailure, recordRouterEvent } from "./events.ts";
-export {
   AGENT_ACTIVITY_TTL_MS,
   agentActivity,
   agentsStatus,
@@ -278,11 +271,6 @@ export {
   restoreOtelTelemetry
 } from "./otel.ts";
 export {
-  loadRouterState,
-  persistRouterStateNow,
-  serializeRouterState
-} from "./persistence.ts";
-export {
   activeProviderRequests,
   carriesPendingToolResult,
   declaredLimit,
@@ -299,7 +287,7 @@ export {
   recordNativeMcpExposure,
   ROUTER_INSTANCE_ID
 } from "./proxy.ts";
-export { ORCHESTRATOR_ALIAS } from "./routing.ts";
+export { ORCHESTRATOR_ALIAS } from "@simulatorlife/autodev-runtime/router/routing";
 export {
   AGENT_EVENTS_PATH,
   AGENT_EVENTS_URL_HEADER,
@@ -338,3 +326,21 @@ export {
   safePrivacyWorkspace,
   usageStatus
 } from "./usage.ts";
+export {
+  isLoopbackAddress,
+  routerAuthorizationValid,
+  setRouterAuthTokenForTests
+} from "@simulatorlife/autodev-runtime/router/auth";
+export {
+  parseConcurrencyConfig,
+  PROCESS_FALLBACK_SESSION_KEY
+} from "@simulatorlife/autodev-runtime/router/concurrency";
+export {
+  classifyProviderFailure,
+  recordRouterEvent
+} from "@simulatorlife/autodev-runtime/router/events";
+export {
+  loadRouterState,
+  persistRouterStateNow,
+  serializeRouterState
+} from "@simulatorlife/autodev-runtime/router/persistence";

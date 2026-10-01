@@ -5,6 +5,21 @@ import type { ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 
 import type { Span } from "@opentelemetry/api";
+import { isLoopbackAddress } from "@simulatorlife/autodev-runtime/router/auth";
+import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
+import {
+  COOLDOWN_CONFIG,
+  type CooldownOptions,
+  COOLDOWNS,
+  type CooldownSummary,
+  PROBE_FAILURE_CLASS
+} from "@simulatorlife/autodev-runtime/router/cooldown";
+import {
+  classifyProviderFailure,
+  INVALID_MODEL_PATTERN,
+  recordRouterEvent
+} from "@simulatorlife/autodev-runtime/router/events";
+import { TOOL_CALL_OWNERSHIP } from "@simulatorlife/autodev-runtime/router/tool-call-ownership";
 import {
   AGENT_ROLE_HEADER,
   CODEX_SESSION_HEADER,
@@ -29,20 +44,6 @@ import {
   safeAutoDevWorkspaceKey
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
-import { isLoopbackAddress } from "./auth.ts";
-import { getDefaultConcurrencyManager } from "./concurrency.ts";
-import {
-  COOLDOWN_CONFIG,
-  type CooldownOptions,
-  COOLDOWNS,
-  type CooldownSummary,
-  PROBE_FAILURE_CLASS
-} from "@simulatorlife/autodev-runtime/router/cooldown";
-import {
-  classifyProviderFailure,
-  INVALID_MODEL_PATTERN,
-  recordRouterEvent
-} from "./events.ts";
 import { injectOrchestratorMemory } from "./memory-injection.ts";
 import { recordMcpExposure } from "./otel.ts";
 import {
@@ -60,7 +61,7 @@ import {
   type OrchestratorCandidate,
   type ProviderRoute,
   ROUTING_POLICY
-} from "./routing.ts";
+} from "@simulatorlife/autodev-runtime/router/routing";
 import {
   bridgeTelemetryHeaders as subagentBridgeTelemetryHeaders,
   closeBridgeSubagentsForRequest,
@@ -84,7 +85,6 @@ import {
   startLogicalRequestSpan,
   withLogicalSpan
 } from "./telemetry.ts";
-import { TOOL_CALL_OWNERSHIP } from "@simulatorlife/autodev-runtime/router/tool-call-ownership";
 import {
   countLiveAgentActivity,
   getDefaultUsageTracker,

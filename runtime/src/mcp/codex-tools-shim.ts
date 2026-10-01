@@ -7,7 +7,7 @@
  * action a Claude-served turn takes goes through here: `tools/list` returns
  * the tools Codex offered on the turn's request, and `tools/call` hands the
  * call to the bridge, which emits it to Codex and blocks until Codex returns
- * the output on its next request. See src/providers/claude-codex-tools.ts.
+ * the output on its next request. See runtime/src/providers/claude-codex-tools.ts.
  *
  * Plain `node:http` rather than `fetch`: a Codex tool call can legitimately
  * outlast undici's default five-minute header timeout (a long test run, or a

@@ -1,28 +1,29 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { recordRouterEvent } from "../src/router/events.ts";
+import { recordRouterEvent } from "@simulatorlife/autodev-runtime/router/events";
+
 import {
   getRouterStatus,
   ingestAgentEvents,
   resetRouterTelemetry
-} from "../src/router/http.ts";
+} from "@simulatorlife/autodev-runtime/router/http";
 import {
   autodevEnrichOtlpPayload,
   ingestOtelSignal,
   type OtelPayload,
   resetOtelTelemetry
-} from "../src/router/otel.ts";
+} from "@simulatorlife/autodev-runtime/router/otel";
 import {
   noteBridgeRequest,
   resetSubagentTelemetry
-} from "../src/router/subagents.ts";
+} from "@simulatorlife/autodev-runtime/router/subagents";
 import {
   attributionDiagnosticsStatus,
   registerWorkspaceId,
   resetAttributionDiagnostics,
   safePrivacyWorkspace
-} from "../src/router/usage.ts";
+} from "@simulatorlife/autodev-runtime/router/usage";
 
 type JsonObject = Record<string, unknown>;
 type Operation = JsonObject & { op: string };

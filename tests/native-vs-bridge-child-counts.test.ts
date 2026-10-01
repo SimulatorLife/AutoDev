@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { ingestAgentEvents, resetRouterTelemetry } from "../src/router/http.ts";
-import { ingestOtelSignal, resetOtelTelemetry } from "../src/router/otel.ts";
-import { CONFIGURED_ORCHESTRATOR_MODEL } from "../src/router/routing.ts";
+import { ingestAgentEvents, resetRouterTelemetry } from "@simulatorlife/autodev-runtime/router/http";
+import { ingestOtelSignal, resetOtelTelemetry } from "@simulatorlife/autodev-runtime/router/otel";
+import { CONFIGURED_ORCHESTRATOR_MODEL } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   closeBridgeSubagentsForRequest,
   noteBridgeRequest,
@@ -12,7 +12,7 @@ import {
   spawnFailureStatus,
   subagentStatus,
   UNATTRIBUTED_SUBAGENT_ROLE
-} from "../src/router/subagents.ts";
+} from "@simulatorlife/autodev-runtime/router/subagents";
 
 type JsonObject = Record<string, unknown>;
 type Operation = JsonObject & { op: string };

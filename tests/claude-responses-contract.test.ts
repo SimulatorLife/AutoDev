@@ -11,7 +11,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createBridgeMcpHomes } from "./bridge-mcp-fixture.ts";
 
 const REPO_ROOT = resolvePath(import.meta.dirname, "..");
-const PROXY = join(REPO_ROOT, "src/providers/claude.ts");
+const PROXY = join(REPO_ROOT, "runtime/src/providers/claude.ts");
 const CONTRACT_PATH = join(
   REPO_ROOT,
   "tests/fixtures/contracts/claude-responses-contract.json"

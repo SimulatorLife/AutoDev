@@ -12,7 +12,7 @@ import { normalizedSource } from "./source-text.ts";
 const REPO_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const CLAUDE_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN";
 const REVIEWED_CLAUDE_TOKEN_CONSUMERS = new Set([
-  "src/providers/claude.ts",
+  "runtime/src/providers/claude.ts",
   "scripts/run-codex-claude-bridge.sh",
   "src/platform/claude-ensure.ts",
   ".github/workflows/claude-invoke.yml",
@@ -63,7 +63,7 @@ function trackedRuntimeTexts(): RuntimeTexts {
 
 function route(provider: string): string {
   const routing = normalizedSource(
-    readFileSync(join(REPO_ROOT, "src/router/routing.ts"), "utf8")
+    readFileSync(join(REPO_ROOT, "runtime/src/router/routing.ts"), "utf8")
   );
   const match = routing.match(
     new RegExp(String.raw`\{ provider: ['"]${provider}['"],[^}]*\}`)
@@ -74,7 +74,7 @@ function route(provider: string): string {
 
 const texts = trackedRuntimeTexts();
 const router = normalizedSource(
-  readFileSync(join(REPO_ROOT, "src/router/server.ts"), "utf8")
+  readFileSync(join(REPO_ROOT, "runtime/src/router/server.ts"), "utf8")
 );
 
 for (const [needle, reason] of UNSUPPORTED_SUBSCRIPTION_TRANSPORTS) {
@@ -109,7 +109,7 @@ test("only reviewed runtime files reference the Claude subscription token", () =
 
 test("the Claude bridge hands the token only to the Claude Code binary", () => {
   const source = normalizedSource(
-    readFileSync(join(REPO_ROOT, "src/providers/claude.ts"), "utf8")
+    readFileSync(join(REPO_ROOT, "runtime/src/providers/claude.ts"), "utf8")
   );
   assert.match(source, /CLI\s*=.*claude/);
   assert.doesNotMatch(source, /anthropic\.com/);
@@ -141,10 +141,13 @@ test("Copilot and Antigravity bridges run their official CLIs", () => {
     /spawn\(process\.env\.COPILOT_BIN \?\? "copilot", args/
   );
   assert.match(
-    texts["src/providers/antigravity.ts"]!,
+    texts["runtime/src/providers/antigravity.ts"]!,
     /const CLI = process\.env\.AGY_CLI_PATH/
   );
-  assert.match(texts["src/providers/antigravity.ts"]!, /spawn\(CLI, agyArgs\(/);
+  assert.match(
+    texts["runtime/src/providers/antigravity.ts"]!,
+    /spawn\(CLI, agyArgs\(/
+  );
   assert.match(route("copilot"), /baseUrl: "http:\/\/127\.0\.0\.1:4003\/v1"/);
   assert.match(
     route("antigravity"),

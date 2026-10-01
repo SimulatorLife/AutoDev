@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { setRouterAuthTokenForTests } from "../../src/router/auth.ts";
+import { setRouterAuthTokenForTests } from "@simulatorlife/autodev-runtime/router/auth";
+
 import {
   handleRequest,
   ingestAgentEvents,
@@ -12,13 +13,13 @@ import {
   requestSession,
   workspaceContextFromRequest,
   workspaceMetadataForSession
-} from "../../src/router/http.ts";
+} from "@simulatorlife/autodev-runtime/router/http";
 import {
   getWorkspaceMetadata,
   noteBridgeRequest,
   rememberWorkspaceMetadata,
   resetSubagentTelemetry
-} from "../../src/router/subagents.ts";
+} from "@simulatorlife/autodev-runtime/router/subagents";
 
 class FakeRequest extends EventTarget {
   method: string;
@@ -133,7 +134,8 @@ test("HTTP endpoint routing keeps health, status, models, control, and response 
   const previousControlToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   const previousControlViewers = process.env.AUTODEV_CONTROL_VIEWERS;
   const previousControlOperators = process.env.AUTODEV_CONTROL_OPERATORS;
-  process.env.AUTODEV_CONTROL_API_TOKEN = "http-control-test-token-0123456789abcdef";
+  process.env.AUTODEV_CONTROL_API_TOKEN =
+    "http-control-test-token-0123456789abcdef";
   process.env.AUTODEV_CONTROL_VIEWERS = "http-viewer";
   process.env.AUTODEV_CONTROL_OPERATORS = "http-operator";
   setRouterAuthTokenForTests("");
@@ -308,4 +310,3 @@ test("Codex thread-id header identifies metadata-less continuation and restores 
     resetSubagentTelemetry();
   }
 });
-

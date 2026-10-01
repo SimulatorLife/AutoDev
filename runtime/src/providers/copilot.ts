@@ -44,7 +44,10 @@ import {
   resolveCwd,
   WorkspaceResolutionError
 } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
-import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+import {
+  resolveRuntimeSourcePath,
+  resolveRuntimeSourceRoot
+} from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
   type AgentEventReporter,
   resolveAgentEventReporter,
@@ -703,7 +706,7 @@ function copilotMcpArgs(
     // The CLI cannot reach Codex directly. Give only this identified root turn
     // a per-request MCP server whose call is collected and returned as a
     // synthetic Codex exec item after the CLI turn completes.
-    const shim = pathApi.join(REPO_ROOT, "src", "mcp", "spawn-shim.ts");
+    const shim = resolveRuntimeSourcePath(REPO_ROOT, "mcp/spawn-shim.ts");
     additional.autodev_spawn = {
       type: "stdio",
       command: process.execPath,

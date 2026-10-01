@@ -57,18 +57,22 @@ test("stdio close flushes a source-owned MCP span with inherited safe resource c
 
   const exporterPort = await listen(exporter);
   const bridgePort = await listen(bridge);
-  const child = spawn(process.execPath, ["src/mcp/codex-tools-shim.ts"], {
-    cwd: REPO_ROOT,
-    env: {
-      PATH: process.env.PATH ?? "",
-      AUTODEV_BRIDGE_URL: `http://127.0.0.1:${bridgePort}`,
-      AUTODEV_CLAUDE_TURN: "turn-runtime-test",
-      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: `http://127.0.0.1:${exporterPort}/v1/traces`,
-      OTEL_RESOURCE_ATTRIBUTES:
-        "autodev.workspace=workspace-runtime-test,autodev.agent.role=worker"
-    },
-    stdio: ["pipe", "pipe", "pipe"]
-  });
+  const child = spawn(
+    process.execPath,
+    ["runtime/src/mcp/codex-tools-shim.ts"],
+    {
+      cwd: REPO_ROOT,
+      env: {
+        PATH: process.env.PATH ?? "",
+        AUTODEV_BRIDGE_URL: `http://127.0.0.1:${bridgePort}`,
+        AUTODEV_CLAUDE_TURN: "turn-runtime-test",
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: `http://127.0.0.1:${exporterPort}/v1/traces`,
+        OTEL_RESOURCE_ATTRIBUTES:
+          "autodev.workspace=workspace-runtime-test,autodev.agent.role=worker"
+      },
+      stdio: ["pipe", "pipe", "pipe"]
+    }
+  );
   const replies = createInterface({ input: child.stdout });
   const replyLines = replies[Symbol.asyncIterator]();
   let stderr = "";

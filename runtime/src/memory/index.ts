@@ -1,6 +1,7 @@
 export * from "./context-injection.ts";
 export * from "./git-curation.ts";
 export * from "./mcp.ts";
+export * from "./openai-compatible-embedding.ts";
 export * from "./postgres.ts";
 export * from "./privacy.ts";
 export * from "./service.ts";

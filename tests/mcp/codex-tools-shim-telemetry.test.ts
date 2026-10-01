@@ -1,6 +1,6 @@
 /**
  * Focused telemetry tests for the source-owned observation of the MCP
- * `tools/call` operation in `src/mcp/codex-tools-shim.ts`.
+ * `tools/call` operation in `runtime/src/mcp/codex-tools-shim.ts`.
  *
  * The shim is the producer that owns the operation. These tests pin:
  * 1. Exactly one `tools/call <tool_name>` span per `tools/call`,
@@ -25,17 +25,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
-
-import { handleMessage } from "../../src/mcp/codex-tools-shim.ts";
 import {
   ensureOtelInitialized,
   getFinishedSpans,
+  handleMessage,
   isOtlpExporterInstalled,
   MCP_SEMCONV_GENAI_REVISION,
   resetTelemetryForTest,
   setTestExporter,
-  shutdownTelemetryForTest
-} from "../../src/mcp/codex-tools-shim-telemetry.ts";
+  shutdownTelemetryForTest} from "@simulatorlife/autodev-runtime/mcp";
 
 type JsonObject = Record<string, unknown>;
 

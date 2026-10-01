@@ -5,7 +5,7 @@ import {
   LIVE_FEED_CATEGORIES,
   LIVE_FEED_NUMERIC_KEYS,
   LiveFeedRecorder
-} from "../../src/router/live-feed.ts";
+} from "@simulatorlife/autodev-runtime/router/live-feed";
 
 test("live feed recorder keeps bounded, categorized, privacy-safe summaries", () => {
   const feed = new LiveFeedRecorder(2);

@@ -12,7 +12,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { CONFIGURED_ORCHESTRATOR_MODEL } from "../../src/router/routing.ts";
+import { CONFIGURED_ORCHESTRATOR_MODEL } from "@simulatorlife/autodev-runtime/router/routing";
 
 type HookOutput = {
   hookSpecificOutput?: { additionalContext?: string };

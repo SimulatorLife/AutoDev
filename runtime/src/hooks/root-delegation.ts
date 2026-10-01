@@ -2,7 +2,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
@@ -14,8 +14,6 @@ type HookInput = {
   hook_event_name?: unknown;
   turn_id?: unknown;
 };
-type SpawnTools = { buildRecoveryScript(parentId: string): string };
-
 const NON_ROOT_MODEL =
   /^(autodev\/|MiniMax-|sonnet$|opus$|haiku$|claude-|gemini-|copilot)/;
 
@@ -28,13 +26,6 @@ function parseInput(raw: string): HookInput {
   } catch {
     return {};
   }
-}
-
-function runtimeSourceRoot(): string {
-  const installed = codexHome();
-  return existsSync(path.join(installed, "src", "agents", "spawn-tools.ts"))
-    ? installed
-    : repositoryRoot();
 }
 
 function logInput(input: HookInput): void {
@@ -58,15 +49,7 @@ function logInput(input: HookInput): void {
 
 async function recoveryScript(parentId: string): Promise<string> {
   try {
-    const modulePath = path.join(
-      runtimeSourceRoot(),
-      "src",
-      "agents",
-      "spawn-tools.ts"
-    );
-    const tools = (await import(
-      pathToFileURL(modulePath).href
-    )) as unknown as SpawnTools;
+    const tools = await import("@simulatorlife/autodev-runtime/agents");
     return tools.buildRecoveryScript(parentId);
   } catch {
     return "";
@@ -123,7 +106,7 @@ export async function runRootDelegation(
   const model = typeof input.model === "string" ? input.model : "";
   if (model !== "autodev/orchestrator" && NON_ROOT_MODEL.test(model)) return 0;
 
-  const root = runtimeSourceRoot();
+  const root = repositoryRoot();
   const promptFile = path.join(root, "agents", "prompts", "orchestrator.md");
   const skillFile = path.join(
     root,

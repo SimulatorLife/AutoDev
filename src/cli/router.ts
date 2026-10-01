@@ -1,8 +1,8 @@
+import type { RouterRuntimeStatus } from "@simulatorlife/autodev-runtime/router/status";
 import { writeLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { ConfigError } from "../config/config-files.ts";
-import { startRouterServer } from "../router/server.ts";
-import type { RouterRuntimeStatus } from "../router/status.ts";
+import { startRouterServer } from "@simulatorlife/autodev-runtime/router/server";
 import { fetchRouterStatus } from "./router-status-client.ts";
 import { UnmigratedRuntimeError } from "./runtime.ts";
 

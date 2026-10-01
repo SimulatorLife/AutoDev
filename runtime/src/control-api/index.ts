@@ -1,1 +1,1 @@
-export * from "../../../src/router/control-api.ts";
+export * from "../router/control-api.ts";

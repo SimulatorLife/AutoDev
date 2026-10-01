@@ -6,7 +6,7 @@ import {
   ToolCallOwnership
 } from "@simulatorlife/autodev-runtime/router/tool-call-ownership";
 
-import { collectToolCallIds } from "../../src/router/responses.ts";
+import { collectToolCallIds } from "@simulatorlife/autodev-runtime/router/responses";
 
 // Recorded in the 2026-09-18 incident: one worker turn hopped antigravity ->
 // minimax -> claude between requests, so the provider that ran the step was

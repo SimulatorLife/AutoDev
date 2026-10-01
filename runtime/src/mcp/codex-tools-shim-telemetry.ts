@@ -16,7 +16,7 @@
  * in place and the call path is unchanged.
  *
  * Resource identity: the shim is a separate subprocess launched by
- * Claude MCP config in src/providers/claude.ts. Its parent chain
+ * Claude MCP config in runtime/src/providers/claude.ts. Its parent chain
  * (router -> Claude CLI -> shim) is the only source for any per-turn
  * `OTEL_RESOURCE_ATTRIBUTES`. This module reads the env-detected
  * resource so per-turn `autodev.workspace` and `autodev.agent.role`
@@ -138,7 +138,7 @@ const state: ShimTelemetryState = {
 function buildResource(): Resource {
   // Start with the env-detected attributes so the parent's
   // OTEL_RESOURCE_ATTRIBUTES (set by withAutoDevOtelResourceContext in
-  // src/providers/claude.ts) and OTEL_SERVICE_NAME reach the shim's
+  // runtime/src/providers/claude.ts) and OTEL_SERVICE_NAME reach the shim's
   // spans. Non-AutoDev attributes pass through verbatim; AutoDev
   // context is validated below.
   const envResource = detectResources({ detectors: [envDetector] });

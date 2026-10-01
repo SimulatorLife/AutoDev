@@ -9,8 +9,8 @@ import {
   latestUserTask
 } from "@simulatorlife/autodev-runtime/memory";
 
-import { RoutedMemoryReconstructor } from "../../src/router/memory-reconstruction.ts";
-import { ORCHESTRATOR_ALIAS } from "../../src/router/routing.ts";
+import { RoutedMemoryReconstructor } from "@simulatorlife/autodev-runtime/router/memory-reconstruction";
+import { ORCHESTRATOR_ALIAS } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   endLogicalRequestSpan,
   resetTelemetryExporter,
@@ -18,7 +18,7 @@ import {
   setTelemetryExporter,
   startLogicalRequestSpan,
   withExtractedTraceContext
-} from "../../src/router/telemetry.ts";
+} from "@simulatorlife/autodev-runtime/router/telemetry";
 
 const savedOtelEnv = {
   endpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,

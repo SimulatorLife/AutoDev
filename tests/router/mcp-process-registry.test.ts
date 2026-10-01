@@ -5,7 +5,7 @@ import {
   getDefaultMcpProcessRegistry,
   McpProcessRegistry,
   setDefaultMcpProcessRegistry
-} from "../../src/router/mcp-process-registry.ts";
+} from "@simulatorlife/autodev-runtime/mcp/process-registry";
 
 void test("register / touch / unregister manage the lifecycle", () => {
   const calls: Array<[number, string]> = [];

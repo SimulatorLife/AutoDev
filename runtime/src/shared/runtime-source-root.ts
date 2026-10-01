@@ -19,3 +19,21 @@ export function resolveRuntimeSourceRoot(
 
   return path.resolve(moduleDirectory, "../..");
 }
+
+/**
+ * Resolve a Runtime-owned module from its source checkout or its stable
+ * CODEX_HOME/src materialization. The root package marker distinguishes the
+ * workspace tree from CODEX_HOME; it never falls back to root repository src.
+ */
+export function resolveRuntimeSourcePath(
+  sourceRoot: string,
+  modulePath: string
+): string {
+  const runtimePackageRoot = path.join(sourceRoot, "runtime");
+  const sourceDirectory = existsSync(
+    path.join(runtimePackageRoot, "package.json")
+  )
+    ? path.join(runtimePackageRoot, "src")
+    : path.join(sourceRoot, "src");
+  return path.resolve(sourceDirectory, modulePath);
+}

@@ -9,7 +9,7 @@ import {
   isDelegationActive,
   isWaitStep,
   updateDelegationState
-} from "../src/providers/antigravity.ts";
+} from "@simulatorlife/autodev-runtime/providers/antigravity";
 
 const spawnTools = new Set(["invoke_subagent", "manage_subagents"]);
 const isSpawnTool = (name: string): boolean => spawnTools.has(name);

@@ -73,11 +73,14 @@ export function buildMemorySearchQuery(
     filters.push(`kind = ANY(${kindsParam}::text[])`);
   }
 
-  // When path ranking is not requested, exact lexical matching is a hard
-  // candidate filter. With embeddings, retain the union of lexical matches
-  // and records that actually have a vector; never fill top-k with unrelated
-  // zero-score records.
-  const lexicalMatch = `claim_search @@ plainto_tsquery('english', ${queryParam})`;
+  // Without path signals, require a lexical or semantic retrieval signal.
+  // Disjunctive lexical terms preserve partial task/claim overlap for JIT
+  // reconstruction while rank orders candidates by the quality of the match.
+  const lexicalQuery =
+    "replace(plainto_tsquery('english', " +
+    queryParam +
+    ")::text, ' & ', ' | ')::tsquery";
+  const lexicalMatch = `claim_search @@ ${lexicalQuery}`;
   if (!relevantPaths?.length) {
     filters.push(
       embedding
@@ -146,7 +149,7 @@ export function buildMemorySearchQuery(
     AND ${sourceExperienceScope}
 ) THEN 1.0 ELSE 0 END`;
   }
-  const lexicalScore = `ts_rank(scoped.claim_search, plainto_tsquery('english', ${queryParam})) * ${lexicalWeight}`;
+  const lexicalScore = `ts_rank(scoped.claim_search, ${lexicalQuery}) * ${lexicalWeight}`;
   const vectorScore = embedding
     ? `(CASE WHEN scoped.embedding IS NOT NULL THEN (1 - (scoped.embedding <=> ${vectorParam}::vector)) * ${vectorWeight} ELSE 0 END)`
     : "0::double precision";

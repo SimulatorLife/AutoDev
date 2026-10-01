@@ -84,7 +84,7 @@ every event and looked like "the router logged nothing".
 5. **Size it**: scan `sessions/` for the error string or item pattern (counts and
    date range) to tell a one-off from a systemic bug.
 6. **Trace to code** in `src/router/`, `src/providers/<bridge>.ts`, or
-   `src/mcp/`, and fix it there, not downstream.
+   `runtime/src/mcp/`, and fix it there, not downstream.
 
 ## 4. Reproduce, fix, verify
 
@@ -96,7 +96,7 @@ every event and looked like "the router logged nothing".
   subagent's own requests.
 - **Live, without touching the running system:** a second bridge from the
   checkout on a spare port (e.g. `CLAUDE_BRIDGE_PORT=4019 node
-  src/providers/claude.ts`, OAuth token read inline from the Keychain, never
+  runtime/src/providers/claude.ts`, OAuth token read inline from the Keychain, never
   printed), an isolated `CODEX_HOME` pointing at it, and `codex exec --json`
   from a throwaway `git init` repo with `</dev/null`; then run this skill's
   script with `--codex-home`. Kill what you started.

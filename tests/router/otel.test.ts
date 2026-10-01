@@ -23,9 +23,9 @@ import {
   setDefaultOtelTracker,
   sqliteKey,
   toolStatusAttribute
-} from "../../src/router/otel.ts";
-import { CONFIGURED_ORCHESTRATOR_MODEL } from "../../src/router/routing.ts";
-import { UsageTracker } from "../../src/router/usage.ts";
+} from "@simulatorlife/autodev-runtime/router/otel";
+import { CONFIGURED_ORCHESTRATOR_MODEL } from "@simulatorlife/autodev-runtime/router/routing";
+import { UsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
 
 function createMockUsageTracker(): UsageTracker {
   return new UsageTracker();
@@ -513,7 +513,11 @@ test("lookback history records only accepted semantic deltas and persists bounde
   );
 
   const events = tracker.codexTelemetryStatus().lookbackEvents;
-  assert.equal(events.length, 6, "duplicate cumulative point has no second event");
+  assert.equal(
+    events.length,
+    6,
+    "duplicate cumulative point has no second event"
+  );
   assert.deepEqual(
     events.map(({ family, type }) => [family, type]),
     [
@@ -610,7 +614,10 @@ test("lookback history records only accepted semantic deltas and persists bounde
   const boundedEvents = bounded.codexTelemetryStatus().lookbackEvents;
   assert.equal(boundedEvents.length, OTEL_LOOKBACK_EVENT_LIMIT);
   assert.equal(boundedEvents[0]?.name, "skill-1");
-  assert.equal(boundedEvents.at(-1)?.name, `skill-${OTEL_LOOKBACK_EVENT_LIMIT}`);
+  assert.equal(
+    boundedEvents.at(-1)?.name,
+    `skill-${OTEL_LOOKBACK_EVENT_LIMIT}`
+  );
 });
 
 test("deferred MCP model attribution retroactively attributes when conversation model arrives", () => {

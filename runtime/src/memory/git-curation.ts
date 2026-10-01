@@ -204,9 +204,13 @@ function sourceCommitFrom(
   evidence: readonly EvidenceReference[]
 ): string | null {
   for (const reference of evidence) {
-    if (reference.kind !== "commit") continue;
+    if (reference.kind !== "commit" && reference.kind !== "pull_request")
+      continue;
     const candidate =
-      reference.revision ?? COMMIT_URI_PATTERN.exec(reference.uri)?.[1] ?? null;
+      reference.revision ??
+      (reference.kind === "commit"
+        ? (COMMIT_URI_PATTERN.exec(reference.uri)?.[1] ?? null)
+        : null);
     if (candidate && COMMIT_PATTERN.test(candidate)) return candidate;
   }
   return null;
@@ -226,7 +230,12 @@ function citedRepositoryFiles(
         ? safeRepositoryRelativePath(repositoryRoot, reference.uri)
         : reference.kind === "skill"
           ? safeRuleSyncSkillPath(repositoryRoot, reference.uri)
-          : null;
+          : reference.kind === "rule"
+            ? (safeRuleSyncRulePath(repositoryRoot, reference.uri) ??
+              safeRepositoryRelativePath(repositoryRoot, reference.uri))
+            : reference.kind === "document"
+              ? safeRepositoryRelativePath(repositoryRoot, reference.uri)
+              : null;
     if (relativePath) files.push({ reference, relativePath });
   }
   return files;
@@ -264,6 +273,57 @@ function safeRuleSyncSkillPath(root: string, uri: string): string | null {
   } catch {
     return null;
   }
+}
+
+function safeRuleSyncRulePath(root: string, uri: string): string | null {
+  try {
+    const parsed = new URL(uri);
+    if (parsed.protocol !== "rulesync:" || parsed.search || parsed.hash)
+      return null;
+    if (parsed.hostname === "commands") {
+      const segments = parsed.pathname
+        .split("/")
+        .filter(Boolean)
+        .map((segment) => decodeURIComponent(segment));
+      if (segments.length !== 1 || !isRuleSyncCommandFilename(segments[0]!)) {
+        return null;
+      }
+      return safeRepositoryRelativePath(
+        root,
+        path.join(".rulesync", "commands", segments[0]!)
+      );
+    }
+    if (
+      (parsed.hostname === "hooks.jsonc" || parsed.hostname === "mcp.jsonc") &&
+      (parsed.pathname === "" || parsed.pathname === "/")
+    ) {
+      return safeRepositoryRelativePath(
+        root,
+        path.join(".rulesync", parsed.hostname)
+      );
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function isRuleSyncCommandFilename(filename: string): boolean {
+  if (!filename.endsWith(".md")) return false;
+  const stem = filename.slice(0, -3);
+  if (
+    !stem ||
+    stem.startsWith("-") ||
+    stem.endsWith("-") ||
+    stem.includes("--")
+  )
+    return false;
+  return [...stem].every(
+    (character) =>
+      (character >= "a" && character <= "z") ||
+      (character >= "0" && character <= "9") ||
+      character === "-"
+  );
 }
 
 function safeRepositoryRelativePath(root: string, uri: string): string | null {

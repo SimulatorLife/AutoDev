@@ -46,12 +46,16 @@ test("runtime targets preserve relative depth for scripts and source files", () 
     "/runtime/src/platform/runtime-files.ts"
   );
   assert.equal(
-    runtimeTarget("src/router/control-api.ts", "/runtime"),
+    runtimeTarget("runtime/src/router/control-api.ts", "/runtime"),
     "/runtime/src/router/control-api.ts"
   );
   assert.equal(
     runtimeTarget("runtime/src/hooks/root-delegation.ts", "/runtime"),
     "/runtime/src/hooks/root-delegation.ts"
+  );
+  assert.equal(
+    runtimeTarget("runtime/src/providers/antigravity.ts", "/runtime"),
+    "/runtime/src/providers/antigravity.ts"
   );
   assert.equal(
     runtimeTarget("runtime/src/providers/copilot.ts", "/runtime"),
@@ -61,6 +65,28 @@ test("runtime targets preserve relative depth for scripts and source files", () 
     runtimeTarget("runtime/src/providers/minimax.ts", "/runtime"),
     "/runtime/src/providers/minimax.ts"
   );
+  for (const mcpSource of [
+    "runtime/src/mcp/codex-tools-shim-telemetry.ts",
+    "runtime/src/mcp/codex-tools-shim.ts",
+    "runtime/src/mcp/launcher.ts",
+    "runtime/src/mcp/spawn-shim.ts",
+    "runtime/src/mcp/tool-filter.ts"
+  ]) {
+    assert.equal(
+      runtimeTarget(mcpSource, "/runtime"),
+      join("/runtime", mcpSource.slice("runtime/".length))
+    );
+  }
+  for (const providerSource of [
+    "runtime/src/providers/claude.ts",
+    "runtime/src/providers/claude-turn.ts",
+    "runtime/src/providers/claude-codex-tools.ts"
+  ]) {
+    assert.equal(
+      runtimeTarget(providerSource, "/runtime"),
+      join("/runtime", providerSource.slice("runtime/".length))
+    );
+  }
 });
 
 test("materialization atomically replaces symlinks and applies the requested mode", () =>

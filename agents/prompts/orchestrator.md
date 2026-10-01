@@ -39,7 +39,7 @@ cell. They are not surfaced as standalone top-level functions in the declared
 tool list -- that is by design, not a missing tool. Treat them the same way
 as any other `tools.*` reference: probe their presence inside an `exec`
 script (`typeof tools.multi_agent_v1__spawn_agent`) before reporting a
-delegation capability failure. The `src/agents/spawn-tools.ts` module builds
+delegation capability failure. The `runtime/src/agents/spawn-tools.ts` module builds
 the batched `await Promise.allSettled(...)` script that fans out across
 children and is the reference implementation.
 

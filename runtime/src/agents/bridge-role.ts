@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import path from "node:path";
 
 import {
   AGENT_ROLE_HEADER,
@@ -7,6 +7,7 @@ import {
   SKILL_CONTEXT_HEADER
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
   MCP_SERVER_COCOINDEX,
   MCP_SERVER_CODEGRAPHCONTEXT,
@@ -19,28 +20,25 @@ import {
 // value knows the local router classified the request as the root turn.
 export const ORCHESTRATOR_AGENT_ROLE = "orchestrator";
 
-const promptRoot = new URL("../../agents/prompts/", import.meta.url);
+const REPO_ROOT = resolveRuntimeSourceRoot(
+  import.meta.dirname,
+  process.env.AUTODEV_REPO_ROOT
+);
+const promptRoot = path.join(REPO_ROOT, "agents", "prompts");
 const PROMPTS = Object.freeze({
-  base: new URL("base.md", promptRoot),
-  leaf: new URL("leaf.md", promptRoot),
-  codeSearch: new URL("code-search.md", promptRoot),
-  orchestrator: new URL("orchestrator.md", promptRoot),
-  roleDirectory: new URL("roles/", promptRoot)
+  base: path.join(promptRoot, "base.md"),
+  leaf: path.join(promptRoot, "leaf.md"),
+  codeSearch: path.join(promptRoot, "code-search.md"),
+  orchestrator: path.join(promptRoot, "orchestrator.md"),
+  roleDirectory: path.join(promptRoot, "roles")
 });
-// The canonical skill source is the repository's `.rulesync/skills`. The
-// installer maps non-`scripts/` assets under $CODEX_HOME at the same depth, so
-// this one specifier resolves in a checkout and in the installed hooks copy.
 const ORCHESTRATION_SKILL_CANDIDATES = [
-  new URL("../../.rulesync/skills/orchestration/SKILL.md", import.meta.url),
-  new URL(
-    "../../hooks/../.agents/skills/orchestration/SKILL.md",
-    import.meta.url
-  )
+  path.join(REPO_ROOT, ".rulesync", "skills", "orchestration", "SKILL.md"),
+  path.join(REPO_ROOT, ".agents", "skills", "orchestration", "SKILL.md")
 ];
 const ORCHESTRATION_SKILL =
-  ORCHESTRATION_SKILL_CANDIDATES.find((url) =>
-    existsSync(fileURLToPath(url))
-  ) ?? ORCHESTRATION_SKILL_CANDIDATES[0]!;
+  ORCHESTRATION_SKILL_CANDIDATES.find((filePath) => existsSync(filePath)) ??
+  ORCHESTRATION_SKILL_CANDIDATES[0]!;
 const ROLE_PROMPT_NAMES = new Set([
   "browser-tester",
   "default",
@@ -140,7 +138,7 @@ export function roleInstructions(role: string | null | undefined): string {
         ? `\n\n${CODE_SEARCH_PROMPT}`
         : "";
     const rolePrompt = readFileSync(
-      new URL(`${rolePromptName(role)}.md`, PROMPTS.roleDirectory),
+      path.join(PROMPTS.roleDirectory, `${rolePromptName(role)}.md`),
       "utf8"
     ).trim();
     const tools =

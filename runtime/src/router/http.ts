@@ -6,6 +6,57 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 
+import {
+  createAgentActivityTracker,
+  resolveAgentActivityTtlMs
+} from "@simulatorlife/autodev-runtime/agents";
+import {
+  getDefaultMcpProcessRegistry,
+  registerLogical
+} from "@simulatorlife/autodev-runtime/mcp/process-registry";
+import {
+  authStatus,
+  routerAuthorizationValid
+} from "@simulatorlife/autodev-runtime/router/auth";
+import {
+  ConcurrencyManager,
+  getDefaultConcurrencyManager,
+  PROCESS_FALLBACK_SESSION_KEY,
+  setDefaultConcurrencyManager,
+  SUBAGENT_SLOT_KIND
+} from "@simulatorlife/autodev-runtime/router/concurrency";
+import {
+  COOLDOWN_CONFIG,
+  COOLDOWNS
+} from "@simulatorlife/autodev-runtime/router/cooldown";
+import {
+  getDefaultRouterEventRecorder,
+  noteRequestIdentity,
+  recordRouterEvent,
+  RouterEventRecorder,
+  setDefaultRouterEventRecorder
+} from "@simulatorlife/autodev-runtime/router/events";
+import {
+  getDefaultRouterLifecycle,
+  RouterLifecycle,
+  setDefaultRouterLifecycle
+} from "@simulatorlife/autodev-runtime/router/lifecycle";
+import {
+  type LiveFeedCategory,
+  LiveFeedRecorder
+} from "@simulatorlife/autodev-runtime/router/live-feed";
+import {
+  effectiveStateFile,
+  getDefaultPersistenceManager,
+  restoreProviderTelemetrySection,
+  RouterPersistence,
+  scheduleRouterStatePersist,
+  setDefaultPersistenceManager
+} from "@simulatorlife/autodev-runtime/router/persistence";
+import {
+  CodexStateCollector,
+  loadCodexStateCollectorConfig
+} from "@simulatorlife/autodev-runtime/router/state-collector";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   isDirectory,
@@ -18,40 +69,7 @@ import {
   normalizeInputItemIds
 } from "@simulatorlife/autodev-runtime/shared/responses-item-ids";
 
-import {
-  createAgentActivityTracker,
-  resolveAgentActivityTtlMs
-} from "../agents/agent-activity.ts";
-import { authStatus, routerAuthorizationValid } from "./auth.ts";
-import {
-  ConcurrencyManager,
-  getDefaultConcurrencyManager,
-  PROCESS_FALLBACK_SESSION_KEY,
-  setDefaultConcurrencyManager,
-  SUBAGENT_SLOT_KIND
-} from "./concurrency.ts";
 import { handleControlApiRequest } from "./control-api.ts";
-import {
-  COOLDOWN_CONFIG,
-  COOLDOWNS
-} from "@simulatorlife/autodev-runtime/router/cooldown";
-import {
-  getDefaultRouterEventRecorder,
-  noteRequestIdentity,
-  recordRouterEvent,
-  RouterEventRecorder,
-  setDefaultRouterEventRecorder
-} from "./events.ts";
-import {
-  getDefaultRouterLifecycle,
-  RouterLifecycle,
-  setDefaultRouterLifecycle
-} from "@simulatorlife/autodev-runtime/router/lifecycle";
-import { type LiveFeedCategory, LiveFeedRecorder } from "./live-feed.ts";
-import {
-  getDefaultMcpProcessRegistry,
-  registerLogical
-} from "./mcp-process-registry.ts";
 import {
   codexTelemetryStatus,
   getDefaultOtelTracker,
@@ -67,14 +85,6 @@ import {
   restoreOtelTelemetry,
   setDefaultOtelTracker
 } from "./otel.ts";
-import {
-  effectiveStateFile,
-  getDefaultPersistenceManager,
-  restoreProviderTelemetrySection,
-  RouterPersistence,
-  scheduleRouterStatePersist,
-  setDefaultPersistenceManager
-} from "./persistence.ts";
 import {
   activeProviderRequests,
   activitySubjectFor,
@@ -108,11 +118,7 @@ import {
   ROUTING_CONFIG as ROUTING,
   ROUTING_CONFIG_FILE,
   ROUTING_POLICY
-} from "./routing.ts";
-import {
-  CodexStateCollector,
-  loadCodexStateCollectorConfig
-} from "./state-collector.ts";
+} from "@simulatorlife/autodev-runtime/router/routing";
 import {
   AGENT_EVENTS_PATH,
   type BridgeRequestContext,

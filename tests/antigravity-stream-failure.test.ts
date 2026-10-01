@@ -113,19 +113,23 @@ process.exit(0);
     { mode: 0o755 }
   );
 
-  const bridge = spawn(process.execPath, ["src/providers/antigravity.ts"], {
-    cwd: REPO_ROOT,
-    env: {
-      ...process.env,
-      HOME: home,
-      CODEX_HOME: codexHome,
-      AGY_PROXY_PORT: String(port),
-      AGY_CLI_PATH: fakeAgy,
-      AGY_SKIP_PERMISSIONS: "true",
-      LITELLM_API_KEY: ""
-    },
-    stdio: ["ignore", "ignore", "pipe"]
-  });
+  const bridge = spawn(
+    process.execPath,
+    ["runtime/src/providers/antigravity.ts"],
+    {
+      cwd: REPO_ROOT,
+      env: {
+        ...process.env,
+        HOME: home,
+        CODEX_HOME: codexHome,
+        AGY_PROXY_PORT: String(port),
+        AGY_CLI_PATH: fakeAgy,
+        AGY_SKIP_PERMISSIONS: "true",
+        LITELLM_API_KEY: ""
+      },
+      stdio: ["ignore", "ignore", "pipe"]
+    }
+  );
 
   try {
     await waitForBridge(bridge);

@@ -8,7 +8,7 @@ import {
   resolveRouterAuthToken,
   routerAuthorizationValid,
   setRouterAuthTokenForTests
-} from "../../src/router/auth.ts";
+} from "@simulatorlife/autodev-runtime/router/auth";
 
 test("isLoopbackAddress identifies loopback IPv4, IPv6, and localhost", () => {
   assert.equal(isLoopbackAddress("127.0.0.1"), true);

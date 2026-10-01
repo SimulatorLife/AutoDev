@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { payloadForCandidate } from "../src/router/proxy.ts";
-import { ROUTING_POLICY as routing } from "../src/router/routing.ts";
+import { payloadForCandidate } from "@simulatorlife/autodev-runtime/router/proxy";
+import { ROUTING_POLICY as routing } from "@simulatorlife/autodev-runtime/router/routing";
 
 type JsonRecord = Record<string, any>;
 

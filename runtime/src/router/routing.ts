@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import path from "node:path";
 
 import type { ProviderRole } from "@simulatorlife/autodev-core";
+import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
 export const ROLE_NAMES = [
   "default",
@@ -304,8 +305,14 @@ export function validateRoutingConfig(value: unknown): RoutingConfig {
 function resolveConfigPath(environment: NodeJS.ProcessEnv): string {
   const explicit = environment.CODEX_ROUTER_CONFIG_FILE?.trim();
   if (explicit) return explicit;
-  const repositorySource = fileURLToPath(
-    new URL("../../config/model-routing.json", import.meta.url)
+  const repositoryRoot = resolveRuntimeSourceRoot(
+    import.meta.dirname,
+    environment.AUTODEV_REPO_ROOT
+  );
+  const repositorySource = path.join(
+    repositoryRoot,
+    "config",
+    "model-routing.json"
   );
   if (existsSync(repositorySource)) return repositorySource;
   const installedSource = `${environment.CODEX_HOME ?? `${environment.HOME ?? process.cwd()}/.codex`}/codex-model-routing.json`;

@@ -137,6 +137,40 @@ test("Git verifier retains evidence when the cited commit is ancestral and cited
   });
 });
 
+test("Git verifier uses a pull-request revision only as commit-lineage evidence", async () => {
+  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    const fileEvidence: EvidenceReference = {
+      kind: "file",
+      uri: pathToFileURL(filePath).href,
+      revision: sourceCommit
+    };
+    const pullRequestEvidence: EvidenceReference = {
+      kind: "pull_request",
+      uri: "https://github.com/owner/repo/pull/42",
+      revision: sourceCommit
+    };
+    const verifier = new GitWorkingTreeMemoryVerifier({
+      repositories: { resolve: async () => root }
+    });
+
+    const assessment = await verifier.verify({
+      memory: recordWithEvidence([pullRequestEvidence, fileEvidence]),
+      task: "Use the current feature default.",
+      context,
+      asOf: "2026-10-01T12:00:00.000Z"
+    });
+
+    assert.equal(assessment.compatibility, "compatible");
+    assert.equal(assessment.source, "git_commit_and_file_identity");
+    assert.ok(
+      assessment.evidence.some(
+        (reference) =>
+          reference.kind === "commit" && reference.revision === sourceCommit
+      )
+    );
+  });
+});
+
 test("Git verifier rejects memories whose cited file changed in the current working tree", async () => {
   await withGitRepository(async ({ root, sourceCommit, filePath }) => {
     const evidence: EvidenceReference[] = [
@@ -261,6 +295,109 @@ test("Git verifier validates canonical RuleSync skill evidence and fails closed 
         { kind: "skill", uri: "rulesync://skills/untracked/SKILL.md" }
       ]),
       task: "Use the untracked draft.",
+      context,
+      asOf: "2026-10-01T12:00:00.000Z"
+    });
+    assert.equal(untracked.compatibility, "unknown");
+  });
+});
+
+test("Git verifier validates canonical RuleSync command references against current files", async () => {
+  await withGitRepository(async ({ root, filePath }) => {
+    const commandPath = join(root, ".rulesync", "commands", "test-fix.md");
+    const hookConfigPath = join(root, ".rulesync", "hooks.jsonc");
+    const mcpConfigPath = join(root, ".rulesync", "mcp.jsonc");
+    await mkdir(join(root, ".rulesync", "commands"), { recursive: true });
+    await writeFile(
+      commandPath,
+      "---\ndescription: Test fixes\n---\nRun tests.\n"
+    );
+    await writeFile(hookConfigPath, '{"hooks":[]}\n');
+    await writeFile(mcpConfigPath, '{"mcpServers":{}}\n');
+    execGit(root, ["add", ".rulesync"]);
+    execGit(root, ["commit", "-q", "-m", "Add canonical RuleSync sources"]);
+    const sourceCommit = execGit(root, ["rev-parse", "HEAD"]);
+    const evidence: EvidenceReference[] = [
+      {
+        kind: "commit",
+        uri: `git://${encodeURIComponent(context.repositoryId!)}/commit/${sourceCommit}`,
+        revision: sourceCommit
+      },
+      {
+        kind: "file",
+        uri: pathToFileURL(filePath).href,
+        revision: sourceCommit
+      },
+      {
+        kind: "rule",
+        uri: "rulesync://commands/test-fix.md",
+        revision: sourceCommit
+      },
+      {
+        kind: "rule",
+        uri: "rulesync://hooks.jsonc",
+        revision: sourceCommit
+      },
+      {
+        kind: "rule",
+        uri: "rulesync://mcp.jsonc",
+        revision: sourceCommit
+      }
+    ];
+    const verifier = new GitWorkingTreeMemoryVerifier({
+      repositories: { resolve: async () => root }
+    });
+
+    const current = await verifier.verify({
+      memory: recordWithEvidence(evidence),
+      task: "Repair the failing test.",
+      context,
+      asOf: "2026-10-01T12:00:00.000Z"
+    });
+    assert.equal(current.compatibility, "compatible");
+    assert.ok(
+      current.evidence.some(
+        (reference) =>
+          reference.kind === "rule" &&
+          reference.uri === "rulesync://commands/test-fix.md"
+      )
+    );
+    assert.ok(
+      current.evidence.some(
+        (reference) =>
+          reference.kind === "rule" &&
+          reference.uri === "rulesync://hooks.jsonc"
+      )
+    );
+    assert.ok(
+      current.evidence.some(
+        (reference) =>
+          reference.kind === "rule" && reference.uri === "rulesync://mcp.jsonc"
+      )
+    );
+
+    await writeFile(
+      commandPath,
+      "---\ndescription: Test fixes\n---\nSkip tests.\n"
+    );
+    const stale = await verifier.verify({
+      memory: recordWithEvidence(evidence),
+      task: "Repair the failing test.",
+      context,
+      asOf: "2026-10-01T12:00:00.000Z"
+    });
+    assert.equal(stale.compatibility, "contradicted");
+    assert.equal(stale.reasonCode, "stale");
+
+    const draftPath = join(root, ".rulesync", "commands", "draft.md");
+    await writeFile(draftPath, "A local draft.");
+    const untracked = await verifier.verify({
+      memory: recordWithEvidence([
+        evidence[0]!,
+        evidence[1]!,
+        { kind: "rule", uri: "rulesync://commands/draft.md" }
+      ]),
+      task: "Use a local draft.",
       context,
       asOf: "2026-10-01T12:00:00.000Z"
     });

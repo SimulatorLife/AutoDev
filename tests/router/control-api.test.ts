@@ -3,27 +3,27 @@ import test from "node:test";
 
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { LOCAL_CONTROL_API_ACTOR } from "@simulatorlife/autodev-core";
+import {
+  getDefaultPersistenceManager,
+  type RouterPersistence,
+  setDefaultPersistenceManager
+} from "@simulatorlife/autodev-runtime/router/persistence";
 import type { ExecutionContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 
 import {
   CONTROL_API_PATHS,
   handleControlApiRequest
-} from "../../src/router/control-api.ts";
-import {
-  getDefaultPersistenceManager,
-  type RouterPersistence,
-  setDefaultPersistenceManager
-} from "../../src/router/persistence.ts";
-import { ROUTING_POLICY } from "../../src/router/routing.ts";
+} from "@simulatorlife/autodev-runtime/router/control-api";
+import { ROUTING_POLICY } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   getDefaultExecutionContract,
   setExecutionContractForTests
-} from "../../src/router/subagents.ts";
+} from "@simulatorlife/autodev-runtime/router/subagents";
 import {
   getFinishedSpans,
   resetTelemetryExporter,
   setTelemetryExporter
-} from "../../src/router/telemetry.ts";
+} from "@simulatorlife/autodev-runtime/router/telemetry";
 
 const ENV_KEYS = [
   "AUTODEV_CONTROL_API_TOKEN",

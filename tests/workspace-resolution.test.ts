@@ -14,7 +14,7 @@ import {
 import {
   workspaceContextFromRequest,
   workspaceMetadataForSession
-} from "../src/router/http.ts";
+} from "@simulatorlife/autodev-runtime/router/http";
 
 async function withWorkspace(
   callback: (workspace: string) => Promise<void>

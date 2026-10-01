@@ -2,6 +2,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import {
+  bridgeSandboxMode,
+  bridgeSkillContext,
+  composeProviderPrompt,
+  isOrchestratorRole,
+  ORCHESTRATOR_AGENT_ROLE,
+  resolveAgentRole,
+  roleInstructions
+} from "@simulatorlife/autodev-runtime/agents";
+import { promptFromInput } from "@simulatorlife/autodev-runtime/providers/antigravity";
+import { renderCodexTranscript } from "@simulatorlife/autodev-runtime/providers/claude-codex-tools";
 import { inputText } from "@simulatorlife/autodev-runtime/providers/copilot";
 import {
   AGENT_ROLE_HEADER,
@@ -13,19 +24,6 @@ import {
   roleContract
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 
-import {
-  composeProviderPrompt,
-  isOrchestratorRole,
-  ORCHESTRATOR_AGENT_ROLE,
-  resolveAgentRole,
-  roleInstructions
-} from "../src/agents/bridge-role.ts";
-import {
-  bridgeSandboxMode,
-  bridgeSkillContext
-} from "../src/agents/bridge-sandbox.ts";
-import { promptFromInput } from "../src/providers/antigravity.ts";
-import { renderCodexTranscript } from "../src/providers/claude-codex-tools.ts";
 import { normalizedSource } from "./source-text.ts";
 
 const read = (path: string): string => {
@@ -298,10 +296,12 @@ test("a leaf is told to ignore a spawn tool its runtime leaks to it", () => {
 });
 
 test("every provider bridge picks its instructions from the shared role prompts", () => {
-  // Root and Runtime bridges share the Runtime Agents contract even though
-  // only the root provider can use sibling-relative source imports.
+  // Runtime bridges use the package Agents contract rather than sibling source imports.
   const bridgeRoleImports: ReadonlyArray<readonly [string, RegExp]> = [
-    ["src/providers/antigravity.ts", /from "\.\.\/agents\/bridge-role\.ts"/],
+    [
+      "runtime/src/providers/antigravity.ts",
+      /from "@simulatorlife\/autodev-runtime\/agents"/
+    ],
     [
       "runtime/src/providers/copilot.ts",
       /from "@simulatorlife\/autodev-runtime\/agents"/
@@ -316,7 +316,7 @@ test("every provider bridge picks its instructions from the shared role prompts"
     assert.doesNotMatch(source, /const BRIDGE_INSTRUCTIONS =/, path);
   }
 
-  const claude = read("src/providers/claude.ts");
+  const claude = read("runtime/src/providers/claude.ts");
   assert.match(claude, /resolveAgentRole\(request\.headers/);
   // Claude takes its role policy from Codex's developer instructions, like a
   // Codex-native model; a second composed copy would compete with them.
@@ -325,7 +325,7 @@ test("every provider bridge picks its instructions from the shared role prompts"
 });
 
 test("the Claude bridge replaces the CLI's own system prompt instead of appending to it", () => {
-  const claude = read("src/providers/claude.ts");
+  const claude = read("runtime/src/providers/claude.ts");
   // Appending leaves Claude Code's default prompt in force, whose harness
   // guidance describes tools a bridged turn does not have.
   assert.doesNotMatch(claude, /--append-system-prompt/);
@@ -345,8 +345,8 @@ test("the installer ships every shared module the bridges import", () => {
   // informative than "Connection failed: error sending request".
   const materializer = read("src/platform/install-materializer.ts");
   const sources = [
-    "src/router/server.ts",
-    "src/providers/antigravity.ts",
+    "runtime/src/router/server.ts",
+    "runtime/src/providers/antigravity.ts",
     "runtime/src/providers/minimax.ts",
     "runtime/src/providers/copilot.ts"
   ];
@@ -362,7 +362,7 @@ test("the installer ships every shared module the bridges import", () => {
     )) {
       imported.add(`src/${match[1]}`);
     }
-    if (source === "src/router/server.ts") {
+    if (source === "runtime/src/router/server.ts") {
       for (const match of read(source).matchAll(
         /from ["']\.\/([^"']+\.ts)["']/g
       )) {
@@ -376,7 +376,7 @@ test("the installer ships every shared module the bridges import", () => {
   );
   for (const asset of [
     ...imported,
-    "src/mcp/tool-filter.ts",
+    "runtime/src/mcp/tool-filter.ts",
     "agents/prompts/base.md",
     "agents/prompts/leaf.md",
     "agents/prompts/orchestrator.md",
@@ -448,7 +448,7 @@ test("web research policy and Playwright boundaries are enforced in role prompts
 
 test("resolveSandboxModeFromHeaders reads the sandbox header case-insensitively", async () => {
   const { resolveSandboxModeFromHeaders } =
-    await import("../src/agents/bridge-role.ts");
+    await import("@simulatorlife/autodev-runtime/agents");
   assert.equal(
     resolveSandboxModeFromHeaders({
       "x-autodev-sandbox-mode": "read-only"
@@ -474,7 +474,7 @@ test("resolveSandboxModeFromHeaders reads the sandbox header case-insensitively"
 
 test("resolveSkillContextFromHeaders returns the propagated skill body", async () => {
   const { resolveSkillContextFromHeaders } =
-    await import("../src/agents/bridge-role.ts");
+    await import("@simulatorlife/autodev-runtime/agents");
   const body = "<skill>...</skill>";
   assert.equal(
     resolveSkillContextFromHeaders({ "x-autodev-skill-context": body }),

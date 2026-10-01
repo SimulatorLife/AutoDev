@@ -14,7 +14,7 @@ type JsonObject = Record<string, unknown>;
 type RequestRecord = { path: string; body: JsonObject };
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
-const shimPath = join(repoRoot, "src/mcp/spawn-shim.ts");
+const shimPath = join(repoRoot, "runtime/src/mcp/spawn-shim.ts");
 
 async function readJsonLine(
   child: ChildProcessWithoutNullStreams

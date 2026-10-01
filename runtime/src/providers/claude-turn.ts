@@ -5,7 +5,7 @@
  * tool calls in that answer, and sends the outputs back on the next request.
  * The Claude CLI instead runs a whole turn in one process. The bridge
  * reconciles the two by keeping the CLI alive between requests: when Claude
- * calls one of Codex's tools (through `src/mcp/codex-tools-shim.ts`) the call
+ * calls one of Codex's tools (through `runtime/src/mcp/codex-tools-shim.ts`) the call
  * is emitted to Codex, the current response completes, and the CLI stays
  * parked on that call until Codex's next request carries its output.
  *

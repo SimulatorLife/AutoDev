@@ -13,14 +13,13 @@ import { tmpdir } from "node:os";
 import { join, resolve as pathResolve } from "node:path";
 import test from "node:test";
 
-import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
-
 import {
   agyArgs,
   agyEnvironment,
   buildInvocationMcpConfig,
   createIsolatedAntigravityHome
-} from "../src/providers/antigravity.ts";
+} from "@simulatorlife/autodev-runtime/providers/antigravity";
+import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 
 const REPO_ROOT = pathResolve(import.meta.dirname, "..");
 
@@ -197,7 +196,7 @@ test("browser-tester receives Playwright only, with exactly its declared browser
       assert.equal(playwrightServer.command, process.execPath);
       assert.equal(
         playwrightServer.args[0],
-        pathResolve(REPO_ROOT, "src/mcp/tool-filter.ts")
+        pathResolve(REPO_ROOT, "runtime/src/mcp/tool-filter.ts")
       );
       assert.equal(playwrightServer.args[1], "bash");
       assert.deepEqual(
@@ -599,7 +598,7 @@ process.exit(0);
   );
 
   const runnerCode = `
-import { runAgy } from "./src/providers/antigravity.ts";
+import { runAgy } from "@simulatorlife/autodev-runtime/providers/antigravity";
 import assert from "node:assert/strict";
 
 const res = await runAgy("test prompt", "gemini-3.8-flash-medium", "medium", process.cwd(), null, null, "default");
@@ -651,7 +650,7 @@ process.exit(1);
   );
 
   const runnerCode = `
-import { runAgy } from "./src/providers/antigravity.ts";
+import { runAgy } from "@simulatorlife/autodev-runtime/providers/antigravity";
 import assert from "node:assert/strict";
 
 try {
@@ -697,7 +696,7 @@ test("isolated HOME is cleaned after failed spawn", async () => {
   const nonExistentAgy = join(temp, "does-not-exist-agy");
 
   const runnerCode = `
-import { runAgy } from "./src/providers/antigravity.ts";
+import { runAgy } from "@simulatorlife/autodev-runtime/providers/antigravity";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -782,7 +781,7 @@ process.exit(0);
   );
 
   const runnerCode = `
-import { runAgy } from "./src/providers/antigravity.ts";
+import { runAgy } from "@simulatorlife/autodev-runtime/providers/antigravity";
 import assert from "node:assert/strict";
 
 const res = await runAgy(
@@ -861,7 +860,7 @@ import { spawn } from "node:child_process";
 import assert from "node:assert/strict";
 
 const proxyPort = 45991;
-const proxy = spawn(process.execPath, ["src/providers/antigravity.ts"], {
+const proxy = spawn(process.execPath, ["runtime/src/providers/antigravity.ts"], {
   cwd: process.cwd(),
   env: {
     ...process.env,

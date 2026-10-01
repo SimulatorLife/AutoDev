@@ -37,10 +37,12 @@ import {
   type MemoryVersionedUpdate,
   type MemoryWhyResult
 } from "@simulatorlife/autodev-core";
+import { MemoryConflictError as RepositoryMemoryConflictError } from "@simulatorlife/autodev-data";
 
 import { redactSensitiveText, sanitizeEvidence } from "./privacy.ts";
 import {
   type NativeTrajectorySource,
+  type NormalizedTrajectorySummary,
   normalizeNativeTrajectory
 } from "./trajectory.ts";
 
@@ -73,8 +75,17 @@ export interface MemoryReconstructor {
   }>;
 }
 
+/** Recoverable provider outage; the service continues with lexical retrieval. */
+export class MemoryEmbeddingUnavailableError extends Error {
+  constructor() {
+    super("The optional memory embedding provider is unavailable.");
+    this.name = "MemoryEmbeddingUnavailableError";
+  }
+}
+
 export interface MemoryEmbeddingProvider {
   /** Implemented through AutoDev's existing provider/model layer, not a private router. */
+  /** Throw MemoryEmbeddingUnavailableError only when a recoverable provider outage prevents vector generation. */
   embed(text: string): Promise<readonly number[]>;
 }
 
@@ -84,6 +95,15 @@ export interface MemoryProposalInput {
   readonly claim: string;
   readonly experienceIds: readonly string[];
   readonly evidence: readonly EvidenceReference[];
+}
+
+export interface MemoryExperienceCaptureInput {
+  readonly source: NativeTrajectorySource;
+  readonly transcript: string;
+  readonly trajectoryUri: string;
+  readonly experience: Omit<ExperienceEnvelope, "trajectory" | "startedAt"> & {
+    readonly startedAt?: string;
+  };
 }
 
 export interface MemoryExperienceRetentionReport {
@@ -283,23 +303,40 @@ export class MemoryService {
   }
 
   async captureExperience(
-    input: {
-      readonly source: NativeTrajectorySource;
-      readonly transcript: string;
-      readonly trajectoryUri: string;
-      readonly experience: Omit<ExperienceEnvelope, "trajectory">;
-    },
+    input: MemoryExperienceCaptureInput,
     actor: MemoryActor,
     context: MemoryReadContext
-  ): Promise<void> {
+  ): Promise<NormalizedTrajectorySummary> {
     const normalized = normalizeNativeTrajectory({
       source: input.source,
       transcript: input.transcript,
       uri: input.trajectoryUri
     });
+    if (
+      !Object.entries(normalized.roleCounts).some(
+        ([role, count]) => role !== "meta" && count !== undefined && count > 0
+      )
+    ) {
+      throw new MemoryValidationError(
+        "Native trajectory contains no conversation records."
+      );
+    }
+    const startedAt =
+      input.experience.startedAt ??
+      (normalized.timestampsInferred ? undefined : normalized.firstTimestamp) ??
+      this.now();
+    const completedAt =
+      input.experience.completedAt ??
+      (normalized.timestampsInferred ||
+      !normalized.lastTimestamp ||
+      Date.parse(normalized.lastTimestamp) < Date.parse(startedAt)
+        ? undefined
+        : normalized.lastTimestamp);
     await this.appendExperience(
       {
         ...input.experience,
+        startedAt,
+        ...(completedAt === undefined ? {} : { completedAt }),
         trajectory: {
           format: normalized.format,
           uri: normalized.uri,
@@ -310,6 +347,7 @@ export class MemoryService {
       actor,
       context
     );
+    return normalized;
   }
 
   appendExperience(
@@ -347,30 +385,43 @@ export class MemoryService {
         );
       }
       span.setAttribute("memory.experience.outcome", experience.outcome);
-      await this.repository.appendExperience({
-        ...experience,
-        trajectory: {
-          ...experience.trajectory,
-          uri: sanitizeEvidence([
-            { kind: "trajectory", uri: experience.trajectory.uri }
-          ])[0]!.uri
-        },
-        evidence: sanitizeEvidence(experience.evidence),
-        ...(experience.validation
-          ? {
-              validation: {
-                ...experience.validation,
-                evidence: sanitizeEvidence(experience.validation.evidence)
+      try {
+        await this.repository.appendExperience({
+          ...experience,
+          trajectory: {
+            ...experience.trajectory,
+            uri: sanitizeEvidence([
+              { kind: "trajectory", uri: experience.trajectory.uri }
+            ])[0]!.uri
+          },
+          evidence: sanitizeEvidence(experience.evidence),
+          ...(experience.validation
+            ? {
+                validation: {
+                  ...experience.validation,
+                  evidence: sanitizeEvidence(experience.validation.evidence)
+                }
               }
-            }
-          : {}),
-        ...(experience.taskReference
-          ? { taskReference: sanitizeEvidence([experience.taskReference])[0]! }
-          : {}),
-        ...(experience.planReference
-          ? { planReference: sanitizeEvidence([experience.planReference])[0]! }
-          : {})
-      });
+            : {}),
+          ...(experience.taskReference
+            ? {
+                taskReference: sanitizeEvidence([experience.taskReference])[0]!
+              }
+            : {}),
+          ...(experience.planReference
+            ? {
+                planReference: sanitizeEvidence([experience.planReference])[0]!
+              }
+            : {})
+        });
+      } catch (error) {
+        // Translate the repository-owned conflict at the Runtime boundary so
+        // callers observe the MemoryService error contract consistently.
+        if (error instanceof RepositoryMemoryConflictError) {
+          throw new MemoryConflictError(error.message);
+        }
+        throw error;
+      }
     });
   }
 
@@ -505,11 +556,7 @@ export class MemoryService {
       evidence,
       relatedMemoryIds
     });
-    const embedding = this.embedder
-      ? await this.withSpan(MEMORY_OPERATIONS.embed, async () =>
-          this.validateEmbedding(await this.embedder!.embed(claim))
-        )
-      : undefined;
+    const embedding = await this.optionalEmbedding(claim);
     await this.repository.proposeMemory(candidate, event, embedding);
     return candidate;
   }
@@ -730,11 +777,7 @@ export class MemoryService {
     return this.withSpan(MEMORY_OPERATIONS.query, async () => {
       this.assertQuery(request.query);
       this.assertTaskKind(request.taskKind);
-      const queryEmbedding = this.embedder
-        ? await this.withSpan(MEMORY_OPERATIONS.embed, async () =>
-            this.validateEmbedding(await this.embedder!.embed(request.query))
-          )
-        : undefined;
+      const queryEmbedding = await this.optionalEmbedding(request.query);
       const asOf = request.asOf ?? this.now();
       const hits = await this.repository.searchMemories({
         ...request,
@@ -1208,11 +1251,7 @@ export class MemoryService {
     query: string
   ): Promise<readonly MemorySearchHit[]> {
     return this.withSpan(MEMORY_OPERATIONS.query, async () => {
-      const queryEmbedding = this.embedder
-        ? await this.withSpan(MEMORY_OPERATIONS.embed, async () =>
-            this.validateEmbedding(await this.embedder!.embed(query))
-          )
-        : undefined;
+      const queryEmbedding = await this.optionalEmbedding(query);
       return this.withSpan(MEMORY_OPERATIONS.retrieve, async (span) => {
         const retrieved = await this.repository.searchMemories({
           ...request,
@@ -1221,6 +1260,25 @@ export class MemoryService {
         span.setAttribute("memory.candidates.retrieved", retrieved.length);
         return retrieved;
       });
+    });
+  }
+
+  private optionalEmbedding(
+    text: string
+  ): Promise<readonly number[] | undefined> {
+    if (!this.embedder) return Promise.resolve(undefined);
+    return this.withSpan(MEMORY_OPERATIONS.embed, async (span) => {
+      try {
+        return this.validateEmbedding(await this.embedder!.embed(text));
+      } catch (error) {
+        if (error instanceof MemoryEmbeddingUnavailableError) {
+          span.setAttribute("memory.embedding.fallback", "lexical");
+        }
+        throw error;
+      }
+    }).catch((error: unknown) => {
+      if (error instanceof MemoryEmbeddingUnavailableError) return undefined;
+      throw error;
     });
   }
 
@@ -1552,6 +1610,16 @@ export class MemoryService {
       throw new MemoryValidationError(
         "Experience requires a trajectory reference and format."
       );
+    if (
+      !Number.isFinite(Date.parse(experience.startedAt)) ||
+      (experience.completedAt !== undefined &&
+        (!Number.isFinite(Date.parse(experience.completedAt)) ||
+          experience.completedAt < experience.startedAt))
+    ) {
+      throw new MemoryValidationError(
+        "Experience timestamps must be valid and completion cannot precede start."
+      );
+    }
   }
 
   private assertQuery(query: string): void {

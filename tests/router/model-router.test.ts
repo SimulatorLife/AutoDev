@@ -8,6 +8,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import {
+  AGENT_ACTIVITY_STATES,
+  AGENT_ACTIVITY_TTL_ENV,
+  createAgentActivityTracker,
+  DEFAULT_AGENT_ACTIVITY_TTL_MS,
+  resolveAgentActivityTtlMs
+} from "@simulatorlife/autodev-runtime/agents";
+import { spawnedChildren } from "@simulatorlife/autodev-runtime/providers/antigravity";
+import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import { COOLDOWNS as cooldowns } from "@simulatorlife/autodev-runtime/router/cooldown";
 import {
   beginShutdown,
@@ -22,22 +31,13 @@ import {
   resolveAgentEventReporter
 } from "@simulatorlife/autodev-runtime/telemetry";
 
-import {
-  AGENT_ACTIVITY_STATES,
-  AGENT_ACTIVITY_TTL_ENV,
-  createAgentActivityTracker,
-  DEFAULT_AGENT_ACTIVITY_TTL_MS,
-  resolveAgentActivityTtlMs
-} from "../../src/agents/agent-activity.ts";
-import { spawnedChildren } from "../../src/providers/antigravity.ts";
-import { getDefaultConcurrencyManager } from "../../src/router/concurrency.ts";
-import * as responses from "../../src/router/responses.ts";
+import * as responses from "@simulatorlife/autodev-runtime/router/responses";
 import {
   CONFIGURED_ORCHESTRATOR_MODEL,
   CONFIGURED_SMART_MODEL,
   ROUTING_POLICY as routing,
   validateRoutingConfig
-} from "../../src/router/routing.ts";
+} from "@simulatorlife/autodev-runtime/router/routing";
 import {
   activeProviderRequests,
   AGENT_ACTIVITY_TTL_MS,
@@ -102,8 +102,8 @@ import {
   UNATTRIBUTED_SUBAGENT_ROLE,
   usageStatus as rawUsageStatus,
   workspaceContextFromRequest
-} from "../../src/router/server.ts";
-import { UsageTracker } from "../../src/router/usage.ts";
+} from "@simulatorlife/autodev-runtime/router/server";
+import { UsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
 import { normalizedSource } from "../source-text.ts";
 
 const getRouterStatus = (...args: any[]): any =>
@@ -193,7 +193,7 @@ test("the router calls the Antigravity adapter directly, with no LiteLLM hop", a
   assert.equal(route.baseUrl, "http://127.0.0.1:4002/v1");
   assert.equal(route.healthUrl, "http://127.0.0.1:4002/health/liveliness");
 
-  const router = read("src/router/server.ts");
+  const router = read("runtime/src/router/server.ts");
   assert.doesNotMatch(
     router,
     /extra_headers = forwarded/,
@@ -205,7 +205,7 @@ test("the router calls the Antigravity adapter directly, with no LiteLLM hop", a
     "the faked-completion detector is obsolete"
   );
 
-  const bridge = read("src/providers/antigravity.ts");
+  const bridge = read("runtime/src/providers/antigravity.ts");
   // A post-stream failure must never read as success. It is no longer a bare
   // `response.failed` either: that discarded every token already streamed. The
   // turn is closed as *incomplete* instead, carrying the work that finished --
@@ -1181,7 +1181,7 @@ test("an exec tool call carrying a spawn script reaches Codex byte for byte", as
   // function that does not exist, and every bridge-driven spawn would fail with
   // nothing in the router log to explain it.
   const { buildSpawnScript, execToolCallSseEvents } =
-    await import("../../src/agents/spawn-tools.ts");
+    await import("@simulatorlife/autodev-runtime/agents");
   const source = buildSpawnScript([
     { agentType: "explorer", message: "audit the catalogue" }
   ]);
@@ -8227,7 +8227,7 @@ test("liveness stays 200 during draining while readiness returns 503 with struct
     // (which would call process.exit in production).
     const { execSync } = await import("node:child_process");
     void execSync;
-    const internal = await import("../../src/router/server.ts");
+    const internal = await import("@simulatorlife/autodev-runtime/router/server");
     void internal;
 
     // Trigger draining through the public lifecycle helper used by tests.
@@ -10912,7 +10912,7 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
   }
 });
 
-// --- Agent activity: shared state machine (src/agents/agent-activity.ts) ---
+// --- Agent activity: shared state machine (runtime/src/agents/agent-activity.ts) ---
 
 test("agent activity: TTL resolves from CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS with a 300000ms default", () => {
   assert.equal(resolveAgentActivityTtlMs({}), DEFAULT_AGENT_ACTIVITY_TTL_MS);

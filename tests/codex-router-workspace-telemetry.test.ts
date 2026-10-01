@@ -5,31 +5,32 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { recordRouterEvent } from "../src/router/events.ts";
+import { recordRouterEvent } from "@simulatorlife/autodev-runtime/router/events";
+import {
+  loadRouterState,
+  persistRouterStateNow
+} from "@simulatorlife/autodev-runtime/router/persistence";
+
 import {
   getRouterStatus,
   ingestAgentEvents,
   resetRouterTelemetry,
   setCodexStateSnapshotForTests
-} from "../src/router/http.ts";
+} from "@simulatorlife/autodev-runtime/router/http";
 import {
   codexTelemetryStatus,
   ingestOtelSignal,
   resetOtelTelemetry
-} from "../src/router/otel.ts";
-import {
-  loadRouterState,
-  persistRouterStateNow
-} from "../src/router/persistence.ts";
-import { proxyConcreteResponse } from "../src/router/proxy.ts";
+} from "@simulatorlife/autodev-runtime/router/otel";
+import { proxyConcreteResponse } from "@simulatorlife/autodev-runtime/router/proxy";
 import {
   noteBridgeRequest,
   resetSubagentTelemetry
-} from "../src/router/subagents.ts";
+} from "@simulatorlife/autodev-runtime/router/subagents";
 import {
   registerWorkspaceId,
   resetAttributionDiagnostics
-} from "../src/router/usage.ts";
+} from "@simulatorlife/autodev-runtime/router/usage";
 
 const attrs = (
   entries: Array<[string, unknown]>

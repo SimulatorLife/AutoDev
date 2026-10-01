@@ -101,7 +101,7 @@ export const DEFAULT_HEARTBEAT_THROTTLE_MS = 15_000;
  * What a bridge may report about its request's lifecycle: its own in-CLI
  * delegation and liveness. The router settles each request itself -- tool
  * waits, input waits, completion, failure -- from the response it relays; see
- * REPORTABLE_AGENT_ACTIVITY_STATES in src/router/http.ts.
+ * REPORTABLE_AGENT_ACTIVITY_STATES in runtime/src/router/http.ts.
  */
 export const VALID_ACTIVITY_STATES = Object.freeze(
   new Set(["subagent_wait", "resumed", "heartbeat"])

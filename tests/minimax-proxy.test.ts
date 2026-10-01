@@ -16,14 +16,14 @@ import {
 } from "@simulatorlife/autodev-runtime/providers/minimax";
 import { AGENT_ROLE_HEADER } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 
-import { downstreamHeaders } from "../src/router/proxy.ts";
-import { upstreamPayload } from "../src/router/responses.ts";
-import { ROUTING_POLICY as routing } from "../src/router/routing.ts";
+import { downstreamHeaders } from "@simulatorlife/autodev-runtime/router/proxy";
+import { upstreamPayload } from "@simulatorlife/autodev-runtime/router/responses";
+import { ROUTING_POLICY as routing } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   FORWARDED_REQUEST_HEADERS,
   SESSION_ID_HEADER,
   SESSION_SCOPE_HEADER
-} from "../src/router/subagents.ts";
+} from "@simulatorlife/autodev-runtime/router/subagents";
 
 const read = (path: string): string =>
   readFileSync(new URL(`../${path}`, import.meta.url), "utf8");

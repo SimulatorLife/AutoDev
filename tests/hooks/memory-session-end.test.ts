@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import {
   chmodSync,
@@ -193,15 +193,40 @@ test("materialized Codex hook reads its installed secret and posts to the loopba
       transcript_path: transcriptPath,
       cwd: path.dirname(codexHome)
     };
-    const stderr = execFileSync(process.execPath, [installed], {
-      input: JSON.stringify(event),
+    const child = spawn(process.execPath, [installed], {
       env,
-      encoding: "utf8",
-      timeout: 5000
+      stdio: ["pipe", "ignore", "pipe"]
     });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    const childResult = new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (code, signal) => resolve({ code, signal }));
+    });
+    child.stdin.end(JSON.stringify(event));
+    const result = await childResult;
+    assert.equal(result.signal, null);
+    assert.equal(result.code, 0, stderr);
     assert.equal(stderr, "");
 
-    const request = await observed;
+    let timeout: NodeJS.Timeout | undefined;
+    const request = await Promise.race([
+      observed,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("Installed hook did not reach Control API")),
+          5000
+        );
+      })
+    ]).finally(() => {
+      if (timeout) clearTimeout(timeout);
+    });
     assert.equal(request.method, "POST");
     assert.equal(request.url, "/control/memory/capture");
     assert.equal(request.authorization, "Bearer installed-local-token");

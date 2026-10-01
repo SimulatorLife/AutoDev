@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { createServer, type Server } from "node:http";
 import test from "node:test";
 
-import { codexState } from "../../src/router/http.ts";
+import { codexState } from "@simulatorlife/autodev-runtime/router/http";
 
 test("control-only listener exposes only authenticated Control API routes", async () => {
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
@@ -13,7 +13,7 @@ test("control-only listener exposes only authenticated Control API routes", asyn
     "control-listener-test-token-0123456789abcdef";
   process.env.AUTODEV_CONTROL_VIEWERS = "control-viewer";
   process.env.AUTODEV_CONTROL_OPERATORS = "";
-  const { createControlApiServer } = await import("../../src/router/server.ts");
+  const { createControlApiServer } = await import("@simulatorlife/autodev-runtime/router/server");
   const server = createControlApiServer();
   try {
     server.listen(0, "127.0.0.1");
@@ -78,7 +78,7 @@ test("OpenLIT mode starts a separate listener that cannot serve model routes", a
   process.env.AUTODEV_CONTROL_OPERATORS = "";
   let server: Server | undefined;
   try {
-    const { startRouterServer } = await import("../../src/router/server.ts");
+    const { startRouterServer } = await import("@simulatorlife/autodev-runtime/router/server");
     server = startRouterServer(0, "127.0.0.1");
     await once(server, "listening");
 
@@ -125,7 +125,7 @@ test("router server removes its process handlers with the listener", async () =>
   let server: Server | undefined;
 
   try {
-    const { startRouterServer } = await import("../../src/router/server.ts");
+    const { startRouterServer } = await import("@simulatorlife/autodev-runtime/router/server");
     server = startRouterServer(0, "127.0.0.1");
     await once(server, "listening");
     assert.equal(codexState.livePollStarted, true);

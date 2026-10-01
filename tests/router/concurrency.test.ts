@@ -4,13 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { createAgentActivityTracker } from "../../src/agents/agent-activity.ts";
+import { createAgentActivityTracker } from "@simulatorlife/autodev-runtime/agents";
 import {
   ConcurrencyManager,
   matchAgentsContext,
   parseConcurrencyConfig,
   PROCESS_FALLBACK_SESSION_KEY
-} from "../../src/router/concurrency.ts";
+} from "@simulatorlife/autodev-runtime/router/concurrency";
 
 test("parseConcurrencyConfig parses multiline and inline tables and rejects legacy max_threads", async () => {
   const dir = await mkdtemp(join(tmpdir(), "concurrency-test-"));

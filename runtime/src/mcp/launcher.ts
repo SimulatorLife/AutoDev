@@ -9,6 +9,7 @@ import {
   resolveCodeGraphContextBinary
 } from "@simulatorlife/autodev-runtime/shared/executables";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import { MCP_SERVER_CODEGRAPHCONTEXT } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 export type McpName =
@@ -107,9 +108,10 @@ export function runMcp(
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
-    const repoRoot =
-      process.env.AUTODEV_REPO_ROOT?.trim() ||
-      fileURLToPath(new URL("../../", import.meta.url));
+    const repoRoot = resolveRuntimeSourceRoot(
+      import.meta.dirname,
+      process.env.AUTODEV_REPO_ROOT
+    );
     process.exitCode = runMcp(process.argv[2] ?? "", repoRoot);
   } catch (error) {
     writeErrorLine(

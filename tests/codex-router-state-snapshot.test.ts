@@ -4,12 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { getRouterStatus, resetRouterTelemetry } from "../src/router/http.ts";
-import { resetOtelTelemetry } from "../src/router/otel.ts";
 import {
   CodexStateCollector,
   loadCodexStateCollectorConfig
-} from "../src/router/state-collector.ts";
+} from "@simulatorlife/autodev-runtime/router/state-collector";
+
+import { getRouterStatus, resetRouterTelemetry } from "@simulatorlife/autodev-runtime/router/http";
+import { resetOtelTelemetry } from "@simulatorlife/autodev-runtime/router/otel";
 import { parseLimitedTableSelect } from "./sqlite-select-stub.ts";
 
 type JsonRecord = Record<string, any>;

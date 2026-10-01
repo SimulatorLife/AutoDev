@@ -7,7 +7,7 @@ import {
   RoutingPolicy,
   type RoutingRuntime,
   validateRoutingConfig
-} from "../../src/router/routing.ts";
+} from "@simulatorlife/autodev-runtime/router/routing";
 
 function seeded(seed: number): () => number {
   let state = seed >>> 0;

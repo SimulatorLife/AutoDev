@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getDefaultConcurrencyManager } from "../../src/router/concurrency.ts";
-import { ROUTING_POLICY } from "../../src/router/routing.ts";
+import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
+
+import { ROUTING_POLICY } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   agentActivity,
   resetRouterTelemetry
-} from "../../src/router/server.ts";
+} from "@simulatorlife/autodev-runtime/router/server";
 import {
   closeBridgeSubagentsForRequest,
   closeBridgeSubagentUsage,
@@ -16,8 +17,8 @@ import {
   orchestratorProviderForSession,
   orchestratorSessionInfo,
   resetSubagentTelemetry
-} from "../../src/router/subagents.ts";
-import { countLiveAgentActivity } from "../../src/router/usage.ts";
+} from "@simulatorlife/autodev-runtime/router/subagents";
+import { countLiveAgentActivity } from "@simulatorlife/autodev-runtime/router/usage";
 
 test("orchestrator-active-subagents: orchestrator remains in subagent_wait while subagents are active", () => {
   resetRouterTelemetry();

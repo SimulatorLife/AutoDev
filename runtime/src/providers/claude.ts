@@ -6,10 +6,10 @@
  *
  * Claude is a model here, not a second agent runtime. The CLI runs with its
  * built-in tools disabled; the only tools it has are Codex's own, mirrored
- * from the request (src/providers/claude-codex-tools.ts). Every call Claude
+ * from the request (runtime/src/providers/claude-codex-tools.ts). Every call Claude
  * makes is emitted to Codex, which executes it in the turn's sandbox, runs its
  * hooks, and shows it in the app, while the CLI stays parked on the call until
- * Codex returns the output (src/providers/claude-turn.ts). The one exception is
+ * Codex returns the output (runtime/src/providers/claude-turn.ts). The one exception is
  * web research: Codex's hosted web search is not something a tool script can
  * perform, so when Codex offers it the CLI keeps its own WebSearch/WebFetch and
  * each use is recorded in the thread as a finished step.
@@ -23,7 +23,7 @@ import { spawn } from "node:child_process";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
@@ -50,12 +50,16 @@ import {
   validatedAutoDevOtelResourceAttributes,
   withAutoDevOtelResourceContext
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
+import {
+  resolveRuntimeSourcePath,
+  resolveRuntimeSourceRoot
+} from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
-import { resolveAgentRole } from "../agents/bridge-role.ts";
 import {
   bridgeSkillContext,
-  readOnlySystemPromptInjection
-} from "../agents/bridge-sandbox.ts";
+  readOnlySystemPromptInjection,
+  resolveAgentRole
+} from "@simulatorlife/autodev-runtime/agents";
 import {
   type AgentEventReporter,
   resolveAgentEventReporter
@@ -531,9 +535,11 @@ export function codexToolsMcpConfig(
   turnId: string,
   environment: NodeJS.ProcessEnv = process.env
 ): string {
-  const shim = resolve(
-    join(import.meta.dirname, "..", "mcp", "codex-tools-shim.ts")
+  const repoRoot = resolveRuntimeSourceRoot(
+    import.meta.dirname,
+    process.env.AUTODEV_REPO_ROOT
   );
+  const shim = resolveRuntimeSourcePath(repoRoot, "mcp/codex-tools-shim.ts");
   const resourceAttributes =
     validatedAutoDevOtelResourceAttributes(environment);
   return JSON.stringify({
@@ -839,7 +845,7 @@ function sendJson(
   response.end(encoded);
 }
 
-// Live turns, parked or streaming. See src/providers/claude-turn.ts.
+// Live turns, parked or streaming. See runtime/src/providers/claude-turn.ts.
 const turns = new ClaudeTurnRegistry();
 
 /** How an error ends a turn: a provider limit, a timeout, or an interruption. */

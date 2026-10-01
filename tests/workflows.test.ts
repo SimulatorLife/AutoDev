@@ -397,7 +397,7 @@ test("provider bridges explicitly expose code MCP capabilities", async () => {
   assert.match(copilot, /--allow-tool=web_search/);
   assert.match(copilot, /--allow-tool=web_fetch/);
   const claude = await readFile(
-    path.join(root, "src", "providers", "claude.ts"),
+    path.join(root, "runtime", "src", "providers", "claude.ts"),
     "utf8"
   );
   // Claude reaches a role's MCP servers through Codex's own tools (Codex
@@ -407,7 +407,7 @@ test("provider bridges explicitly expose code MCP capabilities", async () => {
   assert.match(claude, /WebSearch/);
   assert.match(claude, /WebFetch/);
   const antigravity = await readFile(
-    path.join(root, "src", "providers", "antigravity.ts"),
+    path.join(root, "runtime", "src", "providers", "antigravity.ts"),
     "utf8"
   );
   assert.match(antigravity, /search_web/);

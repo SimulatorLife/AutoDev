@@ -5,21 +5,23 @@ import {
   buildRecoveryScript,
   buildSpawnScript,
   carriesPendingSpawnResult,
-  EXEC_TOOL,
   execToolCallSseEvents,
   mintCallId,
   mintCallItemId,
   parseSpawnResults,
-  pendingToolCallOutputs,
-  SPAWN_TOOL
-} from "../src/agents/spawn-tools.ts";
+  pendingToolCallOutputs
+} from "@simulatorlife/autodev-runtime/agents";
+import {
+  EXEC_TOOL,
+  MULTI_AGENT_SPAWN_TOOL
+} from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 // The literals below are not style choices -- each was read off a live Codex
 // 0.153.1 or a recorded rollout of a GPT-served turn that spawned successfully.
 // A change here is a change to what Codex accepts, so pin them.
 test("the spawn call targets Codex's own code-mode tools", () => {
   assert.equal(EXEC_TOOL, "exec");
-  assert.equal(SPAWN_TOOL, "multi_agent_v1__spawn_agent");
+  assert.equal(MULTI_AGENT_SPAWN_TOOL, "multi_agent_v1__spawn_agent");
 });
 
 test("recovery script closes only terminal children owned by the parent", async () => {
@@ -114,7 +116,7 @@ test("a rejected child is reported without hiding successfully created siblings"
   ]);
   const values: unknown[] = [];
   const tools = {
-    [SPAWN_TOOL]: async ({ message }: { message: string }) => {
+    [MULTI_AGENT_SPAWN_TOOL]: async ({ message }: { message: string }) => {
       if (message === "second") throw new Error("thread limit reached");
       return { agent_id: "child-1", nickname: "Explorer" };
     }

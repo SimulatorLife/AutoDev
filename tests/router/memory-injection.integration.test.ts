@@ -22,16 +22,16 @@ import {
   type MemoryProposalInput
 } from "@simulatorlife/autodev-runtime/memory";
 
-import { handleControlApiRequest } from "../../src/router/control-api.ts";
+import { handleControlApiRequest } from "@simulatorlife/autodev-runtime/router/control-api";
 import {
   closeOrchestratorMemoryHost,
   injectOrchestratorMemory
-} from "../../src/router/memory-injection.ts";
+} from "@simulatorlife/autodev-runtime/router/memory-injection";
 
 const databaseUrl = process.env.AUTODEV_MEMORY_ROUTER_TEST_DATABASE_URL;
 
 test(
-  "router JIT adapter injects only Git-verified MemoryService results into an orchestrator request",
+  "router JIT adapter retrieves partial lexical matches and injects only Git-verified results",
   { skip: !databaseUrl },
   async () => {
     const repositoryRoot = await mkdtemp(
@@ -477,6 +477,103 @@ test(
       );
       assert.equal(duplicateCapture.status, 200);
       assert.equal(duplicateCapture.body.captured, false);
+      const changedTranscript = await readFile(transcriptPath, "utf8");
+      await writeFile(
+        transcriptPath,
+        `${changedTranscript}\n${JSON.stringify({
+          type: "response_item",
+          timestamp: now,
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "changed session content" }]
+          }
+        })}`
+      );
+      const conflictingCapture = await callMemoryControlApi(
+        "POST",
+        "/control/memory/capture",
+        "memory-operator",
+        captureBody
+      );
+      assert.equal(conflictingCapture.status, 409);
+      assert.equal(
+        conflictingCapture.body.error?.code,
+        "autodev_memory_capture_conflict"
+      );
+
+      const parallelSessionId = `${request.sessionKey}.parallel`;
+      const parallelRequest = {
+        ...request,
+        requestId: `request-${identity}-parallel`,
+        sessionKey: parallelSessionId
+      };
+      await injectOrchestratorMemory(parallelRequest);
+      const parallelTranscriptPath = join(
+        sessionsDirectory,
+        "parallel-session.jsonl"
+      );
+      await writeFile(
+        parallelTranscriptPath,
+        [
+          JSON.stringify({
+            type: "session_meta",
+            payload: {
+              id: parallelSessionId,
+              cwd: repositoryRoot,
+              timestamp: now
+            }
+          }),
+          JSON.stringify({
+            type: "response_item",
+            timestamp: now,
+            payload: {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: "parallel capture" }]
+            }
+          }),
+          JSON.stringify({
+            type: "response_item",
+            timestamp: now,
+            payload: {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "captured once" }]
+            }
+          })
+        ].join("\n")
+      );
+      const parallelBody = {
+        sessionId: parallelSessionId,
+        transcriptPath: parallelTranscriptPath,
+        cwd: repositoryRoot
+      };
+      const parallelCaptures = await Promise.all([
+        callMemoryControlApi(
+          "POST",
+          "/control/memory/capture",
+          "memory-operator",
+          parallelBody
+        ),
+        callMemoryControlApi(
+          "POST",
+          "/control/memory/capture",
+          "memory-operator",
+          parallelBody
+        )
+      ]);
+      assert.deepEqual(
+        parallelCaptures.map(({ status }) => status),
+        [200, 200]
+      );
+      assert.deepEqual(
+        parallelCaptures
+          .map(({ body }) => body.captured)
+          .sort((left, right) => Number(right) - Number(left)),
+        [true, false]
+      );
+
       const outsideCapture = await callMemoryControlApi(
         "POST",
         "/control/memory/capture",

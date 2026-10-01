@@ -8,7 +8,7 @@ import { createInterface } from "node:readline";
 import test from "node:test";
 
 const REPO_ROOT = pathResolve(import.meta.dirname, "../..");
-const FILTER = join(REPO_ROOT, "src/mcp/tool-filter.ts");
+const FILTER = join(REPO_ROOT, "runtime/src/mcp/tool-filter.ts");
 
 test("stdio MCP tool filter hides ungranted tools and rejects direct calls", async () => {
   const temp = mkdtempSync(join(tmpdir(), "autodev-mcp-tool-filter-"));

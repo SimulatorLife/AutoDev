@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 
-import { normalizeTranscript } from "@letta-ai/trajectory";
+import {
+  normalizeTranscript,
+  type TranscriptTrajectorySource
+} from "@letta-ai/trajectory";
 
 import { sanitizeEvidenceReference } from "./privacy.ts";
 
@@ -8,12 +11,16 @@ export const NATIVE_TRAJECTORY_SOURCES = [
   "codex",
   "claude-code",
   "copilot-cli",
-  "gemini-cli"
-] as const;
+  "gemini-cli",
+  "openhands",
+  "letta-code",
+  "opencode",
+  "cursor"
+] as const satisfies readonly TranscriptTrajectorySource[];
 
 export type NativeTrajectorySource = (typeof NATIVE_TRAJECTORY_SOURCES)[number];
 
-const MAX_TRANSCRIPT_BYTES = 32 * 1024 * 1024;
+export const MAX_NATIVE_TRAJECTORY_BYTES = 32 * 1024 * 1024;
 
 export interface NormalizedTrajectorySummary {
   readonly format: "letta-trajectory-v1";
@@ -22,6 +29,7 @@ export interface NormalizedTrajectorySummary {
   readonly digest: string;
   readonly recordCount: number;
   readonly diagnosticCount: number;
+  readonly timestampsInferred: boolean;
   readonly roleCounts: Readonly<Partial<Record<string, number>>>;
   readonly firstTimestamp?: string;
   readonly lastTimestamp?: string;
@@ -38,7 +46,7 @@ export function normalizeNativeTrajectory(input: {
   readonly transcript: string;
   readonly uri: string;
 }): NormalizedTrajectorySummary {
-  if (Buffer.byteLength(input.transcript, "utf8") > MAX_TRANSCRIPT_BYTES)
+  if (Buffer.byteLength(input.transcript, "utf8") > MAX_NATIVE_TRAJECTORY_BYTES)
     throw new RangeError(
       "Native trajectory exceeds the 32 MiB normalization limit."
     );
@@ -73,6 +81,10 @@ export function normalizeNativeTrajectory(input: {
     digest: createHash("sha256").update(input.transcript, "utf8").digest("hex"),
     recordCount: normalized.records.length,
     diagnosticCount: normalized.diagnostics.length,
+    timestampsInferred: normalized.diagnostics.some(
+      ({ code }) =>
+        code === "timestamps_synthesized" || code === "timestamps_interpolated"
+    ),
     roleCounts,
     ...(firstTimestamp ? { firstTimestamp } : {}),
     ...(lastTimestamp ? { lastTimestamp } : {})
