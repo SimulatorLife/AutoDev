@@ -13,7 +13,6 @@ defined in the parent skill.
 - Keep scope to the requested change plus dependency work required for correctness
 - Fix failures at the phase or source that owns them rather than masking them downstream
 - Validation evidence is state-specific; material changes invalidate affected evidence
-- Version-sensitive external API, framework, library, protocol, or tool assumptions must match the repository's actual dependency/tool version and authoritative sources
 
 ## 1. Understand
 
@@ -30,9 +29,8 @@ consumers, ownership boundaries, control/data flow, reusable implementations,
 tests, configuration, documentation, and active versus generated/dead/
 transitional paths.
 
-When a target-state decision depends on external behavior, identify the actual
-installed/configured version and verify the assumption against authoritative,
-version-relevant documentation, source, specifications, or release notes.
+For implementation-critical behavior owned outside the repository, resolve
+version-sensitive assumptions through the `docs-researcher` before planning.
 
 **Gate:** the current state and affected path are understood well enough to
 design the target state
@@ -45,9 +43,6 @@ prove the target state.
 
 For staged migrations, define the authoritative path and removal condition for
 the old one.
-
-Carry any externally verified, version-sensitive constraints into the plan so
-implementation does not silently fall back to stale model knowledge.
 
 **Gate:** there is a coherent path from current state to the requested target
 state
@@ -64,11 +59,7 @@ their canonical source. Avoid unrelated cleanup.
 
 Apply the parent skill's validation policy and the strongest relevant repository
 checks. Validate acceptance criteria, the active path, regressions, and affected
-boundaries against one identified repository state. Record unavailable evidence
-explicitly.
-
-If a material change occurs after a validation verdict, rerun the affected
-validation against the new state before advancing.
+boundaries. Record unavailable evidence explicitly.
 
 **Gate:** available evidence supports the target state with no known blocking
 findings
