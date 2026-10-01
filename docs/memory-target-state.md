@@ -249,17 +249,18 @@ agent/provider executions
           ┌─────────┴─────────┐
           │                   │
           ▼                   ▼
- AutoDev memory runtime   optional Graphiti
+ AutoDev MemoryService    optional Graphiti
  JIT/governance/curator   temporal graph index
           │
-          ▼
- official MCP TypeScript SDK
-          │
-          ▼
- AutoDev Memory MCP / native API
-          │
-          ▼
- root + workers + reviewers
+    ┌─────┴──────────────┐
+    │                    │
+    ▼                    ▼
+ native runtime       MCP adapter
+ integration          (official TS SDK)
+    │                    │
+    ▼                    ▼
+orchestrator/agents   external agents +
+automatic JIT        explicit follow-up
 ~~~
 
 ### Direct dependencies
@@ -328,6 +329,52 @@ The following encode AutoDev-specific semantics and should remain custom TypeScr
 | **Memory MCP facade** | Expose governed search/read/history/propose/invalidate/research operations to heterogeneous agents | Direct PostgreSQL/Graphiti access would bypass authorization, provenance, validation, and promotion rules |
 
 The custom layer should orchestrate existing dependencies, not reimplement their storage/indexing/transport capabilities.
+
+### Memory access paths
+
+Do **not** route every memory interaction through MCP. The canonical implementation is one shared TypeScript `MemoryService` with multiple adapters.
+
+Normal AutoDev memory use is automatic and orchestrator-driven:
+
+~~~text
+task arrives
+    ↓
+AutoDev orchestrator
+    ↓
+MemoryService.research(...)
+    ↓
+JIT retrieval + current-state validation + reconstruction
+    ↓
+bounded memory packet
+    ↓
+agent context
+~~~
+
+The active agent should generally begin with relevant memory already present. Memory quality must not depend on the model remembering to call a tool.
+
+Use these access paths:
+
+| Interaction | Access path |
+| --- | --- |
+| Raw trajectory/execution capture | Native runtime + OpenTelemetry/transcript ingestion |
+| Durable memory persistence/search internals | `MemoryService` → `data/` adapters |
+| Automatic pre-delegation JIT research | Native orchestrator → `MemoryService.research(...)` |
+| Automatic memory-packet injection | Native runtime/context assembly |
+| Consolidation, promotion, supersession, retention | Internal runtime/background workflows |
+| Console browse/manage operations | Control API over the same memory service/contracts |
+| Agent discovers a new memory need during execution | Memory MCP tool call or equivalent native tool adapter |
+| External Codex/Claude/Gemini/other client | Memory MCP facade |
+| Direct PostgreSQL/Graphiti access by agents | **Never** |
+
+Internal AutoDev callers must invoke the shared service directly rather than serializing an in-process request through MCP:
+
+~~~text
+AutoDev runtime ───────────────► MemoryService
+Console ──Control API──────────► MemoryService
+external/loosely-coupled agent ─MCP────────────► MemoryService
+~~~
+
+MCP is therefore an **interoperability and explicit follow-up boundary**, not the internal memory architecture. It is appropriate when an agent learns something during execution that changes what history it needs, for provenance/history inspection, for proposing a durable memory, or when the caller is outside the AutoDev runtime.
 
 ### Agent-facing interface
 
