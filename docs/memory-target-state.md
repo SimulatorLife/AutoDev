@@ -215,7 +215,7 @@ The logical contract matters more than a particular database.
 - **`runtime/`** — trajectory capture, retrieval orchestration, JIT research/curation, promotion, and agent-facing context assembly.
 - **`data/`** — typed persistence/search adapters for trajectories, memories, indexes, and retained OpenLIT memory integration.
 - **`core/`** — infrastructure-independent memory types, scopes, provenance, lifecycle states, and contracts.
-- **`console/`** — Memory browse/search, provenance/history, scope/status, and management UX.
+- **`console/`** — retained/adapted OpenLIT Memory connector/page primitives plus AutoDev-specific provenance, lifecycle, scope/status, analytics, and management UX.
 
 Physical storage may combine append-oriented events, structured records, full-text search, vector indexes, and optional temporal/entity graphs.
 
@@ -252,22 +252,22 @@ agent/provider executions
  AutoDev MemoryService    optional Graphiti
  JIT/governance/curator   temporal graph index
           │
-    ┌─────┴──────────────┐
-    │                    │
-    ▼                    ▼
- native runtime       MCP adapter
- integration          (official TS SDK)
-    │                    │
-    ▼                    ▼
-orchestrator/agents   external agents +
-automatic JIT        explicit follow-up
+   ┌──────┼──────────────────┐
+   │      │                  │
+   ▼      ▼                  ▼
+native   Control API +     MCP adapter
+runtime  OpenLIT Memory    (official TS SDK)
+   │      connector/page      │
+   ▼      │                  ▼
+agents    operators/UI     external agents +
+JIT       analytics        explicit follow-up
 ~~~
 
 ### Direct dependencies
 
 | Dependency | Use directly for | Why | Boundary |
 | --- | --- | --- | --- |
-| [OpenTelemetry](https://opentelemetry.io/) + [OpenLIT](https://github.com/openlit/openlit) | Execution traces, tool/LLM/subagent activity, costs, evaluations, and source evidence | AutoDev already uses the OTel/OpenLIT observability plane; do not build a second execution logger | OpenLIT is evidence/observability, not canonical mutable memory |
+| [OpenTelemetry](https://opentelemetry.io/) + [OpenLIT](https://github.com/openlit/openlit) | Execution evidence **and** the retained memory connector/operator UI, graph/detail/list primitives, connector management, and dashboard/trace surfaces | AutoDev already uses the OTel/OpenLIT foundation, and OpenLIT's memory connector layer is vendor-agnostic and capability-driven | OpenLIT is the primary operator/observability surface, but AutoDev `MemoryService` remains the memory semantic/runtime authority |
 | [@letta-ai/trajectory](https://github.com/letta-ai/trajectory) | Normalize supported Codex, Claude Code, Copilot CLI, Gemini CLI, OpenHands, Letta, and other native transcripts into deterministic records | Avoid writing/maintaining one transcript decoder per harness; it is TypeScript and exposes a validated shared trajectory schema | AutoDev still owns repository/task/run/PR/commit/outcome metadata and any unsupported adapters |
 | PostgreSQL | Canonical durable memory records, provenance, scopes, lifecycle state, supersession, utility/evaluation metadata | Memory is mostly structured mutable state requiring transactions, joins, filters, and history | Do not use ClickHouse telemetry tables as the canonical mutable memory database |
 | [pgvector](https://github.com/pgvector/pgvector) | Semantic retrieval inside the same PostgreSQL store | Adds vector/HNSW or IVFFlat search without introducing a separate vector database | Vector similarity is one ranking signal, never the applicability decision |
@@ -276,6 +276,119 @@ automatic JIT        explicit follow-up
 | Git/GitHub + RuleSync/AutoDev configuration | Current-state verification and canonical-source checks | These are the authoritative sources needed to decide whether old memory still applies | Query them during JIT validation; never copy their authority into memory |
 
 Prefer the existing provider/model abstraction for embeddings and reconstruction models. Do not create a dedicated model-routing subsystem for memory.
+
+### Retained OpenLIT memory surface
+
+AutoDev should **reuse and adapt OpenLIT's memory connector framework and Memory page instead of building a second memory administration UI**. OpenLIT's current connector layer is descriptor- and capability-driven: a memory adapter advertises supported operations and filter/configuration fields, while shared forms, routes, list/detail/graph UI, pagination, and tool availability respond to those capabilities.
+
+Implement an **AutoDev Memory connector/adapter** over the canonical `MemoryService`. The connector is a presentation/integration adapter; it does not become the memory authority.
+
+~~~text
+AutoDev MemoryService
+      │
+      ├── native orchestrator/JIT path
+      ├── Control API
+      │      ↓
+      │   AutoDev Memory connector
+      │      ↓
+      │   retained OpenLIT Memory UI
+      │
+      └── MCP facade
+~~~
+
+#### Reuse directly or with light adaptation
+
+| OpenLIT capability | AutoDev use |
+| --- | --- |
+| **Memory connector registry + descriptors** | Register AutoDev Memory alongside optional external/experimental stores without adding per-vendor forms or switches |
+| **Capability-driven UI/actions** | Advertise only operations AutoDev safely supports; hide unsupported actions automatically |
+| **Connector configuration and health** | Reuse connector status/test/health patterns and external-backend endpoint/secret handling when applicable |
+| **Connector-defined filters** | Drive Memory filters from AutoDev scope metadata rather than bespoke page controls |
+| **List/search/pagination** | Reuse the generic memory browser over AutoDev's indexed records |
+| **Detail sheet/panels** | Reuse the shell and extend it with provenance, lifecycle, verification, source evidence, and usage |
+| **Graph view / graph model** | Reuse for AutoDev relationships; feed native relationships or Graphiti-derived edges when enabled |
+| **Copy/import plumbing** | Reuse for migration/experiments across AutoDev, Mem0, Zep, Claude, or other write-capable connectors while retaining provenance |
+| **Audit/access hooks** | Retain equivalent access/audit integration where the reduced AutoDev Console still needs it |
+| **Otter memory tools, if Otter is retained** | Human/operator Q&A and investigation over memory records; never part of the automatic agent JIT path |
+| **OpenLIT trace/dashboard primitives** | Display memory-pipeline latency, token/cost, retrieval quality, lifecycle activity, and ablation/effectiveness metrics |
+
+Do not duplicate those generic capabilities in a separate AutoDev-only Memory application unless the retained OpenLIT primitive cannot represent the required semantics cleanly.
+
+#### Adapt the OpenLIT domain model
+
+Stock OpenLIT memory connectors are generic external-memory CRUD integrations. AutoDev adds stronger semantics and has removed OpenLIT tenancy concepts.
+
+Map the retained machinery as follows:
+
+~~~text
+OpenLIT project/environment  → remove; use AutoDev workspace/repository scope
+user                         → only where a real external connector requires it
+session/run                  → AutoDev task/run
+agent                        → AutoDev agent/role
+
+generic memory record        → AutoDev episodic/semantic/procedural memory
+generic metadata             → provenance + validity + source/evidence references
+delete                       → invalidate/supersede by default for durable knowledge
+hard delete                  → retention/privacy/admin operation only
+~~~
+
+The generic list/detail/filter UI should therefore expose AutoDev concepts such as:
+
+- memory type: episodic / semantic / procedural;
+- scope: task/run / role / workspace/repository / global;
+- status: active / superseded / invalidated / uncertain;
+- source task/run, agent/role, PR/issue, commit/SHA, relevant files/entities;
+- created/valid/last-verified timestamps;
+- supersedes/superseded-by and related-memory links;
+- retrieval, reconstruction, rejection, injection, and observed-use counts;
+- current-state compatibility/verification evidence where available.
+
+Do not recreate OpenLIT organization, account, project, or environment scoping to satisfy the stock connector model.
+
+#### Extend actions where CRUD is insufficient
+
+AutoDev's durable-memory lifecycle is not plain CRUD. The UI/API should expose domain actions where appropriate:
+
+~~~text
+propose
+verify
+revise
+invalidate
+supersede
+promote
+inspect provenance/history
+~~~
+
+Generic `add/update/delete` may remain for external connectors and low-level compatibility, but AutoDev Memory must preserve its governance rules. In particular, deleting a stale semantic memory from the page must not silently erase the historical episode/evidence that produced it.
+
+#### Memory observability in OpenLIT
+
+Instrument the AutoDev memory pipeline with OpenTelemetry so OpenLIT can show the same execution end-to-end:
+
+~~~text
+memory.research
+  ├── memory.query
+  ├── memory.retrieve
+  ├── memory.rerank
+  ├── memory.validate
+  ├── memory.reconstruct
+  └── memory.packet
+~~~
+
+Emit bounded attributes/metrics sufficient to answer:
+
+- candidates retrieved / retained / revised / rejected;
+- rejection reason such as stale, contradicted, superseded, or low relevance;
+- episodic/semantic/procedural composition;
+- packet size/tokens;
+- research/reconstruction latency and cost;
+- retrieval-to-injection/use rate;
+- memory-enabled versus no-memory task outcomes;
+- invalidation/supersession/promotion activity;
+- procedures promoted into skills/rules/tests/docs.
+
+Prefer OpenLIT's retained trace, dashboard, widget, filtering, and resource-detail infrastructure for these views rather than a parallel memory analytics backend.
+
 
 ### Optional secondary dependency: Graphiti
 
@@ -361,7 +474,8 @@ Use these access paths:
 | Automatic pre-delegation JIT research | Native orchestrator → `MemoryService.research(...)` |
 | Automatic memory-packet injection | Native runtime/context assembly |
 | Consolidation, promotion, supersession, retention | Internal runtime/background workflows |
-| Console browse/manage operations | Control API over the same memory service/contracts |
+| Console browse/manage operations | Control API → AutoDev Memory connector/adapted OpenLIT Memory surface → shared memory contracts |
+| Operator investigation/analytics | Adapted OpenLIT Memory page, traces, dashboards, and optional Otter tools |
 | Agent discovers a new memory need during execution | Memory MCP tool call or equivalent native tool adapter |
 | External Codex/Claude/Gemini/other client | Memory MCP facade |
 | Direct PostgreSQL/Graphiti access by agents | **Never** |
@@ -369,9 +483,9 @@ Use these access paths:
 Internal AutoDev callers must invoke the shared service directly rather than serializing an in-process request through MCP:
 
 ~~~text
-AutoDev runtime ───────────────► MemoryService
-Console ──Control API──────────► MemoryService
-external/loosely-coupled agent ─MCP────────────► MemoryService
+AutoDev runtime ─────────────────────────► MemoryService
+Console ──Control API/OpenLIT adapter─────► MemoryService
+external/loosely-coupled agent ─MCP──────► MemoryService
 ~~~
 
 MCP is therefore an **interoperability and explicit follow-up boundary**, not the internal memory architecture. It is appropriate when an agent learns something during execution that changes what history it needs, for provenance/history inspection, for proposing a durable memory, or when the caller is outside the AutoDev runtime.
@@ -420,7 +534,7 @@ Path and Git lineage are first-class evidence, not merely metadata.
 
 ### Implementation order
 
-1. **Foundation:** keep OpenLIT/OTel as execution evidence; adopt @letta-ai/trajectory where its harness adapters fit; add PostgreSQL + pgvector/full-text persistence; implement AutoDev schemas, governance, JIT researcher/validator/curator, packet builder, and MCP facade.
+1. **Foundation:** keep OpenLIT/OTel as execution evidence **and retain/adapt the OpenLIT Memory connector/page**; implement an AutoDev Memory connector over `MemoryService`; adopt @letta-ai/trajectory where its harness adapters fit; add PostgreSQL + pgvector/full-text persistence; implement AutoDev schemas, governance, JIT researcher/validator/curator, packet builder, and MCP facade.
 2. **Coding-aware retrieval:** add path proximity, commit ancestry/file-change checks, PR/issue relationships, and measured retrieval/ablation telemetry.
 3. **Temporal graph only when justified:** project selected entities/relationships to Graphiti if graph queries measurably improve results.
 4. **Extractor experiments:** benchmark native extraction against Mem0/LangMem-derived candidate generators behind the same interface.
@@ -430,20 +544,25 @@ Do not introduce Qdrant, Milvus, Pinecone, a second agent framework, or another 
 
 ## 11. Console target
 
-The Memory surface should expose the lifecycle rather than treating every record as equivalent.
+The **adapted OpenLIT Memory page is the primary AutoDev Memory operator surface**. Extend it; do not create a parallel memory admin/dashboard application.
 
-Support:
+It should combine:
 
-- browse/search across episodes, semantic memories, procedures, and source trajectories;
-- repository/workspace, role, type, status, and time filters;
-- provenance and source evidence;
-- active/superseded/invalidated state;
-- relationship/history views where useful;
-- observed use in agent runs when evidence exists;
-- correction/invalidation without erasing historical evidence;
-- promotion of suitable procedures through the canonical skill/configuration path.
+- connector selection/configuration/health where multiple or external stores exist;
+- browse/search/pagination across episodes, semantic memories, procedures, and source trajectories;
+- repository/workspace, role, task/run, type, status, and time filters;
+- provenance, source evidence, PR/commit/file/entity links, and current-state verification;
+- active/superseded/invalidated/uncertain lifecycle state;
+- relationship/history/graph views where useful;
+- observed retrieval/reconstruction/injection/use and related traces;
+- memory effectiveness, quality, latency/cost, and lifecycle analytics from OpenLIT telemetry;
+- governed propose/verify/revise/invalidate/supersede/promote actions;
+- promotion of suitable procedures through the canonical skill/configuration path;
+- optional operator Q&A through retained Otter memory tools when Otter remains in the AutoDev distribution.
 
-Do not restore organization/project/environment tenancy concepts removed by the Console target.
+Reuse OpenLIT's shared table, filter, detail, graph, connector, chart, status, loading/error, and trace-linking primitives so Memory behaves like the rest of the AutoDev Console.
+
+Do not restore organization/project/environment/account tenancy concepts removed by the Console target, and do not let the OpenLIT connector/UI layer become a second memory source of truth.
 
 ## 12. Acceptance and evaluation
 
@@ -458,7 +577,8 @@ The target is satisfied when:
 - agents receive bounded task-specific packets rather than unbounded history;
 - workers cannot freely pollute shared durable memory;
 - proven procedures can graduate into explicit skills/rules/tests/docs;
-- memory use is observable and can be compared with no-memory/simpler-memory baselines;
+- memory use is observable in OpenLIT and can be compared with no-memory/simpler-memory baselines;
+- the retained OpenLIT Memory connector/page can browse and inspect AutoDev memory without bypassing `MemoryService` governance;
 - secrets and unnecessary sensitive payloads are not persisted by default.
 
 Measure memory changes with outcomes such as task/PR success, repeated failures, tool calls/tokens to completion, stale-memory rejection, retrieval/use rate, harmful memory application, and successful transfer to new tasks. Prefer controlled ablations over assuming more context is better.
