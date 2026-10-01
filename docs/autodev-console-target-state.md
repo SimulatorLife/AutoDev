@@ -161,6 +161,8 @@ packages:
   - "data"
 ```
 
+**Current state:** AutoDev still has one root package with implementation under `src/`, and `pnpm-workspace.yaml` does not yet enumerate code workspaces. The structure above is the migration target, not a claim about the current checkout.
+
 Do not reorganize code merely to satisfy this shape in one large move. Migrate by coherent slices, preserve behavior, and remove each old `src/` path after its replacement is validated.
 
 ## 3. Core architecture
