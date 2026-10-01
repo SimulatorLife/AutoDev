@@ -919,21 +919,89 @@ These sync commands populate OpenLIT read models; they do not supersede canonica
 
 The asynchronous GitHub issue metrics workflow remains a separate GitHub-development reporting surface (`.github/workflows/metrics-dashboard.yml`, issue #2). It is not a replacement observability backend for AutoDev runtime telemetry.
 
-## 14. Reference projects and patterns
+## 14. Reference projects and remaining integrations
 
-Use existing projects as architecture/interaction references rather than inventing each control surface from scratch.
+Use these projects as **interaction/architecture references**, not as embedded applications. Reimplement/adapt the useful patterns inside AutoDev's shared TypeScript/TSX component system.
 
-| Project | Primary use | Borrow |
-| --- | --- | --- |
-| **OpenLIT** | observability foundation | OTel ingestion, ClickHouse/querying, traces/metrics/logs, dashboards, cost/usage, Controller desired-state patterns |
-| **LiteLLM** | Providers, Models, MCP Servers | provider/model catalogs, deployments, enablement, routing/fallbacks, MCP management, limits |
-| **LangWatch** | overall product UX | unified AI observability + operational/provider/gateway controls |
-| **MCPJam Inspector** | MCP detail/debugging | tools/resources/prompts, connection state, requests, logs, auth/activity inspection |
-| **Unleash** | Skills/scoped capabilities | enabled state plus targeting/constraints/role/workspace scope |
-| **Argo CD** | desired versus actual state | desired/live state, health, pending operations, convergence, errors/history |
-| **Backstage** | modular console architecture | cohesive top-level modules/routes instead of one monolithic settings area |
+| Project | AutoDev use | Current gap | Remaining adaptation |
+| --- | --- | --- | --- |
+| **OpenLIT** | telemetry/storage/query foundation plus retained Memory, Evaluations, Usage, and useful Prompt/Agent UI patterns | Backend foundation is present, but the retained product features are not yet wired into the new Console and unwanted product modules remain | Reuse/query retained infrastructure; integrate Memory/Evaluations/Usage/Prompt behavior; subtract accounts/tenancy/Rule Engine/OpenGround/GPU/discovery UX |
+| **LiteLLM** | provider/model/routing/MCP control patterns | AutoDev currently has only limited provider-role mutation and basic provider/model views | Add provider/model availability, priority, fallback order, concurrency, limits, cooldown/circuit health, effective routing, and usage/health detail under Agents/resource detail views |
+| **LangWatch** | unified control + observability resource UX | Console list pages largely separate configuration from runtime evidence | Compose configuration, actual health/state, requests/tokens/cost/failures/latency, and recent traces on the same Agent/provider/MCP/skill/workspace pages |
+| **MCPJam Inspector** | MCP inspection/debugging | AutoDev MCP UI is mainly server + role exposure | Add connection/probe state, Tools, Resources, Prompts, schemas, read/preview operations, diagnostics, activity, authorization/config context, and error/log views |
+| **Unleash** | scoped capability enablement | Skills/MCP capability scope is mostly display-only and often falls back to broad defaults | Add explicit enabled state, agent-role/workspace targeting, constraints, effective state, and clear configured/eligible/observed distinctions |
+| **Argo CD** | desired/live state and convergence | AutoDev has convergence types but not a robust reconciliation/diff model | Add desired vs actual, generations, diff, health, pending/applying/error, last apply/observation, and operation history across mutable resources |
+| **Backstage** | lightweight modular frontend composition | `ConsoleApp` still centralizes feature switching | Add a small typed feature/route registry so each Console feature contributes route/nav/component/data requirements without creating separate packages or adopting Backstage's full plugin framework |
 
-Use interaction models and architecture; copy source only after reviewing the exact license/dependency boundary.
+### Provider/model/routing detail
+
+Provider/model configuration remains secondary to Agents rather than new top-level navigation.
+
+Target resource detail should combine:
+
+```text
+Configuration                  Runtime / Observability
+────────────────────           ─────────────────────────
+Enabled                        Health / circuit state
+Allowed agent roles            Requests
+Models                         Tokens
+Priority / routing             Cost
+Fallbacks                      Failure rate
+Concurrency / limits           Latency
+Cooldown                       Recent traces
+```
+
+Model detail should surface provider, availability, role eligibility, relevant capabilities/context metadata, pricing where used, usage, failures, and routing position.
+
+### MCP detail
+
+Target MCP server detail:
+
+```text
+Overview
+Configuration
+Connection / Health
+Tools
+Resources
+Prompts
+Role Access
+Activity
+Errors / Logs
+```
+
+Useful operations include ping/test, list tools, inspect schemas, list/read resources, list/preview prompts, inspect effective authorization/configuration, and view recent calls/errors.
+
+### Scoped capability targeting
+
+For Skills and other capability assignments, keep configuration state distinct from runtime evidence:
+
+```text
+Enabled
+   ↓
+Eligible for role/workspace
+   ↓
+Selected / Exposed
+   ↓
+Injected
+   ↓
+Used
+```
+
+Do not infer one stage from another. Use Unleash-style targeting/constraint UX only as an interaction model; RuleSync remains the canonical configuration source.
+
+### Modular Console composition
+
+The Console remains one application and one package. If central routing becomes unwieldy, use a lightweight typed registry such as:
+
+```ts
+interface ConsoleFeature {
+  id: CanonicalNavSection;
+  route: string;
+  component: React.ComponentType;
+}
+```
+
+Do not turn each feature into a package merely to achieve modularity.
 
 ## 15. Tests and acceptance
 
