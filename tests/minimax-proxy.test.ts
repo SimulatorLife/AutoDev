@@ -7,13 +7,15 @@ import {
   type ServerResponse
 } from "node:http";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
-import { AGENT_ROLE_HEADER } from "../src/agents/bridge-role.ts";
 import {
   coerceResponseBody,
   freeformInputFromArguments,
   unrecognisedFreeformFeedback
-} from "../src/providers/minimax.ts";
+} from "@simulatorlife/autodev-runtime/providers/minimax";
+import { AGENT_ROLE_HEADER } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
+
 import { downstreamHeaders } from "../src/router/proxy.ts";
 import { upstreamPayload } from "../src/router/responses.ts";
 import { ROUTING_POLICY as routing } from "../src/router/routing.ts";
@@ -25,7 +27,9 @@ import {
 
 const read = (path: string): string =>
   readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
-const PROXY = new URL("../src/providers/minimax.ts", import.meta.url).pathname;
+const PROXY = fileURLToPath(
+  new URL("../runtime/src/providers/minimax.ts", import.meta.url)
+);
 
 test("the MiniMax proxy is an AutoDev-tracked source, not an inline heredoc", () => {
   const ensure = read("scripts/ensure-codex-minimax-proxy.sh");
@@ -37,7 +41,7 @@ test("the MiniMax proxy is an AutoDev-tracked source, not an inline heredoc", ()
 
   const materializer = read("src/platform/install-materializer.ts");
   assert.ok(
-    materializer.includes("src/providers/minimax.ts"),
+    materializer.includes("runtime/src/providers/minimax.ts"),
     "the installer must deploy the proxy beside the hook that launches it"
   );
 });
@@ -875,9 +879,8 @@ test("a streamed unrecognised exec call reaches Codex as a custom tool call carr
 });
 
 test("extractWireMcpServers reads MCP servers from declared tool names", async () => {
-  const { extractWireMcpServers, mcpServerFromToolName } = await import(
-    "../src/providers/minimax.ts"
-  );
+  const { extractWireMcpServers, mcpServerFromToolName } =
+    await import("@simulatorlife/autodev-runtime/providers/minimax");
   assert.equal(mcpServerFromToolName("mcp__lsp__lsp_diagnostics"), "lsp");
   assert.equal(
     mcpServerFromToolName("mcp__cocoindex-code__search"),
@@ -905,9 +908,8 @@ test("extractWireMcpServers reads MCP servers from declared tool names", async (
 });
 
 test("extractWireMcpServers picks up additional_tools input items", async () => {
-  const { extractWireMcpServers } = await import(
-    "../src/providers/minimax.ts"
-  );
+  const { extractWireMcpServers } =
+    await import("@simulatorlife/autodev-runtime/providers/minimax");
   const payload = {
     input: [
       {
@@ -925,9 +927,8 @@ test("extractWireMcpServers picks up additional_tools input items", async () => 
 });
 
 test("extractWireMcpServers returns null when payload declares no tools", async () => {
-  const { extractWireMcpServers } = await import(
-    "../src/providers/minimax.ts"
-  );
+  const { extractWireMcpServers } =
+    await import("@simulatorlife/autodev-runtime/providers/minimax");
   assert.equal(extractWireMcpServers({}), null);
   assert.equal(extractWireMcpServers(null), null);
   assert.equal(extractWireMcpServers({ tools: [] }), null);

@@ -8,10 +8,11 @@ import {
 } from "node:http";
 import { pathToFileURL } from "node:url";
 
-import { writeErrorLine } from "../shared/output.ts";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+
 import { handleControlApiRequest } from "./control-api.ts";
 import { codexState, handle, HOST, PORT, refreshCodexState } from "./http.ts";
-import { beginShutdown } from "./lifecycle.ts";
+import { beginShutdown } from "@simulatorlife/autodev-runtime/router/lifecycle";
 import { closeOrchestratorMemoryHost } from "./memory-injection.ts";
 import { loadRouterState, persistRouterStateNow } from "./persistence.ts";
 import {
@@ -263,12 +264,6 @@ export {
   workspaceMetadataForSession
 } from "./http.ts";
 export {
-  beginShutdown,
-  getLifecycleStatus,
-  isDraining,
-  resetLifecycleForTests
-} from "./lifecycle.ts";
-export {
   autodevEnrichOtlpPayload,
   codexTelemetryStatus,
   ingestOtelLogs,
@@ -308,7 +303,6 @@ export { ORCHESTRATOR_ALIAS } from "./routing.ts";
 export {
   AGENT_EVENTS_PATH,
   AGENT_EVENTS_URL_HEADER,
-  AGENT_ROLE_HEADER,
   bridgeTelemetryHeaders,
   closeBridgeSubagentsForRequest,
   FORWARDED_REQUEST_HEADERS,

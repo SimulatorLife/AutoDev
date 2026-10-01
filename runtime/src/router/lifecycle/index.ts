@@ -1,4 +1,4 @@
-import { writeErrorLine } from "../shared/output.ts";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 export type RouterLifecycleState = "ready" | "draining";
 

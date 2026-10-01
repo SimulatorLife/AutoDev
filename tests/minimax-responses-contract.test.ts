@@ -8,7 +8,7 @@ import {
   freeformInputFromArguments,
   isWebResearchTool,
   rewriteOutboundPayload
-} from "../src/providers/minimax.ts";
+} from "@simulatorlife/autodev-runtime/providers/minimax";
 
 type JsonObject = Record<string, any>;
 type ContractCase = {

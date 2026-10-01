@@ -27,19 +27,8 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
-import { resolveAgentRole } from "../agents/bridge-role.ts";
-import {
-  bridgeSkillContext,
-  readOnlySystemPromptInjection
-} from "../agents/bridge-sandbox.ts";
-import { roleContract } from "../shared/execution-contract.ts";
-import {
-  AUTODEV_WORKSPACE_KEY_HEADER,
-  validatedAutoDevOtelResourceAttributes,
-  withAutoDevOtelResourceContext
-} from "../shared/otel-resource-context.ts";
-import { writeErrorLine } from "../shared/output.ts";
-import type { LimitSource, ProviderLimit } from "../shared/provider-limits.ts";
+import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   classifyCliLimit,
   INCOMPLETE_REASON_INTERRUPTED,
@@ -47,15 +36,30 @@ import {
   INCOMPLETE_REASON_TIMEOUT,
   limitPayload,
   limitResponseHeaders,
+  type LimitSource,
+  type ProviderLimit,
   retryAfterSecondsFromLimit
-} from "../shared/provider-limits.ts";
+} from "@simulatorlife/autodev-runtime/shared/provider-limits";
 import {
   resolveCwd,
   WorkspaceResolutionError
-} from "../shared/resolve-workspace.ts";
-import { awaitedToolResults } from "../shared/responses-continuation.ts";
-import type { AgentEventReporter } from "../telemetry/agent-events.ts";
-import { resolveAgentEventReporter } from "../telemetry/agent-events.ts";
+} from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
+import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
+import {
+  AUTODEV_WORKSPACE_KEY_HEADER,
+  validatedAutoDevOtelResourceAttributes,
+  withAutoDevOtelResourceContext
+} from "@simulatorlife/autodev-runtime/telemetry/resource-context";
+
+import { resolveAgentRole } from "../agents/bridge-role.ts";
+import {
+  bridgeSkillContext,
+  readOnlySystemPromptInjection
+} from "../agents/bridge-sandbox.ts";
+import {
+  type AgentEventReporter,
+  resolveAgentEventReporter
+} from "@simulatorlife/autodev-runtime/telemetry";
 import type { CodexToolSurface } from "./claude-codex-tools.ts";
 import {
   CODEX_TOOLS_SERVER,

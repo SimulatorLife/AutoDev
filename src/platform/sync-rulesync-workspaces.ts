@@ -4,7 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { writeErrorLine, writeLine } from "../shared/output.ts";
+import {
+  writeErrorLine,
+  writeLine
+} from "@simulatorlife/autodev-runtime/shared/output";
 
 const execFileAsync = promisify(execFile);
 
@@ -346,7 +349,9 @@ export async function syncRulesyncWorkspaces(
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   syncRulesyncWorkspaces()
     .then((result) => {
-      writeLine("Synchronized AutoDev Console project architecture for AutoDev:");
+      writeLine(
+        "Synchronized AutoDev Console project architecture for AutoDev:"
+      );
       writeLine(`  Organisation:      ${result.organisation}`);
       writeLine(`  Project:           ${result.project}`);
       writeLine(`  Environment:       ${result.environment}`);

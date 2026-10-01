@@ -76,7 +76,7 @@ CI gates at zero warnings. The ESLint config also encodes AutoDev's module
 layers (`eslint-plugin-boundaries`): `shared` at the bottom; `agents`,
 `telemetry`, `config`, and `mcp` over it; the router and the provider bridges
 side by side, neither importing the other; `platform` over `config`; and the
-CLI and hooks on top. Process output goes through `src/shared/output.ts`
+CLI and hooks on top. Process output goes through `@simulatorlife/autodev-runtime/shared/output`
 (`writeLine` for command output on stdout, `writeErrorLine` for logs on
 stderr); `console` is a lint error everywhere else. Do not relax a rule to make
 a change pass: fix the code, or add a narrowly scoped disable with a

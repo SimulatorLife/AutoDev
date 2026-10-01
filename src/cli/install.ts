@@ -1,6 +1,7 @@
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+
 import { runInstallCheck } from "../platform/install-check.ts";
 import { runInstallCommand } from "../platform/install-command.ts";
-import { writeErrorLine } from "../shared/output.ts";
 
 export interface InstallCommandBackend {
   install(args?: readonly string[]): number;

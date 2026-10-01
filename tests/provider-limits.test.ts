@@ -24,7 +24,8 @@ import {
   retryAfterSecondsFromLimit,
   terminalIncompleteEvents,
   truncationNotice
-} from "../src/shared/provider-limits.ts";
+} from "@simulatorlife/autodev-runtime/shared/provider-limits";
+
 import { normalizedSource } from "./source-text.ts";
 
 const read = (path: string) => {
@@ -243,9 +244,12 @@ test("a classified Antigravity permission denial survives the incomplete boundar
   assert.match(generic.output_text, /stopped unexpectedly/);
 });
 
-test("the typed Claude bridge uses the shared limit boundary", () => {
+test("typed bridges consume the Runtime-owned provider-limit contract", () => {
   const bridge = read("src/providers/claude.ts");
-  assert.match(bridge, /from "\.\.\/shared\/provider-limits\.ts"/);
+  assert.match(
+    bridge,
+    /@simulatorlife\/autodev-runtime\/shared\/provider-limits/u
+  );
   assert.match(bridge, /classifyCliLimit/);
   assert.match(bridge, /ClaudeRateLimitError/);
   assert.match(bridge, /INCOMPLETE_REASON_PROVIDER_LIMIT/);
@@ -253,7 +257,10 @@ test("the typed Claude bridge uses the shared limit boundary", () => {
   // A Claude turn emits its items as they finish, so it ends an interrupted
   // response from the shared details and notice rather than a fixed layout.
   const turn = read("src/providers/claude-turn.ts");
-  assert.match(turn, /from "\.\.\/shared\/provider-limits\.ts"/);
+  assert.match(
+    turn,
+    /@simulatorlife\/autodev-runtime\/shared\/provider-limits/u
+  );
   assert.match(turn, /incompleteDetails\(failure\.reason, failure\.limit\)/);
   assert.match(
     turn,

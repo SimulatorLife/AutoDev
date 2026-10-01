@@ -11,7 +11,10 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import { writeErrorLine, writeLine } from "../shared/output.ts";
+import {
+  writeErrorLine,
+  writeLine
+} from "@simulatorlife/autodev-runtime/shared/output";
 
 export type RuntimeFileMode = 0o644 | 0o755;
 
@@ -20,9 +23,12 @@ export function runtimeTarget(
   codexHome: string,
   hooksDir = path.join(codexHome, "hooks")
 ): string {
-  return repoPath.startsWith("scripts/")
-    ? path.join(hooksDir, repoPath.slice("scripts/".length))
-    : path.join(codexHome, repoPath);
+  if (repoPath.startsWith("scripts/"))
+    return path.join(hooksDir, repoPath.slice("scripts/".length));
+  const installedPath = repoPath.startsWith("runtime/")
+    ? repoPath.slice("runtime/".length)
+    : repoPath;
+  return path.join(codexHome, installedPath);
 }
 
 function ensureParent(filePath: string): void {

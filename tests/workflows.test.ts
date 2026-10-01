@@ -388,7 +388,7 @@ test("Antigravity workspace customizations expose the code skills", async () => 
 
 test("provider bridges explicitly expose code MCP capabilities", async () => {
   const copilot = await readFile(
-    path.join(root, "src", "providers", "copilot.ts"),
+    path.join(root, "runtime", "src", "providers", "copilot.ts"),
     "utf8"
   );
   // Copilot MCP exposure follows the role contract (see copilot-mcp-scope.test.ts).
@@ -617,7 +617,10 @@ test("MiniMax Codex CI runs through the tracked boundary adapter, never straight
     branch,
     /config\/catalogs\/minimax-model-catalog\.json" "\$CODEX_HOME\/minimax-model-catalog\.json"/
   );
-  assert.match(branch, /node "\$AUTODEV_ROOT\/src\/providers\/minimax\.ts"/);
+  assert.match(
+    branch,
+    /node "\$AUTODEV_ROOT\/runtime\/src\/providers\/minimax\.ts"/
+  );
   assert.match(
     branch,
     /MINIMAX_PROXY_HOST=127\.0\.0\.1 MINIMAX_PROXY_PORT=18765/

@@ -3,11 +3,13 @@ import "../../src/router/http.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { AUTODEV_WORKSPACE_KEY_HEADER } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
+
 import {
   COOLDOWN_CONFIG,
   COOLDOWNS,
   type CooldownSummary
-} from "../../src/router/cooldown.ts";
+} from "@simulatorlife/autodev-runtime/router/cooldown";
 import {
   CONCRETE_STATUS_MAX_ATTEMPTS,
   declaredLimit,
@@ -33,9 +35,8 @@ import {
   noteOrchestratorSession,
   resetSubagentTelemetry
 } from "../../src/router/subagents.ts";
-import { TOOL_CALL_OWNERSHIP } from "../../src/router/tool-call-ownership.ts";
+import { TOOL_CALL_OWNERSHIP } from "@simulatorlife/autodev-runtime/router/tool-call-ownership";
 import { countLiveAgentActivity } from "../../src/router/usage.ts";
-import { AUTODEV_WORKSPACE_KEY_HEADER } from "../../src/shared/otel-resource-context.ts";
 
 function responseRecorder(): any {
   const chunks: Buffer[] = [];

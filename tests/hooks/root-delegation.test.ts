@@ -20,7 +20,7 @@ type HookOutput = {
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const hookModule = fileURLToPath(
-  new URL("../../src/hooks/root-delegation.ts", import.meta.url)
+  new URL("../../runtime/src/hooks/root-delegation.ts", import.meta.url)
 );
 
 function runHook(model: string, sessionId?: string): string {
@@ -157,4 +157,3 @@ test("root delegation emits a runtime-agnostic recovery preflight that names the
   // itself, not to assume a code-mode `exec` runtime.
   assert.match(context, /adapt the invocations to the surface your tools/);
 });
-

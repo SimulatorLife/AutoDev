@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { describe, test } from "node:test";
 
-import { COOLDOWNS as cooldowns } from "../src/router/cooldown.ts";
+import { COOLDOWNS as cooldowns } from "@simulatorlife/autodev-runtime/router/cooldown";
 import { ROUTING_POLICY as routing } from "../src/router/routing.ts";
 
 type JsonRecord = Record<string, any>;

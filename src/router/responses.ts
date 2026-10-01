@@ -1,7 +1,7 @@
 import {
   dropUnresolvableReasoning,
   normalizeInputItemIds
-} from "../shared/responses-item-ids.ts";
+} from "@simulatorlife/autodev-runtime/shared/responses-item-ids";
 
 export const FLATTENED_NAMESPACES = Object.freeze([
   ["multi_agent_v1", "multi_agent_v1__"],

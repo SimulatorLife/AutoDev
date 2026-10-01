@@ -20,7 +20,7 @@
  * (router -> Claude CLI -> shim) is the only source for any per-turn
  * `OTEL_RESOURCE_ATTRIBUTES`. This module reads the env-detected
  * resource so per-turn `autodev.workspace` and `autodev.agent.role`
- * inherited from the Claude CLI (src/shared/otel-resource-context.ts)
+ * inherited from the Claude CLI (@simulatorlife/autodev-runtime/telemetry/resource-context)
  * still flow to the shim's spans; it then layers the shim's own
  * `service.name=autodev-codex-tools-mcp` and `service.version` on top
  * so the producer is identifiable regardless of the operator-set
@@ -82,11 +82,10 @@ import {
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION
 } from "@opentelemetry/semantic-conventions";
-
 import {
   safeAutoDevAgentRole,
   safeAutoDevWorkspaceKey
-} from "../shared/otel-resource-context.ts";
+} from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
 const ATTR_AUTODEV_WORKSPACE = "autodev.workspace" as const;
 const ATTR_AUTODEV_AGENT_ROLE = "autodev.agent.role" as const;

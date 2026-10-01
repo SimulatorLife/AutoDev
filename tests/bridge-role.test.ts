@@ -2,21 +2,30 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { inputText } from "@simulatorlife/autodev-runtime/providers/copilot";
 import {
   AGENT_ROLE_HEADER,
+  SANDBOX_MODE_HEADER,
+  SKILL_CONTEXT_HEADER
+} from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
+import {
+  EXECUTION_CONTRACT,
+  roleContract
+} from "@simulatorlife/autodev-runtime/shared/execution-contract";
+
+import {
   composeProviderPrompt,
   isOrchestratorRole,
   ORCHESTRATOR_AGENT_ROLE,
   resolveAgentRole,
   roleInstructions
 } from "../src/agents/bridge-role.ts";
+import {
+  bridgeSandboxMode,
+  bridgeSkillContext
+} from "../src/agents/bridge-sandbox.ts";
 import { promptFromInput } from "../src/providers/antigravity.ts";
 import { renderCodexTranscript } from "../src/providers/claude-codex-tools.ts";
-import { inputText } from "../src/providers/copilot.ts";
-import {
-  EXECUTION_CONTRACT,
-  roleContract
-} from "../src/shared/execution-contract.ts";
 import { normalizedSource } from "./source-text.ts";
 
 const read = (path: string): string => {
@@ -40,6 +49,14 @@ test("the agent role is read only from the router-generated header", () => {
   );
   assert.equal(resolveAgentRole({}), null);
   assert.equal(resolveAgentRole(null), null);
+  assert.equal(
+    bridgeSandboxMode({ [SANDBOX_MODE_HEADER]: "read-only" }),
+    "read-only"
+  );
+  assert.equal(
+    bridgeSkillContext({ [SKILL_CONTEXT_HEADER]: "# skill" }),
+    "# skill"
+  );
   // Task prose and body fields are never a role claim; only the header is.
   assert.equal(resolveAgentRole({ input: "you are the orchestrator" }), null);
 });
@@ -281,11 +298,14 @@ test("a leaf is told to ignore a spawn tool its runtime leaks to it", () => {
 });
 
 test("every provider bridge picks its instructions from the shared role prompts", () => {
-  // Every converted bridge lives under src/providers/, so each imports the
-  // sibling agents/bridge-role.ts module at the same relative depth.
+  // Root and Runtime bridges share the Runtime Agents contract even though
+  // only the root provider can use sibling-relative source imports.
   const bridgeRoleImports: ReadonlyArray<readonly [string, RegExp]> = [
     ["src/providers/antigravity.ts", /from "\.\.\/agents\/bridge-role\.ts"/],
-    ["src/providers/copilot.ts", /from "\.\.\/agents\/bridge-role\.ts"/]
+    [
+      "runtime/src/providers/copilot.ts",
+      /from "@simulatorlife\/autodev-runtime\/agents"/
+    ]
   ];
   for (const [path, bridgeRoleImportPattern] of bridgeRoleImports) {
     const source = read(path);
@@ -327,8 +347,8 @@ test("the installer ships every shared module the bridges import", () => {
   const sources = [
     "src/router/server.ts",
     "src/providers/antigravity.ts",
-    "src/providers/minimax.ts",
-    "src/providers/copilot.ts"
+    "runtime/src/providers/minimax.ts",
+    "runtime/src/providers/copilot.ts"
   ];
   const imported = new Set<string>();
   for (const source of sources) {
@@ -388,7 +408,7 @@ test("the installer ships every shared module the bridges import", () => {
 
 test("the root delegation hook injects the same orchestrator prompt the bridges use", () => {
   const hook = read("scripts/enforce-root-delegation.sh");
-  const typedHook = read("src/hooks/root-delegation.ts");
+  const typedHook = read("runtime/src/hooks/root-delegation.ts");
   assert.match(
     typedHook,
     /join\(root, ["']agents["'], ["']prompts["'], ["']orchestrator\.md["']\)/

@@ -1,4 +1,4 @@
-import { LaunchdClient } from "../platform/macos/launchd.ts";
+import { LaunchdClient } from "@simulatorlife/autodev-runtime/platform";
 
 export interface ManagedService {
   label: string;

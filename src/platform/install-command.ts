@@ -4,8 +4,9 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+
 import { ConfigError } from "../config/config-files.ts";
-import { writeErrorLine } from "../shared/output.ts";
 import {
   installCocoIndex,
   installCodeGraphContext,

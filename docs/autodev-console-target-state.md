@@ -87,12 +87,12 @@ AutoDev/
 
 The initial code-module target is deliberately only **four workspaces**:
 
-| Module | Owns |
-| --- | --- |
+| Module     | Owns                                                                                                                                                                                                                    |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `console/` | The single AutoDev React/Next.js application, shared design system/components, navigation, and feature folders for Agents, MCPs, Skills, Hooks, Memory, Evaluations, Permissions, Tools, Usage, Prompts, and Workspaces |
-| `runtime/` | Long-running AutoDev execution: model router, provider bridges, agent execution, MCP processes, hook execution, runtime health, desired-state reconciliation, and the Control API transport |
-| `core/` | Infrastructure-independent AutoDev domain types/contracts and pure rules shared by Console, Runtime, and Data |
-| `data/` | Typed adapters/repositories for RuleSync canonical sources, OpenLIT/ClickHouse queries, memory/evaluation persistence, workspace/config reads, and other external/persistent data boundaries |
+| `runtime/` | Long-running AutoDev execution: model router, provider bridges, agent execution, MCP processes, hook execution, runtime health, desired-state reconciliation, and the Control API transport                             |
+| `core/`    | Infrastructure-independent AutoDev domain types/contracts and pure rules shared by Console, Runtime, and Data                                                                                                           |
+| `data/`    | Typed adapters/repositories for RuleSync canonical sources, OpenLIT/ClickHouse queries, memory/evaluation persistence, workspace/config reads, and other external/persistent data boundaries                            |
 
 Do **not** create packages such as `agents/`, `skills/`, `mcps/`, or `prompts/` merely because those are top-level UI resources. Inside `console/`, keep them as cohesive feature folders:
 
@@ -338,19 +338,19 @@ Do not create one OpenLIT project, environment, organization, or account per wor
 
 The top-level resources/pages are:
 
-| Resource | Primary authority | Main purpose |
-| --- | --- | --- |
-| **Agents** | RuleSync + AutoDev runtime | agent/role definitions, provider/model eligibility, routing/runtime configuration, desired/actual state, health, activity |
-| **MCPs** | RuleSync + runtime + OTel | MCP server configuration, role exposure, tools/resources/prompts, connection/health, usage/errors |
-| **Skills** | RuleSync + OTel | canonical skill definitions, role/workspace eligibility, exposure/use/error evidence |
-| **Hooks** | RuleSync | hook definitions, event/matcher configuration, generated target projections, validation/effective state |
-| **Memory** | adapted OpenLIT memory/connectors | browse/search/write/copy memory through supported connectors with AutoDev styling |
-| **Evaluations** | adapted OpenLIT evaluations | evaluation definitions/results/history tied back to agents/prompts/models/traces where possible |
-| **Permissions** | RuleSync + effective runtime state | canonical permission policy, role/tool/MCP capability matrices, generated target differences |
-| **Tools** | generated/effective capability catalog + OTel | unified catalog of native tools, MCP tools, plugin/app tools and role exposure/usage |
-| **Usage** | OpenTelemetry/OpenLIT | cross-workspace/provider/model/agent/skill/MCP usage, cost, tokens, latency, failures and traces |
-| **Prompts** | RuleSync; OpenLIT Prompt Hub patterns | canonical prompts/commands with versions/diffs/preview where useful; OpenLIT is a projection, never authority |
-| **Workspaces** | AutoDev configuration + OTel | configured repositories/workspaces, availability/health, resource scope and aggregate usage |
+| Resource        | Primary authority                             | Main purpose                                                                                                              |
+| --------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **Agents**      | RuleSync + AutoDev runtime                    | agent/role definitions, provider/model eligibility, routing/runtime configuration, desired/actual state, health, activity |
+| **MCPs**        | RuleSync + runtime + OTel                     | MCP server configuration, role exposure, tools/resources/prompts, connection/health, usage/errors                         |
+| **Skills**      | RuleSync + OTel                               | canonical skill definitions, role/workspace eligibility, exposure/use/error evidence                                      |
+| **Hooks**       | RuleSync                                      | hook definitions, event/matcher configuration, generated target projections, validation/effective state                   |
+| **Memory**      | adapted OpenLIT memory/connectors             | browse/search/write/copy memory through supported connectors with AutoDev styling                                         |
+| **Evaluations** | adapted OpenLIT evaluations                   | evaluation definitions/results/history tied back to agents/prompts/models/traces where possible                           |
+| **Permissions** | RuleSync + effective runtime state            | canonical permission policy, role/tool/MCP capability matrices, generated target differences                              |
+| **Tools**       | generated/effective capability catalog + OTel | unified catalog of native tools, MCP tools, plugin/app tools and role exposure/usage                                      |
+| **Usage**       | OpenTelemetry/OpenLIT                         | cross-workspace/provider/model/agent/skill/MCP usage, cost, tokens, latency, failures and traces                          |
+| **Prompts**     | RuleSync; OpenLIT Prompt Hub patterns         | canonical prompts/commands with versions/diffs/preview where useful; OpenLIT is a projection, never authority             |
+| **Workspaces**  | AutoDev configuration + OTel                  | configured repositories/workspaces, availability/health, resource scope and aggregate usage                               |
 
 Provider/model/routing/runtime state is still first-class domain data, but is surfaced under **Agents** and resource details instead of adding more top-level navigation.
 
@@ -401,6 +401,7 @@ Concurrency                    Recent traces
 ### Resource pages
 
 **Agents**
+
 - canonical RuleSync agent/role definition;
 - provider/model eligibility, routing and runtime configuration as secondary tabs/panels;
 - skills, MCPs, permissions, tools and hooks affecting the role;
@@ -409,11 +410,13 @@ Concurrency                    Recent traces
 - recent activity/traces/usage.
 
 **MCPs**
+
 - Overview, Configuration, Tools, Resources, Prompts, Role Access, Activity and Errors/Logs;
 - desired enablement versus actual connection/health;
 - server/tool usage from OTel.
 
 **Skills**
+
 - canonical RuleSync definition and role/workspace eligibility;
 - desired enablement/configuration;
 - observed exposure/use/error evidence;
@@ -428,38 +431,45 @@ Configured/Enabled → Eligible → Exposed/Selected → Used
 `Configured/Enabled` and `Eligible` are control-plane facts. `Exposed`, `used`, `unavailable`, and `error` are telemetry facts only when an owning producer reports them. Unknown remains unknown.
 
 **Hooks**
+
 - canonical RuleSync hook event, matcher and command/action;
 - target support and generated projection;
 - validation/effective status;
 - recent hook execution/errors only where trustworthy runtime evidence exists.
 
 **Memory**
+
 - keep/adapt OpenLIT's useful connector-backed memory browsing/search/write/copy UI;
 - use the same AutoDev navigation, tables, forms, detail patterns and filters as the rest of the console;
 - do not reintroduce OpenLIT account/organisation/project/environment scoping.
 
 **Evaluations**
+
 - keep/adapt OpenLIT evaluation definitions, result/history and trace linkage;
 - remove Rule Engine coupling and OpenGround as prerequisites;
 - make evaluations operate directly on explicit AutoDev resources/telemetry.
 
 **Permissions**
+
 - canonical RuleSync permission policy;
 - effective per-agent/role capability matrix;
 - target/provider projection differences and validation;
 - never infer permissions from historical tool usage.
 
 **Tools**
+
 - aggregate native runtime tools, MCP-provided tools, plugin/app tools and other effective tool capabilities into one catalog;
 - show source, roles/agents exposed to, availability/health where meaningful, and historical use/error telemetry;
 - configuration continues to be owned by the originating canonical source rather than by a duplicate Tools database.
 
 **Prompts**
+
 - adapt useful Prompt Hub UI concepts such as browse, edit, preview, version/diff and usage linkage;
 - canonical content remains RuleSync commands/prompts/rules as applicable;
 - remove OpenLIT Rule Engine linking as the activation mechanism.
 
 **Workspaces**
+
 - configured repository/workspace catalog;
 - health/availability and applicable agent/resource scope;
 - aggregate and drill-down usage;
@@ -529,7 +539,9 @@ success/error outcome; `autodev.memory.candidates` counts retrieved, retained,
 revised, rejected, packet-included, and packet-omitted candidates with bounded
 kind/reason dimensions. `autodev.memory.packet.characters` and
 `autodev.memory.packet.tokens` record packet size, with the token histogram
-omitted when no token counter is configured. The router registers its configured
+omitted when no token counter is configured. `autodev.memory.injections` records
+`injected` versus `empty` at the request-assembly boundary; it does not claim the
+model used a packet or that a task succeeded. The router registers its configured
 MeterProvider before constructing its shared MemoryService host, so Runtime-owned
 meters use the same OTLP exporter. Operation-duration observations are per-span;
 nested stages overlap and must not be summed into a total. These metrics
@@ -575,21 +587,25 @@ source history. Codex SessionEnd is wired to a
 best-effort native capture hook; the server validates an observed session/root
 pair and stores only normalized metadata, digest, and a source reference. Other
 harness capture adapters remain unimplemented, and the installed Codex hook
-trust/runtime path still needs live verification. OpenLIT patch 08 adds a read-only-CRUD AutoDev connector to its retained Memory
-registry/page; patch 09 adds a generic descriptor-driven lifecycle action path
-and an evidence-backed invalidate action for live records. Mutations still use
+trust/runtime path still needs live verification. OpenLIT patch 08 adds an AutoDev connector, read-only for generic CRUD, to its retained Memory
+registry/page; patches 09/10 add a generic descriptor-driven lifecycle action
+path and an evidence-backed invalidate action for live records. Mutations still use
 server-side credentials and AutoDev MemoryService governance. Verification,
 revision, supersession, promotion controls, and memory analytics remain unwired.
-The patches apply to the pinned source, but the full OpenLIT build/runtime path
-remains unverified.
+The ten-patch set applies to the pinned source, and targeted adapter, action-route,
+and action-dialog Jest tests pass. The full OpenLIT client typecheck still reports
+116 diagnostics outside these changed files; `next build` compiles before stopping
+on an existing implicit-`any` error in `src/components/(playground)/manage-dashboard/board-creator/components/code-editor.tsx`.
+The patched image, runtime, and live deployment remain unverified.
 
 OpenLIT can display these spans after trace links and memory analytics are
 wired. The repository does not yet have a memory-specific dashboard, a
 provider-backed embedding adapter, additional native-harness capture calls, a
-root workspace resolver for every deployment, or an automated retention policy
-runner. Raw-experience purge is an explicit audited operation, not a scheduled
-retention job. Configured telemetry must not be described as an observed
-dashboard or as memory use when no packet was injected.
+root workspace resolver for every deployment, or a deployment-scheduled retention
+policy. A one-shot Runtime retention runner processes an operator-selected cutoff
+in bounded batches and is disabled by default; raw erasure remains an explicit
+audited per-experience transaction. Configured telemetry must not be described as
+an observed dashboard or as memory use when no packet was injected.
 
 ### Skills
 
@@ -601,18 +617,18 @@ Do not put skill name into broadly aggregated metric dimensions if it creates un
 
 The current verified Usage board contains seven router widgets plus four MCP widgets:
 
-| View | Semantics |
-| --- | --- |
-| Logical routed requests | one per `autodev.routed_request`, including final failures |
-| Logical requests by agent/role | routed-request activity grouped by bounded role |
-| Input/output tokens | sum on physical GenAI attempts |
-| Cache-read rate | cached input / input where both are reported |
-| P95 attempt latency | physical attempt duration |
-| Physical attempts by provider | attempts grouped by `gen_ai.provider.name` |
-| MCP tool calls | shim-owned `tools/call` round trips |
-| P95 MCP tool-call duration | shim-side MCP span duration |
-| MCP tool-call errors | errored MCP `tools/call` spans |
-| MCP calls by tool | top bounded tool-name groups |
+| View                           | Semantics                                                  |
+| ------------------------------ | ---------------------------------------------------------- |
+| Logical routed requests        | one per `autodev.routed_request`, including final failures |
+| Logical requests by agent/role | routed-request activity grouped by bounded role            |
+| Input/output tokens            | sum on physical GenAI attempts                             |
+| Cache-read rate                | cached input / input where both are reported               |
+| P95 attempt latency            | physical attempt duration                                  |
+| Physical attempts by provider  | attempts grouped by `gen_ai.provider.name`                 |
+| MCP tool calls                 | shim-owned `tools/call` round trips                        |
+| P95 MCP tool-call duration     | shim-side MCP span duration                                |
+| MCP tool-call errors           | errored MCP `tools/call` spans                             |
+| MCP calls by tool              | top bounded tool-name groups                               |
 
 Provider does not filter the logical-request count because a single logical route may touch multiple providers. Provider filters apply to attempt-level widgets.
 
@@ -691,24 +707,24 @@ Current review baseline: `main` at `a7e0f370c536411141a8555320f59c97d6f45251`.
 
 ### Migration status
 
-| Area | Current state | Remaining gap |
-| --- | --- | --- |
-| Flat monorepo | **Partial** | `console/`, `runtime/`, `core/`, and `data/` exist and are registered pnpm workspaces, but most substantive runtime implementation still lives under legacy `src/` |
-| Console | **Runnable foundation** | Next.js App Router and all 11 canonical routes build and run. Seven resource views use server-side Control API reads; Agent and Prompt detail routes use the existing typed detail endpoints. Memory uses the retained OpenLIT page with read-only CRUD and a capability-driven evidence-backed invalidation action; other lifecycle UI actions remain missing. Evaluations and Tools remain unavailable pending adapters. Usage has a typed OpenLIT query adapter and dedicated service-auth endpoint, but patched-image/live-query acceptance remains unverified. Other detail integrations and full OpenLIT features remain. |
-| Workspace boundaries | **Partial** | Console and Data declare Core through workspace packages, and the root transitional package declares Core/Data for legacy runtime code. Runtime still contains facades into `src/`; physical migration remains incomplete. |
-| RuleSync ownership | **Partial** | Skills, hooks, commands/prompts, and MCP declarations are established; subagent/agent-role and permissions generation remain explicitly deferred |
-| Control API | **Partial** | Typed reads cover configuration resources; local single-user access uses the fixed `autodev-local` actor with the private service credential. Provider-role enablement and governed Memory propose/revise/verify/invalidate/supersede/procedure-to-skill promotion actions are audited mutations. |
-| Data layer | **Early** | RuleSync/config/ClickHouse adapters remain; the new PostgreSQL/pgvector memory schema and repository are implemented. The v4 audited raw-experience purge migration is covered by SQL-shape and fake-repository tests; live PostgreSQL/pgvector execution of that migration remains environment-gated. The typed OpenLIT Usage client and scoped Memory Control API are implemented and tested. RuleSync skill writes now use a no-overwrite Data API behind Runtime promotion policy. OpenLIT patches 08/09 add the AutoDev Memory connector and a descriptor-driven invalidation action; verification/revision/supersession/promotion UI, memory analytics, evaluations, runtime-state, and effective-tool integrations remain incomplete. |
-| Usage | **Adapter wired; deployment unverified** | Sample values have been removed. URL-persisted typed filters call a dedicated OpenLIT service endpoint that executes only the seeded Usage widgets through `runWidgetQuery` and typed distinct-value adapters; unsupported/partial metrics remain unknown. The Console now exposes OpenLIT's 24H/7D/1M/3M/CUSTOM range model with URL-persisted UTC date bounds; its 90-day query limit and approximately 30-day retention are stated in the UI. Patched-image build and live telemetry-query acceptance are still required. |
-| Memory | **Backend foundation + root JIT; Control API** | Core scopes/lifecycle, PostgreSQL+pgvector/full-text storage, trajectory capture API, governed Runtime service, Git current-state verifier, bounded routed orchestrator-model reconstruction with deterministic test fallback, official MCP facade/stdio CLI, root-router pre-provider JIT, and scoped/paginated Memory Control API with operator lifecycle actions are implemented. Targeted unit suites pass; live PostgreSQL/pgvector retention acceptance remains environment-gated unless a disposable database URL is configured. Still missing Claude/Copilot/Gemini native capture adapters, a provider-backed embedding adapter, complete RuleSync/PR/issue/runtime validators, automated retention scheduling and broader memory-class erasure, default per-run MCP launch configuration, the remaining lifecycle actions in the retained OpenLIT Memory UI, memory analytics, and verified OpenLIT deployment. Explicit audited raw-experience purge is implemented in MemoryService/Control API and refuses to erase referenced provenance. |
-| Evaluations | **UI shell** | Feature view exists; retained OpenLIT evaluation execution/history/query paths are not yet integrated |
-| MCPs | **Configuration view** | The Console reads configured server/role exposure and no longer invents connected/healthy state; probes, tool/resource/prompt inspection, diagnostics, and activity are not yet implemented |
-| Prompts | **Read-oriented prototype** | Canonical RuleSync prompts can be surfaced, but edit/validate/save/version/diff/generate/apply and usage/evaluation linkage are missing |
-| Tools | **Prototype/read model** | UI exists; the effective catalog across native, MCP, plugin/provider, permission, runtime-health, and usage sources is incomplete |
-| Desired/actual state | **Mostly conceptual** | Agent configuration is labeled configured, with validity unknown and convergence not observed; most other resource state still lacks reconciled desired/observed generations |
-| OpenLIT product fork | **Partial/additive** | Receiver auth, dashboard variables, Usage, login/signup removal, branding, and old AutoDev pages are patched; the unwanted OpenLIT product modules are not yet comprehensively removed |
-| Telemetry cutover | **Incomplete cleanup** | Direct OpenLIT ingestion exists, but legacy AutoDev Collector files and router-side OTLP ingestion/history machinery still remain in the repository |
-| CI evidence | **Incomplete** | `main` still has no GitHub combined status or workflow run attached. Full `pnpm test` passes: root 1186/1189 (3 skipped), Core 7, Data 53/54 (one env-gated live test skipped), Console 29, Runtime 41/43 (two env-gated PostgreSQL/MCP tests skipped). Previously run disposable pgvector foundation, Runtime JIT, root-router injection, and MCP stdio integration checks passed; the new v4 purge-migration live exercise remains environment-gated. Core/Data and focused memory TypeScript/ESLint checks pass; Runtime package typecheck still reports legacy `src/router/*` errors, and root lint/format remain non-green outside memory files. |
+| Area                 | Current state                                  | Remaining gap                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Flat monorepo        | **Partial**                                    | `console/`, `runtime/`, `core/`, and `data/` exist and are registered pnpm workspaces, but most substantive runtime implementation still lives under legacy `src/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Console              | **Runnable foundation**                        | Next.js App Router and all 11 canonical routes build and run. Seven resource views use server-side Control API reads; Agent and Prompt detail routes use the existing typed detail endpoints. Memory uses the retained OpenLIT page with read-only CRUD and a capability-driven evidence-backed invalidation action; other lifecycle UI actions remain missing. Evaluations and Tools remain unavailable pending adapters. Usage has a typed OpenLIT query adapter and dedicated service-auth endpoint, but patched-image/live-query acceptance remains unverified. Other detail integrations and full OpenLIT features remain.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Workspace boundaries | **Partial**                                    | Console and Data declare Core through workspace packages, and the root transitional package declares Core/Data/Runtime for legacy runtime code. The Responses continuation parser, provider-limit contract, workspace resolver, canonical tool-name vocabulary, agent-context headers, execution contract, Responses item-id policy, environment parser, executable resolver, and process-output owner now belong to `runtime/src/shared/`; validated OTel resource context belongs to `runtime/src/telemetry/resource-context/`. Router/provider/MCP/agent callers use public workspace subpaths and the legacy root `src/shared/` directory is removed. Provider cooldown policy, tool-call ownership, and router lifecycle now belong to `runtime/src/router/` public subpaths. Runtime still contains many facades into `src/`; physical migration remains incomplete.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| RuleSync ownership   | **Partial**                                    | Skills, hooks, commands/prompts, and MCP declarations are established; subagent/agent-role and permissions generation remain explicitly deferred                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Control API          | **Partial**                                    | Typed reads cover configuration resources; local single-user access uses the fixed `autodev-local` actor with the private service credential. Provider-role enablement and governed Memory propose/revise/verify/invalidate/supersede/procedure-to-skill promotion actions are audited mutations.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Data layer           | **Early**                                      | RuleSync/config/ClickHouse adapters remain; the new PostgreSQL/pgvector memory schema and repository are implemented. The v4 audited raw-experience purge, v5 retention-scan index, and v6 evidence-reference search vector are covered by SQL-shape/fake-repository tests; disposable PostgreSQL/pgvector integration verifies file and pull-request reference search, retention, and purge. Routine integration tests remain environment-gated. The typed OpenLIT Usage client and scoped Memory Control API are implemented and tested. RuleSync skill writes now use a no-overwrite Data API behind Runtime promotion policy. OpenLIT patch 11 adds status-gated verification, revision, supersession, procedure promotion, and provenance/history detail to the AutoDev Memory connector, with targeted adapter/detail UI tests; deployed-image verification remains pending. Memory analytics, evaluations, runtime-state, and effective-tool integrations remain incomplete.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Usage                | **Adapter wired; deployment unverified**       | Sample values have been removed. URL-persisted typed filters call a dedicated OpenLIT service endpoint that executes only the seeded Usage widgets through `runWidgetQuery` and typed distinct-value adapters; unsupported/partial metrics remain unknown. The Console now exposes OpenLIT's 24H/7D/1M/3M/CUSTOM range model with URL-persisted UTC date bounds; its 90-day query limit and approximately 30-day retention are stated in the UI. Patched-image build and live telemetry-query acceptance are still required.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Memory               | **Backend foundation + root JIT; Control API** | Core scopes/lifecycle, PostgreSQL+pgvector/full-text storage, trajectory capture API, governed Runtime service, Git current-state verifier, bounded routed orchestrator-model reconstruction with deterministic test fallback, official MCP facade/stdio CLI with host-bound `experience_append`, root-router pre-provider JIT, and scoped/paginated Memory Control API with operator lifecycle actions are implemented. Data retrieval now soft-ranks exact/nearby file evidence and task-kind matches from caller-visible source experiences after hard scope/validity filters; a disposable PostgreSQL/pgvector run verifies exact-versus-nearby ordering and retention/purge behavior. Routine integration tests remain environment-gated. OpenLIT patches 08–11 now add status-gated verify/revise/invalidate/supersede/procedure-to-skill actions and provenance/history detail to the retained AutoDev Memory connector; targeted adapter/detail UI tests pass, while deployed-image verification remains pending. Still missing Claude/Copilot/Gemini native capture adapters, a provider-backed embedding adapter, complete RuleSync/PR/issue/runtime validators, deployment scheduling and broader memory-class erasure, default per-run MCP launch configuration, memory analytics, and verified OpenLIT deployment. Explicit audited raw-experience purge is implemented in MemoryService/Control API and refuses to erase referenced provenance. |
+| Evaluations          | **UI shell**                                   | Feature view exists; retained OpenLIT evaluation execution/history/query paths are not yet integrated                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| MCPs                 | **Configuration view**                         | The Console reads configured server/role exposure and no longer invents connected/healthy state; probes, tool/resource/prompt inspection, diagnostics, and activity are not yet implemented                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Prompts              | **Read-oriented prototype**                    | Canonical RuleSync prompts can be surfaced, but edit/validate/save/version/diff/generate/apply and usage/evaluation linkage are missing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Tools                | **Prototype/read model**                       | UI exists; the effective catalog across native, MCP, plugin/provider, permission, runtime-health, and usage sources is incomplete                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Desired/actual state | **Mostly conceptual**                          | Agent configuration is labeled configured, with validity unknown and convergence not observed; most other resource state still lacks reconciled desired/observed generations                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| OpenLIT product fork | **Partial/additive**                           | Receiver auth, dashboard variables, Usage, login/signup removal, branding, and old AutoDev pages are patched; the unwanted OpenLIT product modules are not yet comprehensively removed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Telemetry cutover    | **Incomplete cleanup**                         | Direct OpenLIT ingestion exists, but legacy AutoDev Collector files and router-side OTLP ingestion/history machinery still remain in the repository                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| CI evidence          | **Incomplete**                                 | `main` still has no GitHub combined status or workflow run attached. Latest root and Runtime workspace test runs pass: root 1197/1200 (3 skipped) and Runtime 48/50 (two environment-gated tests skipped). The same full `pnpm test` run also passed Core 7/7, Data 58/59 (one environment-gated live test skipped), and Console 29/29. The maintained OpenLIT patch series applies to the pinned source. Responses continuation, provider-limit, workspace-resolution, canonical tool-name, agent-context-header, execution-contract, Responses item-id, environment/executable, process-output, cooldown-policy, tool-call-ownership, router-lifecycle, and OTel resource-context package migrations, runtime manifest closure, Rulesync skill inventory, and installer checks pass. Previously run disposable pgvector foundation, Runtime JIT, root-router injection, and MCP stdio integration checks passed; v4/v5/v6 purge, retention, and reference-search live database exercises have passed on a disposable pgvector instance; routine CI remains environment-gated. Core/Data/Console typechecks and Console build pass. The root typecheck reports 478 diagnostics, mostly in root router tests; Runtime typecheck reports 95 errors across legacy `src/router/*`. `pnpm lint:ci` fails with 124 diagnostics and `pnpm format:check` flags 16 files.                                                                                             |
 
 ### Correctness rule: unknown must remain unknown
 
@@ -753,6 +769,8 @@ src/telemetry/*    → runtime/src/telemetry/*
 ```
 
 After each slice reaches parity, update imports to workspace package contracts and delete the old path. A permanent `runtime/ → ../../../src/*` facade is not acceptable.
+
+**Verified slices:** the Responses continuation parser, provider-limit contract, workspace resolver, canonical tool-name vocabulary, agent-context headers, execution contract, Responses item-id policy, environment parser, executable resolver, and process-output owner were moved from legacy `src/shared/` into `runtime/src/shared/`; OTel resource context, agent-event reporting, and GitHub metrics are physically Runtime-owned under `runtime/src/telemetry/`. All eight hook implementations now live under `runtime/src/hooks/`, and the Copilot and MiniMax provider implementations live under `runtime/src/providers/`; RuleSync's stable `CODEX_HOME/src/hooks/` dispatch paths and provider service paths are materialized from Runtime-owned sources. Hook consumers use Runtime's public hooks and platform package contracts. The legacy `src/shared/`, `src/telemetry/`, and `src/hooks/` directories and superseded installer copy entries are removed; tests exercise package exports, stable hook installation paths, and both source-tree and installed-hook path resolution. Runtime platform code still has a separate root `src/platform/` migration backlog.
 
 Also complete workspace hygiene:
 
@@ -964,12 +982,14 @@ operation history
 The following selected OpenLIT capabilities are still mostly placeholders in the new Console and need real integration:
 
 **Memory**
+
 - real connector-backed records/search/write/copy behavior;
 - source/connector and workspace/agent scope;
 - activity/history where available;
 - no organization/project/environment tenancy dependencies.
 
 **Evaluations**
+
 - evaluation definitions/suites;
 - runs/results/history;
 - prompt/agent/model targets;
@@ -978,18 +998,21 @@ The following selected OpenLIT capabilities are still mostly placeholders in the
 - no Rule Engine or OpenGround prerequisite.
 
 **Prompts**
+
 - RuleSync remains canonical;
 - add edit, validate, save, version/diff, preview, generate/apply;
 - link prompt versions to usage, traces, and evaluations;
 - do not create an independent OpenLIT prompt authority.
 
 **Usage**
+
 - replace all sample/default metrics with live OpenLIT data;
 - retain logical-request versus physical-attempt semantics;
 - add real time/workspace/provider/model/role/skill filters;
 - connect request/token/cache/cost/latency/failure/MCP/skill metrics to retained query infrastructure.
 
 **Tools**
+
 - build the effective catalog across native tools, MCP tools, plugin/provider capabilities, permissions, runtime availability, and telemetry;
 - expose role eligibility, health/availability when known, use/error counts, and trace linkage.
 
@@ -1054,15 +1077,15 @@ The asynchronous GitHub issue metrics workflow remains a separate GitHub-develop
 
 Use these projects as **interaction/architecture references**, not as embedded applications. Reimplement/adapt the useful patterns inside AutoDev's shared TypeScript/TSX component system.
 
-| Project | AutoDev use | Current gap | Remaining adaptation |
-| --- | --- | --- | --- |
-| **OpenLIT** | telemetry/storage/query foundation plus retained Memory, Evaluations, Usage, and useful Prompt/Agent UI patterns | Backend foundation is present, but the retained product features are not yet wired into the new Console and unwanted product modules remain | Reuse/query retained infrastructure; integrate Memory/Evaluations/Usage/Prompt behavior; subtract accounts/tenancy/Rule Engine/OpenGround/GPU/discovery UX |
-| **LiteLLM** | provider/model/routing/MCP control patterns | AutoDev currently has only limited provider-role mutation and basic provider/model views | Add provider/model availability, priority, fallback order, concurrency, limits, cooldown/circuit health, effective routing, and usage/health detail under Agents/resource detail views |
-| **LangWatch** | unified control + observability resource UX | Console list pages largely separate configuration from runtime evidence | Compose configuration, actual health/state, requests/tokens/cost/failures/latency, and recent traces on the same Agent/provider/MCP/skill/workspace pages |
-| **MCPJam Inspector** | MCP inspection/debugging | AutoDev MCP UI is mainly server + role exposure | Add connection/probe state, Tools, Resources, Prompts, schemas, read/preview operations, diagnostics, activity, authorization/config context, and error/log views |
-| **Unleash** | scoped capability enablement | Skills/MCP capability scope is mostly display-only and often falls back to broad defaults | Add explicit enabled state, agent-role/workspace targeting, constraints, effective state, and clear configured/eligible/observed distinctions |
-| **Argo CD** | desired/live state and convergence | AutoDev has convergence types but not a robust reconciliation/diff model | Add desired vs actual, generations, diff, health, pending/applying/error, last apply/observation, and operation history across mutable resources |
-| **Backstage** | lightweight modular frontend composition | `ConsoleApp` still centralizes feature switching | Add a small typed feature/route registry so each Console feature contributes route/nav/component/data requirements without creating separate packages or adopting Backstage's full plugin framework |
+| Project              | AutoDev use                                                                                                      | Current gap                                                                                                                                 | Remaining adaptation                                                                                                                                                                                |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **OpenLIT**          | telemetry/storage/query foundation plus retained Memory, Evaluations, Usage, and useful Prompt/Agent UI patterns | Backend foundation is present, but the retained product features are not yet wired into the new Console and unwanted product modules remain | Reuse/query retained infrastructure; integrate Memory/Evaluations/Usage/Prompt behavior; subtract accounts/tenancy/Rule Engine/OpenGround/GPU/discovery UX                                          |
+| **LiteLLM**          | provider/model/routing/MCP control patterns                                                                      | AutoDev currently has only limited provider-role mutation and basic provider/model views                                                    | Add provider/model availability, priority, fallback order, concurrency, limits, cooldown/circuit health, effective routing, and usage/health detail under Agents/resource detail views              |
+| **LangWatch**        | unified control + observability resource UX                                                                      | Console list pages largely separate configuration from runtime evidence                                                                     | Compose configuration, actual health/state, requests/tokens/cost/failures/latency, and recent traces on the same Agent/provider/MCP/skill/workspace pages                                           |
+| **MCPJam Inspector** | MCP inspection/debugging                                                                                         | AutoDev MCP UI is mainly server + role exposure                                                                                             | Add connection/probe state, Tools, Resources, Prompts, schemas, read/preview operations, diagnostics, activity, authorization/config context, and error/log views                                   |
+| **Unleash**          | scoped capability enablement                                                                                     | Skills/MCP capability scope is mostly display-only and often falls back to broad defaults                                                   | Add explicit enabled state, agent-role/workspace targeting, constraints, effective state, and clear configured/eligible/observed distinctions                                                       |
+| **Argo CD**          | desired/live state and convergence                                                                               | AutoDev has convergence types but not a robust reconciliation/diff model                                                                    | Add desired vs actual, generations, diff, health, pending/applying/error, last apply/observation, and operation history across mutable resources                                                    |
+| **Backstage**        | lightweight modular frontend composition                                                                         | `ConsoleApp` still centralizes feature switching                                                                                            | Add a small typed feature/route registry so each Console feature contributes route/nav/component/data requirements without creating separate packages or adopting Backstage's full plugin framework |
 
 ### Provider/model/routing detail
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseNonNegativeInteger } from "../../src/shared/env.ts";
+import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 
 test("parseNonNegativeInteger falls back when the value is undefined", () => {
   assert.equal(parseNonNegativeInteger(undefined, 42), 42);

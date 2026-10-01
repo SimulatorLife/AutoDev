@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   COOLDOWN_CONFIG,
   ProviderCooldowns
-} from "../../src/router/cooldown.ts";
+} from "@simulatorlife/autodev-runtime/router/cooldown";
 
 const NOW = 1_700_000_000_000;
 

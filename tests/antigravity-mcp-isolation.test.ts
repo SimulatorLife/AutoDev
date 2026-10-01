@@ -13,13 +13,14 @@ import { tmpdir } from "node:os";
 import { join, resolve as pathResolve } from "node:path";
 import test from "node:test";
 
+import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+
 import {
   agyArgs,
   agyEnvironment,
   buildInvocationMcpConfig,
   createIsolatedAntigravityHome
 } from "../src/providers/antigravity.ts";
-import { roleContract } from "../src/shared/execution-contract.ts";
 
 const REPO_ROOT = pathResolve(import.meta.dirname, "..");
 

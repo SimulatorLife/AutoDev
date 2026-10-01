@@ -53,6 +53,7 @@ const canonicalSkills = [
   "orchestration",
   "remove-legacy-shims",
   "resolve-merge-conflicts",
+  "source-driven-development",
   "writing-agent-skills"
 ] as const;
 const repositorySkills: Record<string, readonly string[]> = {

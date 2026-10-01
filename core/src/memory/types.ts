@@ -257,6 +257,7 @@ export interface MemorySearchRequest {
   readonly context: MemoryReadContext;
   readonly kinds?: readonly MemoryKind[];
   readonly relevantPaths?: readonly string[];
+  /** Soft prior only; matching source experiences must be visible in context. */
   readonly taskKind?: string;
   /** Optional provider-generated embedding; dimensions must match stored vectors. */
   readonly queryEmbedding?: readonly number[];
@@ -271,6 +272,7 @@ export interface MemorySearchHit {
     | "lexical"
     | "semantic"
     | "path"
+    | "task_kind"
     | "entity"
     | "lineage"
     | "utility"
@@ -316,6 +318,13 @@ export interface ExperienceListRequest {
   readonly offset?: number;
 }
 
+/** Bounded retention scan for completed, unreferenced task experiences. */
+export interface MemoryExpiredExperienceRequest {
+  readonly context: MemoryReadContext;
+  readonly completedBefore: string;
+  readonly limit: number;
+}
+
 export interface MemoryPage<T> {
   readonly items: readonly T[];
   readonly total: number;
@@ -324,8 +333,7 @@ export interface MemoryPage<T> {
 }
 
 export type MemoryExperiencePurgeReason =
-  | "privacy_request"
-  | "retention_expired";
+  "privacy_request" | "retention_expired";
 
 export interface MemoryExperiencePurgeRequest {
   readonly experienceId: string;
@@ -337,9 +345,7 @@ export interface MemoryExperiencePurgeRequest {
 }
 
 export type MemoryExperiencePurgeResult =
-  | "purged"
-  | "not_visible"
-  | "referenced_by_memory";
+  "purged" | "not_visible" | "referenced_by_memory";
 
 export interface ExperienceSearchRequest {
   readonly query: string;
@@ -399,6 +405,10 @@ export interface MemoryRepository {
   listExperiences(
     request: ExperienceListRequest
   ): Promise<MemoryPage<ExperienceEnvelope>>;
+  /** Selects a bounded, scope-visible batch of completed experiences before the policy cutoff. */
+  listExpiredExperiences(
+    request: MemoryExpiredExperienceRequest
+  ): Promise<readonly ExperienceEnvelope[]>;
   /** Privacy/retention erasure of an unreferenced raw experience, with a tombstone. */
   purgeExperience(
     request: MemoryExperiencePurgeRequest

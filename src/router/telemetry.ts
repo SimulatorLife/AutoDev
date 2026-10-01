@@ -61,11 +61,10 @@ import {
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION
 } from "@opentelemetry/semantic-conventions";
-
 import {
   safeAutoDevAgentRole,
   safeAutoDevWorkspaceKey
-} from "../shared/otel-resource-context.ts";
+} from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 // Experimental (incubating) attribute keys are imported via the package's
 // `./incubating` subpath. NodeNext module resolution does not always resolve
 // the subpath declaration, so the keys are also declared inline below to

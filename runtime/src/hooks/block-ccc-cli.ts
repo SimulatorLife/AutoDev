@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 
-import { writeErrorLine } from "../shared/output.ts";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 export const REDIRECTION_MESSAGE = `Direct CLI execution of 'ccc' is blocked by policy.
 Do NOT run 'ccc' commands in bash or terminal.

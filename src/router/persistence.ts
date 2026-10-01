@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { rename, writeFile } from "node:fs/promises";
 
-import { writeErrorLine } from "../shared/output.ts";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 export const PERSISTED_STATE_SCHEMA = "autodev-router-persisted-state";
 export const PERSISTED_STATE_VERSION = "v4";

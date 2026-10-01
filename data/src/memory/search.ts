@@ -1,6 +1,7 @@
 import type {
   ExperienceListRequest,
   ExperienceSearchRequest,
+  MemoryExpiredExperienceRequest,
   MemoryListRequest,
   MemorySearchRequest
 } from "@simulatorlife/autodev-core";
@@ -24,15 +25,19 @@ export interface VectorRankingWeights {
 const DEFAULT_LIMIT = 20;
 const DEFAULT_LEXICAL_WEIGHT = 0.6;
 const DEFAULT_VECTOR_WEIGHT = 0.4;
+const DEFAULT_PATH_WEIGHT = 0.2;
+const DEFAULT_TASK_KIND_WEIGHT = 0.1;
 
 /**
- * Builds the memory search query as a two-stage statement: the `scoped`
- * CTE applies every hard filter (scope visibility, status, validity,
- * requested kinds, file-evidence path matches, verified validity, and as-of
- * window) and the outer SELECT is the only place a
- * ranking expression (lexical and, optionally, vector) is computed. This
- * keeps "filter before rank" a structural property of the generated SQL
- * rather than a convention callers must trust.
+ * The `scoped` CTE applies hard scope/status/validity/type filters before the
+ * `ranked` CTE computes lexical, optional vector, path-proximity, and optional
+ * task-kind scores.
+ * The final query discards candidates without any positive retrieval signal
+ * before sorting and limiting them, so unrelated zero-score records cannot
+ * fill the result page.
+ * Relevant file paths are a soft ranking signal: exact file matches and
+ * shared path prefixes improve rank, but unrelated historical evidence is
+ * not discarded before lexical/semantic ranking.
  *
  * pgvector ranking is purely optional: it activates only when the caller
  * supplies `request.queryEmbedding` (computed upstream via the existing
@@ -52,6 +57,9 @@ export function buildMemorySearchQuery(
 
   const queryParam = params.add(request.query);
   const asOfParam = params.add(request.asOf ?? new Date().toISOString());
+  const embedding = request.queryEmbedding;
+  const relevantPaths = request.relevantPaths?.filter((path) => path.trim());
+  const taskKind = request.taskKind?.trim();
 
   const filters = [
     scopeFilter,
@@ -60,33 +68,91 @@ export function buildMemorySearchQuery(
     `(validity_valid_from IS NULL OR validity_valid_from <= ${asOfParam}::timestamptz)`,
     `(validity_valid_to IS NULL OR validity_valid_to > ${asOfParam}::timestamptz)`
   ];
-  if (request.relevantPaths && request.relevantPaths.length > 0) {
-    const pathsParam = params.add(request.relevantPaths);
-    filters.push(
-      `EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(memory_records.provenance->'evidence', '[]'::jsonb)) AS evidence_ref WHERE evidence_ref->>'kind' = 'file' AND evidence_ref->>'uri' = ANY(${pathsParam}::text[]))`
-    );
-  }
-
   if (request.kinds && request.kinds.length > 0) {
     const kindsParam = params.add(request.kinds);
     filters.push(`kind = ANY(${kindsParam}::text[])`);
   }
 
+  // When path ranking is not requested, exact lexical matching is a hard
+  // candidate filter. With embeddings, retain the union of lexical matches
+  // and records that actually have a vector; never fill top-k with unrelated
+  // zero-score records.
+  const lexicalMatch = `claim_search @@ plainto_tsquery('english', ${queryParam})`;
+  if (!relevantPaths?.length) {
+    filters.push(
+      embedding
+        ? `(${lexicalMatch} OR memory_records.embedding IS NOT NULL)`
+        : lexicalMatch
+    );
+  }
+
   const limitParam = params.add(request.limit ?? DEFAULT_LIMIT);
 
-  const embedding = request.queryEmbedding;
   let vectorParam: string | undefined;
   if (embedding) {
     vectorParam = params.add(`[${embedding.join(",")}]`);
   }
 
-  const lexicalWeight = embedding
-    ? (weights.lexicalWeight ?? DEFAULT_LEXICAL_WEIGHT)
-    : 1;
-  const vectorWeight = weights.vectorWeight ?? DEFAULT_VECTOR_WEIGHT;
-  const scoreExpr = embedding
-    ? `(ts_rank(claim_search, plainto_tsquery('english', ${queryParam})) * ${lexicalWeight}) + (CASE WHEN embedding IS NOT NULL THEN (1 - (embedding <=> ${vectorParam}::vector)) * ${vectorWeight} ELSE 0 END)`
-    : `ts_rank(claim_search, plainto_tsquery('english', ${queryParam})) * ${lexicalWeight}`;
+  const pathWeight = relevantPaths?.length ? DEFAULT_PATH_WEIGHT : 0;
+  const taskKindWeight = taskKind ? DEFAULT_TASK_KIND_WEIGHT : 0;
+  const relevanceWeight = 1 - pathWeight;
+  const lexicalWeight =
+    (embedding
+      ? (weights.lexicalWeight ?? DEFAULT_LEXICAL_WEIGHT)
+      : (weights.lexicalWeight ?? 1)) * relevanceWeight;
+  const vectorWeight =
+    (weights.vectorWeight ?? DEFAULT_VECTOR_WEIGHT) * relevanceWeight;
+  let pathScoreExpr = "0::double precision";
+  if (relevantPaths?.length) {
+    const pathsParam = params.add(relevantPaths);
+    pathScoreExpr = `COALESCE((
+  SELECT MAX(CASE
+    WHEN evidence_ref->>'uri' = requested_path.uri THEN 1.0
+    ELSE 0.6 * COALESCE((
+      SELECT COUNT(*)::double precision /
+        GREATEST(array_length(path_parts.evidence_parts, 1), array_length(path_parts.requested_parts, 1))
+      FROM generate_series(
+        1,
+        LEAST(array_length(path_parts.evidence_parts, 1), array_length(path_parts.requested_parts, 1))
+      ) AS shared_path_prefix(segment)
+      WHERE path_parts.evidence_parts[shared_path_prefix.segment] = path_parts.requested_parts[shared_path_prefix.segment]
+    ), 0)
+  END)
+  FROM jsonb_array_elements(COALESCE(scoped.provenance->'evidence', '[]'::jsonb)) AS evidence_ref
+  CROSS JOIN unnest(${pathsParam}::text[]) AS requested_path(uri)
+  CROSS JOIN LATERAL (
+    SELECT
+      string_to_array(trim(both '/' FROM regexp_replace(evidence_ref->>'uri', '^[^:]+://', '')), '/') AS evidence_parts,
+      string_to_array(trim(both '/' FROM regexp_replace(requested_path.uri, '^[^:]+://', '')), '/') AS requested_parts
+  ) AS path_parts
+  WHERE evidence_ref->>'kind' = 'file'
+), 0)::double precision`;
+  }
+  let taskKindScoreExpr = "0::double precision";
+  if (taskKind) {
+    // Task-kind metadata is only a tie/relevance bonus after the cited source
+    // experience passes the same scope visibility rule as an explicit read.
+    const taskKindParam = params.add(taskKind);
+    const sourceExperienceScope = buildExperienceScopeFilterSql(
+      "source_experience",
+      request.context,
+      params
+    );
+    taskKindScoreExpr = `CASE WHEN EXISTS (
+  SELECT 1
+  FROM jsonb_array_elements_text(COALESCE(scoped.provenance->'experienceIds', '[]'::jsonb)) AS cited_experience(id)
+  JOIN memory_experiences AS source_experience ON source_experience.id = cited_experience.id
+  WHERE source_experience.task_kind = ${taskKindParam}
+    AND ${sourceExperienceScope}
+) THEN 1.0 ELSE 0 END`;
+  }
+  const lexicalScore = `ts_rank(scoped.claim_search, plainto_tsquery('english', ${queryParam})) * ${lexicalWeight}`;
+  const vectorScore = embedding
+    ? `(CASE WHEN scoped.embedding IS NOT NULL THEN (1 - (scoped.embedding <=> ${vectorParam}::vector)) * ${vectorWeight} ELSE 0 END)`
+    : "0::double precision";
+  const relevantSignals = ["lexical_score > 0"];
+  if (relevantPaths?.length) relevantSignals.push("path_score > 0");
+  if (embedding) relevantSignals.push("embedding IS NOT NULL");
 
   const text = `
 WITH scoped AS (
@@ -96,9 +162,15 @@ WITH scoped AS (
          validity_detail, supersedes, superseded_by, embedding, created_at, updated_at
   FROM memory_records
   WHERE ${filters.join(" AND ")}
+), ranked AS (
+  SELECT scoped.*, ${pathScoreExpr} AS path_score,
+         ${taskKindScoreExpr} AS task_kind_score,
+         ${lexicalScore} AS lexical_score, ${vectorScore} AS vector_score
+  FROM scoped
 )
-SELECT *, ${scoreExpr} AS score
-FROM scoped
+SELECT *, (lexical_score + vector_score + (path_score * ${pathWeight}) + (task_kind_score * ${taskKindWeight})) AS score
+FROM ranked
+WHERE ${relevantSignals.join(" OR ")}
 ORDER BY score DESC
 LIMIT ${limitParam}
 `.trim();
@@ -245,5 +317,22 @@ export function buildExperienceListQuery(
     countParams: countParams.all,
     text: `SELECT * FROM memory_experiences WHERE ${rowFilters.join(" AND ")} ORDER BY ${order}, id DESC LIMIT ${limitParam} OFFSET ${offsetParam}`,
     params: rowParams.all
+  };
+}
+
+export function buildExpiredExperienceQuery(
+  request: MemoryExpiredExperienceRequest
+): BuiltQuery {
+  const params = new SqlParams();
+  const scope = buildExperienceScopeFilterSql(
+    "memory_experiences",
+    request.context,
+    params
+  );
+  const cutoff = params.add(request.completedBefore);
+  const limit = params.add(request.limit);
+  return {
+    text: `SELECT memory_experiences.* FROM memory_experiences WHERE ${scope} AND memory_experiences.completed_at IS NOT NULL AND memory_experiences.completed_at < ${cutoff} AND NOT EXISTS (SELECT 1 FROM memory_records WHERE memory_records.provenance->'experienceIds' @> jsonb_build_array(memory_experiences.id)) ORDER BY memory_experiences.completed_at ASC, memory_experiences.id ASC LIMIT ${limit}`,
+    params: params.all
   };
 }

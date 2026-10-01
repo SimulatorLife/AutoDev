@@ -681,7 +681,7 @@ Prefer extracting provider-neutral components from:
 
 - `src/providers/claude-codex-tools.ts`
 - `src/providers/claude-turn.ts`
-- `src/shared/responses-continuation.ts`
+- `@simulatorlife/autodev-runtime/shared/responses-continuation`
 
 Candidate shared responsibilities:
 

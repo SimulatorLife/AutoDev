@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createMacosServiceLifecycle } from "../../src/hooks/lifecycle.ts";
+import { createMacosServiceLifecycle } from "@simulatorlife/autodev-runtime/hooks";
+
 import {
   type CommandResult,
   LaunchdClient,

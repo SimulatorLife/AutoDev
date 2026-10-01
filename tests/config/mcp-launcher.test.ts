@@ -12,8 +12,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { MCP_SERVER_CODEGRAPHCONTEXT } from "@simulatorlife/autodev-runtime/shared/tool-names";
+
 import { resolveMcpCommand, runMcp } from "../../src/mcp/launcher.ts";
-import { MCP_SERVER_CODEGRAPHCONTEXT } from "../../src/shared/tool-names.ts";
 
 test("MCP launcher resolves pinned AutoDev binaries without shell commands", () => {
   assert.deepEqual(resolveMcpCommand("lsp", "/repo"), {

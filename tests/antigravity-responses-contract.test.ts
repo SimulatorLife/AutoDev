@@ -16,13 +16,14 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
 import {
+  classifyCliLimit,
+  limitPayload
+} from "@simulatorlife/autodev-runtime/shared/provider-limits";
+
+import {
   extractSkillReadPath,
   matchSkillReadPath
 } from "../src/providers/antigravity.ts";
-import {
-  classifyCliLimit,
-  limitPayload
-} from "../src/shared/provider-limits.ts";
 
 const REPO_ROOT = resolvePath(import.meta.dirname, "..");
 const PROXY = join(REPO_ROOT, "src/providers/antigravity.ts");

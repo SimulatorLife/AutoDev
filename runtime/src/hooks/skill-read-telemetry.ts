@@ -33,7 +33,9 @@ import {
   resolveSkillReadReporter,
   SESSION_ID_HEADER,
   SKILL_READ_SOURCE
-} from "../telemetry/agent-events.ts";
+} from "@simulatorlife/autodev-runtime/telemetry";
+
+import { repositoryRoot } from "./command-utils.ts";
 
 const STATE_DIR = path.join(homedir(), ".codex", "run", "skill-read-telemetry");
 const SEEN_KEYS_LIMIT = 4096;
@@ -69,9 +71,7 @@ function asSeenState(value: JsonValue): SeenState {
 }
 
 const HOME = homedir();
-const REPO_ROOT =
-  process.env.AUTODEV_REPO_ROOT ||
-  path.resolve(path.join(import.meta.dirname, "..", ".."));
+const REPO_ROOT = repositoryRoot();
 // Source roots whose SKILL.md reads count as skill activation telemetry.
 // Mirrors the install-time contract in scripts/install.sh and is
 // intentionally narrow: a path under a recognised root that ends in `SKILL.md`

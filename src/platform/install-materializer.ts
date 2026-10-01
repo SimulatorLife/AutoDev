@@ -14,6 +14,11 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  writeErrorLine,
+  writeLine
+} from "@simulatorlife/autodev-runtime/shared/output";
+
 import { runCompose } from "../config/compose-user-config.ts";
 import {
   atomicWrite,
@@ -25,7 +30,6 @@ import { renderAgentDirectory } from "../config/render-agent-configs.ts";
 import { runBridgeMcpCatalogue } from "../config/render-bridge-mcp-catalogue.ts";
 import { runExecutionContract } from "../config/render-execution-contract.ts";
 import { runModelCatalog } from "../config/render-model-catalog.ts";
-import { writeErrorLine, writeLine } from "../shared/output.ts";
 import {
   updateAntigravityPermissions,
   updateAntigravitySkills
@@ -42,27 +46,15 @@ import {
 import { removeStalePaths } from "./runtime-reconciliation.ts";
 
 export const RUNTIME_MODULES = [
-  "src/shared/resolve-workspace.ts",
-  "src/shared/otel-resource-context.ts",
-  "src/shared/executables.ts",
-  "src/shared/env.ts",
   "src/agents/bridge-role.ts",
   "src/agents/bridge-sandbox.ts",
-  "src/telemetry/agent-events.ts",
   "src/agents/agent-activity.ts",
-  "src/shared/provider-limits.ts",
-  "src/shared/responses-item-ids.ts",
-  "src/shared/responses-continuation.ts",
-  "src/shared/output.ts",
-  "src/shared/tool-names.ts",
   "src/agents/spawn-tools.ts",
   "src/router/state-collector.ts",
   "src/router/telemetry.ts",
   "src/router/routing.ts",
-  "src/router/cooldown.ts",
   "src/router/responses.ts",
   "src/router/concurrency.ts",
-  "src/router/lifecycle.ts",
   "src/router/memory-injection.ts",
   "src/router/memory-control-api.ts",
   "src/router/control-api-body.ts",
@@ -79,8 +71,8 @@ export const RUNTIME_MODULES = [
   "src/router/http.ts",
   "src/router/server.ts",
   "src/agents/bridge-spawn-session.ts",
-  "src/providers/minimax.ts",
-  "src/providers/copilot.ts",
+  "runtime/src/providers/minimax.ts",
+  "runtime/src/providers/copilot.ts",
   "src/providers/antigravity.ts",
   "src/providers/claude.ts",
   "src/providers/claude-codex-tools.ts",
@@ -91,8 +83,6 @@ export const RUNTIME_MODULES = [
   "src/mcp/codex-tools-shim-telemetry.ts",
   "src/mcp/launcher.ts",
   "src/router/mcp-process-registry.ts",
-  "src/router/tool-call-ownership.ts",
-  "src/shared/execution-contract.ts",
   "src/router/status.ts",
   "src/cli/router-status.ts",
   "src/cli/router-status-client.ts",
@@ -107,11 +97,11 @@ export const RUNTIME_MODULES = [
   "agents/prompts/leaf.md",
   "agents/prompts/code-search.md",
   "agents/prompts/orchestrator.md",
-  "src/hooks/command-utils.ts",
-  "src/hooks/skill-read-telemetry.ts",
-  "src/hooks/session-start.ts",
-  "src/hooks/subagent-start.ts",
-  "src/hooks/memory-session-end.ts",
+  "runtime/src/hooks/command-utils.ts",
+  "runtime/src/hooks/skill-read-telemetry.ts",
+  "runtime/src/hooks/session-start.ts",
+  "runtime/src/hooks/subagent-start.ts",
+  "runtime/src/hooks/memory-session-end.ts",
   "src/platform/macos/launchd.ts",
   "src/platform/host-arch.ts",
   "src/platform/macos/launchagent.ts",
@@ -132,9 +122,25 @@ export const RUNTIME_MODULES = [
   "src/platform/install-materializer.ts",
   "src/platform/install-command.ts",
   "src/platform/install-check.ts",
-  "src/hooks/root-delegation.ts",
-  "src/hooks/block-ccc-cli.ts",
+  "runtime/src/hooks/root-delegation.ts",
+  "runtime/src/hooks/block-ccc-cli.ts",
   ".rulesync/skills/orchestration/SKILL.md"
+] as const;
+export const OBSOLETE_RUNTIME_MODULES = [
+  "src/shared/resolve-workspace.ts",
+  "src/shared/otel-resource-context.ts",
+  "src/shared/executables.ts",
+  "src/shared/env.ts",
+  "src/shared/provider-limits.ts",
+  "src/shared/responses-item-ids.ts",
+  "src/shared/responses-continuation.ts",
+  "src/shared/output.ts",
+  "src/shared/tool-names.ts",
+  "src/shared/execution-contract.ts",
+  "src/telemetry/agent-events.ts",
+  "src/router/cooldown.ts",
+  "src/router/lifecycle.ts",
+  "src/router/tool-call-ownership.ts"
 ] as const;
 export const OBSOLETE_CLAUDE_SKILL_VIEWS = path.join(
   "provider-runtime",
@@ -809,6 +815,10 @@ function removeObsoleteRuntimeArtifacts(
     path.join(hooks, "codex/lib/spawn-shim-mcp.mjs")
   ];
   removeStalePaths(obsoletePaths, "obsolete-runtime-path");
+  removeStalePaths(
+    OBSOLETE_RUNTIME_MODULES.map((filePath) => path.join(codexHome, filePath)),
+    "obsolete-runtime-path"
+  );
   removeStalePaths(
     OBSOLETE_HOOKS.map((name) => path.join(hooks, name)),
     "obsolete-runtime-hook"

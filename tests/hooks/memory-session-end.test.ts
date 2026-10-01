@@ -1,12 +1,30 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { once } from "node:events";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { LOCAL_CONTROL_API_ACTOR } from "@simulatorlife/autodev-core";
 
 import {
   codexSessionEndCapture,
   createMemorySessionEndHandler
-} from "../../src/hooks/memory-session-end.ts";
+} from "../../runtime/src/hooks/memory-session-end.ts";
+import {
+  materializeRuntimeFile,
+  runtimeFileMatches,
+  runtimeTarget
+} from "../../src/platform/runtime-files.ts";
 
 const validEvent = {
   hook_event_name: "SessionEnd",
@@ -93,4 +111,110 @@ test("SessionEnd capture fails open when secrets or the control API are unavaila
   });
   assert.equal(await unavailable(JSON.stringify(validEvent)), 0);
   assert.equal(calls, 1);
+});
+
+test("materialized Codex hook reads its installed secret and posts to the loopback API", async () => {
+  const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
+  const codexHome = mkdtempSync(path.join(tmpdir(), "autodev-codex-hook-"));
+  const transcriptPath = path.join(
+    codexHome,
+    "sessions",
+    "2026",
+    "10",
+    "01",
+    "session.jsonl"
+  );
+  mkdirSync(path.dirname(transcriptPath), { recursive: true });
+  writeFileSync(transcriptPath, '{"private":"payload stays in source"}\n');
+  writeFileSync(
+    path.join(codexHome, ".env"),
+    "AUTODEV_CONTROL_API_TOKEN=installed-local-token\n"
+  );
+  chmodSync(path.join(codexHome, ".env"), 0o600);
+
+  let resolveObserved!: (value: {
+    method: string | undefined;
+    url: string | undefined;
+    authorization: string | undefined;
+    body: string;
+  }) => void;
+  const observed = new Promise<{
+    method: string | undefined;
+    url: string | undefined;
+    authorization: string | undefined;
+    body: string;
+  }>((resolve) => {
+    resolveObserved = resolve;
+  });
+  const server = createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end('{"captured":true}');
+      resolveObserved({
+        method: request.method,
+        url: request.url,
+        authorization: request.headers.authorization,
+        body: Buffer.concat(chunks).toString("utf8")
+      });
+    });
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+
+    const source = path.join(
+      repositoryRoot,
+      "runtime/src/hooks/memory-session-end.ts"
+    );
+    const installed = runtimeTarget(
+      "runtime/src/hooks/memory-session-end.ts",
+      codexHome
+    );
+    materializeRuntimeFile(source, installed, 0o755);
+    assert.equal(runtimeFileMatches(source, installed), true);
+    assert.equal(
+      path.relative(codexHome, installed),
+      "src/hooks/memory-session-end.ts"
+    );
+
+    const env = {
+      ...process.env,
+      CODEX_HOME: codexHome,
+      AUTODEV_CONTROL_API_LISTEN_PORT: String(address.port)
+    };
+    delete env.AUTODEV_CONTROL_API_TOKEN;
+    const event = {
+      ...validEvent,
+      session_id: "installed-session-1",
+      transcript_path: transcriptPath,
+      cwd: path.dirname(codexHome)
+    };
+    const stderr = execFileSync(process.execPath, [installed], {
+      input: JSON.stringify(event),
+      env,
+      encoding: "utf8",
+      timeout: 5000
+    });
+    assert.equal(stderr, "");
+
+    const request = await observed;
+    assert.equal(request.method, "POST");
+    assert.equal(request.url, "/control/memory/capture");
+    assert.equal(request.authorization, "Bearer installed-local-token");
+    assert.deepEqual(JSON.parse(request.body), {
+      sessionId: event.session_id,
+      transcriptPath,
+      cwd: event.cwd
+    });
+    assert.doesNotMatch(request.body, /private payload stays in source/);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    );
+    rmSync(codexHome, { recursive: true, force: true });
+  }
 });

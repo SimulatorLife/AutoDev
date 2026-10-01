@@ -1,0 +1,673 @@
+diff --git a/src/client/src/__tests__/components/memory-detail-sheet.test.tsx b/src/client/src/__tests__/components/memory-detail-sheet.test.tsx
+index 562beb98..0dc38e7c 100644
+--- a/src/client/src/__tests__/components/memory-detail-sheet.test.tsx
++++ b/src/client/src/__tests__/components/memory-detail-sheet.test.tsx
+@@ -93,6 +93,54 @@ describe("MemoryDetailSheet writes", () => {
+ 		expect(screen.queryByTitle("Delete")).not.toBeInTheDocument();
+ 	});
+ 
++	it("adds governed actions without replacing external connector edit/delete", async () => {
++		const action = {
++			id: "verify",
++			label: "Verify and promote",
++			description: "Compare with current state.",
++			payloadTemplate: { task: "", query: "" }
++		};
++		(global.fetch as jest.Mock).mockResolvedValue({
++			ok: true,
++			json: async () => ({
++				memory: preview,
++				capabilities: {
++					get: true,
++					update: true,
++					delete: true,
++					feedback: false,
++					actions: [action]
++				},
++				connector: { name: "AutoDev Memory" }
++			})
++		});
++		render(
++			<MemoryDetailSheet
++				open
++				memoryId="mem-1"
++				capabilities={{
++					add: false,
++					search: true,
++					get: true,
++					list: true,
++					update: true,
++					delete: true,
++					feedback: false,
++					actions: [action]
++				}}
++				preview={preview}
++				onClose={jest.fn()}
++			/>
++		);
++		await waitFor(() => expect(screen.getByTitle("Edit")).toBeInTheDocument());
++		expect(screen.getByTitle("Delete")).toBeInTheDocument();
++		fireEvent.keyDown(
++			screen.getByRole("button", { name: "Memory lifecycle actions" }),
++			{ key: "Enter", code: "Enter" }
++		);
++		expect(await screen.findByText("Verify and promote")).toBeInTheDocument();
++	});
++
+ 	it("deletes a memory after confirmation", async () => {
+ 		const onClose = jest.fn();
+ 		const onChanged = jest.fn();
+diff --git a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
+index aee793d0..7897a2c3 100644
+--- a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
++++ b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
+@@ -191,24 +191,211 @@ test("AutoDev connector lists source experiences only when task-history access i
+ 	expect(String(experienceRequest)).toContain("includeTaskHistory=true");
+ });
+ 
+-test("AutoDev advertises invalidation only for live durable records", () => {
++test("AutoDev advertises lifecycle actions according to record status and kind", () => {
+ 	const adapter = new AutoDevMemoryAdapter(descriptor);
+-	const active = {
++	const proposed = {
+ 		id: "memory-a",
+-		content: "A durable claim.",
+-		metadata: { autodev: { status: "active" } }
++		content: "A proposed claim.",
++		metadata: { autodev: { status: "proposed" } }
++	};
++	const procedure = {
++		...proposed,
++		metadata: {
++			autodev: {
++				kind: "procedural",
++				status: "active",
++				validity: { state: "verified" }
++			}
++		}
++	};
++	const uncertain = {
++		...proposed,
++		metadata: { autodev: { kind: "semantic", status: "uncertain" } }
++	};
++	const invalidated = {
++		...proposed,
++		metadata: { autodev: { status: "invalidated" } }
+ 	};
+-	const invalidated = { ...active, metadata: { autodev: { status: "invalidated" } } };
+ 	const experience = {
+-		...active,
++		...proposed,
+ 		id: "experience:experience-a",
+ 		metadata: { autodev: { status: "historical" } }
+ 	};
+-	expect(adapter.actionsFor(active)).toEqual([expect.objectContaining({ id: "invalidate" })]);
++	expect(adapter.actionsFor(proposed).map(({ id }) => id)).toEqual([
++		"verify",
++		"supersede",
++		"invalidate"
++	]);
++	expect(adapter.actionsFor(procedure).map(({ id }) => id)).toEqual([
++		"revise",
++		"invalidate",
++		"promote-skill"
++	]);
++	expect(adapter.actionsFor(uncertain).map(({ id }) => id)).toEqual([
++		"revise",
++		"invalidate"
++	]);
+ 	expect(adapter.actionsFor(invalidated)).toEqual([]);
+ 	expect(adapter.actionsFor(experience)).toEqual([]);
+ });
+ 
++test("AutoDev detail retrieves lifecycle history and presents source experiences", async () => {
++	const memory = {
++		id: "memory-a",
++		kind: "semantic",
++		claim: "A durable claim.",
++		status: "active",
++		scope: { kind: "repository", workspaceId: "workspace-a", repositoryId: "owner/repo" },
++		provenance: { experienceIds: ["experience-a"], evidence: [] },
++		validity: { state: "verified" },
++		createdAt: "2026-10-01T00:00:00.000Z",
++		updatedAt: "2026-10-01T00:00:00.000Z"
++	};
++	const fetchSpy = jest
++		.spyOn(global, "fetch")
++		.mockResolvedValueOnce(
++			jsonResponse({ schema: "autodev-memory-record-v1", memory })
++		)
++		.mockResolvedValueOnce(
++			jsonResponse({
++				events: [
++					{
++						id: "event-verified",
++						action: "verified",
++						fromStatus: "proposed",
++						toStatus: "active",
++						occurredAt: "2026-10-01T00:00:00.000Z",
++						actorId: "curator-a"
++					}
++				],
++				relatedMemories: [],
++				sourceExperiences: [
++					{
++						id: "experience-a",
++						workspaceId: "workspace-a",
++						repositoryId: "owner/repo",
++						scope: { kind: "task", workspaceId: "workspace-a", taskId: "task-a", runId: "run-a" },
++						taskId: "task-a",
++						runId: "run-a",
++						agentId: "agent-a",
++						startedAt: "2026-10-01T00:00:00.000Z",
++						outcome: "success",
++						trajectory: { format: "letta-trajectory-v1", uri: "codex://session/task-a" },
++						evidence: []
++					}
++				]
++			})
++		);
++
++	const result = await new AutoDevMemoryAdapter(descriptor).get("memory-a");
++	expect(result?.history).toEqual([
++		{
++			id: "event-verified",
++			event: "verified",
++			oldMemory: "proposed",
++			newMemory: "active",
++			createdAt: "2026-10-01T00:00:00.000Z",
++			actorId: "curator-a"
++		}
++	]);
++	expect(result?.metadata?.autodev).toMatchObject({
++		sourceExperiences: [
++			{ id: "experience:experience-a", lifecycleState: "historical" }
++		]
++	});
++	expect(String(fetchSpy.mock.calls[1]?.[0])).toContain(
++		"/control/memory/records/memory-a/why?"
++	);
++});
++
++test("revision refreshes its new proposal record rather than the source id", async () => {
++	const revised = {
++		id: "memory-revision",
++		kind: "semantic",
++		claim: "The revised claim.",
++		status: "proposed",
++		scope: { kind: "repository", workspaceId: "workspace-a", repositoryId: "owner/repo" },
++		provenance: { experienceIds: ["experience-a"], evidence: [] },
++		validity: { state: "unverified" },
++		createdAt: "2026-10-01T00:00:00.000Z",
++		updatedAt: "2026-10-01T00:00:00.000Z"
++	};
++	const fetchSpy = jest
++		.spyOn(global, "fetch")
++		.mockResolvedValueOnce(
++			jsonResponse({ schema: "autodev-memory-record-v1", memory: revised })
++		)
++		.mockResolvedValueOnce(
++			jsonResponse({ schema: "autodev-memory-record-v1", memory: revised })
++		)
++		.mockResolvedValueOnce(
++			jsonResponse({ events: [], relatedMemories: [], sourceExperiences: [] })
++		);
++
++	const result = await new AutoDevMemoryAdapter(descriptor).executeAction(
++		"memory-a",
++		"revise",
++		{
++			claim: revised.claim,
++			experienceIds: ["experience-a"],
++			evidence: [{ kind: "commit", uri: "git://owner/repo/commit/abc" }]
++		}
++	);
++
++	expect(result.id).toBe("memory-revision");
++	expect(String(fetchSpy.mock.calls[0]?.[0])).toContain(
++		"/memory/records/memory-a/revise?"
++	);
++	expect(String(fetchSpy.mock.calls[1]?.[0])).toContain(
++		"/memory/records/memory-revision?"
++	);
++});
++
++test("procedure promotion retains the canonical skill artifact in the result", async () => {
++	const memory = {
++		id: "memory-procedure",
++		kind: "procedural",
++		claim: "Run the canonical validator.",
++		status: "active",
++		scope: { kind: "repository", workspaceId: "workspace-a", repositoryId: "owner/repo" },
++		provenance: { experienceIds: ["experience-a"], evidence: [] },
++		validity: { state: "verified" },
++		createdAt: "2026-10-01T00:00:00.000Z",
++		updatedAt: "2026-10-01T00:00:00.000Z"
++	};
++	const skill = {
++		name: "canonical-validator",
++		path: ".rulesync/skills/canonical-validator/SKILL.md",
++		uri: "rulesync://skills/canonical-validator/SKILL.md",
++		revision: "commit-abc"
++	};
++	jest
++		.spyOn(global, "fetch")
++		.mockResolvedValueOnce(
++			jsonResponse({ schema: "autodev-memory-skill-promotion-v1", memory, skill })
++		)
++		.mockResolvedValueOnce(
++			jsonResponse({ schema: "autodev-memory-record-v1", memory })
++		)
++		.mockResolvedValueOnce(
++			jsonResponse({ events: [], relatedMemories: [], sourceExperiences: [] })
++		);
++
++	const result = await new AutoDevMemoryAdapter(descriptor).executeAction(
++		"memory-procedure",
++		"promote-skill",
++		{
++			skillName: skill.name,
++			description: "Validate repository changes.",
++			content: "Run the canonical validator.",
++			task: "Validate the current change.",
++			query: "canonical validator"
++		}
++	);
++
++	expect(result.metadata?.autodev).toMatchObject({ promotedSkill: skill });
++});
++
+ test("AutoDev lifecycle invalidation uses the authenticated Control API", async () => {
+ 	const updatedMemory = {
+ 		id: "memory-a",
+diff --git a/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx b/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx
+index e93c7862..a1d98e33 100644
+--- a/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx
++++ b/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx
+@@ -1,7 +1,7 @@
+ "use client";
+ 
+ import { useEffect, useRef, useState, type ReactNode } from "react";
+-import { Angry, ArrowRightLeft, ChevronDown, ChevronUp, Copy, Pencil, ThumbsDown, ThumbsUp, Trash2, User, X } from "lucide-react";
++import { Angry, ArrowRightLeft, ChevronDown, ChevronUp, Copy, MoreHorizontal, Pencil, ThumbsDown, ThumbsUp, Trash2, User, X } from "lucide-react";
+ import { toast } from "sonner";
+ import FeatureAccess from "@/components/rbac/feature-access";
+ import {
+@@ -15,6 +15,12 @@ import {
+ 	AlertDialogTitle,
+ } from "@/components/ui/alert-dialog";
+ import { Button } from "@/components/ui/button";
++import {
++	DropdownMenu,
++	DropdownMenuContent,
++	DropdownMenuItem,
++	DropdownMenuTrigger
++} from "@/components/ui/dropdown-menu";
+ import { Input } from "@/components/ui/input";
+ import { ResizeablePanel } from "@/components/ui/resizeable-panel";
+ import { Sheet, SheetContent } from "@/components/ui/sheet";
+@@ -397,60 +403,74 @@ export default function MemoryDetailSheet({
+ 											<ArrowRightLeft className="h-3.5 w-3.5" />
+ 										</Button>
+ 									) : null}
+-								</FeatureAccess>
+-								<FeatureAccess access="memory.update" hideWhenDenied>
+-									{canUpdate ? (
+-										<Button
+-											variant="outline"
+-											size="sm"
+-											className="h-7 w-7 border-stone-200 bg-white p-0 text-stone-600 hover:bg-stone-100 hover:text-stone-950 disabled:opacity-40 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-stone-50"
+-											onClick={(event) => {
+-												event.preventDefault();
+-												event.stopPropagation();
+-												openNestedDialog(setEditOpen);
+-											}}
+-											disabled={!memory || saving}
+-											title={messages.MEMORY_EDIT}
+-										>
+-											<Pencil className="h-3.5 w-3.5" />
+-										</Button>
+-									) : null}
+-								</FeatureAccess>
+-								<FeatureAccess access="memory.delete" hideWhenDenied>
+-									{canDelete ? (
+-										<Button
+-											variant="outline"
+-											size="sm"
+-											className="h-7 w-7 border-stone-200 bg-white p-0 text-stone-600 hover:bg-stone-100 hover:text-error disabled:opacity-40 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-300 dark:hover:bg-stone-800"
+-											onClick={(event) => {
+-												event.preventDefault();
+-												event.stopPropagation();
+-												openNestedDialog(setDeleteOpen);
+-											}}
+-											disabled={!memoryId || saving}
+-											title={messages.MEMORY_DELETE}
+-										>
+-											<Trash2 className="h-3.5 w-3.5" />
+-										</Button>
+-									) : null}
+-								</FeatureAccess>
+-								<FeatureAccess access="memory.update" hideWhenDenied>
+-									{actions.map((action) => (
+-										<Button
+-											key={action.id}
+-											variant="outline"
+-											size="sm"
+-											className="h-7 border-stone-200 bg-white px-2 text-xs text-stone-600 hover:bg-stone-100 hover:text-stone-950 disabled:opacity-40 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-stone-50"
+-											disabled={!memory || saving}
+-											onClick={() => {
++				</FeatureAccess>
++				<FeatureAccess access="memory.update" hideWhenDenied>
++					{canUpdate ? (
++						<Button
++							variant="outline"
++							size="sm"
++							className="h-7 w-7 border-stone-200 bg-white p-0 text-stone-600 hover:bg-stone-100 hover:text-stone-950 disabled:opacity-40 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-stone-50"
++							onClick={(event) => {
++								event.preventDefault();
++								event.stopPropagation();
++								openNestedDialog(setEditOpen);
++							}}
++							disabled={!memory || saving}
++							title={messages.MEMORY_EDIT}
++						>
++							<Pencil className="h-3.5 w-3.5" />
++						</Button>
++					) : null}
++				</FeatureAccess>
++				<FeatureAccess access="memory.delete" hideWhenDenied>
++					{canDelete ? (
++						<Button
++							variant="outline"
++							size="sm"
++							className="h-7 w-7 border-stone-200 bg-white p-0 text-stone-600 hover:bg-stone-100 hover:text-error disabled:opacity-40 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-300 dark:hover:bg-stone-800"
++							onClick={(event) => {
++								event.preventDefault();
++								event.stopPropagation();
++								openNestedDialog(setDeleteOpen);
++							}}
++							disabled={!memoryId || saving}
++							title={messages.MEMORY_DELETE}
++						>
++							<Trash2 className="h-3.5 w-3.5" />
++						</Button>
++					) : null}
++				</FeatureAccess>
++				<FeatureAccess access="memory.update" hideWhenDenied>
++					{actions.length > 0 ? (
++						<DropdownMenu>
++							<DropdownMenuTrigger asChild>
++								<Button
++									variant="outline"
++									size="sm"
++									className="h-7 w-7 border-stone-200 bg-white p-0 text-stone-600 hover:bg-stone-100 hover:text-stone-950 disabled:opacity-40 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-stone-50"
++									disabled={!memory || saving}
++									aria-label="Memory lifecycle actions"
++									title="Memory lifecycle actions"
++								>
++									<MoreHorizontal className="h-4 w-4" />
++								</Button>
++							</DropdownMenuTrigger>
++							<DropdownMenuContent align="end">
++								{actions.map((action) => (
++									<DropdownMenuItem
++										key={action.id}
++										onSelect={() => {
+ 											setActiveAction(action);
+ 											openNestedDialog(setActionOpen);
+ 										}}
+-										>
+-											{action.label}
+-										</Button>
+-									))}
+-								</FeatureAccess>
++									>
++										{action.label}
++									</DropdownMenuItem>
++								))}
++							</DropdownMenuContent>
++						</DropdownMenu>
++					) : null}
++				</FeatureAccess>
+ 								<Button
+ 									variant="outline"
+ 									size="sm"
+diff --git a/src/client/src/lib/platform/connectors/memory/README.md b/src/client/src/lib/platform/connectors/memory/README.md
+index 4e68d9ef..761aece1 100644
+--- a/src/client/src/lib/platform/connectors/memory/README.md
++++ b/src/client/src/lib/platform/connectors/memory/README.md
+@@ -62,13 +62,15 @@ Configure a workspace ID and, when needed, repository/role/task/run/agent scope
+ on the connector. The Control API URL and service credential are resolved from
+ OpenLIT's server environment; credentials are never stored in connector settings
+ or sent to the browser. The adapter exposes list, exact-text search, get, and
+-health-check as read capabilities, not generic CRUD writes. It also advertises
+-governed lifecycle actions through the shared capability-driven action interface.
+-The initial action is evidence-backed invalidation; proposals, verification,
+-revision, supersession, and promotion remain unexposed in the UI until their
+-operator forms are implemented. Actions call AutoDev's Control API and
+-MemoryService, and PostgreSQL remains the canonical store. Its optional task-history setting requests historical task/agent
+-experience envelopes, but only succeeds for an operator actor when
++health-check as read capabilities, not generic CRUD writes. It advertises
++status-gated verify, revise, invalidate, supersede, and procedure-to-skill
++promotion actions through the shared capability-driven action interface. The
++detail view retrieves lifecycle history, related records, and source
++experiences through the Control API's governed `why` route. Action payloads
++still pass through the AutoDev Control API and MemoryService; PostgreSQL
++remains the canonical store, and generic CRUD stays disabled for AutoDev.
++Its optional task-history setting requests historical task/agent experience
++envelopes, but only succeeds for an operator actor when
+ `AUTODEV_MEMORY_READ_TASK_HISTORY=1` is set in the AutoDev Control API process.
+ The Control API still constrains those reads to the selected workspace and
+ repository.
+diff --git a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
+index 1d0cc25b..6bdb9f77 100644
+--- a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
++++ b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
+@@ -11,6 +11,7 @@ import { UnsupportedMemoryCapabilityError } from "../types";
+ import type {
+ 	MemoryActionDescriptor,
+ 	MemoryCapabilities,
++	MemoryHistoryEvent,
+ 	MemoryListFilter,
+ 	MemoryRecord,
+ 	MemorySearchQuery,
+@@ -58,6 +59,12 @@ interface AutoDevExperiencePage {
+ 	total: number;
+ }
+ 
++interface AutoDevMemoryWhy {
++	events?: unknown[];
++	relatedMemories?: unknown[];
++	sourceExperiences?: unknown[];
++}
++
+ const READ_ONLY_CAPABILITIES: MemoryCapabilities = {
+ 	add: false,
+ 	search: true,
+@@ -73,11 +80,44 @@ const INVALIDATE_ACTION: MemoryActionDescriptor = {
+ 	label: "Invalidate memory",
+ 	description:
+ 		"Invalidation is a soft lifecycle change. Add current evidence; source experiences and lifecycle history remain preserved.",
+-	payloadTemplate: {
+-		evidence: [],
+-		reasonCode: "invalidated_by_curator"
+-	}
++	payloadTemplate: { evidence: [], reasonCode: "invalidated_by_curator" }
++};
++const VERIFY_ACTION: MemoryActionDescriptor = {
++	id: "verify",
++	label: "Verify and promote",
++	description:
++		"Compare this proposal with current authoritative state. Incompatible or uncertain results will not be promoted.",
++	payloadTemplate: { task: "", query: "" }
++};
++const REVISE_ACTION: MemoryActionDescriptor = {
++	id: "revise",
++	label: "Propose revision",
++	description:
++		"Submit an evidence-backed replacement proposal. The current record remains unchanged until the replacement is verified.",
++	payloadTemplate: { claim: "", experienceIds: [], evidence: [] }
++};
++const SUPERSEDE_ACTION: MemoryActionDescriptor = {
++	id: "supersede",
++	label: "Supersede with proposal",
++	description:
++		"Verify this proposal against current state and link it to the active record it replaces.",
++	payloadTemplate: { priorId: "", task: "", query: "" }
+ };
++const PROMOTE_SKILL_ACTION: MemoryActionDescriptor = {
++	id: "promote-skill",
++	label: "Promote to skill",
++	description:
++		"Promote a current-state-verified procedure after its successful runs and validation evidence are rechecked.",
++	payloadTemplate: { skillName: "", description: "", content: "", task: "", query: "" }
++};
++const RECORD_ACTIONS = [
++	INVALIDATE_ACTION,
++	VERIFY_ACTION,
++	REVISE_ACTION,
++	SUPERSEDE_ACTION,
++	PROMOTE_SKILL_ACTION
++];
++
+ 
+ class AutoDevMemoryApiError extends Error {
+ 	readonly status: number;
+@@ -148,6 +188,20 @@ function autoDevExperience(value: unknown): AutoDevExperience | null {
+ 	return record as unknown as AutoDevExperience;
+ }
+ 
++function autoDevHistoryEvent(value: unknown): MemoryHistoryEvent | null {
++	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
++	const event = value as Record<string, unknown>;
++	if (typeof event.action !== "string") return null;
++	return {
++		...(typeof event.id === "string" ? { id: event.id } : {}),
++		event: event.action,
++		...(typeof event.fromStatus === "string" ? { oldMemory: event.fromStatus } : {}),
++		...(typeof event.toStatus === "string" ? { newMemory: event.toStatus } : {}),
++		...(typeof event.occurredAt === "string" ? { createdAt: event.occurredAt } : {}),
++		...(typeof event.actorId === "string" ? { actorId: event.actorId } : {})
++	};
++}
++
+ function presentExperience(experience: AutoDevExperience): MemoryRecord {
+ 	const role = experience.agentRole?.trim() || "agent";
+ 	return {
+@@ -220,10 +274,20 @@ export class AutoDevMemoryAdapter extends BaseMemoryAdapter {
+ 		const metadata = memory.metadata?.autodev;
+ 		if (!metadata || typeof metadata !== "object" || Array.isArray(metadata))
+ 			return [];
+-		const status = (metadata as Record<string, unknown>).status;
+-		return ["proposed", "active", "uncertain"].includes(String(status))
+-			? [INVALIDATE_ACTION]
+-			: [];
++		const state = metadata as Record<string, unknown>;
++		const status = state.status;
++		if (status === "proposed")
++			return [VERIFY_ACTION, SUPERSEDE_ACTION, INVALIDATE_ACTION];
++		if (status !== "active" && status !== "uncertain") return [];
++		const actions = [REVISE_ACTION, INVALIDATE_ACTION];
++		if (
++			status === "active" &&
++			state.kind === "procedural" &&
++			(state.validity as Record<string, unknown> | undefined)?.state === "verified"
++		) {
++			actions.push(PROMOTE_SKILL_ACTION);
++		}
++		return actions;
+ 	}
+ 
+ 	async executeAction(
+@@ -231,11 +295,14 @@ export class AutoDevMemoryAdapter extends BaseMemoryAdapter {
+ 		action: string,
+ 		payload: Record<string, unknown>
+ 	): Promise<MemoryRecord> {
+-		if (action !== INVALIDATE_ACTION.id) {
++		if (!RECORD_ACTIONS.some((candidate) => candidate.id === action)) {
+ 			throw new UnsupportedMemoryCapabilityError(this.type, "actions");
+ 		}
+ 		const params = this.scopeParams();
+-		const result = await forwardToControlApi<{ memory?: unknown }>({
++		const result = await forwardToControlApi<{
++			memory?: unknown;
++			skill?: unknown;
++		}>({
+ 			method: "POST",
+ 			path: `memory/records/${encodeURIComponent(id)}/${action}?${params.toString()}`,
+ 			body: payload
+@@ -243,7 +310,37 @@ export class AutoDevMemoryAdapter extends BaseMemoryAdapter {
+ 		if (!result.ok) throw new AutoDevMemoryApiError(result.status);
+ 		const record = autoDevMemory(result.body.memory);
+ 		if (!record) throw new Error("AutoDev lifecycle response is malformed.");
+-		return present(record);
++		const updated = present(record);
++		let detail: MemoryRecord | null = null;
++		try {
++			// Revision returns a newly created proposal id, not the source id in
++			// the route. Reload the record returned by the governed action.
++			detail = await this.get(record.id);
++		} catch {
++			// The mutation succeeded; keep its response if the provenance refresh fails.
++		}
++		const current = detail ?? updated;
++		const promotedSkill = result.body.skill;
++		if (
++			!promotedSkill ||
++			typeof promotedSkill !== "object" ||
++			Array.isArray(promotedSkill)
++		) {
++			return current;
++		}
++		const currentAutodev = current.metadata?.autodev;
++		return {
++			...current,
++			metadata: {
++				...current.metadata,
++				autodev: {
++					...(currentAutodev && typeof currentAutodev === "object"
++						? currentAutodev
++						: {}),
++					promotedSkill
++				}
++			}
++		};
+ 	}
+ 
+ 	async healthCheck(): Promise<ConnectorHealthResult> {
+@@ -301,7 +398,34 @@ export class AutoDevMemoryAdapter extends BaseMemoryAdapter {
+ 			throw new AutoDevMemoryApiError(result.status);
+ 		}
+ 		const record = autoDevMemory(result.body.memory);
+-		return record ? present(record) : null;
++		if (!record) return null;
++		const memory = present(record);
++		const why = await forwardToControlApi<AutoDevMemoryWhy>({
++			method: "GET",
++			path: `memory/records/${encodeURIComponent(id)}/why?${params.toString()}`
++		});
++		if (!why.ok) return memory;
++		const autodev = memory.metadata?.autodev as Record<string, unknown>;
++		const relatedMemories = (why.body.relatedMemories ?? []).flatMap((item) => {
++			const related = autoDevMemory(item);
++			return related ? [present(related)] : [];
++		});
++		const sourceExperiences = (why.body.sourceExperiences ?? []).flatMap((item) => {
++			const experience = autoDevExperience(item);
++			return experience ? [presentExperience(experience)] : [];
++		});
++		const history = (why.body.events ?? []).flatMap((item) => {
++			const event = autoDevHistoryEvent(item);
++			return event ? [event] : [];
++		});
++		return {
++			...memory,
++			...(history.length ? { history } : {}),
++			metadata: {
++				...memory.metadata,
++				autodev: { ...autodev, relatedMemories, sourceExperiences }
++			}
++		};
+ 	}
+ 
+ 	private scopeParams(includeTaskHistory = false): URLSearchParams {

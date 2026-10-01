@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import { writeErrorLine } from "../../shared/output.ts";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 export interface LaunchAgentValues {
   readonly codexHome: string;

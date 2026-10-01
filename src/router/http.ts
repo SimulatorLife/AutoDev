@@ -6,21 +6,22 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 
-import {
-  createAgentActivityTracker,
-  resolveAgentActivityTtlMs
-} from "../agents/agent-activity.ts";
-import { writeErrorLine } from "../shared/output.ts";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   isDirectory,
   parseTurnMetadataJson,
   resolveCwd,
   WORKSPACE_KEYS
-} from "../shared/resolve-workspace.ts";
+} from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
 import {
   dropUnresolvableReasoning,
   normalizeInputItemIds
-} from "../shared/responses-item-ids.ts";
+} from "@simulatorlife/autodev-runtime/shared/responses-item-ids";
+
+import {
+  createAgentActivityTracker,
+  resolveAgentActivityTtlMs
+} from "../agents/agent-activity.ts";
 import { authStatus, routerAuthorizationValid } from "./auth.ts";
 import {
   ConcurrencyManager,
@@ -30,7 +31,10 @@ import {
   SUBAGENT_SLOT_KIND
 } from "./concurrency.ts";
 import { handleControlApiRequest } from "./control-api.ts";
-import { COOLDOWN_CONFIG, COOLDOWNS } from "./cooldown.ts";
+import {
+  COOLDOWN_CONFIG,
+  COOLDOWNS
+} from "@simulatorlife/autodev-runtime/router/cooldown";
 import {
   getDefaultRouterEventRecorder,
   noteRequestIdentity,
@@ -42,7 +46,7 @@ import {
   getDefaultRouterLifecycle,
   RouterLifecycle,
   setDefaultRouterLifecycle
-} from "./lifecycle.ts";
+} from "@simulatorlife/autodev-runtime/router/lifecycle";
 import { type LiveFeedCategory, LiveFeedRecorder } from "./live-feed.ts";
 import {
   getDefaultMcpProcessRegistry,

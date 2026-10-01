@@ -9,8 +9,9 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { parseNonNegativeInteger } from "../shared/env.ts";
-import { writeErrorLine } from "../shared/output.ts";
+import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+
 import { LaunchdClient } from "./macos/launchd.ts";
 
 export interface ClaudeEnsureOptions {
@@ -34,7 +35,8 @@ export interface ClaudeEnsureDeps {
   readonly startFallback: (launcher: string, logPath: string) => void;
 }
 
-const CLAUDE_MODEL_PATTERN = /^(sonnet|opus|haiku|claude-[a-z0-9][a-z0-9.-]*)$/iu;
+const CLAUDE_MODEL_PATTERN =
+  /^(sonnet|opus|haiku|claude-[a-z0-9][a-z0-9.-]*)$/iu;
 const DEFAULT_TIMEOUT_MS = 5000;
 
 function keychainToken(env: NodeJS.ProcessEnv): string {
@@ -68,10 +70,7 @@ export function isClaudeModel(input: string): boolean {
       value && typeof value === "object" && !Array.isArray(value)
         ? (value as Record<string, unknown>).model
         : null;
-    return (
-      typeof model === "string" &&
-      CLAUDE_MODEL_PATTERN.test(model.trim())
-    );
+    return typeof model === "string" && CLAUDE_MODEL_PATTERN.test(model.trim());
   } catch {
     return false;
   }

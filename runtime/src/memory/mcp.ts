@@ -1,14 +1,19 @@
+import { createHash } from "node:crypto";
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type {
   EvidenceReference,
+  ExperienceEnvelope,
   MemoryActor,
   MemoryReadContext,
   MemoryScope
 } from "@simulatorlife/autodev-core";
 import { z } from "zod/v4";
 
+import { sanitizeEvidenceReference } from "./privacy.ts";
 import {
   MemoryAuthorizationError,
+  MemoryConflictError,
   type MemoryService,
   MemoryValidationError
 } from "./service.ts";
@@ -31,23 +36,46 @@ export interface MemoryMcpSessionProvider {
 }
 
 const memoryKind = z.enum(["episodic", "semantic", "procedural"]);
-const evidenceReference = z.object({
-  kind: z.enum([
-    "trajectory",
-    "trace",
-    "file",
-    "commit",
-    "pull_request",
-    "issue",
-    "rule",
-    "skill",
-    "document",
-    "other"
-  ]),
-  uri: z.string().min(1).max(2000),
-  revision: z.string().max(300).optional(),
-  observedAt: z.string().datetime().optional()
-});
+const evidenceReference = z
+  .object({
+    kind: z.enum([
+      "trajectory",
+      "trace",
+      "file",
+      "commit",
+      "pull_request",
+      "issue",
+      "rule",
+      "skill",
+      "document",
+      "other"
+    ]),
+    uri: z.string().min(1).max(2000),
+    revision: z.string().max(300).optional(),
+    observedAt: z.string().datetime().optional()
+  })
+  .strict();
+const trajectoryReference = z
+  .object({
+    format: z.string().min(1).max(128),
+    uri: z.string().min(1).max(2000),
+    digest: z.string().regex(/^[a-f\d]{64}$/iu),
+    recordCount: z.number().int().min(0).max(10_000_000).optional()
+  })
+  .strict();
+const experienceOutcome = z.enum([
+  "success",
+  "partial",
+  "failure",
+  "cancelled",
+  "unknown"
+]);
+const experienceValidation = z
+  .object({
+    state: z.enum(["passed", "failed", "partial", "not_run"]),
+    evidence: z.array(evidenceReference).max(64)
+  })
+  .strict();
 const memoryScope = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("global") }).strict(),
   z
@@ -101,6 +129,139 @@ export function createMemoryMcpServer(
   const mcp = server();
 
   mcp.registerTool(
+    "experience_append",
+    {
+      description:
+        "Append current-run reported metadata and source references. Workspace, task, run, agent, and role come from the trusted host session; transcript payloads stay in the source system. Outcome and validation are historical assertions, not canonical status; durable promotion still requires curator verification.",
+      inputSchema: {
+        trajectory: trajectoryReference,
+        taskKind: z.string().max(200).optional(),
+        provider: z.string().max(128).optional(),
+        model: z.string().max(256).optional(),
+        branch: z.string().max(512).optional(),
+        baseCommit: z.string().max(300).optional(),
+        headCommit: z.string().max(300).optional(),
+        startedAt: z.string().datetime(),
+        completedAt: z.string().datetime().optional(),
+        outcome: experienceOutcome,
+        validation: experienceValidation.optional(),
+        evidence: z.array(evidenceReference).max(64).optional()
+      }
+    },
+    (input) =>
+      safely(async () => {
+        const session = await sessionProvider.current();
+        const { workspaceId, taskId, runId, agentId } = session.context;
+        if (
+          !workspaceId ||
+          !taskId ||
+          taskId !== session.taskId ||
+          !runId ||
+          !agentId
+        ) {
+          throw new MemoryAuthorizationError(
+            "Experience append requires a host-bound workspace, task, run, and agent."
+          );
+        }
+        const safeTrajectoryReference = sanitizeEvidenceReference({
+          kind: "trajectory",
+          uri: input.trajectory.uri
+        });
+        const trajectoryDigest = input.trajectory.digest.toLowerCase();
+        const trajectoryEvidence: EvidenceReference = safeTrajectoryReference;
+        const evidenceByIdentity = new Map<string, EvidenceReference>();
+        for (const reference of [
+          trajectoryEvidence,
+          ...toEvidenceReferences(input.evidence ?? []).map(
+            sanitizeEvidenceReference
+          )
+        ]) {
+          evidenceByIdentity.set(
+            `${reference.kind}\u0000${reference.uri}`,
+            reference
+          );
+        }
+        if (evidenceByIdentity.size > 64) {
+          throw new MemoryValidationError(
+            "Too many experience evidence references."
+          );
+        }
+        const evidence = [...evidenceByIdentity.values()];
+        const id = experienceAppendId({
+          workspaceId,
+          repositoryId: session.context.repositoryId,
+          taskId,
+          runId,
+          agentId,
+          trajectoryUri: safeTrajectoryReference.uri,
+          trajectoryDigest
+        });
+        const experience: ExperienceEnvelope = {
+          id,
+          workspaceId,
+          ...(session.context.repositoryId
+            ? { repositoryId: session.context.repositoryId }
+            : {}),
+          scope: {
+            kind: "agent",
+            workspaceId,
+            taskId,
+            runId,
+            agentId
+          },
+          taskId,
+          runId,
+          agentId,
+          ...(session.actor.role ? { agentRole: session.actor.role } : {}),
+          ...(input.taskKind ? { taskKind: input.taskKind } : {}),
+          ...(input.provider ? { provider: input.provider } : {}),
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.branch ? { branch: input.branch } : {}),
+          ...(input.baseCommit ? { baseCommit: input.baseCommit } : {}),
+          ...(input.headCommit ? { headCommit: input.headCommit } : {}),
+          startedAt: input.startedAt,
+          ...(input.completedAt ? { completedAt: input.completedAt } : {}),
+          outcome: input.outcome,
+          ...(input.validation
+            ? {
+                validation: {
+                  state: input.validation.state,
+                  evidence: toEvidenceReferences(input.validation.evidence)
+                }
+              }
+            : {}),
+          trajectory: {
+            format: input.trajectory.format,
+            uri: safeTrajectoryReference.uri,
+            digest: trajectoryDigest,
+            ...(input.trajectory.recordCount === undefined
+              ? {}
+              : { recordCount: input.trajectory.recordCount })
+          },
+          evidence
+        };
+        try {
+          await service.appendExperience(
+            experience,
+            session.actor,
+            session.context
+          );
+          return { id, appended: true };
+        } catch (error) {
+          if (!(error instanceof MemoryConflictError)) throw error;
+          const existing = await service.getExperience(id, session.context);
+          if (
+            existing?.trajectory.uri === safeTrajectoryReference.uri &&
+            existing.trajectory.digest === trajectoryDigest
+          ) {
+            return { id, appended: false };
+          }
+          throw error;
+        }
+      })
+  );
+
+  mcp.registerTool(
     "experience_search",
     {
       description:
@@ -142,17 +303,19 @@ export function createMemoryMcpServer(
         "Search currently visible memory candidates; JIT research is preferred before applying remembered guidance.",
       inputSchema: {
         query: z.string().min(1).max(4000),
+        taskKind: z.string().min(1).max(200).optional(),
         kinds: z.array(memoryKind).max(3).optional(),
         relevantPaths: z.array(z.string().min(1).max(500)).max(100).optional(),
         limit: z.number().int().min(1).max(40).optional()
       }
     },
-    ({ query, kinds, relevantPaths, limit }) =>
+    ({ query, taskKind, kinds, relevantPaths, limit }) =>
       safely(async () => {
         const session = await sessionProvider.current();
         return service.search({
           query,
           context: session.context,
+          ...(taskKind ? { taskKind } : {}),
           ...(kinds ? { kinds } : {}),
           ...(relevantPaths ? { relevantPaths } : {}),
           ...(limit === undefined ? {} : { limit })
@@ -285,11 +448,12 @@ export function createMemoryMcpServer(
         "Reconstruct a bounded advisory packet for the current task after checking memory against authoritative current state.",
       inputSchema: {
         query: z.string().min(1).max(4000),
+        taskKind: z.string().min(1).max(200).optional(),
         relevantPaths: z.array(z.string().min(1).max(500)).max(100).optional(),
         maxPacketCharacters: z.number().int().min(0).max(24_000).default(8000)
       }
     },
-    ({ query, relevantPaths, maxPacketCharacters }) =>
+    ({ query, taskKind, relevantPaths, maxPacketCharacters }) =>
       safely(async () => {
         const session = await sessionProvider.current(query);
         return service.research({
@@ -298,6 +462,7 @@ export function createMemoryMcpServer(
           query,
           context: session.context,
           maxPacketCharacters,
+          ...(taskKind ? { taskKind } : {}),
           ...(relevantPaths ? { relevantPaths } : {})
         });
       })
@@ -390,4 +555,25 @@ function toEvidenceReferences(
       ? {}
       : { observedAt: reference.observedAt })
   }));
+}
+
+function experienceAppendId(input: {
+  readonly workspaceId: string;
+  readonly repositoryId: string | undefined;
+  readonly taskId: string;
+  readonly runId: string;
+  readonly agentId: string;
+  readonly trajectoryUri: string;
+  readonly trajectoryDigest: string;
+}): string {
+  const identity = JSON.stringify([
+    input.workspaceId,
+    input.repositoryId ?? "",
+    input.taskId,
+    input.runId,
+    input.agentId,
+    input.trajectoryUri,
+    input.trajectoryDigest.toLowerCase()
+  ]);
+  return `experience-mcp-${createHash("sha256").update(identity).digest("hex")}`;
 }

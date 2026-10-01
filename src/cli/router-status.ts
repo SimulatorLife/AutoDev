@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 
 import {
+  writeErrorLine,
+  writeLine
+} from "@simulatorlife/autodev-runtime/shared/output";
+
+import {
   type RouterProviderRuntimeStatus,
   type RouterRuntimeStatus
 } from "../router/status.ts";
-import { writeErrorLine, writeLine } from "../shared/output.ts";
 import { fetchRouterStatus } from "./router-status-client.ts";
 
 let body: RouterRuntimeStatus;

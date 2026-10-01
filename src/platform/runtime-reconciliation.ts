@@ -1,6 +1,9 @@
 import { lstatSync, rmSync, unlinkSync } from "node:fs";
 
-import { writeErrorLine, writeLine } from "../shared/output.ts";
+import {
+  writeErrorLine,
+  writeLine
+} from "@simulatorlife/autodev-runtime/shared/output";
 
 export type ReconciliationKind =
   | "obsolete-launchagent"

@@ -1,8 +1,8 @@
+import type { ProviderRole } from "@simulatorlife/autodev-core";
 import {
   isHardLimitClass,
   normalizeResetsAt
-} from "../shared/provider-limits.ts";
-import type { ProviderRole } from "./routing.ts";
+} from "@simulatorlife/autodev-runtime/shared/provider-limits";
 
 export type CooldownKind = "config" | "probe" | "hard" | "transient";
 

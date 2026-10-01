@@ -20,7 +20,7 @@ export interface ExecutionContract {
 export type SandboxMode = "read-only" | "workspace-write";
 
 const CONTRACT_URL = new URL(
-  "../../config/execution-contract.json",
+  "../../../config/execution-contract.json",
   import.meta.url
 );
 const CONTRACT = Object.freeze(

@@ -172,6 +172,8 @@ Filter before ranking where possible by:
 
 Ranking may combine lexical/semantic relevance, entity overlap, provenance quality, historical utility, validated outcome, recency, and current-state compatibility. Embedding similarity alone is not evidence of applicability.
 
+PostgreSQL retrieval returns only records with an actual lexical, vector, or path signal instead of filling top-k with zero-score records. Relevant file evidence is a soft signal after hard scope, status, and validity filters: an exact file reference receives the maximum path score, while shared path prefixes contribute proportionally. A supplied task-kind signal adds a small ranking bonus for records citing scope-visible experiences of that kind, but cannot make an otherwise irrelevant candidate eligible; private task/agent episodes cannot influence another run's ranking. Raw-experience full-text search indexes repository, branch/commit, trajectory, task/plan, validation, and evidence-reference metadata (including file, PR, and issue locators) without copying transcript payloads.
+
 Before injection, reconstruct the memory for the current task:
 
 1. What happened previously?
@@ -225,6 +227,8 @@ Memory must not become an unbounded secret/context copy: redact credentials and 
 
 Raw experiences are append-only during their useful retention period. Privacy or retention erasure is a curator-only operation, scoped to the authorized workspace/repository, and is refused while any durable memory cites the experience. Successful erasure removes the raw envelope and retains only an append-only tombstone containing a one-way fingerprint, actor, reason, and timestamp. Durable memory is invalidated or superseded by default rather than physically erased; its source history remains available for governance unless a separate privacy process explicitly handles it.
 The operator Control API exposes `POST /control/memory/experiences/:id/purge` with `privacy_request` or `retention_expired`; invisible experiences return not-found, and provenance references return conflict rather than being broken.
+
+Runtime also provides a one-shot `memory:retention` curator job. It requires an explicit age and workspace/repository, is opt-in, bounds each run to 100 records, and leaves scheduling to the deployment; it erases only completed, unreferenced raw experiences through the same purge transaction.
 
 ## 10. Implementation and dependency strategy
 
@@ -392,8 +396,7 @@ Emit bounded attributes/metrics sufficient to answer:
 
 Prefer OpenLIT's retained trace, dashboard, widget, filtering, and resource-detail infrastructure for these views rather than a parallel memory analytics backend.
 
-The current Runtime producer exports bounded operation/duration, candidate-stage, and packet-size metrics through the OpenTelemetry API. Their dimensions are fixed operation/outcome, memory kind, lifecycle stage, and reason-code categories; packet tokens are reported only when a token counter exists. Model cost remains owned by GenAI attempt telemetry. Retrieval-to-use rates and no-memory ablations still require trustworthy downstream task outcome/injection correlation and are not inferred from retrieval alone.
-
+The current Runtime producer exports bounded operation/duration, candidate-stage, packet-size, and actual packet-injection metrics through the OpenTelemetry API. Their dimensions are fixed operation/outcome, memory kind, lifecycle stage, and reason-code categories; packet tokens are reported only when a token counter exists. Injection counts distinguish a non-empty packet actually appended to the provider request from an empty research result; they do not assert downstream use or task success. Model cost remains owned by GenAI attempt telemetry. Retrieval-to-use rates and no-memory ablations still require trustworthy downstream task outcome/injection correlation and are not inferred from retrieval alone.
 
 ### Optional secondary dependency: Graphiti
 
@@ -444,7 +447,7 @@ The following encode AutoDev-specific semantics and should remain custom TypeScr
 | **Context packet builder** | Bound, deduplicate, prioritize, and cite reconstructed memories for the active agent | Controls context cost and prevents arbitrary history dumps |
 | **Promotion pipeline** | Move repeated/validated procedures into canonical skills/rules/tests/docs and invalidate redundant fuzzy memories | Only AutoDev knows its explicit configuration and development-lifecycle authorities |
 | **Evaluation/ablation layer** | Compare no-memory, retrieval-only, and JIT-reconstructed variants using real task outcomes | Memory must prove value in AutoDev's workload rather than inherit benchmark claims |
-| **Memory MCP facade** | Expose governed search/read/history/propose/invalidate/research operations to heterogeneous agents | Direct PostgreSQL/Graphiti access would bypass authorization, provenance, validation, and promotion rules |
+| **Memory MCP facade** | Expose run-bound experience append plus governed search/read/history/propose/invalidate/research operations to heterogeneous agents | Direct PostgreSQL/Graphiti access would bypass authorization, provenance, validation, and promotion rules |
 
 The custom layer should orchestrate existing dependencies, not reimplement their storage/indexing/transport capabilities.
 
@@ -474,7 +477,7 @@ Use these access paths:
 
 | Interaction | Access path |
 | --- | --- |
-| Raw trajectory/execution capture | Native runtime + OpenTelemetry/transcript ingestion |
+| Raw trajectory/execution capture | Native runtime + OpenTelemetry/transcript ingestion; explicit MCP append accepts host-scoped metadata and source references without transcript payloads |
 | Durable memory persistence/search internals | `MemoryService` → `data/` adapters |
 | Automatic pre-delegation JIT research | Native orchestrator → `MemoryService.research(...)` |
 | Automatic memory-packet injection | Native runtime/context assembly |
@@ -500,6 +503,7 @@ MCP is therefore an **interoperability and explicit follow-up boundary**, not th
 Expose memory through a small native/MCP contract, for example:
 
 ~~~text
+experience.append  # host-bound task/run/agent; source reference and digest only
 experience.search
 experience.get
 
@@ -514,7 +518,7 @@ memory.research
 
 Exact tools may be combined as the API matures. Read results should include scope, status, provenance, source evidence, and applicability/validation information.
 
-Workers should normally append experience and **propose** durable memory. Promotion/invalidation of shared memory follows governance. Agents do not write directly to PostgreSQL or Graphiti.
+Workers can append host-bound experience envelopes with source references through `experience_append`; the MCP tool does not accept transcript payloads or caller-selected scope. Workers should normally append experience and **propose** durable memory. Promotion/invalidation of shared memory follows governance. Agents do not write directly to PostgreSQL or Graphiti.
 
 ### Retrieval signals for coding work
 

@@ -8,8 +8,8 @@ import {
   type MemoryRepositoryRootResolver,
   type PostgresMemoryHost
 } from "@simulatorlife/autodev-runtime/memory";
+import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
 
-import { awaitedToolResults } from "../shared/responses-continuation.ts";
 import { RoutedMemoryReconstructor } from "./memory-reconstruction.ts";
 import { routerTelemetryTracer } from "./telemetry.ts";
 

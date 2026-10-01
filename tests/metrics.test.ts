@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import * as metrics from "../src/telemetry/github-metrics.ts";
+import * as metrics from "@simulatorlife/autodev-runtime/telemetry";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -82,7 +82,7 @@ test("metrics workflow publishes an issue dashboard and artifact", async () => {
   assert.match(source, /actions\/github-script@v8/);
   assert.match(
     await readFile(
-      path.join(root, "src", "telemetry", "github-metrics.ts"),
+      path.join(root, "runtime", "src", "telemetry", "github-metrics.ts"),
       "utf8"
     ),
     /listWorkflowRuns/

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { awaitedToolResults } from "../src/shared/responses-continuation.ts";
+import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
 
 const call = (callId: string) => ({
   type: "custom_tool_call",

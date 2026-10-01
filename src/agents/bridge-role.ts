@@ -2,21 +2,21 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import {
+  AGENT_ROLE_HEADER,
   SANDBOX_MODE_HEADER,
   SKILL_CONTEXT_HEADER
-} from "../router/subagents.ts";
-import { roleContract } from "../shared/execution-contract.ts";
+} from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
+import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import {
   MCP_SERVER_COCOINDEX,
   MCP_SERVER_CODEGRAPHCONTEXT,
   MCP_SERVER_LSP
-} from "../shared/tool-names.ts";
+} from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 // Router-generated request header naming the agent role a provider bridge is
 // serving. The router builds its outbound header set from scratch, so this can
 // never be spoofed by an inbound client: a bridge that sees the orchestrator
 // value knows the local router classified the request as the root turn.
-export const AGENT_ROLE_HEADER = "x-autodev-agent-role";
 export const ORCHESTRATOR_AGENT_ROLE = "orchestrator";
 
 const promptRoot = new URL("../../agents/prompts/", import.meta.url);

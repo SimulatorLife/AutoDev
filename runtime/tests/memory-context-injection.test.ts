@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type {
+  MemoryExpiredExperienceRequest,
   MemoryPacket,
   MemoryReadContext,
   MemoryRecord,
@@ -188,6 +189,9 @@ test("injectMemoryContext performs JIT research and attaches the advisory packet
       limit: 50,
       offset: 0
     }),
+    listExpiredExperiences: async (
+      _request: MemoryExpiredExperienceRequest
+    ) => [],
     purgeExperience: async () => "not_visible",
     proposeMemory: async () => undefined,
     getMemory: async () => memory,

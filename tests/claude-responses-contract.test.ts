@@ -87,18 +87,33 @@ async function waitForHealth(port: number, timeoutMs = 5000): Promise<void> {
 function parseSse(
   text: string
 ): Array<{ event: string | undefined; data: any }> {
-  return text
-    .trimEnd()
-    .split("\n\n")
-    .filter(Boolean)
-    .map((chunk) => {
-      if (chunk === "data: [DONE]") return { event: "[DONE]", data: null };
-      const lines = chunk.split("\n");
-      const event = lines.find((line) => line.startsWith("event: "))?.slice(7);
-      const data = lines.find((line) => line.startsWith("data: "))?.slice(6);
-      return { event, data: data ? JSON.parse(data) : null };
-    });
+  return (
+    text
+      .trimEnd()
+      .split("\n\n")
+      // SSE comments are transport keep-alives, not response lifecycle events.
+      .filter((chunk) => Boolean(chunk) && !chunk.startsWith(":"))
+      .map((chunk) => {
+        if (chunk === "data: [DONE]") return { event: "[DONE]", data: null };
+        const lines = chunk.split("\n");
+        const event = lines
+          .find((line) => line.startsWith("event: "))
+          ?.slice(7);
+        const data = lines.find((line) => line.startsWith("data: "))?.slice(6);
+        return { event, data: data ? JSON.parse(data) : null };
+      })
+  );
 }
+
+test("SSE keep-alive comments do not enter the response event lifecycle", () => {
+  const events = parseSse(
+    ': bridge keep-alive\n\nevent: response.created\ndata: {"type":"response.created"}\n\n'
+  );
+  assert.deepEqual(
+    events.map(({ event }) => event),
+    ["response.created"]
+  );
+});
 
 function scrub(value: any): any {
   if (typeof value === "string")

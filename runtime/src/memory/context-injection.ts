@@ -1,3 +1,4 @@
+import { metrics } from "@opentelemetry/api";
 import type {
   MemoryPacket,
   MemoryReadContext
@@ -137,5 +138,23 @@ export async function injectMemoryContext(
     context: taskContext.context,
     maxPacketCharacters
   });
-  return appendMemoryPacket(payload, packet);
+  const enriched = appendMemoryPacket(payload, packet);
+  const injected =
+    packet.entries.length > 0 &&
+    typeof enriched.instructions === "string" &&
+    enriched.instructions.includes(MEMORY_ADVISORY_START);
+  try {
+    metrics
+      .getMeter("autodev.memory", "1.0.0")
+      .createCounter("autodev.memory.injections", {
+        description: "Memory packets attached to trusted Runtime requests.",
+        unit: "{request}"
+      })
+      .add(1, {
+        "autodev.memory.injection.result": injected ? "injected" : "empty"
+      });
+  } catch {
+    // OTel is observational and must not fail the Runtime request.
+  }
+  return enriched;
 }

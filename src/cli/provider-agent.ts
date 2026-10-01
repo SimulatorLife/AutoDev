@@ -10,13 +10,14 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+
 import { parseTomlFile, type TomlValue } from "../config/config-files.ts";
 import {
   createDefaultRouterEnsureDeps,
   resolveRouterEnsureOptions,
   runRouterEnsure
 } from "../platform/router-ensure.ts";
-import { writeErrorLine } from "../shared/output.ts";
 
 const repositoryRoot = path.resolve(
   fileURLToPath(new URL("../../", import.meta.url))

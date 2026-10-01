@@ -4,17 +4,18 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-import { ensureCodeGraph } from "../platform/code-graph-ensure.ts";
 import {
   createDefaultRouterEnsureDeps,
+  ensureCodeGraph,
   resolveRouterEnsureOptions,
   type RouterEnsureDeps,
   type RouterEnsureOptions,
   type RouterEnsureResult,
   runRouterEnsure
-} from "../platform/router-ensure.ts";
+} from "@simulatorlife/autodev-runtime/platform";
+
+import { repositoryRoot } from "./command-utils.ts";
 
 export function runRepoBootstrapSync(cwd = process.cwd()): number {
   const scriptCandidates = [
@@ -24,11 +25,7 @@ export function runRepoBootstrapSync(cwd = process.cwd()): number {
       "bin",
       "autodev-bootstrap"
     ),
-    path.join(
-      fileURLToPath(new URL("../../", import.meta.url)),
-      "scripts",
-      "bootstrap-repo-exclusions.sh"
-    )
+    path.join(repositoryRoot(), "scripts", "bootstrap-repo-exclusions.sh")
   ];
   for (const script of scriptCandidates) {
     if (existsSync(script)) {

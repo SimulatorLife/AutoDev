@@ -1,13 +1,13 @@
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import { writeErrorLine, writeLine } from "../shared/output.ts";
-import { parseArgs, requiredArg } from "./cli-args.ts";
 import {
-  atomicWrite,
-  ConfigError,
-  readJsonFile
-} from "./config-files.ts";
+  writeErrorLine,
+  writeLine
+} from "@simulatorlife/autodev-runtime/shared/output";
+
+import { parseArgs, requiredArg } from "./cli-args.ts";
+import { atomicWrite, ConfigError, readJsonFile } from "./config-files.ts";
 
 export interface CatalogModelEntry {
   slug: string;
@@ -65,8 +65,7 @@ const ROLE_DESCRIPTIONS: Record<string, string> = {
     "Provider-neutral AutoDev worker role routed by the local model router.",
   validator:
     "Provider-neutral AutoDev validator role routed by the local model router.",
-  smart:
-    "Provider-neutral AutoDev smart role routed by the local model router."
+  smart: "Provider-neutral AutoDev smart role routed by the local model router."
 };
 
 function formatDisplayName(slug: string): string {
@@ -92,7 +91,8 @@ export function buildCodexModelEntry(
 ): CatalogModelEntry {
   const isSmart = role === "smart" || slug.includes("sol");
   const isOrchestrator = role === "orchestrator";
-  const defaultEffort = reasoningEffort ?? (isOrchestrator ? "xhigh" : isSmart ? "high" : "medium");
+  const defaultEffort =
+    reasoningEffort ?? (isOrchestrator ? "xhigh" : isSmart ? "high" : "medium");
 
   let description = "OpenAI Codex model for implementation work.";
   if (isOrchestrator) {
@@ -183,10 +183,10 @@ export function renderModelCatalog(
   modelRoutingPath: string,
   catalogsDir: string
 ): string {
-  const routing = readJsonFile(modelRoutingPath, "model routing configuration") as Record<
-    string,
-    any
-  >;
+  const routing = readJsonFile(
+    modelRoutingPath,
+    "model routing configuration"
+  ) as Record<string, any>;
   const codexModelsConfig = routing.providers?.codex?.models ?? {};
   const orchestratorEffort =
     routing.orchestrator?.reasoningEffort?.codex ?? "xhigh";
@@ -212,7 +212,11 @@ export function renderModelCatalog(
 
   // Preserve standard implementation baseline if not already covered
   if (!addedSlugs.has("gpt-5.6-terra")) {
-    models.splice(1, 0, buildCodexModelEntry("gpt-5.6-terra", "implementation", "medium"));
+    models.splice(
+      1,
+      0,
+      buildCodexModelEntry("gpt-5.6-terra", "implementation", "medium")
+    );
     addedSlugs.add("gpt-5.6-terra");
   }
 
@@ -238,7 +242,11 @@ export function renderModelCatalog(
       const parsed = JSON.parse(readFileSync(filePath, "utf8"));
       if (Array.isArray(parsed.models)) {
         for (const entry of parsed.models) {
-          if (entry && typeof entry.slug === "string" && !addedSlugs.has(entry.slug)) {
+          if (
+            entry &&
+            typeof entry.slug === "string" &&
+            !addedSlugs.has(entry.slug)
+          ) {
             models.push(entry);
             addedSlugs.add(entry.slug);
           }

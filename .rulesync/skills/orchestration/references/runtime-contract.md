@@ -104,7 +104,7 @@ results, and unavailable recovery surfaces explicitly.
 Every canonical AutoDev tool name follows `<namespace>__<tool>` with
 snake_case segments and a double-underscore separator (or a single bare
 snake_case segment, e.g. `exec`). The single owner of these names is
-`src/shared/tool-names.ts`; bridges, hooks, the orchestrator prompt, and
+`@simulatorlife/autodev-runtime/shared/tool-names`; bridges, hooks, the orchestrator prompt, and
 tests all import from there so a rename moves the whole surface together.
 
 | Family                                | Form                     | Examples                                                                                                                                                 |
@@ -124,13 +124,13 @@ ships under its camelCase identity.
 CLI-required exceptions (PascalCase `WebSearch`/`WebFetch`/`Agent` from the
 Claude CLI, lowercase `bash`/`search_web`/`read_file`/`glob`/`grep` from the
 Antigravity CLI, lowercase `bash`/`shell`/`execute` from the Copilot CLI,
-`invoke_subagent` from Antigravity) live in `src/shared/tool-names.ts` under
+`invoke_subagent` from Antigravity) live in `@simulatorlife/autodev-runtime/shared/tool-names` under
 `CLAUDE_NATIVE_TOOL_EXCEPTIONS`, `ANTIGRAVITY_NATIVE_TOOL_EXCEPTIONS`, and
 `COPILOT_NATIVE_TOOL_EXCEPTIONS`. The bridges translate them into the
 canonical surface; do not adopt their style for a new AutoDev tool.
 
 A guard rail in `tests/shared/tool-names.test.ts` fails the suite if anyone
 hard-codes a `multi_agent_v1__*` literal anywhere in `src/` outside
-`src/shared/tool-names.ts`. The audit helper `auditToolNames(names)` classifies
+`@simulatorlife/autodev-runtime/shared/tool-names`. The audit helper `auditToolNames(names)` classifies
 every string into `canonical`, `exception` (with provider), or `unrecognised`,
 and is the recommended surface for any new tool-name validation.

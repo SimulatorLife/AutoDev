@@ -23,6 +23,31 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
 import {
+  type RoleContract,
+  roleContract
+} from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import {
+  classifyCliLimit,
+  INCOMPLETE_REASON_CLIENT_DISCONNECTED,
+  INCOMPLETE_REASON_INTERRUPTED,
+  INCOMPLETE_REASON_PROVIDER_LIMIT,
+  limitPayload,
+  limitResponseHeaders,
+  type ProviderFailureDiagnostic,
+  retryAfterSecondsFromLimit,
+  terminalIncompleteEvents
+} from "@simulatorlife/autodev-runtime/shared/provider-limits";
+import {
+  resolveCwd,
+  WorkspaceResolutionError
+} from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
+import {
+  AUTODEV_WORKSPACE_KEY_HEADER,
+  withAutoDevOtelResourceContext
+} from "@simulatorlife/autodev-runtime/telemetry/resource-context";
+
+import {
   composeProviderPrompt,
   isOrchestratorRole,
   resolveAgentRole
@@ -38,33 +63,12 @@ import {
   mintCallId,
   mintCallItemId
 } from "../agents/spawn-tools.ts";
-import type { RoleContract } from "../shared/execution-contract.ts";
-import { roleContract } from "../shared/execution-contract.ts";
 import {
-  AUTODEV_WORKSPACE_KEY_HEADER,
-  withAutoDevOtelResourceContext
-} from "../shared/otel-resource-context.ts";
-import { writeErrorLine } from "../shared/output.ts";
-import {
-  classifyCliLimit,
-  INCOMPLETE_REASON_CLIENT_DISCONNECTED,
-  INCOMPLETE_REASON_INTERRUPTED,
-  INCOMPLETE_REASON_PROVIDER_LIMIT,
-  limitPayload,
-  limitResponseHeaders,
-  type ProviderFailureDiagnostic,
-  retryAfterSecondsFromLimit,
-  terminalIncompleteEvents
-} from "../shared/provider-limits.ts";
-import {
-  resolveCwd,
-  WorkspaceResolutionError
-} from "../shared/resolve-workspace.ts";
-import {
+  type AgentEventReporter,
   REQUEST_ID_HEADER,
   resolveAgentEventReporter,
   SKILL_READ_SOURCE
-} from "../telemetry/agent-events.ts";
+} from "@simulatorlife/autodev-runtime/telemetry";
 
 // Bind the port only when run as a program. The shared request-shaping helpers
 // below are pure and worth testing directly; importing this file must not take
@@ -107,7 +111,7 @@ const READ_URL_PERMISSION_PATTERN = /^read_url\(/i;
 // the MiniMax and Copilot adapters.
 type JsonRecord = Record<string, any>;
 type JsonValue = any;
-type AgentReporter = import("../telemetry/agent-events.ts").AgentEventReporter;
+type AgentReporter = AgentEventReporter;
 
 /** One subagent a spawn step created, as this bridge tracks it. */
 type SpawnedChild = {
@@ -374,7 +378,7 @@ const ANTIGRAVITY_SKILL_EXPOSURE_SOURCE = "role_contract";
 const ANTIGRAVITY_MCP_EXPOSURE_SOURCE = "role_contract";
 
 // Canonical skill roots whose `SKILL.md` a successful read counts as actual
-// usage, mirroring the approved roots `src/hooks/skill-read-telemetry.ts`
+// usage, mirroring the approved roots `runtime/src/hooks/skill-read-telemetry.ts`
 // uses for Codex's own PreToolUse hook. agy's own tool calls never reach that
 // hook -- its CLI runs entirely inside its own runtime -- so this bridge is
 // the only place a `read_file`/`view_file` or shell read of one of these

@@ -18,7 +18,11 @@ import {
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
-import { writeErrorLine, writeLine } from "../shared/output.ts";
+import {
+  writeErrorLine,
+  writeLine
+} from "@simulatorlife/autodev-runtime/shared/output";
+
 import { executableArch, hostArch, runsNatively } from "./host-arch.ts";
 
 const COLLECTOR_PINNED_VERSION_PATTERN = /^v[0-9]+\.[0-9]+\.[0-9]+$/u;

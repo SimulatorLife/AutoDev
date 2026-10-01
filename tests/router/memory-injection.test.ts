@@ -8,6 +8,7 @@ import {
 import type {
   EvidenceReference,
   ExperienceEnvelope,
+  MemoryExpiredExperienceRequest,
   MemoryHistory,
   MemoryLifecycleEvent,
   MemoryReadContext,
@@ -60,6 +61,12 @@ class MemoryRepositoryStub implements MemoryRepository {
     offset: number;
   }> {
     return { items: [], total: 0, limit: 50, offset: 0 };
+  }
+
+  async listExpiredExperiences(
+    _request: MemoryExpiredExperienceRequest
+  ): Promise<readonly ExperienceEnvelope[]> {
+    return [];
   }
 
   async purgeExperience(): Promise<"not_visible"> {
@@ -315,6 +322,22 @@ test("router initializes the OTel meter provider before creating MemoryService i
         limit: 1
       })
     );
+    const injected = await injectOrchestratorMemory(
+      request([
+        {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_text", text: "Use the prior proxy validation." }
+          ]
+        }
+      ]),
+      memoryHost(() => {})
+    );
+    assert.match(
+      String(injected.instructions),
+      /Use the current proxy request boundary/
+    );
     await flushTelemetryMetrics();
 
     const metrics = exporter
@@ -330,6 +353,16 @@ test("router initializes the OTel meter provider before creating MemoryService i
         (point) =>
           point.attributes["autodev.memory.operation"] === "memory.query" &&
           point.attributes["autodev.memory.outcome"] === "error"
+      )?.value,
+      1
+    );
+    const injections = metrics.find(
+      (metric) => metric.descriptor.name === "autodev.memory.injections"
+    );
+    assert.equal(
+      injections?.dataPoints.find(
+        (point) =>
+          point.attributes["autodev.memory.injection.result"] === "injected"
       )?.value,
       1
     );

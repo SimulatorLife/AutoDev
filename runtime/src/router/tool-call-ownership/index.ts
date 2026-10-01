@@ -10,13 +10,13 @@
  *
  * The router sees every call a provider emits on the way out, so it records
  * the call id against the provider, and a request whose input ends in outputs
- * for those calls prefers that provider (see src/shared/responses-continuation.ts
+ * for those calls prefers that provider (see @simulatorlife/autodev-runtime/shared/responses-continuation
  * for which results count as awaited). It is a preference, not a pin: a
  * provider that is disabled or cooling down is skipped like any other, and
  * the next provider continues from the replayed history.
  */
 
-import { awaitedToolResults } from "../shared/responses-continuation.ts";
+import { awaitedToolResults } from "../../shared/responses-continuation.ts";
 
 const DEFAULT_LIMIT = 4096;
 

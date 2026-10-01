@@ -1,6 +1,10 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 
-import { writeErrorLine, writeLine } from "../shared/output.ts";
+import {
+  writeErrorLine,
+  writeLine
+} from "@simulatorlife/autodev-runtime/shared/output";
+
 import { parseArgs, requiredArg } from "./cli-args.ts";
 import {
   atomicWrite,

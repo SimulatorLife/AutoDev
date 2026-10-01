@@ -94,15 +94,28 @@ const architectureElements = [
   element("core", "core/src/**"),
   element("data", "data/src/**"),
   element("runtime-memory", "runtime/src/memory/**"),
-  element("shared", "src/shared/**"),
-  element("telemetry", "src/telemetry/**"),
+  element("runtime-agents", "runtime/src/agents/**"),
+  element("runtime-providers", "runtime/src/providers/**"),
+  element("runtime-platform", "runtime/src/platform/**"),
+  element("runtime-router-cooldown", "runtime/src/router/cooldown/**"),
+  element("runtime-router-lifecycle", "runtime/src/router/lifecycle/**"),
+  element(
+    "runtime-router-tool-ownership",
+    "runtime/src/router/tool-call-ownership/**"
+  ),
+  element("runtime-shared", "runtime/src/shared/**"),
+  element(
+    "runtime-telemetry-context",
+    "runtime/src/telemetry/resource-context/**"
+  ),
+  element("runtime-telemetry", "runtime/src/telemetry/**"),
   element("agents", "src/agents/**"),
   element("config", "src/config/**"),
   element("mcp", "src/mcp/**"),
   element("router", "src/router/**"),
   element("providers", "src/providers/**"),
   element("platform", "src/platform/**"),
-  element("hooks", "src/hooks/**"),
+  element("runtime-hooks", "runtime/src/hooks/**"),
   element("cli", "src/cli/**"),
   element("console-app", "console/app/**"),
   element("console-components", "console/src/components/**"),
@@ -116,19 +129,26 @@ const architectureElements = [
 ];
 
 const allSourceElements = [
-  "shared",
-  "telemetry",
   "agents",
   "config",
   "mcp",
   "router",
   "providers",
   "platform",
-  "hooks",
   "cli",
   "core",
   "data",
   "runtime-memory",
+  "runtime-agents",
+  "runtime-providers",
+  "runtime-platform",
+  "runtime-router-cooldown",
+  "runtime-router-lifecycle",
+  "runtime-router-tool-ownership",
+  "runtime-shared",
+  "runtime-hooks",
+  "runtime-telemetry-context",
+  "runtime-telemetry",
   "console-app",
   "console-components",
   "console-features",
@@ -151,26 +171,60 @@ const allowFileOnly = (category, to) => ({
 });
 
 const architecturePolicies = [
-  allowOnly("shared", []),
-  allowOnly("telemetry", ["shared"]),
-  allowOnly("agents", ["shared"]),
-  allowOnly("config", ["shared"]),
-  allowOnly("mcp", ["shared"]),
+  allowOnly("runtime-telemetry", [
+    "runtime-shared",
+    "runtime-telemetry-context"
+  ]),
+  allowOnly("runtime-hooks", [
+    "core",
+    "runtime-platform",
+    "runtime-shared",
+    "runtime-telemetry"
+  ]),
+  allowOnly("runtime-platform", ["platform", "runtime-shared"]),
+  allowOnly("runtime-agents", ["agents", "runtime-shared"]),
+  allowOnly("runtime-providers", [
+    "providers",
+    "runtime-agents",
+    "runtime-shared",
+    "runtime-telemetry",
+    "runtime-telemetry-context"
+  ]),
+  allowOnly("agents", ["runtime-shared"]),
+  allowOnly("config", ["runtime-shared"]),
+  allowOnly("mcp", [
+    "runtime-shared",
+    "runtime-telemetry",
+    "runtime-telemetry-context"
+  ]),
   allowOnly("router", [
-    "shared",
     "agents",
-    "telemetry",
+    "runtime-telemetry",
     "core",
     "data",
-    "runtime-memory"
+    "runtime-memory",
+    "runtime-router-cooldown",
+    "runtime-router-lifecycle",
+    "runtime-router-tool-ownership",
+    "runtime-shared",
+    "runtime-telemetry-context"
   ]),
-  allowOnly("providers", ["shared", "agents", "telemetry"]),
-  allowOnly("platform", ["shared", "config"]),
-  allowOnly("hooks", ["shared", "agents", "telemetry", "platform"]),
-  allowOnly("cli", ["shared", "config", "platform", "router"]),
+  allowOnly("providers", [
+    "agents",
+    "runtime-telemetry",
+    "runtime-shared",
+    "runtime-telemetry-context"
+  ]),
+  allowOnly("platform", ["config", "runtime-shared"]),
+  allowOnly("cli", ["config", "platform", "router", "runtime-shared"]),
   allowOnlyElementPaths("core", "core/src"),
   allowOnlyElementPaths("data", ["data/src", "core/src"]),
   allowOnly("runtime-memory", ["core", "data"]),
+  allowOnly("runtime-router-cooldown", ["core", "runtime-shared"]),
+  allowOnly("runtime-router-lifecycle", ["runtime-shared"]),
+  allowOnly("runtime-router-tool-ownership", ["runtime-shared"]),
+  allowOnly("runtime-shared", []),
+  allowOnly("runtime-telemetry-context", []),
   allowOnly("console-app", [
     "core",
     "console-components",

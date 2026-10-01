@@ -19,6 +19,7 @@ import {
   type MemoryActor,
   type MemoryExperiencePurgeReason,
   type MemoryExperiencePurgeResult,
+  type MemoryExpiredExperienceRequest,
   type MemoryHistory,
   type MemoryLifecycleAction,
   type MemoryLifecycleEvent,
@@ -85,6 +86,13 @@ export interface MemoryProposalInput {
   readonly evidence: readonly EvidenceReference[];
 }
 
+export interface MemoryExperienceRetentionReport {
+  readonly selected: number;
+  readonly purged: number;
+  readonly referencedByMemory: number;
+  readonly noLongerVisible: number;
+}
+
 export interface MemorySkillPromotionInput {
   readonly name: string;
   readonly description: string;
@@ -123,6 +131,7 @@ export interface MemoryServiceOptions {
 }
 
 const MAX_QUERY_LENGTH = 4000;
+const MAX_TASK_KIND_LENGTH = 200;
 const MAX_MEMORY_REFERENCE_ID_LENGTH = 256;
 const MAX_CLAIM_LENGTH = 4000;
 const MAX_RESEARCH_HITS = 40;
@@ -130,6 +139,7 @@ const MAX_RESEARCH_CANDIDATES = 40;
 const MAX_LIST_OFFSET = 100_000;
 const MAX_PACKET_CHARACTERS = 24_000;
 const MAX_EXPERIENCE_REFERENCE_COUNT = 64;
+const MAX_RETENTION_BATCH_SIZE = 100;
 const MIN_VALIDATED_PROMOTION_RUNS = 2;
 const MAX_SKILL_DESCRIPTION_LENGTH = 512;
 const MAX_SKILL_CONTENT_LENGTH = 20_000;
@@ -139,6 +149,7 @@ const MEMORY_OPERATIONS = {
   embed: "memory.embed",
   experienceAppend: "memory.experience.append",
   experiencePurge: "memory.experience.purge",
+  experienceRetention: "memory.experience.retention",
   invalidate: "memory.invalidate",
   packet: "memory.packet",
   promote: "memory.promote",
@@ -327,6 +338,14 @@ export class MemoryService {
           "Too many experience evidence references."
         );
       }
+      if (
+        (experience.validation?.evidence.length ?? 0) >
+        MAX_EXPERIENCE_REFERENCE_COUNT
+      ) {
+        throw new MemoryValidationError(
+          "Too many experience validation references."
+        );
+      }
       span.setAttribute("memory.experience.outcome", experience.outcome);
       await this.repository.appendExperience({
         ...experience,
@@ -337,6 +356,14 @@ export class MemoryService {
           ])[0]!.uri
         },
         evidence: sanitizeEvidence(experience.evidence),
+        ...(experience.validation
+          ? {
+              validation: {
+                ...experience.validation,
+                evidence: sanitizeEvidence(experience.validation.evidence)
+              }
+            }
+          : {}),
         ...(experience.taskReference
           ? { taskReference: sanitizeEvidence([experience.taskReference])[0]! }
           : {}),
@@ -587,6 +614,87 @@ export class MemoryService {
     };
   }
 
+  purgeExpiredExperiences(input: {
+    readonly completedBefore: string;
+    readonly limit: number;
+    readonly actor: MemoryActor;
+    readonly context: MemoryReadContext;
+  }): Promise<MemoryExperienceRetentionReport> {
+    return this.withSpan(
+      MEMORY_OPERATIONS.experienceRetention,
+      async (span) => {
+        this.assertCurator(input.actor);
+        if (
+          !input.context.workspaceId.trim() ||
+          !input.context.repositoryId?.trim()
+        ) {
+          throw new MemoryValidationError(
+            "Memory retention requires an explicit workspace and repository."
+          );
+        }
+        if (!input.context.canReadTaskHistory) {
+          throw new MemoryAuthorizationError(
+            "Memory retention requires curator access to workspace-bounded task history."
+          );
+        }
+        const cutoff = Date.parse(input.completedBefore);
+        const now = Date.parse(this.now());
+        if (
+          !Number.isFinite(cutoff) ||
+          !Number.isFinite(now) ||
+          cutoff > now ||
+          !Number.isInteger(input.limit) ||
+          input.limit < 1 ||
+          input.limit > MAX_RETENTION_BATCH_SIZE
+        ) {
+          throw new MemoryValidationError(
+            "Memory retention scan bounds are invalid."
+          );
+        }
+        const candidates = await this.repository.listExpiredExperiences({
+          completedBefore: new Date(cutoff).toISOString(),
+          limit: input.limit,
+          context: input.context
+        } satisfies MemoryExpiredExperienceRequest);
+        const batch = candidates.slice(0, input.limit);
+        const visibleCandidates = batch.filter((experience) =>
+          isMemoryExperienceVisibleTo(experience, input.context)
+        );
+        let purged = 0;
+        let referencedByMemory = 0;
+        let noLongerVisible = batch.length - visibleCandidates.length;
+        // Keep retention sequential and batch-bounded; each erasure runs its own
+        // transaction and rechecks provenance under a row lock.
+        /* eslint-disable no-await-in-loop -- preserve bounded transactional purge order */
+        for (const experience of visibleCandidates) {
+          const result = await this.purgeExperience(
+            experience.id,
+            "retention_expired",
+            input.actor,
+            input.context
+          );
+          if (result === "purged") purged += 1;
+          else if (result === "referenced_by_memory") referencedByMemory += 1;
+          else noLongerVisible += 1;
+        }
+        /* eslint-enable no-await-in-loop */
+        span.setAttribute(
+          "memory.retention.selected",
+          visibleCandidates.length
+        );
+        span.setAttribute("memory.retention.purged", purged);
+        span.setAttribute("memory.retention.referenced", referencedByMemory);
+        span.setAttribute("memory.retention.not_visible", noLongerVisible);
+        return {
+          selected: visibleCandidates.length,
+          purged,
+          referencedByMemory,
+          noLongerVisible
+        };
+      }
+    );
+  }
+
   purgeExperience(
     experienceId: string,
     reason: MemoryExperiencePurgeReason,
@@ -621,6 +729,7 @@ export class MemoryService {
   search(request: MemorySearchRequest): Promise<readonly MemorySearchHit[]> {
     return this.withSpan(MEMORY_OPERATIONS.query, async () => {
       this.assertQuery(request.query);
+      this.assertTaskKind(request.taskKind);
       const queryEmbedding = this.embedder
         ? await this.withSpan(MEMORY_OPERATIONS.embed, async () =>
             this.validateEmbedding(await this.embedder!.embed(request.query))
@@ -1024,6 +1133,7 @@ export class MemoryService {
   research(request: MemoryResearchRequest): Promise<MemoryPacket> {
     return this.withSpan(MEMORY_OPERATIONS.research, async (rootSpan) => {
       this.assertQuery(request.query);
+      this.assertTaskKind(request.taskKind);
       if (!request.task.trim())
         throw new MemoryValidationError("Research requires the current task.");
       if (
@@ -1456,6 +1566,17 @@ export class MemoryService {
       throw new MemoryValidationError(
         "Memory query exceeds its character bound."
       );
+  }
+
+  private assertTaskKind(taskKind: string | undefined): void {
+    if (
+      taskKind !== undefined &&
+      (!taskKind.trim() || taskKind.length > MAX_TASK_KIND_LENGTH)
+    ) {
+      throw new MemoryValidationError(
+        "Memory task kind must be non-empty and bounded."
+      );
+    }
   }
 
   private pageRequest(

@@ -4,7 +4,8 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { writeErrorLine } from "../shared/output.ts";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+
 import { codexHome, repositoryRoot } from "./command-utils.ts";
 
 type HookInput = {
@@ -72,36 +73,6 @@ async function recoveryScript(parentId: string): Promise<string> {
   }
 }
 
-export async function runRootDelegation(
-  raw = readFileSync(0, "utf8")
-): Promise<number> {
-  const input = parseInput(raw);
-  logInput(input);
-  const model = typeof input.model === "string" ? input.model : "";
-  if (model !== "autodev/orchestrator" && NON_ROOT_MODEL.test(model)) return 0;
-
-  const root = runtimeSourceRoot();
-  const promptFile = path.join(root, "agents", "prompts", "orchestrator.md");
-  const skillFile = path.join(
-    root,
-    ".rulesync",
-    "skills",
-    "orchestration",
-    "SKILL.md"
-  );
-  const codeSearchFile = path.join(root, "agents", "prompts", "code-search.md");
-  if (!existsSync(promptFile)) {
-    writeErrorLine(
-      `root-delegation: orchestrator prompt not found at ${promptFile}`
-    );
-    return 0;
-  }
-
-  const parentId =
-    typeof input.session_id === "string" && input.session_id.trim()
-      ? input.session_id.trim()
-      : null;
-  const recovery = parentId ? await recoveryScript(parentId) : "";
 /**
  * Format the parent-side recovery preflight in a form that is unambiguous
  * regardless of whether the orchestrator turn runs in Codex code mode (one
@@ -143,6 +114,37 @@ function buildRecoveryContext(recovery: string): string {
       "recovery helper). Use the natural-language steps above instead.\n";
   return header + codeBlock;
 }
+
+export async function runRootDelegation(
+  raw = readFileSync(0, "utf8")
+): Promise<number> {
+  const input = parseInput(raw);
+  logInput(input);
+  const model = typeof input.model === "string" ? input.model : "";
+  if (model !== "autodev/orchestrator" && NON_ROOT_MODEL.test(model)) return 0;
+
+  const root = runtimeSourceRoot();
+  const promptFile = path.join(root, "agents", "prompts", "orchestrator.md");
+  const skillFile = path.join(
+    root,
+    ".rulesync",
+    "skills",
+    "orchestration",
+    "SKILL.md"
+  );
+  const codeSearchFile = path.join(root, "agents", "prompts", "code-search.md");
+  if (!existsSync(promptFile)) {
+    writeErrorLine(
+      `root-delegation: orchestrator prompt not found at ${promptFile}`
+    );
+    return 0;
+  }
+
+  const parentId =
+    typeof input.session_id === "string" && input.session_id.trim()
+      ? input.session_id.trim()
+      : null;
+  const recovery = parentId ? await recoveryScript(parentId) : "";
 
   const prompt = readFileSync(promptFile, "utf8").trim();
   const skill = existsSync(skillFile)

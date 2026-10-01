@@ -7,11 +7,15 @@ import { join, resolve as resolvePath } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { copilotMcpArgs, runCopilot } from "../src/providers/copilot.ts";
+import {
+  copilotMcpArgs,
+  runCopilot
+} from "@simulatorlife/autodev-runtime/providers/copilot";
 import {
   classifyCliLimit,
   limitPayload
-} from "../src/shared/provider-limits.ts";
+} from "@simulatorlife/autodev-runtime/shared/provider-limits";
+
 import { createBridgeMcpHomes } from "./bridge-mcp-fixture.ts";
 
 const REPO_ROOT = resolvePath(import.meta.dirname, "..");
@@ -23,7 +27,7 @@ process.env.COPILOT_HOME = homes.copilotHome;
 test.after(async () => {
   await rm(homes.root, { recursive: true, force: true });
 });
-const PROXY = join(REPO_ROOT, "src/providers/copilot.ts");
+const PROXY = join(REPO_ROOT, "runtime/src/providers/copilot.ts");
 const CONTRACT_PATH = join(
   REPO_ROOT,
   "tests/fixtures/contracts/copilot-responses-contract.json"
@@ -99,19 +103,32 @@ function waitForListening(child: any): Promise<void> {
 }
 
 function parseSse(text: string): Array<{ event: string; data: any }> {
-  return text
-    .trimEnd()
-    .split("\n\n")
-    .filter(Boolean)
-    .map((chunk) => {
-      if (chunk === "data: [DONE]") return { event: "[DONE]", data: null };
-      const lines = chunk.split("\n");
-      const event =
-        lines.find((line) => line.startsWith("event: "))?.slice(7) ?? "";
-      const data = lines.find((line) => line.startsWith("data: "))?.slice(6);
-      return { event, data: data ? JSON.parse(data) : null };
-    });
+  return (
+    text
+      .trimEnd()
+      .split("\n\n")
+      // SSE comments are transport keep-alives, not response lifecycle events.
+      .filter((chunk) => Boolean(chunk) && !chunk.startsWith(":"))
+      .map((chunk) => {
+        if (chunk === "data: [DONE]") return { event: "[DONE]", data: null };
+        const lines = chunk.split("\n");
+        const event =
+          lines.find((line) => line.startsWith("event: "))?.slice(7) ?? "";
+        const data = lines.find((line) => line.startsWith("data: "))?.slice(6);
+        return { event, data: data ? JSON.parse(data) : null };
+      })
+  );
 }
+
+test("SSE keep-alive comments do not enter the response event lifecycle", () => {
+  const events = parseSse(
+    ': bridge keep-alive\n\nevent: response.created\ndata: {"type":"response.created"}\n\n'
+  );
+  assert.deepEqual(
+    events.map(({ event }) => event),
+    ["response.created"]
+  );
+});
 
 function scrub(value: any): any {
   if (typeof value === "string")

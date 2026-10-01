@@ -137,7 +137,7 @@ test("CI runs the pinned official Claude Code package", () => {
 
 test("Copilot and Antigravity bridges run their official CLIs", () => {
   assert.match(
-    texts["src/providers/copilot.ts"]!,
+    texts["runtime/src/providers/copilot.ts"]!,
     /spawn\(process\.env\.COPILOT_BIN \?\? "copilot", args/
   );
   assert.match(

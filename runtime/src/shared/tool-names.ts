@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 /**
  * The one owner of canonical AutoDev tool names.
  *
@@ -22,8 +20,6 @@
  * bridge translates into the canonical names below; do not adopt their
  * style for a new AutoDev tool.
  */
-
-import { writeErrorLine, writeLine } from "./output.ts";
 
 // ---------------------------------------------------------------------------
 // Codex code-mode meta-tool. The runtime delivers every other tool through
@@ -269,55 +265,4 @@ function exceptionProvider(name: string): string {
   for (const [k, v] of Object.entries(COPILOT_NATIVE_TOOL_EXCEPTIONS))
     if (v === name) return `copilot:${k}`;
   return "unknown";
-}
-
-if (process.argv[1] === new URL(import.meta.url).pathname) {
-  if (process.argv[2] === "--check") {
-    const target = process.argv[3];
-    if (!target) {
-      writeErrorLine("tool-names: --check <path-to-source-file>");
-      process.exitCode = 2;
-    } else {
-      import("node:fs").then(({ readFileSync }) => {
-        const text = readFileSync(target, "utf8");
-        const matches = text.match(/"([a-zA-Z][a-zA-Z0-9_]*)"/g) ?? [];
-        const candidates = Array.from(
-          new Set(matches.map((m) => m.slice(1, -1)))
-        ).filter(
-          (name) =>
-            name.length >= 3 &&
-            !name.includes("-") &&
-            !name.startsWith("x-") &&
-            name !== "undefined" &&
-            name !== "null"
-        );
-        const audit = auditToolNames(candidates);
-        writeLine(
-          `tool-names: ${audit.canonical.length} canonical, ${audit.exceptions.length} documented CLI exceptions, ${audit.unrecognised.length} unrecognised.`
-        );
-        if (audit.unrecognised.length > 0) {
-          writeErrorLine(
-            `tool-names: unrecognised: ${audit.unrecognised.slice(0, 20).join(", ")}`
-          );
-        }
-      });
-    }
-  } else {
-    writeLine(
-      [
-        `Canonical Codex code-mode tools (snake_case, ${MULTI_AGENT_NAMESPACE}__<tool>, mcp__<server>__<tool>):`,
-        `  exec                          ${EXEC_TOOL}`,
-        `  ${MULTI_AGENT_NAMESPACE}__spawn_agent     ${MULTI_AGENT_SPAWN_TOOL}`,
-        `  ${MULTI_AGENT_NAMESPACE}__wait_agent      ${MULTI_AGENT_WAIT_TOOL}`,
-        `  ${MULTI_AGENT_NAMESPACE}__close_agent     ${MULTI_AGENT_CLOSE_TOOL}`,
-        `  ${MULTI_AGENT_NAMESPACE}__resume_agent    ${MULTI_AGENT_RESUME_TOOL}`,
-        `  ${MULTI_AGENT_NAMESPACE}__send_input      ${MULTI_AGENT_SEND_INPUT_TOOL}`,
-        `  web_search                    ${WEB_SEARCH_TOOL}`,
-        `  web_fetch                     ${WEB_FETCH_TOOL}`,
-        `  request_user_input            ${CODEX_APP_REQUEST_USER_INPUT_TOOL}`,
-        `  mcp__<server>__<tool>         (mcpToolName(server, tool))`,
-        `  mcp__autodev_spawn__spawn_subagent  ${AUTODEV_SPAWN_TOOL}`
-      ].join("\n")
-    );
-  }
 }

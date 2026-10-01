@@ -7,9 +7,9 @@ import {
   findExecutable,
   isExecutable,
   resolveCodeGraphContextBinary
-} from "../shared/executables.ts";
-import { writeErrorLine } from "../shared/output.ts";
-import { MCP_SERVER_CODEGRAPHCONTEXT } from "../shared/tool-names.ts";
+} from "@simulatorlife/autodev-runtime/shared/executables";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import { MCP_SERVER_CODEGRAPHCONTEXT } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 export type McpName =
   "lsp" | "playwright" | "cocoindex-code" | typeof MCP_SERVER_CODEGRAPHCONTEXT;

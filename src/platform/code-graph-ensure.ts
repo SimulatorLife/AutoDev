@@ -27,8 +27,11 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolveCodeGraphContextBinary } from "../shared/executables.ts";
-import { writeErrorLine, writeLine } from "../shared/output.ts";
+import { resolveCodeGraphContextBinary } from "@simulatorlife/autodev-runtime/shared/executables";
+import {
+  writeErrorLine,
+  writeLine
+} from "@simulatorlife/autodev-runtime/shared/output";
 
 const WORKER_FLAG = "--worker";
 const REPOSITORIES_QUERY = "MATCH (r:Repository) RETURN r.path AS path";

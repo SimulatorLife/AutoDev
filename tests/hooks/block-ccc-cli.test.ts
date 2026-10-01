@@ -6,7 +6,7 @@ import {
   isCccInvocation,
   REDIRECTION_MESSAGE,
   runBlockCccCli
-} from "../../src/hooks/block-ccc-cli.ts";
+} from "../../runtime/src/hooks/block-ccc-cli.ts";
 
 test("isCccInvocation identifies direct and compound ccc CLI invocations", () => {
   const blocked = [

@@ -58,7 +58,7 @@ adding a tool, match the existing `<namespace>__<tool>` snake_case form so
 the surface stays uniform.
 
 The single source of truth for every canonical name above is
-`src/shared/tool-names.ts` (exported constants
+`@simulatorlife/autodev-runtime/shared/tool-names` (exported constants
 `EXEC_TOOL`, `MULTI_AGENT_*_TOOL`, `MCP_SERVER_*`, `WEB_SEARCH_TOOL`,
 `WEB_FETCH_TOOL`, `CODEX_APP_REQUEST_USER_INPUT_TOOL`, and the helpers
 `multiAgentToolName(suffix)` and `mcpToolName(server, tool)`). Bridges,
@@ -72,7 +72,7 @@ audit helper `auditToolNames(names)` -- which classifies every string into
 `canonical`, `exception` (with provider), or `unrecognised` -- when a future
 tool needs validation. A guard rail in `tests/shared/tool-names.test.ts`
 fails the suite if anyone hard-codes a `multi_agent_v1__*` literal anywhere
-in `src/` outside `src/shared/tool-names.ts`.
+in `src/` outside `@simulatorlife/autodev-runtime/shared/tool-names`.
 
 After spawning, poll child results with `multi_agent_v1__wait_agent({ targets:
 [childId] })` and close terminal children with

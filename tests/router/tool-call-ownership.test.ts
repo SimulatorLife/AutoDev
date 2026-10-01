@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { collectToolCallIds } from "../../src/router/responses.ts";
 import {
   awaitedCallIds,
   ToolCallOwnership
-} from "../../src/router/tool-call-ownership.ts";
+} from "@simulatorlife/autodev-runtime/router/tool-call-ownership";
+
+import { collectToolCallIds } from "../../src/router/responses.ts";
 
 // Recorded in the 2026-09-18 incident: one worker turn hopped antigravity ->
 // minimax -> claude between requests, so the provider that ran the step was

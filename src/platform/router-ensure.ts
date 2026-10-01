@@ -13,8 +13,9 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { parseNonNegativeInteger } from "../shared/env.ts";
-import { writeErrorLine } from "../shared/output.ts";
+import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+
 import { ensureCopilotProxy } from "./copilot-ensure.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 
@@ -199,7 +200,9 @@ function readListenerPid(port: number): number | null {
       { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
     );
     const newlineIndex = stdout.indexOf("\n");
-    const first = (newlineIndex === -1 ? stdout : stdout.slice(0, newlineIndex)).trim();
+    const first = (
+      newlineIndex === -1 ? stdout : stdout.slice(0, newlineIndex)
+    ).trim();
     return PID_PATTERN.test(first) ? Number.parseInt(first) : null;
   } catch {
     return null;

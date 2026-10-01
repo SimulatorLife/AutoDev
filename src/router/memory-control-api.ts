@@ -160,10 +160,16 @@ function oneFilter(
   return value;
 }
 
-function hasControlCharacters(value: string): boolean {
+function hasControlCharacters(value: string, allowLineBreaks = false): boolean {
   for (const character of value) {
     const code = character.codePointAt(0) ?? 0;
-    if (code <= 31 || code === 127) return true;
+    if (
+      (code <= 31 &&
+        (!allowLineBreaks || (code !== 9 && code !== 10 && code !== 13))) ||
+      code === 127
+    ) {
+      return true;
+    }
   }
   return false;
 }
@@ -311,14 +317,15 @@ function exactKeys(
 function requiredString(
   input: Record<string, unknown>,
   key: string,
-  maxCharacters = MAX_FILTER_VALUE
+  maxCharacters = MAX_FILTER_VALUE,
+  allowLineBreaks = false
 ): string {
   const value = input[key];
   if (
     typeof value !== "string" ||
     !value.trim() ||
     value.trim().length > maxCharacters ||
-    hasControlCharacters(value)
+    hasControlCharacters(value, allowLineBreaks)
   ) {
     throw new MemoryValidationError(`Memory field '${key}' is invalid.`);
   }
@@ -831,7 +838,7 @@ async function mutateMemory(
         ]);
         const skillName = requiredString(body, "skillName");
         const description = requiredString(body, "description", 512);
-        const content = requiredString(body, "content", 20_000);
+        const content = requiredString(body, "content", 20_000, true);
         const verification = researchRequest(
           {
             task: body.task,

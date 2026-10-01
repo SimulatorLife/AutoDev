@@ -1,24 +1,16 @@
 /**
- * Bridge-side sandbox + skill-context helpers.
- *
- * Self-contained: imports from node built-ins only, no relative imports of
- * other AutoDev TypeScript modules. The Claude bridge runs under a Rosetta
- * x86_64 Node 25 launched by launchd, and cold-starting an ESM chain that
- * crosses several `.ts` files has been observed to fail with
- * ERR_MODULE_NOT_FOUND on the first attempt (the second succeeds). Keeping
- * this module dep-free removes that race without changing behaviour.
+ * Bridge-side sandbox and skill-context parsing for router-authenticated turns.
+ * Header names are owned by the Runtime package contract and resolved through
+ * the installer's CODEX_HOME/node_modules link.
  */
 
-export type BridgeSandboxMode = "read-only" | "workspace-write" | null;
+import {
+  CODEX_SESSION_HEADER,
+  SANDBOX_MODE_HEADER,
+  SKILL_CONTEXT_HEADER
+} from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 
-// Local copies of the router-emitted header names. Defined here as local
-// constants (not exports) so the module stays import-free and survives
-// Rosetta x86_64 ESM cold-start races on .ts resolution. The canonical
-// definitions live in src/router/subagents.ts and are kept in sync by
-// review: if the router renames a header, update both places.
-const SANDBOX_MODE_HEADER = "x-autodev-sandbox-mode";
-const SKILL_CONTEXT_HEADER = "x-autodev-skill-context";
-const CODEX_SESSION_HEADER = "x-autodev-codex-session";
+export type BridgeSandboxMode = "read-only" | "workspace-write" | null;
 
 function pickHeader(
   headers: Record<string, unknown> | null | undefined,

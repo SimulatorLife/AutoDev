@@ -1,0 +1,339 @@
+diff --git a/src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts b/src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts
+index 33ce5490..0900f165 100644
+--- a/src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts
++++ b/src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts
+@@ -2,6 +2,10 @@ jest.mock("@/lib/session", () => ({ getCurrentUser: jest.fn() }));
+ jest.mock("@/lib/platform/connectors/memory/write", () => ({
+ 	executeProjectMemoryAction: jest.fn(),
+ }));
++jest.mock("@/lib/platform/connectors/memory/crud", () => ({
++	memoryConnectorId: (id: string) => (id.startsWith("memory:") ? id : `memory:${id}`),
++	isMemoryConnectorId: (id: unknown) => typeof id === "string" && id.startsWith("memory:"),
++}));
+ jest.mock("@/utils/asaw", () =>
+ 	jest.fn(async (promise: Promise<unknown>) => {
+ 		try {
+diff --git a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
+index 7231dd72..aee793d0 100644
+--- a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
++++ b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
+@@ -6,6 +6,11 @@ const originalControlEnv = {
+ 	url: process.env.AUTODEV_CONTROL_API_URL,
+ 	token: process.env.AUTODEV_CONTROL_API_TOKEN
+ };
++const originalFetchDescriptor = Object.getOwnPropertyDescriptor(global, "fetch");
++
++function jsonResponse(body: unknown, status = 200): Response {
++	return { status, json: async () => body } as Response;
++}
+ 
+ const descriptor: MemorySourceDescriptor = {
+ 	type: "autodev",
+@@ -15,6 +20,11 @@ const descriptor: MemorySourceDescriptor = {
+ };
+ 
+ beforeEach(() => {
++	Object.defineProperty(global, "fetch", {
++		configurable: true,
++		writable: true,
++		value: jest.fn()
++	});
+ 	process.env.AUTODEV_CONTROL_API_URL = "http://127.0.0.1:4101";
+ 	process.env.AUTODEV_CONTROL_API_TOKEN = "server-only-token";
+ 	_setActorResolverForTesting(async () => "operator-a");
+@@ -29,12 +39,16 @@ afterEach(() => {
+ 		delete process.env.AUTODEV_CONTROL_API_TOKEN;
+ 	else process.env.AUTODEV_CONTROL_API_TOKEN = originalControlEnv.token;
+ 	jest.restoreAllMocks();
++	if (originalFetchDescriptor) {
++		Object.defineProperty(global, "fetch", originalFetchDescriptor);
++	} else {
++		Reflect.deleteProperty(global, "fetch");
++	}
+ });
+ 
+ test("AutoDev adapter reads scoped memory through the authenticated Control API", async () => {
+ 	const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+-		new Response(
+-			JSON.stringify({
++		jsonResponse({
+ 				schema: "autodev-memory-records-v1",
+ 				items: [
+ 					{
+@@ -59,9 +73,7 @@ test("AutoDev adapter reads scoped memory through the authenticated Control API"
+ 				total: 1,
+ 				limit: 20,
+ 				offset: 0
+-			}),
+-			{ status: 200, headers: { "content-type": "application/json" } }
+-		)
++		})
+ 	);
+ 
+ 	const adapter = new AutoDevMemoryAdapter(descriptor);
+@@ -113,7 +125,7 @@ test("AutoDev connector lists source experiences only when task-history access i
+ 	const fetchSpy = jest
+ 		.spyOn(global, "fetch")
+ 		.mockResolvedValueOnce(
+-			Response.json({
++			jsonResponse({
+ 				items: [],
+ 				total: 0,
+ 				limit: 5,
+@@ -121,7 +133,7 @@ test("AutoDev connector lists source experiences only when task-history access i
+ 			})
+ 		)
+ 		.mockResolvedValueOnce(
+-			Response.json({
++			jsonResponse({
+ 				items: [
+ 					{
+ 						id: "experience-a",
+@@ -179,31 +191,25 @@ test("AutoDev connector lists source experiences only when task-history access i
+ 	expect(String(experienceRequest)).toContain("includeTaskHistory=true");
+ });
+ 
+-
+-test("AutoDev advertises invalidation only for live durable memory records", () => {
++test("AutoDev advertises invalidation only for live durable records", () => {
+ 	const adapter = new AutoDevMemoryAdapter(descriptor);
+ 	const active = {
+ 		id: "memory-a",
+ 		content: "A durable claim.",
+ 		metadata: { autodev: { status: "active" } }
+ 	};
+-	const invalidated = {
+-		...active,
+-		metadata: { autodev: { status: "invalidated" } }
+-	};
++	const invalidated = { ...active, metadata: { autodev: { status: "invalidated" } } };
+ 	const experience = {
+ 		...active,
+ 		id: "experience:experience-a",
+ 		metadata: { autodev: { status: "historical" } }
+ 	};
+-	expect(adapter.actionsFor(active)).toEqual([
+-		expect.objectContaining({ id: "invalidate" })
+-	]);
++	expect(adapter.actionsFor(active)).toEqual([expect.objectContaining({ id: "invalidate" })]);
+ 	expect(adapter.actionsFor(invalidated)).toEqual([]);
+ 	expect(adapter.actionsFor(experience)).toEqual([]);
+ });
+ 
+-test("AutoDev lifecycle actions use the authenticated Control API without enabling CRUD writes", async () => {
++test("AutoDev lifecycle invalidation uses the authenticated Control API", async () => {
+ 	const updatedMemory = {
+ 		id: "memory-a",
+ 		kind: "semantic",
+@@ -216,7 +222,7 @@ test("AutoDev lifecycle actions use the authenticated Control API without enabli
+ 		updatedAt: "2026-10-01T00:00:00.000Z"
+ 	};
+ 	const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+-		Response.json({ schema: "autodev-memory-record-v1", memory: updatedMemory })
++		jsonResponse({ schema: "autodev-memory-record-v1", memory: updatedMemory })
+ 	);
+ 	const adapter = new AutoDevMemoryAdapter(descriptor);
+ 	const result = await adapter.executeAction("memory-a", "invalidate", {
+diff --git a/src/client/src/__tests__/lib/platform/connectors/memory-write.test.ts b/src/client/src/__tests__/lib/platform/connectors/memory-write.test.ts
+index 95875c64..ab7719ff 100644
+--- a/src/client/src/__tests__/lib/platform/connectors/memory-write.test.ts
++++ b/src/client/src/__tests__/lib/platform/connectors/memory-write.test.ts
+@@ -13,6 +13,7 @@ jest.mock("@/lib/platform/connectors/memory/crud", () => ({
+ import {
+ 	addProjectMemories,
+ 	deleteProjectMemory,
++	executeProjectMemoryAction,
+ 	parseMemoryMessages,
+ 	parseMemoryMetadata,
+ 	updateProjectMemory,
+@@ -405,3 +406,54 @@ describe("parseMemoryMessages", () => {
+ 		expect(parseMemoryMessages([{ role: "", content: "" }])).toBeUndefined();
+ 	});
+ });
++
++describe("executeProjectMemoryAction", () => {
++	beforeEach(() => {
++		jest.clearAllMocks();
++	});
++
++	it("checks the current record capability and returns updated state", async () => {
++		const current = { id: "memory-a", content: "Claim", metadata: { autodev: { status: "active" } } };
++		const updated = {
++			...current,
++			lifecycleState: "invalidated",
++			metadata: { autodev: { status: "invalidated" } }
++		};
++		const get = jest.fn().mockResolvedValue(current);
++		const actionsFor = jest.fn((record: typeof current) =>
++			record.metadata.autodev.status === "active" ? [{ id: "invalidate", label: "Invalidate", description: "", payloadTemplate: { evidence: [] } }] : []
++		);
++		const executeAction = jest.fn().mockResolvedValue(updated);
++		mockListMemoryConnectors.mockResolvedValue([connector]);
++		mockGetMemoryRuntime.mockResolvedValue({
++			connector,
++			adapter: { capabilities: () => ({ ...capabilities, update: false }), get, actionsFor, executeAction }
++		});
++		const result = await executeProjectMemoryAction({
++			id: "memory-a", action: "invalidate", payload: { evidence: [] }
++		});
++
++		expect(executeAction).toHaveBeenCalledWith("memory-a", "invalidate", { evidence: [] });
++		expect(result.memory.lifecycleState).toBe("invalidated");
++		expect(result.capabilities.update).toBe(false);
++		expect(result.capabilities.actions).toEqual([]);
++	});
++
++	it("rejects an unadvertised action before mutating", async () => {
++		const executeAction = jest.fn();
++		mockListMemoryConnectors.mockResolvedValue([connector]);
++		mockGetMemoryRuntime.mockResolvedValue({
++			connector,
++			adapter: {
++				capabilities: () => capabilities,
++				get: jest.fn().mockResolvedValue({ id: "memory-a", content: "Claim" }),
++				actionsFor: () => [],
++				executeAction
++			}
++		});
++		await expect(
++			executeProjectMemoryAction({ id: "memory-a", action: "invalidate", payload: {} })
++		).rejects.toThrow(/not available for this memory record/);
++		expect(executeAction).not.toHaveBeenCalled();
++	});
++});
+diff --git a/src/client/src/app/api/memory/[id]/actions/route.ts b/src/client/src/app/api/memory/[id]/actions/route.ts
+index fa336a56..cabb445f 100644
+--- a/src/client/src/app/api/memory/[id]/actions/route.ts
++++ b/src/client/src/app/api/memory/[id]/actions/route.ts
+@@ -87,12 +87,22 @@ async function POSTHandler(request: NextRequest, { params }: { params: { id: str
+ 	if (!user) return Response.json("Unauthorized", { status: 401 });
+ 
+ 	let id: string;
+-	let input: ReturnType<typeof parseBody>;
+ 	try {
+ 		id = parseId(params.id);
+-		input = parseBody(await request.json());
+ 	} catch (error) {
+-		return errorResponse(error, MEMORY_INVALID_JSON, 400);
++		return errorResponse(error, MEMORY_INVALID_FILTER, 400);
++	}
++	let body: unknown;
++	try {
++		body = await request.json();
++	} catch {
++		return errorResponse(MEMORY_INVALID_JSON, MEMORY_INVALID_JSON, 400);
++	}
++	let input: ReturnType<typeof parseBody>;
++	try {
++		input = parseBody(body);
++	} catch (error) {
++		return errorResponse(error, MEMORY_INVALID_FILTER, 400);
+ 	}
+ 
+ 	const [error, result] = await asaw(executeProjectMemoryAction({ id, ...input }));
+diff --git a/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx b/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx
+index 7c34a770..e93c7862 100644
+--- a/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx
++++ b/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx
+@@ -120,6 +120,9 @@ export default function MemoryDetailSheet({
+ 		setLoading(true);
+ 		setError(null);
+ 		setHint(undefined);
++		setActions(capabilities?.actions ?? []);
++		setActiveAction(null);
++		setActionOpen(false);
+ 		setDetail((current) =>
+ 			current?.id === memoryId ? current : preview?.id === memoryId ? preview : null
+ 		);
+diff --git a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
+index e7f41673..1d0cc25b 100644
+--- a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
++++ b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
+@@ -1,7 +1,7 @@
+ /**
+- * Read-only OpenLIT Memory connector over AutoDev's governed Control API.
+- * AutoDev PostgreSQL remains canonical; this adapter translates the typed
+- * AutoDev records into the retained OpenLIT Memory page's presentation model.
++ * Read-only-CRUD OpenLIT Memory connector over AutoDev's governed Control API,
++ * with explicitly advertised lifecycle actions. AutoDev PostgreSQL remains
++ * canonical; this adapter translates typed records into the retained Memory UI.
+  */
+ 
+ import { forwardToControlApi } from "@/lib/autodev/control-api";
+@@ -217,7 +217,6 @@ export class AutoDevMemoryAdapter extends BaseMemoryAdapter {
+ 	}
+ 
+ 	actionsFor(memory: MemoryRecord): readonly MemoryActionDescriptor[] {
+-		if (memory.id.startsWith("experience:")) return [];
+ 		const metadata = memory.metadata?.autodev;
+ 		if (!metadata || typeof metadata !== "object" || Array.isArray(metadata))
+ 			return [];
+diff --git a/src/client/src/lib/platform/connectors/memory/index.ts b/src/client/src/lib/platform/connectors/memory/index.ts
+index 73077b0f..dff2f635 100644
+--- a/src/client/src/lib/platform/connectors/memory/index.ts
++++ b/src/client/src/lib/platform/connectors/memory/index.ts
+@@ -2,9 +2,13 @@ import {
+ 	createMemoryAdapter,
+ 	listMemoryTypeDescriptors,
+ } from "./registry";
+-import type { MemoryAdapter, MemorySourceDescriptor } from "./types";
++import type { MemoryAdapter, MemoryCapabilities, MemorySourceDescriptor } from "./types";
+ import { registerConnectorType } from "../registry";
+-import type { ConnectorField, ConnectorInstanceDescriptor } from "../types";
++import type {
++	ConnectorCapabilities,
++	ConnectorField,
++	ConnectorInstanceDescriptor
++} from "../types";
+ import { connectorIconPath } from "../icons";
+ import { connectorDescription } from "../descriptions";
+ 
+@@ -25,6 +29,21 @@ function parseSettings(settings: unknown): Record<string, unknown> {
+ 	return {};
+ }
+ 
++function connectorCapabilityFlags(
++	capabilities: MemoryCapabilities
++): ConnectorCapabilities {
++	const projected: ConnectorCapabilities = {};
++	for (const [key, value] of Object.entries(capabilities)) {
++		if (key === "actions") continue;
++		if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
++			projected[key] = value;
++		} else if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
++			projected[key] = value;
++		}
++	}
++	return projected;
++}
++
+ function fields(descriptor: ReturnType<typeof listMemoryTypeDescriptors>[number]): ConnectorField[] {
+ 	return descriptor.configFields.map((field) => ({
+ 		key: field.key,
+@@ -74,7 +93,7 @@ export function registerMemoryConnectorTypes(): void {
+ 				icon: descriptor.icon || connectorIconPath(descriptor.type),
+ 				scope: descriptor.scope ?? "project",
+ 				configFields: fields(descriptor),
+-				capabilities: { ...descriptor.capabilities },
++				capabilities: connectorCapabilityFlags(descriptor.capabilities),
+ 				internal: descriptor.internal,
+ 			},
+ 			create: (instance: ConnectorInstanceDescriptor) => {
+diff --git a/src/client/src/lib/platform/connectors/memory/types.ts b/src/client/src/lib/platform/connectors/memory/types.ts
+index 70e9bc9a..33bccf00 100644
+--- a/src/client/src/lib/platform/connectors/memory/types.ts
++++ b/src/client/src/lib/platform/connectors/memory/types.ts
+@@ -2,9 +2,10 @@
+  * Memory connector contract.
+  *
+  * Memory adapters are the category-specific runtime behind `category: "memory"`
+- * connector instances. Vendors implement only the operations their
+- * `capabilities()` advertise; the rest throw `UnsupportedMemoryCapabilityError`
+- * so product surfaces can gate honestly instead of guessing.
++ * connector instances. Vendors advertise generic CRUD capabilities separately
++ * from descriptor-driven domain actions. Unsupported operations throw
++ * `UnsupportedMemoryCapabilityError` so product surfaces gate honestly rather
++ * than guessing or treating lifecycle transitions as arbitrary updates.
+  */
+ 
+ import type { ConnectorHealthResult, ConnectorRuntime } from "../types";

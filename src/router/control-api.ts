@@ -5,18 +5,21 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { SpanStatusCode } from "@opentelemetry/api";
-import { LOCAL_CONTROL_API_ACTOR } from "@simulatorlife/autodev-core";
+import {
+  LOCAL_CONTROL_API_ACTOR,
+  type ProviderRole
+} from "@simulatorlife/autodev-core";
 import { RuleSyncRepository } from "@simulatorlife/autodev-data";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
-import { writeErrorLine } from "../shared/output.ts";
 import { getDefaultConcurrencyManager } from "./concurrency.ts";
 import { readControlApiJsonObject } from "./control-api-body.ts";
-import { COOLDOWNS } from "./cooldown.ts";
-import { getDefaultRouterLifecycle } from "./lifecycle.ts";
+import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
+import { getDefaultRouterLifecycle } from "@simulatorlife/autodev-runtime/router/lifecycle";
 import { handleMemoryControlApiRequest } from "./memory-control-api.ts";
 import { getDefaultPersistenceManager } from "./persistence.ts";
 import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "./proxy.ts";
-import { type ProviderRole, ROUTES, ROUTING_POLICY } from "./routing.ts";
+import { ROUTES, ROUTING_POLICY } from "./routing.ts";
 import { getDefaultExecutionContract } from "./subagents.ts";
 import { routerTelemetryTracer } from "./telemetry.ts";
 

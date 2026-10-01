@@ -148,7 +148,7 @@ test("runMain reads process arguments when argv is omitted", async () => {
 test("router status uses its typed status result", async () => {
   const output: string[] = [];
   const originalWrite = process.stdout.write;
-  // Command output goes to stdout through src/shared/output.ts.
+  // Command output goes to stdout through @simulatorlife/autodev-runtime/shared/output.
   process.stdout.write = ((chunk: string | Uint8Array) => {
     output.push(String(chunk).trimEnd());
     return true;

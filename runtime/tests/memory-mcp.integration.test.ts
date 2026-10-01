@@ -53,8 +53,61 @@ test(
     try {
       await client.connect(transport);
       const listed = await client.listTools();
+      assert.ok(listed.tools.some((tool) => tool.name === "experience_append"));
       assert.ok(listed.tools.some((tool) => tool.name === "memory_research"));
       assert.ok(listed.tools.some((tool) => tool.name === "memory_propose"));
+
+      const appended = await client.callTool({
+        name: "experience_append",
+        arguments: {
+          trajectory: {
+            format: "claude-code-native-jsonl",
+            uri: "https://example.invalid/session/trajectory.jsonl?token=private",
+            digest: "c".repeat(64),
+            recordCount: 4
+          },
+          startedAt: "2026-10-01T12:00:00.000Z",
+          completedAt: "2026-10-01T12:05:00.000Z",
+          outcome: "unknown",
+          evidence: [
+            {
+              kind: "pull_request",
+              uri: "https://github.com/owner/repo/pull/17"
+            }
+          ]
+        }
+      });
+      assert.equal(appended.isError, undefined);
+      const appendedValue = JSON.parse(
+        (appended.content as Array<{ text?: string }>)[0]?.text ?? "null"
+      ) as { id: string; appended: boolean };
+      assert.equal(appendedValue.appended, true);
+
+      const retrieved = await client.callTool({
+        name: "experience_get",
+        arguments: { id: appendedValue.id }
+      });
+      assert.equal(retrieved.isError, undefined);
+      const experience = JSON.parse(
+        (retrieved.content as Array<{ text?: string }>)[0]?.text ?? "null"
+      ) as {
+        workspaceId: string;
+        repositoryId?: string;
+        taskId: string;
+        runId: string;
+        agentId: string;
+        trajectory: { uri: string; digest?: string };
+      };
+      assert.equal(experience.workspaceId, "mcp-integration-workspace");
+      assert.equal(experience.repositoryId, "mcp-integration-repository");
+      assert.match(experience.taskId, /^mcp-task-\d+$/u);
+      assert.match(experience.runId, /^mcp-run-\d+$/u);
+      assert.equal(experience.agentId, "mcp-integration-worker");
+      assert.equal(
+        experience.trajectory.uri,
+        "https://example.invalid/session/trajectory.jsonl"
+      );
+      assert.equal(experience.trajectory.digest, "c".repeat(64));
 
       const research = await client.callTool({
         name: "memory_research",

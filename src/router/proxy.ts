@@ -5,12 +5,13 @@ import type { ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 
 import type { Span } from "@opentelemetry/api";
-
-import { resolveSandboxMode } from "../shared/execution-contract.ts";
 import {
-  AUTODEV_WORKSPACE_KEY_HEADER,
-  safeAutoDevWorkspaceKey
-} from "../shared/otel-resource-context.ts";
+  AGENT_ROLE_HEADER,
+  CODEX_SESSION_HEADER,
+  SANDBOX_MODE_HEADER,
+  SKILL_CONTEXT_HEADER
+} from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
+import { resolveSandboxMode } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import {
   INCOMPLETE_REASON_INTERRUPTED,
   INCOMPLETE_REASON_TIMEOUT,
@@ -21,8 +22,13 @@ import {
   type ProviderLimit,
   readLimitHeaders,
   terminalIncompleteEvents
-} from "../shared/provider-limits.ts";
-import { awaitedToolResults } from "../shared/responses-continuation.ts";
+} from "@simulatorlife/autodev-runtime/shared/provider-limits";
+import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
+import {
+  AUTODEV_WORKSPACE_KEY_HEADER,
+  safeAutoDevWorkspaceKey
+} from "@simulatorlife/autodev-runtime/telemetry/resource-context";
+
 import { isLoopbackAddress } from "./auth.ts";
 import { getDefaultConcurrencyManager } from "./concurrency.ts";
 import {
@@ -31,7 +37,7 @@ import {
   COOLDOWNS,
   type CooldownSummary,
   PROBE_FAILURE_CLASS
-} from "./cooldown.ts";
+} from "@simulatorlife/autodev-runtime/router/cooldown";
 import {
   classifyProviderFailure,
   INVALID_MODEL_PATTERN,
@@ -56,10 +62,8 @@ import {
   ROUTING_POLICY
 } from "./routing.ts";
 import {
-  AGENT_ROLE_HEADER,
   bridgeTelemetryHeaders as subagentBridgeTelemetryHeaders,
   closeBridgeSubagentsForRequest,
-  CODEX_SESSION_HEADER,
   FORWARDED_REQUEST_HEADERS,
   hasActiveBridgeSubagentsForSession,
   mcpContractForRole as subagentMcpContractForRole,
@@ -70,10 +74,8 @@ import {
   orchestratorProviderForSession,
   providerCapabilities,
   recordSpawnFailure,
-  SANDBOX_MODE_HEADER,
   SESSION_ID_HEADER,
-  SESSION_SCOPE_HEADER,
-  SKILL_CONTEXT_HEADER
+  SESSION_SCOPE_HEADER
 } from "./subagents.ts";
 import {
   endAttemptSpan,
@@ -82,7 +84,7 @@ import {
   startLogicalRequestSpan,
   withLogicalSpan
 } from "./telemetry.ts";
-import { TOOL_CALL_OWNERSHIP } from "./tool-call-ownership.ts";
+import { TOOL_CALL_OWNERSHIP } from "@simulatorlife/autodev-runtime/router/tool-call-ownership";
 import {
   countLiveAgentActivity,
   getDefaultUsageTracker,
@@ -3138,10 +3140,34 @@ async function runExhaustionWait(
       workspace: ctx.workspace,
       elapsedMs: waitMs
     });
-    await delay(waitMs, ctx.clientSignal);
-    if (!ctx.clientSignal?.aborted) {
-      return tryExhaustionRoute(waitCandidates, 0, tryCandidate, served);
+    const waitStartedAt = Date.now();
+    // Cooldown state must be re-read after each wake; parallel sleeps can
+    // resume before the authoritative reset time and recreate the 503 race.
+    /* eslint-disable no-await-in-loop -- This wait is sequential by cooldown state. */
+    while (
+      !ctx.clientSignal?.aborted &&
+      !ctx.response.headersSent &&
+      !state.deadlineReached
+    ) {
+      const now = Date.now();
+      const remainingCooldownMs = COOLDOWNS.nextRetryMs(
+        waitCandidates.map(({ provider }) => provider),
+        now
+      );
+      if (remainingCooldownMs <= 0)
+        return tryExhaustionRoute(waitCandidates, 0, tryCandidate, served);
+
+      const remainingWindowMs = windowMs - (now - waitStartedAt);
+      if (remainingWindowMs <= 0) break;
+      // Timers can fire before Date.now crosses the provider's absolute reset
+      // timestamp. Recheck authoritative cooldown state and wait the remainder
+      // instead of abandoning an otherwise recoverable request.
+      await delay(
+        Math.min(remainingCooldownMs, remainingWindowMs),
+        ctx.clientSignal
+      );
     }
+    /* eslint-enable no-await-in-loop */
   }
   return false;
 }

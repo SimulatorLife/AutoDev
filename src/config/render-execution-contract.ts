@@ -1,15 +1,14 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import {
+  writeErrorLine,
+  writeLine
+} from "@simulatorlife/autodev-runtime/shared/output";
 import { parse as parseToml } from "smol-toml";
 
-import { writeErrorLine, writeLine } from "../shared/output.ts";
 import { parseArgs, requiredArg } from "./cli-args.ts";
-import {
-  atomicWriteJson,
-  ConfigError,
-  readJsonFile
-} from "./config-files.ts";
+import { atomicWriteJson, ConfigError, readJsonFile } from "./config-files.ts";
 
 const MCP_ORDER: Record<string, number> = {
   lsp: 0,
@@ -34,7 +33,7 @@ const SKILL_ORDER: Record<string, number> = {
   "code-simplification": 3,
   "diagnosing-bugs": 4,
   "improve-codebase-architecture": 5,
-  "opentelemetry": 6,
+  opentelemetry: 6,
   "remove-legacy-shims": 7,
   "resolve-merge-conflicts": 8,
   "doubt-driven-development": 9,

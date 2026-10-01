@@ -32,9 +32,32 @@ verified-claim baseline for isolated tests. Embedding generation is still not
 configured, so retrieval remains PostgreSQL full-text until the existing
 provider layer exposes a compatible embedding capability.
 
+Data migration v6 adds repository, commit, task/plan, validation, and evidence
+references to the experience GIN search vector. This enables exact full-text
+lookup of filenames and PR/issue links without indexing transcript payloads.
+
 The Docker volume `autodev-memory-postgres` is durable. Configure backups,
 retention/deletion policy, and production credentials before storing production
 memory. Never check in `AUTODEV_MEMORY_DB_PASSWORD` or the database URL.
+
+## Raw-experience retention job
+
+Runtime exposes a one-shot curator sweep via
+`pnpm --filter @simulatorlife/autodev-runtime memory:retention`. It is disabled
+unless
+`AUTODEV_MEMORY_RETENTION_ENABLED=1`; operators must explicitly configure
+`AUTODEV_MEMORY_EXPERIENCE_RETENTION_DAYS`, `AUTODEV_MEMORY_DATABASE_URL`,
+`AUTODEV_MEMORY_WORKSPACE_ID`, and `AUTODEV_MEMORY_REPOSITORY_ID`. Historical
+task/agent scope requires `AUTODEV_MEMORY_READ_TASK_HISTORY=1`. The optional
+`AUTODEV_MEMORY_RETENTION_BATCH_SIZE` is bounded to 100 and defaults to 100.
+
+The job considers only completed task/agent experiences older than the configured
+cutoff, within that workspace/repository, and not referenced by any durable
+memory. Each row is still purged through MemoryService's locked, audited
+transaction; output contains counts and cutoff, not experience IDs. No retention
+age or schedule is enabled by default. Schedule this one-shot command only after
+selecting a policy appropriate for the deployment; durable claims remain soft
+invalidations rather than part of this raw-experience sweep.
 
 ## Automatic router JIT
 
@@ -71,10 +94,14 @@ evidence, re-verifies current repository state, writes an operator-authored
 `.rulesync/skills/<name>/SKILL.md` without overwriting existing content, then
 invalidates the redundant fuzzy memory while retaining its history. Workers and
 viewers cannot mutate through this Control API. OpenLIT patch `08-autodev-memory-connector.patch` adds the `autodev` connector
-to the retained Memory registry/page, and patch
-`09-autodev-memory-lifecycle-actions.patch` adds a capability-driven,
-evidence-backed invalidation action for live durable records. The connector
-continues to reject generic CRUD writes.
+to the retained Memory registry/page. Patches
+`09-autodev-memory-lifecycle-actions.patch` and
+`10-autodev-memory-action-hardening.patch` add and harden evidence-backed
+invalidation. Patch `11-autodev-memory-lifecycle-ui.patch` adds status-gated
+verify, revise, supersede, and procedure-to-skill promotion actions plus
+provenance/history detail through the same capability-driven UI. All mutations
+still pass through Control API and MemoryService governance; generic CRUD writes
+remain disabled for this connector.
 Configure `AUTODEV_CONTROL_API_URL` and the server-only
 `AUTODEV_CONTROL_API_TOKEN` in the OpenLIT server environment, then configure a
 connector with its AutoDev `workspaceId` and optional repository/role/task/run/
@@ -82,9 +109,10 @@ agent scope. Enable its task-history option only for an operator actor after
 setting `AUTODEV_MEMORY_READ_TASK_HISTORY=1` on the Control API. The Memory page
 reuses its generic list/search/detail UI; it does
 not create another AutoDev admin page or connect directly to PostgreSQL. The
-detail sheet exposes only the descriptor-advertised invalidation action; the
-other lifecycle controls, current-state validation UI, and memory-specific
-analytics remain unimplemented.
+detail sheet exposes only descriptor-advertised, status-appropriate actions;
+current-state validation is performed by MemoryService when an action is
+submitted. Memory-specific analytics and deployed-image acceptance remain
+unverified.
 
 The Codex SessionEnd configuration is wired to a best-effort hook that sends only the session id,
 workspace path, and transcript path to the authenticated capture route. The
@@ -129,7 +157,14 @@ one run by setting `AUTODEV_MEMORY_DATABASE_URL`,
 host-owned context; the server defaults to worker authority, and global/task-history reads
 remain disabled unless explicitly granted to a root/curator process with
 `AUTODEV_MEMORY_READ_GLOBAL=1` or `AUTODEV_MEMORY_READ_TASK_HISTORY=1`. Tool
-arguments cannot change that identity or scope.
+arguments cannot change that identity or scope. `experience_append` records a
+run-bound envelope with a source format, stable URI, and caller-reported
+SHA-256 digest; it never accepts transcript contents. Workspace/task/run/agent
+scope comes from the trusted process, and repeated appends for the same source
+artifact are idempotent. Outcome and validation fields are reporter-supplied
+historical evidence, not canonical status; durable promotion still requires
+curator verification. Credentials are stripped from trajectory and evidence
+locators before persistence.
 
 Do not expose a root/curator authority to a general-purpose model process.
 The generic `.rulesync/mcp.jsonc` catalog does not launch this server by

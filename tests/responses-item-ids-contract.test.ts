@@ -7,7 +7,7 @@ import {
   normalizeInputItemIds,
   normalizeItemId,
   RESPONSES_ITEM_ID_PREFIXES
-} from "../src/shared/responses-item-ids.ts";
+} from "@simulatorlife/autodev-runtime/shared/responses-item-ids";
 
 const contract: any = JSON.parse(
   readFileSync(

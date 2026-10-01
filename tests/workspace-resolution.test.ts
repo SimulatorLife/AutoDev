@@ -5,15 +5,16 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  workspaceContextFromRequest,
-  workspaceMetadataForSession
-} from "../src/router/http.ts";
-import {
   AmbiguousWorkspaceError,
   parseTurnMetadataJson,
   resolveCwd,
   WorkspaceResolutionError
-} from "../src/shared/resolve-workspace.ts";
+} from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
+
+import {
+  workspaceContextFromRequest,
+  workspaceMetadataForSession
+} from "../src/router/http.ts";
 
 async function withWorkspace(
   callback: (workspace: string) => Promise<void>

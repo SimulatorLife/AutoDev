@@ -6,7 +6,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 source_root="${AUTODEV_REPO_ROOT:-$script_dir/..}"
 module="${AUTODEV_ROOT_DELEGATION_MODULE:-$codex_home/src/hooks/root-delegation.ts}"
-[[ -f "$module" ]] || module="$source_root/src/hooks/root-delegation.ts"
+[[ -f "$module" ]] || module="$source_root/runtime/src/hooks/root-delegation.ts"
 
 resolve_node() {
   if command -v node >/dev/null 2>&1; then command -v node; return 0; fi

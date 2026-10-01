@@ -1,9 +1,12 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import {
+  writeErrorLine,
+  writeLine
+} from "@simulatorlife/autodev-runtime/shared/output";
 import { parse } from "smol-toml";
 
-import { writeErrorLine, writeLine } from "../shared/output.ts";
 import { parseArgs, requiredArg } from "./cli-args.ts";
 import {
   atomicWrite,
@@ -21,7 +24,13 @@ export const ROLE_MARKER = "{{AUTODEV_ROLE_PROMPT}}";
 // still has the full server definition (url + transport + auth). HTTP MCP
 // servers use `bearer_token_env_var` (Codex-supported, mirrors the bundled
 // github plugin); `http_headers` is propagated for non-bearer HTTP auth.
-const LAUNCH_KEYS = ["command", "args", "url", "bearer_token_env_var", "http_headers"] as const;
+const LAUNCH_KEYS = [
+  "command",
+  "args",
+  "url",
+  "bearer_token_env_var",
+  "http_headers"
+] as const;
 const HTTP_URL_PATTERN = /^(http|https):\/\//;
 const TABLE = /^\[mcp_servers\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\]\s*$/gm;
 

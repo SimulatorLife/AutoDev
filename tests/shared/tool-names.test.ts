@@ -1,40 +1,39 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync,readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   ALL_DOCUMENTED_EXCEPTIONS,
   ANTIGRAVITY_NATIVE_TOOL_EXCEPTIONS,
+  auditToolNames,
   AUTODEV_SPAWN_TOOL,
+  CANONICAL_TOOL_NAME_PATTERN,
   CLAUDE_NATIVE_TOOL_EXCEPTIONS,
+  CODEX_APP_REQUEST_USER_INPUT_TOOL,
   COPILOT_NATIVE_TOOL_EXCEPTIONS,
   EXEC_TOOL,
+  isCanonicalToolName,
   MCP_NAMESPACE,
   MCP_SERVER_AUTODEV_SPAWN,
+  MCP_SERVER_COCOINDEX,
+  MCP_SERVER_CODEGRAPHCONTEXT,
+  MCP_SERVER_CODEX_APP,
+  MCP_SERVER_CONTEXT7,
+  MCP_SERVER_LSP,
+  MCP_SERVER_OPENAI_DEVELOPER_DOCS,
+  MCP_SERVER_PLAYWRIGHT,
+  mcpToolName,
   MULTI_AGENT_CLOSE_TOOL,
   MULTI_AGENT_NAMESPACE,
   MULTI_AGENT_RESUME_TOOL,
   MULTI_AGENT_SEND_INPUT_TOOL,
   MULTI_AGENT_SPAWN_TOOL,
   MULTI_AGENT_WAIT_TOOL,
+  multiAgentToolName,
   WEB_FETCH_TOOL,
-  WEB_SEARCH_TOOL,
-  auditToolNames,
-  CANONICAL_TOOL_NAME_PATTERN,
-  CODEX_APP_REQUEST_USER_INPUT_TOOL,
-  isCanonicalToolName,
-  MCP_SERVER_LSP,
-  MCP_SERVER_COCOINDEX,
-  MCP_SERVER_CODEGRAPHCONTEXT,
-  MCP_SERVER_PLAYWRIGHT,
-  MCP_SERVER_OPENAI_DEVELOPER_DOCS,
-  MCP_SERVER_CONTEXT7,
-  MCP_SERVER_CODEX_APP,
-  mcpToolName,
-  multiAgentToolName
-} from "../../src/shared/tool-names.ts";
+  WEB_SEARCH_TOOL} from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 test("canonical Codex code-mode tool names are pinned", () => {
   assert.equal(EXEC_TOOL, "exec");
@@ -202,16 +201,19 @@ test("the audit classifier routes names to the right bucket", () => {
   assert.deepEqual(audit.unrecognised, ["NotAToolName"]);
 });
 
-// Guard rail: src/ must not hard-code a multi_agent_v1__* literal outside
+// Guard rail: runtime source must not hard-code a multi_agent_v1__* literal outside
 // the canonical constants module. If someone re-introduces one, this test
 // names the offender so the next reader can fix it at the source.
-const SRC_ROOT = fileURLToPath(new URL("../../src/", import.meta.url));
-const HOME = fileURLToPath(new URL("./tool-names.ts", import.meta.url));
+const SOURCE_ROOTS = [
+  fileURLToPath(new URL("../../src/", import.meta.url)),
+  fileURLToPath(new URL("../../runtime/src/", import.meta.url))
+];
+const CANONICAL_TOOL_NAMES = fileURLToPath(
+  new URL("../../runtime/src/shared/tool-names.ts", import.meta.url)
+);
 
 function listTypeScriptFiles(dir: string): string[] {
   const out: string[] = [];
-  for (const entry of readFileSync.bind(globalThis) && []) {
-  }
   const stack = [dir];
   while (stack.length > 0) {
     const current = stack.pop()!;
@@ -224,7 +226,7 @@ function listTypeScriptFiles(dir: string): string[] {
   return out;
 }
 
-test("src/ never hard-codes a multi_agent_v1__* tool name outside the canonical module", () => {
+test("source folders never hard-code a multi_agent_v1__* tool name outside Runtime", () => {
   const forbidden = [
     "multi_agent_v1__spawn_agent",
     "multi_agent_v1__wait_agent",
@@ -233,8 +235,8 @@ test("src/ never hard-codes a multi_agent_v1__* tool name outside the canonical 
     "multi_agent_v1__send_input"
   ];
   const offenders: { file: string; line: number; literal: string }[] = [];
-  for (const file of listTypeScriptFiles(SRC_ROOT)) {
-    if (file === HOME) continue;
+  for (const file of SOURCE_ROOTS.flatMap(listTypeScriptFiles)) {
+    if (file === CANONICAL_TOOL_NAMES) continue;
     const text = readFileSync(file, "utf8");
     for (const literal of forbidden) {
       const re = new RegExp(`["']${literal}["']`, "g");
@@ -249,7 +251,7 @@ test("src/ never hard-codes a multi_agent_v1__* tool name outside the canonical 
   assert.deepEqual(
     offenders,
     [],
-    `hard-coded multi_agent_v1__* literals must come from src/shared/tool-names.ts; offenders:\n${offenders
+    `hard-coded multi_agent_v1__* literals must come from @simulatorlife/autodev-runtime/shared/tool-names; offenders:\n${offenders
       .map((o) => `  ${o.file}:${o.line}  ${o.literal}`)
       .join("\n")}`
   );

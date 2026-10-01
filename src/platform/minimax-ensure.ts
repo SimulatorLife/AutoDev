@@ -9,8 +9,9 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { parseNonNegativeInteger } from "../shared/env.ts";
-import { writeErrorLine } from "../shared/output.ts";
+import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+
 import { LaunchdClient } from "./macos/launchd.ts";
 
 export interface MiniMaxEnsureOptions {

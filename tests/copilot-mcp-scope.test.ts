@@ -3,11 +3,15 @@ import { chmod, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
-import { copilotMcpArgs, runCopilot } from "../src/providers/copilot.ts";
+import {
+  copilotMcpArgs,
+  runCopilot
+} from "@simulatorlife/autodev-runtime/providers/copilot";
 import {
   EXECUTION_CONTRACT,
   roleContract
-} from "../src/shared/execution-contract.ts";
+} from "@simulatorlife/autodev-runtime/shared/execution-contract";
+
 import { createBridgeMcpHomes } from "./bridge-mcp-fixture.ts";
 
 type McpServer = {

@@ -17,7 +17,7 @@ node_bin="$(resolve_node)" || { echo "run-codex-copilot-proxy: node not found" >
 # The proxy is a typed AutoDev runtime module installed under CODEX_HOME. It is
 # not an inline heredoc: keeping it as a source-owned module makes it lintable,
 # testable, and reusable by the typed CLI/runtime path (mirrors the MiniMax
-# adapter at src/providers/minimax.ts).
+# adapter at runtime/src/providers/minimax.ts).
 proxy_script="$codex_home/src/providers/copilot.ts"
 if [[ ! -f "$proxy_script" ]]; then
   echo "Copilot proxy source is missing: $proxy_script" >&2

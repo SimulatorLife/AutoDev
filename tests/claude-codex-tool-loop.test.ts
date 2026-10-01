@@ -8,7 +8,7 @@ import { join, resolve as resolvePath } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { AUTODEV_WORKSPACE_KEY_HEADER } from "../src/shared/otel-resource-context.ts";
+import { AUTODEV_WORKSPACE_KEY_HEADER } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
 // The Claude bridge serves Claude as the model behind a Codex turn: every
 // action is a Codex tool call Codex executes and the app renders. These tests

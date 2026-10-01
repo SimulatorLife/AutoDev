@@ -10,7 +10,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { RouterLifecycle } from "../../src/router/lifecycle.ts";
+import { RouterLifecycle } from "@simulatorlife/autodev-runtime/router/lifecycle";
 
 const ROUTER_SERVER = fileURLToPath(
   new URL("../../src/router/server.ts", import.meta.url)

@@ -558,7 +558,7 @@ test("searchMemories excludes memories outside the caller's scope before any ite
   assert.deepEqual(hits[0]?.matchedSignals, ["lexical"]);
 });
 
-test("searchMemories hard-filters relevant file evidence before ranking", async () => {
+test("searchMemories preserves non-path candidates and reports only observed path matches", async () => {
   const pool = new FakeMemoryPool();
   const repo = repoWith(pool);
   await repo.appendExperience(makeExperience());
@@ -571,13 +571,26 @@ test("searchMemories hard-filters relevant file evidence before ranking", async 
       ]
     }
   });
-  const mismatch = makeMemoryRecord({ id: "mem-path-mismatch" });
+  const mismatch = makeMemoryRecord({
+    id: "mem-path-mismatch",
+    claim: "A fallback routing fact without a file citation."
+  });
+  const nearby = makeMemoryRecord({
+    id: "mem-path-nearby",
+    provenance: {
+      ...makeMemoryRecord().provenance,
+      evidence: [
+        { kind: "file", uri: "file:///workspace/repo/src/router/responses.ts" }
+      ]
+    }
+  });
   await repo.proposeMemory(match, makeLifecycleEvent({ memoryId: match.id }));
+  await repo.proposeMemory(nearby, makeLifecycleEvent({ memoryId: nearby.id }));
   await repo.proposeMemory(
     mismatch,
     makeLifecycleEvent({ memoryId: mismatch.id })
   );
-  for (const candidate of [match, mismatch]) {
+  for (const candidate of [match, nearby, mismatch]) {
     await repo.transitionMemories(
       [
         {
@@ -610,10 +623,74 @@ test("searchMemories hard-filters relevant file evidence before ranking", async 
     asOf: "2026-09-30T12:00:00.000Z"
   });
   assert.deepEqual(
-    hits.map((hit) => hit.memory.id),
-    ["mem-path-match"]
+    new Set(hits.map((hit) => hit.memory.id)),
+    new Set(["mem-path-match", "mem-path-nearby", "mem-path-mismatch"])
   );
-  assert.ok(hits[0]?.matchedSignals.includes("path"));
+  assert.ok(
+    hits
+      .find((hit) => hit.memory.id === "mem-path-match")
+      ?.matchedSignals.includes("path")
+  );
+  assert.ok(
+    hits
+      .find((hit) => hit.memory.id === "mem-path-nearby")
+      ?.matchedSignals.includes("path")
+  );
+  assert.ok(
+    !hits
+      .find((hit) => hit.memory.id === "mem-path-mismatch")
+      ?.matchedSignals.includes("path")
+  );
+  assert.ok(
+    hits
+      .find((hit) => hit.memory.id === "mem-path-mismatch")
+      ?.matchedSignals.includes("lexical")
+  );
+});
+
+test("searchMemories ranks and reports task-kind matches from cited experience metadata", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience({ taskKind: "bugfix" }));
+  const candidate = makeMemoryRecord({
+    id: "mem-bugfix-source",
+    claim: "The config loader validates repository state."
+  });
+  await repo.proposeMemory(
+    candidate,
+    makeLifecycleEvent({ memoryId: candidate.id })
+  );
+  await repo.transitionMemories(
+    [
+      {
+        expectedUpdatedAt: candidate.updatedAt,
+        next: {
+          ...candidate,
+          status: "active",
+          validity: { state: "verified", evidence: [] },
+          updatedAt: "2026-01-02T00:00:00.000Z"
+        }
+      }
+    ],
+    [
+      makeLifecycleEvent({
+        id: "evt-bugfix-source-active",
+        memoryId: candidate.id,
+        action: "verified",
+        fromStatus: "proposed",
+        toStatus: "active",
+        reasonCode: "verified_current_state"
+      })
+    ]
+  );
+
+  const hits = await repo.searchMemories({
+    query: "config loader",
+    taskKind: "bugfix",
+    context: makeContext({ workspaceId: "ws-1" }),
+    limit: 5
+  });
+  assert.deepEqual(hits[0]?.matchedSignals, ["lexical", "task_kind"]);
 });
 
 test("searchMemories excludes proposed (unpromoted) memories from results", async () => {
@@ -629,6 +706,47 @@ test("searchMemories excludes proposed (unpromoted) memories from results", asyn
     limit: 10
   });
   assert.equal(hits.length, 0);
+});
+
+test("searchMemories does not fill top-k with zero-signal records", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+  const unrelated = makeMemoryRecord({
+    claim: "The configuration loader reads execution contract files."
+  });
+  await repo.proposeMemory(unrelated, makeLifecycleEvent());
+  await repo.transitionMemories(
+    [
+      {
+        expectedUpdatedAt: unrelated.updatedAt,
+        next: {
+          ...unrelated,
+          status: "active",
+          validity: { state: "verified", evidence: [] },
+          updatedAt: "2026-01-02T00:00:00.000Z"
+        }
+      }
+    ],
+    [
+      makeLifecycleEvent({
+        id: "evt-unrelated-active",
+        memoryId: unrelated.id,
+        action: "verified",
+        fromStatus: "proposed",
+        toStatus: "active",
+        reasonCode: "verified_current_state"
+      })
+    ]
+  );
+
+  const hits = await repo.searchMemories({
+    query: "randomized networking behavior",
+    context: makeContext({ workspaceId: "ws-1" }),
+    limit: 10
+  });
+
+  assert.deepEqual(hits, []);
 });
 
 test("proposeMemory rejects an embedding when no pgvector support is configured", async () => {
@@ -852,6 +970,72 @@ test("listExperiences can read prior task history only in a workspace-bounded cu
     [visible.id, hidden.id].sort()
   );
   assert.equal(curatorPage.total, 2);
+});
+
+test("listExpiredExperiences selects only completed, scoped, unreferenced rows", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  const scope = {
+    kind: "task" as const,
+    workspaceId: "ws-1",
+    taskId: "task-retention",
+    runId: "run-retention"
+  };
+  const makeTaskExperience = (
+    id: string,
+    completedAt?: string,
+    repositoryId = "owner/repo"
+  ) =>
+    makeExperience({
+      id,
+      workspaceId: "ws-1",
+      repositoryId,
+      scope: { ...scope, runId: id },
+      taskId: "task-retention",
+      runId: id,
+      ...(completedAt ? { completedAt } : {})
+    });
+  await repo.appendExperience(
+    makeTaskExperience("exp-referenced", "2025-01-01T00:00:00.000Z")
+  );
+  await repo.appendExperience(
+    makeTaskExperience("exp-expired", "2025-02-01T00:00:00.000Z")
+  );
+  await repo.appendExperience(
+    makeTaskExperience("exp-recent", "2026-02-01T00:00:00.000Z")
+  );
+  await repo.appendExperience(makeTaskExperience("exp-incomplete"));
+  await repo.appendExperience(
+    makeTaskExperience(
+      "exp-other-repository",
+      "2025-03-01T00:00:00.000Z",
+      "owner/other"
+    )
+  );
+  const memory = makeMemoryRecord({
+    provenance: {
+      experienceIds: ["exp-referenced"],
+      evidence: [{ kind: "commit", uri: "git://owner/repo/commit/abc" }],
+      createdBy: "curator",
+      createdAt: "2025-01-01T00:00:00.000Z"
+    }
+  });
+  await repo.proposeMemory(memory, makeLifecycleEvent({ memoryId: memory.id }));
+
+  const candidates = await repo.listExpiredExperiences({
+    context: makeContext({
+      workspaceId: "ws-1",
+      repositoryId: "owner/repo",
+      canReadTaskHistory: true
+    }),
+    completedBefore: "2026-01-01T00:00:00.000Z",
+    limit: 10
+  });
+
+  assert.deepEqual(
+    candidates.map(({ id }) => id),
+    ["exp-expired"]
+  );
 });
 
 test("purgeExperience erases only unreferenced runs and writes a fingerprinted privacy event", async () => {

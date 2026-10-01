@@ -1,7 +1,7 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 
-import { resolveSandboxMode } from "../src/shared/execution-contract.ts";
+import { resolveSandboxMode } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 
 void test("resolveSandboxMode: read-only roles return 'read-only'", () => {
   assert.equal(resolveSandboxMode("explorer"), "read-only");

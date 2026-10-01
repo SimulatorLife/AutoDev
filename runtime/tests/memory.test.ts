@@ -10,22 +10,24 @@ import {
   MeterProvider,
   PeriodicExportingMetricReader
 } from "@opentelemetry/sdk-metrics";
-import type {
-  EvidenceReference,
-  ExperienceEnvelope,
-  MemoryActor,
-  MemoryExperiencePurgeRequest,
-  MemoryExperiencePurgeResult,
-  MemoryHistory,
-  MemoryLifecycleEvent,
-  MemoryPacket,
-  MemoryReadContext,
-  MemoryRecord,
-  MemoryRepository,
-  MemoryResearchRequest,
-  MemorySearchHit,
-  MemorySearchRequest,
-  MemoryVersionedUpdate
+import {
+  type EvidenceReference,
+  type ExperienceEnvelope,
+  isMemoryExperienceVisibleTo,
+  type MemoryActor,
+  type MemoryExperiencePurgeRequest,
+  type MemoryExperiencePurgeResult,
+  type MemoryExpiredExperienceRequest,
+  type MemoryHistory,
+  type MemoryLifecycleEvent,
+  type MemoryPacket,
+  type MemoryReadContext,
+  type MemoryRecord,
+  type MemoryRepository,
+  type MemoryResearchRequest,
+  type MemorySearchHit,
+  type MemorySearchRequest,
+  type MemoryVersionedUpdate
 } from "@simulatorlife/autodev-core";
 
 import { injectMemoryContext } from "../src/memory/context-injection.ts";
@@ -55,6 +57,8 @@ const worker: MemoryActor = {
   role: "worker"
 };
 const root: MemoryActor = { id: "root-agent", authority: "root" };
+const EXPERIENCE_TIME_COLLATOR = new Intl.Collator();
+
 const source: EvidenceReference = {
   kind: "commit",
   uri: "git://workspace-a/repo-a/commit/abc123",
@@ -73,7 +77,7 @@ class FakeMemoryRepository implements MemoryRepository {
 
   async appendExperience(envelope: ExperienceEnvelope): Promise<void> {
     if (this.experiences.has(envelope.id))
-      throw new Error("duplicate experience");
+      throw new MemoryConflictError("duplicate experience");
     this.experiences.set(envelope.id, envelope);
   }
 
@@ -93,6 +97,32 @@ class FakeMemoryRepository implements MemoryRepository {
   }> {
     const items = [...this.experiences.values()];
     return { items, total: items.length, limit: 50, offset: 0 };
+  }
+
+  async listExpiredExperiences(
+    request: MemoryExpiredExperienceRequest
+  ): Promise<readonly ExperienceEnvelope[]> {
+    const cutoff = Date.parse(request.completedBefore);
+    const referenced = new Set(
+      [...this.memories.values()].flatMap(
+        (memory) => memory.provenance.experienceIds
+      )
+    );
+    return [...this.experiences.values()]
+      .filter(
+        (item) =>
+          item.completedAt &&
+          Date.parse(item.completedAt) < cutoff &&
+          isMemoryExperienceVisibleTo(item, request.context) &&
+          !referenced.has(item.id)
+      )
+      .sort((left, right) =>
+        EXPERIENCE_TIME_COLLATOR.compare(
+          String(left.completedAt),
+          String(right.completedAt)
+        )
+      )
+      .slice(0, request.limit);
   }
 
   async purgeExperience(
@@ -337,6 +367,54 @@ test("workers append only their own raw execution references", async () => {
   );
 });
 
+test("experience validation references are bounded and stripped of locator credentials", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const envelope: ExperienceEnvelope = {
+    ...experience(),
+    validation: {
+      state: "passed",
+      evidence: [
+        {
+          kind: "pull_request",
+          uri: "https://example.invalid/repo/pull/12?token=do-not-persist"
+        }
+      ]
+    }
+  };
+
+  await service.appendExperience(envelope, worker, {
+    ...context,
+    taskId: "task-old",
+    runId: "run-old"
+  });
+
+  const stored = repository.experiences.get(envelope.id);
+  assert.equal(
+    stored?.validation?.evidence[0]?.uri,
+    "https://example.invalid/repo/pull/12"
+  );
+  assert.doesNotMatch(JSON.stringify(stored), /do-not-persist/);
+  await assert.rejects(
+    service.appendExperience(
+      {
+        ...envelope,
+        id: "experience-too-many-validation-refs",
+        validation: {
+          ...envelope.validation!,
+          evidence: Array.from({ length: 65 }, () => ({
+            kind: "commit" as const,
+            uri: "git://workspace-a/repo-a/commit/abc123"
+          }))
+        }
+      },
+      worker,
+      { ...context, taskId: "task-old", runId: "run-old" }
+    ),
+    MemoryValidationError
+  );
+});
+
 test("captureExperience normalizes a native transcript and persists only its source reference envelope", async () => {
   const repository = new FakeMemoryRepository();
   const service = makeService(repository);
@@ -529,6 +607,92 @@ test("experience purging preserves evidence referenced by durable memory", async
     "referenced_by_memory"
   );
   assert.equal(repository.experiences.has("experience-1"), true);
+});
+
+test("curator retention purges a bounded completed-history batch and skips referenced evidence", async () => {
+  const repository = new FakeMemoryRepository();
+  const expiredReferenced = {
+    ...experience("expired-referenced"),
+    completedAt: "2026-09-01T00:00:00.000Z"
+  };
+  const expiredUnreferenced = {
+    ...experience("expired-unreferenced"),
+    completedAt: "2026-09-02T00:00:00.000Z"
+  };
+  const recent = {
+    ...experience("recent-run"),
+    completedAt: "2026-09-29T00:00:00.000Z"
+  };
+  await repository.appendExperience(expiredReferenced);
+  await repository.appendExperience(expiredUnreferenced);
+  await repository.appendExperience(recent);
+  repository.memories.set(
+    "durable-reference",
+    record("durable-reference", {
+      provenance: {
+        experienceIds: [expiredReferenced.id],
+        evidence: [source],
+        createdBy: root.id,
+        createdAt: "2026-09-01T00:00:00.000Z"
+      }
+    })
+  );
+  const service = makeService(repository);
+  const retentionContext = { ...context, canReadTaskHistory: true };
+
+  await assert.rejects(
+    service.purgeExpiredExperiences({
+      completedBefore: "2026-09-15T00:00:00.000Z",
+      limit: 10,
+      actor: worker,
+      context: retentionContext
+    }),
+    MemoryAuthorizationError
+  );
+  await assert.rejects(
+    service.purgeExpiredExperiences({
+      completedBefore: "2026-09-15T00:00:00.000Z",
+      limit: 10,
+      actor: root,
+      context
+    }),
+    MemoryAuthorizationError
+  );
+  await assert.rejects(
+    service.purgeExpiredExperiences({
+      completedBefore: "2026-10-01T00:00:00.000Z",
+      limit: 10,
+      actor: root,
+      context: retentionContext
+    }),
+    MemoryValidationError
+  );
+  await assert.rejects(
+    service.purgeExpiredExperiences({
+      completedBefore: "2026-09-15T00:00:00.000Z",
+      limit: 101,
+      actor: root,
+      context: retentionContext
+    }),
+    MemoryValidationError
+  );
+  const report = await service.purgeExpiredExperiences({
+    completedBefore: "2026-09-15T00:00:00.000Z",
+    limit: 10,
+    actor: root,
+    context: retentionContext
+  });
+
+  assert.deepEqual(report, {
+    selected: 1,
+    purged: 1,
+    referencedByMemory: 0,
+    noLongerVisible: 0
+  });
+  assert.equal(repository.experiences.has(expiredReferenced.id), true);
+  assert.equal(repository.experiences.has(expiredUnreferenced.id), false);
+  assert.equal(repository.experiences.has(recent.id), true);
+  assert.equal(repository.purgeRequests[0]?.reason, "retention_expired");
 });
 
 test("revisions create proposals and never rewrite the currently active claim", async () => {
@@ -786,6 +950,20 @@ test("research validates current state, filters scope and lifecycle, and injects
   assert.match(packet.text, /Current state confirms/);
   assert.match(packet.text, /git:\/\/workspace-a\/repo-a\/commit\/abc123/);
   assert.equal(packet.characterCount, packet.text.length);
+});
+
+test("memory search and research reject empty or oversized task-kind signals", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  await assert.rejects(
+    service.search({ query: "configuration", context, taskKind: " " }),
+    MemoryValidationError
+  );
+  await assert.rejects(
+    service.research(researchRequest({ taskKind: "bugfix".repeat(34) })),
+    MemoryValidationError
+  );
+  assert.equal(repository.searchRequests.length, 0);
 });
 
 test("MemoryService emits bounded candidate, packet, and operation metrics", async () => {
@@ -1118,6 +1296,7 @@ test("official MCP facade exposes governed tools and binds scope outside model a
   try {
     const listed = await client.listTools();
     assert.deepEqual(listed.tools.map((tool) => tool.name).sort(), [
+      "experience_append",
       "experience_get",
       "experience_search",
       "memory_get",
@@ -1130,10 +1309,117 @@ test("official MCP facade exposes governed tools and binds scope outside model a
       "memory_why"
     ]);
 
+    const appendArguments = {
+      workspaceId: "attacker-selected-workspace",
+      taskId: "attacker-selected-task",
+      agentId: "attacker-selected-agent",
+      trajectory: {
+        format: "claude-code-native-jsonl",
+        uri: "https://example.invalid/session/transcript.jsonl?token=do-not-persist",
+        digest: "A".repeat(64),
+        recordCount: 12
+      },
+      startedAt: "2026-09-30T10:00:00.000Z",
+      completedAt: "2026-09-30T10:05:00.000Z",
+      outcome: "success",
+      validation: {
+        state: "passed",
+        evidence: [
+          {
+            kind: "pull_request",
+            uri: "https://example.invalid/repo/pull/12?token=validation-secret"
+          }
+        ]
+      },
+      evidence: [
+        {
+          kind: "file",
+          uri: "https://example.invalid/repo/src/feature.ts?token=evidence-secret"
+        }
+      ]
+    };
+    const firstAppend = await client.callTool({
+      name: "experience_append",
+      arguments: appendArguments
+    });
+    assert.equal(firstAppend.isError, undefined);
+    const firstAppendText = (firstAppend.content as Array<{ text?: string }>)[0]
+      ?.text;
+    const firstAppendResult = JSON.parse(firstAppendText ?? "null") as {
+      id: string;
+      appended: boolean;
+    };
+    assert.equal(firstAppendResult.appended, true);
+    const appendedExperience = repository.experiences.get(firstAppendResult.id);
+    assert.ok(appendedExperience);
+    assert.deepEqual(appendedExperience.scope, {
+      kind: "agent",
+      workspaceId: "workspace-a",
+      taskId: "task-current",
+      runId: "run-current",
+      agentId: "agent-current"
+    });
+    assert.equal(
+      appendedExperience.trajectory.uri,
+      "https://example.invalid/session/transcript.jsonl"
+    );
+    assert.equal(appendedExperience.trajectory.digest, "a".repeat(64));
+    assert.equal(
+      appendedExperience.validation?.evidence[0]?.uri,
+      "https://example.invalid/repo/pull/12"
+    );
+    assert.doesNotMatch(
+      JSON.stringify(appendedExperience),
+      /attacker-selected|do-not-persist|validation-secret|evidence-secret/
+    );
+    const repeatedAppend = await client.callTool({
+      name: "experience_append",
+      arguments: {
+        ...appendArguments,
+        trajectory: { ...appendArguments.trajectory, digest: "a".repeat(64) }
+      }
+    });
+    const repeatedAppendText = (
+      repeatedAppend.content as Array<{ text?: string }>
+    )[0]?.text;
+    assert.deepEqual(JSON.parse(repeatedAppendText ?? "null"), {
+      id: firstAppendResult.id,
+      appended: false
+    });
+
+    const [unboundClientTransport, unboundServerTransport] =
+      InMemoryTransport.createLinkedPair();
+    const unboundServer = createMemoryMcpServer(service, {
+      current: () => ({
+        actor: worker,
+        context: { ...context, taskId: "different-host-task" },
+        taskId: "task-current",
+        task: "Unbound MCP task"
+      })
+    });
+    const unboundClient = new Client(
+      { name: "unbound-memory-test-client", version: "1.0.0" },
+      { capabilities: {} }
+    );
+    await unboundServer.connect(unboundServerTransport);
+    await unboundClient.connect(unboundClientTransport);
+    try {
+      const unboundAppend = await unboundClient.callTool({
+        name: "experience_append",
+        arguments: appendArguments
+      });
+      assert.equal(unboundAppend.isError, true);
+      assert.equal(repository.experiences.size, 2);
+    } finally {
+      await unboundClient.close();
+      await unboundServer.close();
+    }
+
     const result = await client.callTool({
       name: "memory_research",
       arguments: {
         query: "memory service",
+        taskKind: "bugfix",
         workspaceId: "attacker-selected-workspace"
       }
     });
@@ -1146,6 +1432,7 @@ test("official MCP facade exposes governed tools and binds scope outside model a
       repository.searchRequests.at(-1)?.context.taskId,
       "task-current"
     );
+    assert.equal(repository.searchRequests.at(-1)?.taskKind, "bugfix");
     const responseContent = result.content as Array<{
       type: string;
       text?: string;

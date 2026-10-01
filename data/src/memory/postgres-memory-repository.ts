@@ -6,6 +6,7 @@ import type {
   ExperienceSearchRequest,
   MemoryExperiencePurgeRequest,
   MemoryExperiencePurgeResult,
+  MemoryExpiredExperienceRequest,
   MemoryHistory,
   MemoryLifecycleEvent,
   MemoryListRequest,
@@ -44,6 +45,7 @@ import {
 import {
   buildExperienceListQuery,
   buildExperienceSearchQuery,
+  buildExpiredExperienceQuery,
   buildMemoryListQuery,
   buildMemorySearchQuery,
   type VectorRankingWeights
@@ -190,6 +192,24 @@ export class PostgresMemoryRepository implements MemoryRepository {
       limit: request.limit ?? 50,
       offset: request.offset ?? 0
     };
+  }
+
+  async listExpiredExperiences(
+    request: MemoryExpiredExperienceRequest
+  ): Promise<readonly ExperienceEnvelope[]> {
+    if (
+      !Number.isInteger(request.limit) ||
+      request.limit < 1 ||
+      request.limit > 1000 ||
+      !Number.isFinite(Date.parse(request.completedBefore))
+    ) {
+      throw new RangeError(
+        "Memory experience retention scan bounds are invalid."
+      );
+    }
+    const query = buildExpiredExperienceQuery(request);
+    const result = await this.pool.query(query.text, query.params);
+    return result.rows.map((row) => hydrateExperienceRow(row));
   }
 
   purgeExperience(
@@ -411,9 +431,14 @@ export class PostgresMemoryRepository implements MemoryRepository {
       memory: hydrateMemoryRecordRow(row),
       score: Number(row.score),
       matchedSignals: [
-        "lexical",
-        ...(usesVector ? (["semantic"] as const) : []),
-        ...(request.relevantPaths?.length ? (["path"] as const) : [])
+        ...(Number(row.lexical_score ?? 0) > 0 ? (["lexical"] as const) : []),
+        ...(usesVector && row.embedding !== null && row.embedding !== undefined
+          ? (["semantic"] as const)
+          : []),
+        ...(Number(row.path_score ?? 0) > 0 ? (["path"] as const) : []),
+        ...(Number(row.task_kind_score ?? 0) > 0
+          ? (["task_kind"] as const)
+          : [])
       ]
     }));
   }

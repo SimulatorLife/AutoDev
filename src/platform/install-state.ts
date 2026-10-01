@@ -15,7 +15,10 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import { writeErrorLine, writeLine } from "../shared/output.ts";
+import {
+  writeErrorLine,
+  writeLine
+} from "@simulatorlife/autodev-runtime/shared/output";
 
 export type OtelIngressMode = "direct" | "collector" | "openlit";
 export const ROUTER_AUTH_VARIABLE = "CODEX_ROUTER_AUTH_TOKEN";

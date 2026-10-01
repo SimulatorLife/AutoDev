@@ -11,12 +11,16 @@ import {
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
+import {
+  writeErrorLine,
+  writeLine
+} from "@simulatorlife/autodev-runtime/shared/output";
+
 import { runCompose } from "../config/compose-user-config.ts";
 import { renderAgentDirectory } from "../config/render-agent-configs.ts";
 import { runBridgeMcpCatalogue } from "../config/render-bridge-mcp-catalogue.ts";
 import { renderExecutionContract } from "../config/render-execution-contract.ts";
 import { runModelCatalog } from "../config/render-model-catalog.ts";
-import { writeErrorLine, writeLine } from "../shared/output.ts";
 import {
   antigravitySkillsStatus,
   missingAntigravityPermissions

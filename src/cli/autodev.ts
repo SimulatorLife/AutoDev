@@ -3,6 +3,11 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  writeErrorLine,
+  writeLine
+} from "@simulatorlife/autodev-runtime/shared/output";
+
 import { parseArgs, requiredArg } from "../config/cli-args.ts";
 import { ConfigError } from "../config/config-files.ts";
 import { renderAgentDirectory } from "../config/render-agent-configs.ts";
@@ -12,7 +17,6 @@ import {
   runExecutionContract
 } from "../config/render-execution-contract.ts";
 import { runModelCatalog } from "../config/render-model-catalog.ts";
-import { writeErrorLine, writeLine } from "../shared/output.ts";
 import { dispatchHookCommand, type HookCommandBackend } from "./hook.ts";
 import {
   dispatchInstallCommand,

@@ -1,6 +1,7 @@
 export * from "../../../src/router/concurrency.ts";
-export * from "../../../src/router/cooldown.ts";
-export * from "../../../src/router/lifecycle.ts";
+export * from "./cooldown/index.ts";
+export * from "./tool-call-ownership/index.ts";
+export * from "./lifecycle/index.ts";
 export * from "../../../src/router/persistence.ts";
 export * from "../../../src/router/proxy.ts";
 export * from "../../../src/router/routing.ts";
@@ -48,5 +49,6 @@ export {
   subagentSpawnToolsFor,
   type SubagentStatus,
   subagentStatus,
-  type SubagentTelemetry} from "../../../src/router/subagents.ts";
+  type SubagentTelemetry
+} from "../../../src/router/subagents.ts";
 export * from "../../../src/router/telemetry.ts";

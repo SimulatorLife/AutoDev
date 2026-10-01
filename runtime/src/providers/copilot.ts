@@ -1,40 +1,36 @@
 #!/usr/bin/env node
 
 /** OpenAI Responses compatibility proxy for the subscription-authenticated Copilot CLI. */
-import type { ChildProcess } from "node:child_process";
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import type { IncomingMessage, ServerResponse } from "node:http";
-import { createServer } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse
+} from "node:http";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import pathApi from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
 import {
-  composeProviderPrompt,
-  isOrchestratorRole,
-  resolveAgentRole
-} from "../agents/bridge-role.ts";
-import {
   bridgeSkillContext,
-  readOnlySystemPromptInjection
-} from "../agents/bridge-sandbox.ts";
-import { SpawnSessionRegistry } from "../agents/bridge-spawn-session.ts";
-import {
   buildSpawnScript,
+  composeProviderPrompt,
   execToolCallSseEvents,
+  isOrchestratorRole,
   mintCallId,
-  mintCallItemId
-} from "../agents/spawn-tools.ts";
-import type { RoleContract } from "../shared/execution-contract.ts";
-import { roleContract } from "../shared/execution-contract.ts";
+  mintCallItemId,
+  readOnlySystemPromptInjection,
+  resolveAgentRole,
+  SpawnSessionRegistry
+} from "@simulatorlife/autodev-runtime/agents";
 import {
-  AUTODEV_WORKSPACE_KEY_HEADER,
-  withAutoDevOtelResourceContext
-} from "../shared/otel-resource-context.ts";
-import { writeErrorLine } from "../shared/output.ts";
+  type RoleContract,
+  roleContract
+} from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   classifyCliLimit,
   INCOMPLETE_REASON_INTERRUPTED,
@@ -43,15 +39,21 @@ import {
   limitResponseHeaders,
   retryAfterSecondsFromLimit,
   terminalIncompleteEvents
-} from "../shared/provider-limits.ts";
+} from "@simulatorlife/autodev-runtime/shared/provider-limits";
 import {
   resolveCwd,
   WorkspaceResolutionError
-} from "../shared/resolve-workspace.ts";
+} from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
+import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
+  type AgentEventReporter,
   resolveAgentEventReporter,
   SKILL_READ_SOURCE
-} from "../telemetry/agent-events.ts";
+} from "@simulatorlife/autodev-runtime/telemetry";
+import {
+  AUTODEV_WORKSPACE_KEY_HEADER,
+  withAutoDevOtelResourceContext
+} from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
 // Bind the port only when run as a program, so this file can be imported for
 // its pure helpers without taking the port from the running bridge. Mirrors
@@ -74,7 +76,7 @@ const AUTH_TOKEN = process.env.CODEX_ROUTER_COPILOT_API_KEY ?? "";
 // specified schema; see COPILOT_TOOL_OUTPUT_KEYS below). Keep the dynamic edge
 // explicit while the transport and boundary operations remain typed.
 type JsonRecord = Record<string, any>;
-type AgentReporter = import("../telemetry/agent-events.ts").AgentEventReporter;
+type AgentReporter = AgentEventReporter;
 // `roleContract` returns the fields every consumer shares (`mcp`) typed, plus
 // an index signature for the rest. This bridge additionally reads
 // `mcpTools`, `readOnly`, and `skills`, which are real contract fields the
@@ -112,24 +114,25 @@ function readOnlyHeaderValue(
 const spawnSessions = new SpawnSessionRegistry();
 
 // Canonical skill roots whose `SKILL.md` a successful read counts as actual
-// usage, mirroring the approved roots `src/hooks/skill-read-telemetry.ts`
+// usage, mirroring the approved roots `runtime/src/hooks/skill-read-telemetry.ts`
 // uses for Codex's own PreToolUse hook. The Copilot CLI's tool calls never
 // reach that hook -- it runs entirely inside its own runtime -- so this
 // bridge is the only place a read of one of these files is observable at all.
 const HOME = homedir();
-// Two levels up from `src/providers/` reaches the repository root in a
-// checkout and `$CODEX_HOME` once installed there, mirroring every other
-// typed `src/` module's `../..` depth (see src/shared/execution-contract.ts).
-const REPO_ROOT =
-  process.env.AUTODEV_REPO_ROOT ||
-  resolve(join(import.meta.dirname, "..", ".."));
+// Resolve the owning checkout or installed CODEX_HOME from this module's
+// location; the Runtime source tree is one level deeper than its installed
+// `src/providers/` copy.
+const REPO_ROOT = resolveRuntimeSourceRoot(
+  import.meta.dirname,
+  process.env.AUTODEV_REPO_ROOT
+);
 const SKILL_ROOTS = [
-  join(HOME, ".agents", "skills"),
-  join(HOME, ".codex", "skills"),
-  join(HOME, "AutoDev", ".agents", "skills"),
-  join(HOME, "AutoDev", ".rulesync", "skills"),
-  join(REPO_ROOT, ".agents", "skills"),
-  join(REPO_ROOT, ".rulesync", "skills")
+  pathApi.join(HOME, ".agents", "skills"),
+  pathApi.join(HOME, ".codex", "skills"),
+  pathApi.join(HOME, "AutoDev", ".agents", "skills"),
+  pathApi.join(HOME, "AutoDev", ".rulesync", "skills"),
+  pathApi.join(REPO_ROOT, ".agents", "skills"),
+  pathApi.join(REPO_ROOT, ".rulesync", "skills")
 ].filter((path) => existsSync(path));
 
 // Tool names the Copilot CLI uses to read a file's contents outright, versus
@@ -156,8 +159,8 @@ function normaliseSkillReadPath(raw: unknown): string | null {
   const trimmed = raw.trim().replaceAll(/^['"]|['"]$/g, "");
   if (!trimmed) return null;
   let path = trimmed;
-  if (path.startsWith("~")) path = join(HOME, path.slice(1));
-  if (!isAbsolute(path)) path = resolve(path);
+  if (path.startsWith("~")) path = pathApi.join(HOME, path.slice(1));
+  if (!pathApi.isAbsolute(path)) path = pathApi.resolve(path);
   return path;
 }
 
@@ -301,15 +304,15 @@ function extractSkillReadPath(
 // path -- because that is all the router retains.
 function matchSkillReadPath(path: string | null): string | null {
   if (!path) return null;
-  const normalised = path.replaceAll(/[\\/]+/g, sep);
+  const normalised = path.replaceAll(/[\\/]+/g, pathApi.sep);
   for (const rootRaw of SKILL_ROOTS) {
-    const root = rootRaw.replaceAll(/[\\/]+/g, sep);
-    const rootWithSep = root.endsWith(sep) ? root : root + sep;
+    const root = rootRaw.replaceAll(/[\\/]+/g, pathApi.sep);
+    const rootWithSep = root.endsWith(pathApi.sep) ? root : root + pathApi.sep;
     if (!normalised.startsWith(rootWithSep)) continue;
     const relative = normalised.slice(root.length).replace(/^[\\/]+/, "");
-    if (!relative.endsWith(`${sep}SKILL.md`) && relative !== "SKILL.md")
+    if (!relative.endsWith(`${pathApi.sep}SKILL.md`) && relative !== "SKILL.md")
       continue;
-    const segments = relative.split(sep).filter(Boolean);
+    const segments = relative.split(pathApi.sep).filter(Boolean);
     if (segments.length !== 2) continue;
     const [skill] = segments;
     if (!skill || skill.includes("..")) continue;
@@ -617,8 +620,8 @@ function isResearchRole(role: unknown): boolean {
 
 /** The launch definition of every AutoDev MCP server, rendered by the installer from `.rulesync/mcp.jsonc`. */
 function bridgeMcpCatalogue(): JsonRecord {
-  const path = join(
-    process.env.CODEX_HOME ?? join(homedir(), ".codex"),
+  const path = pathApi.join(
+    process.env.CODEX_HOME ?? pathApi.join(homedir(), ".codex"),
     "provider-runtime",
     "mcp-servers.json"
   );
@@ -636,8 +639,8 @@ function bridgeMcpCatalogue(): JsonRecord {
 
 /** Server names in the user-level Copilot MCP file that Rulesync writes. */
 function userMcpServerNames(): string[] {
-  const path = join(
-    process.env.COPILOT_HOME ?? join(homedir(), ".copilot"),
+  const path = pathApi.join(
+    process.env.COPILOT_HOME ?? pathApi.join(homedir(), ".copilot"),
     "mcp-config.json"
   );
   if (!existsSync(path)) return [];
@@ -700,9 +703,7 @@ function copilotMcpArgs(
     // The CLI cannot reach Codex directly. Give only this identified root turn
     // a per-request MCP server whose call is collected and returned as a
     // synthetic Codex exec item after the CLI turn completes.
-    const shim = resolve(
-      join(import.meta.dirname, "..", "mcp", "spawn-shim.ts")
-    );
+    const shim = pathApi.join(REPO_ROOT, "src", "mcp", "spawn-shim.ts");
     additional.autodev_spawn = {
       type: "stdio",
       command: process.execPath,

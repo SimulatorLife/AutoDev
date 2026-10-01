@@ -32,7 +32,7 @@
  * `count` anonymous children by the router.
  */
 
-import { writeErrorLine } from "../shared/output.ts";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 export const REQUEST_ID_HEADER = "x-autodev-request-id";
 export const SUBAGENT_SPAWN_TOOLS_HEADER = "x-autodev-subagent-spawn-tools";
@@ -545,9 +545,7 @@ export class AgentEventReporter {
         ? stateOrOptions.minIntervalMs
         : 0;
     const timestamp =
-      typeof stateOrOptions === "object"
-        ? stateOrOptions.timestamp
-        : undefined;
+      typeof stateOrOptions === "object" ? stateOrOptions.timestamp : undefined;
     const now =
       typeof timestamp === "number" && Number.isFinite(timestamp)
         ? timestamp

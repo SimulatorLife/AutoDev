@@ -4,12 +4,13 @@ import test from "node:test";
 import {
   buildExperienceListQuery,
   buildExperienceSearchQuery,
+  buildExpiredExperienceQuery,
   buildMemoryListQuery,
   buildMemorySearchQuery
 } from "../../src/memory/search.ts";
 import { makeContext } from "./fixtures/builders.ts";
 
-test("buildMemorySearchQuery applies scope/status/validity filters inside a CTE before any ranking expression", () => {
+test("buildMemorySearchQuery applies hard scope/status/validity filters before ranking", () => {
   const { text, params } = buildMemorySearchQuery({
     query: "config loader",
     context: makeContext({ workspaceId: "ws-1" }),
@@ -19,16 +20,20 @@ test("buildMemorySearchQuery applies scope/status/validity filters inside a CTE 
 
   const cteStart = text.indexOf("WITH scoped AS (");
   const whereIndex = text.indexOf("WHERE");
-  const cteClose = text.indexOf(")\nSELECT");
-  const outerSelectIndex = text.indexOf("SELECT *,", cteClose);
+  const rankedStart = text.indexOf("), ranked AS (");
+  const rankedEnd = text.indexOf(")\nSELECT", rankedStart);
+  const outerSelectIndex = text.indexOf("SELECT *,", rankedEnd);
   const orderByIndex = text.indexOf("ORDER BY score");
 
   assert.ok(cteStart === 0, "query must start with the scoped CTE");
   assert.ok(whereIndex > cteStart, "WHERE must be inside the CTE");
-  assert.ok(cteClose > whereIndex, "the CTE must close after its WHERE clause");
   assert.ok(
-    outerSelectIndex > cteClose,
-    "the ranking SELECT must be the outer query"
+    rankedStart > whereIndex,
+    "the filtered CTE must close after its WHERE clause"
+  );
+  assert.ok(
+    rankedEnd > rankedStart && outerSelectIndex > rankedEnd,
+    "ranking must occur after the filtered CTE"
   );
   assert.ok(
     orderByIndex > outerSelectIndex,
@@ -36,8 +41,9 @@ test("buildMemorySearchQuery applies scope/status/validity filters inside a CTE 
   );
 
   // The hard filters themselves must live inside the CTE, not the outer query.
-  const cteBody = text.slice(cteStart, cteClose);
-  const outerBody = text.slice(cteClose);
+  const cteBody = text.slice(cteStart, rankedStart);
+  const rankingBody = text.slice(rankedStart, rankedEnd);
+  const outerBody = text.slice(rankedEnd);
   assert.match(cteBody, /status = 'active'/);
   assert.match(cteBody, /validity_state = 'verified'/);
   assert.match(
@@ -46,11 +52,12 @@ test("buildMemorySearchQuery applies scope/status/validity filters inside a CTE 
   );
   assert.match(cteBody, /kind = ANY\(\$\d+::text\[\]\)/);
   assert.match(cteBody, /scope_kind = 'workspace'/);
+  assert.match(cteBody, /claim_search @@ plainto_tsquery\('english', \$\d+\)/);
 
   // Ranking expressions must never appear inside the filter stage.
-  assert.doesNotMatch(cteBody, /ts_rank/);
-  assert.doesNotMatch(cteBody, /AS score/);
-  assert.match(outerBody, /ts_rank\(claim_search/);
+  assert.doesNotMatch(cteBody, /ts_rank|<=>/);
+  assert.match(rankingBody, /ts_rank\(scoped\.claim_search/);
+  assert.doesNotMatch(outerBody, /ts_rank|<=>/);
 
   assert.ok(params.length > 0);
 });
@@ -63,12 +70,13 @@ test("buildMemorySearchQuery includes vector ranking only in the outer query whe
     queryEmbedding: [0.1, 0.2, 0.3]
   });
 
-  const cteClose = text.indexOf(")\nSELECT");
+  const cteClose = text.indexOf("), ranked AS (");
+  const rankedEnd = text.indexOf(")\nSELECT", cteClose);
   const cteBody = text.slice(0, cteClose);
-  const outerBody = text.slice(cteClose);
+  const rankingBody = text.slice(cteClose, rankedEnd);
 
   assert.doesNotMatch(cteBody, /<=>/);
-  assert.match(outerBody, /embedding <=> \$\d+::vector/);
+  assert.match(rankingBody, /scoped\.embedding <=> \$\d+::vector/);
 });
 
 test("buildMemorySearchQuery runs lexical-only when no queryEmbedding is supplied", () => {
@@ -78,7 +86,7 @@ test("buildMemorySearchQuery runs lexical-only when no queryEmbedding is supplie
     limit: 5
   });
   assert.doesNotMatch(text, /<=>/);
-  assert.doesNotMatch(text, /vector/);
+  assert.doesNotMatch(text, /<=>|::vector/);
 });
 
 test("buildExperienceSearchQuery filters by scope visibility inside the CTE before ranking", () => {
@@ -111,7 +119,7 @@ test("buildMemorySearchQuery omits the global scope branch's grant unless the co
   assert.equal(params[0], false);
 });
 
-test("buildMemorySearchQuery hard-filters relevant file evidence before ranking", () => {
+test("buildMemorySearchQuery uses exact and nearby file evidence as a post-filter ranking signal", () => {
   const path = "file:///workspace/repo/src/router/proxy.ts";
   const { text, params } = buildMemorySearchQuery({
     query: "fallback routing",
@@ -119,22 +127,56 @@ test("buildMemorySearchQuery hard-filters relevant file evidence before ranking"
     relevantPaths: [path],
     asOf: "2026-09-30T12:00:00.000Z"
   });
-  const cteClose = text.indexOf(")\nSELECT");
+  const cteClose = text.indexOf("), ranked AS (");
   const cteBody = text.slice(0, cteClose);
-  const outerBody = text.slice(cteClose);
+  const rankingBody = text.slice(cteClose);
 
+  assert.doesNotMatch(cteBody, /relevantPaths|jsonb_array_elements/);
   assert.match(
-    cteBody,
-    /jsonb_array_elements\(COALESCE\(memory_records\.provenance->'evidence'/
+    rankingBody,
+    /jsonb_array_elements\(COALESCE\(scoped\.provenance->'evidence'/
   );
-  assert.match(cteBody, /evidence_ref->>'kind' = 'file'/);
-  assert.match(cteBody, /evidence_ref->>'uri' = ANY\(\$\d+::text\[\]\)/);
-  assert.doesNotMatch(outerBody, /jsonb_array_elements/);
+  assert.match(rankingBody, /evidence_ref->>'kind' = 'file'/);
+  assert.match(rankingBody, /evidence_ref->>'uri' = requested_path\.uri/);
+  assert.match(rankingBody, /generate_series\(/);
+  assert.match(rankingBody, /path_score \* 0\.2/);
   assert.ok(
     params.some(
       (parameter) => Array.isArray(parameter) && parameter.includes(path)
     )
   );
+});
+
+test("buildMemorySearchQuery scores task-kind provenance only from scope-visible source experiences", () => {
+  const { text, params } = buildMemorySearchQuery({
+    query: "configuration workflow",
+    taskKind: "bugfix",
+    context: makeContext({
+      taskId: "task-current",
+      runId: "run-current",
+      agentId: "agent-current"
+    }),
+    limit: 5
+  });
+  const rankedStart = text.indexOf("), ranked AS (");
+  const rankedEnd = text.indexOf(")\nSELECT", rankedStart);
+  const rankedBody = text.slice(rankedStart, rankedEnd);
+  const candidateFilter = text.slice(
+    text.indexOf("WHERE lexical_score"),
+    text.indexOf("ORDER BY score")
+  );
+
+  assert.match(
+    rankedBody,
+    /jsonb_array_elements_text\(COALESCE\(scoped\.provenance->'experienceIds'/
+  );
+  assert.match(rankedBody, /source_experience\.task_kind = \$\d+/);
+  assert.match(rankedBody, /source_experience\.scope_task_id =/);
+  assert.match(rankedBody, /source_experience\.scope_run_id =/);
+  assert.match(rankedBody, /source_experience\.scope_agent_id =/);
+  assert.match(text, /task_kind_score \* 0\.1/);
+  assert.doesNotMatch(candidateFilter, /task_kind_score/);
+  assert.ok(params.includes("bugfix"));
 });
 
 test("memory browser pagination scopes rows and includes non-active lifecycle records", () => {
@@ -187,4 +229,26 @@ test("experience history SQL requires the explicit workspace-bounded task-histor
   assert.match(query.text, /scope_workspace_id = \$\d+/);
   assert.match(query.params.join(" "), /ws-1/);
   assert.match(query.params.join(" "), /owner\/repo/);
+});
+
+test("retention candidate scans are workspace/repository scoped, bounded, and provenance-safe", () => {
+  const query = buildExpiredExperienceQuery({
+    context: makeContext({
+      workspaceId: "ws-1",
+      repositoryId: "owner/repo",
+      canReadTaskHistory: true
+    }),
+    completedBefore: "2026-01-01T00:00:00.000Z",
+    limit: 25
+  });
+  assert.match(query.text, /completed_at IS NOT NULL/);
+  assert.match(query.text, /completed_at < \$\d+/);
+  assert.match(query.text, /NOT EXISTS/);
+  assert.match(query.text, /provenance->'experienceIds'/);
+  assert.match(query.text, /ORDER BY memory_experiences\.completed_at ASC/);
+  assert.match(query.text, /LIMIT \$\d+$/);
+  assert.equal(query.params.at(-2), "2026-01-01T00:00:00.000Z");
+  assert.equal(query.params.at(-1), 25);
+  assert.ok(query.params.includes("ws-1"));
+  assert.ok(query.params.includes("owner/repo"));
 });

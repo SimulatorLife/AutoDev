@@ -243,6 +243,44 @@ BEGIN
 END;
 $fn$ LANGUAGE plpgsql;
 `
+  },
+  {
+    version: 5,
+    description: "Index bounded retention scans of completed experiences",
+    sql: `
+CREATE INDEX IF NOT EXISTS idx_memory_experiences_retention
+  ON memory_experiences (scope_workspace_id, repository_id, completed_at, id)
+  WHERE completed_at IS NOT NULL;
+`
+  },
+  {
+    version: 6,
+    description: "Search raw-experience evidence and source references",
+    sql: `
+-- Raw experiences retain the searchable technical references needed for
+-- later curation: files, commits, PRs/issues, task/plan links, and validation
+-- evidence. This indexes references only; source payloads remain external.
+DROP INDEX IF EXISTS idx_memory_experiences_search;
+ALTER TABLE memory_experiences DROP COLUMN search_vector;
+ALTER TABLE memory_experiences
+  ADD COLUMN search_vector tsvector GENERATED ALWAYS AS (
+    to_tsvector(
+      'english',
+      coalesce(repository_id, '') || ' ' ||
+      coalesce(task_kind, '') || ' ' || coalesce(agent_role, '') || ' ' ||
+      coalesce(provider, '') || ' ' || coalesce(model, '') || ' ' ||
+      coalesce(branch, '') || ' ' || outcome || ' ' ||
+      coalesce(base_commit, '') || ' ' || coalesce(head_commit, '') || ' ' ||
+      coalesce(trajectory_uri, '') || ' ' ||
+      coalesce(task_reference::text, '') || ' ' ||
+      coalesce(plan_reference::text, '') || ' ' ||
+      coalesce(validation_evidence::text, '') || ' ' ||
+      coalesce(evidence::text, '')
+    )
+  ) STORED;
+CREATE INDEX idx_memory_experiences_search
+  ON memory_experiences USING GIN (search_vector);
+`
   }
 ];
 

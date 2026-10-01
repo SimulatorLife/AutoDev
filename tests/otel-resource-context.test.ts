@@ -6,7 +6,7 @@ import {
   safeAutoDevWorkspaceKey,
   validatedAutoDevOtelResourceAttributes,
   withAutoDevOtelResourceContext
-} from "../src/shared/otel-resource-context.ts";
+} from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
 test("AutoDev OTel resource context is bounded, source-owned, and preserves other attributes", () => {
   const env = {

@@ -49,6 +49,18 @@ test("runtime targets preserve relative depth for scripts and source files", () 
     runtimeTarget("src/router/control-api.ts", "/runtime"),
     "/runtime/src/router/control-api.ts"
   );
+  assert.equal(
+    runtimeTarget("runtime/src/hooks/root-delegation.ts", "/runtime"),
+    "/runtime/src/hooks/root-delegation.ts"
+  );
+  assert.equal(
+    runtimeTarget("runtime/src/providers/copilot.ts", "/runtime"),
+    "/runtime/src/providers/copilot.ts"
+  );
+  assert.equal(
+    runtimeTarget("runtime/src/providers/minimax.ts", "/runtime"),
+    "/runtime/src/providers/minimax.ts"
+  );
 });
 
 test("materialization atomically replaces symlinks and applies the requested mode", () =>

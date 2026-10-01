@@ -82,8 +82,9 @@ safe merging, no-duplication guarantees, and non-zero exit outside a git reposit
 
 The session-start hook also keeps the active checkout's CodeGraphContext graph
 present and current, so agents never index repositories themselves. After the
-router is healthy, `src/hooks/session-start.ts` calls `ensureCodeGraph` from
-`src/platform/code-graph-ensure.ts`. Outside a git checkout it does nothing.
+router is healthy, `runtime/src/hooks/session-start.ts` calls `ensureCodeGraph` through
+the `@simulatorlife/autodev-runtime/platform` workspace contract. Outside a git
+checkout it does nothing.
 Inside one it starts a detached worker for the repository's top level and
 returns immediately, so it adds no session-start latency. The worker:
 

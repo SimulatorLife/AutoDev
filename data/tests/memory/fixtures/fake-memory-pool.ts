@@ -9,7 +9,7 @@ import type {
  * into a JS predicate. It is intentionally narrow: it only needs to
  * understand the grammar `buildScopeFilterSql` and the hard filters in
  * `search.ts` actually produce (parens, AND/OR, comparisons, `IS NULL`,
- * `$N` placeholders with optional `::type` casts, JSON evidence-path filters,
+ * `$N` placeholders with optional `::type` casts,
  * and `x = ANY($N::type[])`), so tests exercise the real SQL text the
  * repository builds rather than a re-implementation of its semantics.
  */
@@ -19,12 +19,10 @@ function compileCondition(
 ): (row: Record<string, unknown>) => boolean {
   let expr = sql.trim();
 
-  // The generated hard-path predicate operates on serialized provenance in
-  // the fake row, matching the PostgreSQL JSONB EXISTS clause structurally.
   expr = expr.replaceAll(
-    /EXISTS \(SELECT 1 FROM jsonb_array_elements\(COALESCE\(memory_records\.provenance->'evidence', '\[\]'::jsonb\)\) AS evidence_ref WHERE evidence_ref->>'kind' = 'file' AND evidence_ref->>'uri' = ANY\(\$(\d+)::text\[\]\)\)/g,
+    /claim_search @@ plainto_tsquery\('english', \$(\d+)\)/g,
     (_all, index: string) =>
-      `hasFileEvidence(row.provenance, params[${Number(index) - 1}])`
+      `hasLexicalMatch(row.claim, params[${Number(index) - 1}])`
   );
 
   // x = ANY($N::type[])  ->  (params[N-1] ?? []).includes(x)
@@ -67,45 +65,23 @@ function compileCondition(
   const evaluate = new Function(
     "row",
     "params",
-    "hasFileEvidence",
+    "hasLexicalMatch",
     `return (${expr});`
   ) as (
     row: Record<string, unknown>,
     params: readonly unknown[],
-    hasFileEvidence: FileEvidenceMatcher
+    hasLexicalMatch: (claim: unknown, query: unknown) => boolean
   ) => boolean;
-  return (row) => Boolean(evaluate(row, params, hasFileEvidence));
+  return (row) => Boolean(evaluate(row, params, hasLexicalMatch));
 }
 
-type FileEvidenceMatcher = (
-  provenance: unknown,
-  requestedPaths: unknown
-) => boolean;
-
-function hasFileEvidence(
-  provenance: unknown,
-  requestedPaths: unknown
-): boolean {
-  const value =
-    typeof provenance === "string"
-      ? (JSON.parse(provenance) as Record<string, unknown>)
-      : provenance;
-  if (
-    !value ||
-    typeof value !== "object" ||
-    !Array.isArray((value as Record<string, unknown>).evidence)
-  )
-    return false;
-  if (!Array.isArray(requestedPaths)) return false;
+function hasLexicalMatch(claim: unknown, query: unknown): boolean {
+  if (typeof claim !== "string" || typeof query !== "string") return false;
+  const tokens = query.toLowerCase().match(/[a-z0-9]+/gu) ?? [];
+  const searchableClaim = claim.toLowerCase();
   return (
-    (value as Record<string, unknown>).evidence as Array<
-      Record<string, unknown>
-    >
-  ).some(
-    (reference) =>
-      reference.kind === "file" &&
-      typeof reference.uri === "string" &&
-      requestedPaths.includes(reference.uri)
+    tokens.length > 0 &&
+    tokens.every((token) => searchableClaim.includes(token))
   );
 }
 
@@ -129,6 +105,76 @@ function foreignKeyViolation(message: string): ForeignKeyViolation {
 }
 
 const OCCURRED_AT_COLLATOR = new Intl.Collator();
+
+function memoryPathScore(
+  row: Record<string, unknown>,
+  requestedPaths: readonly string[]
+): number {
+  if (requestedPaths.length === 0) return 0;
+  const rawProvenance = row.provenance;
+  const provenance =
+    typeof rawProvenance === "string"
+      ? (JSON.parse(rawProvenance) as Record<string, unknown>)
+      : (rawProvenance as Record<string, unknown> | undefined);
+  const evidence = provenance?.evidence;
+  if (!Array.isArray(evidence)) return 0;
+  let best = 0;
+  for (const reference of evidence) {
+    if (!reference || typeof reference !== "object") continue;
+    const fileReference = reference as Record<string, unknown>;
+    if (fileReference.kind !== "file" || typeof fileReference.uri !== "string")
+      continue;
+    const evidenceUri = fileReference.uri;
+    for (const requestedUri of requestedPaths) {
+      if (evidenceUri === requestedUri) {
+        best = 1;
+        continue;
+      }
+      const evidenceParts = pathParts(evidenceUri);
+      const requestedParts = pathParts(requestedUri);
+      let sharedPrefix = 0;
+      while (
+        sharedPrefix < Math.min(evidenceParts.length, requestedParts.length) &&
+        evidenceParts[sharedPrefix] === requestedParts[sharedPrefix]
+      ) {
+        sharedPrefix += 1;
+      }
+      best = Math.max(
+        best,
+        0.6 *
+          (sharedPrefix / Math.max(evidenceParts.length, requestedParts.length))
+      );
+    }
+  }
+  return best;
+}
+
+function pathParts(uri: string): string[] {
+  const schemeSeparator = uri.indexOf("://");
+  const path =
+    schemeSeparator === -1 ? uri : uri.slice(schemeSeparator + "://".length);
+  return path.split("/").filter(Boolean);
+}
+
+function memoryTaskKindScore(
+  row: Record<string, unknown>,
+  taskKind: string | undefined,
+  experiences: ReadonlyMap<string, Record<string, unknown>>
+): number {
+  if (!taskKind) return 0;
+  const rawProvenance = row.provenance;
+  const provenance =
+    typeof rawProvenance === "string"
+      ? (JSON.parse(rawProvenance) as Record<string, unknown>)
+      : (rawProvenance as Record<string, unknown> | undefined);
+  const experienceIds = provenance?.experienceIds;
+  if (!Array.isArray(experienceIds)) return 0;
+  return experienceIds.some(
+    (id) => experiences.get(String(id))?.task_kind === taskKind
+  )
+    ? 1
+    : 0;
+}
 
 interface MemoryTables {
   memory_experiences: Map<string, Record<string, unknown>>;
@@ -305,6 +351,8 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     if (related) return related;
     const history = this.readHistoryEvents(sql, params);
     if (history) return history;
+    const expired = this.readExpiredExperiences(sql, params);
+    if (expired) return expired;
     const listCount = this.readListCount(sql, params);
     if (listCount) return listCount;
     const listPage = this.readListPage(sql, params);
@@ -420,6 +468,47 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     return { rows, rowCount: rows.length };
   }
 
+  private readExpiredExperiences(
+    sql: string,
+    params: readonly unknown[]
+  ): MemoryQueryResult | null {
+    const match =
+      /^SELECT memory_experiences\.\* FROM memory_experiences WHERE (.+) AND memory_experiences\.completed_at IS NOT NULL AND memory_experiences\.completed_at < \$(\d+) AND NOT EXISTS \(SELECT 1 FROM memory_records WHERE memory_records\.provenance->'experienceIds' @> jsonb_build_array\(memory_experiences\.id\)\) ORDER BY memory_experiences\.completed_at ASC, memory_experiences\.id ASC LIMIT \$(\d+)$/.exec(
+        sql
+      );
+    if (!match) return null;
+    const visible = compileCondition(match[1] as string, params);
+    const cutoff = Date.parse(String(params[Number(match[2]) - 1]));
+    const limit = Number(params[Number(match[3]) - 1]);
+    const rows = [...this.tables.memory_experiences.values()]
+      .filter((row) => {
+        if (!visible(row) || !row.completed_at) return false;
+        if (Date.parse(String(row.completed_at)) >= cutoff) return false;
+        return ![...this.tables.memory_records.values()].some((memory) => {
+          const provenance =
+            typeof memory.provenance === "string"
+              ? (JSON.parse(memory.provenance) as Record<string, unknown>)
+              : (memory.provenance as Record<string, unknown>);
+          return (
+            Array.isArray(provenance.experienceIds) &&
+            provenance.experienceIds.includes(row.id)
+          );
+        });
+      })
+      .sort((left, right) => {
+        const byCompletion = OCCURRED_AT_COLLATOR.compare(
+          String(left.completed_at),
+          String(right.completed_at)
+        );
+        return (
+          byCompletion ||
+          OCCURRED_AT_COLLATOR.compare(String(left.id), String(right.id))
+        );
+      })
+      .slice(0, limit);
+    return { rows, rowCount: rows.length };
+  }
+
   private readListCount(
     sql: string,
     params: readonly unknown[]
@@ -466,21 +555,97 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     sql: string,
     params: readonly unknown[]
   ): MemoryQueryResult | null {
-    const match =
-      /^WITH scoped AS \(\s*SELECT [\s\S]+?FROM (memory_records|memory_experiences)\s*WHERE ([\s\S]+?)\)\s*SELECT [\s\S]+?LIMIT \$(\d+)$/.exec(
-        sql
-      );
-    if (!match) return null;
-    const table = match[1] as "memory_records" | "memory_experiences";
-    const predicate = compileCondition(match[2] as string, params);
-    const limit = Number(params[Number(match[3]) - 1]);
+    if (!sql.startsWith("WITH scoped AS (")) return null;
+    const table = (["memory_records", "memory_experiences"] as const).find(
+      (candidate) => sql.includes(`FROM ${candidate}\n  WHERE `)
+    );
+    if (!table) return null;
+    const whereStart =
+      sql.indexOf(`FROM ${table}\n  WHERE `) + `FROM ${table}\n  WHERE `.length;
+    const scopedEnd = sql.indexOf("), ranked AS (", whereStart);
+    const plainCteEnd = sql.indexOf(")\nSELECT", whereStart);
+    const whereEnd = scopedEnd === -1 ? plainCteEnd : scopedEnd;
+    const limitStart = sql.lastIndexOf("LIMIT $");
+    if (whereEnd === -1 || limitStart === -1) return null;
+    const whereSql = sql.slice(whereStart, whereEnd);
+    const predicate = compileCondition(whereSql, params);
+    const limitParam = Number(sql.slice(limitStart + "LIMIT $".length));
+    const limit = Number(params[limitParam - 1]);
     const source =
       table === "memory_records"
         ? [...this.tables.memory_records.values()]
         : [...this.tables.memory_experiences.values()];
+    const pathMarker = "unnest($";
+    const pathMarkerIndex = sql.indexOf(pathMarker);
+    const pathParamEndMarker = "::text[]) AS requested_path(uri)";
+    const pathParamEnd = sql.indexOf(pathParamEndMarker, pathMarkerIndex);
+    const pathParamIndex =
+      pathMarkerIndex === -1 || pathParamEnd === -1
+        ? 0
+        : Number(sql.slice(pathMarkerIndex + pathMarker.length, pathParamEnd));
+    const requestedPaths = pathParamIndex
+      ? (params[pathParamIndex - 1] as readonly string[])
+      : [];
+    const taskKindMarker = "source_experience.task_kind = $";
+    const taskKindMarkerIndex = sql.indexOf(taskKindMarker);
+    let taskKindParamEnd = 0;
+    if (taskKindMarkerIndex !== -1) {
+      taskKindParamEnd = taskKindMarkerIndex + taskKindMarker.length;
+      while (
+        taskKindParamEnd < sql.length &&
+        sql.charCodeAt(taskKindParamEnd) >= 48 &&
+        sql.charCodeAt(taskKindParamEnd) <= 57
+      ) {
+        taskKindParamEnd += 1;
+      }
+    }
+    const taskKindParamIndex =
+      taskKindMarkerIndex === -1
+        ? 0
+        : Number(
+            sql.slice(
+              taskKindMarkerIndex + taskKindMarker.length,
+              taskKindParamEnd
+            )
+          );
+    const requestedTaskKind = taskKindParamIndex
+      ? String(params[taskKindParamIndex - 1])
+      : undefined;
+    const queryMarker = "plainto_tsquery('english', $";
+    const queryMarkerIndex = sql.indexOf(queryMarker);
+    const queryEnd = sql.indexOf(")", queryMarkerIndex);
+    const queryParamIndex =
+      queryMarkerIndex === -1 || queryEnd === -1
+        ? 0
+        : Number(sql.slice(queryMarkerIndex + queryMarker.length, queryEnd));
+    const searchQuery = queryParamIndex
+      ? params[queryParamIndex - 1]
+      : undefined;
+    const vectorSearch = sql.includes("::vector");
     const rows = source
       .filter(predicate)
-      .map((row, index) => ({ ...row, score: source.length - index }));
+      .map((row, index) => {
+        const pathScore = memoryPathScore(row, requestedPaths);
+        const lexicalScore = hasLexicalMatch(row.claim, searchQuery) ? 1 : 0;
+        return {
+          ...row,
+          path_score: pathScore,
+          task_kind_score: memoryTaskKindScore(
+            row,
+            requestedTaskKind,
+            this.tables.memory_experiences
+          ),
+          lexical_score: lexicalScore,
+          has_embedding: row.embedding !== null && row.embedding !== undefined,
+          score: source.length - index
+        };
+      })
+      .filter(
+        (row) =>
+          row.lexical_score > 0 ||
+          row.path_score > 0 ||
+          (vectorSearch && row.has_embedding)
+      );
     return {
       rows: rows.slice(0, limit),
       rowCount: Math.min(rows.length, limit)

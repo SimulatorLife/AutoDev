@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import type { ProviderRole } from "@simulatorlife/autodev-core";
+
 export const ROLE_NAMES = [
   "default",
   "docs-researcher",
@@ -68,8 +70,6 @@ export interface RoutingRuntime {
   providerFailureStreak?: (provider: string) => number;
   liveProviderCount?: (provider: string) => number;
 }
-
-export type ProviderRole = "orchestrator" | "subagent";
 
 export interface RoutingRuntimeState {
   disabledOrchestratorProviders: string[];
@@ -589,7 +589,10 @@ export class RoutingPolicy {
     );
   }
 
-  configuredModel(provider: string, tier: string = "default"): string | undefined {
+  configuredModel(
+    provider: string,
+    tier: string = "default"
+  ): string | undefined {
     const providerModels = this.config.providers[provider]?.models;
     return providerModels?.[tier] || providerModels?.default;
   }
@@ -618,4 +621,3 @@ export const ORCHESTRATOR_REASONING_EFFORT = Object.freeze({
 });
 export const CONFIGURED_ORCHESTRATOR_MODEL = ROUTING_POLICY.orchestratorModel;
 export const CONFIGURED_SMART_MODEL = ROUTING_POLICY.smartModel;
-

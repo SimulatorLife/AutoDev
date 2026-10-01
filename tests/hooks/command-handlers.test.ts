@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { runRootDelegation } from "../../src/hooks/root-delegation.ts";
-import { createSessionStart } from "../../src/hooks/session-start.ts";
-import { createSubagentStart } from "../../src/hooks/subagent-start.ts";
+import { runRootDelegation } from "../../runtime/src/hooks/root-delegation.ts";
+import { createSessionStart } from "../../runtime/src/hooks/session-start.ts";
+import { createSubagentStart } from "../../runtime/src/hooks/subagent-start.ts";
 import type {
   RouterEnsureDeps,
   RouterEnsureOptions,

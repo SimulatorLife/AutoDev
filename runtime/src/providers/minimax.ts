@@ -17,16 +17,22 @@
  * Namespace flattening and item-id normalization belong to the router, which
  * applies them to every provider route.
  */
-import type { IncomingMessage, ServerResponse } from "node:http";
-import { createServer } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse
+} from "node:http";
 import { pathToFileURL } from "node:url";
 
-import { resolveAgentRole } from "../agents/bridge-role.ts";
-import { roleContract } from "../shared/execution-contract.ts";
 import {
-  readOnlySystemPromptInjection
-} from "../agents/bridge-sandbox.ts";
-import { resolveAgentEventReporter } from "../telemetry/agent-events.ts";
+  readOnlySystemPromptInjection,
+  resolveAgentRole
+} from "@simulatorlife/autodev-runtime/agents";
+import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import {
+  type AgentEventReporter,
+  resolveAgentEventReporter
+} from "@simulatorlife/autodev-runtime/telemetry";
 
 const MCP_EXPOSURE_SOURCE = "role_contract";
 
@@ -35,7 +41,7 @@ const MCP_EXPOSURE_SOURCE = "role_contract";
 // operations remain typed.
 type JsonRecord = Record<string, any>;
 type EventTransform = (event: JsonRecord) => JsonRecord | JsonRecord[] | null;
-type AgentReporter = import("../telemetry/agent-events.ts").AgentEventReporter;
+type AgentReporter = AgentEventReporter;
 
 // Bind the port only when run as a program. The rewriting helpers below are
 // pure and worth testing directly; importing this file must not take the port
@@ -770,7 +776,6 @@ function proxyError(response: ServerResponse, error: unknown): void {
   );
 }
 
-
 /**
  * Extract the MCP servers actually exposed by this turn's wire payload, not
  * the role-contract's declarative list. A tool name like `mcp__lsp__lsp_diagnostics`
@@ -883,7 +888,7 @@ async function forward(
       } catch {
         wireServers = null;
       }
-      const reportedServers = wireServers ?? (contract.mcp ?? []);
+      const reportedServers = wireServers ?? contract.mcp ?? [];
       for (const server of reportedServers) {
         if (typeof agentEvents.reportMcpExposed === "function") {
           void agentEvents.reportMcpExposed({

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { LOCAL_CONTROL_API_ACTOR } from "@simulatorlife/autodev-core";
+import type { ExecutionContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 
 import {
   CONTROL_API_PATHS,
@@ -23,7 +24,6 @@ import {
   resetTelemetryExporter,
   setTelemetryExporter
 } from "../../src/router/telemetry.ts";
-import type { ExecutionContract } from "../../src/shared/execution-contract.ts";
 
 const ENV_KEYS = [
   "AUTODEV_CONTROL_API_TOKEN",

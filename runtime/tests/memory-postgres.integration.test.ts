@@ -102,6 +102,29 @@ test(
         },
         now: () => now
       });
+      const transcript = [
+        {
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [
+              { type: "input_text", text: "Check the feature default." }
+            ]
+          }
+        },
+        {
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "The default is enabled." }]
+          }
+        }
+      ]
+        .map((event) => JSON.stringify(event))
+        .join("\n");
+
       const experience: Omit<ExperienceEnvelope, "trajectory"> = {
         id: `experience-${randomUUID()}`,
         workspaceId,
@@ -120,30 +143,7 @@ test(
       await runtime.service.captureExperience(
         {
           source: "codex",
-          transcript: [
-            {
-              type: "response_item",
-              payload: {
-                type: "message",
-                role: "user",
-                content: [
-                  { type: "input_text", text: "Check the feature default." }
-                ]
-              }
-            },
-            {
-              type: "response_item",
-              payload: {
-                type: "message",
-                role: "assistant",
-                content: [
-                  { type: "output_text", text: "The default is enabled." }
-                ]
-              }
-            }
-          ]
-            .map((event) => JSON.stringify(event))
-            .join("\n"),
+          transcript,
           trajectoryUri: `file://${repositoryRoot}/trajectory.jsonl`,
           experience
         },
@@ -188,6 +188,43 @@ test(
       const stalePacket = await runtime.service.research(request);
       assert.equal(stalePacket.entries.length, 0);
       assert.equal(stalePacket.text, "");
+
+      // Restore the exact bytes verified by the cited commit before exercising
+      // procedure promotion later in this integration workflow.
+      await writeFile(sourceFile, "export const enabledByDefault = true;\n");
+
+      const expiredExperienceId = `experience-retention-${randomUUID()}`;
+      await runtime.service.captureExperience(
+        {
+          source: "codex",
+          transcript,
+          trajectoryUri: `file://${repositoryRoot}/retention-trajectory.jsonl`,
+          experience: {
+            ...experience,
+            id: expiredExperienceId,
+            startedAt: "2026-09-30T10:00:00.000Z",
+            completedAt: "2026-09-30T11:00:00.000Z"
+          }
+        },
+        worker,
+        readContext
+      );
+      const retention = await runtime.service.purgeExpiredExperiences({
+        completedBefore: now,
+        limit: 10,
+        actor: root,
+        context: { ...readContext, canReadTaskHistory: true }
+      });
+      assert.deepEqual(retention, {
+        selected: 1,
+        purged: 1,
+        referencedByMemory: 0,
+        noLongerVisible: 0
+      });
+      assert.equal(
+        await runtime.service.getExperience(expiredExperienceId, readContext),
+        null
+      );
     } finally {
       await runtime?.close();
       await rm(repositoryRoot, { recursive: true, force: true });

@@ -328,7 +328,11 @@ test(
           query: "feature setting validation procedure"
         }
       );
-      assert.equal(promotedSkill.status, 200);
+      assert.equal(
+        promotedSkill.status,
+        200,
+        JSON.stringify(promotedSkill.body)
+      );
       assert.equal(
         promotedSkill.body.schema,
         "autodev-memory-skill-promotion-v1"

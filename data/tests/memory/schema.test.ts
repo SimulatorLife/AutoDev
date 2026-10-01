@@ -10,16 +10,20 @@ import { FakeMemoryPool } from "./fixtures/fake-memory-pool.ts";
 test("memory migrations define append-only provenance and mandatory PostgreSQL/pgvector storage", () => {
   assert.deepEqual(
     MEMORY_MIGRATIONS.map((migration) => migration.version),
-    [1, 2, 3, 4]
+    [1, 2, 3, 4, 5, 6]
   );
   const initial = MEMORY_MIGRATIONS[0];
   const upgrade = MEMORY_MIGRATIONS[1];
   const skillPromotion = MEMORY_MIGRATIONS[2];
   const privacyErasure = MEMORY_MIGRATIONS[3];
+  const retentionIndex = MEMORY_MIGRATIONS[4];
+  const experienceEvidenceSearch = MEMORY_MIGRATIONS[5];
   assert.ok(initial);
   assert.ok(upgrade);
   assert.ok(skillPromotion);
   assert.ok(privacyErasure);
+  assert.ok(retentionIndex);
+  assert.ok(experienceEvidenceSearch);
 
   // Append-only experience envelopes, never transcript/prompt/tool payloads.
   assert.match(initial.sql, /CREATE TABLE memory_experiences/);
@@ -87,6 +91,14 @@ test("memory migrations define append-only provenance and mandatory PostgreSQL/p
     privacyErasure.sql,
     /IF TG_OP = 'DELETE' AND current_setting\('autodev\.memory_privacy_purge', true\) = 'on'/
   );
+  assert.match(retentionIndex.sql, /idx_memory_experiences_retention/);
+  assert.match(retentionIndex.sql, /completed_at IS NOT NULL/);
+  assert.match(experienceEvidenceSearch.sql, /DROP COLUMN search_vector/);
+  assert.match(experienceEvidenceSearch.sql, /task_reference::text/);
+  assert.match(experienceEvidenceSearch.sql, /validation_evidence::text/);
+  assert.match(experienceEvidenceSearch.sql, /evidence::text/);
+  assert.match(experienceEvidenceSearch.sql, /USING GIN \(search_vector\)/);
+  assert.doesNotMatch(experienceEvidenceSearch.sql, /transcript/i);
 });
 
 test("applyMemoryMigrations records applied versions and runs each migration in its own transaction", async () => {
@@ -95,10 +107,10 @@ test("applyMemoryMigrations records applied versions and runs each migration in 
 
   assert.deepEqual(
     pool.tables.memory_schema_migrations.map((row) => row.version),
-    [1, 2, 3, 4]
+    [1, 2, 3, 4, 5, 6]
   );
-  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 4);
-  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 4);
+  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 6);
+  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 6);
 });
 
 test("applyMemoryMigrations is idempotent: a second call applies nothing new", async () => {
@@ -108,10 +120,13 @@ test("applyMemoryMigrations is idempotent: a second call applies nothing new", a
 
   await applyMemoryMigrations(pool);
 
-  assert.equal(pool.tables.memory_schema_migrations.length, 4);
+  assert.equal(pool.tables.memory_schema_migrations.length, 6);
   const newCalls = pool.executed.slice(executedAfterFirst);
   assert.ok(
     !newCalls.some((sql) => sql.includes("CREATE TABLE memory_experiences"))
   );
   assert.ok(!newCalls.some((sql) => sql.includes("DROP CONSTRAINT")));
+  assert.ok(
+    !newCalls.some((sql) => sql.includes("idx_memory_experiences_retention"))
+  );
 });

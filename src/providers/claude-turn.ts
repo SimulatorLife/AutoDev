@@ -18,13 +18,14 @@
 import { randomBytes } from "node:crypto";
 import type { ServerResponse } from "node:http";
 
-import type { ProviderLimit } from "../shared/provider-limits.ts";
 import {
   INCOMPLETE_REASON_INTERRUPTED,
   incompleteDetails,
+  type ProviderLimit,
   truncationNotice
-} from "../shared/provider-limits.ts";
-import type { AwaitedToolResults } from "../shared/responses-continuation.ts";
+} from "@simulatorlife/autodev-runtime/shared/provider-limits";
+import type { AwaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
+
 import type { CodexTool } from "./claude-codex-tools.ts";
 import {
   codexOutputFailed,

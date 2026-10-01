@@ -8,6 +8,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { COOLDOWNS as cooldowns } from "@simulatorlife/autodev-runtime/router/cooldown";
+import {
+  beginShutdown,
+  getLifecycleStatus,
+  isDraining,
+  resetLifecycleForTests
+} from "@simulatorlife/autodev-runtime/router/lifecycle";
+import { AGENT_ROLE_HEADER } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
+import { RESPONSES_ITEM_ID_PREFIXES } from "@simulatorlife/autodev-runtime/shared/responses-item-ids";
+import {
+  REQUEST_ID_HEADER as AGENT_EVENTS_REQUEST_ID_HEADER,
+  resolveAgentEventReporter
+} from "@simulatorlife/autodev-runtime/telemetry";
+
 import {
   AGENT_ACTIVITY_STATES,
   AGENT_ACTIVITY_TTL_ENV,
@@ -17,7 +31,6 @@ import {
 } from "../../src/agents/agent-activity.ts";
 import { spawnedChildren } from "../../src/providers/antigravity.ts";
 import { getDefaultConcurrencyManager } from "../../src/router/concurrency.ts";
-import { COOLDOWNS as cooldowns } from "../../src/router/cooldown.ts";
 import * as responses from "../../src/router/responses.ts";
 import {
   CONFIGURED_ORCHESTRATOR_MODEL,
@@ -30,11 +43,9 @@ import {
   AGENT_ACTIVITY_TTL_MS,
   AGENT_EVENTS_PATH,
   AGENT_EVENTS_URL_HEADER,
-  AGENT_ROLE_HEADER,
   agentActivity,
   attributionDiagnosticsStatus,
   autodevEnrichOtlpPayload,
-  beginShutdown,
   bridgeTelemetryHeaders,
   carriesPendingToolResult,
   classifyProviderFailure,
@@ -46,7 +57,6 @@ import {
   fallbackable,
   FORWARDED_REQUEST_HEADERS,
   getActiveRequests,
-  getLifecycleStatus,
   getRouterStatus as rawGetRouterStatus,
   handle,
   incrementActiveRequests,
@@ -54,7 +64,6 @@ import {
   ingestOtelSignal,
   isAutodevAttributesEnabled,
   isClientDisconnectError,
-  isDraining,
   loadRouterState,
   lookupBridgeSessionContext,
   mcpContractForRole,
@@ -76,7 +85,6 @@ import {
   recordSubagentSpawn,
   registerWorkspaceId,
   requestSession,
-  resetLifecycleForTests,
   resetOtelTelemetry,
   resetRouterTelemetry,
   resetSubagentTelemetry,
@@ -96,11 +104,6 @@ import {
   workspaceContextFromRequest
 } from "../../src/router/server.ts";
 import { UsageTracker } from "../../src/router/usage.ts";
-import { RESPONSES_ITEM_ID_PREFIXES } from "../../src/shared/responses-item-ids.ts";
-import {
-  REQUEST_ID_HEADER as AGENT_EVENTS_REQUEST_ID_HEADER,
-  resolveAgentEventReporter
-} from "../../src/telemetry/agent-events.ts";
 import { normalizedSource } from "../source-text.ts";
 
 const getRouterStatus = (...args: any[]): any =>

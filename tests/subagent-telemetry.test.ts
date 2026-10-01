@@ -9,6 +9,27 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  copilotToolOutcome,
+  extractSkillReadPath as copilotSkillReadPath,
+  matchSkillReadPath as copilotMatchSkillReadPath,
+  MCP_EXPOSURE_SOURCE as COPILOT_MCP_EXPOSURE_SOURCE,
+  reportToolObservation,
+  SKILL_EXPOSURE_SOURCE as COPILOT_SKILL_EXPOSURE_SOURCE,
+  skillReadEvent
+} from "@simulatorlife/autodev-runtime/providers/copilot";
+import {
+  AGENT_EVENTS_URL_HEADER,
+  type AgentEventReporter,
+  REQUEST_ID_HEADER,
+  resolveAgentEventReporter,
+  resolveSkillReadReporter,
+  SESSION_ID_HEADER,
+  SKILL_READ_SOURCE,
+  SUBAGENT_SPAWN_TOOLS_HEADER,
+  VALID_ACTIVITY_STATES
+} from "@simulatorlife/autodev-runtime/telemetry";
+
+import {
   agyArgs,
   agyErrorDetails,
   agyFailureMessage,
@@ -26,26 +47,6 @@ import {
   spawnedChildren,
   subagentModel
 } from "../src/providers/antigravity.ts";
-import {
-  copilotToolOutcome,
-  extractSkillReadPath as copilotSkillReadPath,
-  matchSkillReadPath as copilotMatchSkillReadPath,
-  MCP_EXPOSURE_SOURCE as COPILOT_MCP_EXPOSURE_SOURCE,
-  reportToolObservation,
-  SKILL_EXPOSURE_SOURCE as COPILOT_SKILL_EXPOSURE_SOURCE,
-  skillReadEvent
-} from "../src/providers/copilot.ts";
-import {
-  AGENT_EVENTS_URL_HEADER,
-  type AgentEventReporter,
-  REQUEST_ID_HEADER,
-  resolveAgentEventReporter,
-  resolveSkillReadReporter,
-  SESSION_ID_HEADER,
-  SKILL_READ_SOURCE,
-  SUBAGENT_SPAWN_TOOLS_HEADER,
-  VALID_ACTIVITY_STATES
-} from "../src/telemetry/agent-events.ts";
 import { normalizedSource } from "./source-text.ts";
 
 const listen = (server: Server): Promise<number> =>
@@ -507,10 +508,7 @@ test("the router's request id reaches agyErrorDetails and logTurnEnd without any
   // AgentEventReporter is authorized from) is what closes that gap -- it
   // carries no prompt text, only an id the router itself assigned.
   const source = read("src/providers/antigravity.ts");
-  assert.match(
-    source,
-    /import \{ REQUEST_ID_HEADER, resolveAgentEventReporter, SKILL_READ_SOURCE \} from "\.\.\/telemetry\/agent-events\.ts";/
-  );
+  assert.match(source, /from "@simulatorlife\/autodev-runtime\/telemetry"/);
   assert.match(
     source,
     /const requestId = headerValue\(request\.headers, REQUEST_ID_HEADER\);/
@@ -650,7 +648,7 @@ test("agyArgs sandboxes read-only roles instead of granting them permission bypa
 test("the Antigravity bridge reports the subagents its own CLI spawns", () => {
   const source = read("src/providers/antigravity.ts");
   // Reached only from inside handle(), so this stays a source assertion.
-  assert.match(source, /from "\.\.\/telemetry\/agent-events\.ts"/);
+  assert.match(source, /from "@simulatorlife\/autodev-runtime\/telemetry"/);
   assert.match(source, /resolveAgentEventReporter\(request\.headers\)/);
   assert.match(
     source,
@@ -742,11 +740,17 @@ test("a Claude orchestrator delegates through Codex, not inside its CLI", () => 
   });
 });
 
-test("the installer ships the reporting module the bridges import at runtime", () => {
-  assert.match(
-    read("src/platform/install-materializer.ts"),
-    /src\/telemetry\/agent-events\.ts/
-  );
+test("provider bridges import the Runtime-owned telemetry contract", () => {
+  for (const sourcePath of [
+    "src/providers/antigravity.ts",
+    "src/providers/claude.ts",
+    "runtime/src/providers/copilot.ts",
+    "runtime/src/providers/minimax.ts"
+  ]) {
+    const source = read(sourcePath);
+    assert.match(source, /@simulatorlife\/autodev-runtime\/telemetry/);
+    assert.doesNotMatch(source, /from ["']\.\.\/telemetry\//);
+  }
 });
 
 // The two `invoke_subagent` step_updates agy really emitted for one dispatch,
@@ -1310,7 +1314,7 @@ test("the Copilot bridge evaluates tool outcomes and reports telemetry", () => {
   assert.deepEqual(copilotToolOutcome({}), { kind: "none" });
 
   // Source assertions for Copilot bridge telemetry wiring
-  const source = read("src/providers/copilot.ts");
+  const source = read("runtime/src/providers/copilot.ts");
   assert.equal(COPILOT_SKILL_EXPOSURE_SOURCE, "role_contract");
   assert.equal(COPILOT_MCP_EXPOSURE_SOURCE, "role_contract");
   assert.match(
@@ -1572,7 +1576,7 @@ test("the skill-read telemetry hook dedupes per turn and emits one skill_used pe
     process.env.AUTODEV_AGENT_EVENTS_URL = `http://127.0.0.1:${port}/v1/agent-events`;
     try {
       const scriptPath = fileURLToPath(
-        new URL("../src/hooks/skill-read-telemetry.ts", import.meta.url)
+        new URL("../runtime/src/hooks/skill-read-telemetry.ts", import.meta.url)
       );
       const skillPath = `${process.env.AUTODEV_REPO_ROOT}/.rulesync/skills/orchestration/SKILL.md`;
       const otherSkillPath = `${process.env.AUTODEV_REPO_ROOT}/.rulesync/skills/ccc/SKILL.md`;
@@ -1798,8 +1802,8 @@ test("bridges report only their own delegation; the router settles every request
   assert.equal((agySource.match(/reportActivity\(/g) ?? []).length, 2);
   // Every other bridge's turn is visible to the router in full.
   for (const path of [
-    "src/providers/copilot.ts",
-    "src/providers/minimax.ts",
+    "runtime/src/providers/copilot.ts",
+    "runtime/src/providers/minimax.ts",
     "src/providers/claude.ts",
     "src/providers/claude-turn.ts"
   ]) {
@@ -2057,7 +2061,7 @@ test("the Copilot bridge detects a successful canonical SKILL.md read", () => {
     { skill: "ccc", source: "skill_read", eventId: "skill_read:call_1:ccc" }
   ]);
 
-  const source = read("src/providers/copilot.ts");
+  const source = read("runtime/src/providers/copilot.ts");
   assert.match(
     source,
     /if \(outcome\.kind === "executed" && outcome\.status === "ok"\) \{/

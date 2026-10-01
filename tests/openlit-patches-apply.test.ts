@@ -1,7 +1,7 @@
 /**
  * Patch-set integrity test.
  *
- * Verifies the nine AutoDev patches apply cleanly to a fresh clone of the
+ * Verifies the eleven AutoDev patches apply cleanly to a fresh clone of the
  * pinned upstream OpenLIT revision (openlit-2.1.0, commit
  * 9938c66638666ca5d3bcb850350faa82e510924b).
  *
@@ -153,7 +153,10 @@ test(
       .trim()
       .split("\n")
       .filter((f) => f.endsWith(".patch"));
-    assert.ok(patches.length >= 2, "expected at least two patch files");
+    assert.ok(
+      patches.length >= 11,
+      "expected the maintained OpenLIT patch series"
+    );
 
     for (const patch of patches) {
       assertPatchHunkCounts(join(PATCHES_DIR, patch));
@@ -253,15 +256,52 @@ test(
       /add: false[\s\S]*update: false[\s\S]*delete: false/u
     );
     assert.match(autoDevMemoryAdapter, /workspaceId/u);
+    assert.match(autoDevMemoryAdapter, /actionsFor\(memory/u);
+    assert.match(autoDevMemoryAdapter, /id: "invalidate"/u);
+    assert.match(autoDevMemoryAdapter, /id: "verify"/u);
+    assert.match(autoDevMemoryAdapter, /id: "revise"/u);
+    assert.match(autoDevMemoryAdapter, /id: "supersede"/u);
+    assert.match(autoDevMemoryAdapter, /id: "promote-skill"/u);
+    assert.match(autoDevMemoryAdapter, /\/why\?/u);
+    assert.match(autoDevMemoryAdapter, /presentExperience\(experience\)/u);
     assert.doesNotMatch(
       autoDevMemoryAdapter,
       /from ["']pg["']|postgres-memory-repository/u
     );
+    const memoryDetailSheet = readFileSync(
+      join(
+        dir,
+        "src/client/src/components/(playground)/memory/memory-detail-sheet.tsx"
+      ),
+      "utf8"
+    );
+    assert.match(memoryDetailSheet, /title=\{messages\.MEMORY_EDIT\}/u);
+    assert.match(memoryDetailSheet, /title=\{messages\.MEMORY_DELETE\}/u);
+    assert.match(memoryDetailSheet, /aria-label="Memory lifecycle actions"/u);
+    const memoryConnectorReadme = readFileSync(
+      join(dir, "src/client/src/lib/platform/connectors/memory/README.md"),
+      "utf8"
+    );
+    assert.match(
+      memoryConnectorReadme,
+      /status-gated verify, revise, invalidate, supersede/u
+    );
+    assert.match(memoryConnectorReadme, /governed `why` route/u);
     const memoryBootstrap = readFileSync(
       join(dir, "src/client/src/lib/platform/connectors/memory/bootstrap.ts"),
       "utf8"
     );
     assert.match(memoryBootstrap, /autoDevMemoryAdapterFactory/u);
+    const memoryActionRoute = readFileSync(
+      join(dir, "src/client/src/app/api/memory/[id]/actions/route.ts"),
+      "utf8"
+    );
+    assert.match(memoryActionRoute, /executeProjectMemoryAction/u);
+    assert.match(
+      memoryActionRoute,
+      /withMemoryAudit\(withMemoryAccess\("update"/u
+    );
+    assert.match(memoryActionRoute, /PAYLOAD_MAX/u);
 
     const usageDashboard = JSON.parse(
       readFileSync(

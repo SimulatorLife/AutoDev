@@ -2,9 +2,11 @@
 
 import { readFileSync } from "node:fs";
 
-import { ensureAntigravityProxy } from "../platform/antigravity-ensure.ts";
-import { ensureClaudeBridge } from "../platform/claude-ensure.ts";
-import { ensureMiniMaxProxy } from "../platform/minimax-ensure.ts";
+import {
+  ensureAntigravityProxy,
+  ensureClaudeBridge,
+  ensureMiniMaxProxy
+} from "@simulatorlife/autodev-runtime/platform";
 
 export interface SubagentStartEnsurers {
   readonly claude: (input: string) => Promise<number>;
