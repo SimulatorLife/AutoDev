@@ -28,6 +28,8 @@ For repository changes, follow `references/development-lifecycle.md`. For spawni
 
 Choose by capability first, then required sandbox. Prefer the smallest capable role and configured `autodev/<role>` aliases over hard-coded providers or models.
 
+When implementation depends on version-sensitive external APIs, frameworks, libraries, protocols, or tool behavior, use `docs-researcher` to verify the relevant behavior against authoritative sources for the repository's actual version before the approach hardens.
+
 ## Complexity and orchestration
 
 Classify work by semantic impact, uncertainty, and regression risk—not line count.
@@ -56,7 +58,16 @@ Delegated roles are leaves unless nested delegation is explicitly designed. Read
 
 ## Validation rules
 
-Validators must be independent of the scope they validate. Provide acceptance criteria, constraints, and current repository/diff state without priming them with the implementer's conclusions unless investigating a specific finding.
+Validators must be independent of the scope they validate.
+
+Before delegating validation, define the validation packet:
+
+- exact repository state being reviewed, including the head/commit identity and any relevant uncommitted diff
+- acceptance criteria, constraints, and non-goals
+- affected surfaces and boundaries
+- expected evidence or checks
+
+Give validators that packet without priming them with the implementer's conclusions unless investigating a specific finding. Validators reviewing the same gate should evaluate the same fixed state.
 
 Prefer complementary evidence, such as:
 
@@ -65,6 +76,8 @@ Prefer complementary evidence, such as:
 - migration/call-path review + regression testing
 
 Treat agent reports as provisional evidence, not authority. The root resolves disagreements and determines whether lifecycle gates pass.
+
+Validation evidence applies only to the state actually inspected. If implementation materially changes after a verdict, invalidate affected evidence and re-run the relevant validation on the new state.
 
 Never weaken requirements, tests, or performance thresholds to obtain a passing result.
 

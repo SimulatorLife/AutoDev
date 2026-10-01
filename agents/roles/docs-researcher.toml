@@ -42,6 +42,10 @@ name = "orchestration"
 enabled = false
 
 [[skills.config]]
+name = "source-driven-development"
+enabled = true
+
+[[skills.config]]
 name = "lsp-mcp-server"
 enabled = false
 
