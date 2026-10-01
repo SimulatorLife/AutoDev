@@ -15,6 +15,7 @@ AutoDev keeps **one broad target-state authority** and a small set of focused op
 - [`organization-routing.md`](organization-routing.md) — GitHub organization scheduler/repository routing. “Organization” here refers to SimulatorLife GitHub automation, not the removed OpenLIT organization concept.
 - [`private-target-validation.md`](private-target-validation.md) — centralized validation for private target repositories.
 - [`codebase-context-target.md`](codebase-context-target.md) — code-search/context tool responsibilities and target workflow.
+- [`memory-target-state.md`](memory-target-state.md) — focused memory architecture: raw experience, episodic/semantic/procedural memory, scoped multi-agent sharing, JIT retrieval/reconstruction, provenance, supersession, promotion, and evaluation. Subordinate to the canonical Console target.
 
 ## Documentation rules
 
