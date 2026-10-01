@@ -19,7 +19,7 @@ For repository changes, follow `references/development-lifecycle.md`. For spawni
 | Role | Use for | Sandbox |
 | --- | --- | --- |
 | `default` | General-purpose development | workspace-write |
-| `docs-researcher` | Targeted documentation research | read-only |
+| `docs-researcher` | Authoritative, version-aware external research | read-only |
 | `browser-tester` | Browser and runtime evidence | read-only |
 | `explorer` | Architecture, dependencies, and current-state discovery | read-only |
 | `worker` | Bounded implementation | workspace-write |
@@ -56,7 +56,7 @@ Delegated roles are leaves unless nested delegation is explicitly designed. Read
 
 ## Validation rules
 
-Validators must be independent of the scope they validate. Provide acceptance criteria, constraints, and current repository/diff state without priming them with the implementer's conclusions unless investigating a specific finding.
+Validators must be independent of the scope they validate. Pin validation to an identified repository state (commit/head plus any relevant uncommitted diff), and provide acceptance criteria, constraints, and expected evidence without priming validators with the implementer's conclusions unless investigating a specific finding. Validators for the same gate should inspect the same state.
 
 Prefer complementary evidence, such as:
 

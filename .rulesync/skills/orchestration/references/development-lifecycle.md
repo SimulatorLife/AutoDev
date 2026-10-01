@@ -29,6 +29,9 @@ consumers, ownership boundaries, control/data flow, reusable implementations,
 tests, configuration, documentation, and active versus generated/dead/
 transitional paths.
 
+For implementation-critical behavior owned outside the repository, resolve
+version-sensitive assumptions through the `docs-researcher` before planning.
+
 **Gate:** the current state and affected path are understood well enough to
 design the target state
 
