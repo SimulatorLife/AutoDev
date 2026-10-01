@@ -61,6 +61,108 @@ The console is one product, not a collection of embedded dashboards.
 - One resource should look and behave consistently regardless of whether its data originates in RuleSync, the Control API, OpenTelemetry/OpenLIT, a memory connector, or evaluation storage.
 - Non-TypeScript third-party infrastructure may remain an implementation dependency underneath the product (for example ClickHouse or the OTel receiver), but no new AutoDev-facing UI/control application should require a second language/runtime.
 
+### Flat monorepo organization
+
+AutoDev should be a **small, flat pnpm TypeScript monorepo**. Do not introduce `apps/`, `packages/`, or `modules/` wrapper directories merely to classify code, and do not create a package per left-navigation resource. Package boundaries represent durable architectural/runtime boundaries; the Console's tabs remain feature folders inside one frontend.
+
+Target repository shape:
+
+```text
+AutoDev/
+├── console/                 # Unified React/Next.js AutoDev UI
+├── runtime/                 # Router, providers, agents, MCP runtime, hooks, Control API
+├── core/                    # Shared domain types, contracts, and pure business logic
+├── data/                    # RuleSync/OpenLIT/ClickHouse/config/persistence/query adapters
+│
+├── .rulesync/               # Canonical agent-facing configuration
+├── config/                  # Portable provider/runtime/deployment configuration
+├── .github/                 # CI and GitHub automation
+├── docs/
+├── scripts/
+├── tests/
+├── package.json
+├── pnpm-workspace.yaml
+└── rulesync.jsonc
+```
+
+The initial code-module target is deliberately only **four workspaces**:
+
+| Module | Owns |
+| --- | --- |
+| `console/` | The single AutoDev React/Next.js application, shared design system/components, navigation, and feature folders for Agents, MCPs, Skills, Hooks, Memory, Evaluations, Permissions, Tools, Usage, Prompts, and Workspaces |
+| `runtime/` | Long-running AutoDev execution: model router, provider bridges, agent execution, MCP processes, hook execution, runtime health, desired-state reconciliation, and the Control API transport |
+| `core/` | Infrastructure-independent AutoDev domain types/contracts and pure rules shared by Console, Runtime, and Data |
+| `data/` | Typed adapters/repositories for RuleSync canonical sources, OpenLIT/ClickHouse queries, memory/evaluation persistence, workspace/config reads, and other external/persistent data boundaries |
+
+Do **not** create packages such as `agents/`, `skills/`, `mcps/`, or `prompts/` merely because those are top-level UI resources. Inside `console/`, keep them as cohesive feature folders:
+
+```text
+console/src/features/
+├── agents/
+├── mcps/
+├── skills/
+├── hooks/
+├── memory/
+├── evaluations/
+├── permissions/
+├── tools/
+├── usage/
+├── prompts/
+└── workspaces/
+```
+
+Likewise, keep cohesive runtime responsibilities as folders inside `runtime/` rather than separate deployables:
+
+```text
+runtime/src/
+├── control-api/
+├── router/
+├── providers/
+├── agents/
+├── mcp/
+├── hooks/
+├── telemetry/
+└── platform/
+```
+
+### Module boundaries
+
+Use this dependency direction:
+
+```text
+console ───────┐
+               ├──> core
+runtime ───────┤
+               │
+console ───────┐
+               ├──> data ───> core
+runtime ───────┘
+
+core ──> no AutoDev module
+```
+
+Additional rules:
+
+- `core/` must stay infrastructure-independent: no React/Next.js, filesystem, HTTP-server, OpenLIT, ClickHouse, RuleSync CLI, or provider-process dependencies.
+- `data/` adapts external/canonical data sources to `core/` contracts; it does not become a second source of truth.
+- `runtime/` is the mutation/reconciliation authority. The Console must not bypass the Control API to mutate RuleSync or runtime state directly.
+- `console/` owns the shared AutoDev UI library initially. Do not create a separate `ui/` workspace until there is a real second UI consumer.
+- Keep shared OpenTelemetry producer code under `runtime/src/telemetry/` initially. Extract a root `telemetry/` workspace only if multiple independent producers genuinely require it.
+- Keep `.rulesync/`, `config/`, `.github/`, and `docs/` at repository root; they are canonical configuration/automation/documentation roots, not software packages.
+- All four code workspaces are TypeScript/TSX and use the same root linting, formatting, test, and TypeScript policies.
+
+The target `pnpm-workspace.yaml` should eventually enumerate the four root workspaces directly:
+
+```yaml
+packages:
+  - "console"
+  - "runtime"
+  - "core"
+  - "data"
+```
+
+Do not reorganize code merely to satisfy this shape in one large move. Migrate by coherent slices, preserve behavior, and remove each old `src/` path after its replacement is validated.
+
 ## 3. Core architecture
 
 ### Observability plane
