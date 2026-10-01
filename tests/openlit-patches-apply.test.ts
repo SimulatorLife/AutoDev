@@ -1,7 +1,7 @@
 /**
  * Patch-set integrity test.
  *
- * Verifies the four AutoDev patches apply cleanly to a fresh clone of the
+ * Verifies the six AutoDev patches apply cleanly to a fresh clone of the
  * pinned upstream OpenLIT revision (openlit-2.1.0, commit
  * 9938c66638666ca5d3bcb850350faa82e510924b).
  *
@@ -782,6 +782,107 @@ test(
     );
     assert.match(middleware, /"\/autodev/u);
     assert.match(middleware, /"\/autodev\/:path\*"/u);
+
+    // Verify patch 05 completely removes login/signup and redirects to /home:
+    const loginPage = readFileSync(
+      join(dir, "src/client/src/app/(auth)/login/page.tsx"),
+      "utf8"
+    );
+    assert.match(loginPage, /redirect\(["']\/home["']\)/u);
+    assert.doesNotMatch(loginPage, /AuthForm/u);
+
+    const registerPage = readFileSync(
+      join(dir, "src/client/src/app/(auth)/register/page.tsx"),
+      "utf8"
+    );
+    assert.match(registerPage, /redirect\(["']\/home["']\)/u);
+    assert.doesNotMatch(registerPage, /AuthForm/u);
+
+    const userActions = readFileSync(
+      join(
+        dir,
+        "src/client/src/components/(playground)/sidebar/user-actions.tsx"
+      ),
+      "utf8"
+    );
+    assert.match(userActions, /return null/u);
+    assert.doesNotMatch(userActions, /signOut/u);
+
+    const checkAuth = readFileSync(
+      join(dir, "src/client/src/middleware/check-auth.ts"),
+      "utf8"
+    );
+    assert.doesNotMatch(
+      checkAuth,
+      /redirect\([^)]*\/login/u,
+      "check-auth middleware must not redirect to /login"
+    );
+
+    const sessionTs = readFileSync(
+      join(dir, "src/client/src/lib/session.ts"),
+      "utf8"
+    );
+    assert.match(
+      sessionTs,
+      /prisma\.user\.findFirst/,
+      "session.ts must fall back to local user when unauthenticated"
+    );
+
+    // Verify patch 06 rebrands all user-facing "OpenLIT" strings to "AutoDev":
+    const layout = readFileSync(
+      join(dir, "src/client/src/app/layout.tsx"),
+      "utf8"
+    );
+    assert.match(
+      layout,
+      /AutoDev/u,
+      "layout.tsx metadata must use 'AutoDev' branding"
+    );
+    assert.doesNotMatch(
+      layout,
+      /OpenLIT/u,
+      "layout.tsx must not contain user-facing 'OpenLIT'"
+    );
+
+    const sidebarBrand = readFileSync(
+      join(dir, "src/client/src/components/(playground)/sidebar-brand.tsx"),
+      "utf8"
+    );
+    assert.match(
+      sidebarBrand,
+      /AutoDev/u,
+      "sidebar-brand.tsx must use 'AutoDev' branding"
+    );
+
+    const sidebarIndex = readFileSync(
+      join(dir, "src/client/src/components/(playground)/sidebar/index.tsx"),
+      "utf8"
+    );
+    assert.match(
+      sidebarIndex,
+      /Search AutoDev/u,
+      "sidebar search placeholder must use 'AutoDev'"
+    );
+
+    const versionInfo = readFileSync(
+      join(dir, "src/client/src/components/(playground)/version-Info.tsx"),
+      "utf8"
+    );
+    assert.match(
+      versionInfo,
+      /AutoDev:/u,
+      "version-Info.tsx must display 'AutoDev:' label"
+    );
+
+    const messagesEn = readFileSync(
+      join(dir, "src/client/src/constants/messages/en.ts"),
+      "utf8"
+    );
+    assert.doesNotMatch(
+      messagesEn,
+      /(?<!\w)OpenLIT(?!\w)/u,
+      "en.ts message constants must not contain user-facing 'OpenLIT'"
+    );
   }
 );
 

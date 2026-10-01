@@ -73,12 +73,6 @@ services:
       # The local patch binds this token to the embedded Collector receiver.
       OPENLIT_OTLP_API_KEY: ${OPENLIT_OTLP_API_KEY:?OPENLIT_OTLP_API_KEY must be set in CODEX_HOME/openlit-secrets.env}
 
-      # OAuth (optional). Empty values are accepted for local development.
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
-      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
-
       # ---- AutoDev Control API proxy settings ---------------------------
       # Read by the patched Next.js server. The bearer token stays server
       # side; the browser only sees same-origin /autodev/api/* URLs. The

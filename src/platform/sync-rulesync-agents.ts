@@ -529,7 +529,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   syncRulesyncAgents()
     .then((result) => {
       writeLine(
-        `Synchronized ${result.totalCatalogAgents} rulesync agents to OpenLIT Agents Hub:`
+        `Synchronized ${result.totalCatalogAgents} rulesync agents to AutoDev Agents Hub:`
       );
       writeLine(`  Inserted:  ${result.inserted.length}`);
       writeLine(`  Updated:   ${result.updated.length}`);

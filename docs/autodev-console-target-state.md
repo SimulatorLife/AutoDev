@@ -278,7 +278,12 @@ Preserve or adapt the parts that directly serve AutoDev:
 
 These are **out of scope**, not hidden optional navigation:
 
-- **Accounts/users**: remove sign-up/login/account-management product flows, OAuth account UI, user profiles, invitations, membership management, and account-scoped preferences. AutoDev is a single-user/local control plane; deployment-level authentication may protect a remotely exposed instance without reintroducing an application account model.
+- **Accounts/users**: completely remove login/sign-up functionality and UI, account-management product flows, OAuth account UI, user profiles, invitations, membership management, and account-scoped preferences. AutoDev is a single-user/local control plane; deployment-level authentication (e.g. reverse proxy) may protect a remotely exposed instance without reintroducing an application account model:
+  - `/login` and `/register` UI forms, inputs, and OAuth buttons are removed; requests to these routes immediately redirect to `/home`.
+  - Auth middleware no longer gates pages/APIs or redirects unauthenticated visitors to `/login`.
+  - Sidebar navigation excludes user action dropdowns, avatar/email displays, and logout/signout triggers.
+  - Server-side session helpers resolve the single local user record automatically without requiring interactive authentication.
+  - OAuth environment variables (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`) are purged from deployment configs.
 - **Organizations/organisations**: remove organization entities, membership, organization switching, permissions tied to organizations, and organization-scoped navigation.
 - **Environments**: remove OpenLIT environment management/selectors/configuration as a product concept. Standard telemetry such as `deployment.environment.name` may still exist when technically useful.
 - **Projects**: remove OpenLIT project management/isolation/selectors. AutoDev **Workspaces** are analytical/configuration resources, not OpenLIT tenancy silos.
@@ -290,6 +295,33 @@ These are **out of scope**, not hidden optional navigation:
 - redundant OpenLIT configuration pages superseded by AutoDev resource pages.
 
 Prefer deleting dead routes, components, stores, APIs, migrations, and navigation after dependency verification rather than keeping permanently disabled compatibility code. If an OpenLIT internal schema currently requires a singleton user/organisation/project/environment record during transition, treat it strictly as an internal implementation detail and remove that dependency when practical; never expose it as an AutoDev concept.
+
+### User-facing branding: "AutoDev", not "OpenLIT"
+
+All user-facing product wording in the AutoDev distribution must say **AutoDev**, not **OpenLIT**. This includes:
+
+- browser title / metadata;
+- sidebar brand name, logo alt text, and search placeholder;
+- version popover label;
+- page headings, descriptions, and instructional copy;
+- getting-started / onboarding text;
+- SDK setup headings (e.g. "Install AutoDev SDK", "Initialize AutoDev");
+- error messages returned to users (API responses, evaluation feedback, controller polling);
+- string constants in the message catalog (`en.ts`);
+- API key placeholders (e.g. `YOUR_AUTODEV_API_KEY`);
+- console log / status output from sync and startup scripts.
+
+**Do not rename** internal/technical identifiers where doing so would break protocol, storage, or code compatibility:
+
+- ClickHouse table names (`openlit_*`, `otel_*`);
+- environment variables (`OPENLIT_API_KEY`, `OPENLIT_URL`, `OPENLIT_DB_PASSWORD`, etc.);
+- HTTP headers (`x-openlit-project-id`, `x-openlit-organisation-id`);
+- localStorage keys (`openlit:my-apps-hidden:`, `openlit:environment:`);
+- TypeScript types/interfaces (`OpenLITQuery`, `OpenLitContextIds`);
+- CSS classes (`openlit-scrollbar`);
+- OpenTelemetry attributes (`openlit.agent.*`, `openlit.lifecycle.*`);
+- internal code comments describing OpenLIT architecture;
+- file/component names that are internal implementation details.
 
 ### Workspaces replace OpenLIT tenancy concepts
 
@@ -529,6 +561,7 @@ The AutoDev Console browser should use same-origin TypeScript server routes/prox
 Security requirements:
 
 - no built-in AutoDev user/account system;
+- complete removal of login and sign-up flows/UI; direct local single-user access;
 - same-origin browser mutations with CSRF protection;
 - private/scoped service credential from console server to Control API;
 - installation/operator-level authorization appropriate to the local deployment;
@@ -552,7 +585,7 @@ Current verified baseline:
 - lock file `$CODEX_HOME/openlit-patched.lock`;
 - telemetry retention currently 730 hours (~30 days) with durable local volumes and no automated backup.
 
-The current patch set established receiver bearer auth, generic dashboard variable/query bindings, Usage widgets, and isolated AutoDev control UI. The target fork may diverge further in **product shell, navigation, AutoDev domain modules, and control pages**, while keeping ingestion, OTel semantics, storage schemas, and generic query execution as close to upstream as practical.
+The current patch set established receiver bearer auth, generic dashboard variable/query bindings, Usage widgets, isolated AutoDev control UI, login/signup removal, and user-facing OpenLIT→AutoDev branding. The target fork may diverge further in **product shell, navigation, AutoDev domain modules, and control pages**, while keeping ingestion, OTel semantics, storage schemas, and generic query execution as close to upstream as practical.
 
 Do not rewrite foundational OpenLIT storage/query abstractions merely to remove hidden singleton organisation/project/environment concepts.
 
@@ -570,6 +603,7 @@ The original M0-M6 observability migration is complete.
 - RuleSync prompt, agent, model, and workspace projections are currently synchronized into OpenLIT for visibility. The **target** is to finish making RuleSync itself authoritative for all supported agent-facing configuration surfaces rather than preserving parallel native authorities.
 - AutoDev uses one canonical OpenLIT project/workspace boundary internally; AutoDev workspaces remain OTel analytical attributes.
 - The latest recorded repository validation for the completed migration was 1163 passed, 0 failed, 2 skipped, with focused patch/variable checks green.
+- Patch 06 (`06-autodev-branding.patch`) rebrands all user-facing "OpenLIT" wording to "AutoDev" across 17 OpenLIT source files (layout metadata, sidebar brand/search, version label, getting-started/onboarding pages, AutoDev tab pages, message catalog, API error messages, API key references). Internal identifiers, table names, env vars, headers, and TypeScript types are preserved unchanged.
 
 ### Remaining product-fork work
 

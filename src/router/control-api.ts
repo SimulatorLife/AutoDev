@@ -129,7 +129,7 @@ export function authorizeControlApiRequest(
       status: 401,
       code: "autodev_control_api_unauthorized",
       message:
-        "Control API requires the OpenLIT server-side service credential."
+        "Control API requires the AutoDev server-side service credential."
     };
   }
   const actor = actorClaim(request);
@@ -138,7 +138,7 @@ export function authorizeControlApiRequest(
       authorized: false,
       status: 401,
       code: "autodev_control_api_actor_missing",
-      message: "Control API requires a verified OpenLIT user identity."
+      message: "Control API requires a verified AutoDev user identity."
     };
   }
   if (availability.config.operators.has(actor))
@@ -149,7 +149,7 @@ export function authorizeControlApiRequest(
     authorized: false,
     status: 403,
     code: "autodev_control_api_actor_forbidden",
-    message: "The OpenLIT user is not authorized for AutoDev control."
+    message: "The AutoDev user is not authorized for AutoDev control."
   };
 }
 

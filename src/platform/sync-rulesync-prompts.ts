@@ -403,7 +403,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   syncRulesyncPrompts()
     .then((result) => {
       writeLine(
-        `Synchronized ${result.totalCatalogPrompts} rulesync prompts to OpenLIT Prompt Hub:`
+        `Synchronized ${result.totalCatalogPrompts} rulesync prompts to AutoDev Prompt Hub:`
       );
       writeLine(`  Inserted:  ${result.inserted.length}`);
       writeLine(`  Updated:   ${result.updated.length}`);

@@ -719,7 +719,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   syncRulesyncModels()
     .then((result) => {
       writeLine(
-        `Synchronized ${result.totalProviders} providers and ${result.totalModels} models to OpenLIT:`
+        `Synchronized ${result.totalProviders} providers and ${result.totalModels} models to AutoDev Console:`
       );
       writeLine(`  Providers Inserted:  ${result.providersInserted.length}`);
       writeLine(`  Providers Unchanged: ${result.providersUnchanged.length}`);
@@ -731,7 +731,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     })
     .catch((error) => {
       writeErrorLine(
-        `Failed to sync AutoDev models to OpenLIT: ${
+        `Failed to sync AutoDev models to AutoDev Console: ${
           error instanceof Error ? error.message : String(error)
         }`
       );

@@ -346,7 +346,7 @@ export async function syncRulesyncWorkspaces(
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   syncRulesyncWorkspaces()
     .then((result) => {
-      writeLine("Synchronized OpenLIT project architecture for AutoDev:");
+      writeLine("Synchronized AutoDev Console project architecture for AutoDev:");
       writeLine(`  Organisation:      ${result.organisation}`);
       writeLine(`  Project:           ${result.project}`);
       writeLine(`  Environment:       ${result.environment}`);
