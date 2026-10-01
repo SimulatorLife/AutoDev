@@ -231,14 +231,20 @@ const tsConfig = defineConfig({
     "import/newline-after-import": ["error", { count: 1 }],
     "import/no-cycle": "error",
     "import/no-deprecated": "error",
-    "import/no-duplicates": "error",
-    "import/no-extraneous-dependencies": "error",
+    "import/no-extraneous-dependencies": [
+      "error",
+      { packageDir: [".", "./console", "./runtime", "./core", "./data"] }
+    ],
     "import/no-mutable-exports": "error",
     "import/no-self-import": "error",
     "import/no-unresolved": "error",
     "import/no-useless-path-segments": "error",
     "simple-import-sort/exports": "error",
     "simple-import-sort/imports": "error",
+    "unicorn/filename-case": [
+      "error",
+      { cases: { kebabCase: true, pascalCase: true } }
+    ],
 
     /* SonarJS DRY/control-flow smells. */
     "sonarjs/cognitive-complexity": ["error", 20],

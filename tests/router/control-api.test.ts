@@ -425,3 +425,95 @@ test("read-only collections reject mutations and the removed admin route stays a
     restoreEnv(saved);
   }
 });
+
+test("Control API surfaces all 11 canonical resource families", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+
+    // 1. Agents collection and detail
+    const agents = await call("GET", CONTROL_API_PATHS.agents, { actor: "viewer-a" });
+    assert.equal(agents.response.statusCode, 200);
+    assert.equal(agents.body.schema, "autodev-control-agents-v1");
+    assert.ok(agents.body.totalAgents > 0);
+    assert.ok(Array.isArray(agents.body.agents));
+
+    const agentDetail = await call("GET", CONTROL_API_PATHS.agents + "/orchestrator", { actor: "viewer-a" });
+    assert.equal(agentDetail.response.statusCode, 200);
+    assert.equal(agentDetail.body.schema, "autodev-control-agent-detail-v1");
+    assert.equal(agentDetail.body.role, "orchestrator");
+    assert.equal(agentDetail.body.kind, "orchestrator");
+
+    const unknownAgent = await call("GET", CONTROL_API_PATHS.agents + "/nonexistent-role-xyz", { actor: "viewer-a" });
+    assert.equal(unknownAgent.response.statusCode, 404);
+
+    const agentPost = await call("POST", CONTROL_API_PATHS.agents, { actor: "operator-a", body: {} });
+    assert.equal(agentPost.response.statusCode, 405);
+
+    // 2. Providers
+    const providers = await call("GET", CONTROL_API_PATHS.providers, { actor: "viewer-a" });
+    assert.equal(providers.response.statusCode, 200);
+    assert.equal(providers.body.schema, "autodev-control-providers-v1");
+
+    // 3. Models
+    const models = await call("GET", CONTROL_API_PATHS.models, { actor: "viewer-a" });
+    assert.equal(models.response.statusCode, 200);
+    assert.equal(models.body.schema, "autodev-control-models-v1");
+    assert.ok(models.body.totalModels > 0);
+
+    // 4. MCPs
+    const mcps = await call("GET", CONTROL_API_PATHS.mcps, { actor: "viewer-a" });
+    assert.equal(mcps.response.statusCode, 200);
+    assert.equal(mcps.body.schema, "autodev-control-mcps-v1");
+
+    // 5. Skills
+    const skills = await call("GET", CONTROL_API_PATHS.skills, { actor: "viewer-a" });
+    assert.equal(skills.response.statusCode, 200);
+    assert.equal(skills.body.schema, "autodev-control-skills-v1");
+
+    // 6. Hooks
+    const hooks = await call("GET", CONTROL_API_PATHS.hooks, { actor: "viewer-a" });
+    assert.equal(hooks.response.statusCode, 200);
+    assert.equal(hooks.body.schema, "autodev-control-hooks-v1");
+    assert.equal(hooks.body.valid, true);
+
+    // 7. Permissions
+    const permissions = await call("GET", CONTROL_API_PATHS.permissions, { actor: "viewer-a" });
+    assert.equal(permissions.response.statusCode, 200);
+    assert.equal(permissions.body.schema, "autodev-control-permissions-v1");
+    assert.equal(permissions.body.policy.approvalPolicy, "never");
+    assert.equal(permissions.body.policy.sandboxMode, "workspace-write");
+
+    // 8. Prompts collection and detail
+    const prompts = await call("GET", CONTROL_API_PATHS.prompts, { actor: "viewer-a" });
+    assert.equal(prompts.response.statusCode, 200);
+    assert.equal(prompts.body.schema, "autodev-control-prompts-v1");
+    assert.ok(prompts.body.totalCommands > 0);
+
+    const promptDetail = await call("GET", CONTROL_API_PATHS.prompts + "/dry", { actor: "viewer-a" });
+    assert.equal(promptDetail.response.statusCode, 200);
+    assert.equal(promptDetail.body.schema, "autodev-control-prompt-detail-v1");
+    assert.equal(promptDetail.body.name, "dry");
+
+    const unknownPrompt = await call("GET", CONTROL_API_PATHS.prompts + "/nonexistent-prompt-xyz", { actor: "viewer-a" });
+    assert.equal(unknownPrompt.response.statusCode, 404);
+
+    // 9. Workspaces
+    const workspaces = await call("GET", CONTROL_API_PATHS.workspaces, { actor: "viewer-a" });
+    assert.equal(workspaces.response.statusCode, 200);
+    assert.equal(workspaces.body.schema, "autodev-control-workspaces-v1");
+
+    // 10. Routing
+    const routing = await call("GET", CONTROL_API_PATHS.routing, { actor: "viewer-a" });
+    assert.equal(routing.response.statusCode, 200);
+    assert.equal(routing.body.schema, "autodev-control-routing-v1");
+    assert.ok(Array.isArray(routing.body.routes));
+
+    // 11. Runtime
+    const runtime = await call("GET", CONTROL_API_PATHS.runtime, { actor: "viewer-a" });
+    assert.equal(runtime.response.statusCode, 200);
+    assert.equal(runtime.body.schema, "autodev-control-runtime-v1");
+  } finally {
+    restoreEnv(saved);
+  }
+});

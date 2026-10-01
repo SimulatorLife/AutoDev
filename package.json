@@ -6,8 +6,8 @@
     "node": ">=24.12.0"
   },
   "scripts": {
-    "test": "node --test tests/*.test.ts tests/**/*.test.ts",
-    "test:ts": "node --test tests/*.test.ts tests/**/*.test.ts",
+    "test": "node --test tests/*.test.ts tests/**/*.test.ts core/tests/**/*.test.ts data/tests/**/*.test.ts console/tests/**/*.test.ts runtime/tests/**/*.test.ts",
+    "test:ts": "node --test tests/*.test.ts tests/**/*.test.ts core/tests/**/*.test.ts data/tests/**/*.test.ts console/tests/**/*.test.ts runtime/tests/**/*.test.ts",
     "typecheck": "tsc --noEmit",
     "validate:weights": "node tests/weights.test.ts",
     "validate:actionlint": "actionlint",
@@ -36,6 +36,8 @@
     "@opentelemetry/sdk-trace-node": "^2.11.0",
     "@opentelemetry/semantic-conventions": "^1.43.0",
     "chart.js": "^4.5.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
     "smol-toml": "^1.8.0"
   },
   "devDependencies": {
@@ -44,6 +46,8 @@
     "@eslint/js": "^9.39.5",
     "@playwright/mcp": "^0.0.80",
     "@types/node": "^24.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "eslint": "^9.39.5",
     "eslint-config-prettier": "^10.1.8",
     "eslint-import-resolver-typescript": "^4.4.5",

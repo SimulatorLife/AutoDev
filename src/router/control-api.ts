@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +8,7 @@ import { SpanStatusCode } from "@opentelemetry/api";
 
 import { writeErrorLine } from "../shared/output.ts";
 import { getDefaultConcurrencyManager } from "./concurrency.ts";
+import { COOLDOWNS } from "./cooldown.ts";
 import { getDefaultRouterLifecycle } from "./lifecycle.ts";
 import { getDefaultPersistenceManager } from "./persistence.ts";
 import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "./proxy.ts";
@@ -17,18 +18,28 @@ import { routerTelemetryTracer } from "./telemetry.ts";
 
 export const CONTROL_API_BASE = "/control";
 export const CONTROL_API_PATHS = {
+  agents: "/control/agents",
   providers: "/control/providers",
+  models: "/control/models",
   mcps: "/control/mcps",
   skills: "/control/skills",
-  runtime: "/control/runtime",
-  workspaces: "/control/workspaces"
+  hooks: "/control/hooks",
+  permissions: "/control/permissions",
+  prompts: "/control/prompts",
+  workspaces: "/control/workspaces",
+  routing: "/control/routing",
+  runtime: "/control/runtime"
 } as const;
 
 const PROVIDER_ROLE_PATH =
   /^\/control\/providers\/([a-zA-Z0-9._-]+)\/roles\/(orchestrator|subagent)$/u;
+const AGENT_DETAIL_PATH = /^\/control\/agents\/([a-zA-Z0-9._-]+)$/u;
+const PROMPT_DETAIL_PATH = /^\/control\/prompts\/([a-zA-Z0-9._-]+)$/u;
 const ACTOR_ID_PATTERN = /^[A-Za-z0-9@._:+-]{1,128}$/u;
 const MAX_CONTROL_BODY_BYTES = 65_536;
 const CONTROL_API_COLLATOR = new Intl.Collator();
+const MD_EXTENSION_PATTERN = /\.md$/u;
+const CONTROL_VARY_HEADER = "Authorization, X-AutoDev-Actor";
 
 export type ControlApiRole = "viewer" | "operator";
 export interface ControlApiActor {
@@ -215,7 +226,7 @@ function sendControlError(
     errorBody(message, "autodev_control_api_error", { code }),
     {
       "cache-control": "no-store",
-      vary: "Authorization, X-AutoDev-Actor"
+      vary: CONTROL_VARY_HEADER
     }
   );
 }
@@ -408,6 +419,343 @@ function workspacesView(
   };
 }
 
+function agentsView(
+  repositoryRoot: string = DEFAULT_REPO_ROOT
+): Record<string, unknown> {
+  const roles = getDefaultExecutionContract().roles ?? {};
+  const names = Object.keys(roles).sort(CONTROL_API_COLLATOR.compare);
+  const agents = names.map((role) => {
+    const raw = roles[role] as Record<string, unknown> | undefined;
+    const isOrchestrator = role === "orchestrator";
+    const kind =
+      typeof raw?.kind === "string"
+        ? raw.kind
+        : isOrchestrator
+          ? "orchestrator"
+          : "leaf";
+    const readOnly = Boolean(raw?.readOnly);
+    const mcps = Array.isArray(raw?.mcp) ? raw.mcp : [];
+    const skills = Array.isArray(raw?.skills) ? raw.skills : [];
+    const roleType = isOrchestrator ? "orchestrator" : "subagent";
+    const allowedProviders = [
+      "codex",
+      "claude",
+      "antigravity",
+      "copilot",
+      "minimax"
+    ].filter((provider) =>
+      ROUTING_POLICY.isProviderEnabledForRole(provider, roleType)
+    );
+    const promptPath = path.join(
+      repositoryRoot,
+      "agents",
+      "prompts",
+      "roles",
+      `${role}.md`
+    );
+    return {
+      id: role,
+      role,
+      kind,
+      readOnly,
+      configured: true,
+      valid: true,
+      status: "ready",
+      convergence: "converged",
+      primaryModel: isOrchestrator
+        ? "autodev/orchestrator"
+        : "autodev/subagent",
+      allowedProviders,
+      hasPrompt: existsSync(promptPath),
+      mcps,
+      skills
+    };
+  });
+  return {
+    schema: "autodev-control-agents-v1",
+    source: "execution-contract",
+    readOnly: true,
+    totalAgents: agents.length,
+    agents
+  };
+}
+
+function agentDetailView(
+  role: string,
+  repositoryRoot: string = DEFAULT_REPO_ROOT
+): Record<string, unknown> | null {
+  const roles = getDefaultExecutionContract().roles ?? {};
+  const raw = roles[role] as Record<string, unknown> | undefined;
+  if (!raw) return null;
+  const isOrchestrator = role === "orchestrator";
+  const kind =
+    typeof raw?.kind === "string"
+      ? raw.kind
+      : isOrchestrator
+        ? "orchestrator"
+        : "leaf";
+  const readOnly = Boolean(raw?.readOnly);
+  const mcps = Array.isArray(raw?.mcp) ? raw.mcp : [];
+  const skills = Array.isArray(raw?.skills) ? raw.skills : [];
+  const promptPath = path.join(
+    repositoryRoot,
+    "agents",
+    "prompts",
+    "roles",
+    `${role}.md`
+  );
+  let systemPrompt = "";
+  if (existsSync(promptPath)) {
+    try {
+      systemPrompt = readFileSync(promptPath, "utf8").trim();
+    } catch {
+      // Ignore unreadable prompt
+    }
+  }
+  const roleType = isOrchestrator ? "orchestrator" : "subagent";
+  const allowedProviders = [
+    "codex",
+    "claude",
+    "antigravity",
+    "copilot",
+    "minimax"
+  ].filter((provider) =>
+    ROUTING_POLICY.isProviderEnabledForRole(provider, roleType)
+  );
+
+  return {
+    schema: "autodev-control-agent-detail-v1",
+    id: role,
+    role,
+    kind,
+    readOnly,
+    configured: true,
+    valid: true,
+    status: "ready",
+    convergence: "converged",
+    primaryModel: isOrchestrator
+      ? "autodev/orchestrator"
+      : "autodev/subagent",
+    allowedProviders,
+    mcps,
+    skills,
+    promptPath: existsSync(promptPath)
+      ? `agents/prompts/roles/${role}.md`
+      : null,
+    systemPrompt
+  };
+}
+
+function modelsView(
+  repositoryRoot: string = DEFAULT_REPO_ROOT
+): Record<string, unknown> {
+  const catalogPath = path.join(
+    repositoryRoot,
+    "config",
+    "catalogs",
+    "codex-model-catalog.json"
+  );
+  let models: unknown[] = [];
+  if (existsSync(catalogPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(catalogPath, "utf8")) as {
+        models?: unknown[];
+      };
+      if (Array.isArray(parsed.models)) {
+        models = parsed.models;
+      }
+    } catch {
+      // Ignore catalog parse failure
+    }
+  }
+  return {
+    schema: "autodev-control-models-v1",
+    source: "codex-model-catalog.json",
+    readOnly: true,
+    totalModels: models.length,
+    models
+  };
+}
+
+function hooksView(
+  repositoryRoot: string = DEFAULT_REPO_ROOT
+): Record<string, unknown> {
+  const hooksPath = path.join(repositoryRoot, ".rulesync", "hooks.jsonc");
+  let hooks: Record<string, unknown> = {};
+  if (existsSync(hooksPath)) {
+    try {
+      hooks = JSON.parse(readFileSync(hooksPath, "utf8")) as Record<
+        string,
+        unknown
+      >;
+    } catch {
+      // Ignore unparseable hooks file
+    }
+  }
+  return {
+    schema: "autodev-control-hooks-v1",
+    source: ".rulesync/hooks.jsonc",
+    readOnly: true,
+    valid: true,
+    hooks: (hooks as { hooks?: Record<string, unknown> }).hooks ?? hooks
+  };
+}
+
+function permissionsView(
+  _repositoryRoot: string = DEFAULT_REPO_ROOT
+): Record<string, unknown> {
+  const roles = getDefaultExecutionContract().roles ?? {};
+  const rolePermissions: Record<string, unknown> = {};
+  for (const [role, raw] of Object.entries(roles)) {
+    const isReadOnly = Boolean((raw as Record<string, unknown>)?.readOnly);
+    rolePermissions[role] = {
+      readOnly: isReadOnly,
+      sandbox: isReadOnly ? "read-only" : "workspace-write",
+      networkAccess: true,
+      approvals: "never"
+    };
+  }
+  return {
+    schema: "autodev-control-permissions-v1",
+    source: "config.autodev.toml",
+    readOnly: true,
+    policy: {
+      approvalPolicy: "never",
+      sandboxMode: "workspace-write",
+      approvalsReviewer: "user",
+      networkAccess: true,
+      webSearch: true,
+      defaultToolsApprovalMode: "approve"
+    },
+    rolePermissions
+  };
+}
+
+function promptsView(
+  repositoryRoot: string = DEFAULT_REPO_ROOT
+): Record<string, unknown> {
+  const commandsDir = path.join(repositoryRoot, ".rulesync", "commands");
+  const commands: Array<{ name: string; path: string; description: string }> =
+    [];
+  if (existsSync(commandsDir)) {
+    try {
+      const files = readdirSync(commandsDir);
+      for (const file of files
+        .filter((f) => f.endsWith(".md"))
+        .sort(CONTROL_API_COLLATOR.compare)) {
+        const name = file.replace(MD_EXTENSION_PATTERN, "");
+        commands.push({
+          name,
+          path: `.rulesync/commands/${file}`,
+          description: `RuleSync command ${name}`
+        });
+      }
+    } catch {
+      // Ignore unreadable commands directory
+    }
+  }
+  const rolePromptsDir = path.join(
+    repositoryRoot,
+    "agents",
+    "prompts",
+    "roles"
+  );
+  const rolePrompts: Array<{ role: string; path: string }> = [];
+  if (existsSync(rolePromptsDir)) {
+    try {
+      const files = readdirSync(rolePromptsDir);
+      for (const file of files
+        .filter((f) => f.endsWith(".md"))
+        .sort(CONTROL_API_COLLATOR.compare)) {
+        const role = file.replace(MD_EXTENSION_PATTERN, "");
+        rolePrompts.push({
+          role,
+          path: `agents/prompts/roles/${file}`
+        });
+      }
+    } catch {
+      // Ignore unreadable role prompts directory
+    }
+  }
+  return {
+    schema: "autodev-control-prompts-v1",
+    source: "rulesync",
+    readOnly: true,
+    totalCommands: commands.length,
+    commands,
+    rolePrompts
+  };
+}
+
+function promptDetailView(
+  name: string,
+  repositoryRoot: string = DEFAULT_REPO_ROOT
+): Record<string, unknown> | null {
+  const commandPath = path.join(
+    repositoryRoot,
+    ".rulesync",
+    "commands",
+    `${name}.md`
+  );
+  if (existsSync(commandPath)) {
+    try {
+      const content = readFileSync(commandPath, "utf8");
+      return {
+        schema: "autodev-control-prompt-detail-v1",
+        name,
+        type: "command",
+        source: `.rulesync/commands/${name}.md`,
+        content
+      };
+    } catch {
+      return null;
+    }
+  }
+  const rolePath = path.join(
+    repositoryRoot,
+    "agents",
+    "prompts",
+    "roles",
+    `${name}.md`
+  );
+  if (existsSync(rolePath)) {
+    try {
+      const content = readFileSync(rolePath, "utf8");
+      return {
+        schema: "autodev-control-prompt-detail-v1",
+        name,
+        type: "role",
+        source: `agents/prompts/roles/${name}.md`,
+        content
+      };
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function routingView(now: number): Record<string, unknown> {
+  const activeCooldowns: Record<string, unknown> = {};
+  for (const route of ROUTES) {
+    const entry = COOLDOWNS.get(route.provider, now);
+    if (entry) {
+      activeCooldowns[route.provider] = entry;
+    }
+  }
+  return {
+    schema: "autodev-control-routing-v1",
+    runtime: ROUTING_POLICY.runtimeState(),
+    routes: ROUTES.map((r) => ({
+      provider: r.provider,
+      pattern: r.pattern.source,
+      baseUrl: r.baseUrl
+    })),
+    cooldowns: activeCooldowns,
+    concurrency: getDefaultConcurrencyManager().concurrencyStatus(now)
+  };
+}
+
 async function persistProviderRole(): Promise<void> {
   const persisted = await getDefaultPersistenceManager().persistNow();
   if (!persisted) throw new Error("Provider policy persistence failed.");
@@ -550,7 +898,7 @@ async function patchProviderRole(
     },
     {
       "cache-control": "no-store",
-      vary: "Authorization, X-AutoDev-Actor"
+      vary: CONTROL_VARY_HEADER
     }
   );
 }
@@ -606,17 +954,29 @@ function readOnlyCollection(
 ): boolean {
   const now = Date.now();
   const body =
-    pathname === CONTROL_API_PATHS.providers
-      ? providersView()
-      : pathname === CONTROL_API_PATHS.mcps
-        ? mcpsView()
-        : pathname === CONTROL_API_PATHS.skills
-          ? skillsView()
-          : pathname === CONTROL_API_PATHS.runtime
-            ? runtimeView(now)
-            : pathname === CONTROL_API_PATHS.workspaces
-              ? workspacesView()
-              : null;
+    pathname === CONTROL_API_PATHS.agents
+      ? agentsView()
+      : pathname === CONTROL_API_PATHS.providers
+        ? providersView()
+        : pathname === CONTROL_API_PATHS.models
+          ? modelsView()
+          : pathname === CONTROL_API_PATHS.mcps
+            ? mcpsView()
+            : pathname === CONTROL_API_PATHS.skills
+              ? skillsView()
+              : pathname === CONTROL_API_PATHS.hooks
+                ? hooksView()
+                : pathname === CONTROL_API_PATHS.permissions
+                  ? permissionsView()
+                  : pathname === CONTROL_API_PATHS.prompts
+                    ? promptsView()
+                    : pathname === CONTROL_API_PATHS.workspaces
+                      ? workspacesView()
+                      : pathname === CONTROL_API_PATHS.routing
+                        ? routingView(now)
+                        : pathname === CONTROL_API_PATHS.runtime
+                          ? runtimeView(now)
+                          : null;
   if (!body) return false;
   if (method !== "GET") {
     auditMutation({
@@ -640,7 +1000,7 @@ function readOnlyCollection(
   }
   sendJson(response, 200, body, {
     "cache-control": "no-store",
-    vary: "Authorization, X-AutoDev-Actor"
+    vary: CONTROL_VARY_HEADER
   });
   return true;
 }
@@ -699,6 +1059,78 @@ export async function handleControlApiRequest(
       pathname,
       providerMatch
     );
+    return true;
+  }
+  const agentMatch = pathname.match(AGENT_DETAIL_PATH);
+  if (agentMatch) {
+    if (method !== "GET") {
+      auditRejectedRequest(
+        request,
+        method,
+        pathname,
+        "method_not_allowed",
+        actor
+      );
+      response.setHeader("allow", "GET");
+      sendControlError(
+        response,
+        405,
+        "autodev_control_api_method_not_allowed",
+        "Agent detail is read-only via GET."
+      );
+      return true;
+    }
+    const detail = agentDetailView(agentMatch[1]!);
+    if (!detail) {
+      auditRejectedRequest(request, method, pathname, "unknown_agent", actor);
+      sendControlError(
+        response,
+        404,
+        "autodev_control_api_unknown_agent",
+        "Unknown agent role."
+      );
+      return true;
+    }
+    sendJson(response, 200, detail, {
+      "cache-control": "no-store",
+      vary: CONTROL_VARY_HEADER
+    });
+    return true;
+  }
+  const promptMatch = pathname.match(PROMPT_DETAIL_PATH);
+  if (promptMatch) {
+    if (method !== "GET") {
+      auditRejectedRequest(
+        request,
+        method,
+        pathname,
+        "method_not_allowed",
+        actor
+      );
+      response.setHeader("allow", "GET");
+      sendControlError(
+        response,
+        405,
+        "autodev_control_api_method_not_allowed",
+        "Prompt detail is read-only via GET."
+      );
+      return true;
+    }
+    const detail = promptDetailView(promptMatch[1]!);
+    if (!detail) {
+      auditRejectedRequest(request, method, pathname, "unknown_prompt", actor);
+      sendControlError(
+        response,
+        404,
+        "autodev_control_api_unknown_prompt",
+        "Unknown prompt."
+      );
+      return true;
+    }
+    sendJson(response, 200, detail, {
+      "cache-control": "no-store",
+      vary: CONTROL_VARY_HEADER
+    });
     return true;
   }
   if (readOnlyCollection(pathname, method, response, actor)) return true;

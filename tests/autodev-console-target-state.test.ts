@@ -29,7 +29,7 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
   for (const item of nav) {
     const branchIndex = target.indexOf(`├── ${item}`);
     const index =
-      branchIndex >= 0 ? branchIndex : target.indexOf(`└── ${item}`);
+      branchIndex === -1 ? target.indexOf(`└── ${item}`) : branchIndex;
     assert.ok(
       index > previousIndex,
       `${item} must appear in canonical nav order`
@@ -47,7 +47,7 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
     "**GPU monitoring/dashboard**",
     "**OpenLIT agent discovery/instrumentation and Controller daemon**",
   ]) {
-    assert.match(target, new RegExp(removed.replaceAll(/[*/]/g, "\\$&")));
+    assert.match(target, new RegExp(removed.replaceAll(/[*/]/g, String.raw`\$&`)));
   }
 
   assert.match(
@@ -108,7 +108,7 @@ test("canonical target defines the flat four-module monorepo", () => {
   const target = readFileSync(targetStatePath, "utf8");
 
   for (const module of ["console/", "runtime/", "core/", "data/"]) {
-    assert.match(target, new RegExp(`\\b${module.replace("/", "\\/")}`));
+    assert.match(target, new RegExp(String.raw`\b${module.replace("/", String.raw`\/`)}`));
   }
 
   assert.match(target, /small, flat pnpm TypeScript monorepo/);
@@ -119,4 +119,60 @@ test("canonical target defines the flat four-module monorepo", () => {
   assert.match(target, /core\/.*infrastructure-independent/s);
   assert.match(target, /Console must not bypass the Control API/);
   assert.match(target, /Do not create a separate `ui\/` workspace until there is a real second UI consumer/);
+});
+
+test("monorepo layout, console features, and control API match target state exactly", () => {
+  const workspaceYaml = readFileSync(
+    new URL("pnpm-workspace.yaml", repositoryRoot),
+    "utf8"
+  );
+  assert.ok(workspaceYaml.includes("- console"));
+  assert.ok(workspaceYaml.includes("- runtime"));
+  assert.ok(workspaceYaml.includes("- core"));
+  assert.ok(workspaceYaml.includes("- data"));
+
+  for (const mod of ["console", "runtime", "core", "data"]) {
+    assert.ok(existsSync(new URL(`${mod}/package.json`, repositoryRoot)));
+    assert.ok(existsSync(new URL(`${mod}/tsconfig.json`, repositoryRoot)));
+    assert.ok(existsSync(new URL(`${mod}/src/index.ts`, repositoryRoot)));
+  }
+
+  const expectedNav = [
+    "agents",
+    "mcps",
+    "skills",
+    "hooks",
+    "memory",
+    "evaluations",
+    "permissions",
+    "tools",
+    "usage",
+    "prompts",
+    "workspaces"
+  ];
+
+  for (const feat of expectedNav) {
+    assert.ok(
+      existsSync(new URL(`console/src/features/${feat}`, repositoryRoot)),
+      `console/src/features/${feat} must exist`
+    );
+  }
+
+  // Ensure removed concepts are not present as features
+  for (const removed of [
+    "accounts",
+    "users",
+    "organizations",
+    "environments",
+    "projects",
+    "rules",
+    "openground",
+    "gpu"
+  ]) {
+    assert.equal(
+      existsSync(new URL(`console/src/features/${removed}`, repositoryRoot)),
+      false,
+      `Removed concept ${removed} must not exist in console/src/features`
+    );
+  }
 });
