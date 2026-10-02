@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.codex.autodev-console</string>
+
+  <!-- AutoDev Console (single-user Next.js UI) on 127.0.0.1:3300. KeepAlive
+       keeps it up across restarts, crashes, and sleep. The installer
+       pre-builds console/.next so the launcher can exec the resolved Node
+       against console/node_modules/next/dist/bin/next start. The launcher
+       reads AUTODEV_CONTROL_API_TOKEN and AUTODEV_OPENLIT_USAGE_TOKEN from
+       CODEX_HOME/openlit-secrets.env via an exact-key parser; this plist
+       intentionally carries no token values. The Console never advertises
+       backend readiness from /api/health; this plist therefore runs the
+       server-side process only. Invokes the installed hook copy under
+       ~/.codex (outside Desktop) so macOS privacy controls on the repo do
+       not block launchd. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__CODEX_HOME__/hooks/run-codex-console.sh</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <!-- Launchd's default PATH lacks nvm/homebrew node. The launcher resolves a
+       real node binary first via AUTODEV_NODE_BIN, then PATH, then the
+       usual nvm/homebrew fallbacks. CODEX_HOME so the launcher can read
+       its out-of-repository config (.env + openlit-secrets.env). HOME so
+       other credential lookups succeed. AUTODEV_REPO_ROOT so the launcher can
+       confirm console/.next/BUILD_ID exists before exec'ing Next. The
+       launcher never propagates any token value through the launchd
+       environment; tokens are read from openlit-secrets.env at exec time. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>AUTODEV_NODE_BIN</key>
+    <string>__AUTODEV_NODE_BIN__</string>
+    <key>CODEX_HOME</key>
+    <string>__CODEX_HOME__</string>
+    <key>HOME</key>
+    <string>__HOME__</string>
+    <key>AUTODEV_REPO_ROOT</key>
+    <string>__AUTODEV_REPO_ROOT__</string>
+    <key>AUTODEV_CONSOLE_PORT</key>
+    <string>__AUTODEV_CONSOLE_PORT__</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>__CODEX_HOME__/run/codex-autodev-console.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__CODEX_HOME__/run/codex-autodev-console.launchd.err.log</string>
+</dict>
+</plist>
