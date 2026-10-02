@@ -109,7 +109,7 @@ running MCP servers. `tests/platform/code-graph-ensure.test.ts` covers it.
 Codex user-level configuration is managed via a composed model rather than a direct symlink:
 
 - **Portable runtime/provider source (`config/config.autodev.toml`):** Contains AutoDev-owned model/provider, telemetry, feature, and shell/runtime settings that are not canonical RuleSync agent-facing configuration. Agent/skill/MCP/hook/permission definitions belong in RuleSync where supported; `.rulesync/mcp.jsonc` is already canonical for MCP declarations.
-- **Composer (`src/config/compose-user-config.ts`):** Deterministically merges the portable source and the Rulesync-generated MCP projection with existing machine-local state at `$CODEX_HOME/config.toml`. AutoDev-owned settings win conflicts, while operator-specific keys (such as `notify`, `projects`, `marketplaces`, desktop/TUI preferences, custom non-AutoDev MCP servers, and user-added skills) are preserved.
+- **Composer (`runtime/src/config/compose-user-config.ts`):** Deterministically merges the portable source and the Rulesync-generated MCP projection with existing machine-local state at `$CODEX_HOME/config.toml`. AutoDev-owned settings win conflicts, while operator-specific keys (such as `notify`, `projects`, `marketplaces`, desktop/TUI preferences, custom non-AutoDev MCP servers, and user-added skills) are preserved.
 - **Root role settings:** The root turn is the orchestrator, so the composer overlays `agents/roles/orchestrator.toml`'s per-server settings (`enabled`, `enabled_tools`, `default_tools_approval_mode`) onto each server the MCP projection declares, the same keys a child role's TOML owns for that child. Launch keys stay with the projection. Orchestrator entries the projection does not declare (the bridge-injected `autodev_spawn` and the plugin-owned `codex_app`) add nothing to `mcp_servers`. This is what gives native and Claude-served root turns the orchestrator's scoped CodeGraphContext tools rather than CGC's full surface.
 - **Hook and state handling:** `.rulesync/hooks.jsonc` is the sole hook declaration source. The installer generates provider projections alongside repository skills, including `.codex/hooks.json` in the active project location Codex reads; `--check` validates those outputs. The composer removes legacy Codex hook event arrays while preserving `hooks.state` and unrelated machine-local state. Rulesync projections are lossy where documented: Codex cannot retain `prevent_idle_sleep`, and Copilot/Antigravity support fewer hook events.
 - **Regular file output:** Writes an atomic regular file to `$CODEX_HOME/config.toml` (never a symlink). Codex resolves configuration at startup, and symlinking would cause local overrides to be overwritten or lost.
@@ -259,6 +259,7 @@ selected role contract. Read-only roles keep the Antigravity sandbox and never
 receive `--dangerously-skip-permissions` or `command(*)`. If a native command is
 not allowed, the leaf prompt directs the model to stop retrying it and return a
 visible summary that records the limitation.
+
 - Web research permissions: `read_url(*)` for headless document and URL inspection.
 - Exact and recursive read grants for shared configuration: `read_file(~/.agents)`
   plus `read_file(~/.agents/**)`, and the equivalent pair for `~/.codex`.
@@ -461,7 +462,7 @@ and honors `$HOME` rather than `$CODEX_HOME`, so the installer runs Rulesync
 with `$HOME` pointed at a throwaway `mkdtempSync` directory and copies each
 generated prompt into the real `$CODEX_HOME/prompts/` via
 `materializeRuntimeFile`. The `COMMANDS` catalog constant in
-`src/platform/install-materializer.ts` is a validated materialization inventory derived from the canonical `.rulesync/commands/` catalog: the
+`runtime/src/platform/install-materializer.ts` is a validated materialization inventory derived from the canonical `.rulesync/commands/` catalog: the
 materializer fails loudly if a catalog entry produces no projection, if a
 projection names a prompt that is not in the inventory, and `checkCommands`
 verifies the installed file equals a fresh projection of the current RuleSync source.
@@ -568,7 +569,7 @@ superuser/raw-disk commands, and catastrophic root/home recursive deletion.
   upstream is usable and to correlate a turn's request header across
   restarts.
 - Prefer `ensure-*` scripts for idempotent setup and the `diagnose-*` scripts for evidence before changing provider routing.
-- The retired router HTML dashboard is not an operational surface. Use the AutoDev/OpenLIT **Usage** console for historical/aggregate observability and `http://127.0.0.1:4100/status` for raw live router state. Inspect that state through the typed entrypoint with `pnpm autodev -- router status`; use `node src/cli/router-status.ts` for the detailed report (or add `--json` for machine-readable output). It reports observed session-limit, throttling, quota, capacity, timeout, and availability failures; it cannot query an upstream provider's private quota dashboard. Antigravity CLI turns allow up to 15 minutes by default (override
+- The retired router HTML dashboard is not an operational surface. Use the AutoDev/OpenLIT **Usage** console for historical/aggregate observability and `http://127.0.0.1:4100/status` for raw live router state. Inspect that state through the typed entrypoint with `pnpm autodev -- router status`; use `node runtime/src/cli/router-status.ts` for the detailed report (or add `--json` for machine-readable output). It reports observed session-limit, throttling, quota, capacity, timeout, and availability failures; it cannot query an upstream provider's private quota dashboard. Antigravity CLI turns allow up to 15 minutes by default (override
   with `AGY_PRINT_TIMEOUT` when needed). Router counters and recent events are
   persisted in `$CODEX_HOME/codex-router-state.json`; response headers and
   structured router events provide per-request
@@ -583,7 +584,7 @@ active repository.
 ### Execution contract
 
 The versioned execution contract is `config/execution-contract.json`.
-It is generated by `src/config/render-execution-contract.ts` from the native
+It is generated by `runtime/src/config/render-execution-contract.ts` from the native
 role TOMLs plus the root orchestrator configuration, then installed beside the
 bridge modules. Provider bridges consume it for role kind, read-only intent,
 expected MCP/skill capabilities, and adapter spawn-tool metadata. Canonical role prose lives in

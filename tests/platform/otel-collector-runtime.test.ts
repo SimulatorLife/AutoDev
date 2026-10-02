@@ -18,7 +18,7 @@ import {
   type CollectorOptions,
   ensureCollector,
   runCollector
-} from "../../src/platform/otel-collector.ts";
+} from "@simulatorlife/autodev-runtime/platform/otel-collector";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const originalPath = process.env.PATH;

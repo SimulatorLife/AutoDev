@@ -52,7 +52,7 @@ export function createBridgeMcpHomes(): {
   const codexHome = join(root, "codex");
   const catalogue = join(codexHome, "provider-runtime", "mcp-servers.json");
   run("node", [
-    join(REPO_ROOT, "src/config/render-bridge-mcp-catalogue.ts"),
+    join(REPO_ROOT, "runtime/src/config/render-bridge-mcp-catalogue.ts"),
     "--mcp-source",
     join(projection, ".codex", "config.toml"),
     "--output",

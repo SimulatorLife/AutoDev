@@ -9,7 +9,6 @@ import {
 } from "@opentelemetry/sdk-metrics";
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
-
 import {
   recordBridgeSkillExposure,
   recordBridgeSkillUsed

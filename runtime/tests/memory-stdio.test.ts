@@ -27,6 +27,7 @@ test("stdio MCP context is host-bound, worker-only by default, and not model-con
   assert.equal(session.context.canReadGlobal, false);
   assert.equal(session.context.canReadTaskHistory, false);
   assert.equal(session.task, "Search current memory evidence.");
+  assert.equal(session.memoryMode, "unknown");
 });
 
 test("global access requires an operator-bound root/curator configuration", () => {

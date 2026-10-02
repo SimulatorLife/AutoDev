@@ -52,7 +52,7 @@ Retain enough of each meaningful execution to reconstruct its outcome:
 - relevant context references, tool calls, and observations;
 - code/config/document changes;
 - validation, reviews, failures, retries, corrections, and outcome;
-- workspace/repository, refs/SHAs, timestamps, provider/model, and relevant entities.
+- workspace/repository, refs/SHAs, timestamps, provider/model, selected memory mode, and relevant entities.
 
 Prefer references to large source artifacts over duplicated copies.
 
@@ -282,7 +282,7 @@ JIT       analytics        explicit follow-up
 | [official MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) | Standard agent-facing memory server/client transport | Keeps memory usable across Codex, Claude, Copilot, Antigravity, and other MCP-capable agents without coupling the memory core to one harness | AutoDev owns the tools and authorization semantics; MCP is transport/interoperability |
 | Git/GitHub + RuleSync/AutoDev configuration | Current-state verification and canonical-source checks | These are the authoritative sources needed to decide whether old memory still applies | Query them during JIT validation; never copy their authority into memory |
 
-Prefer the existing provider/model abstraction for embeddings and reconstruction models. Do not create a dedicated model-routing subsystem for memory.
+Prefer the existing provider/model abstraction for embeddings and reconstruction models. Do not create a dedicated model-routing subsystem for memory. Runtime resolves the optional embedding model through the existing provider routes and their configured credentials; no embedding model is selected by default.
 
 ### Retained OpenLIT memory surface
 
@@ -396,7 +396,7 @@ Emit bounded attributes/metrics sufficient to answer:
 
 Prefer OpenLIT's retained trace, dashboard, widget, filtering, and resource-detail infrastructure for these views rather than a parallel memory analytics backend.
 
-The current Runtime producer exports bounded operation/duration, candidate-stage, packet-size, and actual packet-injection metrics through the OpenTelemetry API. When an optional embedding provider reports an unavailable condition, Runtime marks the embedding span as an error and falls back to lexical retrieval; invalid vector output remains a hard error. Their dimensions are fixed operation/outcome, memory kind, lifecycle stage, and reason-code categories; packet tokens are reported only when a token counter exists. Injection counts distinguish a non-empty packet actually appended to the provider request from an empty research result; they do not assert downstream use or task success. Model cost remains owned by GenAI attempt telemetry. Retrieval-to-use rates and no-memory ablations still require trustworthy downstream task outcome/injection correlation and are not inferred from retrieval alone.
+Each experience can retain the host-selected memory mode beside its reporter-supplied outcome for scoped cohort analysis; historical rows remain unknown rather than being backfilled, and the field does not prove a packet was injected. The router annotates each logical request span with the bounded `autodev.memory.mode` category (`jit`, `retrieval-only`, `disabled`, or `invalid`); unknown values disable automatic retrieval. `retrieval-only` is gated by `AUTODEV_MEMORY_ABLATION=1` and injects only hard-scope/status/validity-filtered candidates, explicitly marked `not_evaluated` and without current-state validation/reconstruction; it is for isolated evaluation, not production. A strict no-memory cohort must also avoid separate explicit MCP access. These modes identify request cohorts but do not infer task success. The current Runtime producer exports bounded operation/duration, candidate-stage, packet-size, and actual packet-injection metrics through the OpenTelemetry API. Configured provider-backed embedding calls use a child GenAI embeddings span with bounded model/provider metadata and observed input-token usage. When an optional embedding provider reports an unavailable condition, Runtime marks the embedding span as an error and falls back to lexical retrieval; invalid vector output remains a hard error. Memory metric dimensions are fixed operation/outcome, memory kind, lifecycle stage, and reason-code categories; the injection counter additionally uses bounded result and mode categories. Packet tokens are reported only when a token counter exists. Injection counts distinguish a non-empty packet actually appended to the provider request from an empty research result; they do not assert downstream use or task success. Model cost remains owned by GenAI telemetry. Experience browsing can filter reporter outcomes by the stored host-selected memory mode, but the join from a specific injected packet to a final task/PR outcome remains unimplemented. Retrieval-to-use rates and outcome ablations still require trustworthy downstream task outcome/injection correlation and are not inferred from retrieval alone.
 
 ### Optional secondary dependency: Graphiti
 

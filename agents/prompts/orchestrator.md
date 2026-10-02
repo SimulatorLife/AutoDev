@@ -98,7 +98,7 @@ launcher in `$CODEX_HOME/config.toml` and the `run-autodev-mcp.sh` launcher
 rejects it by name. `autodev_spawn` is the bridge-injected spawn shim that
 provider CLI bridges (e.g. Copilot, Antigravity's CLI) attach to their
 subprocess so the CLI can ask its own bridge to create a child thread. The
-renderer (`src/config/render-execution-contract.ts`) explicitly excludes
+renderer (`runtime/src/config/render-execution-contract.ts`) explicitly excludes
 `autodev_spawn` from the orchestrator's "missing root MCP" check for that
 reason.
 

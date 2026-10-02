@@ -15,6 +15,7 @@ import type {
 import {
   appendMemoryPacket,
   injectMemoryContext,
+  injectRetrievalOnlyMemoryContext,
   latestUserTask,
   memoryQueryFromTask
 } from "../src/memory/context-injection.ts";
@@ -206,23 +207,31 @@ test("injectMemoryContext performs JIT research and attaches the advisory packet
     transitionMemories: async (_changes: readonly MemoryVersionedUpdate[]) =>
       true
   };
+  let validationCalls = 0;
+  let reconstructionCalls = 0;
   const service = new MemoryService({
     repository,
     verifier: {
-      verify: async () => ({
-        compatibility: "compatible",
-        source: "git-current-state",
-        checkedAt: time,
-        evidence: [evidence],
-        reasonCode: "verified_current_state"
-      })
+      verify: async () => {
+        validationCalls += 1;
+        return {
+          compatibility: "compatible",
+          source: "git-current-state",
+          checkedAt: time,
+          evidence: [evidence],
+          reasonCode: "verified_current_state"
+        };
+      }
     },
     reconstructor: {
-      reconstruct: async () => ({
-        disposition: "retain",
-        guidance: "Verify the current feature setting.",
-        rationale: "The cited file is unchanged."
-      })
+      reconstruct: async () => {
+        reconstructionCalls += 1;
+        return {
+          disposition: "retain",
+          guidance: "Verify the current feature setting.",
+          rationale: "The cited file is unchanged."
+        };
+      }
     },
     now: () => time
   });
@@ -244,6 +253,31 @@ test("injectMemoryContext performs JIT research and attaches the advisory packet
     String(injected.instructions),
     /file:\/\/\/repo\/src\/feature\.ts/
   );
+  assert.equal(validationCalls, 1);
+  assert.equal(reconstructionCalls, 1);
+
+  validationCalls = 0;
+  reconstructionCalls = 0;
+  const retrievedOnly = await injectRetrievalOnlyMemoryContext(
+    service,
+    payload,
+    context
+  );
+  assert.match(
+    String(retrievedOnly.instructions),
+    /The feature defaults to enabled/
+  );
+  assert.match(
+    String(retrievedOnly.instructions),
+    /Retrieval-only ablation: this claim was not validated/
+  );
+  assert.match(String(retrievedOnly.instructions), /not_evaluated/);
+  assert.doesNotMatch(
+    String(retrievedOnly.instructions),
+    /Verify the current feature setting/
+  );
+  assert.equal(validationCalls, 0);
+  assert.equal(reconstructionCalls, 0);
 
   const emptyRepository = { ...repository, searchMemories: async () => [] };
   const emptyService = new MemoryService({

@@ -18,7 +18,7 @@ import {
   type ProviderAgentDeps,
   readRoleExecutionSettings,
   runProviderAgent
-} from "../../src/cli/provider-agent.ts";
+} from "@simulatorlife/autodev-runtime/cli/provider-agent";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -193,7 +193,7 @@ test("provider agent rejects obsolete provider selection and invalid roles", () 
 
 test("provider-agent help is a successful typed CLI path", () => {
   const module = fileURLToPath(
-    new URL("../../src/cli/provider-agent.ts", import.meta.url)
+    new URL("../../runtime/src/cli/provider-agent.ts", import.meta.url)
   );
   const output = execFileSync(process.execPath, [module, "--help"], {
     encoding: "utf8"

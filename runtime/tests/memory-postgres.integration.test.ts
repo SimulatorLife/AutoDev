@@ -190,7 +190,16 @@ test(
         AUTODEV_MEMORY_RUN_ID: `${runId}-native-capture`,
         AUTODEV_MEMORY_AGENT_ID: "worker-native-capture",
         AUTODEV_MEMORY_ROLE: "worker",
-        AUTODEV_MEMORY_CAPTURE_TASK_KIND: "bugfix"
+        AUTODEV_MEMORY_CAPTURE_TASK_KIND: "bugfix",
+        AUTODEV_MEMORY_CAPTURE_OUTCOME: "partial",
+        AUTODEV_MEMORY_CAPTURE_MODE: "jit",
+        AUTODEV_MEMORY_CAPTURE_VALIDATION_STATE: "passed",
+        AUTODEV_MEMORY_CAPTURE_VALIDATION_EVIDENCE: JSON.stringify([
+          {
+            kind: "file",
+            uri: `${pathToFileURL(nativeTranscriptPath).href}?token=validation-secret`
+          }
+        ])
       });
       const imported = await runMemoryCapture(
         runtime.service,
@@ -207,16 +216,23 @@ test(
         "letta-trajectory-v1"
       );
       assert.equal(importedExperience?.taskKind, "bugfix");
-      assert.equal(importedExperience?.outcome, "unknown");
+      assert.equal(importedExperience?.outcome, "partial");
+      assert.equal(importedExperience?.memoryMode, "jit");
+      assert.equal(importedExperience?.validation?.state, "passed");
+      assert.equal(
+        importedExperience?.validation?.evidence[0]?.uri,
+        pathToFileURL(nativeTranscriptPath).href
+      );
       assert.doesNotMatch(
         JSON.stringify(importedExperience),
-        /private native prompt|private native answer/
+        /private native prompt|private native answer|validation-secret/
       );
-      assert.equal(
-        (await runMemoryCapture(runtime.service, captureConfiguration))
-          .appended,
-        false
+      const repeatedCapture = await runMemoryCapture(
+        runtime.service,
+        captureConfiguration
       );
+      assert.equal(repeatedCapture.appended, false);
+      assert.equal(repeatedCapture.outcome, "partial");
 
       const proposalInput: MemoryProposalInput = {
         kind: "semantic",

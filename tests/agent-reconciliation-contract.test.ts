@@ -7,8 +7,10 @@ import {
   AGENT_ACTIVITY_STATES
 } from "@simulatorlife/autodev-runtime/agents";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
-
-import { agentActivity, agentsStatus } from "@simulatorlife/autodev-runtime/router/http";
+import {
+  agentActivity,
+  agentsStatus
+} from "@simulatorlife/autodev-runtime/router/http";
 import { projectLiveAgents } from "@simulatorlife/autodev-runtime/router/usage";
 
 type AgentActivityState = (typeof AGENT_ACTIVITY_STATES)[number];

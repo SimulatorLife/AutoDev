@@ -5,6 +5,7 @@ import type {
   EvidenceReference,
   ExperienceEnvelope,
   MemoryActor,
+  MemoryExecutionMode,
   MemoryReadContext,
   MemoryScope
 } from "@simulatorlife/autodev-core";
@@ -22,6 +23,7 @@ export interface MemoryMcpSession {
   readonly actor: MemoryActor;
   readonly context: MemoryReadContext;
   readonly taskId: string;
+  readonly memoryMode: MemoryExecutionMode;
   /** Transient current task text; never accepted from tool arguments or persisted. */
   readonly task: string;
 }
@@ -222,6 +224,7 @@ export function createMemoryMcpServer(
           startedAt: input.startedAt,
           ...(input.completedAt ? { completedAt: input.completedAt } : {}),
           outcome: input.outcome,
+          memoryMode: session.memoryMode,
           ...(input.validation
             ? {
                 validation: {

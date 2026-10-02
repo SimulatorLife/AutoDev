@@ -3,7 +3,7 @@ new file mode 100644
 index 00000000..fdbd162b
 --- /dev/null
 +++ b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
-@@ -0,0 +1,180 @@
+@@ -0,0 +1,192 @@
 +import { _setActorResolverForTesting } from "@/lib/autodev/control-api";
 +import { AutoDevMemoryAdapter } from "@/lib/platform/connectors/memory/autodev/adapter";
 +import type { MemorySourceDescriptor } from "@/lib/platform/connectors/memory/types";
@@ -145,6 +145,7 @@ index 00000000..fdbd162b
 +						agentRole: "orchestrator",
 +						startedAt: "2026-10-01T00:00:00.000Z",
 +						outcome: "success",
++						memoryMode: "retrieval-only",
 +						trajectory: {
 +							format: "letta-trajectory-v1",
 +							uri: "codex://session/session-a"
@@ -164,7 +165,12 @@ index 00000000..fdbd162b
 +		);
 +	const adapter = new AutoDevMemoryAdapter({
 +		...descriptor,
-+		settings: { ...descriptor.settings, includeTaskHistory: true }
++		settings: {
++			...descriptor.settings,
++			includeTaskHistory: true,
++			memoryMode: "retrieval-only",
++			outcome: "success"
++		}
 +	});
 +
 +	const result = await adapter.list({ limit: 5 });
@@ -176,13 +182,19 @@ index 00000000..fdbd162b
 +		metadata: {
 +			autodev: {
 +				kind: "episodic",
-+				experience: { taskId: "task-a", runId: "run-a" }
++				experience: {
++					taskId: "task-a",
++					runId: "run-a",
++					memoryMode: "retrieval-only"
++				}
 +			}
 +		}
 +	});
 +	const experienceRequest = fetchSpy.mock.calls[1]?.[0];
 +	expect(String(experienceRequest)).toContain("/control/memory/experiences?");
 +	expect(String(experienceRequest)).toContain("includeTaskHistory=true");
++	expect(String(experienceRequest)).toContain("memoryMode=retrieval-only");
++	expect(String(experienceRequest)).toContain("outcome=success");
 +});
 diff --git a/src/client/src/__tests__/lib/platform/connectors/memory-bootstrap.test.ts b/src/client/src/__tests__/lib/platform/connectors/memory-bootstrap.test.ts
 index e3a23dab..b9ba255f 100644
@@ -319,7 +331,7 @@ new file mode 100644
 index 00000000..156d7ebb
 --- /dev/null
 +++ b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
-@@ -0,0 +1,400 @@
+@@ -0,0 +1,429 @@
 +/**
 + * Read-only OpenLIT Memory connector over AutoDev's governed Control API.
 + * AutoDev PostgreSQL remains canonical; this adapter translates the typed
@@ -369,6 +381,7 @@ index 00000000..156d7ebb
 +	startedAt: string;
 +	completedAt?: string;
 +	outcome: string;
++	memoryMode?: "jit" | "retrieval-only" | "disabled" | "invalid" | "unknown";
 +	trajectory: Record<string, unknown>;
 +	evidence: unknown[];
 +}
@@ -388,6 +401,8 @@ index 00000000..156d7ebb
 +	feedback: false
 +};
 +const MAX_PAGE_SIZE = 100;
++const MEMORY_MODES = new Set(["jit", "retrieval-only", "disabled", "invalid", "unknown"]);
++const EXPERIENCE_OUTCOMES = new Set(["success", "partial", "failure", "cancelled", "unknown"]);
 +
 +class AutoDevMemoryApiError extends Error {
 +	readonly status: number;
@@ -509,6 +524,8 @@ index 00000000..156d7ebb
 +	private readonly runId: string;
 +	private readonly agentId: string;
 +	private readonly includeTaskHistory: boolean;
++	private readonly memoryMode: string;
++	private readonly outcome: string;
 +
 +	constructor(descriptor: MemorySourceDescriptor) {
 +		super(descriptor);
@@ -520,6 +537,12 @@ index 00000000..156d7ebb
 +		this.agentId = setting(descriptor, "agentId");
 +		this.includeTaskHistory =
 +			descriptor.settings.includeTaskHistory === true;
++		this.memoryMode = setting(descriptor, "memoryMode");
++		this.outcome = setting(descriptor, "outcome");
++		if (this.memoryMode && !MEMORY_MODES.has(this.memoryMode))
++			throw new Error("AutoDev memory mode filter is invalid.");
++		if (this.outcome && !EXPERIENCE_OUTCOMES.has(this.outcome))
++			throw new Error("AutoDev experience outcome filter is invalid.");
 +	}
 +
 +	capabilities(): MemoryCapabilities {
@@ -627,6 +650,8 @@ index 00000000..156d7ebb
 +		const experienceParams = this.scopeParams(true);
 +		experienceParams.set("limit", String(options.limit));
 +		if (options.query) experienceParams.set("query", options.query);
++		if (this.memoryMode) experienceParams.set("memoryMode", this.memoryMode);
++		if (this.outcome) experienceParams.set("outcome", this.outcome);
 +		const experienceResult =
 +			await forwardToControlApi<AutoDevExperiencePage>({
 +				method: "GET",
@@ -715,6 +740,22 @@ index 00000000..156d7ebb
 +				defaultValue: false,
 +				description:
 +					"Requires AUTODEV_MEMORY_READ_TASK_HISTORY=1 and an AutoDev operator actor."
++			},
++			{
++				key: "memoryMode",
++				label: "Memory mode filter",
++				kind: "text",
++				group: "settings",
++				description:
++					"Optional experience-only cohort filter: jit, retrieval-only, disabled, invalid, or unknown. Requires task history."
++			},
++			{
++				key: "outcome",
++				label: "Reported outcome filter",
++				kind: "text",
++				group: "settings",
++				description:
++					"Optional experience-only filter: success, partial, failure, cancelled, or unknown. Requires task history."
 +			}
 +		],
 +		authStyle: "none"

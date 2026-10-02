@@ -17,12 +17,11 @@ import {
   applyMemoryMigrations,
   createPgMemoryPool
 } from "@simulatorlife/autodev-data";
+import { handleControlApiRequest } from "@simulatorlife/autodev-runtime/control-api";
 import {
   createPostgresMemoryHost,
   type MemoryProposalInput
 } from "@simulatorlife/autodev-runtime/memory";
-
-import { handleControlApiRequest } from "@simulatorlife/autodev-runtime/router/control-api";
 import {
   closeOrchestratorMemoryHost,
   injectOrchestratorMemory
@@ -66,7 +65,10 @@ test(
         "AUTODEV_CONTROL_VIEWERS",
         "AUTODEV_CONTROL_OPERATORS",
         "CODEX_HOME",
-        "AUTODEV_MEMORY_RECONSTRUCTION"
+        "AUTODEV_MEMORY_RECONSTRUCTION",
+        "AUTODEV_MEMORY_MODE",
+        "AUTODEV_MEMORY_ABLATION",
+        "AUTODEV_MEMORY_READ_TASK_HISTORY"
       ].map((key) => [key, process.env[key]])
     );
     const migrationPool = createPgMemoryPool({
@@ -150,6 +152,8 @@ test(
 
       process.env.AUTODEV_MEMORY_DATABASE_URL = databaseUrl;
       process.env.AUTODEV_MEMORY_RECONSTRUCTION = "deterministic";
+      process.env.AUTODEV_MEMORY_MODE = "jit";
+      process.env.AUTODEV_MEMORY_READ_TASK_HISTORY = "1";
       const request = {
         payload: {
           model: "autodev/orchestrator",
@@ -192,6 +196,19 @@ test(
         String(stale.instructions),
         /The feature setting defaults to enabled/
       );
+      process.env.AUTODEV_MEMORY_MODE = "retrieval-only";
+      process.env.AUTODEV_MEMORY_ABLATION = "1";
+      const unvalidated = await injectOrchestratorMemory(request);
+      assert.match(
+        String(unvalidated.instructions),
+        /The feature setting defaults to enabled/
+      );
+      assert.match(String(unvalidated.instructions), /not_evaluated/);
+      assert.match(
+        String(unvalidated.instructions),
+        /Retrieval-only ablation: this claim was not validated/
+      );
+      process.env.AUTODEV_MEMORY_MODE = "jit";
       // Restore the committed source so API verify/promote exercises the
       // compatible branch independently of the stale-memory assertion above.
       await writeFile(sourceFile, "export const featureEnabled = true;\n");
@@ -460,6 +477,7 @@ test(
         `codex://session/${request.sessionKey}`
       );
       assert.equal(captured.scope.kind, "task");
+      assert.equal(captured.memoryMode, "jit");
       assert.doesNotMatch(
         JSON.stringify(captured),
         /private task text must not be stored|private tool observation/
@@ -468,6 +486,61 @@ test(
         JSON.stringify(captured).includes("transcriptPath"),
         false,
         "the absolute transcript path is not retained"
+      );
+      const directlyFilteredExperiences = await service.listExperiences({
+        context: {
+          workspaceId,
+          repositoryId,
+          role: "orchestrator",
+          canReadGlobal: false,
+          canReadTaskHistory: true
+        },
+        memoryModes: ["jit"],
+        outcomes: ["unknown"],
+        limit: 100,
+        offset: 0
+      });
+      assert.deepEqual(
+        directlyFilteredExperiences.items.map((item) => item.id),
+        [capturedId]
+      );
+      const modeFilteredExperiences = await callMemoryControlApi(
+        "GET",
+        `/control/memory/experiences?workspaceId=${workspaceId}&repositoryId=${encodeURIComponent(repositoryId)}&includeTaskHistory=true&memoryMode=jit&outcome=unknown`,
+        "memory-operator"
+      );
+      assert.equal(
+        modeFilteredExperiences.status,
+        200,
+        JSON.stringify(modeFilteredExperiences.body)
+      );
+      assert.deepEqual(
+        modeFilteredExperiences.body.items.map(
+          (item: { id: string }) => item.id
+        ),
+        [capturedId]
+      );
+      const unknownModeExperiences = await callMemoryControlApi(
+        "GET",
+        `/control/memory/experiences?workspaceId=${workspaceId}&repositoryId=${encodeURIComponent(repositoryId)}&includeTaskHistory=true&memoryMode=unknown&outcome=success`,
+        "memory-operator"
+      );
+      assert.equal(
+        unknownModeExperiences.status,
+        200,
+        JSON.stringify(unknownModeExperiences.body)
+      );
+      assert.ok(
+        unknownModeExperiences.body.items.some(
+          (item: { id: string }) => item.id === experience.id
+        ),
+        "legacy rows with no memory-mode column value are browseable as unknown"
+      );
+      assert.ok(
+        unknownModeExperiences.body.items.every(
+          (item: { memoryMode?: string }) =>
+            item.memoryMode === undefined || item.memoryMode === "unknown"
+        )
       );
       const duplicateCapture = await callMemoryControlApi(
         "POST",

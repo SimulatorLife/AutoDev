@@ -35,6 +35,7 @@ export function experienceToRow(
     started_at: experience.startedAt,
     completed_at: experience.completedAt ?? null,
     outcome: experience.outcome,
+    memory_mode: experience.memoryMode ?? null,
     validation_state: experience.validation?.state ?? null,
     validation_evidence: JSON.stringify(experience.validation?.evidence ?? []),
     trajectory_format: experience.trajectory.format,

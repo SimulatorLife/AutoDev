@@ -38,7 +38,16 @@ const approvedLegacyFiles = new Set([
   "scripts/run-codex-claude-bridge.sh",
   "scripts/run-codex-copilot-cli-responses-proxy.sh",
   "scripts/run-codex-model-router.sh",
-  "scripts/run-provider-agent.sh"
+  "scripts/run-provider-agent.sh",
+  "config/openlit/assets/clickhouse-init.sh",
+  "eslint.config.js",
+  "scripts/openlit/apply-patches.sh",
+  "scripts/openlit/bootstrap-otlp-key.sh",
+  "scripts/openlit/bootstrap-secrets.sh",
+  "scripts/openlit/build-local.sh",
+  "scripts/openlit/down.sh",
+  "scripts/openlit/pin-image.sh",
+  "scripts/openlit/up.sh"
 ]);
 
 const forbiddenImplementationFiles = trackedFiles.filter((file) => {

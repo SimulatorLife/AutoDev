@@ -246,7 +246,7 @@ test("each tool folder receives exactly its repository skills with bundled files
 
 test("repository folders never duplicate user-level skills", () => {
   const materializer = readFileSync(
-    join(repositoryRoot, "src/platform/install-materializer.ts"),
+    join(repositoryRoot, "runtime/src/platform/install-materializer.ts"),
     "utf8"
   );
   const match = /export const SKILLS = \[(.*?)\]/su.exec(materializer);
@@ -317,7 +317,7 @@ test("Rulesync check detects edited, stale, and missing generated skills", () =>
 test("installer delegates repository skill generation and checking to typed materialization", () => {
   const installer = readFileSync(installerPath, "utf8");
   const materializer = readFileSync(
-    join(repositoryRoot, "src/platform/install-materializer.ts"),
+    join(repositoryRoot, "runtime/src/platform/install-materializer.ts"),
     "utf8"
   );
   assert.match(installer, /src\/cli\/install\.ts/);

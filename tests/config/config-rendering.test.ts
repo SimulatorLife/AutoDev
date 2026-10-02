@@ -5,20 +5,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { parse } from "smol-toml";
-
 import {
   applyOtelIngress,
-  compose,
-  loadPortable
-} from "../../src/config/compose-user-config.ts";
-import {
   atomicWrite,
+  compose,
+  loadPortable,
+  renderBridgeMcpCatalogue,
   serializeToml,
-  type TomlTable
-} from "../../src/config/config-files.ts";
-import { renderBridgeMcpCatalogue } from "../../src/config/render-bridge-mcp-catalogue.ts";
-import { validateProviderContracts } from "../../src/config/render-execution-contract.ts";
+  type TomlTable,
+  validateProviderContracts
+} from "@simulatorlife/autodev-runtime/config";
+import { parse } from "smol-toml";
 
 test("TOML serialization is parseable and ends with one newline", () => {
   const input: TomlTable = { z: "last", a: true, nested: { value: 2 } };

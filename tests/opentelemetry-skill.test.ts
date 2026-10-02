@@ -12,7 +12,7 @@ const targetStatePath = new URL(
   repositoryRoot
 );
 const materializerPath = new URL(
-  "src/platform/install-materializer.ts",
+  "runtime/src/platform/install-materializer.ts",
   repositoryRoot
 );
 

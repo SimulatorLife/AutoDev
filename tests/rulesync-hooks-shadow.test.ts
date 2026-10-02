@@ -161,7 +161,7 @@ test("portable config keeps hooks in Rulesync and install uses typed materializa
     /src\/cli\/install\.ts/
   );
   const materializer = readFileSync(
-    join(repositoryRoot, "src/platform/install-materializer.ts"),
+    join(repositoryRoot, "runtime/src/platform/install-materializer.ts"),
     "utf8"
   );
   assert.match(materializer, /config\.autodev\.toml/);

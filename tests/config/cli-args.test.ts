@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseArgs, requiredArg } from "../../src/config/cli-args.ts";
-import { ConfigError } from "../../src/config/config-files.ts";
+import {
+  ConfigError,
+  parseArgs,
+  requiredArg
+} from "@simulatorlife/autodev-runtime/config";
 
 test("parseArgs captures --key value pairs into values", () => {
   const { values, flags } = parseArgs(["--mcp-source", "path/to/mcp.toml"]);

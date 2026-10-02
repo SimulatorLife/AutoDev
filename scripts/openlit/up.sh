@@ -102,16 +102,16 @@ for _ in {1..30}; do
 done
 
 echo "==> Synchronizing rulesync prompts to AutoDev Prompt Hub"
-OPENLIT_DB_PASSWORD="$OPENLIT_DB_PASSWORD" node "$REPO_ROOT/src/platform/sync-rulesync-prompts.ts" || echo "Warning: prompt synchronization failed" >&2
+OPENLIT_DB_PASSWORD="$OPENLIT_DB_PASSWORD" pnpm --filter @simulatorlife/autodev-data openlit:sync-prompts || echo "Warning: prompt synchronization failed" >&2
 
 echo "==> Synchronizing rulesync agent roles to AutoDev Agents Hub"
-OPENLIT_DB_PASSWORD="$OPENLIT_DB_PASSWORD" node "$REPO_ROOT/src/platform/sync-rulesync-agents.ts" || echo "Warning: agent synchronization failed" >&2
+OPENLIT_DB_PASSWORD="$OPENLIT_DB_PASSWORD" pnpm --filter @simulatorlife/autodev-data openlit:sync-agents || echo "Warning: agent synchronization failed" >&2
 
 echo "==> Synchronizing AutoDev provider models & pricing catalog"
-node "$REPO_ROOT/src/platform/sync-rulesync-models.ts" || echo "Warning: model synchronization failed" >&2
+pnpm --filter @simulatorlife/autodev-data openlit:sync-models || echo "Warning: model synchronization failed" >&2
 
 echo "==> Synchronizing AutoDev project and workspace architecture"
-node "$REPO_ROOT/src/platform/sync-rulesync-workspaces.ts" || echo "Warning: workspace synchronization failed" >&2
+pnpm --filter @simulatorlife/autodev-data openlit:sync-workspaces || echo "Warning: workspace synchronization failed" >&2
 
 echo "==> AutoDev Console stack started (container build/runtime still requires acceptance probes)."
 echo "    Image tag:       $IMAGE_TAG"

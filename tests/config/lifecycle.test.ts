@@ -2,12 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createMacosServiceLifecycle } from "@simulatorlife/autodev-runtime/hooks";
-
 import {
   type CommandResult,
   LaunchdClient,
   LaunchdError
-} from "../../src/platform/macos/launchd.ts";
+} from "@simulatorlife/autodev-runtime/platform/launchd";
 
 test("macOS lifecycle uses typed launchd operations without shell interpolation", () => {
   const calls: string[][] = [];

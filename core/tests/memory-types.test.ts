@@ -6,7 +6,8 @@ import {
   isMemoryExperienceVisibleTo,
   isMemoryScopeVisibleTo,
   type MemoryReadContext,
-  type MemoryScope
+  type MemoryScope,
+  parseMemoryExecutionMode
 } from "../src/memory/types.ts";
 
 const context: MemoryReadContext = {
@@ -18,6 +19,18 @@ const context: MemoryReadContext = {
   agentId: "agent-a",
   canReadGlobal: false
 };
+
+test("memory execution modes distinguish safe defaults, gated ablations, and invalid config", () => {
+  assert.equal(parseMemoryExecutionMode(undefined), "unknown");
+  assert.equal(parseMemoryExecutionMode("jit"), "jit");
+  assert.equal(parseMemoryExecutionMode("disabled"), "disabled");
+  assert.equal(parseMemoryExecutionMode("retrieval-only"), "invalid");
+  assert.equal(
+    parseMemoryExecutionMode("retrieval-only", true),
+    "retrieval-only"
+  );
+  assert.equal(parseMemoryExecutionMode("unrecognized"), "invalid");
+});
 
 test("memory scope visibility requires exact workspace, repository, and role matches", () => {
   assert.equal(

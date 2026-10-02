@@ -21,7 +21,7 @@ import {
   runtimeLinkMatches,
   runtimeTarget,
   skillLinkMatches
-} from "../../src/platform/runtime-files.ts";
+} from "@simulatorlife/autodev-runtime/platform/runtime-files";
 
 function withTempDir<T>(callback: (directory: string) => T): T {
   const directory = mkdtempSync(join(tmpdir(), "autodev-runtime-files-"));
@@ -41,13 +41,38 @@ test("runtime targets preserve relative depth for scripts and source files", () 
     runtimeTarget("agents/prompts/base.md", "/runtime"),
     "/runtime/agents/prompts/base.md"
   );
+  for (const platformSource of [
+    "runtime/src/platform/host-arch.ts",
+    "runtime/src/platform/macos/launchagent.ts",
+    "runtime/src/platform/macos/launchd.ts",
+    "runtime/src/platform/router-ensure.ts",
+    "runtime/src/platform/copilot-ensure.ts",
+    "runtime/src/platform/code-graph-ensure.ts",
+    "runtime/src/platform/antigravity-ensure.ts",
+    "runtime/src/platform/claude-ensure.ts",
+    "runtime/src/platform/minimax-ensure.ts",
+    "runtime/src/platform/install-state.ts",
+    "runtime/src/platform/service-restart.ts",
+    "runtime/src/platform/antigravity-settings.ts",
+    "runtime/src/platform/dependencies.ts",
+    "runtime/src/platform/install-check.ts",
+    "runtime/src/platform/install-command.ts",
+    "runtime/src/platform/install-materializer.ts",
+    "runtime/src/platform/otel-collector.ts",
+    "runtime/src/platform/otel-provision.ts",
+    "runtime/src/cli/router-status.ts",
+    "runtime/src/cli/router-status-client.ts",
+    "runtime/src/platform/runtime-files.ts",
+    "runtime/src/platform/runtime-reconciliation.ts"
+  ]) {
+    assert.equal(
+      runtimeTarget(platformSource, "/runtime"),
+      join("/runtime", platformSource.slice("runtime/".length))
+    );
+  }
   assert.equal(
-    runtimeTarget("src/platform/runtime-files.ts", "/runtime"),
-    "/runtime/src/platform/runtime-files.ts"
-  );
-  assert.equal(
-    runtimeTarget("runtime/src/router/control-api.ts", "/runtime"),
-    "/runtime/src/router/control-api.ts"
+    runtimeTarget("runtime/src/control-api/index.ts", "/runtime"),
+    "/runtime/src/control-api/index.ts"
   );
   assert.equal(
     runtimeTarget("runtime/src/hooks/root-delegation.ts", "/runtime"),

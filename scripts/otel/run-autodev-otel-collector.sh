@@ -7,7 +7,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 source_root="$script_dir/../../"
 module="${AUTODEV_OTEL_MODULE:-$codex_home/src/platform/otel-collector.ts}"
-[[ -f "$module" ]] || module="$source_root/src/platform/otel-collector.ts"
+[[ -f "$module" ]] || module="$source_root/runtime/src/platform/otel-collector.ts"
 
 resolve_node() {
   # launchd passes the native Node the installer resolved; PATH order alone

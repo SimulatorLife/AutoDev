@@ -1,9 +1,15 @@
 import path from "node:path";
 
-import type { MemoryReadContext } from "@simulatorlife/autodev-core";
+import { trace } from "@opentelemetry/api";
+import {
+  type MemoryExecutionMode,
+  type MemoryReadContext,
+  parseMemoryExecutionMode
+} from "@simulatorlife/autodev-core";
 import {
   createPostgresMemoryHost,
   injectMemoryContext,
+  injectRetrievalOnlyMemoryContext,
   latestUserTask,
   type MemoryRepositoryRootResolver,
   type PostgresMemoryHost
@@ -13,6 +19,30 @@ import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/respon
 import { configuredMemoryEmbeddingProvider } from "./memory-embedding.ts";
 import { RoutedMemoryReconstructor } from "./memory-reconstruction.ts";
 import { routerTelemetryTracer } from "./telemetry.ts";
+
+type MemoryMode = Exclude<MemoryExecutionMode, "unknown">;
+
+function memoryMode(env: NodeJS.ProcessEnv): MemoryMode {
+  const configured = env.AUTODEV_MEMORY_MODE?.trim();
+  if (!configured) return "jit";
+  const parsed = parseMemoryExecutionMode(
+    configured,
+    env.AUTODEV_MEMORY_ABLATION === "1"
+  );
+  return parsed === "unknown" ? "invalid" : parsed;
+}
+
+export function currentRouterMemoryMode(): MemoryMode {
+  return memoryMode(process.env);
+}
+
+function annotateMemoryMode(mode: MemoryMode): void {
+  try {
+    trace.getActiveSpan()?.setAttribute("autodev.memory.mode", mode);
+  } catch {
+    // Telemetry must not affect whether advisory memory is queried.
+  }
+}
 
 export interface OrchestratorMemoryRequest {
   readonly payload: Record<string, unknown>;
@@ -43,6 +73,10 @@ export async function injectOrchestratorMemory(
   request: OrchestratorMemoryRequest,
   hostOverride?: PostgresMemoryHost | null
 ): Promise<Record<string, unknown>> {
+  const mode = memoryMode(process.env);
+  annotateMemoryMode(mode);
+  if (mode === "disabled" || mode === "invalid") return request.payload;
+
   const workspace = request.workspace;
   if (
     !workspace ||
@@ -97,12 +131,20 @@ export async function injectOrchestratorMemory(
   });
 
   try {
-    return await injectMemoryContext(service, request.payload, {
+    const taskContext = {
       taskId,
       runId: request.requestId,
       task,
-      context
-    });
+      context,
+      memoryMode: mode
+    };
+    return mode === "retrieval-only"
+      ? await injectRetrievalOnlyMemoryContext(
+          service,
+          request.payload,
+          taskContext
+        )
+      : await injectMemoryContext(service, request.payload, taskContext);
   } catch {
     // Historical memory is advisory; a database/curation failure must not fail the task.
     return request.payload;

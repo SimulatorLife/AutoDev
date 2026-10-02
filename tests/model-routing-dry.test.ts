@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   renderModelCatalog,
   runModelCatalog
-} from "../src/config/render-model-catalog.ts";
+} from "@simulatorlife/autodev-runtime/config";
 import {
   CONFIGURED_ORCHESTRATOR_MODEL,
   CONFIGURED_SMART_MODEL,
@@ -52,8 +52,8 @@ test("config/model-routing.json is the single source of truth for model versions
 });
 
 test("changing model in a single config field dynamically propagates through RoutingPolicy without code changes", () => {
-  const baseConfig = JSON.parse(
-    JSON.stringify(ROUTING_POLICY.config)
+  const baseConfig = structuredClone(
+    ROUTING_POLICY.config
   ) as RoutingPolicyConfig;
 
   // Simulate updating the model versions in ONE config file, ONE field each
@@ -179,16 +179,16 @@ test("renderModelCatalog dynamically handles arbitrary new model additions witho
 
     const renderedJson = renderModelCatalog(mockRoutingPath, CATALOGS_DIR);
     const rendered = JSON.parse(renderedJson);
-    const slugs = (rendered.models as Array<{ slug: string }>).map(
-      (m) => m.slug
+    const slugs = new Set(
+      (rendered.models as Array<{ slug: string }>).map((m) => m.slug)
     );
 
     assert.ok(
-      slugs.includes("gpt-next-alpha"),
+      slugs.has("gpt-next-alpha"),
       "Catalog must contain newly configured orchestrator model"
     );
     assert.ok(
-      slugs.includes("gpt-next-beta"),
+      slugs.has("gpt-next-beta"),
       "Catalog must contain newly configured smart model"
     );
   } finally {

@@ -15,7 +15,7 @@ import {
   type CollectorOptions,
   resolveCollectorOptions,
   runCollector
-} from "../../src/platform/otel-collector.ts";
+} from "@simulatorlife/autodev-runtime/platform/otel-collector";
 
 function withTempDir<T>(callback: (directory: string) => T): T {
   const directory = mkdtempSync(join(tmpdir(), "autodev-otel-collector-"));

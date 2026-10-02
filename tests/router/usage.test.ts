@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { createAgentActivityTracker } from "@simulatorlife/autodev-runtime/agents";
-
 import {
   clearWorkspaceCapabilities,
   emptyUsageBucket,

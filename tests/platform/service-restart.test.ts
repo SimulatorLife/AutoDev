@@ -14,7 +14,7 @@ import {
   restartServices,
   type ServiceRestartDeps,
   type ServiceRestartOptions
-} from "../../src/platform/service-restart.ts";
+} from "@simulatorlife/autodev-runtime/platform/service-restart";
 
 const PORTS: Record<ManagedServiceLabel, number> = {
   [LABEL_MODEL_ROUTER]: 4100,

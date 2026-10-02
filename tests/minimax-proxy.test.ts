@@ -14,8 +14,6 @@ import {
   freeformInputFromArguments,
   unrecognisedFreeformFeedback
 } from "@simulatorlife/autodev-runtime/providers/minimax";
-import { AGENT_ROLE_HEADER } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
-
 import { downstreamHeaders } from "@simulatorlife/autodev-runtime/router/proxy";
 import { upstreamPayload } from "@simulatorlife/autodev-runtime/router/responses";
 import { ROUTING_POLICY as routing } from "@simulatorlife/autodev-runtime/router/routing";
@@ -24,6 +22,7 @@ import {
   SESSION_ID_HEADER,
   SESSION_SCOPE_HEADER
 } from "@simulatorlife/autodev-runtime/router/subagents";
+import { AGENT_ROLE_HEADER } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 
 const read = (path: string): string =>
   readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -39,7 +38,7 @@ test("the MiniMax proxy is an AutoDev-tracked source, not an inline heredoc", ()
   assert.doesNotMatch(ensure, /<<'NODE'/);
   assert.doesNotMatch(ensure, /createServer/);
 
-  const materializer = read("src/platform/install-materializer.ts");
+  const materializer = read("runtime/src/platform/install-materializer.ts");
   assert.ok(
     materializer.includes("runtime/src/providers/minimax.ts"),
     "the installer must deploy the proxy beside the hook that launches it"

@@ -54,6 +54,15 @@ import {
   setDefaultPersistenceManager
 } from "@simulatorlife/autodev-runtime/router/persistence";
 import {
+  ORCHESTRATOR_ALIAS,
+  ORCHESTRATOR_REASONING_EFFORT,
+  ORCHESTRATOR_TIER,
+  ROUTES,
+  ROUTING_CONFIG as ROUTING,
+  ROUTING_CONFIG_FILE,
+  ROUTING_POLICY
+} from "@simulatorlife/autodev-runtime/router/routing";
+import {
   CodexStateCollector,
   loadCodexStateCollectorConfig
 } from "@simulatorlife/autodev-runtime/router/state-collector";
@@ -69,7 +78,7 @@ import {
   normalizeInputItemIds
 } from "@simulatorlife/autodev-runtime/shared/responses-item-ids";
 
-import { handleControlApiRequest } from "./control-api.ts";
+import { handleControlApiRequest } from "../control-api/index.ts";
 import {
   codexTelemetryStatus,
   getDefaultOtelTracker,
@@ -110,15 +119,6 @@ import {
   UPSTREAM_TRANSPORT_MAX_ATTEMPTS
 } from "./proxy.ts";
 import { setUpstreamShapeHooks } from "./responses.ts";
-import {
-  ORCHESTRATOR_ALIAS,
-  ORCHESTRATOR_REASONING_EFFORT,
-  ORCHESTRATOR_TIER,
-  ROUTES,
-  ROUTING_CONFIG as ROUTING,
-  ROUTING_CONFIG_FILE,
-  ROUTING_POLICY
-} from "@simulatorlife/autodev-runtime/router/routing";
 import {
   AGENT_EVENTS_PATH,
   type BridgeRequestContext,

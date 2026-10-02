@@ -78,7 +78,7 @@ const statusPayload = {
 async function runStatusCli(
   payload: unknown,
   args: string[] = [],
-  entrypoint = "src/cli/router-status.ts"
+  entrypoint = "runtime/src/cli/router-status.ts"
 ): Promise<{ stdout: string; stderr: string }> {
   const server = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
@@ -178,7 +178,7 @@ test("autodev router status uses the same operational JSON contract", async () =
   const { stdout } = await runStatusCli(
     statusPayload,
     ["router", "status"],
-    "src/cli/autodev.ts"
+    "runtime/src/cli/autodev.ts"
   );
   assert.deepEqual(JSON.parse(stdout), {
     schema: statusPayload.schema,

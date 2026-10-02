@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { RouterLifecycle } from "@simulatorlife/autodev-runtime/router/lifecycle";
 
 const ROUTER_SERVER = fileURLToPath(
-  new URL("@simulatorlife/autodev-runtime/router/server", import.meta.url)
+  new URL("../../runtime/src/router/server.ts", import.meta.url)
 );
 
 function freePort(): Promise<number> {

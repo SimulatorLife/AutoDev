@@ -22,13 +22,15 @@ test(
     await migrationPool.end();
 
     const serverPath = fileURLToPath(
-      new URL("../src/memory/mcp-main.ts", import.meta.url)
+      new URL("../src/router/memory-mcp-main.ts", import.meta.url)
     );
-    const env = Object.fromEntries(
+    const env: NodeJS.ProcessEnv = Object.fromEntries(
       Object.entries(process.env).filter(
         (entry): entry is [string, string] => typeof entry[1] === "string"
       )
     );
+    delete env.AUTODEV_MEMORY_MODE;
+    delete env.AUTODEV_MEMORY_ABLATION;
     Object.assign(env, {
       AUTODEV_MEMORY_DATABASE_URL: databaseUrl!,
       AUTODEV_MEMORY_WORKSPACE_ID: "mcp-integration-workspace",
@@ -96,6 +98,7 @@ test(
         taskId: string;
         runId: string;
         agentId: string;
+        memoryMode: string;
         trajectory: { uri: string; digest?: string };
       };
       assert.equal(experience.workspaceId, "mcp-integration-workspace");
@@ -103,6 +106,7 @@ test(
       assert.match(experience.taskId, /^mcp-task-\d+$/u);
       assert.match(experience.runId, /^mcp-run-\d+$/u);
       assert.equal(experience.agentId, "mcp-integration-worker");
+      assert.equal(experience.memoryMode, "unknown");
       assert.equal(
         experience.trajectory.uri,
         "https://example.invalid/session/trajectory.jsonl"

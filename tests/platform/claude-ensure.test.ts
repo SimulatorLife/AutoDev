@@ -7,7 +7,7 @@ import {
   ensureClaudeBridge,
   isClaudeModel,
   resolveClaudeEnsureOptions
-} from "../../src/platform/claude-ensure.ts";
+} from "@simulatorlife/autodev-runtime/platform/claude-ensure";
 
 function options(
   overrides: Partial<ClaudeEnsureOptions> = {}

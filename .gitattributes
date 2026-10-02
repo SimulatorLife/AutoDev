@@ -1,0 +1,4 @@
+# These files contain unified patches. Their leading diff-context marker may be
+# followed by a source-code indentation tab, which the outer diff checker sees
+# as a space-before-tab error even though it is required patch syntax.
+patches/openlit/*.patch whitespace=-space-before-tab

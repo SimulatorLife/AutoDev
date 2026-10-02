@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { ingestAgentEvents, resetRouterTelemetry } from "@simulatorlife/autodev-runtime/router/http";
-import { ingestOtelSignal, resetOtelTelemetry } from "@simulatorlife/autodev-runtime/router/otel";
+import {
+  ingestAgentEvents,
+  resetRouterTelemetry
+} from "@simulatorlife/autodev-runtime/router/http";
+import {
+  ingestOtelSignal,
+  resetOtelTelemetry
+} from "@simulatorlife/autodev-runtime/router/otel";
 import { CONFIGURED_ORCHESTRATOR_MODEL } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   closeBridgeSubagentsForRequest,

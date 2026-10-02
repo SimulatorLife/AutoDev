@@ -14,7 +14,7 @@ import {
   CANONICAL_HOOK_HASHES,
   checkHookTrust,
   syncHookTrust
-} from "../../src/platform/install-materializer.ts";
+} from "@simulatorlife/autodev-runtime/platform/install-materializer";
 
 function withTempDir<T>(callback: (directory: string) => T): T {
   const directory = mkdtempSync(join(tmpdir(), "autodev-hook-trust-"));

@@ -4,14 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { runRootDelegation } from "../../runtime/src/hooks/root-delegation.ts";
-import { createSessionStart } from "../../runtime/src/hooks/session-start.ts";
-import { createSubagentStart } from "../../runtime/src/hooks/subagent-start.ts";
 import type {
   RouterEnsureDeps,
   RouterEnsureOptions,
   RouterEnsureResult
-} from "../../src/platform/router-ensure.ts";
+} from "@simulatorlife/autodev-runtime/platform/router-ensure";
+
+import { runRootDelegation } from "../../runtime/src/hooks/root-delegation.ts";
+import { createSessionStart } from "../../runtime/src/hooks/session-start.ts";
+import { createSubagentStart } from "../../runtime/src/hooks/subagent-start.ts";
 
 function withCodexHome<T>(callback: (home: string) => T): T {
   const previous = process.env.CODEX_HOME;

@@ -33,7 +33,7 @@ alias.
 Model version management is strictly DRY (Don't Repeat Yourself). The repository enforces that changing or adding a model version is performed in **ONE config file, ONE single value**: [`config/model-routing.json`](file://config/model-routing.json).
 
 - **Sole Source of Truth**: [`config/model-routing.json`](file://config/model-routing.json) defines all provider models under `providers.<provider>.models`. To change the Codex orchestrator model, edit `providers.codex.models.orchestrator` (and `default`). To change the smart model, edit `providers.codex.models.smart`.
-- **Derived Model Catalog**: The Codex model catalog ([`config/catalogs/codex-model-catalog.json`](file://config/catalogs/codex-model-catalog.json)) is an automatically generated artifact rendered directly from [`config/model-routing.json`](file://config/model-routing.json) via [`renderModelCatalog`](file://src/config/render-model-catalog.ts) (CLI: `autodev render catalog`). The platform installer materializes and validates this catalog during `bash scripts/install.sh` and `node src/cli/install.ts --check`.
+- **Derived Model Catalog**: The Codex model catalog ([`config/catalogs/codex-model-catalog.json`](file://config/catalogs/codex-model-catalog.json)) is an automatically generated artifact rendered directly from [`config/model-routing.json`](file://config/model-routing.json) via [`renderModelCatalog`](file://runtime/src/config/render-model-catalog.ts) (CLI: `autodev render catalog`). The platform installer materializes and validates this catalog during `bash scripts/install.sh` and `node runtime/src/cli/install.ts --check`.
 - **Dynamic Catalog Fallback**: The router's HTTP catalog endpoint (`GET /v1/models`) dynamically includes configured Codex models from the active [`RoutingPolicy`](file://runtime/src/router/routing.ts) even before the catalog file is re-rendered.
 - **Zero-Code-Change Model Upgrades**: Tests, contract fixtures, telemetry trackers, and hooks dynamically resolve model identifiers via [`RoutingPolicy.configuredModel`](file://runtime/src/router/routing.ts), [`CONFIGURED_ORCHESTRATOR_MODEL`](file://runtime/src/router/routing.ts), and [`CONFIGURED_SMART_MODEL`](file://runtime/src/router/routing.ts) rather than hardcoding concrete model names.
 - **Enforcement & Regressions**: The test suite [`tests/model-routing-dry.test.ts`](file://tests/model-routing-dry.test.ts) locks in this single-source-of-truth invariant, ensuring that updating model strings in configuration automatically propagates through routing, candidate generation, metadata synthesis, and catalog materialization without breaking tests or requiring compatibility wrappers.
@@ -683,13 +683,13 @@ The router makes its effective choice visible in two ways:
   regardless of which provider spawned it and by which mechanism. This is
   distinct from `usage.byRole`, which counts _router requests_ made by
   subagents: a bridge-native child makes no router request at all, so it
-  appears in `status.subagents` and nowhere else. `src/cli/router-status.ts` prints it under
+  appears in `status.subagents` and nowhere else. `runtime/src/cli/router-status.ts` prints it under
   `Subagents spawned:`. See "Counting subagents across providers".
 - The router-local HTML dashboard has been retired. Use `GET /status` or `pnpm autodev -- router status` for live diagnostics and the AutoDev Console **Usage** surface for historical/aggregate observability. Do not add new UI behavior to the router status endpoint.
 
 ### Grouped usage sections in the human CLI report
 
-The human report from `src/cli/router-status.ts` renders the three usage
+The human report from `runtime/src/cli/router-status.ts` renders the three usage
 breakdowns together as one ordered group rather than spacing them across the
 telemetry output. After a blank-line separator following the `Concurrency:`
 summary, the report prints
@@ -1221,7 +1221,7 @@ transport responsible only for composing them:
 
 | Consumer                   | Shared composition                                                                                                                               | Provider-specific boundary                                                                                                                                                          |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Native Codex child         | `base.md` + `leaf.md` + optional `code-search.md` + role-specific `developer_instructions`                                                       | `src/config/render-agent-configs.ts` materializes the complete role TOML under `~/.codex/agents`; `agent_type` selects it at spawn time                                             |
+| Native Codex child         | `base.md` + `leaf.md` + optional `code-search.md` + role-specific `developer_instructions`                                                       | `runtime/src/config/render-agent-configs.ts` materializes the complete role TOML under `~/.codex/agents`; `agent_type` selects it at spawn time                                     |
 | Antigravity/Copilot bridge | `base.md` + workspace + `leaf.md` (or `orchestrator.md` + orchestration skill) + optional `code-search.md` + role fragment + capability metadata | `composeProviderPrompt(role, cwd)` then appends the delegated task                                                                                                                  |
 | Claude bridge              | Codex's own request context, like a native child: the role TOML's `developer_instructions`, the root bootstrap hook, and the conversation        | `renderCodexTranscript()` feeds Codex's input to the CLI on stdin; `systemPrompt()` replaces the CLI's system prompt with only how to act through Codex's tools, plus the workspace |
 | MiniMax pass-through       | Native Codex request, including the rendered role configuration                                                                                  | The proxy remains transport-only and does not author a competing prompt                                                                                                             |
@@ -1320,16 +1320,16 @@ or unrecognized header fails closed to the bounded policy. The
 bootstrap and the canonical `orchestration` skill, so the root agent gets one
 delegation policy no matter which provider serves it. The Antigravity and
 Copilot bridges share `runtime/src/agents/bridge-role.ts`; the Claude bridge takes the
-same prompts from Codex's context. The installer copies `src/` runtime modules
-under `$CODEX_HOME/src/` and script-backed bridge assets under the hooks
-runtime, so a bridge uses the same relative layout in a checkout and an
+same prompts from Codex's context. The installer materializes Runtime-owned modules from `runtime/src/` into the
+established `$CODEX_HOME/src/` paths and script-backed bridge assets under the
+hooks runtime, so a bridge uses the same relative layout in a checkout and an
 installation: `../src/…` for typed modules and `./codex/prompts/…` for prompt
 assets. That is what makes the bridges runnable and importable straight from a
 checkout, so their pure request-shaping helpers can be unit-tested rather than
 asserted against source text.
 
 Because the copies keep their relative layout, the `RUNTIME_MODULES` manifest in
-`src/platform/install-materializer.ts` must be closed under relative imports: a
+`runtime/src/platform/install-materializer.ts` must be closed under relative imports: a
 module listed there whose own import is missing resolves in a checkout and fails
 with `ERR_MODULE_NOT_FOUND` under `$CODEX_HOME`, which crash-loops the service
 that imports it. `tests/platform/runtime-manifest.test.ts` walks the manifest's
@@ -1835,7 +1835,7 @@ installer is the only supported materialization path into
     through Codex's tools, so it needs none.
 - User-level provider/runtime configuration: `config/config.autodev.toml` is
   the authoritative portable source for AutoDev-owned provider/runtime settings that RuleSync does not model, composed into `$CODEX_HOME/config.toml`
-  as an atomic regular file by `src/config/compose-user-config.ts`. The former
+  as an atomic regular file by `runtime/src/config/compose-user-config.ts`. The former
   `config/config.toml` seed is retired; valid legacy symlink
   targets are migrated once and broken targets fail closed.
   Composition is required because Codex loads user-level settings at startup and
@@ -1928,12 +1928,12 @@ completion. The Claude bridge is the exception: it serves Claude as a model
 whose every tool call Codex executes (see "Claude bridge: Codex executes every
 tool"):
 
-| Bridge                             | Authenticates as                                                                                                                                                                                                            |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `runtime/src/providers/claude.ts`          | the `claude` CLI's Claude Code OAuth subscription. `claudeEnvironment()` **removes** `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment so the CLI cannot silently fall back to metered API billing. |
-| `runtime/src/providers/antigravity.ts`     | the `agy` CLI's Antigravity subscription. `ensure-codex-antigravity-proxy.sh` refuses to start unless `useAiCredits=false` and `useG1Credits=false`.                                                                        |
-| `runtime/src/providers/copilot.ts` | the `copilot` CLI's own login.                                                                                                                                                                                              |
-| `runtime/src/providers/minimax.ts` | a plain `MINIMAX_API_KEY`; no subprocess.                                                                                                                                                                                   |
+| Bridge                                 | Authenticates as                                                                                                                                                                                                            |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runtime/src/providers/claude.ts`      | the `claude` CLI's Claude Code OAuth subscription. `claudeEnvironment()` **removes** `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment so the CLI cannot silently fall back to metered API billing. |
+| `runtime/src/providers/antigravity.ts` | the `agy` CLI's Antigravity subscription. `ensure-codex-antigravity-proxy.sh` refuses to start unless `useAiCredits=false` and `useG1Credits=false`.                                                                        |
+| `runtime/src/providers/copilot.ts`     | the `copilot` CLI's own login.                                                                                                                                                                                              |
+| `runtime/src/providers/minimax.ts`     | a plain `MINIMAX_API_KEY`; no subprocess.                                                                                                                                                                                   |
 
 LiteLLM's `anthropic/*` and `gemini/*` providers speak HTTPS with an API key:
 a different account, a different meter, and per-token billing where these have
@@ -2024,7 +2024,7 @@ configured and validated.
 
 ### Cross-provider execution contract
 
-`config/execution-contract.json` is the current generated runtime contract for role kind, read-only intent, expected MCP/skill capabilities, and adapter spawn-tool metadata. Today it is projected from native role TOMLs by `src/config/render-execution-contract.ts`; the installer rejects drift. This is a transitional projection path, not a long-term competing source of truth: once RuleSync owns the corresponding agent/subagent semantics losslessly, generate/validate the runtime contract from that canonical RuleSync state and remove duplicate editable role authority. The Antigravity and Copilot bridge prompt paths append the canonical
+`config/execution-contract.json` is the current generated runtime contract for role kind, read-only intent, expected MCP/skill capabilities, and adapter spawn-tool metadata. Today it is projected from native role TOMLs by `runtime/src/config/render-execution-contract.ts`; the installer rejects drift. This is a transitional projection path, not a long-term competing source of truth: once RuleSync owns the corresponding agent/subagent semantics losslessly, generate/validate the runtime contract from that canonical RuleSync state and remove duplicate editable role authority. The Antigravity and Copilot bridge prompt paths append the canonical
 role fragment from `agents/prompts/roles/` and use this JSON only for
 capability metadata; the Claude bridge receives the rendered role TOML's
 instructions in Codex's own context. The installer deploys both beside the bridge runtime

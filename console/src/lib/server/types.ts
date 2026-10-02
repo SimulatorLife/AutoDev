@@ -2,7 +2,7 @@
  * Typed shapes returned by the AutoDev Control API.
  *
  * These mirrors are derived from the runtime Control API handlers
- * (`src/router/control-api.ts`). They are intentionally narrow: each field is
+ * (`runtime/src/control-api/index.ts`). They are intentionally narrow: each field is
  * an `unknown` until a runtime validator narrows it. The view layer is
  * responsible for refusing to render synthetic values when a field is missing.
  */

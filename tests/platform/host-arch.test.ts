@@ -9,7 +9,8 @@ import {
   hostArch,
   resolveServiceNode,
   runsNatively
-} from "../../src/platform/host-arch.ts";
+} from "@simulatorlife/autodev-runtime/platform/host-arch";
+
 import { executableHeader } from "./executable-header.ts";
 
 function withTempDir<T>(callback: (directory: string) => T): T {

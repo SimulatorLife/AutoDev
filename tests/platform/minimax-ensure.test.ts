@@ -7,7 +7,7 @@ import {
   type MiniMaxEnsureDeps,
   type MiniMaxEnsureOptions,
   resolveMiniMaxEnsureOptions
-} from "../../src/platform/minimax-ensure.ts";
+} from "@simulatorlife/autodev-runtime/platform/minimax-ensure";
 
 function options(
   overrides: Partial<MiniMaxEnsureOptions> = {}

@@ -6,7 +6,6 @@ import {
   type RouterEvent,
   RouterEventRecorder
 } from "@simulatorlife/autodev-runtime/router/events";
-
 import { activitySubjectFor } from "@simulatorlife/autodev-runtime/router/proxy";
 import { CONFIGURED_SMART_MODEL } from "@simulatorlife/autodev-runtime/router/routing";
 import { UsageTracker } from "@simulatorlife/autodev-runtime/router/usage";

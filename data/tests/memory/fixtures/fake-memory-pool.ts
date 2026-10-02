@@ -40,7 +40,7 @@ function compileCondition(
   );
   // bare known columns used without a table prefix in CTE filters
   expr = expr.replaceAll(
-    /\b(status|validity_state|validity_valid_from|validity_valid_to|kind)\b(?!\s*:)/g,
+    /\b(status|validity_state|validity_valid_from|validity_valid_to|memory_mode|outcome|kind)\b(?!\s*:)/g,
     "row.$1"
   );
 

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { runMain } from "../../src/cli/autodev.ts";
-import { UnmigratedRuntimeError } from "../../src/cli/runtime.ts";
+import {
+  runMain,
+  UnmigratedRuntimeError
+} from "@simulatorlife/autodev-runtime/cli";
 
 test("CLI dispatches router, provider, hook, and install through typed backends", async () => {
   const calls: string[] = [];

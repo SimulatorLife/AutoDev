@@ -137,8 +137,44 @@ export interface MemoryActor {
   readonly role?: string;
 }
 
-export type ExperienceOutcome =
-  "success" | "partial" | "failure" | "cancelled" | "unknown";
+export const EXPERIENCE_OUTCOMES = [
+  "success",
+  "partial",
+  "failure",
+  "cancelled",
+  "unknown"
+] as const;
+export type ExperienceOutcome = (typeof EXPERIENCE_OUTCOMES)[number];
+
+/** Host-selected memory policy for the task that produced this experience. */
+export const MEMORY_EXECUTION_MODES = [
+  "jit",
+  "retrieval-only",
+  "disabled",
+  "invalid",
+  "unknown"
+] as const;
+export type MemoryExecutionMode = (typeof MEMORY_EXECUTION_MODES)[number];
+
+export function isMemoryExecutionMode(
+  value: unknown
+): value is MemoryExecutionMode {
+  return (
+    typeof value === "string" &&
+    MEMORY_EXECUTION_MODES.includes(value as MemoryExecutionMode)
+  );
+}
+
+/** Parse an externally reported mode without treating an invalid value as a valid cohort. */
+export function parseMemoryExecutionMode(
+  value: unknown,
+  ablationEnabled = false
+): MemoryExecutionMode {
+  if (typeof value !== "string" || !value.trim()) return "unknown";
+  const mode = value.trim();
+  if (!isMemoryExecutionMode(mode)) return "invalid";
+  return mode === "retrieval-only" && !ablationEnabled ? "invalid" : mode;
+}
 
 export interface EvidenceReference {
   readonly kind:
@@ -183,6 +219,8 @@ export interface ExperienceEnvelope {
   readonly startedAt: string;
   readonly completedAt?: string;
   readonly outcome: ExperienceOutcome;
+  /** Host-selected cohort policy, not proof that a packet was injected. */
+  readonly memoryMode?: MemoryExecutionMode;
   readonly validation?: {
     readonly state: "passed" | "failed" | "partial" | "not_run";
     readonly evidence: readonly EvidenceReference[];
@@ -281,7 +319,7 @@ export interface MemorySearchHit {
 }
 
 export type MemoryReviewDisposition =
-  "retain" | "revise" | "reject" | "uncertain";
+  "retain" | "revise" | "reject" | "uncertain" | "not_evaluated";
 
 /** Task-time reconstruction; the source memory itself remains unchanged. */
 export interface ReconstructedMemory {
@@ -314,6 +352,8 @@ export interface MemoryListRequest {
 export interface ExperienceListRequest {
   readonly context: MemoryReadContext;
   readonly query?: string;
+  readonly memoryModes?: readonly MemoryExecutionMode[];
+  readonly outcomes?: readonly ExperienceOutcome[];
   readonly limit?: number;
   readonly offset?: number;
 }

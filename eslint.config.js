@@ -109,6 +109,7 @@ const architectureFiles = [
 const architectureElements = [
   element("core", "core/src/**"),
   element("data", "data/src/**"),
+  element("runtime-control-api", "runtime/src/control-api/**"),
   element("runtime-memory", "runtime/src/memory/**"),
   element("runtime-mcp", "runtime/src/mcp/**"),
   element("runtime-agents", "runtime/src/agents/**"),
@@ -128,11 +129,10 @@ const architectureElements = [
     "runtime/src/telemetry/resource-context/**"
   ),
   element("runtime-telemetry", "runtime/src/telemetry/**"),
-  element("config", "src/config/**"),
-  element("router", "src/router/**"),
-  element("platform", "src/platform/**"),
+  element("runtime-config", "runtime/src/config/**"),
+  element("runtime-router", "runtime/src/router/**"),
   element("runtime-hooks", "runtime/src/hooks/**"),
-  element("cli", "src/cli/**"),
+  element("runtime-cli", "runtime/src/cli/**"),
   element("console-app", "console/app/**"),
   element("console-components", "console/src/components/**"),
   element("console-features", "console/src/features/**"),
@@ -145,10 +145,10 @@ const architectureElements = [
 ];
 
 const allSourceElements = [
-  "config",
-  "router",
-  "platform",
-  "cli",
+  "runtime-config",
+  "runtime-router",
+  "runtime-control-api",
+  "runtime-cli",
   "core",
   "data",
   "runtime-memory",
@@ -198,7 +198,7 @@ const architecturePolicies = [
     "runtime-shared",
     "runtime-telemetry"
   ]),
-  allowOnly("runtime-platform", ["platform", "runtime-shared"]),
+  allowOnly("runtime-platform", ["runtime-config", "runtime-shared"]),
   allowOnly("runtime-mcp", ["runtime-shared"]),
   allowOnly("runtime-agents", ["runtime-shared"]),
   allowOnly("runtime-providers", [
@@ -207,9 +207,10 @@ const architecturePolicies = [
     "runtime-telemetry",
     "runtime-telemetry-context"
   ]),
-  allowOnly("config", ["runtime-shared"]),
-  allowOnly("router", [
+  allowOnly("runtime-config", ["runtime-shared"]),
+  allowOnly("runtime-router", [
     "runtime-agents",
+    "runtime-control-api",
     "runtime-telemetry",
     "core",
     "data",
@@ -224,8 +225,24 @@ const architecturePolicies = [
     "runtime-shared",
     "runtime-telemetry-context"
   ]),
-  allowOnly("platform", ["config", "runtime-shared"]),
-  allowOnly("cli", ["config", "platform", "router", "runtime-shared"]),
+  allowOnly("runtime-control-api", [
+    "core",
+    "data",
+    "runtime-memory",
+    "runtime-router",
+    "runtime-router-concurrency",
+    "runtime-router-cooldown",
+    "runtime-router-lifecycle",
+    "runtime-router-persistence",
+    "runtime-shared",
+    "runtime-telemetry"
+  ]),
+  allowOnly("runtime-cli", [
+    "runtime-config",
+    "runtime-platform",
+    "runtime-router",
+    "runtime-shared"
+  ]),
   allowOnlyElementPaths("core", "core/src"),
   allowOnlyElementPaths("data", ["data/src", "core/src"]),
   allowOnly("runtime-memory", ["core", "data"]),
@@ -249,17 +266,17 @@ const architecturePolicies = [
   allowFileOnly("runtime-router-status", []),
   allowFileOnly("runtime-router-events", ["runtime-shared"]),
   allowFileOnly("runtime-router-live-feed", []),
-  allowFileOnly("router", [
+  allowFileOnly("runtime-router", [
     "runtime-router-events",
     "runtime-router-live-feed"
   ]),
   allowFileOnly("test", ["runtime-router-events", "runtime-router-live-feed"]),
   allowFileOnly("runtime-router-auth", []),
-  allowFileOnly("router", ["runtime-router-auth"]),
+  allowFileOnly("runtime-router", ["runtime-router-auth"]),
   allowFileOnly("test", ["runtime-router-auth"]),
-  allowFileOnly("cli", ["runtime-router-status"]),
+  allowFileOnly("runtime-cli", ["runtime-router-status"]),
   allowFileOnly("test", ["runtime-router-status"]),
-  allowFileOnly("router", ["runtime-router-state-collector"]),
+  allowFileOnly("runtime-router", ["runtime-router-state-collector"]),
   allowFileOnly("test", ["runtime-router-state-collector"]),
   allowFileOnly("console-entrypoint", [
     "console-app",
@@ -513,12 +530,16 @@ export default defineConfig([
   /* Classified source dependencies are default-deny and mirror the documented layers. */
   {
     files: [
-      "src/**/*.ts",
       "tests/**/*.ts",
       ".rulesync/skills/**/*.ts",
       "core/**/*.ts",
       "data/**/*.ts",
       "runtime/src/memory/**/*.ts",
+      "runtime/src/router/**/*.ts",
+      "runtime/src/control-api/**/*.ts",
+      "runtime/src/config/**/*.ts",
+      "runtime/src/cli/**/*.ts",
+      "runtime/src/platform/**/*.ts",
       "console/app/**/*.{ts,tsx}",
       "console/next.config.ts",
       "console/src/index.ts",
@@ -534,12 +555,16 @@ export default defineConfig([
       "boundaries/root-path": REPOSITORY_ROOT,
       "boundaries/elements-single-type": true,
       "boundaries/include": [
-        "src/**/*",
         "tests/**/*",
         ".rulesync/skills/**/*",
         "core/**/*",
         "data/**/*",
         "runtime/src/memory/**/*",
+        "runtime/src/router/**/*",
+        "runtime/src/control-api/**/*",
+        "runtime/src/config/**/*",
+        "runtime/src/cli/**/*",
+        "runtime/src/platform/**/*",
         "console/app/**/*",
         "console/next.config.ts",
         "console/src/index.ts",
@@ -572,7 +597,7 @@ export default defineConfig([
 
   /* Pure shared primitives get the tightest KISS/coupling ceiling. */
   {
-    files: ["src/shared/**/*.ts"],
+    files: ["runtime/src/shared/**/*.ts"],
     rules: {
       complexity: ["error", { max: 20 }],
       "import/max-dependencies": [

@@ -18,21 +18,28 @@ pnpm --filter @simulatorlife/autodev-data memory:migrate
 
 The migration fails if pgvector cannot be installed; lexical-only operation is
 not presented as a complete canonical deployment. The current vector column is
-1536-dimensional. The router has no embedding model configured by default, so
-it uses PostgreSQL full-text retrieval until an adapter from AutoDev's existing
-provider/model abstraction is supplied. No memory-specific model router is
-created.
+1536-dimensional. Retrieval is lexical by default. To enable vector search,
+set `AUTODEV_MEMORY_EMBEDDING_MODEL` to an embedding-capable model already
+recognized by AutoDev's `config/model-routing.json` provider route. The selected
+provider must expose an OpenAI-compatible `/embeddings` endpoint and return
+1536-dimensional vectors; the adapter reuses that route's base URL and `envKey`
+credential, and does not create a separate model router or API key. Missing
+routing/credentials or a recoverable provider outage keeps lexical retrieval
+available. No embedding model is selected by default. Embedding requests contain
+the memory claim or bounded task query, never raw transcript contents; configure
+only a provider route approved to process that data and restart the router after
+changing the embedding model setting.
 
 The root JIT path reconstructs at most two top-ranked candidates through the
 already configured orchestrator model over the local AutoDev router. It does
 not create a separate memory model router; the `memory.reconstruct` span covers
 the bounded call, and invalid/unavailable model output is classified uncertain
 and excluded. `AUTODEV_MEMORY_RECONSTRUCTION=deterministic` selects the
-verified-claim baseline for isolated tests. Embedding generation is still not
-configured, so retrieval remains PostgreSQL full-text until the existing
-provider layer exposes a compatible embedding capability. A recoverable failure
-from an optional embedding provider records a failed embedding span and falls
-back to full-text retrieval; malformed vectors remain errors. Full-text
+verified-claim baseline for isolated tests. Configured embedding requests emit a
+child GenAI embeddings span with bounded model/provider metadata and observed
+input-token usage. Recoverable provider failures are traced and fall back to
+full-text retrieval; malformed vectors remain hard errors.
+Full-text
 matching allows partial task/claim term overlap so JIT validation can evaluate
 candidates whose wording differs from the task; zero-signal records remain
 excluded.
@@ -40,6 +47,9 @@ excluded.
 Data migration v6 adds repository, commit, task/plan, validation, and evidence
 references to the experience GIN search vector. This enables exact full-text
 lookup of filenames and PR/issue links without indexing transcript payloads.
+Data migration v7 stores the host-selected memory mode beside each experience
+and indexes it with run outcomes for scoped ablation browsing. Existing rows
+remain `unknown`/unset rather than being backfilled from current process state.
 
 The Docker volume `autodev-memory-postgres` is durable. Configure backups,
 retention/deletion policy, and production credentials before storing production
@@ -79,6 +89,16 @@ root), `AUTODEV_MEMORY_CAPTURE_SOURCE`, `AUTODEV_MEMORY_TASK_ID`,
 resolve to a non-empty regular file beneath the configured root and is limited
 to 32 MiB. Optional `AUTODEV_MEMORY_CAPTURE_TASK_KIND`, `_PROVIDER`, `_MODEL`,
 `_BRANCH`, `_BASE_COMMIT`, and `_HEAD_COMMIT` attach bounded execution metadata.
+`AUTODEV_MEMORY_CAPTURE_OUTCOME` accepts `success`, `partial`, `failure`,
+`cancelled`, or `unknown` (default). `AUTODEV_MEMORY_CAPTURE_MODE` overrides
+`AUTODEV_MEMORY_MODE` and defaults to `unknown`; `retrieval-only` also requires
+`AUTODEV_MEMORY_ABLATION=1`. To include validation, set
+`AUTODEV_MEMORY_CAPTURE_VALIDATION_STATE` and a bounded JSON array of evidence
+references in `AUTODEV_MEMORY_CAPTURE_VALIDATION_EVIDENCE`; `not_run` may omit
+references, while reported validation states require at least one. These fields
+are host-reported historical evidence, not canonical task status. Re-capturing
+the same transcript is idempotent and keeps the original
+outcome/validation/memory mode.
 
 The importer normalizes the transcript in memory and persists only the scoped
 experience envelope, a source URI, and digests/counts; it does not store
@@ -104,12 +124,23 @@ review/merge status. Missing evidence, stale files, or a storage failure yields
 no packet and does not block the task. Global memory reads are
 disabled by default; set `AUTODEV_MEMORY_READ_GLOBAL=1` only when the operator
 intends to grant that scope.
+Set `AUTODEV_MEMORY_MODE=disabled` on a separate router process to run a
+no-automatic-JIT baseline. For an isolated retrieval-only ablation, set both
+`AUTODEV_MEMORY_MODE=retrieval-only` and `AUTODEV_MEMORY_ABLATION=1`; it injects
+at most two hard-scope/status/validity-filtered claims without Git validation or
+reconstruction and labels their disposition `not_evaluated`. Never enable this ablation in normal
+production routing. Unset or `jit` keeps the default path, and unknown values
+disable memory. For a strict no-memory cohort, also do not connect an explicit
+memory MCP client. `autodev.memory.mode` is attached to the active request span
+and the bounded injection metric. This distinguishes request-level cohorts; it
+does not claim task or PR success.
 
 The authenticated Control API exposes scoped Memory browsing at
 `GET /control/memory/records` and `GET /control/memory/experiences`, along with
 record detail, history, and provenance (`/why`) routes. Every request must name
 `workspaceId`; optional `repositoryId`, `role`, `taskId` + `runId`, and
-`agentId` filters narrow visibility. Task/agent-scoped raw experiences stay
+`agentId` filters narrow visibility. Experience lists also accept `memoryMode`
+and `outcome` filters for the host-reported cohort metadata. Task/agent-scoped raw experiences stay
 private by default; an operator can request `includeTaskHistory=true` only when
 `AUTODEV_MEMORY_READ_TASK_HISTORY=1` is set, and that grant remains bounded to
 the selected workspace/repository. Both lists support `query`, `limit` (1–100),
@@ -191,8 +222,11 @@ one run by setting `AUTODEV_MEMORY_DATABASE_URL`,
 host-owned context; the server defaults to worker authority, and global/task-history reads
 remain disabled unless explicitly granted to a root/curator process with
 `AUTODEV_MEMORY_READ_GLOBAL=1` or `AUTODEV_MEMORY_READ_TASK_HISTORY=1`. Tool
-arguments cannot change that identity or scope. `experience_append` records a
-run-bound envelope with a source format, stable URI, and caller-reported
+arguments cannot change that identity or scope. If
+`AUTODEV_MEMORY_EMBEDDING_MODEL` is configured, MCP search and proposals reuse
+the same provider route and credential; without it, operations remain
+lexical-only. `experience_append` records a run-bound envelope with a source
+format, stable URI, and caller-reported
 SHA-256 digest; it never accepts transcript contents. Workspace/task/run/agent
 scope comes from the trusted process, and repeated appends for the same source
 artifact are idempotent. Outcome and validation fields are reporter-supplied

@@ -1,14 +1,16 @@
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
-import type {
-  MemoryActor,
-  MemoryAuthority,
-  MemoryReadContext
+import {
+  type MemoryActor,
+  type MemoryAuthority,
+  type MemoryExecutionMode,
+  type MemoryReadContext,
+  parseMemoryExecutionMode
 } from "@simulatorlife/autodev-core";
 
 import type { MemoryMcpSessionProvider } from "./mcp.ts";
 import { createPostgresMemoryHost } from "./postgres.ts";
+import type { MemoryEmbeddingProvider } from "./service.ts";
 import { serveMemoryMcpStdio } from "./stdio.ts";
 
 export interface MemoryStdioConfiguration {
@@ -23,6 +25,7 @@ export interface MemoryStdioConfiguration {
   readonly task: string;
   readonly canReadGlobal: boolean;
   readonly canReadTaskHistory: boolean;
+  readonly memoryMode: MemoryExecutionMode;
 }
 
 /** Build a trusted, process-bound MCP context; no value comes from tool arguments. */
@@ -61,7 +64,11 @@ export function memoryStdioConfiguration(
       env.AUTODEV_MEMORY_READ_GLOBAL === "1",
     canReadTaskHistory:
       (authority === "root" || authority === "curator") &&
-      env.AUTODEV_MEMORY_READ_TASK_HISTORY === "1"
+      env.AUTODEV_MEMORY_READ_TASK_HISTORY === "1",
+    memoryMode: parseMemoryExecutionMode(
+      env.AUTODEV_MEMORY_MODE,
+      env.AUTODEV_MEMORY_ABLATION === "1"
+    )
   };
 }
 
@@ -83,15 +90,19 @@ export function memoryMcpSessionProvider(
       actor: configuration.actor,
       context,
       taskId: configuration.taskId,
-      task: researchQuery?.trim() || configuration.task
+      task: researchQuery?.trim() || configuration.task,
+      memoryMode: configuration.memoryMode
     })
   };
 }
 
-export async function startMemoryMcpFromEnvironment(): Promise<void> {
+export async function startMemoryMcpFromEnvironment(
+  embedder?: MemoryEmbeddingProvider
+): Promise<void> {
   const configuration = memoryStdioConfiguration(process.env, process.pid);
   const host = createPostgresMemoryHost({
-    databaseUrl: configuration.databaseUrl
+    databaseUrl: configuration.databaseUrl,
+    ...(embedder ? { embedder } : {})
   });
   const service = host.createService({
     resolve: (context) =>
@@ -136,9 +147,4 @@ function memoryAuthority(value: string | undefined): MemoryAuthority {
   if (value === "root" || value === "curator" || value === "system")
     return value;
   return "worker";
-}
-
-const entryPoint = process.argv[1];
-if (entryPoint && import.meta.url === pathToFileURL(entryPoint).href) {
-  await startMemoryMcpFromEnvironment();
 }

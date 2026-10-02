@@ -1,9 +1,9 @@
-import { OpenAICompatibleMemoryEmbeddingProvider } from "@simulatorlife/autodev-runtime/memory";
+import { OpenAICompatibleMemoryEmbeddingProvider } from "../memory/openai-compatible-embedding.ts";
 import {
   type ProviderRoute,
   ROUTING_POLICY,
   type RoutingPolicy
-} from "@simulatorlife/autodev-runtime/router/routing";
+} from "./routing.ts";
 
 const LOCAL_ROUTER_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const MAX_EMBEDDING_MODEL_LENGTH = 256;
@@ -24,6 +24,7 @@ export function configuredMemoryEmbeddingProvider(
           provider = new OpenAICompatibleMemoryEmbeddingProvider({
             endpoint: route.baseUrl,
             model,
+            provider: route.provider,
             ...(apiKey ? { apiKey } : {})
           });
         } catch {

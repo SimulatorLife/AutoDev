@@ -281,6 +281,24 @@ ALTER TABLE memory_experiences
 CREATE INDEX idx_memory_experiences_search
   ON memory_experiences USING GIN (search_vector);
 `
+  },
+  {
+    version: 7,
+    description: "Store the host-selected memory mode on each experience",
+    sql: `
+ALTER TABLE memory_experiences
+  ADD COLUMN memory_mode text
+  CHECK (memory_mode IN ('jit', 'retrieval-only', 'disabled', 'invalid', 'unknown'));
+CREATE INDEX idx_memory_experiences_mode_outcome
+  ON memory_experiences (
+    scope_workspace_id,
+    repository_id,
+    memory_mode,
+    outcome,
+    completed_at
+  )
+  WHERE memory_mode IS NOT NULL;
+`
   }
 ];
 

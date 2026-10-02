@@ -6,9 +6,14 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import type {
-  MemoryActor,
-  MemoryReadContext
+import {
+  type EvidenceReference,
+  type ExperienceEnvelope,
+  type ExperienceOutcome,
+  type MemoryActor,
+  type MemoryExecutionMode,
+  type MemoryReadContext,
+  parseMemoryExecutionMode
 } from "@simulatorlife/autodev-core";
 
 import { createPostgresMemoryRuntime } from "./postgres.ts";
@@ -28,6 +33,30 @@ import {
 const MAX_CAPTURE_PATH_LENGTH = 4096;
 const MAX_CAPTURE_ID_LENGTH = 256;
 const MAX_CAPTURE_TASK_KIND_LENGTH = 200;
+const MAX_CAPTURE_VALIDATION_BYTES = 32 * 1024;
+const MAX_CAPTURE_VALIDATION_EVIDENCE = 64;
+const MAX_EVIDENCE_URI_LENGTH = 2000;
+const MAX_EVIDENCE_REVISION_LENGTH = 300;
+const EXPERIENCE_OUTCOMES = new Set<ExperienceOutcome>([
+  "success",
+  "partial",
+  "failure",
+  "cancelled",
+  "unknown"
+]);
+const VALIDATION_STATES = new Set(["passed", "failed", "partial", "not_run"]);
+const EVIDENCE_KINDS = new Set<EvidenceReference["kind"]>([
+  "trajectory",
+  "trace",
+  "file",
+  "commit",
+  "pull_request",
+  "issue",
+  "rule",
+  "skill",
+  "document",
+  "other"
+]);
 
 export interface MemoryCaptureConfiguration {
   readonly databaseUrl: string;
@@ -47,6 +76,9 @@ export interface MemoryCaptureConfiguration {
   readonly branch?: string;
   readonly baseCommit?: string;
   readonly headCommit?: string;
+  readonly outcome: ExperienceOutcome;
+  readonly memoryMode: MemoryExecutionMode;
+  readonly validation?: ExperienceEnvelope["validation"];
   readonly actor: MemoryActor;
   readonly context: MemoryReadContext;
 }
@@ -58,6 +90,8 @@ export interface MemoryCaptureResult {
   readonly digest: string;
   readonly recordCount: number;
   readonly diagnosticCount?: number;
+  readonly outcome: ExperienceOutcome;
+  readonly memoryMode: MemoryExecutionMode;
 }
 
 interface TranscriptSource {
@@ -156,6 +190,14 @@ export function memoryCaptureConfiguration(
     300,
     "head commit"
   );
+  const outcome = captureOutcome(env.AUTODEV_MEMORY_CAPTURE_OUTCOME);
+  const captureMode =
+    env.AUTODEV_MEMORY_CAPTURE_MODE?.trim() || env.AUTODEV_MEMORY_MODE?.trim();
+  const memoryMode = parseMemoryExecutionMode(
+    captureMode,
+    env.AUTODEV_MEMORY_ABLATION === "1"
+  );
+  const validation = captureValidation(env);
   const actor: MemoryActor = { id: agentId, authority: "worker", role };
   const context: MemoryReadContext = {
     workspaceId,
@@ -186,6 +228,9 @@ export function memoryCaptureConfiguration(
     ...(branch ? { branch } : {}),
     ...(baseCommit ? { baseCommit } : {}),
     ...(headCommit ? { headCommit } : {}),
+    outcome,
+    memoryMode,
+    ...(validation ? { validation } : {}),
     actor,
     context
   };
@@ -240,7 +285,11 @@ export async function runMemoryCapture(
     ...(configuration.headCommit
       ? { headCommit: configuration.headCommit }
       : {}),
-    outcome: "unknown",
+    outcome: configuration.outcome,
+    memoryMode: configuration.memoryMode,
+    ...(configuration.validation
+      ? { validation: configuration.validation }
+      : {}),
     taskReference: trajectoryEvidence,
     evidence: [trajectoryEvidence]
   };
@@ -262,7 +311,9 @@ export async function runMemoryCapture(
       source: configuration.source,
       digest: normalized.digest,
       recordCount: normalized.recordCount,
-      diagnosticCount: normalized.diagnosticCount
+      diagnosticCount: normalized.diagnosticCount,
+      outcome: configuration.outcome,
+      memoryMode: configuration.memoryMode
     };
   } catch (error) {
     if (!(error instanceof MemoryConflictError)) throw error;
@@ -276,7 +327,9 @@ export async function runMemoryCapture(
         appended: false,
         source: configuration.source,
         digest,
-        recordCount: existing.trajectory.recordCount ?? 0
+        recordCount: existing.trajectory.recordCount ?? 0,
+        outcome: existing.outcome,
+        memoryMode: existing.memoryMode ?? "unknown"
       };
     }
     throw error;
@@ -390,6 +443,110 @@ function captureExperienceId(input: {
     input.digest
   ]);
   return `experience-capture-${createHash("sha256").update(identity).digest("hex")}`;
+}
+
+function captureOutcome(value: string | undefined): ExperienceOutcome {
+  const outcome = value?.trim() || "unknown";
+  if (!EXPERIENCE_OUTCOMES.has(outcome as ExperienceOutcome)) {
+    throw new MemoryCaptureConfigurationError(
+      "Native capture outcome must be a supported historical outcome label."
+    );
+  }
+  return outcome as ExperienceOutcome;
+}
+
+function captureValidation(
+  env: NodeJS.ProcessEnv
+): ExperienceEnvelope["validation"] {
+  const state = env.AUTODEV_MEMORY_CAPTURE_VALIDATION_STATE?.trim();
+  const rawEvidence = env.AUTODEV_MEMORY_CAPTURE_VALIDATION_EVIDENCE?.trim();
+  let validation: ExperienceEnvelope["validation"];
+  if (state || rawEvidence) {
+    if (!state || !VALIDATION_STATES.has(state)) {
+      throw new MemoryCaptureConfigurationError(
+        "Native capture validation state is missing or unsupported."
+      );
+    }
+    if (
+      rawEvidence &&
+      Buffer.byteLength(rawEvidence, "utf8") > MAX_CAPTURE_VALIDATION_BYTES
+    ) {
+      throw new MemoryCaptureConfigurationError(
+        "Native capture validation evidence exceeds its size bound."
+      );
+    }
+    let evidence: readonly EvidenceReference[] = [];
+    if (rawEvidence) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(rawEvidence) as unknown;
+      } catch {
+        throw new MemoryCaptureConfigurationError(
+          "Native capture validation evidence must be a JSON array."
+        );
+      }
+      if (
+        !Array.isArray(parsed) ||
+        parsed.length > MAX_CAPTURE_VALIDATION_EVIDENCE
+      ) {
+        throw new MemoryCaptureConfigurationError(
+          "Native capture validation evidence must be a bounded JSON array."
+        );
+      }
+      evidence = parsed.map(parseCaptureEvidence);
+    }
+    if (state !== "not_run" && evidence.length === 0) {
+      throw new MemoryCaptureConfigurationError(
+        "Reported validation requires at least one evidence reference."
+      );
+    }
+    validation = {
+      state: state as NonNullable<ExperienceEnvelope["validation"]>["state"],
+      evidence
+    };
+  }
+  return validation;
+}
+
+function parseCaptureEvidence(value: unknown): EvidenceReference {
+  if (!isRecord(value)) {
+    throw new MemoryCaptureConfigurationError(
+      "Native capture validation evidence contains an invalid reference."
+    );
+  }
+  const keys = Object.keys(value);
+  if (
+    keys.some(
+      (key) => !["kind", "uri", "revision", "observedAt"].includes(key)
+    ) ||
+    typeof value.kind !== "string" ||
+    !EVIDENCE_KINDS.has(value.kind as EvidenceReference["kind"]) ||
+    typeof value.uri !== "string" ||
+    !value.uri.trim() ||
+    value.uri.length > MAX_EVIDENCE_URI_LENGTH ||
+    (value.revision !== undefined &&
+      (typeof value.revision !== "string" ||
+        value.revision.length > MAX_EVIDENCE_REVISION_LENGTH)) ||
+    (value.observedAt !== undefined &&
+      (typeof value.observedAt !== "string" ||
+        !Number.isFinite(Date.parse(value.observedAt))))
+  ) {
+    throw new MemoryCaptureConfigurationError(
+      "Native capture validation evidence contains an invalid reference."
+    );
+  }
+  return {
+    kind: value.kind as EvidenceReference["kind"],
+    uri: value.uri,
+    ...(typeof value.revision === "string" ? { revision: value.revision } : {}),
+    ...(typeof value.observedAt === "string"
+      ? { observedAt: value.observedAt }
+      : {})
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function required(value: string | undefined, name: string): string {

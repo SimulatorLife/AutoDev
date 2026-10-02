@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 import {
   COMMANDS,
   materializeCommands
-} from "../src/platform/install-materializer.ts";
+} from "@simulatorlife/autodev-runtime/platform/install-materializer";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const catalogRoot = join(repositoryRoot, ".rulesync", "commands");
@@ -169,7 +169,7 @@ test("COMMANDS catalog exactly matches the on-disk .rulesync/commands files", ()
   assert.deepEqual(
     [...COMMANDS].sort(),
     onDisk,
-    "COMMANDS catalog drift: keep src/platform/install-materializer.ts COMMANDS and .rulesync/commands/*.md in lockstep"
+    "COMMANDS catalog drift: keep runtime/src/platform/install-materializer.ts COMMANDS and .rulesync/commands/*.md in lockstep"
   );
 });
 

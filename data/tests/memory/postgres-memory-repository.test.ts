@@ -567,7 +567,10 @@ test("searchMemories preserves non-path candidates and reports only observed pat
     provenance: {
       ...makeMemoryRecord().provenance,
       evidence: [
-        { kind: "file", uri: "file:///workspace/repo/src/router/proxy.ts" }
+        {
+          kind: "file",
+          uri: "file:///workspace/repo/runtime/src/router/proxy.ts"
+        }
       ]
     }
   });
@@ -580,7 +583,10 @@ test("searchMemories preserves non-path candidates and reports only observed pat
     provenance: {
       ...makeMemoryRecord().provenance,
       evidence: [
-        { kind: "file", uri: "file:///workspace/repo/src/router/responses.ts" }
+        {
+          kind: "file",
+          uri: "file:///workspace/repo/runtime/src/router/responses.ts"
+        }
       ]
     }
   });
@@ -619,7 +625,7 @@ test("searchMemories preserves non-path candidates and reports only observed pat
   const hits = await repo.searchMemories({
     query: "fallback routing",
     context: makeContext({ workspaceId: "ws-1" }),
-    relevantPaths: ["file:///workspace/repo/src/router/proxy.ts"],
+    relevantPaths: ["file:///workspace/repo/runtime/src/router/proxy.ts"],
     asOf: "2026-09-30T12:00:00.000Z"
   });
   assert.deepEqual(
@@ -914,9 +920,14 @@ test("listMemories returns scoped lifecycle pages and an exact total beyond the 
 test("listExperiences can read prior task history only in a workspace-bounded curator context", async () => {
   const pool = new FakeMemoryPool();
   const repo = repoWith(pool);
-  const visible = makeExperience({ id: "visible-experience" });
+  const visible = makeExperience({
+    id: "visible-experience",
+    memoryMode: "jit"
+  });
   const hidden = makeExperience({
     id: "hidden-experience",
+    memoryMode: "retrieval-only",
+    outcome: "failure",
     taskId: "task-other",
     runId: "run-other",
     repositoryId: "repo-1",
@@ -929,6 +940,7 @@ test("listExperiences can read prior task history only in a workspace-bounded cu
   });
   const foreignRepository = makeExperience({
     id: "foreign-repository-experience",
+    memoryMode: "retrieval-only",
     taskId: "task-foreign",
     runId: "run-foreign",
     repositoryId: "repo-2",
@@ -970,6 +982,49 @@ test("listExperiences can read prior task history only in a workspace-bounded cu
     [visible.id, hidden.id].sort()
   );
   assert.equal(curatorPage.total, 2);
+
+  const retrievalOnlyPage = await repo.listExperiences({
+    context: { ...exactContext, canReadTaskHistory: true },
+    memoryModes: ["retrieval-only"],
+    outcomes: ["failure"],
+    limit: 10,
+    offset: 0
+  });
+  assert.deepEqual(
+    retrievalOnlyPage.items.map(({ id }) => id),
+    [hidden.id]
+  );
+  assert.equal(retrievalOnlyPage.total, 1);
+});
+
+test("unknown-mode experience reads include explicit and legacy unknown rows only", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  const legacy = makeExperience({ id: "legacy-experience-mode" });
+  const explicitUnknown = makeExperience({
+    id: "explicit-unknown-experience-mode",
+    memoryMode: "unknown"
+  });
+  const disabled = makeExperience({
+    id: "disabled-experience-mode",
+    memoryMode: "disabled"
+  });
+  await repo.appendExperience(legacy);
+  await repo.appendExperience(explicitUnknown);
+  await repo.appendExperience(disabled);
+
+  const page = await repo.listExperiences({
+    context: makeContext({ workspaceId: "ws-1", canReadTaskHistory: true }),
+    memoryModes: ["unknown"],
+    limit: 10,
+    offset: 0
+  });
+
+  assert.deepEqual(
+    page.items.map(({ id }) => id).sort(),
+    [legacy.id, explicitUnknown.id].sort()
+  );
+  assert.equal(page.total, 2);
 });
 
 test("listExpiredExperiences selects only completed, scoped, unreferenced rows", async () => {

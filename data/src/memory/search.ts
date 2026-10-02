@@ -1,6 +1,7 @@
 import type {
   ExperienceListRequest,
   ExperienceSearchRequest,
+  MemoryExecutionMode,
   MemoryExpiredExperienceRequest,
   MemoryListRequest,
   MemorySearchRequest
@@ -278,6 +279,21 @@ export function buildMemoryListQuery(
   return { countText, countParams: params.all, text, params: rowParams.all };
 }
 
+function experienceModeFilter(
+  modes: readonly MemoryExecutionMode[],
+  params: SqlParams
+): string {
+  const explicitModes = modes.filter((mode) => mode !== "unknown");
+  if (explicitModes.length === 0) {
+    return "(memory_mode IS NULL OR memory_mode = 'unknown')";
+  }
+  const modeParameter = params.add(explicitModes);
+  const explicitMatch = `memory_mode = ANY(${modeParameter}::text[])`;
+  return modes.includes("unknown")
+    ? `(${explicitMatch} OR memory_mode IS NULL OR memory_mode = 'unknown')`
+    : explicitMatch;
+}
+
 export function buildExperienceListQuery(
   request: ExperienceListRequest
 ): BuiltListQuery {
@@ -295,6 +311,13 @@ export function buildExperienceListQuery(
       `search_vector @@ plainto_tsquery('english', ${queryParam})`
     );
   }
+  if (request.memoryModes && request.memoryModes.length > 0) {
+    countFilters.push(experienceModeFilter(request.memoryModes, countParams));
+  }
+  if (request.outcomes && request.outcomes.length > 0) {
+    const outcomesParam = countParams.add(request.outcomes);
+    countFilters.push(`outcome = ANY(${outcomesParam}::text[])`);
+  }
 
   const rowParams = new SqlParams();
   const rowScope = buildExperienceScopeFilterSql(
@@ -309,6 +332,13 @@ export function buildExperienceListQuery(
     rowFilters.push(
       `search_vector @@ plainto_tsquery('english', ${rowQueryParam})`
     );
+  }
+  if (request.memoryModes && request.memoryModes.length > 0) {
+    rowFilters.push(experienceModeFilter(request.memoryModes, rowParams));
+  }
+  if (request.outcomes && request.outcomes.length > 0) {
+    const outcomesParam = rowParams.add(request.outcomes);
+    rowFilters.push(`outcome = ANY(${outcomesParam}::text[])`);
   }
   const limitParam = rowParams.add(request.limit ?? 50);
   const offsetParam = rowParams.add(request.offset ?? 0);

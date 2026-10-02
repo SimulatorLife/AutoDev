@@ -1,12 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
-import type { ExecutionContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import path from "node:path";
 
 import {
   type AgentActivityTracker,
   PROCESS_FALLBACK_SESSION_KEY
 } from "@simulatorlife/autodev-runtime/router/concurrency";
+import type { ExecutionContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
 // Normalise the persisted `settled` counter block. The router records it
 // as `{ success, failure }`; persistence may hand back an object whose
@@ -265,8 +265,10 @@ export function getDefaultExecutionContract(): ExecutionContract {
   if (cachedExecutionContract) return cachedExecutionContract;
   const codexHome =
     process.env.CODEX_HOME ?? `${process.env.HOME ?? process.cwd()}/.codex`;
-  const defaultContract = fileURLToPath(
-    new URL("../../config/execution-contract.json", import.meta.url)
+  const defaultContract = path.join(
+    resolveRuntimeSourceRoot(import.meta.dirname),
+    "config",
+    "execution-contract.json"
   );
   const candidates = [
     process.env.CODEX_EXECUTION_CONTRACT_FILE,

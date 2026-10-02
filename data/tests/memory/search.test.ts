@@ -123,7 +123,7 @@ test("buildMemorySearchQuery omits the global scope branch's grant unless the co
 });
 
 test("buildMemorySearchQuery uses exact and nearby file evidence as a post-filter ranking signal", () => {
-  const path = "file:///workspace/repo/src/router/proxy.ts";
+  const path = "file:///workspace/repo/runtime/src/router/proxy.ts";
   const { text, params } = buildMemorySearchQuery({
     query: "fallback routing",
     context: makeContext({ workspaceId: "ws-1" }),
@@ -200,6 +200,48 @@ test("memory browser pagination scopes rows and includes non-active lifecycle re
   assert.equal(query.params.at(-2), 10);
   assert.equal(query.params.at(-1), 20);
   assert.ok(query.countParams.includes(false));
+});
+
+test("experience browser can filter by recorded memory mode", () => {
+  const query = buildExperienceListQuery({
+    context: makeContext({ workspaceId: "ws-1" }),
+    memoryModes: ["disabled", "retrieval-only"],
+    outcomes: ["failure", "partial"],
+    limit: 10
+  });
+  assert.match(query.countText, /memory_mode = ANY\(\$\d+::text\[\]\)/);
+  assert.match(query.text, /memory_mode = ANY\(\$\d+::text\[\]\)/);
+  assert.match(query.countText, /outcome = ANY\(\$\d+::text\[\]\)/);
+  assert.match(query.text, /outcome = ANY\(\$\d+::text\[\]\)/);
+  assert.ok(
+    query.countParams.some(
+      (parameter) =>
+        Array.isArray(parameter) &&
+        parameter.includes("disabled") &&
+        parameter.includes("retrieval-only")
+    )
+  );
+  assert.ok(
+    query.countParams.some(
+      (parameter) =>
+        Array.isArray(parameter) &&
+        parameter.includes("failure") &&
+        parameter.includes("partial")
+    )
+  );
+});
+
+test("unknown-mode experience filters include legacy rows without a mode column value", () => {
+  const query = buildExperienceListQuery({
+    context: makeContext({ workspaceId: "ws-1" }),
+    memoryModes: ["unknown"],
+    limit: 10
+  });
+  assert.match(
+    query.countText,
+    /memory_mode IS NULL OR memory_mode = 'unknown'/
+  );
+  assert.match(query.text, /memory_mode IS NULL OR memory_mode = 'unknown'/);
 });
 
 test("experience browser supports scoped pagination and lexical ordering", () => {

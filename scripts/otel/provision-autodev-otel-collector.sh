@@ -7,7 +7,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 source_root="$script_dir/../../"
 module="${AUTODEV_OTEL_MODULE:-$codex_home/src/platform/otel-provision.ts}"
-[[ -f "$module" ]] || module="$source_root/src/platform/otel-provision.ts"
+[[ -f "$module" ]] || module="$source_root/runtime/src/platform/otel-provision.ts"
 
 resolve_node() {
   if command -v node >/dev/null 2>&1; then command -v node; return 0; fi

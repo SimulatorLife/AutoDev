@@ -9,7 +9,7 @@ import {
   OBSOLETE_RUNTIME_MODULES,
   OTEL_RUNTIME,
   RUNTIME_MODULES
-} from "../../src/platform/install-materializer.ts";
+} from "@simulatorlife/autodev-runtime/platform/install-materializer";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -28,6 +28,52 @@ function relativeImports(modulePath: string): string[] {
   ].map((match) => normalize(join(directory, match[1] ?? "")));
 }
 
+const BARE_PACKAGE_IMPORT_PATTERN =
+  /(?:^|\n)\s*(?:import|export)\b[\s\S]*?\bfrom\s+["']([^."'\n\r][^"'\n\r]*)["']/gu;
+
+function packageImports(source: string): Set<string> {
+  const packages = new Set<string>();
+  const normalized = source.replaceAll(/\/\*[\s\S]*?\*\/|\/\/.*/gu, "");
+  for (const match of normalized.matchAll(BARE_PACKAGE_IMPORT_PATTERN)) {
+    const specifier = match[1]!;
+    if (specifier.startsWith("node:")) continue;
+    const parts = specifier.split("/");
+    packages.add(
+      specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!
+    );
+  }
+  return packages;
+}
+
+function assertInstalledSourceDependencies(
+  modulePath: string,
+  rootDependencies: ReadonlySet<string>,
+  runtimeDependencies: ReadonlySet<string>,
+  runtimePackageName: string
+): void {
+  if (!modulePath.endsWith(".ts")) return;
+  const runtimeSource = modulePath.startsWith("runtime/");
+  const dependencies = runtimeSource ? runtimeDependencies : rootDependencies;
+  const modulesRoot = runtimeSource ? "runtime/node_modules" : "node_modules";
+  for (const packageName of packageImports(
+    readFileSync(join(repositoryRoot, modulePath), "utf8")
+  )) {
+    const selfImport = runtimeSource && packageName === runtimePackageName;
+    if (!selfImport) {
+      assert.ok(
+        dependencies.has(packageName),
+        `${modulePath} imports "${packageName}" without declaring it in its owning package`
+      );
+    }
+    assert.ok(
+      existsSync(join(repositoryRoot, modulesRoot, packageName)) ||
+        (selfImport &&
+          existsSync(join(repositoryRoot, "node_modules", packageName))),
+      `workspace dependency "${packageName}" is missing from its package resolution path`
+    );
+  }
+}
+
 test("every manifest entry exists in the repository", () => {
   const absent = [...RUNTIME_MODULES, ...OTEL_RUNTIME].filter(
     (modulePath) => !existsSync(join(repositoryRoot, modulePath))
@@ -42,13 +88,12 @@ test("every manifest entry exists in the repository", () => {
 test("installer removes stale CODEX_HOME copies of Runtime-owned source", () => {
   const runtimeModules = RUNTIME_MODULES as readonly string[];
   const obsoleteModules = OBSOLETE_RUNTIME_MODULES as readonly string[];
-  assert.equal(obsoleteModules.length, 46);
   for (const legacyPath of obsoleteModules) {
     assert.equal(existsSync(join(repositoryRoot, legacyPath)), false);
     assert.equal(runtimeModules.includes(legacyPath), false);
   }
   const materializer = readFileSync(
-    join(repositoryRoot, "src/platform/install-materializer.ts"),
+    join(repositoryRoot, "runtime/src/platform/install-materializer.ts"),
     "utf8"
   );
   assert.match(materializer, /OBSOLETE_RUNTIME_MODULES\.map/);
@@ -74,14 +119,40 @@ test("runtime manifest is closed under relative imports", () => {
   assert.deepEqual(
     gaps.sort(),
     [],
-    `RUNTIME_MODULES is not self-contained; add these entries to src/platform/install-materializer.ts:\n${gaps.join("\n")}`
+    `RUNTIME_MODULES is not self-contained; add these entries to runtime/src/platform/install-materializer.ts:\n${gaps.join("\n")}`
   );
 });
 
-test("config CLI parsing and config-file I/O have distinct runtime owners", () => {
-  assert.ok(RUNTIME_MODULES.includes("src/config/cli-args.ts"));
-  assert.ok(RUNTIME_MODULES.includes("src/config/config-files.ts"));
-  assert.equal(existsSync(join(repositoryRoot, "src/config/toml.ts")), false);
+test("configuration tools are Runtime-owned behind a workspace export", () => {
+  const runtimePackage = JSON.parse(
+    readFileSync(join(repositoryRoot, "runtime/package.json"), "utf8")
+  ) as { exports: Record<string, string> };
+  assert.equal(runtimePackage.exports["./config"], "./src/config/index.ts");
+  const sourceFiles = [
+    "cli-args.ts",
+    "compose-user-config.ts",
+    "config-files.ts",
+    "render-agent-configs.ts",
+    "render-bridge-mcp-catalogue.ts",
+    "render-execution-contract.ts",
+    "render-model-catalog.ts"
+  ];
+  const runtimeModules = RUNTIME_MODULES as readonly string[];
+  const obsoleteModules = OBSOLETE_RUNTIME_MODULES as readonly string[];
+  for (const filename of sourceFiles) {
+    const runtimePath = `runtime/src/config/${filename}`;
+    const legacyPath = `src/config/${filename}`;
+    assert.equal(existsSync(join(repositoryRoot, runtimePath)), true);
+    assert.equal(existsSync(join(repositoryRoot, legacyPath)), false);
+    assert.equal(runtimeModules.includes(runtimePath), false);
+    assert.equal(runtimeModules.includes(legacyPath), false);
+    assert.ok(obsoleteModules.includes(legacyPath));
+  }
+  assert.equal(existsSync(join(repositoryRoot, "src/config")), false);
+  assert.doesNotMatch(
+    readFileSync(join(repositoryRoot, "runtime/src/config/index.ts"), "utf8"),
+    /\.\.\/\.\.\/\.\.\/src\/config/
+  );
 });
 
 test("Runtime shared contracts are Runtime-owned and loaded through workspace exports", () => {
@@ -325,10 +396,7 @@ test("remaining router implementations are Runtime-owned and installed from Runt
     readFileSync(join(repositoryRoot, "runtime/package.json"), "utf8")
   ) as { exports: Record<string, string> };
   const moduleNames = [
-    "control-api-body",
-    "control-api",
     "http",
-    "memory-control-api",
     "memory-embedding",
     "memory-injection",
     "memory-reconstruction",
@@ -341,9 +409,7 @@ test("remaining router implementations are Runtime-owned and installed from Runt
     "usage"
   ];
   const packageExports = new Set([
-    "control-api",
     "http",
-    "memory-control-api",
     "memory-injection",
     "memory-reconstruction",
     "otel",
@@ -375,12 +441,31 @@ test("remaining router implementations are Runtime-owned and installed from Runt
     readFileSync(join(repositoryRoot, "runtime/src/router/index.ts"), "utf8"),
     /\.\.\/\.\.\/\.\.\/src\/router/
   );
-  assert.doesNotMatch(
-    readFileSync(
-      join(repositoryRoot, "runtime/src/control-api/index.ts"),
-      "utf8"
-    ),
-    /\.\.\/\.\.\/\.\.\/src\/router/
+});
+
+test("Control API implementation is Runtime-owned outside the model router", () => {
+  const runtimePackage = JSON.parse(
+    readFileSync(join(repositoryRoot, "runtime/package.json"), "utf8")
+  ) as { exports: Record<string, string> };
+  assert.equal(
+    runtimePackage.exports["./control-api"],
+    "./src/control-api/index.ts"
+  );
+  for (const name of ["index.ts", "body.ts", "memory.ts"]) {
+    const runtimePath = `runtime/src/control-api/${name}`;
+    assert.equal(existsSync(join(repositoryRoot, runtimePath)), true);
+    assert.ok((RUNTIME_MODULES as readonly string[]).includes(runtimePath));
+  }
+  for (const name of [
+    "control-api.ts",
+    "control-api-body.ts",
+    "memory-control-api.ts"
+  ])
+    assert.equal(existsSync(join(repositoryRoot, `src/router/${name}`)), false);
+  assert.equal(
+    "./router/control-api" in runtimePackage.exports,
+    false,
+    "the control transport must not remain a model-router subpath"
   );
 });
 
@@ -398,7 +483,7 @@ test("router routing policy is Runtime-owned behind its workspace subpath", () =
   assert.equal(existsSync(join(repositoryRoot, legacyPath)), false);
   assert.equal(
     (RUNTIME_MODULES as readonly string[]).includes(runtimePath),
-    false
+    true
   );
   assert.equal(
     (RUNTIME_MODULES as readonly string[]).includes(legacyPath),
@@ -537,6 +622,205 @@ test("router state collection and MCP process lifecycle are Runtime-owned", () =
     assert.equal(modules.includes(migration.legacyPath), false);
     assert.ok(obsolete.includes(migration.legacyPath));
   }
+});
+
+test("CLI implementations are Runtime-owned behind workspace subpaths", () => {
+  const runtimePackage = JSON.parse(
+    readFileSync(join(repositoryRoot, "runtime/package.json"), "utf8")
+  ) as { exports: Record<string, string> };
+  const cliFiles = [
+    "autodev.ts",
+    "hook.ts",
+    "index.ts",
+    "install.ts",
+    "provider-agent.ts",
+    "provider.ts",
+    "repo.ts",
+    "router-status-client.ts",
+    "router-status.ts",
+    "router.ts",
+    "runtime.ts"
+  ];
+  for (const filename of cliFiles) {
+    assert.equal(
+      existsSync(join(repositoryRoot, "runtime/src/cli", filename)),
+      true
+    );
+    assert.equal(existsSync(join(repositoryRoot, "src/cli", filename)), false);
+  }
+  assert.equal(runtimePackage.exports["./cli"], "./src/cli/index.ts");
+  assert.equal(
+    runtimePackage.exports["./cli/provider-agent"],
+    "./src/cli/provider-agent.ts"
+  );
+  assert.equal(
+    (RUNTIME_MODULES as readonly string[]).includes(
+      "runtime/src/cli/router-status.ts"
+    ),
+    true
+  );
+  assert.equal(
+    (RUNTIME_MODULES as readonly string[]).includes(
+      "runtime/src/cli/router-status-client.ts"
+    ),
+    true
+  );
+  assert.ok(
+    (OBSOLETE_RUNTIME_MODULES as readonly string[]).includes(
+      "src/cli/router-status.ts"
+    )
+  );
+  assert.ok(
+    (OBSOLETE_RUNTIME_MODULES as readonly string[]).includes(
+      "src/cli/router-status-client.ts"
+    )
+  );
+  assert.equal(existsSync(join(repositoryRoot, "src")), false);
+});
+
+test("platform host and installation primitives are Runtime-owned behind package subpaths", () => {
+  const runtimePackage = JSON.parse(
+    readFileSync(join(repositoryRoot, "runtime/package.json"), "utf8")
+  ) as { exports: Record<string, string> };
+  const migrations = [
+    {
+      name: "host-arch",
+      runtimePath: "runtime/src/platform/host-arch.ts",
+      legacyPath: "src/platform/host-arch.ts",
+      exportTarget: "./src/platform/host-arch.ts"
+    },
+    {
+      name: "launchagent",
+      runtimePath: "runtime/src/platform/macos/launchagent.ts",
+      legacyPath: "src/platform/macos/launchagent.ts",
+      exportTarget: "./src/platform/macos/launchagent.ts"
+    },
+    {
+      name: "launchd",
+      runtimePath: "runtime/src/platform/macos/launchd.ts",
+      legacyPath: "src/platform/macos/launchd.ts",
+      exportTarget: "./src/platform/macos/launchd.ts"
+    },
+    {
+      name: "runtime-files",
+      runtimePath: "runtime/src/platform/runtime-files.ts",
+      legacyPath: "src/platform/runtime-files.ts",
+      exportTarget: "./src/platform/runtime-files.ts"
+    },
+    {
+      name: "runtime-reconciliation",
+      runtimePath: "runtime/src/platform/runtime-reconciliation.ts",
+      legacyPath: "src/platform/runtime-reconciliation.ts",
+      exportTarget: "./src/platform/runtime-reconciliation.ts"
+    },
+    {
+      name: "copilot-ensure",
+      runtimePath: "runtime/src/platform/copilot-ensure.ts",
+      legacyPath: "src/platform/copilot-ensure.ts",
+      exportTarget: "./src/platform/copilot-ensure.ts"
+    },
+    {
+      name: "code-graph-ensure",
+      runtimePath: "runtime/src/platform/code-graph-ensure.ts",
+      legacyPath: "src/platform/code-graph-ensure.ts",
+      exportTarget: "./src/platform/code-graph-ensure.ts"
+    },
+    {
+      name: "router-ensure",
+      runtimePath: "runtime/src/platform/router-ensure.ts",
+      legacyPath: "src/platform/router-ensure.ts",
+      exportTarget: "./src/platform/router-ensure.ts"
+    },
+    {
+      name: "antigravity-ensure",
+      runtimePath: "runtime/src/platform/antigravity-ensure.ts",
+      legacyPath: "src/platform/antigravity-ensure.ts",
+      exportTarget: "./src/platform/antigravity-ensure.ts"
+    },
+    {
+      name: "claude-ensure",
+      runtimePath: "runtime/src/platform/claude-ensure.ts",
+      legacyPath: "src/platform/claude-ensure.ts",
+      exportTarget: "./src/platform/claude-ensure.ts"
+    },
+    {
+      name: "minimax-ensure",
+      runtimePath: "runtime/src/platform/minimax-ensure.ts",
+      legacyPath: "src/platform/minimax-ensure.ts",
+      exportTarget: "./src/platform/minimax-ensure.ts"
+    },
+    {
+      name: "install-state",
+      runtimePath: "runtime/src/platform/install-state.ts",
+      legacyPath: "src/platform/install-state.ts",
+      exportTarget: "./src/platform/install-state.ts"
+    },
+    {
+      name: "service-restart",
+      runtimePath: "runtime/src/platform/service-restart.ts",
+      legacyPath: "src/platform/service-restart.ts",
+      exportTarget: "./src/platform/service-restart.ts"
+    },
+    {
+      name: "antigravity-settings",
+      runtimePath: "runtime/src/platform/antigravity-settings.ts",
+      legacyPath: "src/platform/antigravity-settings.ts",
+      exportTarget: "./src/platform/antigravity-settings.ts"
+    },
+    {
+      name: "dependencies",
+      runtimePath: "runtime/src/platform/dependencies.ts",
+      legacyPath: "src/platform/dependencies.ts",
+      exportTarget: "./src/platform/dependencies.ts"
+    },
+    {
+      name: "install-check",
+      runtimePath: "runtime/src/platform/install-check.ts",
+      legacyPath: "src/platform/install-check.ts",
+      exportTarget: "./src/platform/install-check.ts"
+    },
+    {
+      name: "install-command",
+      runtimePath: "runtime/src/platform/install-command.ts",
+      legacyPath: "src/platform/install-command.ts",
+      exportTarget: "./src/platform/install-command.ts"
+    },
+    {
+      name: "install-materializer",
+      runtimePath: "runtime/src/platform/install-materializer.ts",
+      legacyPath: "src/platform/install-materializer.ts",
+      exportTarget: "./src/platform/install-materializer.ts"
+    },
+    {
+      name: "otel-collector",
+      runtimePath: "runtime/src/platform/otel-collector.ts",
+      legacyPath: "src/platform/otel-collector.ts",
+      exportTarget: "./src/platform/otel-collector.ts"
+    },
+    {
+      name: "otel-provision",
+      runtimePath: "runtime/src/platform/otel-provision.ts",
+      legacyPath: "src/platform/otel-provision.ts",
+      exportTarget: "./src/platform/otel-provision.ts"
+    }
+  ];
+  const modules = RUNTIME_MODULES as readonly string[];
+  const obsolete = OBSOLETE_RUNTIME_MODULES as readonly string[];
+  for (const migration of migrations) {
+    assert.equal(
+      runtimePackage.exports[`./platform/${migration.name}`],
+      migration.exportTarget
+    );
+    assert.equal(existsSync(join(repositoryRoot, migration.runtimePath)), true);
+    assert.equal(existsSync(join(repositoryRoot, migration.legacyPath)), false);
+    assert.ok(modules.includes(migration.runtimePath));
+    assert.equal(modules.includes(migration.legacyPath), false);
+    assert.ok(obsolete.includes(migration.legacyPath));
+  }
+  assert.doesNotMatch(
+    readFileSync(join(repositoryRoot, "runtime/src/platform/index.ts"), "utf8"),
+    /\.\.\/\.\.\/\.\.\/src\/platform/
+  );
 });
 
 test("Agents implementations are Runtime-owned behind the workspace package", () => {
@@ -723,43 +1007,23 @@ test("router dashboard and chart.js are decommissioned from runtime modules", ()
   assert.equal(OBSOLETE_DASHBOARD, "codex-model-router-dashboard.html");
 });
 
-test("runtime package dependencies imported by RUNTIME_MODULES exist in package dependencies and node_modules", () => {
-  const packageJson = JSON.parse(
+test("installed sources use dependencies from their owning workspace", () => {
+  const runtimePackage = JSON.parse(
+    readFileSync(join(repositoryRoot, "runtime/package.json"), "utf8")
+  ) as { name: string; dependencies?: Record<string, string> };
+  const rootPackage = JSON.parse(
     readFileSync(join(repositoryRoot, "package.json"), "utf8")
+  ) as { dependencies?: Record<string, string> };
+  const rootDependencies = new Set(Object.keys(rootPackage.dependencies ?? {}));
+  const runtimeDependencies = new Set(
+    Object.keys(runtimePackage.dependencies ?? {})
   );
-  const declaredDependencies = new Set(
-    Object.keys(packageJson.dependencies ?? {})
-  );
 
-  const BARE_IMPORT_PATTERN =
-    /(?:^|\n)\s*(?:import|export)\b[\s\S]*?\bfrom\s+["']([^."'\n\r][^"'\n\r]*)["']/gu;
-
-  const importedPackages = new Set<string>();
-  for (const modulePath of RUNTIME_MODULES) {
-    if (!modulePath.endsWith(".ts")) continue;
-    const content = readFileSync(
-      join(repositoryRoot, modulePath),
-      "utf8"
-    ).replaceAll(/\/\*[\s\S]*?\*\/|\/\/.*/gu, "");
-    for (const match of content.matchAll(BARE_IMPORT_PATTERN)) {
-      const specifier = match[1]!;
-      if (specifier.startsWith("node:")) continue;
-      const parts = specifier.split("/");
-      const packageName = specifier.startsWith("@")
-        ? parts.slice(0, 2).join("/")
-        : parts[0]!;
-      importedPackages.add(packageName);
-    }
-  }
-
-  for (const pkg of importedPackages) {
-    assert.ok(
-      declaredDependencies.has(pkg),
-      `RUNTIME_MODULES imports "${pkg}" but it is not listed in package.json dependencies`
+  for (const modulePath of RUNTIME_MODULES)
+    assertInstalledSourceDependencies(
+      modulePath,
+      rootDependencies,
+      runtimeDependencies,
+      runtimePackage.name
     );
-    assert.ok(
-      existsSync(join(repositoryRoot, "node_modules", pkg)),
-      `runtime package "${pkg}" is missing from repository node_modules`
-    );
-  }
 });

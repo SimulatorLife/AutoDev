@@ -24,13 +24,6 @@ import {
   isDraining,
   resetLifecycleForTests
 } from "@simulatorlife/autodev-runtime/router/lifecycle";
-import { AGENT_ROLE_HEADER } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
-import { RESPONSES_ITEM_ID_PREFIXES } from "@simulatorlife/autodev-runtime/shared/responses-item-ids";
-import {
-  REQUEST_ID_HEADER as AGENT_EVENTS_REQUEST_ID_HEADER,
-  resolveAgentEventReporter
-} from "@simulatorlife/autodev-runtime/telemetry";
-
 import * as responses from "@simulatorlife/autodev-runtime/router/responses";
 import {
   CONFIGURED_ORCHESTRATOR_MODEL,
@@ -104,6 +97,13 @@ import {
   workspaceContextFromRequest
 } from "@simulatorlife/autodev-runtime/router/server";
 import { UsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
+import { AGENT_ROLE_HEADER } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
+import { RESPONSES_ITEM_ID_PREFIXES } from "@simulatorlife/autodev-runtime/shared/responses-item-ids";
+import {
+  REQUEST_ID_HEADER as AGENT_EVENTS_REQUEST_ID_HEADER,
+  resolveAgentEventReporter
+} from "@simulatorlife/autodev-runtime/telemetry";
+
 import { normalizedSource } from "../source-text.ts";
 
 const getRouterStatus = (...args: any[]): any =>
@@ -245,7 +245,7 @@ test("the router calls the Antigravity adapter directly, with no LiteLLM hop", a
   );
   // The installer still names the obsolete assets, because naming them is how
   // it removes them from a host that has them; it must not install them.
-  const materializer = read("src/platform/install-materializer.ts");
+  const materializer = read("runtime/src/platform/install-materializer.ts");
   assert.match(materializer, /com\.codex\.antigravity-litellm/);
   assert.doesNotMatch(materializer, /litellm_dir/);
 });
@@ -8227,7 +8227,8 @@ test("liveness stays 200 during draining while readiness returns 503 with struct
     // (which would call process.exit in production).
     const { execSync } = await import("node:child_process");
     void execSync;
-    const internal = await import("@simulatorlife/autodev-runtime/router/server");
+    const internal =
+      await import("@simulatorlife/autodev-runtime/router/server");
     void internal;
 
     // Trigger draining through the public lifecycle helper used by tests.
@@ -10325,7 +10326,7 @@ transport = "streamable_http"
     );
 
     const renderer = new URL(
-      "../../src/config/render-execution-contract.ts",
+      "../../runtime/src/config/render-execution-contract.ts",
       import.meta.url
     ).pathname;
     const rootConfig = new URL(

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type { ServerResponse } from "node:http";
-import { fileURLToPath } from "node:url";
+import path from "node:path";
 
 import type { Span } from "@opentelemetry/api";
 import { isLoopbackAddress } from "@simulatorlife/autodev-runtime/router/auth";
@@ -19,6 +19,12 @@ import {
   INVALID_MODEL_PATTERN,
   recordRouterEvent
 } from "@simulatorlife/autodev-runtime/router/events";
+import {
+  type Candidate,
+  type OrchestratorCandidate,
+  type ProviderRoute,
+  ROUTING_POLICY
+} from "@simulatorlife/autodev-runtime/router/routing";
 import { TOOL_CALL_OWNERSHIP } from "@simulatorlife/autodev-runtime/router/tool-call-ownership";
 import {
   AGENT_ROLE_HEADER,
@@ -39,6 +45,7 @@ import {
   terminalIncompleteEvents
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
 import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
+import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
   AUTODEV_WORKSPACE_KEY_HEADER,
   safeAutoDevWorkspaceKey
@@ -56,12 +63,6 @@ import {
   transformSseEvent,
   upstreamPayload
 } from "./responses.ts";
-import {
-  type Candidate,
-  type OrchestratorCandidate,
-  type ProviderRoute,
-  ROUTING_POLICY
-} from "@simulatorlife/autodev-runtime/router/routing";
 import {
   bridgeTelemetryHeaders as subagentBridgeTelemetryHeaders,
   closeBridgeSubagentsForRequest,
@@ -153,8 +154,10 @@ export const CLIENT_DISCONNECT_CODES = Object.freeze(
   ])
 );
 
-const defaultContractPath = fileURLToPath(
-  new URL("../../config/execution-contract.json", import.meta.url)
+const defaultContractPath = path.join(
+  resolveRuntimeSourceRoot(import.meta.dirname),
+  "config",
+  "execution-contract.json"
 );
 const EXECUTION_CONTRACT_FILE =
   process.env.CODEX_EXECUTION_CONTRACT_FILE ??

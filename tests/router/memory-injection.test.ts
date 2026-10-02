@@ -5,6 +5,7 @@ import {
   AggregationTemporality,
   InMemoryMetricExporter
 } from "@opentelemetry/sdk-metrics";
+import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import type {
   EvidenceReference,
   ExperienceEnvelope,
@@ -22,7 +23,6 @@ import {
   MemoryService,
   type PostgresMemoryHost
 } from "@simulatorlife/autodev-runtime/memory";
-
 import {
   closeOrchestratorMemoryHost,
   createOrchestratorMemoryService,
@@ -30,8 +30,12 @@ import {
   trustedMemoryContextForSession
 } from "@simulatorlife/autodev-runtime/router/memory-injection";
 import {
+  endLogicalRequestSpan,
   flushTelemetryMetrics,
-  setTelemetryMetricExporterForTest
+  setTelemetryExporter,
+  setTelemetryMetricExporterForTest,
+  startLogicalRequestSpan,
+  withLogicalSpan
 } from "@simulatorlife/autodev-runtime/router/telemetry";
 
 const evidence: EvidenceReference = {
@@ -231,6 +235,85 @@ test("router root requests inject verified memory automatically before provider 
   assert.equal(original.payload.instructions, "Authoritative root policy.");
 });
 
+test("disabled and invalid memory modes fail closed without querying memory", async () => {
+  const previousMode = process.env.AUTODEV_MEMORY_MODE;
+  const previousAblation = process.env.AUTODEV_MEMORY_ABLATION;
+  delete process.env.AUTODEV_MEMORY_ABLATION;
+  let hostCalls = 0;
+  const host = {
+    createService() {
+      hostCalls += 1;
+      throw new Error("disabled mode must not construct a MemoryService");
+    }
+  } as unknown as PostgresMemoryHost;
+  const original = request([
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "Compare a no-memory baseline." }]
+    }
+  ]);
+
+  try {
+    for (const mode of ["disabled", "retrieval-only", "typo"] as const) {
+      process.env.AUTODEV_MEMORY_MODE = mode;
+      assert.equal(
+        await injectOrchestratorMemory(original, host),
+        original.payload
+      );
+    }
+    assert.equal(hostCalls, 0);
+  } finally {
+    if (previousMode === undefined) delete process.env.AUTODEV_MEMORY_MODE;
+    else process.env.AUTODEV_MEMORY_MODE = previousMode;
+    if (previousAblation === undefined)
+      delete process.env.AUTODEV_MEMORY_ABLATION;
+    else process.env.AUTODEV_MEMORY_ABLATION = previousAblation;
+  }
+});
+
+test("retrieval-only ablation injects bounded unvalidated claims without JIT reconstruction", async () => {
+  const previousMode = process.env.AUTODEV_MEMORY_MODE;
+  const previousAblation = process.env.AUTODEV_MEMORY_ABLATION;
+  process.env.AUTODEV_MEMORY_MODE = "retrieval-only";
+  process.env.AUTODEV_MEMORY_ABLATION = "1";
+  let validationCalls = 0;
+  try {
+    const output = await injectOrchestratorMemory(
+      request([
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Change the proxy boundary." }]
+        }
+      ]),
+      memoryHost(() => {
+        validationCalls += 1;
+      })
+    );
+    assert.match(
+      String(output.instructions),
+      /Use bounded per-session request handling in the proxy/
+    );
+    assert.match(
+      String(output.instructions),
+      /Retrieval-only ablation: this claim was not validated/
+    );
+    assert.match(String(output.instructions), /not_evaluated/);
+    assert.doesNotMatch(
+      String(output.instructions),
+      /Use the current proxy request boundary/
+    );
+    assert.equal(validationCalls, 0);
+  } finally {
+    if (previousMode === undefined) delete process.env.AUTODEV_MEMORY_MODE;
+    else process.env.AUTODEV_MEMORY_MODE = previousMode;
+    if (previousAblation === undefined)
+      delete process.env.AUTODEV_MEMORY_ABLATION;
+    else process.env.AUTODEV_MEMORY_ABLATION = previousAblation;
+  }
+});
+
 test("tool-result continuations without a new user steer do not repeat a JIT search", async () => {
   let researchCalls = 0;
   const host = memoryHost(() => {
@@ -302,14 +385,20 @@ test("router initializes the OTel meter provider before creating MemoryService i
   const previousOtlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   const previousMetricsEndpoint =
     process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT;
+  const previousMemoryMode = process.env.AUTODEV_MEMORY_MODE;
+  const previousAblation = process.env.AUTODEV_MEMORY_ABLATION;
+  const spanExporter = new InMemorySpanExporter();
   const exporter = new InMemoryMetricExporter(
     AggregationTemporality.CUMULATIVE
   );
   process.env.AUTODEV_MEMORY_DATABASE_URL =
     "postgresql://autodev_memory:invalid@127.0.0.1:1/autodev_memory?connect_timeout=1";
   process.env.AUTODEV_MEMORY_RECONSTRUCTION = "deterministic";
+  process.env.AUTODEV_MEMORY_MODE = "jit";
+  process.env.AUTODEV_MEMORY_ABLATION = "1";
   delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   delete process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT;
+  setTelemetryExporter(spanExporter);
   setTelemetryMetricExporterForTest(exporter);
 
   try {
@@ -322,22 +411,107 @@ test("router initializes the OTel meter provider before creating MemoryService i
         limit: 1
       })
     );
-    const injected = await injectOrchestratorMemory(
-      request([
-        {
-          type: "message",
-          role: "user",
-          content: [
-            { type: "input_text", text: "Use the prior proxy validation." }
-          ]
-        }
-      ]),
-      memoryHost(() => {})
-    );
+    const injectedRequest = request([
+      {
+        type: "message",
+        role: "user",
+        content: [
+          { type: "input_text", text: "Use the prior proxy validation." }
+        ]
+      }
+    ]);
+    const jitSpan = startLogicalRequestSpan({
+      requestId: "memory-jit-baseline",
+      role: "orchestrator",
+      providerRole: "orchestrator",
+      workspace: { key: "owner/repo" },
+      subject: "memory JIT baseline",
+      requestedModel: null
+    });
+    let injected: Record<string, unknown> = injectedRequest.payload;
+    await withLogicalSpan(jitSpan, async () => {
+      injected = await injectOrchestratorMemory(
+        injectedRequest,
+        memoryHost(() => {})
+      );
+    });
+    endLogicalRequestSpan(jitSpan, { status: "ok" });
     assert.match(
       String(injected.instructions),
       /Use the current proxy request boundary/
     );
+
+    const disabledRequest = request([
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "No-memory baseline." }]
+      }
+    ]);
+    process.env.AUTODEV_MEMORY_MODE = "disabled";
+    const disabledSpan = startLogicalRequestSpan({
+      requestId: "memory-disabled-baseline",
+      role: "orchestrator",
+      providerRole: "orchestrator",
+      workspace: { key: "owner/repo" },
+      subject: "memory disabled baseline",
+      requestedModel: null
+    });
+    let disabled: Record<string, unknown> = disabledRequest.payload;
+    await withLogicalSpan(disabledSpan, async () => {
+      disabled = await injectOrchestratorMemory(disabledRequest, {
+        createService: () => {
+          throw new Error("disabled mode must not construct MemoryService");
+        },
+        close: async () => {}
+      });
+    });
+    endLogicalRequestSpan(disabledSpan, { status: "ok" });
+    assert.equal(disabled, disabledRequest.payload);
+
+    process.env.AUTODEV_MEMORY_MODE = "retrieval-only";
+    const retrievalOnlyRequest = request([
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "Compare retrieved claims." }]
+      }
+    ]);
+    const retrievalOnlySpan = startLogicalRequestSpan({
+      requestId: "memory-retrieval-only-baseline",
+      role: "orchestrator",
+      providerRole: "orchestrator",
+      workspace: { key: "owner/repo" },
+      subject: "memory retrieval-only baseline",
+      requestedModel: null
+    });
+    let retrievalOnly: Record<string, unknown> = retrievalOnlyRequest.payload;
+    await withLogicalSpan(retrievalOnlySpan, async () => {
+      retrievalOnly = await injectOrchestratorMemory(
+        retrievalOnlyRequest,
+        memoryHost(() => {
+          throw new Error(
+            "retrieval-only mode must skip current-state validation"
+          );
+        })
+      );
+    });
+    endLogicalRequestSpan(retrievalOnlySpan, { status: "ok" });
+    assert.match(
+      String(retrievalOnly.instructions),
+      /Retrieval-only ablation: this claim was not validated/
+    );
+    process.env.AUTODEV_MEMORY_MODE = "jit";
+
+    const memoryModes = new Set(
+      spanExporter
+        .getFinishedSpans()
+        .filter((span) => span.name === "autodev.routed_request")
+        .map((span) => span.attributes["autodev.memory.mode"])
+    );
+    assert.ok(memoryModes.has("jit"));
+    assert.ok(memoryModes.has("disabled"));
+    assert.ok(memoryModes.has("retrieval-only"));
     await flushTelemetryMetrics();
 
     const metrics = exporter
@@ -359,12 +533,20 @@ test("router initializes the OTel meter provider before creating MemoryService i
     const injections = metrics.find(
       (metric) => metric.descriptor.name === "autodev.memory.injections"
     );
-    assert.equal(
-      injections?.dataPoints.find(
+    const injectedPoints =
+      injections?.dataPoints.filter(
         (point) =>
           point.attributes["autodev.memory.injection.result"] === "injected"
-      )?.value,
-      1
+      ) ?? [];
+    assert.equal(
+      injectedPoints.reduce((total, point) => total + point.value, 0),
+      2
+    );
+    assert.deepEqual(
+      new Set(
+        injectedPoints.map((point) => point.attributes["autodev.memory.mode"])
+      ),
+      new Set(["jit", "retrieval-only"])
     );
   } finally {
     await closeOrchestratorMemoryHost();
@@ -374,6 +556,12 @@ test("router initializes the OTel meter provider before creating MemoryService i
     if (previousReconstruction === undefined)
       delete process.env.AUTODEV_MEMORY_RECONSTRUCTION;
     else process.env.AUTODEV_MEMORY_RECONSTRUCTION = previousReconstruction;
+    if (previousMemoryMode === undefined)
+      delete process.env.AUTODEV_MEMORY_MODE;
+    else process.env.AUTODEV_MEMORY_MODE = previousMemoryMode;
+    if (previousAblation === undefined)
+      delete process.env.AUTODEV_MEMORY_ABLATION;
+    else process.env.AUTODEV_MEMORY_ABLATION = previousAblation;
     if (previousOtlpEndpoint === undefined)
       delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
     else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = previousOtlpEndpoint;

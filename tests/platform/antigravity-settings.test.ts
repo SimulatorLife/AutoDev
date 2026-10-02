@@ -13,7 +13,7 @@ import {
   REQUIRED_MCP_PERMISSIONS,
   updateAntigravityPermissions,
   updateAntigravitySkills
-} from "../../src/platform/antigravity-settings.ts";
+} from "@simulatorlife/autodev-runtime/platform/antigravity-settings";
 
 function withTempDir<T>(callback: (directory: string) => T): T {
   const directory = mkdtempSync(

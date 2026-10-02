@@ -61,8 +61,10 @@ diff --git a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-ada
 index aee793d0..7897a2c3 100644
 --- a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
 +++ b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
-@@ -191,24 +191,211 @@ test("AutoDev connector lists source experiences only when task-history access i
+@@ -191,26 +191,213 @@ test("AutoDev connector lists source experiences only when task-history access i
  	expect(String(experienceRequest)).toContain("includeTaskHistory=true");
+ 	expect(String(experienceRequest)).toContain("memoryMode=retrieval-only");
+ 	expect(String(experienceRequest)).toContain("outcome=success");
  });
  
 -test("AutoDev advertises invalidation only for live durable records", () => {

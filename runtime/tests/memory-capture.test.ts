@@ -130,6 +130,8 @@ test("manual native capture configuration accepts every supported transcript ada
       AUTODEV_MEMORY_CAPTURE_SOURCE: source
     });
     assert.equal(configuration.source, source);
+    assert.equal(configuration.outcome, "unknown");
+    assert.equal(configuration.memoryMode, "unknown");
   }
 });
 
@@ -148,13 +150,22 @@ test("manual native capture normalizes, scopes, bounds, and deduplicates a sourc
     const configuration = memoryCaptureConfiguration({
       ...enabledEnvironment,
       AUTODEV_MEMORY_REPOSITORY_ROOT: repositoryRoot,
-      AUTODEV_MEMORY_CAPTURE_ROOT: transcriptRoot
+      AUTODEV_MEMORY_CAPTURE_ROOT: transcriptRoot,
+      AUTODEV_MEMORY_CAPTURE_OUTCOME: "success",
+      AUTODEV_MEMORY_CAPTURE_MODE: "retrieval-only",
+      AUTODEV_MEMORY_ABLATION: "1",
+      AUTODEV_MEMORY_CAPTURE_VALIDATION_STATE: "passed",
+      AUTODEV_MEMORY_CAPTURE_VALIDATION_EVIDENCE: JSON.stringify([
+        { kind: "pull_request", uri: "https://example.invalid/pull/8" }
+      ])
     });
     const { service, experiences, calls } = captureServiceStub();
 
     const captured = await runMemoryCapture(service, configuration);
 
     assert.equal(captured.appended, true);
+    assert.equal(captured.outcome, "success");
+    assert.equal(captured.memoryMode, "retrieval-only");
     assert.equal(captured.source, "claude-code");
     assert.equal(
       captured.digest,
@@ -173,7 +184,14 @@ test("manual native capture normalizes, scopes, bounds, and deduplicates a sourc
       runId: "run-a",
       agentId: "worker-a"
     });
-    assert.equal(stored.outcome, "unknown");
+    assert.equal(stored.outcome, "success");
+    assert.equal(stored.memoryMode, "retrieval-only");
+    assert.deepEqual(stored.validation, {
+      state: "passed",
+      evidence: [
+        { kind: "pull_request", uri: "https://example.invalid/pull/8" }
+      ]
+    });
     assert.equal(stored.trajectory.format, "letta-trajectory-v1");
     assert.equal(
       stored.trajectory.uri,
@@ -184,9 +202,17 @@ test("manual native capture normalizes, scopes, bounds, and deduplicates a sourc
       /private transcript request|private transcript response/
     );
 
-    const repeated = await runMemoryCapture(service, configuration);
+    const changedReporterAssertion = memoryCaptureConfiguration({
+      ...enabledEnvironment,
+      AUTODEV_MEMORY_REPOSITORY_ROOT: repositoryRoot,
+      AUTODEV_MEMORY_CAPTURE_ROOT: transcriptRoot,
+      AUTODEV_MEMORY_CAPTURE_OUTCOME: "failure"
+    });
+    const repeated = await runMemoryCapture(service, changedReporterAssertion);
     assert.equal(repeated.id, captured.id);
     assert.equal(repeated.appended, false);
+    assert.equal(repeated.outcome, "success");
+    assert.equal(repeated.memoryMode, "retrieval-only");
     assert.equal(calls.length, 2);
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
@@ -209,6 +235,31 @@ test("manual native capture rejects disabled, unsupported, and symlink-escaped i
         AUTODEV_MEMORY_CAPTURE_SOURCE: "unsupported-harness"
       }),
     /Capture source must be one of/
+  );
+  assert.throws(
+    () =>
+      memoryCaptureConfiguration({
+        ...enabledEnvironment,
+        AUTODEV_MEMORY_CAPTURE_OUTCOME: "maybe"
+      }),
+    /supported historical outcome/
+  );
+  assert.throws(
+    () =>
+      memoryCaptureConfiguration({
+        ...enabledEnvironment,
+        AUTODEV_MEMORY_CAPTURE_VALIDATION_STATE: "passed"
+      }),
+    /validation requires at least one evidence reference/
+  );
+  assert.throws(
+    () =>
+      memoryCaptureConfiguration({
+        ...enabledEnvironment,
+        AUTODEV_MEMORY_CAPTURE_VALIDATION_STATE: "passed",
+        AUTODEV_MEMORY_CAPTURE_VALIDATION_EVIDENCE: "not-json"
+      }),
+    /validation evidence must be a JSON array/
   );
 
   const temporaryRoot = await mkdtemp(

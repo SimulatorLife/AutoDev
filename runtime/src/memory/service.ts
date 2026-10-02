@@ -10,11 +10,14 @@ import {
 } from "@opentelemetry/api";
 import {
   type EvidenceReference,
+  EXPERIENCE_OUTCOMES,
   type ExperienceEnvelope,
   type ExperienceListRequest,
   type ExperienceSearchRequest,
+  isMemoryExecutionMode,
   isMemoryExperienceVisibleTo,
   isMemoryScopeVisibleTo,
+  MEMORY_EXECUTION_MODES,
   MEMORY_REASON_CODES,
   type MemoryActor,
   type MemoryExperiencePurgeReason,
@@ -590,6 +593,8 @@ export class MemoryService {
     request: ExperienceListRequest
   ): Promise<MemoryPage<ExperienceEnvelope>> {
     this.assertOptionalQuery(request.query);
+    this.assertMemoryModes(request.memoryModes);
+    this.assertExperienceOutcomes(request.outcomes);
     const pagination = this.pageRequest(request.limit, request.offset);
     const page = await this.repository.listExperiences({
       ...request,
@@ -774,7 +779,7 @@ export class MemoryService {
   }
 
   search(request: MemorySearchRequest): Promise<readonly MemorySearchHit[]> {
-    return this.withSpan(MEMORY_OPERATIONS.query, async () => {
+    return this.withSpan(MEMORY_OPERATIONS.query, async (span) => {
       this.assertQuery(request.query);
       this.assertTaskKind(request.taskKind);
       const queryEmbedding = await this.optionalEmbedding(request.query);
@@ -785,7 +790,7 @@ export class MemoryService {
         ...(queryEmbedding ? { queryEmbedding } : {}),
         limit: Math.min(Math.max(request.limit ?? 10, 1), MAX_RESEARCH_HITS)
       });
-      return hits
+      const eligibleHits = hits
         .filter((hit) => this.isEligibleRecord(hit.memory, asOf))
         .filter((hit) =>
           isMemoryScopeVisibleTo(hit.memory.scope, request.context)
@@ -795,6 +800,16 @@ export class MemoryService {
           0,
           Math.min(Math.max(request.limit ?? 10, 1), MAX_RESEARCH_HITS)
         );
+      span.setAttribute("memory.candidates.retrieved", eligibleHits.length);
+      for (const hit of eligibleHits) {
+        recordMemoryMetric(() =>
+          this.metrics.candidates.add(1, {
+            "autodev.memory.candidate.stage": "retrieved",
+            "autodev.memory.kind": hit.memory.kind
+          })
+        );
+      }
+      return eligibleHits;
     });
   }
 
@@ -1627,6 +1642,32 @@ export class MemoryService {
       throw new MemoryValidationError(
         "Memory query must be non-empty and bounded."
       );
+  }
+
+  private assertExperienceOutcomes(
+    outcomes: ExperienceListRequest["outcomes"]
+  ): void {
+    if (
+      outcomes !== undefined &&
+      (outcomes.length > EXPERIENCE_OUTCOMES.length ||
+        outcomes.some((outcome) => !EXPERIENCE_OUTCOMES.includes(outcome)))
+    ) {
+      throw new MemoryValidationError(
+        "Memory experience outcome filter is invalid."
+      );
+    }
+  }
+
+  private assertMemoryModes(modes: ExperienceListRequest["memoryModes"]): void {
+    if (
+      modes !== undefined &&
+      (modes.length > MEMORY_EXECUTION_MODES.length ||
+        modes.some((mode) => !isMemoryExecutionMode(mode)))
+    ) {
+      throw new MemoryValidationError(
+        "Memory experience mode filter is invalid."
+      );
+    }
   }
 
   private assertOptionalQuery(query: string | undefined): void {

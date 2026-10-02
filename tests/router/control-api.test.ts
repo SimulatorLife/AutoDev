@@ -4,16 +4,14 @@ import test from "node:test";
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { LOCAL_CONTROL_API_ACTOR } from "@simulatorlife/autodev-core";
 import {
+  CONTROL_API_PATHS,
+  handleControlApiRequest
+} from "@simulatorlife/autodev-runtime/control-api";
+import {
   getDefaultPersistenceManager,
   type RouterPersistence,
   setDefaultPersistenceManager
 } from "@simulatorlife/autodev-runtime/router/persistence";
-import type { ExecutionContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
-
-import {
-  CONTROL_API_PATHS,
-  handleControlApiRequest
-} from "@simulatorlife/autodev-runtime/router/control-api";
 import { ROUTING_POLICY } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   getDefaultExecutionContract,
@@ -24,6 +22,7 @@ import {
   resetTelemetryExporter,
   setTelemetryExporter
 } from "@simulatorlife/autodev-runtime/router/telemetry";
+import type { ExecutionContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 
 const ENV_KEYS = [
   "AUTODEV_CONTROL_API_TOKEN",
@@ -675,6 +674,18 @@ test("Memory Control API rejects invalid filters before opening the memory host"
       { actor: "viewer-a" }
     );
     assert.equal(invalidScope.response.statusCode, 400);
+    const invalidMemoryMode = await call(
+      "GET",
+      "/control/memory/experiences?workspaceId=workspace-a&memoryMode=other",
+      { actor: "viewer-a" }
+    );
+    assert.equal(invalidMemoryMode.response.statusCode, 400);
+    const invalidOutcome = await call(
+      "GET",
+      "/control/memory/experiences?workspaceId=workspace-a&outcome=maybe",
+      { actor: "viewer-a" }
+    );
+    assert.equal(invalidOutcome.response.statusCode, 400);
   } finally {
     restoreEnv(saved);
   }

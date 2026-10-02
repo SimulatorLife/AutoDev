@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { runInstallCommand } from "../../src/platform/install-command.ts";
+import { runInstallCommand } from "@simulatorlife/autodev-runtime/platform/install-command";
 
 test("typed install command rejects check mode until diagnostic ownership migrates", () => {
   assert.throws(

@@ -6,4 +6,4 @@ set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 node_bin="${AUTODEV_NODE_BIN:-$(command -v node || true)}"
 [[ -x "$node_bin" ]] || { echo "run-provider-agent: node not found" >&2; exit 127; }
-exec env AUTODEV_REPO_ROOT="$repo_root" "$node_bin" "$repo_root/src/cli/provider-agent.ts" "$@"
+exec env AUTODEV_REPO_ROOT="$repo_root" "$node_bin" "$repo_root/runtime/src/cli/provider-agent.ts" "$@"

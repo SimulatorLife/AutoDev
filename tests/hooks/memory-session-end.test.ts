@@ -15,16 +15,16 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { LOCAL_CONTROL_API_ACTOR } from "@simulatorlife/autodev-core";
+import {
+  materializeRuntimeFile,
+  runtimeFileMatches,
+  runtimeTarget
+} from "@simulatorlife/autodev-runtime/platform/runtime-files";
 
 import {
   codexSessionEndCapture,
   createMemorySessionEndHandler
 } from "../../runtime/src/hooks/memory-session-end.ts";
-import {
-  materializeRuntimeFile,
-  runtimeFileMatches,
-  runtimeTarget
-} from "../../src/platform/runtime-files.ts";
 
 const validEvent = {
   hook_event_name: "SessionEnd",
@@ -181,7 +181,7 @@ test("materialized Codex hook reads its installed secret and posts to the loopba
       "src/hooks/memory-session-end.ts"
     );
 
-    const env = {
+    const env: NodeJS.ProcessEnv = {
       ...process.env,
       CODEX_HOME: codexHome,
       AUTODEV_CONTROL_API_LISTEN_PORT: String(address.port)

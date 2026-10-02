@@ -89,8 +89,10 @@ index 7231dd72..aee793d0 100644
  				items: [
  					{
  						id: "experience-a",
-@@ -179,31 +191,25 @@ test("AutoDev connector lists source experiences only when task-history access i
+@@ -179,33 +191,27 @@ test("AutoDev connector lists source experiences only when task-history access i
  	expect(String(experienceRequest)).toContain("includeTaskHistory=true");
+ 	expect(String(experienceRequest)).toContain("memoryMode=retrieval-only");
+ 	expect(String(experienceRequest)).toContain("outcome=success");
  });
  
 -

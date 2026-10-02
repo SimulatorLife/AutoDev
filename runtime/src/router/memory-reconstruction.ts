@@ -5,7 +5,6 @@ import {
   memoryQueryFromTask,
   type MemoryReconstructor
 } from "@simulatorlife/autodev-runtime/memory";
-
 import { ORCHESTRATOR_ALIAS } from "@simulatorlife/autodev-runtime/router/routing";
 
 const MAX_TASK_CHARACTERS = 4000;

@@ -27,7 +27,7 @@ Use **CGC as the default structural map** for:
 
 Prefer CGC graph traversal over repeated step-by-step LSP/file traversal when the question is architectural or relational.
 
-**Graph lifecycle (current state):** session start owns creating and refreshing the active checkout's graph (`src/platform/code-graph-ensure.ts`). A detached worker indexes a repository the graph does not list, and refreshes one whose `HEAD` or working tree changed since its last successful run. A lock and a freshness stamp keep this idempotent, and its state lives outside the repository. Agents do not index: role allowlists omit `add_code_to_graph` and `check_job_status`, and the root session gets the same four-tool CGC surface, because the orchestrator role's per-server settings are composed into the root config. CGC answers queries about an unindexed repository with successful, empty results, so agents confirm the workspace with `list_indexed_repositories` before trusting an empty answer.
+**Graph lifecycle (current state):** session start owns creating and refreshing the active checkout's graph (`runtime/src/platform/code-graph-ensure.ts`). A detached worker indexes a repository the graph does not list, and refreshes one whose `HEAD` or working tree changed since its last successful run. A lock and a freshness stamp keep this idempotent, and its state lives outside the repository. Agents do not index: role allowlists omit `add_code_to_graph` and `check_job_status`, and the root session gets the same four-tool CGC surface, because the orchestrator role's per-server settings are composed into the root config. CGC answers queries about an unindexed repository with successful, empty results, so agents confirm the workspace with `list_indexed_repositories` before trusting an empty answer.
 
 ### CocoIndex Code (CCC) — semantic discovery
 
@@ -110,22 +110,22 @@ Do **not** query CCC, CGC, LSP, grep, and file search for the same fact merely t
 
 Inspect the **actual installed/current versions and exposed MCP schemas** before disabling or hiding anything. The ownership below is the target hypothesis and must be verified against the real tools.
 
-| Capability | Preferred owner | Suspected overlap |
-|---|---|---|
-| Natural-language/concept discovery | **CCC** | CGC `find_code`, LSP workspace/symbol search |
-| Known-symbol lookup | **LSP** | CGC `find_code` |
-| Exact definitions | **LSP** | CGC/source search |
-| Exact references | **LSP** | CGC callers/importers are related but not equivalent |
-| Callers/callees | **CGC** | LSP call hierarchy |
-| Transitive callers/callees | **CGC** | repeated LSP call-hierarchy traversal |
-| A→B call chains | **CGC** | manual/repeated LSP traversal |
-| Module/dependency graph | **CGC** | LSP imports/related-files |
-| Importers | **CGC** | LSP reference/import tooling |
-| Exact type/signature/hover | **LSP** | limited CGC metadata |
-| Implementations/type semantics | **LSP** | CGC inheritance graph |
-| Broad inheritance architecture | **CGC** | LSP type hierarchy |
-| Diagnostics/refactoring | **LSP** | no meaningful equivalent |
-| Semantic similarity search | **CCC** | no true equivalent |
+| Capability                         | Preferred owner | Suspected overlap                                    |
+| ---------------------------------- | --------------- | ---------------------------------------------------- |
+| Natural-language/concept discovery | **CCC**         | CGC `find_code`, LSP workspace/symbol search         |
+| Known-symbol lookup                | **LSP**         | CGC `find_code`                                      |
+| Exact definitions                  | **LSP**         | CGC/source search                                    |
+| Exact references                   | **LSP**         | CGC callers/importers are related but not equivalent |
+| Callers/callees                    | **CGC**         | LSP call hierarchy                                   |
+| Transitive callers/callees         | **CGC**         | repeated LSP call-hierarchy traversal                |
+| A→B call chains                    | **CGC**         | manual/repeated LSP traversal                        |
+| Module/dependency graph            | **CGC**         | LSP imports/related-files                            |
+| Importers                          | **CGC**         | LSP reference/import tooling                         |
+| Exact type/signature/hover         | **LSP**         | limited CGC metadata                                 |
+| Implementations/type semantics     | **LSP**         | CGC inheritance graph                                |
+| Broad inheritance architecture     | **CGC**         | LSP type hierarchy                                   |
+| Diagnostics/refactoring            | **LSP**         | no meaningful equivalent                             |
+| Semantic similarity search         | **CCC**         | no true equivalent                                   |
 
 Important distinctions:
 
@@ -154,13 +154,13 @@ Do not permanently remove useful recovery/precision capabilities. Keep them avai
 
 Checked against `lsp-mcp-server` 1.1.20's exposed schemas, the normal implementation roles (`default`, `worker`) scope `lsp` with `enabled_tools` in their role TOMLs:
 
-| Status | Tools | Reason |
-|---|---|---|
-| Kept | `lsp_find_symbol`, `lsp_smart_search`, `lsp_goto_definition`, `lsp_goto_type_definition`, `lsp_find_references`, `lsp_find_implementations`, `lsp_type_hierarchy`, `lsp_hover`, `lsp_signature_help`, `lsp_document_symbols`, `lsp_diagnostics`, `lsp_index_files`, `lsp_workspace_diagnostics`, `lsp_rename`, `lsp_code_actions`, `lsp_format_document` | Exact symbol/type/reference/diagnostic/refactor semantics |
-| Hidden: covered by a bundled tool | `lsp_workspace_symbols` | `lsp_find_symbol` does the same fuzzy name search and adds definition, hover, and references; its schema also advertises it as a codebase-exploration entry point, which competes with CCC |
-| Hidden: owned by CGC | `lsp_call_hierarchy`, `lsp_file_imports`, `lsp_related_files` | Callers/callees and import/dependency neighbourhoods |
-| Hidden: redundant | `lsp_file_exports`, `lsp_document_highlights` | Covered by `lsp_document_symbols` and `lsp_find_references` |
-| Hidden: no agent value | `lsp_completions`, `lsp_inlay_hints`, `lsp_folding_ranges`, `lsp_selection_range`, `lsp_server_status`, `lsp_start_server`, `lsp_stop_server` | Editor affordances; servers auto-start |
+| Status                            | Tools                                                                                                                                                                                                                                                                                                                                                    | Reason                                                                                                                                                                                     |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Kept                              | `lsp_find_symbol`, `lsp_smart_search`, `lsp_goto_definition`, `lsp_goto_type_definition`, `lsp_find_references`, `lsp_find_implementations`, `lsp_type_hierarchy`, `lsp_hover`, `lsp_signature_help`, `lsp_document_symbols`, `lsp_diagnostics`, `lsp_index_files`, `lsp_workspace_diagnostics`, `lsp_rename`, `lsp_code_actions`, `lsp_format_document` | Exact symbol/type/reference/diagnostic/refactor semantics                                                                                                                                  |
+| Hidden: covered by a bundled tool | `lsp_workspace_symbols`                                                                                                                                                                                                                                                                                                                                  | `lsp_find_symbol` does the same fuzzy name search and adds definition, hover, and references; its schema also advertises it as a codebase-exploration entry point, which competes with CCC |
+| Hidden: owned by CGC              | `lsp_call_hierarchy`, `lsp_file_imports`, `lsp_related_files`                                                                                                                                                                                                                                                                                            | Callers/callees and import/dependency neighbourhoods                                                                                                                                       |
+| Hidden: redundant                 | `lsp_file_exports`, `lsp_document_highlights`                                                                                                                                                                                                                                                                                                            | Covered by `lsp_document_symbols` and `lsp_find_references`                                                                                                                                |
+| Hidden: no agent value            | `lsp_completions`, `lsp_inlay_hints`, `lsp_folding_ranges`, `lsp_selection_range`, `lsp_server_status`, `lsp_start_server`, `lsp_stop_server`                                                                                                                                                                                                            | Editor affordances; servers auto-start                                                                                                                                                     |
 
 `lsp_find_symbol` and `lsp_smart_search` can still return `incoming_calls`/`outgoing_calls`, which keeps a precise one-hop fallback. `explorer`, `validator`, `smart`, and `orchestrator` keep the full LSP surface. `tests/config/config-rendering.test.ts` freezes the split, and `tests/copilot-mcp-scope.test.ts` checks that Copilot turns receive the same allowlist.
 

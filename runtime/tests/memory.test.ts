@@ -1288,11 +1288,7 @@ test("unavailable optional embeddings fall back to lexical memory operations", a
       } as never);
     }
   } as unknown as Tracer;
-  await repository.appendExperience(experience(), worker, {
-    ...context,
-    taskId: "task-old",
-    runId: "run-old"
-  });
+  await repository.appendExperience(experience());
   const service = makeService(repository, {
     embedder: {
       embed: async () => {
@@ -1393,7 +1389,8 @@ test("official MCP facade exposes governed tools and binds scope outside model a
       actor: worker,
       context,
       taskId: "task-current",
-      task: "Investigate memory MCP scope safety."
+      task: "Investigate memory MCP scope safety.",
+      memoryMode: "unknown"
     })
   });
   const client = new Client(
@@ -1503,7 +1500,8 @@ test("official MCP facade exposes governed tools and binds scope outside model a
         actor: worker,
         context: { ...context, taskId: "different-host-task" },
         taskId: "task-current",
-        task: "Unbound MCP task"
+        task: "Unbound MCP task",
+        memoryMode: "unknown"
       })
     });
     const unboundClient = new Client(

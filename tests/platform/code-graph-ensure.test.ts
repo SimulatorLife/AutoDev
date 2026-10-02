@@ -17,7 +17,7 @@ import {
   ensureCodeGraph,
   gitRoot,
   runCodeGraphWorker
-} from "../../src/platform/code-graph-ensure.ts";
+} from "@simulatorlife/autodev-runtime/platform/code-graph-ensure";
 
 interface Fixture {
   root: string;

@@ -1,13 +1,19 @@
 import { metrics } from "@opentelemetry/api";
 import type {
+  MemoryExecutionMode,
   MemoryPacket,
   MemoryReadContext
 } from "@simulatorlife/autodev-core";
 
+import { redactSensitiveText, sanitizeEvidence } from "./privacy.ts";
 import type { MemoryService } from "./service.ts";
 
 const MAX_TASK_TEXT_CHARACTERS = 16_000;
 const MAX_QUERY_CHARACTERS = 4000;
+const MAX_RETRIEVAL_ONLY_ENTRIES = 2;
+const MAX_RETRIEVAL_ONLY_PACKET_CHARACTERS = 4000;
+const MAX_RETRIEVAL_ONLY_EVIDENCE = 4;
+const MAX_RETRIEVAL_ONLY_EVIDENCE_URI_CHARACTERS = 512;
 const MEMORY_ADVISORY_START = "--- AUTODEV MEMORY PACKET V1 ---";
 const MEMORY_ADVISORY_END = "--- END AUTODEV MEMORY PACKET ---";
 const INJECTED_CONTEXT_PREFIXES = [
@@ -24,6 +30,7 @@ export interface MemoryTaskContext {
   readonly runId: string;
   readonly task: string;
   readonly context: MemoryReadContext;
+  readonly memoryMode?: MemoryExecutionMode;
 }
 
 /** Extract only the newest user-authored text from a Responses API input value. */
@@ -138,6 +145,93 @@ export async function injectMemoryContext(
     context: taskContext.context,
     maxPacketCharacters
   });
+  return appendAndMeasureMemoryPacket(
+    payload,
+    packet,
+    taskContext.memoryMode ?? "jit"
+  );
+}
+
+/**
+ * Experimental retrieval-only ablation. It keeps only hard Data/MemoryService
+ * scope and lifecycle filters; it deliberately skips current-state validation
+ * and reconstruction and labels every injected claim as uncertain.
+ */
+export async function injectRetrievalOnlyMemoryContext(
+  service: MemoryService,
+  payload: Record<string, unknown>,
+  taskContext: MemoryTaskContext
+): Promise<Record<string, unknown>> {
+  if (!taskContext.task.trim()) return payload;
+  if (
+    payload.instructions !== undefined &&
+    typeof payload.instructions !== "string"
+  ) {
+    return payload;
+  }
+  const hits = await service.search({
+    query: memoryQueryFromTask(taskContext.task),
+    context: taskContext.context,
+    limit: MAX_RETRIEVAL_ONLY_ENTRIES
+  });
+  const packet = retrievalOnlyPacket(taskContext.taskId, hits);
+  return appendAndMeasureMemoryPacket(
+    payload,
+    packet,
+    taskContext.memoryMode ?? "retrieval-only"
+  );
+}
+
+function retrievalOnlyPacket(
+  taskId: string,
+  hits: Awaited<ReturnType<MemoryService["search"]>>
+): MemoryPacket {
+  const entries: MemoryPacket["entries"][number][] = [];
+  let characterCount = 0;
+  let omittedCount = 0;
+  for (const hit of hits) {
+    const entry: MemoryPacket["entries"][number] = {
+      memoryId: hit.memory.id,
+      disposition: "not_evaluated",
+      guidance: redactSensitiveText(hit.memory.claim),
+      rationale:
+        "Retrieval-only ablation: this claim was not validated against current repository state or reconstructed for the task.",
+      evidence: sanitizeEvidence(
+        hit.memory.provenance.evidence.slice(0, MAX_RETRIEVAL_ONLY_EVIDENCE)
+      ).filter(
+        (reference) =>
+          reference.uri.length <= MAX_RETRIEVAL_ONLY_EVIDENCE_URI_CHARACTERS &&
+          (reference.revision === undefined || reference.revision.length <= 128)
+      )
+    };
+    const entryCharacters = JSON.stringify(entry).length;
+    const separatorCharacters = entries.length === 0 ? 0 : 1;
+    if (
+      characterCount + separatorCharacters + entryCharacters >
+      MAX_RETRIEVAL_ONLY_PACKET_CHARACTERS
+    ) {
+      omittedCount += 1;
+      continue;
+    }
+    entries.push(entry);
+    characterCount += separatorCharacters + entryCharacters;
+  }
+  const text = entries.map((entry) => entry.guidance ?? "").join("\n");
+  return {
+    taskId,
+    entries,
+    text,
+    characterCount,
+    omittedCount,
+    generatedAt: new Date().toISOString()
+  };
+}
+
+function appendAndMeasureMemoryPacket(
+  payload: Record<string, unknown>,
+  packet: MemoryPacket,
+  memoryMode: MemoryExecutionMode
+): Record<string, unknown> {
   const enriched = appendMemoryPacket(payload, packet);
   const injected =
     packet.entries.length > 0 &&
@@ -151,7 +245,8 @@ export async function injectMemoryContext(
         unit: "{request}"
       })
       .add(1, {
-        "autodev.memory.injection.result": injected ? "injected" : "empty"
+        "autodev.memory.injection.result": injected ? "injected" : "empty",
+        "autodev.memory.mode": memoryMode
       });
   } catch {
     // OTel is observational and must not fail the Runtime request.

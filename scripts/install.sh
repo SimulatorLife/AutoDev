@@ -396,4 +396,4 @@ if [[ $is_check -eq 0 ]]; then
   ensure_bootstrap_command
 fi
 
-exec env AUTODEV_REPO_ROOT="$repo_root" CODEX_HOME="$codex_home" node "$repo_root/src/cli/install.ts" "$@"
+exec env AUTODEV_REPO_ROOT="$repo_root" CODEX_HOME="$codex_home" node "$repo_root/runtime/src/cli/install.ts" "$@"

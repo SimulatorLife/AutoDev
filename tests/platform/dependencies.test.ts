@@ -10,7 +10,7 @@ import {
   installCodeGraphContext,
   installPythonLanguageServer,
   resolveDependencyOptions
-} from "../../src/platform/dependencies.ts";
+} from "@simulatorlife/autodev-runtime/platform/dependencies";
 
 function options(
   overrides: Partial<DependencyOptions> = {}

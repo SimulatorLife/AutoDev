@@ -23,11 +23,18 @@ test("hydrateExperienceRow round-trips a serialized experience envelope", () => 
     repositoryId: "repo-1",
     taskKind: "bugfix",
     agentRole: "worker",
-    validation: { state: "passed", evidence: [] }
+    validation: { state: "passed", evidence: [] },
+    memoryMode: "retrieval-only"
   });
   const row = experienceToRow(experience);
   const hydrated = hydrateExperienceRow(row);
   assert.deepEqual(hydrated, experience);
+});
+
+test("hydrateExperienceRow rejects an unknown memory mode", () => {
+  const row = experienceToRow(makeExperience());
+  row.memory_mode = "unrecognized-mode";
+  assert.throws(() => hydrateExperienceRow(row), MemoryHydrationError);
 });
 
 test("hydrateMemoryRecordRow round-trips a serialized memory record", () => {

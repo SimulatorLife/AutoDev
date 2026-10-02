@@ -788,7 +788,7 @@ index 00000000..77322e02
 + * /autodev/mcps
 + *
 + * Renders the read-only MCP server exposure list sourced from the
-+ * `autodev-control-mcps-v1` schema (defined in src/router/control-api.ts).
++ * `autodev-control-mcps-v1` schema (defined in runtime/src/control-api/index.ts).
 + * The AutoDev API derives exposure from the configured role bindings on
 + * each server; it does NOT advertise a separate `transport`, `exposed`,
 + * `available`, or `tools[]` list — those belong to OpenLIT's stock
@@ -1061,7 +1061,7 @@ index 00000000..c3fc18e3
 + * server-side and forwards the request.
 + *
 + * Per the canonical AutoDev Control API contract
-+ * (`autodev-control-providers-v1`, defined in src/router/control-api.ts):
++ * (`autodev-control-providers-v1`, defined in runtime/src/control-api/index.ts):
 + *
 + *   - `providers[]` entries carry `id` plus a `roles` map with
 + *     `orchestrator.{enabled,mutable}` and `subagent.{enabled,mutable}`.
@@ -1333,7 +1333,7 @@ index 00000000..155bc68c
 + *
 + * Renders the live router state from the
 + * `autodev-control-runtime-v1` schema (defined in
-+ * src/router/control-api.ts). The AutoDev API exposes the router
++ * runtime/src/control-api/index.ts). The AutoDev API exposes the router
 + * instance id, lifecycle status, concurrency-manager status, and the
 + * active request count — it does NOT advertise a custom `version`,
 + * `startedAt`, `collectors[]`, or `queues[]` shape, so this page shows
@@ -1479,7 +1479,7 @@ index 00000000..6714b894
 + * /autodev/skills
 + *
 + * Renders the read-only skills exposure list sourced from the
-+ * `autodev-control-skills-v1` schema (defined in src/router/control-api.ts).
++ * `autodev-control-skills-v1` schema (defined in runtime/src/control-api/index.ts).
 + * The AutoDev API derives exposure from the configured role bindings on
 + * each skill; it does NOT advertise a separate `enabled` or `available`
 + * flag — those derive from the role binding presence the control API
@@ -1647,7 +1647,7 @@ index 00000000..5b1d0eb9
 + *      `AUTODEV_CONTROL_VIEWERS` / `AUTODEV_CONTROL_OPERATORS` allowlists.
 + *      Forwarding a forged role/email header would be a security regression.
 + *
-+ * Wire contract (the AutoDev Control API in src/router/control-api.ts is
++ * Wire contract (the AutoDev Control API in runtime/src/control-api/index.ts is
 + * the source of truth):
 + *
 + *   GET    /control/providers
@@ -1716,7 +1716,7 @@ index 00000000..5b1d0eb9
 +
 +/**
 + * Response shape returned by `GET /control/providers`. Mirrors the
-+ * `autodev-control-providers-v1` schema in src/router/control-api.ts:
++ * `autodev-control-providers-v1` schema in runtime/src/control-api/index.ts:
 + *   providers: [{ id, roles: { orchestrator: { enabled, mutable },
 + *                                subagent:     { enabled, mutable } } }]
 + * The proxy deliberately does NOT expose `displayName`, `status`,

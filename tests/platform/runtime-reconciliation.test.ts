@@ -15,7 +15,7 @@ import test from "node:test";
 import {
   removeStalePaths,
   stalePaths
-} from "../../src/platform/runtime-reconciliation.ts";
+} from "@simulatorlife/autodev-runtime/platform/runtime-reconciliation";
 
 function withTempDir<T>(callback: (directory: string) => T): T {
   const directory = mkdtempSync(
@@ -84,15 +84,7 @@ test("removeStalePaths skips missing paths and preserves input order", () =>
 
     assert.deepEqual(
       removeStalePaths(
-        [
-          missingStart,
-          first,
-          missingMiddle,
-          second,
-          third,
-          missingEnd,
-          fourth
-        ],
+        [missingStart, first, missingMiddle, second, third, missingEnd, fourth],
         "obsolete-runtime-path"
       ),
       [first, second, third, fourth]

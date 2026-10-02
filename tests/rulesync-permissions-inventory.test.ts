@@ -85,8 +85,8 @@ test("Claude bridge acts only through Codex tools", () => {
 });
 
 test("Antigravity permissions are dynamic and machine-local", () => {
-  const source = read("src/platform/antigravity-settings.ts");
-  const materializer = read("src/platform/install-materializer.ts");
+  const source = read("runtime/src/platform/antigravity-settings.ts");
+  const materializer = read("runtime/src/platform/install-materializer.ts");
   assert.ok(materializer.includes("updateAntigravityPermissions"));
   for (const marker of [
     "updateAntigravityPermissions",

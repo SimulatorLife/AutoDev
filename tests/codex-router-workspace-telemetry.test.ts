@@ -7,11 +7,6 @@ import test from "node:test";
 
 import { recordRouterEvent } from "@simulatorlife/autodev-runtime/router/events";
 import {
-  loadRouterState,
-  persistRouterStateNow
-} from "@simulatorlife/autodev-runtime/router/persistence";
-
-import {
   getRouterStatus,
   ingestAgentEvents,
   resetRouterTelemetry,
@@ -22,6 +17,10 @@ import {
   ingestOtelSignal,
   resetOtelTelemetry
 } from "@simulatorlife/autodev-runtime/router/otel";
+import {
+  loadRouterState,
+  persistRouterStateNow
+} from "@simulatorlife/autodev-runtime/router/persistence";
 import { proxyConcreteResponse } from "@simulatorlife/autodev-runtime/router/proxy";
 import {
   noteBridgeRequest,

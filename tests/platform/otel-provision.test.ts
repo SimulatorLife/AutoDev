@@ -14,12 +14,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { executableArch, hostArch } from "../../src/platform/host-arch.ts";
+import {
+  executableArch,
+  hostArch
+} from "@simulatorlife/autodev-runtime/platform/host-arch";
+
 import {
   provisionCollector,
   type ProvisionOptions,
   resolveProvisionOptions
-} from "../../src/platform/otel-provision.ts";
+} from "@simulatorlife/autodev-runtime/platform/otel-provision";
 import { executableHeader } from "./executable-header.ts";
 
 function withTempDir<T>(callback: (directory: string) => T): T {

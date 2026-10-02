@@ -4,11 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { LAUNCH_LABELS } from "../../src/platform/install-materializer.ts";
 import {
   launchAgentMatches,
   renderLaunchAgent
-} from "../../src/platform/macos/launchagent.ts";
+} from "@simulatorlife/autodev-runtime/platform/launchagent";
+
+import { LAUNCH_LABELS } from "@simulatorlife/autodev-runtime/platform/install-materializer";
 
 function withTempDir<T>(callback: (directory: string) => T): T {
   const directory = mkdtempSync(join(tmpdir(), "autodev-launchagent-"));

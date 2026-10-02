@@ -6,7 +6,7 @@ import {
   type CopilotEnsureOptions,
   ensureCopilotProxy,
   resolveCopilotEnsureOptions
-} from "../../src/platform/copilot-ensure.ts";
+} from "@simulatorlife/autodev-runtime/platform/copilot-ensure";
 
 function options(
   overrides: Partial<CopilotEnsureOptions> = {}

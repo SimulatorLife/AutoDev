@@ -16,7 +16,7 @@ import {
   ensureRouterAuth,
   readOtelIngressMode,
   writeOtelIngressMode
-} from "../../src/platform/install-state.ts";
+} from "@simulatorlife/autodev-runtime/platform/install-state";
 
 function withTempDir<T>(callback: (directory: string) => T): T {
   const directory = mkdtempSync(join(tmpdir(), "autodev-install-state-"));

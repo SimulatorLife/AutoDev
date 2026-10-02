@@ -8,7 +8,6 @@ import {
   type CurrentStateAssessment,
   latestUserTask
 } from "@simulatorlife/autodev-runtime/memory";
-
 import { RoutedMemoryReconstructor } from "@simulatorlife/autodev-runtime/router/memory-reconstruction";
 import { ORCHESTRATOR_ALIAS } from "@simulatorlife/autodev-runtime/router/routing";
 import {
@@ -41,7 +40,7 @@ test.after(() => {
 
 const evidence = {
   kind: "file" as const,
-  uri: "file:///workspace/repo/src/router/memory.ts"
+  uri: "file:///workspace/repo/runtime/src/router/memory-reconstruction.ts"
 };
 const memory: MemoryRecord = {
   id: "memory-procedure",

@@ -1,4 +1,6 @@
+export * as cli from "./cli/index.ts";
 export * as agents from "./agents/index.ts";
+export * as config from "./config/index.ts";
 export * from "./control-api/index.ts";
 export * as hooks from "./hooks/index.ts";
 export * as mcp from "./mcp/index.ts";

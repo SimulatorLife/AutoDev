@@ -5,12 +5,15 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  getRouterStatus,
+  resetRouterTelemetry
+} from "@simulatorlife/autodev-runtime/router/http";
+import { resetOtelTelemetry } from "@simulatorlife/autodev-runtime/router/otel";
+import {
   CodexStateCollector,
   loadCodexStateCollectorConfig
 } from "@simulatorlife/autodev-runtime/router/state-collector";
 
-import { getRouterStatus, resetRouterTelemetry } from "@simulatorlife/autodev-runtime/router/http";
-import { resetOtelTelemetry } from "@simulatorlife/autodev-runtime/router/otel";
 import { parseLimitedTableSelect } from "./sqlite-select-stub.ts";
 
 type JsonRecord = Record<string, any>;

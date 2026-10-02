@@ -1,8 +1,11 @@
 import {
   type EvidenceReference,
+  EXPERIENCE_OUTCOMES as CORE_EXPERIENCE_OUTCOMES,
   type ExperienceEnvelope,
   type ExperienceOutcome,
+  MEMORY_EXECUTION_MODES,
   MEMORY_REASON_CODES,
+  type MemoryExecutionMode,
   type MemoryKind,
   type MemoryLifecycleAction,
   type MemoryLifecycleEvent,
@@ -17,13 +20,12 @@ import {
 import { MemoryHydrationError } from "./errors.ts";
 import { columnsToScope } from "./scope-sql.ts";
 
-const EXPERIENCE_OUTCOMES: ReadonlySet<string> = new Set([
-  "success",
-  "partial",
-  "failure",
-  "cancelled",
-  "unknown"
-]);
+const MEMORY_EXECUTION_MODE_SET: ReadonlySet<string> = new Set(
+  MEMORY_EXECUTION_MODES
+);
+const EXPERIENCE_OUTCOMES: ReadonlySet<string> = new Set(
+  CORE_EXPERIENCE_OUTCOMES
+);
 const MEMORY_KINDS: ReadonlySet<string> = new Set([
   "episodic",
   "semantic",
@@ -207,6 +209,15 @@ export function hydrateExperienceRow(
     row.outcome,
     EXPERIENCE_OUTCOMES
   );
+  const memoryMode =
+    row.memory_mode === null || row.memory_mode === undefined
+      ? undefined
+      : requireEnum<MemoryExecutionMode>(
+          table,
+          "memory_mode",
+          row.memory_mode,
+          MEMORY_EXECUTION_MODE_SET
+        );
   const validationState = row.validation_state;
   const validation =
     validationState === null || validationState === undefined
@@ -289,6 +300,7 @@ export function hydrateExperienceRow(
     startedAt: requireIsoString(table, "started_at", row.started_at),
     ...(completedAt === undefined ? {} : { completedAt }),
     outcome,
+    ...(memoryMode === undefined ? {} : { memoryMode }),
     ...(validation === undefined ? {} : { validation }),
     trajectory: {
       format: requireString(table, "trajectory_format", row.trajectory_format),

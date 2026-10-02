@@ -12,7 +12,7 @@ import test from "node:test";
 
 import { parse } from "smol-toml";
 
-import { ensureCodexAppMcpServerEnabled } from "../../src/platform/install-materializer.ts";
+import { ensureCodexAppMcpServerEnabled } from "@simulatorlife/autodev-runtime/platform/install-materializer";
 
 const PLUGIN_VERSION = "0.1.4";
 const SENTINEL = path.join("autodev", "codex-app-tools-state.json");

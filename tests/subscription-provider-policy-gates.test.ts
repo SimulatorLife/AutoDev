@@ -14,7 +14,7 @@ const CLAUDE_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN";
 const REVIEWED_CLAUDE_TOKEN_CONSUMERS = new Set([
   "runtime/src/providers/claude.ts",
   "scripts/run-codex-claude-bridge.sh",
-  "src/platform/claude-ensure.ts",
+  "runtime/src/platform/claude-ensure.ts",
   ".github/workflows/claude-invoke.yml",
   "scripts/run-ci-provider.sh",
   ".github/workflows/agent-invoke.yml"

@@ -1,23 +1,35 @@
-import { context, propagation } from "@opentelemetry/api";
+import {
+  context,
+  propagation,
+  type Span,
+  SpanKind,
+  SpanStatusCode,
+  trace,
+  type Tracer
+} from "@opentelemetry/api";
 import { MEMORY_EMBEDDING_DIMENSIONS } from "@simulatorlife/autodev-data";
 
 import {
   type MemoryEmbeddingProvider,
   MemoryEmbeddingUnavailableError,
-  MemoryValidationError} from "./service.ts";
+  MemoryValidationError
+} from "./service.ts";
 
 const MAX_EMBEDDING_INPUT_CHARACTERS = 16_000;
 const MAX_EMBEDDING_RESPONSE_BYTES = 64 * 1024;
 const DEFAULT_EMBEDDING_TIMEOUT_MS = 5000;
 const MAX_EMBEDDING_TIMEOUT_MS = 30_000;
 const EMBEDDING_PATH_SUFFIX = /\/+$/u;
+const LOCAL_EMBEDDING_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 export interface OpenAICompatibleMemoryEmbeddingOptions {
   readonly endpoint: string;
   readonly model: string;
+  readonly provider?: string;
   readonly apiKey?: string;
   readonly timeoutMs?: number;
   readonly fetchImpl?: typeof fetch;
+  readonly tracer?: Tracer;
 }
 
 /**
@@ -27,15 +39,19 @@ export interface OpenAICompatibleMemoryEmbeddingOptions {
 export class OpenAICompatibleMemoryEmbeddingProvider implements MemoryEmbeddingProvider {
   private readonly endpoint: string;
   private readonly model: string;
+  private readonly provider: string | undefined;
   private readonly apiKey: string | undefined;
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly tracer: Tracer;
 
   constructor(options: OpenAICompatibleMemoryEmbeddingOptions) {
     const endpoint = new URL(options.endpoint);
     const model = options.model.trim();
     if (
       (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") ||
+      (endpoint.protocol === "http:" &&
+        !LOCAL_EMBEDDING_HOSTS.has(endpoint.hostname)) ||
       endpoint.username ||
       endpoint.password ||
       endpoint.search ||
@@ -58,18 +74,55 @@ export class OpenAICompatibleMemoryEmbeddingProvider implements MemoryEmbeddingP
 
     this.endpoint = endpoint.toString();
     this.model = model;
+    this.provider = options.provider?.trim() || undefined;
     this.apiKey = options.apiKey?.trim() || undefined;
     this.timeoutMs = timeoutMs;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
+    this.tracer =
+      options.tracer ?? trace.getTracer("autodev.memory.embedding", "1.0.0");
   }
 
-  async embed(text: string): Promise<readonly number[]> {
-    if (!text.trim() || text.length > MAX_EMBEDDING_INPUT_CHARACTERS) {
-      throw new MemoryValidationError(
-        "Memory embedding input is empty or exceeds its bound."
-      );
-    }
+  embed(text: string): Promise<readonly number[]> {
+    return this.tracer.startActiveSpan(
+      "gen_ai.client_operation",
+      {
+        kind: SpanKind.CLIENT,
+        attributes: {
+          "gen_ai.operation.name": "embeddings",
+          "gen_ai.request.model": this.model,
+          ...(this.provider ? { "gen_ai.provider.name": this.provider } : {})
+        }
+      },
+      async (span) => {
+        try {
+          if (!text.trim() || text.length > MAX_EMBEDDING_INPUT_CHARACTERS) {
+            throw new MemoryValidationError(
+              "Memory embedding input is empty or exceeds its bound."
+            );
+          }
+          return await this.requestEmbedding(text, span);
+        } catch (error) {
+          span.setStatus({ code: SpanStatusCode.ERROR });
+          span.setAttribute(
+            "error.type",
+            error instanceof MemoryEmbeddingUnavailableError
+              ? "provider_unavailable"
+              : error instanceof MemoryValidationError
+                ? "invalid_response"
+                : "operation_failed"
+          );
+          throw error;
+        } finally {
+          span.end();
+        }
+      }
+    );
+  }
 
+  private async requestEmbedding(
+    text: string,
+    span: Span
+  ): Promise<readonly number[]> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
@@ -107,6 +160,10 @@ export class OpenAICompatibleMemoryEmbeddingProvider implements MemoryEmbeddingP
       }
 
       const payload = await readBoundedJson(response);
+      const inputTokens = embeddingInputTokens(payload);
+      if (inputTokens !== undefined) {
+        span.setAttribute("gen_ai.usage.input_tokens", inputTokens);
+      }
       return embeddingVector(payload);
     } finally {
       clearTimeout(timer);
@@ -122,12 +179,13 @@ async function readBoundedJson(response: Response): Promise<unknown> {
   let byteLength = 0;
   try {
     while (true) {
+      // eslint-disable-next-line no-await-in-loop -- sequential reads enforce the response byte bound
       const { done, value } = await reader.read();
       if (done) break;
       if (!value) continue;
       byteLength += value.byteLength;
       if (byteLength > MAX_EMBEDDING_RESPONSE_BYTES) {
-        await reader.cancel().catch(() => undefined);
+        void reader.cancel().catch(() => undefined);
         throw new MemoryEmbeddingUnavailableError();
       }
       chunks.push(value);
@@ -145,8 +203,27 @@ async function readBoundedJson(response: Response): Promise<unknown> {
   }
 }
 
+function embeddingInputTokens(payload: unknown): number | undefined {
+  let tokenCount: number | undefined;
+  if (isRecord(payload) && isRecord(payload.usage)) {
+    const tokens = payload.usage.prompt_tokens ?? payload.usage.input_tokens;
+    if (
+      typeof tokens === "number" &&
+      Number.isSafeInteger(tokens) &&
+      tokens >= 0
+    ) {
+      tokenCount = tokens;
+    }
+  }
+  return tokenCount;
+}
+
 function embeddingVector(payload: unknown): readonly number[] {
-  if (!isRecord(payload) || !Array.isArray(payload.data)) {
+  if (
+    !isRecord(payload) ||
+    !Array.isArray(payload.data) ||
+    payload.data.length !== 1
+  ) {
     throw new MemoryEmbeddingUnavailableError();
   }
   const first = payload.data[0];

@@ -7,19 +7,26 @@
   "types": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./openlit": "./src/openlit/index.ts",
     "./usage": "./src/usage/index.ts"
   },
   "dependencies": {
     "@simulatorlife/autodev-core": "workspace:*",
     "jsonc-parser": "3.3.1",
-    "pg": "8.23.1"
+    "pg": "8.23.1",
+    "smol-toml": "^1.8.0"
   },
   "scripts": {
+    "memory:migrate": "node src/memory/migrate.ts",
+    "openlit:sync-agents": "node src/openlit/sync-rulesync-agents.ts",
+    "openlit:sync-models": "node src/openlit/sync-rulesync-models.ts",
+    "openlit:sync-prompts": "node src/openlit/sync-rulesync-prompts.ts",
+    "openlit:sync-workspaces": "node src/openlit/sync-rulesync-workspaces.ts",
     "test": "node --test tests/**/*.test.ts",
-    "typecheck": "tsc --noEmit",
-    "memory:migrate": "node src/memory/migrate.ts"
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/node": "^24.0.0",
     "@types/pg": "8.23.1"
   }
 }

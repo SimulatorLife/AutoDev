@@ -128,9 +128,11 @@ Control API, receiver, and Usage tokens are stored together in
 | `bootstrap-secrets.sh`  | Generate/preserve strong DB, Control API, OTLP receiver, and Console Usage tokens in the CODEX_HOME secret file. |
 | `bootstrap-otlp-key.sh` | Materialize the same generated receiver token for producers; it does not call an OpenLIT API.                    |
 | `up.sh`                 | Build, prepare secrets, then start the locally patched image with the non-secret template.                       |
+| `down.sh`               | Stop the local stack while preserving its durable ClickHouse and OpenLIT data volumes.                           |
 
-The runner cleans up only its own fresh scratch clone. It never edits the
-tracked env template or removes pre-existing `.tmp` data. Current patched-image
+The bring-up runner cleans up only its own fresh scratch clone. It never edits the
+tracked env template or removes pre-existing `.tmp` data. The down runner leaves
+the named persistent data volumes intact. Current patched-image
 and runtime acceptance evidence, including remaining gates, lives only in the
 [canonical AutoDev Console target](../../docs/autodev-console-target-state.md) §§11–12;
 source patch application alone is not deployment or cutover proof.
@@ -146,6 +148,9 @@ auth, persistence, dashboard, and control-proxy probes.
 ```sh
 # Full local bring-up:
 scripts/openlit/up.sh
+
+# Stop the stack without deleting telemetry or OpenLIT data:
+scripts/openlit/down.sh
 
 # Pull and verify the first-party upstream image (optional; not required
 # when running `up.sh` because the runner builds the patched image).

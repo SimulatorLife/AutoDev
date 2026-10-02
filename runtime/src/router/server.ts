@@ -15,7 +15,7 @@ import {
 } from "@simulatorlife/autodev-runtime/router/persistence";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
-import { handleControlApiRequest } from "./control-api.ts";
+import { handleControlApiRequest } from "../control-api/index.ts";
 import { codexState, handle, HOST, PORT, refreshCodexState } from "./http.ts";
 import { closeOrchestratorMemoryHost } from "./memory-injection.ts";
 import {
@@ -287,7 +287,6 @@ export {
   recordNativeMcpExposure,
   ROUTER_INSTANCE_ID
 } from "./proxy.ts";
-export { ORCHESTRATOR_ALIAS } from "@simulatorlife/autodev-runtime/router/routing";
 export {
   AGENT_EVENTS_PATH,
   AGENT_EVENTS_URL_HEADER,
@@ -344,3 +343,4 @@ export {
   persistRouterStateNow,
   serializeRouterState
 } from "@simulatorlife/autodev-runtime/router/persistence";
+export { ORCHESTRATOR_ALIAS } from "@simulatorlife/autodev-runtime/router/routing";

@@ -343,7 +343,7 @@ test("the installer ships every shared module the bridges import", () => {
   // it is the installed router crash-looping under launchd on
   // ERR_MODULE_NOT_FOUND, which reaches the operator as nothing more
   // informative than "Connection failed: error sending request".
-  const materializer = read("src/platform/install-materializer.ts");
+  const materializer = read("runtime/src/platform/install-materializer.ts");
   const sources = [
     "runtime/src/router/server.ts",
     "runtime/src/providers/antigravity.ts",
@@ -366,7 +366,14 @@ test("the installer ships every shared module the bridges import", () => {
       for (const match of read(source).matchAll(
         /from ["']\.\/([^"']+\.ts)["']/g
       )) {
-        imported.add(`src/router/${match[1]}`);
+        imported.add(`runtime/src/router/${match[1]}`);
+      }
+    }
+    if (source === "runtime/src/router/server.ts") {
+      for (const match of read(source).matchAll(
+        /from ["']\.\.\/([^"']+\.ts)["']/g
+      )) {
+        imported.add(`runtime/src/${match[1]}`);
       }
     }
   }

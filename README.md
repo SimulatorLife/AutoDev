@@ -36,7 +36,7 @@ AutoDev itself is managed with pnpm `10.32.1`, declared by `packageManager` in
 Node 24.12+, declared by `.nvmrc` and the package engine constraint. Use
 `pnpm install --frozen-lockfile` before running the checks. The typed command
 boundary is available as `pnpm autodev -- <command>` (or
-`node src/cli/autodev.ts <command>`); native TypeScript is executed directly by
+`node runtime/src/cli/autodev.ts <command>`); native TypeScript is executed directly by
 Node and checked with `pnpm run typecheck`. The target-aware runner
 intentionally retains an npm compatibility branch for organization repositories
 that have not migrated their own package manager; that branch is not used to

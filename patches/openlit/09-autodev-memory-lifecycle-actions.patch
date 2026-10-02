@@ -175,9 +175,11 @@ diff --git a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-ada
 index fdbd162b..7231dd72 100644
 --- a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
 +++ b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
-@@ -178,3 +178,59 @@ test("AutoDev connector lists source experiences only when task-history access i
+@@ -178,5 +178,61 @@ test("AutoDev connector lists source experiences only when task-history access i
  	expect(String(experienceRequest)).toContain("/control/memory/experiences?");
  	expect(String(experienceRequest)).toContain("includeTaskHistory=true");
+ 	expect(String(experienceRequest)).toContain("memoryMode=retrieval-only");
+ 	expect(String(experienceRequest)).toContain("outcome=success");
  });
 +
 +
@@ -625,10 +627,12 @@ index 156d7ebb..e7f41673 100644
  	MemoryCapabilities,
  	MemoryListFilter,
  	MemoryRecord,
-@@ -66,6 +68,16 @@ const READ_ONLY_CAPABILITIES: MemoryCapabilities = {
+@@ -66,8 +68,18 @@ const READ_ONLY_CAPABILITIES: MemoryCapabilities = {
  	feedback: false
  };
  const MAX_PAGE_SIZE = 100;
+ const MEMORY_MODES = new Set(["jit", "retrieval-only", "disabled", "invalid", "unknown"]);
+ const EXPERIENCE_OUTCOMES = new Set(["success", "partial", "failure", "cancelled", "unknown"]);
 +const INVALIDATE_ACTION: MemoryActionDescriptor = {
 +	id: "invalidate",
 +	label: "Invalidate memory",

@@ -957,7 +957,7 @@ AutoDev:
 - `runtime/src/providers/claude-turn.ts`
 - `runtime/src/agents/bridge-spawn-session.ts`
 - `runtime/src/agents/spawn-tools.ts`
-- `src/platform/antigravity-settings.ts`
+- `runtime/src/platform/antigravity-settings.ts`
 - `config/execution-contract.json`
 - `.rulesync/hooks.jsonc`
 - `.rulesync/mcp.jsonc`

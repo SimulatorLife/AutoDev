@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { LaunchdClient } from "../../src/platform/macos/launchd.ts";
+import { LaunchdClient } from "@simulatorlife/autodev-runtime/platform/launchd";
 import {
   __testing,
   createDefaultRouterEnsureDeps,
@@ -19,7 +19,7 @@ import {
   type RouterEnsureOptions,
   type RouterEnsureResult,
   runRouterEnsure
-} from "../../src/platform/router-ensure.ts";
+} from "@simulatorlife/autodev-runtime/platform/router-ensure";
 
 function withTempHome<T>(callback: (home: string) => T): T {
   const previous = process.env.CODEX_HOME;
