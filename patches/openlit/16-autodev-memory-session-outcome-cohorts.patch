@@ -113,7 +113,7 @@ index 00000000..024ad54e
 +	expect(await response.json()).toBe(MEMORY_SESSION_COHORTS_UNSUPPORTED_CONNECTOR);
 +});
 diff --git a/src/client/src/__tests__/components/memory-cohort-view.test.tsx b/src/client/src/__tests__/components/memory-cohort-view.test.tsx
-index d99aa5b0..ce3a8677 100644
+index 734ee3e8..42730205 100644
 --- a/src/client/src/__tests__/components/memory-cohort-view.test.tsx
 +++ b/src/client/src/__tests__/components/memory-cohort-view.test.tsx
 @@ -39,9 +39,7 @@ describe("MemoryCohortView", () => {
@@ -127,7 +127,7 @@ index d99aa5b0..ce3a8677 100644
  		const requestUrl = new URL(String(fetchSpy.mock.calls[0]?.[0]), "http://localhost");
  		expect(requestUrl.searchParams.get("occurredFrom")).toMatch(/T00:00:00\.000Z$/u);
  		expect(requestUrl.searchParams.get("occurredUntil")).toMatch(/T23:59:59\.999Z$/u);
-@@ -57,62 +55,53 @@ describe("MemoryCohortView", () => {
+@@ -57,64 +55,55 @@ describe("MemoryCohortView", () => {
  		});
  		global.fetch = fetchSpy as unknown as typeof fetch;
  		render(<MemoryCohortView connectorId="memory:autodev-a" connectorType="autodev" />);
@@ -169,6 +169,7 @@ index d99aa5b0..ce3a8677 100644
 -							{
 -								memoryMode: "jit",
 -								injectionResult: "injected",
+-								sessionCardinality: "multiple",
 -								reportKind: null,
 -								outcomeKind: null,
 -								exposureCount: 9,
@@ -177,6 +178,7 @@ index d99aa5b0..ce3a8677 100644
 -							{
 -								memoryMode: "jit",
 -								injectionResult: "injected",
+-								sessionCardinality: "single",
 -								reportKind: "pull_request",
 -								outcomeKind: "success",
 -								exposureCount: 2,
@@ -197,6 +199,7 @@ index d99aa5b0..ce3a8677 100644
 +									{
 +										memoryMode: "jit",
 +										injectionResult: "injected",
++										sessionCardinality: "multiple",
 +										reportKind: null,
 +										outcomeKind: null,
 +										exposureCount: 9,
@@ -205,6 +208,7 @@ index d99aa5b0..ce3a8677 100644
 +									{
 +										memoryMode: "jit",
 +										injectionResult: "injected",
++										sessionCardinality: "single",
 +										reportKind: "pull_request",
 +										outcomeKind: "success",
 +										exposureCount: 2,
@@ -228,11 +232,10 @@ index d99aa5b0..ce3a8677 100644
  
  		render(<MemoryCohortView connectorId="memory:autodev-a" connectorType="autodev" />);
  
-@@ -145,3 +134,56 @@ describe("MemoryCohortView", () => {
- 		]);
+@@ -158,3 +147,55 @@ describe("MemoryCohortView", () => {
+ 		expect(headers.join(" ")).not.toMatch(/model-use evidence/i);
  	});
  });
-+
 +test("renders deduplicated session counts and exposes excluded conflicts without rates", async () => {
 +	const sessionPage = {
 +		schema: "autodev-memory-session-outcome-cohorts-v1",
@@ -286,10 +289,10 @@ index d99aa5b0..ce3a8677 100644
 +	expect(sessionUrl.pathname).toBe("/api/memory/session-cohorts");
 +});
 diff --git a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
-index d76efe20..ff81deb5 100644
+index 64065586..95c2a5e8 100644
 --- a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
 +++ b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
-@@ -959,3 +959,99 @@ test("reportOutcome propagates an append-only conflicting-report response withou
+@@ -976,3 +976,99 @@ test("reportOutcome propagates an append-only conflicting-report response withou
  	const lastCall = fetchSpy.mock.calls[1] as [string, RequestInit];
  	expect(JSON.parse(String(lastCall[1].body))).toMatchObject({ correlationToken: token });
  });
@@ -526,10 +529,10 @@ index 00000000..df9ab4cf
 +
 +export const GET = withMemoryAccess("read", GETHandler);
 diff --git a/src/client/src/components/(playground)/memory/memory-cohort-view.tsx b/src/client/src/components/(playground)/memory/memory-cohort-view.tsx
-index 03a66dae..98d8235a 100644
+index f7ce2fc2..92454dea 100644
 --- a/src/client/src/components/(playground)/memory/memory-cohort-view.tsx
 +++ b/src/client/src/components/(playground)/memory/memory-cohort-view.tsx
-@@ -44,7 +44,28 @@ export interface MemoryCohortResult {
+@@ -45,7 +45,28 @@ export interface MemoryCohortResult {
  	page: MemoryCohortPage | null;
  }
  
@@ -558,7 +561,7 @@ index 03a66dae..98d8235a 100644
  const INJECTION_RESULT_OPTIONS = ["injected", "empty", "skipped"];
  const REPORT_KIND_OPTIONS = ["task", "pull_request", "issue", "other"];
  const OUTCOME_KIND_OPTIONS = ["success", "partial", "failure", "cancelled", "unknown"];
-@@ -80,12 +101,16 @@ export default function MemoryCohortView({
+@@ -81,12 +102,16 @@ export default function MemoryCohortView({
  	const [loading, setLoading] = useState(false);
  	const [error, setError] = useState<string | null>(null);
  	const [result, setResult] = useState<MemoryCohortResult | null>(null);
@@ -575,7 +578,7 @@ index 03a66dae..98d8235a 100644
  		if (connectorType !== "autodev" || !connectorId) {
  			setLoading(false);
  			return;
-@@ -130,10 +155,42 @@ export default function MemoryCohortView({
+@@ -131,10 +156,42 @@ export default function MemoryCohortView({
  			})
  			.then((payload) => {
  				if (requestId === requestSequence.current) setResult(payload.result);
@@ -618,7 +621,7 @@ index 03a66dae..98d8235a 100644
  				}
  			})
  			.finally(() => {
-@@ -146,6 +203,8 @@ export default function MemoryCohortView({
+@@ -147,6 +204,8 @@ export default function MemoryCohortView({
  		memoryMode,
  		messages.MEMORY_COHORTS_INVALID_WINDOW,
  		messages.MEMORY_COHORTS_LOAD_FAILED,
@@ -627,7 +630,7 @@ index 03a66dae..98d8235a 100644
  		occurredFrom,
  		occurredUntil,
  		outcomeKind,
-@@ -293,6 +352,66 @@ export default function MemoryCohortView({
+@@ -296,6 +355,66 @@ export default function MemoryCohortView({
  					</Table>
  				</div>
  			)}
@@ -695,10 +698,10 @@ index 03a66dae..98d8235a 100644
  	);
  }
 diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
-index fbe1aac0..ad6a51ef 100644
+index e4a95165..b2933ab9 100644
 --- a/src/client/src/constants/messages/en.ts
 +++ b/src/client/src/constants/messages/en.ts
-@@ -2680,6 +2680,25 @@ export const MEMORY_COHORTS_TOTAL_EXPOSURES = "Total exposures";
+@@ -2681,6 +2681,25 @@ export const MEMORY_COHORTS_TOTAL_EXPOSURES = "Total exposures";
  export const MEMORY_COHORTS_TOTAL_REPORTS = "Total reports";
  export const MEMORY_COHORTS_REFRESH = "Refresh";
  export const MEMORY_COHORTS_ALL_FILTER_VALUE = "All";
@@ -725,10 +728,10 @@ index fbe1aac0..ad6a51ef 100644
  export const MEMORY_DETAIL_CHANGELOG_EMPTY = "No changelog for this memory.";
  export const MEMORY_DETAIL_EVENT_ADDED = "Added";
 diff --git a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
-index 552ba66a..f60c2485 100644
+index 7fde73ed..4af80043 100644
 --- a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
 +++ b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
-@@ -144,6 +144,37 @@ export interface AutoDevCohortResult {
+@@ -145,6 +145,37 @@ export interface AutoDevCohortResult {
  	page: AutoDevCohortPage | null;
  }
  
@@ -766,15 +769,15 @@ index 552ba66a..f60c2485 100644
  export interface AutoDevOutcomeReportInput {
  	experienceId: string;
  	injectionEventId: string;
-@@ -174,6 +205,7 @@ const READ_ONLY_CAPABILITIES: MemoryCapabilities = {
+@@ -175,6 +206,7 @@ const READ_ONLY_CAPABILITIES: MemoryCapabilities = {
  };
  const MAX_PAGE_SIZE = 100;
  const MEMORY_MODES = new Set(["jit", "retrieval-only", "disabled", "invalid", "unknown"]);
 +const SESSION_COHORT_MEMORY_MODES = new Set(["jit", "retrieval-only", "disabled"]);
  const EXPERIENCE_OUTCOMES = new Set(["success", "partial", "failure", "cancelled", "unknown"]);
  const INJECTION_RESULTS = new Set(["injected", "empty", "skipped"]);
- const REPORT_KINDS = new Set(["task", "pull_request", "issue", "other"]);
-@@ -457,6 +489,88 @@ function autoDevCohortPage(
+ // Read-only grouping dimension derived server-side from each row's full
+@@ -464,6 +496,88 @@ function autoDevCohortPage(
  	};
  }
  
@@ -863,7 +866,7 @@ index 552ba66a..f60c2485 100644
  function autoDevHistoryEvent(value: unknown): MemoryHistoryEvent | null {
  	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
  	const event = value as Record<string, unknown>;
-@@ -821,6 +935,53 @@ export class AutoDevMemoryAdapter extends BaseMemoryAdapter {
+@@ -828,6 +942,53 @@ export class AutoDevMemoryAdapter extends BaseMemoryAdapter {
  		}
  	}
  

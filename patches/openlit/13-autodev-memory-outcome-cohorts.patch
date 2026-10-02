@@ -1,9 +1,9 @@
 diff --git a/src/client/src/__tests__/app/api/memory/cohorts/route.test.ts b/src/client/src/__tests__/app/api/memory/cohorts/route.test.ts
 new file mode 100644
-index 00000000..8a7fecf6
+index 00000000..0cc06454
 --- /dev/null
 +++ b/src/client/src/__tests__/app/api/memory/cohorts/route.test.ts
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,156 @@
 +jest.mock("@/lib/session", () => ({ getCurrentUser: jest.fn() }));
 +jest.mock("@/lib/platform/connectors/memory/crud", () => ({
 +	memoryConnectorId: (id: string) => (id.startsWith("memory:") ? id : `memory:${id}`),
@@ -123,6 +123,7 @@ index 00000000..8a7fecf6
 +					{
 +						memoryMode: "jit",
 +						injectionResult: "injected",
++						sessionCardinality: "multiple",
 +						reportKind: null,
 +						outcomeKind: null,
 +						exposureCount: 5,
@@ -161,10 +162,10 @@ index 00000000..8a7fecf6
 +});
 diff --git a/src/client/src/__tests__/components/memory-cohort-view.test.tsx b/src/client/src/__tests__/components/memory-cohort-view.test.tsx
 new file mode 100644
-index 00000000..d99aa5b0
+index 00000000..734ee3e8
 --- /dev/null
 +++ b/src/client/src/__tests__/components/memory-cohort-view.test.tsx
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,160 @@
 +import { fireEvent, render, screen } from "@testing-library/react";
 +import MemoryCohortView from "@/components/(playground)/memory/memory-cohort-view";
 +
@@ -260,6 +261,7 @@ index 00000000..d99aa5b0
 +							{
 +								memoryMode: "jit",
 +								injectionResult: "injected",
++								sessionCardinality: "multiple",
 +								reportKind: null,
 +								outcomeKind: null,
 +								exposureCount: 9,
@@ -268,6 +270,7 @@ index 00000000..d99aa5b0
 +							{
 +								memoryMode: "jit",
 +								injectionResult: "injected",
++								sessionCardinality: "single",
 +								reportKind: "pull_request",
 +								outcomeKind: "success",
 +								exposureCount: 2,
@@ -305,18 +308,29 @@ index 00000000..d99aa5b0
 +		expect(headers).toEqual([
 +			"Memory mode",
 +			"Injection result",
++			"Injection events per session",
 +			"Report kind",
 +			"Outcome kind",
 +			"Exposure count",
 +			"Report count",
 +		]);
++		// Both cells share the same (memoryMode, injectionResult) pair but have
++		// different sessionCardinality; the new column must keep them visibly
++		// distinct rows instead of appearing as duplicates, and the values
++		// must be plain, non-causal labels -- never "task success",
++		// "per-turn attribution", or "model-use evidence".
++		expect(screen.getByText("single")).toBeInTheDocument();
++		expect(screen.getByText("multiple")).toBeInTheDocument();
++		expect(headers.join(" ")).not.toMatch(/task success/i);
++		expect(headers.join(" ")).not.toMatch(/per-turn attribution/i);
++		expect(headers.join(" ")).not.toMatch(/model-use evidence/i);
 +	});
 +});
 diff --git a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
-index fe95f2db..abf060f0 100644
+index fe95f2db..4302f6d8 100644
 --- a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
 +++ b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
-@@ -609,3 +609,236 @@ test("experience detail distinguishes empty and unavailable outcome reads", asyn
+@@ -609,3 +609,253 @@ test("experience detail distinguishes empty and unavailable outcome reads", asyn
  	});
  	expect(fetchSpy).toHaveBeenCalledTimes(4);
  });
@@ -369,6 +383,7 @@ index fe95f2db..abf060f0 100644
 +				{
 +					memoryMode: "jit",
 +					injectionResult: "injected",
++					sessionCardinality: "multiple",
 +					reportKind: null,
 +					outcomeKind: null,
 +					exposureCount: 9,
@@ -377,6 +392,7 @@ index fe95f2db..abf060f0 100644
 +				{
 +					memoryMode: "jit",
 +					injectionResult: "injected",
++					sessionCardinality: "single",
 +					reportKind: "pull_request",
 +					outcomeKind: "success",
 +					exposureCount: 2,
@@ -410,10 +426,22 @@ index fe95f2db..abf060f0 100644
 +	expect(result.page?.cells).toContainEqual({
 +		memoryMode: "jit",
 +		injectionResult: "injected",
++		sessionCardinality: "multiple",
 +		reportKind: null,
 +		outcomeKind: null,
 +		exposureCount: 9,
 +		reportCount: 0
++	});
++	// The cells differ only by sessionCardinality for an otherwise-identical
++	// (memoryMode, injectionResult) pair; both must stay distinguishable.
++	expect(result.page?.cells).toContainEqual({
++		memoryMode: "jit",
++		injectionResult: "injected",
++		sessionCardinality: "single",
++		reportKind: "pull_request",
++		outcomeKind: "success",
++		exposureCount: 2,
++		reportCount: 2
 +	});
 +	expect(result.page?.exposureCount).toBe(11);
 +	expect(result.page?.reportCount).toBe(2);
@@ -444,6 +472,7 @@ index fe95f2db..abf060f0 100644
 +				{
 +					memoryMode: "jit",
 +					injectionResult: "injected",
++					sessionCardinality: "single",
 +					reportKind: "pull_request",
 +					outcomeKind: "success",
 +					exposureCount: 2,
@@ -517,6 +546,7 @@ index fe95f2db..abf060f0 100644
 +			{
 +				memoryMode: "jit",
 +				injectionResult: "injected",
++				sessionCardinality: "single",
 +				reportKind: null,
 +				outcomeKind: null,
 +				exposureCount: 2,
@@ -529,6 +559,7 @@ index fe95f2db..abf060f0 100644
 +	const invalidPages = [
 +		{ ...validPage, cells: [{ ...validPage.cells[0], memoryMode: "caller-mode" }] },
 +		{ ...validPage, cells: [{ ...validPage.cells[0], injectionResult: "caller-result" }] },
++		{ ...validPage, cells: [{ ...validPage.cells[0], sessionCardinality: "caller-value" }] },
 +		{ ...validPage, cells: [{ ...validPage.cells[0], reportKind: "task" }] },
 +		{ ...validPage, cells: [{ ...validPage.cells[0], reportCount: 1 }], reportCount: 1 },
 +		{
@@ -710,10 +741,10 @@ index 00000000..4c6f1572
 +export const GET = withMemoryAccess("read", GETHandler);
 diff --git a/src/client/src/components/(playground)/memory/memory-cohort-view.tsx b/src/client/src/components/(playground)/memory/memory-cohort-view.tsx
 new file mode 100644
-index 00000000..03a66dae
+index 00000000..f7ce2fc2
 --- /dev/null
 +++ b/src/client/src/components/(playground)/memory/memory-cohort-view.tsx
-@@ -0,0 +1,337 @@
+@@ -0,0 +1,340 @@
 +"use client";
 +
 +import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -741,6 +772,7 @@ index 00000000..03a66dae
 +export interface MemoryCohortCell {
 +	memoryMode: string;
 +	injectionResult: string;
++	sessionCardinality: "single" | "multiple";
 +	reportKind: string | null;
 +	outcomeKind: string | null;
 +	exposureCount: number;
@@ -988,6 +1020,7 @@ index 00000000..03a66dae
 +							<TableRow>
 +								<TableHead>{messages.MEMORY_COHORTS_MEMORY_MODE}</TableHead>
 +								<TableHead>{messages.MEMORY_COHORTS_INJECTION_RESULT}</TableHead>
++								<TableHead>{messages.MEMORY_COHORTS_SESSION_CARDINALITY}</TableHead>
 +								<TableHead>{messages.MEMORY_COHORTS_REPORT_KIND}</TableHead>
 +								<TableHead>{messages.MEMORY_COHORTS_OUTCOME_KIND}</TableHead>
 +								<TableHead className="text-right">{messages.MEMORY_COHORTS_EXPOSURE_COUNT}</TableHead>
@@ -999,6 +1032,7 @@ index 00000000..03a66dae
 +								<TableRow key={index}>
 +									<TableCell>{cell.memoryMode}</TableCell>
 +									<TableCell>{cell.injectionResult}</TableCell>
++									<TableCell>{cell.sessionCardinality}</TableCell>
 +									<TableCell>{cell.reportKind ?? messages.MEMORY_COHORTS_UNREPORTED}</TableCell>
 +									<TableCell>{cell.outcomeKind ?? messages.MEMORY_COHORTS_UNREPORTED}</TableCell>
 +									<TableCell className="text-right tabular-nums">{cell.exposureCount}</TableCell>
@@ -1095,10 +1129,10 @@ index 05dc399c..7adef977 100644
  									</>
  								) : null}
 diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
-index 7cdd7e89..c512bfc8 100644
+index 7cdd7e89..7bcba7d7 100644
 --- a/src/client/src/constants/messages/en.ts
 +++ b/src/client/src/constants/messages/en.ts
-@@ -2637,6 +2637,35 @@ export const MEMORY_DETAIL_OUTCOME_REPORTED = "Reported at";
+@@ -2637,6 +2637,36 @@ export const MEMORY_DETAIL_OUTCOME_REPORTED = "Reported at";
  export const MEMORY_DETAIL_OUTCOME_UNREPORTED = "Unreported";
  export const MEMORY_DETAIL_OUTCOME_UNKNOWN = "Unknown (reported)";
  export const MEMORY_DETAIL_OUTCOME_EVIDENCE = "Outcome evidence";
@@ -1121,6 +1155,7 @@ index 7cdd7e89..c512bfc8 100644
 +export const MEMORY_COHORTS_INVALID_WINDOW = "Select valid start and end dates with a window no longer than 365 days.";
 +export const MEMORY_COHORTS_MEMORY_MODE = "Memory mode";
 +export const MEMORY_COHORTS_INJECTION_RESULT = "Injection result";
++export const MEMORY_COHORTS_SESSION_CARDINALITY = "Injection events per session";
 +export const MEMORY_COHORTS_REPORT_KIND = "Report kind";
 +export const MEMORY_COHORTS_OUTCOME_KIND = "Outcome kind";
 +export const MEMORY_COHORTS_UNREPORTED = "Unreported";
@@ -1135,10 +1170,10 @@ index 7cdd7e89..c512bfc8 100644
  export const MEMORY_DETAIL_CHANGELOG_EMPTY = "No changelog for this memory.";
  export const MEMORY_DETAIL_EVENT_ADDED = "Added";
 diff --git a/src/client/src/lib/platform/connectors/memory/README.md b/src/client/src/lib/platform/connectors/memory/README.md
-index 73e62783..f0982a83 100644
+index 73e62783..0b81289b 100644
 --- a/src/client/src/lib/platform/connectors/memory/README.md
 +++ b/src/client/src/lib/platform/connectors/memory/README.md
-@@ -81,3 +81,22 @@ reporter-supplied outcome/evidence; absent reports and unavailable history are
+@@ -81,3 +81,27 @@ reporter-supplied outcome/evidence; absent reports and unavailable history are
  explicit. An `injected` decision does not establish model use, provider success,
  or task/PR success, and the opaque join token is not exposed in prompts, traces,
  or the detail metadata.
@@ -1152,8 +1187,13 @@ index 73e62783..f0982a83 100644
 +set; any one missing surfaces an explicit "disabled" state rather than a
 +silent empty table. The occurred window is required and bounded to 365
 +days by the adapter, the API route, and the Control API itself. Cells are
-+grouped by `(memoryMode, injectionResult, reportKind, outcomeKind)` and
-+carry only `exposureCount`/`reportCount` integers; a null
++grouped by `(memoryMode, injectionResult, sessionCardinality, reportKind,
++outcomeKind)`, where `sessionCardinality` (`single`/`multiple`) is a plain,
++non-causal signal of whether the session behind that cell's exposures
++captured one or more than one injection event -- it is derived from each
++row's full session event set, is never caller-filterable, and is not task
++success, per-turn attribution, or model-use evidence. Cells carry only
++`exposureCount`/`reportCount` integers; a null
 +`reportKind`/`outcomeKind` marks an unreported exposure and stays visible
 +by default (leaving the report-kind/outcome-kind filters unset does not
 +hide it). The view labels these as exposure and report counts grouped by
@@ -1162,10 +1202,10 @@ index 73e62783..f0982a83 100644
 +outcomes are reporter-supplied and that `reportCount` is always less than
 +or equal to `exposureCount`.
 diff --git a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
-index 8129ad7f..91f03232 100644
+index 8129ad7f..c55aa72a 100644
 --- a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
 +++ b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
-@@ -93,6 +93,56 @@ interface AutoDevInjectionOutcomePage {
+@@ -93,6 +93,57 @@ interface AutoDevInjectionOutcomePage {
  	items?: unknown;
  }
  
@@ -1181,6 +1221,7 @@ index 8129ad7f..91f03232 100644
 +interface AutoDevCohortCell {
 +	memoryMode: string;
 +	injectionResult: string;
++	sessionCardinality: "single" | "multiple";
 +	reportKind: string | null;
 +	outcomeKind: string | null;
 +	exposureCount: number;
@@ -1222,11 +1263,14 @@ index 8129ad7f..91f03232 100644
  interface AutoDevMemoryWhy {
  	events?: unknown[];
  	relatedMemories?: unknown[];
-@@ -111,6 +161,12 @@ const READ_ONLY_CAPABILITIES: MemoryCapabilities = {
+@@ -111,6 +162,15 @@ const READ_ONLY_CAPABILITIES: MemoryCapabilities = {
  const MAX_PAGE_SIZE = 100;
  const MEMORY_MODES = new Set(["jit", "retrieval-only", "disabled", "invalid", "unknown"]);
  const EXPERIENCE_OUTCOMES = new Set(["success", "partial", "failure", "cancelled", "unknown"]);
 +const INJECTION_RESULTS = new Set(["injected", "empty", "skipped"]);
++// Read-only grouping dimension derived server-side from each row's full
++// session event set; the UI never lets a caller filter on it.
++const SESSION_CARDINALITIES = new Set(["single", "multiple"]);
 +const REPORT_KINDS = new Set(["task", "pull_request", "issue", "other"]);
 +// Mirrors MEMORY_OUTCOME_COHORT_MAX_WINDOW_MS in @simulatorlife/autodev-core. The
 +// Control API re-validates this bound server-side; the client bound exists so
@@ -1235,7 +1279,7 @@ index 8129ad7f..91f03232 100644
  const INVALIDATE_ACTION: MemoryActionDescriptor = {
  	id: "invalidate",
  	label: "Invalidate memory",
-@@ -301,6 +357,85 @@ function autoDevInjectionOutcome(value: unknown): AutoDevInjectionOutcomeItem |
+@@ -301,6 +361,88 @@ function autoDevInjectionOutcome(value: unknown): AutoDevInjectionOutcomeItem |
  	};
  }
  
@@ -1252,6 +1296,8 @@ index 8129ad7f..91f03232 100644
 +		!MEMORY_MODES.has(value.memoryMode) ||
 +		typeof value.injectionResult !== "string" ||
 +		!INJECTION_RESULTS.has(value.injectionResult) ||
++		typeof value.sessionCardinality !== "string" ||
++		!SESSION_CARDINALITIES.has(value.sessionCardinality) ||
 +		(!unreported && !reported) ||
 +		!Number.isSafeInteger(value.exposureCount) ||
 +		(value.exposureCount as number) < 0 ||
@@ -1266,6 +1312,7 @@ index 8129ad7f..91f03232 100644
 +	return {
 +		memoryMode: value.memoryMode,
 +		injectionResult: value.injectionResult,
++		sessionCardinality: value.sessionCardinality as "single" | "multiple",
 +		reportKind: value.reportKind as string | null,
 +		outcomeKind: value.outcomeKind as string | null,
 +		exposureCount: value.exposureCount as number,
@@ -1321,7 +1368,7 @@ index 8129ad7f..91f03232 100644
  function autoDevHistoryEvent(value: unknown): MemoryHistoryEvent | null {
  	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
  	const event = value as Record<string, unknown>;
-@@ -605,6 +740,66 @@ export class AutoDevMemoryAdapter extends BaseMemoryAdapter {
+@@ -605,6 +747,66 @@ export class AutoDevMemoryAdapter extends BaseMemoryAdapter {
  		}
  	}
  
@@ -1388,7 +1435,7 @@ index 8129ad7f..91f03232 100644
  	private async readRecords(options: {
  		query?: string;
  		limit: number;
-@@ -653,6 +848,17 @@ export class AutoDevMemoryAdapter extends BaseMemoryAdapter {
+@@ -653,6 +855,17 @@ export class AutoDevMemoryAdapter extends BaseMemoryAdapter {
  	}
  }
  

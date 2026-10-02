@@ -118,12 +118,16 @@ read requires the connector's workspace, repository, and task-history/
 operator configuration; the occurred-time window is required and bounded to
 365 days by the adapter, the `/api/memory/cohorts` route, and the Control API
 itself. The view renders only exposure/report counts grouped by
-`(memoryMode, injectionResult, reportKind, outcomeKind)`; a null
-`reportKind`/`outcomeKind` cell is an unreported exposure and stays visible
-when no report filter is selected. The UI states outcomes are
-reporter-supplied and that `reportCount` is always less than or equal to
-`exposureCount`, and never labels these counts a task success rate,
-model-use metric, PR verification, or a causal measure of memory's effect.
+`(memoryMode, injectionResult, sessionCardinality, reportKind, outcomeKind)`.
+`sessionCardinality` is `single` or `multiple` according to the full event set
+for each contributing session, independent of the cohort's other filters; it
+is a bounded exposure classification, not a unique-session count or a
+per-turn outcome attribution. A null `reportKind`/`outcomeKind` cell is an
+unreported exposure and stays visible when no report filter is selected. The
+UI states outcomes are reporter-supplied and that `reportCount` is always less
+than or equal to `exposureCount`, and never labels these counts a task success
+rate, model-use metric, PR verification, or a causal measure of memory's
+effect.
 
 The retained experience detail exposes a reporter form for each unreported
 injection. Operators choose the outcome/report category and provide bounded

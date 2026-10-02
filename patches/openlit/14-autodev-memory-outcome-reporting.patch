@@ -308,10 +308,10 @@ index 00000000..de694608
 +	});
 +});
 diff --git a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
-index abf060f0..d76efe20 100644
+index 4302f6d8..64065586 100644
 --- a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
 +++ b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
-@@ -842,3 +842,120 @@ test("readOutcomeCohorts rejects invalid cohort dimensions, unpaired nulls, bad
+@@ -859,3 +859,120 @@ test("readOutcomeCohorts rejects invalid cohort dimensions, unpaired nulls, bad
  		expect(result).toEqual({ status: "unavailable", page: null });
  	}
  });
@@ -912,7 +912,7 @@ index 00000000..77274450
 +	);
 +}
 diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
-index c512bfc8..de399f82 100644
+index 7bcba7d7..793a7b3d 100644
 --- a/src/client/src/constants/messages/en.ts
 +++ b/src/client/src/constants/messages/en.ts
 @@ -2637,6 +2637,21 @@ export const MEMORY_DETAIL_OUTCOME_REPORTED = "Reported at";
@@ -938,7 +938,7 @@ index c512bfc8..de399f82 100644
  export const MEMORY_COHORTS_TITLE = "Aggregate exposure and outcome cohorts";
  export const MEMORY_COHORTS_SCOPE_NOTE =
 diff --git a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
-index 91f03232..552ba66a 100644
+index c55aa72a..7fde73ed 100644
 --- a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
 +++ b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
 @@ -69,6 +69,7 @@ interface AutoDevOutcomeEvidence {
@@ -949,7 +949,7 @@ index 91f03232..552ba66a 100644
  		injectionResult: "injected" | "empty" | "skipped";
  		memoryMode: string;
  		packetCharacterCount: number;
-@@ -143,6 +144,19 @@ export interface AutoDevCohortResult {
+@@ -144,6 +145,19 @@ export interface AutoDevCohortResult {
  	page: AutoDevCohortPage | null;
  }
  
@@ -969,9 +969,9 @@ index 91f03232..552ba66a 100644
  interface AutoDevMemoryWhy {
  	events?: unknown[];
  	relatedMemories?: unknown[];
-@@ -163,6 +177,10 @@ const MEMORY_MODES = new Set(["jit", "retrieval-only", "disabled", "invalid", "u
- const EXPERIENCE_OUTCOMES = new Set(["success", "partial", "failure", "cancelled", "unknown"]);
- const INJECTION_RESULTS = new Set(["injected", "empty", "skipped"]);
+@@ -167,6 +181,10 @@ const INJECTION_RESULTS = new Set(["injected", "empty", "skipped"]);
+ // session event set; the UI never lets a caller filter on it.
+ const SESSION_CARDINALITIES = new Set(["single", "multiple"]);
  const REPORT_KINDS = new Set(["task", "pull_request", "issue", "other"]);
 +const OUTCOME_EVIDENCE_KINDS = new Set([
 +	"trajectory", "trace", "file", "commit", "pull_request", "issue",
@@ -980,7 +980,7 @@ index 91f03232..552ba66a 100644
  // Mirrors MEMORY_OUTCOME_COHORT_MAX_WINDOW_MS in @simulatorlife/autodev-core. The
  // Control API re-validates this bound server-side; the client bound exists so
  // an operator gets an immediate, specific error instead of a generic 400.
-@@ -309,6 +327,8 @@ function autoDevInjectionOutcome(value: unknown): AutoDevInjectionOutcomeItem |
+@@ -313,6 +331,8 @@ function autoDevInjectionOutcome(value: unknown): AutoDevInjectionOutcomeItem |
  	if (!isObject(value) || !isObject(value.injection)) return null;
  	const injection = value.injection;
  	if (
@@ -989,7 +989,7 @@ index 91f03232..552ba66a 100644
  		!(injection.injectionResult === "injected" || injection.injectionResult === "empty" || injection.injectionResult === "skipped") ||
  		typeof injection.memoryMode !== "string" ||
  		!Number.isSafeInteger(injection.packetCharacterCount) ||
-@@ -344,6 +364,7 @@ function autoDevInjectionOutcome(value: unknown): AutoDevInjectionOutcomeItem |
+@@ -348,6 +368,7 @@ function autoDevInjectionOutcome(value: unknown): AutoDevInjectionOutcomeItem |
  	// join token and reporter identity are never added to MemoryRecord metadata.
  	return {
  		injection: {
@@ -997,7 +997,7 @@ index 91f03232..552ba66a 100644
  			injectionResult: injection.injectionResult,
  			memoryMode: injection.memoryMode,
  			packetCharacterCount: injection.packetCharacterCount as number,
-@@ -800,6 +821,100 @@ export class AutoDevMemoryAdapter extends BaseMemoryAdapter {
+@@ -807,6 +828,100 @@ export class AutoDevMemoryAdapter extends BaseMemoryAdapter {
  		}
  	}
  
