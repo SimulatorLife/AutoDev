@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { constants, realpathSync } from "node:fs";
+import { open, readFile, realpath, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -43,9 +44,20 @@ import {
 } from "../router/memory-injection.ts";
 import { errorBody, sendJson } from "../router/proxy.ts";
 import { readControlApiJsonObject } from "./body.ts";
+import {
+  type ClaudeCodeWorkspaceBinding,
+  loadClaudeCodeCaptureBinding,
+  resolveClaudeCodeTranscriptBinding,
+  resolveClaudeCodeWorkspaceBinding
+} from "./claude-code-binding.ts";
 
 const MEMORY_PATH_PREFIX = "/control/memory/";
 const MEMORY_CAPTURE_PATH = `${MEMORY_PATH_PREFIX}capture`;
+const MEMORY_CLAUDE_CAPTURE_PATH = `${MEMORY_PATH_PREFIX}claude-code/capture`;
+const CLAUDE_CODE_BINDING_PROVIDER = "claude-code" as const;
+const CLAUDE_CODE_CAPTURE_ACTOR = "autodev-claude-code-session-end";
+const CODEX_CAPTURE_ACTOR = "autodev-codex-session-end";
+const MAX_NATIVE_CAPTURE_PATH_LENGTH = 4096;
 const MEMORY_CAPTURE_ACTION = "capture_experience";
 const MEMORY_PROMOTE_SKILL_ACTION = "promote-skill";
 const MEMORY_EXPERIENCE_RESOURCE = "/control/memory/experiences";
@@ -1277,14 +1289,15 @@ async function captureCodexExperience(
       }),
       evidence: [{ kind: "trajectory", uri: trajectoryUri }]
     };
-    const captured = await captureCodexExperienceIdempotently(
+    const captured = await captureExperienceIdempotently(
       service,
       { source: "codex", transcript, trajectoryUri, experience },
       transcriptDigest,
-      context
+      context,
+      CODEX_CAPTURE_ACTOR
     );
     if (!captured) {
-      respondToDuplicateCodexCapture(response, audit);
+      respondToDuplicateCapture(response, audit, "codex");
       return;
     }
     audit({
@@ -1348,11 +1361,402 @@ async function captureCodexExperience(
   }
 }
 
-async function captureCodexExperienceIdempotently(
+/**
+ * Capture one Claude Code SessionEnd event. Scope authority comes
+ * exclusively from the operator-owned binding file:
+ *
+ * 1. The hook-supplied `cwd` is matched by realpath against exactly one
+ *    `[[workspace]]` entry; an ambiguous or missing match fails closed.
+ * 2. The hook-supplied `transcriptPath` is matched by realpath against
+ *    the operator-owned transcript root; symlink/".." escapes fail
+ *    closed.
+ * 3. The hook-supplied `session_id` only sets the session/run/agent
+ *    identity; `outcome` stays "unknown" because no task signal was
+ *    reported. No transcript payload is persisted.
+ */
+interface ClaudeCodeCaptureInput {
+  readonly sessionId: string;
+  readonly transcriptPath: string;
+  readonly cwd: string;
+}
+
+class ClaudeCodeCaptureValidationError extends MemoryValidationError {
+  readonly reason: string;
+
+  constructor(reason: string, message: string) {
+    super(message);
+    this.reason = reason;
+  }
+}
+
+async function captureClaudeCodeExperience(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: MemoryControlActor,
+  audit: MemoryControlAudit
+): Promise<void> {
+  if (actor.role !== "operator") {
+    audit({
+      action: MEMORY_CAPTURE_ACTION,
+      resource: MEMORY_EXPERIENCE_RESOURCE,
+      outcome: "denied",
+      changes: null,
+      reason: "viewer_cannot_capture"
+    });
+    sendMemoryError(
+      response,
+      403,
+      "autodev_memory_capture_forbidden",
+      "Operator access is required for native trajectory capture."
+    );
+    return;
+  }
+
+  const parsedBody = await readControlApiJsonObject(request);
+  if (!parsedBody.ok) {
+    audit({
+      action: MEMORY_CAPTURE_ACTION,
+      resource: MEMORY_EXPERIENCE_RESOURCE,
+      outcome: "error",
+      changes: null,
+      reason: "invalid_body"
+    });
+    sendBodyError(response, parsedBody);
+    return;
+  }
+
+  try {
+    const input = parseClaudeCodeCaptureInput(parsedBody.body);
+    const result = await persistClaudeCodeExperience(input);
+    if (result === "unavailable") {
+      sendMemoryError(
+        response,
+        503,
+        "autodev_memory_unavailable",
+        "Memory storage is not configured."
+      );
+      return;
+    }
+    if (result === "duplicate") {
+      respondToDuplicateCapture(response, audit, CLAUDE_CODE_BINDING_PROVIDER);
+      return;
+    }
+    audit({
+      action: MEMORY_CAPTURE_ACTION,
+      resource: MEMORY_EXPERIENCE_RESOURCE,
+      outcome: "ok",
+      changes: { source: CLAUDE_CODE_BINDING_PROVIDER, outcome: "unknown" }
+    });
+    sendJson(
+      response,
+      200,
+      { schema: "autodev-memory-capture-v1", captured: true },
+      { "cache-control": "no-store" }
+    );
+  } catch (error) {
+    respondToClaudeCodeCaptureError(response, audit, error);
+  }
+}
+
+function parseClaudeCodeCaptureInput(
+  body: Record<string, unknown>
+): ClaudeCodeCaptureInput {
+  exactKeys(body, ["sessionId", "transcriptPath", "cwd"]);
+  const sessionId = requiredString(body, "sessionId");
+  if (!MEMORY_ID_PATTERN.test(sessionId))
+    throw new MemoryValidationError("Claude Code session id is invalid.");
+  const cwd = requiredString(body, "cwd", MAX_NATIVE_CAPTURE_PATH_LENGTH);
+  const transcriptPath = requiredString(
+    body,
+    "transcriptPath",
+    MAX_NATIVE_CAPTURE_PATH_LENGTH
+  );
+  if (!path.isAbsolute(cwd) || !path.isAbsolute(transcriptPath)) {
+    throw new MemoryValidationError("Claude Code paths must be absolute.");
+  }
+  return { sessionId, transcriptPath, cwd };
+}
+
+async function persistClaudeCodeExperience(
+  input: ClaudeCodeCaptureInput
+): Promise<"captured" | "duplicate" | "unavailable"> {
+  const binding = requireClaudeCodeBinding();
+  const workspace = requireClaudeCodeWorkspace(binding, input.cwd);
+  const transcriptPath = requireClaudeCodeTranscript(
+    workspace,
+    input.transcriptPath,
+    input.sessionId
+  );
+  const service = createOrchestratorMemoryService();
+  if (!service) return "unavailable";
+  const transcript = await readClaudeCodeTranscript(transcriptPath);
+
+  const context: MemoryReadContext = {
+    workspaceId: workspace.workspaceId,
+    repositoryId: workspace.repositoryId,
+    role: "orchestrator",
+    taskId: input.sessionId,
+    runId: input.sessionId,
+    agentId: input.sessionId,
+    canReadGlobal: false
+  };
+  const trajectoryUri = claudeCodeTrajectoryUri(input.sessionId);
+  const experience = claudeCodeExperienceEnvelope(
+    input,
+    workspace,
+    transcript.metadata,
+    trajectoryUri
+  );
+  const transcriptDigest = createHash("sha256")
+    .update(transcript.contents, "utf8")
+    .digest("hex");
+  const captured = await captureExperienceIdempotently(
+    service,
+    {
+      source: CLAUDE_CODE_BINDING_PROVIDER,
+      transcript: transcript.contents,
+      trajectoryUri,
+      experience
+    },
+    transcriptDigest,
+    context,
+    CLAUDE_CODE_CAPTURE_ACTOR
+  );
+  return captured ? "captured" : "duplicate";
+}
+
+function requireClaudeCodeBinding() {
+  const result = loadClaudeCodeCaptureBinding();
+  if (!result.ok) {
+    throw new ClaudeCodeCaptureValidationError(
+      result.failure,
+      result.failureMessage ??
+        "Claude Code capture is not configured. Author the operator-owned binding file."
+    );
+  }
+  if (!result.binding.optIn) {
+    throw new ClaudeCodeCaptureValidationError(
+      "claude_binding_disabled",
+      "Claude Code capture is opted out in the operator binding file."
+    );
+  }
+  return result.binding;
+}
+
+function requireClaudeCodeWorkspace(
+  binding: ReturnType<typeof requireClaudeCodeBinding>,
+  cwd: string
+) {
+  const result = resolveClaudeCodeWorkspaceBinding(binding, cwd);
+  if (!result.ok || !result.workspace) {
+    throw new ClaudeCodeCaptureValidationError(
+      result.failure ?? "workspace_unauthorized",
+      result.failureMessage ??
+        "Claude Code hook cwd does not match any operator-authorized workspace root."
+    );
+  }
+  return result.workspace;
+}
+
+function requireClaudeCodeTranscript(
+  workspace: ClaudeCodeWorkspaceBinding,
+  transcriptPath: string,
+  sessionId: string
+): string {
+  let canonicalPath: string;
+  try {
+    canonicalPath = realpathSync(transcriptPath);
+  } catch {
+    throw new ClaudeCodeCaptureValidationError(
+      "transcript_root_escape",
+      "Claude Code transcript path failed to realpath."
+    );
+  }
+  const result = resolveClaudeCodeTranscriptBinding(
+    workspace,
+    canonicalPath,
+    sessionId
+  );
+  if (!result.ok) {
+    throw new ClaudeCodeCaptureValidationError(
+      result.failure ?? "transcript_root_escape",
+      result.failureMessage ??
+        "Claude Code transcript must remain beneath the operator-configured transcript root."
+    );
+  }
+  return canonicalPath;
+}
+
+async function readClaudeCodeTranscript(filePath: string) {
+  let handle: Awaited<ReturnType<typeof open>>;
+  try {
+    handle = await open(
+      filePath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+    );
+  } catch {
+    throw new MemoryValidationError(
+      "Claude Code transcript is unavailable for reading."
+    );
+  }
+
+  try {
+    let metadata: Awaited<ReturnType<typeof stat>>;
+    try {
+      metadata = await handle.stat();
+    } catch {
+      throw new MemoryValidationError(
+        "Claude Code transcript is unavailable for stat."
+      );
+    }
+    if (
+      !metadata.isFile() ||
+      metadata.size <= 0 ||
+      metadata.size > MAX_NATIVE_TRANSCRIPT_BYTES
+    ) {
+      throw new MemoryValidationError(
+        "Claude Code transcript size is invalid."
+      );
+    }
+
+    // Read no more than the configured ceiling plus one byte, even if the
+    // file grows after `stat`. This bounds memory use at the source instead
+    // of checking an arbitrarily large read after allocation.
+    const buffer = Buffer.allocUnsafe(MAX_NATIVE_TRANSCRIPT_BYTES + 1);
+    let bytesRead: number;
+    try {
+      ({ bytesRead } = await handle.read(buffer, 0, buffer.length, 0));
+    } catch {
+      throw new MemoryValidationError(
+        "Claude Code transcript is unavailable for reading."
+      );
+    }
+    if (
+      bytesRead <= 0 ||
+      bytesRead !== metadata.size ||
+      bytesRead > MAX_NATIVE_TRANSCRIPT_BYTES
+    ) {
+      throw new MemoryValidationError(
+        "Claude Code transcript size is invalid."
+      );
+    }
+    return {
+      contents: buffer.subarray(0, bytesRead).toString("utf8"),
+      metadata
+    };
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
+function claudeCodeTrajectoryUri(sessionId: string): string {
+  return `claude-code://session/${encodeURIComponent(sessionId)}`;
+}
+
+function claudeCodeExperienceEnvelope(
+  input: ClaudeCodeCaptureInput,
+  workspace: ReturnType<typeof requireClaudeCodeWorkspace>,
+  metadata: Awaited<ReturnType<typeof stat>>,
+  trajectoryUri: string
+): Omit<ExperienceEnvelope, "trajectory"> {
+  const birthtimeMs = Number(metadata.birthtimeMs);
+  const startedAt =
+    Number.isFinite(birthtimeMs) && birthtimeMs > 0
+      ? new Date(birthtimeMs).toISOString()
+      : new Date(Number(metadata.mtimeMs)).toISOString();
+  return {
+    id: `claude-code-session-${createHash("sha256")
+      .update(workspace.workspaceId)
+      .update("\0")
+      .update(workspace.repositoryId)
+      .update("\0")
+      .update(input.sessionId)
+      .digest("hex")}`,
+    workspaceId: workspace.workspaceId,
+    repositoryId: workspace.repositoryId,
+    scope: {
+      kind: "task",
+      workspaceId: workspace.workspaceId,
+      taskId: input.sessionId,
+      runId: input.sessionId
+    },
+    taskId: input.sessionId,
+    runId: input.sessionId,
+    taskKind: "interactive_session",
+    taskReference: { kind: "trajectory", uri: trajectoryUri },
+    agentId: input.sessionId,
+    agentRole: "unknown",
+    startedAt,
+    completedAt: new Date().toISOString(),
+    outcome: "unknown",
+    // Claude Code's session id is not an AutoDev Router session key, so
+    // this capture cannot claim which memory mode the request cohort used.
+    memoryMode: "unknown",
+    evidence: [{ kind: "trajectory", uri: trajectoryUri }]
+  };
+}
+
+function respondToClaudeCodeCaptureError(
+  response: ServerResponse,
+  audit: MemoryControlAudit,
+  error: unknown
+): void {
+  if (error instanceof MemoryValidationError) {
+    audit({
+      action: MEMORY_CAPTURE_ACTION,
+      resource: MEMORY_EXPERIENCE_RESOURCE,
+      outcome: "error",
+      changes: null,
+      reason:
+        error instanceof ClaudeCodeCaptureValidationError
+          ? error.reason
+          : "invalid_capture"
+    });
+    sendMemoryError(
+      response,
+      400,
+      "autodev_memory_capture_invalid",
+      "Native trajectory capture input is invalid."
+    );
+    return;
+  }
+  if (error instanceof MemoryConflictError) {
+    audit({
+      action: MEMORY_CAPTURE_ACTION,
+      resource: MEMORY_EXPERIENCE_RESOURCE,
+      outcome: "error",
+      changes: null,
+      reason: "captured_transcript_conflict"
+    });
+    sendMemoryError(
+      response,
+      409,
+      "autodev_memory_capture_conflict",
+      "Native transcript conflicts with the previously captured session."
+    );
+    return;
+  }
+  audit({
+    action: MEMORY_CAPTURE_ACTION,
+    resource: MEMORY_EXPERIENCE_RESOURCE,
+    outcome: "error",
+    changes: null,
+    reason: "capture_failed"
+  });
+  sendMemoryError(
+    response,
+    503,
+    "autodev_memory_capture_failed",
+    "Native trajectory capture could not be completed."
+  );
+}
+
+async function captureExperienceIdempotently(
   service: MemoryService,
   input: MemoryExperienceCaptureInput,
   transcriptDigest: string,
-  context: MemoryReadContext
+  context: MemoryReadContext,
+  actorId: string
 ): Promise<boolean> {
   const matchesCapture = (existing: ExperienceEnvelope | null): boolean =>
     existing?.trajectory.uri === input.trajectoryUri &&
@@ -1361,14 +1765,14 @@ async function captureCodexExperienceIdempotently(
   if (existing) {
     if (matchesCapture(existing)) return false;
     throw new MemoryConflictError(
-      "Codex session transcript differs from its captured version."
+      "Native transcript differs from its captured version."
     );
   }
 
   try {
     await service.captureExperience(
       input,
-      { id: "autodev-codex-session-end", authority: "system" },
+      { id: actorId, authority: "system" },
       context
     );
     return true;
@@ -1383,15 +1787,16 @@ async function captureCodexExperienceIdempotently(
   }
 }
 
-function respondToDuplicateCodexCapture(
+function respondToDuplicateCapture(
   response: ServerResponse,
-  audit: MemoryControlAudit
+  audit: MemoryControlAudit,
+  source: "codex" | typeof CLAUDE_CODE_BINDING_PROVIDER
 ): void {
   audit({
     action: MEMORY_CAPTURE_ACTION,
     resource: MEMORY_EXPERIENCE_RESOURCE,
     outcome: "ok",
-    changes: { source: "codex", duplicate: true }
+    changes: { source, duplicate: true }
   });
   sendJson(
     response,
@@ -1803,6 +2208,20 @@ export async function handleMemoryControlApiRequest(
       return true;
     }
     await captureCodexExperience(request, response, actor, audit);
+    return true;
+  }
+  if (pathname === MEMORY_CLAUDE_CAPTURE_PATH) {
+    if ((request.method ?? "GET").toUpperCase() !== "POST") {
+      response.setHeader("allow", "POST");
+      sendMemoryError(
+        response,
+        405,
+        "autodev_memory_method_not_allowed",
+        "Native capture requires POST."
+      );
+      return true;
+    }
+    await captureClaudeCodeExperience(request, response, actor, audit);
     return true;
   }
   const route = parseRoute(pathname);

@@ -1,0 +1,2307 @@
+diff --git a/src/client/src/__tests__/helpers/server/platform.test.ts b/src/client/src/__tests__/helpers/server/platform.test.ts
+index 08383829..ae6d76e4 100644
+--- a/src/client/src/__tests__/helpers/server/platform.test.ts
++++ b/src/client/src/__tests__/helpers/server/platform.test.ts
+@@ -3,7 +3,6 @@ import {
+   validateMetricsRequestType,
+   getFilterWhereCondition,
+   getFilterPreviousParams,
+-  getFilterWhereConditionForGPU,
+   dateTruncGroupingLogic,
+ } from '@/helpers/server/platform';
+ import { addDays, addMonths } from 'date-fns';
+@@ -32,13 +31,6 @@ describe('validateMetricsRequest', () => {
+       'GENERATION_BY_CATEGORY',
+       'TOKENS_PER_TIME',
+       'GENERATION_BY_ENDPOINT',
+-      'AVERAGE_MEMORY_USAGE',
+-      'MEMORY_PER_TIME',
+-      'AVERAGE_TEMPERATURE',
+-      'TEMPERATURE_PER_TIME',
+-      'AVERAGE_POWER_DRAW',
+-      'POWER_PER_TIME',
+-      'FANSPEED_PER_TIME',
+       'GENERATION_BY_OPERATION',
+       'GENERATION_BY_SYSTEM',
+       'GENERATION_BY_ENVIRONMENT',
+@@ -527,40 +519,6 @@ describe('getFilterPreviousParams', () => {
+   });
+ });
+ 
+-// ─── getFilterWhereConditionForGPU ─────────────────────────────────────────────
+-
+-describe('getFilterWhereConditionForGPU', () => {
+-  it('includes TimeUnix range when timeLimit is provided', () => {
+-    const filter = {
+-      timeLimit: {
+-        start: new Date('2024-01-01'),
+-        end: new Date('2024-01-31'),
+-      },
+-    };
+-    const result = getFilterWhereConditionForGPU(filter as any);
+-    expect(result).toContain('TimeUnix >=');
+-    expect(result).toContain('TimeUnix <=');
+-    expect(result).toContain('parseDateTimeBestEffort');
+-  });
+-
+-  it('returns empty string when timeLimit is absent', () => {
+-    const result = getFilterWhereConditionForGPU({} as any);
+-    expect(result).toBe('');
+-  });
+-
+-  it('returns empty string when start or end is missing', () => {
+-    const result = getFilterWhereConditionForGPU({
+-      timeLimit: { start: new Date() },
+-    } as any);
+-    expect(result).toBe('');
+-  });
+-
+-  it('returns empty string without throwing when filter is null (covers catch block on line 371)', () => {
+-    const result = getFilterWhereConditionForGPU(null as any);
+-    expect(result).toBe('');
+-  });
+-});
+-
+ // ─── dateTruncGroupingLogic ────────────────────────────────────────────────────
+ 
+ describe('dateTruncGroupingLogic', () => {
+diff --git a/src/client/src/__tests__/lib/platform/gpu/external.test.ts b/src/client/src/__tests__/lib/platform/gpu/external.test.ts
+deleted file mode 100644
+index 8e438e0d..00000000
+--- a/src/client/src/__tests__/lib/platform/gpu/external.test.ts
++++ /dev/null
+@@ -1,355 +0,0 @@
+-const mockResolveDescriptor = jest.fn();
+-const mockGetAdapter = jest.fn();
+-
+-jest.mock("@/lib/telemetry-source", () => ({
+-	resolveTelemetrySourceDescriptor: (...a: unknown[]) =>
+-		mockResolveDescriptor(...a),
+-	getTelemetryAdapter: (...a: unknown[]) => mockGetAdapter(...a),
+-}));
+-
+-import {
+-	externalAverageUtilization,
+-	externalUtilizationParamsPerTime,
+-	externalAverageTemperature,
+-	externalAverageTemperatureParamsPerTime,
+-	externalAveragePowerDraw,
+-	externalPowerParamsPerTime,
+-	externalAverageMemoryUsage,
+-	externalMemoryParamsPerTime,
+-	externalFanspeedParamsPerTime,
+-} from "@/lib/platform/gpu/external";
+-
+-const prometheus = {
+-	type: "prometheus",
+-	id: "src-prom",
+-	isBuiltIn: false,
+-	settings: {},
+-	signals: ["metrics"],
+-	name: "Prometheus",
+-	dbConfigId: "db-1",
+-};
+-
+-const builtin = {
+-	type: "clickhouse",
+-	id: "builtin:db-1",
+-	isBuiltIn: true,
+-	settings: {},
+-	signals: ["metrics"],
+-	name: "CH",
+-	dbConfigId: "db-1",
+-};
+-
+-const params = {
+-	timeLimit: {
+-		start: new Date("2026-07-01T00:00:00.000Z"),
+-		end: new Date("2026-07-01T01:00:00.000Z"),
+-		type: "CUSTOM",
+-	},
+-	limit: 10,
+-	offset: 0,
+-	selectedConfig: {},
+-};
+-
+-beforeEach(() => {
+-	jest.clearAllMocks();
+-	mockResolveDescriptor.mockResolvedValue(prometheus);
+-});
+-
+-describe("built-in ClickHouse routing", () => {
+-	it("returns null for every export on the built-in source", async () => {
+-		mockResolveDescriptor.mockResolvedValue(builtin);
+-		expect(await externalAverageUtilization(params)).toBeNull();
+-		expect(await externalUtilizationParamsPerTime(params)).toBeNull();
+-		expect(await externalAverageTemperature(params)).toBeNull();
+-		expect(await externalAverageTemperatureParamsPerTime(params)).toBeNull();
+-		expect(await externalAveragePowerDraw(params)).toBeNull();
+-		expect(await externalPowerParamsPerTime(params)).toBeNull();
+-		expect(await externalAverageMemoryUsage(params)).toBeNull();
+-		expect(await externalMemoryParamsPerTime(params)).toBeNull();
+-		expect(await externalFanspeedParamsPerTime(params)).toBeNull();
+-		expect(mockGetAdapter).not.toHaveBeenCalled();
+-	});
+-
+-	it("returns null when the resolved type is clickhouse even if not flagged built-in", async () => {
+-		mockResolveDescriptor.mockResolvedValue({ ...prometheus, isBuiltIn: false, type: "clickhouse" });
+-		expect(await externalAverageUtilization(params)).toBeNull();
+-	});
+-
+-	it("resolves the metrics adapter for an external source", async () => {
+-		const metricTimeSeries = jest.fn().mockResolvedValue({ rows: [] });
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-		await externalAverageUtilization(params);
+-		expect(mockGetAdapter).toHaveBeenCalledWith({ signal: "metrics", environment: undefined });
+-	});
+-});
+-
+-describe("externalAverageUtilization", () => {
+-	it("averages utilization values and filters the metric name into the query", async () => {
+-		const metricTimeSeries = jest.fn().mockResolvedValue({
+-			rows: [{ value: 10 }, { value: 20 }],
+-		});
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalAverageUtilization(params);
+-		expect(res).toEqual({ err: null, data: [{ utilization: 15 }] });
+-		const query = metricTimeSeries.mock.calls[0][0];
+-		expect(query.filters).toEqual(
+-			expect.arrayContaining([
+-				{ target: "spanName", op: "in", value: ["gpu.utilization"] },
+-			])
+-		);
+-		expect(query.aggregations).toEqual([{ fn: "avg", as: "utilization" }]);
+-	});
+-
+-	it("falls back to count when value is absent and rounds to two decimals", async () => {
+-		const metricTimeSeries = jest.fn().mockResolvedValue({
+-			rows: [{ count: 1 }, { count: 2 }, { count: 3 }],
+-		});
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalAverageUtilization(params);
+-		expect(res).toEqual({ err: null, data: [{ utilization: 2 }] });
+-	});
+-
+-	it("ignores non-finite values and returns zero when nothing remains", async () => {
+-		const metricTimeSeries = jest.fn().mockResolvedValue({
+-			rows: [{ value: Number.NaN }, { value: Number.POSITIVE_INFINITY }],
+-		});
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalAverageUtilization(params);
+-		expect(res).toEqual({ err: null, data: [{ utilization: 0 }] });
+-	});
+-
+-	it("defaults to zero when neither value nor count is present", async () => {
+-		const metricTimeSeries = jest.fn().mockResolvedValue({ rows: [{}] });
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalAverageUtilization(params);
+-		expect(res).toEqual({ err: null, data: [{ utilization: 0 }] });
+-	});
+-
+-	it("returns zero for an empty row set", async () => {
+-		const metricTimeSeries = jest.fn().mockResolvedValue({ rows: [] });
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalAverageUtilization(params);
+-		expect(res).toEqual({ err: null, data: [{ utilization: 0 }] });
+-	});
+-
+-	it("returns a stringified error when the adapter throws a non-Error value", async () => {
+-		const metricTimeSeries = jest.fn().mockRejectedValue("boom");
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalAverageUtilization(params);
+-		expect(res).toEqual({ err: "boom", data: [] });
+-	});
+-
+-	it("returns the Error message when the adapter throws an Error", async () => {
+-		const metricTimeSeries = jest.fn().mockRejectedValue(new Error("prometheus down"));
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalAverageUtilization(params);
+-		expect(res).toEqual({ err: "prometheus down", data: [] });
+-	});
+-});
+-
+-describe("externalUtilizationParamsPerTime", () => {
+-	it("buckets values per time by mapped metric key", async () => {
+-		const metricTimeSeries = jest.fn().mockResolvedValue({
+-			rows: [
+-				{ request_time: "00:00", metricName: "gpu.utilization", value: 10 },
+-				{ request_time: "00:00", __name__: "gpu.enc.utilization", value: 20 },
+-				{ request_time: "01:00", metricName: "gpu.dec.utilization", value: 30 },
+-			],
+-		});
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalUtilizationParamsPerTime(params);
+-		expect(res).toEqual({
+-			err: null,
+-			data: [
+-				{ request_time: "00:00", utilization: 10, enc_utilization: 20 },
+-				{ request_time: "01:00", dec_utilization: 30 },
+-			],
+-		});
+-	});
+-
+-	it("skips rows missing a time label or a finite value", async () => {
+-		const metricTimeSeries = jest.fn().mockResolvedValue({
+-			rows: [
+-				{ metricName: "gpu.utilization", value: 10 },
+-				{ request_time: "00:00", metricName: "gpu.utilization", value: Number.NaN },
+-				{ request_time: "00:00", metricName: "", value: 5 },
+-				{ request_time: "00:00", value: 5 },
+-			],
+-		});
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalUtilizationParamsPerTime(params);
+-		expect(res).toEqual({ err: null, data: [] });
+-	});
+-
+-	it("uses timestamp/label fallbacks for the time bucket key", async () => {
+-		const metricTimeSeries = jest.fn().mockResolvedValue({
+-			rows: [{ timestamp: "t1", metricName: "gpu.utilization", value: 1 }],
+-		});
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalUtilizationParamsPerTime(params);
+-		expect(res).toEqual({ err: null, data: [{ request_time: "t1", utilization: 1 }] });
+-	});
+-
+-	it("returns an error payload on failure", async () => {
+-		const metricTimeSeries = jest.fn().mockRejectedValue(new Error("boom"));
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalUtilizationParamsPerTime(params);
+-		expect(res).toEqual({ err: "boom", data: [] });
+-	});
+-});
+-
+-describe("externalAverageTemperature", () => {
+-	it("averages temperature values", async () => {
+-		const metricTimeSeries = jest.fn().mockResolvedValue({ rows: [{ value: 50 }, { value: 60 }] });
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalAverageTemperature(params);
+-		expect(res).toEqual({ err: null, data: [{ temperature: 55 }] });
+-	});
+-});
+-
+-describe("externalAverageTemperatureParamsPerTime", () => {
+-	it("buckets temperature by time via bucketByTime", async () => {
+-		const metricTimeSeries = jest.fn().mockResolvedValue({
+-			rows: [
+-				{ request_time: "01:00", value: 70 },
+-				{ request_time: "00:00", value: 50 },
+-				{ request_time: "00:00", value: 60 },
+-				{ label: "" },
+-				{ timestamp: "02:00", value: 80 },
+-				{ request_time: "02:00", value: Number.NaN },
+-			],
+-		});
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalAverageTemperatureParamsPerTime(params);
+-		expect(res).toEqual({
+-			err: null,
+-			data: [
+-				{ request_time: "00:00", temperature: 55 },
+-				{ request_time: "01:00", temperature: 70 },
+-				{ request_time: "02:00", temperature: 80 },
+-			],
+-		});
+-	});
+-
+-	it("returns an error payload on failure", async () => {
+-		const metricTimeSeries = jest.fn().mockRejectedValue(new Error("boom"));
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalAverageTemperatureParamsPerTime(params);
+-		expect(res).toEqual({ err: "boom", data: [] });
+-	});
+-});
+-
+-describe("externalAveragePowerDraw / externalPowerParamsPerTime", () => {
+-	it("averages power draw", async () => {
+-		const metricTimeSeries = jest.fn().mockResolvedValue({ rows: [{ value: 100 }] });
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalAveragePowerDraw(params);
+-		expect(res).toEqual({ err: null, data: [{ power_draw: 100 }] });
+-	});
+-
+-	it("buckets power draw/limit series by mapped keys", async () => {
+-		const metricTimeSeries = jest.fn().mockResolvedValue({
+-			rows: [
+-				{ request_time: "00:00", metricName: "gpu.power.draw", value: 12.345 },
+-				{ request_time: "00:00", metricName: "gpu.power.limit", value: 20 },
+-			],
+-		});
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalPowerParamsPerTime(params);
+-		expect(res).toEqual({
+-			err: null,
+-			data: [{ request_time: "00:00", power_draw: 12.345, power_limit: 20 }],
+-		});
+-	});
+-
+-	it("returns an error payload on failure for power series", async () => {
+-		const metricTimeSeries = jest.fn().mockRejectedValue(new Error("boom"));
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalPowerParamsPerTime(params);
+-		expect(res).toEqual({ err: "boom", data: [] });
+-	});
+-});
+-
+-describe("externalAverageMemoryUsage / externalMemoryParamsPerTime", () => {
+-	it("averages memory usage", async () => {
+-		const metricTimeSeries = jest.fn().mockResolvedValue({ rows: [{ value: 40 }] });
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalAverageMemoryUsage(params);
+-		expect(res).toEqual({ err: null, data: [{ memory_used: 40 }] });
+-	});
+-
+-	it("buckets each memory series by mapped key", async () => {
+-		const metricTimeSeries = jest.fn().mockResolvedValue({
+-			rows: [
+-				{ request_time: "00:00", metricName: "gpu.memory.available", value: 1 },
+-				{ request_time: "00:00", metricName: "gpu.memory.total", value: 2 },
+-				{ request_time: "00:00", metricName: "gpu.memory.used", value: 3 },
+-				{ request_time: "00:00", metricName: "gpu.memory.free", value: 4 },
+-			],
+-		});
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalMemoryParamsPerTime(params);
+-		expect(res).toEqual({
+-			err: null,
+-			data: [
+-				{
+-					request_time: "00:00",
+-					memory_available: 1,
+-					memory_total: 2,
+-					memory_used: 3,
+-					memory_free: 4,
+-				},
+-			],
+-		});
+-	});
+-
+-	it("returns an error payload on failure for memory series", async () => {
+-		const metricTimeSeries = jest.fn().mockRejectedValue(new Error("boom"));
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalMemoryParamsPerTime(params);
+-		expect(res).toEqual({ err: "boom", data: [] });
+-	});
+-});
+-
+-describe("externalFanspeedParamsPerTime", () => {
+-	it("buckets fan speed values by time", async () => {
+-		const metricTimeSeries = jest.fn().mockResolvedValue({
+-			rows: [
+-				{ request_time: "00:00", value: 30 },
+-				{ request_time: "00:00", value: 40 },
+-			],
+-		});
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalFanspeedParamsPerTime(params);
+-		expect(res).toEqual({ err: null, data: [{ request_time: "00:00", fan_speed: 35 }] });
+-	});
+-
+-	it("returns an error payload on failure", async () => {
+-		const metricTimeSeries = jest.fn().mockRejectedValue(new Error("boom"));
+-		mockGetAdapter.mockResolvedValue({ metricTimeSeries });
+-
+-		const res = await externalFanspeedParamsPerTime(params);
+-		expect(res).toEqual({ err: "boom", data: [] });
+-	});
+-});
+diff --git a/src/client/src/__tests__/lib/platform/gpu/gpu.test.ts b/src/client/src/__tests__/lib/platform/gpu/gpu.test.ts
+deleted file mode 100644
+index 22491c77..00000000
+--- a/src/client/src/__tests__/lib/platform/gpu/gpu.test.ts
++++ /dev/null
+@@ -1,87 +0,0 @@
+-jest.mock('@/lib/platform/common', () => ({
+-  dataCollector: jest.fn().mockResolvedValue({ data: [] }),
+-  OTEL_GPUS_TABLE_NAME: 'otel_metrics_gauge',
+-}));
+-
+-jest.mock('@/lib/platform/gpu/external', () => ({
+-  externalAverageUtilization: jest.fn().mockResolvedValue(null),
+-  externalUtilizationParamsPerTime: jest.fn().mockResolvedValue(null),
+-  externalAveragePowerDraw: jest.fn().mockResolvedValue(null),
+-  externalPowerParamsPerTime: jest.fn().mockResolvedValue(null),
+-  externalAverageMemoryUsage: jest.fn().mockResolvedValue(null),
+-  externalMemoryParamsPerTime: jest.fn().mockResolvedValue(null),
+-}));
+-
+-import { getAverageUtilization, getUtilizationParamsPerTime } from '@/lib/platform/gpu/utilization';
+-import { getAveragePowerDraw, getPowerParamsPerTime } from '@/lib/platform/gpu/power';
+-import { getMemoryParamsPerTime, getAverageMemoryUsage } from '@/lib/platform/gpu/memory';
+-import { dataCollector } from '@/lib/platform/common';
+-
+-const baseParams = {
+-  timeLimit: {
+-    start: new Date('2024-01-01'),
+-    end: new Date('2024-01-31'),
+-    type: '1M',
+-  },
+-};
+-
+-beforeEach(() => {
+-  jest.clearAllMocks();
+-});
+-
+-describe('GPU utilization', () => {
+-  it('getAverageUtilization calls dataCollector with utilization query', async () => {
+-    const result = await getAverageUtilization(baseParams);
+-    expect(dataCollector).toHaveBeenCalledTimes(1);
+-    const { query } = (dataCollector as jest.Mock).mock.calls[0][0];
+-    expect(query).toContain('utilization');
+-    expect(query).toContain('otel_metrics_gauge');
+-    expect(result).toEqual({ data: [] });
+-  });
+-
+-  it('getUtilizationParamsPerTime calls dataCollector with time-series query', async () => {
+-    await getUtilizationParamsPerTime(baseParams);
+-    expect(dataCollector).toHaveBeenCalledTimes(1);
+-    const { query } = (dataCollector as jest.Mock).mock.calls[0][0];
+-    expect(query).toContain('request_time');
+-    expect(query).toContain('GROUP BY');
+-  });
+-});
+-
+-describe('GPU power', () => {
+-  it('getAveragePowerDraw calls dataCollector with power query', async () => {
+-    await getAveragePowerDraw(baseParams);
+-    expect(dataCollector).toHaveBeenCalledTimes(1);
+-    const { query } = (dataCollector as jest.Mock).mock.calls[0][0];
+-    expect(query).toContain('power_draw');
+-    expect(query).toContain('gpu.power.draw');
+-  });
+-
+-  it('getPowerParamsPerTime calls dataCollector with time-series query', async () => {
+-    await getPowerParamsPerTime(baseParams);
+-    const { query } = (dataCollector as jest.Mock).mock.calls[0][0];
+-    expect(query).toContain('power_draw');
+-    expect(query).toContain('power_limit');
+-    expect(query).toContain('request_time');
+-  });
+-});
+-
+-describe('GPU memory', () => {
+-  it('getAverageMemoryUsage calls dataCollector with memory query', async () => {
+-    await getAverageMemoryUsage(baseParams);
+-    expect(dataCollector).toHaveBeenCalledTimes(1);
+-    const { query } = (dataCollector as jest.Mock).mock.calls[0][0];
+-    expect(query).toContain('memory_used');
+-    expect(query).toContain('gpu.memory.used');
+-  });
+-
+-  it('getMemoryParamsPerTime calls dataCollector with time-series memory query', async () => {
+-    await getMemoryParamsPerTime(baseParams);
+-    const { query } = (dataCollector as jest.Mock).mock.calls[0][0];
+-    expect(query).toContain('memory_available');
+-    expect(query).toContain('memory_total');
+-    expect(query).toContain('memory_used');
+-    expect(query).toContain('memory_free');
+-    expect(query).toContain('request_time');
+-  });
+-});
+diff --git a/src/client/src/__tests__/lib/platform/gpu/temperature-fanspeed.test.ts b/src/client/src/__tests__/lib/platform/gpu/temperature-fanspeed.test.ts
+deleted file mode 100644
+index f52ca893..00000000
+--- a/src/client/src/__tests__/lib/platform/gpu/temperature-fanspeed.test.ts
++++ /dev/null
+@@ -1,57 +0,0 @@
+-jest.mock('@/lib/platform/common', () => ({
+-  dataCollector: jest.fn().mockResolvedValue({ data: [] }),
+-  OTEL_GPUS_TABLE_NAME: 'otel_metrics_gauge',
+-}));
+-
+-jest.mock('@/lib/platform/gpu/external', () => ({
+-  externalAverageTemperature: jest.fn().mockResolvedValue(null),
+-  externalAverageTemperatureParamsPerTime: jest.fn().mockResolvedValue(null),
+-  externalFanspeedParamsPerTime: jest.fn().mockResolvedValue(null),
+-}));
+-
+-import { getAverageTemperature, getAverageTemperatureParamsPerTime } from '@/lib/platform/gpu/temperature';
+-import { getFanspeedParamsPerTime } from '@/lib/platform/gpu/fanspeed';
+-import { dataCollector } from '@/lib/platform/common';
+-
+-const baseParams = {
+-  timeLimit: {
+-    start: new Date('2024-01-01'),
+-    end: new Date('2024-01-31'),
+-    type: '1M',
+-  },
+-};
+-
+-beforeEach(() => {
+-  jest.clearAllMocks();
+-});
+-
+-describe('GPU temperature', () => {
+-  it('getAverageTemperature calls dataCollector with temperature query', async () => {
+-    const result = await getAverageTemperature(baseParams);
+-    expect(dataCollector).toHaveBeenCalledTimes(1);
+-    const { query } = (dataCollector as jest.Mock).mock.calls[0][0];
+-    expect(query).toContain('temperature');
+-    expect(query).toContain('gpu.temperature');
+-    expect(result).toEqual({ data: [] });
+-  });
+-
+-  it('getAverageTemperatureParamsPerTime calls dataCollector with time-series query', async () => {
+-    await getAverageTemperatureParamsPerTime(baseParams);
+-    const { query } = (dataCollector as jest.Mock).mock.calls[0][0];
+-    expect(query).toContain('temperature');
+-    expect(query).toContain('request_time');
+-    expect(query).toContain('ORDER BY');
+-  });
+-});
+-
+-describe('GPU fan speed', () => {
+-  it('getFanspeedParamsPerTime calls dataCollector with fan speed query', async () => {
+-    const result = await getFanspeedParamsPerTime(baseParams);
+-    expect(dataCollector).toHaveBeenCalledTimes(1);
+-    const { query } = (dataCollector as jest.Mock).mock.calls[0][0];
+-    expect(query).toContain('fan_speed');
+-    expect(query).toContain('gpu.fan_speed');
+-    expect(query).toContain('request_time');
+-    expect(result).toEqual({ data: [] });
+-  });
+-});
+diff --git a/src/client/src/__tests__/selectors/page.test.ts b/src/client/src/__tests__/selectors/page.test.ts
+index f5f37c6a..77e5c42b 100644
+--- a/src/client/src/__tests__/selectors/page.test.ts
++++ b/src/client/src/__tests__/selectors/page.test.ts
+@@ -33,11 +33,6 @@ describe('getDashboardType', () => {
+     const state = makeState({ dashboard: { type: 'vector' } });
+     expect(getDashboardType(state)).toBe('vector');
+   });
+-
+-  it('returns gpu type when set', () => {
+-    const state = makeState({ dashboard: { type: 'gpu' } });
+-    expect(getDashboardType(state)).toBe('gpu');
+-  });
+ });
+ 
+ describe('getVisibilityColumnsOfPage', () => {
+diff --git a/src/client/src/__tests__/store/page.test.ts b/src/client/src/__tests__/store/page.test.ts
+index 3a12aaa0..4abec435 100644
+--- a/src/client/src/__tests__/store/page.test.ts
++++ b/src/client/src/__tests__/store/page.test.ts
+@@ -67,7 +67,7 @@ describe('pageStoreSlice', () => {
+ 
+     it('does not mutate other pages when setting data for one page', () => {
+       const requestBefore = store.getState().page.request;
+-      store.getState().page.setData('dashboard', 'type', 'gpu');
++      store.getState().page.setData('dashboard', 'type', 'vector');
+       expect(store.getState().page.request).toEqual(requestBefore);
+     });
+   });
+diff --git a/src/client/src/app/(playground)/dashboard/dashboard-type.tsx b/src/client/src/app/(playground)/dashboard/dashboard-type.tsx
+index 37680016..f514de28 100644
+--- a/src/client/src/app/(playground)/dashboard/dashboard-type.tsx
++++ b/src/client/src/app/(playground)/dashboard/dashboard-type.tsx
+@@ -3,14 +3,12 @@ import { getDashboardType, setPageData } from "@/selectors/page";
+ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+ import { DASHBOARD_TYPE_OBJECT } from "@/types/store/page";
+ import LLMDashboard from "./llm";
+-import GPUDashboard from "./gpu";
+ import VectorDashboard from "./vector";
+ import { objectKeys } from "@/utils/object";
+ 
+ const DashboardLabels: any = {
+ 	llm: "LLM",
+ 	vector: "VECTOR DB",
+-	gpu: "GPU",
+ };
+ 
+ export function DashboardTypeFilter() {
+@@ -42,8 +40,6 @@ export function DashboardTypeGraphContainer() {
+ 				<LLMDashboard />
+ 			) : dashboardType === DASHBOARD_TYPE_OBJECT.vector ? (
+ 				<VectorDashboard />
+-			) : dashboardType === DASHBOARD_TYPE_OBJECT.gpu ? (
+-				<GPUDashboard />
+ 			) : null}
+ 		</div>
+ 	);
+diff --git a/src/client/src/app/(playground)/dashboard/gpu/gpu-metric.tsx b/src/client/src/app/(playground)/dashboard/gpu/gpu-metric.tsx
+deleted file mode 100644
+index 91944ce8..00000000
+--- a/src/client/src/app/(playground)/dashboard/gpu/gpu-metric.tsx
++++ /dev/null
+@@ -1,108 +0,0 @@
+-import {
+-	AreaChart,
+-	Area,
+-	XAxis,
+-	YAxis,
+-	CartesianGrid,
+-	Tooltip,
+-	ResponsiveContainer,
+-} from "recharts";
+-import { useCallback, useEffect } from "react";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import { getFilterDetails } from "@/selectors/filter";
+-import { useRootStore } from "@/store";
+-import { getPingStatus } from "@/selectors/database-config";
+-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+-import IntermediateState from "@/components/(playground)/intermediate-state";
+-import { getFilterParamsForDashboard } from "@/helpers/client/filter";
+-
+-const COLORS = ["#8884d8", "#82ca9d", "#ffc658"];
+-
+-export default function GPUMetric({
+-	chartKeys,
+-	title,
+-	url,
+-}: {
+-	chartKeys: string[];
+-	title: string;
+-	url?: string;
+-}) {
+-	const filter = useRootStore(getFilterDetails);
+-	const pingStatus = useRootStore(getPingStatus);
+-	const { data, fireRequest, isFetched, isLoading } = useFetchWrapper();
+-	const fetchData = useCallback(async () => {
+-		fireRequest({
+-			body: JSON.stringify({
+-				...getFilterParamsForDashboard(filter),
+-			}),
+-			requestType: "POST",
+-			url: url ? url : "/api/telemetry/gpu",
+-			responseDataKey: "data",
+-		});
+-	}, [filter]);
+-
+-	useEffect(() => {
+-		if (
+-			filter.timeLimit.start &&
+-			filter.timeLimit.end &&
+-			pingStatus === "success"
+-		)
+-			fetchData();
+-	}, [filter, fetchData, pingStatus]);
+-
+-	const updatedDataWithType = ((data || []) as any[]) || [];
+-
+-	return (
+-		<Card className="w-full flex flex-col h-64">
+-			<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+-				<CardTitle className="text-sm font-medium text-stone-950 dark:text-white">
+-					{title}
+-				</CardTitle>
+-			</CardHeader>
+-			<CardContent className="grow">
+-				{isLoading || !isFetched || pingStatus === "pending" ? (
+-					<IntermediateState type="loading" />
+-				) : updatedDataWithType.length === 0 ? (
+-					<IntermediateState type="nodata" />
+-				) : (
+-					<ResponsiveContainer width="100%" height="100%">
+-						<AreaChart
+-							width={500}
+-							height={400}
+-							data={updatedDataWithType}
+-							margin={{
+-								top: 10,
+-								right: 30,
+-								left: 0,
+-								bottom: 0,
+-							}}
+-						>
+-							<CartesianGrid strokeDasharray="3 3" />
+-							<XAxis
+-								dataKey="request_time"
+-								className="text-xs stroke-stone-300"
+-								stroke="currentColor"
+-							/>
+-							<YAxis
+-								className="text-xs stroke-stone-300"
+-								stroke="currentColor"
+-								domain={[0, "dataMax + 15"]}
+-							/>
+-							<Tooltip labelClassName="dark:text-stone-700" />
+-							{chartKeys.map((type, index) => (
+-								<Area
+-									key={type}
+-									type="monotone"
+-									dataKey={type.replaceAll(".", "_")}
+-									stackId="1"
+-									stroke={COLORS[index]}
+-									fill={COLORS[index]}
+-								/>
+-							))}
+-						</AreaChart>
+-					</ResponsiveContainer>
+-				)}
+-			</CardContent>
+-		</Card>
+-	);
+-}
+diff --git a/src/client/src/app/(playground)/dashboard/gpu/index.tsx b/src/client/src/app/(playground)/dashboard/gpu/index.tsx
+deleted file mode 100644
+index 756a2b28..00000000
+--- a/src/client/src/app/(playground)/dashboard/gpu/index.tsx
++++ /dev/null
+@@ -1,39 +0,0 @@
+-import GPUMetric from "./gpu-metric";
+-import NumberStats from "./number-stats";
+-
+-export default function GPUDashboard() {
+-	return (
+-		<>
+-			<NumberStats />
+-			<div className="grid-cols-2 grid gap-4">
+-				<GPUMetric
+-					chartKeys={["utilization", "enc_utilization", "dec_utilization"]}
+-					url="/api/telemetry/gpu/utilization/time"
+-					title="Avg Utilization Percentage (%)"
+-				/>
+-
+-				<GPUMetric
+-					chartKeys={["temperature"]}
+-					url="/api/telemetry/gpu/temperature/time"
+-					title="Avg Temperature (°C)"
+-				/>
+-				<GPUMetric
+-					chartKeys={["memory_total", "memory_used", "memory_free"]}
+-					url="/api/telemetry/gpu/memory/time"
+-					title="Memory (MB)"
+-				/>
+-
+-				<GPUMetric
+-					chartKeys={["power.limit", "power.draw"]}
+-					url="/api/telemetry/gpu/power/time"
+-					title="Power (Watt)"
+-				/>
+-				<GPUMetric
+-					chartKeys={["fan_speed"]}
+-					url="/api/telemetry/gpu/fanspeed/time"
+-					title="Fan speed (0-100)"
+-				/>
+-			</div>
+-		</>
+-	);
+-}
+diff --git a/src/client/src/app/(playground)/dashboard/gpu/number-stats.tsx b/src/client/src/app/(playground)/dashboard/gpu/number-stats.tsx
+deleted file mode 100644
+index 534664f9..00000000
+--- a/src/client/src/app/(playground)/dashboard/gpu/number-stats.tsx
++++ /dev/null
+@@ -1,39 +0,0 @@
+-import StatCard from "@/components/(playground)/stat-card";
+-import { MemoryStick, PowerIcon, Thermometer, UtilityPole } from "lucide-react";
+-
+-function NumberStats() {
+-	return (
+-		<div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+-			<StatCard
+-				dataKey="utilization"
+-				heading="Avg utilization percentage"
+-				textSuffix="%"
+-				icon={UtilityPole}
+-				url="/api/telemetry/gpu/utilization/average"
+-			/>
+-			<StatCard
+-				dataKey="temperature"
+-				heading="Avg temperature"
+-				icon={Thermometer}
+-				textSuffix="°C"
+-				url="/api/telemetry/gpu/temperature/average"
+-			/>
+-			<StatCard
+-				dataKey="power_draw"
+-				heading="Avg power draw"
+-				icon={PowerIcon}
+-				textSuffix="W"
+-				url="/api/telemetry/gpu/power/average"
+-			/>
+-			<StatCard
+-				dataKey="memory_used"
+-				heading="Average memory used"
+-				icon={MemoryStick}
+-				textSuffix="MB"
+-				url="/api/telemetry/gpu/memory/average"
+-			/>
+-		</div>
+-	);
+-}
+-
+-export default NumberStats;
+diff --git a/src/client/src/app/api/metrics/gpu/fanspeed/time/route.ts b/src/client/src/app/api/metrics/gpu/fanspeed/time/route.ts
+deleted file mode 100644
+index 441803cc..00000000
+--- a/src/client/src/app/api/metrics/gpu/fanspeed/time/route.ts
++++ /dev/null
+@@ -1,36 +0,0 @@
+-import { withRouteAccess } from "@/lib/access/route-access";
+-import { getRequestEnvironment } from "@/constants/openlit-context";
+-import { GPUMetricParams, TimeLimit } from "@/lib/platform/common";
+-import {
+-	validateMetricsRequest,
+-	validateMetricsRequestType,
+-} from "@/helpers/server/platform";
+-import { getFanspeedParamsPerTime } from "@/lib/platform/gpu/fanspeed";
+-
+-async function POSTHandler(request: Request) {
+-	const formData = await request.json();
+-	const timeLimit = formData.timeLimit as TimeLimit;
+-
+-	const params: GPUMetricParams = {
+-		timeLimit,
+-		environment:
+-			typeof formData.environment === "string"
+-				? formData.environment
+-				: getRequestEnvironment(request),
+-	};
+-
+-	const validationParam = validateMetricsRequest(
+-		params,
+-		validateMetricsRequestType.FANSPEED_PER_TIME
+-	);
+-
+-	if (!validationParam.success)
+-		return Response.json(validationParam.err, {
+-			status: 400,
+-		});
+-
+-	const res: any = await getFanspeedParamsPerTime(params);
+-	return Response.json(res);
+-}
+-
+-export const POST = withRouteAccess("metrics.read", POSTHandler, { requireDbConfig: true });
+diff --git a/src/client/src/app/api/metrics/gpu/memory/average/route.ts b/src/client/src/app/api/metrics/gpu/memory/average/route.ts
+deleted file mode 100644
+index 6079d937..00000000
+--- a/src/client/src/app/api/metrics/gpu/memory/average/route.ts
++++ /dev/null
+@@ -1,36 +0,0 @@
+-import { withRouteAccess } from "@/lib/access/route-access";
+-import { getRequestEnvironment } from "@/constants/openlit-context";
+-import { GPUMetricParams, TimeLimit } from "@/lib/platform/common";
+-import {
+-	validateMetricsRequest,
+-	validateMetricsRequestType,
+-} from "@/helpers/server/platform";
+-import { getAverageMemoryUsage } from "@/lib/platform/gpu/memory";
+-
+-async function POSTHandler(request: Request) {
+-	const formData = await request.json();
+-	const timeLimit = formData.timeLimit as TimeLimit;
+-
+-	const params: GPUMetricParams = {
+-		timeLimit,
+-		environment:
+-			typeof formData.environment === "string"
+-				? formData.environment
+-				: getRequestEnvironment(request),
+-	};
+-
+-	const validationParam = validateMetricsRequest(
+-		params,
+-		validateMetricsRequestType.AVERAGE_MEMORY_USAGE
+-	);
+-
+-	if (!validationParam.success)
+-		return Response.json(validationParam.err, {
+-			status: 400,
+-		});
+-
+-	const res: any = await getAverageMemoryUsage(params);
+-	return Response.json(res);
+-}
+-
+-export const POST = withRouteAccess("metrics.read", POSTHandler, { requireDbConfig: true });
+diff --git a/src/client/src/app/api/metrics/gpu/memory/time/route.ts b/src/client/src/app/api/metrics/gpu/memory/time/route.ts
+deleted file mode 100644
+index 5a7dcdf2..00000000
+--- a/src/client/src/app/api/metrics/gpu/memory/time/route.ts
++++ /dev/null
+@@ -1,36 +0,0 @@
+-import { withRouteAccess } from "@/lib/access/route-access";
+-import { getRequestEnvironment } from "@/constants/openlit-context";
+-import { GPUMetricParams, TimeLimit } from "@/lib/platform/common";
+-import {
+-	validateMetricsRequest,
+-	validateMetricsRequestType,
+-} from "@/helpers/server/platform";
+-import { getMemoryParamsPerTime } from "@/lib/platform/gpu/memory";
+-
+-async function POSTHandler(request: Request) {
+-	const formData = await request.json();
+-	const timeLimit = formData.timeLimit as TimeLimit;
+-
+-	const params: GPUMetricParams = {
+-		timeLimit,
+-		environment:
+-			typeof formData.environment === "string"
+-				? formData.environment
+-				: getRequestEnvironment(request),
+-	};
+-
+-	const validationParam = validateMetricsRequest(
+-		params,
+-		validateMetricsRequestType.MEMORY_PER_TIME
+-	);
+-
+-	if (!validationParam.success)
+-		return Response.json(validationParam.err, {
+-			status: 400,
+-		});
+-
+-	const res: any = await getMemoryParamsPerTime(params);
+-	return Response.json(res);
+-}
+-
+-export const POST = withRouteAccess("metrics.read", POSTHandler, { requireDbConfig: true });
+diff --git a/src/client/src/app/api/metrics/gpu/power/average/route.ts b/src/client/src/app/api/metrics/gpu/power/average/route.ts
+deleted file mode 100644
+index 19e28965..00000000
+--- a/src/client/src/app/api/metrics/gpu/power/average/route.ts
++++ /dev/null
+@@ -1,36 +0,0 @@
+-import { withRouteAccess } from "@/lib/access/route-access";
+-import { getRequestEnvironment } from "@/constants/openlit-context";
+-import { GPUMetricParams, TimeLimit } from "@/lib/platform/common";
+-import {
+-	validateMetricsRequest,
+-	validateMetricsRequestType,
+-} from "@/helpers/server/platform";
+-import { getAveragePowerDraw } from "@/lib/platform/gpu/power";
+-
+-async function POSTHandler(request: Request) {
+-	const formData = await request.json();
+-	const timeLimit = formData.timeLimit as TimeLimit;
+-
+-	const params: GPUMetricParams = {
+-		timeLimit,
+-		environment:
+-			typeof formData.environment === "string"
+-				? formData.environment
+-				: getRequestEnvironment(request),
+-	};
+-
+-	const validationParam = validateMetricsRequest(
+-		params,
+-		validateMetricsRequestType.AVERAGE_POWER_DRAW
+-	);
+-
+-	if (!validationParam.success)
+-		return Response.json(validationParam.err, {
+-			status: 400,
+-		});
+-
+-	const res: any = await getAveragePowerDraw(params);
+-	return Response.json(res);
+-}
+-
+-export const POST = withRouteAccess("metrics.read", POSTHandler, { requireDbConfig: true });
+diff --git a/src/client/src/app/api/metrics/gpu/power/time/route.ts b/src/client/src/app/api/metrics/gpu/power/time/route.ts
+deleted file mode 100644
+index 50e11bc7..00000000
+--- a/src/client/src/app/api/metrics/gpu/power/time/route.ts
++++ /dev/null
+@@ -1,36 +0,0 @@
+-import { withRouteAccess } from "@/lib/access/route-access";
+-import { getRequestEnvironment } from "@/constants/openlit-context";
+-import { GPUMetricParams, TimeLimit } from "@/lib/platform/common";
+-import {
+-	validateMetricsRequest,
+-	validateMetricsRequestType,
+-} from "@/helpers/server/platform";
+-import { getPowerParamsPerTime } from "@/lib/platform/gpu/power";
+-
+-async function POSTHandler(request: Request) {
+-	const formData = await request.json();
+-	const timeLimit = formData.timeLimit as TimeLimit;
+-
+-	const params: GPUMetricParams = {
+-		timeLimit,
+-		environment:
+-			typeof formData.environment === "string"
+-				? formData.environment
+-				: getRequestEnvironment(request),
+-	};
+-
+-	const validationParam = validateMetricsRequest(
+-		params,
+-		validateMetricsRequestType.POWER_PER_TIME
+-	);
+-
+-	if (!validationParam.success)
+-		return Response.json(validationParam.err, {
+-			status: 400,
+-		});
+-
+-	const res: any = await getPowerParamsPerTime(params);
+-	return Response.json(res);
+-}
+-
+-export const POST = withRouteAccess("metrics.read", POSTHandler, { requireDbConfig: true });
+diff --git a/src/client/src/app/api/metrics/gpu/temperature/average/route.ts b/src/client/src/app/api/metrics/gpu/temperature/average/route.ts
+deleted file mode 100644
+index 7dd3b235..00000000
+--- a/src/client/src/app/api/metrics/gpu/temperature/average/route.ts
++++ /dev/null
+@@ -1,36 +0,0 @@
+-import { withRouteAccess } from "@/lib/access/route-access";
+-import { getRequestEnvironment } from "@/constants/openlit-context";
+-import { GPUMetricParams, TimeLimit } from "@/lib/platform/common";
+-import {
+-	validateMetricsRequest,
+-	validateMetricsRequestType,
+-} from "@/helpers/server/platform";
+-import { getAverageTemperature } from "@/lib/platform/gpu/temperature";
+-
+-async function POSTHandler(request: Request) {
+-	const formData = await request.json();
+-	const timeLimit = formData.timeLimit as TimeLimit;
+-
+-	const params: GPUMetricParams = {
+-		timeLimit,
+-		environment:
+-			typeof formData.environment === "string"
+-				? formData.environment
+-				: getRequestEnvironment(request),
+-	};
+-
+-	const validationParam = validateMetricsRequest(
+-		params,
+-		validateMetricsRequestType.AVERAGE_TEMPERATURE
+-	);
+-
+-	if (!validationParam.success)
+-		return Response.json(validationParam.err, {
+-			status: 400,
+-		});
+-
+-	const res: any = await getAverageTemperature(params);
+-	return Response.json(res);
+-}
+-
+-export const POST = withRouteAccess("metrics.read", POSTHandler, { requireDbConfig: true });
+diff --git a/src/client/src/app/api/metrics/gpu/temperature/time/route.ts b/src/client/src/app/api/metrics/gpu/temperature/time/route.ts
+deleted file mode 100644
+index b786619c..00000000
+--- a/src/client/src/app/api/metrics/gpu/temperature/time/route.ts
++++ /dev/null
+@@ -1,36 +0,0 @@
+-import { withRouteAccess } from "@/lib/access/route-access";
+-import { getRequestEnvironment } from "@/constants/openlit-context";
+-import { GPUMetricParams, TimeLimit } from "@/lib/platform/common";
+-import {
+-	validateMetricsRequest,
+-	validateMetricsRequestType,
+-} from "@/helpers/server/platform";
+-import { getAverageTemperatureParamsPerTime } from "@/lib/platform/gpu/temperature";
+-
+-async function POSTHandler(request: Request) {
+-	const formData = await request.json();
+-	const timeLimit = formData.timeLimit as TimeLimit;
+-
+-	const params: GPUMetricParams = {
+-		timeLimit,
+-		environment:
+-			typeof formData.environment === "string"
+-				? formData.environment
+-				: getRequestEnvironment(request),
+-	};
+-
+-	const validationParam = validateMetricsRequest(
+-		params,
+-		validateMetricsRequestType.POWER_PER_TIME
+-	);
+-
+-	if (!validationParam.success)
+-		return Response.json(validationParam.err, {
+-			status: 400,
+-		});
+-
+-	const res: any = await getAverageTemperatureParamsPerTime(params);
+-	return Response.json(res);
+-}
+-
+-export const POST = withRouteAccess("metrics.read", POSTHandler, { requireDbConfig: true });
+diff --git a/src/client/src/app/api/metrics/gpu/utilization/average/route.ts b/src/client/src/app/api/metrics/gpu/utilization/average/route.ts
+deleted file mode 100644
+index 1729f812..00000000
+--- a/src/client/src/app/api/metrics/gpu/utilization/average/route.ts
++++ /dev/null
+@@ -1,36 +0,0 @@
+-import { withRouteAccess } from "@/lib/access/route-access";
+-import { getRequestEnvironment } from "@/constants/openlit-context";
+-import { GPUMetricParams, TimeLimit } from "@/lib/platform/common";
+-import {
+-	validateMetricsRequest,
+-	validateMetricsRequestType,
+-} from "@/helpers/server/platform";
+-import { getAverageUtilization } from "@/lib/platform/gpu/utilization";
+-
+-async function POSTHandler(request: Request) {
+-	const formData = await request.json();
+-	const timeLimit = formData.timeLimit as TimeLimit;
+-
+-	const params: GPUMetricParams = {
+-		timeLimit,
+-		environment:
+-			typeof formData.environment === "string"
+-				? formData.environment
+-				: getRequestEnvironment(request),
+-	};
+-
+-	const validationParam = validateMetricsRequest(
+-		params,
+-		validateMetricsRequestType.AVERAGE_UTILIZATION
+-	);
+-
+-	if (!validationParam.success)
+-		return Response.json(validationParam.err, {
+-			status: 400,
+-		});
+-
+-	const res: any = await getAverageUtilization(params);
+-	return Response.json(res);
+-}
+-
+-export const POST = withRouteAccess("metrics.read", POSTHandler, { requireDbConfig: true });
+diff --git a/src/client/src/app/api/metrics/gpu/utilization/time/route.ts b/src/client/src/app/api/metrics/gpu/utilization/time/route.ts
+deleted file mode 100644
+index 4a77e695..00000000
+--- a/src/client/src/app/api/metrics/gpu/utilization/time/route.ts
++++ /dev/null
+@@ -1,36 +0,0 @@
+-import { withRouteAccess } from "@/lib/access/route-access";
+-import { getRequestEnvironment } from "@/constants/openlit-context";
+-import { GPUMetricParams, TimeLimit } from "@/lib/platform/common";
+-import {
+-	validateMetricsRequest,
+-	validateMetricsRequestType,
+-} from "@/helpers/server/platform";
+-import { getUtilizationParamsPerTime } from "@/lib/platform/gpu/utilization";
+-
+-async function POSTHandler(request: Request) {
+-	const formData = await request.json();
+-	const timeLimit = formData.timeLimit as TimeLimit;
+-
+-	const params: GPUMetricParams = {
+-		timeLimit,
+-		environment:
+-			typeof formData.environment === "string"
+-				? formData.environment
+-				: getRequestEnvironment(request),
+-	};
+-
+-	const validationParam = validateMetricsRequest(
+-		params,
+-		validateMetricsRequestType.UTILIZATION_PER_TIME
+-	);
+-
+-	if (!validationParam.success)
+-		return Response.json(validationParam.err, {
+-			status: 400,
+-		});
+-
+-	const res: any = await getUtilizationParamsPerTime(params);
+-	return Response.json(res);
+-}
+-
+-export const POST = withRouteAccess("metrics.read", POSTHandler, { requireDbConfig: true });
+diff --git a/src/client/src/app/api/telemetry/[...segments]/route.ts b/src/client/src/app/api/telemetry/[...segments]/route.ts
+index 7ac742ed..11a246e9 100644
+--- a/src/client/src/app/api/telemetry/[...segments]/route.ts
++++ b/src/client/src/app/api/telemetry/[...segments]/route.ts
+@@ -32,15 +32,6 @@ async function post(request: Request, context: RouteContext, path: string): Prom
+ 		"vector/environment": () => import("@/app/api/metrics/vector/environment/route"),
+ 		"vector/operation": () => import("@/app/api/metrics/vector/operation/route"),
+ 		"vector/system": () => import("@/app/api/metrics/vector/system/route"),
+-		"gpu/fanspeed/time": () => import("@/app/api/metrics/gpu/fanspeed/time/route"),
+-		"gpu/memory/average": () => import("@/app/api/metrics/gpu/memory/average/route"),
+-		"gpu/memory/time": () => import("@/app/api/metrics/gpu/memory/time/route"),
+-		"gpu/power/average": () => import("@/app/api/metrics/gpu/power/average/route"),
+-		"gpu/power/time": () => import("@/app/api/metrics/gpu/power/time/route"),
+-		"gpu/temperature/average": () => import("@/app/api/metrics/gpu/temperature/average/route"),
+-		"gpu/temperature/time": () => import("@/app/api/metrics/gpu/temperature/time/route"),
+-		"gpu/utilization/average": () => import("@/app/api/metrics/gpu/utilization/average/route"),
+-		"gpu/utilization/time": () => import("@/app/api/metrics/gpu/utilization/time/route"),
+ 	};
+ 	const loader = modules[path];
+ 	if (!loader) return Response.json({ err: `Unknown telemetry route: ${path}` }, { status: 404 });
+diff --git a/src/client/src/clickhouse/migrations/index.ts b/src/client/src/clickhouse/migrations/index.ts
+index 88b487d1..fed69437 100644
+--- a/src/client/src/clickhouse/migrations/index.ts
++++ b/src/client/src/clickhouse/migrations/index.ts
+@@ -114,7 +114,7 @@ export default async function migrations(databaseConfigId?: string) {
+ 	// the cleanup, and uses IF EXISTS so fresh installs are no-ops.
+ 	await DropVcsMigration(databaseConfigId);
+ 
+-	// Built-in dashboard seeding (LLM / Vector DB / GPU / Coding
++	// Built-in dashboard seeding (LLM / Vector DB / Coding
+ 	// Agents / future) lives inside `create-custom-dashboards-migration`
+ 	// and runs on every boot via per-title idempotent upsert -- no
+ 	// per-board one-off migration is needed when a new built-in board
+diff --git a/src/client/src/clickhouse/seed-data/openlit-dashboard-GPU-dashboard-layout.json b/src/client/src/clickhouse/seed-data/openlit-dashboard-GPU-dashboard-layout.json
+deleted file mode 100644
+index 73890fda..00000000
+--- a/src/client/src/clickhouse/seed-data/openlit-dashboard-GPU-dashboard-layout.json
++++ /dev/null
+@@ -1,264 +0,0 @@
+-{
+-  "id": "70072a30-a88c-4eb5-8058-a5dca6536b8d",
+-  "title": "GPU dashboard",
+-  "description": "The dashboard helps detect GPU performance bottlenecks, thermal or power inefficiencies, and optimize resource utilization across your infrastructure.",
+-  "parentId": null,
+-  "isMainDashboard": false,
+-  "isPinned": true,
+-  "createdAt": "2025-06-27 05:46:43",
+-  "updatedAt": "2025-06-27 05:46:43",
+-  "widgets": {
+-    "953b08e7-5158-4806-b52e-8b58880b0cfd": {
+-      "id": "953b08e7-5158-4806-b52e-8b58880b0cfd",
+-      "title": "Power (Watt)",
+-      "description": "Visualization to identify the Power over time",
+-      "type": "AREA_CHART",
+-      "properties": {
+-        "xAxis": "request_time",
+-        "yAxes": [
+-          {
+-            "key": "power_draw",
+-            "color": "#F36C06"
+-          },
+-          {
+-            "key": "power_limit",
+-            "color": "#10b981"
+-          }
+-        ]
+-      },
+-      "config": {
+-        "query": "WITH\n    parseDateTimeBestEffort('{{filter.timeLimit.start}}') AS start_time,\n    parseDateTimeBestEffort('{{filter.timeLimit.end}}') AS end_time,\n    dateDiff('day', start_time, end_time) AS days_diff,\n    dateDiff('year', start_time, end_time) AS years_diff,\n    multiIf(\n        years_diff >= 1, 'month',\n        days_diff <= 1, 'hour',\n        'day'\n    ) AS date_granularity\n\nSELECT\n    MAX(power_draw) AS power_draw,\n    MAX(power_limit) AS power_limit,\n    request_time\nFROM (\n    SELECT\n        ROUND(AVG(IF(MetricName = 'gpu.power.draw', Value, NULL)), 2) AS power_draw,\n        ROUND(AVG(IF(MetricName = 'gpu.power.limit', Value, NULL)), 2) AS power_limit,\n        formatDateTime(DATE_TRUNC(date_granularity, TimeUnix), '%Y/%m/%d %R') AS request_time\n    FROM otel_metrics_gauge\n    WHERE\n        MetricName IN ('gpu.power.draw', 'gpu.power.limit')\n        AND TimeUnix >= start_time AND TimeUnix <= end_time\n    GROUP BY request_time\n)\nGROUP BY request_time\nORDER BY request_time\n"
+-      },
+-      "createdAt": "2025-06-27 07:13:12",
+-      "updatedAt": "2025-06-27 07:13:59"
+-    },
+-    "bab582ed-c163-4614-bec5-1b99d1157740": {
+-      "id": "bab582ed-c163-4614-bec5-1b99d1157740",
+-      "title": "Memory (MB)",
+-      "description": "Visualization to identify the Memory in (MB) over time",
+-      "type": "AREA_CHART",
+-      "properties": {
+-        "xAxis": "request_time",
+-        "yAxes": [
+-          {
+-            "key": "memory_available",
+-            "color": "#10b981"
+-          },
+-          {
+-            "key": "memory_used",
+-            "color": "#f59e0b"
+-          },
+-          {
+-            "key": "memory_total",
+-            "color": "#F36C06"
+-          }
+-        ]
+-      },
+-      "config": {
+-        "query": "WITH\n    parseDateTimeBestEffort('{{filter.timeLimit.start}}') AS start_time,\n    parseDateTimeBestEffort('{{filter.timeLimit.end}}') AS end_time,\n    dateDiff('day', start_time, end_time) AS days_diff,\n    dateDiff('year', start_time, end_time) AS years_diff,\n    multiIf(\n        years_diff >= 1, 'month',\n        days_diff <= 1, 'hour',\n        'day'\n    ) AS date_granularity\n\nSELECT\n    MAX(memory_available) AS memory_available,\n    MAX(memory_total) AS memory_total,\n    MAX(memory_used) AS memory_used,\n    MAX(memory_free) AS memory_free,\n    request_time\nFROM (\n    SELECT\n        SUM(IF(MetricName = 'gpu.memory.available', Value, 0)) AS memory_available,\n        SUM(IF(MetricName = 'gpu.memory.total', Value, 0)) AS memory_total,\n        SUM(IF(MetricName = 'gpu.memory.used', Value, 0)) AS memory_used,\n        SUM(IF(MetricName = 'gpu.memory.free', Value, 0)) AS memory_free,\n        formatDateTime(DATE_TRUNC(date_granularity, TimeUnix), '%Y/%m/%d %R') AS request_time\n    FROM otel_metrics_gauge\n    WHERE\n        MetricName IN (\n            'gpu.memory.available',\n            'gpu.memory.total',\n            'gpu.memory.used',\n            'gpu.memory.free'\n        )\n        AND TimeUnix >= start_time AND TimeUnix <= end_time\n    GROUP BY request_time\n)\nGROUP BY request_time\nORDER BY request_time\n"
+-      },
+-      "createdAt": "2025-06-27 07:10:26",
+-      "updatedAt": "2025-06-27 07:12:29"
+-    },
+-    "8cd8b0f1-7661-4a0e-ada8-a7718d86700c": {
+-      "id": "8cd8b0f1-7661-4a0e-ada8-a7718d86700c",
+-      "title": "Avg Utilization Percentage (%)",
+-      "description": "Visualization to identify the Avg Utilization Percentage over time",
+-      "type": "AREA_CHART",
+-      "properties": {
+-        "xAxis": "request_time",
+-        "yAxes": [
+-          {
+-            "key": "utilization",
+-            "color": "#F36C06"
+-          },
+-          {
+-            "key": "enc_utilization",
+-            "color": "#0ea5e9"
+-          },
+-          {
+-            "key": "dec_utilization",
+-            "color": "#10b981"
+-          }
+-        ]
+-      },
+-      "config": {
+-        "query": "WITH\n    parseDateTimeBestEffort('{{filter.timeLimit.start}}') AS start_time,\n    parseDateTimeBestEffort('{{filter.timeLimit.end}}') AS end_time,\n    dateDiff('day', start_time, end_time) AS days_diff,\n    dateDiff('year', start_time, end_time) AS years_diff,\n    -- Apply JS logic in SQL: if ≥1 year → month, ≤1 day → hour, else → day\n    multiIf(\n        years_diff >= 1, 'month',\n        days_diff <= 1, 'hour',\n        'day'\n    ) AS date_granularity\n\nSELECT\n    MAX(utilization) AS utilization,\n    MAX(enc_utilization) AS enc_utilization,\n    MAX(dec_utilization) AS dec_utilization,\n    request_time\nFROM (\n    SELECT\n        ROUND(AVG(IF(MetricName = 'gpu.utilization', Value, NULL)), 2) AS utilization,\n        ROUND(AVG(IF(MetricName = 'gpu.enc.utilization', Value, NULL)), 2) AS enc_utilization,\n        ROUND(AVG(IF(MetricName = 'gpu.dec.utilization', Value, NULL)), 2) AS dec_utilization,\n        formatDateTime(DATE_TRUNC(date_granularity, TimeUnix), '%Y/%m/%d %H:%i') AS request_time\n    FROM otel_metrics_gauge\n    WHERE\n        MetricName IN (\n            'gpu.utilization',\n            'gpu.enc.utilization',\n            'gpu.dec.utilization'\n        )\n        AND TimeUnix >= start_time AND TimeUnix <= end_time\n    GROUP BY request_time\n)\nGROUP BY request_time\nORDER BY request_time\n"
+-      },
+-      "createdAt": "2025-06-27 06:56:44",
+-      "updatedAt": "2025-06-27 07:01:30"
+-    },
+-    "0952942c-dd5a-484b-8449-224aef6264a8": {
+-      "id": "0952942c-dd5a-484b-8449-224aef6264a8",
+-      "title": "Avg power draw",
+-      "description": "This defines average power drawn within the time period selected",
+-      "type": "STAT_CARD",
+-      "properties": {
+-        "color": "#F36C06",
+-        "value": "0.power_draw",
+-        "suffix": "W",
+-        "trend": "0.rate",
+-        "trendSuffix": "%"
+-      },
+-      "config": {
+-        "query": "WITH\n    parseDateTimeBestEffort('{{filter.timeLimit.start}}') AS start_time,\n    parseDateTimeBestEffort('{{filter.timeLimit.end}}') AS end_time,\n    (end_time - start_time) AS duration,\n    (start_time - duration) AS prev_start_time,\n    (end_time - duration) AS prev_end_time\n\nSELECT\n    round(avgIf(Value,\n        TimeUnix >= start_time AND TimeUnix <= end_time AND MetricName = 'gpu.power.draw'\n    ), 2) AS power_draw,\n\n    round(avgIf(Value,\n        TimeUnix >= prev_start_time AND TimeUnix <= prev_end_time AND MetricName = 'gpu.power.draw'\n    ), 2) AS power_draw_previous,\n\n    round(\n        if(\n            avgIf(Value,\n                TimeUnix >= prev_start_time AND TimeUnix <= prev_end_time AND MetricName = 'gpu.power.draw'\n            ) = 0,\n            avgIf(Value,\n                TimeUnix >= start_time AND TimeUnix <= end_time AND MetricName = 'gpu.power.draw'\n            ) * 100.0,\n            (\n                avgIf(Value,\n                    TimeUnix >= start_time AND TimeUnix <= end_time AND MetricName = 'gpu.power.draw'\n                ) -\n                avgIf(Value,\n                    TimeUnix >= prev_start_time AND TimeUnix <= prev_end_time AND MetricName = 'gpu.power.draw'\n                )\n            )\n            /\n            avgIf(Value,\n                TimeUnix >= prev_start_time AND TimeUnix <= prev_end_time AND MetricName = 'gpu.power.draw'\n            ) * 100.0\n        ), 2\n    ) AS rate\nFROM otel_metrics_gauge\nWHERE\n    MetricName = 'gpu.power.draw'\n    AND TimeUnix >= prev_start_time AND TimeUnix <= end_time\n"
+-      },
+-      "createdAt": "2025-06-27 06:48:22",
+-      "updatedAt": "2025-06-27 06:51:58"
+-    },
+-    "c1e14dcc-d345-4201-9468-54cb73356dd4": {
+-      "id": "c1e14dcc-d345-4201-9468-54cb73356dd4",
+-      "title": "Avg Temperature (°C)",
+-      "description": "Visualization to identify the Average Temperature over time",
+-      "type": "LINE_CHART",
+-      "properties": {
+-        "color": "#F36C06",
+-        "xAxis": "request_time",
+-        "yAxis": "temperature"
+-      },
+-      "config": {
+-        "query": "WITH\n    parseDateTimeBestEffort('{{filter.timeLimit.start}}') AS start_time,\n    parseDateTimeBestEffort('{{filter.timeLimit.end}}') AS end_time,\n    dateDiff('day', start_time, end_time) AS days_diff,\n    dateDiff('year', start_time, end_time) AS years_diff,\n    multiIf(\n        years_diff >= 1, 'month',\n        days_diff <= 1, 'hour',\n        'day'\n    ) AS date_granularity\n\nSELECT\n    ROUND(AVG(Value), 2) AS temperature,\n    formatDateTime(DATE_TRUNC(date_granularity, TimeUnix), '%Y/%m/%d %R') AS request_time\nFROM otel_metrics_gauge\nWHERE\n    MetricName = 'gpu.temperature'\n    AND TimeUnix >= start_time AND TimeUnix <= end_time\nGROUP BY\n    request_time\nORDER BY\n    request_time\n"
+-      },
+-      "createdAt": "2025-06-27 07:01:46",
+-      "updatedAt": "2025-06-27 07:08:44"
+-    },
+-    "fefb9f0e-5ee5-497a-b4e0-4e95a79c08c7": {
+-      "id": "fefb9f0e-5ee5-497a-b4e0-4e95a79c08c7",
+-      "title": "Fan Speed (0 - 100)",
+-      "description": "Visualization to identify the Fan Speed over time",
+-      "type": "LINE_CHART",
+-      "properties": {
+-        "color": "#F36C06",
+-        "xAxis": "request_time",
+-        "yAxis": "fan_speed"
+-      },
+-      "config": {
+-        "query": "WITH\n    parseDateTimeBestEffort('{{filter.timeLimit.start}}') AS start_time,\n    parseDateTimeBestEffort('{{filter.timeLimit.end}}') AS end_time,\n    dateDiff('day', start_time, end_time) AS days_diff,\n    dateDiff('year', start_time, end_time) AS years_diff,\n    multiIf(\n        years_diff >= 1, 'month',\n        days_diff <= 1, 'hour',\n        'day'\n    ) AS date_granularity\n\nSELECT\n    ROUND(AVG(Value), 2) AS fan_speed,\n    formatDateTime(DATE_TRUNC(date_granularity, TimeUnix), '%Y/%m/%d %R') AS request_time\nFROM otel_metrics_gauge\nWHERE\n    MetricName = 'gpu.fan_speed'\n    AND TimeUnix >= start_time AND TimeUnix <= end_time\nGROUP BY request_time\nORDER BY request_time\n"
+-      },
+-      "createdAt": "2025-06-27 07:14:29",
+-      "updatedAt": "2025-06-27 07:15:24"
+-    },
+-    "74c4fc4b-c062-468d-b35b-8b7ea3aa0cbf": {
+-      "id": "74c4fc4b-c062-468d-b35b-8b7ea3aa0cbf",
+-      "title": "Average memory used",
+-      "description": "This defines average memory used within the time period selected",
+-      "type": "STAT_CARD",
+-      "properties": {
+-        "color": "#F36C06",
+-        "suffix": "MB",
+-        "trendSuffix": "%",
+-        "trend": "0.rate",
+-        "value": "0.memory_used"
+-      },
+-      "config": {
+-        "query": "WITH\n    parseDateTimeBestEffort('{{filter.timeLimit.start}}') AS start_time,\n    parseDateTimeBestEffort('{{filter.timeLimit.end}}') AS end_time,\n    (end_time - start_time) AS duration,\n    (start_time - duration) AS prev_start_time,\n    (end_time - duration) AS prev_end_time\n\nSELECT\n    round(avgIf(Value,\n        TimeUnix >= start_time AND TimeUnix <= end_time AND MetricName = 'gpu.memory.used'\n    ), 2) AS memory_used,\n\n    round(avgIf(Value,\n        TimeUnix >= prev_start_time AND TimeUnix <= prev_end_time AND MetricName = 'gpu.memory.used'\n    ), 2) AS memory_used_previous,\n\n    round(\n        if(\n            avgIf(Value,\n                TimeUnix >= prev_start_time AND TimeUnix <= prev_end_time AND MetricName = 'gpu.memory.used'\n            ) = 0,\n            avgIf(Value,\n                TimeUnix >= start_time AND TimeUnix <= end_time AND MetricName = 'gpu.memory.used'\n            ) * 100.0,\n            (\n                avgIf(Value,\n                    TimeUnix >= start_time AND TimeUnix <= end_time AND MetricName = 'gpu.memory.used'\n                ) -\n                avgIf(Value,\n                    TimeUnix >= prev_start_time AND TimeUnix <= prev_end_time AND MetricName = 'gpu.memory.used'\n                )\n            )\n            /\n            avgIf(Value,\n                TimeUnix >= prev_start_time AND TimeUnix <= prev_end_time AND MetricName = 'gpu.memory.used'\n            ) * 100.0\n        ), 2\n    ) AS rate\nFROM otel_metrics_gauge\nWHERE\n    MetricName = 'gpu.memory.used'\n    AND TimeUnix >= prev_start_time AND TimeUnix <= end_time\n"
+-      },
+-      "createdAt": "2025-06-27 06:49:58",
+-      "updatedAt": "2025-06-27 06:51:32"
+-    },
+-    "17dda542-b991-455b-b92c-2a3ae74381ea": {
+-      "id": "17dda542-b991-455b-b92c-2a3ae74381ea",
+-      "title": "Avg utilization percentage",
+-      "description": "This defines average utilization percentage within the time period selected",
+-      "type": "STAT_CARD",
+-      "properties": {
+-        "color": "#F36C06",
+-        "value": "0.utilization",
+-        "trend": "0.rate",
+-        "trendSuffix": "%",
+-        "suffix": "%"
+-      },
+-      "config": {
+-        "query": "WITH\n    parseDateTimeBestEffort('{{filter.timeLimit.start}}') AS start_time,\n    parseDateTimeBestEffort('{{filter.timeLimit.end}}') AS end_time,\n    (end_time - start_time) AS duration,\n    (start_time - duration) AS prev_start_time,\n    (end_time - duration) AS prev_end_time\n\nSELECT\n    round(avgIf(Value,\n        TimeUnix >= start_time AND TimeUnix <= end_time AND MetricName = 'gpu.utilization'\n    ), 2) AS utilization,\n\n    round(avgIf(Value,\n        TimeUnix >= prev_start_time AND TimeUnix <= prev_end_time AND MetricName = 'gpu.utilization'\n    ), 2) AS utilization_previous,\n\n    round(\n        if(\n            avgIf(Value,\n                TimeUnix >= prev_start_time AND TimeUnix <= prev_end_time AND MetricName = 'gpu.utilization'\n            ) = 0,\n            avgIf(Value,\n                TimeUnix >= start_time AND TimeUnix <= end_time AND MetricName = 'gpu.utilization'\n            ) * 100.0,\n            (\n                avgIf(Value,\n                    TimeUnix >= start_time AND TimeUnix <= end_time AND MetricName = 'gpu.utilization'\n                ) -\n                avgIf(Value,\n                    TimeUnix >= prev_start_time AND TimeUnix <= prev_end_time AND MetricName = 'gpu.utilization'\n                )\n            ) /\n            avgIf(Value,\n                TimeUnix >= prev_start_time AND TimeUnix <= prev_end_time AND MetricName = 'gpu.utilization'\n            ) * 100.0\n        ), 2\n    ) AS rate\nFROM otel_metrics_gauge\nWHERE\n    MetricName = 'gpu.utilization'\n    AND TimeUnix >= prev_start_time AND TimeUnix <= end_time\n"
+-      },
+-      "createdAt": "2025-06-27 06:06:03",
+-      "updatedAt": "2025-06-27 06:30:44"
+-    },
+-    "903d54ac-f41b-4e0c-9c3f-aaa1543c77bc": {
+-      "id": "903d54ac-f41b-4e0c-9c3f-aaa1543c77bc",
+-      "title": "Avg temperature",
+-      "description": "This defines average temperature within the time period selected",
+-      "type": "STAT_CARD",
+-      "properties": {
+-        "color": "#F36C06",
+-        "value": "0.temperature",
+-        "suffix": "°C",
+-        "trend": "rate",
+-        "trendSuffix": "%"
+-      },
+-      "config": {
+-        "query": "WITH\n    parseDateTimeBestEffort('{{filter.timeLimit.start}}') AS start_time,\n    parseDateTimeBestEffort('{{filter.timeLimit.end}}') AS end_time,\n    (end_time - start_time) AS duration,\n    (start_time - duration) AS prev_start_time,\n    (end_time - duration) AS prev_end_time\n\nSELECT\n    round(avgIf(Value,\n        TimeUnix >= start_time AND TimeUnix <= end_time AND MetricName = 'gpu.temperature'\n    ), 2) AS temperature,\n\n    round(avgIf(Value,\n        TimeUnix >= prev_start_time AND TimeUnix <= prev_end_time AND MetricName = 'gpu.temperature'\n    ), 2) AS temperature_previous,\n\n    round(\n        if(\n            avgIf(Value,\n                TimeUnix >= prev_start_time AND TimeUnix <= prev_end_time AND MetricName = 'gpu.temperature'\n            ) = 0,\n            avgIf(Value,\n                TimeUnix >= start_time AND TimeUnix <= end_time AND MetricName = 'gpu.temperature'\n            ) * 100.0,\n            (\n                avgIf(Value,\n                    TimeUnix >= start_time AND TimeUnix <= end_time AND MetricName = 'gpu.temperature'\n                ) -\n                avgIf(Value,\n                    TimeUnix >= prev_start_time AND TimeUnix <= prev_end_time AND MetricName = 'gpu.temperature'\n                )\n            )\n            /\n            avgIf(Value,\n                TimeUnix >= prev_start_time AND TimeUnix <= prev_end_time AND MetricName = 'gpu.temperature'\n            ) * 100.0\n        ), 2\n    ) AS rate\nFROM otel_metrics_gauge\nWHERE\n    MetricName = 'gpu.temperature'\n    AND TimeUnix >= prev_start_time AND TimeUnix <= end_time\n"
+-      },
+-      "createdAt": "2025-06-27 06:45:31",
+-      "updatedAt": "2025-06-27 06:47:46"
+-    }
+-  },
+-  "tags": "[\"gpu\"]",
+-  "layouts": {
+-    "lg": [
+-      {
+-        "i": "953b08e7-5158-4806-b52e-8b58880b0cfd",
+-        "x": 2,
+-        "y": 3,
+-        "w": 2,
+-        "h": 2
+-      },
+-      {
+-        "i": "bab582ed-c163-4614-bec5-1b99d1157740",
+-        "x": 0,
+-        "y": 3,
+-        "w": 2,
+-        "h": 2
+-      },
+-      {
+-        "i": "8cd8b0f1-7661-4a0e-ada8-a7718d86700c",
+-        "x": 0,
+-        "y": 1,
+-        "w": 2,
+-        "h": 2
+-      },
+-      {
+-        "i": "0952942c-dd5a-484b-8449-224aef6264a8",
+-        "x": 2,
+-        "y": 0,
+-        "w": 1,
+-        "h": 1
+-      },
+-      {
+-        "i": "c1e14dcc-d345-4201-9468-54cb73356dd4",
+-        "x": 2,
+-        "y": 1,
+-        "w": 2,
+-        "h": 2
+-      },
+-      {
+-        "i": "fefb9f0e-5ee5-497a-b4e0-4e95a79c08c7",
+-        "x": 0,
+-        "y": 5,
+-        "w": 2,
+-        "h": 2
+-      },
+-      {
+-        "i": "74c4fc4b-c062-468d-b35b-8b7ea3aa0cbf",
+-        "x": 3,
+-        "y": 0,
+-        "w": 1,
+-        "h": 1
+-      },
+-      {
+-        "i": "17dda542-b991-455b-b92c-2a3ae74381ea",
+-        "x": 0,
+-        "y": 0,
+-        "w": 1,
+-        "h": 1
+-      },
+-      {
+-        "i": "903d54ac-f41b-4e0c-9c3f-aaa1543c77bc",
+-        "x": 1,
+-        "y": 0,
+-        "w": 1,
+-        "h": 1
+-      }
+-    ]
+-  }
+-}
+\ No newline at end of file
+diff --git a/src/client/src/clickhouse/seed/dashboards.ts b/src/client/src/clickhouse/seed/dashboards.ts
+index da5458b6..76070b0b 100644
+--- a/src/client/src/clickhouse/seed/dashboards.ts
++++ b/src/client/src/clickhouse/seed/dashboards.ts
+@@ -10,7 +10,6 @@ import {
+ } from "@/lib/platform/manage-dashboard/widget";
+ import llmDashboard from "../seed-data/openlit-dashboard-LLM-dashboard-layout.json";
+ import vectorDbDashboard from "../seed-data/openlit-dashboard-Vector-DB-layout.json";
+-import gpuDashboard from "../seed-data/openlit-dashboard-GPU-dashboard-layout.json";
+ import codingAgentsDashboard from "../seed-data/openlit-dashboard-coding-agents-layout.json";
+ import autoDevUsageDashboard from "../seed-data/openlit-dashboard-AutoDev-Usage-layout.json";
+ 
+@@ -34,7 +33,6 @@ const SEEDED_DASHBOARDS: ReadonlyArray<{
+ }> = [
+ 	{ seedTitle: "LLM dashboard", layout: llmDashboard },
+ 	{ seedTitle: "Vector DB", layout: vectorDbDashboard },
+-	{ seedTitle: "GPU dashboard", layout: gpuDashboard },
+ 	{ seedTitle: "Coding Agents", layout: codingAgentsDashboard },
+ 	{ seedTitle: "Usage", layout: autoDevUsageDashboard },
+ ];
+diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
+index de399f82..fbe1aac0 100644
+--- a/src/client/src/constants/messages/en.ts
++++ b/src/client/src/constants/messages/en.ts
+@@ -1227,12 +1227,12 @@ export const GET_STARTED_WITH_VAULT_FEATURE_DETAILS = [
+ 
+ // Getting Started - Tracing
+ export const GET_STARTED_WITH_TRACING = "Get Started with Observability";
+-export const GET_STARTED_WITH_TRACING_DESCRIPTION = "OpenTelemetry-native auto-instrumentation to trace LLMs, agents, vector databases and GPUs with zero-code. Visualize application flow, identify performance bottlenecks, and track errors with detailed stack traces.";
++export const GET_STARTED_WITH_TRACING_DESCRIPTION = "OpenTelemetry-native auto-instrumentation to trace LLMs, agents, and vector databases with zero-code. Visualize application flow, identify performance bottlenecks, and track errors with detailed stack traces.";
+ export const GET_STARTED_WITH_TRACING_FEATURE_DETAILS = [
+ 	{
+ 		icon: "🔍",
+ 		title: "Zero-Code Instrumentation",
+-		description: "Automatically trace LLMs, agents, frameworks, vector databases, and GPUs without modifying your existing code.",
++		description: "Automatically trace LLMs, agents, frameworks, and vector databases without modifying your existing code.",
+ 	},
+ 	{
+ 		icon: "⚡",
+@@ -2680,7 +2680,6 @@ export const MEMORY_COHORTS_TOTAL_EXPOSURES = "Total exposures";
+ export const MEMORY_COHORTS_TOTAL_REPORTS = "Total reports";
+ export const MEMORY_COHORTS_REFRESH = "Refresh";
+ export const MEMORY_COHORTS_ALL_FILTER_VALUE = "All";
+-
+ export const MEMORY_DETAIL_INPUT_EMPTY = "No source messages for this memory.";
+ export const MEMORY_DETAIL_CHANGELOG_EMPTY = "No changelog for this memory.";
+ export const MEMORY_DETAIL_EVENT_ADDED = "Added";
+diff --git a/src/client/src/constants/messages/hi.ts b/src/client/src/constants/messages/hi.ts
+index eb7e035f..35bfbb79 100644
+--- a/src/client/src/constants/messages/hi.ts
++++ b/src/client/src/constants/messages/hi.ts
+@@ -357,12 +357,12 @@ export const GET_STARTED_WITH_VAULT_FEATURE_DETAILS = [
+ 
+ // Getting Started - Tracing
+ export const GET_STARTED_WITH_TRACING = "ऑब्जर्वेबिलिटी के साथ शुरू करें";
+-export const GET_STARTED_WITH_TRACING_DESCRIPTION = "ज़ीरो-कोड के साथ LLM, एजेंट, वेक्टर डेटाबेस और GPU को ट्रेस करने के लिए OpenTelemetry-नेटिव ऑटो-इंस्ट्रूमेंटेशन। एप्लिकेशन फ्लो को विज़ुअलाइज़ करें, परफॉर्मेंस बाधाओं की पहचान करें, और विस्तृत स्टैक ट्रेस के साथ त्रुटियों को ट्रैक करें।";
++export const GET_STARTED_WITH_TRACING_DESCRIPTION = "ज़ीरो-कोड के साथ LLM, एजेंट और वेक्टर डेटाबेस को ट्रेस करने के लिए OpenTelemetry-नेटिव ऑटो-इंस्ट्रूमेंटेशन। एप्लिकेशन फ्लो को विज़ुअलाइज़ करें, परफॉर्मेंस बाधाओं की पहचान करें, और विस्तृत स्टैक ट्रेस के साथ त्रुटियों को ट्रैक करें।";
+ export const GET_STARTED_WITH_TRACING_FEATURE_DETAILS = [
+ 	{
+ 		icon: "🔍",
+ 		title: "ज़ीरो-कोड इंस्ट्रूमेंटेशन",
+-		description: "अपने मौजूदा कोड को संशोधित किए बिना स्वचालित रूप से LLM, एजेंट, फ्रेमवर्क, वेक्टर डेटाबेस और GPU को ट्रेस करें।",
++		description: "अपने मौजूदा कोड को संशोधित किए बिना स्वचालित रूप से LLM, एजेंट, फ्रेमवर्क और वेक्टर डेटाबेस को ट्रेस करें।",
+ 	},
+ 	{
+ 		icon: "⚡",
+diff --git a/src/client/src/helpers/server/platform.ts b/src/client/src/helpers/server/platform.ts
+index f7924442..590370cd 100644
+--- a/src/client/src/helpers/server/platform.ts
++++ b/src/client/src/helpers/server/platform.ts
+@@ -66,22 +66,6 @@ export const validateMetricsRequestType = {
+ 	// Endpoint
+ 	GENERATION_BY_ENDPOINT: "GENERATION_BY_ENDPOINT",
+ 
+-	// GPU
+-	// memory
+-	AVERAGE_MEMORY_USAGE: "AVERAGE_MEMORY_USAGE",
+-	MEMORY_PER_TIME: "MEMORY_PER_TIME",
+-	// temperature
+-	AVERAGE_TEMPERATURE: "AVERAGE_TEMPERATURE",
+-	TEMPERATURE_PER_TIME: "TEMPERATURE_PER_TIME",
+-	// power
+-	AVERAGE_POWER_DRAW: "AVERAGE_POWER_DRAW",
+-	POWER_PER_TIME: "POWER_PER_TIME",
+-	// fanspeed
+-	FANSPEED_PER_TIME: "FANSPEED_PER_TIME",
+-	// utilization
+-	AVERAGE_UTILIZATION: "AVERAGE_UTILIZATION",
+-	UTILIZATION_PER_TIME: "UTILIZATION_PER_TIME",
+-
+ 	// Vectordb
+ 	GENERATION_BY_OPERATION: "GENERATION_BY_OPERATION",
+ 	// system
+@@ -126,19 +110,6 @@ export const validateMetricsRequest = (
+ 		// Endpoint
+ 		case validateMetricsRequestType.GENERATION_BY_ENDPOINT:
+ 
+-		// GPU
+-		// memory
+-		case validateMetricsRequestType.AVERAGE_MEMORY_USAGE:
+-		case validateMetricsRequestType.MEMORY_PER_TIME:
+-		// temperature
+-		case validateMetricsRequestType.AVERAGE_TEMPERATURE:
+-		case validateMetricsRequestType.TEMPERATURE_PER_TIME:
+-		// Power
+-		case validateMetricsRequestType.AVERAGE_POWER_DRAW:
+-		case validateMetricsRequestType.POWER_PER_TIME:
+-		// Fan speed
+-		case validateMetricsRequestType.FANSPEED_PER_TIME:
+-
+ 		// Vectordb
+ 		case validateMetricsRequestType.GENERATION_BY_OPERATION:
+ 		case validateMetricsRequestType.GENERATION_BY_SYSTEM:
+@@ -486,21 +457,6 @@ export const getFilterPreviousParams = (filter: MetricParams) => {
+ 	}
+ };
+ 
+-export const getFilterWhereConditionForGPU = (
+-	filter: FilterWhereConditionType
+-) => {
+-	const whereArray: string[] = [];
+-	try {
+-		const { start, end } = filter.timeLimit || {};
+-		if (start && end) {
+-			whereArray.push(
+-				`TimeUnix >= parseDateTimeBestEffort('${start}') AND TimeUnix <= parseDateTimeBestEffort('${end}')`
+-			);
+-		}
+-	} catch {}
+-	return whereArray.join(" AND ");
+-};
+-
+ export const dateTruncGroupingLogic = (end: Date, start: Date) => {
+ 	let dateTrunc = "day";
+ 	if (differenceInYears(end as Date, start as Date) >= 1) {
+diff --git a/src/client/src/lib/platform/chat/schema-context.ts b/src/client/src/lib/platform/chat/schema-context.ts
+index cb3e2ca9..cdace67a 100644
+--- a/src/client/src/lib/platform/chat/schema-context.ts
++++ b/src/client/src/lib/platform/chat/schema-context.ts
+@@ -245,7 +245,7 @@ Primary table for traces and spans. This is the most commonly queried table.
+ - \`deployment.environment\` — Deployment environment (production, staging, etc.)
+ 
+ ### otel_metrics_gauge
+-Gauge metrics (point-in-time values like GPU temperature, memory usage).
++Gauge metrics (point-in-time numeric measurements).
+ 
+ | Column | Type | Description |
+ |--------|------|-------------|
+diff --git a/src/client/src/lib/platform/common.ts b/src/client/src/lib/platform/common.ts
+index 640865d3..8cc00e60 100644
+--- a/src/client/src/lib/platform/common.ts
++++ b/src/client/src/lib/platform/common.ts
+@@ -13,7 +13,6 @@ import { OPERATION_TYPE } from "@/types/platform";
+ 
+ export const OTEL_TRACES_TABLE_NAME = "otel_traces";
+ export const OTEL_LOGS_TABLE_NAME = "otel_logs";
+-export const OTEL_GPUS_TABLE_NAME = "otel_metrics_gauge";
+ export const OTEL_METRICS_GAUGE_TABLE_NAME = "otel_metrics_gauge";
+ export const OTEL_METRICS_SUM_TABLE_NAME = "otel_metrics_sum";
+ export const OTEL_METRICS_HISTOGRAM_TABLE_NAME = "otel_metrics_histogram";
+@@ -47,21 +46,6 @@ export interface MetricParams {
+ 	environment?: string;
+ }
+ 
+-export type GPU_TYPE_KEY =
+-	| "utilization"
+-	| "enc.utilization"
+-	| "dec.utilization"
+-	| "temperature"
+-	| "fan_speed"
+-	| "memory.available"
+-	| "memory.total"
+-	| "memory.used"
+-	| "memory.free"
+-	| "power.draw"
+-	| "power.limit";
+-
+-export interface GPUMetricParams extends MetricParams { }
+-
+ export type DataCollectorType = { err?: unknown; data?: unknown };
+ type CollectorParams = Partial<
+ 	QueryParams &
+diff --git a/src/client/src/lib/platform/gpu/external.ts b/src/client/src/lib/platform/gpu/external.ts
+deleted file mode 100644
+index a3671200..00000000
+--- a/src/client/src/lib/platform/gpu/external.ts
++++ /dev/null
+@@ -1,211 +0,0 @@
+-/**
+- * External-metrics path for GPU dashboard widgets.
+- * Built-in ClickHouse keeps SQL in sibling modules; this routes through the
+- * metrics signal binding so Prometheus / Mimir / etc. can serve gpu.* gauges.
+- */
+-
+-import type { GPUMetricParams } from "@/lib/platform/common";
+-import { metricParamsToOpenLITQuery } from "@/lib/platform/connectors/datasource/clickhouse/query-map";
+-import type { OpenLITQuery } from "@/lib/platform/connectors/datasource/types";
+-
+-async function resolveExternalMetrics(environment?: string) {
+-	const { getTelemetryAdapter, resolveTelemetrySourceDescriptor } =
+-		await import("@/lib/telemetry-source");
+-	const descriptor = await resolveTelemetrySourceDescriptor({
+-		signal: "metrics",
+-		environment,
+-	});
+-	if (descriptor.isBuiltIn || descriptor.type === "clickhouse") {
+-		return null;
+-	}
+-	const adapter = await getTelemetryAdapter({ signal: "metrics", environment });
+-	return { adapter, descriptor };
+-}
+-
+-function asError(err: unknown): string {
+-	return err instanceof Error ? err.message : String(err);
+-}
+-
+-function gpuMetricQuery(
+-	params: GPUMetricParams,
+-	metricNames: string[],
+-	aggregations?: OpenLITQuery["aggregations"]
+-): OpenLITQuery {
+-	const base = metricParamsToOpenLITQuery(params, "metrics");
+-	return {
+-		...base,
+-		filters: [
+-			...(base.filters || []),
+-			{ target: "spanName", op: "in", value: metricNames },
+-		],
+-		aggregations,
+-	};
+-}
+-
+-function averageOf(rows: Record<string, unknown>[]): number {
+-	const values = rows
+-		.map((row) => Number(row.value ?? row.count ?? 0))
+-		.filter((value) => Number.isFinite(value));
+-	if (values.length === 0) return 0;
+-	return Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 100) / 100;
+-}
+-
+-function bucketByTime(
+-	rows: Record<string, unknown>[],
+-	valueKey: string
+-): Array<Record<string, unknown>> {
+-	const buckets = new Map<string, number[]>();
+-	for (const row of rows) {
+-		const label = String(row.request_time ?? row.timestamp ?? row.label ?? "");
+-		if (!label) continue;
+-		const value = Number(row.value ?? 0);
+-		if (!Number.isFinite(value)) continue;
+-		const list = buckets.get(label) || [];
+-		list.push(value);
+-		buckets.set(label, list);
+-	}
+-	return Array.from(buckets.entries())
+-		.sort(([a], [b]) => a.localeCompare(b))
+-		.map(([request_time, values]) => ({
+-			request_time,
+-			[valueKey]:
+-				Math.round(
+-					(values.reduce((sum, value) => sum + value, 0) / values.length) * 100
+-				) / 100,
+-		}));
+-}
+-
+-async function externalGpuAverage(
+-	params: GPUMetricParams,
+-	metricName: string,
+-	valueKey: string
+-) {
+-	const resolved = await resolveExternalMetrics(params.environment);
+-	if (!resolved) return null;
+-	try {
+-		const frame = await resolved.adapter.metricTimeSeries(
+-			gpuMetricQuery(params, [metricName], [{ fn: "avg", as: valueKey }])
+-		);
+-		return {
+-			err: null,
+-			data: [{ [valueKey]: averageOf(frame.rows as unknown as Record<string, unknown>[]) }],
+-		};
+-	} catch (err) {
+-		return { err: asError(err), data: [] };
+-	}
+-}
+-
+-async function externalGpuSeries(
+-	params: GPUMetricParams,
+-	metricNames: string[],
+-	mapName: (metricName: string) => string
+-) {
+-	const resolved = await resolveExternalMetrics(params.environment);
+-	if (!resolved) return null;
+-	try {
+-		const frame = await resolved.adapter.metricTimeSeries(
+-			gpuMetricQuery(params, metricNames, [{ fn: "avg", as: "value" }])
+-		);
+-		const byTime = new Map<string, Record<string, unknown>>();
+-		for (const row of frame.rows as unknown as Record<string, unknown>[]) {
+-			const request_time = String(
+-				row.request_time ?? row.timestamp ?? row.label ?? ""
+-			);
+-			if (!request_time) continue;
+-			const metricName = String(row.metricName ?? row.__name__ ?? "");
+-			const key = mapName(metricName);
+-			const value = Number(row.value ?? 0);
+-			if (!key || !Number.isFinite(value)) continue;
+-			const bucket = byTime.get(request_time) || { request_time };
+-			bucket[key] = value;
+-			byTime.set(request_time, bucket);
+-		}
+-		return {
+-			err: null,
+-			data: Array.from(byTime.values()).sort((a, b) =>
+-				String(a.request_time).localeCompare(String(b.request_time))
+-			),
+-		};
+-	} catch (err) {
+-		return { err: asError(err), data: [] };
+-	}
+-}
+-
+-export async function externalAverageUtilization(params: GPUMetricParams) {
+-	return externalGpuAverage(params, "gpu.utilization", "utilization");
+-}
+-
+-export async function externalUtilizationParamsPerTime(params: GPUMetricParams) {
+-	return externalGpuSeries(
+-		params,
+-		["gpu.utilization", "gpu.enc.utilization", "gpu.dec.utilization"],
+-		(name) => name.replace(/^gpu\./, "").replaceAll(".", "_")
+-	);
+-}
+-
+-export async function externalAverageTemperature(params: GPUMetricParams) {
+-	return externalGpuAverage(params, "gpu.temperature", "temperature");
+-}
+-
+-export async function externalAverageTemperatureParamsPerTime(
+-	params: GPUMetricParams
+-) {
+-	const resolved = await resolveExternalMetrics(params.environment);
+-	if (!resolved) return null;
+-	try {
+-		const frame = await resolved.adapter.metricTimeSeries(
+-			gpuMetricQuery(params, ["gpu.temperature"], [{ fn: "avg", as: "temperature" }])
+-		);
+-		return {
+-			err: null,
+-			data: bucketByTime(frame.rows as unknown as Record<string, unknown>[], "temperature"),
+-		};
+-	} catch (err) {
+-		return { err: asError(err), data: [] };
+-	}
+-}
+-
+-export async function externalAveragePowerDraw(params: GPUMetricParams) {
+-	return externalGpuAverage(params, "gpu.power.draw", "power_draw");
+-}
+-
+-export async function externalPowerParamsPerTime(params: GPUMetricParams) {
+-	return externalGpuSeries(
+-		params,
+-		["gpu.power.draw", "gpu.power.limit"],
+-		(name) => name.replace(/^gpu\./, "").replaceAll(".", "_")
+-	);
+-}
+-
+-export async function externalAverageMemoryUsage(params: GPUMetricParams) {
+-	return externalGpuAverage(params, "gpu.memory.used", "memory_used");
+-}
+-
+-export async function externalMemoryParamsPerTime(params: GPUMetricParams) {
+-	return externalGpuSeries(
+-		params,
+-		[
+-			"gpu.memory.available",
+-			"gpu.memory.total",
+-			"gpu.memory.used",
+-			"gpu.memory.free",
+-		],
+-		(name) => name.replace(/^gpu\./, "").replaceAll(".", "_")
+-	);
+-}
+-
+-export async function externalFanspeedParamsPerTime(params: GPUMetricParams) {
+-	const resolved = await resolveExternalMetrics(params.environment);
+-	if (!resolved) return null;
+-	try {
+-		const frame = await resolved.adapter.metricTimeSeries(
+-			gpuMetricQuery(params, ["gpu.fan_speed"], [{ fn: "avg", as: "fan_speed" }])
+-		);
+-		return {
+-			err: null,
+-			data: bucketByTime(frame.rows as unknown as Record<string, unknown>[], "fan_speed"),
+-		};
+-	} catch (err) {
+-		return { err: asError(err), data: [] };
+-	}
+-}
+diff --git a/src/client/src/lib/platform/gpu/fanspeed.ts b/src/client/src/lib/platform/gpu/fanspeed.ts
+deleted file mode 100644
+index fd7324ae..00000000
+--- a/src/client/src/lib/platform/gpu/fanspeed.ts
++++ /dev/null
+@@ -1,34 +0,0 @@
+-import {
+-	dateTruncGroupingLogic,
+-	getFilterWhereConditionForGPU,
+-} from "@/helpers/server/platform";
+-import {
+-	dataCollector,
+-	OTEL_GPUS_TABLE_NAME,
+-	GPUMetricParams,
+-} from "../common";
+-import { externalFanspeedParamsPerTime } from "./external";
+-
+-export async function getFanspeedParamsPerTime(params: GPUMetricParams) {
+-	const external = await externalFanspeedParamsPerTime(params);
+-	if (external) return external;
+-
+-	const { start, end } = params.timeLimit;
+-	const dateTrunc = dateTruncGroupingLogic(end as Date, start as Date);
+-
+-	const query = `
+-		SELECT
+-				ROUND(AVG(Value), 2) AS fan_speed,
+-				formatDateTime(DATE_TRUNC('${dateTrunc}', TimeUnix), '%Y/%m/%d %R') AS request_time
+-			FROM
+-					${OTEL_GPUS_TABLE_NAME}
+-			WHERE ${getFilterWhereConditionForGPU(params)} AND MetricName = 'gpu.fan_speed'
+-			GROUP BY
+-				request_time,
+-				MetricName
+-			ORDER BY
+-				request_time;
+-  `;
+-
+-	return dataCollector({ query });
+-}
+diff --git a/src/client/src/lib/platform/gpu/memory.ts b/src/client/src/lib/platform/gpu/memory.ts
+deleted file mode 100644
+index 8602fdc9..00000000
+--- a/src/client/src/lib/platform/gpu/memory.ts
++++ /dev/null
+@@ -1,85 +0,0 @@
+-import {
+-	dateTruncGroupingLogic,
+-	getFilterWhereConditionForGPU,
+-} from "@/helpers/server/platform";
+-import {
+-	dataCollector,
+-	OTEL_GPUS_TABLE_NAME,
+-	GPUMetricParams,
+-} from "../common";
+-import {
+-	externalAverageMemoryUsage,
+-	externalMemoryParamsPerTime,
+-} from "./external";
+-
+-export async function getMemoryParamsPerTime(params: GPUMetricParams) {
+-	const external = await externalMemoryParamsPerTime(params);
+-	if (external) return external;
+-
+-	const keys = [
+-		"memory.available",
+-		"memory.total",
+-		"memory.used",
+-		"memory.free",
+-	];
+-
+-	const { start, end } = params.timeLimit;
+-	const dateTrunc = dateTruncGroupingLogic(end as Date, start as Date);
+-
+-	const query = `
+-		SELECT
+-			${keys
+-				.map(
+-					(type) =>
+-						`MAX(${type.replaceAll(".", "_")}) AS ${type.replaceAll(".", "_")},`
+-				)
+-				.join(" ")}
+-			request_time
+-		FROM (
+-			SELECT
+-				${keys
+-					.map(
+-						(type) =>
+-							`SUM(IF(MetricName = 'gpu.${type}', Value, 0)) AS ${type.replaceAll(
+-								".",
+-								"_"
+-							)},`
+-					)
+-					.join(" ")}
+-				formatDateTime(DATE_TRUNC('${dateTrunc}', TimeUnix), '%Y/%m/%d %R') AS request_time
+-			FROM
+-					${OTEL_GPUS_TABLE_NAME}
+-			WHERE ${getFilterWhereConditionForGPU(params)}
+-			GROUP BY
+-				request_time,
+-				MetricName
+-			ORDER BY
+-				request_time
+-		)
+-		GROUP BY 
+-			request_time 
+-		ORDER BY 
+-			request_time;
+-  `;
+-
+-	return dataCollector({ query });
+-}
+-
+-export async function getAverageMemoryUsage(params: GPUMetricParams) {
+-	const external = await externalAverageMemoryUsage(params);
+-	if (external) return external;
+-
+-	const query = `
+-			SELECT
+-				ROUND(AVG(Value), 2) as memory_used
+-			FROM
+-					${OTEL_GPUS_TABLE_NAME}
+-			WHERE ${getFilterWhereConditionForGPU(
+-				params
+-			)} AND MetricName = 'gpu.memory.used'
+-			GROUP BY
+-				MetricName
+-  `;
+-
+-	return dataCollector({ query });
+-}
+diff --git a/src/client/src/lib/platform/gpu/power.ts b/src/client/src/lib/platform/gpu/power.ts
+deleted file mode 100644
+index d6b4930e..00000000
+--- a/src/client/src/lib/platform/gpu/power.ts
++++ /dev/null
+@@ -1,77 +0,0 @@
+-import {
+-	dateTruncGroupingLogic,
+-	getFilterWhereConditionForGPU,
+-} from "@/helpers/server/platform";
+-import {
+-	GPUMetricParams,
+-	OTEL_GPUS_TABLE_NAME,
+-	dataCollector,
+-} from "../common";
+-import {
+-	externalAveragePowerDraw,
+-	externalPowerParamsPerTime,
+-} from "./external";
+-
+-export async function getAveragePowerDraw(params: GPUMetricParams) {
+-	const external = await externalAveragePowerDraw(params);
+-	if (external) return external;
+-
+-	const query = `
+-			SELECT
+-				ROUND(AVG(Value), 2) as power_draw
+-			FROM
+-					${OTEL_GPUS_TABLE_NAME}
+-			WHERE ${getFilterWhereConditionForGPU(params)} AND MetricName = 'gpu.power.draw'
+-			GROUP BY
+-				MetricName
+-  `;
+-
+-	return dataCollector({ query });
+-}
+-
+-export async function getPowerParamsPerTime(params: GPUMetricParams) {
+-	const external = await externalPowerParamsPerTime(params);
+-	if (external) return external;
+-
+-	const keys = ["power.draw", "power.limit"];
+-	const { start, end } = params.timeLimit;
+-	const dateTrunc = dateTruncGroupingLogic(end as Date, start as Date);
+-
+-	const query = `
+-		SELECT
+-			${keys
+-				.map(
+-					(type) =>
+-						`MAX(${type.replaceAll(".", "_")}) AS ${type.replaceAll(".", "_")},`
+-				)
+-				.join(" ")}
+-			request_time
+-		FROM (
+-			SELECT
+-				${keys
+-					.map(
+-						(type) =>
+-							`ROUND(AVG(IF(MetricName = 'gpu.${type}', Value, 0)), 2) AS ${type.replaceAll(
+-								".",
+-								"_"
+-							)},`
+-					)
+-					.join(" ")}
+-				formatDateTime(DATE_TRUNC('${dateTrunc}', TimeUnix), '%Y/%m/%d %R') AS request_time
+-			FROM
+-					${OTEL_GPUS_TABLE_NAME}
+-			WHERE ${getFilterWhereConditionForGPU(params)}
+-			GROUP BY
+-				request_time,
+-				MetricName
+-			ORDER BY
+-				request_time
+-		)
+-		GROUP BY 
+-			request_time 
+-		ORDER BY 
+-			request_time;
+-  `;
+-
+-	return dataCollector({ query });
+-}
+diff --git a/src/client/src/lib/platform/gpu/temperature.ts b/src/client/src/lib/platform/gpu/temperature.ts
+deleted file mode 100644
+index 5328839b..00000000
+--- a/src/client/src/lib/platform/gpu/temperature.ts
++++ /dev/null
+@@ -1,59 +0,0 @@
+-import {
+-	dateTruncGroupingLogic,
+-	getFilterWhereConditionForGPU,
+-} from "@/helpers/server/platform";
+-import {
+-	GPUMetricParams,
+-	OTEL_GPUS_TABLE_NAME,
+-	dataCollector,
+-} from "../common";
+-import {
+-	externalAverageTemperature,
+-	externalAverageTemperatureParamsPerTime,
+-} from "./external";
+-
+-export async function getAverageTemperature(params: GPUMetricParams) {
+-	const external = await externalAverageTemperature(params);
+-	if (external) return external;
+-
+-	const query = `
+-			SELECT
+-				ROUND(AVG(Value), 2) as temperature
+-			FROM
+-					${OTEL_GPUS_TABLE_NAME}
+-			WHERE ${getFilterWhereConditionForGPU(
+-				params
+-			)} AND MetricName = 'gpu.temperature'
+-			GROUP BY
+-				MetricName
+-  `;
+-
+-	return dataCollector({ query });
+-}
+-
+-export async function getAverageTemperatureParamsPerTime(
+-	params: GPUMetricParams
+-) {
+-	const external = await externalAverageTemperatureParamsPerTime(params);
+-	if (external) return external;
+-
+-	const { start, end } = params.timeLimit;
+-	const dateTrunc = dateTruncGroupingLogic(end as Date, start as Date);
+-
+-	const query = `
+-		SELECT
+-				ROUND(AVG(Value), 2) as temperature,
+-				formatDateTime(DATE_TRUNC('${dateTrunc}', TimeUnix), '%Y/%m/%d %R') AS request_time
+-			FROM
+-					${OTEL_GPUS_TABLE_NAME}
+-			WHERE ${getFilterWhereConditionForGPU(params)}
+-			AND MetricName = 'gpu.temperature'
+-			GROUP BY
+-				request_time,
+-				MetricName
+-			ORDER BY
+-				request_time;
+-  `;
+-
+-	return dataCollector({ query });
+-}
+diff --git a/src/client/src/lib/platform/gpu/utilization.ts b/src/client/src/lib/platform/gpu/utilization.ts
+deleted file mode 100644
+index cf00c6e1..00000000
+--- a/src/client/src/lib/platform/gpu/utilization.ts
++++ /dev/null
+@@ -1,81 +0,0 @@
+-import {
+-	dateTruncGroupingLogic,
+-	getFilterWhereConditionForGPU,
+-} from "@/helpers/server/platform";
+-import {
+-	GPUMetricParams,
+-	OTEL_GPUS_TABLE_NAME,
+-	dataCollector,
+-} from "../common";
+-import {
+-	externalAverageUtilization,
+-	externalUtilizationParamsPerTime,
+-} from "./external";
+-
+-export async function getAverageUtilization(params: GPUMetricParams) {
+-	const external = await externalAverageUtilization(params);
+-	if (external) return external;
+-
+-	const query = `
+-			SELECT
+-				ROUND(AVG(Value), 2) as utilization
+-			FROM
+-					${OTEL_GPUS_TABLE_NAME}
+-			WHERE ${getFilterWhereConditionForGPU(
+-				params
+-			)} AND MetricName = 'gpu.utilization'
+-			GROUP BY
+-				MetricName
+-  `;
+-
+-	return dataCollector({ query });
+-}
+-
+-export async function getUtilizationParamsPerTime(params: GPUMetricParams) {
+-	const external = await externalUtilizationParamsPerTime(params);
+-	if (external) return external;
+-
+-	const keys = ["utilization", "enc.utilization", "dec.utilization"];
+-	const { start, end } = params.timeLimit;
+-	const dateTrunc = dateTruncGroupingLogic(end as Date, start as Date);
+-
+-	const query = `
+-		SELECT
+-			${keys
+-				.map(
+-					(type) =>
+-						`MAX(${type.replaceAll(".", "_")}) AS ${type.replaceAll(".", "_")},`
+-				)
+-				.join(" ")}
+-			request_time
+-		FROM (
+-			SELECT
+-				${keys
+-					.map(
+-						(type) =>
+-							`ROUND(AVG(IF(MetricName = 'gpu.${type}', Value, 0)), 2) AS ${type.replaceAll(
+-								".",
+-								"_"
+-							)},`
+-					)
+-					.join(" ")}
+-				formatDateTime(DATE_TRUNC('${dateTrunc}', TimeUnix), '%Y/%m/%d %R') AS request_time
+-			FROM
+-					${OTEL_GPUS_TABLE_NAME}
+-			WHERE ${getFilterWhereConditionForGPU({
+-				...params,
+-			})}
+-			GROUP BY
+-				request_time,
+-				MetricName
+-			ORDER BY
+-				request_time
+-		)
+-		GROUP BY 
+-			request_time 
+-		ORDER BY 
+-			request_time;
+-  `;
+-
+-	return dataCollector({ query });
+-}
+diff --git a/src/client/src/types/store/page.ts b/src/client/src/types/store/page.ts
+index 9051ea8a..b49cf7ba 100644
+--- a/src/client/src/types/store/page.ts
++++ b/src/client/src/types/store/page.ts
+@@ -1,9 +1,8 @@
+ import { ValueOf } from "@/types/util";
+ 
+-export const DASHBOARD_TYPE_OBJECT: Record<"llm" | "vector" | "gpu", string> = {
++export const DASHBOARD_TYPE_OBJECT: Record<"llm" | "vector", string> = {
+ 	llm: "llm",
+ 	vector: "vector",
+-	gpu: "gpu",
+ };
+ 
+ export type DASHBOARD_TYPE = ValueOf<typeof DASHBOARD_TYPE_OBJECT>;

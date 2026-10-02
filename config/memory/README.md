@@ -118,10 +118,14 @@ provider selection. A bounded JSON-quoted advisory packet is appended to the
 request instructions; tool-result continuations without a new human steer are
 not re-researched. The default verifier requires a source commit in current Git
 history and unchanged cited tracked files; canonical RuleSync skill, command,
-hook, and MCP references resolve to tracked source files. Pull-request revision
-SHAs can establish Git lineage, but the verifier does not query live GitHub
-review/merge status. Missing evidence, stale files, or a storage failure yields
-no packet and does not block the task. Global memory reads are
+hook, and MCP references resolve to tracked source files. A revisionless
+canonical GitHub pull request for the trusted repository may supply its merge
+commit through at most one bounded lookup per research context, but only when
+GitHub reports the PR merged. The commit must still be a local ancestor and
+cited files must remain unchanged. This does not validate reviews/checks, issue
+state, reverts, reopened PRs, or superseding changes. Missing evidence, stale
+files, or a storage failure yields no packet and does not block the task.
+Global memory reads are
 disabled by default; set `AUTODEV_MEMORY_READ_GLOBAL=1` only when the operator
 intends to grant that scope.
 Set `AUTODEV_MEMORY_MODE=disabled` on a separate router process to run a
@@ -198,11 +202,45 @@ router accepts a transcript only when its session/workspace pair was previously
 observed on a trusted request and the resolved file remains inside
 `$CODEX_HOME/sessions`; transcript contents are normalized in memory and are
 not stored, only a digest, bounded metadata, and a `codex://session/...`
-reference. Claude Code, Copilot CLI, Gemini CLI, and other harnesses do not yet
-have automatic native capture hooks. Claude Code's SessionEnd hook is
-best-effort, and its documented `session_id`/`cwd` fields do not establish a
-mapping to an AutoDev Router session or workspace; AutoDev must not trust them
-as caller-selected scope. See the [official Claude Code hook reference](https://code.claude.com/docs/en/hooks)
+reference.
+
+Claude Code SessionEnd capture posts to
+`POST /control/memory/claude-code/capture`, but remains disabled unless an
+operator authors a binding file (default:
+`$CLAUDE_HOME/claude-code-memory.toml`, or `~/.claude/claude-code-memory.toml`).
+Use absolute paths; tilde expansion is not performed. For example:
+
+```toml
+optIn = true
+
+[[workspace]]
+root = "/Users/operator/src/example"
+workspaceId = "workspace-example"
+repositoryId = "owner/example"
+transcriptRoot = "/Users/operator/.claude/projects/-Users-operator-src-example"
+```
+
+Each workspace `transcriptRoot` must resolve to a distinct, non-overlapping
+transcript directory for that workspace; `root` must resolve to the exact
+repository workspace root. Binding disjoint transcript roots per workspace
+prevents a hook from pairing a transcript from one authorized repository with
+another workspace's `cwd`. The
+Control API is the only consumer of this operator-owned file. It requires
+exactly one matching realpath for the hook's `cwd` (subdirectories, ancestors,
+ambiguous roots, and unbound workspaces are rejected) and a transcript
+realpath strictly beneath that workspace's configured transcript root. The
+transcript basename must equal `<session_id>.jsonl`; an unrecognized naming
+scheme fails closed rather than weakening the session-to-transcript check. The hook's session ID only identifies a
+session-scoped task/run/agent; it does not establish a Router session mapping.
+The captured outcome is always `unknown` absent a separate trusted task report.
+Transcript contents are normalized in memory and are not persisted; only a
+digest, bounded metadata, and a `claude-code://session/...` reference are
+retained. Capture is best-effort and fails closed without an opted-in binding.
+The shared hook uses actor `autodev-local`; if Control API actor allowlists are
+configured, include it in `AUTODEV_CONTROL_OPERATORS`.
+
+Copilot CLI, Gemini CLI, and other harnesses remain manually importable only.
+See the [official Claude Code hook reference](https://code.claude.com/docs/en/hooks)
 and the [memory injection/outcome evaluation notes](../../docs/memory-injection-outcome-evaluation.md).
 The installed Runtime hook file is now materialized and executed in an isolated
 CODEX_HOME test against a local Control API stub; actual Codex desktop hook

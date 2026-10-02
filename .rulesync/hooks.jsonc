@@ -45,5 +45,16 @@
         }
       ]
     }
+  },
+  "claudecode": {
+    "hooks": {
+      "SessionEnd": [
+        {
+          "type": "command",
+          "command": "AUTODEV_MEMORY_HOOK_PROVIDER=claude-code node ~/.codex/src/hooks/memory-session-end.ts",
+          "timeout": 60
+        }
+      ]
+    }
   }
 }

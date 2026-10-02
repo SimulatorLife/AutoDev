@@ -51,6 +51,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/router/responses.ts",
   "runtime/src/router/memory-injection.ts",
   "runtime/src/control-api/memory.ts",
+  "runtime/src/control-api/claude-code-binding.ts",
   "runtime/src/control-api/body.ts",
   "runtime/src/router/memory-reconstruction.ts",
   "runtime/src/router/memory-embedding.ts",

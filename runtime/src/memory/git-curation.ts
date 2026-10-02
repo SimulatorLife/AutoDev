@@ -20,8 +20,22 @@ const COMMIT_PATTERN = /^[0-9a-f]{7,64}$/i;
 const COMMIT_URI_PATTERN = /\/commit\/([0-9a-f]{7,64})(?:$|[/?#])/i;
 const NON_FILE_URI_SCHEME_PATTERN = /^[a-z][a-z\d+.-]*:/i;
 const RULESYNC_SKILL_NAME_PATTERN = /^[a-z0-9-]{1,64}$/u;
+const GITHUB_REPOSITORY_SEGMENT_PATTERN = /^[A-Za-z0-9_.-]{1,100}$/u;
+const GITHUB_PULL_REQUEST_NUMBER_PATTERN = /^[1-9]\d{0,9}$/u;
 const GIT_TIMEOUT_MS = 2000;
 const GIT_MAX_BUFFER_BYTES = 512 * 1024;
+const GITHUB_LOOKUPS_PER_CONTEXT = 1;
+
+interface GitHubPullRequestLocator {
+  readonly owner: string;
+  readonly repository: string;
+  readonly number: number;
+}
+
+interface PullRequestLookupState {
+  lookups: number;
+  readonly revisions: Map<string, Promise<string | null>>;
+}
 
 export interface MemoryRepositoryRootResolver {
   /** Resolves a repository from trusted runtime metadata, never a tool argument. */
@@ -30,10 +44,10 @@ export interface MemoryRepositoryRootResolver {
 
 /**
  * Conservative current-state validation for memories grounded in Git files.
- * It only marks a claim compatible when its source commit is an ancestor of
- * current HEAD and every cited file is byte-for-byte unchanged in the current
- * working tree. Anything without that evidence remains unknown and cannot be
- * injected by MemoryService.
+ * A revisionless same-repository GitHub PR may supply its merge commit through
+ * one bounded `gh api` lookup per research context, but Git ancestry and exact
+ * cited-file identity remain mandatory. Missing Git/PR evidence or an
+ * unavailable status lookup stays unknown and cannot authorize injection.
  */
 interface GitRepositorySnapshot {
   readonly root: string;
@@ -43,17 +57,32 @@ interface GitRepositorySnapshot {
 export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier {
   private readonly repositories: MemoryRepositoryRootResolver;
   private readonly now: () => string;
+  private readonly pullRequestMergeCommit: (
+    repositoryId: string,
+    uri: string
+  ) => Promise<string | null>;
   private readonly snapshots = new WeakMap<
     MemoryReadContext,
     Promise<GitRepositorySnapshot | null>
+  >();
+  private readonly pullRequestLookups = new WeakMap<
+    MemoryReadContext,
+    PullRequestLookupState
   >();
 
   constructor(options: {
     readonly repositories: MemoryRepositoryRootResolver;
     readonly now?: () => string;
+    /** Substitutable only for hermetic tests; production uses the GitHub CLI. */
+    readonly pullRequestMergeCommit?: (
+      repositoryId: string,
+      uri: string
+    ) => Promise<string | null>;
   }) {
     this.repositories = options.repositories;
     this.now = options.now ?? (() => new Date().toISOString());
+    this.pullRequestMergeCommit =
+      options.pullRequestMergeCommit ?? githubMergedPullRequestCommit;
   }
 
   async verify(input: {
@@ -72,11 +101,31 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
       return unknownAssessment(checkedAt, "verification_inconclusive");
     }
     const { root: repositoryRoot, head: currentCommit } = snapshot;
-    const sourceCommit = sourceCommitFrom(input.memory.provenance.evidence);
-    const citedFiles = citedRepositoryFiles(
-      repositoryRoot,
-      input.memory.provenance.evidence
-    );
+    const evidence = input.memory.provenance.evidence;
+    let sourceCommit = sourceCommitFrom(evidence);
+    let resolvedPullRequest: EvidenceReference | null = null;
+    if (!sourceCommit) {
+      const pullRequest = evidence.find(
+        (reference) =>
+          reference.kind === "pull_request" &&
+          parseGitHubPullRequestLocator(
+            reference.uri,
+            input.context.repositoryId!
+          ) !== null
+      );
+      if (pullRequest) {
+        const mergeCommit = await this.pullRequestMergeCommitForContext(
+          input.context,
+          input.context.repositoryId,
+          pullRequest.uri
+        );
+        if (mergeCommit) {
+          sourceCommit = mergeCommit;
+          resolvedPullRequest = pullRequest;
+        }
+      }
+    }
+    const citedFiles = citedRepositoryFiles(repositoryRoot, evidence);
     if (!sourceCommit || citedFiles.length === 0) {
       return unknownAssessment(checkedAt, "verification_inconclusive");
     }
@@ -140,6 +189,15 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
           revision: currentCommit,
           observedAt: checkedAt
         },
+        ...(resolvedPullRequest && sourceCommit
+          ? [
+              {
+                ...resolvedPullRequest,
+                revision: sourceCommit,
+                observedAt: checkedAt
+              }
+            ]
+          : []),
         ...citedFiles.map(({ reference }) => ({
           ...reference,
           revision: currentCommit,
@@ -147,6 +205,41 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
         }))
       ]
     };
+  }
+
+  /**
+   * Resolve at most one revisionless GitHub PR per research context. The
+   * ranked JIT candidate order determines which PR is consulted first; failed
+   * or unavailable lookups remain unknown rather than authorizing a claim.
+   */
+  private pullRequestMergeCommitForContext(
+    context: MemoryReadContext,
+    repositoryId: string,
+    uri: string
+  ): Promise<string | null> {
+    const locator = parseGitHubPullRequestLocator(uri, repositoryId);
+    if (!locator) return Promise.resolve(null);
+    let state = this.pullRequestLookups.get(context);
+    if (!state) {
+      state = { lookups: 0, revisions: new Map() };
+      this.pullRequestLookups.set(context, state);
+    }
+    const lookupKey = `${locator.owner}/${locator.repository}#${locator.number}`;
+    const cached = state.revisions.get(lookupKey);
+    if (cached) return cached;
+    if (state.lookups >= GITHUB_LOOKUPS_PER_CONTEXT)
+      return Promise.resolve(null);
+    state.lookups += 1;
+    const lookup = Promise.resolve()
+      .then(() => this.pullRequestMergeCommit(repositoryId, uri))
+      .then((revision) =>
+        typeof revision === "string" && COMMIT_PATTERN.test(revision)
+          ? revision.toLowerCase()
+          : null
+      )
+      .catch(() => null);
+    state.revisions.set(lookupKey, lookup);
+    return lookup;
   }
 
   private repositorySnapshot(
@@ -214,6 +307,108 @@ function sourceCommitFrom(
     if (candidate && COMMIT_PATTERN.test(candidate)) return candidate;
   }
   return null;
+}
+
+/**
+ * Restrict live PR lookups to a canonical GitHub PR for the trusted current
+ * repository. Memory evidence can never select an arbitrary host or project.
+ */
+function parseGitHubPullRequestLocator(
+  uri: string,
+  repositoryId: string
+): GitHubPullRequestLocator | null {
+  try {
+    const parsed = new URL(uri);
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.hostname.toLowerCase() !== "github.com" ||
+      parsed.port ||
+      parsed.username ||
+      parsed.password ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      return null;
+    }
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    if (
+      segments.length !== 4 ||
+      segments[2] !== "pull" ||
+      !GITHUB_REPOSITORY_SEGMENT_PATTERN.test(segments[0]!) ||
+      !GITHUB_REPOSITORY_SEGMENT_PATTERN.test(segments[1]!) ||
+      !GITHUB_PULL_REQUEST_NUMBER_PATTERN.test(segments[3]!) ||
+      `${segments[0]}/${segments[1]}`.toLowerCase() !==
+        repositoryId.trim().toLowerCase()
+    ) {
+      return null;
+    }
+    const number = Number(segments[3]);
+    if (!Number.isSafeInteger(number)) return null;
+    return { owner: segments[0]!, repository: segments[1]!, number };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pass only the environment required for GitHub CLI configuration and auth.
+ * The Runtime process may contain unrelated provider/control-plane secrets;
+ * none of those need to cross into the child process.
+ */
+function githubCliEnvironment(): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+  for (const key of [
+    "PATH",
+    "HOME",
+    "XDG_CONFIG_HOME",
+    "GH_CONFIG_DIR",
+    "GH_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_TOKEN",
+    "TMPDIR",
+    "TMP",
+    "TEMP"
+  ]) {
+    const value = process.env[key];
+    if (value !== undefined) environment[key] = value;
+  }
+  environment.GH_HOST = "github.com";
+  environment.GH_PROMPT_DISABLED = "1";
+  environment.GH_NO_UPDATE_NOTIFIER = "1";
+  return environment;
+}
+
+/** Resolve a PR commit only when GitHub reports that PR as merged. */
+async function githubMergedPullRequestCommit(
+  repositoryId: string,
+  uri: string
+): Promise<string | null> {
+  const locator = parseGitHubPullRequestLocator(uri, repositoryId);
+  if (!locator) return null;
+  const endpoint = `repos/${locator.owner}/${locator.repository}/pulls/${locator.number}`;
+  try {
+    const result = await execFileAsync(
+      "gh",
+      [
+        "api",
+        endpoint,
+        "--jq",
+        "if .merged == true then (.merge_commit_sha // empty) else empty end"
+      ],
+      {
+        timeout: GIT_TIMEOUT_MS,
+        maxBuffer: 1024,
+        env: githubCliEnvironment()
+      }
+    );
+    const revision = result.stdout.trim();
+    return COMMIT_PATTERN.test(revision) ? revision.toLowerCase() : null;
+  } catch {
+    // Missing gh, unavailable credentials/network, private-repo access, and
+    // API failures remain inconclusive; Git validation fails closed without
+    // allowing a PR URL to authorize memory by itself.
+    return null;
+  }
 }
 
 function citedRepositoryFiles(

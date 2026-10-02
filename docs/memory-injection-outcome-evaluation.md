@@ -87,11 +87,14 @@ Filtering on a report or outcome category naturally selects reported cells only.
 The retained OpenLIT Memory page includes an AutoDev-only "Outcome cohorts"
 table on the same server-side Control API proxy. It renders bounded counts and
 explicit unreported cells without converting them to rates or claiming
-downstream use. The 14-patch series applies to pinned OpenLIT; six focused cohort/reporting
-Jest suites pass (50/50) and the full client typecheck passes. A local arm64
-image has been built for all 14 patches. The running OpenLIT container remains
-on its previous image, so deployed UI and Control API-connected browser
-verification are pending.
+downstream use. The tested 17-patch prefix applies to pinned OpenLIT; seven focused upstream
+Jest suites pass (66/66) and the patched client typecheck passes. Patch 18
+removes Controller/OpAMP and discovery while retaining the authenticated
+first-party OTLP receiver; the full 18-patch series applies, but p18 client
+typecheck, image build, and receiver runtime acceptance remain pending. A local
+p17 arm64 image tag exists without provenance in the standard lock; the lock
+and running OpenLIT container remain on p14, so deployed UI and Control
+API-connected browser verification are pending.
 
 ## Correlation limits
 

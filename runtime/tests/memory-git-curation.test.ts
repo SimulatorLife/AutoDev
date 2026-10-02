@@ -1,8 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
@@ -139,6 +146,7 @@ test("Git verifier retains evidence when the cited commit is ancestral and cited
 
 test("Git verifier uses a pull-request revision only as commit-lineage evidence", async () => {
   await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    let pullRequestLookups = 0;
     const fileEvidence: EvidenceReference = {
       kind: "file",
       uri: pathToFileURL(filePath).href,
@@ -150,7 +158,11 @@ test("Git verifier uses a pull-request revision only as commit-lineage evidence"
       revision: sourceCommit
     };
     const verifier = new GitWorkingTreeMemoryVerifier({
-      repositories: { resolve: async () => root }
+      repositories: { resolve: async () => root },
+      pullRequestMergeCommit: async () => {
+        pullRequestLookups += 1;
+        return sourceCommit;
+      }
     });
 
     const assessment = await verifier.verify({
@@ -167,6 +179,11 @@ test("Git verifier uses a pull-request revision only as commit-lineage evidence"
         (reference) =>
           reference.kind === "commit" && reference.revision === sourceCommit
       )
+    );
+    assert.equal(
+      pullRequestLookups,
+      0,
+      "an explicit source revision does not trigger live GitHub lookup"
     );
   });
 });
@@ -402,5 +419,232 @@ test("Git verifier validates canonical RuleSync command references against curre
       asOf: "2026-10-01T12:00:00.000Z"
     });
     assert.equal(untracked.compatibility, "unknown");
+  });
+});
+
+test("Git verifier resolves a revisionless same-repository PR only through its merged commit", async () => {
+  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    let lookups = 0;
+    const pullRequestEvidence: EvidenceReference = {
+      kind: "pull_request",
+      uri: "https://github.com/owner/repo/pull/42"
+    };
+    const fileEvidence: EvidenceReference = {
+      kind: "file",
+      uri: pathToFileURL(filePath).href
+    };
+    const verifier = new GitWorkingTreeMemoryVerifier({
+      repositories: { resolve: async () => root },
+      pullRequestMergeCommit: async (repositoryId, uri) => {
+        lookups += 1;
+        assert.equal(repositoryId, "owner/repo");
+        assert.equal(uri, pullRequestEvidence.uri);
+        // The production resolver returns a SHA only for a merged PR.
+        return sourceCommit;
+      }
+    });
+
+    const assessment = await verifier.verify({
+      memory: recordWithEvidence([pullRequestEvidence, fileEvidence]),
+      task: "Use the merged feature behavior.",
+      context,
+      asOf: "2026-10-01T12:00:00.000Z"
+    });
+
+    assert.equal(assessment.compatibility, "compatible");
+    assert.equal(lookups, 1);
+    assert.ok(
+      assessment.evidence.some(
+        (reference) =>
+          reference.kind === "pull_request" &&
+          reference.uri === pullRequestEvidence.uri &&
+          reference.revision === sourceCommit
+      ),
+      "the resolved merge revision remains visible as provenance"
+    );
+  });
+});
+
+test("Git verifier keeps unmerged and foreign-repository PR references inconclusive", async () => {
+  await withGitRepository(async ({ root, filePath }) => {
+    let lookups = 0;
+    const fileEvidence: EvidenceReference = {
+      kind: "file",
+      uri: pathToFileURL(filePath).href
+    };
+    const verifier = new GitWorkingTreeMemoryVerifier({
+      repositories: { resolve: async () => root },
+      pullRequestMergeCommit: async () => {
+        lookups += 1;
+        return null;
+      }
+    });
+
+    const openAssessment = await verifier.verify({
+      memory: recordWithEvidence([
+        { kind: "pull_request", uri: "https://github.com/owner/repo/pull/43" },
+        fileEvidence
+      ]),
+      task: "Use a proposed feature.",
+      context,
+      asOf: "2026-10-01T12:00:00.000Z"
+    });
+    assert.equal(openAssessment.compatibility, "unknown");
+    assert.equal(lookups, 1);
+
+    const foreignAssessment = await verifier.verify({
+      memory: recordWithEvidence([
+        {
+          kind: "pull_request",
+          uri: "https://github.com/attacker/other/pull/9"
+        },
+        fileEvidence
+      ]),
+      task: "Use unrelated history.",
+      context: { ...context, runId: "other-run" },
+      asOf: "2026-10-01T12:00:00.000Z"
+    });
+    assert.equal(foreignAssessment.compatibility, "unknown");
+    assert.equal(lookups, 1, "foreign refs must not trigger an API lookup");
+  });
+});
+
+test("Git verifier caps live PR lookups at one per research context", async () => {
+  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    let lookups = 0;
+    const verifier = new GitWorkingTreeMemoryVerifier({
+      repositories: { resolve: async () => root },
+      pullRequestMergeCommit: async () => {
+        lookups += 1;
+        return sourceCommit;
+      }
+    });
+    const fileEvidence: EvidenceReference = {
+      kind: "file",
+      uri: pathToFileURL(filePath).href
+    };
+
+    const first = await verifier.verify({
+      memory: recordWithEvidence([
+        { kind: "pull_request", uri: "https://github.com/owner/repo/pull/50" },
+        fileEvidence
+      ]),
+      task: "Apply one reviewed change.",
+      context,
+      asOf: "2026-10-01T12:00:00.000Z"
+    });
+    const second = await verifier.verify({
+      memory: recordWithEvidence([
+        { kind: "pull_request", uri: "https://github.com/owner/repo/pull/51" },
+        fileEvidence
+      ]),
+      task: "Apply another reviewed change.",
+      context,
+      asOf: "2026-10-01T12:00:00.000Z"
+    });
+
+    assert.equal(first.compatibility, "compatible");
+    assert.equal(second.compatibility, "unknown");
+    assert.equal(lookups, 1);
+  });
+});
+
+test("Git verifier caps concurrent PR lookups at one per research context", async () => {
+  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    let lookups = 0;
+    const verifier = new GitWorkingTreeMemoryVerifier({
+      repositories: { resolve: async () => root },
+      pullRequestMergeCommit: async () => {
+        lookups += 1;
+        return sourceCommit;
+      }
+    });
+    const fileEvidence: EvidenceReference = {
+      kind: "file",
+      uri: pathToFileURL(filePath).href
+    };
+    const verifyPr = (number: number) =>
+      verifier.verify({
+        memory: recordWithEvidence([
+          {
+            kind: "pull_request",
+            uri: `https://github.com/owner/repo/pull/${number}`
+          },
+          fileEvidence
+        ]),
+        task: `Apply PR ${number}.`,
+        context,
+        asOf: "2026-10-01T12:00:00.000Z"
+      });
+
+    const assessments = await Promise.all([verifyPr(60), verifyPr(61)]);
+
+    assert.equal(lookups, 1);
+    assert.deepEqual(
+      assessments.map((assessment) => assessment.compatibility).sort(),
+      ["compatible", "unknown"]
+    );
+  });
+});
+
+test("GitHub CLI resolver queries only the same-repository merged-commit endpoint", async () => {
+  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    const temporary = await mkdtemp(join(tmpdir(), "autodev-memory-fake-gh-"));
+    const previousPath = process.env.PATH;
+    const previousTmpDir = process.env.TMPDIR;
+    const previousSecret = process.env.AUTODEV_MEMORY_TEST_SECRET;
+    try {
+      const ghPath = join(temporary, "gh");
+      const argsPath = join(temporary, "args.txt");
+      const hostPath = join(temporary, "host.txt");
+      const secretPath = join(temporary, "secret.txt");
+      const mergeCommitPath = join(temporary, "merge-commit.txt");
+      await writeFile(mergeCommitPath, `${sourceCommit}\n`, "utf8");
+      const fakeGitHubCli = String.raw`#!/bin/sh
+printf '%s\n' "$*" > "$TMPDIR/args.txt"
+printf '%s\n' "$GH_HOST" > "$TMPDIR/host.txt"
+printf '%s\n' "$AUTODEV_MEMORY_TEST_SECRET" > "$TMPDIR/secret.txt"
+cat "$TMPDIR/merge-commit.txt"
+`;
+      await writeFile(ghPath, fakeGitHubCli, { mode: 0o700 });
+      await chmod(ghPath, 0o700);
+      process.env.PATH = `${temporary}${delimiter}${previousPath ?? ""}`;
+      process.env.TMPDIR = temporary;
+      process.env.AUTODEV_MEMORY_TEST_SECRET = "must-not-be-inherited";
+
+      const verifier = new GitWorkingTreeMemoryVerifier({
+        repositories: { resolve: async () => root }
+      });
+      const assessment = await verifier.verify({
+        memory: recordWithEvidence([
+          {
+            kind: "pull_request",
+            uri: "https://github.com/owner/repo/pull/52"
+          },
+          { kind: "file", uri: pathToFileURL(filePath).href }
+        ]),
+        task: "Use the merged change after verifying current files.",
+        context: { ...context },
+        asOf: "2026-10-01T12:00:00.000Z"
+      });
+
+      assert.equal(assessment.compatibility, "compatible");
+      assert.match(
+        await readFile(argsPath, "utf8"),
+        /repos\/owner\/repo\/pulls\/52/u
+      );
+      assert.match(await readFile(argsPath, "utf8"), /\.merged == true/u);
+      assert.equal((await readFile(hostPath, "utf8")).trim(), "github.com");
+      assert.equal((await readFile(secretPath, "utf8")).trim(), "");
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      if (previousTmpDir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previousTmpDir;
+      if (previousSecret === undefined)
+        delete process.env.AUTODEV_MEMORY_TEST_SECRET;
+      else process.env.AUTODEV_MEMORY_TEST_SECRET = previousSecret;
+      await rm(temporary, { recursive: true, force: true });
+    }
   });
 });

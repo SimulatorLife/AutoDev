@@ -1,0 +1,283 @@
+diff --git a/src/Dockerfile b/src/Dockerfile
+index 7666c3b2..9ea27450 100644
+--- a/src/Dockerfile
++++ b/src/Dockerfile
+@@ -23,28 +23,13 @@ ENV PRISMA_CLI_BINARY_TARGETS=linux-musl-openssl-3.0.x,linux-musl-arm64-openssl-
+ RUN npm install && npx prisma generate && npm run build
+ 
+ 
+-# Opamp server build from source - pinned with digest
+-FROM golang:1.25-alpine@sha256:8e02eb337d9e0ea459e041f1ee5eece41cbb61f1d83e7d883a3e2fb4862063fa AS go-builder
+-
+-# Set working directory for opamp-server
+-WORKDIR /app/opamp-server
+-
+-# Copy the rest of the opamp-server source code
+-COPY ./opamp-server/ ./
+-
+-# Build the opamp-server binary
+-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o opamp-server .
+-
+-
+ # OpenTelemetry Collector Contrib download - pinned with digest
+ FROM alpine:3.21@sha256:c3f8e73fdb79deaebaa2037150150191b9dcbfba68b4a46d70103204c53f4709 AS otel-downloader
+ 
+ # Accept build arguments (TARGETARCH is automatically provided by Docker buildx)
+ # Default to amd64 if not specified (most common architecture)
+ ARG OTEL_VERSION=v0.142.0
+-ARG OPAMP_SUPERVISOR_VERSION=v0.142.0
+ ARG TARGETARCH=amd64
+-ARG TARGETPLATFORM
+ 
+ # Install curl and file utilities for downloading binaries and verification
+ RUN apk add --no-cache curl file
+@@ -52,10 +37,10 @@ RUN apk add --no-cache curl file
+ # Set working directory
+ WORKDIR /tmp
+ 
+-# Download OpenTelemetry Collector Contrib and OpAMP Supervisor.
++# Download only OpenTelemetry Collector Contrib, the existing first-party OTLP receiver.
+ # GitHub release-assets occasionally 504 on specific blobs; fall back to the
+-# matching .deb when needed (binaries at usr/bin/*).
+-RUN echo "Downloading binaries for architecture: ${TARGETARCH}" && \
++# matching .deb when needed (binary at usr/bin/otelcol-contrib).
++RUN echo "Downloading OpenTelemetry Collector for architecture: ${TARGETARCH}" && \
+     OTEL_TAR="otelcol-contrib_${OTEL_VERSION#v}_linux_${TARGETARCH}.tar.gz" && \
+     OTEL_BASE="https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/${OTEL_VERSION}" && \
+     if curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "${OTEL_TAR}" "${OTEL_BASE}/${OTEL_TAR}"; then \
+@@ -70,40 +55,13 @@ RUN echo "Downloading binaries for architecture: ${TARGETARCH}" && \
+       rm -rf "${OTEL_DEB}" otel-deb; \
+     fi && \
+     chmod +x otelcol-contrib && \
+-    echo "otelcol-contrib binary info:" && file otelcol-contrib && \
+-    OPAMP_BASE="https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/cmd%2Fopampsupervisor%2F${OPAMP_SUPERVISOR_VERSION}" && \
+-    OPAMP_BIN="opampsupervisor_${OPAMP_SUPERVISOR_VERSION#v}_linux_${TARGETARCH}" && \
+-    if curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o opampsupervisor "${OPAMP_BASE}/${OPAMP_BIN}"; then \
+-      true; \
+-    else \
+-      echo "opampsupervisor binary unavailable, falling back to .deb" && \
+-      OPAMP_DEB="opampsupervisor_${OPAMP_SUPERVISOR_VERSION#v}_linux_${TARGETARCH}.deb" && \
+-      curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "${OPAMP_DEB}" "${OPAMP_BASE}/${OPAMP_DEB}" && \
+-      (command -v dpkg-deb >/dev/null || apk add --no-cache dpkg) && \
+-      dpkg-deb -x "${OPAMP_DEB}" opamp-deb && \
+-      mv opamp-deb/usr/bin/opampsupervisor ./opampsupervisor && \
+-      rm -rf "${OPAMP_DEB}" opamp-deb; \
+-    fi && \
+-    chmod +x opampsupervisor && \
+-    echo "opampsupervisor binary info:" && file opampsupervisor
++    echo "otelcol-contrib binary info:" && file otelcol-contrib
+ 
+ 
+ # Final runtime image - Node 20 on Debian bookworm (bullseye-security
+ # package indexes now 404 openssl 1.1.1w updates required by bullseye-slim)
+ FROM node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
+ 
+-# Accept build arguments to pass version and architecture info
+-# TARGETARCH is automatically provided by Docker buildx based on --platform
+-# Default to amd64 if not specified (must match otel-downloader stage)
+-ARG OPAMP_SUPERVISOR_VERSION=v0.142.0
+-ARG TARGETARCH=amd64
+-ARG TARGETPLATFORM
+-
+-
+-# Set as environment variables for use by scripts
+-ENV OPAMP_SUPERVISOR_VERSION=${OPAMP_SUPERVISOR_VERSION}
+-ENV TARGETARCH=${TARGETARCH}
+-
+ # Install only the additional runtime dependencies needed.
+ # Skip Valid-Until so a briefly stale security index cannot fail the image build.
+ RUN apt-get update -o Acquire::Check-Valid-Until=false && apt-get install -y --no-install-recommends \
+@@ -130,27 +88,9 @@ COPY --from=builder /app/client/node_modules/@prisma ./node_modules/@prisma
+ COPY --from=builder /app/client/node_modules/.bin ./node_modules/.bin
+ COPY --from=builder /app/client/node_modules/prisma ./node_modules/prisma
+ 
+-# Copy the built opamp-server binary from go-builder stage
+-COPY --from=go-builder /app/opamp-server/opamp-server /app/opamp/opamp-server
+-COPY --from=go-builder /app/opamp-server/certs /app/opamp/certs
+-COPY --from=go-builder /app/opamp-server/setup-supervisor.sh /app/opamp/setup-supervisor.sh
+-
+-# Copy OpenTelemetry Collector and OpAMP Supervisor binaries
+-# Place otelcol-contrib at the path expected by supervisor configuration file
+-COPY --from=otel-downloader /tmp/otelcol-contrib /app/opamp/otelcontribcol
+-COPY --from=otel-downloader /tmp/opampsupervisor /app/opamp/opampsupervisor
+-
+-# Verify binary architectures match runtime
+-RUN apt-get update -o Acquire::Check-Valid-Until=false && apt-get install -y --no-install-recommends file && \
+-    echo "Verifying binary architectures..." && \
+-    echo "Runtime architecture: $(uname -m)" && \
+-    echo "otelcontribcol:" && file /app/opamp/otelcontribcol && \
+-    echo "opampsupervisor:" && file /app/opamp/opampsupervisor && \
+-    rm -rf /var/lib/apt/lists/*
+-
+-# Execute entrypoint script to generate NextAuth.js secret and run commands
+-RUN chmod +x ./scripts/entrypoint.sh /app/opamp/otelcontribcol /app/opamp/opampsupervisor /app/opamp/opamp-server /app/opamp/setup-supervisor.sh
+-RUN chmod -R u=rwX,go= /app/opamp/certs
++# Copy OpenLIT's bundled first-party OTLP receiver; no OpAMP or sidecar is shipped.
++COPY --from=otel-downloader /tmp/otelcol-contrib /app/otel/otelcol-contrib
++RUN test -x /app/otel/otelcol-contrib && chmod +x ./scripts/entrypoint.sh
+ 
+ # Expose the port that Next.js will run on
+ EXPOSE ${DOCKER_PORT:-3000}
+diff --git a/src/client/scripts/entrypoint.sh b/src/client/scripts/entrypoint.sh
+index 128efc52..dfe21f4f 100755
+--- a/src/client/scripts/entrypoint.sh
++++ b/src/client/scripts/entrypoint.sh
+@@ -77,21 +77,12 @@ prisma db seed
+ # Run crond in the background
+ service cron start
+ 
+-# Start the OpenTelemetry Collector as the sole in-container OTLP
+-# receiver. Patch 18 removed the OpAMP supervisor wrapper; the collector now
+-# runs directly under this shell so a SIGTERM to the container reaches it
+-# cleanly. We trap SIGTERM/SIGINT, forward them to the collector, and wait
+-# for the collector to exit before letting the entrypoint return the same
+-# exit code (otherwise the container is force-killed before the collector
+-# flushes its batch processor and traces/logs are lost on shutdown).
++# Run OpenLIT's first-party Collector beside the UI. Keep this shell as PID 1:
++# it owns both children, forwards stop signals, and reaps them before exit.
+ OTEL_COLLECTOR_CONFIG="${OTEL_COLLECTOR_CONFIG:-/etc/otel/otel-collector-config.yaml}"
+-OTEL_COLLECTOR_BIN="${OTEL_COLLECTOR_BIN:-/app/opamp/otelcontribcol}"
+-if [ ! -x "$OTEL_COLLECTOR_BIN" ] && [ -x "/usr/local/bin/otelcontribcol" ]; then
+-    OTEL_COLLECTOR_BIN="/usr/local/bin/otelcontribcol"
+-fi
+-
++OTEL_COLLECTOR_BIN="${OTEL_COLLECTOR_BIN:-/app/otel/otelcol-contrib}"
+ if [ ! -x "$OTEL_COLLECTOR_BIN" ]; then
+-    echo "❌ otelcontribcol not found at $OTEL_COLLECTOR_BIN"
++    echo "❌ bundled otelcol-contrib not found at $OTEL_COLLECTOR_BIN"
+     exit 1
+ fi
+ if [ ! -f "$OTEL_COLLECTOR_CONFIG" ]; then
+@@ -99,9 +90,32 @@ if [ ! -f "$OTEL_COLLECTOR_CONFIG" ]; then
+     exit 1
+ fi
+ 
+-echo "Starting OpenTelemetry Collector (direct, no supervisor)..."
+-echo "  binary: $OTEL_COLLECTOR_BIN"
+-echo "  config: $OTEL_COLLECTOR_CONFIG"
++OTEL_COLLECTOR_PID=""
++NODE_PID=""
++shutdown_services() {
++    local signal="$1"
++    for pid in "$NODE_PID" "$OTEL_COLLECTOR_PID"; do
++        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
++            kill -s "$signal" "$pid" 2>/dev/null || true
++        fi
++    done
++    if [ -n "$NODE_PID" ]; then
++        wait "$NODE_PID" 2>/dev/null || true
++    fi
++    if [ -n "$OTEL_COLLECTOR_PID" ]; then
++        wait "$OTEL_COLLECTOR_PID" 2>/dev/null || true
++    fi
++}
++
++handle_signal() {
++    local signal="$1"
++    local exit_code="$2"
++    trap - SIGTERM SIGINT
++    shutdown_services "$signal"
++    exit "$exit_code"
++}
++trap 'handle_signal TERM 143' SIGTERM
++trap 'handle_signal INT 130' SIGINT
+ 
+ "$OTEL_COLLECTOR_BIN" \
+     --config="$OTEL_COLLECTOR_CONFIG" \
+@@ -109,43 +123,7 @@ echo "  config: $OTEL_COLLECTOR_CONFIG"
+     >/var/log/otel-collector.log 2>&1 &
+ OTEL_COLLECTOR_PID=$!
+ 
+-# Forward termination signals to the collector so a `docker stop` flushes
+-# the batch processor and emits a clean exit code instead of being
+-# SIGKILL'd by the container runtime after the grace period.
+-shutdown_collector() {
+-    local signal="$1"
+-    if kill -0 "$OTEL_COLLECTOR_PID" 2>/dev/null; then
+-        echo "Received $signal, forwarding to otelcontribcol (pid $OTEL_COLLECTOR_PID)..."
+-        kill -s "$signal" "$OTEL_COLLECTOR_PID" 2>/dev/null || true
+-        # Give the collector a few seconds to drain. If it's still alive,
+-        # the container runtime's SIGKILL is the appropriate last resort.
+-        for _ in 1 2 3 4 5 6 7 8 9 10; do
+-            if ! kill -0 "$OTEL_COLLECTOR_PID" 2>/dev/null; then
+-                break
+-            fi
+-            sleep 1
+-        done
+-        if kill -0 "$OTEL_COLLECTOR_PID" 2>/dev/null; then
+-            echo "otelcontribcol did not exit on $signal; sending SIGKILL"
+-            kill -9 "$OTEL_COLLECTOR_PID" 2>/dev/null || true
+-        fi
+-        wait "$OTEL_COLLECTOR_PID" 2>/dev/null || true
+-    fi
+-}
+-trap 'shutdown_collector SIGTERM; exit 143' SIGTERM
+-trap 'shutdown_collector SIGINT; exit 130' SIGINT
+-
+-# Wait for the collector to exit in the background so we can react to its
+-# termination as well (a collector exit == the in-container receiver is gone
+-# and we should not keep serving UI without telemetry ingestion).
+-(
+-        wait "$OTEL_COLLECTOR_PID" 2>/dev/null
+-        COLLECTOR_EXIT=$?
+-        echo "otelcontribcol exited with code $COLLECTOR_EXIT"
+-        # Propagate the collector's exit so the container exits too.
+-        exit "$COLLECTOR_EXIT"
+-    ) &
+-COLLECTOR_WATCHER_PID=$!
++echo "Starting OpenLIT first-party OTLP receiver (pid $OTEL_COLLECTOR_PID)..."
+ 
+ # Starting the AutoDev UI Server
+ export PORT=${DOCKER_PORT:-3000}
+@@ -157,7 +135,16 @@ if echo "$HOSTNAME" | grep -qvE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$|^::$|^localhos
+   export HOSTNAME="0.0.0.0"
+ fi
+ 
+-# `exec node` so SIGTERM reaches Next.js directly. Combined with the trap
+-# above, both the UI server and the collector receive clean shutdown
+-# signals from `docker stop`.
+-exec node --max_old_space_size=512 /app/client/server.js
++node --max_old_space_size=512 /app/client/server.js &
++NODE_PID=$!
++
++# Exit if either required process exits, then stop/reap the other one. Keeping
++# this shell as PID 1 ensures Docker signals execute the forwarding trap.
++if wait -n "$NODE_PID" "$OTEL_COLLECTOR_PID"; then
++    EXIT_CODE=0
++else
++    EXIT_CODE=$?
++fi
++trap - SIGTERM SIGINT
++shutdown_services TERM
++exit "$EXIT_CODE"
+diff --git a/src/client/src/__tests__/platform/controller-removal.test.ts b/src/client/src/__tests__/platform/controller-removal.test.ts
+index 5872f70f..f561ec00 100644
+--- a/src/client/src/__tests__/platform/controller-removal.test.ts
++++ b/src/client/src/__tests__/platform/controller-removal.test.ts
+@@ -64,10 +64,24 @@ describe("controller removal and direct OTel receiver verification", () => {
+ 
+ 		expect(content).not.toContain("opamp-server");
+ 		expect(content).not.toContain("opamp-supervisor");
+-		expect(content).toContain("otelcontribcol");
++		expect(content).toContain("/app/otel/otelcol-contrib");
++		expect(content).toContain("shutdown_services");
+ 		expect(content).toMatch(/trap\s+.*SIGTERM/);
+ 		expect(content).toMatch(/trap\s+.*SIGINT/);
+-		expect(content).toContain("shutdown_collector");
++		expect(content).toContain('wait -n "$NODE_PID" "$OTEL_COLLECTOR_PID"');
++		expect(content).toContain("node --max_old_space_size=512 /app/client/server.js &");
++		expect(content).not.toContain("exec node");
++	});
++
++	it("removes controller and OpAMP build stages from the image", () => {
++		const dockerfile = fs.readFileSync(path.join(repoRoot, "src/Dockerfile"), "utf-8");
++		expect(dockerfile).not.toContain("go-builder");
++		expect(dockerfile).not.toContain("opamp-server");
++		expect(dockerfile).not.toContain("opampsupervisor");
++		expect(dockerfile).not.toContain("/app/opamp");
++		expect(dockerfile).toContain(
++			"COPY --from=otel-downloader /tmp/otelcol-contrib /app/otel/otelcol-contrib"
++		);
+ 	});
+ 
+ 	it("retains bearer token authentication and standard ports in otel-collector-config.yaml", () => {

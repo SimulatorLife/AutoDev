@@ -22,8 +22,8 @@ import {
 } from "@simulatorlife/autodev-runtime/platform/runtime-files";
 
 import {
-  codexSessionEndCapture,
-  createMemorySessionEndHandler
+  createMemorySessionEndHandler,
+  sessionEndCapture
 } from "../../runtime/src/hooks/memory-session-end.ts";
 
 const validEvent = {
@@ -34,25 +34,31 @@ const validEvent = {
   reason: "completed"
 };
 
-test("Codex SessionEnd capture accepts only bounded session identity and local paths", () => {
-  assert.deepEqual(codexSessionEndCapture(validEvent), {
+test("SessionEnd capture accepts only bounded session identity and local paths", () => {
+  assert.deepEqual(sessionEndCapture(validEvent), {
     sessionId: "codex-session-1",
     transcriptPath: validEvent.transcript_path,
-    cwd: validEvent.cwd
+    cwd: validEvent.cwd,
+    provider: "codex"
   });
   assert.equal(
-    codexSessionEndCapture({ ...validEvent, hook_event_name: "SessionStart" }),
+    sessionEndCapture({ ...validEvent, provider: "claude-code" })?.provider,
+    "codex",
+    "caller payloads cannot select the provider capture route"
+  );
+  assert.equal(
+    sessionEndCapture({ ...validEvent, hook_event_name: "SessionStart" }),
     null
   );
   assert.equal(
-    codexSessionEndCapture({
+    sessionEndCapture({
       ...validEvent,
       transcript_path: "https://example.test/transcript"
     }),
     null
   );
   assert.equal(
-    codexSessionEndCapture({ ...validEvent, session_id: "../outside" }),
+    sessionEndCapture({ ...validEvent, session_id: "../outside" }),
     null
   );
 });
@@ -85,6 +91,31 @@ test("SessionEnd forwards references only to the local authenticated Memory Cont
     sessionId: validEvent.session_id,
     transcriptPath: validEvent.transcript_path,
     cwd: validEvent.cwd
+  });
+});
+
+test("Claude Code SessionEnd routes to the binding-validated capture endpoint", async () => {
+  let posted: { url: string; body: unknown } | null = null;
+  const run = createMemorySessionEndHandler({
+    env: { AUTODEV_MEMORY_HOOK_PROVIDER: "claude-code" },
+    readToken: () => "local-service-token",
+    fetchImpl: async (url, init) => {
+      posted = {
+        url: String(url),
+        body: JSON.parse(String(init?.body)) as unknown
+      };
+      return new Response(null, { status: 200 });
+    }
+  });
+
+  assert.equal(await run(JSON.stringify(validEvent)), 0);
+  assert.deepEqual(posted, {
+    url: "http://127.0.0.1:4101/control/memory/claude-code/capture",
+    body: {
+      sessionId: validEvent.session_id,
+      transcriptPath: validEvent.transcript_path,
+      cwd: validEvent.cwd
+    }
   });
 });
 

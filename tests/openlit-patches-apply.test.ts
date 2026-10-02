@@ -1,19 +1,21 @@
 /**
  * Patch-set integrity test.
  *
- * Verifies the eleven AutoDev patches apply cleanly to a fresh clone of the
- * pinned upstream OpenLIT revision (openlit-2.1.0, commit
+ * Verifies the ordered AutoDev patch series applies cleanly to a fresh clone of
+ * the pinned upstream OpenLIT revision (openlit-2.1.0, commit
  * 9938c66638666ca5d3bcb850350faa82e510924b).
  *
- * The test clones upstream into a tmp worktree, runs `git apply --check`
- * on every patch in patches/openlit/, then asserts the resulting tree
- * matches the expected added files. It is deliberately conservative: if
+ * The test validates the ordered patch series prefix (verifying patches 15,
+ * 16, and 17, and patch 18 when present), runs `git apply --check` and `git apply`
+ * on every patch in patches/openlit/, then asserts the resulting tree matches the
+ * expected added and removed files. It is deliberately conservative: if
  * upstream drifts, this test fails and the patch set must be regenerated.
  */
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -153,10 +155,41 @@ test(
       .trim()
       .split("\n")
       .filter((f) => f.endsWith(".patch"));
+    const expectedPatchNames = [
+      "01-generic-dashboard-variables",
+      "02-autodev-pages",
+      "03-otlp-receiver-auth",
+      "04-autodev-usage-dashboard",
+      "05-remove-login-signup",
+      "06-autodev-branding",
+      "07-autodev-usage-api",
+      "08-autodev-memory-connector",
+      "09-autodev-memory-lifecycle-actions",
+      "10-autodev-memory-action-hardening",
+      "11-autodev-memory-lifecycle-ui",
+      "12-autodev-memory-outcomes",
+      "13-autodev-memory-outcome-cohorts",
+      "14-autodev-memory-outcome-reporting",
+      "15-remove-gpu-product",
+      "16-autodev-memory-session-outcome-cohorts",
+      "17-remove-openlit-memory-session-authorization"
+    ];
+    if (patches.some((p) => p.startsWith("18-"))) {
+      expectedPatchNames.push("18-remove-openlit-controller-discovery");
+    }
+    if (patches.some((p) => p.startsWith("19-"))) {
+      expectedPatchNames.push("19-remove-controller-image-runtime");
+    }
     assert.ok(
-      patches.length >= 11,
-      "expected the maintained OpenLIT patch series"
+      patches.length >= expectedPatchNames.length,
+      `expected at least ${expectedPatchNames.length} maintained OpenLIT patches`
     );
+    for (const [index, expectedName] of expectedPatchNames.entries()) {
+      assert.ok(
+        patches[index]?.startsWith(expectedName),
+        `expected patch ${index + 1} (${expectedName}) in order, got ${patches[index]}`
+      );
+    }
 
     for (const patch of patches) {
       assertPatchHunkCounts(join(PATCHES_DIR, patch));
@@ -247,7 +280,10 @@ test(
       "src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts",
       "src/client/src/__tests__/app/api/memory/experiences/[id]/outcomes/route.test.ts",
       "src/client/src/components/(playground)/memory/memory-outcome-report-form.tsx",
-      "src/client/src/__tests__/components/memory-outcome-report-form.test.tsx"
+      "src/client/src/__tests__/components/memory-outcome-report-form.test.tsx",
+      // 16-autodev-memory-session-outcome-cohorts
+      "src/client/src/app/api/memory/session-cohorts/route.ts",
+      "src/client/src/__tests__/app/api/memory/session-cohorts/route.test.ts"
     ];
     for (const rel of expected) {
       const full = join(dir, rel);
@@ -978,6 +1014,198 @@ test(
       /(?<!\w)OpenLIT(?!\w)/u,
       "en.ts message constants must not contain user-facing 'OpenLIT'"
     );
+
+    // Verify patch 15 completely removes the GPU product and dashboard:
+    const removedGpuPaths = [
+      "src/client/src/app/(playground)/dashboard/gpu/gpu-metric.tsx",
+      "src/client/src/app/(playground)/dashboard/gpu/index.tsx",
+      "src/client/src/app/(playground)/dashboard/gpu/number-stats.tsx",
+      "src/client/src/clickhouse/seed-data/openlit-dashboard-GPU-dashboard-layout.json",
+      "src/client/src/__tests__/lib/platform/gpu/external.test.ts",
+      "src/client/src/__tests__/lib/platform/gpu/gpu.test.ts",
+      "src/client/src/__tests__/lib/platform/gpu/temperature-fanspeed.test.ts",
+      "src/client/src/lib/platform/gpu/external.ts",
+      "src/client/src/lib/platform/gpu/fanspeed.ts",
+      "src/client/src/lib/platform/gpu/memory.ts",
+      "src/client/src/lib/platform/gpu/power.ts",
+      "src/client/src/lib/platform/gpu/temperature.ts",
+      "src/client/src/lib/platform/gpu/utilization.ts"
+    ];
+    for (const rel of removedGpuPaths) {
+      const full = join(dir, rel);
+      assert.equal(
+        existsSync(full),
+        false,
+        `15-remove-gpu-product must remove: ${rel}`
+      );
+    }
+    const dashboardType = readFileSync(
+      join(dir, "src/client/src/app/(playground)/dashboard/dashboard-type.tsx"),
+      "utf8"
+    );
+    assert.doesNotMatch(
+      dashboardType,
+      /GPUDashboard/u,
+      "dashboard-type.tsx must not import or render GPUDashboard"
+    );
+    assert.doesNotMatch(
+      dashboardType,
+      /gpu:\s*["']GPU["']/u,
+      "dashboard-type.tsx must not contain GPU tab label"
+    );
+    const pageTypes = readFileSync(
+      join(dir, "src/client/src/types/store/page.ts"),
+      "utf8"
+    );
+    assert.doesNotMatch(
+      pageTypes,
+      /gpu:\s*["']gpu["']/u,
+      "types/store/page.ts must not define GPU dashboard type"
+    );
+    const commonPlatform = readFileSync(
+      join(dir, "src/client/src/lib/platform/common.ts"),
+      "utf8"
+    );
+    assert.doesNotMatch(
+      commonPlatform,
+      /OTEL_GPUS_TABLE_NAME/u,
+      "common.ts must not define OTEL_GPUS_TABLE_NAME"
+    );
+
+    // Verify patch 16 adds session outcome cohorts:
+    const sessionCohortsRoute = readFileSync(
+      join(dir, "src/client/src/app/api/memory/session-cohorts/route.ts"),
+      "utf8"
+    );
+    assert.match(sessionCohortsRoute, /readSessionOutcomeCohorts/u);
+    assert.match(sessionCohortsRoute, /resolveAutoDevConnectorId/u);
+    assert.match(sessionCohortsRoute, /withMemoryAccess\("read"/u);
+    assert.match(
+      sessionCohortsRoute,
+      /MEMORY_SESSION_COHORTS_UNSUPPORTED_CONNECTOR/u
+    );
+    assert.match(sessionCohortsRoute, /MAX_COHORT_WINDOW_MS/u);
+    const memoryCohortView = readFileSync(
+      join(
+        dir,
+        "src/client/src/components/(playground)/memory/memory-cohort-view.tsx"
+      ),
+      "utf8"
+    );
+    assert.match(memoryCohortView, /\/api\/memory\/session-cohorts/u);
+    assert.match(memoryCohortView, /MEMORY_SESSION_COHORTS_TITLE/u);
+    assert.match(memoryCohortView, /MemorySessionCohortResult/u);
+    assert.match(messagesEn, /MEMORY_SESSION_COHORTS_TITLE/u);
+    assert.match(messagesEn, /MEMORY_SESSION_COHORTS_NOTE/u);
+    assert.match(autoDevMemoryAdapter, /readSessionOutcomeCohorts/u);
+    assert.match(
+      autoDevMemoryAdapter,
+      /autodev-memory-session-outcome-cohorts-v1/u
+    );
+    assert.match(autoDevMemoryAdapter, /conflictingOutcomeSessionCount/u);
+
+    // Verify patch 17 removes OpenLIT session gating in favor of Control API:
+    assert.match(
+      proxy,
+      /CONTROL_API_ACTOR_ENV\s*=\s*"AUTODEV_CONTROL_API_ACTOR"/u,
+      "proxy must define AUTODEV_CONTROL_API_ACTOR env key"
+    );
+    assert.match(
+      proxy,
+      /LOCAL_CONTROL_API_ACTOR\s*=\s*"autodev-local"/u,
+      "proxy must default to autodev-local actor"
+    );
+    assert.doesNotMatch(
+      proxy,
+      /fetchActorFromSession/u,
+      "proxy must not derive actor from OpenLIT session"
+    );
+    assert.doesNotMatch(
+      proxy,
+      /_setActorResolverForTesting/u,
+      "proxy must remove testing session resolver hook"
+    );
+    assert.doesNotMatch(
+      memoryActionRoute,
+      /getCurrentUser/u,
+      "memory action route must delegate actor auth to Control API without an OpenLIT session gate"
+    );
+    const memoryCohortsRoute = readFileSync(
+      join(dir, "src/client/src/app/api/memory/cohorts/route.ts"),
+      "utf8"
+    );
+    assert.doesNotMatch(
+      memoryCohortsRoute,
+      /getCurrentUser/u,
+      "memory cohorts route must delegate auth to Control API without an OpenLIT session gate"
+    );
+    const memoryOutcomesRoute = readFileSync(
+      join(
+        dir,
+        "src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts"
+      ),
+      "utf8"
+    );
+    assert.doesNotMatch(
+      memoryOutcomesRoute,
+      /getCurrentUser/u,
+      "memory outcome reporting route must delegate auth to Control API without an OpenLIT session gate"
+    );
+
+    // Verify patch 18 removes OpenLIT controller discovery if present:
+    if (patches.some((p) => p.startsWith("18-"))) {
+      const removedControllerDiscoveryPaths = [
+        "src/client/src/app/(playground)/agents/controller-table.tsx",
+        "src/client/src/app/(playground)/agents/no-controller.tsx",
+        "src/client/src/app/(playground)/fleet-hub/page.tsx",
+        "src/opamp-server/setup-supervisor.sh"
+      ];
+      for (const rel of removedControllerDiscoveryPaths) {
+        assert.equal(
+          existsSync(join(dir, rel)),
+          false,
+          `18-remove-openlit-controller-discovery must remove: ${rel}`
+        );
+      }
+
+      const receiverConfig = readFileSync(
+        join(dir, "assets/otel-collector-config.yaml"),
+        "utf8"
+      );
+      assert.match(receiverConfig, /bearertokenauth/u);
+      assert.match(receiverConfig, /endpoint: 0\.0\.0\.0:4317/u);
+      assert.match(receiverConfig, /endpoint: 0\.0\.0\.0:4318/u);
+    }
+
+    if (patches.some((p) => p.startsWith("19-"))) {
+      const dockerfile = readFileSync(join(dir, "src/Dockerfile"), "utf8");
+      assert.doesNotMatch(
+        dockerfile,
+        /go-builder|opamp-server|opampsupervisor|OPAMP_SUPERVISOR_VERSION|\/app\/opamp/u,
+        "patch 19 must remove the OpAMP build/runtime image contents"
+      );
+      assert.match(
+        dockerfile,
+        /COPY --from=otel-downloader \/tmp\/otelcol-contrib \/app\/otel\/otelcol-contrib/u,
+        "patch 19 must keep only OpenLIT's bundled OTLP receiver"
+      );
+      const entrypoint = readFileSync(
+        join(dir, "src/client/scripts/entrypoint.sh"),
+        "utf8"
+      );
+      assert.match(
+        entrypoint,
+        /wait -n \"\$NODE_PID\" \"\$OTEL_COLLECTOR_PID\"/u
+      );
+      assert.match(entrypoint, /trap .*SIGTERM/u);
+      assert.doesNotMatch(entrypoint, /exec node/u);
+      const compose = readFileSync(join(dir, "docker-compose.yml"), "utf8");
+      assert.doesNotMatch(
+        compose,
+        /^\u0020{2}(?:otel-collector|otelcol|autodev-collector):/mu,
+        "patch 19 must not introduce a separate Collector service"
+      );
+    }
   }
 );
 
@@ -1046,13 +1274,7 @@ test(
         .trim()
         .split("\n")
         .filter((f) => f.endsWith(".patch"));
-      assert.equal(
-        patches.length,
-        14,
-        "expected all 14 maintained OpenLIT patches"
-      );
-
-      for (const [index, expectedName] of [
+      const expectedPatchNames = [
         "01-generic-dashboard-variables",
         "02-autodev-pages",
         "03-otlp-receiver-auth",
@@ -1066,11 +1288,26 @@ test(
         "11-autodev-memory-lifecycle-ui",
         "12-autodev-memory-outcomes",
         "13-autodev-memory-outcome-cohorts",
-        "14-autodev-memory-outcome-reporting"
-      ].entries()) {
+        "14-autodev-memory-outcome-reporting",
+        "15-remove-gpu-product",
+        "16-autodev-memory-session-outcome-cohorts",
+        "17-remove-openlit-memory-session-authorization"
+      ];
+      if (patches.some((p) => p.startsWith("18-"))) {
+        expectedPatchNames.push("18-remove-openlit-controller-discovery");
+      }
+      if (patches.some((p) => p.startsWith("19-"))) {
+        expectedPatchNames.push("19-remove-controller-image-runtime");
+      }
+      assert.ok(
+        patches.length >= expectedPatchNames.length,
+        `expected at least ${expectedPatchNames.length} maintained OpenLIT patches`
+      );
+
+      for (const [index, expectedName] of expectedPatchNames.entries()) {
         assert.ok(
-          patches.some((patch) => patch.startsWith(expectedName)),
-          `expected patch ${index + 1} (${expectedName}) in the series`
+          patches[index]?.startsWith(expectedName),
+          `expected patch ${index + 1} (${expectedName}) in order in the series, got ${patches[index]}`
         );
       }
 
@@ -1088,10 +1325,7 @@ test(
       // 08-12; its presence proves the cohort view applied.
       assert.ok(
         statSync(
-          join(
-            workDirectory,
-            "src/client/src/app/api/memory/cohorts/route.ts"
-          )
+          join(workDirectory, "src/client/src/app/api/memory/cohorts/route.ts")
         ).isFile()
       );
       // 14-autodev-memory-outcome-reporting extends the existing experience
@@ -1105,17 +1339,101 @@ test(
         ).isFile()
       );
 
+      // 15-remove-gpu-product removes the GPU dashboard and metrics
+      assert.equal(
+        existsSync(
+          join(
+            workDirectory,
+            "src/client/src/app/(playground)/dashboard/gpu/index.tsx"
+          )
+        ),
+        false,
+        "15-remove-gpu-product must remove GPU dashboard files"
+      );
+
+      // 16-autodev-memory-session-outcome-cohorts adds the session cohorts route
+      assert.ok(
+        statSync(
+          join(
+            workDirectory,
+            "src/client/src/app/api/memory/session-cohorts/route.ts"
+          )
+        ).isFile(),
+        "16-autodev-memory-session-outcome-cohorts must add the session cohorts route"
+      );
+
+      // 17-remove-openlit-memory-session-authorization removes OpenLIT session gating
+      const appliedControlApi = readFileSync(
+        join(workDirectory, "src/client/src/lib/autodev/control-api.ts"),
+        "utf8"
+      );
+      assert.match(
+        appliedControlApi,
+        /AUTODEV_CONTROL_API_ACTOR/u,
+        "17-remove-openlit-memory-session-authorization must configure server-only actor"
+      );
+      assert.doesNotMatch(
+        appliedControlApi,
+        /fetchActorFromSession/u,
+        "17-remove-openlit-memory-session-authorization must remove fetchActorFromSession"
+      );
+      const appliedActionRoute = readFileSync(
+        join(
+          workDirectory,
+          "src/client/src/app/api/memory/[id]/actions/route.ts"
+        ),
+        "utf8"
+      );
+      assert.doesNotMatch(
+        appliedActionRoute,
+        /getCurrentUser/u,
+        "17-remove-openlit-memory-session-authorization must remove session check in memory actions"
+      );
+
+      // 18-remove-openlit-controller-discovery removes controller discovery when present
+      if (patches.some((p) => p.startsWith("18-"))) {
+        assert.equal(
+          existsSync(
+            join(
+              workDirectory,
+              "src/client/src/app/(playground)/agents/controller-table.tsx"
+            )
+          ),
+          false,
+          "18-remove-openlit-controller-discovery must remove controller-table"
+        );
+      }
+      if (patches.some((p) => p.startsWith("19-"))) {
+        const dockerfile = readFileSync(
+          join(workDirectory, "src/Dockerfile"),
+          "utf8"
+        );
+        assert.doesNotMatch(
+          dockerfile,
+          /go-builder|opamp-server|opampsupervisor|OPAMP_SUPERVISOR_VERSION|\/app\/opamp/u
+        );
+        assert.match(
+          dockerfile,
+          /COPY --from=otel-downloader \/tmp\/otelcol-contrib \/app\/otel\/otelcol-contrib/u
+        );
+        const entrypoint = readFileSync(
+          join(workDirectory, "src/client/scripts/entrypoint.sh"),
+          "utf8"
+        );
+        assert.match(
+          entrypoint,
+          /wait -n \"\$NODE_PID\" \"\$OTEL_COLLECTOR_PID\"/u
+        );
+        assert.doesNotMatch(entrypoint, /exec node/u);
+      }
+
       const status = run("git", ["status", "--short"], workDirectory);
       assert.doesNotMatch(
         status.stdout,
         /^(?:UU|AA|DD|U[ADU]|[ADU]U) /mu,
         "worktree must contain no unmerged/conflicted paths after a successful run"
       );
-      const rejFiles = run(
-        "find",
-        [".", "-name", "*.rej"],
-        workDirectory
-      );
+      const rejFiles = run("find", [".", "-name", "*.rej"], workDirectory);
       assert.equal(
         rejFiles.stdout.trim(),
         "",
@@ -1127,23 +1445,28 @@ test(
   }
 );
 
-test("openlit patch set excludes any reference to a producer-facing otelcol pass-through", () => {
-  // OpenLIT 2.1.0 ships its own OTLP receivers; producers do NOT need a
-  // sidecar Collector. The patches must not regress this by adding one.
-  const ls = run("ls", ["-1", PATCHES_DIR], repositoryRoot);
+test("OpenLIT patches do not add a producer-facing Collector sidecar", () => {
+  // OpenLIT retains its own authenticated OTLP receiver inside the UI
+  // container. Producers must not be redirected through a new compose
+  // service or a Collector hostname; bundling the receiver is expected.
+  const ls = run("ls", ["-1"], PATCHES_DIR);
+  assert.equal(ls.status, 0, ls.stderr);
   const patches = ls.stdout
     .trim()
     .split("\n")
-    .filter((f) => f.endsWith(".patch"));
+    .filter((file) => file.endsWith(".patch"));
 
   for (const patch of patches) {
     const content = readFileSync(join(PATCHES_DIR, patch), "utf8");
-    // Anything that introduces a new OTLP Collector process is a
-    // regression and must fail the test.
     assert.doesNotMatch(
       content,
-      /otelcol-contrib|otelcol_/u,
-      `patch ${patch} must not introduce a sidecar otelcol pass-through`
+      /^\+[ \t]*(?:otel-collector|otelcol|autodev-collector):/mu,
+      `patch ${patch} must not add a producer-facing Collector service`
+    );
+    assert.doesNotMatch(
+      content,
+      /^\+.*(?:OTEL_EXPORTER_OTLP_ENDPOINT\s*=.*(?:otelcol|otel-collector)|endpoint:\s*https?:\/\/(?:otelcol|otel-collector)(?:[:/]|$))/mu,
+      `patch ${patch} must not point producers at a Collector pass-through`
     );
   }
 });

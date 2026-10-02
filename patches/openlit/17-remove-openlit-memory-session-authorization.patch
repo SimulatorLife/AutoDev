@@ -1,0 +1,794 @@
+diff --git a/src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts b/src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts
+index 0900f165..ab252360 100644
+--- a/src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts
++++ b/src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts
+@@ -1,4 +1,3 @@
+-jest.mock("@/lib/session", () => ({ getCurrentUser: jest.fn() }));
+ jest.mock("@/lib/platform/connectors/memory/write", () => ({
+ 	executeProjectMemoryAction: jest.fn(),
+ }));
+@@ -17,7 +16,6 @@ jest.mock("@/utils/asaw", () =>
+ );
+ 
+ import { POST } from "@/app/api/memory/[id]/actions/route";
+-import { getCurrentUser } from "@/lib/session";
+ import { executeProjectMemoryAction } from "@/lib/platform/connectors/memory/write";
+ import { MEMORY_INVALID_FILTER, MEMORY_INVALID_JSON } from "@/constants/messages/en";
+ 
+@@ -43,16 +41,23 @@ function makeRequest(body: unknown) {
+ describe("POST /api/memory/[id]/actions", () => {
+ 	beforeEach(() => {
+ 		jest.clearAllMocks();
+-		(getCurrentUser as jest.Mock).mockResolvedValue({ id: "operator-a" });
+ 	});
+ 
+-	it("requires authentication", async () => {
+-		(getCurrentUser as jest.Mock).mockResolvedValue(null);
+-		const response = await POST(makeRequest({ action: "invalidate", payload: {} }), {
+-			params: { id: "memory-a" },
+-		});
+-		expect(response.status).toBe(401);
+-		expect(executeProjectMemoryAction).not.toHaveBeenCalled();
++	it("delegates actor authorization to the AutoDev Control API", async () => {
++		(executeProjectMemoryAction as jest.Mock).mockRejectedValue(
++			Object.assign(new Error("actor not authorized"), { status: 403 }),
++		);
++		const response = await POST(
++			makeRequest({
++				action: "invalidate",
++				connectorId: "memory:autodev",
++				payload: { evidence: [{ kind: "commit", uri: "git://owner/repo/commit/abc" }] },
++			}),
++			{ params: { id: "memory-a" } },
++		);
++		expect(response.status).toBe(403);
++		await expect(response.json()).resolves.toBe("actor not authorized");
++		expect(executeProjectMemoryAction).toHaveBeenCalled();
+ 	});
+ 
+ 	it("rejects malformed or extra action fields", async () => {
+diff --git a/src/client/src/__tests__/app/api/memory/cohorts/route.test.ts b/src/client/src/__tests__/app/api/memory/cohorts/route.test.ts
+index 8a7fecf6..93e7e748 100644
+--- a/src/client/src/__tests__/app/api/memory/cohorts/route.test.ts
++++ b/src/client/src/__tests__/app/api/memory/cohorts/route.test.ts
+@@ -1,4 +1,3 @@
+-jest.mock("@/lib/session", () => ({ getCurrentUser: jest.fn() }));
+ jest.mock("@/lib/platform/connectors/memory/crud", () => ({
+ 	memoryConnectorId: (id: string) => (id.startsWith("memory:") ? id : `memory:${id}`),
+ 	isMemoryConnectorId: (id: unknown) => typeof id === "string" && id.startsWith("memory:"),
+@@ -11,7 +10,6 @@ jest.mock("@/lib/platform/connectors/memory/autodev/adapter", () => ({
+ }));
+ 
+ import { GET } from "@/app/api/memory/cohorts/route";
+-import { getCurrentUser } from "@/lib/session";
+ import { getMemoryRuntime, listMemoryConnectors } from "@/lib/platform/connectors/memory/crud";
+ import { MEMORY_COHORTS_UNSUPPORTED_CONNECTOR } from "@/constants/messages/en";
+ 
+@@ -33,16 +31,22 @@ const claudeConnector = { id: "memory:claude-a", type: "claude", name: "Claude"
+ describe("GET /api/memory/cohorts", () => {
+ 	beforeEach(() => {
+ 		jest.clearAllMocks();
+-		(getCurrentUser as jest.Mock).mockResolvedValue({ id: "operator-a" });
++		(listMemoryConnectors as jest.Mock).mockResolvedValue([autoDevConnector]);
+ 	});
+ 
+-	it("requires authentication", async () => {
+-		(getCurrentUser as jest.Mock).mockResolvedValue(null);
++	it("forwards unavailable Control API authorization without an OpenLIT session gate", async () => {
++		const readOutcomeCohorts = jest.fn().mockResolvedValue({ status: "unavailable", page: null });
++		(getMemoryRuntime as jest.Mock).mockResolvedValue({
++			adapter: { __autodev: true, readOutcomeCohorts },
++			connector: autoDevConnector,
++		});
+ 		const response = await GET(
+ 			makeRequest("occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z")
+ 		);
+-		expect(response.status).toBe(401);
+-		expect(listMemoryConnectors).not.toHaveBeenCalled();
++		expect(response.status).toBe(200);
++		await expect(response.json()).resolves.toMatchObject({
++			result: { status: "unavailable", page: null },
++		});
+ 	});
+ 
+ 	it("rejects a missing or invalid occurred timestamp", async () => {
+diff --git a/src/client/src/__tests__/app/api/memory/experiences/[id]/outcomes/route.test.ts b/src/client/src/__tests__/app/api/memory/experiences/[id]/outcomes/route.test.ts
+index 17b366c3..c728e7c4 100644
+--- a/src/client/src/__tests__/app/api/memory/experiences/[id]/outcomes/route.test.ts
++++ b/src/client/src/__tests__/app/api/memory/experiences/[id]/outcomes/route.test.ts
+@@ -1,4 +1,3 @@
+-jest.mock("@/lib/session", () => ({ getCurrentUser: jest.fn() }));
+ jest.mock("@/lib/platform/connectors/memory/crud", () => ({
+ 	isMemoryConnectorId: (id: unknown) => typeof id === "string" && id.startsWith("memory:"),
+ 	listMemoryConnectors: jest.fn(),
+@@ -10,7 +9,6 @@ jest.mock("@/lib/platform/connectors/memory/autodev/adapter", () => ({
+ }));
+ 
+ import { POST } from "@/app/api/memory/experiences/[id]/outcomes/route";
+-import { getCurrentUser } from "@/lib/session";
+ import { getMemoryRuntime, listMemoryConnectors } from "@/lib/platform/connectors/memory/crud";
+ import { MEMORY_DETAIL_OUTCOME_REPORT_INVALID } from "@/constants/messages/en";
+ 
+@@ -29,7 +27,6 @@ const connector = { id: "memory:autodev-a", type: "autodev", name: "AutoDev Memo
+ 
+ beforeEach(() => {
+ 	jest.clearAllMocks();
+-	(getCurrentUser as jest.Mock).mockResolvedValue({ id: "operator-a" });
+ 	(listMemoryConnectors as jest.Mock).mockResolvedValue([connector]);
+ });
+ 
+@@ -68,13 +65,7 @@ test("outcome POST sends only the event id and reporter fields and returns no op
+ 	expect(JSON.stringify(reportBody)).not.toMatch(/correlationToken|reporterId|reportId/iu);
+ });
+ 
+-test("outcome POST requires an authenticated session and evidence for non-unknown reports", async () => {
+-	(getCurrentUser as jest.Mock).mockResolvedValue(null);
+-	const unauthenticated = await POST(makeRequest({}), { params: { id: "experience-a" } });
+-	expect(unauthenticated.status).toBe(401);
+-	expect(listMemoryConnectors).not.toHaveBeenCalled();
+-
+-	(getCurrentUser as jest.Mock).mockResolvedValue({ id: "operator-a" });
++test("outcome POST requires evidence for non-unknown reports", async () => {
+ 	const reportOutcome = jest.fn().mockResolvedValue({
+ 		appended: true,
+ 		outcome: {
+@@ -145,3 +136,26 @@ test("outcome POST rejects non-AutoDev connectors and preserves append-only conf
+ 	);
+ 	expect(conflict.status).toBe(409);
+ });
++
++test("outcome POST preserves Control API actor authorization without an OpenLIT session", async () => {
++	const reportOutcome = jest.fn().mockRejectedValue(
++		Object.assign(new Error("actor not authorized"), { status: 403 }),
++	);
++	(getMemoryRuntime as jest.Mock).mockResolvedValue({
++		connector,
++		adapter: { __autodev: true, reportOutcome },
++	});
++	const response = await POST(
++		makeRequest({
++			connectorId: connector.id,
++			injectionEventId: "injection-event-a",
++			outcomeKind: "success",
++			reportKind: "pull_request",
++			evidence: [{ kind: "pull_request", uri: "https://github.com/owner/repo/pull/1" }],
++		}),
++		{ params: { id: "experience-a" } },
++	);
++	expect(response.status).toBe(403);
++	await expect(response.json()).resolves.toBe("actor not authorized");
++	expect(reportOutcome).toHaveBeenCalled();
++});
+diff --git a/src/client/src/__tests__/app/api/memory/session-cohorts/route.test.ts b/src/client/src/__tests__/app/api/memory/session-cohorts/route.test.ts
+index 024ad54e..a34e8c50 100644
+--- a/src/client/src/__tests__/app/api/memory/session-cohorts/route.test.ts
++++ b/src/client/src/__tests__/app/api/memory/session-cohorts/route.test.ts
+@@ -33,22 +33,6 @@ beforeEach(() => {
+ 	(listMemoryConnectors as jest.Mock).mockResolvedValue([autoDevConnector]);
+ });
+ 
+-
+-test("session cohort route forwards Control API unavailability without an OpenLIT session", async () => {
+-	const readSessionOutcomeCohorts = jest.fn().mockResolvedValue({ status: "unavailable", page: null });
+-	(getMemoryRuntime as jest.Mock).mockResolvedValue({
+-		adapter: { __autodev: true, readSessionOutcomeCohorts },
+-		connector: autoDevConnector,
+-	});
+-	const response = await GET(
+-		makeRequest("occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z")
+-	);
+-	expect(response.status).toBe(200);
+-	await expect(response.json()).resolves.toMatchObject({
+-		result: { status: "unavailable", page: null },
+-	});
+-});
+-
+ test("session cohort route rejects caller-selected identities and overlong windows", async () => {
+ 	for (const query of [
+ 		"occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z&taskId=caller",
+@@ -94,6 +78,20 @@ test("session cohort route invokes only the AutoDev adapter and returns deduplic
+ 	});
+ });
+ 
++test("session cohort route surfaces an unavailable Control API result (e.g. an upstream 401/403) without a local session gate", async () => {
++	const readSessionOutcomeCohorts = jest.fn().mockResolvedValue({ status: "unavailable", page: null });
++	(getMemoryRuntime as jest.Mock).mockResolvedValue({
++		adapter: { __autodev: true, readSessionOutcomeCohorts },
++		connector: autoDevConnector,
++	});
++	const response = await GET(
++		makeRequest("occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z")
++	);
++	expect(response.status).toBe(200);
++	const body = await response.json();
++	expect(body.result).toEqual({ status: "unavailable", page: null });
++});
++
+ test("session cohort route does not expose session analysis for other connectors", async () => {
+ 	(listMemoryConnectors as jest.Mock).mockResolvedValue([claudeConnector]);
+ 	(getMemoryRuntime as jest.Mock).mockResolvedValue({
+diff --git a/src/client/src/__tests__/lib/autodev/control-api.test.ts b/src/client/src/__tests__/lib/autodev/control-api.test.ts
+index 6a4dddbc..2931b82b 100644
+--- a/src/client/src/__tests__/lib/autodev/control-api.test.ts
++++ b/src/client/src/__tests__/lib/autodev/control-api.test.ts
+@@ -5,8 +5,8 @@
+  *
+  *   1. The service credential must never appear in any value the proxy
+  *      returns to the browser (URL, headers, body).
+- *   2. The proxy must reject requests when the OpenLIT session is missing
+- *      with a deterministic 401 envelope.
++ *   2. The proxy never derives identity from an OpenLIT session or the
++ *      incoming request; its actor is server-configured.
+  *   3. The proxy must reject state-changing requests whose Origin header
+  *      is missing or mismatched against the request Host (the stock
+  *      middleware CSRF helper keys on `pathname.startsWith("/api/")` and
+@@ -16,7 +16,7 @@
+  *      every request with a deterministic 503 envelope.
+  *   5. The proxy must forward ONLY the documented headers:
+  *        Authorization:           Bearer <service token>
+- *        X-AutoDev-Actor:         <verified NextAuth user id>
++ *        X-AutoDev-Actor:         <server-configured actor id>
+  *      It MUST NOT forward X-AutoDev-Role, X-AutoDev-Actor-Email, or any
+  *      other identity claim. OpenLIT CE has no granular RBAC, so the
+  *      AutoDev Control API is the sole authority for viewer/operator
+@@ -26,30 +26,17 @@
+  *   7. Upstream 401/403/502 errors propagate through the proxy with the
+  *      upstream status preserved and a normalized `{ err }` body.
+  *
+- * The test uses the `_setActorResolverForTesting` hook to inject a stub
+- * session resolver. The proxy imports `@/lib/session` lazily (so the
+- * static import chain does not pull in NextAuth + Prisma + ESM-only
+- * `jose`); the hook short-circuits the dynamic import at call time.
++ * Tests configure the server-side `AUTODEV_CONTROL_API_ACTOR` environment
++ * variable directly. No session resolver or browser identity is involved.
+  */
+ 
+ import {
+-	_setActorResolverForTesting,
+ 	controlResponseToFetch,
+ 	forwardToControlApi,
+ 	withControlApiProxy,
+ } from "@/lib/autodev/control-api";
+ import type { NextRequest } from "next/server";
+ 
+-// The test resolver hook is gated on NODE_ENV !== 'test'. Force it on
+-// via `Object.defineProperty` because TypeScript types `process.env` as
+-// readonly. The proxy reads `process.env.NODE_ENV` at function-call time
+-// (not at module-load time), so the mutation is picked up by the resolver.
+-Object.defineProperty(process.env, "NODE_ENV", {
+-	value: "test",
+-	writable: true,
+-	configurable: true,
+-});
+-
+ const envSnapshot = { ...process.env };
+ 
+ function setEnv(patch: Record<string, string | undefined>) {
+@@ -76,8 +63,9 @@ function unmockFetch() {
+ 	globalThis.fetch = originalFetch;
+ }
+ 
+-function setActor(fn: () => Promise<string | null> | string | null) {
+-	_setActorResolverForTesting(async () => (await fn()) ?? null);
++function setConfiguredActor(actor: string | undefined) {
++	if (actor === undefined) delete process.env.AUTODEV_CONTROL_API_ACTOR;
++	else process.env.AUTODEV_CONTROL_API_ACTOR = actor;
+ }
+ 
+ /**
+@@ -108,29 +96,33 @@ function fakeRequest(
+ }
+ 
+ beforeEach(() => {
+-	setActor(() => null);
++	setConfiguredActor(undefined);
+ });
+ 
+ afterAll(() => {
+ 	restoreEnv();
+ 	unmockFetch();
+-	_setActorResolverForTesting(null);
+ });
+ 
+ describe("forwardToControlApi", () => {
+-	it("returns 401 when the OpenLIT session is missing", async () => {
++	it("defaults to the local actor without an OpenLIT session", async () => {
+ 		setEnv({
+ 			AUTODEV_CONTROL_API_URL: "http://127.0.0.1:4100",
+ 			AUTODEV_CONTROL_API_TOKEN: "service-secret",
+ 			AUTODEV_CONTROL_API_DISABLED: undefined,
+ 		});
+-		setActor(() => null);
++		let forwardedActor = "";
++		mockFetch(async (_url, init) => {
++			forwardedActor =
++				((init?.headers as Record<string, string> | undefined)?.["X-AutoDev-Actor"] ?? "");
++			return new Response(JSON.stringify({ providers: [] }), {
++				status: 200,
++				headers: { "content-type": "application/json" },
++			});
++		});
+ 		const res = await forwardToControlApi({ method: "GET", path: "providers" });
+-		expect(res.ok).toBe(false);
+-		if (!res.ok) {
+-			expect(res.status).toBe(401);
+-			expect(res.err).toBe("unauthenticated");
+-		}
++		expect(res.ok).toBe(true);
++		expect(forwardedActor).toBe("autodev-local");
+ 	});
+ 
+ 	it("returns 503 when the kill switch is set", async () => {
+@@ -139,7 +131,7 @@ describe("forwardToControlApi", () => {
+ 			AUTODEV_CONTROL_API_TOKEN: "service-secret",
+ 			AUTODEV_CONTROL_API_DISABLED: "1",
+ 		});
+-		setActor(() => "u1");
++		setConfiguredActor("u1");
+ 		const res = await forwardToControlApi({ method: "GET", path: "providers" });
+ 		expect(res.ok).toBe(false);
+ 		if (!res.ok) {
+@@ -154,7 +146,7 @@ describe("forwardToControlApi", () => {
+ 			AUTODEV_CONTROL_API_TOKEN: undefined,
+ 			AUTODEV_CONTROL_API_DISABLED: undefined,
+ 		});
+-		setActor(() => "u1");
++		setConfiguredActor("u1");
+ 		const res = await forwardToControlApi({ method: "GET", path: "providers" });
+ 		expect(res.ok).toBe(false);
+ 		if (!res.ok) {
+@@ -163,6 +155,24 @@ describe("forwardToControlApi", () => {
+ 		}
+ 	});
+ 
++	it("rejects an invalid server actor before making a request", async () => {
++		setEnv({
++			AUTODEV_CONTROL_API_URL: "http://127.0.0.1:4100",
++			AUTODEV_CONTROL_API_TOKEN: "service-secret",
++			AUTODEV_CONTROL_API_ACTOR: "not a valid actor",
++			AUTODEV_CONTROL_API_DISABLED: undefined,
++		});
++		const fetchMock = jest.fn(async () => new Response("{}", { status: 200 }));
++		mockFetch(fetchMock as unknown as typeof fetch);
++		const res = await forwardToControlApi({ method: "GET", path: "providers" });
++		expect(res.ok).toBe(false);
++		if (!res.ok) {
++			expect(res.status).toBe(503);
++			expect(res.err).toMatch(/AUTODEV_CONTROL_API_ACTOR/);
++		}
++		expect(fetchMock).not.toHaveBeenCalled();
++	});
++
+ 	it("forwards only Authorization + X-AutoDev-Actor, never a role claim", async () => {
+ 		setEnv({
+ 			AUTODEV_CONTROL_API_URL: "http://127.0.0.1:4100",
+@@ -196,7 +206,7 @@ describe("forwardToControlApi", () => {
+ 				},
+ 			);
+ 		});
+-		setActor(() => "u1");
++		setConfiguredActor("u1");
+ 		const res = await forwardToControlApi<{
+ 			schema: string;
+ 			providers: Array<{
+@@ -266,7 +276,7 @@ describe("forwardToControlApi", () => {
+ 				},
+ 			);
+ 		});
+-		setActor(() => "u1");
++		setConfiguredActor("u1");
+ 		const res = await forwardToControlApi<{ enabled: boolean }>({
+ 			method: "PATCH",
+ 			path: "providers/openai/roles/subagent",
+@@ -307,7 +317,7 @@ describe("forwardToControlApi", () => {
+ 				},
+ 			);
+ 		});
+-		setActor(() => "u1");
++		setConfiguredActor("u1");
+ 		const res = await forwardToControlApi({
+ 			method: "GET",
+ 			path: "providers",
+@@ -336,7 +346,7 @@ describe("forwardToControlApi", () => {
+ 				},
+ 			);
+ 		});
+-		setActor(() => "u1");
++		setConfiguredActor("u1");
+ 		const res = await forwardToControlApi({
+ 			method: "PATCH",
+ 			path: "providers/openai/roles/subagent",
+@@ -358,7 +368,7 @@ describe("forwardToControlApi", () => {
+ 		mockFetch(async () => {
+ 			throw new Error("ECONNREFUSED");
+ 		});
+-		setActor(() => "u1");
++		setConfiguredActor("u1");
+ 		const res = await forwardToControlApi({
+ 			method: "GET",
+ 			path: "providers",
+@@ -392,7 +402,7 @@ describe("withControlApiProxy", () => {
+ 				},
+ 			);
+ 		});
+-		setActor(() => "u1");
++		setConfiguredActor("u1");
+ 		const request = fakeRequest({
+ 			method: "GET",
+ 			host: "app.example.com",
+@@ -416,7 +426,7 @@ describe("withControlApiProxy", () => {
+ 				AUTODEV_CONTROL_API_TOKEN: "service-secret",
+ 				AUTODEV_CONTROL_API_DISABLED: undefined,
+ 			});
+-			setActor(() => "u1");
++		setConfiguredActor("u1");
+ 			// Default mock — should never be called when Origin is wrong.
+ 			mockFetch(async () => {
+ 				return new Response(JSON.stringify({ ok: true }), { status: 200 });
+@@ -517,12 +527,13 @@ describe("withControlApiProxy", () => {
+ 					{ status: 200, headers: { "content-type": "application/json" } },
+ 				);
+ 			});
+-			setActor(() => "viewer-1");
++			setConfiguredActor("viewer-1");
+ 			const request = fakeRequest({
+ 				method: "PATCH",
+ 				origin: "https://app.example.com",
+ 				host: "app.example.com",
+ 			});
++			request.headers.set("x-autodev-actor", "browser-forged-actor");
+ 			await withControlApiProxy(
+ 				request,
+ 				"PATCH",
+@@ -555,7 +566,7 @@ describe("withControlApiProxy", () => {
+ 					{ status: 200, headers: { "content-type": "application/json" } },
+ 				);
+ 			});
+-			setActor(() => "op-1");
++			setConfiguredActor("op-1");
+ 			const request = fakeRequest({
+ 				method: "PATCH",
+ 				origin: "https://app.example.com",
+diff --git a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
+index ff81deb5..823c6ef4 100644
+--- a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
++++ b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
+@@ -1,10 +1,10 @@
+-import { _setActorResolverForTesting } from "@/lib/autodev/control-api";
+ import { AutoDevMemoryAdapter } from "@/lib/platform/connectors/memory/autodev/adapter";
+ import type { MemorySourceDescriptor } from "@/lib/platform/connectors/memory/types";
+ 
+ const originalControlEnv = {
+ 	url: process.env.AUTODEV_CONTROL_API_URL,
+-	token: process.env.AUTODEV_CONTROL_API_TOKEN
++	token: process.env.AUTODEV_CONTROL_API_TOKEN,
++	actor: process.env.AUTODEV_CONTROL_API_ACTOR
+ };
+ const originalFetchDescriptor = Object.getOwnPropertyDescriptor(global, "fetch");
+ 
+@@ -27,17 +27,19 @@ beforeEach(() => {
+ 	});
+ 	process.env.AUTODEV_CONTROL_API_URL = "http://127.0.0.1:4101";
+ 	process.env.AUTODEV_CONTROL_API_TOKEN = "server-only-token";
+-	_setActorResolverForTesting(async () => "operator-a");
++	process.env.AUTODEV_CONTROL_API_ACTOR = "operator-a";
+ });
+ 
+ afterEach(() => {
+-	_setActorResolverForTesting(null);
+ 	if (originalControlEnv.url === undefined)
+ 		delete process.env.AUTODEV_CONTROL_API_URL;
+ 	else process.env.AUTODEV_CONTROL_API_URL = originalControlEnv.url;
+ 	if (originalControlEnv.token === undefined)
+ 		delete process.env.AUTODEV_CONTROL_API_TOKEN;
+ 	else process.env.AUTODEV_CONTROL_API_TOKEN = originalControlEnv.token;
++	if (originalControlEnv.actor === undefined)
++		delete process.env.AUTODEV_CONTROL_API_ACTOR;
++	else process.env.AUTODEV_CONTROL_API_ACTOR = originalControlEnv.actor;
+ 	jest.restoreAllMocks();
+ 	if (originalFetchDescriptor) {
+ 		Object.defineProperty(global, "fetch", originalFetchDescriptor);
+diff --git a/src/client/src/app/(playground)/autodev/api/providers/[provider]/roles/[role]/route.ts b/src/client/src/app/(playground)/autodev/api/providers/[provider]/roles/[role]/route.ts
+index 01f45771..a4a85c8d 100644
+--- a/src/client/src/app/(playground)/autodev/api/providers/[provider]/roles/[role]/route.ts
++++ b/src/client/src/app/(playground)/autodev/api/providers/[provider]/roles/[role]/route.ts
+@@ -9,9 +9,9 @@ import { NextRequest } from "next/server";
+  * before reaching the network so a malformed client cannot trick the
+  * upstream into a 4xx loop.
+  *
+- * Authorization: OpenLIT re-validates the NextAuth session; the bearer
+- * token stays server-side; the verified actor id is forwarded as
+- * `X-AutoDev-Actor`. The AutoDev API matches the actor against its own
++ * Authorization: the server-configured actor is forwarded as
++ * `X-AutoDev-Actor`; the bearer token stays server-side. The AutoDev API
++ * matches that actor against its own
+  * `AUTODEV_CONTROL_OPERATORS` allowlist and returns 403 if the actor
+  * is not authorized.
+  */
+diff --git a/src/client/src/app/(playground)/autodev/api/providers/route.ts b/src/client/src/app/(playground)/autodev/api/providers/route.ts
+index 8a919bf6..c9c2bb5e 100644
+--- a/src/client/src/app/(playground)/autodev/api/providers/route.ts
++++ b/src/client/src/app/(playground)/autodev/api/providers/route.ts
+@@ -5,9 +5,8 @@ import { NextRequest } from "next/server";
+  * /autodev/api/providers — proxy GET to AutoDev Control API.
+  *
+  * Reads only; the AutoDev Control API is responsible for the resource
+- * allowlist (OpenLIT CE has no granular RBAC). The OpenLIT session is
+- * re-validated server-side and the verified actor identity is forwarded
+- * via `X-AutoDev-Actor` header.
++ * allowlist (OpenLIT CE has no granular RBAC). The server-configured
++ * actor identity is forwarded via `X-AutoDev-Actor`.
+  */
+ export async function GET(request: NextRequest): Promise<Response> {
+ 	return withControlApiProxy(request, "GET", "providers");
+diff --git a/src/client/src/app/(playground)/autodev/layout.tsx b/src/client/src/app/(playground)/autodev/layout.tsx
+index 8153a797..5561f1cb 100644
+--- a/src/client/src/app/(playground)/autodev/layout.tsx
++++ b/src/client/src/app/(playground)/autodev/layout.tsx
+@@ -10,8 +10,9 @@ import React from "react";
+  * activity; they do not rebuild charts.
+  *
+  * The layout deliberately does NOT render the OpenLIT sidebar or analytics
+- * chrome — it is a focused control surface. Session identity comes from the
+- * stock NextAuth session; no browser-held service secrets are ever exposed.
++ * chrome — it is a focused control surface. Control API identity comes from
++ * server-only deployment configuration; no browser-held service secrets or
++ * actor claims are ever trusted.
+  */
+ const NAV: Array<{ href: string; label: string }> = [
+ 	{ href: "/autodev", label: "Overview" },
+diff --git a/src/client/src/app/(playground)/autodev/providers/page.tsx b/src/client/src/app/(playground)/autodev/providers/page.tsx
+index 5f194e3a..9b744dcd 100644
+--- a/src/client/src/app/(playground)/autodev/providers/page.tsx
++++ b/src/client/src/app/(playground)/autodev/providers/page.tsx
+@@ -25,7 +25,7 @@ import { useCallback, useEffect, useState } from "react";
+  *     surface, and the proxy must not invent them.
+  *
+  * Authorization is enforced by the AutoDev Control API; the proxy forwards
+- * the verified actor identity via `X-AutoDev-Actor` and the AutoDev API
++ * the server-configured actor identity via `X-AutoDev-Actor`; the AutoDev API
+  * applies its own `AUTODEV_CONTROL_OPERATORS` allowlist. A 403 means the
+  * actor is not an operator; the page surfaces the upstream error verbatim
+  * so the operator sees why the action was rejected.
+diff --git a/src/client/src/app/(playground)/autodev/runtime/page.tsx b/src/client/src/app/(playground)/autodev/runtime/page.tsx
+index 9c89bc45..d000dda5 100644
+--- a/src/client/src/app/(playground)/autodev/runtime/page.tsx
++++ b/src/client/src/app/(playground)/autodev/runtime/page.tsx
+@@ -89,7 +89,7 @@ export default function AutodevRuntimePage() {
+ 			<div>
+ 				<h1 className="text-xl font-semibold">Runtime controls</h1>
+ 				<p className="mt-2 text-sm text-stone-600 dark:text-stone-300 max-w-3xl">
+-					Live router state. The proxy forwards the verified actor identity
++					Live router state. The proxy forwards the server-configured actor
+ 					to the AutoDev Control API; the API alone decides whether a
+ 					mutation is allowed for the current actor against its resource
+ 					allowlists. AutoDev Console has no granular RBAC in the telemetry viewer, so all authorization
+diff --git a/src/client/src/app/api/memory/[id]/actions/route.ts b/src/client/src/app/api/memory/[id]/actions/route.ts
+index cabb445f..1e9710cd 100644
+--- a/src/client/src/app/api/memory/[id]/actions/route.ts
++++ b/src/client/src/app/api/memory/[id]/actions/route.ts
+@@ -1,5 +1,4 @@
+ import { NextRequest } from "next/server";
+-import { getCurrentUser } from "@/lib/session";
+ import { errorResponse } from "@/utils/api-response";
+ import asaw from "@/utils/asaw";
+ import { withMemoryAccess, withMemoryAudit } from "@/lib/access/memory-route";
+@@ -83,9 +82,6 @@ function statusFor(error: unknown): number {
+ }
+ 
+ async function POSTHandler(request: NextRequest, { params }: { params: { id: string } }) {
+-	const user = await getCurrentUser();
+-	if (!user) return Response.json("Unauthorized", { status: 401 });
+-
+ 	let id: string;
+ 	try {
+ 		id = parseId(params.id);
+diff --git a/src/client/src/app/api/memory/cohorts/route.ts b/src/client/src/app/api/memory/cohorts/route.ts
+index 4c6f1572..d88e20a3 100644
+--- a/src/client/src/app/api/memory/cohorts/route.ts
++++ b/src/client/src/app/api/memory/cohorts/route.ts
+@@ -1,5 +1,4 @@
+ import { NextRequest } from "next/server";
+-import { getCurrentUser } from "@/lib/session";
+ import { errorResponse } from "@/utils/api-response";
+ import { withMemoryAccess } from "@/lib/access/memory-route";
+ import {
+@@ -115,9 +114,6 @@ function statusFor(message: string): number {
+ }
+ 
+ async function GETHandler(request: NextRequest) {
+-	const user = await getCurrentUser();
+-	if (!user) return Response.json("Unauthorized", { status: 401 });
+-
+ 	const params = request.nextUrl.searchParams;
+ 	let connectorId: string | undefined;
+ 	let filter: AutoDevCohortFilter;
+diff --git a/src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts b/src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts
+index 54749309..5c793d0b 100644
+--- a/src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts
++++ b/src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts
+@@ -1,5 +1,4 @@
+ import { NextRequest } from "next/server";
+-import { getCurrentUser } from "@/lib/session";
+ import { errorResponse } from "@/utils/api-response";
+ import { withMemoryAccess, withMemoryAudit } from "@/lib/access/memory-route";
+ import {
+@@ -132,9 +131,6 @@ async function POSTHandler(
+ 	request: NextRequest,
+ 	{ params }: { readonly params: { readonly id: string } }
+ ) {
+-	const user = await getCurrentUser();
+-	if (!user) return Response.json("Unauthorized", { status: 401 });
+-
+ 	let experienceId: string;
+ 	let rawBody: unknown;
+ 	let input: ParsedReportBody;
+diff --git a/src/client/src/lib/autodev/control-api.ts b/src/client/src/lib/autodev/control-api.ts
+index 71f64231..32c184a7 100644
+--- a/src/client/src/lib/autodev/control-api.ts
++++ b/src/client/src/lib/autodev/control-api.ts
+@@ -1,27 +1,27 @@
+ /**
+  * Same-origin server-side proxy to the AutoDev Control API.
+  *
+- * The browser MUST NOT call the AutoDev Control API directly. The OpenLIT
+- * server authenticates the user session (NextAuth — the only identity
+- * boundary available in OpenLIT CE), enforces exact Origin validation for
+- * every mutation, and forwards the request to the AutoDev Control API
+- * using a scoped service credential resolved at request time from the
+- * server environment. The OpenLIT browser only ever sees a same-origin
+- * `/autodev/api/*` URL; the service credential never leaves the server
+- * process.
++ * The browser MUST NOT call the AutoDev Control API directly. The proxy
++ * chooses the actor from server-only deployment configuration (defaulting
++ * to the canonical `autodev-local` actor), enforces exact Origin validation
++ * for every mutation, and forwards the request using a scoped service
++ * credential. The OpenLIT browser only ever sees a same-origin
++ * `/autodev/api/*` URL; neither actor configuration nor service credentials
++ * leave the server process.
+  *
+  * Authorization model:
+  *
+- * OpenLIT CE ships only with NextAuth identity and no granular RBAC. Per
+- * docs/observability-target-state.md §5, the AutoDev Control API is
+- * responsible for the resource/action allowlists. This proxy:
++ * The single-user OpenLIT distribution has no application account identity
++ * or granular RBAC. The AutoDev Control API is responsible for the
++ * resource/action allowlists. This proxy:
+  *
+- *   1. Verifies the OpenLIT session is present (NextAuth gate).
++ *   1. Uses only the server-configured AutoDev actor; browser identity
++ *      headers and OpenLIT sessions are never consulted.
+  *   2. Enforces exact Origin matching for every state-changing method
+  *      (the stock middleware CSRF check is bypassed for `/autodev/api/*`
+  *      because that path lives outside `/api/*`; same-origin alone is not
+  *      a sufficient CSRF defense, so the proxy performs its own check).
+- *   3. Forwards the verified actor identity (id only) as `X-AutoDev-Actor`.
++ *   3. Forwards the server-configured actor identity as `X-AutoDev-Actor`.
+  *   4. Honors an opt-in `AUTODEV_CONTROL_API_DISABLED=1` kill switch.
+  *   5. NEVER forwards any `X-AutoDev-Role` or `X-AutoDev-Actor-Email`
+  *      header. OpenLIT CE has no trustworthy RBAC; the AutoDev Control API
+@@ -65,7 +65,7 @@
+  *
+  *   Auth (server-side only):
+  *     Authorization:           Bearer <AUTODEV_CONTROL_API_TOKEN>
+- *     X-AutoDev-Actor:         <verified NextAuth user id>
++ *     X-AutoDev-Actor:         <AUTODEV_CONTROL_API_ACTOR or autodev-local>
+  *
+  *   The AutoDev API matches `X-AutoDev-Actor` against the
+  *   `AUTODEV_CONTROL_VIEWERS` / `AUTODEV_CONTROL_OPERATORS` allowlists it
+@@ -74,16 +74,6 @@
+ 
+ import { NextRequest } from "next/server";
+ 
+-// NOTE: `@/lib/session` is imported dynamically so the proxy can be unit
+-// tested without loading NextAuth + Prisma + the upstream jest mock graph.
+-// The static import pulled `jose` into the test runtime, which breaks the
+-// upstream Jest config (ESM-only `jose` in a CommonJS transform path).
+-async function fetchActorFromSession(): Promise<string | null> {
+-    const { getCurrentUser } = await import("@/lib/session");
+-    const user = await getCurrentUser();
+-    return user?.id ?? null;
+-}
+-
+ /** HTTP verbs supported by the proxy. */
+ export type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
+ 
+@@ -197,12 +187,14 @@ export interface ProviderRolePatchResponse {
+ }
+ 
+ /**
+- * Environment variable naming the AutoDev Control API base URL. The variable
+- * is server-only; never expose it to the client bundle.
++ * Server-only deployment settings for the AutoDev Control API proxy.
++ * Never expose any of these values to the client bundle.
+  */
+ const CONTROL_API_URL_ENV = "AUTODEV_CONTROL_API_URL";
+-/** Service credential used by the proxy to call the AutoDev Control API. */
+ const CONTROL_API_TOKEN_ENV = "AUTODEV_CONTROL_API_TOKEN";
++const CONTROL_API_ACTOR_ENV = "AUTODEV_CONTROL_API_ACTOR";
++const LOCAL_CONTROL_API_ACTOR = "autodev-local";
++const ACTOR_ID_PATTERN = /^[A-Za-z0-9@._:+-]{1,128}$/u;
+ /**
+  * Kill switch: when set to `1` or `true`, the proxy short-circuits every
+  * request with a 503. Useful for local development and for the cutover
+@@ -226,7 +218,7 @@ function safeJsonParse(raw: string): unknown {
+ }
+ 
+ function readControlApiConfig():
+-	| { baseUrl: string; token: string }
++	| { baseUrl: string; token: string; actor: string }
+ 	| { err: string; status: number } {
+ 	const disabled = process.env[CONTROL_API_DISABLED_ENV];
+ 	if (disabled === "1" || disabled === "true") {
+@@ -243,35 +235,14 @@ function readControlApiConfig():
+ 			err: `${CONTROL_API_URL_ENV} and ${CONTROL_API_TOKEN_ENV} must be set on the OpenLIT server before the /autodev proxy can forward requests.`,
+ 		};
+ 	}
+-	return { baseUrl: baseUrl.replace(/\/+$/u, ""), token };
+-}
+-
+-/**
+- * Resolve the verified actor identity from the NextAuth session.
+- *
+- * Production callers rely on `getCurrentUser()` — every `/autodev/api/*`
+- * handler invokes this internally before forwarding the request. The
+- * `_setActorResolverForTesting` hook exists so unit tests can swap the
+- * resolver for a stub without loading the full NextAuth + Prisma stack.
+- * The hook is a no-op outside `NODE_ENV === 'test'` so it cannot be used
+- * to bypass auth in production.
+- */
+-let _actorResolver: (() => Promise<string | null>) | null = null;
+-export function _setActorResolverForTesting(
+-	fn: (() => Promise<string | null>) | null,
+-): void {
+-	if (
+-		process.env.NODE_ENV !== "test" &&
+-		process.env.AUTODEV_ALLOW_TEST_HOOKS !== "1"
+-	) {
+-		return;
++	const actor = process.env[CONTROL_API_ACTOR_ENV]?.trim() || LOCAL_CONTROL_API_ACTOR;
++	if (!ACTOR_ID_PATTERN.test(actor)) {
++		return {
++			status: 503,
++			err: `${CONTROL_API_ACTOR_ENV} must be a valid server-configured actor id.`,
++		};
+ 	}
+-	_actorResolver = fn;
+-}
+-
+-async function resolveActorId(): Promise<string | null> {
+-	if (_actorResolver) return _actorResolver();
+-	return fetchActorFromSession();
++	return { baseUrl: baseUrl.replace(/\/+$/u, ""), token, actor };
+ }
+ 
+ /**
+@@ -353,7 +324,7 @@ function verifyOriginForMutation(
+  * The proxy forwards only the headers the AutoDev API contract documents:
+  *
+  *   Authorization:   Bearer <service token>      (server-only)
+- *   X-AutoDev-Actor: <verified session user id>  (server-only, derived)
++ *   X-AutoDev-Actor: <configured deployment actor> (server-only)
+  *
+  * It MUST NOT forward `X-AutoDev-Role` or `X-AutoDev-Actor-Email` or any
+  * other identity claim: the AutoDev API decides allowlist membership from
+@@ -370,16 +341,13 @@ export async function forwardToControlApi<T = unknown>(
+ 		return { ok: false, status: config.status, err: config.err };
+ 	}
+ 
+-	const actor = await resolveActorId();
+-	if (!actor) return { ok: false, status: 401, err: "unauthenticated" };
+-
+ 	const url = `${config.baseUrl}/control/${req.path}`;
+ 	const headers: Record<string, string> = {
+ 		Authorization: `Bearer ${config.token}`,
+ 		Accept: "application/json",
+-		// Single, verified identity claim. The AutoDev API alone matches
++		// Single server-configured actor claim. The AutoDev API alone matches
+ 		// this against its own viewers / operators allowlists.
+-		"X-AutoDev-Actor": actor,
++		"X-AutoDev-Actor": config.actor,
+ 	};
+ 	let body: BodyInit | undefined;
+ 	if (req.body !== undefined) {

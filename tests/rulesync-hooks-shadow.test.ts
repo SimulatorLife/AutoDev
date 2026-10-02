@@ -128,7 +128,10 @@ function document(target: (typeof targets)[number]): JsonObject {
 
 test("Rulesync hook source is the canonical four-section command subset", () => {
   const source = readJson(hookSourcePath);
-  assert.deepEqual(Object.keys(source).sort(), ["codexcli", "hooks"].sort());
+  assert.deepEqual(
+    Object.keys(source).sort(),
+    ["claudecode", "codexcli", "hooks"].sort()
+  );
   assert.deepEqual(Object.keys(asObject(source.hooks)).sort(), [
     "beforeSubmitPrompt",
     "preToolUse",
@@ -243,7 +246,7 @@ test("configured Rulesync generation writes hooks alongside skills", () => {
   }
 });
 
-test("Codex gets native memory capture without adding an unsupported Claude/Copilot hook", () => {
+test("Codex and Claude get native memory capture without adding a Copilot hook", () => {
   const source = hooksAt(readJson(hookSourcePath).hooks);
   const codex = hooksAt(document("codexcli").hooks);
   assert.deepEqual(
@@ -265,9 +268,27 @@ test("Codex gets native memory capture without adding an unsupported Claude/Copi
   const claude = hooksAt(document("claudecode").hooks);
   assert.deepEqual(
     Object.keys(claude).sort(),
-    ["PreToolUse", "SessionStart", "SubagentStart", "UserPromptSubmit"].sort()
+    [
+      "PreToolUse",
+      "SessionEnd",
+      "SessionStart",
+      "SubagentStart",
+      "UserPromptSubmit"
+    ].sort()
   );
-  assert.deepEqual(groupedCommands(claude), sourceCommands);
+  const claudeMemoryCapture =
+    "AUTODEV_MEMORY_HOOK_PROVIDER=claude-code node ~/.codex/src/hooks/memory-session-end.ts";
+  assert.deepEqual(groupedCommands(claude), [
+    ...sourceCommands,
+    claudeMemoryCapture
+  ]);
+  const sessionEndHook = claude.SessionEnd?.[0]?.hooks;
+  assert.ok(Array.isArray(sessionEndHook));
+  assert.deepEqual(asObject(sessionEndHook[0]), {
+    type: "command",
+    command: claudeMemoryCapture,
+    timeout: 60
+  });
   const targetPromptHooks = Array.isArray(codex.UserPromptSubmit?.[0]?.hooks)
     ? (codex.UserPromptSubmit[0].hooks as unknown[])
     : [];
