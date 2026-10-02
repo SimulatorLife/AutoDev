@@ -91,10 +91,8 @@ downstream use. The tested 17-patch prefix applies to pinned OpenLIT; seven focu
 upstream Jest suites pass (66/66) and its patched client typecheck passes. Patches
 18–21 remove Controller/OpAMP discovery, image artifacts, stale message constants, and Controller table initialization while retaining the authenticated first-party OTLP receiver with PID-1 signal supervision. The full
 21-patch apply, patched client typecheck, and eight focused upstream Jest suites
-(58/58) pass. The `linux/arm64` p21 validation image `autodev-openlit:p21-validation`
-was built with a scratch lock under `/tmp`. The standard lock and running OpenLIT
-container remain on p14, so deployed UI and actual receiver drain acceptance remain
-pending.
+(58/58) pass. The linux/arm64 p21 image autodev-openlit:openlit-9938c6663866-p01204b3d1c6d87af (sha256:e18e53a018a3a5baaa81e7cac4b4fb089faddac9847abab2d72e77963cff8729) was built with the separate .tmp/openlit-p21-validation.lock. The standard lock and running OpenLIT
+container remain on p14, an isolated p21 stack returned 401 without OTLP auth and 200 with a bearer token, persisted a span, had no Controller tables on fresh ClickHouse initialization, and completed Collector shutdown on docker stop. Existing volumes are not purged automatically; deployed UI/receiver acceptance remains pending.
 
 ## Correlation limits
 
