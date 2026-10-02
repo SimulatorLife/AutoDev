@@ -54,10 +54,6 @@ export const RUNTIME_MODULES = [
   "runtime/src/control-api/body.ts",
   "runtime/src/router/memory-reconstruction.ts",
   "runtime/src/router/memory-embedding.ts",
-  "runtime/src/memory/openai-compatible-embedding.ts",
-  "runtime/src/memory/privacy.ts",
-  "runtime/src/memory/service.ts",
-  "runtime/src/memory/trajectory.ts",
   "runtime/src/router/routing.ts",
   "runtime/src/control-api/index.ts",
   "runtime/src/router/subagents.ts",
@@ -189,7 +185,11 @@ export const OBSOLETE_RUNTIME_MODULES = [
   "src/platform/otel-provision.ts",
   "src/platform/sync-rulesync-workspaces.ts",
   "src/cli/router-status.ts",
-  "src/cli/router-status-client.ts"
+  "src/cli/router-status-client.ts",
+  "src/memory/openai-compatible-embedding.ts",
+  "src/memory/privacy.ts",
+  "src/memory/service.ts",
+  "src/memory/trajectory.ts"
 ] as const;
 export const OBSOLETE_CLAUDE_SKILL_VIEWS = path.join(
   "provider-runtime",

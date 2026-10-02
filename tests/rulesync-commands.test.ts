@@ -37,12 +37,14 @@ const driftWorkflowPath = join(
 const installerPath = join(repositoryRoot, "scripts", "install.sh");
 const checkModulePath = join(
   repositoryRoot,
+  "runtime",
   "src",
   "platform",
   "install-check.ts"
 );
 const materializerPath = join(
   repositoryRoot,
+  "runtime",
   "src",
   "platform",
   "install-materializer.ts"

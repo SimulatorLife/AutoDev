@@ -1007,6 +1007,30 @@ test("router dashboard and chart.js are decommissioned from runtime modules", ()
   assert.equal(OBSOLETE_DASHBOARD, "codex-model-router-dashboard.html");
 });
 
+test("Memory implementations are Runtime-owned behind the workspace package", () => {
+  const runtimePackage = JSON.parse(
+    readFileSync(join(repositoryRoot, "runtime/package.json"), "utf8")
+  ) as { exports: Record<string, string> };
+  assert.equal(runtimePackage.exports["./memory"], "./src/memory/index.ts");
+  const memoryModules = [
+    "openai-compatible-embedding.ts",
+    "privacy.ts",
+    "service.ts",
+    "trajectory.ts"
+  ];
+  const runtimeModules = RUNTIME_MODULES as readonly string[];
+  const obsoleteModules = OBSOLETE_RUNTIME_MODULES as readonly string[];
+  for (const filename of memoryModules) {
+    const runtimePath = `runtime/src/memory/${filename}`;
+    const legacyPath = `src/memory/${filename}`;
+    assert.equal(existsSync(join(repositoryRoot, runtimePath)), true);
+    assert.equal(existsSync(join(repositoryRoot, legacyPath)), false);
+    assert.equal(runtimeModules.includes(runtimePath), false);
+    assert.equal(runtimeModules.includes(legacyPath), false);
+    assert.ok(obsoleteModules.includes(legacyPath));
+  }
+});
+
 test("installed sources use dependencies from their owning workspace", () => {
   const runtimePackage = JSON.parse(
     readFileSync(join(repositoryRoot, "runtime/package.json"), "utf8")

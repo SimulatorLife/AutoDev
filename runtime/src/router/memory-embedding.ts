@@ -1,4 +1,4 @@
-import { OpenAICompatibleMemoryEmbeddingProvider } from "../memory/openai-compatible-embedding.ts";
+import { OpenAICompatibleMemoryEmbeddingProvider } from "@simulatorlife/autodev-runtime/memory";
 import {
   type ProviderRoute,
   ROUTING_POLICY,

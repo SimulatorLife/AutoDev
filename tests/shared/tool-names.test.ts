@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdirSync,readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -33,7 +33,8 @@ import {
   MULTI_AGENT_WAIT_TOOL,
   multiAgentToolName,
   WEB_FETCH_TOOL,
-  WEB_SEARCH_TOOL} from "@simulatorlife/autodev-runtime/shared/tool-names";
+  WEB_SEARCH_TOOL
+} from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 test("canonical Codex code-mode tool names are pinned", () => {
   assert.equal(EXEC_TOOL, "exec");
@@ -205,7 +206,9 @@ test("the audit classifier routes names to the right bucket", () => {
 // the canonical constants module. If someone re-introduces one, this test
 // names the offender so the next reader can fix it at the source.
 const SOURCE_ROOTS = [
-  fileURLToPath(new URL("../../src/", import.meta.url)),
+  fileURLToPath(new URL("../../console/src/", import.meta.url)),
+  fileURLToPath(new URL("../../core/src/", import.meta.url)),
+  fileURLToPath(new URL("../../data/src/", import.meta.url)),
   fileURLToPath(new URL("../../runtime/src/", import.meta.url))
 ];
 const CANONICAL_TOOL_NAMES = fileURLToPath(
@@ -220,7 +223,11 @@ function listTypeScriptFiles(dir: string): string[] {
     for (const entry of readdirSync(current, { withFileTypes: true })) {
       const full = join(current, entry.name);
       if (entry.isDirectory()) stack.push(full);
-      else if (entry.isFile() && entry.name.endsWith(".ts")) out.push(full);
+      else if (
+        entry.isFile() &&
+        (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))
+      )
+        out.push(full);
     }
   }
   return out;

@@ -417,12 +417,12 @@ test("provider bridges explicitly expose code MCP capabilities", async () => {
     "utf8"
   );
   const settings = await readFile(
-    path.join(root, "src", "platform", "antigravity-settings.ts"),
+    path.join(root, "runtime", "src", "platform", "antigravity-settings.ts"),
     "utf8"
   );
   assert.match(settings, /read_url\(\*\)/);
   const materializer = await readFile(
-    path.join(root, "src", "platform", "install-materializer.ts"),
+    path.join(root, "runtime", "src", "platform", "install-materializer.ts"),
     "utf8"
   );
   assert.match(
