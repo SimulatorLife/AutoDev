@@ -359,6 +359,8 @@ test(
       const initialJoin = initialItems[0]!;
       assert.equal(initialJoin.outcome, null);
       assert.equal(initialJoin.injection.correlationToken, correlationToken);
+      // Only one injection has been recorded for this session so far.
+      assert.equal(initialJoin.sessionInjectionCount, 1);
       assert.equal(initialJoin.injection.runId, requestRunId);
       assert.equal(initialJoin.injection.agentId, requestAgentId);
       assert.notEqual(initialJoin.injection.runId, sessionRunId);
@@ -405,6 +407,9 @@ test(
       const joinedJoin = joinedItems[0]!;
       assert.notEqual(joinedJoin.outcome, null);
       assert.equal(joinedJoin.outcome?.correlationToken, correlationToken);
+      // Reporting an outcome does not add a second injection event, so the
+      // session-wide count is unchanged.
+      assert.equal(joinedJoin.sessionInjectionCount, 1);
       assert.equal(joinedJoin.outcome?.outcomeKind, "success");
       assert.equal(joinedJoin.outcome?.reportKind, "pull_request");
       assert.equal(joinedJoin.outcome?.reporterAuthority, "root");
@@ -472,10 +477,14 @@ test(
       );
       assert.equal(cohortPage.exposureCount, 2);
       assert.equal(cohortPage.reportCount, 1);
+      // Both cells belong to the same session, which captured exactly two
+      // injection events in total, so both are 'multiple' regardless of
+      // the per-cell memoryMode/injectionResult/reportKind grouping.
       assert.deepEqual(cohortPage.cells, [
         {
           memoryMode: "disabled",
           injectionResult: "skipped",
+          sessionCardinality: "multiple",
           reportKind: null,
           outcomeKind: null,
           exposureCount: 1,
@@ -484,6 +493,7 @@ test(
         {
           memoryMode: "jit",
           injectionResult: "injected",
+          sessionCardinality: "multiple",
           reportKind: "pull_request",
           outcomeKind: "success",
           exposureCount: 1,

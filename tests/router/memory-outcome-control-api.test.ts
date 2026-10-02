@@ -74,6 +74,13 @@ class OutcomeControlServiceStub {
   readonly listRequests: MemoryInjectionOutcomeJoinRequest[] = [];
   readonly experienceContexts: MemoryReadContext[] = [];
   private storedReport: MemoryOutcomeReport | null = null;
+  /**
+   * Stands in for the Data-layer-derived count of every injection event
+   * captured for this stub's session, inclusive of the returned row. Tests
+   * override this to exercise single- vs multi-injection sessions without
+   * needing a real repository.
+   */
+  sessionInjectionCount = 1;
 
   async getExperience(
     id: string,
@@ -94,7 +101,13 @@ class OutcomeControlServiceStub {
     this.listRequests.push(request);
     const outcome = this.storedReport;
     return {
-      items: [{ injection, outcome }],
+      items: [
+        {
+          injection,
+          outcome,
+          sessionInjectionCount: this.sessionInjectionCount
+        }
+      ],
       total: 1,
       limit: request.limit ?? 50,
       offset: request.offset ?? 0
@@ -240,6 +253,32 @@ test("outcome GET exposes request-level injection tokens only in an authorized s
   assert.equal(service.listRequests[0]?.context.runId, "session-a");
   assert.equal(service.listRequests[0]?.context.agentId, "session-a");
   assert.equal(service.listRequests[0]?.includeUnreported, true);
+});
+
+test("outcome GET passes through the Data-derived sessionInjectionCount for single- and multi-injection sessions without altering it from cohort-style filters", async () => {
+  process.env[taskHistoryEnv] = "1";
+
+  const singleSessionService = new OutcomeControlServiceStub();
+  singleSessionService.sessionInjectionCount = 1;
+  const single = await callOutcomeRoute(singleSessionService, "GET", undefined, {
+    actor: "operator"
+  });
+  assert.equal(single.response.statusCode, 200);
+  assert.equal(single.body.items[0].sessionInjectionCount, 1);
+
+  const multiSessionService = new OutcomeControlServiceStub();
+  multiSessionService.sessionInjectionCount = 3;
+  const multi = await callOutcomeRoute(multiSessionService, "GET", undefined, {
+    actor: "operator"
+  });
+  assert.equal(multi.response.statusCode, 200);
+  assert.equal(multi.body.items[0].sessionInjectionCount, 3);
+  // The request-level injection/outcome payload is otherwise identical;
+  // only the session-wide cardinality signal differs between the two reads.
+  assert.equal(
+    multi.body.items[0].injection.correlationToken,
+    single.body.items[0].injection.correlationToken
+  );
 });
 
 test("outcome GET requires operator task-history authorization and a visible experience", async () => {

@@ -5,6 +5,7 @@ import {
   assertMemoryInjectionOutcomeCohortFilter,
   type ExperienceEnvelope,
   isMemoryExperienceVisibleTo,
+  isMemoryInjectionSessionCardinality,
   isMemoryScopeVisibleTo,
   type MemoryReadContext,
   type MemoryScope,
@@ -182,4 +183,12 @@ test("task history remains private unless a curator grants workspace-bounded exp
     false,
     "experience history grants never widen durable memory record visibility"
   );
+});
+
+test("isMemoryInjectionSessionCardinality accepts only the bounded single/multiple cardinality values", () => {
+  assert.equal(isMemoryInjectionSessionCardinality("single"), true);
+  assert.equal(isMemoryInjectionSessionCardinality("multiple"), true);
+  assert.equal(isMemoryInjectionSessionCardinality("none"), false);
+  assert.equal(isMemoryInjectionSessionCardinality(1), false);
+  assert.equal(isMemoryInjectionSessionCardinality(undefined), false);
 });

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import {
   assertMemoryInjectionOutcomeCohortFilter,
+  isMemoryInjectionSessionCardinality,
   type ExperienceEnvelope,
   type ExperienceListRequest,
   type ExperienceOutcome,
@@ -915,8 +916,23 @@ export class PostgresMemoryRepository implements MemoryRepository {
     const limitParam = `$${filterParams.all.length + 1}`;
     const offsetParam = `$${filterParams.all.length + 2}`;
 
+    // The first scope placeholders are deliberately shared with this CTE:
+    // buildSessionScopeFilter adds workspace as $1, task as $2, and an
+    // optional repository as $3. The aggregate groups once per canonical
+    // session key before mode/result/outcome filters or pagination apply.
+    const sessionCountRepositoryFilter = sessionLookup.repositoryId
+      ? " AND si.repository_id = $3"
+      : "";
     const pageText = `
-      SELECT i.*,
+      WITH session_counts AS MATERIALIZED (
+        SELECT si.workspace_id, si.repository_id, si.task_id,
+               COUNT(*)::bigint AS session_injection_count
+        FROM memory_injection_events si
+        WHERE si.workspace_id = $1
+          AND si.task_id = $2${sessionCountRepositoryFilter}
+        GROUP BY si.workspace_id, si.repository_id, si.task_id
+      )
+      SELECT i.*, sc.session_injection_count,
              r.id AS report_id,
              r.workspace_id AS report_workspace_id,
              r.repository_id AS report_repository_id,
@@ -936,6 +952,10 @@ export class PostgresMemoryRepository implements MemoryRepository {
              r.reporter_id, r.reporter_authority, r.evidence AS report_evidence,
              r.reason_code AS report_reason_code
       FROM memory_injection_events i
+      JOIN session_counts sc
+        ON sc.workspace_id = i.workspace_id
+       AND sc.repository_id IS NOT DISTINCT FROM i.repository_id
+       AND sc.task_id = i.task_id
       LEFT JOIN memory_outcome_reports r
         ON r.workspace_id = i.workspace_id
        AND r.repository_id = i.repository_id
@@ -959,7 +979,12 @@ export class PostgresMemoryRepository implements MemoryRepository {
     );
     const items: MemoryInjectionOutcomeJoin[] = rowsResult.rows.map((row) => {
       const injection = hydrateInjectionEventRow(row);
-      if (!row.report_id) return { injection, outcome: null };
+      const sessionInjectionCount = parseCohortCount(
+        row.session_injection_count,
+        "session_injection_count"
+      );
+      if (!row.report_id)
+        return { injection, outcome: null, sessionInjectionCount };
       const reportRow: Record<string, unknown> = {
         id: row.report_id,
         workspace_id: row.report_workspace_id,
@@ -985,7 +1010,8 @@ export class PostgresMemoryRepository implements MemoryRepository {
       };
       return {
         injection,
-        outcome: hydrateOutcomeReportRow(reportRow)
+        outcome: hydrateOutcomeReportRow(reportRow),
+        sessionInjectionCount
       };
     });
     return {
@@ -1046,19 +1072,41 @@ export class PostgresMemoryRepository implements MemoryRepository {
     // joined report per exposure, so `reportCount <= exposureCount` holds
     // structurally.
     const text = `
-      SELECT i.memory_mode, i.injection_result,
+      WITH cohort_sessions AS MATERIALIZED (
+        SELECT DISTINCT i.workspace_id, i.repository_id, i.task_id
+        FROM memory_injection_events i
+        WHERE i.workspace_id = ${workspaceParam}
+          AND i.repository_id = ${repositoryParam}
+          AND i.occurred_at >= ${fromParam}
+          AND i.occurred_at <= ${untilParam}
+      ),
+      session_counts AS MATERIALIZED (
+        SELECT si.workspace_id, si.repository_id, si.task_id,
+               CASE WHEN COUNT(*) > 1 THEN 'multiple' ELSE 'single' END AS session_cardinality
+        FROM cohort_sessions cs
+        JOIN memory_injection_events si
+          ON si.workspace_id = cs.workspace_id
+         AND si.repository_id = cs.repository_id
+         AND si.task_id = cs.task_id
+        GROUP BY si.workspace_id, si.repository_id, si.task_id
+      )
+      SELECT i.memory_mode, i.injection_result, sc.session_cardinality,
              r.report_kind, r.outcome_kind,
              COUNT(i.id)::bigint AS exposure_count,
              COUNT(r.id)::bigint AS report_count
       FROM memory_injection_events i
+      JOIN session_counts sc
+        ON sc.workspace_id = i.workspace_id
+       AND sc.repository_id = i.repository_id
+       AND sc.task_id = i.task_id
       LEFT JOIN memory_outcome_reports r
         ON r.workspace_id = i.workspace_id
        AND r.repository_id = i.repository_id
        AND r.correlation_token = i.correlation_token
        AND r.task_id = i.task_id
       WHERE ${whereClause}
-      GROUP BY i.memory_mode, i.injection_result, r.report_kind, r.outcome_kind
-      ORDER BY i.memory_mode, i.injection_result,
+      GROUP BY i.memory_mode, i.injection_result, sc.session_cardinality, r.report_kind, r.outcome_kind
+      ORDER BY i.memory_mode, i.injection_result, sc.session_cardinality,
                r.report_kind NULLS FIRST, r.outcome_kind NULLS FIRST
     `;
     const result = await this.pool.query(text, params.all);
@@ -1089,9 +1137,17 @@ export class PostgresMemoryRepository implements MemoryRepository {
         reportCount + cellReportCount,
         "report_count"
       );
+      if (!isMemoryInjectionSessionCardinality(row.session_cardinality)) {
+        throw new MemoryHydrationError(
+          "memory_injection_events",
+          "session_cardinality",
+          `expected "single" or "multiple", got ${String(row.session_cardinality)}`
+        );
+      }
       return {
         memoryMode: row.memory_mode as MemoryExecutionMode,
         injectionResult: row.injection_result as MemoryInjectionResult,
+        sessionCardinality: row.session_cardinality,
         reportKind: (row.report_kind ?? null) as MemoryOutcomeReportKind | null,
         outcomeKind: (row.outcome_kind ?? null) as ExperienceOutcome | null,
         exposureCount: cellExposureCount,

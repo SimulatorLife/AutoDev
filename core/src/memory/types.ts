@@ -194,6 +194,21 @@ export const MEMORY_OUTCOME_REPORT_KINDS = [
 export type MemoryOutcomeReportKind =
   (typeof MEMORY_OUTCOME_REPORT_KINDS)[number];
 
+/**
+ * Bounded cardinality of a captured session's injection events: whether the
+ * session (workspace, repository, task/session id) emitted exactly one
+ * injection event or more than one. Derived at read time from the full
+ * event set for that session; it carries no request/thread run or agent
+ * identity and is not evidence of task success, memory use, or reliable
+ * per-turn attribution.
+ */
+export const MEMORY_INJECTION_SESSION_CARDINALITIES = [
+  "single",
+  "multiple"
+] as const;
+export type MemoryInjectionSessionCardinality =
+  (typeof MEMORY_INJECTION_SESSION_CARDINALITIES)[number];
+
 export const MEMORY_INJECTION_EVENT_REASON_CODES = [
   "packet_attached",
   "no_packet_research_returned_empty",
@@ -236,6 +251,17 @@ export function isMemoryOutcomeReportKind(
   return (
     typeof value === "string" &&
     MEMORY_OUTCOME_REPORT_KINDS.includes(value as MemoryOutcomeReportKind)
+  );
+}
+
+export function isMemoryInjectionSessionCardinality(
+  value: unknown
+): value is MemoryInjectionSessionCardinality {
+  return (
+    typeof value === "string" &&
+    MEMORY_INJECTION_SESSION_CARDINALITIES.includes(
+      value as MemoryInjectionSessionCardinality
+    )
   );
 }
 
@@ -327,6 +353,18 @@ export interface MemoryInjectionOutcomeJoin {
   readonly injection: MemoryInjectionEvent;
   /** Null when the stored injection has not yet been reported. */
   readonly outcome: MemoryOutcomeReport | null;
+  /**
+   * Count of all injection events captured for the same session key
+   * (workspace, repository, task/session id) as `injection`, inclusive of
+   * `injection` itself. Derived at read time from the full append-only
+   * event set for that session -- memory-mode, injection-result, report-kind,
+   * and outcome-kind filters applied to the surrounding query never change
+   * this count. It distinguishes a session that injected exactly once from
+   * one that injected repeatedly; it does not attribute any request/thread
+   * runId or agentId to the session-level outcome, and it is not evidence
+   * that the model read or relied on any injected packet.
+   */
+  readonly sessionInjectionCount: number;
 }
 
 export interface MemoryInjectionOutcomeJoinRequest {
@@ -746,6 +784,11 @@ export interface MemoryRepository {
    *   are never issued;
    * - return cells whose `reportKind`/`outcomeKind` are null when no
    *   matching report row exists for an injection event;
+   * - derive each cell's `sessionCardinality` from the full, unfiltered
+   *   count of injection events sharing that event's session key
+   *   (workspace, repository, task/session id); `memoryModes`,
+   *   `injectionResults`, `reportKinds`, and `outcomeKinds` filters must
+   *   never change which sessions count as `single` vs `multiple`;
    * - never include correlation tokens, session/task/run/agent IDs, memory
    *   IDs, evidence URIs, or reporter identities in the response.
    */
@@ -771,12 +814,14 @@ export interface MemoryResearchRequest {
 /**
  * Bounded aggregate read over canonical append-only injection/outcome event
  * tables. The cohort is grouped by the fixed tuple
- * `(memoryMode, injectionResult, reportKind, outcomeKind)`. Cells whose
- * `reportKind`/`outcomeKind` are null represent unreported exposures (an
- * injection event that has not yet received a reporter-supplied outcome);
- * `reportCount` is 0 for those cells and `reportCount <= exposureCount` is
- * structurally guaranteed by the one-row-per-token unique index on the
- * report table.
+ * `(memoryMode, injectionResult, sessionCardinality, reportKind, outcomeKind)`.
+ * Cells whose `reportKind`/`outcomeKind` are null represent unreported
+ * exposures (an injection event that has not yet received a reporter-
+ * supplied outcome); `reportCount` is 0 for those cells and
+ * `reportCount <= exposureCount` is structurally guaranteed by the
+ * one-row-per-token unique index on the report table. `sessionCardinality`
+ * is derived from the full event set for each row's session key, never from
+ * the filtered rows contributing to the cohort read itself.
  *
  * Operators query this cohort at the (workspace, repository, time) level.
  * Role/task/run/agent selectors are never accepted from the caller; the
@@ -803,6 +848,15 @@ export interface MemoryInjectionOutcomeCohortFilter {
 export interface MemoryInjectionOutcomeCohortCell {
   readonly memoryMode: MemoryExecutionMode;
   readonly injectionResult: MemoryInjectionResult;
+  /**
+   * `"single"` when every injection event grouped into this cell belongs to
+   * a session (workspace, repository, task/session id) that captured exactly
+   * one injection event in total; `"multiple"` when that session captured
+   * more than one. Derived from the full, unfiltered event set for the
+   * session -- never from the `memoryModes`/`injectionResults`/
+   * `reportKinds`/`outcomeKinds` filters applied to this cohort read.
+   */
+  readonly sessionCardinality: MemoryInjectionSessionCardinality;
   /** Null when the cell represents an unreported exposure (no matching report row). */
   readonly reportKind: MemoryOutcomeReportKind | null;
   /** Null when the cell represents an unreported exposure (no matching report row). */

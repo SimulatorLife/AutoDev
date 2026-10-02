@@ -412,6 +412,17 @@ CREATE TRIGGER memory_outcome_reports_no_update
   BEFORE UPDATE OR DELETE ON memory_outcome_reports
   FOR EACH ROW EXECUTE FUNCTION memory_outcome_reports_append_only();
 `
+  },
+  {
+    version: 9,
+    description: "Index captured-session injection event lookups",
+    sql: `
+-- Session counts are derived across all injection rows for the canonical
+-- (workspace_id, repository_id, task_id) key. This index supports the
+-- full-session aggregation independently of occurred-time or cohort filters.
+CREATE INDEX idx_memory_injection_events_session_key
+  ON memory_injection_events (workspace_id, repository_id, task_id);
+`
   }
 ];
 

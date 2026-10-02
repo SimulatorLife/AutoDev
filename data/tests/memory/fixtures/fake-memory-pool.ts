@@ -546,7 +546,7 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     // once here rather than matching \s+ runs throughout.
     const normalizedSql = normalizeSql(sql);
     const pageMatch =
-      /^SELECT i\.\*, (.+?) FROM memory_injection_events i LEFT JOIN memory_outcome_reports r ON r\.workspace_id = i\.workspace_id AND r\.repository_id = i\.repository_id AND r\.correlation_token = i\.correlation_token AND r\.task_id = i\.task_id WHERE (.+?) ORDER BY i\.occurred_at DESC, i\.id DESC LIMIT \$(\d+) OFFSET \$(\d+)$/i.exec(
+      /^WITH session_counts AS MATERIALIZED \(.+?\) SELECT i\.\*, sc\.session_injection_count, (.+?) FROM memory_injection_events i JOIN session_counts sc ON sc\.workspace_id = i\.workspace_id AND sc\.repository_id IS NOT DISTINCT FROM i\.repository_id AND sc\.task_id = i\.task_id LEFT JOIN memory_outcome_reports r ON r\.workspace_id = i\.workspace_id AND r\.repository_id = i\.repository_id AND r\.correlation_token = i\.correlation_token AND r\.task_id = i\.task_id WHERE (.+?) ORDER BY i\.occurred_at DESC, i\.id DESC LIMIT \$(\d+) OFFSET \$(\d+)$/i.exec(
         normalizedSql
       );
     const countMatch =
@@ -591,9 +591,17 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     if (!pageMatch) {
       return { rows: [{ total: matched.length }], rowCount: 1 };
     }
+    const allInjections = [...this.tables.memory_injection_events.values()];
+    const sessionCounts = countInjectionsBySession(allInjections);
     const projected = matched
       .slice(offset, offset + limit)
-      .map((row) => projectJoinRow(row.injection, row.report));
+      .map((row) =>
+        projectJoinRow(
+          row.injection,
+          row.report,
+          sessionCounts.get(injectionSessionKey(row.injection)) ?? 0
+        )
+      );
     return { rows: projected, rowCount: projected.length };
   }
 
@@ -610,7 +618,7 @@ export class FakeMemoryPool implements MemoryConnectionPool {
   ): MemoryQueryResult | null {
     const normalizedSql = normalizeSql(sql);
     const match =
-      /^SELECT i\.memory_mode, i\.injection_result, r\.report_kind, r\.outcome_kind, COUNT\(i\.id\)::bigint AS exposure_count, COUNT\(r\.id\)::bigint AS report_count FROM memory_injection_events i LEFT JOIN memory_outcome_reports r ON r\.workspace_id = i\.workspace_id AND r\.repository_id = i\.repository_id AND r\.correlation_token = i\.correlation_token AND r\.task_id = i\.task_id WHERE (.+) GROUP BY i\.memory_mode, i\.injection_result, r\.report_kind, r\.outcome_kind ORDER BY i\.memory_mode, i\.injection_result, r\.report_kind NULLS FIRST, r\.outcome_kind NULLS FIRST$/i.exec(
+      /^WITH cohort_sessions AS MATERIALIZED \(.+?\), session_counts AS MATERIALIZED \(.+?\) SELECT i\.memory_mode, i\.injection_result, sc\.session_cardinality, r\.report_kind, r\.outcome_kind, COUNT\(i\.id\)::bigint AS exposure_count, COUNT\(r\.id\)::bigint AS report_count FROM memory_injection_events i JOIN session_counts sc ON sc\.workspace_id = i\.workspace_id AND sc\.repository_id = i\.repository_id AND sc\.task_id = i\.task_id LEFT JOIN memory_outcome_reports r ON r\.workspace_id = i\.workspace_id AND r\.repository_id = i\.repository_id AND r\.correlation_token = i\.correlation_token AND r\.task_id = i\.task_id WHERE (.+) GROUP BY i\.memory_mode, i\.injection_result, sc\.session_cardinality, r\.report_kind, r\.outcome_kind ORDER BY i\.memory_mode, i\.injection_result, sc\.session_cardinality, r\.report_kind NULLS FIRST, r\.outcome_kind NULLS FIRST$/i.exec(
         normalizedSql
       );
     if (!match) return null;
@@ -619,12 +627,15 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     const reportsByToken = indexReportsByWorkspaceToken(
       this.tables.memory_outcome_reports
     );
+    const allInjections = [...this.tables.memory_injection_events.values()];
+    const sessionCounts = countInjectionsBySession(allInjections);
     type CellKey = string;
     const cells = new Map<
       CellKey,
       {
         memory_mode: unknown;
         injection_result: unknown;
+        session_cardinality: unknown;
         report_kind: unknown;
         outcome_kind: unknown;
         exposure_count: number;
@@ -643,9 +654,14 @@ export class FakeMemoryPool implements MemoryConnectionPool {
       if (!predicate(injection, report)) continue;
       const reportKind = report ? report.report_kind : null;
       const outcomeKind = report ? report.outcome_kind : null;
+      const sessionCardinality =
+        (sessionCounts.get(injectionSessionKey(injection)) ?? 0) > 1
+          ? "multiple"
+          : "single";
       const key = [
         injection.memory_mode,
         injection.injection_result,
+        sessionCardinality,
         reportKind,
         outcomeKind
       ].join("\u0001");
@@ -657,6 +673,7 @@ export class FakeMemoryPool implements MemoryConnectionPool {
         cells.set(key, {
           memory_mode: injection.memory_mode,
           injection_result: injection.injection_result,
+          session_cardinality: sessionCardinality,
           report_kind: reportKind,
           outcome_kind: outcomeKind,
           exposure_count: 1,
@@ -668,6 +685,7 @@ export class FakeMemoryPool implements MemoryConnectionPool {
       const dimensions: (keyof typeof left)[] = [
         "memory_mode",
         "injection_result",
+        "session_cardinality",
         "report_kind",
         "outcome_kind"
       ];
@@ -1256,11 +1274,36 @@ function indexReportsByInjection(
   return map;
 }
 
+function injectionSessionKey(row: Record<string, unknown>): string {
+  // Mirrors both repository aggregates. JSON tuple encoding preserves the
+  // difference between a NULL repository and an empty-string repository.
+  return JSON.stringify([
+    row.workspace_id ?? null,
+    row.repository_id ?? null,
+    row.task_id ?? null
+  ]);
+}
+
+function countInjectionsBySession(
+  injections: readonly Record<string, unknown>[]
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const injection of injections) {
+    const key = injectionSessionKey(injection);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
 function projectJoinRow(
   injection: Record<string, unknown>,
-  report: Record<string, unknown> | null
+  report: Record<string, unknown> | null,
+  sessionInjectionCountValue: number
 ): Record<string, unknown> {
-  const projected: Record<string, unknown> = { ...injection };
+  const projected: Record<string, unknown> = {
+    ...injection,
+    session_injection_count: sessionInjectionCountValue
+  };
   const reportProjection: Readonly<Record<string, string>> = {
     report_id: "id",
     report_workspace_id: "workspace_id",

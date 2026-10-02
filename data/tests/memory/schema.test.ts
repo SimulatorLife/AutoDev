@@ -10,7 +10,7 @@ import { FakeMemoryPool } from "./fixtures/fake-memory-pool.ts";
 test("memory migrations define append-only provenance and mandatory PostgreSQL/pgvector storage", () => {
   assert.deepEqual(
     MEMORY_MIGRATIONS.map((migration) => migration.version),
-    [1, 2, 3, 4, 5, 6, 7, 8]
+    [1, 2, 3, 4, 5, 6, 7, 8, 9]
   );
   const initial = MEMORY_MIGRATIONS[0];
   const upgrade = MEMORY_MIGRATIONS[1];
@@ -20,6 +20,7 @@ test("memory migrations define append-only provenance and mandatory PostgreSQL/p
   const experienceEvidenceSearch = MEMORY_MIGRATIONS[5];
   const experienceMemoryMode = MEMORY_MIGRATIONS[6];
   const injectionOutcome = MEMORY_MIGRATIONS[7];
+  const injectionSessionIndex = MEMORY_MIGRATIONS[8];
   assert.ok(initial);
   assert.ok(upgrade);
   assert.ok(skillPromotion);
@@ -28,6 +29,7 @@ test("memory migrations define append-only provenance and mandatory PostgreSQL/p
   assert.ok(experienceEvidenceSearch);
   assert.ok(experienceMemoryMode);
   assert.ok(injectionOutcome);
+  assert.ok(injectionSessionIndex);
 
   // Append-only experience envelopes, never transcript/prompt/tool payloads.
   assert.match(initial.sql, /CREATE TABLE memory_experiences/);
@@ -125,6 +127,13 @@ test("memory migrations define append-only provenance and mandatory PostgreSQL/p
     injectionOutcome.sql,
     /BEFORE UPDATE OR DELETE ON memory_outcome_reports/
   );
+
+  // Forward-only session index supports full-set injection counts without
+  // changing migration 8's append-only event table contract.
+  assert.match(
+    injectionSessionIndex.sql,
+    /CREATE INDEX idx_memory_injection_events_session_key\s+ON memory_injection_events\s*\(workspace_id, repository_id, task_id\)/
+  );
 });
 
 test("applyMemoryMigrations records applied versions and runs each migration in its own transaction", async () => {
@@ -133,10 +142,38 @@ test("applyMemoryMigrations records applied versions and runs each migration in 
 
   assert.deepEqual(
     pool.tables.memory_schema_migrations.map((row) => row.version),
-    [1, 2, 3, 4, 5, 6, 7, 8]
+    [1, 2, 3, 4, 5, 6, 7, 8, 9]
   );
-  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 8);
-  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 8);
+  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 9);
+  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 9);
+});
+
+test("applyMemoryMigrations adds migration 9 transactionally to a database already at migration 8", async () => {
+  const pool = new FakeMemoryPool();
+  pool.tables.memory_schema_migrations.push(
+    ...Array.from({ length: 8 }, (_, index) => ({
+      version: index + 1,
+      description: "already applied"
+    }))
+  );
+
+  await applyMemoryMigrations(pool);
+
+  assert.deepEqual(
+    pool.tables.memory_schema_migrations.map((row) => row.version),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9]
+  );
+  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 1);
+  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 1);
+  assert.equal(pool.executed.filter((sql) => sql === "ROLLBACK").length, 0);
+  assert.ok(
+    pool.executed.some((sql) =>
+      sql.includes("idx_memory_injection_events_session_key")
+    )
+  );
+  assert.ok(
+    !pool.executed.some((sql) => sql.includes("CREATE TABLE memory_injection_events"))
+  );
 });
 
 test("applyMemoryMigrations is idempotent: a second call applies nothing new", async () => {
@@ -146,7 +183,7 @@ test("applyMemoryMigrations is idempotent: a second call applies nothing new", a
 
   await applyMemoryMigrations(pool);
 
-  assert.equal(pool.tables.memory_schema_migrations.length, 8);
+  assert.equal(pool.tables.memory_schema_migrations.length, 9);
   const newCalls = pool.executed.slice(executedAfterFirst);
   assert.ok(
     !newCalls.some((sql) => sql.includes("CREATE TABLE memory_experiences"))
@@ -157,5 +194,10 @@ test("applyMemoryMigrations is idempotent: a second call applies nothing new", a
   );
   assert.ok(
     !newCalls.some((sql) => sql.includes("idx_memory_experiences_mode_outcome"))
+  );
+  assert.ok(
+    !newCalls.some((sql) =>
+      sql.includes("idx_memory_injection_events_session_key")
+    )
   );
 });

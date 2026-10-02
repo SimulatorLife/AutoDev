@@ -155,7 +155,7 @@ const cohortFilterBase = {
   occurredUntil: "2026-01-10T00:00:00.000Z"
 };
 
-test("aggregateInjectionOutcomeCohorts groups reported injections by the fixed (memoryMode, injectionResult, reportKind, outcomeKind) tuple", async () => {
+test("aggregateInjectionOutcomeCohorts groups reported injections by the fixed (memoryMode, injectionResult, sessionCardinality, reportKind, outcomeKind) tuple", async () => {
   const pool = new FakeMemoryPool();
   const repository = repo(pool);
   await seedCohortFixtures(repository);
@@ -307,6 +307,11 @@ test("aggregateInjectionOutcomeCohorts applies bounded memoryModes/injectionResu
   assert.equal(page.cells.length, 1);
   assert.equal(page.exposureCount, 2);
   assert.equal(page.cells[0]!.memoryMode, "jit");
+  assert.equal(
+    page.cells[0]!.sessionCardinality,
+    "multiple",
+    "filtered jit/injected exposures retain the full session cardinality"
+  );
 });
 
 test("aggregateInjectionOutcomeCohorts applies bounded reportKinds/outcomeKinds filters and naturally excludes unreported cells", async () => {
@@ -323,6 +328,11 @@ test("aggregateInjectionOutcomeCohorts applies bounded reportKinds/outcomeKinds 
   assert.equal(page.cells[0]!.reportKind, "task");
   assert.equal(page.exposureCount, 2);
   assert.equal(page.reportCount, 2);
+  assert.equal(
+    page.cells[0]!.sessionCardinality,
+    "multiple",
+    "report/outcome filters do not remove the unreported sibling from the session count"
+  );
 });
 
 test("aggregateInjectionOutcomeCohorts never returns correlation tokens, IDs, evidence, or reporter identities", async () => {
@@ -500,4 +510,188 @@ test("aggregateInjectionOutcomeCohorts rejects a non-finite occurred timestamp i
     /not a valid timestamp/
   );
   assert.equal(pool.calls.length, 0);
+});
+
+const singleSessionRequestContext: MemoryReadContext = makeContext({
+  workspaceId: "ws-1",
+  repositoryId: "repo-1",
+  taskId: "session-single",
+  runId: "req-single",
+  agentId: "thread-single"
+});
+
+const multiSessionRequestContextA: MemoryReadContext = makeContext({
+  workspaceId: "ws-1",
+  repositoryId: "repo-1",
+  taskId: "session-multi",
+  runId: "req-multi-1",
+  agentId: "thread-multi-1"
+});
+
+const multiSessionRequestContextB: MemoryReadContext = makeContext({
+  workspaceId: "ws-1",
+  repositoryId: "repo-1",
+  taskId: "session-multi",
+  runId: "req-multi-2",
+  agentId: "thread-multi-2"
+});
+
+function sessionScopedInjectionEvent(
+  taskId: string,
+  runId: string,
+  agentId: string,
+  overrides: Partial<MemoryInjectionEvent> = {}
+): MemoryInjectionEvent {
+  return injectionEvent({
+    scope: { kind: "task", workspaceId: "ws-1", taskId, runId },
+    taskId,
+    runId,
+    agentId,
+    ...overrides
+  });
+}
+
+/**
+ * Seeds one single-injection session and one two-injection session, both in
+ * the default cohort window, so a cardinality assertion can distinguish
+ * `single` from `multiple` within the same cohort read.
+ */
+async function seedCardinalityFixtures(
+  repository: PostgresMemoryRepository
+): Promise<void> {
+  await repository.recordInjectionEvent({
+    event: sessionScopedInjectionEvent(
+      "session-single",
+      "req-single",
+      "thread-single",
+      {
+        id: "inj-single",
+        correlationToken: "tok-single",
+        occurredAt: "2026-01-04T00:00:00.000Z"
+      }
+    ),
+    actor: { id: "system", authority: "system" },
+    context: singleSessionRequestContext
+  });
+  await repository.recordInjectionEvent({
+    event: sessionScopedInjectionEvent(
+      "session-multi",
+      "req-multi-1",
+      "thread-multi-1",
+      {
+        id: "inj-multi-1",
+        correlationToken: "tok-multi-1",
+        memoryMode: "jit",
+        injectionResult: "injected",
+        occurredAt: "2026-01-05T00:00:00.000Z"
+      }
+    ),
+    actor: { id: "system", authority: "system" },
+    context: multiSessionRequestContextA
+  });
+  await repository.recordInjectionEvent({
+    event: sessionScopedInjectionEvent(
+      "session-multi",
+      "req-multi-2",
+      "thread-multi-2",
+      {
+        id: "inj-multi-2",
+        correlationToken: "tok-multi-2",
+        memoryMode: "disabled",
+        injectionResult: "skipped",
+        memoryIds: [],
+        packetCharacterCount: 0,
+        occurredAt: "2026-01-06T00:00:00.000Z"
+      }
+    ),
+    actor: { id: "system", authority: "system" },
+    context: multiSessionRequestContextB
+  });
+  // This sibling sits outside cohortFilterBase's occurred window. It still
+  // contributes to sessionCardinality without contributing an exposure.
+  await repository.recordInjectionEvent({
+    event: sessionScopedInjectionEvent(
+      "session-multi",
+      "req-multi-3",
+      "thread-multi-3",
+      {
+        id: "inj-multi-outside-window",
+        correlationToken: "tok-multi-outside-window",
+        memoryMode: "retrieval-only",
+        injectionResult: "empty",
+        memoryIds: [],
+        packetCharacterCount: 0,
+        occurredAt: "2026-02-06T00:00:00.000Z"
+      }
+    ),
+    actor: { id: "system", authority: "system" },
+    context: makeContext({
+      workspaceId: "ws-1",
+      repositoryId: "repo-1",
+      taskId: "session-multi",
+      runId: "req-multi-3",
+      agentId: "thread-multi-3"
+    })
+  });
+}
+
+test("aggregateInjectionOutcomeCohorts marks a one-injection session's cell sessionCardinality 'single'", async () => {
+  const pool = new FakeMemoryPool();
+  const repository = repo(pool);
+  await seedCardinalityFixtures(repository);
+
+  const page = await repository.aggregateInjectionOutcomeCohorts(
+    cohortFilterBase
+  );
+  const singleCell = page.cells.find(
+    (cell) => cell.sessionCardinality === "single"
+  );
+  assert.ok(
+    singleCell,
+    "expected the lone single-injection session to form a 'single' cell"
+  );
+  assert.equal(singleCell?.memoryMode, "jit");
+  assert.equal(singleCell?.injectionResult, "injected");
+  assert.equal(singleCell?.exposureCount, 1);
+
+  const multipleCells = page.cells.filter(
+    (cell) => cell.sessionCardinality === "multiple"
+  );
+  // session-multi contributed two distinct (memoryMode, injectionResult)
+  // rows (jit/injected and disabled/skipped), so it forms two 'multiple'
+  // cells, each still counted once.
+  assert.equal(multipleCells.length, 2);
+  assert.equal(
+    multipleCells.reduce((sum, cell) => sum + cell.exposureCount, 0),
+    2
+  );
+});
+
+test("aggregateInjectionOutcomeCohorts keeps sessionCardinality 'multiple' for a multi-injection session's cell even when a memoryMode filter removes its sibling row", async () => {
+  const pool = new FakeMemoryPool();
+  const repository = repo(pool);
+  await seedCardinalityFixtures(repository);
+
+  const filtered = await repository.aggregateInjectionOutcomeCohorts({
+    ...cohortFilterBase,
+    memoryModes: ["jit"]
+  });
+  // Only the jit/injected rows survive the filter: one from session-single
+  // (cardinality 'single') and one from session-multi (cardinality
+  // 'multiple', even though its sibling disabled/skipped row was filtered
+  // out of this read).
+  assert.equal(filtered.cells.length, 2);
+  const multiSessionCell = filtered.cells.find(
+    (cell) => cell.sessionCardinality === "multiple"
+  );
+  assert.ok(multiSessionCell);
+  assert.equal(multiSessionCell?.memoryMode, "jit");
+  assert.equal(multiSessionCell?.injectionResult, "injected");
+  assert.equal(multiSessionCell?.exposureCount, 1);
+
+  const singleSessionCell = filtered.cells.find(
+    (cell) => cell.sessionCardinality === "single"
+  );
+  assert.ok(singleSessionCell);
+  assert.equal(singleSessionCell?.exposureCount, 1);
 });

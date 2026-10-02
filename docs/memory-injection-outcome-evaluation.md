@@ -74,9 +74,14 @@ and reporter-supplied `outcomeKind`. Callers cannot select task, run, agent, or
 role identities; the aggregate is deliberately workspace/repository/time
 scoped.
 
-Cells group the fixed tuple `(memoryMode, injectionResult, reportKind,
-outcomeKind)`. With no matching report, the cell retains `reportKind: null`,
-`outcomeKind: null`, and `reportCount: 0` so unreported exposure is visible.
+Cells group the fixed tuple `(memoryMode, injectionResult, sessionCardinality,
+reportKind, outcomeKind)`, where `sessionCardinality` is `"single"` or
+`"multiple"` depending on whether the session (workspace, repository,
+task/session id) backing that cell's exposures captured exactly one or more
+than one injection event in its full event set (see
+[Injection cardinality](#injection-cardinality)). With no matching report,
+the cell retains `reportKind: null`, `outcomeKind: null`, and
+`reportCount: 0` so unreported exposure is visible.
 `exposureCount` counts observed injection decisions and `reportCount` counts
 joined reports; `reportCount <= exposureCount` is guaranteed by the one-report-
 per-token constraint. These are counts, not success rates: an outcome is only
@@ -109,6 +114,39 @@ An `injected` event proves only that a non-empty packet was appended to the
 provider request. It does not prove that the model read, relied on, or correctly
 applied the packet. Retrieval-to-use rates and automatic PR verification
 still need trustworthy downstream outcomes and explicit evidence of use.
+
+### Injection cardinality
+
+Because a session may contain multiple request-level injections, every
+observed-injection read exposes a bounded, read-time-derived cardinality
+signal so operators can distinguish "this session injected once" from "this
+session injected repeatedly" without inferring task success or memory use.
+
+The per-injection outcome join (`GET /control/memory/experiences/:id/outcomes`)
+adds `sessionInjectionCount` to each row: the count of every injection event
+captured for that row's exact session key (workspace, repository, captured
+task/session id), inclusive of the row itself. This count is computed over
+the session's full append-only event set, not the filtered rows the current
+read happens to return -- `memoryMode`, `injectionResult`, `reportKind`, and
+`outcomeKind` filters on the surrounding query never change it.
+
+The bounded outcome cohort read (`GET /control/memory/cohorts`) adds a
+`sessionCardinality` dimension (`"single"` or `"multiple"`) to the grouped
+tuple, so a cell's exposures can be read as "one-shot sessions" or
+"repeated-injection sessions" without exposing the underlying count, session
+identity, or any request/thread run/agent id. Like `sessionInjectionCount`,
+`sessionCardinality` is derived from each row's full session event set, not
+from the cohort's own `memoryMode`/`injectionResult`/`reportKind`/
+`outcomeKind` filters, so filtering a cohort read never reclassifies a
+multi-injection session as `"single"`.
+
+Neither signal narrows the gaps above: a `sessionInjectionCount` or
+`sessionCardinality` of more than one still does not identify which request
+within the session the reporter's outcome actually describes, still does not
+attribute request/thread `runId`/`agentId` to the session-level outcome, and
+still is not evidence that any injected packet was read, relied on, or used.
+Precise per-turn task attribution and retrieval-to-use rates remain
+unimplemented.
 
 ## Controlled ablation assignment
 

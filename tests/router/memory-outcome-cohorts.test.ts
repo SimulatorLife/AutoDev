@@ -24,6 +24,7 @@ const cohortPage: MemoryInjectionOutcomeCohortPage = {
     {
       memoryMode: "jit",
       injectionResult: "injected",
+      sessionCardinality: "multiple",
       reportKind: null,
       outcomeKind: null,
       exposureCount: 4,
@@ -32,6 +33,7 @@ const cohortPage: MemoryInjectionOutcomeCohortPage = {
     {
       memoryMode: "jit",
       injectionResult: "injected",
+      sessionCardinality: "single",
       reportKind: "pull_request",
       outcomeKind: "success",
       exposureCount: 3,
@@ -169,6 +171,11 @@ test("cohort GET returns bounded scoped groups including unreported exposures", 
   assert.equal(body.cells[0].reportKind, null);
   assert.equal(body.cells[0].outcomeKind, null);
   assert.equal(body.cells[0].reportCount, 0);
+  // The cardinality dimension passes through untouched: it is derived at
+  // the Data layer from each cell's full session event set, not recomputed
+  // or stripped by the Control API route.
+  assert.equal(body.cells[0].sessionCardinality, "multiple");
+  assert.equal(body.cells[1].sessionCardinality, "single");
   assert.deepEqual(service.requests[0], {
     context: {
       workspaceId: "workspace-a",

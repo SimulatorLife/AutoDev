@@ -17,7 +17,7 @@ import { applyMemoryMigrations } from "../../src/memory/schema.ts";
 const databaseUrl = process.env.AUTODEV_MEMORY_TEST_DATABASE_URL;
 
 test(
-  "live PostgreSQL migration 8, injection/outcome persistence, session-scoped join, and append-only history",
+  "live PostgreSQL migrations 8-9, injection/outcome persistence, session-scoped join, and append-only history",
   { skip: !databaseUrl },
   async () => {
     const pool = createPgMemoryPool({ connectionString: databaseUrl });
@@ -105,14 +105,14 @@ test(
     };
 
     try {
-      // Migration 8 must apply cleanly against real PostgreSQL/pgvector and
-      // remain idempotent when re-run, mirroring the production migrator.
+      // Migrations 8-9 must apply cleanly against real PostgreSQL/pgvector
+      // and remain idempotent when re-run, mirroring the production migrator.
       await applyMemoryMigrations(pool);
       await applyMemoryMigrations(pool);
-      const appliedMigration8 = await pool.query<{ version: number }>(
-        "SELECT version FROM memory_schema_migrations WHERE version = 8"
+      const appliedMigration9 = await pool.query<{ version: number }>(
+        "SELECT version FROM memory_schema_migrations WHERE version = 9"
       );
-      assert.equal(appliedMigration8.rows.length, 1);
+      assert.equal(appliedMigration9.rows.length, 1);
       const tables = await pool.query<{ table_name: string }>(
         `SELECT table_name FROM information_schema.tables
          WHERE table_schema = 'public'

@@ -403,3 +403,97 @@ test("listInjectionOutcomeJoins does not match injection events in a different s
   });
   assert.equal(page.total, 0);
 });
+
+test("listInjectionOutcomeJoins reports sessionInjectionCount of 1 for a single-injection session", async () => {
+  const pool = new FakeMemoryPool();
+  const repository = repo(pool);
+  await repository.recordInjectionEvent({
+    event: injectionEvent(),
+    actor: { id: "system", authority: "system" },
+    context: requestContext
+  });
+  const page = await repository.listInjectionOutcomeJoins({
+    context: sessionContext,
+    includeUnreported: true
+  });
+  assert.equal(page.total, 1);
+  assert.equal(page.items[0]!.sessionInjectionCount, 1);
+});
+
+test("listInjectionOutcomeJoins reports sessionInjectionCount across every request-level injection in the session, inclusive of the current row", async () => {
+  const pool = new FakeMemoryPool();
+  const repository = repo(pool);
+  await repository.recordInjectionEvent({
+    event: injectionEvent({ id: "inj-1", correlationToken: "tok-1" }),
+    actor: { id: "system", authority: "system" },
+    context: requestContext
+  });
+  await repository.recordInjectionEvent({
+    event: injectionEvent({
+      id: "inj-2",
+      correlationToken: "tok-2",
+      runId: "req-2",
+      agentId: "thread-2"
+    }),
+    actor: { id: "system", authority: "system" },
+    context: makeContext({
+      workspaceId: "ws-1",
+      repositoryId: "repo-1",
+      taskId: "session-A",
+      runId: "req-2",
+      agentId: "thread-2"
+    })
+  });
+  const page = await repository.listInjectionOutcomeJoins({
+    context: sessionContext,
+    includeUnreported: true
+  });
+  assert.equal(page.total, 2);
+  for (const item of page.items) {
+    assert.equal(item.sessionInjectionCount, 2);
+  }
+});
+
+test("listInjectionOutcomeJoins sessionInjectionCount is not reduced by memory-mode/result filters on the surrounding query", async () => {
+  const pool = new FakeMemoryPool();
+  const repository = repo(pool);
+  await repository.recordInjectionEvent({
+    event: injectionEvent({
+      id: "inj-jit",
+      correlationToken: "tok-jit",
+      memoryMode: "jit",
+      injectionResult: "injected"
+    }),
+    actor: { id: "system", authority: "system" },
+    context: requestContext
+  });
+  await repository.recordInjectionEvent({
+    event: injectionEvent({
+      id: "inj-disabled",
+      correlationToken: "tok-disabled",
+      memoryMode: "disabled",
+      injectionResult: "skipped",
+      runId: "req-2",
+      agentId: "thread-2"
+    }),
+    actor: { id: "system", authority: "system" },
+    context: makeContext({
+      workspaceId: "ws-1",
+      repositoryId: "repo-1",
+      taskId: "session-A",
+      runId: "req-2",
+      agentId: "thread-2"
+    })
+  });
+  const filtered = await repository.listInjectionOutcomeJoins({
+    context: sessionContext,
+    includeUnreported: true,
+    memoryModes: ["jit"]
+  });
+  assert.equal(filtered.total, 1);
+  assert.equal(
+    filtered.items[0]!.sessionInjectionCount,
+    2,
+    "the session's full event set has two injections even though the memoryMode filter only surfaces one row"
+  );
+});
