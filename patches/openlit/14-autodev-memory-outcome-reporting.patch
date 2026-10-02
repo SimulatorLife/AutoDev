@@ -1,0 +1,1100 @@
+diff --git a/src/client/src/__tests__/app/api/memory/experiences/[id]/outcomes/route.test.ts b/src/client/src/__tests__/app/api/memory/experiences/[id]/outcomes/route.test.ts
+new file mode 100644
+index 00000000..17b366c3
+--- /dev/null
++++ b/src/client/src/__tests__/app/api/memory/experiences/[id]/outcomes/route.test.ts
+@@ -0,0 +1,147 @@
++jest.mock("@/lib/session", () => ({ getCurrentUser: jest.fn() }));
++jest.mock("@/lib/platform/connectors/memory/crud", () => ({
++	isMemoryConnectorId: (id: unknown) => typeof id === "string" && id.startsWith("memory:"),
++	listMemoryConnectors: jest.fn(),
++	getMemoryRuntime: jest.fn(),
++	memoryConnectorId: (id: string) => (id.startsWith("memory:") ? id : `memory:${id}`)
++}));
++jest.mock("@/lib/platform/connectors/memory/autodev/adapter", () => ({
++	isAutoDevMemoryAdapter: (adapter: unknown) => !!adapter && typeof adapter === "object" && (adapter as { __autodev?: boolean }).__autodev === true
++}));
++
++import { POST } from "@/app/api/memory/experiences/[id]/outcomes/route";
++import { getCurrentUser } from "@/lib/session";
++import { getMemoryRuntime, listMemoryConnectors } from "@/lib/platform/connectors/memory/crud";
++import { MEMORY_DETAIL_OUTCOME_REPORT_INVALID } from "@/constants/messages/en";
++
++(globalThis as unknown as { Response: { json: unknown } }).Response = {
++	json: (body: unknown, init?: ResponseInit) => ({
++		status: init?.status ?? 200,
++		json: async () => body,
++	})
++};
++
++function makeRequest(body: unknown) {
++	return { json: async () => body } as any;
++}
++
++const connector = { id: "memory:autodev-a", type: "autodev", name: "AutoDev Memory" };
++
++beforeEach(() => {
++	jest.clearAllMocks();
++	(getCurrentUser as jest.Mock).mockResolvedValue({ id: "operator-a" });
++	(listMemoryConnectors as jest.Mock).mockResolvedValue([connector]);
++});
++
++test("outcome POST sends only the event id and reporter fields and returns no opaque token", async () => {
++	const reportOutcome = jest.fn().mockResolvedValue({
++		appended: true,
++		outcome: {
++			outcomeKind: "success",
++			reportKind: "pull_request",
++			reportedAt: "2026-10-01T00:05:00.000Z",
++			evidence: [{ kind: "pull_request", uri: "https://github.com/owner/repo/pull/1" }]
++		}
++	});
++	(getMemoryRuntime as jest.Mock).mockResolvedValue({ connector, adapter: { __autodev: true, reportOutcome } });
++	const reportBody = {
++		connectorId: connector.id,
++		injectionEventId: "injection-event-a",
++		outcomeKind: "success",
++		reportKind: "pull_request",
++		evidence: [{ kind: "pull_request", uri: "https://github.com/owner/repo/pull/1" }]
++	};
++	const response = await POST(makeRequest(reportBody), { params: { id: "experience-a" } });
++	const body = await response.json();
++
++	expect(response.status).toBe(200);
++	expect(reportOutcome).toHaveBeenCalledWith({
++		experienceId: "experience-a",
++		injectionEventId: "injection-event-a",
++		outcomeKind: "success",
++		reportKind: "pull_request",
++		evidence: reportBody.evidence
++	});
++	expect(body.appended).toBe(true);
++	expect(body.outcome.reportKind).toBe("pull_request");
++	expect(JSON.stringify(body)).not.toMatch(/correlationToken|opaque-token|reportId|reporterId/iu);
++	expect(JSON.stringify(reportBody)).not.toMatch(/correlationToken|reporterId|reportId/iu);
++});
++
++test("outcome POST requires an authenticated session and evidence for non-unknown reports", async () => {
++	(getCurrentUser as jest.Mock).mockResolvedValue(null);
++	const unauthenticated = await POST(makeRequest({}), { params: { id: "experience-a" } });
++	expect(unauthenticated.status).toBe(401);
++	expect(listMemoryConnectors).not.toHaveBeenCalled();
++
++	(getCurrentUser as jest.Mock).mockResolvedValue({ id: "operator-a" });
++	const reportOutcome = jest.fn().mockResolvedValue({
++		appended: true,
++		outcome: {
++			outcomeKind: "unknown",
++			reportKind: "task",
++			reportedAt: "2026-10-01T00:05:00.000Z",
++			evidence: []
++		}
++	});
++	(getMemoryRuntime as jest.Mock).mockResolvedValue({ connector, adapter: { __autodev: true, reportOutcome } });
++	const missingEvidence = await POST(
++		makeRequest({
++			connectorId: connector.id,
++			injectionEventId: "injection-event-a",
++			outcomeKind: "success",
++			reportKind: "task",
++			evidence: []
++		}),
++		{ params: { id: "experience-a" } }
++	);
++	expect(missingEvidence.status).toBe(400);
++	expect(reportOutcome).not.toHaveBeenCalled();
++	const unknownWithoutEvidence = await POST(
++		makeRequest({
++			connectorId: connector.id,
++			injectionEventId: "injection-event-a",
++			outcomeKind: "unknown",
++			reportKind: "task",
++			evidence: []
++		}),
++		{ params: { id: "experience-a" } }
++	);
++	expect(unknownWithoutEvidence.status).toBe(200);
++});
++
++test("outcome POST rejects caller-supplied correlation tokens and unknown fields", async () => {
++	const response = await POST(
++		makeRequest({
++			connectorId: connector.id,
++			injectionEventId: "injection-event-a",
++			correlationToken: "caller-token",
++			outcomeKind: "unknown",
++			reportKind: "task",
++			evidence: []
++		}),
++		{ params: { id: "experience-a" } }
++	);
++	expect(response.status).toBe(400);
++	const body = await response.json();
++	expect(body).toBe(MEMORY_DETAIL_OUTCOME_REPORT_INVALID);
++});
++
++test("outcome POST rejects non-AutoDev connectors and preserves append-only conflict status", async () => {
++	(getMemoryRuntime as jest.Mock).mockResolvedValue({ connector, adapter: { __autodev: false } });
++	const nonAutoDev = await POST(
++		makeRequest({ connectorId: connector.id, injectionEventId: "event-a", outcomeKind: "unknown", reportKind: "task", evidence: [] }),
++		{ params: { id: "experience-a" } }
++	);
++	expect(nonAutoDev.status).toBe(400);
++
++	(getMemoryRuntime as jest.Mock).mockResolvedValue({
++		connector,
++		adapter: { __autodev: true, reportOutcome: jest.fn().mockRejectedValue(Object.assign(new Error("conflict"), { status: 409 })) }
++	});
++	const conflict = await POST(
++		makeRequest({ connectorId: connector.id, injectionEventId: "event-a", outcomeKind: "failure", reportKind: "task", evidence: [{ kind: "commit", uri: "git://repo/commit/abc" }] }),
++		{ params: { id: "experience-a" } }
++	);
++	expect(conflict.status).toBe(409);
++});
+diff --git a/src/client/src/__tests__/components/memory-detail-sheet.test.tsx b/src/client/src/__tests__/components/memory-detail-sheet.test.tsx
+index 2478f95f..1a778225 100644
+--- a/src/client/src/__tests__/components/memory-detail-sheet.test.tsx
++++ b/src/client/src/__tests__/components/memory-detail-sheet.test.tsx
+@@ -47,11 +47,12 @@ describe("MemoryDetailSheet writes", () => {
+ 			metadata: {
+ 				autodev: {
+ 					kind: "episodic",
+-					experience: { taskId: "task-a", runId: "run-a", agentId: "agent-a" },
++					experience: { id: "experience-a", taskId: "task-a", runId: "run-a", agentId: "agent-a" },
+ 					injectionOutcomes: {
+ 						status: "available",
+ 						items: [{
+ 							injection: {
++								eventId: "injection-1",
+ 								injectionResult: "injected",
+ 								memoryMode: "jit",
+ 								packetCharacterCount: 321,
+@@ -62,6 +63,7 @@ describe("MemoryDetailSheet writes", () => {
+ 							outcome: null
+ 						}, {
+ 							injection: {
++								eventId: "injection-2",
+ 								injectionResult: "skipped",
+ 								memoryMode: "disabled",
+ 								packetCharacterCount: 0,
+@@ -76,6 +78,7 @@ describe("MemoryDetailSheet writes", () => {
+ 							}
+ 						}, {
+ 							injection: {
++								eventId: "injection-3",
+ 								injectionResult: "empty",
+ 								memoryMode: "jit",
+ 								packetCharacterCount: 0,
+@@ -96,6 +99,7 @@ describe("MemoryDetailSheet writes", () => {
+ 			<MemoryDetailSheet
+ 				open
+ 				memoryId={experience.id}
++				connectorId="memory:autodev-a"
+ 				capabilities={{ add: false, search: true, get: true, list: true, update: false, delete: false, feedback: false }}
+ 				preview={experience}
+ 				onClose={jest.fn()}
+@@ -106,9 +110,10 @@ describe("MemoryDetailSheet writes", () => {
+ 		expect(screen.getByText("Packet injected")).toBeInTheDocument();
+ 		expect(screen.getByText("Injection skipped")).toBeInTheDocument();
+ 		expect(screen.getByText("No packet returned")).toBeInTheDocument();
+-		expect(screen.getByText("Unreported")).toBeInTheDocument();
+-		expect(screen.getByText("success")).toBeInTheDocument();
+-		expect(screen.getByText("pull request")).toBeInTheDocument();
++		expect(screen.getAllByText("Unreported")).toHaveLength(2);
++		expect(screen.getAllByText("Report outcome")).toHaveLength(2);
++		expect(screen.getByText("success", { selector: "p" })).toBeInTheDocument();
++		expect(screen.getByText("pull request", { selector: "p" })).toBeInTheDocument();
+ 		expect(screen.getByText("https://example.test/pr/1")).toBeInTheDocument();
+ 		expect(screen.getByText("memory-a")).toBeInTheDocument();
+ 		expect(screen.getByText(/does not prove model use, provider success, or task\/PR success/i)).toBeInTheDocument();
+@@ -116,7 +121,7 @@ describe("MemoryDetailSheet writes", () => {
+ 	});
+ 
+ 	it.each([
+-		["empty", "No persisted injection decisions were recorded for this experience."],
++		["empty", "No injection decisions match this experience and its active filters."],
+ 		["unavailable", "Unavailable: persisted injection and outcome records could not be loaded."],
+ 		["disabled", "Unavailable: task-history access is not enabled for this connector."]
+ 	] as const)("shows the explicit %s injection-history state", async (status, message) => {
+diff --git a/src/client/src/__tests__/components/memory-outcome-report-form.test.tsx b/src/client/src/__tests__/components/memory-outcome-report-form.test.tsx
+new file mode 100644
+index 00000000..de694608
+--- /dev/null
++++ b/src/client/src/__tests__/components/memory-outcome-report-form.test.tsx
+@@ -0,0 +1,85 @@
++import { fireEvent, render, screen, waitFor } from "@testing-library/react";
++import MemoryOutcomeReportForm from "@/components/(playground)/memory/memory-outcome-report-form";
++
++jest.mock("@/utils/api", () => ({
++	getRequestHeaders: (headers?: Record<string, string>) => headers || {},
++}));
++
++function response(body: unknown, status = 200) {
++	return {
++		ok: status >= 200 && status < 300,
++		status,
++		json: async () => body,
++	} as Response;
++}
++
++describe("MemoryOutcomeReportForm", () => {
++	beforeEach(() => jest.clearAllMocks());
++
++	it("requires evidence for non-unknown outcomes without sending a request", async () => {
++		const fetchSpy = jest.fn();
++		global.fetch = fetchSpy as unknown as typeof fetch;
++		render(
++			<MemoryOutcomeReportForm
++				connectorId="memory:autodev-a"
++				experienceId="experience-a"
++				injectionEventId="injection-event-a"
++				onReported={jest.fn()}
++			/>
++		);
++		fireEvent.click(screen.getByText("Report outcome"));
++		fireEvent.change(screen.getByLabelText("Outcome category"), { target: { value: "success" } });
++		fireEvent.click(screen.getByRole("button", { name: "Append outcome" }));
++		expect(await screen.findByText(/Add at least one evidence reference/i)).toBeInTheDocument();
++		expect(fetchSpy).not.toHaveBeenCalled();
++	});
++
++	it("posts only the event id and reporter fields, then displays the sanitized outcome", async () => {
++		const fetchSpy = jest.fn().mockResolvedValue(response({
++			schema: "autodev-memory-outcome-report-ui-v1",
++			appended: true,
++			outcome: {
++				outcomeKind: "success",
++				reportKind: "pull_request",
++				reportedAt: "2026-10-01T00:05:00.000Z",
++				evidence: [{ kind: "pull_request", uri: "https://github.com/owner/repo/pull/1" }]
++			}
++		}));
++		global.fetch = fetchSpy as unknown as typeof fetch;
++		const onReported = jest.fn();
++		render(
++			<MemoryOutcomeReportForm
++				connectorId="memory:autodev-a"
++				experienceId="experience-a"
++				injectionEventId="injection-event-a"
++				onReported={onReported}
++			/>
++		);
++		fireEvent.click(screen.getByText("Report outcome"));
++		fireEvent.change(screen.getByLabelText("Outcome category"), { target: { value: "success" } });
++		fireEvent.change(screen.getByLabelText("Report kind"), { target: { value: "pull_request" } });
++		fireEvent.change(screen.getByLabelText("Evidence kind"), { target: { value: "pull_request" } });
++		fireEvent.change(screen.getByLabelText("Evidence reference"), { target: { value: "https://github.com/owner/repo/pull/1" } });
++		fireEvent.click(screen.getByRole("button", { name: "Append outcome" }));
++
++		await waitFor(() => expect(onReported).toHaveBeenCalledTimes(1));
++		const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
++		expect(url).toContain("/api/memory/experiences/experience-a/outcomes");
++		const body = JSON.parse(String(init.body)) as Record<string, unknown>;
++		expect(body).toMatchObject({
++			connectorId: "memory:autodev-a",
++			injectionEventId: "injection-event-a",
++			outcomeKind: "success",
++			reportKind: "pull_request",
++			evidence: [{ kind: "pull_request", uri: "https://github.com/owner/repo/pull/1" }]
++		});
++		expect(body).not.toHaveProperty("correlationToken");
++		expect(body).not.toHaveProperty("reporterId");
++		expect(onReported).toHaveBeenCalledWith({
++			outcomeKind: "success",
++			reportKind: "pull_request",
++			reportedAt: "2026-10-01T00:05:00.000Z",
++			evidence: [{ kind: "pull_request", uri: "https://github.com/owner/repo/pull/1" }]
++		});
++	});
++});
+diff --git a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
+index abf060f0..d76efe20 100644
+--- a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
++++ b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
+@@ -842,3 +842,120 @@ test("readOutcomeCohorts rejects invalid cohort dimensions, unpaired nulls, bad
+ 		expect(result).toEqual({ status: "unavailable", page: null });
+ 	}
+ });
++
++test("reportOutcome resolves the token server-side and returns only a sanitized reporter outcome", async () => {
++	const correlationToken = "opaque-server-only-token";
++	const injection = {
++		id: "injection-event-a",
++		correlationToken,
++		injectionResult: "injected",
++		memoryMode: "jit",
++		packetCharacterCount: 24,
++		memoryIds: ["memory-a"],
++		occurredAt: "2026-10-01T00:00:00.000Z"
++	};
++	const outcome = {
++		outcomeKind: "success",
++		reportKind: "pull_request",
++		reportedAt: "2026-10-01T00:05:00.000Z",
++		evidence: [{ kind: "pull_request", uri: "https://github.com/owner/repo/pull/1" }]
++	};
++	const fetchSpy = jest.spyOn(global, "fetch")
++		.mockResolvedValueOnce(jsonResponse({ items: [{ injection, outcome: null }] }))
++		.mockResolvedValueOnce(jsonResponse({
++			schema: "autodev-memory-outcome-report-v1",
++			experienceId: "experience-a",
++			reportId: "server-only-report-id",
++			appended: true
++		}))
++		.mockResolvedValueOnce(jsonResponse({ items: [{ injection, outcome }] }));
++	const adapter = new AutoDevMemoryAdapter({
++		...descriptor,
++		settings: { ...descriptor.settings, includeTaskHistory: true }
++	});
++
++	const result = await adapter.reportOutcome({
++		experienceId: "experience-a",
++		injectionEventId: injection.id,
++		outcomeKind: "success",
++		reportKind: "pull_request",
++		evidence: outcome.evidence
++	});
++
++	expect(result).toEqual({ appended: true, outcome });
++	expect(JSON.stringify(result)).not.toContain(correlationToken);
++	expect(JSON.stringify(result)).not.toContain("server-only-report-id");
++	expect(fetchSpy).toHaveBeenCalledTimes(3);
++	const [lookupUrl] = fetchSpy.mock.calls[0] as [string];
++	const parsedLookup = new URL(lookupUrl);
++	expect(parsedLookup.pathname).toBe("/control/memory/experiences/experience-a/outcomes");
++	expect(parsedLookup.searchParams.get("includeTaskHistory")).toBe("true");
++	for (const selector of ["taskId", "runId", "agentId"]) {
++		expect(parsedLookup.searchParams.has(selector)).toBe(false);
++	}
++	const [reportUrl, reportInit] = fetchSpy.mock.calls[1] as [string, RequestInit];
++	expect(String(reportUrl)).toContain("/control/memory/experiences/experience-a/outcomes?");
++	const reportBody = JSON.parse(String(reportInit.body)) as Record<string, unknown>;
++	expect(reportBody.correlationToken).toBe(correlationToken);
++	expect(reportBody.outcomeKind).toBe("success");
++	expect(reportBody.reportKind).toBe("pull_request");
++});
++
++test("reportOutcome rejects missing task-history access, missing evidence, and event IDs outside the experience", async () => {
++	const fetchSpy = jest.spyOn(global, "fetch");
++	const withoutTaskHistory = new AutoDevMemoryAdapter(descriptor);
++	await expect(withoutTaskHistory.reportOutcome({
++		experienceId: "experience-a",
++		injectionEventId: "injection-event-a",
++		outcomeKind: "success",
++		reportKind: "task",
++		evidence: [{ kind: "commit", uri: "git://repo/commit/abc" }]
++	})).rejects.toMatchObject({ status: 403 });
++
++	const adapter = new AutoDevMemoryAdapter({
++		...descriptor,
++		settings: { ...descriptor.settings, includeTaskHistory: true }
++	});
++	await expect(adapter.reportOutcome({
++		experienceId: "experience-a",
++		injectionEventId: "injection-event-a",
++		outcomeKind: "success",
++		reportKind: "task",
++		evidence: []
++	})).rejects.toMatchObject({ status: 400 });
++	expect(fetchSpy).not.toHaveBeenCalled();
++
++	fetchSpy.mockResolvedValueOnce(jsonResponse({
++		items: [{ injection: { id: "different-event", correlationToken: "not-for-this-event" }, outcome: null }]
++	}));
++	await expect(adapter.reportOutcome({
++		experienceId: "experience-a",
++		injectionEventId: "injection-event-a",
++		outcomeKind: "unknown",
++		reportKind: "task",
++		evidence: []
++	})).rejects.toMatchObject({ status: 404 });
++	expect(fetchSpy).toHaveBeenCalledTimes(1);
++});
++
++test("reportOutcome propagates an append-only conflicting-report response without exposing the event token", async () => {
++	const token = "opaque-conflicting-token";
++	const fetchSpy = jest.spyOn(global, "fetch")
++		.mockResolvedValueOnce(jsonResponse({
++			items: [{ injection: { id: "injection-event-a", correlationToken: token }, outcome: null }]
++		}))
++		.mockResolvedValueOnce(jsonResponse({ err: "conflict" }, 409));
++	const adapter = new AutoDevMemoryAdapter({
++		...descriptor,
++		settings: { ...descriptor.settings, includeTaskHistory: true }
++	});
++	await expect(adapter.reportOutcome({
++		experienceId: "experience-a",
++		injectionEventId: "injection-event-a",
++		outcomeKind: "failure",
++		reportKind: "task",
++		evidence: [{ kind: "trajectory", uri: "codex://session/task-a" }]
++	})).rejects.toMatchObject({ status: 409 });
++	const lastCall = fetchSpy.mock.calls[1] as [string, RequestInit];
++	expect(JSON.parse(String(lastCall[1].body))).toMatchObject({ correlationToken: token });
++});
+diff --git a/src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts b/src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts
+new file mode 100644
+index 00000000..54749309
+--- /dev/null
++++ b/src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts
+@@ -0,0 +1,191 @@
++import { NextRequest } from "next/server";
++import { getCurrentUser } from "@/lib/session";
++import { errorResponse } from "@/utils/api-response";
++import { withMemoryAccess, withMemoryAudit } from "@/lib/access/memory-route";
++import {
++	getMemoryRuntime,
++	isMemoryConnectorId,
++	listMemoryConnectors,
++	memoryConnectorId
++} from "@/lib/platform/connectors/memory/crud";
++import {
++	isAutoDevMemoryAdapter,
++	type AutoDevOutcomeReportInput
++} from "@/lib/platform/connectors/memory/autodev/adapter";
++import {
++	MEMORY_COHORTS_UNSUPPORTED_CONNECTOR,
++	MEMORY_DETAIL_OUTCOME_REPORT_FAILED,
++	MEMORY_DETAIL_OUTCOME_REPORT_INVALID,
++	MEMORY_INVALID_JSON
++} from "@/constants/messages/en";
++
++const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
++const EVIDENCE_KINDS = new Set([
++	"trajectory", "trace", "file", "commit", "pull_request", "issue",
++	"rule", "skill", "document", "other"
++]);
++const OUTCOME_KINDS = new Set(["success", "partial", "failure", "cancelled", "unknown"]);
++const REPORT_KINDS = new Set(["task", "pull_request", "issue", "other"]);
++const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/u;
++const MAX_BODY_BYTES = 64 * 1024;
++const MAX_EVIDENCE_REFERENCES = 64;
++
++interface ParsedReportBody {
++	readonly connectorId?: string;
++	readonly injectionEventId: string;
++	readonly outcomeKind: string;
++	readonly reportKind: string;
++	readonly evidence: AutoDevOutcomeReportInput["evidence"];
++}
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++	return !!value && typeof value === "object" && !Array.isArray(value);
++}
++
++function requiredId(value: unknown): string {
++	if (
++		typeof value !== "string" ||
++		!ID_PATTERN.test(value) ||
++		CONTROL_CHARACTER_PATTERN.test(value)
++	) {
++		throw new TypeError(MEMORY_DETAIL_OUTCOME_REPORT_INVALID);
++	}
++	return value;
++}
++
++function parseConnectorId(value: unknown): string | undefined {
++	if (value === undefined || value === null) return undefined;
++	if (typeof value !== "string" || value.length > 120 || CONTROL_CHARACTER_PATTERN.test(value)) {
++		throw new TypeError(MEMORY_DETAIL_OUTCOME_REPORT_INVALID);
++	}
++	const normalized = memoryConnectorId(value.trim());
++	if (!isMemoryConnectorId(normalized)) {
++		throw new TypeError(MEMORY_DETAIL_OUTCOME_REPORT_INVALID);
++	}
++	return normalized;
++}
++
++function parseEvidence(value: unknown): AutoDevOutcomeReportInput["evidence"] {
++	if (!Array.isArray(value) || value.length > MAX_EVIDENCE_REFERENCES) {
++		throw new TypeError(MEMORY_DETAIL_OUTCOME_REPORT_INVALID);
++	}
++	return value.map((entry) => {
++		if (!isRecord(entry)) throw new TypeError(MEMORY_DETAIL_OUTCOME_REPORT_INVALID);
++		if (
++			Object.keys(entry).some((key) => !["kind", "uri", "revision", "observedAt"].includes(key)) ||
++			typeof entry.kind !== "string" ||
++			!EVIDENCE_KINDS.has(entry.kind) ||
++			typeof entry.uri !== "string" ||
++			!entry.uri.trim() ||
++			entry.uri.length > 2048 ||
++			CONTROL_CHARACTER_PATTERN.test(entry.uri) ||
++			(entry.revision !== undefined &&
++				(typeof entry.revision !== "string" || entry.revision.length > 256 || CONTROL_CHARACTER_PATTERN.test(entry.revision))) ||
++			(entry.observedAt !== undefined &&
++				(typeof entry.observedAt !== "string" || !Number.isFinite(Date.parse(entry.observedAt))))
++		) {
++			throw new TypeError(MEMORY_DETAIL_OUTCOME_REPORT_INVALID);
++		}
++		return {
++			kind: entry.kind,
++			uri: entry.uri.trim(),
++			...(typeof entry.revision === "string" ? { revision: entry.revision } : {}),
++			...(typeof entry.observedAt === "string" ? { observedAt: entry.observedAt } : {})
++		};
++	});
++}
++
++function parseBody(value: unknown): ParsedReportBody {
++	if (!isRecord(value)) throw new TypeError(MEMORY_INVALID_JSON);
++	if (
++		Object.keys(value).some((key) => !["connectorId", "injectionEventId", "outcomeKind", "reportKind", "evidence"].includes(key)) ||
++		Buffer.byteLength(JSON.stringify(value), "utf8") > MAX_BODY_BYTES ||
++		typeof value.outcomeKind !== "string" ||
++		!OUTCOME_KINDS.has(value.outcomeKind) ||
++		typeof value.reportKind !== "string" ||
++		!REPORT_KINDS.has(value.reportKind)
++	) {
++		throw new TypeError(MEMORY_DETAIL_OUTCOME_REPORT_INVALID);
++	}
++	const input: ParsedReportBody = {
++		connectorId: parseConnectorId(value.connectorId),
++		injectionEventId: requiredId(value.injectionEventId),
++		outcomeKind: value.outcomeKind,
++		reportKind: value.reportKind,
++		evidence: parseEvidence(value.evidence)
++	};
++	if (input.outcomeKind !== "unknown" && input.evidence.length === 0) {
++		throw new TypeError(MEMORY_DETAIL_OUTCOME_REPORT_INVALID);
++	}
++	return input;
++}
++
++function statusFor(error: unknown): number {
++	if (error && typeof error === "object" && "status" in error) {
++		const status = Number((error as { status?: unknown }).status);
++		if ([400, 401, 403, 404, 409, 503].includes(status)) return status;
++	}
++	return 503;
++}
++
++async function POSTHandler(
++	request: NextRequest,
++	{ params }: { readonly params: { readonly id: string } }
++) {
++	const user = await getCurrentUser();
++	if (!user) return Response.json("Unauthorized", { status: 401 });
++
++	let experienceId: string;
++	let rawBody: unknown;
++	let input: ParsedReportBody;
++	try {
++		experienceId = requiredId(params.id);
++	} catch (error) {
++		return errorResponse(error, MEMORY_DETAIL_OUTCOME_REPORT_INVALID, 400);
++	}
++	try {
++		rawBody = await request.json();
++	} catch {
++		return errorResponse(MEMORY_INVALID_JSON, MEMORY_INVALID_JSON, 400);
++	}
++	try {
++		input = parseBody(rawBody);
++	} catch (error) {
++		return errorResponse(error, MEMORY_DETAIL_OUTCOME_REPORT_INVALID, 400);
++	}
++
++	try {
++		const connectors = await listMemoryConnectors();
++		const connector = input.connectorId
++			? connectors.find((item) => item.id === input.connectorId)
++			: connectors.find((item) => item.type === "autodev");
++		if (!connector) {
++			return errorResponse(MEMORY_COHORTS_UNSUPPORTED_CONNECTOR, MEMORY_COHORTS_UNSUPPORTED_CONNECTOR, 404);
++		}
++		const runtime = await getMemoryRuntime(connector.id);
++		if (!isAutoDevMemoryAdapter(runtime.adapter)) {
++			return errorResponse(MEMORY_COHORTS_UNSUPPORTED_CONNECTOR, MEMORY_COHORTS_UNSUPPORTED_CONNECTOR, 400);
++		}
++		const result = await runtime.adapter.reportOutcome({
++			experienceId,
++			injectionEventId: input.injectionEventId,
++			outcomeKind: input.outcomeKind,
++			reportKind: input.reportKind,
++			evidence: input.evidence
++		});
++		// The adapter returns only the reporter-visible outcome; the opaque token
++		// and Control API report id remain server-side.
++		return Response.json(
++			{
++				schema: "autodev-memory-outcome-report-ui-v1",
++				appended: result.appended,
++				outcome: result.outcome
++			},
++			{ headers: { "cache-control": "no-store" } }
++		);
++	} catch (error) {
++		return errorResponse(error, MEMORY_DETAIL_OUTCOME_REPORT_FAILED, statusFor(error));
++	}
++}
++
++export const POST = withMemoryAudit(withMemoryAccess("update", POSTHandler));
+diff --git a/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx b/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx
+index 408cdee5..0b4f3306 100644
+--- a/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx
++++ b/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx
+@@ -40,6 +40,7 @@ import type {
+ 	MemoryMessage,
+ } from "@/lib/platform/connectors/memory/types";
+ import MemoryActionDialog from "./memory-action-dialog";
++import MemoryOutcomeReportForm, { type MemoryOutcomeReportSummary } from "./memory-outcome-report-form";
+ import MemoryWriteDialog from "./memory-write-dialog";
+ 
+ const DETAIL_SHEET_CONTENT_CLASS =
+@@ -557,7 +558,7 @@ export default function MemoryDetailSheet({
+ 												)
+ 													}
+ 												/>
+-												<AutoDevInjectionOutcomeDetails memory={memory} />
++												<AutoDevInjectionOutcomeDetails memory={memory} connectorId={connectorId} />
+ 											</TabsContent>
+ 									{inputCount ? (
+ 										<TabsContent value="input" className="mt-3">
+@@ -743,18 +744,31 @@ function metadataForDetails(memory: MemoryListItem): Record<string, unknown> | u
+ 	return { ...metadata, autodev: visibleAutoDev };
+ }
+ 
+-function AutoDevInjectionOutcomeDetails({ memory }: { memory: MemoryListItem }) {
++function AutoDevInjectionOutcomeDetails({
++	memory,
++	connectorId
++}: {
++	memory: MemoryListItem;
++	connectorId?: string;
++}) {
+ 	const messages = getMessage();
++	const [reportedOutcomes, setReportedOutcomes] = useState<
++		Record<string, MemoryOutcomeReportSummary>
++	>({});
++	useEffect(() => setReportedOutcomes({}), [memory.id]);
+ 	if (!memory.id.startsWith("experience:")) return null;
+ 	const autodev = memory.metadata?.autodev;
+ 	if (!isPlainObject(autodev) || !isPlainObject(autodev.experience)) return null;
+ 	const history = autodev.injectionOutcomes;
+ 	if (!isPlainObject(history)) return null;
++	const experienceId =
++		typeof autodev.experience.id === "string" ? autodev.experience.id : "";
+ 	const status = history.status;
+ 	const items = Array.isArray(history.items) ? history.items : [];
+-	const unavailableMessage = status === "disabled"
+-		? messages.MEMORY_DETAIL_INJECTION_DISABLED
+-		: messages.MEMORY_DETAIL_INJECTION_UNAVAILABLE;
++	const unavailableMessage =
++		status === "disabled"
++			? messages.MEMORY_DETAIL_INJECTION_DISABLED
++			: messages.MEMORY_DETAIL_INJECTION_UNAVAILABLE;
+ 
+ 	return (
+ 		<section className="space-y-3 border-t border-stone-200 pt-4 dark:border-stone-800">
+@@ -779,7 +793,10 @@ function AutoDevInjectionOutcomeDetails({ memory }: { memory: MemoryListItem })
+ 					{items.map((value, index) => {
+ 						if (!isPlainObject(value) || !isPlainObject(value.injection)) return null;
+ 						const injection = value.injection;
+-						const outcome = isPlainObject(value.outcome) ? value.outcome : null;
++						const eventId = typeof injection.eventId === "string" ? injection.eventId : "";
++						const outcome = eventId && reportedOutcomes[eventId]
++							? reportedOutcomes[eventId]
++							: isPlainObject(value.outcome) ? value.outcome : null;
+ 						const resultLabel = injection.injectionResult === "injected"
+ 							? messages.MEMORY_DETAIL_INJECTION_INJECTED
+ 							: injection.injectionResult === "empty"
+@@ -791,7 +808,7 @@ function AutoDevInjectionOutcomeDetails({ memory }: { memory: MemoryListItem })
+ 								: String(outcome.outcomeKind ?? "")
+ 							: messages.MEMORY_DETAIL_OUTCOME_UNREPORTED;
+ 						return (
+-							<div key={String(index)} className="space-y-2 rounded-md border border-stone-200 p-3 dark:border-stone-800">
++							<div key={eventId || String(index)} className="space-y-2 rounded-md border border-stone-200 p-3 dark:border-stone-800">
+ 								<div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+ 									<MetaCard label={messages.MEMORY_DETAIL_INJECTION_DECISION} value={resultLabel} />
+ 									<MetaCard label={messages.MEMORY_DETAIL_INJECTION_MODE} value={typeof injection.memoryMode === "string" ? injection.memoryMode : undefined} />
+@@ -812,6 +829,16 @@ function AutoDevInjectionOutcomeDetails({ memory }: { memory: MemoryListItem })
+ 								{outcome && Array.isArray(outcome.evidence) && outcome.evidence.length > 0 ? (
+ 									<MemoryAttributeTable data={{ [messages.MEMORY_DETAIL_OUTCOME_EVIDENCE]: outcome.evidence }} />
+ 								) : null}
++								{!outcome && connectorId && experienceId && eventId ? (
++									<MemoryOutcomeReportForm
++										connectorId={connectorId}
++										experienceId={experienceId}
++										injectionEventId={eventId}
++										onReported={(reported) =>
++											setReportedOutcomes((current) => ({ ...current, [eventId]: reported }))
++										}
++									/>
++								) : null}
+ 							</div>
+ 						);
+ 					})}
+diff --git a/src/client/src/components/(playground)/memory/memory-outcome-report-form.tsx b/src/client/src/components/(playground)/memory/memory-outcome-report-form.tsx
+new file mode 100644
+index 00000000..77274450
+--- /dev/null
++++ b/src/client/src/components/(playground)/memory/memory-outcome-report-form.tsx
+@@ -0,0 +1,181 @@
++"use client";
++
++import { useState, type FormEvent } from "react";
++import { Button } from "@/components/ui/button";
++import {
++	Select,
++	SelectContent,
++	SelectItem,
++	SelectTrigger,
++	SelectValue,
++} from "@/components/ui/select";
++import getMessage from "@/constants/messages";
++import { getRequestHeaders } from "@/utils/api";
++
++const OUTCOME_KINDS = ["unknown", "success", "partial", "failure", "cancelled"];
++const REPORT_KINDS = ["task", "pull_request", "issue", "other"];
++const EVIDENCE_KINDS = [
++	"trajectory", "trace", "file", "commit", "pull_request", "issue",
++	"rule", "skill", "document", "other"
++];
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++	return !!value && typeof value === "object" && !Array.isArray(value);
++}
++
++export interface MemoryOutcomeReportSummary {
++	outcomeKind: string;
++	reportKind: string;
++	reportedAt: string;
++	evidence: { kind: string; uri: string }[];
++}
++
++export default function MemoryOutcomeReportForm({
++	connectorId,
++	experienceId,
++	injectionEventId,
++	onReported
++}: {
++	connectorId: string;
++	experienceId: string;
++	injectionEventId: string;
++	onReported: (outcome: MemoryOutcomeReportSummary) => void;
++}) {
++	const messages = getMessage();
++	const [outcomeKind, setOutcomeKind] = useState("unknown");
++	const [reportKind, setReportKind] = useState("task");
++	const [evidenceKind, setEvidenceKind] = useState("other");
++	const [evidenceUri, setEvidenceUri] = useState("");
++	const [saving, setSaving] = useState(false);
++	const [error, setError] = useState<string | null>(null);
++
++	async function submit(event: FormEvent<HTMLFormElement>) {
++		event.preventDefault();
++		if (saving) return;
++		const uri = evidenceUri.trim();
++		if (outcomeKind !== "unknown" && !uri) {
++			setError(messages.MEMORY_DETAIL_OUTCOME_REPORT_EVIDENCE_REQUIRED);
++			return;
++		}
++		setSaving(true);
++		setError(null);
++		const evidence = uri ? [{ kind: evidenceKind, uri }] : [];
++		try {
++			const response = await fetch(
++				`/api/memory/experiences/${encodeURIComponent(experienceId)}/outcomes`,
++				{
++					method: "POST",
++					headers: getRequestHeaders({ "Content-Type": "application/json" }),
++					// The opaque correlation token is resolved and held server-side;
++					// the browser submits only the non-secret event id.
++					body: JSON.stringify({
++						connectorId,
++						injectionEventId,
++						outcomeKind,
++						reportKind,
++						evidence
++					})
++				}
++			);
++			const body = await response.json().catch(() => null);
++			if (!response.ok) {
++				const reason =
++					body && typeof body === "object" && typeof body.err === "string"
++						? body.err
++						: messages.MEMORY_DETAIL_OUTCOME_REPORT_FAILED;
++				throw new Error(reason);
++			}
++			if (
++				!isRecord(body) ||
++				!isRecord(body.outcome) ||
++				typeof body.outcome.outcomeKind !== "string" ||
++				typeof body.outcome.reportKind !== "string" ||
++				typeof body.outcome.reportedAt !== "string" ||
++				!Array.isArray(body.outcome.evidence) ||
++				!body.outcome.evidence.every((reference) => isRecord(reference) && typeof reference.kind === "string" && typeof reference.uri === "string")
++			) {
++				throw new Error(messages.MEMORY_DETAIL_OUTCOME_REPORT_FAILED);
++			}
++			const outcome: MemoryOutcomeReportSummary = {
++				outcomeKind: body.outcome.outcomeKind,
++				reportKind: body.outcome.reportKind,
++				reportedAt: body.outcome.reportedAt,
++				evidence: body.outcome.evidence.map((reference) => ({
++					kind: (reference as Record<string, string>).kind,
++					uri: (reference as Record<string, string>).uri
++				}))
++			};
++			onReported(outcome);
++		} catch (caught) {
++			setError(
++				caught instanceof Error
++					? caught.message
++					: messages.MEMORY_DETAIL_OUTCOME_REPORT_FAILED
++			);
++		} finally {
++			setSaving(false);
++		}
++	}
++
++	return (
++		<details className="rounded-md border border-stone-200 p-3 dark:border-stone-800">
++			<summary className="cursor-pointer text-xs font-medium text-stone-700 dark:text-stone-200">
++				{messages.MEMORY_DETAIL_OUTCOME_REPORT_BUTTON}
++			</summary>
++			<form onSubmit={submit} className="mt-3 space-y-3">
++				<p className="text-xs text-stone-500 dark:text-stone-400">
++					{messages.MEMORY_DETAIL_OUTCOME_REPORT_NOTE}
++				</p>
++				<div className="grid gap-2 sm:grid-cols-2">
++					<label className="flex flex-col gap-1 text-xs text-stone-500 dark:text-stone-400">
++						{messages.MEMORY_DETAIL_OUTCOME_REPORT_CATEGORY}
++						<select
++							aria-label={messages.MEMORY_DETAIL_OUTCOME_REPORT_CATEGORY}
++							value={outcomeKind}
++							onChange={(event) => setOutcomeKind(event.target.value)}
++							className="h-8 rounded-md border border-stone-200 bg-white px-2 dark:border-stone-800 dark:bg-stone-950"
++						>
++							{OUTCOME_KINDS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
++						</select>
++					</label>
++					<label className="flex flex-col gap-1 text-xs text-stone-500 dark:text-stone-400">
++						{messages.MEMORY_DETAIL_OUTCOME_REPORT_KIND}
++						<select
++							aria-label={messages.MEMORY_DETAIL_OUTCOME_REPORT_KIND}
++							value={reportKind}
++							onChange={(event) => setReportKind(event.target.value)}
++							className="h-8 rounded-md border border-stone-200 bg-white px-2 dark:border-stone-800 dark:bg-stone-950"
++						>
++							{REPORT_KINDS.map((kind) => <option key={kind} value={kind}>{kind.replaceAll("_", " ")}</option>)}
++						</select>
++					</label>
++				</div>
++				<label className="flex flex-col gap-1 text-xs text-stone-500 dark:text-stone-400">
++					{messages.MEMORY_DETAIL_OUTCOME_REPORT_EVIDENCE_KIND}
++					<select
++						aria-label={messages.MEMORY_DETAIL_OUTCOME_REPORT_EVIDENCE_KIND}
++						value={evidenceKind}
++						onChange={(event) => setEvidenceKind(event.target.value)}
++						className="h-8 rounded-md border border-stone-200 bg-white px-2 dark:border-stone-800 dark:bg-stone-950"
++					>
++						{EVIDENCE_KINDS.map((kind) => <option key={kind} value={kind}>{kind.replaceAll("_", " ")}</option>)}
++					</select>
++				</label>
++				<label className="flex flex-col gap-1 text-xs text-stone-500 dark:text-stone-400">
++					{messages.MEMORY_DETAIL_OUTCOME_REPORT_EVIDENCE_URI}
++					<input
++						type="text"
++						maxLength={2048}
++						value={evidenceUri}
++						onChange={(event) => setEvidenceUri(event.target.value)}
++						className="h-8 rounded-md border border-stone-200 bg-white px-2 text-xs dark:border-stone-800 dark:bg-stone-950"
++					/>
++				</label>
++				{error ? <p role="alert" className="text-xs text-red-700 dark:text-red-300">{error}</p> : null}
++				<Button type="submit" size="sm" disabled={saving}>
++					{saving ? messages.MEMORY_DETAIL_OUTCOME_REPORT_SAVING : messages.MEMORY_DETAIL_OUTCOME_REPORT_SUBMIT}
++				</Button>
++			</form>
++		</details>
++	);
++}
+diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
+index c512bfc8..de399f82 100644
+--- a/src/client/src/constants/messages/en.ts
++++ b/src/client/src/constants/messages/en.ts
+@@ -2637,6 +2637,21 @@ export const MEMORY_DETAIL_OUTCOME_REPORTED = "Reported at";
+ export const MEMORY_DETAIL_OUTCOME_UNREPORTED = "Unreported";
+ export const MEMORY_DETAIL_OUTCOME_UNKNOWN = "Unknown (reported)";
+ export const MEMORY_DETAIL_OUTCOME_EVIDENCE = "Outcome evidence";
++export const MEMORY_DETAIL_OUTCOME_REPORT_BUTTON = "Report outcome";
++export const MEMORY_DETAIL_OUTCOME_REPORT_TITLE = "Append reporter-supplied outcome";
++export const MEMORY_DETAIL_OUTCOME_REPORT_NOTE =
++	"This is an operator report, not a verified task result. Provider success, retrieval, or a PR link does not prove task success or model use.";
++export const MEMORY_DETAIL_OUTCOME_REPORT_CATEGORY = "Outcome category";
++export const MEMORY_DETAIL_OUTCOME_REPORT_KIND = "Report kind";
++export const MEMORY_DETAIL_OUTCOME_REPORT_EVIDENCE_KIND = "Evidence kind";
++export const MEMORY_DETAIL_OUTCOME_REPORT_EVIDENCE_URI = "Evidence reference";
++export const MEMORY_DETAIL_OUTCOME_REPORT_EVIDENCE_REQUIRED =
++	"Add at least one evidence reference for any outcome other than Unknown.";
++export const MEMORY_DETAIL_OUTCOME_REPORT_SUBMIT = "Append outcome";
++export const MEMORY_DETAIL_OUTCOME_REPORT_SAVING = "Appending outcome…";
++export const MEMORY_DETAIL_OUTCOME_REPORT_SAVED = "Reporter outcome appended.";
++export const MEMORY_DETAIL_OUTCOME_REPORT_INVALID = "Outcome report fields or evidence are invalid.";
++export const MEMORY_DETAIL_OUTCOME_REPORT_FAILED = "Outcome report could not be saved.";
+ export const MEMORY_COHORTS_TAB_TITLE = "Outcome cohorts";
+ export const MEMORY_COHORTS_TITLE = "Aggregate exposure and outcome cohorts";
+ export const MEMORY_COHORTS_SCOPE_NOTE =
+diff --git a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
+index 91f03232..552ba66a 100644
+--- a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
++++ b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
+@@ -69,6 +69,7 @@ interface AutoDevOutcomeEvidence {
+ 
+ interface AutoDevInjectionOutcomeItem {
+ 	injection: {
++		eventId: string;
+ 		injectionResult: "injected" | "empty" | "skipped";
+ 		memoryMode: string;
+ 		packetCharacterCount: number;
+@@ -143,6 +144,19 @@ export interface AutoDevCohortResult {
+ 	page: AutoDevCohortPage | null;
+ }
+ 
++export interface AutoDevOutcomeReportInput {
++	experienceId: string;
++	injectionEventId: string;
++	outcomeKind: string;
++	reportKind: string;
++	evidence: readonly AutoDevOutcomeEvidence[];
++}
++
++export interface AutoDevOutcomeReportResult {
++	readonly appended: boolean;
++	readonly outcome: NonNullable<AutoDevInjectionOutcomeItem["outcome"]>;
++}
++
+ interface AutoDevMemoryWhy {
+ 	events?: unknown[];
+ 	relatedMemories?: unknown[];
+@@ -163,6 +177,10 @@ const MEMORY_MODES = new Set(["jit", "retrieval-only", "disabled", "invalid", "u
+ const EXPERIENCE_OUTCOMES = new Set(["success", "partial", "failure", "cancelled", "unknown"]);
+ const INJECTION_RESULTS = new Set(["injected", "empty", "skipped"]);
+ const REPORT_KINDS = new Set(["task", "pull_request", "issue", "other"]);
++const OUTCOME_EVIDENCE_KINDS = new Set([
++	"trajectory", "trace", "file", "commit", "pull_request", "issue",
++	"rule", "skill", "document", "other"
++]);
+ // Mirrors MEMORY_OUTCOME_COHORT_MAX_WINDOW_MS in @simulatorlife/autodev-core. The
+ // Control API re-validates this bound server-side; the client bound exists so
+ // an operator gets an immediate, specific error instead of a generic 400.
+@@ -309,6 +327,8 @@ function autoDevInjectionOutcome(value: unknown): AutoDevInjectionOutcomeItem |
+ 	if (!isObject(value) || !isObject(value.injection)) return null;
+ 	const injection = value.injection;
+ 	if (
++		typeof injection.id !== "string" ||
++		!injection.id.trim() ||
+ 		!(injection.injectionResult === "injected" || injection.injectionResult === "empty" || injection.injectionResult === "skipped") ||
+ 		typeof injection.memoryMode !== "string" ||
+ 		!Number.isSafeInteger(injection.packetCharacterCount) ||
+@@ -344,6 +364,7 @@ function autoDevInjectionOutcome(value: unknown): AutoDevInjectionOutcomeItem |
+ 	// join token and reporter identity are never added to MemoryRecord metadata.
+ 	return {
+ 		injection: {
++			eventId: injection.id,
+ 			injectionResult: injection.injectionResult,
+ 			memoryMode: injection.memoryMode,
+ 			packetCharacterCount: injection.packetCharacterCount as number,
+@@ -800,6 +821,100 @@ export class AutoDevMemoryAdapter extends BaseMemoryAdapter {
+ 		}
+ 	}
+ 
++	/**
++	 * Append one reporter-supplied outcome for an observed injection event.
++	 * The browser supplies only the scoped experience and injection event IDs;
++	 * this server-side adapter resolves the opaque correlation token through
++	 * the authorized read route and never returns that token to the UI.
++	 */
++	async reportOutcome(input: AutoDevOutcomeReportInput): Promise<AutoDevOutcomeReportResult> {
++		if (!this.includeTaskHistory || !this.workspaceId || !this.repositoryId) {
++			throw new AutoDevMemoryApiError(403);
++		}
++		const experienceId = input.experienceId.trim();
++		const injectionEventId = input.injectionEventId.trim();
++		if (
++			!experienceId || experienceId.length > 128 ||
++			!injectionEventId || injectionEventId.length > 128 ||
++			/[\u0000-\u001f\u007f]/u.test(experienceId + injectionEventId) ||
++			!EXPERIENCE_OUTCOMES.has(input.outcomeKind) ||
++			!REPORT_KINDS.has(input.reportKind) ||
++			!Array.isArray(input.evidence) || input.evidence.length > 64
++		) throw new AutoDevMemoryApiError(400);
++		const evidence = input.evidence.map((reference) => {
++			if (
++				!reference ||
++				typeof reference !== "object" ||
++				typeof reference.kind !== "string" ||
++				!OUTCOME_EVIDENCE_KINDS.has(reference.kind) ||
++				typeof reference.uri !== "string" ||
++				!reference.uri.trim() || reference.uri.length > 2048 ||
++				/[\u0000-\u001f\u007f]/u.test(reference.uri) ||
++				(reference.revision !== undefined && reference.revision.length > 256) ||
++				(reference.observedAt !== undefined && !Number.isFinite(Date.parse(reference.observedAt)))
++			) throw new AutoDevMemoryApiError(400);
++			return reference;
++		});
++		if (input.outcomeKind !== "unknown" && evidence.length === 0) {
++			throw new AutoDevMemoryApiError(400);
++		}
++
++		const params = new URLSearchParams({
++			workspaceId: this.workspaceId,
++			repositoryId: this.repositoryId,
++			includeTaskHistory: "true"
++		});
++		const path = `memory/experiences/${encodeURIComponent(experienceId)}/outcomes?${params.toString()}`;
++		const current = await forwardToControlApi<AutoDevInjectionOutcomePage>({
++			method: "GET",
++			path
++		});
++		if (!current.ok) throw new AutoDevMemoryApiError(current.status);
++		if (!Array.isArray(current.body.items)) throw new AutoDevMemoryApiError(503);
++		const joined = current.body.items.find((value) => {
++			if (!isObject(value) || !isObject(value.injection)) return false;
++			return value.injection.id === injectionEventId;
++		});
++		if (!isObject(joined) || !isObject(joined.injection)) {
++			throw new AutoDevMemoryApiError(404);
++		}
++		const correlationToken = joined.injection.correlationToken;
++		if (typeof correlationToken !== "string" || !correlationToken.trim() || correlationToken.length > 256) {
++			throw new AutoDevMemoryApiError(503);
++		}
++		const written = await forwardToControlApi<unknown>({
++			method: "POST",
++			path,
++			body: {
++				correlationToken,
++				outcomeKind: input.outcomeKind,
++				reportKind: input.reportKind,
++				evidence
++			}
++		});
++		if (!written.ok) throw new AutoDevMemoryApiError(written.status);
++		if (!isObject(written.body) || typeof written.body.appended !== "boolean") {
++			throw new AutoDevMemoryApiError(503);
++		}
++
++		// Read the canonical stored report back to return only its safe,
++		// reporter-visible projection (never the token or report id).
++		const refreshed = await forwardToControlApi<AutoDevInjectionOutcomePage>({
++			method: "GET",
++			path
++		});
++		if (!refreshed.ok || !Array.isArray(refreshed.body.items)) {
++			throw new AutoDevMemoryApiError(refreshed.ok ? 503 : refreshed.status);
++		}
++		const refreshedJoin = refreshed.body.items.find((value) => {
++			if (!isObject(value) || !isObject(value.injection)) return false;
++			return value.injection.id === injectionEventId;
++		});
++		const parsed = autoDevInjectionOutcome(refreshedJoin);
++		if (!parsed?.outcome) throw new AutoDevMemoryApiError(503);
++		return { appended: written.body.appended, outcome: parsed.outcome };
++	}
++
+ 	private async readRecords(options: {
+ 		query?: string;
+ 		limit: number;

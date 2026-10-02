@@ -1,0 +1,699 @@
+diff --git a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
+--- a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
++++ b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
+@@ -58,6 +58,39 @@
+ interface AutoDevExperiencePage {
+ 	items: AutoDevExperience[];
+ 	total: number;
++}
++
++interface AutoDevOutcomeEvidence {
++	kind: string;
++	uri: string;
++	revision?: string;
++	observedAt?: string;
++}
++
++interface AutoDevInjectionOutcomeItem {
++	injection: {
++		injectionResult: "injected" | "empty" | "skipped";
++		memoryMode: string;
++		packetCharacterCount: number;
++		packetTokenCount?: number;
++		memoryIds: string[];
++		occurredAt: string;
++	};
++	outcome: {
++		outcomeKind: string;
++		reportKind: string;
++		reportedAt: string;
++		evidence: AutoDevOutcomeEvidence[];
++	} | null;
++}
++
++interface AutoDevInjectionOutcomeHistory {
++	status: "available" | "empty" | "unavailable" | "disabled";
++	items: AutoDevInjectionOutcomeItem[];
++}
++
++interface AutoDevInjectionOutcomePage {
++	items?: unknown;
+ }
+ 
+ interface AutoDevMemoryWhy {
+@@ -191,6 +224,83 @@
+ 	return record as unknown as AutoDevExperience;
+ }
+ 
++function isObject(value: unknown): value is Record<string, unknown> {
++	return !!value && typeof value === "object" && !Array.isArray(value);
++}
++
++function autoDevOutcomeEvidence(value: unknown): AutoDevOutcomeEvidence[] | null {
++	if (!Array.isArray(value)) return null;
++	const evidence = value.map((entry) => {
++		if (!isObject(entry) || typeof entry.kind !== "string" || typeof entry.uri !== "string")
++			return null;
++		if (
++			(entry.revision !== undefined && typeof entry.revision !== "string") ||
++			(entry.observedAt !== undefined && typeof entry.observedAt !== "string")
++		) return null;
++		return {
++			kind: entry.kind,
++			uri: entry.uri,
++			...(typeof entry.revision === "string" ? { revision: entry.revision } : {}),
++			...(typeof entry.observedAt === "string" ? { observedAt: entry.observedAt } : {})
++		};
++	});
++	return evidence.some((entry) => entry === null)
++		? null
++		: evidence as AutoDevOutcomeEvidence[];
++}
++
++function autoDevInjectionOutcome(value: unknown): AutoDevInjectionOutcomeItem | null {
++	if (!isObject(value) || !isObject(value.injection)) return null;
++	const injection = value.injection;
++	if (
++		!(injection.injectionResult === "injected" || injection.injectionResult === "empty" || injection.injectionResult === "skipped") ||
++		typeof injection.memoryMode !== "string" ||
++		!Number.isSafeInteger(injection.packetCharacterCount) ||
++		(injection.packetCharacterCount as number) < 0 ||
++		(injection.packetTokenCount !== undefined &&
++			(!Number.isSafeInteger(injection.packetTokenCount) || (injection.packetTokenCount as number) < 0)) ||
++		!Array.isArray(injection.memoryIds) ||
++		!injection.memoryIds.every((id) => typeof id === "string") ||
++		typeof injection.occurredAt !== "string" ||
++		!Number.isFinite(Date.parse(injection.occurredAt))
++	) return null;
++
++	let outcome: AutoDevInjectionOutcomeItem["outcome"] = null;
++	if (value.outcome !== null) {
++		if (
++			!isObject(value.outcome) ||
++			typeof value.outcome.outcomeKind !== "string" ||
++			typeof value.outcome.reportKind !== "string" ||
++			typeof value.outcome.reportedAt !== "string" ||
++			!Number.isFinite(Date.parse(value.outcome.reportedAt))
++		) return null;
++		const evidence = autoDevOutcomeEvidence(value.outcome.evidence);
++		if (!evidence) return null;
++		outcome = {
++			outcomeKind: value.outcome.outcomeKind,
++			reportKind: value.outcome.reportKind,
++			reportedAt: value.outcome.reportedAt,
++			evidence
++		};
++	}
++
++	// Deliberately project only operator-visible outcome details. The opaque
++	// join token and reporter identity are never added to MemoryRecord metadata.
++	return {
++		injection: {
++			injectionResult: injection.injectionResult,
++			memoryMode: injection.memoryMode,
++			packetCharacterCount: injection.packetCharacterCount as number,
++			...(typeof injection.packetTokenCount === "number"
++				? { packetTokenCount: injection.packetTokenCount }
++				: {}),
++			memoryIds: injection.memoryIds as string[],
++			occurredAt: injection.occurredAt
++		},
++		outcome
++	};
++}
++
+ function autoDevHistoryEvent(value: unknown): MemoryHistoryEvent | null {
+ 	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+ 	const event = value as Record<string, unknown>;
+@@ -205,7 +315,10 @@
+ 	};
+ }
+ 
+-function presentExperience(experience: AutoDevExperience): MemoryRecord {
++function presentExperience(
++	experience: AutoDevExperience,
++	injectionOutcomes?: AutoDevInjectionOutcomeHistory
++): MemoryRecord {
+ 	const role = experience.agentRole?.trim() || "agent";
+ 	return {
+ 		id: `experience:${experience.id}`,
+@@ -215,7 +328,8 @@
+ 			autodev: {
+ 				kind: "episodic",
+ 				status: "historical",
+-				experience
++				experience,
++				...(injectionOutcomes ? { injectionOutcomes } : {})
+ 			}
+ 		},
+ 		agentId: experience.agentId,
+@@ -395,7 +509,11 @@
+ 				throw new AutoDevMemoryApiError(result.status);
+ 			}
+ 			const experience = autoDevExperience(result.body.experience);
+-			return experience ? presentExperience(experience) : null;
++			if (!experience) return null;
++			const injectionOutcomes: AutoDevInjectionOutcomeHistory = this.includeTaskHistory
++				? await this.readInjectionOutcomes(experience)
++				: { status: "disabled", items: [] };
++			return presentExperience(experience, injectionOutcomes);
+ 		}
+ 		const params = this.scopeParams();
+ 		const result = await forwardToControlApi<{
+@@ -457,6 +575,34 @@
+ 			params.set("agentId", this.agentId);
+ 		if (includeTaskHistory) params.set("includeTaskHistory", "true");
+ 		return params;
++	}
++
++	private async readInjectionOutcomes(
++		experience: AutoDevExperience
++	): Promise<AutoDevInjectionOutcomeHistory> {
++		const params = new URLSearchParams({ workspaceId: this.workspaceId });
++		if (this.repositoryId) params.set("repositoryId", this.repositoryId);
++		params.set("includeTaskHistory", "true");
++		if (this.memoryMode) params.set("memoryMode", this.memoryMode);
++		if (this.outcome) params.set("outcome", this.outcome);
++		try {
++			const result = await forwardToControlApi<AutoDevInjectionOutcomePage>({
++				method: "GET",
++				path: `memory/experiences/${encodeURIComponent(experience.id)}/outcomes?${params.toString()}`
++			});
++			if (!result.ok || !Array.isArray(result.body.items))
++				return { status: "unavailable", items: [] };
++			const items = result.body.items.map(autoDevInjectionOutcome);
++			if (items.some((item) => item === null))
++				return { status: "unavailable", items: [] };
++			const validItems = items as AutoDevInjectionOutcomeItem[];
++			return {
++				status: validItems.length ? "available" : "empty",
++				items: validItems
++			};
++		} catch {
++			return { status: "unavailable", items: [] };
++		}
+ 	}
+ 
+ 	private async readRecords(options: {
+diff --git a/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx b/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx
+--- a/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx
++++ b/src/client/src/components/(playground)/memory/memory-detail-sheet.tsx
+@@ -544,20 +544,21 @@
+ 										) : null}
+ 									</TabsList>
+ 									<TabsContent value="details" className="mt-3">
+-										<MemoryDetailsTab
+-											memory={memory}
+-											connectorName={connectorName}
+-											connectorId={connectorId}
+-											canFeedback={canFeedback}
++												<MemoryDetailsTab
++													memory={memory}
++													connectorName={connectorName}
++													connectorId={connectorId}
++													canFeedback={canFeedback}
+ 											onFeedback={(feedback) =>
+ 												setDetail((current) =>
+ 													current
+ 														? { ...current, feedback }
+ 														: { ...memory, feedback }
+ 												)
+-											}
+-										/>
+-									</TabsContent>
++													}
++												/>
++												<AutoDevInjectionOutcomeDetails memory={memory} />
++											</TabsContent>
+ 									{inputCount ? (
+ 										<TabsContent value="input" className="mt-3">
+ 											<MemoryInputTab messages={memory.input || []} />
+@@ -640,6 +641,7 @@
+ }) {
+ 	const messages = getMessage();
+ 	const kindLabel = kindMessage(messages, memory.kind);
++	const metadata = metadataForDetails(memory);
+ 	return (
+ 		<div className="space-y-4">
+ 			<section>
+@@ -708,12 +710,12 @@
+ 					<MetaCard label={messages.MEMORY_DETAIL_CONNECTOR} value={connectorName} />
+ 				) : null}
+ 			</div>
+-			{memory.metadata && Object.keys(memory.metadata).length > 0 ? (
++			{metadata && Object.keys(metadata).length > 0 ? (
+ 				<section>
+ 					<h3 className="mb-1.5 text-[11px] uppercase tracking-wide text-stone-500 dark:text-stone-400">
+ 						{messages.MEMORY_DETAIL_METADATA}
+ 					</h3>
+-					<MemoryAttributeTable data={memory.metadata} />
++					<MemoryAttributeTable data={metadata} />
+ 				</section>
+ 			) : null}
+ 			{memory.structuredAttributes &&
+@@ -726,6 +728,96 @@
+ 				</section>
+ 			) : null}
+ 		</div>
++	);
++}
++
++function metadataForDetails(memory: MemoryListItem): Record<string, unknown> | undefined {
++	const metadata = memory.metadata;
++	if (!metadata || !memory.id.startsWith("experience:") || !isPlainObject(metadata.autodev)) {
++		return metadata;
++	}
++	const autodev = metadata.autodev;
++	if (!isPlainObject(autodev.injectionOutcomes)) return metadata;
++	const visibleAutoDev = { ...autodev };
++	delete visibleAutoDev.injectionOutcomes;
++	return { ...metadata, autodev: visibleAutoDev };
++}
++
++function AutoDevInjectionOutcomeDetails({ memory }: { memory: MemoryListItem }) {
++	const messages = getMessage();
++	if (!memory.id.startsWith("experience:")) return null;
++	const autodev = memory.metadata?.autodev;
++	if (!isPlainObject(autodev) || !isPlainObject(autodev.experience)) return null;
++	const history = autodev.injectionOutcomes;
++	if (!isPlainObject(history)) return null;
++	const status = history.status;
++	const items = Array.isArray(history.items) ? history.items : [];
++	const unavailableMessage = status === "disabled"
++		? messages.MEMORY_DETAIL_INJECTION_DISABLED
++		: messages.MEMORY_DETAIL_INJECTION_UNAVAILABLE;
++
++	return (
++		<section className="space-y-3 border-t border-stone-200 pt-4 dark:border-stone-800">
++			<div>
++				<h3 className="mb-1.5 text-[11px] uppercase tracking-wide text-stone-500 dark:text-stone-400">
++					{messages.MEMORY_DETAIL_INJECTION_OUTCOMES}
++				</h3>
++				<p className="text-xs text-stone-500 dark:text-stone-400">
++					{messages.MEMORY_DETAIL_INJECTION_SCOPE_NOTE}
++				</p>
++			</div>
++			{status === "disabled" || status === "unavailable" ? (
++				<p role="status" className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-100">
++					{unavailableMessage}
++				</p>
++			) : status === "empty" || items.length === 0 ? (
++				<p role="status" className="rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-600 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-300">
++					{messages.MEMORY_DETAIL_INJECTION_EMPTY}
++				</p>
++			) : (
++				<div className="space-y-3">
++					{items.map((value, index) => {
++						if (!isPlainObject(value) || !isPlainObject(value.injection)) return null;
++						const injection = value.injection;
++						const outcome = isPlainObject(value.outcome) ? value.outcome : null;
++						const resultLabel = injection.injectionResult === "injected"
++							? messages.MEMORY_DETAIL_INJECTION_INJECTED
++							: injection.injectionResult === "empty"
++								? messages.MEMORY_DETAIL_INJECTION_EMPTY_PACKET
++								: messages.MEMORY_DETAIL_INJECTION_SKIPPED;
++						const outcomeLabel = outcome
++							? outcome.outcomeKind === "unknown"
++								? messages.MEMORY_DETAIL_OUTCOME_UNKNOWN
++								: String(outcome.outcomeKind ?? "")
++							: messages.MEMORY_DETAIL_OUTCOME_UNREPORTED;
++						return (
++							<div key={String(index)} className="space-y-2 rounded-md border border-stone-200 p-3 dark:border-stone-800">
++								<div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
++									<MetaCard label={messages.MEMORY_DETAIL_INJECTION_DECISION} value={resultLabel} />
++									<MetaCard label={messages.MEMORY_DETAIL_INJECTION_MODE} value={typeof injection.memoryMode === "string" ? injection.memoryMode : undefined} />
++									<MetaCard label={messages.MEMORY_DETAIL_INJECTION_PACKET_CHARACTERS} value={typeof injection.packetCharacterCount === "number" ? String(injection.packetCharacterCount) : undefined} />
++									<MetaCard label={messages.MEMORY_DETAIL_INJECTION_PACKET_TOKENS} value={typeof injection.packetTokenCount === "number" ? String(injection.packetTokenCount) : undefined} />
++									<MetaCard label={messages.MEMORY_DETAIL_INJECTION_OCCURRED} value={typeof injection.occurredAt === "string" ? formatBrowserDateTime(injection.occurredAt, injection.occurredAt) : undefined} />
++									<MetaCard label={messages.MEMORY_DETAIL_OUTCOME} value={outcomeLabel} />
++									{outcome ? (
++										<>
++											<MetaCard label={messages.MEMORY_DETAIL_OUTCOME_KIND} value={typeof outcome.reportKind === "string" ? outcome.reportKind.replaceAll("_", " ") : undefined} />
++											<MetaCard label={messages.MEMORY_DETAIL_OUTCOME_REPORTED} value={typeof outcome.reportedAt === "string" ? formatBrowserDateTime(outcome.reportedAt, outcome.reportedAt) : undefined} />
++										</>
++									) : null}
++								</div>
++								{Array.isArray(injection.memoryIds) && injection.memoryIds.length > 0 ? (
++									<MemoryAttributeTable data={{ [messages.MEMORY_DETAIL_INJECTION_MEMORY_IDS]: injection.memoryIds }} />
++								) : null}
++								{outcome && Array.isArray(outcome.evidence) && outcome.evidence.length > 0 ? (
++									<MemoryAttributeTable data={{ [messages.MEMORY_DETAIL_OUTCOME_EVIDENCE]: outcome.evidence }} />
++								) : null}
++							</div>
++						);
++					})}
++				</div>
++			)}
++		</section>
+ 	);
+ }
+ 
+diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
+--- a/src/client/src/constants/messages/en.ts
++++ b/src/client/src/constants/messages/en.ts
+@@ -2613,6 +2613,30 @@
+ export const MEMORY_DETAIL_LIFECYCLE = "Lifecycle";
+ export const MEMORY_DETAIL_SYNTHESIZED = "Synthesized";
+ export const MEMORY_DETAIL_STRUCTURED = "Structured attributes";
++export const MEMORY_DETAIL_INJECTION_OUTCOMES = "Persisted injection and task outcomes";
++export const MEMORY_DETAIL_INJECTION_SCOPE_NOTE =
++	"These are persisted packet-attachment decisions and reporter-supplied outcomes. Injection does not prove model use, provider success, or task/PR success.";
++export const MEMORY_DETAIL_INJECTION_DISABLED =
++	"Unavailable: task-history access is not enabled for this connector.";
++export const MEMORY_DETAIL_INJECTION_UNAVAILABLE =
++	"Unavailable: persisted injection and outcome records could not be loaded.";
++export const MEMORY_DETAIL_INJECTION_EMPTY =
++	"No injection decisions match this experience and its active filters.";
++export const MEMORY_DETAIL_INJECTION_DECISION = "Injection decision";
++export const MEMORY_DETAIL_INJECTION_MODE = "Memory mode";
++export const MEMORY_DETAIL_INJECTION_PACKET_CHARACTERS = "Packet size (characters)";
++export const MEMORY_DETAIL_INJECTION_PACKET_TOKENS = "Packet size (tokens)";
++export const MEMORY_DETAIL_INJECTION_OCCURRED = "Decision timestamp";
++export const MEMORY_DETAIL_INJECTION_MEMORY_IDS = "Packet memory IDs";
++export const MEMORY_DETAIL_INJECTION_INJECTED = "Packet injected";
++export const MEMORY_DETAIL_INJECTION_EMPTY_PACKET = "No packet returned";
++export const MEMORY_DETAIL_INJECTION_SKIPPED = "Injection skipped";
++export const MEMORY_DETAIL_OUTCOME = "Reported outcome";
++export const MEMORY_DETAIL_OUTCOME_KIND = "Report kind";
++export const MEMORY_DETAIL_OUTCOME_REPORTED = "Reported at";
++export const MEMORY_DETAIL_OUTCOME_UNREPORTED = "Unreported";
++export const MEMORY_DETAIL_OUTCOME_UNKNOWN = "Unknown (reported)";
++export const MEMORY_DETAIL_OUTCOME_EVIDENCE = "Outcome evidence";
+ export const MEMORY_DETAIL_INPUT_EMPTY = "No source messages for this memory.";
+ export const MEMORY_DETAIL_CHANGELOG_EMPTY = "No changelog for this memory.";
+ export const MEMORY_DETAIL_EVENT_ADDED = "Added";
+@@ -2826,4 +2850,3 @@
+ export const DATA_SOURCE_BINDING_FAILED = "Failed to update signal routing.";
+ export const DATA_SOURCE_LOAD_FAILED = "Failed to load data sources.";
+ export const DATA_SOURCE_RETRY = "Try again";
+-
+diff --git a/src/client/src/lib/platform/connectors/memory/README.md b/src/client/src/lib/platform/connectors/memory/README.md
+--- a/src/client/src/lib/platform/connectors/memory/README.md
++++ b/src/client/src/lib/platform/connectors/memory/README.md
+@@ -74,3 +74,10 @@
+ `AUTODEV_MEMORY_READ_TASK_HISTORY=1` is set in the AutoDev Control API process.
+ The Control API still constrains those reads to the selected workspace and
+ repository.
++When task-history access is enabled, an experience detail also reads its
++persisted injection/outcome joins through the scoped outcomes route. The detail
++shows packet-attachment decisions, mode, bounded packet metadata, and any
++reporter-supplied outcome/evidence; absent reports and unavailable history are
++explicit. An `injected` decision does not establish model use, provider success,
++or task/PR success, and the opaque join token is not exposed in prompts, traces,
++or the detail metadata.
+diff --git a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
+--- a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
++++ b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
+@@ -439,3 +439,173 @@
+ 	});
+ 	expect(new Headers(init.headers).get("x-autodev-actor")).toBe("operator-a");
+ });
++
++test("experience detail fetches scoped injection outcomes only with task history enabled", async () => {
++	const experience = {
++		id: "experience-a",
++		workspaceId: "workspace-a",
++		repositoryId: "owner/repo",
++		scope: { kind: "task", workspaceId: "workspace-a", taskId: "task-a", runId: "run-a" },
++		taskId: "task-a",
++		runId: "run-a",
++		agentId: "agent-a",
++		startedAt: "2026-10-01T00:00:00.000Z",
++		outcome: "unknown",
++		trajectory: { format: "letta-trajectory-v1", uri: "codex://session/task-a" },
++		evidence: []
++	};
++	const fetchSpy = jest.spyOn(global, "fetch")
++		.mockResolvedValueOnce(jsonResponse({ experience }))
++		.mockResolvedValueOnce(jsonResponse({
++			items: [{
++				injection: {
++					id: "injection-1",
++					correlationToken: "operator-only-join-token",
++					injectionResult: "injected",
++					memoryMode: "jit",
++					packetCharacterCount: 321,
++					packetTokenCount: 81,
++					memoryIds: ["memory-a"],
++					occurredAt: "2026-10-01T00:01:00.000Z"
++				},
++				outcome: {
++					correlationToken: "operator-only-join-token",
++					outcomeKind: "success",
++					reportKind: "pull_request",
++					reportedAt: "2026-10-01T00:02:00.000Z",
++					evidence: [{ kind: "pull_request", uri: "https://example.test/pr/1" }]
++				}
++			}, {
++				injection: {
++					id: "injection-2",
++					correlationToken: "unreported-join-token",
++					injectionResult: "empty",
++					memoryMode: "retrieval-only",
++					packetCharacterCount: 0,
++					memoryIds: [],
++					occurredAt: "2026-10-01T00:03:00.000Z"
++				},
++				outcome: null
++			}]
++		}));
++	const adapter = new AutoDevMemoryAdapter({
++		...descriptor,
++		settings: {
++			...descriptor.settings,
++			includeTaskHistory: true,
++			memoryMode: "jit",
++			outcome: "success",
++			taskId: "caller-task",
++			runId: "caller-run",
++			agentId: "caller-agent"
++		}
++	});
++
++	const result = await adapter.get("experience:experience-a");
++	expect(result?.metadata?.autodev).toMatchObject({
++		injectionOutcomes: {
++			status: "available",
++			items: [
++				{
++					injection: {
++						injectionResult: "injected",
++						memoryMode: "jit",
++						packetCharacterCount: 321,
++						packetTokenCount: 81,
++						memoryIds: ["memory-a"]
++					},
++					outcome: {
++						outcomeKind: "success",
++						reportKind: "pull_request",
++						evidence: [{ kind: "pull_request", uri: "https://example.test/pr/1" }]
++					}
++				},
++				{
++					injection: { injectionResult: "empty", memoryMode: "retrieval-only" },
++					outcome: null
++				}
++			]
++		}
++	});
++	expect(JSON.stringify(result?.metadata)).not.toContain("operator-only-join-token");
++	expect(JSON.stringify(result?.metadata)).not.toContain("unreported-join-token");
++	expect(fetchSpy).toHaveBeenCalledTimes(2);
++	const [outcomesUrl, outcomesInit] = fetchSpy.mock.calls[1] as [string, RequestInit];
++	const parsed = new URL(outcomesUrl);
++	expect(parsed.pathname).toBe("/control/memory/experiences/experience-a/outcomes");
++	expect(parsed.searchParams.get("workspaceId")).toBe("workspace-a");
++	expect(parsed.searchParams.get("repositoryId")).toBe("owner/repo");
++	expect(parsed.searchParams.get("includeTaskHistory")).toBe("true");
++	expect(parsed.searchParams.get("memoryMode")).toBe("jit");
++	expect(parsed.searchParams.get("outcome")).toBe("success");
++	for (const identityKey of ["taskId", "runId", "agentId"]) {
++		expect(parsed.searchParams.has(identityKey)).toBe(false);
++	}
++	expect(new Headers(outcomesInit.headers).get("authorization")).toBe(
++		"Bearer server-only-token"
++	);
++	expect(new Headers(outcomesInit.headers).get("x-autodev-actor")).toBe("operator-a");
++});
++
++test("experience detail does not request injection outcomes without explicit task-history access", async () => {
++	const experience = {
++		id: "experience-a",
++		workspaceId: "workspace-a",
++		repositoryId: "owner/repo",
++		scope: { kind: "task", workspaceId: "workspace-a", taskId: "task-a", runId: "run-a" },
++		taskId: "task-a",
++		runId: "run-a",
++		agentId: "agent-a",
++		startedAt: "2026-10-01T00:00:00.000Z",
++		outcome: "unknown",
++		trajectory: { format: "letta-trajectory-v1", uri: "codex://session/task-a" },
++		evidence: []
++	};
++	const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
++		jsonResponse({ experience })
++	);
++
++	const result = await new AutoDevMemoryAdapter(descriptor).get("experience:experience-a");
++	expect(result?.metadata?.autodev).toMatchObject({
++		injectionOutcomes: { status: "disabled", items: [] }
++	});
++	expect(fetchSpy).toHaveBeenCalledTimes(1);
++	const [url] = fetchSpy.mock.calls[0] as [string];
++	expect(String(url)).not.toContain("/outcomes?");
++	expect(String(url)).not.toContain("includeTaskHistory=true");
++});
++
++test("experience detail distinguishes empty and unavailable outcome reads", async () => {
++	const experience = {
++		id: "experience-a",
++		workspaceId: "workspace-a",
++		repositoryId: "owner/repo",
++		scope: { kind: "task", workspaceId: "workspace-a", taskId: "task-a", runId: "run-a" },
++		taskId: "task-a",
++		runId: "run-a",
++		agentId: "agent-a",
++		startedAt: "2026-10-01T00:00:00.000Z",
++		outcome: "unknown",
++		trajectory: { format: "letta-trajectory-v1", uri: "codex://session/task-a" },
++		evidence: []
++	};
++	const fetchSpy = jest.spyOn(global, "fetch")
++		.mockResolvedValueOnce(jsonResponse({ experience }))
++		.mockResolvedValueOnce(jsonResponse({ items: [] }))
++		.mockResolvedValueOnce(jsonResponse({ experience }))
++		.mockResolvedValueOnce(jsonResponse({ error: "unavailable" }, 503));
++	const adapter = new AutoDevMemoryAdapter({
++		...descriptor,
++		settings: { ...descriptor.settings, includeTaskHistory: true }
++	});
++
++	const empty = await adapter.get("experience:experience-a");
++	expect(empty?.metadata?.autodev).toMatchObject({
++		injectionOutcomes: { status: "empty", items: [] }
++	});
++	const unavailable = await adapter.get("experience:experience-a");
++	expect(unavailable?.metadata?.autodev).toMatchObject({
++		injectionOutcomes: { status: "unavailable", items: [] }
++	});
++	expect(fetchSpy).toHaveBeenCalledTimes(4);
++});
+diff --git a/src/client/src/__tests__/components/memory-detail-sheet.test.tsx b/src/client/src/__tests__/components/memory-detail-sheet.test.tsx
+--- a/src/client/src/__tests__/components/memory-detail-sheet.test.tsx
++++ b/src/client/src/__tests__/components/memory-detail-sheet.test.tsx
+@@ -37,6 +37,115 @@
+ 				connector: { name: "Mem0" },
+ 			}),
+ 		}) as unknown as typeof fetch;
++	});
++
++	it("shows persisted injection decisions and reporter evidence without implying model use", async () => {
++		const experience: MemoryListItem = {
++			id: "experience:experience-a",
++			content: "Captured orchestrator trajectory (unknown).",
++			kind: "summary",
++			metadata: {
++				autodev: {
++					kind: "episodic",
++					experience: { taskId: "task-a", runId: "run-a", agentId: "agent-a" },
++					injectionOutcomes: {
++						status: "available",
++						items: [{
++							injection: {
++								injectionResult: "injected",
++								memoryMode: "jit",
++								packetCharacterCount: 321,
++								packetTokenCount: 81,
++								memoryIds: ["memory-a"],
++								occurredAt: "2026-10-01T00:01:00.000Z"
++							},
++							outcome: null
++						}, {
++							injection: {
++								injectionResult: "skipped",
++								memoryMode: "disabled",
++								packetCharacterCount: 0,
++								memoryIds: [],
++								occurredAt: "2026-10-01T00:02:00.000Z"
++							},
++							outcome: {
++								outcomeKind: "success",
++								reportKind: "pull_request",
++								reportedAt: "2026-10-01T00:03:00.000Z",
++								evidence: [{ kind: "pull_request", uri: "https://example.test/pr/1" }]
++							}
++						}, {
++							injection: {
++								injectionResult: "empty",
++								memoryMode: "jit",
++								packetCharacterCount: 0,
++								memoryIds: [],
++								occurredAt: "2026-10-01T00:04:00.000Z"
++							},
++							outcome: null
++						}]
++					}
++				}
++			}
++		};
++		(global.fetch as jest.Mock).mockResolvedValue({
++			ok: true,
++			json: async () => ({ memory: experience, capabilities: { get: true }, connector: { name: "AutoDev Memory" } })
++		});
++		render(
++			<MemoryDetailSheet
++				open
++				memoryId={experience.id}
++				capabilities={{ add: false, search: true, get: true, list: true, update: false, delete: false, feedback: false }}
++				preview={experience}
++				onClose={jest.fn()}
++			/>
++		);
++
++		expect(await screen.findByText("Persisted injection and task outcomes")).toBeInTheDocument();
++		expect(screen.getByText("Packet injected")).toBeInTheDocument();
++		expect(screen.getByText("Injection skipped")).toBeInTheDocument();
++		expect(screen.getByText("No packet returned")).toBeInTheDocument();
++		expect(screen.getByText("Unreported")).toBeInTheDocument();
++		expect(screen.getByText("success")).toBeInTheDocument();
++		expect(screen.getByText("pull request")).toBeInTheDocument();
++		expect(screen.getByText("https://example.test/pr/1")).toBeInTheDocument();
++		expect(screen.getByText("memory-a")).toBeInTheDocument();
++		expect(screen.getByText(/does not prove model use, provider success, or task\/PR success/i)).toBeInTheDocument();
++		expect(screen.queryByText(/^Used$/i)).not.toBeInTheDocument();
++	});
++
++	it.each([
++		["empty", "No persisted injection decisions were recorded for this experience."],
++		["unavailable", "Unavailable: persisted injection and outcome records could not be loaded."],
++		["disabled", "Unavailable: task-history access is not enabled for this connector."]
++	] as const)("shows the explicit %s injection-history state", async (status, message) => {
++		const experience: MemoryListItem = {
++			id: "experience:experience-a",
++			content: "Captured trajectory.",
++			kind: "summary",
++			metadata: {
++				autodev: {
++					kind: "episodic",
++					experience: { taskId: "task-a" },
++					injectionOutcomes: { status, items: [] }
++				}
++			}
++		};
++		(global.fetch as jest.Mock).mockResolvedValue({
++			ok: true,
++			json: async () => ({ memory: experience, capabilities: { get: true }, connector: { name: "AutoDev Memory" } })
++		});
++		render(
++			<MemoryDetailSheet
++				open
++				memoryId={experience.id}
++				capabilities={{ add: false, search: true, get: true, list: true, update: false, delete: false, feedback: false }}
++				preview={experience}
++				onClose={jest.fn()}
++			/>
++		);
++		expect(await screen.findByRole("status")).toHaveTextContent(message);
+ 	});
+ 
+ 	it("shows edit and delete when the connector can write", async () => {

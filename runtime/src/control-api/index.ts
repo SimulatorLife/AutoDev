@@ -6,7 +6,8 @@ import path from "node:path";
 import { SpanStatusCode } from "@opentelemetry/api";
 import {
   LOCAL_CONTROL_API_ACTOR,
-  type ProviderRole
+  type ProviderRole,
+  type ToolCatalogItem
 } from "@simulatorlife/autodev-core";
 import { RuleSyncRepository } from "@simulatorlife/autodev-data";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
@@ -19,6 +20,10 @@ import {
 } from "@simulatorlife/autodev-runtime/router/routing";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+import {
+  WEB_FETCH_TOOL,
+  WEB_SEARCH_TOOL
+} from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "../router/proxy.ts";
 import { getDefaultExecutionContract } from "../router/subagents.ts";
@@ -32,6 +37,7 @@ export const CONTROL_API_PATHS = {
   providers: "/control/providers",
   models: "/control/models",
   mcps: "/control/mcps",
+  tools: "/control/tools",
   skills: "/control/skills",
   hooks: "/control/hooks",
   permissions: "/control/permissions",
@@ -48,6 +54,7 @@ const AGENT_DETAIL_PATH = /^\/control\/agents\/([a-zA-Z0-9._-]+)$/u;
 const PROMPT_DETAIL_PATH = /^\/control\/prompts\/([a-zA-Z0-9._-]+)$/u;
 const ACTOR_ID_PATTERN = /^[A-Za-z0-9@._:+-]{1,128}$/u;
 const CONTROL_API_COLLATOR = new Intl.Collator();
+const EXECUTION_CONTRACT_SOURCE = "execution-contract" as const;
 const MD_EXTENSION_PATTERN = /\.md$/u;
 const CONTROL_VARY_HEADER = "Authorization, X-AutoDev-Actor";
 
@@ -302,18 +309,172 @@ function configuredRoleExposure(
 }
 
 function mcpsView(): Record<string, unknown> {
+  const state = new RuleSyncRepository(DEFAULT_REPO_ROOT).loadMcpState();
+  if (state.valid !== true) {
+    return {
+      schema: "autodev-control-mcps-v1",
+      source: state.source,
+      readOnly: true,
+      valid: state.valid,
+      servers: []
+    };
+  }
+
+  const exposures = configuredRoleExposure("mcp");
+  const rolesByServer = new Map(
+    exposures.map(({ name, roles }) => [name, roles])
+  );
+  const declaredNames = new Set(state.servers.map((server) => server.name));
+  const declared = state.servers.map((server) => ({
+    ...server,
+    declared: true,
+    roles: rolesByServer.get(server.name) ?? []
+  }));
+  const unbackedRoleExposures = exposures
+    .filter(({ name }) => !declaredNames.has(name))
+    .map(({ name, roles }) => ({
+      name,
+      enabled: null,
+      transport: "unknown",
+      targetOverrides: [],
+      declared: false,
+      roles
+    }));
   return {
     schema: "autodev-control-mcps-v1",
-    source: "execution-contract",
+    source: state.source,
     readOnly: true,
-    servers: configuredRoleExposure("mcp")
+    valid: state.valid,
+    servers: [...declared, ...unbackedRoleExposures].sort((left, right) =>
+      CONTROL_API_COLLATOR.compare(left.name, right.name)
+    )
+  };
+}
+
+interface ToolCatalogDraft {
+  readonly name: string;
+  readonly source: ToolCatalogItem["source"];
+  readonly server?: string;
+  readonly exposedRoles: Set<string>;
+}
+
+function addToolToCatalog(
+  catalog: Map<string, ToolCatalogDraft>,
+  input: {
+    name: string;
+    source: ToolCatalogItem["source"];
+    role: string;
+    server?: string;
+  }
+): void {
+  if (!input.name.trim()) return;
+  const key = `${input.source}\u0000${input.server ?? ""}\u0000${input.name}`;
+  let item = catalog.get(key);
+  if (!item) {
+    item = {
+      name: input.name,
+      source: input.source,
+      ...(input.server ? { server: input.server } : {}),
+      exposedRoles: new Set<string>()
+    };
+    catalog.set(key, item);
+  }
+  item.exposedRoles.add(input.role);
+}
+
+function addNativeResearchTools(
+  catalog: Map<string, ToolCatalogDraft>,
+  role: string,
+  contract: { webResearch?: { search?: boolean; fetch?: boolean } }
+): void {
+  if (contract.webResearch?.search === true) {
+    addToolToCatalog(catalog, {
+      name: WEB_SEARCH_TOOL,
+      source: "native",
+      role
+    });
+  }
+  if (contract.webResearch?.fetch === true) {
+    addToolToCatalog(catalog, {
+      name: WEB_FETCH_TOOL,
+      source: "native",
+      role
+    });
+  }
+}
+
+function addMcpTools(
+  catalog: Map<string, ToolCatalogDraft>,
+  role: string,
+  mcpTools: unknown
+): void {
+  if (!mcpTools || typeof mcpTools !== "object" || Array.isArray(mcpTools))
+    return;
+  for (const [server, names] of Object.entries(mcpTools)) {
+    if (!Array.isArray(names)) continue;
+    const source: ToolCatalogItem["source"] =
+      server === "codex_app" ? "plugin" : "mcp";
+    for (const name of names) {
+      if (typeof name !== "string") continue;
+      addToolToCatalog(catalog, { name, source, role, server });
+    }
+  }
+}
+
+function toolCatalogItems(
+  catalog: Map<string, ToolCatalogDraft>
+): ToolCatalogItem[] {
+  return Array.from(catalog.values())
+    .map((item) => ({
+      name: item.name,
+      source: item.source,
+      ...(item.server ? { server: item.server } : {}),
+      exposedRoles: Array.from(item.exposedRoles).sort(
+        CONTROL_API_COLLATOR.compare
+      )
+    }))
+    .sort((left, right) =>
+      CONTROL_API_COLLATOR.compare(
+        `${left.source}:${left.server ?? ""}:${left.name}`,
+        `${right.source}:${right.server ?? ""}:${right.name}`
+      )
+    );
+}
+
+function toolsView(): Record<string, unknown> {
+  const catalog = new Map<string, ToolCatalogDraft>();
+  const roles = Object.entries(getDefaultExecutionContract().roles ?? {});
+  if (roles.length === 0) {
+    return {
+      schema: "autodev-control-tools-v1",
+      source: EXECUTION_CONTRACT_SOURCE,
+      readOnly: true,
+      coverage: "unknown",
+      totalTools: null,
+      tools: []
+    };
+  }
+
+  for (const [role, contract] of roles) {
+    addNativeResearchTools(catalog, role, contract);
+    addMcpTools(catalog, role, contract.mcpTools);
+  }
+
+  const tools = toolCatalogItems(catalog);
+  return {
+    schema: "autodev-control-tools-v1",
+    source: EXECUTION_CONTRACT_SOURCE,
+    readOnly: true,
+    coverage: "partial",
+    totalTools: tools.length,
+    tools
   };
 }
 
 function skillsView(): Record<string, unknown> {
   return {
     schema: "autodev-control-skills-v1",
-    source: "execution-contract",
+    source: EXECUTION_CONTRACT_SOURCE,
     readOnly: true,
     skills: configuredRoleExposure("skills")
   };
@@ -429,7 +590,7 @@ function agentsView(
   });
   return {
     schema: "autodev-control-agents-v1",
-    source: "execution-contract",
+    source: EXECUTION_CONTRACT_SOURCE,
     readOnly: true,
     totalAgents: agents.length,
     agents
@@ -907,6 +1068,7 @@ const READ_ONLY_COLLECTIONS: ReadonlyMap<
   [CONTROL_API_PATHS.providers, providersView],
   [CONTROL_API_PATHS.models, modelsView],
   [CONTROL_API_PATHS.mcps, mcpsView],
+  [CONTROL_API_PATHS.tools, toolsView],
   [CONTROL_API_PATHS.skills, skillsView],
   [CONTROL_API_PATHS.hooks, hooksView],
   [CONTROL_API_PATHS.permissions, permissionsView],

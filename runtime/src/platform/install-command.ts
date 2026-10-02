@@ -1,21 +1,14 @@
-import {
-  resolveRuntimeSourcePath,
-  resolveRuntimeSourceRoot
-} from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { ConfigError } from "@simulatorlife/autodev-runtime/config";
-import {
-  ensureRouterAuth,
-  type OtelIngressMode,
-  readOtelIngressMode,
-  writeOtelIngressMode
-} from "./install-state.ts";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import {
+  resolveRuntimeSourcePath,
+  resolveRuntimeSourceRoot
+} from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
 import {
   installCocoIndex,
@@ -24,6 +17,12 @@ import {
   resolveDependencyOptions
 } from "./dependencies.ts";
 import { materializeInstallation } from "./install-materializer.ts";
+import {
+  ensureRouterAuth,
+  type OtelIngressMode,
+  readOtelIngressMode,
+  writeOtelIngressMode
+} from "./install-state.ts";
 
 export interface InstallCommandOptions {
   readonly repositoryRoot?: string;
@@ -47,8 +46,6 @@ function parseFlags(args: readonly string[]): InstallFlags {
     if (arg === "--materialize-only") flags.materializeOnly = true;
     else if (arg === "--enable-router-auth") flags.routerAuth = true;
     else if (
-      arg === "--enable-otel-collector" ||
-      arg === "--disable-otel-collector" ||
       arg === "--enable-openlit-ingress" ||
       arg === "--disable-openlit-ingress"
     ) {
@@ -58,11 +55,7 @@ function parseFlags(args: readonly string[]): InstallFlags {
         );
       }
       flags.otelMode =
-        arg === "--enable-otel-collector"
-          ? "collector"
-          : arg === "--enable-openlit-ingress"
-            ? "openlit"
-            : "direct";
+        arg === "--enable-openlit-ingress" ? "openlit" : "direct";
     } else if (arg === "--check") {
       throw new ConfigError(
         "autodev install --check is still owned by the installer check boundary; run scripts/install.sh --check"
@@ -164,16 +157,9 @@ export function runInstallCommand(
   const env = {
     AUTODEV_REPO_ROOT: repositoryRoot,
     CODEX_HOME: codexHome,
-    HOME: home,
-    AUTODEV_OTEL_MODE: otelMode
+    HOME: home
   };
   try {
-    if (otelMode === "collector" && !flags.materializeOnly)
-      runNodeModule(
-        resolveRuntimeSourcePath(repositoryRoot, "platform/otel-provision.ts"),
-        [],
-        env
-      );
     if (flags.routerAuth)
       ensureRouterAuth(
         process.env.CODEX_ENV_FILE ?? path.join(codexHome, ".env"),

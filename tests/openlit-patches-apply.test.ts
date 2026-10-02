@@ -237,7 +237,17 @@ test(
       "src/client/src/components/(playground)/memory/memory-action-dialog.tsx",
       "src/client/src/app/api/memory/[id]/actions/route.ts",
       "src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts",
-      "src/client/src/__tests__/components/memory-action-dialog.test.tsx"
+      "src/client/src/__tests__/components/memory-action-dialog.test.tsx",
+      // 13-autodev-memory-outcome-cohorts
+      "src/client/src/app/api/memory/cohorts/route.ts",
+      "src/client/src/components/(playground)/memory/memory-cohort-view.tsx",
+      "src/client/src/__tests__/app/api/memory/cohorts/route.test.ts",
+      "src/client/src/__tests__/components/memory-cohort-view.test.tsx",
+      // 14-autodev-memory-outcome-reporting
+      "src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts",
+      "src/client/src/__tests__/app/api/memory/experiences/[id]/outcomes/route.test.ts",
+      "src/client/src/components/(playground)/memory/memory-outcome-report-form.tsx",
+      "src/client/src/__tests__/components/memory-outcome-report-form.test.tsx"
     ];
     for (const rel of expected) {
       const full = join(dir, rel);
@@ -998,6 +1008,124 @@ test("apply-patches refuses a non-empty work directory without deleting it", () 
     rmSync(workDirectory, { recursive: true, force: true });
   }
 });
+
+test(
+  "apply-patches.sh applies the full patch series to a fresh empty work directory",
+  { timeout: 180_000 },
+  () => {
+    const workDirectory = mkdtempSync(
+      join(tmpdir(), "autodev-openlit-apply-script-")
+    );
+    try {
+      const result = run(
+        "bash",
+        [join(repositoryRoot, "scripts/openlit/apply-patches.sh")],
+        repositoryRoot,
+        {
+          ...process.env,
+          REPO_ROOT: repositoryRoot,
+          AUTODEV_OPENLIT_WORK_DIR: workDirectory
+        }
+      );
+      assert.equal(
+        result.status,
+        0,
+        `apply-patches.sh failed: stdout=${result.stdout} stderr=${result.stderr}`
+      );
+      const rev = run("git", ["rev-parse", "HEAD"], workDirectory);
+      assert.equal(rev.stdout.trim(), PINNED_COMMIT);
+
+      // Every patch in the series must have actually landed: each
+      // patch's new files must be present in the real worktree the
+      // script produced, proving the ordered check+apply loop (not a
+      // check-all-then-apply-all loop) ran against the accumulating
+      // tree.
+      const ls = run("ls", ["-1", PATCHES_DIR], repositoryRoot);
+      assert.equal(ls.status, 0, `patches dir not readable: ${ls.stderr}`);
+      const patches = ls.stdout
+        .trim()
+        .split("\n")
+        .filter((f) => f.endsWith(".patch"));
+      assert.equal(
+        patches.length,
+        14,
+        "expected all 14 maintained OpenLIT patches"
+      );
+
+      for (const [index, expectedName] of [
+        "01-generic-dashboard-variables",
+        "02-autodev-pages",
+        "03-otlp-receiver-auth",
+        "04-autodev-usage-dashboard",
+        "05-remove-login-signup",
+        "06-autodev-branding",
+        "07-autodev-usage-api",
+        "08-autodev-memory-connector",
+        "09-autodev-memory-lifecycle-actions",
+        "10-autodev-memory-action-hardening",
+        "11-autodev-memory-lifecycle-ui",
+        "12-autodev-memory-outcomes",
+        "13-autodev-memory-outcome-cohorts",
+        "14-autodev-memory-outcome-reporting"
+      ].entries()) {
+        assert.ok(
+          patches.some((patch) => patch.startsWith(expectedName)),
+          `expected patch ${index + 1} (${expectedName}) in the series`
+        );
+      }
+
+      // 06-autodev-branding depends on files created by 01-05; its
+      // presence after a clean script run proves later patches applied
+      // against the accumulated tree rather than the untouched base.
+      const layout = readFileSync(
+        join(workDirectory, "src/client/src/app/layout.tsx"),
+        "utf8"
+      );
+      assert.match(layout, /AutoDev/u);
+      assert.doesNotMatch(layout, /OpenLIT/u);
+
+      // 13-autodev-memory-outcome-cohorts depends on files created by
+      // 08-12; its presence proves the cohort view applied.
+      assert.ok(
+        statSync(
+          join(
+            workDirectory,
+            "src/client/src/app/api/memory/cohorts/route.ts"
+          )
+        ).isFile()
+      );
+      // 14-autodev-memory-outcome-reporting extends the existing experience
+      // detail surface with an evidence-backed, token-private report form.
+      assert.ok(
+        statSync(
+          join(
+            workDirectory,
+            "src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts"
+          )
+        ).isFile()
+      );
+
+      const status = run("git", ["status", "--short"], workDirectory);
+      assert.doesNotMatch(
+        status.stdout,
+        /^(?:UU|AA|DD|U[ADU]|[ADU]U) /mu,
+        "worktree must contain no unmerged/conflicted paths after a successful run"
+      );
+      const rejFiles = run(
+        "find",
+        [".", "-name", "*.rej"],
+        workDirectory
+      );
+      assert.equal(
+        rejFiles.stdout.trim(),
+        "",
+        "a successful apply-patches.sh run must leave no .rej reject files"
+      );
+    } finally {
+      rmSync(workDirectory, { recursive: true, force: true });
+    }
+  }
+);
 
 test("openlit patch set excludes any reference to a producer-facing otelcol pass-through", () => {
   // OpenLIT 2.1.0 ships its own OTLP receivers; producers do NOT need a

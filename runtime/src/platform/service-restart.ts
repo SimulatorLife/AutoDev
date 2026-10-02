@@ -13,7 +13,6 @@ import path from "node:path";
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
-import { type OtelIngressMode } from "./install-state.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 
 const WHITESPACE_SPLIT_PATTERN = /\s+/u;
@@ -30,14 +29,12 @@ export const LABEL_CLAUDE_BRIDGE = "com.codex.claude-bridge";
 export const LABEL_MINIMAX_PROXY = "com.codex.minimax-proxy";
 export const LABEL_ANTIGRAVITY_PROXY = "com.codex.antigravity-proxy";
 export const LABEL_COPILOT_PROXY = "com.codex.copilot-proxy";
-export const LABEL_OTEL_COLLECTOR = "com.codex.otel-collector";
 export const MANAGED_SERVICE_LABELS = [
   LABEL_MODEL_ROUTER,
   LABEL_CLAUDE_BRIDGE,
   LABEL_MINIMAX_PROXY,
   LABEL_ANTIGRAVITY_PROXY,
-  LABEL_COPILOT_PROXY,
-  LABEL_OTEL_COLLECTOR
+  LABEL_COPILOT_PROXY
 ] as const;
 export type ManagedServiceLabel = (typeof MANAGED_SERVICE_LABELS)[number];
 export type KillSignal = "SIGTERM" | "SIGKILL";
@@ -46,7 +43,6 @@ export interface ServiceRestartOptions {
   readonly repositoryRoot: string;
   readonly home: string;
   readonly codexHome: string;
-  readonly otelMode: OtelIngressMode;
   readonly readyAttempts: number;
   readonly readyDelayMs: number;
 }
@@ -98,8 +94,7 @@ const SERVICE_PORTS = {
   [LABEL_CLAUDE_BRIDGE]: 4000,
   [LABEL_MINIMAX_PROXY]: 18_765,
   [LABEL_ANTIGRAVITY_PROXY]: 4002,
-  [LABEL_COPILOT_PROXY]: 4003,
-  [LABEL_OTEL_COLLECTOR]: 4318
+  [LABEL_COPILOT_PROXY]: 4003
 } as const satisfies Record<ManagedServiceLabel, number>;
 
 const BRIDGE_SPECS: readonly ServiceSpec[] = [
@@ -135,15 +130,6 @@ const BRIDGE_SPECS: readonly ServiceSpec[] = [
   }
 ];
 
-const COLLECTOR_SPEC: ServiceSpec = {
-  label: LABEL_OTEL_COLLECTOR,
-  probe: "http://127.0.0.1:4318/v1/logs",
-  // An empty OTLP export: a bare POST is refused with 415 by the receiver.
-  jsonBody: "{}",
-  ownedPort: null,
-  required: true
-};
-
 export function resolveServiceRestartOptions(
   env: NodeJS.ProcessEnv = process.env
 ): ServiceRestartOptions {
@@ -152,11 +138,6 @@ export function resolveServiceRestartOptions(
     repositoryRoot: env.AUTODEV_REPO_ROOT?.trim() || process.cwd(),
     home,
     codexHome: env.CODEX_HOME?.trim() || path.join(home, ".codex"),
-    otelMode:
-      env.AUTODEV_OTEL_MODE === "collector" ||
-      env.AUTODEV_OTEL_MODE === "openlit"
-        ? env.AUTODEV_OTEL_MODE
-        : "direct",
     readyAttempts: parseNonNegativeInteger(
       env.AUTODEV_SERVICE_READY_ATTEMPTS,
       DEFAULT_ATTEMPTS
@@ -303,9 +284,6 @@ function serviceLauncher(
     case LABEL_MINIMAX_PROXY: {
       return path.join(hooks, "ensure-codex-minimax-proxy.sh");
     }
-    case LABEL_OTEL_COLLECTOR: {
-      return path.join(hooks, "otel", "run-autodev-otel-collector.sh");
-    }
     default: {
       throw new Error(`unknown managed service label: ${label}`);
     }
@@ -331,9 +309,6 @@ function serviceHook(
     }
     case LABEL_MINIMAX_PROXY: {
       return path.join(options.codexHome, "src", "providers", "minimax.ts");
-    }
-    case LABEL_OTEL_COLLECTOR: {
-      return serviceLauncher(options, label);
     }
     default: {
       throw new Error(`unknown managed service label: ${label}`);
@@ -421,32 +396,6 @@ async function runDirectEnsures(
     ) !== 0
   )
     return 1;
-  if (options.otelMode === "collector") {
-    const collector = path.join(
-      options.codexHome,
-      "hooks",
-      "otel",
-      "ensure-autodev-otel-collector.sh"
-    );
-    if (
-      run(collector, undefined, {
-        AUTODEV_OTEL_REPO_ROOT: options.repositoryRoot,
-        AUTODEV_OTEL_CONFIG: path.join(
-          options.repositoryRoot,
-          "config",
-          "otel",
-          "collector.yaml"
-        ),
-        AUTODEV_OTEL_VERSION_FILE: path.join(
-          options.repositoryRoot,
-          "config",
-          "otel",
-          "collector.version"
-        )
-      }) !== 0
-    )
-      return 1;
-  }
   for (const [model, script] of [
     ["sonnet", "ensure-codex-claude-bridge.sh"],
     ["MiniMax-M3", "ensure-codex-minimax-proxy.sh"],
@@ -577,10 +526,7 @@ async function verifySupervisedServices(
   deps: ServiceRestartDeps,
   options: ServiceRestartOptions
 ): Promise<number> {
-  const specs =
-    options.otelMode === "collector"
-      ? [...BRIDGE_SPECS, COLLECTOR_SPEC]
-      : BRIDGE_SPECS;
+  const specs = BRIDGE_SPECS;
   const checks = await Promise.all(
     specs.map((spec) => checkService(deps, options, spec))
   );
@@ -628,7 +574,7 @@ function readLaunchdJobDump(
   return "";
 }
 
-type ReloadResult = "ok" | "no-plist" | "disabled-otel" | "failed";
+type ReloadResult = "ok" | "no-plist" | "failed";
 
 function foreignLabels(
   deps: ServiceRestartDeps,
@@ -652,17 +598,14 @@ async function reloadOneLabel(
   options: ServiceRestartOptions,
   label: ManagedServiceLabel
 ): Promise<ReloadResult> {
-  const disableCollector =
-    label === LABEL_OTEL_COLLECTOR && options.otelMode !== "collector";
   const plist = plistPath(options, label);
-  if (!disableCollector && !deps.fileExists(plist)) return "no-plist";
+  if (!deps.fileExists(plist)) return "no-plist";
   try {
     deps.launchd.bootout(label);
   } catch (error) {
     writeErrorLine(`could not unload ${label}: ${errorText(error)}`);
     return "failed";
   }
-  if (disableCollector) return "disabled-otel";
   if (!(await reapUnmanaged(options, label, deps))) return "failed";
   try {
     deps.launchd.enable(label);

@@ -1,8 +1,12 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 import { trace } from "@opentelemetry/api";
 import {
+  type MemoryActor,
   type MemoryExecutionMode,
+  type MemoryInjectionEvent,
+  type MemoryInjectionResult,
   type MemoryReadContext,
   parseMemoryExecutionMode
 } from "@simulatorlife/autodev-core";
@@ -11,7 +15,11 @@ import {
   injectMemoryContext,
   injectRetrievalOnlyMemoryContext,
   latestUserTask,
+  MemoryAuthorizationError,
+  MemoryConflictError,
   type MemoryRepositoryRootResolver,
+  type MemoryService,
+  MemoryValidationError,
   type PostgresMemoryHost
 } from "@simulatorlife/autodev-runtime/memory";
 import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
@@ -20,7 +28,108 @@ import { configuredMemoryEmbeddingProvider } from "./memory-embedding.ts";
 import { RoutedMemoryReconstructor } from "./memory-reconstruction.ts";
 import { routerTelemetryTracer } from "./telemetry.ts";
 
+const RUNTIME_INJECTION_RECORDED_BY = "autodev-router-memory-injection";
+const MEMORY_EXPERIMENT_ID_PATTERN = /^[a-z\d][a-z\d._-]{0,127}$/iu;
+
 type MemoryMode = Exclude<MemoryExecutionMode, "unknown">;
+
+export const CONTROLLED_ABLATION_ARMS = [
+  "jit",
+  "retrieval-only",
+  "disabled"
+] as const;
+export type ControlledAblationArm = (typeof CONTROLLED_ABLATION_ARMS)[number];
+
+const trustedRepositoryRoots = new Map<string, string>();
+const trustedSessionContexts = new Map<
+  string,
+  {
+    workspaceId: string;
+    repositoryId: string;
+    root: string;
+    sessionScope: string;
+  } | null
+>();
+
+export function clearTrustedMemoryContextsForTest(): void {
+  trustedRepositoryRoots.clear();
+  trustedSessionContexts.clear();
+}
+
+/**
+ * Deterministically assign a stable memory arm for an experiment given a trusted
+ * session key. Buckets approximately evenly across the three arms using SHA-256.
+ */
+export function assignControlledAblationArm(
+  experimentId: string,
+  sessionKey: string,
+  workspaceId: string,
+  repositoryId: string
+): ControlledAblationArm {
+  const parts = [
+    "autodev-memory-experiment-v1",
+    experimentId,
+    workspaceId,
+    repositoryId,
+    sessionKey
+  ];
+  const hash = createHash("sha256").update(parts.join("\u0000")).digest();
+  const bucket = Number(hash.readBigUInt64BE(0) % 3n);
+  return CONTROLLED_ABLATION_ARMS[bucket]!;
+}
+
+export function isTrustedSession(
+  sessionKey: string | null | undefined,
+  sessionScope: string | null | undefined,
+  workspace:
+    | {
+        readonly key: string;
+        readonly cwd?: string | null;
+        readonly workspace_id?: string;
+      }
+    | null
+    | undefined
+): boolean {
+  if (!sessionKey || typeof sessionKey !== "string") return false;
+  const trimmed = sessionKey.trim();
+  if (
+    !trimmed ||
+    trimmed.length > 256 ||
+    trimmed === "process-scope" ||
+    sessionScope !== "identified"
+  ) {
+    return false;
+  }
+
+  if (
+    !workspace ||
+    !workspace.key?.trim() ||
+    workspace.key === "unknown" ||
+    !workspace.cwd ||
+    !path.isAbsolute(workspace.cwd)
+  ) {
+    return false;
+  }
+
+  const existing = trustedSessionContexts.get(trimmed);
+  if (existing === null) {
+    return false;
+  }
+  if (existing !== undefined) {
+    const workspaceId = workspace.workspace_id?.trim() || workspace.key;
+    if (
+      existing.workspaceId !== workspaceId ||
+      existing.repositoryId !== workspace.key ||
+      path.resolve(existing.root) !== path.resolve(workspace.cwd) ||
+      existing.sessionScope !== sessionScope
+    ) {
+      trustedSessionContexts.set(trimmed, null);
+      return false;
+    }
+  }
+
+  return true;
+}
 
 function memoryMode(env: NodeJS.ProcessEnv): MemoryMode {
   const configured = env.AUTODEV_MEMORY_MODE?.trim();
@@ -32,8 +141,66 @@ function memoryMode(env: NodeJS.ProcessEnv): MemoryMode {
   return parsed === "unknown" ? "invalid" : parsed;
 }
 
-export function currentRouterMemoryMode(): MemoryMode {
-  return memoryMode(process.env);
+export interface RouterMemoryModeContext {
+  readonly sessionKey?: string | null;
+  readonly sessionScope?: string | null;
+  readonly workspace?: {
+    readonly key: string;
+    readonly cwd?: string | null;
+    readonly workspace_id?: string;
+  } | null;
+}
+
+export function resolveRouterMemoryMode(
+  env: NodeJS.ProcessEnv,
+  context?: RouterMemoryModeContext
+): MemoryMode {
+  const experimentId = env.AUTODEV_MEMORY_EXPERIMENT_ID?.trim();
+  if (!experimentId) {
+    return memoryMode(env);
+  }
+  if (!MEMORY_EXPERIMENT_ID_PATTERN.test(experimentId)) return "invalid";
+
+  // An experiment is configured: require AUTODEV_MEMORY_ABLATION=1 (otherwise fail closed).
+  if (env.AUTODEV_MEMORY_ABLATION !== "1") {
+    return "invalid";
+  }
+
+  // Require trusted absolute workspace identity before assigning.
+  const workspace = context?.workspace;
+  if (
+    !workspace ||
+    !workspace.key?.trim() ||
+    workspace.key === "unknown" ||
+    !workspace.cwd ||
+    !path.isAbsolute(workspace.cwd)
+  ) {
+    return "invalid";
+  }
+
+  // Require a trusted session key: never use requestId as a per-request substitute.
+  const sessionKey = context?.sessionKey?.trim();
+  if (!sessionKey || sessionKey === "process-scope") {
+    return "invalid";
+  }
+
+  if (!isTrustedSession(sessionKey, context?.sessionScope, workspace)) {
+    return "invalid";
+  }
+
+  const workspaceId = workspace.workspace_id?.trim() || workspace.key.trim();
+  return assignControlledAblationArm(
+    experimentId,
+    sessionKey,
+    workspaceId,
+    workspace.key.trim()
+  );
+}
+
+export function currentRouterMemoryMode(
+  context?: RouterMemoryModeContext
+): MemoryMode {
+  return resolveRouterMemoryMode(process.env, context);
 }
 
 function annotateMemoryMode(mode: MemoryMode): void {
@@ -48,6 +215,7 @@ export interface OrchestratorMemoryRequest {
   readonly payload: Record<string, unknown>;
   readonly requestId: string;
   readonly sessionKey: string | null;
+  readonly sessionScope?: string | null;
   readonly threadId: string | null;
   readonly workspace: {
     readonly key: string;
@@ -59,11 +227,6 @@ export interface OrchestratorMemoryRequest {
 let memoryHost: PostgresMemoryHost | null = null;
 let memoryDatabaseUrl: string | null = null;
 let memoryHostClose: Promise<void> | null = null;
-const trustedRepositoryRoots = new Map<string, string>();
-const trustedSessionContexts = new Map<
-  string,
-  { workspaceId: string; repositoryId: string; root: string } | null
->();
 
 /**
  * Automatically add a governed packet to a root user turn before any provider
@@ -73,9 +236,14 @@ export async function injectOrchestratorMemory(
   request: OrchestratorMemoryRequest,
   hostOverride?: PostgresMemoryHost | null
 ): Promise<Record<string, unknown>> {
-  const mode = memoryMode(process.env);
+  const mode = currentRouterMemoryMode({
+    sessionKey: request.sessionKey,
+    ...(request.sessionScope === undefined
+      ? {}
+      : { sessionScope: request.sessionScope }),
+    workspace: request.workspace
+  });
   annotateMemoryMode(mode);
-  if (mode === "disabled" || mode === "invalid") return request.payload;
 
   const workspace = request.workspace;
   if (
@@ -100,20 +268,29 @@ export async function injectOrchestratorMemory(
   const task = latestUserTask(taskInput);
   if (!task) return request.payload;
 
+  const workspaceId = workspace.workspace_id?.trim() || workspace.key;
+  const taskId = request.sessionKey ?? request.requestId;
+  if (isTrustedSession(request.sessionKey, request.sessionScope, workspace)) {
+    rememberTrustedRepositoryRoot(
+      workspaceId,
+      workspace.key,
+      workspace.cwd,
+      [request.sessionKey!].filter((value): value is string =>
+        Boolean(value?.trim())
+      ),
+      request.sessionScope
+    );
+  }
+
+  if (mode === "disabled" || mode === "invalid") {
+    await persistMemoryModeSkip(request, mode, hostOverride);
+    return request.payload;
+  }
+
   const host =
     hostOverride === undefined ? configuredMemoryHost() : hostOverride;
   if (!host) return request.payload;
 
-  const workspaceId = workspace.workspace_id?.trim() || workspace.key;
-  const taskId = request.sessionKey ?? request.requestId;
-  rememberTrustedRepositoryRoot(
-    workspaceId,
-    workspace.key,
-    workspace.cwd,
-    [request.sessionKey, request.threadId, taskId].filter(
-      (value): value is string => Boolean(value?.trim())
-    )
-  );
   const context: MemoryReadContext = {
     workspaceId,
     repositoryId: workspace.key,
@@ -138,16 +315,368 @@ export async function injectOrchestratorMemory(
       context,
       memoryMode: mode
     };
-    return mode === "retrieval-only"
-      ? await injectRetrievalOnlyMemoryContext(
-          service,
-          request.payload,
-          taskContext
-        )
-      : await injectMemoryContext(service, request.payload, taskContext);
+    const enriched =
+      mode === "retrieval-only"
+        ? await injectRetrievalOnlyMemoryContext(
+            service,
+            request.payload,
+            taskContext
+          )
+        : await injectMemoryContext(service, request.payload, taskContext);
+    // Emit the injection observation after packet construction so the durable
+    // event reflects what the model actually received. The runtime emits
+    // injection events under the `system` authority and never lets a
+    // database failure break the request; an emit error is logged but the
+    // enriched payload still returns to the caller.
+    await emitInjectionObservation({
+      service,
+      context,
+      request,
+      taskContext,
+      enriched
+    });
+    return enriched;
   } catch {
     // Historical memory is advisory; a database/curation failure must not fail the task.
     return request.payload;
+  }
+}
+
+/**
+ * Build a content-free, opaque correlation token for one actual injection
+ * observation. The token mixes only the durable, scope-visible identity
+ * (workspace, repository, task, run, agent), the host-selected mode, the
+ * bounded sorted memory ids, and the bounded packet text digest. It contains
+ * no transcript, prompt, claim, or telemetry content, and is never
+ * propagated into metric dimensions or model prompts.
+ */
+export function createMemoryInjectionCorrelationToken(input: {
+  readonly workspaceId: string;
+  readonly repositoryId?: string;
+  readonly taskId: string;
+  readonly runId: string;
+  readonly agentId?: string;
+  readonly memoryMode: MemoryExecutionMode;
+  readonly memoryIds: readonly string[];
+  readonly packetText: string;
+}): string {
+  const identity = [
+    input.workspaceId,
+    input.repositoryId ?? "",
+    input.taskId,
+    input.runId,
+    input.agentId ?? "",
+    input.memoryMode,
+    [...input.memoryIds].sort().join("\u0000"),
+    createHash("sha256").update(input.packetText).digest("hex")
+  ].join("\u0001");
+  return createHash("sha256").update(identity).digest("hex");
+}
+
+async function emitInjectionObservation(input: {
+  readonly service: MemoryService;
+  readonly context: MemoryReadContext;
+  readonly request: OrchestratorMemoryRequest;
+  readonly taskContext: {
+    readonly taskId: string;
+    readonly runId: string;
+    readonly memoryMode?: MemoryExecutionMode;
+  };
+  readonly enriched: Record<string, unknown>;
+}): Promise<void> {
+  try {
+    const instructions = input.enriched.instructions;
+    const instructionsText =
+      typeof instructions === "string" ? instructions : "";
+    // Bounded extraction: only a complete marker pair counts as a packet.
+    // Operating on the bounded body prevents AGENTS.md policy / pre-existing
+    // system instructions from being credited as a memory packet.
+    const block = extractMemoryPacketBlock(instructionsText);
+    let injectionResult: MemoryInjectionResult;
+    let packetCharacterCount = 0;
+    let memoryIds: readonly string[] = [];
+    let packetDigest: string;
+    if (block === null) {
+      injectionResult =
+        input.taskContext.memoryMode === "retrieval-only" ||
+        input.taskContext.memoryMode === "jit"
+          ? "empty"
+          : "skipped";
+      packetDigest = "";
+    } else {
+      injectionResult = "injected";
+      packetCharacterCount = block.body.length;
+      packetDigest = createHash("sha256").update(block.body).digest("hex");
+      memoryIds = extractInjectedMemoryIds(block.body);
+    }
+    const token = createMemoryInjectionCorrelationToken({
+      workspaceId: input.context.workspaceId,
+      ...(input.context.repositoryId
+        ? { repositoryId: input.context.repositoryId }
+        : {}),
+      taskId: input.taskContext.taskId,
+      runId: input.taskContext.runId,
+      ...(input.context.agentId ? { agentId: input.context.agentId } : {}),
+      memoryMode: input.taskContext.memoryMode ?? "unknown",
+      memoryIds,
+      packetText: packetDigest
+    });
+    const event: MemoryInjectionEvent = {
+      id: `inj-${token.slice(0, 32)}`,
+      workspaceId: input.context.workspaceId,
+      ...(input.context.repositoryId
+        ? { repositoryId: input.context.repositoryId }
+        : {}),
+      scope: {
+        kind: "task",
+        workspaceId: input.context.workspaceId,
+        taskId: input.taskContext.taskId,
+        runId: input.taskContext.runId
+      },
+      taskId: input.taskContext.taskId,
+      runId: input.taskContext.runId,
+      agentId: input.context.agentId ?? input.taskContext.runId,
+      ...(input.context.role ? { agentRole: input.context.role } : {}),
+      correlationToken: token,
+      memoryMode: input.taskContext.memoryMode ?? "unknown",
+      injectionResult,
+      packetCharacterCount,
+      memoryIds,
+      occurredAt: new Date().toISOString(),
+      reasonCode:
+        injectionResult === "injected"
+          ? "packet_attached"
+          : input.taskContext.memoryMode === "disabled"
+            ? "memory_mode_disabled"
+            : input.taskContext.memoryMode === "invalid"
+              ? "memory_mode_invalid"
+              : "no_packet_research_returned_empty",
+      evidence: [],
+      recordedBy: RUNTIME_INJECTION_RECORDED_BY
+    };
+    const actor: MemoryActor = {
+      id: RUNTIME_INJECTION_RECORDED_BY,
+      authority: "system"
+    };
+    await input.service.recordInjectionEvent({
+      event,
+      actor,
+      context: input.context
+    });
+    try {
+      const span = trace.getActiveSpan();
+      // The token deliberately never enters the attribute set; the metric
+      // dimension stays bounded to the categorical decision + mode.
+      span?.setAttribute("autodev.memory.injection.result", injectionResult);
+    } catch {
+      // Telemetry must not affect memory observation.
+    }
+  } catch (error) {
+    // Observational emission is best-effort: never propagate injection logging
+    // failures back to the routed request.
+    try {
+      trace.getActiveSpan()?.addEvent("memory_injection_emit_failed", {
+        // Bounded, fixed-category failure classification only. The raw error
+        // message/string is never serialized into telemetry: it may contain
+        // SQL text, connection details, or other free-form sensitive data.
+        "autodev.memory.error.type": memoryInjectionEmitFailureClass(error)
+      });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Bounded, fixed-category classification for a failed injection-event
+ * emission. Never derived from `error.message`; only the error's own type
+ * is observable.
+ */
+function memoryInjectionEmitFailureClass(error: unknown): string {
+  if (error instanceof MemoryConflictError) return "conflict";
+  if (error instanceof MemoryValidationError) return "validation";
+  if (error instanceof MemoryAuthorizationError) return "authorization";
+  return "unknown";
+}
+
+const MEMORY_PACKET_START = "--- AUTODEV MEMORY PACKET V1 ---";
+const MEMORY_PACKET_END = "--- END AUTODEV MEMORY PACKET ---";
+
+/**
+ * Locate a complete memory-packet block in the post-enrichment instructions
+ * string. Returns the bounded body (exclusive of the markers) when both
+ * markers are present in the expected order, or null otherwise.
+ */
+function extractMemoryPacketBlock(
+  instructionsText: string
+): { readonly body: string } | null {
+  if (!instructionsText) return null;
+  const start = instructionsText.indexOf(MEMORY_PACKET_START);
+  if (start === -1) return null;
+  const end = instructionsText.indexOf(
+    MEMORY_PACKET_END,
+    start + MEMORY_PACKET_START.length
+  );
+  if (end === -1) return null;
+  return {
+    body: instructionsText.slice(start + MEMORY_PACKET_START.length, end).trim()
+  };
+}
+
+function extractInjectedMemoryIds(packetBody: string): readonly string[] {
+  if (!packetBody) return [];
+  const ids = new Set<string>();
+  const re = /"memoryId"\s*:\s*"([^"]+)"/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(packetBody)) !== null) {
+    if (match[1]) ids.add(match[1]);
+  }
+  return [...ids];
+}
+
+async function persistMemoryModeSkip(
+  request: OrchestratorMemoryRequest,
+  mode: "disabled" | "invalid",
+  hostOverride?: PostgresMemoryHost | null
+): Promise<void> {
+  const skipContext = skipSessionContextForRequest(request);
+  if (!skipContext) return;
+  try {
+    const host =
+      hostOverride === undefined ? configuredMemoryHost() : hostOverride;
+    const service = host?.createService({
+      resolve: (scope) =>
+        scope.workspaceId === skipContext.workspaceId &&
+        scope.repositoryId === skipContext.repositoryId
+          ? (request.workspace?.cwd ?? null)
+          : null
+    });
+    if (!service) return;
+    await emitSkipObservation({
+      service,
+      context: skipContext.context,
+      request,
+      reasonCode:
+        mode === "disabled" ? "memory_mode_disabled" : "memory_mode_invalid"
+    });
+  } catch {
+    // Skip observation is best-effort and must never break the request.
+  }
+}
+
+/**
+ * Build the trusted session-scoped identifiers for a no-memory cohort
+ * observation. Returns null when the workspace is unknown / untrusted, in
+ * which case we deliberately do not fabricate a skip event.
+ */
+function skipSessionContextForRequest(request: OrchestratorMemoryRequest): {
+  readonly context: MemoryReadContext;
+  readonly workspaceId: string;
+  readonly repositoryId: string;
+} | null {
+  const workspace = request.workspace;
+  if (
+    !workspace ||
+    !workspace.key.trim() ||
+    workspace.key === "unknown" ||
+    !workspace.cwd ||
+    !path.isAbsolute(workspace.cwd)
+  ) {
+    return null;
+  }
+
+  const isExperiment = Boolean(
+    process.env.AUTODEV_MEMORY_EXPERIMENT_ID?.trim()
+  );
+  if (
+    isExperiment &&
+    !isTrustedSession(request.sessionKey, request.sessionScope, workspace)
+  ) {
+    return null;
+  }
+
+  const workspaceIdKey = workspace.workspace_id?.trim() || workspace.key;
+  const taskId = request.sessionKey ?? request.requestId;
+  const context: MemoryReadContext = {
+    workspaceId: workspaceIdKey,
+    repositoryId: workspace.key,
+    role: "orchestrator",
+    taskId,
+    runId: request.requestId,
+    ...(request.threadId ? { agentId: request.threadId } : {}),
+    canReadGlobal: process.env.AUTODEV_MEMORY_READ_GLOBAL === "1"
+  };
+  return {
+    context,
+    workspaceId: workspaceIdKey,
+    repositoryId: workspace.key
+  };
+}
+
+async function emitSkipObservation(input: {
+  readonly service: MemoryService;
+  readonly context: MemoryReadContext;
+  readonly request: OrchestratorMemoryRequest;
+  readonly reasonCode: "memory_mode_disabled" | "memory_mode_invalid";
+}): Promise<void> {
+  try {
+    const taskId = input.context.taskId ?? input.request.requestId;
+    const runId = input.context.runId ?? input.request.requestId;
+    const agentId = input.context.agentId ?? input.request.threadId ?? runId;
+    const token = createMemoryInjectionCorrelationToken({
+      workspaceId: input.context.workspaceId,
+      ...(input.context.repositoryId
+        ? { repositoryId: input.context.repositoryId }
+        : {}),
+      taskId,
+      runId,
+      agentId,
+      memoryMode:
+        input.reasonCode === "memory_mode_disabled" ? "disabled" : "invalid",
+      memoryIds: [],
+      packetText: ""
+    });
+    const event: MemoryInjectionEvent = {
+      id: `inj-${token.slice(0, 32)}`,
+      workspaceId: input.context.workspaceId,
+      ...(input.context.repositoryId
+        ? { repositoryId: input.context.repositoryId }
+        : {}),
+      scope: {
+        kind: "task",
+        workspaceId: input.context.workspaceId,
+        taskId,
+        runId
+      },
+      taskId,
+      runId,
+      agentId,
+      ...(input.context.role ? { agentRole: input.context.role } : {}),
+      correlationToken: token,
+      memoryMode:
+        input.reasonCode === "memory_mode_disabled" ? "disabled" : "invalid",
+      injectionResult: "skipped",
+      packetCharacterCount: 0,
+      memoryIds: [],
+      occurredAt: new Date().toISOString(),
+      reasonCode: input.reasonCode,
+      evidence: [],
+      recordedBy: RUNTIME_INJECTION_RECORDED_BY
+    };
+    await input.service.recordInjectionEvent({
+      event,
+      actor: { id: RUNTIME_INJECTION_RECORDED_BY, authority: "system" },
+      context: input.context
+    });
+    try {
+      trace
+        .getActiveSpan()
+        ?.setAttribute("autodev.memory.injection.result", "skipped");
+    } catch {
+      // ignore
+    }
+  } catch {
+    // Observational skip emission is best-effort.
   }
 }
 
@@ -162,7 +691,8 @@ function rememberTrustedRepositoryRoot(
   workspaceId: string,
   repositoryId: string,
   root: string,
-  sessionIds: readonly string[]
+  sessionIds: readonly string[],
+  sessionScope: string | null | undefined
 ): void {
   const key = `${workspaceId}\u0000${repositoryId}`;
   trustedRepositoryRoots.delete(key);
@@ -175,13 +705,19 @@ function rememberTrustedRepositoryRoot(
   }
   for (const sessionId of sessionIds) {
     const existing = trustedSessionContexts.get(sessionId);
-    const next = { workspaceId, repositoryId, root };
+    const next = {
+      workspaceId,
+      repositoryId,
+      root,
+      sessionScope: sessionScope ?? "unknown"
+    };
     trustedSessionContexts.set(
       sessionId,
       existing &&
         (existing.workspaceId !== workspaceId ||
           existing.repositoryId !== repositoryId ||
-          existing.root !== root)
+          path.resolve(existing.root) !== path.resolve(root) ||
+          existing.sessionScope !== next.sessionScope)
         ? null
         : next
     );
@@ -198,7 +734,12 @@ function rememberTrustedRepositoryRoot(
 export function trustedMemoryContextForSession(
   sessionId: string,
   root: string
-): { workspaceId: string; repositoryId: string; root: string } | null {
+): {
+  workspaceId: string;
+  repositoryId: string;
+  root: string;
+  sessionScope: string;
+} | null {
   const context = trustedSessionContexts.get(sessionId);
   if (!context || path.resolve(context.root) !== path.resolve(root))
     return null;

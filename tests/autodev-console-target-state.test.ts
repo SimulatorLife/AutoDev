@@ -171,6 +171,19 @@ test("monorepo layout, console features, and control API match target state exac
     );
   }
 
+  assert.equal(
+    existsSync(new URL("console/app/mcps/[name]/page.tsx", repositoryRoot)),
+    true,
+    "MCP details must have a URL-addressable Console route"
+  );
+  assert.equal(
+    existsSync(
+      new URL("console/src/features/mcps/McpDetailView.ts", repositoryRoot)
+    ),
+    true,
+    "MCP detail rendering belongs to the Console feature"
+  );
+
   // Ensure removed concepts are not present as features
   for (const removed of [
     "accounts",
@@ -190,7 +203,7 @@ test("monorepo layout, console features, and control API match target state exac
   }
 });
 
-test("root quality scripts validate legacy sources and all code workspaces", () => {
+test("root quality scripts validate all code workspaces", () => {
   const manifest = JSON.parse(
     readFileSync(new URL("package.json", repositoryRoot), "utf8")
   ) as { scripts: Record<string, string> };
@@ -211,9 +224,13 @@ test("canonical target tracks migration gaps without claiming premature cutover"
   assert.match(target, /Flat monorepo\s+\|\s+\*\*Partial\*\*/);
   assert.match(target, /Console\s+\|\s+\*\*Runnable foundation\*\*/);
   assert.match(target, /RuleSync ownership\s+\|\s+\*\*Partial\*\*/);
-  assert.match(target, /Telemetry cutover\s+\|\s+\*\*Incomplete cleanup\*\*/);
+  assert.match(
+    target,
+    /Telemetry cutover\s+\|\s+\*\*Standalone Collector removed; router cleanup incomplete\*\*/
+  );
   assert.match(target, /unknown must remain unknown/i);
-  assert.match(target, /Move implementation out of legacy `src\/`/);
+  assert.match(target, /Physical migration complete; finish workspace hygiene/);
+  assert.match(target, /The root `src\/` implementation tree is absent/);
   assert.match(target, /Finish RuleSync canonical ownership/);
   assert.match(target, /Remaining OpenLIT subtraction/);
   assert.match(target, /Remaining telemetry cleanup/);

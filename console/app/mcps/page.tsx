@@ -5,7 +5,6 @@ import {
   controlApiFailureCode,
   fetchMcps
 } from "../../src/lib/server/control-api.ts";
-import { mcpsFromControlApi } from "../../src/lib/server/views.ts";
 import {
   ConsolePageShell,
   readNodeContext,
@@ -40,10 +39,13 @@ export default async function McpsPage(): Promise<React.JSX.Element> {
       })
     );
   }
-  const servers = mcpsFromControlApi(result.data);
+  const servers = result.data.servers;
   return React.createElement(
     ConsolePageShell,
-    { section, counts: { MCPs: servers.length } },
-    React.createElement(McpsView, { servers })
+    { section, counts: result.data.valid ? { MCPs: servers.length } : {} },
+    React.createElement(McpsView, {
+      servers,
+      sourceValidity: result.data.valid
+    })
   );
 }

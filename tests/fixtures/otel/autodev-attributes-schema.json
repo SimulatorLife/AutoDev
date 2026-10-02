@@ -1,5 +1,5 @@
 {
-  "_comment": "Phase 3 in-repo slice (docs/AUTODEV_PLATFORM_MIGRATION.md, Phase 3 'Then' -- Define AutoDev semantic attributes under an autodev.* namespace). This freezes the additive attribute *contract* for the seven migration keys (names, types, cardinality, scope, signal applicability) AND adds an opt-in router-side emitter behind the AUTODEV_OTEL_ATTRIBUTES=v1 env flag. When the flag is unset (the default), no autodev.* attribute is ever added; when the flag is set, a non-mutating enrichment helper decorates OTLP JSON in ingestOtelSignal. No collector.yaml, provider, launch-agent, or runtime release-mode emitter reads or writes these keys yet, and no prompt content is ever carried by them.",
+  "_comment": "Versioned, additive contract for AutoDev-specific OTel attributes. The current optional enrichment is owned by Runtime's router OTLP receiver and guarded by AUTODEV_OTEL_ATTRIBUTES=v1; it decorates standard OTLP JSON only when source-owned alias values exist and never includes prompt content. This contract documents the legacy router-ingress path pending the telemetry cutover in docs/autodev-console-target-state.md §12.",
   "schema_version": "autodev-otel-attributes-v1",
   "namespace_prefix": "autodev",
   "compatibility": "additive-optional",
@@ -10,7 +10,7 @@
     "'scope: resource' means the attribute belongs on the OTLP Resource for a given resourceLogs/resourceSpans/resourceMetrics entry. 'scope: event' means the attribute belongs on a per-record data point: a logRecord attribute for logs, a span attribute for traces, or a data point attribute for metrics.",
     "Emission is opt-in: the helper only runs when AUTODEV_OTEL_ATTRIBUTES=v1 is exported. The default ingestion path leaves every payload untouched. The helper is non-mutating: it always returns a fresh cloned payload, never the input.",
     "Values are derived strictly from existing resource/session alias keys (e.g. role, workspace_id, provider, model on the resource; spawn_mechanism on a spawn log record; skill on a skill record; server_name on an MCP span/record). When an alias is unknown or empty, the corresponding autodev.* key is omitted.",
-    "No collector.yaml, provider, launch-agent, or other runtime wiring is added in this slice -- the helper is router-internal in scripts/codex-model-router.mjs and is gated by AUTODEV_OTEL_ATTRIBUTES=v1."
+    "The current emitter is the Runtime-owned enrichAutodevOtlpPayload helper in runtime/src/router/otel.ts, gated by AUTODEV_OTEL_ATTRIBUTES=v1; it is not an OpenLIT or Collector translation layer."
   ],
   "attributes": [
     {
@@ -19,11 +19,7 @@
       "type": "string",
       "cardinality": "single",
       "scope": "resource",
-      "signals": [
-        "logs",
-        "traces",
-        "metrics"
-      ],
+      "signals": ["logs", "traces", "metrics"],
       "optional": true,
       "compatibility": "additive",
       "prompt_content": false,
@@ -35,11 +31,7 @@
       "type": "string",
       "cardinality": "single",
       "scope": "resource",
-      "signals": [
-        "logs",
-        "traces",
-        "metrics"
-      ],
+      "signals": ["logs", "traces", "metrics"],
       "optional": true,
       "compatibility": "additive",
       "prompt_content": false,
@@ -51,11 +43,7 @@
       "type": "string",
       "cardinality": "single",
       "scope": "resource",
-      "signals": [
-        "logs",
-        "traces",
-        "metrics"
-      ],
+      "signals": ["logs", "traces", "metrics"],
       "optional": true,
       "compatibility": "additive",
       "prompt_content": false,
@@ -67,11 +55,7 @@
       "type": "string",
       "cardinality": "single",
       "scope": "resource",
-      "signals": [
-        "logs",
-        "traces",
-        "metrics"
-      ],
+      "signals": ["logs", "traces", "metrics"],
       "optional": true,
       "compatibility": "additive",
       "prompt_content": false,
@@ -83,9 +67,7 @@
       "type": "string",
       "cardinality": "single",
       "scope": "event",
-      "signals": [
-        "logs"
-      ],
+      "signals": ["logs"],
       "optional": true,
       "compatibility": "additive",
       "prompt_content": false,
@@ -97,10 +79,7 @@
       "type": "string",
       "cardinality": "single",
       "scope": "event",
-      "signals": [
-        "logs",
-        "metrics"
-      ],
+      "signals": ["logs", "metrics"],
       "optional": true,
       "compatibility": "additive",
       "prompt_content": false,
@@ -112,10 +91,7 @@
       "type": "string",
       "cardinality": "single",
       "scope": "event",
-      "signals": [
-        "logs",
-        "traces"
-      ],
+      "signals": ["logs", "traces"],
       "optional": true,
       "compatibility": "additive",
       "prompt_content": false,

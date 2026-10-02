@@ -130,6 +130,16 @@ function foreignKeyViolation(message: string): ForeignKeyViolation {
 
 const OCCURRED_AT_COLLATOR = new Intl.Collator();
 
+// Repository-generated SQL templates are multi-line for readability
+// (see postgres-memory-repository.ts). Collapsing every whitespace run
+// to a single space here, once, lets every matcher below use plain
+// single-space separators instead of scattered \s+ runs that the
+// regex-safety linters flag as backtracking-prone.
+const WHITESPACE_RUN_PATTERN = /\s+/gu;
+function normalizeSql(sql: string): string {
+  return sql.replaceAll(WHITESPACE_RUN_PATTERN, " ").trim();
+}
+
 function memoryPathScore(
   row: Record<string, unknown>,
   requestedPaths: readonly string[]
@@ -205,6 +215,8 @@ interface MemoryTables {
   memory_records: Map<string, Record<string, unknown>>;
   memory_lifecycle_events: Record<string, unknown>[];
   memory_experience_privacy_events: Record<string, unknown>[];
+  memory_injection_events: Map<string, Record<string, unknown>>;
+  memory_outcome_reports: Map<string, Record<string, unknown>>;
   memory_schema_migrations: Record<string, unknown>[];
 }
 
@@ -221,6 +233,12 @@ function cloneTables(tables: MemoryTables): MemoryTables {
     })),
     memory_experience_privacy_events:
       tables.memory_experience_privacy_events.map((row) => ({ ...row })),
+    memory_injection_events: new Map(
+      Array.from(tables.memory_injection_events, ([k, v]) => [k, { ...v }])
+    ),
+    memory_outcome_reports: new Map(
+      Array.from(tables.memory_outcome_reports, ([k, v]) => [k, { ...v }])
+    ),
     memory_schema_migrations: tables.memory_schema_migrations.map((row) => ({
       ...row
     }))
@@ -241,6 +259,8 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     memory_records: new Map(),
     memory_lifecycle_events: [],
     memory_experience_privacy_events: [],
+    memory_injection_events: new Map(),
+    memory_outcome_reports: new Map(),
     memory_schema_migrations: []
   };
 
@@ -303,6 +323,10 @@ export class FakeMemoryPool implements MemoryConnectionPool {
           this.snapshot.memory_lifecycle_events;
         this.tables.memory_experience_privacy_events =
           this.snapshot.memory_experience_privacy_events;
+        this.tables.memory_injection_events =
+          this.snapshot.memory_injection_events;
+        this.tables.memory_outcome_reports =
+          this.snapshot.memory_outcome_reports;
         this.tables.memory_schema_migrations =
           this.snapshot.memory_schema_migrations;
         this.snapshot = undefined;
@@ -349,6 +373,14 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     sql: string,
     params: readonly unknown[]
   ): MemoryQueryResult | null {
+    const cohorts = this.readInjectionOutcomeCohorts(sql, params);
+    if (cohorts) return cohorts;
+    const joined = this.readInjectionOutcomeJoin(sql, params);
+    if (joined) return joined;
+    const sessionInjection = this.readInjectionEventByToken(sql, params);
+    if (sessionInjection) return sessionInjection;
+    const outcomeByToken = this.readOutcomeReportByToken(sql, params);
+    if (outcomeByToken) return outcomeByToken;
     if (sql === "SELECT * FROM memory_records WHERE id = $1 FOR SHARE") {
       const row = this.tables.memory_records.get(params[0] as string);
       const rows = row ? [row] : [];
@@ -424,6 +456,236 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     return row
       ? { rows: [{ id: row.id }], rowCount: 1 }
       : { rows: [], rowCount: 0 };
+  }
+
+  private readInjectionEventByToken(
+    sql: string,
+    params: readonly unknown[]
+  ): MemoryQueryResult | null {
+    // The repository's session lookup uses workspace + (optional) repository
+    // = + task. The template is multi-line for readability, so normalize
+    // whitespace once here rather than matching \s+ runs throughout.
+    const normalizedSql = normalizeSql(sql);
+    const withRepository =
+      /^SELECT \* FROM memory_injection_events WHERE correlation_token = \$(\d+) AND scope_workspace_id = \$(\d+) AND repository_id = \$(\d+) AND scope_task_id = \$(\d+) ORDER BY occurred_at DESC, id DESC LIMIT 1$/i.exec(
+        normalizedSql
+      );
+    const withoutRepository =
+      /^SELECT \* FROM memory_injection_events WHERE correlation_token = \$(\d+) AND scope_workspace_id = \$(\d+) AND scope_task_id = \$(\d+) ORDER BY occurred_at DESC, id DESC LIMIT 1$/i.exec(
+        normalizedSql
+      );
+    const match = withRepository ?? withoutRepository;
+    if (!match) return null;
+    const token = String(params[Number(match[1]) - 1]);
+    const workspaceId = String(params[Number(match[2]) - 1]);
+    const repositoryId = withRepository
+      ? String(params[Number(withRepository[3]) - 1])
+      : undefined;
+    const taskId = withRepository
+      ? String(params[Number(withRepository[4]) - 1])
+      : String(params[Number(match[3]) - 1]);
+    const rows = [...this.tables.memory_injection_events.values()]
+      .filter(
+        (row) =>
+          row.correlation_token === token &&
+          row.scope_workspace_id === workspaceId &&
+          (repositoryId === undefined ||
+            (row.repository_id ?? null) === (repositoryId ?? null)) &&
+          row.scope_task_id === taskId
+      )
+      .sort((left, right) => {
+        const byTime = OCCURRED_AT_COLLATOR.compare(
+          String(right.occurred_at),
+          String(left.occurred_at)
+        );
+        return (
+          byTime ||
+          OCCURRED_AT_COLLATOR.compare(String(right.id), String(left.id))
+        );
+      })
+      .slice(0, 1);
+    return { rows, rowCount: rows.length };
+  }
+
+  private readOutcomeReportByToken(
+    sql: string,
+    params: readonly unknown[]
+  ): MemoryQueryResult | null {
+    // The repository's idempotency lookup uses (workspace_id,
+    // correlation_token) only, matching the narrowed unique index.
+    const normalizedSql = normalizeSql(sql);
+    const match =
+      /^SELECT \* FROM memory_outcome_reports WHERE correlation_token = \$(\d+) AND workspace_id = \$(\d+) ORDER BY created_at DESC, id DESC LIMIT 1$/i.exec(
+        normalizedSql
+      );
+    if (!match) return null;
+    const token = String(params[Number(match[1]) - 1]);
+    const workspaceId = String(params[Number(match[2]) - 1]);
+    const rows = [...this.tables.memory_outcome_reports.values()]
+      .filter(
+        (row) =>
+          row.correlation_token === token && row.workspace_id === workspaceId
+      )
+      .sort((left, right) =>
+        OCCURRED_AT_COLLATOR.compare(
+          String(right.id ?? ""),
+          String(left.id ?? "")
+        )
+      )
+      .slice(0, 1);
+    return { rows, rowCount: rows.length };
+  }
+
+  private readInjectionOutcomeJoin(
+    sql: string,
+    params: readonly unknown[]
+  ): MemoryQueryResult | null {
+    // The repository builds exactly two SQL shapes for the joined read: a
+    // paginated SELECT and a COUNT. Both must use the same WHERE clause.
+    // The templates are multi-line for readability, so normalize whitespace
+    // once here rather than matching \s+ runs throughout.
+    const normalizedSql = normalizeSql(sql);
+    const pageMatch =
+      /^SELECT i\.\*, (.+?) FROM memory_injection_events i LEFT JOIN memory_outcome_reports r ON r\.workspace_id = i\.workspace_id AND r\.repository_id = i\.repository_id AND r\.correlation_token = i\.correlation_token AND r\.task_id = i\.task_id WHERE (.+?) ORDER BY i\.occurred_at DESC, i\.id DESC LIMIT \$(\d+) OFFSET \$(\d+)$/i.exec(
+        normalizedSql
+      );
+    const countMatch =
+      /^SELECT COUNT\(\*\)::bigint AS total FROM memory_injection_events i LEFT JOIN memory_outcome_reports r ON r\.workspace_id = i\.workspace_id AND r\.repository_id = i\.repository_id AND r\.correlation_token = i\.correlation_token AND r\.task_id = i\.task_id WHERE (.+)$/i.exec(
+        normalizedSql
+      );
+    if (!pageMatch && !countMatch) return null;
+    // The page SELECT has both a projection capture and a WHERE capture;
+    // COUNT has only its WHERE capture. Select the capture that corresponds
+    // to the exact SQL shape rather than treating both shapes as group 1.
+    const whereSql = (pageMatch ? pageMatch[2] : countMatch?.[1]) as string;
+    const limit = pageMatch ? Number(params[Number(pageMatch[3]) - 1]) : 0;
+    const offset = pageMatch ? Number(params[Number(pageMatch[4]) - 1]) : 0;
+    const predicate = parseInjectionOutcomeJoinWhere(whereSql, params);
+    const reportsByInjection = indexReportsByInjection(
+      this.tables.memory_outcome_reports
+    );
+    const matched: Array<{
+      injection: Record<string, unknown>;
+      report: Record<string, unknown> | null;
+    }> = [];
+    for (const injection of this.tables.memory_injection_events.values()) {
+      const report =
+        reportsByInjection.get(injectionJoinKey(injection)) ?? null;
+      if (predicate(injection, report)) {
+        matched.push({ injection, report });
+      }
+    }
+    matched.sort((left, right) => {
+      const byTime = OCCURRED_AT_COLLATOR.compare(
+        String(right.injection.occurred_at ?? ""),
+        String(left.injection.occurred_at ?? "")
+      );
+      return (
+        byTime ||
+        OCCURRED_AT_COLLATOR.compare(
+          String(right.injection.id ?? ""),
+          String(left.injection.id ?? "")
+        )
+      );
+    });
+    if (!pageMatch) {
+      return { rows: [{ total: matched.length }], rowCount: 1 };
+    }
+    const projected = matched
+      .slice(offset, offset + limit)
+      .map((row) => projectJoinRow(row.injection, row.report));
+    return { rows: projected, rowCount: projected.length };
+  }
+
+  /**
+   * Interprets the single GROUP BY SQL shape
+   * `PostgresMemoryRepository.aggregateInjectionOutcomeCohorts` issues. The
+   * join key includes the canonical workspace/repository/task/token match.
+   * The fake also respects the real `(workspace_id, correlation_token)`
+   * uniqueness constraint, which limits each exposure to at most one report.
+   */
+  private readInjectionOutcomeCohorts(
+    sql: string,
+    params: readonly unknown[]
+  ): MemoryQueryResult | null {
+    const normalizedSql = normalizeSql(sql);
+    const match =
+      /^SELECT i\.memory_mode, i\.injection_result, r\.report_kind, r\.outcome_kind, COUNT\(i\.id\)::bigint AS exposure_count, COUNT\(r\.id\)::bigint AS report_count FROM memory_injection_events i LEFT JOIN memory_outcome_reports r ON r\.workspace_id = i\.workspace_id AND r\.repository_id = i\.repository_id AND r\.correlation_token = i\.correlation_token AND r\.task_id = i\.task_id WHERE (.+) GROUP BY i\.memory_mode, i\.injection_result, r\.report_kind, r\.outcome_kind ORDER BY i\.memory_mode, i\.injection_result, r\.report_kind NULLS FIRST, r\.outcome_kind NULLS FIRST$/i.exec(
+        normalizedSql
+      );
+    if (!match) return null;
+    const whereSql = match[1] as string;
+    const predicate = parseInjectionOutcomeCohortWhere(whereSql, params);
+    const reportsByToken = indexReportsByWorkspaceToken(
+      this.tables.memory_outcome_reports
+    );
+    type CellKey = string;
+    const cells = new Map<
+      CellKey,
+      {
+        memory_mode: unknown;
+        injection_result: unknown;
+        report_kind: unknown;
+        outcome_kind: unknown;
+        exposure_count: number;
+        report_count: number;
+      }
+    >();
+    for (const injection of this.tables.memory_injection_events.values()) {
+      const tokenKey = injectionWorkspaceTokenKey(injection);
+      const candidate = reportsByToken.get(tokenKey) ?? null;
+      const report =
+        candidate &&
+        candidate.repository_id === injection.repository_id &&
+        candidate.task_id === injection.task_id
+          ? candidate
+          : null;
+      if (!predicate(injection, report)) continue;
+      const reportKind = report ? report.report_kind : null;
+      const outcomeKind = report ? report.outcome_kind : null;
+      const key = [
+        injection.memory_mode,
+        injection.injection_result,
+        reportKind,
+        outcomeKind
+      ].join("\u0001");
+      const existing = cells.get(key);
+      if (existing) {
+        existing.exposure_count += 1;
+        if (report) existing.report_count += 1;
+      } else {
+        cells.set(key, {
+          memory_mode: injection.memory_mode,
+          injection_result: injection.injection_result,
+          report_kind: reportKind,
+          outcome_kind: outcomeKind,
+          exposure_count: 1,
+          report_count: report ? 1 : 0
+        });
+      }
+    }
+    const rows = [...cells.values()].sort((left, right) => {
+      const dimensions: (keyof typeof left)[] = [
+        "memory_mode",
+        "injection_result",
+        "report_kind",
+        "outcome_kind"
+      ];
+      for (const dimension of dimensions) {
+        const leftValue = left[dimension];
+        const rightValue = right[dimension];
+        if (leftValue === rightValue) continue;
+        if (leftValue === null || leftValue === undefined) return -1;
+        if (rightValue === null || rightValue === undefined) return 1;
+        const comparison = OCCURRED_AT_COLLATOR.compare(
+          String(leftValue),
+          String(rightValue)
+        );
+        if (comparison !== 0) return comparison;
+      }
+      return 0;
+    });
+    return { rows, rowCount: rows.length };
   }
 
   private readById(
@@ -736,35 +998,112 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     });
 
     if (table === "memory_experiences" || table === "memory_records") {
-      const map = this.tables[table as "memory_experiences" | "memory_records"];
-      const id = row.id as string;
-      if (map.has(id))
-        throw uniqueViolation(
-          `duplicate key value violates unique constraint "${table}_pkey"`
-        );
-      map.set(id, row);
-      return { rows: [row], rowCount: 1 };
+      return this.insertVersionedRow(table, row);
     }
-
     if (table === "memory_experience_privacy_events") {
       this.tables.memory_experience_privacy_events.push(row);
       return { rows: [row], rowCount: 1 };
     }
-
+    if (table === "memory_injection_events") {
+      return this.insertInjectionEvent(row);
+    }
+    if (table === "memory_outcome_reports") {
+      return this.insertOutcomeReport(row);
+    }
     if (table === "memory_lifecycle_events") {
-      const memoryId = row.memory_id as string;
-      if (!this.tables.memory_records.has(memoryId)) {
-        throw foreignKeyViolation(
-          `insert or update on table "memory_lifecycle_events" violates foreign key constraint: memory_id ${memoryId} not found`
-        );
-      }
-      this.tables.memory_lifecycle_events.push(row);
-      return { rows: [row], rowCount: 1 };
+      return this.insertLifecycleEvent(row);
     }
 
     throw new Error(
       `FakeMemoryPool cannot insert into unknown table: ${table}`
     );
+  }
+
+  private insertVersionedRow(
+    table: "memory_experiences" | "memory_records",
+    row: Record<string, unknown>
+  ): MemoryQueryResult {
+    const map = this.tables[table];
+    const id = row.id as string;
+    if (map.has(id)) {
+      throw uniqueViolation(
+        `duplicate key value violates unique constraint "${table}_pkey"`
+      );
+    }
+    map.set(id, row);
+    return { rows: [row], rowCount: 1 };
+  }
+
+  private insertInjectionEvent(
+    row: Record<string, unknown>
+  ): MemoryQueryResult {
+    const map = this.tables.memory_injection_events;
+    const id = row.id as string;
+    if (map.has(id)) {
+      throw uniqueViolation(
+        `duplicate key value violates unique constraint "memory_injection_events_pkey"`
+      );
+    }
+    // memory_injection_events.correlation_token is a bare column-level
+    // UNIQUE constraint: one token, globally, across every workspace.
+    const token = row.correlation_token as string | undefined;
+    if (token) {
+      for (const existing of map.values()) {
+        if (existing.correlation_token === token) {
+          throw uniqueViolation(
+            `duplicate key value violates unique constraint "memory_injection_events_correlation_token_key"`
+          );
+        }
+      }
+    }
+    map.set(id, row);
+    return { rows: [row], rowCount: 1 };
+  }
+
+  private insertOutcomeReport(row: Record<string, unknown>): MemoryQueryResult {
+    const map = this.tables.memory_outcome_reports;
+    const id = row.id as string;
+    if (map.has(id)) {
+      throw uniqueViolation(
+        `duplicate key value violates unique constraint "memory_outcome_reports_pkey"`
+      );
+    }
+    // Enforce the unique index on (workspace_id, correlation_token): at
+    // most one outcome report per injection, per workspace.
+    for (const existing of map.values()) {
+      if (
+        existing.workspace_id === row.workspace_id &&
+        existing.correlation_token === row.correlation_token
+      ) {
+        throw uniqueViolation(
+          `duplicate key value violates unique constraint "uniq_memory_outcome_reports_scope_key"`
+        );
+      }
+    }
+    // The reporter_authority column is narrowed to "root"/"curator".
+    if (
+      row.reporter_authority !== "root" &&
+      row.reporter_authority !== "curator"
+    ) {
+      throw new Error(
+        `memory_outcome_reports.reporter_authority check violation: ${row.reporter_authority}`
+      );
+    }
+    map.set(id, row);
+    return { rows: [row], rowCount: 1 };
+  }
+
+  private insertLifecycleEvent(
+    row: Record<string, unknown>
+  ): MemoryQueryResult {
+    const memoryId = row.memory_id as string;
+    if (!this.tables.memory_records.has(memoryId)) {
+      throw foreignKeyViolation(
+        `insert or update on table "memory_lifecycle_events" violates foreign key constraint: memory_id ${memoryId} not found`
+      );
+    }
+    this.tables.memory_lifecycle_events.push(row);
+    return { rows: [row], rowCount: 1 };
   }
 
   private handleUpdate(
@@ -789,4 +1128,254 @@ export class FakeMemoryPool implements MemoryConnectionPool {
 
     return { rows: [{ id }], rowCount: 1 };
   }
+}
+
+/**
+ * Narrow, explicit matcher for the WHERE clause the repository emits from
+ * `buildSessionScopeFilter` plus the modal-union filters. The fake does NOT
+ * attempt to interpret arbitrary SQL — only the well-known shapes the
+ * repository generates.
+ */
+function parseInjectionOutcomeJoinWhere(
+  whereSql: string,
+  params: readonly unknown[]
+): (
+  injection: Record<string, unknown>,
+  report: Record<string, unknown> | null
+) => boolean {
+  // workspace + repository + task session scope
+  const scopeWithRepository =
+    /\(i\.scope_workspace_id = \$(\d+) AND i\.repository_id = \$(\d+) AND i\.scope_task_id = \$(\d+)\)/i.exec(
+      whereSql
+    );
+  const scopeWithoutRepository =
+    /\(i\.scope_workspace_id = \$(\d+) AND i\.scope_task_id = \$(\d+)\)/i.exec(
+      whereSql
+    );
+  const scopeMatch = scopeWithRepository ?? scopeWithoutRepository;
+  let workspaceId: string | undefined;
+  let repositoryId: string | undefined;
+  let taskId: string | undefined;
+  if (scopeMatch) {
+    workspaceId = String(params[Number(scopeMatch[1]) - 1]);
+    if (scopeWithRepository) {
+      repositoryId = String(params[Number(scopeWithRepository[2]) - 1]);
+      taskId = String(params[Number(scopeWithRepository[3]) - 1]);
+    } else {
+      taskId = String(params[Number(scopeMatch[2]) - 1]);
+    }
+  }
+  // i.memory_mode = ANY($N::text[])  -- optional
+  const modeMatch = /i\.memory_mode = ANY\(\$(\d+)::text\[\]\)/i.exec(whereSql);
+  const modes = modeMatch
+    ? (params[Number(modeMatch[1]) - 1] as readonly string[])
+    : undefined;
+  // i.injection_result = ANY($N::text[])  -- optional
+  const resultMatch = /i\.injection_result = ANY\(\$(\d+)::text\[\]\)/i.exec(
+    whereSql
+  );
+  const results = resultMatch
+    ? (params[Number(resultMatch[1]) - 1] as readonly string[])
+    : undefined;
+  // r.outcome_kind = ANY($N::text[])  -- optional
+  const outcomeMatch = /r\.outcome_kind = ANY\(\$(\d+)::text\[\]\)/i.exec(
+    whereSql
+  );
+  const outcomeKinds = outcomeMatch
+    ? (params[Number(outcomeMatch[1]) - 1] as readonly string[])
+    : undefined;
+  // r.report_kind = ANY($N::text[])  -- optional
+  const reportMatch = /r\.report_kind = ANY\(\$(\d+)::text\[\]\)/i.exec(
+    whereSql
+  );
+  const reportKinds = reportMatch
+    ? (params[Number(reportMatch[1]) - 1] as readonly string[])
+    : undefined;
+  // Default includeUnreported=false -> `r.outcome_kind IS NOT NULL`
+  // includeUnreported=true -> `(r.id IS NULL OR r.outcome_kind IS NOT NULL)`
+  const includeUnreported = /r\.id IS NULL/i.test(whereSql);
+  return (injection, report) => {
+    if (
+      workspaceId !== undefined &&
+      String(injection.scope_workspace_id ?? "") !== workspaceId
+    )
+      return false;
+    if (
+      repositoryId !== undefined &&
+      String(injection.repository_id ?? "") !== repositoryId
+    )
+      return false;
+    if (
+      taskId !== undefined &&
+      String(injection.scope_task_id ?? "") !== taskId
+    )
+      return false;
+    if (modes && !modes.includes(String(injection.memory_mode ?? "")))
+      return false;
+    if (results && !results.includes(String(injection.injection_result ?? "")))
+      return false;
+    if (report === null) {
+      if (!includeUnreported) return false;
+    } else {
+      if (outcomeKinds && !outcomeKinds.includes(String(report.outcome_kind)))
+        return false;
+      if (
+        reportKinds &&
+        !reportKinds.includes(String(report.report_kind ?? ""))
+      )
+        return false;
+    }
+    return true;
+  };
+}
+
+function injectionJoinKey(row: Record<string, unknown>): string {
+  return [
+    row.workspace_id ?? "",
+    row.correlation_token ?? "",
+    row.scope_task_id ?? row.task_id ?? "",
+    row.repository_id ?? ""
+  ].join("\u0001");
+}
+
+function indexReportsByInjection(
+  reports: Map<string, Record<string, unknown>>
+): Map<string, Record<string, unknown>> {
+  const map = new Map<string, Record<string, unknown>>();
+  for (const report of reports.values()) {
+    map.set(
+      [
+        report.workspace_id ?? "",
+        report.correlation_token ?? "",
+        report.task_id ?? "",
+        report.repository_id ?? ""
+      ].join("\u0001"),
+      report
+    );
+  }
+  return map;
+}
+
+function projectJoinRow(
+  injection: Record<string, unknown>,
+  report: Record<string, unknown> | null
+): Record<string, unknown> {
+  const projected: Record<string, unknown> = { ...injection };
+  const reportProjection: Readonly<Record<string, string>> = {
+    report_id: "id",
+    report_workspace_id: "workspace_id",
+    report_repository_id: "repository_id",
+    report_scope_kind: "scope_kind",
+    report_scope_workspace_id: "scope_workspace_id",
+    report_scope_repository_id: "scope_repository_id",
+    report_scope_role: "scope_role",
+    report_scope_task_id: "scope_task_id",
+    report_scope_run_id: "scope_run_id",
+    report_scope_agent_id: "scope_agent_id",
+    report_task_id: "task_id",
+    report_run_id: "run_id",
+    report_agent_id: "agent_id",
+    report_correlation_token: "correlation_token",
+    outcome_kind: "outcome_kind",
+    report_kind: "report_kind",
+    reported_at: "reported_at",
+    reporter_id: "reporter_id",
+    reporter_authority: "reporter_authority",
+    report_evidence: "evidence",
+    report_reason_code: "reason_code"
+  };
+  if (report === null) {
+    for (const alias of Object.keys(reportProjection)) projected[alias] = null;
+    return projected;
+  }
+  for (const [alias, column] of Object.entries(reportProjection)) {
+    projected[alias] = report[column] ?? null;
+  }
+  return projected;
+}
+
+/**
+ * Narrow matcher for the WHERE clause
+ * `PostgresMemoryRepository.aggregateInjectionOutcomeCohorts` builds: a
+ * hard workspace/repository/occurred-window filter plus the four optional
+ * bounded-enum filters. The fake does NOT attempt to interpret arbitrary
+ * SQL, only this well-known shape.
+ */
+function parseInjectionOutcomeCohortWhere(
+  whereSql: string,
+  params: readonly unknown[]
+): (
+  injection: Record<string, unknown>,
+  report: Record<string, unknown> | null
+) => boolean {
+  const hardMatch =
+    /i\.workspace_id = \$(\d+) AND i\.repository_id = \$(\d+) AND i\.occurred_at >= \$(\d+) AND i\.occurred_at <= \$(\d+)/i.exec(
+      whereSql
+    );
+  if (!hardMatch) {
+    throw new Error(
+      `FakeMemoryPool cannot interpret cohort WHERE clause: ${whereSql}`
+    );
+  }
+  const workspaceId = String(params[Number(hardMatch[1]) - 1]);
+  const repositoryId = String(params[Number(hardMatch[2]) - 1]);
+  const occurredFrom = String(params[Number(hardMatch[3]) - 1]);
+  const occurredUntil = String(params[Number(hardMatch[4]) - 1]);
+
+  const modeMatch = /i\.memory_mode = ANY\(\$(\d+)::text\[\]\)/i.exec(whereSql);
+  const modes = modeMatch
+    ? (params[Number(modeMatch[1]) - 1] as readonly string[])
+    : undefined;
+  const resultMatch = /i\.injection_result = ANY\(\$(\d+)::text\[\]\)/i.exec(
+    whereSql
+  );
+  const results = resultMatch
+    ? (params[Number(resultMatch[1]) - 1] as readonly string[])
+    : undefined;
+  const reportKindMatch = /r\.report_kind = ANY\(\$(\d+)::text\[\]\)/i.exec(
+    whereSql
+  );
+  const reportKinds = reportKindMatch
+    ? (params[Number(reportKindMatch[1]) - 1] as readonly string[])
+    : undefined;
+  const outcomeKindMatch = /r\.outcome_kind = ANY\(\$(\d+)::text\[\]\)/i.exec(
+    whereSql
+  );
+  const outcomeKinds = outcomeKindMatch
+    ? (params[Number(outcomeKindMatch[1]) - 1] as readonly string[])
+    : undefined;
+
+  return (injection, report) => {
+    if (String(injection.workspace_id ?? "") !== workspaceId) return false;
+    if (String(injection.repository_id ?? "") !== repositoryId) return false;
+    const occurredAt = String(injection.occurred_at ?? "");
+    if (occurredAt < occurredFrom || occurredAt > occurredUntil) return false;
+    if (modes && !modes.includes(String(injection.memory_mode ?? "")))
+      return false;
+    if (results && !results.includes(String(injection.injection_result ?? "")))
+      return false;
+    if (reportKinds && !reportKinds.includes(String(report?.report_kind ?? "")))
+      return false;
+    if (
+      outcomeKinds &&
+      !outcomeKinds.includes(String(report?.outcome_kind ?? ""))
+    )
+      return false;
+    return true;
+  };
+}
+
+/** `(workspace_id, correlation_token)` key matching the real unique index. */
+function injectionWorkspaceTokenKey(row: Record<string, unknown>): string {
+  return [row.workspace_id ?? "", row.correlation_token ?? ""].join("\u0001");
+}
+
+function indexReportsByWorkspaceToken(
+  reports: Map<string, Record<string, unknown>>
+): Map<string, Record<string, unknown>> {
+  const map = new Map<string, Record<string, unknown>>();
+  for (const report of reports.values()) {
+    map.set(injectionWorkspaceTokenKey(report), report);
+  }
+  return map;
 }

@@ -242,11 +242,25 @@ test("viewer reads control resources; MCP and Skills views contain configuration
       actor: "viewer-a"
     });
     assert.equal(mcps.response.statusCode, 200);
-    assert.equal(mcps.body.source, "execution-contract");
-    assert.deepEqual(mcps.body.servers, [
-      { name: "github", roles: ["reviewer"] },
-      { name: "playwright", roles: ["default", "reviewer"] }
-    ]);
+    assert.equal(mcps.body.source, ".rulesync/mcp.jsonc");
+    assert.equal(mcps.body.valid, true);
+    const undeclaredGithub = mcps.body.servers.find(
+      (server: { name: string }) => server.name === "github"
+    );
+    assert.deepEqual(undeclaredGithub, {
+      name: "github",
+      enabled: null,
+      transport: "unknown",
+      targetOverrides: [],
+      declared: false,
+      roles: ["reviewer"]
+    });
+    const canonicalLsp = mcps.body.servers.find(
+      (server: { name: string }) => server.name === "lsp"
+    );
+    assert.ok(canonicalLsp);
+    assert.equal(canonicalLsp.declared, true);
+    assert.deepEqual(canonicalLsp.roles, []);
     assert.equal("mcpSummary" in mcps.body, false);
 
     const skills = await call("GET", CONTROL_API_PATHS.skills, {
@@ -447,6 +461,11 @@ test("read-only collections reject mutations and the removed admin route stays a
       body: {}
     });
     assert.equal(readonly.response.statusCode, 405);
+    const toolsReadOnly = await call("PATCH", CONTROL_API_PATHS.tools, {
+      actor: "operator-a",
+      body: {}
+    });
+    assert.equal(toolsReadOnly.response.statusCode, 405);
 
     const legacy = await call("POST", "/v1/providers/claude", {
       actor: "operator-a",
@@ -458,7 +477,29 @@ test("read-only collections reject mutations and the removed admin route stays a
   }
 });
 
-test("Control API surfaces all 11 canonical resource families", async () => {
+test("Tools catalog remains unknown when the role source is unavailable", async () => {
+  const saved = saveEnv();
+  const priorContract = getDefaultExecutionContract();
+  try {
+    configure();
+    setExecutionContractForTests({
+      roles: {},
+      providers: {}
+    } as ExecutionContract);
+    const tools = await call("GET", CONTROL_API_PATHS.tools, {
+      actor: "viewer-a"
+    });
+    assert.equal(tools.response.statusCode, 200);
+    assert.equal(tools.body.coverage, "unknown");
+    assert.equal(tools.body.totalTools, null);
+    assert.deepEqual(tools.body.tools, []);
+  } finally {
+    setExecutionContractForTests(priorContract);
+    restoreEnv(saved);
+  }
+});
+
+test("Control API surfaces all 12 typed resource families", async () => {
   const saved = saveEnv();
   try {
     configure();
@@ -526,15 +567,69 @@ test("Control API surfaces all 11 canonical resource families", async () => {
     });
     assert.equal(mcps.response.statusCode, 200);
     assert.equal(mcps.body.schema, "autodev-control-mcps-v1");
+    assert.equal(mcps.body.source, ".rulesync/mcp.jsonc");
+    assert.equal(mcps.body.valid, true);
+    assert.ok(
+      mcps.body.servers.some(
+        (server: { name: string }) => server.name === "lsp"
+      )
+    );
+    const isolatedTargetMcp = mcps.body.servers.find(
+      (server: { name: string }) => server.name === "autodev_spawn"
+    );
+    assert.ok(isolatedTargetMcp);
+    assert.equal(isolatedTargetMcp.transport, "stdio");
+    assert.equal(isolatedTargetMcp.enabled, null);
+    assert.equal(isolatedTargetMcp.declared, true);
+    assert.ok(
+      isolatedTargetMcp.targetOverrides.some(
+        (override: { target: string; enabled: boolean }) =>
+          override.target === "antigravity-cli" && override.enabled
+      )
+    );
+    const context7 = mcps.body.servers.find(
+      (server: { name: string }) => server.name === "context7"
+    );
+    assert.ok(context7);
+    assert.equal(context7.enabled, true);
+    assert.deepEqual(context7.targetOverrides, [
+      { target: "codexcli", enabled: false }
+    ]);
+    assert.doesNotMatch(
+      JSON.stringify(mcps.body),
+      /CONTEXT7_API_KEY|MCP_TOKEN|bearer_token/u
+    );
 
-    // 5. Skills
+    // 5. Tools: known capability declarations only; health and use are unknown.
+    const tools = await call("GET", CONTROL_API_PATHS.tools, {
+      actor: "viewer-a"
+    });
+    assert.equal(tools.response.statusCode, 200);
+    assert.equal(tools.body.schema, "autodev-control-tools-v1");
+    assert.equal(tools.body.source, "execution-contract");
+    assert.equal(tools.body.coverage, "partial");
+    const webSearch = tools.body.tools.find(
+      (tool: { name: string; source: string }) =>
+        tool.name === "web_search" && tool.source === "native"
+    );
+    assert.ok(webSearch);
+    assert.ok(webSearch.exposedRoles.includes("docs-researcher"));
+    const appTool = tools.body.tools.find(
+      (tool: { name: string; source: string }) =>
+        tool.name === "request_user_input" && tool.source === "plugin"
+    );
+    assert.ok(appTool);
+    assert.ok(appTool.exposedRoles.includes("orchestrator"));
+    assert.equal("status" in webSearch, false);
+
+    // 6. Skills
     const skills = await call("GET", CONTROL_API_PATHS.skills, {
       actor: "viewer-a"
     });
     assert.equal(skills.response.statusCode, 200);
     assert.equal(skills.body.schema, "autodev-control-skills-v1");
 
-    // 6. Hooks
+    // 7. Hooks
     const hooks = await call("GET", CONTROL_API_PATHS.hooks, {
       actor: "viewer-a"
     });
@@ -542,7 +637,7 @@ test("Control API surfaces all 11 canonical resource families", async () => {
     assert.equal(hooks.body.schema, "autodev-control-hooks-v1");
     assert.equal(hooks.body.valid, true);
 
-    // 7. Permissions
+    // 8. Permissions
     const permissions = await call("GET", CONTROL_API_PATHS.permissions, {
       actor: "viewer-a"
     });
@@ -551,7 +646,7 @@ test("Control API surfaces all 11 canonical resource families", async () => {
     assert.equal(permissions.body.policy.approvalPolicy, "never");
     assert.equal(permissions.body.policy.sandboxMode, "workspace-write");
 
-    // 8. Prompts collection and detail
+    // 9. Prompts collection and detail
     const prompts = await call("GET", CONTROL_API_PATHS.prompts, {
       actor: "viewer-a"
     });
@@ -573,14 +668,14 @@ test("Control API surfaces all 11 canonical resource families", async () => {
     );
     assert.equal(unknownPrompt.response.statusCode, 404);
 
-    // 9. Workspaces
+    // 10. Workspaces
     const workspaces = await call("GET", CONTROL_API_PATHS.workspaces, {
       actor: "viewer-a"
     });
     assert.equal(workspaces.response.statusCode, 200);
     assert.equal(workspaces.body.schema, "autodev-control-workspaces-v1");
 
-    // 10. Routing
+    // 11. Routing
     const routing = await call("GET", CONTROL_API_PATHS.routing, {
       actor: "viewer-a"
     });
@@ -588,7 +683,7 @@ test("Control API surfaces all 11 canonical resource families", async () => {
     assert.equal(routing.body.schema, "autodev-control-routing-v1");
     assert.ok(Array.isArray(routing.body.routes));
 
-    // 11. Runtime
+    // 12. Runtime
     const runtime = await call("GET", CONTROL_API_PATHS.runtime, {
       actor: "viewer-a"
     });

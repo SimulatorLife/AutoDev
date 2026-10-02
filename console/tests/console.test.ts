@@ -17,8 +17,9 @@ import {
   DataTable,
   EvaluationsView,
   HooksView,
+  McpDetailView,
   McpsView,
-  MemoryView,
+  MemoryPortalCard,
   PromptDetailView,
   PromptsView,
   SkillsView,
@@ -37,15 +38,16 @@ import {
   fetchAgentDetail,
   fetchPromptDetail,
   fetchProviders,
+  fetchTools,
   readControlApiConfig
 } from "../src/lib/server/control-api.ts";
+import { readMemoryPortalConfig } from "../src/lib/server/memory-portal.ts";
 import {
   readOpenLITUsageConfig,
   usageSelectionFromSearchParams
 } from "../src/lib/server/openlit-usage.ts";
 import {
   hooksFromControlApi,
-  mcpsFromControlApi,
   permissionsFromControlApi,
   promptDocumentFromControlApi,
   promptsFromControlApi,
@@ -257,7 +259,37 @@ test("server Control API client uses only its configured token and fixed local a
   );
   assert.equal(request.headers.get("authorization"), `Bearer ${token}`);
   assert.equal(request.headers.get("x-autodev-actor"), LOCAL_CONTROL_API_ACTOR);
+  const toolsResult = await fetchTools(
+    { baseUrl: "http://127.0.0.1:4101", serviceToken: token },
+    {
+      fetchImpl: async (input, init) => {
+        requests.push({
+          url: String(input),
+          headers: new Headers(init?.headers)
+        });
+        return Response.json({
+          schema: "autodev-control-tools-v1",
+          source: "execution-contract",
+          readOnly: true,
+          coverage: "partial",
+          totalTools: 0,
+          tools: []
+        });
+      }
+    }
+  );
+
+  assert.equal(
+    requests[1]?.url,
+    `http://127.0.0.1:4101${CONTROL_API_PATHS.tools}`
+  );
+  assert.equal(requests[1]?.headers.get("authorization"), `Bearer ${token}`);
+  assert.equal(
+    requests[1]?.headers.get("x-autodev-actor"),
+    LOCAL_CONTROL_API_ACTOR
+  );
   assert.equal(JSON.stringify(result).includes(token), false);
+  assert.equal(JSON.stringify(toolsResult).includes(token), false);
   assert.equal(readControlApiConfig({} as NodeJS.ProcessEnv), null);
 });
 
@@ -442,13 +474,177 @@ test("UsageView with empty arrays still reports no synthetic counts", () => {
 test("McpsView never reports 'Connected' or '100%' without runtime evidence", () => {
   const markup = renderToStaticMarkup(
     React.createElement(McpsView, {
-      servers: [{ server: "playwright", roles: ["browser-tester"] }]
+      servers: [
+        {
+          name: "playwright",
+          enabled: false,
+          transport: "stdio",
+          declared: true,
+          roles: ["browser-tester"],
+          targetOverrides: [{ target: "codexcli", enabled: false }]
+        }
+      ],
+      sourceValidity: true
     })
   );
   assert.equal(markup.includes("Connected"), false);
   assert.equal(markup.includes("100%"), false);
   assert.equal(markup.includes("All servers available"), false);
   assert.match(markup, /data-mcp-connection-observed="false"/);
+  assert.match(markup, /RuleSync source valid/);
+  assert.match(markup, /codexcli: disabled/);
+  assert.match(markup, />Disabled</);
+  assert.match(markup, /data-status="configured"/);
+  assert.match(markup, /STDIO/);
+  assert.match(markup, /href="\/mcps\/playwright"/);
+});
+
+test("McpDetailView combines canonical desired state with unknown runtime health", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools: null,
+      server: {
+        name: "context7",
+        enabled: true,
+        transport: "http",
+        targetOverrides: [{ target: "codexcli", enabled: false }],
+        declared: true,
+        roles: ["docs-researcher"]
+      }
+    })
+  );
+  assert.match(markup, /Desired state/);
+  assert.match(markup, /Enabled by default/);
+  assert.match(markup, /codexcli: disabled/);
+  assert.match(markup, /docs-researcher/);
+  assert.match(markup, /Runtime connection/);
+  assert.match(markup, /Not observed/);
+  assert.match(markup, /Configured tool allowlist/);
+  assert.match(markup, /Tools, resources, prompts, and activity/);
+  // Tools source is unavailable in this fixture; the section must report
+  // Unknown and must not fabricate a Connected/ready state.
+  assert.match(markup, /data-tool-allowlist-projection="unknown"/);
+  assert.match(markup, />Unknown</);
+  assert.doesNotMatch(markup, /Connected/);
+});
+
+test("McpDetailView renders populated configured tool allowlist from the Tools capability projection", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools: [
+        {
+          name: "resolve-library-id",
+          source: "mcp",
+          server: "context7",
+          exposedRoles: ["docs-researcher"]
+        },
+        {
+          name: "get-library-docs",
+          source: "mcp",
+          server: "context7",
+          exposedRoles: ["docs-researcher", "code-reviewer"]
+        }
+      ],
+      server: {
+        name: "context7",
+        enabled: true,
+        transport: "http",
+        targetOverrides: [],
+        declared: true,
+        roles: ["docs-researcher"]
+      }
+    })
+  );
+  assert.match(markup, /Configured tool allowlist/);
+  assert.match(markup, /data-tool-allowlist-projection="partial"/);
+  assert.match(markup, /data-enumerated-tool-count="2"/);
+  assert.match(markup, /resolve-library-id/);
+  assert.match(markup, /get-library-docs/);
+  // Configured exposed roles must be visible per tool.
+  assert.match(markup, />docs-researcher</);
+  assert.match(markup, />code-reviewer</);
+  // Section must NOT claim the remote server is connected or that this is
+  // the full live tool inventory.
+  assert.doesNotMatch(markup, /Connected/);
+  assert.doesNotMatch(markup, /data-status="ready"/);
+  // Live inventory section must remain explicit "Not observed".
+  assert.match(markup, /Not observed/);
+  assert.match(markup, /Tools, resources, prompts, and activity/);
+});
+
+test("McpDetailView distinguishes no enumerated allowlist entries from an empty live inventory", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools: [],
+      server: {
+        name: "context7",
+        enabled: true,
+        transport: "http",
+        targetOverrides: [],
+        declared: true,
+        roles: ["docs-researcher"]
+      }
+    })
+  );
+  assert.match(markup, /Configured tool allowlist/);
+  assert.match(markup, /data-tool-allowlist-projection="partial-empty"/);
+  assert.match(markup, /data-enumerated-tool-count="0"/);
+  assert.match(markup, /No allowlist entries enumerated/);
+  assert.match(markup, /live inventory remains unknown/);
+  // A partial projection with no entries is not evidence of no server tools.
+  assert.match(markup, /live inventory remains unknown/);
+  assert.doesNotMatch(markup, /None configured/);
+  // No fabricated live inventory claims.
+  assert.doesNotMatch(markup, /Connected/);
+  assert.doesNotMatch(markup, /data-status="ready"/);
+  // Live inventory section still stays explicitly unobserved.
+  assert.match(markup, /Not observed/);
+});
+
+test("McpDetailView distinguishes an unavailable tool source from an empty allowlist", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools: null,
+      server: {
+        name: "playwright",
+        enabled: false,
+        transport: "stdio",
+        targetOverrides: [],
+        declared: true,
+        roles: ["browser-tester"]
+      }
+    })
+  );
+  // null means the tools source is unavailable -- mark Unknown explicitly.
+  assert.match(markup, /Configured tool allowlist/);
+  assert.match(markup, /data-tool-allowlist-projection="unknown"/);
+  assert.doesNotMatch(markup, /data-enumerated-tool-count="0"/);
+  assert.match(markup, />Unknown</);
+  // Critically: must NOT collapse to "None configured" (that would claim
+  // the source was observed and the allowlist is empty, which is false).
+  assert.doesNotMatch(markup, /None configured/);
+  // And must not fabricate a live connection or ready tool.
+  assert.doesNotMatch(markup, /Connected/);
+  assert.doesNotMatch(markup, /data-status="ready"/);
+  // Existing live section must remain explicitly unobserved.
+  assert.match(markup, /Tools, resources, prompts, and activity/);
+  assert.match(markup, /Not observed/);
+});
+
+test("McpsView distinguishes invalid canonical configuration from an empty list", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(McpsView, { servers: [], sourceValidity: false })
+  );
+  assert.match(markup, /data-mcp-source-validity="false"/);
+  assert.match(markup, /RuleSync source invalid/);
+  assert.match(markup, /Configured MCPs/);
+  assert.match(markup, />Invalid</);
+  assert.match(markup, /no MCP configuration was projected/);
+  assert.doesNotMatch(markup, /Configured MCPs[\s\S]*?>0</);
 });
 
 test("SkillsView never reports 'Active' or 'Recorded' without OTel evidence", () => {
@@ -483,6 +679,7 @@ test("WorkspacesView never reports 'Available' without runtime evidence", () => 
 test("ToolsView falls back to 'Unknown' when status is missing", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ToolsView, {
+      coverage: "partial",
       tools: [
         {
           name: "read_file",
@@ -495,11 +692,28 @@ test("ToolsView falls back to 'Unknown' when status is missing", () => {
   );
   assert.equal(markup.includes(">ready<"), false);
   assert.match(markup, /Unknown/);
+  assert.match(markup, /data-tools-coverage="partial"/);
+  assert.match(
+    markup,
+    /Other tools, runtime availability, and historical use are not observed/
+  );
+  assert.doesNotMatch(markup, /Universal/);
+});
+
+test("ToolsView keeps an unavailable capability source unknown instead of zero", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(ToolsView, { tools: [], coverage: "unknown" })
+  );
+  assert.match(markup, /Known Declarations/);
+  assert.match(markup, />Unknown</);
+  assert.match(markup, /execution-contract role inventory is not observed/);
+  assert.doesNotMatch(markup, /Known Declarations[\s\S]*?>0</);
 });
 
 test("ToolsView preserves explicit 'ready'/'unavailable' status values", () => {
   const readyMarkup = renderToStaticMarkup(
     React.createElement(ToolsView, {
+      coverage: "partial",
       tools: [
         {
           name: "exec_command",
@@ -514,6 +728,7 @@ test("ToolsView preserves explicit 'ready'/'unavailable' status values", () => {
 
   const unavailableMarkup = renderToStaticMarkup(
     React.createElement(ToolsView, {
+      coverage: "partial",
       tools: [
         {
           name: "exec_command",
@@ -527,19 +742,148 @@ test("ToolsView preserves explicit 'ready'/'unavailable' status values", () => {
   assert.match(unavailableMarkup, /data-status="unavailable"/);
 });
 
-test("MemoryView with empty records renders the explicit empty state", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(MemoryView, { records: [] })
-  );
-  assert.match(markup, /No memory records found/);
+test("readMemoryPortalConfig defaults to the local OpenLIT UI base URL", () => {
+  assert.deepEqual(readMemoryPortalConfig({}), {
+    href: "http://127.0.0.1:3000/memory"
+  });
 });
 
-test("MemoryView without a connector keeps record count and source unknown", () => {
-  const markup = renderToStaticMarkup(React.createElement(MemoryView, {}));
-  assert.match(markup, /data-memory-state="not-observed"/);
-  assert.match(markup, /Connector integration is not wired/);
-  assert.equal(markup.includes("sqlite"), false);
-  assert.equal(markup.includes("AutoDev Local"), false);
+test("readMemoryPortalConfig normalizes a configured URL to the fixed /memory path", () => {
+  assert.deepEqual(
+    readMemoryPortalConfig({
+      AUTODEV_OPENLIT_UI_URL: "https://openlit.example.com:8443/some/other/path?x=1"
+    }),
+    { href: "https://openlit.example.com:8443/memory" }
+  );
+  assert.deepEqual(
+    readMemoryPortalConfig({ AUTODEV_OPENLIT_UI_URL: "  http://openlit:3000/  " }),
+    { href: "http://openlit:3000/memory" }
+  );
+});
+
+test("readMemoryPortalConfig rejects unsafe configured URLs", () => {
+  assert.equal(
+    readMemoryPortalConfig({ AUTODEV_OPENLIT_UI_URL: "not a url" }),
+    null
+  );
+  assert.equal(
+    readMemoryPortalConfig({ AUTODEV_OPENLIT_UI_URL: "javascript:alert(1)" }),
+    null
+  );
+  assert.equal(
+    readMemoryPortalConfig({ AUTODEV_OPENLIT_UI_URL: "ftp://openlit:3000" }),
+    null
+  );
+  assert.equal(
+    readMemoryPortalConfig({
+      AUTODEV_OPENLIT_UI_URL: "https://admin:s3cret@openlit.example.com"
+    }),
+    null
+  );
+});
+
+test("MemoryPortalCard links to the resolved Memory destination and never exposes a token", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryPortalCard, {
+      href: "http://127.0.0.1:3000/memory"
+    })
+  );
+  assert.match(markup, /data-feature="memory-portal"/);
+  assert.match(
+    markup,
+    /href="http:\/\/127\.0\.0\.1:3000\/memory"[^>]*data-memory-portal-link="true"/
+  );
+  assert.match(markup, /target="_blank"/);
+  assert.match(markup, /rel="noopener noreferrer"/);
+  assert.match(markup, /Open AutoDev Memory/);
+  assert.equal(/openlit/i.test(markup), false);
+  assert.equal(markup.toLowerCase().includes("token"), false);
+  assert.equal(markup.toLowerCase().includes("secret"), false);
+  assert.equal(markup.toLowerCase().includes("bearer"), false);
+});
+
+test("Memory page contract renders the portal card on the default local destination without requiring the Control API token", () => {
+  // Mirrors the branch logic of console/app/memory/page.tsx without
+  // importing the App Router file (the test runner loads .ts only).
+  const env = {
+    AUTODEV_CONTROL_API_TOKEN: undefined,
+    AUTODEV_OPENLIT_UI_URL: undefined
+  };
+  const portal = readMemoryPortalConfig(env);
+  assert.ok(portal, "default portal config must resolve");
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryPortalCard, { href: portal.href })
+  );
+  assert.match(markup, /data-feature="memory-portal"/);
+  assert.match(
+    markup,
+    /href="http:\/\/127.0.0.1:3000\/memory"[^>]*data-memory-portal-link="true"/
+  );
+  assert.match(markup, /target="_blank"/);
+  assert.match(markup, /rel="noopener noreferrer"/);
+  assert.match(markup, /Open AutoDev Memory/);
+  // The page must never surface the Control API credential gate or the
+  // historical "adapter pending" placeholder.
+  assert.equal(markup.includes("autodev_control_api_disabled"), false);
+  assert.equal(markup.includes("AUTODEV_CONTROL_API_TOKEN"), false);
+  assert.equal(markup.includes("autodev_memory_adapter_pending"), false);
+});
+
+test("Memory page contract renders the explicit unavailable state when AUTODEV_OPENLIT_UI_URL is unsafe", () => {
+  const env = {
+    AUTODEV_CONTROL_API_TOKEN: undefined,
+    AUTODEV_OPENLIT_UI_URL: "https://admin:s3cret@openlit.example.com"
+  };
+  const portal = readMemoryPortalConfig(env);
+  assert.equal(portal, null);
+  // Local harness mirroring the contract of the page's unavailable branch
+  // (data-status, data-error-code, title, message, hint) so the test does
+  // not need to import the .tsx route file.
+  function Unavailable(props: { title: string; code: string; message: string; hint?: string }) {
+    return React.createElement(
+      "div",
+      {
+        role: "alert",
+        "data-status": "unavailable",
+        "data-error-code": props.code
+      },
+      React.createElement("h2", null, props.title),
+      React.createElement("p", null, props.message),
+      React.createElement("p", null, props.hint)
+    );
+  }
+  const markup = renderToStaticMarkup(
+    React.createElement(Unavailable, {
+      title: "Memory destination URL is not configured safely",
+      code: "autodev_memory_portal_url_invalid",
+      message:
+        "AUTODEV_OPENLIT_UI_URL must be an http or https URL with no embedded credentials.",
+      hint: "Set AUTODEV_OPENLIT_UI_URL in the Next.js server environment, or unset it to use the local default."
+    })
+  );
+  assert.match(markup, /data-status="unavailable"/);
+  assert.match(markup, /data-error-code="autodev_memory_portal_url_invalid"/);
+  assert.match(markup, /Memory destination URL is not configured safely/);
+  assert.equal(markup.includes("data-memory-portal-link=\"true\""), false);
+  assert.equal(markup.includes("autodev_control_api_disabled"), false);
+  assert.equal(markup.includes("autodev_memory_adapter_pending"), false);
+});
+
+test("Memory page contract normalizes a configured AUTODEV_OPENLIT_UI_URL to the fixed /memory path", () => {
+  const env = {
+    AUTODEV_CONTROL_API_TOKEN: undefined,
+    AUTODEV_OPENLIT_UI_URL: "https://memory.example.com/some/other/path?x=1"
+  };
+  const portal = readMemoryPortalConfig(env);
+  assert.deepEqual(portal, { href: "https://memory.example.com/memory" });
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryPortalCard, { href: portal.href })
+  );
+  assert.match(
+    markup,
+    /href="https:\/\/memory.example.com\/memory"[^>]*data-memory-portal-link="true"/
+  );
+  assert.equal(markup.includes("data-status=\"unavailable\""), false);
 });
 
 test("EvaluationsView with empty results renders the explicit empty state", () => {
@@ -586,15 +930,6 @@ test("HooksView distinguishes an invalid source from an absent one", () => {
 });
 
 test("View adapters translate Control API responses without inventing data", () => {
-  const mcps = mcpsFromControlApi({
-    schema: "autodev-control-mcps-v1",
-    source: "test",
-    readOnly: true,
-    servers: [{ name: "playwright", roles: ["browser-tester"] }]
-  });
-  assert.deepEqual(mcps[0]?.server, "playwright");
-  assert.deepEqual(mcps[0]?.roles, ["browser-tester"]);
-
   const skills = skillsFromControlApi({
     schema: "autodev-control-skills-v1",
     source: "test",

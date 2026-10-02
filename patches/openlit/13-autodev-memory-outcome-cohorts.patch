@@ -1,0 +1,1408 @@
+diff --git a/src/client/src/__tests__/app/api/memory/cohorts/route.test.ts b/src/client/src/__tests__/app/api/memory/cohorts/route.test.ts
+new file mode 100644
+index 00000000..8a7fecf6
+--- /dev/null
++++ b/src/client/src/__tests__/app/api/memory/cohorts/route.test.ts
+@@ -0,0 +1,155 @@
++jest.mock("@/lib/session", () => ({ getCurrentUser: jest.fn() }));
++jest.mock("@/lib/platform/connectors/memory/crud", () => ({
++	memoryConnectorId: (id: string) => (id.startsWith("memory:") ? id : `memory:${id}`),
++	isMemoryConnectorId: (id: unknown) => typeof id === "string" && id.startsWith("memory:"),
++	listMemoryConnectors: jest.fn(),
++	getMemoryRuntime: jest.fn(),
++}));
++jest.mock("@/lib/platform/connectors/memory/autodev/adapter", () => ({
++	isAutoDevMemoryAdapter: (adapter: unknown) =>
++		!!adapter && typeof adapter === "object" && (adapter as { __autodev?: boolean }).__autodev === true,
++}));
++
++import { GET } from "@/app/api/memory/cohorts/route";
++import { getCurrentUser } from "@/lib/session";
++import { getMemoryRuntime, listMemoryConnectors } from "@/lib/platform/connectors/memory/crud";
++import { MEMORY_COHORTS_UNSUPPORTED_CONNECTOR } from "@/constants/messages/en";
++
++(globalThis as unknown as { Response: { json: unknown } }).Response = {
++	json: (body: unknown, init?: ResponseInit) => ({
++		status: init?.status ?? 200,
++		json: async () => body,
++	}),
++};
++
++function makeRequest(query: string) {
++	const url = "http://localhost/api/memory/cohorts" + (query ? "?" + query : "");
++	return { nextUrl: { searchParams: new URL(url).searchParams } } as any;
++}
++
++const autoDevConnector = { id: "memory:autodev-a", type: "autodev", name: "AutoDev Memory" };
++const claudeConnector = { id: "memory:claude-a", type: "claude", name: "Claude" };
++
++describe("GET /api/memory/cohorts", () => {
++	beforeEach(() => {
++		jest.clearAllMocks();
++		(getCurrentUser as jest.Mock).mockResolvedValue({ id: "operator-a" });
++	});
++
++	it("requires authentication", async () => {
++		(getCurrentUser as jest.Mock).mockResolvedValue(null);
++		const response = await GET(
++			makeRequest("occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z")
++		);
++		expect(response.status).toBe(401);
++		expect(listMemoryConnectors).not.toHaveBeenCalled();
++	});
++
++	it("rejects a missing or invalid occurred timestamp", async () => {
++		const response = await GET(makeRequest("occurredUntil=2026-09-02T00:00:00.000Z"));
++		expect(response.status).toBe(400);
++		const body = await response.json();
++		expect(String(body)).toMatch(/occurredFrom/);
++	});
++
++	it("rejects a window exceeding 365 days", async () => {
++		const response = await GET(
++			makeRequest("occurredFrom=2024-01-01T00:00:00.000Z&occurredUntil=2026-01-01T00:00:00.000Z")
++		);
++		expect(response.status).toBe(400);
++		const body = await response.json();
++		expect(String(body)).toMatch(/365 days/);
++	});
++
++	it("rejects an invalid enum filter value", async () => {
++		const response = await GET(
++			makeRequest(
++				"occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z&memoryMode=not-a-mode"
++			)
++		);
++		expect(response.status).toBe(400);
++	});
++
++	it("rejects task/run/agent identity and unknown query selectors", async () => {
++		for (const key of ["taskId", "runId", "agentId", "unknown"]) {
++			const response = await GET(
++				makeRequest(
++					"occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z&" + key + "=caller-value"
++				)
++			);
++			expect(response.status).toBe(400);
++		}
++		expect(listMemoryConnectors).not.toHaveBeenCalled();
++	});
++
++
++	it("404s when no AutoDev connector exists and none was requested", async () => {
++		(listMemoryConnectors as jest.Mock).mockResolvedValue([claudeConnector]);
++		const response = await GET(
++			makeRequest("occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z")
++		);
++		expect(response.status).toBe(404);
++	});
++
++	it("rejects a requested connector that is not the AutoDev adapter", async () => {
++		(listMemoryConnectors as jest.Mock).mockResolvedValue([claudeConnector]);
++		(getMemoryRuntime as jest.Mock).mockResolvedValue({
++			adapter: { __autodev: false },
++			connector: claudeConnector,
++		});
++		const response = await GET(
++			makeRequest(
++				"connectorId=claude-a&occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z"
++			)
++		);
++		expect(response.status).toBe(400);
++		const body = await response.json();
++		expect(body).toBe(MEMORY_COHORTS_UNSUPPORTED_CONNECTOR);
++	});
++
++	it("returns the cohort result for a valid request, excluding role/task/run/agent scope", async () => {
++		const readOutcomeCohorts = jest.fn().mockResolvedValue({
++			status: "available",
++			page: {
++				occurredFrom: "2026-09-01T00:00:00.000Z",
++				occurredUntil: "2026-09-02T00:00:00.000Z",
++				cells: [
++					{
++						memoryMode: "jit",
++						injectionResult: "injected",
++						reportKind: null,
++						outcomeKind: null,
++						exposureCount: 5,
++						reportCount: 0,
++					},
++				],
++				exposureCount: 5,
++				reportCount: 0,
++			},
++		});
++		(listMemoryConnectors as jest.Mock).mockResolvedValue([autoDevConnector]);
++		(getMemoryRuntime as jest.Mock).mockResolvedValue({
++			adapter: { __autodev: true, readOutcomeCohorts },
++			connector: autoDevConnector,
++		});
++
++		const response = await GET(
++			makeRequest(
++				"occurredFrom=2026-09-01T00:00:00.000Z&occurredUntil=2026-09-02T00:00:00.000Z"
++			)
++		);
++		expect(response.status).toBe(200);
++		const body = await response.json();
++		expect(body.connector).toEqual(autoDevConnector);
++		expect(body.result.status).toBe("available");
++		expect(body.result.page.cells[0].reportKind).toBeNull();
++		expect(readOutcomeCohorts).toHaveBeenCalledWith({
++			occurredFrom: "2026-09-01T00:00:00.000Z",
++			occurredUntil: "2026-09-02T00:00:00.000Z",
++			memoryModes: undefined,
++			injectionResults: undefined,
++			reportKinds: undefined,
++			outcomeKinds: undefined,
++		});
++	});
++});
+diff --git a/src/client/src/__tests__/components/memory-cohort-view.test.tsx b/src/client/src/__tests__/components/memory-cohort-view.test.tsx
+new file mode 100644
+index 00000000..d99aa5b0
+--- /dev/null
++++ b/src/client/src/__tests__/components/memory-cohort-view.test.tsx
+@@ -0,0 +1,147 @@
++import { fireEvent, render, screen } from "@testing-library/react";
++import MemoryCohortView from "@/components/(playground)/memory/memory-cohort-view";
++
++jest.mock("@/utils/api", () => ({
++	getRequestHeaders: (headers?: Record<string, string>) => headers || {},
++}));
++
++class ResizeObserverMock {
++	observe() {}
++	unobserve() {}
++	disconnect() {}
++}
++Object.defineProperty(global, "ResizeObserver", {
++	writable: true,
++	value: ResizeObserverMock,
++});
++
++describe("MemoryCohortView", () => {
++	beforeEach(() => {
++		jest.clearAllMocks();
++	});
++
++	it("renders nothing for a non-AutoDev connector", () => {
++		global.fetch = jest.fn() as unknown as typeof fetch;
++		const { container } = render(
++			<MemoryCohortView connectorId="memory:claude-a" connectorType="claude" />
++		);
++		expect(container).toBeEmptyDOMElement();
++		expect(global.fetch).not.toHaveBeenCalled();
++	});
++
++	it("shows the explicit disabled state and sends an inclusive UTC date window", async () => {
++		const fetchSpy = jest.fn().mockResolvedValue({
++			ok: true,
++			json: async () => ({
++				connector: { id: "memory:autodev-a", type: "autodev" },
++				result: { status: "disabled", page: null },
++			}),
++		});
++		global.fetch = fetchSpy as unknown as typeof fetch;
++		render(<MemoryCohortView connectorId="memory:autodev-a" connectorType="autodev" />);
++		expect(await screen.findByRole("status")).toHaveTextContent(
++			"workspace, repository, and task-history/operator access"
++		);
++		const requestUrl = new URL(String(fetchSpy.mock.calls[0]?.[0]), "http://localhost");
++		expect(requestUrl.searchParams.get("occurredFrom")).toMatch(/T00:00:00\.000Z$/u);
++		expect(requestUrl.searchParams.get("occurredUntil")).toMatch(/T23:59:59\.999Z$/u);
++	});
++
++	it("handles cleared date inputs without making an invalid request", async () => {
++		const fetchSpy = jest.fn().mockResolvedValue({
++			ok: true,
++			json: async () => ({
++				connector: { id: "memory:autodev-a", type: "autodev" },
++				result: { status: "disabled", page: null },
++			}),
++		});
++		global.fetch = fetchSpy as unknown as typeof fetch;
++		render(<MemoryCohortView connectorId="memory:autodev-a" connectorType="autodev" />);
++		await screen.findByRole("status");
++		fireEvent.change(screen.getByLabelText("From"), { target: { value: "" } });
++		expect(await screen.findByText(/Select valid start and end dates/i)).toBeInTheDocument();
++		expect(fetchSpy).toHaveBeenCalledTimes(1);
++	});
++
++	it("handles cleared date inputs without making an invalid request", async () => {
++		const fetchSpy = jest.fn().mockResolvedValue({
++			ok: true,
++			json: async () => ({
++				connector: { id: "memory:autodev-a", type: "autodev" },
++				result: { status: "disabled", page: null },
++			}),
++		});
++		global.fetch = fetchSpy as unknown as typeof fetch;
++		render(<MemoryCohortView connectorId="memory:autodev-a" connectorType="autodev" />);
++		await screen.findByRole("status");
++		fireEvent.change(screen.getByLabelText("From"), { target: { value: "" } });
++		expect(await screen.findByText(/Select valid start and end dates/i)).toBeInTheDocument();
++		expect(fetchSpy).toHaveBeenCalledTimes(1);
++	});
++
++	it("keeps an unreported (null reportKind/outcomeKind) cell visible and states outcomes are reporter-supplied", async () => {
++		global.fetch = jest.fn().mockResolvedValue({
++			ok: true,
++			json: async () => ({
++				connector: { id: "memory:autodev-a", type: "autodev" },
++				result: {
++					status: "available",
++					page: {
++						occurredFrom: "2026-09-01T00:00:00.000Z",
++						occurredUntil: "2026-09-02T00:00:00.000Z",
++						cells: [
++							{
++								memoryMode: "jit",
++								injectionResult: "injected",
++								reportKind: null,
++								outcomeKind: null,
++								exposureCount: 9,
++								reportCount: 0,
++							},
++							{
++								memoryMode: "jit",
++								injectionResult: "injected",
++								reportKind: "pull_request",
++								outcomeKind: "success",
++								exposureCount: 2,
++								reportCount: 2,
++							},
++						],
++						exposureCount: 11,
++						reportCount: 2,
++					},
++				},
++			}),
++		}) as unknown as typeof fetch;
++
++		render(<MemoryCohortView connectorId="memory:autodev-a" connectorType="autodev" />);
++
++		expect(await screen.findAllByText("Unreported")).toHaveLength(2);
++		expect(screen.getByText("11")).toBeInTheDocument();
++		expect(screen.getByText("2", { selector: "p" })).toBeInTheDocument();
++		expect(
++			screen.getByText(/outcomes are reporter-supplied/i)
++		).toBeInTheDocument();
++		expect(
++			screen.getByText(/reportCount is always less than or equal to exposureCount/i)
++		).toBeInTheDocument();
++		// The disclaimer explicitly states these counts are NOT any of the
++		// following, so the phrases legitimately appear once, inside the
++		// disclaimer sentence -- never as a table/column label or a computed
++		// value (e.g. a percentage).
++		expect(screen.getByText(/not a task success rate/i)).toBeInTheDocument();
++		expect(screen.getByText(/a model-use metric/i)).toBeInTheDocument();
++		expect(screen.getByText(/pr verification/i)).toBeInTheDocument();
++		expect(screen.getByText(/causal effect on any outcome/i)).toBeInTheDocument();
++		expect(screen.queryByText(/%/)).not.toBeInTheDocument();
++		const headers = screen.getAllByRole("columnheader").map((node) => node.textContent);
++		expect(headers).toEqual([
++			"Memory mode",
++			"Injection result",
++			"Report kind",
++			"Outcome kind",
++			"Exposure count",
++			"Report count",
++		]);
++	});
++});
+diff --git a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
+index fe95f2db..abf060f0 100644
+--- a/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
++++ b/src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts
+@@ -609,3 +609,236 @@ test("experience detail distinguishes empty and unavailable outcome reads", asyn
+ 	});
+ 	expect(fetchSpy).toHaveBeenCalledTimes(4);
+ });
++
++test("readOutcomeCohorts returns disabled without workspace, repository, and task-history access", async () => {
++	const fetchSpy = jest.spyOn(global, "fetch");
++	const missingRepository = new AutoDevMemoryAdapter({
++		...descriptor,
++		settings: { workspaceId: "workspace-a", includeTaskHistory: true }
++	});
++	const disabledWithoutRepository = await missingRepository.readOutcomeCohorts({
++		occurredFrom: "2026-09-01T00:00:00.000Z",
++		occurredUntil: "2026-09-02T00:00:00.000Z"
++	});
++	expect(disabledWithoutRepository).toEqual({ status: "disabled", page: null });
++
++	const missingTaskHistory = new AutoDevMemoryAdapter(descriptor);
++	const disabledWithoutHistory = await missingTaskHistory.readOutcomeCohorts({
++		occurredFrom: "2026-09-01T00:00:00.000Z",
++		occurredUntil: "2026-09-02T00:00:00.000Z"
++	});
++	expect(disabledWithoutHistory).toEqual({ status: "disabled", page: null });
++	expect(fetchSpy).not.toHaveBeenCalled();
++});
++
++test("readOutcomeCohorts rejects an occurred window longer than 365 days", async () => {
++	const fetchSpy = jest.spyOn(global, "fetch");
++	const adapter = new AutoDevMemoryAdapter({
++		...descriptor,
++		settings: { ...descriptor.settings, includeTaskHistory: true }
++	});
++	await expect(
++		adapter.readOutcomeCohorts({
++			occurredFrom: "2024-01-01T00:00:00.000Z",
++			occurredUntil: "2026-01-01T00:00:00.000Z"
++		})
++	).rejects.toThrow(/365 days/);
++	expect(fetchSpy).not.toHaveBeenCalled();
++});
++
++test("readOutcomeCohorts scopes the Control API read to workspace/repository/time only, never role/task/run/agent", async () => {
++	const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValueOnce(
++		jsonResponse({
++			schema: "autodev-memory-injection-outcome-cohorts-v1",
++			workspaceId: "workspace-a",
++			repositoryId: "owner/repo",
++			occurredFrom: "2026-09-01T00:00:00.000Z",
++			occurredUntil: "2026-09-02T00:00:00.000Z",
++			cells: [
++				{
++					memoryMode: "jit",
++					injectionResult: "injected",
++					reportKind: null,
++					outcomeKind: null,
++					exposureCount: 9,
++					reportCount: 0
++				},
++				{
++					memoryMode: "jit",
++					injectionResult: "injected",
++					reportKind: "pull_request",
++					outcomeKind: "success",
++					exposureCount: 2,
++					reportCount: 2
++				}
++			],
++			exposureCount: 11,
++			reportCount: 2
++		})
++	);
++	const adapter = new AutoDevMemoryAdapter({
++		...descriptor,
++		settings: {
++			...descriptor.settings,
++			includeTaskHistory: true,
++			role: "operator",
++			taskId: "caller-task",
++			runId: "caller-run",
++			agentId: "caller-agent"
++		}
++	});
++
++	const result = await adapter.readOutcomeCohorts({
++		occurredFrom: "2026-09-01T00:00:00.000Z",
++		occurredUntil: "2026-09-02T00:00:00.000Z"
++	});
++
++	expect(result.status).toBe("available");
++	// The unreported exposure cell (null reportKind/outcomeKind) must stay in
++	// the result, not be dropped because no report filter narrowed it out.
++	expect(result.page?.cells).toContainEqual({
++		memoryMode: "jit",
++		injectionResult: "injected",
++		reportKind: null,
++		outcomeKind: null,
++		exposureCount: 9,
++		reportCount: 0
++	});
++	expect(result.page?.exposureCount).toBe(11);
++	expect(result.page?.reportCount).toBe(2);
++
++	const [cohortUrl] = fetchSpy.mock.calls[0] as [string];
++	const parsed = new URL(cohortUrl);
++	expect(parsed.pathname).toBe("/control/memory/cohorts");
++	expect(parsed.searchParams.get("workspaceId")).toBe("workspace-a");
++	expect(parsed.searchParams.get("repositoryId")).toBe("owner/repo");
++	expect(parsed.searchParams.get("includeTaskHistory")).toBe("true");
++	expect(parsed.searchParams.get("occurredFrom")).toBe("2026-09-01T00:00:00.000Z");
++	expect(parsed.searchParams.get("occurredUntil")).toBe("2026-09-02T00:00:00.000Z");
++	expect(parsed.searchParams.has("reportKind")).toBe(false);
++	for (const identityKey of ["role", "taskId", "runId", "agentId"]) {
++		expect(parsed.searchParams.has(identityKey)).toBe(false);
++	}
++});
++
++test("readOutcomeCohorts forwards report filters without expecting unreported cells", async () => {
++	const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValueOnce(
++		jsonResponse({
++			schema: "autodev-memory-injection-outcome-cohorts-v1",
++			workspaceId: "workspace-a",
++			repositoryId: "owner/repo",
++			occurredFrom: "2026-09-01T00:00:00.000Z",
++			occurredUntil: "2026-09-02T00:00:00.000Z",
++			cells: [
++				{
++					memoryMode: "jit",
++					injectionResult: "injected",
++					reportKind: "pull_request",
++					outcomeKind: "success",
++					exposureCount: 2,
++					reportCount: 2
++				}
++			],
++			exposureCount: 2,
++			reportCount: 2
++		})
++	);
++	const adapter = new AutoDevMemoryAdapter({
++		...descriptor,
++		settings: { ...descriptor.settings, includeTaskHistory: true }
++	});
++	const result = await adapter.readOutcomeCohorts({
++		occurredFrom: "2026-09-01T00:00:00.000Z",
++		occurredUntil: "2026-09-02T00:00:00.000Z",
++		reportKinds: ["pull_request"]
++	});
++	expect(result.status).toBe("available");
++	expect(result.page?.cells).toHaveLength(1);
++	expect(result.page?.cells[0]?.reportKind).toBe("pull_request");
++	const parsed = new URL((fetchSpy.mock.calls[0] as [string])[0]);
++	expect(parsed.searchParams.getAll("reportKind")).toEqual(["pull_request"]);
++});
++
++test("readOutcomeCohorts returns unavailable for a malformed or non-ok Control API response", async () => {
++	const adapter = new AutoDevMemoryAdapter({
++		...descriptor,
++		settings: { ...descriptor.settings, includeTaskHistory: true }
++	});
++	jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({ error: "unavailable" }, 503));
++	const unavailable = await adapter.readOutcomeCohorts({
++		occurredFrom: "2026-09-01T00:00:00.000Z",
++		occurredUntil: "2026-09-02T00:00:00.000Z"
++	});
++	expect(unavailable).toEqual({ status: "unavailable", page: null });
++
++	jest.spyOn(global, "fetch").mockResolvedValueOnce(
++		jsonResponse({
++			schema: "autodev-memory-injection-outcome-cohorts-v1",
++			workspaceId: "workspace-a",
++			repositoryId: "owner/repo",
++			occurredFrom: "2026-09-01T00:00:00.000Z",
++			occurredUntil: "2026-09-02T00:00:00.000Z",
++			cells: [{ memoryMode: "jit", injectionResult: "injected", reportKind: null, outcomeKind: null, exposureCount: 1, reportCount: 5 }],
++			exposureCount: 1,
++			reportCount: 5
++		})
++	);
++	const inconsistentCounts = await adapter.readOutcomeCohorts({
++		occurredFrom: "2026-09-01T00:00:00.000Z",
++		occurredUntil: "2026-09-02T00:00:00.000Z"
++	});
++	expect(inconsistentCounts).toEqual({ status: "unavailable", page: null });
++});
++
++
++test("readOutcomeCohorts rejects invalid cohort dimensions, unpaired nulls, bad totals, and wrong scope/window", async () => {
++	const adapter = new AutoDevMemoryAdapter({
++		...descriptor,
++		settings: { ...descriptor.settings, includeTaskHistory: true }
++	});
++	const validPage = {
++		schema: "autodev-memory-injection-outcome-cohorts-v1",
++		workspaceId: "workspace-a",
++		repositoryId: "owner/repo",
++		occurredFrom: "2026-09-01T00:00:00.000Z",
++		occurredUntil: "2026-09-02T00:00:00.000Z",
++		cells: [
++			{
++				memoryMode: "jit",
++				injectionResult: "injected",
++				reportKind: null,
++				outcomeKind: null,
++				exposureCount: 2,
++				reportCount: 0
++			}
++		],
++		exposureCount: 2,
++		reportCount: 0
++	};
++	const invalidPages = [
++		{ ...validPage, cells: [{ ...validPage.cells[0], memoryMode: "caller-mode" }] },
++		{ ...validPage, cells: [{ ...validPage.cells[0], injectionResult: "caller-result" }] },
++		{ ...validPage, cells: [{ ...validPage.cells[0], reportKind: "task" }] },
++		{ ...validPage, cells: [{ ...validPage.cells[0], reportCount: 1 }], reportCount: 1 },
++		{
++			...validPage,
++			cells: [{ ...validPage.cells[0], reportKind: "task", outcomeKind: "success" }]
++		},
++		{ ...validPage, cells: [{ ...validPage.cells[0], reportKind: "unknown-kind", outcomeKind: "success" }] },
++		{ ...validPage, exposureCount: 3 },
++		{ ...validPage, reportCount: 1 },
++		{ ...validPage, workspaceId: "other-workspace" },
++		{ ...validPage, repositoryId: "other/repository" },
++		{ ...validPage, occurredFrom: "2026-09-02T00:00:00.000Z" },
++		{ ...validPage, occurredUntil: "2026-09-03T00:00:00.000Z" }
++	];
++	const fetchSpy = jest.spyOn(global, "fetch");
++	for (const page of invalidPages) {
++		fetchSpy.mockResolvedValueOnce(jsonResponse(page));
++		const result = await adapter.readOutcomeCohorts({
++			occurredFrom: "2026-09-01T00:00:00.000Z",
++			occurredUntil: "2026-09-02T00:00:00.000Z"
++		});
++		expect(result).toEqual({ status: "unavailable", page: null });
++	}
++});
+diff --git a/src/client/src/app/api/memory/cohorts/route.ts b/src/client/src/app/api/memory/cohorts/route.ts
+new file mode 100644
+index 00000000..4c6f1572
+--- /dev/null
++++ b/src/client/src/app/api/memory/cohorts/route.ts
+@@ -0,0 +1,149 @@
++import { NextRequest } from "next/server";
++import { getCurrentUser } from "@/lib/session";
++import { errorResponse } from "@/utils/api-response";
++import { withMemoryAccess } from "@/lib/access/memory-route";
++import {
++	getMemoryRuntime,
++	isMemoryConnectorId,
++	listMemoryConnectors,
++	memoryConnectorId,
++} from "@/lib/platform/connectors/memory/crud";
++import {
++	isAutoDevMemoryAdapter,
++	type AutoDevCohortFilter,
++} from "@/lib/platform/connectors/memory/autodev/adapter";
++import {
++	MEMORY_CONNECTOR_NOT_FOUND,
++	MEMORY_COHORTS_LOAD_FAILED,
++	MEMORY_COHORTS_UNSUPPORTED_CONNECTOR,
++	MEMORY_INVALID_FILTER,
++} from "@/constants/messages/en";
++
++const FILTER_MAX = 64;
++const FILTER_VALUES_MAX = 10;
++const MEMORY_MODE_VALUES = ["jit", "retrieval-only", "disabled", "invalid", "unknown"];
++const INJECTION_RESULT_VALUES = ["injected", "empty", "skipped"];
++const REPORT_KIND_VALUES = ["task", "pull_request", "issue", "other"];
++const OUTCOME_KIND_VALUES = ["success", "partial", "failure", "cancelled", "unknown"];
++const ALLOWED_QUERY_KEYS = new Set([
++	"connectorId",
++	"occurredFrom",
++	"occurredUntil",
++	"memoryMode",
++	"injectionResult",
++	"reportKind",
++	"outcomeKind"
++]);
++// Mirrors MEMORY_OUTCOME_COHORT_MAX_WINDOW_MS in @simulatorlife/autodev-core; the
++// adapter and the Control API both re-validate this, but checking here
++// gives a clear 400 before any Control API round trip.
++const MAX_COHORT_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
++
++function parseConnectorId(value: string | null): string | undefined {
++	if (value == null) return undefined;
++	const trimmed = value.trim();
++	if (!trimmed) return undefined;
++	if (trimmed.length > 120 || /[\u0000-\u001f]/.test(trimmed)) {
++		throw new Error(MEMORY_INVALID_FILTER);
++	}
++	const id = memoryConnectorId(trimmed);
++	if (!isMemoryConnectorId(id)) throw new Error(MEMORY_CONNECTOR_NOT_FOUND);
++	return id;
++}
++
++function parseTimestamp(value: string | null, label: string): string {
++	const trimmed = String(value || "").trim();
++	if (!trimmed || !Number.isFinite(Date.parse(trimmed))) {
++		throw new Error(label + " must be a valid ISO 8601 timestamp.");
++	}
++	return trimmed;
++}
++
++function parseEnumValues(values: string[], allowed: string[], label: string): string[] | undefined {
++	if (!values.length) return undefined;
++	if (values.length > FILTER_VALUES_MAX) throw new Error(MEMORY_INVALID_FILTER);
++	const trimmed = values.map((value) => value.trim());
++	if (trimmed.some((value) => !value || value.length > FILTER_MAX || !allowed.includes(value))) {
++		throw new Error(label + " filter is invalid.");
++	}
++	return trimmed;
++}
++
++function parseFilter(params: URLSearchParams): AutoDevCohortFilter {
++	let hasUnexpectedKey = false;
++	params.forEach((_value, key) => {
++		if (!ALLOWED_QUERY_KEYS.has(key)) hasUnexpectedKey = true;
++	});
++	if (hasUnexpectedKey) throw new Error(MEMORY_INVALID_FILTER);
++	const occurredFrom = parseTimestamp(params.get("occurredFrom"), "occurredFrom");
++	const occurredUntil = parseTimestamp(params.get("occurredUntil"), "occurredUntil");
++	const fromMs = Date.parse(occurredFrom);
++	const untilMs = Date.parse(occurredUntil);
++	if (untilMs < fromMs) throw new Error("occurredUntil must be on or after occurredFrom.");
++	if (untilMs - fromMs > MAX_COHORT_WINDOW_MS) {
++		throw new Error("The occurred window cannot exceed 365 days.");
++	}
++	return {
++		occurredFrom,
++		occurredUntil,
++		memoryModes: parseEnumValues(params.getAll("memoryMode"), MEMORY_MODE_VALUES, "memoryMode"),
++		injectionResults: parseEnumValues(
++			params.getAll("injectionResult"),
++			INJECTION_RESULT_VALUES,
++			"injectionResult"
++		),
++		reportKinds: parseEnumValues(params.getAll("reportKind"), REPORT_KIND_VALUES, "reportKind"),
++		outcomeKinds: parseEnumValues(params.getAll("outcomeKind"), OUTCOME_KIND_VALUES, "outcomeKind"),
++	};
++}
++
++async function resolveAutoDevConnectorId(requested: string | undefined): Promise<string> {
++	const connectors = await listMemoryConnectors();
++	if (requested) {
++		const match = connectors.find((connector) => connector.id === requested);
++		if (!match) throw new Error(MEMORY_CONNECTOR_NOT_FOUND);
++		return match.id;
++	}
++	const autoDevConnector = connectors.find((connector) => connector.type === "autodev");
++	if (!autoDevConnector) throw new Error(MEMORY_CONNECTOR_NOT_FOUND);
++	return autoDevConnector.id;
++}
++
++function statusFor(message: string): number {
++	if (message === MEMORY_CONNECTOR_NOT_FOUND) return 404;
++	return 400;
++}
++
++async function GETHandler(request: NextRequest) {
++	const user = await getCurrentUser();
++	if (!user) return Response.json("Unauthorized", { status: 401 });
++
++	const params = request.nextUrl.searchParams;
++	let connectorId: string | undefined;
++	let filter: AutoDevCohortFilter;
++	try {
++		connectorId = parseConnectorId(params.get("connectorId"));
++		filter = parseFilter(params);
++	} catch (error) {
++		return errorResponse(error, MEMORY_INVALID_FILTER, 400);
++	}
++
++	try {
++		const resolvedConnectorId = await resolveAutoDevConnectorId(connectorId);
++		const runtime = await getMemoryRuntime(resolvedConnectorId);
++		if (!isAutoDevMemoryAdapter(runtime.adapter)) {
++			return errorResponse(
++				MEMORY_COHORTS_UNSUPPORTED_CONNECTOR,
++				MEMORY_COHORTS_UNSUPPORTED_CONNECTOR,
++				400
++			);
++		}
++		const result = await runtime.adapter.readOutcomeCohorts(filter);
++		return Response.json({ connector: runtime.connector, result });
++	} catch (error) {
++		const message = error instanceof Error ? error.message : String(error);
++		return errorResponse(error, MEMORY_COHORTS_LOAD_FAILED, statusFor(message));
++	}
++}
++
++export const GET = withMemoryAccess("read", GETHandler);
+diff --git a/src/client/src/components/(playground)/memory/memory-cohort-view.tsx b/src/client/src/components/(playground)/memory/memory-cohort-view.tsx
+new file mode 100644
+index 00000000..03a66dae
+--- /dev/null
++++ b/src/client/src/components/(playground)/memory/memory-cohort-view.tsx
+@@ -0,0 +1,337 @@
++"use client";
++
++import { useCallback, useEffect, useMemo, useRef, useState } from "react";
++import { RefreshCw } from "lucide-react";
++import { Button } from "@/components/ui/button";
++import {
++	Select,
++	SelectContent,
++	SelectItem,
++	SelectTrigger,
++	SelectValue,
++} from "@/components/ui/select";
++import {
++	Table,
++	TableBody,
++	TableCell,
++	TableHead,
++	TableHeader,
++	TableRow,
++} from "@/components/ui/table";
++import { Skeleton } from "@/components/ui/skeleton";
++import getMessage from "@/constants/messages";
++import { getRequestHeaders } from "@/utils/api";
++
++export interface MemoryCohortCell {
++	memoryMode: string;
++	injectionResult: string;
++	reportKind: string | null;
++	outcomeKind: string | null;
++	exposureCount: number;
++	reportCount: number;
++}
++
++export interface MemoryCohortPage {
++	occurredFrom: string;
++	occurredUntil: string;
++	cells: MemoryCohortCell[];
++	exposureCount: number;
++	reportCount: number;
++}
++
++export interface MemoryCohortResult {
++	status: "available" | "empty" | "unavailable" | "disabled";
++	page: MemoryCohortPage | null;
++}
++
++const MEMORY_MODE_OPTIONS = ["jit", "retrieval-only", "disabled", "invalid", "unknown"];
++const INJECTION_RESULT_OPTIONS = ["injected", "empty", "skipped"];
++const REPORT_KIND_OPTIONS = ["task", "pull_request", "issue", "other"];
++const OUTCOME_KIND_OPTIONS = ["success", "partial", "failure", "cancelled", "unknown"];
++const DEFAULT_WINDOW_DAYS = 30;
++const MAX_COHORT_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
++const ALL_VALUE = "__all__";
++
++function isoDate(date: Date): string {
++	return date.toISOString().slice(0, 10);
++}
++
++function defaultWindow(): { occurredFrom: string; occurredUntil: string } {
++	const until = new Date();
++	const from = new Date(until.getTime() - DEFAULT_WINDOW_DAYS * 24 * 60 * 60 * 1000);
++	return { occurredFrom: isoDate(from), occurredUntil: isoDate(until) };
++}
++
++export default function MemoryCohortView({
++	connectorId,
++	connectorType,
++}: {
++	connectorId: string;
++	connectorType: string;
++}) {
++	const messages = getMessage();
++	const initialWindow = useMemo(defaultWindow, []);
++	const [occurredFrom, setOccurredFrom] = useState(initialWindow.occurredFrom);
++	const [occurredUntil, setOccurredUntil] = useState(initialWindow.occurredUntil);
++	const [memoryMode, setMemoryMode] = useState(ALL_VALUE);
++	const [injectionResult, setInjectionResult] = useState(ALL_VALUE);
++	const [reportKind, setReportKind] = useState(ALL_VALUE);
++	const [outcomeKind, setOutcomeKind] = useState(ALL_VALUE);
++	const [loading, setLoading] = useState(false);
++	const [error, setError] = useState<string | null>(null);
++	const [result, setResult] = useState<MemoryCohortResult | null>(null);
++
++	const requestSequence = useRef(0);
++	const load = useCallback(() => {
++		const requestId = ++requestSequence.current;
++		setResult(null);
++		setError(null);
++		if (connectorType !== "autodev" || !connectorId) {
++			setLoading(false);
++			return;
++		}
++		const fromMs = Date.parse(`${occurredFrom}T00:00:00.000Z`);
++		const untilMs = Date.parse(`${occurredUntil}T23:59:59.999Z`);
++		if (
++			!occurredFrom ||
++			!occurredUntil ||
++			!Number.isFinite(fromMs) ||
++			!Number.isFinite(untilMs) ||
++			untilMs < fromMs ||
++			untilMs - fromMs > MAX_COHORT_WINDOW_MS
++		) {
++			setLoading(false);
++			setError(messages.MEMORY_COHORTS_INVALID_WINDOW);
++			return;
++		}
++		setLoading(true);
++		const params = new URLSearchParams({
++			connectorId,
++			occurredFrom: new Date(fromMs).toISOString(),
++			occurredUntil: new Date(untilMs).toISOString(),
++		});
++		// Explicit group-dimension filters are opt-in. Leaving reportKind and
++		// outcomeKind unselected (the default) deliberately keeps unreported
++		// exposure cells in the response -- they are not errors to be hidden.
++		if (memoryMode !== ALL_VALUE) params.set("memoryMode", memoryMode);
++		if (injectionResult !== ALL_VALUE) params.set("injectionResult", injectionResult);
++		if (reportKind !== ALL_VALUE) params.set("reportKind", reportKind);
++		if (outcomeKind !== ALL_VALUE) params.set("outcomeKind", outcomeKind);
++		fetch("/api/memory/cohorts?" + params.toString(), { headers: getRequestHeaders() })
++			.then(async (response) => {
++				const body = await response.json().catch(() => null);
++				if (!response.ok) {
++					throw new Error(
++						(body && typeof body === "object" && typeof body.err === "string" && body.err) ||
++						messages.MEMORY_COHORTS_LOAD_FAILED
++					);
++				}
++				return body as { result: MemoryCohortResult };
++			})
++			.then((payload) => {
++				if (requestId === requestSequence.current) setResult(payload.result);
++			})
++			.catch((caught: unknown) => {
++				if (requestId === requestSequence.current) {
++					setError(caught instanceof Error ? caught.message : messages.MEMORY_COHORTS_LOAD_FAILED);
++				}
++			})
++			.finally(() => {
++				if (requestId === requestSequence.current) setLoading(false);
++			});
++	}, [
++		connectorId,
++		connectorType,
++		injectionResult,
++		memoryMode,
++		messages.MEMORY_COHORTS_INVALID_WINDOW,
++		messages.MEMORY_COHORTS_LOAD_FAILED,
++		occurredFrom,
++		occurredUntil,
++		outcomeKind,
++		reportKind,
++	]);
++
++	useEffect(() => {
++		load();
++		return () => {
++			requestSequence.current += 1;
++		};
++	}, [load]);
++
++	if (connectorType !== "autodev") return null;
++
++	const page = result?.page ?? null;
++	const cells = page?.cells ?? [];
++
++	return (
++		<div className="flex h-full min-h-0 flex-col gap-3 overflow-auto p-1">
++			<div>
++				<h2 className="text-sm font-semibold text-stone-900 dark:text-stone-100">
++					{messages.MEMORY_COHORTS_TITLE}
++				</h2>
++				<p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
++					{messages.MEMORY_COHORTS_SCOPE_NOTE}
++				</p>
++			</div>
++			<div className="flex flex-wrap items-end gap-2">
++				<label className="flex flex-col gap-1 text-xs text-stone-500 dark:text-stone-400">
++					{messages.MEMORY_COHORTS_FROM_LABEL}
++					<input
++						type="date"
++						value={occurredFrom}
++						max={occurredUntil}
++						onChange={(event) => setOccurredFrom(event.target.value)}
++						className="h-8 rounded-md border border-stone-200 bg-white px-2 text-xs dark:border-stone-800 dark:bg-stone-950"
++					/>
++				</label>
++				<label className="flex flex-col gap-1 text-xs text-stone-500 dark:text-stone-400">
++					{messages.MEMORY_COHORTS_UNTIL_LABEL}
++					<input
++						type="date"
++						value={occurredUntil}
++						min={occurredFrom}
++						onChange={(event) => setOccurredUntil(event.target.value)}
++						className="h-8 rounded-md border border-stone-200 bg-white px-2 text-xs dark:border-stone-800 dark:bg-stone-950"
++					/>
++				</label>
++				<CohortFilterSelect
++					label={messages.MEMORY_COHORTS_MEMORY_MODE}
++					value={memoryMode}
++					options={MEMORY_MODE_OPTIONS}
++					allLabel={messages.MEMORY_COHORTS_ALL_FILTER_VALUE}
++					onChange={setMemoryMode}
++				/>
++				<CohortFilterSelect
++					label={messages.MEMORY_COHORTS_INJECTION_RESULT}
++					value={injectionResult}
++					options={INJECTION_RESULT_OPTIONS}
++					allLabel={messages.MEMORY_COHORTS_ALL_FILTER_VALUE}
++					onChange={setInjectionResult}
++				/>
++				<CohortFilterSelect
++					label={messages.MEMORY_COHORTS_REPORT_KIND}
++					value={reportKind}
++					options={REPORT_KIND_OPTIONS}
++					allLabel={messages.MEMORY_COHORTS_ALL_FILTER_VALUE}
++					onChange={setReportKind}
++				/>
++				<CohortFilterSelect
++					label={messages.MEMORY_COHORTS_OUTCOME_KIND}
++					value={outcomeKind}
++					options={OUTCOME_KIND_OPTIONS}
++					allLabel={messages.MEMORY_COHORTS_ALL_FILTER_VALUE}
++					onChange={setOutcomeKind}
++				/>
++				<Button
++					size="sm"
++					variant="outline"
++					className="h-8 gap-1.5"
++					onClick={load}
++					disabled={loading}
++				>
++					<RefreshCw className={"size-3.5 " + (loading ? "animate-spin" : "")} />
++					{messages.MEMORY_COHORTS_REFRESH}
++				</Button>
++			</div>
++			{loading && !result ? (
++				<div className="space-y-2">
++					<Skeleton className="h-8 w-full rounded-md" />
++					<Skeleton className="h-24 w-full rounded-md" />
++				</div>
++			) : error ? (
++				<p role="status" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900/70 dark:bg-red-950/30 dark:text-red-100">
++					{error}
++				</p>
++			) : result?.status === "disabled" ? (
++				<p role="status" className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-100">
++					{messages.MEMORY_COHORTS_DISABLED}
++				</p>
++			) : result?.status === "unavailable" ? (
++				<p role="status" className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-100">
++					{messages.MEMORY_COHORTS_UNAVAILABLE}
++				</p>
++			) : result?.status === "empty" || cells.length === 0 ? (
++				<p role="status" className="rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-600 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-300">
++					{messages.MEMORY_COHORTS_EMPTY}
++				</p>
++			) : (
++				<div className="space-y-3">
++					<div className="grid grid-cols-2 gap-2 sm:grid-cols-2">
++						<CohortTotalCard
++							label={messages.MEMORY_COHORTS_TOTAL_EXPOSURES}
++							value={page?.exposureCount ?? 0}
++						/>
++						<CohortTotalCard
++							label={messages.MEMORY_COHORTS_TOTAL_REPORTS}
++							value={page?.reportCount ?? 0}
++						/>
++					</div>
++					<Table>
++						<TableHeader>
++							<TableRow>
++								<TableHead>{messages.MEMORY_COHORTS_MEMORY_MODE}</TableHead>
++								<TableHead>{messages.MEMORY_COHORTS_INJECTION_RESULT}</TableHead>
++								<TableHead>{messages.MEMORY_COHORTS_REPORT_KIND}</TableHead>
++								<TableHead>{messages.MEMORY_COHORTS_OUTCOME_KIND}</TableHead>
++								<TableHead className="text-right">{messages.MEMORY_COHORTS_EXPOSURE_COUNT}</TableHead>
++								<TableHead className="text-right">{messages.MEMORY_COHORTS_REPORT_COUNT}</TableHead>
++							</TableRow>
++						</TableHeader>
++						<TableBody>
++							{cells.map((cell, index) => (
++								<TableRow key={index}>
++									<TableCell>{cell.memoryMode}</TableCell>
++									<TableCell>{cell.injectionResult}</TableCell>
++									<TableCell>{cell.reportKind ?? messages.MEMORY_COHORTS_UNREPORTED}</TableCell>
++									<TableCell>{cell.outcomeKind ?? messages.MEMORY_COHORTS_UNREPORTED}</TableCell>
++									<TableCell className="text-right tabular-nums">{cell.exposureCount}</TableCell>
++									<TableCell className="text-right tabular-nums">{cell.reportCount}</TableCell>
++								</TableRow>
++							))}
++						</TableBody>
++					</Table>
++				</div>
++			)}
++		</div>
++	);
++}
++
++function CohortFilterSelect({
++	label,
++	value,
++	options,
++	allLabel,
++	onChange,
++}: {
++	label: string;
++	value: string;
++	options: string[];
++	allLabel: string;
++	onChange: (value: string) => void;
++}) {
++	return (
++		<Select value={value} onValueChange={onChange}>
++			<SelectTrigger className="h-8 w-[160px]" aria-label={label}>
++				<SelectValue placeholder={label} />
++			</SelectTrigger>
++			<SelectContent>
++				<SelectItem value={ALL_VALUE}>{allLabel}</SelectItem>
++				{options.map((option) => (
++					<SelectItem key={option} value={option}>
++						{option}
++					</SelectItem>
++				))}
++			</SelectContent>
++		</Select>
++	);
++}
++
++function CohortTotalCard({ label, value }: { label: string; value: number }) {
++	return (
++		<div className="rounded-md border border-stone-200 bg-white px-3 py-2 dark:border-stone-800 dark:bg-stone-950">
++			<p className="text-[11px] uppercase tracking-wide text-stone-500 dark:text-stone-400">{label}</p>
++			<p className="mt-1 text-lg font-semibold tabular-nums text-stone-950 dark:text-stone-50">{value}</p>
++		</div>
++	);
++}
+diff --git a/src/client/src/components/(playground)/memory/memory-page.tsx b/src/client/src/components/(playground)/memory/memory-page.tsx
+index 05dc399c..7adef977 100644
+--- a/src/client/src/components/(playground)/memory/memory-page.tsx
++++ b/src/client/src/components/(playground)/memory/memory-page.tsx
+@@ -47,6 +47,7 @@ import { getRequestHeaders } from "@/utils/api";
+ import MemoryGraph from "./memory-graph";
+ import MemoryList from "./memory-list";
+ import MemoryDetailSheet from "./memory-detail-sheet";
++import MemoryCohortView from "./memory-cohort-view";
+ import MemoryWriteDialog from "./memory-write-dialog";
+ import MemoryCopyDialog from "./memory-copy-dialog";
+ import MemoryFilterCombobox, {
+@@ -636,6 +637,11 @@ export default function MemoryPage() {
+ 												<TabsTrigger value="list" className="shrink-0 px-3 py-1 text-xs">
+ 													{messages.MEMORY_LIST_TITLE}
+ 												</TabsTrigger>
++												{result?.connector?.type === "autodev" ? (
++													<TabsTrigger value="cohorts" className="shrink-0 px-3 py-1 text-xs">
++														{messages.MEMORY_COHORTS_TAB_TITLE}
++													</TabsTrigger>
++												) : null}
+ 											</TabsList>
+ 											<TabsContent
+ 												value="graph"
+@@ -692,6 +698,18 @@ export default function MemoryPage() {
+ 													</div>
+ 												)}
+ 											</TabsContent>
++											{result?.connector?.type === "autodev" ? (
++												<TabsContent
++													value="cohorts"
++
++													className="mt-2 min-h-0 flex-1 overflow-hidden data-[state=inactive]:hidden data-[state=active]:flex data-[state=active]:flex-col"
++												>
++													<MemoryCohortView
++														connectorId={connectorId}
++														connectorType={result?.connector?.type || ""}
++													/>
++												</TabsContent>
++											) : null}
+ 										</Tabs>
+ 									</>
+ 								) : null}
+diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
+index 7cdd7e89..c512bfc8 100644
+--- a/src/client/src/constants/messages/en.ts
++++ b/src/client/src/constants/messages/en.ts
+@@ -2637,6 +2637,35 @@ export const MEMORY_DETAIL_OUTCOME_REPORTED = "Reported at";
+ export const MEMORY_DETAIL_OUTCOME_UNREPORTED = "Unreported";
+ export const MEMORY_DETAIL_OUTCOME_UNKNOWN = "Unknown (reported)";
+ export const MEMORY_DETAIL_OUTCOME_EVIDENCE = "Outcome evidence";
++export const MEMORY_COHORTS_TAB_TITLE = "Outcome cohorts";
++export const MEMORY_COHORTS_TITLE = "Aggregate exposure and outcome cohorts";
++export const MEMORY_COHORTS_SCOPE_NOTE =
++	"Counts of injection exposures and reporter-supplied outcomes, grouped by memory mode, injection result, report kind, and outcome kind. Outcomes are reporter-supplied, reportCount is always less than or equal to exposureCount, and these counts are not a task success rate, a model-use metric, PR verification, or a measure of memory's causal effect on any outcome.";
++export const MEMORY_COHORTS_DISABLED =
++	"Unavailable: this connector needs a configured workspace, repository, and task-history/operator access to read outcome cohorts.";
++export const MEMORY_COHORTS_UNAVAILABLE = "Unavailable: aggregate outcome cohorts could not be loaded.";
++export const MEMORY_COHORTS_EMPTY =
++	"No injection events were recorded for the selected window and filters.";
++export const MEMORY_COHORTS_LOAD_FAILED = "Failed to load outcome cohorts.";
++export const MEMORY_COHORTS_UNSUPPORTED_CONNECTOR =
++	"Outcome cohorts are only available for the AutoDev Memory connector.";
++export const MEMORY_COHORTS_WINDOW_LABEL = "Occurred window";
++export const MEMORY_COHORTS_FROM_LABEL = "From";
++export const MEMORY_COHORTS_UNTIL_LABEL = "Until";
++export const MEMORY_COHORTS_WINDOW_TOO_LONG = "The occurred window cannot exceed 365 days.";
++export const MEMORY_COHORTS_INVALID_WINDOW = "Select valid start and end dates with a window no longer than 365 days.";
++export const MEMORY_COHORTS_MEMORY_MODE = "Memory mode";
++export const MEMORY_COHORTS_INJECTION_RESULT = "Injection result";
++export const MEMORY_COHORTS_REPORT_KIND = "Report kind";
++export const MEMORY_COHORTS_OUTCOME_KIND = "Outcome kind";
++export const MEMORY_COHORTS_UNREPORTED = "Unreported";
++export const MEMORY_COHORTS_EXPOSURE_COUNT = "Exposure count";
++export const MEMORY_COHORTS_REPORT_COUNT = "Report count";
++export const MEMORY_COHORTS_TOTAL_EXPOSURES = "Total exposures";
++export const MEMORY_COHORTS_TOTAL_REPORTS = "Total reports";
++export const MEMORY_COHORTS_REFRESH = "Refresh";
++export const MEMORY_COHORTS_ALL_FILTER_VALUE = "All";
++
+ export const MEMORY_DETAIL_INPUT_EMPTY = "No source messages for this memory.";
+ export const MEMORY_DETAIL_CHANGELOG_EMPTY = "No changelog for this memory.";
+ export const MEMORY_DETAIL_EVENT_ADDED = "Added";
+diff --git a/src/client/src/lib/platform/connectors/memory/README.md b/src/client/src/lib/platform/connectors/memory/README.md
+index 73e62783..f0982a83 100644
+--- a/src/client/src/lib/platform/connectors/memory/README.md
++++ b/src/client/src/lib/platform/connectors/memory/README.md
+@@ -81,3 +81,22 @@ reporter-supplied outcome/evidence; absent reports and unavailable history are
+ explicit. An `injected` decision does not establish model use, provider success,
+ or task/PR success, and the opaque join token is not exposed in prompts, traces,
+ or the detail metadata.
++
++The Memory page's "Outcome cohorts" tab (shown only for this connector type)
++reads a bounded aggregate over the same canonical event tables through
++`GET memory/cohorts`. Unlike the per-experience outcomes route, the cohort
++read is scoped to (workspace, repository, occurred-time window) only -- it
++never accepts a role/task/run/agent scope -- and requires the connector's
++workspace, repository, and task-history/operator configuration to all be
++set; any one missing surfaces an explicit "disabled" state rather than a
++silent empty table. The occurred window is required and bounded to 365
++days by the adapter, the API route, and the Control API itself. Cells are
++grouped by `(memoryMode, injectionResult, reportKind, outcomeKind)` and
++carry only `exposureCount`/`reportCount` integers; a null
++`reportKind`/`outcomeKind` marks an unreported exposure and stays visible
++by default (leaving the report-kind/outcome-kind filters unset does not
++hide it). The view labels these as exposure and report counts grouped by
++dimension only -- never as a task success rate, model-use metric, PR
++verification, or a causal measure of memory's effect, and the UI states
++outcomes are reporter-supplied and that `reportCount` is always less than
++or equal to `exposureCount`.
+diff --git a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
+index 8129ad7f..91f03232 100644
+--- a/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
++++ b/src/client/src/lib/platform/connectors/memory/autodev/adapter.ts
+@@ -93,6 +93,56 @@ interface AutoDevInjectionOutcomePage {
+ 	items?: unknown;
+ }
+ 
++/**
++ * One grouped cell of the bounded (workspaceId, repositoryId, time) cohort
++ * aggregate: counts only, grouped by the fixed tuple (memoryMode,
++ * injectionResult, reportKind, outcomeKind). A null reportKind/outcomeKind
++ * means the cell is an unreported exposure -- injection events that have not
++ * (yet) received a reporter-supplied outcome. These cells are not errors and
++ * must stay visible; they are the majority case for any workspace that does
++ * not require reporting.
++ */
++interface AutoDevCohortCell {
++	memoryMode: string;
++	injectionResult: string;
++	reportKind: string | null;
++	outcomeKind: string | null;
++	exposureCount: number;
++	reportCount: number;
++}
++
++interface AutoDevCohortPage {
++	schema: "autodev-memory-injection-outcome-cohorts-v1";
++	workspaceId: string;
++	repositoryId: string;
++	occurredFrom: string;
++	occurredUntil: string;
++	cells: AutoDevCohortCell[];
++	exposureCount: number;
++	reportCount: number;
++}
++
++export interface AutoDevCohortFilter {
++	occurredFrom: string;
++	occurredUntil: string;
++	memoryModes?: readonly string[];
++	injectionResults?: readonly string[];
++	reportKinds?: readonly string[];
++	outcomeKinds?: readonly string[];
++}
++
++/**
++ * Discriminated result for the cohort read. "disabled" covers connectors
++ * that have not opted into task-history/operator access; "unavailable"
++ * covers a reachable-but-failed or malformed Control API response;
++ * "available"/"empty" distinguish a successful read that did or did not
++ * find matching injection events.
++ */
++export interface AutoDevCohortResult {
++	status: "available" | "empty" | "unavailable" | "disabled";
++	page: AutoDevCohortPage | null;
++}
++
+ interface AutoDevMemoryWhy {
+ 	events?: unknown[];
+ 	relatedMemories?: unknown[];
+@@ -111,6 +161,12 @@ const READ_ONLY_CAPABILITIES: MemoryCapabilities = {
+ const MAX_PAGE_SIZE = 100;
+ const MEMORY_MODES = new Set(["jit", "retrieval-only", "disabled", "invalid", "unknown"]);
+ const EXPERIENCE_OUTCOMES = new Set(["success", "partial", "failure", "cancelled", "unknown"]);
++const INJECTION_RESULTS = new Set(["injected", "empty", "skipped"]);
++const REPORT_KINDS = new Set(["task", "pull_request", "issue", "other"]);
++// Mirrors MEMORY_OUTCOME_COHORT_MAX_WINDOW_MS in @simulatorlife/autodev-core. The
++// Control API re-validates this bound server-side; the client bound exists so
++// an operator gets an immediate, specific error instead of a generic 400.
++const MAX_COHORT_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
+ const INVALIDATE_ACTION: MemoryActionDescriptor = {
+ 	id: "invalidate",
+ 	label: "Invalidate memory",
+@@ -301,6 +357,85 @@ function autoDevInjectionOutcome(value: unknown): AutoDevInjectionOutcomeItem |
+ 	};
+ }
+ 
++function autoDevCohortCell(value: unknown): AutoDevCohortCell | null {
++	if (!isObject(value)) return null;
++	const unreported = value.reportKind === null && value.outcomeKind === null;
++	const reported =
++		typeof value.reportKind === "string" &&
++		REPORT_KINDS.has(value.reportKind) &&
++		typeof value.outcomeKind === "string" &&
++		EXPERIENCE_OUTCOMES.has(value.outcomeKind);
++	if (
++		typeof value.memoryMode !== "string" ||
++		!MEMORY_MODES.has(value.memoryMode) ||
++		typeof value.injectionResult !== "string" ||
++		!INJECTION_RESULTS.has(value.injectionResult) ||
++		(!unreported && !reported) ||
++		!Number.isSafeInteger(value.exposureCount) ||
++		(value.exposureCount as number) < 0 ||
++		!Number.isSafeInteger(value.reportCount) ||
++		(value.reportCount as number) < 0 ||
++		(value.reportCount as number) > (value.exposureCount as number) ||
++		(unreported && value.reportCount !== 0) ||
++		(reported && value.reportCount === 0)
++	) {
++		return null;
++	}
++	return {
++		memoryMode: value.memoryMode,
++		injectionResult: value.injectionResult,
++		reportKind: value.reportKind as string | null,
++		outcomeKind: value.outcomeKind as string | null,
++		exposureCount: value.exposureCount as number,
++		reportCount: value.reportCount as number
++	};
++}
++
++function autoDevCohortPage(
++	value: unknown,
++	workspaceId: string,
++	repositoryId: string,
++	filter: AutoDevCohortFilter
++): AutoDevCohortPage | null {
++	if (
++		!isObject(value) ||
++		value.schema !== "autodev-memory-injection-outcome-cohorts-v1" ||
++		value.workspaceId !== workspaceId ||
++		value.repositoryId !== repositoryId ||
++		value.occurredFrom !== filter.occurredFrom ||
++		value.occurredUntil !== filter.occurredUntil ||
++		!Array.isArray(value.cells) ||
++		!Number.isSafeInteger(value.exposureCount) ||
++		(value.exposureCount as number) < 0 ||
++		!Number.isSafeInteger(value.reportCount) ||
++		(value.reportCount as number) < 0 ||
++		(value.reportCount as number) > (value.exposureCount as number)
++	) {
++		return null;
++	}
++	const cells = value.cells.map(autoDevCohortCell);
++	if (cells.some((cell) => cell === null)) return null;
++	const validCells = cells as AutoDevCohortCell[];
++	const exposureCount = validCells.reduce((sum, cell) => sum + cell.exposureCount, 0);
++	const reportCount = validCells.reduce((sum, cell) => sum + cell.reportCount, 0);
++	if (
++		!Number.isSafeInteger(exposureCount) ||
++		!Number.isSafeInteger(reportCount) ||
++		exposureCount !== value.exposureCount ||
++		reportCount !== value.reportCount
++	) return null;
++	return {
++		schema: "autodev-memory-injection-outcome-cohorts-v1",
++		workspaceId,
++		repositoryId,
++		occurredFrom: value.occurredFrom as string,
++		occurredUntil: value.occurredUntil as string,
++		cells: validCells,
++		exposureCount: value.exposureCount as number,
++		reportCount: value.reportCount as number
++	};
++}
++
+ function autoDevHistoryEvent(value: unknown): MemoryHistoryEvent | null {
+ 	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+ 	const event = value as Record<string, unknown>;
+@@ -605,6 +740,66 @@ export class AutoDevMemoryAdapter extends BaseMemoryAdapter {
+ 		}
+ 	}
+ 
++	/**
++	 * Bounded aggregate cohort read for the Memory page's cohort view. Scoped
++	 * to this connector's configured workspace+repository; requires explicit
++	 * task-history/operator configuration (the same `includeTaskHistory`
++	 * setting gating experience history) because the cohort read requires
++	 * operator access and reads across the whole repository rather than one
++	 * task/run/agent scope. The window is bounded client-side (defense in
++	 * depth) in addition to the Control API's own 365-day bound.
++	 */
++	async readOutcomeCohorts(filter: AutoDevCohortFilter): Promise<AutoDevCohortResult> {
++		if (!this.includeTaskHistory) return { status: "disabled", page: null };
++		if (!this.workspaceId || !this.repositoryId) return { status: "disabled", page: null };
++		const fromMs = Date.parse(filter.occurredFrom);
++		const untilMs = Date.parse(filter.occurredUntil);
++		if (
++			!Number.isFinite(fromMs) ||
++			!Number.isFinite(untilMs) ||
++			untilMs < fromMs ||
++			untilMs - fromMs > MAX_COHORT_WINDOW_MS
++		) {
++			throw new Error("AutoDev cohort window must be a valid range of at most 365 days.");
++		}
++		if (filter.memoryModes?.some((mode) => !MEMORY_MODES.has(mode)))
++			throw new Error("AutoDev cohort memory-mode filter is invalid.");
++		if (filter.injectionResults?.some((result) => !INJECTION_RESULTS.has(result)))
++			throw new Error("AutoDev cohort injection-result filter is invalid.");
++		if (filter.reportKinds?.some((kind) => !REPORT_KINDS.has(kind)))
++			throw new Error("AutoDev cohort report-kind filter is invalid.");
++		if (filter.outcomeKinds?.some((kind) => !EXPERIENCE_OUTCOMES.has(kind)))
++			throw new Error("AutoDev cohort outcome-kind filter is invalid.");
++
++		// Built independently of scopeParams(): cohort reads never accept a
++		// role/task/run/agent scope, even if this connector instance is
++		// otherwise configured with one.
++		const params = new URLSearchParams({
++			workspaceId: this.workspaceId,
++			repositoryId: this.repositoryId,
++			includeTaskHistory: "true",
++			occurredFrom: filter.occurredFrom,
++			occurredUntil: filter.occurredUntil
++		});
++		for (const mode of filter.memoryModes ?? []) params.append("memoryMode", mode);
++		for (const result of filter.injectionResults ?? []) params.append("injectionResult", result);
++		for (const kind of filter.reportKinds ?? []) params.append("reportKind", kind);
++		for (const kind of filter.outcomeKinds ?? []) params.append("outcomeKind", kind);
++
++		try {
++			const result = await forwardToControlApi<unknown>({
++				method: "GET",
++				path: `memory/cohorts?${params.toString()}`
++			});
++			if (!result.ok) return { status: "unavailable", page: null };
++			const page = autoDevCohortPage(result.body, this.workspaceId, this.repositoryId, filter);
++			if (!page) return { status: "unavailable", page: null };
++			return { status: page.cells.length ? "available" : "empty", page };
++		} catch {
++			return { status: "unavailable", page: null };
++		}
++	}
++
+ 	private async readRecords(options: {
+ 		query?: string;
+ 		limit: number;
+@@ -653,6 +848,17 @@ export class AutoDevMemoryAdapter extends BaseMemoryAdapter {
+ 	}
+ }
+ 
++/**
++ * Narrows a generic MemoryAdapter to AutoDevMemoryAdapter so the cohort
++ * API route can call readOutcomeCohorts without widening the shared
++ * MemoryAdapter interface for every connector type.
++ */
++export function isAutoDevMemoryAdapter(
++	adapter: unknown
++): adapter is AutoDevMemoryAdapter {
++	return adapter instanceof AutoDevMemoryAdapter;
++}
++
+ export const autoDevMemoryAdapterFactory = {
+ 	type: "autodev",
+ 	create: (descriptor: MemorySourceDescriptor) =>

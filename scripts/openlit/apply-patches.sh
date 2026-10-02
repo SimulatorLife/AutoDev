@@ -53,18 +53,15 @@ if [[ ${#PATCH_FILES[@]} -eq 0 ]]; then
 	exit 1
 fi
 
-echo "==> Checking ${#PATCH_FILES[@]} patches against $PINNED_COMMIT"
+echo "==> Applying ${#PATCH_FILES[@]} patches in order against $PINNED_COMMIT"
 for patch in "${PATCH_FILES[@]}"; do
 	echo "    - $(basename "$patch")"
 	if ! git apply --check "$patch"; then
 		echo "apply-patches.sh: $patch failed git apply --check" >&2
 		exit 3
 	fi
-done
-for patch in "${PATCH_FILES[@]}"; do
 	git apply "$patch"
 done
-
 echo "==> Patch set applied to fresh pinned worktree $WORK_DIR"
 git status --short | head -30
 popd >/dev/null

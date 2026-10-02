@@ -33,6 +33,7 @@ import type {
   ControlApiRoutingResponse,
   ControlApiRuntimeResponse,
   ControlApiSkillsResponse,
+  ControlApiToolsResponse,
   ControlApiWorkspacesResponse
 } from "./types.ts";
 
@@ -136,6 +137,7 @@ export const CONTROL_API_PATHS = {
   providers: "/control/providers",
   models: "/control/models",
   mcps: "/control/mcps",
+  tools: "/control/tools",
   skills: "/control/skills",
   hooks: "/control/hooks",
   permissions: "/control/permissions",
@@ -199,6 +201,17 @@ export function fetchMcps(
 ): Promise<ControlApiResult<ControlApiMcpsResponse>> {
   return fetchControlApi<ControlApiMcpsResponse>(
     CONTROL_API_PATHS.mcps,
+    config,
+    options
+  );
+}
+
+export function fetchTools(
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiToolsResponse>> {
+  return fetchControlApi<ControlApiToolsResponse>(
+    CONTROL_API_PATHS.tools,
     config,
     options
   );

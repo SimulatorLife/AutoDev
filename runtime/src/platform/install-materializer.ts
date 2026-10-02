@@ -1,4 +1,3 @@
-import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
@@ -26,6 +25,16 @@ import {
   serializeToml,
   type TomlTable
 } from "@simulatorlife/autodev-runtime/config";
+import {
+  writeErrorLine,
+  writeLine
+} from "@simulatorlife/autodev-runtime/shared/output";
+import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+
+import {
+  updateAntigravityPermissions,
+  updateAntigravitySkills
+} from "./antigravity-settings.ts";
 import { resolveServiceNode } from "./host-arch.ts";
 import { renderLaunchAgent } from "./macos/launchagent.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
@@ -36,15 +45,6 @@ import {
   runtimeTarget
 } from "./runtime-files.ts";
 import { removeStalePaths } from "./runtime-reconciliation.ts";
-import {
-  writeErrorLine,
-  writeLine
-} from "@simulatorlife/autodev-runtime/shared/output";
-
-import {
-  updateAntigravityPermissions,
-  updateAntigravitySkills
-} from "./antigravity-settings.ts";
 
 export const RUNTIME_MODULES = [
   "runtime/src/router/telemetry.ts",
@@ -97,8 +97,6 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/runtime-files.ts",
   "runtime/src/platform/runtime-reconciliation.ts",
   "runtime/src/platform/service-restart.ts",
-  "runtime/src/platform/otel-collector.ts",
-  "runtime/src/platform/otel-provision.ts",
   "runtime/src/platform/install-state.ts",
   "runtime/src/platform/dependencies.ts",
   "runtime/src/platform/install-materializer.ts",
@@ -195,11 +193,6 @@ export const OBSOLETE_CLAUDE_SKILL_VIEWS = path.join(
   "provider-runtime",
   "claude"
 );
-export const OTEL_RUNTIME = [
-  "scripts/otel/provision-autodev-otel-collector.sh",
-  "scripts/otel/ensure-autodev-otel-collector.sh",
-  "scripts/otel/run-autodev-otel-collector.sh"
-] as const;
 export const HOOKS = [
   "enforce-root-delegation.sh",
   "ensure-codex-antigravity-proxy.sh",
@@ -335,6 +328,11 @@ export const LAUNCH_LABELS = [
 export const OBSOLETE_LAUNCH = [
   "com.codex.antigravity-litellm",
   "com.codex.otel-collector"
+] as const;
+const OBSOLETE_COLLECTOR_HOOKS = [
+  "otel/ensure-autodev-otel-collector.sh",
+  "otel/provision-autodev-otel-collector.sh",
+  "otel/run-autodev-otel-collector.sh"
 ] as const;
 export const OBSOLETE_PATHS = [
   ".config/litellm/antigravity.yaml",
@@ -856,12 +854,16 @@ function removeObsoleteRuntimeArtifacts(
 ): void {
   const obsoletePaths = [
     ...OBSOLETE_PATHS.map((filePath) => path.join(home, filePath)),
+    ...OBSOLETE_LAUNCH.map((label) =>
+      path.join(home, "Library", "LaunchAgents", `${label}.plist`)
+    ),
     path.join(hooks, OBSOLETE_DASHBOARD),
     path.join(codexHome, "src", "router", "dashboard.html"),
     path.join(codexHome, "src", "router", "lookback-aggregator.ts"),
     path.join(hooks, "codex/lib/codex-spawn-tools.mjs"),
     path.join(hooks, "codex/lib/codex-state-collector.mjs"),
-    path.join(hooks, "codex/lib/spawn-shim-mcp.mjs")
+    path.join(hooks, "codex/lib/spawn-shim-mcp.mjs"),
+    path.join(codexHome, "run", "autodev-otel-collector.pid")
   ];
   removeStalePaths(obsoletePaths, "obsolete-runtime-path");
   removeStalePaths(
@@ -870,6 +872,10 @@ function removeObsoleteRuntimeArtifacts(
   );
   removeStalePaths(
     OBSOLETE_HOOKS.map((name) => path.join(hooks, name)),
+    "obsolete-runtime-hook"
+  );
+  removeStalePaths(
+    OBSOLETE_COLLECTOR_HOOKS.map((name) => path.join(hooks, name)),
     "obsolete-runtime-hook"
   );
   removeStalePaths(
@@ -892,8 +898,6 @@ function materializeRuntimeSources(
 ): void {
   for (const filePath of RUNTIME_MODULES)
     materializeRuntimeFile(source(filePath), target(filePath), 0o644);
-  for (const filePath of OTEL_RUNTIME)
-    materializeRuntimeFile(source(filePath), target(filePath), 0o755);
   for (const role of PROMPT_ROLES)
     materializeRuntimeFile(
       source(`agents/prompts/roles/${role}.md`),

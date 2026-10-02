@@ -514,6 +514,7 @@ export interface LogicalRequestSpanOptions {
   workspace: { key: string; cwd?: string | null } | null;
   subject: string;
   requestedModel: string | null;
+  memoryMode?: "jit" | "retrieval-only" | "disabled" | "invalid";
 }
 
 export function startLogicalRequestSpan(
@@ -530,6 +531,8 @@ export function startLogicalRequestSpan(
   if (role) attributes["autodev.agent.role"] = role;
   const model = safeModelName(options.requestedModel);
   if (model) attributes["autodev.requested_model"] = model;
+  if (options.memoryMode)
+    attributes["autodev.memory.mode"] = options.memoryMode;
   const span = state.tracer.startSpan("autodev.routed_request", {
     kind: SpanKind.INTERNAL,
     attributes

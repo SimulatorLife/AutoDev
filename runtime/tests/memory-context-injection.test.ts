@@ -205,7 +205,26 @@ test("injectMemoryContext performs JIT research and attaches the advisory packet
     }),
     getMemoryHistory: async () => null,
     transitionMemories: async (_changes: readonly MemoryVersionedUpdate[]) =>
-      true
+      true,
+    recordInjectionEvent: async () => ({ appended: false, id: "" }),
+    recordOutcomeReport: async () => ({ appended: false, id: "" }),
+    findInjectionEventByTokenForSession: async () => null,
+    listInjectionOutcomeJoins: async () => ({
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0
+    }),
+    aggregateInjectionOutcomeCohorts: async (request) => ({
+      schema: "autodev-memory-injection-outcome-cohorts-v1",
+      workspaceId: request.context.workspaceId,
+      repositoryId: request.context.repositoryId!,
+      occurredFrom: request.occurredFrom,
+      occurredUntil: request.occurredUntil,
+      cells: [],
+      exposureCount: 0,
+      reportCount: 0
+    })
   };
   let validationCalls = 0;
   let reconstructionCalls = 0;

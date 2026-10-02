@@ -1632,7 +1632,9 @@ function buildReadOnlyInvocationSettings({
   existingAllow,
   existingDeny,
   mcpGrants,
-  cwd
+  cwd,
+  originalHome,
+  codexHome
 }: {
   userSettings: JsonRecord;
   userPermissions: JsonRecord;
@@ -1640,16 +1642,28 @@ function buildReadOnlyInvocationSettings({
   existingDeny: unknown[];
   mcpGrants: string[];
   cwd: string | undefined;
+  originalHome?: string | undefined;
+  codexHome?: string | undefined;
 }): JsonRecord {
   if (!cwd || !isAbsolute(cwd))
     throw new Error(
       "Antigravity read-only invocation requires a validated absolute workspace"
     );
 
+  const home = originalHome ?? process.env.HOME ?? homedir();
+  const resolvedCodexHome =
+    codexHome ?? process.env.CODEX_HOME ?? join(home, ".codex");
+
   const workspaceRoot = resolvePath(cwd);
   const workspaceReadGrants = [
     `read_file(${workspaceRoot})`,
     `read_file(${workspaceRoot}/**)`
+  ];
+  const sharedReadGrants = [
+    `read_file(${join(home, ".agents")})`,
+    `read_file(${join(home, ".agents")}/**)`,
+    `read_file(${resolvedCodexHome})`,
+    `read_file(${join(resolvedCodexHome, "**")})`
   ];
   const urlReadGrants = existingAllow.filter(
     (entry): entry is string =>
@@ -1662,7 +1676,12 @@ function buildReadOnlyInvocationSettings({
     permissions: {
       ...userPermissions,
       allow: Array.from(
-        new Set([...urlReadGrants, ...workspaceReadGrants, ...mcpGrants])
+        new Set([
+          ...urlReadGrants,
+          ...workspaceReadGrants,
+          ...sharedReadGrants,
+          ...mcpGrants
+        ])
       ),
       deny: existingDeny
     }
@@ -1672,7 +1691,7 @@ function buildReadOnlyInvocationSettings({
 /**
  * Builds invocation-scoped settings with MCP permissions limited to the role
  * contract. Write-capable roles retain user non-MCP permissions; read-only
- * roles receive only workspace-scoped file reads plus user-configured URL reads.
+ * roles receive workspace-scoped and shared agent/codex file reads plus user-configured URL reads.
  */
 function buildInvocationSettings(
   agentRole: string | null,
@@ -1750,7 +1769,9 @@ function buildInvocationSettings(
       existingAllow,
       existingDeny,
       mcpGrants,
-      cwd: options?.cwd
+      cwd: options?.cwd,
+      originalHome: options?.originalHome ?? originalHome,
+      codexHome: options?.codexHome
     });
 
   return {

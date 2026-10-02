@@ -1,34 +1,54 @@
 import { createHash } from "node:crypto";
 
-import type {
-  ExperienceEnvelope,
-  ExperienceListRequest,
-  ExperienceSearchRequest,
-  MemoryExperiencePurgeRequest,
-  MemoryExperiencePurgeResult,
-  MemoryExpiredExperienceRequest,
-  MemoryHistory,
-  MemoryLifecycleEvent,
-  MemoryListRequest,
-  MemoryPage,
-  MemoryReadContext,
-  MemoryRecord,
-  MemoryRepository,
-  MemorySearchHit,
-  MemorySearchRequest,
-  MemoryVersionedUpdate
+import {
+  assertMemoryInjectionOutcomeCohortFilter,
+  type ExperienceEnvelope,
+  type ExperienceListRequest,
+  type ExperienceOutcome,
+  type ExperienceSearchRequest,
+  type MemoryExecutionMode,
+  type MemoryExperiencePurgeRequest,
+  type MemoryExperiencePurgeResult,
+  type MemoryExpiredExperienceRequest,
+  type MemoryHistory,
+  type MemoryInjectionEvent,
+  type MemoryInjectionEventSessionLookup,
+  type MemoryInjectionOutcomeCohortCell,
+  type MemoryInjectionOutcomeCohortFilter,
+  type MemoryInjectionOutcomeCohortPage,
+  type MemoryInjectionOutcomeJoin,
+  type MemoryInjectionOutcomeJoinPage,
+  type MemoryInjectionOutcomeJoinRequest,
+  type MemoryInjectionResult,
+  type MemoryLifecycleEvent,
+  type MemoryListRequest,
+  type MemoryOutcomeReport,
+  type MemoryOutcomeReportKind,
+  type MemoryPage,
+  type MemoryReadContext,
+  type MemoryRecord,
+  type MemoryRecordInjectionEventInput,
+  type MemoryRecordOutcomeReportInput,
+  type MemoryRepository,
+  type MemoryScope,
+  type MemorySearchHit,
+  type MemorySearchRequest,
+  type MemoryVersionedUpdate
 } from "@simulatorlife/autodev-core";
 
 import {
   MemoryConflictError,
+  MemoryHydrationError,
   MemoryLifecycleError,
   MemoryProvenanceError,
   MemoryVectorError
 } from "./errors.ts";
 import {
   hydrateExperienceRow,
+  hydrateInjectionEventRow,
   hydrateLifecycleEventRow,
-  hydrateMemoryRecordRow
+  hydrateMemoryRecordRow,
+  hydrateOutcomeReportRow
 } from "./hydration.ts";
 import {
   type MemoryConnectionPool,
@@ -53,8 +73,10 @@ import {
 import {
   buildInsert,
   experienceToRow,
+  injectionEventToRow,
   lifecycleEventToRow,
-  memoryRecordToRow
+  memoryRecordToRow,
+  outcomeReportToRow
 } from "./serialize.ts";
 
 export interface PostgresVectorSupport extends VectorRankingWeights {
@@ -83,6 +105,23 @@ function isUniqueViolation(error: unknown): boolean {
   );
 }
 
+/**
+ * Parses a `COUNT(...)::bigint` aggregate as a non-negative safe integer,
+ * failing closed on malformed driver output instead of silently coercing
+ * it (the pg driver returns bigint columns as strings).
+ */
+function parseCohortCount(value: unknown, column: string): number {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new MemoryHydrationError(
+      "memory_injection_events",
+      column,
+      `expected a non-negative safe integer, got ${String(value)}`
+    );
+  }
+  return parsed;
+}
+
 /** Rejects missing, empty, non-finite, or dimension-mismatched vectors instead of silently coercing them. */
 function validateEmbedding(
   embedding: readonly number[],
@@ -106,6 +145,23 @@ function validateEmbedding(
       `embedding has ${embedding.length} dimensions, expected ${expectedDimensions}`
     );
   }
+}
+
+function buildSessionScopeFilter(
+  alias: string,
+  context: MemoryInjectionEventSessionLookup,
+  params: SqlParams
+): string {
+  const workspaceId = params.add(context.workspaceId);
+  const taskId = params.add(context.taskId);
+  // The runtime path always supplies repositoryId, so an exact equality
+  // check is sufficient and avoids the `=` operator. If
+  // repositoryId is omitted, we deliberately skip the check (cross-repository
+  // queries at the session level are not a documented capability).
+  const repositoryClause = context.repositoryId
+    ? ` AND ${alias}.repository_id = ${params.add(context.repositoryId)}`
+    : "";
+  return `(${alias}.scope_workspace_id = ${workspaceId}${repositoryClause} AND ${alias}.scope_task_id = ${taskId})`;
 }
 
 /**
@@ -577,4 +633,498 @@ export class PostgresMemoryRepository implements MemoryRepository {
       throw error;
     }
   }
+
+  async recordInjectionEvent(
+    input: MemoryRecordInjectionEventInput
+  ): Promise<{ readonly appended: boolean; readonly id: string }> {
+    const { event } = input;
+    // Session-level write-scope authorization: only workspace, repository,
+    // and task identity are checked against the trusted context.
+    // `runId`/`agentId` are the event's own request-level identity
+    // (requestId/threadId) and are intentionally NOT required to equal the
+    // caller context's runId/agentId, mirroring the session-level join used
+    // by findInjectionEventByTokenForSession/listInjectionOutcomeJoins.
+    if (
+      event.workspaceId !== input.context.workspaceId ||
+      (event.repositoryId !== undefined &&
+        event.repositoryId !== input.context.repositoryId) ||
+      event.scope.kind === "global" ||
+      event.scope.workspaceId !== event.workspaceId ||
+      event.taskId !== input.context.taskId
+    ) {
+      throw new MemoryConflictError(
+        "Injection event scope does not match the trusted session."
+      );
+    }
+    const existing = await this.findInjectionEventByTokenForSession(
+      {
+        workspaceId: event.workspaceId,
+        ...(event.repositoryId === undefined
+          ? {}
+          : { repositoryId: event.repositoryId }),
+        taskId: event.taskId,
+        ...(event.runId === undefined ? {} : { runId: event.runId }),
+        ...(event.agentId === undefined ? {} : { agentId: event.agentId }),
+        canReadGlobal: false
+      },
+      event.correlationToken
+    );
+    if (existing) {
+      if (existing.id !== event.id)
+        throw new MemoryConflictError(
+          "Injection event correlationToken is already recorded with a different id."
+        );
+      return { appended: false, id: existing.id };
+    }
+    const row = injectionEventToRow(event);
+    const insert = buildInsert("memory_injection_events", row);
+    try {
+      await this.pool.query(insert.text, insert.params);
+      return { appended: true, id: event.id };
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new MemoryConflictError(
+          `Injection event ${event.id} already exists`
+        );
+      }
+      throw error;
+    }
+  }
+
+  async recordOutcomeReport(
+    input: MemoryRecordOutcomeReportInput
+  ): Promise<{ readonly appended: boolean; readonly id: string }> {
+    const { report } = input;
+    // Authority is owned by the trusted MemoryActor; "worker" and "system"
+    // never appear in the stored column. The Control API path maps an
+    // authenticated operator to `root`, and the runtime emits only injection
+    // events. Reject anything else here so the database column never accepts
+    // an unauthorized value even if the service is bypassed.
+    if (
+      input.actor.authority !== "root" &&
+      input.actor.authority !== "curator"
+    ) {
+      throw new MemoryConflictError(
+        "Outcome report reporter authority must be root or curator."
+      );
+    }
+    // The Data boundary enforces the evidence requirement so a caller cannot
+    // bypass it by skipping the MemoryService layer.
+    if (report.outcomeKind !== "unknown" && report.evidence.length === 0) {
+      throw new MemoryConflictError(
+        "Non-unknown outcome reports require at least one evidence reference."
+      );
+    }
+    // The trusted session context -- never the caller-supplied report
+    // object -- is the sole source of workspace/repository/task/run/agent
+    // identity for both the injection lookup and the persisted row. A
+    // report whose own workspaceId/repositoryId/taskId diverges from the
+    // context therefore fails with the same "no scope-aligned injection
+    // event" signal as an unknown token, rather than leaking which part of
+    // a forged/stale scope was wrong.
+    if (!input.context.taskId) {
+      throw new MemoryConflictError(
+        "Outcome report requires a trusted session task context."
+      );
+    }
+    // Scope-aligned injection must already exist; the Control API does this
+    // check first, but the repository never trusts a missing linkage.
+    const matched = await this.findInjectionEventByTokenForSession(
+      {
+        workspaceId: input.context.workspaceId,
+        ...(input.context.repositoryId
+          ? { repositoryId: input.context.repositoryId }
+          : {}),
+        taskId: input.context.taskId,
+        ...(input.context.runId === undefined
+          ? {}
+          : { runId: input.context.runId }),
+        ...(input.context.agentId === undefined
+          ? {}
+          : { agentId: input.context.agentId }),
+        canReadGlobal: false
+      },
+      report.correlationToken
+    );
+    if (!matched) {
+      throw new MemoryConflictError(
+        "Outcome report targets a correlationToken that has no scope-aligned injection event."
+      );
+    }
+    const scope: MemoryScope = {
+      kind: "task",
+      workspaceId: input.context.workspaceId,
+      taskId: input.context.taskId,
+      runId: input.context.runId ?? input.context.taskId
+    };
+    const storedReport: MemoryOutcomeReport = {
+      ...report,
+      reporterId: input.actor.id,
+      reporterAuthority: input.actor.authority,
+      workspaceId: input.context.workspaceId,
+      ...(input.context.repositoryId
+        ? { repositoryId: input.context.repositoryId }
+        : {}),
+      scope,
+      taskId: input.context.taskId,
+      runId: input.context.runId ?? input.context.taskId,
+      agentId: input.context.agentId ?? input.context.taskId
+    };
+    // One outcome report per correlationToken: a scope-aligned retry with an
+    // identical body is idempotent and returns `appended: false`; a retry
+    // with a different body for the same token conflicts.
+    const existingReport = await this.findOutcomeReportByToken(
+      storedReport.workspaceId,
+      storedReport.correlationToken
+    );
+    if (existingReport) {
+      if (outcomeReportBodyMatches(existingReport, storedReport)) {
+        return { appended: false, id: existingReport.id };
+      }
+      throw new MemoryConflictError(
+        "Outcome report conflicts with a previously recorded report for this correlation token."
+      );
+    }
+    const row = outcomeReportToRow(storedReport);
+    const insert = buildInsert("memory_outcome_reports", row);
+    try {
+      await this.pool.query(insert.text, insert.params);
+      return { appended: true, id: storedReport.id };
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        // Race: another writer inserted between our lookup and this insert.
+        // Re-check for idempotency before surfacing a hard conflict.
+        const racedExisting = await this.findOutcomeReportByToken(
+          storedReport.workspaceId,
+          storedReport.correlationToken
+        );
+        if (
+          racedExisting &&
+          outcomeReportBodyMatches(racedExisting, storedReport)
+        ) {
+          return { appended: false, id: racedExisting.id };
+        }
+        throw new MemoryConflictError(
+          `Outcome report ${storedReport.id} already exists for this scope and report key.`
+        );
+      }
+      throw error;
+    }
+  }
+
+  async findInjectionEventByTokenForSession(
+    context: MemoryInjectionEventSessionLookup,
+    correlationToken: string
+  ): Promise<MemoryInjectionEvent | null> {
+    if (!correlationToken.trim()) return null;
+    const params = new SqlParams();
+    const tokenParam = params.add(correlationToken);
+    const workspaceId = params.add(context.workspaceId);
+    const taskId = params.add(context.taskId);
+    const repositoryClause = context.repositoryId
+      ? ` AND repository_id = ${params.add(context.repositoryId)}`
+      : "";
+    const text = `SELECT * FROM memory_injection_events
+      WHERE correlation_token = ${tokenParam}
+        AND scope_workspace_id = ${workspaceId}${repositoryClause}
+        AND scope_task_id = ${taskId}
+      ORDER BY occurred_at DESC, id DESC
+      LIMIT 1`;
+    const result = await this.pool.query(text, params.all);
+    const matched = result.rows[0];
+    return matched ? hydrateInjectionEventRow(matched) : null;
+  }
+
+  /**
+   * Scope-free lookup of the single outcome report that already claims a
+   * `(workspace_id, correlation_token)` key, used solely to decide whether
+   * a new write is an idempotent retry or a genuine conflict. Not exposed
+   * on `MemoryRepository`: callers only ever learn about an existing report
+   * through `recordOutcomeReport`'s return value or through
+   * `listInjectionOutcomeJoins`.
+   */
+  private async findOutcomeReportByToken(
+    workspaceId: string,
+    correlationToken: string
+  ): Promise<MemoryOutcomeReport | null> {
+    if (!correlationToken.trim()) return null;
+    const params = new SqlParams();
+    const tokenParam = params.add(correlationToken);
+    const workspaceParam = params.add(workspaceId);
+    const text = `SELECT * FROM memory_outcome_reports
+      WHERE correlation_token = ${tokenParam}
+        AND workspace_id = ${workspaceParam}
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`;
+    const result = await this.pool.query(text, params.all);
+    const matched = result.rows[0];
+    return matched ? hydrateOutcomeReportRow(matched) : null;
+  }
+
+  async listInjectionOutcomeJoins(
+    request: MemoryInjectionOutcomeJoinRequest
+  ): Promise<MemoryInjectionOutcomeJoinPage> {
+    const limit = Math.min(Math.max(request.limit ?? 50, 1), 100);
+    const offset = Math.max(request.offset ?? 0, 0);
+    const sessionLookup: MemoryInjectionEventSessionLookup = {
+      workspaceId: request.context.workspaceId,
+      ...(request.context.repositoryId
+        ? { repositoryId: request.context.repositoryId }
+        : {}),
+      taskId: request.context.taskId ?? "",
+      canReadGlobal: false
+    };
+    if (!sessionLookup.taskId) {
+      return { items: [], total: 0, limit, offset };
+    }
+    const filterParams = new SqlParams();
+    const scopeFilter = buildSessionScopeFilter(
+      "i",
+      sessionLookup,
+      filterParams
+    );
+    const filters: string[] = [scopeFilter];
+    if (request.memoryModes && request.memoryModes.length > 0) {
+      const modeParam = filterParams.add(request.memoryModes);
+      filters.push(`i.memory_mode = ANY(${modeParam}::text[])`);
+    }
+    if (request.injectionResults && request.injectionResults.length > 0) {
+      const resultParam = filterParams.add(request.injectionResults);
+      filters.push(`i.injection_result = ANY(${resultParam}::text[])`);
+    }
+    const includeUnreported = request.includeUnreported === true;
+    if (includeUnreported) {
+      filters.push(`(r.id IS NULL OR r.outcome_kind IS NOT NULL)`);
+    } else {
+      filters.push(`r.outcome_kind IS NOT NULL`);
+    }
+    if (request.outcomeKinds && request.outcomeKinds.length > 0) {
+      const outcomeParam = filterParams.add(request.outcomeKinds);
+      filters.push(`r.outcome_kind = ANY(${outcomeParam}::text[])`);
+    }
+    if (request.reportKinds && request.reportKinds.length > 0) {
+      const reportKindParam = filterParams.add(request.reportKinds);
+      filters.push(`r.report_kind = ANY(${reportKindParam}::text[])`);
+    }
+    const whereClause = filters.join(" AND ");
+
+    // Pagination parameters are appended after the WHERE-filter parameters,
+    // so their SQL placeholders must continue at the next parameter index.
+    // Restarting them at $1/$2 makes PostgreSQL bind the workspace/task ids
+    // as LIMIT/OFFSET (and leaves appended values unused).
+    const limitParam = `$${filterParams.all.length + 1}`;
+    const offsetParam = `$${filterParams.all.length + 2}`;
+
+    const pageText = `
+      SELECT i.*,
+             r.id AS report_id,
+             r.workspace_id AS report_workspace_id,
+             r.repository_id AS report_repository_id,
+             r.scope_kind AS report_scope_kind,
+             r.scope_workspace_id AS report_scope_workspace_id,
+             r.scope_repository_id AS report_scope_repository_id,
+             r.scope_role AS report_scope_role,
+             r.scope_task_id AS report_scope_task_id,
+             r.scope_run_id AS report_scope_run_id,
+             r.scope_agent_id AS report_scope_agent_id,
+             r.task_id AS report_task_id,
+             r.run_id AS report_run_id,
+             r.agent_id AS report_agent_id,
+             r.correlation_token AS report_correlation_token,
+             r.outcome_kind, r.report_kind,
+             r.reported_at,
+             r.reporter_id, r.reporter_authority, r.evidence AS report_evidence,
+             r.reason_code AS report_reason_code
+      FROM memory_injection_events i
+      LEFT JOIN memory_outcome_reports r
+        ON r.workspace_id = i.workspace_id
+       AND r.repository_id = i.repository_id
+       AND r.correlation_token = i.correlation_token
+       AND r.task_id = i.task_id
+      WHERE ${whereClause}
+      ORDER BY i.occurred_at DESC, i.id DESC
+      LIMIT ${limitParam} OFFSET ${offsetParam}
+    `;
+    const pageParams = filterParams.all.concat([limit, offset]);
+    const rowsResult = await this.pool.query(pageText, pageParams);
+    const countResult = await this.pool.query<{ total: number }>(
+      `SELECT COUNT(*)::bigint AS total FROM memory_injection_events i
+       LEFT JOIN memory_outcome_reports r
+         ON r.workspace_id = i.workspace_id
+        AND r.repository_id = i.repository_id
+        AND r.correlation_token = i.correlation_token
+        AND r.task_id = i.task_id
+       WHERE ${whereClause}`,
+      filterParams.all
+    );
+    const items: MemoryInjectionOutcomeJoin[] = rowsResult.rows.map((row) => {
+      const injection = hydrateInjectionEventRow(row);
+      if (!row.report_id) return { injection, outcome: null };
+      const reportRow: Record<string, unknown> = {
+        id: row.report_id,
+        workspace_id: row.report_workspace_id,
+        repository_id: row.report_repository_id,
+        scope_kind: row.report_scope_kind,
+        scope_workspace_id: row.report_scope_workspace_id,
+        scope_repository_id: row.report_scope_repository_id,
+        scope_role: row.report_scope_role,
+        scope_task_id: row.report_scope_task_id,
+        scope_run_id: row.report_scope_run_id,
+        scope_agent_id: row.report_scope_agent_id,
+        task_id: row.report_task_id,
+        run_id: row.report_run_id,
+        agent_id: row.report_agent_id,
+        correlation_token: row.report_correlation_token,
+        outcome_kind: row.outcome_kind,
+        report_kind: row.report_kind,
+        reported_at: row.reported_at,
+        reporter_id: row.reporter_id,
+        reporter_authority: row.reporter_authority,
+        reason_code: row.report_reason_code,
+        evidence: row.report_evidence
+      };
+      return {
+        injection,
+        outcome: hydrateOutcomeReportRow(reportRow)
+      };
+    });
+    return {
+      items,
+      total: Number(countResult.rows[0]?.total ?? 0),
+      limit,
+      offset
+    };
+  }
+
+  /**
+   * Workspace/repository/time-scoped GROUP BY aggregate over the canonical
+   * append-only injection/outcome event tables. See the Core contract on
+   * `MemoryRepository.aggregateInjectionOutcomeCohorts` for the privacy and
+   * cardinality guarantees this method must uphold.
+   */
+  async aggregateInjectionOutcomeCohorts(
+    request: MemoryInjectionOutcomeCohortFilter
+  ): Promise<MemoryInjectionOutcomeCohortPage> {
+    assertMemoryInjectionOutcomeCohortFilter(request);
+    const workspaceId = request.context.workspaceId;
+    // assertMemoryInjectionOutcomeCohortFilter already rejects a missing
+    // repositoryId, so this narrowing is defensive, not a fallback path.
+    const repositoryId = request.context.repositoryId as string;
+
+    const params = new SqlParams();
+    const workspaceParam = params.add(workspaceId);
+    const repositoryParam = params.add(repositoryId);
+    const fromParam = params.add(request.occurredFrom);
+    const untilParam = params.add(request.occurredUntil);
+    const filters = [
+      `i.workspace_id = ${workspaceParam}`,
+      `i.repository_id = ${repositoryParam}`,
+      `i.occurred_at >= ${fromParam}`,
+      `i.occurred_at <= ${untilParam}`
+    ];
+    if (request.memoryModes && request.memoryModes.length > 0) {
+      const modeParam = params.add(request.memoryModes);
+      filters.push(`i.memory_mode = ANY(${modeParam}::text[])`);
+    }
+    if (request.injectionResults && request.injectionResults.length > 0) {
+      const resultParam = params.add(request.injectionResults);
+      filters.push(`i.injection_result = ANY(${resultParam}::text[])`);
+    }
+    if (request.reportKinds && request.reportKinds.length > 0) {
+      const reportKindParam = params.add(request.reportKinds);
+      filters.push(`r.report_kind = ANY(${reportKindParam}::text[])`);
+    }
+    if (request.outcomeKinds && request.outcomeKinds.length > 0) {
+      const outcomeParam = params.add(request.outcomeKinds);
+      filters.push(`r.outcome_kind = ANY(${outcomeParam}::text[])`);
+    }
+    const whereClause = filters.join(" AND ");
+
+    // The join is scoped to the matched event even if malformed rows were
+    // inserted outside the repository's report-write path. The unique
+    // (workspace_id, correlation_token) index still guarantees at most one
+    // joined report per exposure, so `reportCount <= exposureCount` holds
+    // structurally.
+    const text = `
+      SELECT i.memory_mode, i.injection_result,
+             r.report_kind, r.outcome_kind,
+             COUNT(i.id)::bigint AS exposure_count,
+             COUNT(r.id)::bigint AS report_count
+      FROM memory_injection_events i
+      LEFT JOIN memory_outcome_reports r
+        ON r.workspace_id = i.workspace_id
+       AND r.repository_id = i.repository_id
+       AND r.correlation_token = i.correlation_token
+       AND r.task_id = i.task_id
+      WHERE ${whereClause}
+      GROUP BY i.memory_mode, i.injection_result, r.report_kind, r.outcome_kind
+      ORDER BY i.memory_mode, i.injection_result,
+               r.report_kind NULLS FIRST, r.outcome_kind NULLS FIRST
+    `;
+    const result = await this.pool.query(text, params.all);
+
+    let exposureCount = 0;
+    let reportCount = 0;
+    const cells: MemoryInjectionOutcomeCohortCell[] = result.rows.map((row) => {
+      const cellExposureCount = parseCohortCount(
+        row.exposure_count,
+        "exposure_count"
+      );
+      const cellReportCount = parseCohortCount(
+        row.report_count,
+        "report_count"
+      );
+      if (cellReportCount > cellExposureCount) {
+        throw new MemoryHydrationError(
+          "memory_injection_events",
+          "report_count",
+          `report_count ${cellReportCount} exceeds exposure_count ${cellExposureCount}`
+        );
+      }
+      exposureCount = parseCohortCount(
+        exposureCount + cellExposureCount,
+        "exposure_count"
+      );
+      reportCount = parseCohortCount(
+        reportCount + cellReportCount,
+        "report_count"
+      );
+      return {
+        memoryMode: row.memory_mode as MemoryExecutionMode,
+        injectionResult: row.injection_result as MemoryInjectionResult,
+        reportKind: (row.report_kind ?? null) as MemoryOutcomeReportKind | null,
+        outcomeKind: (row.outcome_kind ?? null) as ExperienceOutcome | null,
+        exposureCount: cellExposureCount,
+        reportCount: cellReportCount
+      };
+    });
+
+    return {
+      schema: "autodev-memory-injection-outcome-cohorts-v1",
+      workspaceId,
+      repositoryId,
+      occurredFrom: request.occurredFrom,
+      occurredUntil: request.occurredUntil,
+      cells,
+      exposureCount,
+      reportCount
+    };
+  }
+}
+
+/**
+ * True when two outcome reports for the same `(workspace_id,
+ * correlation_token)` key carry an identical reporter-supplied body. Used
+ * to distinguish a safe, idempotent same-body retry from a genuine
+ * conflicting report for the same injection.
+ */
+function outcomeReportBodyMatches(
+  existing: MemoryOutcomeReport,
+  incoming: MemoryOutcomeReport
+): boolean {
+  return (
+    existing.outcomeKind === incoming.outcomeKind &&
+    existing.reportKind === incoming.reportKind &&
+    JSON.stringify(existing.evidence) === JSON.stringify(incoming.evidence)
+  );
 }

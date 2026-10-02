@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -12,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   linkRuntimeSource,
@@ -22,6 +24,8 @@ import {
   runtimeTarget,
   skillLinkMatches
 } from "@simulatorlife/autodev-runtime/platform/runtime-files";
+
+const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 function withTempDir<T>(callback: (directory: string) => T): T {
   const directory = mkdtempSync(join(tmpdir(), "autodev-runtime-files-"));
@@ -34,8 +38,8 @@ function withTempDir<T>(callback: (directory: string) => T): T {
 
 test("runtime targets preserve relative depth for scripts and source files", () => {
   assert.equal(
-    runtimeTarget("scripts/otel/run-autodev-otel-collector.sh", "/runtime"),
-    "/runtime/hooks/otel/run-autodev-otel-collector.sh"
+    runtimeTarget("scripts/openlit/apply-patches.sh", "/runtime"),
+    "/runtime/hooks/openlit/apply-patches.sh"
   );
   assert.equal(
     runtimeTarget("agents/prompts/base.md", "/runtime"),
@@ -58,8 +62,6 @@ test("runtime targets preserve relative depth for scripts and source files", () 
     "runtime/src/platform/install-check.ts",
     "runtime/src/platform/install-command.ts",
     "runtime/src/platform/install-materializer.ts",
-    "runtime/src/platform/otel-collector.ts",
-    "runtime/src/platform/otel-provision.ts",
     "runtime/src/cli/router-status.ts",
     "runtime/src/cli/router-status-client.ts",
     "runtime/src/platform/runtime-files.ts",
@@ -110,6 +112,19 @@ test("runtime targets preserve relative depth for scripts and source files", () 
     assert.equal(
       runtimeTarget(providerSource, "/runtime"),
       join("/runtime", providerSource.slice("runtime/".length))
+    );
+  }
+});
+
+test("removed standalone Collector implementations are not Runtime sources", () => {
+  for (const filePath of [
+    "runtime/src/platform/otel-collector.ts",
+    "runtime/src/platform/otel-provision.ts"
+  ]) {
+    assert.equal(
+      existsSync(join(repositoryRoot, filePath)),
+      false,
+      `${filePath} must not return as Runtime-owned code`
     );
   }
 });

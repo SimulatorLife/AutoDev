@@ -11,19 +11,22 @@ import {
 } from "../../components/tables/DataTable.ts";
 
 /**
- * Tools resource view.
- *
- * The Tools table aggregates native, MCP, plugin, and effective capabilities.
- * When the upstream source does not report a runtime status for a tool, the
- * view must render `Unknown` rather than fall back to `ready`. Configuration
- * presence is not runtime readiness.
+ * Partial configuration read model built from the execution contract.
+ * It lists explicitly enumerated role MCP/plugin tools and native web-research
+ * capabilities; it does not claim to be the complete tool inventory. When the
+ * source has no runtime status, configuration presence stays distinct from
+ * runtime readiness and the view renders `Unknown`.
  */
 
 export interface ToolsViewProps {
   readonly tools: readonly ToolCatalogItem[];
+  readonly coverage: "partial" | "unknown";
 }
 
-export function ToolsView({ tools }: ToolsViewProps): React.JSX.Element {
+export function ToolsView({
+  tools,
+  coverage
+}: ToolsViewProps): React.JSX.Element {
   const [sourceFilter, setSourceFilter] = useState<string>("all");
 
   const filtered = tools.filter((t) =>
@@ -96,7 +99,7 @@ export function ToolsView({ tools }: ToolsViewProps): React.JSX.Element {
             ? React.createElement(
                 "span",
                 { className: "text-xs text-slate-500" },
-                "Universal"
+                "No role attribution"
               )
             : null
         )
@@ -110,7 +113,7 @@ export function ToolsView({ tools }: ToolsViewProps): React.JSX.Element {
           : tool.status === "unavailable"
             ? React.createElement(StatusBadge, { status: "unavailable" })
             : React.createElement(StatusBadge, {
-                status: "unavailable",
+                status: "not-observed",
                 label: "Unknown"
               })
     }
@@ -131,17 +134,20 @@ export function ToolsView({ tools }: ToolsViewProps): React.JSX.Element {
       "div",
       { className: "grid grid-cols-1 md:grid-cols-4 gap-4" },
       React.createElement(StatCard, {
-        title: "Total Tools",
-        value: tools.length
+        title: "Known Declarations",
+        value: coverage === "unknown" ? "Unknown" : tools.length
       }),
       React.createElement(StatCard, {
-        title: "Native Tools",
-        value: nativeCount
+        title: "Known Native",
+        value: coverage === "unknown" ? "Unknown" : nativeCount
       }),
-      React.createElement(StatCard, { title: "MCP Tools", value: mcpCount }),
       React.createElement(StatCard, {
-        title: "Plugin Tools",
-        value: pluginCount
+        title: "Known MCP",
+        value: coverage === "unknown" ? "Unknown" : mcpCount
+      }),
+      React.createElement(StatCard, {
+        title: "Known Plugin",
+        value: coverage === "unknown" ? "Unknown" : pluginCount
       })
     ),
     React.createElement(
@@ -153,7 +159,7 @@ export function ToolsView({ tools }: ToolsViewProps): React.JSX.Element {
           className:
             "text-sm font-semibold uppercase tracking-wider text-slate-400"
         },
-        "Effective Tool Catalog"
+        "Configured Tool Declarations"
       ),
       React.createElement(
         "div",
@@ -179,12 +185,26 @@ export function ToolsView({ tools }: ToolsViewProps): React.JSX.Element {
         )
       )
     ),
+    React.createElement(
+      "p",
+      {
+        className:
+          "rounded border border-amber-900/70 bg-amber-950/30 p-3 text-xs text-amber-200",
+        "data-tools-coverage": coverage
+      },
+      coverage === "unknown"
+        ? "The execution-contract role inventory is not observed; tool declarations are unavailable."
+        : "Partial configuration projection: explicitly enumerated role MCP/plugin tools and native web-research capabilities only. Other tools, runtime availability, and historical use are not observed."
+    ),
     DataTable({
       data: filtered,
       columns,
-      keyExtractor: (t: ToolCatalogItem) => t.name,
+      keyExtractor: (tool: ToolCatalogItem) =>
+        `${tool.source}:${tool.server ?? ""}:${tool.name}`,
       emptyMessage:
-        "No tools observed. The effective catalog is built from native, MCP, plugin, and capability sources."
+        coverage === "unknown"
+          ? "Execution-contract tool declarations are not observed."
+          : "No tool declarations were enumerated in the current execution contract."
     })
   );
 }

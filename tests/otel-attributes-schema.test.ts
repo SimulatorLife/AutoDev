@@ -14,7 +14,7 @@ const schemaPath = join(
 );
 const existingFixturePath = join(
   repositoryRoot,
-  "tests/fixtures/otel/collector-forwarded-otlp.json"
+  "tests/fixtures/otel/otlp-http-batches.json"
 );
 const expectedKeys = [
   "autodev.role",
@@ -152,7 +152,7 @@ test("AutoDev attribute names do not collide with existing unprefixed keys", () 
   );
 });
 
-test("existing Collector-forwarded fixture remains free of AutoDev attributes", () => {
+test("standard OTLP fixture remains free of AutoDev attributes", () => {
   assert.equal(existsSync(existingFixturePath), true);
   assert.deepEqual(
     attributeKeys(readJson(existingFixturePath)).filter(

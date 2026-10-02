@@ -8,14 +8,11 @@ import type {
   AgentDefinition,
   EvaluationResult,
   HookDefinition,
-  McpRoleExposure,
-  MemoryRecord,
   PermissionPolicy,
   PromptAsset,
   PromptDocument,
   RoleCapabilityMatrix,
   SkillDefinition,
-  ToolCatalogItem,
   WorkspaceEntry
 } from "@simulatorlife/autodev-core";
 
@@ -24,7 +21,6 @@ import type {
   ControlApiAgentRecord,
   ControlApiAgentsResponse,
   ControlApiHooksResponse,
-  ControlApiMcpsResponse,
   ControlApiPermissionsResponse,
   ControlApiPromptDetailResponse,
   ControlApiPromptsResponse,
@@ -77,15 +73,6 @@ export function agentDetailFromControlApi(
   response: ControlApiAgentDetailResponse
 ): AgentDefinition {
   return agentFromControlApi(response);
-}
-
-export function mcpsFromControlApi(
-  response: ControlApiMcpsResponse
-): readonly McpRoleExposure[] {
-  return response.servers.map((server) => ({
-    server: server.name,
-    roles: server.roles
-  }));
 }
 
 export function skillsFromControlApi(
@@ -211,6 +198,4 @@ export function workspacesFromControlApi(
   }));
 }
 
-export const emptyMemoryRecords: readonly MemoryRecord[] = [];
 export const emptyEvaluations: readonly EvaluationResult[] = [];
-export const emptyTools: readonly ToolCatalogItem[] = [];

@@ -1,5 +1,10 @@
 import React from "react";
 
+import { ToolsView } from "../../src/features/tools/ToolsView.ts";
+import {
+  controlApiFailureCode,
+  fetchTools
+} from "../../src/lib/server/control-api.ts";
 import {
   ConsolePageShell,
   readNodeContext,
@@ -8,15 +13,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-/**
- * Tools resource view.
- *
- * The effective tool catalog is composed from native, MCP, plugin, permission,
- * runtime-availability, and usage sources. None of those adapters is yet wired
- * into the Console, so this route renders an explicit unavailable state
- * rather than emitting fabricated availability rows.
- */
-export default function ToolsPage(): React.JSX.Element {
+export default async function ToolsPage(): Promise<React.JSX.Element> {
   const { section, config } = readNodeContext("/tools");
   if (!config) {
     return React.createElement(
@@ -30,15 +27,26 @@ export default function ToolsPage(): React.JSX.Element {
       })
     );
   }
+
+  const result = await fetchTools(config);
+  if (result.kind !== "ok") {
+    return React.createElement(
+      ConsolePageShell,
+      { section },
+      React.createElement(ResourceUnavailable, {
+        title: "Tool catalog could not be loaded",
+        code: controlApiFailureCode(result),
+        message: result.message
+      })
+    );
+  }
+
   return React.createElement(
     ConsolePageShell,
-    { section, counts: { Tools: 0 } },
-    React.createElement(ResourceUnavailable, {
-      title: "Tool catalog adapters are not wired into the Console",
-      code: "autodev_tools_adapter_pending",
-      message:
-        "Native, MCP, plugin, permission, runtime-availability, and usage telemetry sources are not yet composed into a single catalog.",
-      hint: "Once the effective catalog adapter exists, Tools will render the merged tool inventory."
+    { section },
+    React.createElement(ToolsView, {
+      tools: result.data.tools,
+      coverage: result.data.coverage
     })
   );
 }

@@ -28,8 +28,31 @@ export interface McpPrompt {
   readonly description?: string;
 }
 
-export interface McpRoleExposure {
-  readonly server: string;
+export type McpServerTransport = "stdio" | "http" | "unknown";
+
+export interface McpTargetOverride {
+  readonly target: string;
+  readonly enabled: boolean;
+}
+
+/** Safe desired-state summary of one canonical RuleSync MCP declaration. */
+export interface McpServerDefinition {
+  readonly name: string;
+  /** null means the server exists only in target projections, not in the base list. */
+  readonly enabled: boolean | null;
+  readonly transport: McpServerTransport;
+  /** Explicit overrides only; a missing target entry carries no inferred state. */
+  readonly targetOverrides: readonly McpTargetOverride[];
+}
+
+/** Combined canonical declaration and generated role-exposure projection. */
+export interface McpServerResource extends McpServerDefinition {
+  readonly declared: boolean;
   readonly roles: readonly AgentRole[];
-  readonly tools?: readonly McpTool[];
+}
+
+export interface RuleSyncMcpState {
+  readonly source: ".rulesync/mcp.jsonc";
+  readonly valid: boolean | null;
+  readonly servers: readonly McpServerDefinition[];
 }

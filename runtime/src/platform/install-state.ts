@@ -20,15 +20,14 @@ import {
   writeLine
 } from "@simulatorlife/autodev-runtime/shared/output";
 
-export type OtelIngressMode = "direct" | "collector" | "openlit";
+export type OtelIngressMode = "direct" | "openlit";
 export const ROUTER_AUTH_VARIABLE = "CODEX_ROUTER_AUTH_TOKEN";
 
 function fail(message: string): never {
   throw new Error(message);
 }
 function mode(value: string): OtelIngressMode {
-  if (value === "direct" || value === "collector" || value === "openlit")
-    return value;
+  if (value === "direct" || value === "openlit") return value;
   return fail(`invalid OTLP ingress mode: ${value}`);
 }
 
@@ -40,7 +39,17 @@ export function readOtelIngressMode(filePath: string): OtelIngressMode {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   if (!existsSync(filePath)) return "direct";
-  return mode(readFileSync(filePath, "utf8").replaceAll(/\s+/gu, ""));
+  const stored = readFileSync(filePath, "utf8").replaceAll(/\s+/gu, "");
+  if (stored === "collector") {
+    // One-time state migration: the standalone Collector is removed, and its
+    // old forward-only route maps to the existing direct router ingress.
+    writeOtelIngressMode(filePath, "direct");
+    writeErrorLine(
+      "migrated obsolete Collector ingress selection to direct router ingress"
+    );
+    return "direct";
+  }
+  return mode(stored);
 }
 
 export function writeOtelIngressMode(
@@ -136,7 +145,7 @@ function cli(argv: string[]): number {
     return 0;
   }
   throw new Error(
-    "usage: install-state mode-read <path> | mode-write <path> <direct|collector|openlit> | auth <env-file>"
+    "usage: install-state mode-read <path> | mode-write <path> <direct|openlit> | auth <env-file>"
   );
 }
 

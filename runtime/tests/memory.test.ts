@@ -19,10 +19,16 @@ import {
   type MemoryExperiencePurgeResult,
   type MemoryExpiredExperienceRequest,
   type MemoryHistory,
+  type MemoryInjectionEvent,
+  type MemoryInjectionEventSessionLookup,
+  type MemoryInjectionOutcomeCohortFilter,
   type MemoryLifecycleEvent,
+  type MemoryOutcomeReport,
   type MemoryPacket,
   type MemoryReadContext,
   type MemoryRecord,
+  type MemoryRecordInjectionEventInput,
+  type MemoryRecordOutcomeReportInput,
   type MemoryRepository,
   type MemoryResearchRequest,
   type MemorySearchHit,
@@ -70,11 +76,17 @@ const source: EvidenceReference = {
 class FakeMemoryRepository implements MemoryRepository {
   readonly experiences = new Map<string, ExperienceEnvelope>();
   readonly memories = new Map<string, MemoryRecord>();
+  readonly injectionEvents = new Map<string, MemoryInjectionEvent>();
+  readonly outcomeReportResults: {
+    readonly appended: boolean;
+    readonly id: string;
+  }[] = [];
   readonly events: MemoryLifecycleEvent[] = [];
   hits: readonly MemorySearchHit[] = [];
   readonly searchRequests: MemorySearchRequest[] = [];
   readonly proposalEmbeddings: (readonly number[] | undefined)[] = [];
   readonly purgeRequests: MemoryExperiencePurgeRequest[] = [];
+  readonly outcomeCohortRequests: MemoryInjectionOutcomeCohortFilter[] = [];
   failNextTransition = false;
 
   async appendExperience(envelope: ExperienceEnvelope): Promise<void> {
@@ -213,6 +225,62 @@ class FakeMemoryRepository implements MemoryRepository {
     this.events.push(...events);
     return true;
   }
+
+  async recordInjectionEvent(input: MemoryRecordInjectionEventInput): Promise<{
+    readonly appended: boolean;
+    readonly id: string;
+  }> {
+    const { event } = input;
+    if (this.injectionEvents.has(event.correlationToken)) {
+      return { appended: false, id: event.id };
+    }
+    this.injectionEvents.set(event.correlationToken, event);
+    return { appended: true, id: event.id };
+  }
+
+  async recordOutcomeReport(input: MemoryRecordOutcomeReportInput): Promise<{
+    readonly appended: boolean;
+    readonly id: string;
+  }> {
+    return (
+      this.outcomeReportResults.shift() ?? {
+        appended: false,
+        id: input.report.id
+      }
+    );
+  }
+
+  async findInjectionEventByTokenForSession(
+    _context: MemoryInjectionEventSessionLookup,
+    correlationToken: string
+  ): Promise<MemoryInjectionEvent | null> {
+    return this.injectionEvents.get(correlationToken) ?? null;
+  }
+
+  async listInjectionOutcomeJoins(): Promise<{
+    readonly items: readonly never[];
+    readonly total: number;
+    readonly limit: number;
+    readonly offset: number;
+  }> {
+    return { items: [], total: 0, limit: 50, offset: 0 };
+  }
+
+  async aggregateInjectionOutcomeCohorts(
+    request: MemoryInjectionOutcomeCohortFilter
+  ) {
+    this.outcomeCohortRequests.push(request);
+    return {
+      schema: "autodev-memory-injection-outcome-cohorts-v1" as const,
+      workspaceId: request.context.workspaceId,
+      repositoryId: request.context.repositoryId!,
+      occurredFrom: request.occurredFrom,
+      occurredUntil: request.occurredUntil,
+      cells: [],
+      exposureCount: 0,
+      reportCount: 0
+    };
+  }
 }
 
 function experience(id = "experience-1"): ExperienceEnvelope {
@@ -334,6 +402,119 @@ function researchRequest(
     maxPacketCharacters: 12_000,
     ...overrides
   };
+}
+
+function outcomeInjectionEvent(
+  overrides: Partial<MemoryInjectionEvent> = {}
+): MemoryInjectionEvent {
+  return {
+    id: "private-injection-id",
+    workspaceId: context.workspaceId,
+    ...(context.repositoryId ? { repositoryId: context.repositoryId } : {}),
+    scope: {
+      kind: "repository",
+      workspaceId: context.workspaceId,
+      repositoryId: context.repositoryId!
+    },
+    taskId: context.taskId ?? "task-current",
+    runId: "private-injection-run-id",
+    agentId: "private-injection-agent-id",
+    correlationToken: "private-correlation-token",
+    memoryMode: "jit",
+    injectionResult: "injected",
+    packetCharacterCount: 32,
+    packetTokenCount: 8,
+    memoryIds: ["private-memory-id"],
+    occurredAt: "2026-09-30T10:00:00.000Z",
+    reasonCode: "packet_attached",
+    evidence: [
+      {
+        kind: "commit",
+        uri: "https://example.test/private-injection-evidence"
+      }
+    ],
+    recordedBy: "private-recorder-id",
+    ...overrides
+  };
+}
+
+function outcomeReport(
+  overrides: Partial<MemoryOutcomeReport> = {}
+): MemoryOutcomeReport {
+  return {
+    id: "private-outcome-report-id",
+    workspaceId: context.workspaceId,
+    ...(context.repositoryId ? { repositoryId: context.repositoryId } : {}),
+    scope: {
+      kind: "repository",
+      workspaceId: context.workspaceId,
+      repositoryId: context.repositoryId!
+    },
+    taskId: context.taskId ?? "task-current",
+    runId: "private-report-run-id",
+    agentId: "private-report-agent-id",
+    correlationToken: "private-correlation-token",
+    outcomeKind: "success",
+    reportKind: "task",
+    reportedAt: "2026-09-30T10:01:00.000Z",
+    reporterId: "private-reporter-id",
+    reporterAuthority: "worker",
+    reasonCode: "reporter_supplied",
+    evidence: [
+      {
+        kind: "document",
+        uri: "https://example.test/private-report-evidence"
+      }
+    ],
+    ...overrides
+  };
+}
+
+function makeOutcomeMetricHarness(
+  repository: FakeMemoryRepository,
+  tracer?: Tracer
+) {
+  const exporter = new InMemoryMetricExporter(
+    AggregationTemporality.CUMULATIVE
+  );
+  const reader = new PeriodicExportingMetricReader({
+    exporter,
+    exportIntervalMillis: 60_000
+  });
+  const provider = new MeterProvider({ readers: [reader] });
+  const service = makeService(repository, {
+    meter: provider.getMeter("autodev.memory.outcome-test"),
+    ...(tracer ? { tracer } : {})
+  });
+  return { exporter, provider, service };
+}
+
+function outcomeReportMetricPoints(exporter: InMemoryMetricExporter) {
+  const metric = exporter
+    .getMetrics()
+    .flatMap((resource) => resource.scopeMetrics)
+    .flatMap((scope) => scope.metrics)
+    .find((item) => item.descriptor.name === "autodev.memory.outcome_reports");
+  assert.ok(metric, "outcome report counter should be exported");
+  return metric.dataPoints;
+}
+
+async function persistOutcomeInjection(
+  repository: FakeMemoryRepository,
+  service: MemoryService,
+  event = outcomeInjectionEvent()
+): Promise<MemoryInjectionEvent> {
+  const result = await service.recordInjectionEvent({
+    event,
+    actor: root,
+    context: { ...context, runId: event.runId, agentId: event.agentId }
+  });
+  assert.equal(result.appended, true);
+  const stored = repository.injectionEvents.get(event.correlationToken);
+  assert.ok(stored);
+  assert.equal(stored.memoryMode, event.memoryMode);
+  assert.equal(stored.injectionResult, event.injectionResult);
+  return event;
 }
 
 test("workers append only their own raw execution references", async () => {
@@ -1127,6 +1308,174 @@ test("MemoryService emits bounded candidate, packet, and operation metrics", asy
   }
 });
 
+test("MemoryService counts a newly appended outcome report with bounded span attributes", async () => {
+  const repository = new FakeMemoryRepository();
+  const spanAttributes = new Map<string, unknown>();
+  const tracer = {
+    startActiveSpan(name: string, callback: (span: never) => Promise<unknown>) {
+      return callback({
+        setAttribute: (key: string, value: unknown) => {
+          if (name === "memory.outcome.report") spanAttributes.set(key, value);
+        },
+        setStatus: () => undefined,
+        end: () => undefined
+      } as never);
+    }
+  } as unknown as Tracer;
+  const { exporter, provider, service } = makeOutcomeMetricHarness(
+    repository,
+    tracer
+  );
+  repository.outcomeReportResults.push({
+    appended: true,
+    id: "private-outcome-report-id"
+  });
+
+  try {
+    await persistOutcomeInjection(repository, service);
+    const result = await service.recordOutcomeReport({
+      report: outcomeReport(),
+      actor: root,
+      context
+    });
+    assert.equal(result.appended, true);
+    await provider.forceFlush();
+
+    const points = outcomeReportMetricPoints(exporter);
+    assert.equal(points.length, 1);
+    assert.equal(points[0]?.value, 1);
+    assert.deepEqual(points[0]?.attributes, {
+      "autodev.memory.outcome.report_kind": "task",
+      "autodev.memory.outcome.kind": "success",
+      "autodev.memory.outcome.memory_mode": "jit",
+      "autodev.memory.outcome.injection_result": "injected"
+    });
+    assert.deepEqual([...spanAttributes.keys()].sort(), [
+      "memory.outcome.injection_result",
+      "memory.outcome.kind",
+      "memory.outcome.memory_mode",
+      "memory.outcome.report_kind"
+    ]);
+    assert.deepEqual([...spanAttributes.values()].sort(), [
+      "injected",
+      "jit",
+      "success",
+      "task"
+    ]);
+  } finally {
+    await provider.shutdown();
+  }
+});
+
+test("MemoryService does not recount an idempotent outcome-report retry", async () => {
+  const repository = new FakeMemoryRepository();
+  const { exporter, provider, service } = makeOutcomeMetricHarness(repository);
+  repository.outcomeReportResults.push(
+    { appended: true, id: "private-outcome-report-id" },
+    { appended: false, id: "private-outcome-report-id" }
+  );
+
+  try {
+    await persistOutcomeInjection(repository, service);
+    const input = { report: outcomeReport(), actor: root, context };
+    assert.equal((await service.recordOutcomeReport(input)).appended, true);
+    assert.equal((await service.recordOutcomeReport(input)).appended, false);
+    await provider.forceFlush();
+
+    const points = outcomeReportMetricPoints(exporter);
+    assert.equal(points.length, 1);
+    assert.equal(points[0]?.value, 1);
+  } finally {
+    await provider.shutdown();
+  }
+});
+
+test("outcome cohort dimensions come from the persisted injection event", async () => {
+  const repository = new FakeMemoryRepository();
+  const { exporter, provider, service } = makeOutcomeMetricHarness(repository);
+  const event = outcomeInjectionEvent({
+    memoryMode: "disabled",
+    injectionResult: "skipped"
+  });
+  repository.outcomeReportResults.push({
+    appended: true,
+    id: "private-outcome-report-id"
+  });
+
+  try {
+    await persistOutcomeInjection(repository, service, event);
+    await service.recordOutcomeReport({
+      report: outcomeReport({
+        outcomeKind: "partial",
+        reportKind: "issue"
+      }),
+      actor: root,
+      context
+    });
+    await provider.forceFlush();
+
+    const points = outcomeReportMetricPoints(exporter);
+    assert.equal(points.length, 1);
+    assert.equal(points[0]?.value, 1);
+    assert.deepEqual(points[0]?.attributes, {
+      "autodev.memory.outcome.report_kind": "issue",
+      "autodev.memory.outcome.kind": "partial",
+      "autodev.memory.outcome.memory_mode": "disabled",
+      "autodev.memory.outcome.injection_result": "skipped"
+    });
+  } finally {
+    await provider.shutdown();
+  }
+});
+
+test("outcome-report metric dimensions exclude IDs and evidence URIs", async () => {
+  const repository = new FakeMemoryRepository();
+  const { exporter, provider, service } = makeOutcomeMetricHarness(repository);
+  repository.outcomeReportResults.push({
+    appended: true,
+    id: "private-outcome-report-id"
+  });
+
+  try {
+    await persistOutcomeInjection(repository, service);
+    await service.recordOutcomeReport({
+      report: outcomeReport(),
+      actor: root,
+      context
+    });
+    await provider.forceFlush();
+
+    const points = outcomeReportMetricPoints(exporter);
+    assert.equal(points.length, 1);
+    const attributes = points[0]!.attributes;
+    assert.deepEqual(Object.keys(attributes).sort(), [
+      "autodev.memory.outcome.injection_result",
+      "autodev.memory.outcome.kind",
+      "autodev.memory.outcome.memory_mode",
+      "autodev.memory.outcome.report_kind"
+    ]);
+    const serializedDimensions = JSON.stringify(attributes);
+    for (const sensitiveValue of [
+      "private-injection-id",
+      "private-injection-run-id",
+      "private-injection-agent-id",
+      "private-correlation-token",
+      "private-memory-id",
+      "private-recorder-id",
+      "private-outcome-report-id",
+      "private-report-run-id",
+      "private-report-agent-id",
+      "private-reporter-id",
+      "private-injection-evidence",
+      "private-report-evidence"
+    ]) {
+      assert.equal(serializedDimensions.includes(sensitiveValue), false);
+    }
+  } finally {
+    await provider.shutdown();
+  }
+});
+
 test("packet bounds use whole entries and enforce a supplied token counter", async () => {
   const repository = new FakeMemoryRepository();
   repository.hits = [record("long", { claim: "A long but valid claim." })].map(
@@ -1662,5 +2011,87 @@ test("MemoryService provides scoped lifecycle browsing with bounded pagination",
   await assert.rejects(
     () => service.listMemories({ context, limit: 101 }),
     MemoryValidationError
+  );
+});
+
+test("MemoryService gates outcome cohorts and validates the bounded aggregate before Data access", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const request: MemoryInjectionOutcomeCohortFilter = {
+    context: {
+      workspaceId: "workspace-a",
+      repositoryId: "repo-a",
+      canReadGlobal: false,
+      canReadTaskHistory: true
+    },
+    occurredFrom: "2026-09-01T00:00:00.000Z",
+    occurredUntil: "2026-10-01T00:00:00.000Z",
+    memoryModes: ["jit"]
+  };
+
+  await assert.rejects(
+    () =>
+      service.aggregateInjectionOutcomeCohorts({
+        ...request,
+        context: { ...request.context, canReadTaskHistory: false }
+      }),
+    MemoryAuthorizationError
+  );
+  assert.equal(repository.outcomeCohortRequests.length, 0);
+
+  const page = await service.aggregateInjectionOutcomeCohorts(request);
+  assert.equal(page.schema, "autodev-memory-injection-outcome-cohorts-v1");
+  assert.equal(page.workspaceId, request.context.workspaceId);
+  assert.equal(page.repositoryId, request.context.repositoryId);
+  assert.deepEqual(repository.outcomeCohortRequests, [request]);
+
+  await assert.rejects(
+    () =>
+      service.aggregateInjectionOutcomeCohorts({
+        ...request,
+        occurredFrom: "2024-01-01T00:00:00.000Z"
+      }),
+    TypeError
+  );
+  assert.equal(repository.outcomeCohortRequests.length, 1);
+});
+
+test("MemoryService traces aggregate cohort counts without query identities", async () => {
+  const repository = new FakeMemoryRepository();
+  const attributes = new Map<string, unknown>();
+  const spanNames: string[] = [];
+  const tracer = {
+    startActiveSpan(name: string, callback: (span: never) => Promise<unknown>) {
+      spanNames.push(name);
+      return callback({
+        setAttribute: (key: string, value: unknown) =>
+          attributes.set(key, value),
+        setStatus: () => undefined,
+        end: () => undefined
+      } as never);
+    }
+  } as unknown as Tracer;
+  const service = makeService(repository, { tracer });
+
+  await service.aggregateInjectionOutcomeCohorts({
+    context: {
+      workspaceId: "workspace-a",
+      repositoryId: "repo-a",
+      canReadGlobal: false,
+      canReadTaskHistory: true
+    },
+    occurredFrom: "2026-09-01T00:00:00.000Z",
+    occurredUntil: "2026-10-01T00:00:00.000Z"
+  });
+
+  assert.deepEqual(spanNames, ["memory.injection.outcome.aggregate"]);
+  assert.deepEqual(Object.fromEntries(attributes), {
+    "memory.injection.outcome.exposures": 0,
+    "memory.injection.outcome.reports": 0,
+    "memory.injection.outcome.cohort_cells": 0
+  });
+  assert.doesNotMatch(
+    [...attributes.keys()].join(" "),
+    /workspace|repository|task|run|agent|memory_id/u
   );
 });

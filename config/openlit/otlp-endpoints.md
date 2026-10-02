@@ -13,7 +13,8 @@ protocols. Docker publishes the ports on loopback only.
 | logs                    | OTLP/HTTP | `http://127.0.0.1:4318` |
 | traces / metrics / logs | OTLP/gRPC | `http://127.0.0.1:4317` |
 
-All producers must provide the standard header:
+When the AutoDev `openlit` ingress mode is enabled, producers use this receiver
+and must provide the standard header:
 
 ```text
 Authorization: Bearer <OPENLIT_OTLP_API_KEY>
@@ -28,11 +29,15 @@ the out-of-repository key and publishes the standard OTLP endpoint/header to
 its own process and the Codex GUI launchd domain. Disable it with
 `bash scripts/install.sh --disable-openlit-ingress`.
 
-The OpenLIT Collector accepts OTLP/HTTP JSON and Protobuf as supported by its
-receiver. Producers use standard OTLP protocol settings; no AutoDev telemetry
-translation layer is inserted. The separate AutoDev Collector remains an
-incumbent rollback path only until the end-to-end cutover gates in
-`docs/autodev-console-target-state.md` pass.
+OpenLIT's embedded Collector accepts OTLP/HTTP JSON and Protobuf as supported
+by its receiver. Producers use standard OTLP protocol settings; no AutoDev
+telemetry translation layer is inserted. AutoDev no longer ships or runs a
+separate Collector. The legacy `direct` ingress mode still targets the router's
+receiver on port 4100; it is not the OpenLIT path and is scheduled for removal
+after its live-control state is separated. A protected local trace POST has
+been verified against OpenLIT's receiver; remaining live producer/deployment
+acceptance gates are tracked in
+[`docs/autodev-console-target-state.md`](../../docs/autodev-console-target-state.md) §12.
 
 OpenLIT Community Edition provides session identity but no granular
 viewer/operator RBAC for `/autodev`. The Control API proxy and authorization

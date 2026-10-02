@@ -33,6 +33,117 @@ test("RuleSyncRepository loads canonical RuleSync sources", () => {
   const skills = repo.loadSkills();
   assert.ok(skills.length > 0);
   assert.ok(skills.some((s) => s.name === "orchestration"));
+
+  const mcps = repo.loadMcpState();
+  assert.equal(mcps.valid, true);
+  assert.ok(mcps.servers.some((server) => server.name === "lsp"));
+  assert.ok(mcps.servers.some((server) => server.name === "autodev_spawn"));
+  const context7 = mcps.servers.find((server) => server.name === "context7");
+  assert.deepEqual(context7?.targetOverrides, [
+    { target: "codexcli", enabled: false }
+  ]);
+});
+
+test("RuleSync MCP state parses canonical JSONC and target overrides without exposing config", async () => {
+  const repositoryRoot = await mkdtemp(path.join(tmpdir(), "autodev-mcp-"));
+  const sourcePath = path.join(repositoryRoot, ".rulesync", "mcp.jsonc");
+  const repo = new RuleSyncRepository(repositoryRoot);
+  try {
+    assert.deepEqual(repo.loadMcpState(), {
+      source: ".rulesync/mcp.jsonc",
+      valid: null,
+      servers: []
+    });
+
+    await mkdir(path.dirname(sourcePath), { recursive: true });
+    await writeFile(
+      sourcePath,
+      `{
+        // The server launch details and credentials are never returned by this read model.
+        "mcpServers": {
+          "local": { "command": "node", "env": { "TOKEN": "secret" }, },
+          "remote": { "url": "https://mcp.example.test", "bearer_token_env_var": "MCP_TOKEN" },
+          "default-disabled": { "command": "node", "disabled": true },
+        },
+        "codexcli": {
+          "mcpServers": {
+            "remote": null,
+            "local": { "command": "node", "args": ["local"], },
+            "codex-only": { "command": "node", "disabled": false, },
+            "target-disabled": { "command": "node", "disabled": true, },
+          },
+        },
+        "copilotcli": { "mcpServers": { "local": null, }, },
+      }`,
+      "utf8"
+    );
+
+    assert.deepEqual(repo.loadMcpState(), {
+      source: ".rulesync/mcp.jsonc",
+      valid: true,
+      servers: [
+        {
+          name: "codex-only",
+          enabled: null,
+          transport: "stdio",
+          targetOverrides: [{ target: "codexcli", enabled: true }]
+        },
+        {
+          name: "default-disabled",
+          enabled: false,
+          transport: "stdio",
+          targetOverrides: []
+        },
+        {
+          name: "local",
+          enabled: true,
+          transport: "stdio",
+          targetOverrides: [
+            { target: "codexcli", enabled: true },
+            { target: "copilotcli", enabled: false }
+          ]
+        },
+        {
+          name: "remote",
+          enabled: true,
+          transport: "http",
+          targetOverrides: [{ target: "codexcli", enabled: false }]
+        },
+        {
+          name: "target-disabled",
+          enabled: null,
+          transport: "stdio",
+          targetOverrides: [{ target: "codexcli", enabled: false }]
+        }
+      ]
+    });
+
+    await writeFile(
+      sourcePath,
+      `{"mcpServers":{"bad":{"command":"node"}},"codexcli":{"mcpServers":{"bad":{"command":"node","disabled":"yes"}}}}`,
+      "utf8"
+    );
+    assert.deepEqual(repo.loadMcpState(), {
+      source: ".rulesync/mcp.jsonc",
+      valid: false,
+      servers: []
+    });
+
+    await writeFile(sourcePath, `{"mcpServers": []}`, "utf8");
+    assert.deepEqual(repo.loadMcpState(), {
+      source: ".rulesync/mcp.jsonc",
+      valid: false,
+      servers: []
+    });
+    await writeFile(sourcePath, "{", "utf8");
+    assert.deepEqual(repo.loadMcpState(), {
+      source: ".rulesync/mcp.jsonc",
+      valid: false,
+      servers: []
+    });
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
 });
 
 test("RuleSync hook state distinguishes absent, valid JSONC, and invalid source", async () => {

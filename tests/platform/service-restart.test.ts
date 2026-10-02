@@ -8,7 +8,6 @@ import {
   LABEL_COPILOT_PROXY,
   LABEL_MINIMAX_PROXY,
   LABEL_MODEL_ROUTER,
-  LABEL_OTEL_COLLECTOR,
   MANAGED_SERVICE_LABELS,
   type ManagedServiceLabel,
   restartServices,
@@ -21,16 +20,14 @@ const PORTS: Record<ManagedServiceLabel, number> = {
   [LABEL_CLAUDE_BRIDGE]: 4000,
   [LABEL_MINIMAX_PROXY]: 18_765,
   [LABEL_ANTIGRAVITY_PROXY]: 4002,
-  [LABEL_COPILOT_PROXY]: 4003,
-  [LABEL_OTEL_COLLECTOR]: 4318
+  [LABEL_COPILOT_PROXY]: 4003
 };
 const JOB_PIDS: Record<ManagedServiceLabel, number> = {
   [LABEL_MODEL_ROUTER]: 100,
   [LABEL_CLAUDE_BRIDGE]: 200,
   [LABEL_MINIMAX_PROXY]: 300,
   [LABEL_ANTIGRAVITY_PROXY]: 400,
-  [LABEL_COPILOT_PROXY]: 500,
-  [LABEL_OTEL_COLLECTOR]: 600
+  [LABEL_COPILOT_PROXY]: 500
 };
 
 function options(
@@ -40,7 +37,6 @@ function options(
     repositoryRoot: "/repo",
     home: "/home",
     codexHome: "/home/.codex",
-    otelMode: "direct",
     readyAttempts: 3,
     readyDelayMs: 0,
     ...overrides
@@ -172,7 +168,7 @@ test("a supervised restart reloads each service with bootstrap alone and runs no
     restartServices(options(), fake)
   );
   assert.equal(status, 0);
-  for (const label of MANAGED_SERVICE_LABELS.slice(0, 5)) {
+  for (const label of MANAGED_SERVICE_LABELS) {
     const plist = `bootstrap:/home/Library/LaunchAgents/${label}.plist`;
     assert.ok(
       fake.calls.indexOf(`enable:${label}`) < fake.calls.indexOf(plist),
@@ -184,51 +180,9 @@ test("a supervised restart reloads each service with bootstrap alone and runs no
     false,
     "RunAtLoad already starts the job; kickstart -k would kill it mid-startup"
   );
-  assert.ok(fake.calls.includes(`bootout:${LABEL_OTEL_COLLECTOR}`));
-  assert.equal(
-    fake.calls.includes(
-      `bootstrap:/home/Library/LaunchAgents/${LABEL_OTEL_COLLECTOR}.plist`
-    ),
-    false,
-    "direct OTel mode unloads the collector without starting it"
-  );
   assert.deepEqual(fake.runs, [], "launchd already verified every service");
   assert.match(stderr, /supervised by launchd/u);
   assert.equal(stderr.includes("is not running"), false);
-});
-
-test("collector mode verifies the collector alongside the bridges", async () => {
-  const fake = deps();
-  assert.equal(
-    await restartServices(options({ otelMode: "collector" }), fake),
-    0
-  );
-  assert.ok(
-    fake.calls.includes(
-      `bootstrap:/home/Library/LaunchAgents/${LABEL_OTEL_COLLECTOR}.plist`
-    )
-  );
-  assert.ok(
-    fake.probes.includes("http://127.0.0.1:4318/v1/logs {}"),
-    "the OTLP receiver refuses a bare POST with 415; probe with an empty JSON export"
-  );
-});
-
-test("OpenLIT ingress keeps the separate Collector unloaded", async () => {
-  const fake = deps();
-  assert.equal(
-    await restartServices(options({ otelMode: "openlit" }), fake),
-    0
-  );
-  assert.ok(fake.calls.includes(`bootout:${LABEL_OTEL_COLLECTOR}`));
-  assert.equal(
-    fake.calls.includes(
-      `bootstrap:/home/Library/LaunchAgents/${LABEL_OTEL_COLLECTOR}.plist`
-    ),
-    false,
-    "OpenLIT's first-party receiver replaces the pass-through Collector"
-  );
-  assert.deepEqual(fake.runs, []);
 });
 
 test("a crash-looping bridge is reported at once with its log, without holding up the install", async () => {
@@ -462,15 +416,15 @@ test("a job that will not unload is reported instead of being bootstrapped over"
 });
 
 test("a loaded service owned by another runtime leaves every service untouched", async () => {
-  const fake = deps({}, { loaded: new Set([LABEL_OTEL_COLLECTOR]) });
+  const fake = deps({}, { loaded: new Set([LABEL_CLAUDE_BRIDGE]) });
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
       ...fake,
       launchd: {
         ...fake.launchd,
         print: (label) =>
-          label === LABEL_OTEL_COLLECTOR
-            ? "program = /foreign/runtime/collector"
+          label === LABEL_CLAUDE_BRIDGE
+            ? "program = /foreign/runtime/claude-bridge"
             : fake.launchd.print(label)
       }
     })
@@ -484,30 +438,30 @@ test("a loaded service owned by another runtime leaves every service untouched",
   assert.deepEqual(fake.runs, []);
   assert.match(
     stderr,
-    /loaded com\.codex\.otel-collector belongs to another runtime/u
+    /loaded com\.codex\.claude-bridge belongs to another runtime/u
   );
 });
 
-test("a loaded service with an earlier install path under the same CODEX_HOME is adopted and restarted", async () => {
-  const fake = deps({}, { loaded: new Set([LABEL_OTEL_COLLECTOR]) });
+test("a bridge loaded from an earlier install path under the same CODEX_HOME is adopted and restarted", async () => {
+  const fake = deps({}, { loaded: new Set([LABEL_COPILOT_PROXY]) });
   assert.equal(
-    await restartServices(options({ otelMode: "collector" }), {
+    await restartServices(options(), {
       ...fake,
       launchd: {
         ...fake.launchd,
         print: (label) =>
-          label === LABEL_OTEL_COLLECTOR
-            ? "program = /bin/bash\narguments = { /home/.codex/hooks/codex/otel/run-autodev-otel-collector.sh }\nCODEX_HOME => /home/.codex"
+          label === LABEL_COPILOT_PROXY
+            ? "program = /bin/bash\narguments = { /home/.codex/hooks/codex/run-codex-copilot-cli-responses-proxy.sh }\nCODEX_HOME => /home/.codex"
             : fake.launchd.print(label)
       }
     }),
     0
   );
-  assert.ok(fake.calls.includes(`bootout:${LABEL_OTEL_COLLECTOR}`));
-  assert.ok(fake.calls.includes(`enable:${LABEL_OTEL_COLLECTOR}`));
+  assert.ok(fake.calls.includes(`bootout:${LABEL_COPILOT_PROXY}`));
+  assert.ok(fake.calls.includes(`enable:${LABEL_COPILOT_PROXY}`));
   assert.ok(
     fake.calls.includes(
-      `bootstrap:/home/Library/LaunchAgents/${LABEL_OTEL_COLLECTOR}.plist`
+      `bootstrap:/home/Library/LaunchAgents/${LABEL_COPILOT_PROXY}.plist`
     )
   );
 });
@@ -521,20 +475,16 @@ test("a runtime rooted at another CODEX_HOME is left untouched", async () => {
   assert.deepEqual(fake.runs, []);
 });
 
-test("a missing launchctl skips every launchd call and forwards Collector paths to the ensure hooks", async () => {
+test("a missing launchctl starts bridges through direct ensure hooks", async () => {
   const fake = deps({ commandAvailable: () => false });
   const [status, stderr] = await captureStderr(() =>
-    restartServices(options({ otelMode: "collector" }), fake)
+    restartServices(options(), fake)
   );
   assert.equal(status, 0);
   assert.match(stderr, /launchctl unavailable \(sandbox\?\)/u);
   assert.deepEqual(fake.calls, []);
-  const collector = fake.runs.find((run) =>
-    run.args.at(-1)?.endsWith("ensure-autodev-otel-collector.sh")
+  assert.equal(
+    fake.runs.some((run) => run.args.at(-1)?.includes("otel-collector")),
+    false
   );
-  assert.deepEqual(collector?.env, {
-    AUTODEV_OTEL_REPO_ROOT: "/repo",
-    AUTODEV_OTEL_CONFIG: "/repo/config/otel/collector.yaml",
-    AUTODEV_OTEL_VERSION_FILE: "/repo/config/otel/collector.version"
-  });
 });

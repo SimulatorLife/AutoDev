@@ -10,14 +10,18 @@ test("typed install command rejects check mode until diagnostic ownership migrat
   );
 });
 
-test("typed install command rejects contradictory OTLP ingress flags before side effects", () => {
+test("typed install command rejects the removed Collector mode and contradictory OpenLIT flags", () => {
   assert.throws(
-    () =>
-      runInstallCommand([
-        "--enable-otel-collector",
-        "--disable-otel-collector"
-      ]),
-    /mutually exclusive/
+    () => runInstallCommand(["--enable-otel-collector"]),
+    /unsupported install option/
+  );
+  assert.throws(
+    () => runInstallCommand(["--disable-otel-collector"]),
+    /unsupported install option/
+  );
+  assert.throws(
+    () => runInstallCommand(["--disable-otel-collector"]),
+    /unsupported install option/
   );
   assert.throws(
     () =>

@@ -1,4 +1,8 @@
-import { MEMORY_REASON_CODES } from "@simulatorlife/autodev-core";
+import {
+  MEMORY_INJECTION_EVENT_REASON_CODES,
+  MEMORY_OUTCOME_REPORT_REASON_CODES,
+  MEMORY_REASON_CODES
+} from "@simulatorlife/autodev-core";
 
 import type { MemoryConnectionPool } from "./query-client.ts";
 
@@ -21,6 +25,13 @@ const SCOPE_COLUMNS_DDL = `
 export const MEMORY_EMBEDDING_DIMENSIONS = 1536 as const;
 
 const MEMORY_REASON_CODE_SQL = MEMORY_REASON_CODES.map(
+  (reason) => `'${reason}'`
+).join(", ");
+
+const MEMORY_INJECTION_EVENT_REASON_SQL =
+  MEMORY_INJECTION_EVENT_REASON_CODES.map((reason) => `'${reason}'`).join(", ");
+
+const MEMORY_OUTCOME_REPORT_REASON_SQL = MEMORY_OUTCOME_REPORT_REASON_CODES.map(
   (reason) => `'${reason}'`
 ).join(", ");
 
@@ -298,6 +309,108 @@ CREATE INDEX idx_memory_experiences_mode_outcome
     completed_at
   )
   WHERE memory_mode IS NOT NULL;
+`
+  },
+  {
+    version: 8,
+    description:
+      "Record actual memory packet injection events and reporter-supplied outcome joins",
+    sql: `
+-- Actual memory packet injection events are append-only observations of the
+-- runtime boundary. They record the host-selected mode, the injected/empty
+-- decision, and the bounded memory references that were attached; the
+-- durable correlationToken is opaque, contains no transcript or claim
+-- content, and is never propagated into metric dimensions or model prompts.
+-- The (workspace, repository, task, run, agent) scope mirrors
+-- memory_experiences so visibility/authority reuse buildScopeFilterSql.
+CREATE TABLE memory_injection_events (
+  id text PRIMARY KEY,
+  workspace_id text NOT NULL,
+  repository_id text,
+  ${SCOPE_COLUMNS_DDL},
+  task_id text NOT NULL,
+  run_id text NOT NULL,
+  agent_id text NOT NULL,
+  agent_role text,
+  -- SHA-256 tokens include workspace/repository/task/request identity; global
+  -- uniqueness makes an accidental cross-workspace token collision fail closed.
+  correlation_token text NOT NULL UNIQUE,
+  memory_mode text NOT NULL CHECK (memory_mode IN ('jit', 'retrieval-only', 'disabled', 'invalid', 'unknown')),
+  injection_result text NOT NULL CHECK (injection_result IN ('injected', 'empty', 'skipped')),
+  packet_character_count integer NOT NULL DEFAULT 0 CHECK (packet_character_count >= 0),
+  packet_token_count integer CHECK (packet_token_count IS NULL OR packet_token_count >= 0),
+  memory_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  occurred_at timestamptz NOT NULL,
+  reason_code text NOT NULL CHECK (reason_code IN (${MEMORY_INJECTION_EVENT_REASON_SQL})),
+  evidence jsonb NOT NULL DEFAULT '[]'::jsonb,
+  recorded_by text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+${SCOPE_KIND_CHECK("memory_injection_events")}
+CREATE INDEX idx_memory_injection_events_scope_time
+  ON memory_injection_events (scope_workspace_id, repository_id, task_id, run_id, agent_id, occurred_at);
+
+CREATE FUNCTION memory_injection_events_append_only() RETURNS trigger AS $fn$
+BEGIN
+  RAISE EXCEPTION 'memory_injection_events is append-only: % is not permitted', TG_OP;
+END;
+$fn$ LANGUAGE plpgsql;
+CREATE TRIGGER memory_injection_events_no_update
+  BEFORE UPDATE OR DELETE ON memory_injection_events
+  FOR EACH ROW EXECUTE FUNCTION memory_injection_events_append_only();
+
+-- Reporter-supplied outcome reports are append-only and must point at a
+-- previously observed injection event in the session scope (workspace,
+-- repository, task). Injection run_id/agent_id are request-level details
+-- and are intentionally not part of the join. One outcome report is
+-- permitted per injection:
+-- a unique (workspace_id, correlation_token) key makes a same-body retry
+-- idempotent (the repository returns appended: false) while a conflicting
+-- retry for the same token is rejected, so every injection joins to at
+-- most one reporter-supplied outcome and analytics never double-count
+-- one exposure.
+CREATE TABLE memory_outcome_reports (
+  id text PRIMARY KEY,
+  workspace_id text NOT NULL,
+  repository_id text,
+  ${SCOPE_COLUMNS_DDL},
+  task_id text NOT NULL,
+  run_id text NOT NULL,
+  agent_id text NOT NULL,
+  correlation_token text NOT NULL,
+  outcome_kind text NOT NULL CHECK (outcome_kind IN ('success', 'partial', 'failure', 'cancelled', 'unknown')),
+  report_kind text NOT NULL CHECK (report_kind IN ('task', 'pull_request', 'issue', 'other')),
+  reported_at timestamptz NOT NULL,
+  reporter_id text NOT NULL,
+  -- "worker" and "system" must never appear in the recorded authority:
+  -- worker actors cannot author outcomes, and system actors only emit
+  -- injection events, not outcomes. Only root/curator are eligible.
+  reporter_authority text NOT NULL CHECK (reporter_authority IN ('root', 'curator')),
+  reason_code text NOT NULL CHECK (reason_code IN (${MEMORY_OUTCOME_REPORT_REASON_SQL})),
+  evidence jsonb NOT NULL DEFAULT '[]'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+-- One row per (workspace_id, correlation_token): see the table comment
+-- above for the cardinality/idempotency contract this enforces.
+CREATE UNIQUE INDEX uniq_memory_outcome_reports_scope_key
+  ON memory_outcome_reports (
+    workspace_id,
+    correlation_token
+  );
+${SCOPE_KIND_CHECK("memory_outcome_reports")}
+CREATE INDEX idx_memory_outcome_reports_scope_token
+  ON memory_outcome_reports (workspace_id, correlation_token);
+CREATE INDEX idx_memory_outcome_reports_scope_time
+  ON memory_outcome_reports (scope_workspace_id, repository_id, task_id, run_id, agent_id, reported_at);
+
+CREATE FUNCTION memory_outcome_reports_append_only() RETURNS trigger AS $fn$
+BEGIN
+  RAISE EXCEPTION 'memory_outcome_reports is append-only: % is not permitted', TG_OP;
+END;
+$fn$ LANGUAGE plpgsql;
+CREATE TRIGGER memory_outcome_reports_no_update
+  BEFORE UPDATE OR DELETE ON memory_outcome_reports
+  FOR EACH ROW EXECUTE FUNCTION memory_outcome_reports_append_only();
 `
   }
 ];

@@ -753,10 +753,12 @@ const home = process.env.HOME;
 const mcpConfig = JSON.parse(readFileSync(join(home, ".gemini", "config", "mcp_config.json"), "utf8"));
 const settings = JSON.parse(readFileSync(join(home, ".gemini", "antigravity-cli", "settings.json"), "utf8"));
 const workspace = process.cwd();
-assert.deepEqual(
-  settings.permissions.allow.filter(entry => entry.startsWith("read_file(")),
-  ["read_file(" + workspace + ")", "read_file(" + workspace + "/**)"]
-);
+const readAllows = settings.permissions.allow.filter(entry => entry.startsWith("read_file("));
+assert.ok(readAllows.includes("read_file(" + workspace + ")"));
+assert.ok(readAllows.includes("read_file(" + workspace + "/**)"));
+assert.ok(readAllows.some(entry => entry.includes(".agents")));
+assert.ok(readAllows.some(entry => entry.includes("codex")));
+assert.equal(readAllows.length, 6);
 
 const servers = Object.keys(mcpConfig.mcpServers || {});
 const playwrightAllows = (settings.permissions?.allow || []).filter(e => e.startsWith("mcp(playwright"));
@@ -972,7 +974,7 @@ test("read-only Antigravity permission scope limits read_file to validated works
       const allowList = settings.permissions?.allow as string[];
       const denyList = settings.permissions?.deny as string[];
 
-      // 1. Explicit read_file authorization limited to validated request workspace
+      // 1. Explicit read_file authorization limited to validated request workspace and shared agent/codex roots
       assert.ok(
         allowList.includes(`read_file(${targetWorkspace})`),
         "workspace root must be granted"
@@ -981,8 +983,24 @@ test("read-only Antigravity permission scope limits read_file to validated works
         allowList.includes(`read_file(${targetWorkspace}/**)`),
         "workspace recursive files must be granted"
       );
+      assert.ok(
+        allowList.includes(`read_file(${join(env.userHome, ".agents")})`),
+        "shared .agents root must be granted"
+      );
+      assert.ok(
+        allowList.includes(`read_file(${join(env.userHome, ".agents")}/**)`),
+        "shared .agents recursive files must be granted"
+      );
+      assert.ok(
+        allowList.includes(`read_file(${env.codexHome})`),
+        "shared .codex root must be granted"
+      );
+      assert.ok(
+        allowList.includes(`read_file(${join(env.codexHome, "**")})`),
+        "shared .codex recursive files must be granted"
+      );
 
-      // 2. Paths outside selected workspace and broad access are NOT granted
+      // 2. Paths outside selected workspace and shared roots, plus broad access, are NOT granted
       assert.ok(
         !allowList.includes("read_file(**)"),
         "broad read_file(**) must not be granted"
@@ -996,9 +1014,11 @@ test("read-only Antigravity permission scope limits read_file to validated works
           (entry) =>
             typeof entry === "string" &&
             entry.startsWith("read_file(") &&
-            !entry.includes(targetWorkspace)
+            !entry.includes(targetWorkspace) &&
+            !entry.includes(join(env.userHome, ".agents")) &&
+            !entry.includes(env.codexHome)
         ),
-        "no read_file grants outside selected workspace"
+        "no read_file grants outside selected workspace and shared agent roots"
       );
 
       // 3. Command, write, and unsandboxed permissions are NOT granted
@@ -1033,10 +1053,17 @@ test("read-only Antigravity permission scope limits read_file to validated works
         "read_url(*) should be preserved"
       );
 
-      // The only read_file rules are the exact and recursive selected-root grants.
+      // The only read_file rules are the exact and recursive selected-root and shared agent/codex grants.
       assert.deepEqual(
         allowList.filter((entry) => entry.startsWith("read_file(")),
-        [`read_file(${targetWorkspace})`, `read_file(${targetWorkspace}/**)`]
+        [
+          `read_file(${targetWorkspace})`,
+          `read_file(${targetWorkspace}/**)`,
+          `read_file(${join(env.userHome, ".agents")})`,
+          `read_file(${join(env.userHome, ".agents")}/**)`,
+          `read_file(${env.codexHome})`,
+          `read_file(${join(env.codexHome, "**")})`
+        ]
       );
 
       // 5. Explicit denies remain intact and take precedence

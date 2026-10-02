@@ -5,9 +5,10 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  LAUNCH_LABELS,
   OBSOLETE_DASHBOARD,
+  OBSOLETE_LAUNCH,
   OBSOLETE_RUNTIME_MODULES,
-  OTEL_RUNTIME,
   RUNTIME_MODULES
 } from "@simulatorlife/autodev-runtime/platform/install-materializer";
 
@@ -75,7 +76,7 @@ function assertInstalledSourceDependencies(
 }
 
 test("every manifest entry exists in the repository", () => {
-  const absent = [...RUNTIME_MODULES, ...OTEL_RUNTIME].filter(
+  const absent = [...RUNTIME_MODULES].filter(
     (modulePath) => !existsSync(join(repositoryRoot, modulePath))
   );
   assert.deepEqual(
@@ -790,18 +791,6 @@ test("platform host and installation primitives are Runtime-owned behind package
       runtimePath: "runtime/src/platform/install-materializer.ts",
       legacyPath: "src/platform/install-materializer.ts",
       exportTarget: "./src/platform/install-materializer.ts"
-    },
-    {
-      name: "otel-collector",
-      runtimePath: "runtime/src/platform/otel-collector.ts",
-      legacyPath: "src/platform/otel-collector.ts",
-      exportTarget: "./src/platform/otel-collector.ts"
-    },
-    {
-      name: "otel-provision",
-      runtimePath: "runtime/src/platform/otel-provision.ts",
-      legacyPath: "src/platform/otel-provision.ts",
-      exportTarget: "./src/platform/otel-provision.ts"
     }
   ];
   const modules = RUNTIME_MODULES as readonly string[];
@@ -1005,6 +994,97 @@ test("router dashboard and chart.js are decommissioned from runtime modules", ()
     false
   );
   assert.equal(OBSOLETE_DASHBOARD, "codex-model-router-dashboard.html");
+});
+
+test("AutoDev standalone OTel Collector is decommissioned with no replacement sidecar", () => {
+  const runtimeModules = RUNTIME_MODULES as readonly string[];
+  const obsoleteModules = OBSOLETE_RUNTIME_MODULES as readonly string[];
+
+  // Repository no longer contains any AutoDev-owned standalone Collector
+  // implementation, provisioning, configuration, scripts, or LaunchAgent.
+  const removedAutoDevFiles = [
+    "runtime/src/platform/otel-collector.ts",
+    "runtime/src/platform/otel-provision.ts",
+    "config/otel/collector.yaml",
+    "config/otel/collector.version",
+    "config/otel/collector-artifacts.json",
+    "scripts/otel/ensure-autodev-otel-collector.sh",
+    "scripts/otel/provision-autodev-otel-collector.sh",
+    "scripts/otel/run-autodev-otel-collector.sh",
+    "config/launchagents/com.codex.otel-collector.plist"
+  ];
+  for (const filePath of removedAutoDevFiles) {
+    assert.equal(
+      existsSync(join(repositoryRoot, filePath)),
+      false,
+      `${filePath} must not be reintroduced as a replacement sidecar`
+    );
+    assert.equal(
+      runtimeModules.includes(filePath),
+      false,
+      `${filePath} must not be reinstalled from a Runtime manifest entry`
+    );
+  }
+
+  // Stale CODEX_HOME installs from prior versions are tracked in
+  // OBSOLETE_RUNTIME_MODULES so the installer removes them on next run.
+  const staleAutoDevPaths = [
+    "src/platform/otel-collector.ts",
+    "src/platform/otel-provision.ts"
+  ];
+  for (const legacyPath of staleAutoDevPaths) {
+    assert.equal(
+      existsSync(join(repositoryRoot, legacyPath)),
+      false,
+      `${legacyPath} must not be reintroduced as a legacy install source`
+    );
+    assert.ok(
+      obsoleteModules.includes(legacyPath),
+      `${legacyPath} must remain in OBSOLETE_RUNTIME_MODULES so stale CODEX_HOME copies are cleaned`
+    );
+  }
+
+  // The installer must still drive the obsolete-path cleanup loop.
+  const materializer = readFileSync(
+    join(repositoryRoot, "runtime/src/platform/install-materializer.ts"),
+    "utf8"
+  );
+  assert.match(
+    materializer,
+    /OBSOLETE_RUNTIME_MODULES\.map\(\(filePath\) => path\.join\(codexHome, filePath\)\)/,
+    "stale CODEX_HOME copies of the removed Collector must still be removed by the installer"
+  );
+  const collectorLabel = "com.codex.otel-collector" as const;
+  assert.equal(
+    (LAUNCH_LABELS as readonly string[]).includes(collectorLabel),
+    false,
+    "the deleted Collector LaunchAgent must not be rendered"
+  );
+  assert.ok(
+    OBSOLETE_LAUNCH.includes(collectorLabel),
+    "old Collector launchd state must still be unloaded once during migration"
+  );
+  assert.match(
+    materializer,
+    /OBSOLETE_LAUNCH\.map\(\(label\) =>[\s\S]*?path\.join\(home, "Library", "LaunchAgents", `\$\{label\}\.plist`\)/,
+    "stale Collector plist files under LaunchAgents must be removed"
+  );
+  assert.match(materializer, /OBSOLETE_COLLECTOR_HOOKS\.map/);
+  assert.match(materializer, /autodev-otel-collector\.pid/);
+  // The installer must not reintroduce the sidecar Collector sources in any
+  // install manifest.
+  assert.doesNotMatch(
+    materializer,
+    /"scripts\/otel\//,
+    "Install manifest must not reintroduce any scripts/otel/ Collector source"
+  );
+  assert.doesNotMatch(
+    materializer,
+    /"runtime\/src\/platform\/otel-(?:collector|provision)\.ts"/,
+    "Install manifest must not reintroduce otel-collector or otel-provision sources"
+  );
+
+  assert.match(materializer, /bootoutObsoleteLaunchLabels\(launchd\)/);
 });
 
 test("Memory implementations are Runtime-owned behind the workspace package", () => {

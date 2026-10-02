@@ -1,6 +1,8 @@
 import type {
   ExperienceEnvelope,
+  MemoryInjectionEvent,
   MemoryLifecycleEvent,
+  MemoryOutcomeReport,
   MemoryRecord
 } from "@simulatorlife/autodev-core";
 
@@ -88,6 +90,58 @@ export function lifecycleEventToRow(
     reason_code: event.reasonCode,
     evidence: JSON.stringify(event.evidence),
     related_memory_ids: JSON.stringify(event.relatedMemoryIds)
+  };
+}
+
+
+/** Row values for inserting one `memory_injection_events` row. */
+export function injectionEventToRow(
+  event: MemoryInjectionEvent
+): Record<string, unknown> {
+  const scope = scopeToColumns(event.scope);
+  return {
+    id: event.id,
+    workspace_id: event.workspaceId,
+    repository_id: event.repositoryId ?? null,
+    ...scope,
+    task_id: event.taskId,
+    run_id: event.runId,
+    agent_id: event.agentId,
+    agent_role: event.agentRole ?? null,
+    correlation_token: event.correlationToken,
+    memory_mode: event.memoryMode,
+    injection_result: event.injectionResult,
+    packet_character_count: event.packetCharacterCount,
+    packet_token_count: event.packetTokenCount ?? null,
+    memory_ids: JSON.stringify(event.memoryIds),
+    occurred_at: event.occurredAt,
+    reason_code: event.reasonCode,
+    evidence: JSON.stringify(event.evidence),
+    recorded_by: event.recordedBy
+  };
+}
+
+/** Row values for inserting one `memory_outcome_reports` row. */
+export function outcomeReportToRow(
+  report: MemoryOutcomeReport
+): Record<string, unknown> {
+  const scope = scopeToColumns(report.scope);
+  return {
+    id: report.id,
+    workspace_id: report.workspaceId,
+    repository_id: report.repositoryId ?? null,
+    ...scope,
+    task_id: report.taskId,
+    run_id: report.runId,
+    agent_id: report.agentId,
+    correlation_token: report.correlationToken,
+    outcome_kind: report.outcomeKind,
+    report_kind: report.reportKind,
+    reported_at: report.reportedAt,
+    reporter_id: report.reporterId,
+    reporter_authority: report.reporterAuthority,
+    reason_code: report.reasonCode,
+    evidence: JSON.stringify(report.evidence)
   };
 }
 

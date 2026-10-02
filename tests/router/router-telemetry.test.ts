@@ -3,6 +3,7 @@ import "@simulatorlife/autodev-runtime/router/http";
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { trace } from "@opentelemetry/api";
 import {
   AggregationTemporality,
   InMemoryMetricExporter
@@ -18,6 +19,7 @@ import {
   fetchUpstream,
   proxyConcreteResponse,
   proxyFallbackChain,
+  proxyOrchestratorResponse,
   writeResponseStream
 } from "@simulatorlife/autodev-runtime/router/proxy";
 import type { ProviderRoute } from "@simulatorlife/autodev-runtime/router/routing";
@@ -85,6 +87,8 @@ const route = (provider: string, envKey: string): ProviderRoute => ({
 
 interface SpanRecord {
   name: string;
+  spanId: string;
+  traceId: string;
   attributes: Record<string, unknown>;
   status: { code: number };
   parentSpanContext: { spanId: string; traceId: string } | undefined;
@@ -96,6 +100,8 @@ function snapshotSpans(): SpanRecord[] {
     const parent = span.parentSpanContext;
     return {
       name: span.name,
+      spanId: span.spanContext().spanId,
+      traceId: span.spanContext().traceId,
       attributes: { ...span.attributes } as Record<string, unknown>,
       status: { code: span.status.code as number },
       parentSpanContext: parent
@@ -438,6 +444,228 @@ test(
       globalThis.fetch = originalFetch;
       if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
       else process.env.LITELLM_API_KEY = previousKey;
+      resetTelemetryExporter();
+    }
+  }
+);
+
+test(
+  "orchestrator payload preparation and memory spans share the routed-request trace",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "claude-key";
+    const originalFetch = globalThis.fetch;
+    let upstreamInstructions: unknown;
+    globalThis.fetch = (async (
+      _input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      upstreamInstructions = body.instructions;
+      return jsonResponse({
+        id: "resp-memory-trace",
+        status: "completed",
+        model: "claude-test",
+        output: []
+      });
+    }) as typeof fetch;
+    installExporter();
+    let preparedSpanId: string | null = null;
+    try {
+      await proxyFallbackChain(
+        responseRecorder(),
+        {
+          candidates: [route("claude", "LITELLM_API_KEY")],
+          agentRole: "orchestrator",
+          origin: "orchestrator",
+          subject: "the orchestrator",
+          preparePayload: async (payload) => {
+            const active = trace.getActiveSpan();
+            assert.ok(
+              active,
+              "preparation runs inside the logical request span"
+            );
+            preparedSpanId = active.spanContext().spanId;
+            active.setAttribute("autodev.memory.mode", "jit");
+            const researchSpan = trace
+              .getTracer("autodev.memory.test", "1.0.0")
+              .startSpan("memory.research");
+            researchSpan.end();
+            return { ...payload, instructions: "advisory memory packet" };
+          }
+        },
+        { model: "autodev/orchestrator", input: [], stream: false },
+        false,
+        "req-memory-trace",
+        null,
+        { key: "memory-trace-workspace" }
+      );
+
+      const spans = snapshotSpans();
+      const logical = findLogical(spans);
+      const research = spans.find((span) => span.name === "memory.research");
+      assert.equal(logical.length, 1);
+      assert.equal(upstreamInstructions, "advisory memory packet");
+      assert.ok(preparedSpanId);
+      assert.equal(logical[0]?.attributes["autodev.memory.mode"], "jit");
+      assert.equal(preparedSpanId, logical[0]?.spanId);
+      assert.ok(research);
+      assert.equal(research.parentSpanContext?.spanId, logical[0]?.spanId);
+      assert.equal(research.parentSpanContext?.traceId, logical[0]?.traceId);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      resetTelemetryExporter();
+    }
+  }
+);
+
+test(
+  "a failed advisory payload preparation does not prevent provider routing",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "claude-key";
+    const originalFetch = globalThis.fetch;
+    let forwardedInput: unknown;
+    globalThis.fetch = (async (
+      _input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      forwardedInput = JSON.parse(String(init?.body));
+      return jsonResponse({
+        id: "resp-memory-preparation-error",
+        status: "completed",
+        model: "claude-test",
+        output: []
+      });
+    }) as typeof fetch;
+    installExporter();
+    const originalPayload = {
+      model: "autodev/worker",
+      instructions: "Keep canonical policy.",
+      input: [],
+      stream: false
+    };
+    try {
+      const response = responseRecorder();
+      await proxyFallbackChain(
+        response,
+        {
+          candidates: [route("claude", "LITELLM_API_KEY")],
+          role: "worker",
+          subject: "worker turn",
+          preparePayload: async () => {
+            throw new Error("memory service unavailable");
+          }
+        },
+        originalPayload,
+        false,
+        "req-memory-preparation-error",
+        null,
+        { key: "memory-preparation-workspace" }
+      );
+
+      assert.equal(response.statusCode, 200);
+      assert.equal(
+        (forwardedInput as Record<string, unknown>).instructions,
+        originalPayload.instructions
+      );
+      const logical = findLogical(snapshotSpans());
+      assert.equal(logical.length, 1);
+      assert.equal(
+        logical[0]?.attributes["autodev.memory.injection.result"],
+        "unavailable"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      resetTelemetryExporter();
+    }
+  }
+);
+
+test(
+  "the orchestrator router attaches the selected memory mode to its logical span",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    const previousKey = process.env.LITELLM_API_KEY;
+    const previousDatabaseUrl = process.env.AUTODEV_MEMORY_DATABASE_URL;
+    const previousMode = process.env.AUTODEV_MEMORY_MODE;
+    const previousAblation = process.env.AUTODEV_MEMORY_ABLATION;
+    process.env.LITELLM_API_KEY = "claude-key";
+    process.env.AUTODEV_MEMORY_MODE = "disabled";
+    delete process.env.AUTODEV_MEMORY_DATABASE_URL;
+    delete process.env.AUTODEV_MEMORY_ABLATION;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        id: "resp-disabled-memory",
+        status: "completed",
+        model: "claude-test",
+        output: []
+      })) as typeof fetch;
+    installExporter();
+    try {
+      await proxyOrchestratorResponse(
+        responseRecorder(),
+        {
+          model: "autodev/orchestrator",
+          input: [
+            { type: "message", role: "user", content: "A no-memory task." }
+          ],
+          stream: false
+        },
+        false,
+        "req-disabled-memory",
+        null,
+        { key: "memory-mode-workspace" }
+      );
+
+      await proxyFallbackChain(
+        responseRecorder(),
+        {
+          candidates: [],
+          agentRole: "orchestrator",
+          subject: "the orchestrator with no providers"
+        },
+        { model: "autodev/orchestrator", input: [], stream: false },
+        false,
+        "req-disabled-memory-no-provider",
+        null,
+        { key: "memory-mode-workspace" }
+      );
+      const logical = findLogical(snapshotSpans());
+      assert.equal(logical.length, 2);
+      assert.ok(
+        logical.every(
+          (span) => span.attributes["autodev.memory.mode"] === "disabled"
+        )
+      );
+      assert.ok(
+        logical.every(
+          (span) =>
+            span.attributes["autodev.memory.injection.result"] === undefined
+        )
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      if (previousDatabaseUrl === undefined)
+        delete process.env.AUTODEV_MEMORY_DATABASE_URL;
+      else process.env.AUTODEV_MEMORY_DATABASE_URL = previousDatabaseUrl;
+      if (previousMode === undefined) delete process.env.AUTODEV_MEMORY_MODE;
+      else process.env.AUTODEV_MEMORY_MODE = previousMode;
+      if (previousAblation === undefined)
+        delete process.env.AUTODEV_MEMORY_ABLATION;
+      else process.env.AUTODEV_MEMORY_ABLATION = previousAblation;
       resetTelemetryExporter();
     }
   }

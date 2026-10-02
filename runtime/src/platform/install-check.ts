@@ -1,4 +1,3 @@
-import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
@@ -19,20 +18,11 @@ import {
   runCompose,
   runModelCatalog
 } from "@simulatorlife/autodev-runtime/config";
-import { resolveServiceNode } from "./host-arch.ts";
-import { readOtelIngressMode } from "./install-state.ts";
-import { launchAgentMatches } from "./macos/launchagent.ts";
-import {
-  runtimeFileMatches,
-  runtimeLinkMatches,
-  runtimeTarget,
-  skillLinkMatches
-} from "./runtime-files.ts";
-import { stalePaths } from "./runtime-reconciliation.ts";
 import {
   writeErrorLine,
   writeLine
 } from "@simulatorlife/autodev-runtime/shared/output";
+import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
 import {
   antigravitySkillsStatus,
@@ -44,6 +34,7 @@ import {
   checkPythonLanguageServer,
   resolveDependencyOptions
 } from "./dependencies.ts";
+import { resolveServiceNode } from "./host-arch.ts";
 import { createCodexMcpSource } from "./install-command.ts";
 import {
   CATALOGS,
@@ -56,8 +47,8 @@ import {
   OBSOLETE_DASHBOARD,
   OBSOLETE_DIRS,
   OBSOLETE_HOOKS,
+  OBSOLETE_LAUNCH,
   OBSOLETE_PATHS,
-  OTEL_RUNTIME,
   PROFILES,
   PROMPT_ROLES,
   ROLES,
@@ -65,7 +56,15 @@ import {
   RUNTIME_MODULES,
   SKILLS
 } from "./install-materializer.ts";
-import { resolveCollectorOptions, runCollector } from "./otel-collector.ts";
+import { readOtelIngressMode } from "./install-state.ts";
+import { launchAgentMatches } from "./macos/launchagent.ts";
+import {
+  runtimeFileMatches,
+  runtimeLinkMatches,
+  runtimeTarget,
+  skillLinkMatches
+} from "./runtime-files.ts";
+import { stalePaths } from "./runtime-reconciliation.ts";
 
 export interface InstallCheckOptions {
   readonly repositoryRoot?: string;
@@ -166,6 +165,9 @@ function staleCheck(
 ): void {
   const hooks = path.join(options.codexHome, "hooks");
   const paths = [
+    ...OBSOLETE_LAUNCH.map((label) =>
+      path.join(options.home, "Library", "LaunchAgents", `${label}.plist`)
+    ),
     path.join(
       options.home,
       "Library",
@@ -378,15 +380,6 @@ function checkRuntimeAndOt(
     ),
     failures
   );
-  for (const filePath of OTEL_RUNTIME)
-    check(
-      `Collector runtime ${filePath}`,
-      runtimeFileMatches(
-        path.join(paths.repositoryRoot, filePath),
-        path.join(paths.hooks, filePath.slice(8))
-      ),
-      failures
-    );
   for (const role of PROMPT_ROLES)
     check(
       `prompt role ${role}`,
@@ -722,33 +715,17 @@ function checkRulesync(
   }
 }
 
-function checkCollector(
+function checkOtelIngress(
   paths: RunInstallPaths,
   mode: string,
   failures: { value: number }
 ): void {
   check(
     `OTLP ingress mode ${mode}`,
-    mode === "direct" || mode === "collector" || mode === "openlit",
+    mode === "direct" || mode === "openlit",
     failures
   );
-  const collector = resolveCollectorOptions({
-    ...process.env,
-    AUTODEV_OTEL_REPO_ROOT: paths.repositoryRoot,
-    CODEX_HOME: paths.codexHome
-  });
-  if (mode === "collector") {
-    try {
-      check(
-        "Collector binary/config",
-        runCollector(collector, true) === 0,
-        failures
-      );
-    } catch {
-      writeLine("missing-or-drifted Collector binary/config");
-      failures.value = 1;
-    }
-  } else if (mode === "openlit") {
+  if (mode === "openlit") {
     check(
       "private OpenLIT secret and receiver key files",
       privateOpenlitSecretsReady(paths.codexHome),
@@ -767,7 +744,7 @@ function checkCollector(
     );
   } else {
     writeLine(
-      "ok separate Collector is disabled (direct OTLP ingress on 127.0.0.1:4100)"
+      "ok direct router OTLP ingress selected; OpenLIT first-party ingress is not enabled"
     );
   }
 }
@@ -1013,7 +990,7 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
     checkPortableConfig(paths, failures);
     checkUserConfigAndAgents(paths, projection, mode, failures);
     checkRulesync(paths, failures);
-    checkCollector(paths, mode, failures);
+    checkOtelIngress(paths, mode, failures);
     checkObsoleteSkillPaths(paths, failures);
     checkAntigravityCli(paths, failures);
     checkGitExcludes(paths, failures);

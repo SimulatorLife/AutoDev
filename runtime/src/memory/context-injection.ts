@@ -1,4 +1,4 @@
-import { metrics } from "@opentelemetry/api";
+import { metrics, trace } from "@opentelemetry/api";
 import type {
   MemoryExecutionMode,
   MemoryPacket,
@@ -237,6 +237,21 @@ function appendAndMeasureMemoryPacket(
     packet.entries.length > 0 &&
     typeof enriched.instructions === "string" &&
     enriched.instructions.includes(MEMORY_ADVISORY_START);
+  try {
+    const span = trace.getActiveSpan();
+    span?.setAttribute(
+      "autodev.memory.injection.result",
+      injected ? "injected" : "empty"
+    );
+    span?.setAttribute("autodev.memory.mode", memoryMode);
+    span?.setAttribute("autodev.memory.packet.entries", packet.entries.length);
+    span?.setAttribute(
+      "autodev.memory.packet.characters",
+      packet.characterCount
+    );
+  } catch {
+    // Telemetry must not affect whether advisory memory is attached.
+  }
   try {
     metrics
       .getMeter("autodev.memory", "1.0.0")

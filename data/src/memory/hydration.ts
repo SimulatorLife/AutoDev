@@ -4,11 +4,22 @@ import {
   type ExperienceEnvelope,
   type ExperienceOutcome,
   MEMORY_EXECUTION_MODES,
+  MEMORY_INJECTION_EVENT_REASON_CODES,
+  MEMORY_INJECTION_RESULTS,
+  MEMORY_OUTCOME_REPORT_KINDS,
+  MEMORY_OUTCOME_REPORT_REASON_CODES,
   MEMORY_REASON_CODES,
+  type MemoryAuthority,
   type MemoryExecutionMode,
+  type MemoryInjectionEvent,
+  type MemoryInjectionEventReasonCode,
+  type MemoryInjectionResult,
   type MemoryKind,
   type MemoryLifecycleAction,
   type MemoryLifecycleEvent,
+  type MemoryOutcomeReport,
+  type MemoryOutcomeReportKind,
+  type MemoryOutcomeReportReasonCode,
   type MemoryProvenance,
   type MemoryReasonCode,
   type MemoryRecord,
@@ -56,6 +67,24 @@ const LIFECYCLE_ACTIONS: ReadonlySet<string> = new Set([
   "promoted",
   "procedure_promoted"
 ]);
+const MEMORY_INJECTION_RESULT_SET: ReadonlySet<string> = new Set(
+  MEMORY_INJECTION_RESULTS
+);
+const MEMORY_INJECTION_EVENT_REASON_SET: ReadonlySet<string> = new Set(
+  MEMORY_INJECTION_EVENT_REASON_CODES
+);
+const MEMORY_OUTCOME_REPORT_KIND_SET: ReadonlySet<string> = new Set(
+  MEMORY_OUTCOME_REPORT_KINDS
+);
+const MEMORY_OUTCOME_REPORT_REASON_SET: ReadonlySet<string> = new Set(
+  MEMORY_OUTCOME_REPORT_REASON_CODES
+);
+const MEMORY_AUTHORITY_SET: ReadonlySet<string> = new Set([
+  "worker",
+  "root",
+  "curator",
+  "system"
+]);
 const EVIDENCE_KINDS: ReadonlySet<string> = new Set([
   "trajectory",
   "trace",
@@ -68,6 +97,8 @@ const EVIDENCE_KINDS: ReadonlySet<string> = new Set([
   "document",
   "other"
 ]);
+
+const INTEGER_STRING_PATTERN = /^-?\d+$/u;
 
 function fail(table: string, column: string, detail: string): never {
   throw new MemoryHydrationError(table, column, detail);
@@ -478,5 +509,138 @@ export function hydrateLifecycleEventRow(
       "related_memory_ids",
       row.related_memory_ids
     )
+  };
+}
+
+
+/** Hydrate one `memory_injection_events` row. */
+export function hydrateInjectionEventRow(
+  row: Record<string, unknown>
+): MemoryInjectionEvent {
+  const table = "memory_injection_events";
+  const agentRole = optionalString(table, "agent_role", row.agent_role);
+  const packetTokenCount = row.packet_token_count;
+  return {
+    id: requireString(table, "id", row.id),
+    workspaceId: requireString(table, "workspace_id", row.workspace_id),
+    ...(row.repository_id === null || row.repository_id === undefined
+      ? {}
+      : { repositoryId: requireString(table, "repository_id", row.repository_id) }),
+    scope: columnsToScope(table, row),
+    taskId: requireString(table, "task_id", row.task_id),
+    runId: requireString(table, "run_id", row.run_id),
+    agentId: requireString(table, "agent_id", row.agent_id),
+    ...(agentRole === undefined ? {} : { agentRole }),
+    correlationToken: requireString(
+      table,
+      "correlation_token",
+      row.correlation_token
+    ),
+    memoryMode: requireEnum<MemoryExecutionMode>(
+      table,
+      "memory_mode",
+      row.memory_mode,
+      MEMORY_EXECUTION_MODE_SET
+    ),
+    injectionResult: requireEnum<MemoryInjectionResult>(
+      table,
+      "injection_result",
+      row.injection_result,
+      MEMORY_INJECTION_RESULT_SET
+    ),
+    packetCharacterCount: requireNonNegativeInteger(
+      table,
+      "packet_character_count",
+      row.packet_character_count
+    ),
+    ...(packetTokenCount === null || packetTokenCount === undefined
+      ? {}
+      : {
+          packetTokenCount: requireNonNegativeInteger(
+            table,
+            "packet_token_count",
+            packetTokenCount
+          )
+        }),
+    memoryIds: parseIdArray(table, "memory_ids", row.memory_ids),
+    occurredAt: requireIsoString(table, "occurred_at", row.occurred_at),
+    reasonCode: requireEnum<MemoryInjectionEventReasonCode>(
+      table,
+      "reason_code",
+      row.reason_code,
+      MEMORY_INJECTION_EVENT_REASON_SET
+    ),
+    evidence: parseEvidenceList(table, "evidence", row.evidence ?? "[]"),
+    recordedBy: requireString(table, "recorded_by", row.recorded_by)
+  };
+}
+
+function requireNonNegativeInteger(
+  table: string,
+  column: string,
+  value: unknown
+): number {
+  if (typeof value === "string") {
+    if (!INTEGER_STRING_PATTERN.test(value)) {
+      fail(table, column, `expected an integer, got ${JSON.stringify(value)}`);
+    }
+    value = Number(value);
+  }
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    fail(table, column, `expected a non-negative integer, got ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+/** Hydrate one `memory_outcome_reports` row. */
+export function hydrateOutcomeReportRow(
+  row: Record<string, unknown>
+): MemoryOutcomeReport {
+  const table = "memory_outcome_reports";
+  const repositoryId = optionalString(table, "repository_id", row.repository_id);
+  const agentRole = optionalString(table, "agent_role", row.agent_role);
+  return {
+    id: requireString(table, "id", row.id),
+    workspaceId: requireString(table, "workspace_id", row.workspace_id),
+    ...(repositoryId === undefined
+      ? {}
+      : { repositoryId }),
+    scope: columnsToScope(table, row),
+    taskId: requireString(table, "task_id", row.task_id),
+    runId: requireString(table, "run_id", row.run_id),
+    agentId: requireString(table, "agent_id", row.agent_id),
+    ...(agentRole === undefined ? {} : { agentRole }),
+    correlationToken: requireString(
+      table,
+      "correlation_token",
+      row.correlation_token
+    ),
+    outcomeKind: requireEnum<ExperienceOutcome>(
+      table,
+      "outcome_kind",
+      row.outcome_kind,
+      EXPERIENCE_OUTCOMES
+    ),
+    reportKind: requireEnum<MemoryOutcomeReportKind>(
+      table,
+      "report_kind",
+      row.report_kind,
+      MEMORY_OUTCOME_REPORT_KIND_SET
+    ),
+    reportedAt: requireIsoString(table, "reported_at", row.reported_at),
+    reporterId: requireString(table, "reporter_id", row.reporter_id),
+    reporterAuthority: requireEnum<MemoryAuthority>(
+      table,
+      "reporter_authority",
+      row.reporter_authority,
+      MEMORY_AUTHORITY_SET
+    ),
+    reasonCode: requireEnum<MemoryOutcomeReportReasonCode>(
+      table,
+      "reason_code",
+      row.reason_code,
+      MEMORY_OUTCOME_REPORT_REASON_SET
+    ),
+    evidence: parseEvidenceList(table, "evidence", row.evidence ?? "[]")
   };
 }

@@ -135,6 +135,21 @@ memory MCP client. `autodev.memory.mode` is attached to the active request span
 and the bounded injection metric. This distinguishes request-level cohorts; it
 does not claim task or PR success.
 
+For an opt-in session-level assignment experiment, set
+`AUTODEV_MEMORY_EXPERIMENT_ID` to the same opaque salt on every router replica
+and set `AUTODEV_MEMORY_ABLATION=1`. This takes precedence over
+`AUTODEV_MEMORY_MODE` and reproducibly assigns trusted Router-identified Codex
+sessions to `jit`, `retrieval-only`, or `disabled` using the workspace,
+repository, and session key. Missing/untrusted session or workspace identity
+selects `invalid` rather than being counted as a control-arm exposure. The ID is
+not persisted with injection events or telemetry; record it and isolate each
+experiment to a non-overlapping repository/time window. This hashes sessions
+into approximately even arms; it is not fixed-block allocation. Session-level
+assignment does not establish per-turn outcomes: the cohort API counts request
+exposures, and outcomes remain operator-reported. Strict no-memory cohorts must
+also omit direct Memory MCP access. Do not interpret multiple injections from
+one session as independent tasks or successes.
+
 The authenticated Control API exposes scoped Memory browsing at
 `GET /control/memory/records` and `GET /control/memory/experiences`, along with
 record detail, history, and provenance (`/why`) routes. Every request must name
@@ -184,10 +199,14 @@ observed on a trusted request and the resolved file remains inside
 `$CODEX_HOME/sessions`; transcript contents are normalized in memory and are
 not stored, only a digest, bounded metadata, and a `codex://session/...`
 reference. Claude Code, Copilot CLI, Gemini CLI, and other harnesses do not yet
-have automatic native capture hooks. The installed Runtime hook file is now
-materialized and executed in an isolated CODEX_HOME test against a local
-Control API stub; actual Codex desktop hook trust/approval still needs live
-operator verification.
+have automatic native capture hooks. Claude Code's SessionEnd hook is
+best-effort, and its documented `session_id`/`cwd` fields do not establish a
+mapping to an AutoDev Router session or workspace; AutoDev must not trust them
+as caller-selected scope. See the [official Claude Code hook reference](https://code.claude.com/docs/en/hooks)
+and the [memory injection/outcome evaluation notes](../../docs/memory-injection-outcome-evaluation.md).
+The installed Runtime hook file is now materialized and executed in an isolated
+CODEX_HOME test against a local Control API stub; actual Codex desktop hook
+trust/approval still needs live operator verification.
 
 The MCP stdio factory is likewise an adapter surface, not a configured global
 server: it requires a trusted host to supply the repository, task, and agent

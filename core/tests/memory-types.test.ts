@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assertMemoryInjectionOutcomeCohortFilter,
   type ExperienceEnvelope,
   isMemoryExperienceVisibleTo,
   isMemoryScopeVisibleTo,
@@ -30,6 +31,33 @@ test("memory execution modes distinguish safe defaults, gated ablations, and inv
     "retrieval-only"
   );
   assert.equal(parseMemoryExecutionMode("unrecognized"), "invalid");
+});
+
+test("memory outcome cohorts reject task-, run-, role-, and agent-selected context", () => {
+  const cohort = {
+    context: {
+      workspaceId: "workspace-a",
+      repositoryId: "repo-a",
+      canReadGlobal: false
+    },
+    occurredFrom: "2026-09-01T00:00:00.000Z",
+    occurredUntil: "2026-10-01T00:00:00.000Z"
+  };
+  assert.doesNotThrow(() => assertMemoryInjectionOutcomeCohortFilter(cohort));
+
+  for (const selector of ["role", "taskId", "runId", "agentId"] as const) {
+    assert.throws(
+      () =>
+        assertMemoryInjectionOutcomeCohortFilter({
+          ...cohort,
+          context: {
+            ...cohort.context,
+            [selector]: "caller-selected"
+          }
+        }),
+      /cannot select a role, task, run, or agent/u
+    );
+  }
 });
 
 test("memory scope visibility requires exact workspace, repository, and role matches", () => {

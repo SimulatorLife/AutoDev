@@ -51,7 +51,10 @@ import {
   safeAutoDevWorkspaceKey
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
-import { injectOrchestratorMemory } from "./memory-injection.ts";
+import {
+  currentRouterMemoryMode,
+  injectOrchestratorMemory
+} from "./memory-injection.ts";
 import { recordMcpExposure } from "./otel.ts";
 import {
   collectToolCallIds,
@@ -2676,7 +2679,8 @@ export async function proxyFallbackChain(
     subject,
     agentRole = null,
     sessionKey = null,
-    session = null
+    session = null,
+    preparePayload
   }: {
     candidates: Candidate[] | OrchestratorCandidate[];
     role?: string | null;
@@ -2685,12 +2689,19 @@ export async function proxyFallbackChain(
     agentRole?: string | null;
     sessionKey?: string | null;
     session?: RouterSession | null;
+    preparePayload?: (
+      payload: Record<string, unknown>
+    ) => Promise<Record<string, unknown>>;
   },
   payload: Record<string, unknown>,
   wantsStream: boolean,
   requestId: string,
   turnMetadataHeader: string | null,
-  workspace: { key: string; cwd?: string | null } | null,
+  workspace: {
+    key: string;
+    cwd?: string | null;
+    workspace_id?: string;
+  } | null,
   clientSignal: AbortSignal | null = null
 ): Promise<void> {
   const isOrchestratorTurn = agentRole === ORCHESTRATOR_AGENT_ROLE;
@@ -2714,7 +2725,16 @@ export async function proxyFallbackChain(
     providerRole,
     workspace,
     subject,
-    requestedModel: modelName || null
+    requestedModel: modelName || null,
+    ...(isOrchestratorTurn
+      ? {
+          memoryMode: currentRouterMemoryMode({
+            sessionKey,
+            sessionScope: session?.scope ?? null,
+            workspace
+          })
+        }
+      : {})
   });
   if (!candidates || candidates.length === 0) {
     rejectFallbackChain(
@@ -2823,6 +2843,18 @@ export async function proxyFallbackChain(
 
   try {
     await withLogicalSpan(logicalSpan, async () => {
+      if (preparePayload) {
+        try {
+          fbCtx.payload = await preparePayload(payload);
+        } catch {
+          // Memory is advisory; preparation must never block a routed task.
+          fbCtx.payload = payload;
+          logicalSpan.setAttribute(
+            "autodev.memory.injection.result",
+            "unavailable"
+          );
+        }
+      }
       if (
         await runPrimaryPass(
           fbCtx,
@@ -3644,7 +3676,7 @@ export function proxyRoleResponse(
   );
 }
 
-export async function proxyOrchestratorResponse(
+export function proxyOrchestratorResponse(
   response: ServerResponse,
   payload: Record<string, unknown>,
   wantsStream: boolean,
@@ -3654,13 +3686,6 @@ export async function proxyOrchestratorResponse(
   clientSignal: AbortSignal | null = null,
   session: RouterSession | null = null
 ): Promise<void> {
-  const memoryPayload = await injectOrchestratorMemory({
-    payload,
-    requestId,
-    sessionKey: session?.key ?? null,
-    threadId: session?.thread ?? null,
-    workspace
-  });
   const sessionKey = session?.key ?? null;
   // The provider that issued the calls being answered comes first; otherwise
   // an orchestrator mid-session stays with the provider it started on.
@@ -3678,9 +3703,18 @@ export async function proxyOrchestratorResponse(
       agentRole: ORCHESTRATOR_AGENT_ROLE,
       subject: "the orchestrator",
       sessionKey,
-      session
+      session,
+      preparePayload: (requestPayload) =>
+        injectOrchestratorMemory({
+          payload: requestPayload,
+          requestId,
+          sessionKey,
+          sessionScope: session?.scope ?? null,
+          threadId: session?.thread ?? null,
+          workspace
+        })
     },
-    memoryPayload,
+    payload,
     wantsStream,
     requestId,
     turnMetadataHeader,

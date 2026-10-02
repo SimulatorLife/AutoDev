@@ -27,12 +27,13 @@ function withTempDir<T>(callback: (directory: string) => T): T {
   }
 }
 
-test("OTLP ingress state persists direct, collector, or OpenLIT mode privately", () =>
+test("OTLP ingress state persists direct/OpenLIT modes and migrates the obsolete Collector selection", () =>
   withTempDir((directory) => {
     const path = join(directory, "otel-ingress.mode");
     assert.equal(readOtelIngressMode(path), "direct");
-    writeOtelIngressMode(path, "collector");
-    assert.equal(readOtelIngressMode(path), "collector");
+    writeFileSync(path, "collector\n", { mode: 0o600 });
+    assert.equal(readOtelIngressMode(path), "direct");
+    assert.equal(readFileSync(path, "utf8"), "direct\n");
     writeOtelIngressMode(path, "openlit");
     assert.equal(readOtelIngressMode(path), "openlit");
     assert.equal(statSync(path).mode & 0o777, 0o600);

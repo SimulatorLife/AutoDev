@@ -1,43 +1,49 @@
+import { type CanonicalNavSection } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import {
-  ConsolePageShell,
-  readNodeContext,
-  ResourceUnavailable
-} from "../_console.tsx";
+import { MemoryPortalCard } from "../../src/features/memory/MemoryPortalCard.ts";
+import { readMemoryPortalConfig } from "../../src/lib/server/memory-portal.ts";
+import { ConsolePageShell, ResourceUnavailable } from "../_console.tsx";
 
 export const dynamic = "force-dynamic";
 
+const SECTION: CanonicalNavSection = "Memory";
+
 /**
- * Memory resource view.
+ * Memory entry point.
  *
- * The retained OpenLIT memory/connector adapter is not yet wired into the
- * AutoDev Control API; this route therefore reports an explicit unavailable
- * state rather than fabricating connector-backed records.
+ * The retained, AutoDev-branded Memory operator page is the sole Memory
+ * operator UI (lifecycle actions, provenance/history, per-experience
+ * outcomes, and the bounded cohort view). This route never reimplements
+ * that CRUD/list/detail/cohort UI, never calls the Memory Control API
+ * directly, and never embeds the page in an iframe. It renders a small
+ * portal/entry card linking to the configured public Memory destination
+ * URL (`AUTODEV_OPENLIT_UI_URL`), normalized to the fixed `/memory`
+ * path, or an explicit unavailable state when that URL is not configured
+ * safely.
+ *
+ * The route makes no Control API request and never reads or forwards any
+ * service token, so it is available independently of
+ * `AUTODEV_CONTROL_API_TOKEN`.
  */
 export default function MemoryPage(): React.JSX.Element {
-  const { section, config } = readNodeContext("/memory");
-  if (!config) {
+  const portal = readMemoryPortalConfig();
+  if (!portal) {
     return React.createElement(
       ConsolePageShell,
-      { section },
+      { section: SECTION },
       React.createElement(ResourceUnavailable, {
-        title: "Control API credential is not configured",
-        code: "autodev_control_api_disabled",
+        title: "Memory destination URL is not configured safely",
+        code: "autodev_memory_portal_url_invalid",
         message:
-          "Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read memory connectors."
+          "AUTODEV_OPENLIT_UI_URL must be an http or https URL with no embedded credentials.",
+        hint: "Set AUTODEV_OPENLIT_UI_URL in the Next.js server environment, or unset it to use the local default."
       })
     );
   }
   return React.createElement(
     ConsolePageShell,
-    { section },
-    React.createElement(ResourceUnavailable, {
-      title: "Memory adapters are not wired into the Console",
-      code: "autodev_memory_adapter_pending",
-      message:
-        "The retained OpenLIT memory connector adapter has not yet been integrated with the Control API.",
-      hint: "Once the connector adapter exists, Memory will list records scoped to the current AutoDev workspace."
-    })
+    { section: SECTION },
+    React.createElement(MemoryPortalCard, { href: portal.href })
   );
 }

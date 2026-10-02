@@ -3767,22 +3767,18 @@ test("ingests Codex OTEL turn and MCP lifecycle telemetry without prompt content
   resetOtelTelemetry();
 });
 
-test("accepts Collector-forwarded OTLP JSON batches over HTTP at /v1/logs, /v1/traces, and /v1/metrics", async () => {
-  // Freezes the HTTP ingress contract for Phase 3 ("Insert OpenTelemetry
-  // Collector as OTLP ingress"): the fixture is a realistic OTLP JSON batch
-  // shaped exactly as config/otel/collector.yaml's otlphttp/autodev exporter
-  // (encoding: json) would forward it, POSTed straight at the router's
-  // existing receiver over a real loopback HTTP connection. No Collector
-  // process is launched; this only proves the receiver's HTTP contract
-  // tolerates a Collector-shaped payload end to end.
+test("accepts standard OTLP JSON batches over HTTP at /v1/logs, /v1/traces, and /v1/metrics", async () => {
+  // Freezes the legacy router receiver's standard OTLP/HTTP JSON contract
+  // with hand-authored producer request bodies sent over a real loopback
+  // connection. This test does not rely on a separate Collector and does not
+  // prove that router-owned historical aggregation is part of the target.
   resetOtelTelemetry();
   // The fixture's OTLP timestamps are placeholder tokens rather than literal
   // nanoseconds: MCP server health is computed relative to wall-clock time
   // (see codexTelemetryStatus's OTEL_HEALTH_TTL_MS freshness window), so a
   // frozen literal timestamp would read as permanently stale no matter when
   // this test runs. The tokens are substituted with real, currently-fresh
-  // nanosecond offsets here, exactly as a live Collector export would carry
-  // its own current timestamps.
+  // nanosecond offsets here, matching current producer timestamps.
   const base = BigInt(Date.now() - 10_000) * 1_000_000n;
   const fixtureTokens = {
     __OTEL_T0__: base,
@@ -3795,7 +3791,7 @@ test("accepts Collector-forwarded OTLP JSON batches over HTTP at /v1/logs, /v1/t
     __OTEL_T20MS__: base + 20_000_000n
   };
   let fixtureText = await readFile(
-    new URL("../fixtures/otel/collector-forwarded-otlp.json", import.meta.url),
+    new URL("../fixtures/otel/otlp-http-batches.json", import.meta.url),
     "utf8"
   );
   for (const [token, value] of Object.entries(fixtureTokens))
@@ -3844,8 +3840,8 @@ test("accepts Collector-forwarded OTLP JSON batches over HTTP at /v1/logs, /v1/t
     assert.equal(intervalStatus.codexTelemetry.toolResults.causeResolved, 1);
 
     agentActivity.reset();
-    agentActivity.beginRequest("collector-forwarded-conversation-1", {
-      requestId: "active-collector-request",
+    agentActivity.beginRequest("router-ingress-conversation-1", {
+      requestId: "active-otlp-request",
       role: "orchestrator",
       origin: "orchestrator"
     });
@@ -3921,15 +3917,11 @@ test("accepts Collector-forwarded OTLP JSON batches over HTTP at /v1/logs, /v1/t
     // request was ever counted as malformed.
     const status = getRouterStatus();
     assert.equal(
-      JSON.stringify(telemetry).includes(
-        "do-not-store-this-collector-forwarded-secret"
-      ),
+      JSON.stringify(telemetry).includes("do-not-store-this-otlp-secret"),
       false
     );
     assert.equal(
-      JSON.stringify(status).includes(
-        "do-not-store-this-collector-forwarded-secret"
-      ),
+      JSON.stringify(status).includes("do-not-store-this-otlp-secret"),
       false
     );
   } finally {
@@ -3939,8 +3931,8 @@ test("accepts Collector-forwarded OTLP JSON batches over HTTP at /v1/logs, /v1/t
   }
 });
 
-test("dedupes repeated Collector-forwarded OTLP JSON batches so receiver counts climb but semantic aggregates stay stable", async () => {
-  // Phase 3 no-double-counting HTTP contract: a misbehaving Collector that
+test("dedupes repeated standard OTLP JSON batches so receiver counts climb but semantic aggregates stay stable", async () => {
+  // Phase 3 no-double-counting HTTP contract: a misbehaving OTLP producer that
   // redelivers the exact same OTLP JSON batch (the body the otlphttp/autodev
   // exporter emits, encoded as json) must increment the receiver's transport
   // counters, yet its cumulative-metric timestamps and tool-result call ids
@@ -3960,7 +3952,7 @@ test("dedupes repeated Collector-forwarded OTLP JSON batches so receiver counts 
     __OTEL_T20MS__: base + 20_000_000n
   };
   let fixtureText = await readFile(
-    new URL("../fixtures/otel/collector-forwarded-otlp.json", import.meta.url),
+    new URL("../fixtures/otel/otlp-http-batches.json", import.meta.url),
     "utf8"
   );
   for (const [token, value] of Object.entries(fixtureTokens))
@@ -3990,7 +3982,7 @@ test("dedupes repeated Collector-forwarded OTLP JSON batches so receiver counts 
     assert.equal(metricsResponse.status, 200);
     assert.deepEqual(await metricsResponse.json(), {});
 
-    // Redelivered identical body, simulating a Collector retry/export
+    // Redelivered identical body, simulating an OTLP producer retry
     // resend of the very same batch.
     const secondLogs = await post("/v1/logs", fixture.logs);
     assert.equal(secondLogs.status, 200);
@@ -4137,15 +4129,11 @@ test("dedupes repeated Collector-forwarded OTLP JSON batches so receiver counts 
     // no request was ever counted as malformed.
     const status = getRouterStatus();
     assert.equal(
-      JSON.stringify(telemetry).includes(
-        "do-not-store-this-collector-forwarded-secret"
-      ),
+      JSON.stringify(telemetry).includes("do-not-store-this-otlp-secret"),
       false
     );
     assert.equal(
-      JSON.stringify(status).includes(
-        "do-not-store-this-collector-forwarded-secret"
-      ),
+      JSON.stringify(status).includes("do-not-store-this-otlp-secret"),
       false
     );
   } finally {
@@ -4154,9 +4142,9 @@ test("dedupes repeated Collector-forwarded OTLP JSON batches so receiver counts 
   }
 });
 
-test("Collector-forwarded OTLP semantics do not depend on logs/traces/metrics arrival order", async () => {
+test("OTLP semantics do not depend on logs/traces/metrics arrival order", async () => {
   // Codex exports logs, traces, and metrics as independent OTLP requests, and
-  // the Collector forwards each signal on its own pipeline, so no cross-signal
+  // each signal arrives in a separately delivered OTLP request, so no cross-signal
   // order can be relied on. Every order, and a full redelivery, must yield the
   // same semantic projection as logs -> traces -> metrics. Ingestion-time
   // stamps (lastSeenAt/lastReceivedAt) are wall-clock and excluded; the
@@ -4173,7 +4161,7 @@ test("Collector-forwarded OTLP semantics do not depend on logs/traces/metrics ar
     __OTEL_T20MS__: base + 20_000_000n
   };
   let fixtureText = await readFile(
-    new URL("../fixtures/otel/collector-forwarded-otlp.json", import.meta.url),
+    new URL("../fixtures/otel/otlp-http-batches.json", import.meta.url),
     "utf8"
   );
   for (const [token, value] of Object.entries(fixtureTokens))
@@ -4256,7 +4244,7 @@ test("Collector-forwarded OTLP semantics do not depend on logs/traces/metrics ar
 });
 
 test("rejects malformed OTLP HTTP bodies at /v1/logs, /v1/traces, and /v1/metrics without leaking receiver state", async () => {
-  // The Collector's otlphttp exporter always sends valid JSON, but the
+  // An OTLP/HTTP JSON producer sends a valid JSON body, but the
   // receiver's HTTP contract must still reject a body that fails to parse
   // (e.g. a truncated export from a misbehaving forwarder) with a 400 and
   // count it as invalid rather than as a successful signal.

@@ -1,3 +1,8 @@
+import type {
+  McpServerResource,
+  ToolCatalogItem
+} from "@simulatorlife/autodev-core";
+
 /**
  * Typed shapes returned by the AutoDev Control API.
  *
@@ -76,12 +81,19 @@ export interface ControlApiModelsResponse {
 
 export interface ControlApiMcpsResponse {
   readonly schema: "autodev-control-mcps-v1";
+  readonly source: ".rulesync/mcp.jsonc";
+  readonly readOnly: boolean;
+  readonly valid: boolean | null;
+  readonly servers: readonly McpServerResource[];
+}
+
+export interface ControlApiToolsResponse {
+  readonly schema: "autodev-control-tools-v1";
   readonly source: string;
   readonly readOnly: boolean;
-  readonly servers: readonly {
-    readonly name: string;
-    readonly roles: readonly string[];
-  }[];
+  readonly coverage: "partial" | "unknown";
+  readonly totalTools: number | null;
+  readonly tools: readonly ToolCatalogItem[];
 }
 
 export interface ControlApiSkillsResponse {

@@ -29,9 +29,6 @@ const approvedLegacyFiles = new Set([
   "scripts/ensure-codex-minimax-proxy.sh",
   "scripts/ensure-codex-model-router.sh",
   "scripts/install.sh",
-  "scripts/otel/ensure-autodev-otel-collector.sh",
-  "scripts/otel/provision-autodev-otel-collector.sh",
-  "scripts/otel/run-autodev-otel-collector.sh",
   "scripts/run-autodev-mcp.sh",
   "scripts/run-ci-provider.sh",
   "scripts/run-codex-antigravity-proxy.sh",
@@ -77,4 +74,47 @@ test("approved non-TypeScript files remain explicit and bounded", () => {
       .sort(),
     [...approvedLegacyFiles].sort()
   );
+});
+
+test("AutoDev standalone OTel Collector sidecar files are not re-tracked", () => {
+  // The AutoDev-owned standalone Collector must not return as a replacement
+  // sidecar. No replacement file is allowed in any of these locations.
+  const removedAutoDevFiles = [
+    "runtime/src/platform/otel-collector.ts",
+    "runtime/src/platform/otel-provision.ts",
+    "config/otel/collector.yaml",
+    "config/otel/collector.version",
+    "config/otel/collector-artifacts.json",
+    "scripts/otel/ensure-autodev-otel-collector.sh",
+    "scripts/otel/provision-autodev-otel-collector.sh",
+    "scripts/otel/run-autodev-otel-collector.sh",
+    "config/launchagents/com.codex.otel-collector.plist"
+  ];
+  const trackedSet = new Set(trackedFiles);
+  for (const filePath of removedAutoDevFiles) {
+    assert.equal(
+      trackedSet.has(filePath),
+      false,
+      `${filePath} must not be re-tracked as a replacement sidecar source`
+    );
+    assert.equal(
+      approvedLegacyFiles.has(filePath),
+      false,
+      `${filePath} must not be re-approved as a legacy Collector source`
+    );
+  }
+  // No replacement scripts/otel/ or config/otel/ sidecar may be added under
+  // those prefixes either.
+  for (const file of trackedFiles) {
+    assert.equal(
+      file.startsWith("scripts/otel/"),
+      false,
+      `${file} must not be re-tracked under scripts/otel/ as a replacement sidecar`
+    );
+    assert.equal(
+      file.startsWith("config/otel/"),
+      false,
+      `${file} must not be re-tracked under config/otel/ as a replacement sidecar`
+    );
+  }
 });

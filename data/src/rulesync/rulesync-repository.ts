@@ -16,7 +16,11 @@ import type {
   HookAction,
   HookDefinition,
   HookEvent,
+  McpServerDefinition,
+  McpServerTransport,
+  McpTargetOverride,
   PromptAsset,
+  RuleSyncMcpState,
   SkillDefinition
 } from "@simulatorlife/autodev-core";
 import { parse, type ParseError } from "jsonc-parser";
@@ -63,6 +67,109 @@ export class RuleSyncSkillConflictError extends Error {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function mcpTransport(config: Record<string, unknown>): McpServerTransport {
+  const hasCommand =
+    typeof config.command === "string" && config.command.trim().length > 0;
+  const hasUrl = typeof config.url === "string" && config.url.trim().length > 0;
+  if (hasCommand === hasUrl) return "unknown";
+  return hasCommand ? "stdio" : "http";
+}
+
+type MutableMcpServer = {
+  enabled: boolean | null;
+  transport: McpServerTransport;
+  targetOverrides: McpTargetOverride[];
+};
+
+function isMcpConfig(value: unknown): value is Record<string, unknown> {
+  return (
+    isRecord(value) &&
+    (value.disabled === undefined || typeof value.disabled === "boolean")
+  );
+}
+
+function parseBaseMcpServers(
+  declarations: Record<string, unknown>
+): Map<string, MutableMcpServer> | null {
+  const servers = new Map<string, MutableMcpServer>();
+  for (const [name, config] of Object.entries(declarations)) {
+    if (!name.trim() || !isMcpConfig(config)) return null;
+    servers.set(name, {
+      enabled: config.disabled !== true,
+      transport: mcpTransport(config),
+      targetOverrides: []
+    });
+  }
+  return servers;
+}
+
+function isTargetMcpConfig(
+  target: string,
+  value: unknown
+): value is Record<string, unknown> {
+  return (
+    target !== "$schema" &&
+    target !== "mcpServers" &&
+    isRecord(value) &&
+    "mcpServers" in value
+  );
+}
+
+function applyMcpTargetOverrides(
+  document: Record<string, unknown>,
+  servers: Map<string, MutableMcpServer>
+): boolean {
+  for (const [target, targetConfig] of Object.entries(document)) {
+    if (!isTargetMcpConfig(target, targetConfig)) continue;
+    const overrides = targetConfig.mcpServers;
+    if (!isRecord(overrides)) return false;
+    for (const [name, config] of Object.entries(overrides)) {
+      if (config !== null && !isMcpConfig(config)) return false;
+      const enabled = config !== null && config.disabled !== true;
+      let server = servers.get(name);
+      if (!server) {
+        server = {
+          enabled: null,
+          transport: config === null ? "unknown" : mcpTransport(config),
+          targetOverrides: []
+        };
+        servers.set(name, server);
+      }
+      server.targetOverrides.push({ target, enabled });
+    }
+  }
+  return true;
+}
+
+function projectMcpDefinitions(
+  servers: Map<string, MutableMcpServer>
+): McpServerDefinition[] {
+  return Array.from(servers, ([name, definition]) => ({
+    name,
+    enabled: definition.enabled,
+    transport: definition.transport,
+    targetOverrides: definition.targetOverrides.sort((left, right) =>
+      COLLATOR.compare(left.target, right.target)
+    )
+  })).sort((left, right) => COLLATOR.compare(left.name, right.name));
+}
+
+function parseMcpState(content: string): RuleSyncMcpState | null {
+  const errors: ParseError[] = [];
+  const document: unknown = parse(content, errors, {
+    allowTrailingComma: true
+  });
+  if (errors.length > 0 || !isRecord(document)) return null;
+  if (!isRecord(document.mcpServers)) return null;
+  const servers = parseBaseMcpServers(document.mcpServers);
+  if (!servers || !applyMcpTargetOverrides(document, servers)) return null;
+  return {
+    source: ".rulesync/mcp.jsonc",
+    valid: true,
+    servers: projectMcpDefinitions(servers)
+  };
 }
 
 function isHookEvent(value: string): value is HookEvent {
@@ -204,17 +311,19 @@ export class RuleSyncRepository {
     return { source, valid: true, hooks };
   }
 
-  loadMcp(): Record<string, unknown> {
-    const mcpPath = path.join(this.repositoryRoot, ".rulesync", "mcp.jsonc");
-    if (!existsSync(mcpPath)) return {};
+  loadMcpState(): RuleSyncMcpState {
+    const source = ".rulesync/mcp.jsonc" as const;
+    const mcpPath = path.join(this.repositoryRoot, source);
+    if (!existsSync(mcpPath)) return { source, valid: null, servers: [] };
+
+    let content: string;
     try {
-      return JSON.parse(readFileSync(mcpPath, "utf8")) as Record<
-        string,
-        unknown
-      >;
+      content = readFileSync(mcpPath, "utf8");
     } catch {
-      return {};
+      return { source, valid: false, servers: [] };
     }
+
+    return parseMcpState(content) ?? { source, valid: false, servers: [] };
   }
 
   async createSkill(

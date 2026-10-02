@@ -24,9 +24,16 @@ import {
   type PostgresMemoryHost
 } from "@simulatorlife/autodev-runtime/memory";
 import {
+  assignControlledAblationArm,
+  clearTrustedMemoryContextsForTest,
   closeOrchestratorMemoryHost,
+  CONTROLLED_ABLATION_ARMS,
+  createMemoryInjectionCorrelationToken,
   createOrchestratorMemoryService,
+  currentRouterMemoryMode,
   injectOrchestratorMemory,
+  isTrustedSession,
+  resolveRouterMemoryMode,
   trustedMemoryContextForSession
 } from "@simulatorlife/autodev-runtime/router/memory-injection";
 import {
@@ -106,6 +113,48 @@ class MemoryRepositoryStub implements MemoryRepository {
   ): Promise<boolean> {
     return true;
   }
+  async recordInjectionEvent(): Promise<{
+    readonly appended: boolean;
+    readonly id: string;
+  }> {
+    return { appended: false, id: "" };
+  }
+  async recordOutcomeReport(): Promise<{
+    readonly appended: boolean;
+    readonly id: string;
+  }> {
+    return { appended: false, id: "" };
+  }
+  async findInjectionEventByTokenForSession(): Promise<null> {
+    return null;
+  }
+  async listInjectionOutcomeJoins(): Promise<{
+    readonly items: readonly never[];
+    readonly total: number;
+    readonly limit: number;
+    readonly offset: number;
+  }> {
+    return { items: [], total: 0, limit: 50, offset: 0 };
+  }
+  async aggregateInjectionOutcomeCohorts(): Promise<{
+    readonly schema: string;
+    readonly workspaceId: string;
+    readonly occurredFrom: string;
+    readonly occurredUntil: string;
+    readonly cells: readonly never[];
+    readonly exposureCount: number;
+    readonly reportCount: number;
+  }> {
+    return {
+      schema: "autodev-memory-injection-outcome-cohorts-v1",
+      workspaceId: "workspace-a",
+      occurredFrom: "",
+      occurredUntil: "",
+      cells: [],
+      exposureCount: 0,
+      reportCount: 0
+    };
+  }
 }
 
 function verifiedRecord(): MemoryRecord {
@@ -175,12 +224,50 @@ const request = (input: unknown[]) => ({
   },
   requestId: "request-current",
   sessionKey: "root-session",
+  sessionScope: "identified",
   threadId: "root-thread",
   workspace: {
     key: "owner/repo",
     cwd: "/workspace/repo",
     workspace_id: "workspace-a"
   }
+});
+
+test("memory injection correlation token is deterministic, opaque, and packet-specific", () => {
+  const input = {
+    workspaceId: "workspace-a",
+    repositoryId: "owner/repo",
+    taskId: "session-a",
+    runId: "request-a",
+    agentId: "thread-a",
+    memoryMode: "jit" as const,
+    memoryIds: ["memory-a", "memory-b"],
+    packetText: "private historical guidance must not appear in the token"
+  };
+  const token = createMemoryInjectionCorrelationToken(input);
+  assert.match(token, /^[a-f0-9]{64}$/u);
+  assert.equal(
+    createMemoryInjectionCorrelationToken({
+      ...input,
+      memoryIds: [...input.memoryIds].reverse()
+    }),
+    token
+  );
+  assert.notEqual(
+    createMemoryInjectionCorrelationToken({
+      ...input,
+      memoryIds: ["memory-a", "memory-c"]
+    }),
+    token
+  );
+  assert.notEqual(
+    createMemoryInjectionCorrelationToken({
+      ...input,
+      packetText: "different bounded memory packet"
+    }),
+    token
+  );
+  assert.doesNotMatch(token, /private historical guidance/u);
 });
 
 test("router root requests inject verified memory automatically before provider dispatch", async () => {
@@ -229,13 +316,14 @@ test("router root requests inject verified memory automatically before provider 
     {
       workspaceId: "workspace-a",
       repositoryId: "owner/repo",
-      root: "/workspace/repo"
+      root: "/workspace/repo",
+      sessionScope: "identified"
     }
   );
   assert.equal(original.payload.instructions, "Authoritative root policy.");
 });
 
-test("disabled and invalid memory modes fail closed without querying memory", async () => {
+test("disabled and invalid memory modes fail closed when skip-event storage is unavailable", async () => {
   const previousMode = process.env.AUTODEV_MEMORY_MODE;
   const previousAblation = process.env.AUTODEV_MEMORY_ABLATION;
   delete process.env.AUTODEV_MEMORY_ABLATION;
@@ -243,7 +331,7 @@ test("disabled and invalid memory modes fail closed without querying memory", as
   const host = {
     createService() {
       hostCalls += 1;
-      throw new Error("disabled mode must not construct a MemoryService");
+      throw new Error("skip-event storage is unavailable");
     }
   } as unknown as PostgresMemoryHost;
   const original = request([
@@ -262,7 +350,154 @@ test("disabled and invalid memory modes fail closed without querying memory", as
         original.payload
       );
     }
-    assert.equal(hostCalls, 0);
+    assert.equal(hostCalls, 3);
+  } finally {
+    if (previousMode === undefined) delete process.env.AUTODEV_MEMORY_MODE;
+    else process.env.AUTODEV_MEMORY_MODE = previousMode;
+    if (previousAblation === undefined)
+      delete process.env.AUTODEV_MEMORY_ABLATION;
+    else process.env.AUTODEV_MEMORY_ABLATION = previousAblation;
+  }
+});
+
+test("disabled memory records a content-free skip decision without research", async () => {
+  const previousMode = process.env.AUTODEV_MEMORY_MODE;
+  const previousAblation = process.env.AUTODEV_MEMORY_ABLATION;
+  process.env.AUTODEV_MEMORY_MODE = "disabled";
+  delete process.env.AUTODEV_MEMORY_ABLATION;
+  const recorded: Array<Record<string, unknown>> = [];
+  const service = {
+    async recordInjectionEvent(input: { event: Record<string, unknown> }) {
+      recorded.push(input.event);
+      return { appended: true, id: String(input.event.id) };
+    }
+  };
+  const host = {
+    createService() {
+      return service;
+    },
+    close: async () => {}
+  } as unknown as PostgresMemoryHost;
+  const original = request([
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "Do not store this task text." }]
+    }
+  ]);
+
+  try {
+    const result = await injectOrchestratorMemory(original, host);
+    assert.equal(result, original.payload);
+    assert.equal(recorded.length, 1);
+    assert.equal(recorded[0]?.memoryMode, "disabled");
+    assert.equal(recorded[0]?.injectionResult, "skipped");
+    assert.equal(recorded[0]?.reasonCode, "memory_mode_disabled");
+    assert.deepEqual(recorded[0]?.memoryIds, []);
+    assert.equal("task" in recorded[0]!, false);
+    assert.equal(
+      JSON.stringify(recorded[0]).includes("Do not store this task text"),
+      false
+    );
+  } finally {
+    if (previousMode === undefined) delete process.env.AUTODEV_MEMORY_MODE;
+    else process.env.AUTODEV_MEMORY_MODE = previousMode;
+    if (previousAblation === undefined)
+      delete process.env.AUTODEV_MEMORY_ABLATION;
+    else process.env.AUTODEV_MEMORY_ABLATION = previousAblation;
+  }
+});
+
+test("disabled and invalid modes ignore tool-result continuations without user steer and record user-task skips", async () => {
+  const previousMode = process.env.AUTODEV_MEMORY_MODE;
+  const previousAblation = process.env.AUTODEV_MEMORY_ABLATION;
+  delete process.env.AUTODEV_MEMORY_ABLATION;
+  const recorded: Array<Record<string, unknown>> = [];
+  const service = {
+    async recordInjectionEvent(input: { event: Record<string, unknown> }) {
+      recorded.push(input.event);
+      return { appended: true, id: String(input.event.id) };
+    }
+  };
+  let hostCalls = 0;
+  const host = {
+    createService() {
+      hostCalls += 1;
+      return service;
+    },
+    close: async () => {}
+  } as unknown as PostgresMemoryHost;
+
+  const toolContinuationWithoutSteer = request([
+    {
+      type: "function_call_output",
+      call_id: "call-1",
+      output: "tool result"
+    },
+    {
+      type: "message",
+      role: "user",
+      content: [
+        {
+          type: "input_text",
+          text: "<subagent_notification>child completed</subagent_notification>"
+        }
+      ]
+    }
+  ]);
+
+  const toolContinuationWithSteer = request([
+    {
+      type: "function_call_output",
+      call_id: "call-1",
+      output: "tool result"
+    },
+    {
+      type: "message",
+      role: "user",
+      content: [
+        {
+          type: "input_text",
+          text: "User steer: proceed with next phase"
+        }
+      ]
+    }
+  ]);
+
+  try {
+    for (const mode of ["disabled", "invalid"] as const) {
+      process.env.AUTODEV_MEMORY_MODE = mode;
+      recorded.length = 0;
+      hostCalls = 0;
+
+      const resultNoSteer = await injectOrchestratorMemory(
+        toolContinuationWithoutSteer,
+        host
+      );
+      assert.equal(resultNoSteer, toolContinuationWithoutSteer.payload);
+      assert.equal(hostCalls, 0);
+      assert.equal(recorded.length, 0);
+
+      const resultWithSteer = await injectOrchestratorMemory(
+        toolContinuationWithSteer,
+        host
+      );
+      assert.equal(resultWithSteer, toolContinuationWithSteer.payload);
+      assert.equal(hostCalls, 1);
+      assert.equal(recorded.length, 1);
+      assert.equal(recorded[0]?.memoryMode, mode);
+      assert.equal(recorded[0]?.injectionResult, "skipped");
+      assert.equal(
+        recorded[0]?.reasonCode,
+        mode === "disabled" ? "memory_mode_disabled" : "memory_mode_invalid"
+      );
+      assert.deepEqual(recorded[0]?.memoryIds, []);
+      assert.equal("task" in recorded[0]!, false);
+      assert.equal(
+        JSON.stringify(recorded[0]).includes("proceed with next phase"),
+        false
+      );
+    }
   } finally {
     if (previousMode === undefined) delete process.env.AUTODEV_MEMORY_MODE;
     else process.env.AUTODEV_MEMORY_MODE = previousMode;
@@ -440,6 +675,19 @@ test("router initializes the OTel meter provider before creating MemoryService i
       String(injected.instructions),
       /Use the current proxy request boundary/
     );
+    const jitRequestSpan = spanExporter
+      .getFinishedSpans()
+      .find(
+        (span) => span.spanContext().spanId === jitSpan.spanContext().spanId
+      );
+    assert.equal(
+      jitRequestSpan?.attributes["autodev.memory.injection.result"],
+      "injected"
+    );
+    assert.equal(
+      typeof jitRequestSpan?.attributes["autodev.memory.packet.entries"],
+      "number"
+    );
 
     const disabledRequest = request([
       {
@@ -539,7 +787,14 @@ test("router initializes the OTel meter provider before creating MemoryService i
           point.attributes["autodev.memory.injection.result"] === "injected"
       ) ?? [];
     assert.equal(
-      injectedPoints.reduce((total, point) => total + point.value, 0),
+      injectedPoints.reduce((total, point) => {
+        if (typeof point.value !== "number") {
+          throw new TypeError(
+            "Memory injection counter must aggregate to a number."
+          );
+        }
+        return total + point.value;
+      }, 0),
       2
     );
     assert.deepEqual(
@@ -569,5 +824,300 @@ test("router initializes the OTel meter provider before creating MemoryService i
       delete process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT;
     else
       process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = previousMetricsEndpoint;
+  }
+});
+
+test("controlled ablation assignment is deterministic and scoped to a session workspace", () => {
+  const experimentId = "exp-controlled-2026";
+  const sessionA = "codex-session-abc-123";
+  const sessionB = "codex-session-xyz-789";
+  const workspaceId = "workspace-a";
+  const repositoryId = "owner/repo";
+
+  const armA1 = assignControlledAblationArm(
+    experimentId,
+    sessionA,
+    workspaceId,
+    repositoryId
+  );
+  const armA2 = assignControlledAblationArm(
+    experimentId,
+    sessionA,
+    workspaceId,
+    repositoryId
+  );
+  assert.equal(armA1, armA2);
+  assert.ok(CONTROLLED_ABLATION_ARMS.includes(armA1));
+
+  const armB1 = assignControlledAblationArm(
+    experimentId,
+    sessionB,
+    workspaceId,
+    repositoryId
+  );
+  const armB2 = assignControlledAblationArm(
+    experimentId,
+    sessionB,
+    workspaceId,
+    repositoryId
+  );
+  assert.equal(armB1, armB2);
+  assert.ok(CONTROLLED_ABLATION_ARMS.includes(armB1));
+
+  const env = {
+    AUTODEV_MEMORY_EXPERIMENT_ID: experimentId,
+    AUTODEV_MEMORY_ABLATION: "1"
+  };
+  const context = {
+    sessionKey: sessionA,
+    sessionScope: "identified",
+    workspace: {
+      key: "owner/repo",
+      cwd: "/workspace/repo",
+      workspace_id: "workspace-a"
+    }
+  };
+
+  const mode1 = resolveRouterMemoryMode(env, context);
+  const mode2 = resolveRouterMemoryMode(env, context);
+  assert.equal(mode1, armA1);
+  assert.equal(mode2, armA1);
+});
+
+test("controlled ablation distributes across all arms across distinct sessions", () => {
+  const experimentId = "exp-distribution-test";
+  const observedArms = new Set<string>();
+  const counts: Record<string, number> = {
+    jit: 0,
+    "retrieval-only": 0,
+    disabled: 0
+  };
+
+  for (let i = 0; i < 150; i++) {
+    const sessionKey = `codex-session-${i}-${i * 31}`;
+    const arm = assignControlledAblationArm(
+      experimentId,
+      sessionKey,
+      "workspace-a",
+      "owner/repo"
+    );
+    observedArms.add(arm);
+    counts[arm] = (counts[arm] ?? 0) + 1;
+  }
+
+  assert.deepEqual(
+    observedArms,
+    new Set(["jit", "retrieval-only", "disabled"])
+  );
+  assert.ok((counts.jit ?? 0) > 20, "jit arm adequately represented");
+  assert.ok(
+    (counts["retrieval-only"] ?? 0) > 20,
+    "retrieval-only arm adequately represented"
+  );
+  assert.ok((counts.disabled ?? 0) > 20, "disabled arm adequately represented");
+});
+
+test("controlled ablation fails closed on missing, untrusted, or un-ablated session", async () => {
+  clearTrustedMemoryContextsForTest();
+  const previousExp = process.env.AUTODEV_MEMORY_EXPERIMENT_ID;
+  const previousAblation = process.env.AUTODEV_MEMORY_ABLATION;
+
+  try {
+    process.env.AUTODEV_MEMORY_EXPERIMENT_ID = "exp-fail-closed";
+    delete process.env.AUTODEV_MEMORY_ABLATION;
+
+    const trustedWorkspace = {
+      key: "owner/repo",
+      cwd: "/workspace/repo",
+      workspace_id: "workspace-a"
+    };
+
+    // 1. Missing AUTODEV_MEMORY_ABLATION=1 is invalid rather than a control arm.
+    assert.equal(
+      resolveRouterMemoryMode(process.env, {
+        sessionKey: "session-1",
+        sessionScope: "identified",
+        workspace: trustedWorkspace
+      }),
+      "invalid"
+    );
+
+    assert.equal(
+      resolveRouterMemoryMode(
+        {
+          AUTODEV_MEMORY_EXPERIMENT_ID: "invalid id",
+          AUTODEV_MEMORY_ABLATION: "1"
+        },
+        {
+          sessionKey: "session-1",
+          sessionScope: "identified",
+          workspace: trustedWorkspace
+        }
+      ),
+      "invalid",
+      "malformed experiment IDs cannot assign a cohort"
+    );
+
+    process.env.AUTODEV_MEMORY_ABLATION = "1";
+
+    // 2. Missing/anonymous session keys are invalid, never a control arm.
+    assert.equal(
+      resolveRouterMemoryMode(process.env, {
+        sessionKey: null,
+        sessionScope: "process-fallback",
+        workspace: trustedWorkspace
+      }),
+      "invalid"
+    );
+    assert.equal(
+      resolveRouterMemoryMode(process.env, {
+        sessionKey: "",
+        sessionScope: "identified",
+        workspace: trustedWorkspace
+      }),
+      "invalid"
+    );
+    assert.equal(
+      resolveRouterMemoryMode(process.env, {
+        sessionKey: "session-without-router-scope",
+        workspace: trustedWorkspace
+      }),
+      "invalid"
+    );
+    assert.equal(
+      resolveRouterMemoryMode(process.env, {
+        sessionKey: "process-scope",
+        sessionScope: "process-fallback",
+        workspace: trustedWorkspace
+      }),
+      "invalid"
+    );
+
+    // 3. Untrusted / missing / relative workspace fails closed to disabled
+    assert.equal(
+      resolveRouterMemoryMode(process.env, {
+        sessionKey: "session-1",
+        sessionScope: "identified",
+        workspace: null
+      }),
+      "invalid"
+    );
+    assert.equal(
+      resolveRouterMemoryMode(process.env, {
+        sessionKey: "session-1",
+        sessionScope: "identified",
+        workspace: { key: "owner/repo", cwd: "relative/path" }
+      }),
+      "invalid"
+    );
+    assert.equal(
+      resolveRouterMemoryMode(process.env, {
+        sessionKey: "session-1",
+        sessionScope: "identified",
+        workspace: { key: "unknown", cwd: "/workspace/repo" }
+      }),
+      "invalid"
+    );
+
+    // 4. Conflicting session across workspaces fails closed
+    assert.ok(
+      isTrustedSession("conflicted-session", "identified", {
+        key: "repo-1",
+        cwd: "/workspace/repo-1"
+      })
+    );
+    // Observe session-conflict in first workspace
+    await injectOrchestratorMemory({
+      ...request([{ type: "message", role: "user", content: "first turn" }]),
+      sessionKey: "conflicted-session",
+      workspace: { key: "repo-1", cwd: "/workspace/repo-1" }
+    });
+
+    // Same session claimed in a different repository root must fail closed
+    assert.equal(
+      resolveRouterMemoryMode(process.env, {
+        sessionKey: "conflicted-session",
+        sessionScope: "identified",
+        workspace: { key: "repo-2", cwd: "/workspace/repo-2" }
+      }),
+      "invalid"
+    );
+
+    // 5. In injection, missing sessionKey produces no fabricated skip event.
+    const recordedEvents: Array<Record<string, unknown>> = [];
+    const host = {
+      createService() {
+        return {
+          async recordInjectionEvent(input: {
+            event: Record<string, unknown>;
+          }) {
+            recordedEvents.push(input.event);
+            return { appended: true, id: String(input.event.id) };
+          }
+        };
+      },
+      close: async () => {}
+    } as unknown as PostgresMemoryHost;
+
+    const noSessionRequest = {
+      ...request([
+        { type: "message", role: "user", content: "Task without session" }
+      ]),
+      sessionKey: null,
+      requestId: "request-should-not-substitute"
+    };
+
+    const result = await injectOrchestratorMemory(noSessionRequest, host);
+    assert.equal(result, noSessionRequest.payload);
+    assert.equal(
+      recordedEvents.length,
+      0,
+      "must not record a skip event substituting requestId for missing sessionKey"
+    );
+  } finally {
+    clearTrustedMemoryContextsForTest();
+    if (previousExp === undefined)
+      delete process.env.AUTODEV_MEMORY_EXPERIMENT_ID;
+    else process.env.AUTODEV_MEMORY_EXPERIMENT_ID = previousExp;
+    if (previousAblation === undefined)
+      delete process.env.AUTODEV_MEMORY_ABLATION;
+    else process.env.AUTODEV_MEMORY_ABLATION = previousAblation;
+  }
+});
+
+test("controlled ablation preserves default AUTODEV_MEMORY_MODE when no experiment is configured", () => {
+  const previousExp = process.env.AUTODEV_MEMORY_EXPERIMENT_ID;
+  const previousMode = process.env.AUTODEV_MEMORY_MODE;
+  const previousAblation = process.env.AUTODEV_MEMORY_ABLATION;
+  delete process.env.AUTODEV_MEMORY_EXPERIMENT_ID;
+
+  try {
+    // Default when unset -> jit
+    delete process.env.AUTODEV_MEMORY_MODE;
+    delete process.env.AUTODEV_MEMORY_ABLATION;
+    assert.equal(currentRouterMemoryMode(), "jit");
+
+    // Explicit disabled
+    process.env.AUTODEV_MEMORY_MODE = "disabled";
+    assert.equal(currentRouterMemoryMode(), "disabled");
+
+    // retrieval-only requires ablation=1
+    process.env.AUTODEV_MEMORY_MODE = "retrieval-only";
+    assert.equal(currentRouterMemoryMode(), "invalid");
+    process.env.AUTODEV_MEMORY_ABLATION = "1";
+    assert.equal(currentRouterMemoryMode(), "retrieval-only");
+
+    // invalid mode
+    process.env.AUTODEV_MEMORY_MODE = "unrecognized_mode";
+    assert.equal(currentRouterMemoryMode(), "invalid");
+  } finally {
+    if (previousExp === undefined)
+      delete process.env.AUTODEV_MEMORY_EXPERIMENT_ID;
+    else process.env.AUTODEV_MEMORY_EXPERIMENT_ID = previousExp;
+    if (previousMode === undefined) delete process.env.AUTODEV_MEMORY_MODE;
+    else process.env.AUTODEV_MEMORY_MODE = previousMode;
+    if (previousAblation === undefined)
+      delete process.env.AUTODEV_MEMORY_ABLATION;
+    else process.env.AUTODEV_MEMORY_ABLATION = previousAblation;
   }
 });

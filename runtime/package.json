@@ -32,8 +32,6 @@
     "./platform/launchagent": "./src/platform/macos/launchagent.ts",
     "./platform/launchd": "./src/platform/macos/launchd.ts",
     "./platform/minimax-ensure": "./src/platform/minimax-ensure.ts",
-    "./platform/otel-collector": "./src/platform/otel-collector.ts",
-    "./platform/otel-provision": "./src/platform/otel-provision.ts",
     "./platform/router-ensure": "./src/platform/router-ensure.ts",
     "./platform/runtime-files": "./src/platform/runtime-files.ts",
     "./platform/runtime-reconciliation": "./src/platform/runtime-reconciliation.ts",

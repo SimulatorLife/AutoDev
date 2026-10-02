@@ -20,7 +20,7 @@ const contractPath = join(
 );
 const existingFixturePath = join(
   repositoryRoot,
-  "tests/fixtures/otel/collector-forwarded-otlp.json"
+  "tests/fixtures/otel/otlp-http-batches.json"
 );
 const expectedKeys = [
   "autodev.role",
@@ -257,7 +257,7 @@ test("unknown optional values produce no AutoDev keys", () => {
 });
 
 test("AutoDev attributes are categorical and never carry prompt content", () => {
-  const secret = "do-not-store-this-collector-forwarded-secret";
+  const secret = "do-not-store-this-otlp-secret";
   for (const signal of ["logs", "traces", "metrics"])
     for (const [location, entries] of signalLocations(after, signal)) {
       for (const [key, value] of attributeMap(entries))
@@ -289,7 +289,7 @@ test("AutoDev attributes are categorical and never carry prompt content", () => 
     }
 });
 
-test("runtime emission remains opt-in and the existing Collector fixture is undecorated", () => {
+test("runtime emission remains opt-in and the canonical OTLP fixture remains undecorated", () => {
   assert.equal(contract.emission, "opt-in");
   assert.notEqual(contract.emission, "always-on");
   const runtime = object(contract.runtime_emission);

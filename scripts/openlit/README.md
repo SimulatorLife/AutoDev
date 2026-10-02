@@ -4,9 +4,11 @@ These scripts implement the OpenLIT integration described in
 [`docs/autodev-console-target-state.md`](../../docs/autodev-console-target-state.md).
 The split is deliberate:
 
-- `apply-patches.sh` — checkout the pinned upstream commit, run `git apply
---check` on every patch in `patches/openlit/`, then apply them to a
-  scratch worktree. Refuses to run if the upstream HEAD does not match the
+- `apply-patches.sh` — checkout the pinned upstream commit, then for each
+  patch in `patches/openlit/` (in order) run `git apply --check` against
+  the worktree as it stands after all prior patches and apply it before
+  checking the next; later patches intentionally depend on files earlier
+  patches create. Refuses to run if the upstream HEAD does not match the
   pinned commit.
 - `build-local.sh` — build the locally patched image and lock the source
   commit, patch-set hash, image ID, and resulting digest. The local stack uses
@@ -36,6 +38,14 @@ Collector as `OPENLIT_OTLP_API_KEY`; producers send
 `Authorization: Bearer <token>`. This modifies OpenLIT's existing receiver
 configuration; it does not add a sidecar or second telemetry path. See
 `config/openlit/otlp-endpoints.md`.
+
+AutoDev does not run or ship a separate Collector. The opt-in `openlit`
+ingress uses OpenLIT's embedded `otelcol-contrib` receiver; the legacy `direct`
+ingress still targets the AutoDev router's OTLP receiver on port 4100 and is
+scheduled for removal after its live-control state is separated. A protected
+local trace POST has been verified against OpenLIT's receiver; remaining live
+producer/deployment acceptance gates are tracked in
+[`docs/autodev-console-target-state.md`](../../docs/autodev-console-target-state.md) §12.
 
 ## Control/API ownership
 
@@ -98,6 +108,33 @@ The endpoint only reports metrics for successful individual widget queries.
 Query errors remain explicitly unobserved, and unsupported distinct-value
 capabilities produce unavailable filters rather than fabricated options.
 
+## Memory outcome cohorts
+
+The retained OpenLIT Memory page's "Outcome cohorts" tab (AutoDev connector
+only) reads a bounded aggregate through `GET memory/cohorts` on the same
+server-only Control API proxy credential used by the rest of the `autodev`
+memory connector -- it is not a new app or a second Control API client. The
+read requires the connector's workspace, repository, and task-history/
+operator configuration; the occurred-time window is required and bounded to
+365 days by the adapter, the `/api/memory/cohorts` route, and the Control API
+itself. The view renders only exposure/report counts grouped by
+`(memoryMode, injectionResult, reportKind, outcomeKind)`; a null
+`reportKind`/`outcomeKind` cell is an unreported exposure and stays visible
+when no report filter is selected. The UI states outcomes are
+reporter-supplied and that `reportCount` is always less than or equal to
+`exposureCount`, and never labels these counts a task success rate,
+model-use metric, PR verification, or a causal measure of memory's effect.
+
+The retained experience detail exposes a reporter form for each unreported
+injection. Operators choose the outcome/report category and provide bounded
+evidence; non-`unknown` outcomes require evidence. The browser sends only the
+experience ID, injection event ID, selected categories, and evidence to a same-
+origin route. The server resolves the opaque correlation token from the scoped
+Control API read, then appends the report through the existing Control API.
+Neither the token, report ID, actor identity, nor service credential is returned
+to the browser. Reports are append-only, identical retries are idempotent, and
+conflicting reports are rejected. Outcomes remain reporter-supplied: provider
+status, retrieval, and a PR link are not treated as success.
 ## Usage
 
 ```sh

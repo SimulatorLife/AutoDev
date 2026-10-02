@@ -9,6 +9,7 @@ import {
   type Tracer
 } from "@opentelemetry/api";
 import {
+  assertMemoryInjectionOutcomeCohortFilter,
   type EvidenceReference,
   EXPERIENCE_OUTCOMES,
   type ExperienceEnvelope,
@@ -16,14 +17,23 @@ import {
   type ExperienceSearchRequest,
   isMemoryExecutionMode,
   isMemoryExperienceVisibleTo,
+  isMemoryInjectionResult,
+  isMemoryOutcomeReportKind,
   isMemoryScopeVisibleTo,
   MEMORY_EXECUTION_MODES,
+  MEMORY_OUTCOME_REPORT_KINDS,
   MEMORY_REASON_CODES,
   type MemoryActor,
+  type MemoryAuthority,
   type MemoryExperiencePurgeReason,
   type MemoryExperiencePurgeResult,
   type MemoryExpiredExperienceRequest,
   type MemoryHistory,
+  type MemoryInjectionEvent,
+  type MemoryInjectionOutcomeCohortFilter,
+  type MemoryInjectionOutcomeCohortPage,
+  type MemoryInjectionOutcomeJoinPage,
+  type MemoryInjectionOutcomeJoinRequest,
   type MemoryLifecycleAction,
   type MemoryLifecycleEvent,
   type MemoryListRequest,
@@ -32,6 +42,8 @@ import {
   type MemoryReadContext,
   type MemoryReasonCode,
   type MemoryRecord,
+  type MemoryRecordInjectionEventInput,
+  type MemoryRecordOutcomeReportInput,
   type MemoryRepository,
   type MemoryResearchRequest,
   type MemorySearchHit,
@@ -168,12 +180,20 @@ const MAX_SKILL_DESCRIPTION_LENGTH = 512;
 const MAX_SKILL_CONTENT_LENGTH = 20_000;
 const MEMORY_SKILL_NAME_PATTERN = /^[a-z0-9-]{1,64}$/u;
 
+const MAX_INJECTION_MEMORY_IDS = 64;
+const MAX_INJECTION_REVISION_LENGTH = 256;
+const MAX_INJECTION_URI_LENGTH = 2048;
+
 const MEMORY_OPERATIONS = {
   embed: "memory.embed",
   experienceAppend: "memory.experience.append",
   experiencePurge: "memory.experience.purge",
   experienceRetention: "memory.experience.retention",
+  injectionRecord: "memory.injection.record",
+  injectionOutcomeList: "memory.injection.outcome.list",
+  injectionOutcomeAggregate: "memory.injection.outcome.aggregate",
   invalidate: "memory.invalidate",
+  outcomeReport: "memory.outcome.report",
   packet: "memory.packet",
   promote: "memory.promote",
   propose: "memory.propose",
@@ -203,6 +223,7 @@ interface MemoryMetricInstruments {
   readonly candidates: Counter<MemoryMetricAttributes>;
   readonly packetCharacters: Histogram<MemoryMetricAttributes>;
   readonly packetTokens: Histogram<MemoryMetricAttributes>;
+  readonly outcomeReports: Counter<MemoryMetricAttributes>;
 }
 
 function recordMemoryMetric(record: () => void): void {
@@ -211,6 +232,37 @@ function recordMemoryMetric(record: () => void): void {
   } catch {
     // Telemetry is observational and must never fail a memory operation.
   }
+}
+
+/**
+ * Session-level visibility for one injection event or outcome report row.
+ * These rows are keyed at (workspace, repository, task) session scope;
+ * their stored `runId`/`agentId` are request-level identifiers
+ * (requestId/threadId) and must never be compared against the reporter's
+ * session-level `context.runId`/`context.agentId`. Revealing
+ * injections/outcomes across every request and agent within a session
+ * requires the explicit curator task-history grant; this intentionally
+ * does not widen `isMemoryScopeVisibleTo`, which remains an exact match
+ * for ordinary memory records.
+ */
+function isInjectionOutcomeVisibleToSession(
+  row: {
+    readonly workspaceId: string;
+    readonly repositoryId?: string;
+    readonly taskId: string;
+  },
+  context: MemoryReadContext
+): boolean {
+  if (!context.canReadTaskHistory) return false;
+  if (row.workspaceId !== context.workspaceId) return false;
+  if (row.taskId !== context.taskId) return false;
+  if (
+    context.repositoryId !== undefined &&
+    row.repositoryId !== context.repositoryId
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function createMemoryMetricInstruments(meter: Meter): MemoryMetricInstruments {
@@ -241,7 +293,56 @@ function createMemoryMetricInstruments(meter: Meter): MemoryMetricInstruments {
     packetTokens: meter.createHistogram("autodev.memory.packet.tokens", {
       description: "Token count of a constructed memory packet when available.",
       unit: "{token}"
+    }),
+    outcomeReports: meter.createCounter("autodev.memory.outcome_reports", {
+      description:
+        "Newly persisted outcome reports for memory injections, counted only when the report is appended (not on idempotent retries).",
+      unit: "{report}"
     })
+  };
+}
+
+/**
+ * Bounded categorical dimensions for the outcome-cohort counter and span.
+ * Inputs are the matched `MemoryInjectionEvent` (evidence for memory mode +
+ * actual injection result) and the bounded fields of the reporter-supplied
+ * outcome report (report kind + outcome kind). Anything outside the bounded
+ * enums collapses to "unknown" so cardinality stays low. Sensitive fields
+ * (correlationToken, experience/task/run/agent IDs, evidence URIs, claims,
+ * target bodies, reporter IDs) are intentionally never included.
+ */
+interface OutcomeReportCohortAttributes extends MemoryMetricAttributes {
+  readonly "autodev.memory.outcome.report_kind": string;
+  readonly "autodev.memory.outcome.kind": string;
+  readonly "autodev.memory.outcome.memory_mode": string;
+  readonly "autodev.memory.outcome.injection_result": string;
+}
+
+function recordOutcomeReportCohortAttributes(
+  injection: MemoryInjectionEvent,
+  report: MemoryRecordOutcomeReportInput["report"]
+): OutcomeReportCohortAttributes {
+  const injectionResultValue: string = isMemoryInjectionResult(
+    injection.injectionResult
+  )
+    ? injection.injectionResult
+    : "unknown";
+  const memoryModeValue: string = isMemoryExecutionMode(injection.memoryMode)
+    ? injection.memoryMode
+    : "unknown";
+  const reportKindValue: string = isMemoryOutcomeReportKind(report.reportKind)
+    ? report.reportKind
+    : "unknown";
+  const outcomeKindValue: string = EXPERIENCE_OUTCOMES.includes(
+    report.outcomeKind as (typeof EXPERIENCE_OUTCOMES)[number]
+  )
+    ? report.outcomeKind
+    : "unknown";
+  return {
+    "autodev.memory.outcome.report_kind": reportKindValue,
+    "autodev.memory.outcome.kind": outcomeKindValue,
+    "autodev.memory.outcome.memory_mode": memoryModeValue,
+    "autodev.memory.outcome.injection_result": injectionResultValue
   };
 }
 
@@ -426,6 +527,357 @@ export class MemoryService {
         throw error;
       }
     });
+  }
+
+  /**
+   * Append-only, idempotent record of an actual memory packet injection (or
+   * empty/skipped research result) at the runtime boundary. The
+   * `correlationToken` is opaque, content-free, and excluded from metric
+   * dimensions; it exists solely so a later reporter-supplied outcome can be
+   * joined back to the exact captured task/session scope without rewriting
+   * any raw `ExperienceEnvelope` row. Re-emitting the same token returns
+   * `{ appended: false, id: <existing> }` so the runtime treats retries as
+   * already-recorded rather than overwriting prior observations.
+   */
+  recordInjectionEvent(
+    input: MemoryRecordInjectionEventInput
+  ): Promise<{ readonly appended: boolean; readonly id: string }> {
+    return this.withSpan(MEMORY_OPERATIONS.injectionRecord, async (span) => {
+      const { event } = input;
+      this.assertActor(input.actor);
+      if (
+        !isMemoryScopeVisibleTo(event.scope, input.context) ||
+        event.workspaceId !== input.context.workspaceId ||
+        (event.repositoryId !== undefined &&
+          event.repositoryId !== input.context.repositoryId) ||
+        event.taskId !== input.context.taskId ||
+        event.runId !== input.context.runId ||
+        event.agentId !== input.context.agentId
+      ) {
+        throw new MemoryAuthorizationError(
+          "Injection events are restricted to the trusted session's workspace, task, run, and agent."
+        );
+      }
+      if (
+        !event.correlationToken.trim() ||
+        event.correlationToken.length > 256
+      ) {
+        throw new MemoryValidationError(
+          "Injection event correlationToken is required and bounded."
+        );
+      }
+      if (event.memoryIds.length > MAX_INJECTION_MEMORY_IDS) {
+        throw new MemoryValidationError(
+          "Injection event references too many memory ids."
+        );
+      }
+      if (
+        event.memoryIds.some(
+          (memoryId) =>
+            !memoryId.trim() || memoryId.length > MAX_INJECTION_REVISION_LENGTH
+        )
+      ) {
+        throw new MemoryValidationError(
+          "Injection event memory ids are invalid."
+        );
+      }
+      if (
+        !Number.isInteger(event.packetCharacterCount) ||
+        event.packetCharacterCount < 0 ||
+        event.packetCharacterCount > 24_000
+      ) {
+        throw new MemoryValidationError(
+          "Injection event packet character count is invalid."
+        );
+      }
+      if (
+        event.packetTokenCount !== undefined &&
+        (!Number.isInteger(event.packetTokenCount) ||
+          event.packetTokenCount < 0 ||
+          event.packetTokenCount > 8000)
+      ) {
+        throw new MemoryValidationError(
+          "Injection event packet token count is invalid."
+        );
+      }
+      for (const reference of event.evidence) {
+        if (
+          !reference.uri ||
+          reference.uri.length > MAX_INJECTION_URI_LENGTH ||
+          (reference.revision !== undefined &&
+            reference.revision.length > MAX_INJECTION_REVISION_LENGTH)
+        ) {
+          throw new MemoryValidationError(
+            "Injection event evidence reference is invalid."
+          );
+        }
+      }
+      try {
+        const result = await this.repository.recordInjectionEvent({
+          ...input,
+          event: {
+            ...event,
+            evidence: sanitizeEvidence(event.evidence)
+          }
+        });
+        span.setAttribute("memory.injection.appended", result.appended);
+        span.setAttribute("memory.injection.result", event.injectionResult);
+        span.setAttribute("memory.injection.mode", event.memoryMode);
+        return result;
+      } catch (error) {
+        if (error instanceof RepositoryMemoryConflictError) {
+          throw new MemoryConflictError(error.message);
+        }
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Append-only, reporter-supplied outcome attached to an observed injection
+   * event. Only operator/root/curator/system authorities may record outcomes;
+   * non-`unknown` outcomes require at least one bounded evidence reference;
+   * the report's `correlationToken` must resolve to a previously persisted
+   * injection event in the exact (workspace, repository, task, run, agent)
+   * scope, or the write fails closed. Duplicate reports return
+   * `{ appended: false }` so retries remain safe.
+   */
+  recordOutcomeReport(
+    input: MemoryRecordOutcomeReportInput
+  ): Promise<{ readonly appended: boolean; readonly id: string }> {
+    return this.withSpan(MEMORY_OPERATIONS.outcomeReport, async (span) => {
+      const { report } = input;
+      this.assertActor(input.actor);
+      // The recorded `reporter_authority` is always sourced from the trusted
+      // MemoryActor. The Control API path maps an authenticated operator to
+      // `root`, and the runtime emits only injection events under `system`,
+      // so caller-supplied `report.reporterAuthority` is ignored.
+      if (
+        input.actor.authority !== "root" &&
+        input.actor.authority !== "curator"
+      ) {
+        throw new MemoryAuthorizationError(
+          "Only root or memory curator authorities may record outcome reports."
+        );
+      }
+      const storedAuthority: MemoryAuthority = input.actor.authority;
+      // Reporter context enforces workspace+repository+task identity (the
+      // trusted session scope); the report's `runId`/`agentId` are session-
+      // level and need not equal the request-level identifiers stored on
+      // the underlying injection event. This is the explicit session-level
+      // join documented in docs/memory-injection-outcome-evaluation.md.
+      if (
+        !isMemoryScopeVisibleTo(report.scope, input.context) ||
+        report.workspaceId !== input.context.workspaceId ||
+        (report.repositoryId !== undefined &&
+          report.repositoryId !== input.context.repositoryId) ||
+        report.taskId !== input.context.taskId
+      ) {
+        throw new MemoryAuthorizationError(
+          "Outcome reports are restricted to the trusted session's workspace, repository, and task."
+        );
+      }
+      if (!report.correlationToken.trim()) {
+        throw new MemoryValidationError(
+          "Outcome report correlationToken is required."
+        );
+      }
+      const cleanEvidence = sanitizeEvidence(report.evidence);
+      if (report.outcomeKind !== "unknown" && cleanEvidence.length === 0) {
+        throw new MemoryValidationError(
+          "Non-unknown outcome reports require at least one evidence reference."
+        );
+      }
+      // Session-level lookup: the correlationToken must match an event whose
+      // (workspace_id, repository_id, task_id) tuple matches the reporter's
+      // trusted session scope. Request-level runId/agentId on the event row
+      // are not part of the join.
+      const injection =
+        await this.repository.findInjectionEventByTokenForSession(
+          {
+            workspaceId: input.context.workspaceId,
+            ...(input.context.repositoryId
+              ? { repositoryId: input.context.repositoryId }
+              : {}),
+            taskId: input.context.taskId,
+            ...(input.context.runId === undefined
+              ? {}
+              : { runId: input.context.runId }),
+            ...(input.context.agentId === undefined
+              ? {}
+              : { agentId: input.context.agentId }),
+            canReadGlobal: false
+          },
+          report.correlationToken
+        );
+      if (!injection) {
+        throw new MemoryValidationError(
+          "Outcome report targets a correlationToken that has no scope-aligned injection event."
+        );
+      }
+      try {
+        const result = await this.repository.recordOutcomeReport({
+          ...input,
+          report: {
+            ...report,
+            reporterAuthority: storedAuthority,
+            evidence: cleanEvidence
+          }
+        });
+        // Bounded outcome-cohort counter: the matched injection event is the
+        // single evidence source for mode + actual injection result; the
+        // report contributes only outcome kind + report kind. Any value not
+        // in the bounded enum collapses to "unknown" so cardinality stays
+        // bounded. Never export correlationToken, experience/task/run/agent
+        // IDs, evidence URIs, claims, target bodies, or reporter IDs.
+        const outcomeAttributes = recordOutcomeReportCohortAttributes(
+          injection,
+          report
+        );
+        span.setAttribute(
+          "memory.outcome.report_kind",
+          outcomeAttributes["autodev.memory.outcome.report_kind"]
+        );
+        span.setAttribute(
+          "memory.outcome.kind",
+          outcomeAttributes["autodev.memory.outcome.kind"]
+        );
+        span.setAttribute(
+          "memory.outcome.injection_result",
+          outcomeAttributes["autodev.memory.outcome.injection_result"]
+        );
+        span.setAttribute(
+          "memory.outcome.memory_mode",
+          outcomeAttributes["autodev.memory.outcome.memory_mode"]
+        );
+        if (result.appended) {
+          recordMemoryMetric(() =>
+            this.metrics.outcomeReports.add(1, outcomeAttributes)
+          );
+        }
+        return result;
+      } catch (error) {
+        if (error instanceof RepositoryMemoryConflictError) {
+          throw new MemoryConflictError(error.message);
+        }
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Scoped read/join between stored injection events and their
+   * reporter-supplied outcomes. Returns one row per injection; rows without a
+   * matching outcome carry `outcome: null`. Reports that point at an injection
+   * event outside the authorized scope never appear here because the report
+   * write was rejected at the MemoryService boundary.
+   */
+  listInjectionOutcomeJoins(
+    request: MemoryInjectionOutcomeJoinRequest
+  ): Promise<MemoryInjectionOutcomeJoinPage> {
+    return this.withSpan(
+      MEMORY_OPERATIONS.injectionOutcomeList,
+      async (span) => {
+        if (
+          request.memoryModes !== undefined &&
+          request.memoryModes.length > MEMORY_EXECUTION_MODES.length
+        ) {
+          throw new MemoryValidationError(
+            "Injection/outcome join memory mode filter is invalid."
+          );
+        }
+        if (
+          request.injectionResults !== undefined &&
+          request.injectionResults.some(
+            (value) =>
+              value !== "injected" && value !== "empty" && value !== "skipped"
+          )
+        ) {
+          throw new MemoryValidationError(
+            "Injection/outcome join injection result filter is invalid."
+          );
+        }
+        if (
+          request.reportKinds !== undefined &&
+          request.reportKinds.some(
+            (kind) => !MEMORY_OUTCOME_REPORT_KINDS.includes(kind as never)
+          )
+        ) {
+          throw new MemoryValidationError(
+            "Injection/outcome join report kind filter is invalid."
+          );
+        }
+        // Session/task-scoped visibility: the reporter context carries the
+        // session-level task id (Codex capture uses taskId=runId=agentId=
+        // sessionId). The injection event row, however, retains request-level
+        // runId/agentId that the join must NOT compare against. We pass
+        // only the trusted session identity forward.
+        const sessionContext: MemoryReadContext = {
+          workspaceId: request.context.workspaceId,
+          ...(request.context.repositoryId
+            ? { repositoryId: request.context.repositoryId }
+            : {}),
+          ...(request.context.role ? { role: request.context.role } : {}),
+          ...(request.context.taskId ? { taskId: request.context.taskId } : {}),
+          canReadGlobal: request.context.canReadGlobal,
+          ...(request.context.canReadTaskHistory === undefined
+            ? {}
+            : { canReadTaskHistory: request.context.canReadTaskHistory })
+        };
+        const page = await this.repository.listInjectionOutcomeJoins({
+          ...request,
+          context: sessionContext
+        });
+        const visible = page.items.filter(
+          (join) =>
+            isInjectionOutcomeVisibleToSession(
+              join.injection,
+              request.context
+            ) &&
+            (join.outcome === null ||
+              isInjectionOutcomeVisibleToSession(join.outcome, request.context))
+        );
+        span.setAttribute("memory.injection.outcome.total", visible.length);
+        span.setAttribute(
+          "memory.injection.outcome.include_unreported",
+          request.includeUnreported === true
+        );
+        return { ...page, items: visible };
+      }
+    );
+  }
+
+  /**
+   * Bounded workspace/repository/time aggregate over the canonical append-only
+   * injection/outcome events. The repository returns counts only; no
+   * session-level identifiers or evidence leave the persistence boundary.
+   */
+  aggregateInjectionOutcomeCohorts(
+    request: MemoryInjectionOutcomeCohortFilter
+  ): Promise<MemoryInjectionOutcomeCohortPage> {
+    return this.withSpan(
+      MEMORY_OPERATIONS.injectionOutcomeAggregate,
+      async (span) => {
+        if (request.context.canReadTaskHistory !== true) {
+          throw new MemoryAuthorizationError(
+            "Task-history access is required for memory outcome cohorts."
+          );
+        }
+        assertMemoryInjectionOutcomeCohortFilter(request);
+        const page =
+          await this.repository.aggregateInjectionOutcomeCohorts(request);
+        span.setAttribute(
+          "memory.injection.outcome.exposures",
+          page.exposureCount
+        );
+        span.setAttribute("memory.injection.outcome.reports", page.reportCount);
+        span.setAttribute(
+          "memory.injection.outcome.cohort_cells",
+          page.cells.length
+        );
+        return page;
+      }
+    );
   }
 
   propose(

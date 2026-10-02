@@ -1,5 +1,5 @@
 {
-  "_comment": "Phase 3 in-repo slice (docs/AUTODEV_PLATFORM_MIGRATION.md, Phase 3 'Then' -- Define AutoDev semantic attributes under an autodev.* namespace). This freezes the additive autodev.* emission mapping contract (resource-scope keys go into resource.attributes; event-scope keys go into event/span/log/datapoint attributes; output preserves all existing keys; unknown optional values produce no autodev key; no prompt or response content is ever carried). Emission is opt-in: the router-side helper in scripts/codex-model-router.mjs only enriches when AUTODEV_OTEL_ATTRIBUTES=v1. The helper is non-mutating: it returns a fresh cloned payload or the original payload untouched when nothing applies.",
+  "_comment": "Contract fixture for the optional, non-mutating AutoDev OTel enrichment performed by Runtime's router OTLP receiver. It freezes resource/event attribute placement, source aliases, and unknown-value behavior without depending on a standalone Collector; prompt or response content is never carried.",
   "contract_version": "autodev-otel-attributes-emission-v1",
   "schema_version": "autodev-otel-attributes-v1",
   "namespace_prefix": "autodev",
@@ -30,37 +30,13 @@
       "autodev.mcp.server": "event"
     },
     "signals_by_key": {
-      "autodev.role": [
-        "logs",
-        "traces",
-        "metrics"
-      ],
-      "autodev.workspace": [
-        "logs",
-        "traces",
-        "metrics"
-      ],
-      "autodev.provider": [
-        "logs",
-        "traces",
-        "metrics"
-      ],
-      "autodev.model": [
-        "logs",
-        "traces",
-        "metrics"
-      ],
-      "autodev.spawn.mechanism": [
-        "logs"
-      ],
-      "autodev.skill": [
-        "logs",
-        "metrics"
-      ],
-      "autodev.mcp.server": [
-        "logs",
-        "traces"
-      ]
+      "autodev.role": ["logs", "traces", "metrics"],
+      "autodev.workspace": ["logs", "traces", "metrics"],
+      "autodev.provider": ["logs", "traces", "metrics"],
+      "autodev.model": ["logs", "traces", "metrics"],
+      "autodev.spawn.mechanism": ["logs"],
+      "autodev.skill": ["logs", "metrics"],
+      "autodev.mcp.server": ["logs", "traces"]
     },
     "mappings": [
       {
@@ -69,11 +45,7 @@
         "type": "string",
         "cardinality": "single",
         "scope": "resource",
-        "signals": [
-          "logs",
-          "traces",
-          "metrics"
-        ],
+        "signals": ["logs", "traces", "metrics"],
         "target_location": "resource.attributes",
         "optional": true,
         "compatibility": "additive",
@@ -87,11 +59,7 @@
         "type": "string",
         "cardinality": "single",
         "scope": "resource",
-        "signals": [
-          "logs",
-          "traces",
-          "metrics"
-        ],
+        "signals": ["logs", "traces", "metrics"],
         "target_location": "resource.attributes",
         "optional": true,
         "compatibility": "additive",
@@ -105,11 +73,7 @@
         "type": "string",
         "cardinality": "single",
         "scope": "resource",
-        "signals": [
-          "logs",
-          "traces",
-          "metrics"
-        ],
+        "signals": ["logs", "traces", "metrics"],
         "target_location": "resource.attributes",
         "optional": true,
         "compatibility": "additive",
@@ -123,11 +87,7 @@
         "type": "string",
         "cardinality": "single",
         "scope": "resource",
-        "signals": [
-          "logs",
-          "traces",
-          "metrics"
-        ],
+        "signals": ["logs", "traces", "metrics"],
         "target_location": "resource.attributes",
         "optional": true,
         "compatibility": "additive",
@@ -141,9 +101,7 @@
         "type": "string",
         "cardinality": "single",
         "scope": "event",
-        "signals": [
-          "logs"
-        ],
+        "signals": ["logs"],
         "target_location": "logRecord.attributes",
         "optional": true,
         "compatibility": "additive",
@@ -157,10 +115,7 @@
         "type": "string",
         "cardinality": "single",
         "scope": "event",
-        "signals": [
-          "logs",
-          "metrics"
-        ],
+        "signals": ["logs", "metrics"],
         "target_location": "logRecord.attributes | dataPoint.attributes",
         "optional": true,
         "compatibility": "additive",
@@ -174,10 +129,7 @@
         "type": "string",
         "cardinality": "single",
         "scope": "event",
-        "signals": [
-          "logs",
-          "traces"
-        ],
+        "signals": ["logs", "traces"],
         "target_location": "logRecord.attributes | span.attributes",
         "optional": true,
         "compatibility": "additive",
@@ -239,7 +191,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -262,7 +214,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -274,7 +226,7 @@
                     {
                       "key": "prompt_text",
                       "value": {
-                        "stringValue": "do-not-store-this-collector-forwarded-secret"
+                        "stringValue": "do-not-store-this-otlp-secret"
                       }
                     }
                   ]
@@ -291,7 +243,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -314,7 +266,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -337,7 +289,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -360,7 +312,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -383,7 +335,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -401,7 +353,7 @@
                     {
                       "key": "call_id",
                       "value": {
-                        "stringValue": "call-collector-1"
+                        "stringValue": "call-otlp-1"
                       }
                     },
                     {
@@ -430,7 +382,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -511,7 +463,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     }
                   ],
@@ -533,7 +485,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     }
                   ],
@@ -555,7 +507,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -578,7 +530,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     }
                   ],
@@ -606,7 +558,7 @@
               {
                 "key": "workspace_id",
                 "value": {
-                  "stringValue": "ws-collector-forwarded"
+                  "stringValue": "ws-router-ingress"
                 }
               }
             ]
@@ -791,7 +743,7 @@
               {
                 "key": "autodev.workspace",
                 "value": {
-                  "stringValue": "ws-collector-forwarded"
+                  "stringValue": "ws-router-ingress"
                 }
               },
               {
@@ -827,7 +779,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -850,7 +802,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -862,7 +814,7 @@
                     {
                       "key": "prompt_text",
                       "value": {
-                        "stringValue": "do-not-store-this-collector-forwarded-secret"
+                        "stringValue": "do-not-store-this-otlp-secret"
                       }
                     }
                   ]
@@ -879,7 +831,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -908,7 +860,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -937,7 +889,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -966,7 +918,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -989,7 +941,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -1007,7 +959,7 @@
                     {
                       "key": "call_id",
                       "value": {
-                        "stringValue": "call-collector-1"
+                        "stringValue": "call-otlp-1"
                       }
                     },
                     {
@@ -1036,7 +988,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -1103,7 +1055,7 @@
               {
                 "key": "autodev.workspace",
                 "value": {
-                  "stringValue": "ws-collector-forwarded"
+                  "stringValue": "ws-router-ingress"
                 }
               },
               {
@@ -1141,7 +1093,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -1169,7 +1121,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -1197,7 +1149,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     },
                     {
@@ -1226,7 +1178,7 @@
                     {
                       "key": "conversation.id",
                       "value": {
-                        "stringValue": "collector-forwarded-conversation-1"
+                        "stringValue": "router-ingress-conversation-1"
                       }
                     }
                   ],
@@ -1254,7 +1206,7 @@
               {
                 "key": "workspace_id",
                 "value": {
-                  "stringValue": "ws-collector-forwarded"
+                  "stringValue": "ws-router-ingress"
                 }
               },
               {
@@ -1266,7 +1218,7 @@
               {
                 "key": "autodev.workspace",
                 "value": {
-                  "stringValue": "ws-collector-forwarded"
+                  "stringValue": "ws-router-ingress"
                 }
               },
               {
@@ -1477,7 +1429,7 @@
                         {
                           "key": "conversation.id",
                           "value": {
-                            "stringValue": "collector-forwarded-conversation-1"
+                            "stringValue": "router-ingress-conversation-1"
                           }
                         }
                       ]
@@ -1516,7 +1468,7 @@
                         {
                           "key": "conversation.id",
                           "value": {
-                            "stringValue": "collector-forwarded-conversation-1"
+                            "stringValue": "router-ingress-conversation-1"
                           }
                         }
                       ],
@@ -1612,7 +1564,7 @@
                         {
                           "key": "conversation.id",
                           "value": {
-                            "stringValue": "collector-forwarded-conversation-1"
+                            "stringValue": "router-ingress-conversation-1"
                           }
                         }
                       ]
@@ -1651,7 +1603,7 @@
                         {
                           "key": "conversation.id",
                           "value": {
-                            "stringValue": "collector-forwarded-conversation-1"
+                            "stringValue": "router-ingress-conversation-1"
                           }
                         }
                       ],
@@ -1722,6 +1674,6 @@
     "default": false,
     "helper": "autodevEnrichOtlpPayload",
     "mutates": false,
-    "gating_module": "scripts/codex-model-router.mjs"
+    "gating_module": "runtime/src/router/otel.ts"
   }
 }
