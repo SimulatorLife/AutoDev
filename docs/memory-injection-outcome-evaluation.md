@@ -89,11 +89,9 @@ table on the same server-side Control API proxy. It renders bounded counts and
 explicit unreported cells without converting them to rates or claiming
 downstream use. The tested 17-patch prefix applies to pinned OpenLIT; seven focused
 upstream Jest suites pass (66/66) and its patched client typecheck passes. Patches
-18–20 remove Controller/OpAMP discovery and image artifacts, retain the authenticated
-first-party OTLP receiver with PID-1 signal supervision, and delete stale Controller
-messages; patch 21 removes stale Controller ClickHouse table creation. The full
+18–21 remove Controller/OpAMP discovery, image artifacts, stale message constants, and Controller table initialization while retaining the authenticated first-party OTLP receiver with PID-1 signal supervision. The full
 21-patch apply, patched client typecheck, and eight focused upstream Jest suites
-(61/61) pass. The `linux/arm64` p21 validation image `autodev-openlit:p21-validation`
+(58/58) pass. The `linux/arm64` p21 validation image `autodev-openlit:p21-validation`
 was built with a scratch lock under `/tmp`. The standard lock and running OpenLIT
 container remain on p14, so deployed UI and actual receiver drain acceptance remain
 pending.
