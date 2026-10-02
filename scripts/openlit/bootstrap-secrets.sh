@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate and persist OpenLIT/Control secrets outside the repository.
+# Generate OpenLIT/Control secrets outside the repo and provision local Console server env.
 #
 # The input is a mode-0600 env file under CODEX_HOME (not the tracked
 # config/openlit/openlit.env template). Existing strong values are preserved;

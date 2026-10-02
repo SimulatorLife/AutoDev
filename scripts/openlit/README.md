@@ -162,7 +162,7 @@ Control API, receiver, and Usage tokens are stored together in
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `apply-patches.sh`      | Apply all local patches to the exact pinned OpenLIT commit.                                                      |
 | `build-local.sh`        | Build the patched image and record source, patch, image-ID, and digest metadata outside the repo.                |
-| `bootstrap-secrets.sh`  | Generate/preserve strong DB, Control API, OTLP receiver, and Console Usage tokens in the CODEX_HOME secret file. |
+| `bootstrap-secrets.sh`  | Generate/preserve strong DB, Control API, OTLP receiver, and Console Usage tokens. Writes the canonical `$CODEX_HOME/openlit-secrets.env` (mode 0600, outside the repo) and additionally materializes the two Console server-only tokens plus their local base URL defaults into `console/.env.local` (mode 0600, ignored by `.env.*`) for Next.js to auto-load on `pnpm --filter @simulatorlife/autodev-console dev/build/start`. The launchd-managed Console (`scripts/run-codex-console.sh`) continues to source the canonical secret file directly and does not depend on `console/.env.local`. |
 | `bootstrap-otlp-key.sh` | Materialize the same generated receiver token for producers; it does not call an OpenLIT API.                    |
 | `up.sh`                 | Build, prepare secrets, then start the locally patched image with the non-secret template.                       |
 | `down.sh`               | Stop the local stack while preserving its durable ClickHouse and OpenLIT data volumes.                           |
@@ -197,3 +197,47 @@ scripts/openlit/pin-image.sh
 scripts/openlit/apply-patches.sh
 scripts/openlit/build-local.sh
 ```
+
+## Local Console environment materialization
+
+`scripts/openlit/bootstrap-secrets.sh` is the canonical writer for both
+secret stores the local Console needs:
+
+1. The out-of-repository canonical secret file
+   `$CODEX_HOME/openlit-secrets.env` (mode 0600), which the launchd-managed
+   `scripts/run-codex-console.sh` LaunchAgent reads via an exact-key parser
+   to export the two Console-required service credentials before exec'ing
+   `next start`.
+2. The Next.js auto-loaded file `console/.env.local` (mode 0600), which the
+   `pnpm --filter @simulatorlife/autodev-console dev/build/start` workflow
+   picks up directly. Next.js loads it on every server-side request; the
+   file is gitignored via the root `.gitignore` rule `.env.*`.
+
+`console/.env.local` carries only the two Console-required server-only
+service credentials (`AUTODEV_CONTROL_API_TOKEN`,
+`AUTODEV_OPENLIT_USAGE_TOKEN`) and their non-secret local base URL
+defaults (`AUTODEV_CONTROL_API_BASE_URL`,
+`AUTODEV_OPENLIT_USAGE_URL`). It deliberately does **not** carry the
+OpenLIT database password or the OTLP receiver token, because those are
+OpenLIT-side and proxy-only credentials respectively and must never reach
+the Console server process. URL defaults use Next.js
+`${VAR:-default}` expansion so operators can override them per shell
+session without editing the file.
+
+The writer is an atomic tmp-file + `mv -f` swap followed by an explicit
+`chmod 0600`; it overwrites any previous `console/.env.local` and
+re-enforces the owner-only permission even if the prior file was more
+permissive (e.g. left behind by a hand-edit). When the script cannot
+locate a `console/` directory next to the `scripts/openlit/` path it is
+invoked from, the `.env.local` step is skipped silently and the canonical
+secret file is still produced. Test harnesses pass `REPO_ROOT=<tmpdir>`
+to drive the bootstrap end-to-end without touching the real
+`console/.env.local`.
+
+The security boundary is server-only: neither the CONTROL nor the USAGE
+token may be exposed to browser code. The Console's
+`src/lib/server/control-api.ts` and `src/lib/server/openlit-usage.ts`
+adapters read these variables from `process.env` and the server-rendered
+pages render a documented "credential not configured" state when the
+variables are absent; `console/.env.local` is the contract that closes
+that gap for the `pnpm` workflow.

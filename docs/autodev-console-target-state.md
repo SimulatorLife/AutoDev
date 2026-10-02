@@ -1098,6 +1098,20 @@ configured, browser-reachable `AUTODEV_OPENLIT_UI_URL` (same local default); it
 is not used as a service API credential or forwarded to the Control API. Do not
 source or expose the full secret file to browser code.
 
+The two Console server-only tokens are seeded into the server environment by
+exactly one writer: `scripts/openlit/bootstrap-secrets.sh`, which is the same
+script that populates `$CODEX_HOME/openlit-secrets.env` and is invoked from
+`scripts/openlit/up.sh`. It writes the canonical secret file outside the
+repository and additionally materializes a mode-0600 `console/.env.local`
+that Next.js auto-loads on every server-side request from the `pnpm`
+Console workflow. That file carries only the two Console-required server
+credentials plus their non-secret local base URL defaults; the OpenLIT
+database password and the OTLP receiver token are deliberately not
+included. The launchd-managed Console path does not depend on
+`console/.env.local` — `scripts/run-codex-console.sh` reads the canonical
+secret file via an exact-key parser and exports only the two tokens
+needed by the Next.js server.
+
 Current out-of-band OpenLIT projections:
 
 ```bash
