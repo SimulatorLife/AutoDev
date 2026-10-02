@@ -5,11 +5,9 @@
  * the pinned upstream OpenLIT revision (openlit-2.1.0, commit
  * 9938c66638666ca5d3bcb850350faa82e510924b).
  *
- * The test validates the ordered patch series prefix (verifying patches 15,
- * 16, and 17, and patch 18 when present), runs `git apply --check` and `git apply`
- * on every patch in patches/openlit/, then asserts the resulting tree matches the
- * expected added and removed files. It is deliberately conservative: if
- * upstream drifts, this test fails and the patch set must be regenerated.
+ * The full ordered series is applied to pinned OpenLIT, including patches 15-21,
+ * then checked for expected additions and removals. Upstream drift requires
+ * regenerating the patch series.
  */
 
 import assert from "node:assert/strict";
@@ -179,6 +177,12 @@ test(
     }
     if (patches.some((p) => p.startsWith("19-"))) {
       expectedPatchNames.push("19-remove-controller-image-runtime");
+    }
+    if (patches.some((p) => p.startsWith("20-"))) {
+      expectedPatchNames.push("20-remove-stale-controller-messages");
+    }
+    if (patches.some((p) => p.startsWith("21-"))) {
+      expectedPatchNames.push("21-remove-controller-clickhouse-schema");
     }
     assert.ok(
       patches.length >= expectedPatchNames.length,
@@ -621,6 +625,11 @@ test(
     );
     assert.match(clickhouseInit, /CREATE TABLE IF NOT EXISTS otel_traces/u);
     assert.match(clickhouseInit, /toIntervalHour\(730\)/u);
+    assert.doesNotMatch(
+      clickhouseInit,
+      /openlit_controller_|Creating OpenLIT Controller tables/u,
+      "the bootstrap must not persist removed Controller resources"
+    );
 
     // Verify the dashboard persistence round-trips variables. The
     // board table now has a `variables` column, the layout reader
@@ -1158,6 +1167,17 @@ test(
         "src/client/src/app/(playground)/agents/controller-table.tsx",
         "src/client/src/app/(playground)/agents/no-controller.tsx",
         "src/client/src/app/(playground)/fleet-hub/page.tsx",
+        "src/client/src/app/api/controller",
+        "src/client/src/app/api/fleet-hub",
+        "src/client/src/lib/platform/controller",
+        "src/client/src/lib/platform/fleet-hub",
+        "src/client/src/store/agents-instrumentation.ts",
+        "src/client/src/selectors/agents-instrumentation.ts",
+        "src/client/src/types/controller.ts",
+        "src/client/src/types/store/agents-instrumentation.ts",
+        "src/client/src/clickhouse/migrations/create-controller-migration.ts",
+        "src/client/src/clickhouse/migrations/generalize-controller-desired-states-migration.ts",
+        "src/opamp-server/main.go",
         "src/opamp-server/setup-supervisor.sh"
       ];
       for (const rel of removedControllerDiscoveryPaths) {
@@ -1193,18 +1213,34 @@ test(
         join(dir, "src/client/scripts/entrypoint.sh"),
         "utf8"
       );
-      assert.match(
-        entrypoint,
-        /wait -n \"\$NODE_PID\" \"\$OTEL_COLLECTOR_PID\"/u
-      );
+      assert.match(entrypoint, /wait -n "\$NODE_PID" "\$OTEL_COLLECTOR_PID"/u);
       assert.match(entrypoint, /trap .*SIGTERM/u);
       assert.doesNotMatch(entrypoint, /exec node/u);
+      assert.doesNotMatch(
+        entrypoint,
+        /telemetry\\.useOtelForInternalMetrics/u,
+        "patch 19 must not pass a feature gate unsupported by the pinned receiver"
+      );
       const compose = readFileSync(join(dir, "docker-compose.yml"), "utf8");
       assert.doesNotMatch(
         compose,
         /^\u0020{2}(?:otel-collector|otelcol|autodev-collector):/mu,
         "patch 19 must not introduce a separate Collector service"
       );
+    }
+
+    if (patches.some((p) => p.startsWith("20-"))) {
+      for (const locale of ["en", "hi"]) {
+        const messages = readFileSync(
+          join(dir, "src/client/src/constants/messages/" + locale + ".ts"),
+          "utf8"
+        );
+        assert.doesNotMatch(
+          messages,
+          /^export const AGENTS_(?:SOURCE_CONTROLLER|SOURCE_BOTH|COLUMN_CONTROLLER|STATUS_INSTRUMENTED|LLM_OBSERVABILITY_DESCRIPTION|AGENT_USE_NOTE|AGENT_TOGGLE_CONTROLLER_UPGRADE|CONTROLLER_DEFAULT_TITLE|STAT_INSTRUMENTED|CONFIG_SAVED)\\b/mu,
+          "patch 20 must remove stale Controller constants from " + locale
+        );
+      }
     }
   }
 );
@@ -1298,6 +1334,12 @@ test(
       }
       if (patches.some((p) => p.startsWith("19-"))) {
         expectedPatchNames.push("19-remove-controller-image-runtime");
+      }
+      if (patches.some((p) => p.startsWith("20-"))) {
+        expectedPatchNames.push("20-remove-stale-controller-messages");
+      }
+      if (patches.some((p) => p.startsWith("21-"))) {
+        expectedPatchNames.push("21-remove-controller-clickhouse-schema");
       }
       assert.ok(
         patches.length >= expectedPatchNames.length,
@@ -1422,9 +1464,40 @@ test(
         );
         assert.match(
           entrypoint,
-          /wait -n \"\$NODE_PID\" \"\$OTEL_COLLECTOR_PID\"/u
+          /wait -n "\$NODE_PID" "\$OTEL_COLLECTOR_PID"/u
         );
         assert.doesNotMatch(entrypoint, /exec node/u);
+        assert.doesNotMatch(
+          entrypoint,
+          /telemetry\\.useOtelForInternalMetrics/u
+        );
+      }
+      if (patches.some((p) => p.startsWith("20-"))) {
+        for (const locale of ["en", "hi"]) {
+          const messages = readFileSync(
+            join(
+              workDirectory,
+              "src/client/src/constants/messages/" + locale + ".ts"
+            ),
+            "utf8"
+          );
+          assert.doesNotMatch(
+            messages,
+            /^export const AGENTS_(?:SOURCE_CONTROLLER|SOURCE_BOTH|COLUMN_CONTROLLER|STATUS_INSTRUMENTED|LLM_OBSERVABILITY_DESCRIPTION|AGENT_USE_NOTE|AGENT_TOGGLE_CONTROLLER_UPGRADE|CONTROLLER_DEFAULT_TITLE|STAT_INSTRUMENTED|CONFIG_SAVED)\\b/mu
+          );
+        }
+      }
+
+      if (patches.some((p) => p.startsWith("21-"))) {
+        const clickhouseInit = readFileSync(
+          join(workDirectory, "assets/clickhouse-init.sh"),
+          "utf8"
+        );
+        assert.doesNotMatch(
+          clickhouseInit,
+          /openlit_controller_|Creating OpenLIT Controller tables/u,
+          "patch 21 must remove Controller table creation from fresh ClickHouse initialization"
+        );
       }
 
       const status = run("git", ["status", "--short"], workDirectory);

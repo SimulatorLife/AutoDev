@@ -1,0 +1,116 @@
+diff --git a/src/client/src/__tests__/platform/controller-removal.test.ts b/src/client/src/__tests__/platform/controller-removal.test.ts
+index f561ec00..e3bc676c 100644
+--- a/src/client/src/__tests__/platform/controller-removal.test.ts
++++ b/src/client/src/__tests__/platform/controller-removal.test.ts
+@@ -42,6 +42,30 @@ describe("controller removal and direct OTel receiver verification", () => {
+ 		expect(fs.existsSync(controllerTypes)).toBe(false);
+ 	});
+ 
++	it("removes unused Controller-only message constants", () => {
++		const obsoleteKeys = [
++			"AGENTS_SOURCE_CONTROLLER",
++			"AGENTS_SOURCE_BOTH",
++			"AGENTS_COLUMN_CONTROLLER",
++			"AGENTS_STATUS_INSTRUMENTED",
++			"AGENTS_LLM_OBSERVABILITY_DESCRIPTION",
++			"AGENTS_AGENT_USE_NOTE",
++			"AGENTS_AGENT_TOGGLE_CONTROLLER_UPGRADE",
++			"AGENTS_CONTROLLER_DEFAULT_TITLE",
++			"AGENTS_STAT_INSTRUMENTED",
++			"AGENTS_CONFIG_SAVED",
++		];
++		for (const locale of ["en", "hi"]) {
++			const messages = fs.readFileSync(
++				path.join(clientRoot, "src/constants/messages/" + locale + ".ts"),
++				"utf-8"
++			);
++			for (const key of obsoleteKeys) {
++				expect(messages).not.toContain("export const " + key);
++			}
++		}
++	});
++
+ 	it("does not register controller tables in ClickHouse migrations", () => {
+ 		const migrationsDir = path.join(clientRoot, "src/clickhouse/migrations");
+ 		const migrationFiles = fs.readdirSync(migrationsDir);
+diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
+index c3beb45d..c6ff4d09 100644
+--- a/src/client/src/constants/messages/en.ts
++++ b/src/client/src/constants/messages/en.ts
+@@ -891,9 +891,7 @@ export const AGENTS_COLUMN_LAST_SEEN = "Last Seen";
+ export const AGENTS_COLUMN_LLM_OBSERVABILITY = "LLM Observability";
+ export const AGENTS_COLUMN_AGENT_OBSERVABILITY = "Agent Observability";
+ export const AGENTS_COLUMN_SOURCE = "Source";
+-export const AGENTS_SOURCE_CONTROLLER = "Controller";
+ export const AGENTS_SOURCE_SDK = "SDK";
+-export const AGENTS_SOURCE_BOTH = "Controller + SDK";
+ 
+ export const AGENTS_SDK_ENABLED_VIA = "Enabled (via SDK)";
+ export const AGENTS_SDK_SOURCE_NOTE = "Source: SDK";
+@@ -1007,7 +1005,6 @@ export const AGENTS_SCOPED_TO_SERVICE = (serviceName: string) =>
+ 	`Scoped to service "${serviceName}"`;
+ 
+ // Agents - Controller Table
+-export const AGENTS_COLUMN_CONTROLLER = "Controller";
+ export const AGENTS_COLUMN_METADATA = "Metadata";
+ export const AGENTS_COLUMN_SERVICES = "Agents";
+ export const AGENTS_COLUMN_STATUS = "Status";
+@@ -1026,7 +1023,6 @@ export const AGENTS_LOADING_REQUESTS = "Loading requests...";
+ export const AGENTS_LOADING_CONFIGURATION = "Loading configuration...";
+ export const AGENTS_LOADING_VERSIONS = "Loading…";
+ export const AGENTS_LOAD_MORE_VERSIONS = "Load more versions";
+-export const AGENTS_STATUS_INSTRUMENTED = "Instrumented";
+ export const AGENTS_STATUS_DISCOVERED = "Discovered";
+ export const AGENTS_STAT_PROVIDERS = "Providers";
+ export const AGENTS_STAT_PID = "PID";
+@@ -1036,7 +1032,6 @@ export const AGENTS_STAT_RUNTIME_UNKNOWN = "Unknown";
+ export const AGENTS_RESOURCE_ATTRIBUTES = "Resource Attributes";
+ export const AGENTS_CONTROLS = "Controls";
+ export const AGENTS_LLM_OBSERVABILITY_LABEL = "LLM Observability";
+-export const AGENTS_LLM_OBSERVABILITY_DESCRIPTION = "Enable eBPF-based observability for LLM and VectorDB traffic — RED metrics, model name, tokens, and tool calls.";
+ export const AGENTS_AGENT_OBSERVABILITY_LABEL = "Agent Observability";
+ export const AGENTS_AGENT_OBSERVABILITY_DESCRIPTION = "Injects the AutoDev agent SDK for LangChain, LangGraph, CrewAI, and similar agent frameworks.";
+ export const AGENTS_AGENT_ACTION_DOCKER = "Requires container recreate.";
+@@ -1048,7 +1043,6 @@ export const AGENTS_DEPLOYING_IN_PROGRESS = "deploying (rolling update in progre
+ export const AGENTS_REMOVING_IN_PROGRESS = "removing (rolling update in progress)";
+ export const AGENTS_ENABLED = "enabled";
+ export const AGENTS_DISABLED = "disabled";
+-export const AGENTS_AGENT_USE_NOTE = "Use this only for agent framework spans. Provider-level LLM traffic still comes from eBPF.";
+ export const AGENTS_SDK_VERSION_LABEL = "SDK version:";
+ export const AGENTS_MANUAL_SETUP_REQUIRED = "Manual setup required";
+ 
+@@ -1069,7 +1063,6 @@ export const AGENTS_AGENT_TOGGLE_CONFLICT = "Conflict detected";
+ export const AGENTS_AGENT_TOGGLE_UNAVAILABLE = "Unavailable";
+ export const AGENTS_AGENT_TOGGLE_DOCKER_NEEDED = "Docker access needed";
+ export const AGENTS_AGENT_TOGGLE_NOT_MANAGEABLE = "Not manageable";
+-export const AGENTS_AGENT_TOGGLE_CONTROLLER_UPGRADE = "Controller upgrade needed";
+ export const AGENTS_ACTION_WORKING_ELLIPSIS = "Working...";
+ export const AGENTS_ACTION_FAILED = "Action Failed";
+ export const AGENTS_LAST_ERROR_INSTRUMENT = "Instrument";
+@@ -1084,12 +1077,9 @@ export const AGENTS_LAST_SEEN_PREFIX = "Last seen ";
+ export const AGENTS_WORKING_SUFFIX = (label: string) => `${label}...`;
+ 
+ // Agents - Controller Detail
+-export const AGENTS_CONTROLLER_DEFAULT_TITLE = "Controller";
+ 
+ export const AGENTS_LAST_HEARTBEAT_PREFIX = "Last heartbeat ";
+ export const AGENTS_STAT_SERVICES_DISCOVERED = "Agents Discovered";
+-export const AGENTS_STAT_INSTRUMENTED = "Instrumented";
+-export const AGENTS_CONFIG_SAVED = "Configuration saved. Controller will pick it up on next poll.";
+ export const AGENTS_CONFIG_SAVE_FAILED = (err: string) => `Failed to save config: ${err}`;
+ export const AGENTS_LOADING_CONFIG = "Loading configuration...";
+ export const AGENTS_SAVING = "Saving...";
+diff --git a/src/client/src/constants/messages/hi.ts b/src/client/src/constants/messages/hi.ts
+index 35bfbb79..786d27be 100644
+--- a/src/client/src/constants/messages/hi.ts
++++ b/src/client/src/constants/messages/hi.ts
+@@ -515,9 +515,7 @@ export const PERSONAL_ORGANISATION = "व्यक्तिगत";
+ 
+ // Agents - Unified detail
+ export const AGENTS_COLUMN_SOURCE = "स्रोत";
+-export const AGENTS_SOURCE_CONTROLLER = "कंट्रोलर";
+ export const AGENTS_SOURCE_SDK = "SDK";
+-export const AGENTS_SOURCE_BOTH = "कंट्रोलर + SDK";
+ export const AGENTS_FILTER_STATUS_SDK = "SDK-इंस्ट्रुमेंटेड";
+ export const AGENTS_SDK_ENABLED_VIA = "सक्षम (SDK के माध्यम से)";
+ export const AGENTS_SDK_SOURCE_NOTE = "स्रोत: SDK";
