@@ -11,6 +11,7 @@ const MAX_TASK_CHARACTERS = 4000;
 const MAX_CLAIM_CHARACTERS = 4000;
 const MAX_EVIDENCE_REFERENCES = 12;
 const MAX_EVIDENCE_URI_CHARACTERS = 512;
+const MAX_ISSUE_OBSERVATIONS = 4;
 const MAX_RESPONSE_CHARACTERS = 12_000;
 const MAX_OUTPUT_TOKENS = 512;
 const DEFAULT_TIMEOUT_MS = 12_000;
@@ -24,6 +25,7 @@ const MEMORY_REVIEW_INSTRUCTIONS = [
   "The supplied current-state verification is authoritative; do not override it or invent evidence.",
   "Decide whether to retain the claim, revise it into narrow task-specific guidance, reject it, or mark it uncertain.",
   "Use only the supplied evidence. If applicability is unclear, choose uncertain.",
+  "Current issue state is dated context only; open/closed state alone does not prove task success or memory correctness.",
   'Return one JSON object with exactly: disposition ("retain"|"revise"|"reject"|"uncertain"), guidance (string or null), rationale (string).'
 ].join(" ");
 
@@ -139,13 +141,23 @@ function buildReviewRequest(
         ? { revision: reference.revision.slice(0, 128) }
         : {})
     }));
+  const issueObservations = (assessment.issueObservations ?? [])
+    .slice(0, MAX_ISSUE_OBSERVATIONS)
+    .map((observation) => ({
+      uri: observation.uri.slice(0, MAX_EVIDENCE_URI_CHARACTERS),
+      state: observation.state,
+      stateReason: observation.stateReason,
+      updatedAt: observation.updatedAt,
+      observedAt: observation.observedAt
+    }));
   const context = JSON.stringify({
     task: normalizedTask,
     memory: { kind: memory.kind, claim },
     currentState: {
       compatibility: assessment.compatibility,
       source: assessment.source.slice(0, 128),
-      evidence
+      evidence,
+      issueObservations
     }
   });
   if (context.length > MAX_RESPONSE_CHARACTERS) return null;

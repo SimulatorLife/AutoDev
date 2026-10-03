@@ -107,7 +107,18 @@ test("router-backed reconstructor reuses the configured orchestrator model and s
         adapter.reconstruct({
           memory,
           task: "Add a governed memory API action.",
-          assessment
+          assessment: {
+            ...assessment,
+            issueObservations: [
+              {
+                uri: "https://github.com/owner/repo/issues/42",
+                state: "CLOSED",
+                stateReason: "NOT_PLANNED",
+                updatedAt: "2026-10-01T00:01:00.000Z",
+                observedAt: "2026-10-01T00:02:00.000Z"
+              }
+            ]
+          }
         })
     );
   } finally {
@@ -134,12 +145,32 @@ test("router-backed reconstructor reuses the configured orchestrator model and s
     model: string;
     stream: boolean;
     tools: unknown[];
-    input: Array<{ role: string }>;
+    input: Array<{
+      role: string;
+      content?: Array<{ text?: string }>;
+    }>;
+    instructions: string;
   };
   assert.equal(body.model, ORCHESTRATOR_ALIAS);
   assert.equal(body.stream, false);
   assert.deepEqual(body.tools, []);
   assert.equal(body.input[0]?.role, "developer");
+  const requestContext = JSON.parse(
+    String(body.input[0]?.content?.[0]?.text)
+  ) as { currentState: { issueObservations: unknown[] } };
+  assert.deepEqual(requestContext.currentState.issueObservations, [
+    {
+      uri: "https://github.com/owner/repo/issues/42",
+      state: "CLOSED",
+      stateReason: "NOT_PLANNED",
+      updatedAt: "2026-10-01T00:01:00.000Z",
+      observedAt: "2026-10-01T00:02:00.000Z"
+    }
+  ]);
+  assert.match(
+    String(body.instructions),
+    /issue state is dated context only.*does not prove task success/u
+  );
   assert.equal(latestUserTask(body.input), null);
 });
 

@@ -11,6 +11,7 @@ import type {
 
 import type {
   CurrentStateAssessment,
+  CurrentStateIssueObservation,
   MemoryCurrentStateVerifier,
   MemoryReconstructor
 } from "./service.ts";
@@ -32,6 +33,23 @@ interface GitHubPullRequestLocator {
   readonly number: number;
 }
 
+interface GitHubIssueLocator {
+  readonly owner: string;
+  readonly repository: string;
+  readonly number: number;
+}
+
+interface GitHubIssueState {
+  readonly state: "OPEN" | "CLOSED";
+  readonly stateReason: "COMPLETED" | "NOT_PLANNED" | "REOPENED" | null;
+  readonly updatedAt: string;
+}
+
+interface GitHubReferenceState {
+  readonly pullRequest: GitHubPullRequestState | null;
+  readonly issue: GitHubIssueState | null;
+}
+
 interface GitHubPullRequestState {
   readonly state: string;
   readonly isDraft: boolean;
@@ -42,18 +60,32 @@ interface GitHubPullRequestState {
   readonly checksState: string | null;
 }
 
-interface PullRequestLookupState {
+interface GitHubLookupState {
   lookups: number;
-  readonly states: Map<string, Promise<GitHubPullRequestState | null>>;
+  readonly states: Map<string, Promise<GitHubReferenceState | null>>;
 }
 
-type PullRequestVerificationResult =
+type GitHubReferenceSource =
+  | "git_github_pr_review_checks"
+  | "git_github_issue_state"
+  | "git_github_reference_state";
+
+type GitHubReferenceSelectionResult =
+  | {
+      readonly kind: "selected";
+      readonly pullRequestReference: EvidenceReference | null;
+      readonly issueReference: EvidenceReference | null;
+    }
+  | { readonly kind: "unknown"; readonly source: GitHubReferenceSource };
+
+type GitHubEvidenceVerificationResult =
   | { readonly kind: "none" }
-  | { readonly kind: "unknown" }
+  | { readonly kind: "unknown"; readonly source: GitHubReferenceSource }
   | {
       readonly kind: "verified";
-      readonly reference: EvidenceReference;
-      readonly mergeCommit: string;
+      readonly pullRequestReference: EvidenceReference | null;
+      readonly mergeCommit: string | null;
+      readonly issueObservation: CurrentStateIssueObservation | null;
     };
 
 export interface MemoryRepositoryRootResolver {
@@ -63,10 +95,10 @@ export interface MemoryRepositoryRootResolver {
 
 /**
  * Conservative current-state validation for memories grounded in Git files.
- * A cited same-repository PR is checked once per research context and must be
- * merged, approved, and have successful checks before it can supply commit
- * lineage. Local ancestry and exact cited-file identity remain mandatory;
- * missing GitHub state stays unknown and cannot authorize injection.
+ * Cited same-repository PRs require merged/approved/successful checks before
+ * supplying lineage. Canonical issue state is returned as dated context, never
+ * as a task outcome. Local ancestry and exact cited-file identity remain
+ * mandatory; unavailable GitHub state cannot authorize injection.
  */
 interface GitRepositorySnapshot {
   readonly root: string;
@@ -76,31 +108,33 @@ interface GitRepositorySnapshot {
 export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier {
   private readonly repositories: MemoryRepositoryRootResolver;
   private readonly now: () => string;
-  private readonly pullRequestState: (
+  private readonly githubState: (
     repositoryId: string,
-    uri: string
-  ) => Promise<GitHubPullRequestState | null>;
+    pullRequestUri: string | null,
+    issueUri: string | null
+  ) => Promise<GitHubReferenceState | null>;
   private readonly snapshots = new WeakMap<
     MemoryReadContext,
     Promise<GitRepositorySnapshot | null>
   >();
-  private readonly pullRequestLookups = new WeakMap<
+  private readonly githubLookups = new WeakMap<
     MemoryReadContext,
-    PullRequestLookupState
+    GitHubLookupState
   >();
 
   constructor(options: {
     readonly repositories: MemoryRepositoryRootResolver;
     readonly now?: () => string;
     /** Substitutable only for hermetic tests; production uses the GitHub CLI. */
-    readonly pullRequestState?: (
+    readonly githubState?: (
       repositoryId: string,
-      uri: string
-    ) => Promise<GitHubPullRequestState | null>;
+      pullRequestUri: string | null,
+      issueUri: string | null
+    ) => Promise<GitHubReferenceState | null>;
   }) {
     this.repositories = options.repositories;
     this.now = options.now ?? (() => new Date().toISOString());
-    this.pullRequestState = options.pullRequestState ?? githubPullRequestState;
+    this.githubState = options.githubState ?? githubReferenceState;
   }
 
   async verify(input: {
@@ -124,82 +158,110 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
     if (citedFiles.length === 0) {
       return unknownAssessment(checkedAt, "verification_inconclusive");
     }
-    const pullRequestVerification = await this.verifyCitedPullRequest(
+    const githubEvidence = await this.verifyCitedGitHubEvidence(
       evidence,
       input.context,
-      input.context.repositoryId
+      input.context.repositoryId,
+      checkedAt
     );
-    if (pullRequestVerification.kind === "unknown") {
+    if (githubEvidence.kind === "unknown") {
       return unknownAssessment(
         checkedAt,
         "verification_inconclusive",
-        "git_github_pr_review_checks"
+        githubEvidence.source
       );
     }
     const sourceCommit =
       sourceCommitFrom(evidence) ??
-      (pullRequestVerification.kind === "verified"
-        ? pullRequestVerification.mergeCommit
-        : null);
+      (githubEvidence.kind === "verified" ? githubEvidence.mergeCommit : null);
     const resolvedPullRequest =
-      pullRequestVerification.kind === "verified"
+      githubEvidence.kind === "verified" && githubEvidence.pullRequestReference
         ? {
-            ...pullRequestVerification.reference,
+            ...githubEvidence.pullRequestReference,
             revision:
-              pullRequestVerification.reference.revision ??
-              pullRequestVerification.mergeCommit,
+              githubEvidence.pullRequestReference.revision ??
+              githubEvidence.mergeCommit!,
             observedAt: checkedAt
           }
+        : null;
+    const issueObservation =
+      githubEvidence.kind === "verified"
+        ? githubEvidence.issueObservation
         : null;
     if (!sourceCommit) {
       return unknownAssessment(checkedAt, "verification_inconclusive");
     }
 
-    const ancestry = await runGit(repositoryRoot, [
+    return this.verifyGitLineage({
+      repositoryId: input.context.repositoryId,
+      repositoryRoot,
+      currentCommit,
+      sourceCommit,
+      checkedAt,
+      citedFiles,
+      resolvedPullRequest,
+      issueObservation
+    });
+  }
+
+  private async verifyGitLineage(input: {
+    readonly repositoryId: string;
+    readonly repositoryRoot: string;
+    readonly currentCommit: string;
+    readonly sourceCommit: string;
+    readonly checkedAt: string;
+    readonly citedFiles: readonly {
+      readonly reference: EvidenceReference;
+      readonly relativePath: string;
+    }[];
+    readonly resolvedPullRequest: EvidenceReference | null;
+    readonly issueObservation: CurrentStateIssueObservation | null;
+  }): Promise<CurrentStateAssessment> {
+    const ancestry = await runGit(input.repositoryRoot, [
       "merge-base",
       "--is-ancestor",
-      sourceCommit,
-      currentCommit
+      input.sourceCommit,
+      input.currentCommit
     ]);
     if (ancestry.exitCode === 1) {
       return contradictedAssessment(
-        checkedAt,
+        input.checkedAt,
         "current_state_conflict",
-        input.context.repositoryId,
-        currentCommit
+        input.repositoryId,
+        input.currentCommit
       );
     }
     if (ancestry.exitCode !== 0) {
-      return unknownAssessment(checkedAt, "verification_inconclusive");
+      return unknownAssessment(input.checkedAt, "verification_inconclusive");
     }
 
-    const tracked = await runGit(repositoryRoot, [
+    const tracked = await runGit(input.repositoryRoot, [
       "ls-files",
       "--error-unmatch",
       "--",
-      ...citedFiles.map((file) => file.relativePath)
+      ...input.citedFiles.map((file) => file.relativePath)
     ]);
     if (tracked.exitCode !== 0)
-      return unknownAssessment(checkedAt, "verification_inconclusive");
+      return unknownAssessment(input.checkedAt, "verification_inconclusive");
 
-    const diff = await runGit(repositoryRoot, [
+    const diff = await runGit(input.repositoryRoot, [
       "diff",
       "--quiet",
-      sourceCommit,
+      input.sourceCommit,
       "--",
-      ...citedFiles.map((file) => file.relativePath)
+      ...input.citedFiles.map((file) => file.relativePath)
     ]);
     if (diff.exitCode === 1) {
       return contradictedAssessment(
-        checkedAt,
+        input.checkedAt,
         "stale",
-        input.context.repositoryId,
-        currentCommit,
-        citedFiles.map((file) => file.reference)
+        input.repositoryId,
+        input.currentCommit,
+        input.citedFiles.map((file) => file.reference)
       );
     }
     if (diff.exitCode !== 0) {
-      return unknownAssessment(checkedAt, "verification_inconclusive");
+      return unknownAssessment(input.checkedAt, "verification_inconclusive");
     }
 
     // Identical final bytes do not erase intervening changes to cited files:
@@ -207,26 +269,26 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
     // Inspect only commits touching these paths. A canonical revert is stale;
     // any other intervening change remains unknown and is excluded from injection.
     const pathHistory = await inspectCitedFileHistory(
-      repositoryRoot,
-      sourceCommit,
-      currentCommit,
-      citedFiles.map((file) => file.relativePath)
+      input.repositoryRoot,
+      input.sourceCommit,
+      input.currentCommit,
+      input.citedFiles.map((file) => file.relativePath)
     );
     if (pathHistory.exitCode !== 0) {
-      return unknownAssessment(checkedAt, "verification_inconclusive");
+      return unknownAssessment(input.checkedAt, "verification_inconclusive");
     }
     if (pathHistory.reverted) {
       return contradictedAssessment(
-        checkedAt,
+        input.checkedAt,
         "stale",
-        input.context.repositoryId,
-        currentCommit,
-        citedFiles.map((file) => file.reference)
+        input.repositoryId,
+        input.currentCommit,
+        input.citedFiles.map((file) => file.reference)
       );
     }
     if (pathHistory.changed) {
       return unknownAssessment(
-        checkedAt,
+        input.checkedAt,
         "verification_inconclusive",
         "git_cited_file_history_changed"
       );
@@ -234,86 +296,137 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
 
     return {
       compatibility: "compatible",
-      source: resolvedPullRequest
+      source: input.resolvedPullRequest
         ? "git_github_pr_review_checks_and_file_identity"
-        : "git_commit_and_file_identity",
-      checkedAt,
+        : input.issueObservation
+          ? "git_github_issue_state_and_file_identity"
+          : "git_commit_and_file_identity",
+      checkedAt: input.checkedAt,
       reasonCode: "verified_current_state",
       evidence: [
         {
           kind: "commit",
-          uri: commitUri(input.context.repositoryId, currentCommit),
-          revision: currentCommit,
-          observedAt: checkedAt
+          uri: commitUri(input.repositoryId, input.currentCommit),
+          revision: input.currentCommit,
+          observedAt: input.checkedAt
         },
-        ...(resolvedPullRequest ? [resolvedPullRequest] : []),
-        ...citedFiles.map(({ reference }) => ({
+        ...(input.resolvedPullRequest ? [input.resolvedPullRequest] : []),
+        ...(input.issueObservation
+          ? [
+              {
+                kind: "issue" as const,
+                uri: input.issueObservation.uri,
+                observedAt: input.checkedAt
+              }
+            ]
+          : []),
+        ...input.citedFiles.map(({ reference }) => ({
           ...reference,
-          revision: currentCommit,
-          observedAt: checkedAt
+          revision: input.currentCommit,
+          observedAt: input.checkedAt
         }))
-      ]
+      ],
+      ...(input.issueObservation
+        ? { issueObservations: [input.issueObservation] }
+        : {})
     };
   }
 
-  private async verifyCitedPullRequest(
+  private async verifyCitedGitHubEvidence(
     evidence: readonly EvidenceReference[],
     context: MemoryReadContext,
-    repositoryId: string
-  ): Promise<PullRequestVerificationResult> {
-    const pullRequests = new Map<string, EvidenceReference>();
-    for (const reference of evidence) {
-      if (reference.kind !== "pull_request") continue;
-      const locator = parseGitHubPullRequestLocator(
-        reference.uri,
-        repositoryId
-      );
-      if (!locator) continue;
-      const key = `${locator.owner.toLowerCase()}/${locator.repository.toLowerCase()}#${locator.number}`;
-      pullRequests.set(key, reference);
-    }
-    if (pullRequests.size > 1) return { kind: "unknown" };
-    const reference = pullRequests.values().next().value;
-    if (!reference) return { kind: "none" };
-    const state = await this.pullRequestStateForContext(
+    repositoryId: string,
+    observedAt: string
+  ): Promise<GitHubEvidenceVerificationResult> {
+    const selection = selectGitHubReferences(evidence, repositoryId);
+    if (selection.kind === "unknown") return selection;
+    const { pullRequestReference, issueReference } = selection;
+    if (!pullRequestReference && !issueReference) return { kind: "none" };
+
+    const state = await this.githubStateForContext(
       context,
       repositoryId,
-      reference.uri
+      pullRequestReference?.uri ?? null,
+      issueReference?.uri ?? null
     );
-    if (!isVerifiedPullRequestState(state)) return { kind: "unknown" };
+    if (!state) {
+      return {
+        kind: "unknown",
+        source: referenceStateSource(pullRequestReference, issueReference)
+      };
+    }
+    if (
+      pullRequestReference &&
+      !isVerifiedPullRequestState(state.pullRequest)
+    ) {
+      return { kind: "unknown", source: "git_github_pr_review_checks" };
+    }
+    if (issueReference && !state.issue) {
+      return { kind: "unknown", source: "git_github_issue_state" };
+    }
+
+    const issueObservation =
+      issueReference && state.issue
+        ? {
+            uri: issueReference.uri,
+            state: state.issue.state,
+            stateReason: state.issue.stateReason,
+            updatedAt: state.issue.updatedAt,
+            observedAt
+          }
+        : null;
     return {
       kind: "verified",
-      reference,
-      mergeCommit: state.mergeCommit
+      pullRequestReference,
+      mergeCommit: state.pullRequest?.mergeCommit ?? null,
+      issueObservation
     };
   }
 
   /**
-   * Resolve and validate at most one cited GitHub PR per research context.
-   * The query captures the PR merge, review decision, and aggregate check
-   * state together so a reference cannot authorize injection based on merge
-   * lineage alone. Unavailable or incomplete API data stays unknown.
+   * Resolve at most one PR and one issue together in a single GitHub query per
+   * research context. Issue state is surfaced as context, never interpreted as
+   * a task outcome; unavailable state fails closed when an issue was cited.
    */
-  private pullRequestStateForContext(
+  private githubStateForContext(
     context: MemoryReadContext,
     repositoryId: string,
-    uri: string
-  ): Promise<GitHubPullRequestState | null> {
-    const locator = parseGitHubPullRequestLocator(uri, repositoryId);
-    if (!locator) return Promise.resolve(null);
-    let state = this.pullRequestLookups.get(context);
+    pullRequestUri: string | null,
+    issueUri: string | null
+  ): Promise<GitHubReferenceState | null> {
+    const pullRequestLocator = pullRequestUri
+      ? parseGitHubPullRequestLocator(pullRequestUri, repositoryId)
+      : null;
+    const issueLocator = issueUri
+      ? parseGitHubIssueLocator(issueUri, repositoryId)
+      : null;
+    if (
+      (pullRequestUri && !pullRequestLocator) ||
+      (issueUri && !issueLocator) ||
+      (!pullRequestLocator && !issueLocator)
+    ) {
+      return Promise.resolve(null);
+    }
+
+    let state = this.githubLookups.get(context);
     if (!state) {
       state = { lookups: 0, states: new Map() };
-      this.pullRequestLookups.set(context, state);
+      this.githubLookups.set(context, state);
     }
-    const lookupKey = `${locator.owner}/${locator.repository}#${locator.number}`;
+    const pullRequestKey = pullRequestLocator
+      ? `${pullRequestLocator.owner}/${pullRequestLocator.repository}#${pullRequestLocator.number}`.toLowerCase()
+      : "";
+    const issueKey = issueLocator
+      ? `${issueLocator.owner}/${issueLocator.repository}#${issueLocator.number}`.toLowerCase()
+      : "";
+    const lookupKey = `pr=${pullRequestKey}|issue=${issueKey}`;
     const cached = state.states.get(lookupKey);
     if (cached) return cached;
     if (state.lookups >= GITHUB_LOOKUPS_PER_CONTEXT)
       return Promise.resolve(null);
     state.lookups += 1;
     const lookup = Promise.resolve()
-      .then(() => this.pullRequestState(repositoryId, uri))
+      .then(() => this.githubState(repositoryId, pullRequestUri, issueUri))
       .catch(() => null);
     state.states.set(lookupKey, lookup);
     return lookup;
@@ -361,14 +474,19 @@ export class VerifiedMemoryReconstructor implements MemoryReconstructor {
         rationale: "Current authoritative state did not verify this memory."
       });
     }
+    const baseRationale =
+      input.assessment.source ===
+      "git_github_pr_review_checks_and_file_identity"
+        ? "The cited PR is merged with an approved review decision and successful checks; its source commit is in the current repository lineage and cited files are unchanged."
+        : "The cited source commit is in the current repository lineage and the cited files are unchanged.";
+    const issueRationale = (input.assessment.issueObservations ?? []).map(
+      (observation) =>
+        `Current linked GitHub issue state is ${observation.state.toLowerCase()}${observation.stateReason ? ` (${observation.stateReason.toLowerCase().replaceAll("_", " ")})` : ""}, updated ${observation.updatedAt} and observed ${observation.observedAt}; this status alone does not establish task success or memory correctness.`
+    );
     return Promise.resolve({
       disposition: "retain",
       guidance: input.memory.claim,
-      rationale:
-        input.assessment.source ===
-        "git_github_pr_review_checks_and_file_identity"
-          ? "The cited PR is merged with an approved review decision and successful checks; its source commit is in the current repository lineage and cited files are unchanged."
-          : "The cited source commit is in the current repository lineage and the cited files are unchanged."
+      rationale: [baseRationale, ...issueRationale].join(" ")
     });
   }
 }
@@ -393,6 +511,60 @@ function sourceCommitFrom(
  * Restrict live PR lookups to a canonical GitHub PR for the trusted current
  * repository. Memory evidence can never select an arbitrary host or project.
  */
+function selectGitHubReferences(
+  evidence: readonly EvidenceReference[],
+  repositoryId: string
+): GitHubReferenceSelectionResult {
+  const pullRequests = new Map<string, EvidenceReference>();
+  const issues = new Map<string, EvidenceReference>();
+  for (const reference of evidence) {
+    if (reference.kind === "pull_request") {
+      const locator = parseGitHubPullRequestLocator(
+        reference.uri,
+        repositoryId
+      );
+      if (!locator) continue;
+      const key = `${locator.owner.toLowerCase()}/${locator.repository.toLowerCase()}#${locator.number}`;
+      pullRequests.set(key, reference);
+    } else if (reference.kind === "issue") {
+      const locator = parseGitHubIssueLocator(reference.uri, repositoryId);
+      if (!locator) continue;
+      const key = `${locator.owner.toLowerCase()}/${locator.repository.toLowerCase()}#${locator.number}`;
+      issues.set(key, reference);
+    }
+  }
+
+  const ambiguousPullRequests = pullRequests.size > 1;
+  const ambiguousIssues = issues.size > 1;
+  if (ambiguousPullRequests || ambiguousIssues) {
+    return {
+      kind: "unknown",
+      source:
+        ambiguousPullRequests && ambiguousIssues
+          ? "git_github_reference_state"
+          : ambiguousPullRequests
+            ? "git_github_pr_review_checks"
+            : "git_github_issue_state"
+    };
+  }
+  return {
+    kind: "selected",
+    pullRequestReference: pullRequests.values().next().value ?? null,
+    issueReference: issues.values().next().value ?? null
+  };
+}
+
+function referenceStateSource(
+  pullRequestReference: EvidenceReference | null,
+  issueReference: EvidenceReference | null
+): GitHubReferenceSource {
+  if (pullRequestReference && issueReference)
+    return "git_github_reference_state";
+  return pullRequestReference
+    ? "git_github_pr_review_checks"
+    : "git_github_issue_state";
+}
+
 function parseGitHubPullRequestLocator(
   uri: string,
   repositoryId: string
@@ -414,6 +586,43 @@ function parseGitHubPullRequestLocator(
     if (
       segments.length !== 4 ||
       segments[2] !== "pull" ||
+      !GITHUB_REPOSITORY_SEGMENT_PATTERN.test(segments[0]!) ||
+      !GITHUB_REPOSITORY_SEGMENT_PATTERN.test(segments[1]!) ||
+      !GITHUB_PULL_REQUEST_NUMBER_PATTERN.test(segments[3]!) ||
+      `${segments[0]}/${segments[1]}`.toLowerCase() !==
+        repositoryId.trim().toLowerCase()
+    ) {
+      return null;
+    }
+    const number = Number(segments[3]);
+    if (!Number.isSafeInteger(number)) return null;
+    return { owner: segments[0]!, repository: segments[1]!, number };
+  } catch {
+    return null;
+  }
+}
+
+function parseGitHubIssueLocator(
+  uri: string,
+  repositoryId: string
+): GitHubIssueLocator | null {
+  try {
+    const parsed = new URL(uri);
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.hostname.toLowerCase() !== "github.com" ||
+      parsed.port ||
+      parsed.username ||
+      parsed.password ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      return null;
+    }
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    if (
+      segments.length !== 4 ||
+      segments[2] !== "issues" ||
       !GITHUB_REPOSITORY_SEGMENT_PATTERN.test(segments[0]!) ||
       !GITHUB_REPOSITORY_SEGMENT_PATTERN.test(segments[1]!) ||
       !GITHUB_PULL_REQUEST_NUMBER_PATTERN.test(segments[3]!) ||
@@ -459,45 +668,71 @@ function githubCliEnvironment(): NodeJS.ProcessEnv {
 }
 
 /**
- * Read current PR merge, review, and aggregate check state in one bounded
- * GraphQL request. Only a closed, merged PR with an approved review decision
- * and successful check rollup can contribute commit lineage. The calling
- * verifier still independently checks local ancestry and cited-file identity.
+ * Read current PR review/check state and/or issue state in one bounded query.
+ * Issue state is context only, never a task-outcome verdict. The caller
+ * independently checks local Git ancestry and cited-file identity.
  */
-async function githubPullRequestState(
+async function githubReferenceState(
   repositoryId: string,
-  uri: string
-): Promise<GitHubPullRequestState | null> {
-  const locator = parseGitHubPullRequestLocator(uri, repositoryId);
-  if (!locator) return null;
-  const query = `query($owner: String!, $name: String!, $number: Int!) {
+  pullRequestUri: string | null,
+  issueUri: string | null
+): Promise<GitHubReferenceState | null> {
+  const pullRequestLocator = pullRequestUri
+    ? parseGitHubPullRequestLocator(pullRequestUri, repositoryId)
+    : null;
+  const issueLocator = issueUri
+    ? parseGitHubIssueLocator(issueUri, repositoryId)
+    : null;
+  if (
+    (pullRequestUri && !pullRequestLocator) ||
+    (issueUri && !issueLocator) ||
+    (!pullRequestLocator && !issueLocator)
+  ) {
+    return null;
+  }
+
+  const variableDefinitions = ["$owner: String!", "$name: String!"];
+  const argumentsList = [
+    "api",
+    "graphql",
+    "-F",
+    `owner=${pullRequestLocator?.owner ?? issueLocator!.owner}`,
+    "-F",
+    `name=${pullRequestLocator?.repository ?? issueLocator!.repository}`
+  ];
+  const selections: string[] = [];
+  if (pullRequestLocator) {
+    variableDefinitions.push("$pullRequestNumber: Int!");
+    argumentsList.push("-F", `pullRequestNumber=${pullRequestLocator.number}`);
+    selections.push(`pullRequest(number: $pullRequestNumber) {
+      state
+      isDraft
+      merged
+      mergedAt
+      mergeCommit { oid }
+      reviewDecision
+      statusCheckRollup { state }
+    }`);
+  }
+  if (issueLocator) {
+    variableDefinitions.push("$issueNumber: Int!");
+    argumentsList.push("-F", `issueNumber=${issueLocator.number}`);
+    selections.push(`issue(number: $issueNumber) {
+      state
+      stateReason
+      updatedAt
+    }`);
+  }
+  const query = `query(${variableDefinitions.join(", ")}) {
     repository(owner: $owner, name: $name) {
-      pullRequest(number: $number) {
-        state
-        isDraft
-        merged
-        mergedAt
-        mergeCommit { oid }
-        reviewDecision
-        statusCheckRollup { state }
-      }
+      ${selections.join("\n      ")}
     }
   }`;
+
   try {
     const result = await execFileAsync(
       "gh",
-      [
-        "api",
-        "graphql",
-        "-F",
-        `owner=${locator.owner}`,
-        "-F",
-        `name=${locator.repository}`,
-        "-F",
-        `number=${locator.number}`,
-        "-f",
-        `query=${query}`
-      ],
+      [...argumentsList, "-f", `query=${query}`],
       {
         timeout: GIT_TIMEOUT_MS,
         maxBuffer: GIT_MAX_BUFFER_BYTES,
@@ -514,47 +749,77 @@ async function githubPullRequestState(
     }
     const data = response ? asRecord(response.data) : null;
     const repository = data ? asRecord(data.repository) : null;
-    const pullRequest = repository ? asRecord(repository.pullRequest) : null;
-    const mergeCommit = pullRequest ? asRecord(pullRequest.mergeCommit) : null;
-    const statusCheckRollup = pullRequest
-      ? asRecord(pullRequest.statusCheckRollup)
+    if (!repository) return null;
+    const pullRequest = pullRequestLocator
+      ? parseGitHubPullRequestState(repository.pullRequest)
       : null;
-    if (
-      !pullRequest ||
-      typeof pullRequest.state !== "string" ||
-      typeof pullRequest.isDraft !== "boolean" ||
-      typeof pullRequest.merged !== "boolean" ||
-      (pullRequest.mergedAt !== null &&
-        typeof pullRequest.mergedAt !== "string") ||
-      (pullRequest.reviewDecision !== null &&
-        typeof pullRequest.reviewDecision !== "string") ||
-      (statusCheckRollup !== null &&
-        typeof statusCheckRollup.state !== "string")
-    ) {
+    const issue = issueLocator ? parseGitHubIssueState(repository.issue) : null;
+    if ((pullRequestLocator && !pullRequest) || (issueLocator && !issue))
       return null;
-    }
-    const mergeCommitOid = mergeCommit?.oid;
-    return {
-      state: pullRequest.state,
-      isDraft: pullRequest.isDraft,
-      merged: pullRequest.merged,
-      mergedAt: pullRequest.mergedAt,
-      mergeCommit:
-        typeof mergeCommitOid === "string" &&
-        COMMIT_PATTERN.test(mergeCommitOid)
-          ? mergeCommitOid.toLowerCase()
-          : null,
-      reviewDecision: pullRequest.reviewDecision,
-      checksState:
-        statusCheckRollup && typeof statusCheckRollup.state === "string"
-          ? statusCheckRollup.state
-          : null
-    };
+    return { pullRequest, issue };
   } catch {
     // Missing gh, unavailable credentials/network, private-repo access, and
     // API failures remain inconclusive; none may authorize memory injection.
     return null;
   }
+}
+
+function parseGitHubPullRequestState(
+  value: unknown
+): GitHubPullRequestState | null {
+  const pullRequest = asRecord(value);
+  if (!pullRequest) return null;
+  const mergeCommit = asRecord(pullRequest.mergeCommit);
+  const statusCheckRollup = asRecord(pullRequest.statusCheckRollup);
+  if (
+    typeof pullRequest.state !== "string" ||
+    typeof pullRequest.isDraft !== "boolean" ||
+    typeof pullRequest.merged !== "boolean" ||
+    (pullRequest.mergedAt !== null &&
+      typeof pullRequest.mergedAt !== "string") ||
+    (pullRequest.reviewDecision !== null &&
+      typeof pullRequest.reviewDecision !== "string") ||
+    (statusCheckRollup !== null && typeof statusCheckRollup.state !== "string")
+  ) {
+    return null;
+  }
+  const mergeCommitOid = mergeCommit?.oid;
+  return {
+    state: pullRequest.state,
+    isDraft: pullRequest.isDraft,
+    merged: pullRequest.merged,
+    mergedAt: pullRequest.mergedAt,
+    mergeCommit:
+      typeof mergeCommitOid === "string" && COMMIT_PATTERN.test(mergeCommitOid)
+        ? mergeCommitOid.toLowerCase()
+        : null,
+    reviewDecision: pullRequest.reviewDecision,
+    checksState:
+      statusCheckRollup && typeof statusCheckRollup.state === "string"
+        ? statusCheckRollup.state
+        : null
+  };
+}
+
+function parseGitHubIssueState(value: unknown): GitHubIssueState | null {
+  const issue = asRecord(value);
+  if (
+    !issue ||
+    (issue.state !== "OPEN" && issue.state !== "CLOSED") ||
+    (issue.stateReason !== null &&
+      issue.stateReason !== "COMPLETED" &&
+      issue.stateReason !== "NOT_PLANNED" &&
+      issue.stateReason !== "REOPENED") ||
+    typeof issue.updatedAt !== "string" ||
+    !Number.isFinite(Date.parse(issue.updatedAt))
+  ) {
+    return null;
+  }
+  return {
+    state: issue.state,
+    stateReason: issue.stateReason,
+    updatedAt: issue.updatedAt
+  };
 }
 
 function parseJsonObject(value: string): Record<string, unknown> | null {

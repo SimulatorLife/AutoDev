@@ -76,7 +76,10 @@ test("Git verifier requires a merged approved PR with successful checks", async 
     for (const [index, pullRequestState] of invalidStates.entries()) {
       const verifier = new GitWorkingTreeMemoryVerifier({
         repositories: { resolve: async () => root },
-        pullRequestState: async () => pullRequestState
+        githubState: async () => ({
+          pullRequest: pullRequestState,
+          issue: null
+        })
       });
       const assessment = await verifier.verify({
         memory: recordWithEvidence([
@@ -232,9 +235,12 @@ test("Git verifier validates current PR state without overwriting its explicit s
     };
     const verifier = new GitWorkingTreeMemoryVerifier({
       repositories: { resolve: async () => root },
-      pullRequestState: async () => {
+      githubState: async () => {
         pullRequestLookups += 1;
-        return approvedPullRequestState(pullRequestMergeCommit);
+        return {
+          pullRequest: approvedPullRequestState(pullRequestMergeCommit),
+          issue: null
+        };
       }
     });
 
@@ -521,12 +527,15 @@ test("Git verifier resolves a revisionless PR only after merge, review, and chec
     };
     const verifier = new GitWorkingTreeMemoryVerifier({
       repositories: { resolve: async () => root },
-      pullRequestState: async (repositoryId, uri) => {
+      githubState: async (repositoryId, uri) => {
         lookups += 1;
         assert.equal(repositoryId, "owner/repo");
         assert.equal(uri, pullRequestEvidence.uri);
         // Production resolves lineage only after all current PR gates pass.
-        return approvedPullRequestState(sourceCommit);
+        return {
+          pullRequest: approvedPullRequestState(sourceCommit),
+          issue: null
+        };
       }
     });
 
@@ -560,9 +569,9 @@ test("Git verifier keeps unmerged and foreign-repository PR references inconclus
     };
     const verifier = new GitWorkingTreeMemoryVerifier({
       repositories: { resolve: async () => root },
-      pullRequestState: async () => {
+      githubState: async () => {
         lookups += 1;
-        return null;
+        return { pullRequest: null, issue: null };
       }
     });
 
@@ -595,14 +604,153 @@ test("Git verifier keeps unmerged and foreign-repository PR references inconclus
   });
 });
 
+test("Git verifier surfaces current issue state without inferring an outcome", async () => {
+  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    let lookups = 0;
+    const issueUri = "https://github.com/owner/repo/issues/48";
+    const verifier = new GitWorkingTreeMemoryVerifier({
+      repositories: { resolve: async () => root },
+      githubState: async (repositoryId, pullRequestUri, issueReference) => {
+        lookups += 1;
+        assert.equal(repositoryId, "owner/repo");
+        assert.equal(pullRequestUri, null);
+        assert.equal(issueReference, issueUri);
+        return {
+          pullRequest: null,
+          issue: {
+            state: "CLOSED",
+            stateReason: "NOT_PLANNED",
+            updatedAt: "2026-09-30T12:00:00.000Z"
+          }
+        };
+      }
+    });
+    const assessment = await verifier.verify({
+      memory: recordWithEvidence([
+        {
+          kind: "commit",
+          uri: `git://${encodeURIComponent(context.repositoryId!)}/commit/${sourceCommit}`,
+          revision: sourceCommit
+        },
+        { kind: "issue", uri: issueUri },
+        { kind: "file", uri: pathToFileURL(filePath).href }
+      ]),
+      task: "Consider the historical issue alongside current code.",
+      context,
+      asOf: "2026-10-01T12:00:00.000Z"
+    });
+
+    assert.equal(assessment.compatibility, "compatible");
+    assert.deepEqual(assessment.issueObservations, [
+      {
+        uri: issueUri,
+        state: "CLOSED",
+        stateReason: "NOT_PLANNED",
+        updatedAt: "2026-09-30T12:00:00.000Z",
+        observedAt: assessment.checkedAt
+      }
+    ]);
+    const reconstruction = await new VerifiedMemoryReconstructor().reconstruct({
+      memory: recordWithEvidence([
+        {
+          kind: "commit",
+          uri: `git://${encodeURIComponent(context.repositoryId!)}/commit/${sourceCommit}`,
+          revision: sourceCommit
+        },
+        { kind: "issue", uri: issueUri },
+        { kind: "file", uri: pathToFileURL(filePath).href }
+      ]),
+      task: "Consider the historical issue alongside current code.",
+      assessment
+    });
+    assert.match(
+      reconstruction.rationale,
+      /issue state is closed \(not planned\)/u
+    );
+    assert.match(
+      reconstruction.rationale,
+      /does not establish task success or memory correctness/u
+    );
+    assert.equal(lookups, 1);
+  });
+});
+
+test("Git verifier fails closed when a cited issue state cannot be fetched", async () => {
+  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    const issueUri = "https://github.com/owner/repo/issues/49";
+    const verifier = new GitWorkingTreeMemoryVerifier({
+      repositories: { resolve: async () => root },
+      githubState: async () => null
+    });
+    const assessment = await verifier.verify({
+      memory: recordWithEvidence([
+        {
+          kind: "commit",
+          uri: `git://${encodeURIComponent(context.repositoryId!)}/commit/${sourceCommit}`,
+          revision: sourceCommit
+        },
+        { kind: "issue", uri: issueUri },
+        { kind: "file", uri: pathToFileURL(filePath).href }
+      ]),
+      task: "Check the current issue state.",
+      context,
+      asOf: "2026-10-01T12:00:00.000Z"
+    });
+    assert.equal(assessment.compatibility, "unknown");
+    assert.equal(assessment.source, "git_github_issue_state");
+  });
+});
+
+test("Git verifier leaves multiple issue references unknown under the one-query budget", async () => {
+  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    let lookups = 0;
+    const verifier = new GitWorkingTreeMemoryVerifier({
+      repositories: { resolve: async () => root },
+      githubState: async () => {
+        lookups += 1;
+        return {
+          pullRequest: null,
+          issue: {
+            state: "OPEN",
+            stateReason: null,
+            updatedAt: "2026-10-01T00:00:00.000Z"
+          }
+        };
+      }
+    });
+    const assessment = await verifier.verify({
+      memory: recordWithEvidence([
+        {
+          kind: "commit",
+          uri: `git://owner%2Frepo/commit/${sourceCommit}`,
+          revision: sourceCommit
+        },
+        { kind: "issue", uri: "https://github.com/owner/repo/issues/50" },
+        { kind: "issue", uri: "https://github.com/owner/repo/issues/51" },
+        { kind: "file", uri: pathToFileURL(filePath).href }
+      ]),
+      task: "Reconcile guidance linked to multiple issues.",
+      context: { ...context, runId: "multiple-issue-evidence" },
+      asOf: "2026-10-01T12:00:00.000Z"
+    });
+
+    assert.equal(assessment.compatibility, "unknown");
+    assert.equal(assessment.source, "git_github_issue_state");
+    assert.equal(lookups, 0);
+  });
+});
+
 test("Git verifier does not spend the bounded PR lookup when no cited file can be validated", async () => {
   await withGitRepository(async ({ root, sourceCommit, filePath }) => {
     let lookups = 0;
     const verifier = new GitWorkingTreeMemoryVerifier({
       repositories: { resolve: async () => root },
-      pullRequestState: async () => {
+      githubState: async () => {
         lookups += 1;
-        return approvedPullRequestState(sourceCommit);
+        return {
+          pullRequest: approvedPullRequestState(sourceCommit),
+          issue: null
+        };
       }
     });
     const orphaned = await verifier.verify({
@@ -635,9 +783,12 @@ test("Git verifier leaves multiple cited PRs unknown when one lookup cannot vali
     let lookups = 0;
     const verifier = new GitWorkingTreeMemoryVerifier({
       repositories: { resolve: async () => root },
-      pullRequestState: async () => {
+      githubState: async () => {
         lookups += 1;
-        return approvedPullRequestState(sourceCommit);
+        return {
+          pullRequest: approvedPullRequestState(sourceCommit),
+          issue: null
+        };
       }
     });
     const assessment = await verifier.verify({
@@ -670,9 +821,12 @@ test("Git verifier caps live PR lookups at one per research context", async () =
     let lookups = 0;
     const verifier = new GitWorkingTreeMemoryVerifier({
       repositories: { resolve: async () => root },
-      pullRequestState: async () => {
+      githubState: async () => {
         lookups += 1;
-        return approvedPullRequestState(sourceCommit);
+        return {
+          pullRequest: approvedPullRequestState(sourceCommit),
+          issue: null
+        };
       }
     });
     const fileEvidence: EvidenceReference = {
@@ -710,9 +864,12 @@ test("Git verifier caps concurrent PR lookups at one per research context", asyn
     let lookups = 0;
     const verifier = new GitWorkingTreeMemoryVerifier({
       repositories: { resolve: async () => root },
-      pullRequestState: async () => {
+      githubState: async () => {
         lookups += 1;
-        return approvedPullRequestState(sourceCommit);
+        return {
+          pullRequest: approvedPullRequestState(sourceCommit),
+          issue: null
+        };
       }
     });
     const fileEvidence: EvidenceReference = {
@@ -768,6 +925,11 @@ test("GitHub CLI resolver queries same-repository merge, review, and check state
                 mergeCommit: { oid: sourceCommit },
                 reviewDecision: "APPROVED",
                 statusCheckRollup: { state: "SUCCESS" }
+              },
+              issue: {
+                state: "CLOSED",
+                stateReason: "COMPLETED",
+                updatedAt: "2026-09-30T12:00:00.000Z"
               }
             }
           }
@@ -795,6 +957,7 @@ cat "$TMPDIR/pull-request.json"
             kind: "pull_request",
             uri: "https://github.com/owner/repo/pull/52"
           },
+          { kind: "issue", uri: "https://github.com/owner/repo/issues/53" },
           { kind: "file", uri: pathToFileURL(filePath).href }
         ]),
         task: "Use the merged change after verifying current files.",
@@ -803,11 +966,22 @@ cat "$TMPDIR/pull-request.json"
       });
 
       assert.equal(assessment.compatibility, "compatible");
+      assert.deepEqual(assessment.issueObservations, [
+        {
+          uri: "https://github.com/owner/repo/issues/53",
+          state: "CLOSED",
+          stateReason: "COMPLETED",
+          updatedAt: "2026-09-30T12:00:00.000Z",
+          observedAt: assessment.checkedAt
+        }
+      ]);
       const args = await readFile(argsPath, "utf8");
       assert.match(args, /api graphql/u);
       assert.match(args, /owner=owner/u);
       assert.match(args, /name=repo/u);
-      assert.match(args, /number=52/u);
+      assert.match(args, /pullRequestNumber=52/u);
+      assert.match(args, /issueNumber=53/u);
+      assert.match(args, /stateReason/u);
       assert.match(args, /reviewDecision/u);
       assert.match(args, /statusCheckRollup/u);
       assert.equal((await readFile(hostPath, "utf8")).trim(), "github.com");
@@ -826,6 +1000,7 @@ cat "$TMPDIR/pull-request.json"
             kind: "pull_request",
             uri: "https://github.com/owner/repo/pull/52"
           },
+          { kind: "issue", uri: "https://github.com/owner/repo/issues/53" },
           { kind: "file", uri: pathToFileURL(filePath).href }
         ]),
         task: "Do not authorize partial GitHub state.",

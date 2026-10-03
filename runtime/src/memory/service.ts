@@ -75,11 +75,20 @@ import {
   normalizeNativeTrajectory
 } from "./trajectory.ts";
 
+export interface CurrentStateIssueObservation {
+  readonly uri: string;
+  readonly state: "OPEN" | "CLOSED";
+  readonly stateReason: "COMPLETED" | "NOT_PLANNED" | "REOPENED" | null;
+  readonly updatedAt: string;
+  readonly observedAt: string;
+}
+
 export interface CurrentStateAssessment {
   readonly compatibility: "compatible" | "contradicted" | "unknown";
   readonly source: string;
   readonly checkedAt: string;
   readonly evidence: readonly EvidenceReference[];
+  readonly issueObservations?: readonly CurrentStateIssueObservation[];
   readonly reasonCode: MemoryReasonCode;
 }
 

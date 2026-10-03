@@ -56,8 +56,9 @@ never infers success from retrieval, provider status, or a PR link.
 
 Outcome claims remain reporter-supplied: the report API does not query GitHub
 or CI and a PR/commit reference is never proof of task success. Separately, the
-JIT Git verifier validates a cited canonical same-repository PR with one bounded
-GraphQL lookup per research context. The PR must be closed/merged, not a draft,
+JIT Git verifier validates canonical same-repository GitHub evidence with one
+bounded GraphQL lookup per research context, batching at most one PR and one
+issue. A cited PR must be closed/merged, not a draft,
 have an approved review decision, and have a successful status-check rollup;
 otherwise current-state compatibility remains unknown. The merge commit is used
 only when no explicit revision is present, and local ancestry plus exact cited-
@@ -66,8 +67,11 @@ descendant `git revert` records whose subject/body name the exact source commit
 and touch a cited path, even if a later commit restores identical bytes. Any
 other descendant change to a cited path followed by restored bytes remains
 unknown and is excluded from injection.
-Issue state, inline review-thread contents, semantic supersession with no cited-
-path history change, and task outcomes remain unverified.
+GitHub issue state is exposed only as a dated current-state observation; open,
+closed, completed, or not-planned status is not an outcome verdict. Foreign
+issue trackers, semantic issue-state reconciliation, inline review-thread
+contents, semantic supersession with no cited-path history change, and task
+outcomes remain unverified.
 
 ## Curator-assessed injection-use reports
 
