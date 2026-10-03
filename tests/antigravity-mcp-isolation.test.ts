@@ -233,8 +233,8 @@ test("browser-tester receives Playwright only, with exactly its declared browser
       assert.ok(!allowList.includes("mcp(playwright/*)"));
 
       // Scoped permissions for read-only role: explicit workspace read_file, no unsandboxed commands
-      assert.ok(allowList.includes("read_file(/Users/henrykirk/AutoDev)"));
-      assert.ok(allowList.includes("read_file(/Users/henrykirk/AutoDev/**)"));
+      assert.ok(allowList.includes(`read_file(${REPO_ROOT})`));
+      assert.ok(allowList.includes(`read_file(${REPO_ROOT}/**)`));
       assert.ok(!allowList.includes("unsandboxed(pnpm test)"));
       assert.ok(allowList.includes("read_url(*)"));
 
