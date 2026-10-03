@@ -33,7 +33,7 @@ import {
 const databaseUrl = process.env.AUTODEV_MEMORY_ROUTER_TEST_DATABASE_URL;
 
 test(
-  "router JIT adapter retrieves partial lexical matches and injects only Git-verified results",
+  "router memory integration verifies JIT evidence and controlled session cohorts",
   { skip: !databaseUrl },
   async () => {
     const repositoryRoot = await mkdtemp(
@@ -704,6 +704,8 @@ test(
       process.env.AUTODEV_MEMORY_READ_GLOBAL = "0";
       process.env.AUTODEV_MEMORY_MODE = "jit";
 
+      // The unique repository has no durable memories, so the two enabled
+      // arms should record empty decisions while disabled records a skip.
       const ablationService = host!.createService({
         resolve: async (readContext) =>
           readContext.repositoryId === ablationRepositoryId

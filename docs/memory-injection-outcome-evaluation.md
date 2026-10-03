@@ -298,6 +298,9 @@ The environment-gated `tests/router/memory-injection.integration.test.ts`
 exercises all three deterministic arms through real Router injection-event
 writes, including two request events per session and the disabled skip path,
 then appends session outcomes through the Control API and verifies the unique
-session cohort aggregate. This proves the assignment-to-report wiring and
-session deduplication; it does not establish per-turn outcomes, memory use, or
-effectiveness.
+session cohort aggregate. The separate Data live-PostgreSQL integration at
+`data/tests/memory/postgres-session-outcome-cohorts.integration.test.ts` covers
+repeated single-mode injections, unreported rows, conflicting per-injection
+outcomes, and mixed-mode exclusion in the aggregate SQL. Together these prove
+the assignment-to-report wiring and cohort semantics; they do not establish
+per-turn outcomes, memory use, or effectiveness.
