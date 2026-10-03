@@ -355,6 +355,13 @@ from one session as independent observations. The report form is per injection
 while task outcomes are session-level; repeated reports do not establish
 per-turn outcomes or independent task successes.
 
+The Codex provider runner enforces this boundary for its managed launch: it
+disables the per-run `autodev_memory` MCP server whenever the ablation gate or an
+experiment ID is present, and also for non-JIT modes. This prevents a managed
+provider from bypassing a `retrieval-only` or `disabled` assignment with a
+direct MCP call. It does not control independently configured external MCP
+clients; those must remain disconnected for the experiment.
+
 ### Telemetry privacy and outcomes
 
 The experiment ID and session identifiers are deliberately excluded from

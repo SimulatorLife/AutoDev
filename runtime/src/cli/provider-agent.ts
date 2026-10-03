@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   accessSync,
   constants as fsConstants,
@@ -10,8 +11,6 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
-
 import {
   parseTomlFile,
   type TomlValue
@@ -22,6 +21,7 @@ import {
   runRouterEnsure
 } from "@simulatorlife/autodev-runtime/platform/router-ensure";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
 const repositoryRoot = path.resolve(
   resolveRuntimeSourceRoot(import.meta.dirname)
@@ -65,6 +65,89 @@ export interface ProviderAgentDeps {
     environment: NodeJS.ProcessEnv,
     checkOnly: boolean
   ) => number;
+}
+
+const MEMORY_MCP_CONFIG_KEY = "mcp_servers.autodev_memory";
+
+interface MemoryMcpLaunch {
+  readonly args: readonly string[];
+  readonly environment: NodeJS.ProcessEnv;
+}
+
+/**
+ * Give ordinary JIT runs a run-bound Memory MCP server. Controlled cohorts
+ * cannot use this explicit path to bypass router injection assignment.
+ */
+function configureMemoryMcp(
+  options: ProviderAgentOptions,
+  environment: NodeJS.ProcessEnv
+): MemoryMcpLaunch {
+  const mode = environment.AUTODEV_MEMORY_MODE?.trim() || "jit";
+  const boundRepositoryRoot =
+    environment.AUTODEV_MEMORY_REPOSITORY_ROOT?.trim();
+  const workspaceId = environment.AUTODEV_MEMORY_WORKSPACE_ID?.trim();
+  const repositoryId = environment.AUTODEV_MEMORY_REPOSITORY_ID?.trim();
+  const databaseUrl = environment.AUTODEV_MEMORY_DATABASE_URL?.trim();
+  const cohortControlsMcp =
+    environment.AUTODEV_MEMORY_ABLATION === "1" ||
+    Boolean(environment.AUTODEV_MEMORY_EXPERIMENT_ID?.trim());
+  const trustedWorkspace =
+    boundRepositoryRoot &&
+    path.isAbsolute(boundRepositoryRoot) &&
+    path.resolve(boundRepositoryRoot) === options.workspace;
+  const validScope =
+    workspaceId &&
+    workspaceId !== "unknown" &&
+    repositoryId &&
+    repositoryId !== "unknown" &&
+    databaseUrl;
+
+  if (mode !== "jit" || cohortControlsMcp || !trustedWorkspace || !validScope) {
+    return {
+      args: ["-c", `${MEMORY_MCP_CONFIG_KEY}.enabled=false`],
+      environment
+    };
+  }
+
+  const taskId = `provider-task-${randomUUID()}`;
+  const runId = `provider-run-${randomUUID()}`;
+  const actorId = `provider-${options.role}-${randomUUID()}`;
+  const mcpEnvironment: NodeJS.ProcessEnv = {
+    ...environment,
+    AUTODEV_MEMORY_WORKSPACE_ID: workspaceId,
+    AUTODEV_MEMORY_REPOSITORY_ID: repositoryId,
+    AUTODEV_MEMORY_REPOSITORY_ROOT: options.workspace,
+    AUTODEV_MEMORY_ROLE: options.role,
+    AUTODEV_MEMORY_ACTOR_ID: actorId,
+    AUTODEV_MEMORY_AUTHORITY: "worker",
+    AUTODEV_MEMORY_TASK_ID: taskId,
+    AUTODEV_MEMORY_RUN_ID: runId,
+    AUTODEV_MEMORY_MODE: "jit"
+  };
+  // A general-purpose provider process never inherits operator-only grants or
+  // an unrelated task description from its launcher environment.
+  delete mcpEnvironment.AUTODEV_MEMORY_READ_GLOBAL;
+  delete mcpEnvironment.AUTODEV_MEMORY_READ_TASK_HISTORY;
+  delete mcpEnvironment.AUTODEV_MEMORY_TASK_TEXT;
+
+  const mcpEntryPoint = path.join(
+    boundRepositoryRoot,
+    "runtime",
+    "src",
+    "router",
+    "memory-mcp-main.ts"
+  );
+  return {
+    args: [
+      "-c",
+      `${MEMORY_MCP_CONFIG_KEY}.enabled=true`,
+      "-c",
+      `${MEMORY_MCP_CONFIG_KEY}.command=${JSON.stringify(process.execPath)}`,
+      "-c",
+      `${MEMORY_MCP_CONFIG_KEY}.args=${JSON.stringify([mcpEntryPoint])}`
+    ],
+    environment: mcpEnvironment
+  };
 }
 
 function usage(): string {
@@ -314,6 +397,7 @@ export async function runProviderAgent(
     env.CODEX_ENV_FILE?.trim() || path.join(options.codexHome, ".env"),
     env
   );
+  const memoryMcp = configureMemoryMcp(options, environment);
   const settings = readRoleExecutionSettings(options.roleFile);
   const args = ["--strict-config", "-C", options.workspace];
   if (settings.reasoningEffort)
@@ -323,6 +407,7 @@ export async function runProviderAgent(
   if (settings.sandboxMode)
     args.push("-c", `sandbox_mode=${settings.sandboxMode}`);
   args.push(
+    ...memoryMcp.args,
     "exec",
     "--model",
     `autodev/${options.role}`,
@@ -331,7 +416,7 @@ export async function runProviderAgent(
     "--skip-git-repo-check",
     buildProviderPrompt(options.prompt, settings)
   );
-  return execute(options.codexBinary, args, environment, false);
+  return execute(options.codexBinary, args, memoryMcp.environment, false);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

@@ -154,6 +154,27 @@ exposures, and outcomes remain operator-reported. Strict no-memory cohorts must
 also omit direct Memory MCP access. Do not interpret multiple injections from
 one session as independent tasks or successes.
 
+## Per-run Codex Memory MCP
+
+`run-provider-agent.sh` adds a run-scoped `autodev_memory` MCP server to Codex
+only for an ordinary JIT run when the host supplies the Memory database URL,
+workspace/repository IDs, and an absolute repository root matching the selected
+workspace. The database URL remains in the child process environment; it is not
+copied into Codex command-line arguments or prompts. Each server gets a fresh
+host-generated task/run/actor identity, the selected host role, and `worker`
+authority. Operator-only global and task-history grants are removed, and model
+tool arguments cannot change the workspace or identity. Incomplete or
+mismatched host scope disables the server rather than guessing.
+
+The provider runner explicitly disables this server for `retrieval-only`,
+`disabled`, `invalid`, or `unknown` memory modes, whenever
+`AUTODEV_MEMORY_ABLATION=1`, or whenever an experiment ID is configured. This
+keeps direct MCP calls from bypassing controlled router-injection arms. Strict
+cohort deployments must also keep other external Memory MCP clients disconnected;
+the per-run Codex override cannot govern independently launched clients. The
+generic `.rulesync/mcp.jsonc` catalog remains free of a process-global Memory
+server because only the runtime can bind trusted per-run context.
+
 The authenticated Control API exposes scoped Memory browsing at
 `GET /control/memory/records` and `GET /control/memory/experiences`, along with
 record detail, history, and provenance (`/why`) routes. Every request must name

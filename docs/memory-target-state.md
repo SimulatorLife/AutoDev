@@ -527,6 +527,18 @@ external/loosely-coupled agent ─MCP──────► MemoryService
 
 MCP is therefore an **interoperability and explicit follow-up boundary**, not the internal memory architecture. It is appropriate when an agent learns something during execution that changes what history it needs, for provenance/history inspection, for proposing a durable memory, or when the caller is outside the AutoDev runtime.
 
+For ordinary Codex provider runs, Runtime may expose the same facade through a
+run-scoped `autodev_memory` MCP launch configuration when JIT is active and the
+host supplies a trusted database/workspace/repository binding. The server is
+forced to worker authority, receives fresh host-generated task/run/actor IDs,
+and receives no operator-only global or task-history grants. It is omitted (and
+explicitly disabled in the Codex invocation) for retrieval-only, disabled, or
+invalid modes and for every controlled ablation/experiment, so a direct tool
+call cannot bypass the router's cohort assignment. This is not a global
+`.rulesync/mcp.jsonc` server and does not replace native pre-delegation research
+or packet injection. External MCP clients remain separately managed and must be
+absent from controlled cohorts.
+
 ### Agent-facing interface
 
 Expose memory through a small native/MCP contract, for example:
