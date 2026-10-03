@@ -8,6 +8,7 @@
     "./agents": "./src/agents/index.ts",
     "./cli": "./src/cli/index.ts",
     "./cli/autodev": "./src/cli/autodev.ts",
+    "./cli/dev": "./src/cli/dev.ts",
     "./cli/provider-agent": "./src/cli/provider-agent.ts",
     "./cli/router-status": "./src/cli/router-status.ts",
     "./cli/router-status-client": "./src/cli/router-status-client.ts",
