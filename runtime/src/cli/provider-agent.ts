@@ -408,6 +408,8 @@ export async function runProviderAgent(
     args.push("-c", `sandbox_mode=${settings.sandboxMode}`);
   args.push(
     ...memoryMcp.args,
+    "-c",
+    `shell_environment_policy.filters.AUTODEV_MEMORY_DATABASE_URL=${JSON.stringify("exclude")}`,
     "exec",
     "--model",
     `autodev/${options.role}`,

@@ -160,7 +160,8 @@ one session as independent tasks or successes.
 only for an ordinary JIT run when the host supplies the Memory database URL,
 workspace/repository IDs, and an absolute repository root matching the selected
 workspace. The database URL remains in the child process environment; it is not
-copied into Codex command-line arguments or prompts. Each server gets a fresh
+copied into Codex command-line arguments or prompts, and Codex excludes it from
+model-spawned tool commands. Each server gets a fresh
 host-generated task/run/actor identity, the selected host role, and `worker`
 authority. Operator-only global and task-history grants are removed, and model
 tool arguments cannot change the workspace or identity. Incomplete or

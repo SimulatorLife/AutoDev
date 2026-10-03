@@ -537,7 +537,8 @@ invalid modes and for every controlled ablation/experiment, so a direct tool
 call cannot bypass the router's cohort assignment. This is not a global
 `.rulesync/mcp.jsonc` server and does not replace native pre-delegation research
 or packet injection. External MCP clients remain separately managed and must be
-absent from controlled cohorts.
+absent from controlled cohorts. The host database URL stays in the MCP-launch
+environment and Codex filters it out of model-spawned tool commands.
 
 ### Agent-facing interface
 

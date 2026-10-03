@@ -158,6 +158,11 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
     );
     assert.ok(
       calls[0]?.args.includes(
+        'shell_environment_policy.filters.AUTODEV_MEMORY_DATABASE_URL="exclude"'
+      )
+    );
+    assert.ok(
+      calls[0]?.args.includes(
         `mcp_servers.autodev_memory.command=${JSON.stringify(process.execPath)}`
       )
     );
