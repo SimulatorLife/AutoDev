@@ -205,7 +205,7 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
     // Identical final bytes do not erase intervening changes to cited files:
     // a later semantic supersession or manual revert may restore the old text.
     // Inspect only commits touching these paths. A canonical revert is stale;
-    // any other intervening change requires reconstruction and remains unknown.
+    // any other intervening change remains unknown and is excluded from injection.
     const pathHistory = await inspectCitedFileHistory(
       repositoryRoot,
       sourceCommit,
@@ -791,9 +791,9 @@ function commitUri(repositoryId: string, commit: string): string {
 /**
  * Inspect every descendant commit that changed a cited path. A standard
  * `git revert <source>` is a direct contradiction even if a later commit
- * restores the same bytes. Other path-changing history makes the memory
- * uncertain and forces task-time reconstruction instead of silently treating
- * old bytes as current. The path filter excludes unrelated repository churn;
+ * restores the same bytes. Other path-changing history leaves compatibility
+ * unknown and excludes the memory rather than silently treating old bytes as
+ * current. The path filter excludes unrelated repository churn;
  * Git timeout/buffer failures remain inconclusive.
  */
 async function inspectCitedFileHistory(
