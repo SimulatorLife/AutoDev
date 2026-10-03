@@ -33,10 +33,29 @@ interface GitHubPullRequestLocator {
   readonly number: number;
 }
 
+interface GitHubPullRequestState {
+  readonly state: string;
+  readonly isDraft: boolean;
+  readonly merged: boolean;
+  readonly mergedAt: string | null;
+  readonly mergeCommit: string | null;
+  readonly reviewDecision: string | null;
+  readonly checksState: string | null;
+}
+
 interface PullRequestLookupState {
   lookups: number;
-  readonly revisions: Map<string, Promise<string | null>>;
+  readonly states: Map<string, Promise<GitHubPullRequestState | null>>;
 }
+
+type PullRequestVerificationResult =
+  | { readonly kind: "none" }
+  | { readonly kind: "unknown" }
+  | {
+      readonly kind: "verified";
+      readonly reference: EvidenceReference;
+      readonly mergeCommit: string;
+    };
 
 export interface MemoryRepositoryRootResolver {
   /** Resolves a repository from trusted runtime metadata, never a tool argument. */
@@ -45,10 +64,10 @@ export interface MemoryRepositoryRootResolver {
 
 /**
  * Conservative current-state validation for memories grounded in Git files.
- * A revisionless same-repository GitHub PR may supply its merge commit through
- * one bounded `gh api` lookup per research context, but Git ancestry and exact
- * cited-file identity remain mandatory. Missing Git/PR evidence or an
- * unavailable status lookup stays unknown and cannot authorize injection.
+ * A cited same-repository PR is checked once per research context and must be
+ * merged, approved, and have successful checks before it can supply commit
+ * lineage. Local ancestry and exact cited-file identity remain mandatory;
+ * missing GitHub state stays unknown and cannot authorize injection.
  */
 interface GitRepositorySnapshot {
   readonly root: string;
@@ -58,10 +77,10 @@ interface GitRepositorySnapshot {
 export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier {
   private readonly repositories: MemoryRepositoryRootResolver;
   private readonly now: () => string;
-  private readonly pullRequestMergeCommit: (
+  private readonly pullRequestState: (
     repositoryId: string,
     uri: string
-  ) => Promise<string | null>;
+  ) => Promise<GitHubPullRequestState | null>;
   private readonly snapshots = new WeakMap<
     MemoryReadContext,
     Promise<GitRepositorySnapshot | null>
@@ -75,15 +94,14 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
     readonly repositories: MemoryRepositoryRootResolver;
     readonly now?: () => string;
     /** Substitutable only for hermetic tests; production uses the GitHub CLI. */
-    readonly pullRequestMergeCommit?: (
+    readonly pullRequestState?: (
       repositoryId: string,
       uri: string
-    ) => Promise<string | null>;
+    ) => Promise<GitHubPullRequestState | null>;
   }) {
     this.repositories = options.repositories;
     this.now = options.now ?? (() => new Date().toISOString());
-    this.pullRequestMergeCommit =
-      options.pullRequestMergeCommit ?? githubMergedPullRequestCommit;
+    this.pullRequestState = options.pullRequestState ?? githubPullRequestState;
   }
 
   async verify(input: {
@@ -103,31 +121,38 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
     }
     const { root: repositoryRoot, head: currentCommit } = snapshot;
     const evidence = input.memory.provenance.evidence;
-    let sourceCommit = sourceCommitFrom(evidence);
-    let resolvedPullRequest: EvidenceReference | null = null;
-    if (!sourceCommit) {
-      const pullRequest = evidence.find(
-        (reference) =>
-          reference.kind === "pull_request" &&
-          parseGitHubPullRequestLocator(
-            reference.uri,
-            input.context.repositoryId!
-          ) !== null
-      );
-      if (pullRequest) {
-        const mergeCommit = await this.pullRequestMergeCommitForContext(
-          input.context,
-          input.context.repositoryId,
-          pullRequest.uri
-        );
-        if (mergeCommit) {
-          sourceCommit = mergeCommit;
-          resolvedPullRequest = pullRequest;
-        }
-      }
-    }
     const citedFiles = citedRepositoryFiles(repositoryRoot, evidence);
-    if (!sourceCommit || citedFiles.length === 0) {
+    if (citedFiles.length === 0) {
+      return unknownAssessment(checkedAt, "verification_inconclusive");
+    }
+    const pullRequestVerification = await this.verifyCitedPullRequest(
+      evidence,
+      input.context,
+      input.context.repositoryId
+    );
+    if (pullRequestVerification.kind === "unknown") {
+      return unknownAssessment(
+        checkedAt,
+        "verification_inconclusive",
+        "git_github_pr_review_checks"
+      );
+    }
+    const sourceCommit =
+      sourceCommitFrom(evidence) ??
+      (pullRequestVerification.kind === "verified"
+        ? pullRequestVerification.mergeCommit
+        : null);
+    const resolvedPullRequest =
+      pullRequestVerification.kind === "verified"
+        ? {
+            ...pullRequestVerification.reference,
+            revision:
+              pullRequestVerification.reference.revision ??
+              pullRequestVerification.mergeCommit,
+            observedAt: checkedAt
+          }
+        : null;
+    if (!sourceCommit) {
       return unknownAssessment(checkedAt, "verification_inconclusive");
     }
 
@@ -206,7 +231,9 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
 
     return {
       compatibility: "compatible",
-      source: "git_commit_and_file_identity",
+      source: resolvedPullRequest
+        ? "git_github_pr_review_checks_and_file_identity"
+        : "git_commit_and_file_identity",
       checkedAt,
       reasonCode: "verified_current_state",
       evidence: [
@@ -216,15 +243,7 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
           revision: currentCommit,
           observedAt: checkedAt
         },
-        ...(resolvedPullRequest && sourceCommit
-          ? [
-              {
-                ...resolvedPullRequest,
-                revision: sourceCommit,
-                observedAt: checkedAt
-              }
-            ]
-          : []),
+        ...(resolvedPullRequest ? [resolvedPullRequest] : []),
         ...citedFiles.map(({ reference }) => ({
           ...reference,
           revision: currentCommit,
@@ -234,38 +253,66 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
     };
   }
 
+  private async verifyCitedPullRequest(
+    evidence: readonly EvidenceReference[],
+    context: MemoryReadContext,
+    repositoryId: string
+  ): Promise<PullRequestVerificationResult> {
+    const pullRequests = new Map<string, EvidenceReference>();
+    for (const reference of evidence) {
+      if (reference.kind !== "pull_request") continue;
+      const locator = parseGitHubPullRequestLocator(
+        reference.uri,
+        repositoryId
+      );
+      if (!locator) continue;
+      const key = `${locator.owner.toLowerCase()}/${locator.repository.toLowerCase()}#${locator.number}`;
+      pullRequests.set(key, reference);
+    }
+    if (pullRequests.size > 1) return { kind: "unknown" };
+    const reference = pullRequests.values().next().value;
+    if (!reference) return { kind: "none" };
+    const state = await this.pullRequestStateForContext(
+      context,
+      repositoryId,
+      reference.uri
+    );
+    if (!isVerifiedPullRequestState(state)) return { kind: "unknown" };
+    return {
+      kind: "verified",
+      reference,
+      mergeCommit: state.mergeCommit
+    };
+  }
+
   /**
-   * Resolve at most one revisionless GitHub PR per research context. The
-   * ranked JIT candidate order determines which PR is consulted first; failed
-   * or unavailable lookups remain unknown rather than authorizing a claim.
+   * Resolve and validate at most one cited GitHub PR per research context.
+   * The query captures the PR merge, review decision, and aggregate check
+   * state together so a reference cannot authorize injection based on merge
+   * lineage alone. Unavailable or incomplete API data stays unknown.
    */
-  private pullRequestMergeCommitForContext(
+  private pullRequestStateForContext(
     context: MemoryReadContext,
     repositoryId: string,
     uri: string
-  ): Promise<string | null> {
+  ): Promise<GitHubPullRequestState | null> {
     const locator = parseGitHubPullRequestLocator(uri, repositoryId);
     if (!locator) return Promise.resolve(null);
     let state = this.pullRequestLookups.get(context);
     if (!state) {
-      state = { lookups: 0, revisions: new Map() };
+      state = { lookups: 0, states: new Map() };
       this.pullRequestLookups.set(context, state);
     }
     const lookupKey = `${locator.owner}/${locator.repository}#${locator.number}`;
-    const cached = state.revisions.get(lookupKey);
+    const cached = state.states.get(lookupKey);
     if (cached) return cached;
     if (state.lookups >= GITHUB_LOOKUPS_PER_CONTEXT)
       return Promise.resolve(null);
     state.lookups += 1;
     const lookup = Promise.resolve()
-      .then(() => this.pullRequestMergeCommit(repositoryId, uri))
-      .then((revision) =>
-        typeof revision === "string" && COMMIT_PATTERN.test(revision)
-          ? revision.toLowerCase()
-          : null
-      )
+      .then(() => this.pullRequestState(repositoryId, uri))
       .catch(() => null);
-    state.revisions.set(lookupKey, lookup);
+    state.states.set(lookupKey, lookup);
     return lookup;
   }
 
@@ -315,7 +362,10 @@ export class VerifiedMemoryReconstructor implements MemoryReconstructor {
       disposition: "retain",
       guidance: input.memory.claim,
       rationale:
-        "The cited source commit is in the current repository lineage and the cited files are unchanged."
+        input.assessment.source ===
+        "git_github_pr_review_checks_and_file_identity"
+          ? "The cited PR is merged with an approved review decision and successful checks; its source commit is in the current repository lineage and cited files are unchanged."
+          : "The cited source commit is in the current repository lineage and the cited files are unchanged."
     });
   }
 }
@@ -405,37 +455,133 @@ function githubCliEnvironment(): NodeJS.ProcessEnv {
   return environment;
 }
 
-/** Resolve a PR commit only when GitHub reports that PR as merged. */
-async function githubMergedPullRequestCommit(
+/**
+ * Read current PR merge, review, and aggregate check state in one bounded
+ * GraphQL request. Only a closed, merged PR with an approved review decision
+ * and successful check rollup can contribute commit lineage. The calling
+ * verifier still independently checks local ancestry and cited-file identity.
+ */
+async function githubPullRequestState(
   repositoryId: string,
   uri: string
-): Promise<string | null> {
+): Promise<GitHubPullRequestState | null> {
   const locator = parseGitHubPullRequestLocator(uri, repositoryId);
   if (!locator) return null;
-  const endpoint = `repos/${locator.owner}/${locator.repository}/pulls/${locator.number}`;
+  const query = `query($owner: String!, $name: String!, $number: Int!) {
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $number) {
+        state
+        isDraft
+        merged
+        mergedAt
+        mergeCommit { oid }
+        reviewDecision
+        statusCheckRollup { state }
+      }
+    }
+  }`;
   try {
     const result = await execFileAsync(
       "gh",
       [
         "api",
-        endpoint,
-        "--jq",
-        "if .merged == true then (.merge_commit_sha // empty) else empty end"
+        "graphql",
+        "-F",
+        `owner=${locator.owner}`,
+        "-F",
+        `name=${locator.repository}`,
+        "-F",
+        `number=${locator.number}`,
+        "-f",
+        `query=${query}`
       ],
       {
         timeout: GIT_TIMEOUT_MS,
-        maxBuffer: 1024,
+        maxBuffer: GIT_MAX_BUFFER_BYTES,
         env: githubCliEnvironment()
       }
     );
-    const revision = result.stdout.trim();
-    return COMMIT_PATTERN.test(revision) ? revision.toLowerCase() : null;
+    const response = parseJsonObject(result.stdout);
+    if (
+      response &&
+      "errors" in response &&
+      (!Array.isArray(response.errors) || response.errors.length > 0)
+    ) {
+      return null;
+    }
+    const data = response ? asRecord(response.data) : null;
+    const repository = data ? asRecord(data.repository) : null;
+    const pullRequest = repository ? asRecord(repository.pullRequest) : null;
+    const mergeCommit = pullRequest ? asRecord(pullRequest.mergeCommit) : null;
+    const statusCheckRollup = pullRequest
+      ? asRecord(pullRequest.statusCheckRollup)
+      : null;
+    if (
+      !pullRequest ||
+      typeof pullRequest.state !== "string" ||
+      typeof pullRequest.isDraft !== "boolean" ||
+      typeof pullRequest.merged !== "boolean" ||
+      (pullRequest.mergedAt !== null &&
+        typeof pullRequest.mergedAt !== "string") ||
+      (pullRequest.reviewDecision !== null &&
+        typeof pullRequest.reviewDecision !== "string") ||
+      (statusCheckRollup !== null &&
+        typeof statusCheckRollup.state !== "string")
+    ) {
+      return null;
+    }
+    const mergeCommitOid = mergeCommit?.oid;
+    return {
+      state: pullRequest.state,
+      isDraft: pullRequest.isDraft,
+      merged: pullRequest.merged,
+      mergedAt: pullRequest.mergedAt,
+      mergeCommit:
+        typeof mergeCommitOid === "string" &&
+        COMMIT_PATTERN.test(mergeCommitOid)
+          ? mergeCommitOid.toLowerCase()
+          : null,
+      reviewDecision: pullRequest.reviewDecision,
+      checksState:
+        statusCheckRollup && typeof statusCheckRollup.state === "string"
+          ? statusCheckRollup.state
+          : null
+    };
   } catch {
     // Missing gh, unavailable credentials/network, private-repo access, and
-    // API failures remain inconclusive; Git validation fails closed without
-    // allowing a PR URL to authorize memory by itself.
+    // API failures remain inconclusive; none may authorize memory injection.
     return null;
   }
+}
+
+function parseJsonObject(value: string): Record<string, unknown> | null {
+  try {
+    return asRecord(JSON.parse(value));
+  } catch {
+    return null;
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function isVerifiedPullRequestState(
+  value: GitHubPullRequestState | null
+): value is GitHubPullRequestState & { readonly mergeCommit: string } {
+  return (
+    value !== null &&
+    (value.state === "CLOSED" || value.state === "MERGED") &&
+    !value.isDraft &&
+    value.merged &&
+    typeof value.mergedAt === "string" &&
+    Number.isFinite(Date.parse(value.mergedAt)) &&
+    typeof value.mergeCommit === "string" &&
+    value.reviewDecision === "APPROVED" &&
+    value.checksState === "SUCCESS"
+  );
 }
 
 function citedRepositoryFiles(
@@ -599,11 +745,12 @@ async function runGit(
 
 function unknownAssessment(
   checkedAt: string,
-  reasonCode: "verification_inconclusive"
+  reasonCode: "verification_inconclusive",
+  source = "git_commit_and_file_identity"
 ): CurrentStateAssessment {
   return {
     compatibility: "unknown",
-    source: "git_commit_and_file_identity",
+    source,
     checkedAt,
     reasonCode,
     evidence: []

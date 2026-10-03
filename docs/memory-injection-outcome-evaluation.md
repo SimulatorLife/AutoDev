@@ -54,14 +54,18 @@ returned in browser metadata or telemetry. Unknown outcomes may omit evidence;
 other outcome categories require it. Reports stay append-only and the form
 never infers success from retrieval, provider status, or a PR link.
 
-Outcome claims are reporter-supplied. The API does not query GitHub or CI to
-verify PR status, and a PR/commit reference is provenance, not proof of success.
-Neither retrieval nor a successful provider request is treated as task success.
-Separately, the JIT Git verifier rejects a conventional descendant `git revert`
-whose `Revert` subject and body marker name the exact cited source commit and
-touch a cited path, even if a later commit restores identical file bytes. This narrow local
-history check does not validate nonstandard reverts, review threads, CI/checks,
-issue state, reopened PRs, or superseding changes.
+Outcome claims remain reporter-supplied: the report API does not query GitHub
+or CI and a PR/commit reference is never proof of task success. Separately, the
+JIT Git verifier validates a cited canonical same-repository PR with one bounded
+GraphQL lookup per research context. The PR must be closed/merged, not a draft,
+have an approved review decision, and have a successful status-check rollup;
+otherwise current-state compatibility remains unknown. The merge commit is used
+only when no explicit revision is present, and local ancestry plus exact cited-
+file identity remain mandatory. The verifier also rejects conventional
+descendant `git revert` records whose subject/body name the exact source commit
+and touch a cited path, even if a later commit restores identical bytes. Issue
+state, inline review-thread contents, nonstandard reverts, semantic supersession
+not reflected in cited files/history, and task outcomes remain unverified.
 
 ## Curator-assessed injection-use reports
 
