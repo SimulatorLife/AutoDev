@@ -32,21 +32,39 @@ if [[ -z "$repo_root" ]]; then
   repo_root="$(cd -- "$script_dir/.." && pwd)"
 fi
 
+# Clear any inherited tokens before reading openlit-secrets.env so tokens
+# come strictly from CODEX_HOME/openlit-secrets.env.
+unset AUTODEV_CONTROL_API_TOKEN AUTODEV_OPENLIT_USAGE_TOKEN
+
 # ---------------------------------------------------------------------------
 # Optional nonsecret URL overrides from CODEX_HOME/.env
 #
-# The .env file is for URLs (and other non-secret overrides) only. We source
-# it with `set -a` so any KEY=VALUE is exported, but the file is not the
-# canonical secret store — control/usage tokens always come from
-# openlit-secrets.env and are read by exact-key parser below. The .env file
-# is OPTIONAL; if absent, the Next.js server falls back to its built-in
-# defaults (http://127.0.0.1:4101 / http://127.0.0.1:3000).
+# Reads optional nonsecret URL overrides only from CODEX_HOME/.env if present.
+# Secret tokens are never read from .env; only URL overrides are parsed.
 # ---------------------------------------------------------------------------
 if [[ -f "$codex_home/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "$codex_home/.env"
-  set +a
+  while IFS='=' read -r key val || [[ -n "$key" ]]; do
+    # Strip carriage return and leading/trailing whitespace
+    key="${key%$'\r'}"
+    key="$(printf '%s' "$key" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    if [[ "$key" =~ ^# ]] || [[ -z "$key" ]]; then
+      continue
+    fi
+    case "$key" in
+      *TOKEN*|*SECRET*|*PASSWORD*|*KEY*)
+        # Never read secrets or tokens from .env
+        ;;
+      *_URL)
+        val="${val%$'\r'}"
+        val="$(printf '%s' "$val" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+        val="${val%\"}"
+        val="${val#\"}"
+        val="${val%\'}"
+        val="${val#\'}"
+        export "$key"="$val"
+        ;;
+    esac
+  done < "$codex_home/.env"
 fi
 
 # ---------------------------------------------------------------------------
@@ -62,7 +80,7 @@ openlit_secret_file="${AUTODEV_OPENLIT_SECRET_FILE:-$codex_home/openlit-secrets.
 if [[ -f "$openlit_secret_file" ]]; then
   read_openlit_secret() {
     local name="$1"
-    awk -F= -v key="$name" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$openlit_secret_file"
+    awk -F= -v key="$name" '$1 == key { sub(/^[^=]*=/, ""); sub(/\r$/, ""); print; exit }' "$openlit_secret_file"
   }
   control_token="$(read_openlit_secret AUTODEV_CONTROL_API_TOKEN)"
   usage_token="$(read_openlit_secret AUTODEV_OPENLIT_USAGE_TOKEN)"
@@ -134,8 +152,8 @@ ERR
 fi
 
 next_bin="$console_dir/node_modules/next/dist/bin/next"
-if [[ ! -x "$next_bin" ]]; then
-  echo "run-codex-console: next bin is missing or not executable: $next_bin" >&2
+if [[ ! -f "$next_bin" ]]; then
+  echo "run-codex-console: next bin is missing: $next_bin" >&2
   echo "  Reinstall console/node_modules (the Runtime installer links it)." >&2
   exit 127
 fi

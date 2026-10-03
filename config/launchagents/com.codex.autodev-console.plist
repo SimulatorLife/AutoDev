@@ -9,13 +9,12 @@
        keeps it up across restarts, crashes, and sleep. The installer
        pre-builds console/.next so the launcher can exec the resolved Node
        against console/node_modules/next/dist/bin/next start. The launcher
-       reads AUTODEV_CONTROL_API_TOKEN and AUTODEV_OPENLIT_USAGE_TOKEN from
-       CODEX_HOME/openlit-secrets.env via an exact-key parser; this plist
-       intentionally carries no token values. The Console never advertises
-       backend readiness from /api/health; this plist therefore runs the
-       server-side process only. Invokes the installed hook copy under
-       ~/.codex (outside Desktop) so macOS privacy controls on the repo do
-       not block launchd. -->
+       reads service credentials from CODEX_HOME/openlit-secrets.env via
+       an exact-key parser; this plist intentionally carries no token keys
+       or values. The Console never advertises backend readiness from
+       /api/health; this plist therefore runs the server-side process only.
+       Invokes the installed hook copy under ~/.codex (outside Desktop) so
+       macOS privacy controls on the repo do not block launchd. -->
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
