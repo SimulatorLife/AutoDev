@@ -638,15 +638,62 @@ CREATE TABLE IF NOT EXISTS memory_schema_migrations (
 );
 `;
 
+// A single, stable advisory-lock key serializes bootstrap table creation
+// and every migration version check/apply across concurrent processes.
+// hashtext() is deterministic for a fixed string, so every process derives
+// the same int4 key without a shared constant; it is widened to bigint to
+// match the single-argument pg_advisory_xact_lock overload. Transaction-
+// scoped ("_xact_") locks release automatically on COMMIT/ROLLBACK, so each
+// lock acquisition below is scoped to exactly the transaction that needs
+// it and never needs an explicit unlock.
+const MIGRATION_LOCK_KEY_SQL =
+  "hashtext('autodev_memory_schema_migrations')::bigint";
+const MIGRATION_LOCK_SQL = `SELECT pg_advisory_xact_lock(${MIGRATION_LOCK_KEY_SQL})`;
+
+/**
+ * Creates the migrations-tracking table if it does not already exist,
+ * serialized against every other concurrent caller (including ones racing
+ * to create the same table) by a transaction-scoped advisory lock. Two
+ * processes issuing `CREATE TABLE IF NOT EXISTS` concurrently can otherwise
+ * both observe "missing" and race on the same catalog insert, which
+ * PostgreSQL reports as a unique-constraint violation.
+ */
+async function createMigrationsTableLocked(
+  pool: MemoryConnectionPool
+): Promise<void> {
+  const connection = await pool.connect();
+  try {
+    await connection.query("BEGIN");
+    await connection.query(MIGRATION_LOCK_SQL);
+    await connection.query(MIGRATIONS_TABLE_DDL);
+    await connection.query("COMMIT");
+  } catch (error) {
+    await connection.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
 /**
  * Applies every migration that has not yet been recorded in
  * `memory_schema_migrations`, in version order, each in its own
  * transaction.
+ *
+ * Bootstrap table creation and every migration's version check are
+ * serialized by the same transaction-scoped advisory lock (see
+ * `MIGRATION_LOCK_SQL`). The initial applied-version snapshot taken after
+ * bootstrap is only used to build this process's candidate pending list;
+ * it is deliberately re-checked per migration while holding the lock,
+ * immediately before running that migration's DDL, so a second process
+ * racing with a stale snapshot observes the version as already applied
+ * and skips it instead of re-running the DDL and double-inserting the
+ * tracking row.
  */
 export async function applyMemoryMigrations(
   pool: MemoryConnectionPool
 ): Promise<void> {
-  await pool.query(MIGRATIONS_TABLE_DDL);
+  await createMigrationsTableLocked(pool);
   const applied = await pool.query<{ version: number }>(
     "SELECT version FROM memory_schema_migrations"
   );
@@ -663,11 +710,21 @@ export async function applyMemoryMigrations(
     const connection = await pool.connect();
     try {
       await connection.query("BEGIN");
-      await connection.query(migration.sql);
-      await connection.query(
-        "INSERT INTO memory_schema_migrations (version, description) VALUES ($1, $2)",
-        [migration.version, migration.description]
+      await connection.query(MIGRATION_LOCK_SQL);
+      // Re-check under the lock: another process may have already applied
+      // this exact version while this process was still computing its
+      // (now stale) pending list above.
+      const current = await connection.query<{ version: number }>(
+        "SELECT version FROM memory_schema_migrations WHERE version = $1",
+        [migration.version]
       );
+      if (current.rowCount === 0) {
+        await connection.query(migration.sql);
+        await connection.query(
+          "INSERT INTO memory_schema_migrations (version, description) VALUES ($1, $2)",
+          [migration.version, migration.description]
+        );
+      }
       await connection.query("COMMIT");
     } catch (error) {
       await connection.query("ROLLBACK").catch(() => {});

@@ -231,8 +231,8 @@ test("applyMemoryMigrations records applied versions and runs each migration in 
     pool.tables.memory_schema_migrations.map((row) => row.version),
     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
   );
-  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 11);
-  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 11);
+  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 12);
+  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 12);
 });
 
 test("applyMemoryMigrations adds migration 9 transactionally to a database already at migration 8", async () => {
@@ -250,8 +250,8 @@ test("applyMemoryMigrations adds migration 9 transactionally to a database alrea
     pool.tables.memory_schema_migrations.map((row) => row.version),
     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
   );
-  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 3);
-  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 3);
+  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 4);
+  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 4);
   assert.equal(pool.executed.filter((sql) => sql === "ROLLBACK").length, 0);
   assert.ok(
     pool.executed.some((sql) =>
@@ -285,8 +285,8 @@ test("applyMemoryMigrations adds migration 10 transactionally to a database alre
     pool.tables.memory_schema_migrations.map((row) => row.version),
     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
   );
-  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 2);
-  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 2);
+  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 3);
+  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 3);
   assert.equal(pool.executed.filter((sql) => sql === "ROLLBACK").length, 0);
   assert.ok(
     pool.executed.some((sql) =>
@@ -320,8 +320,8 @@ test("applyMemoryMigrations adds migration 11 transactionally to a database alre
     pool.tables.memory_schema_migrations.map((row) => row.version),
     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
   );
-  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 1);
-  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 1);
+  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 2);
+  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 2);
   assert.equal(pool.executed.filter((sql) => sql === "ROLLBACK").length, 0);
   assert.ok(
     pool.executed.some((sql) =>
@@ -368,5 +368,93 @@ test("applyMemoryMigrations is idempotent: a second call applies nothing new", a
     !newCalls.some((sql) =>
       sql.includes("CREATE TABLE memory_injection_use_reports")
     )
+  );
+});
+
+test("applyMemoryMigrations serializes bootstrap and every migration check behind the same transaction-scoped advisory lock", async () => {
+  const pool = new FakeMemoryPool();
+  await applyMemoryMigrations(pool);
+
+  const lockCalls = pool.executed.filter((sql) =>
+    sql.startsWith("SELECT pg_advisory_xact_lock(")
+  );
+  // One lock acquisition for bootstrap table creation, plus one per
+  // migration version (11 migrations), each re-checking under the lock
+  // before deciding whether to run that migration's DDL.
+  assert.equal(lockCalls.length, 1 + MEMORY_MIGRATIONS.length);
+  assert.ok(
+    lockCalls.every((sql) =>
+      sql.includes("hashtext('autodev_memory_schema_migrations')")
+    )
+  );
+
+  // Every lock acquisition happens inside its own BEGIN/COMMIT, confirming
+  // the lock is transaction-scoped rather than held across the whole
+  // bootstrap-plus-migration-loop call.
+  const beginIndexes = pool.executed
+    .map((sql, index) => (sql === "BEGIN" ? index : -1))
+    .filter((index) => index !== -1);
+  const lockIndexes = pool.executed
+    .map((sql, index) =>
+      sql.startsWith("SELECT pg_advisory_xact_lock(") ? index : -1
+    )
+    .filter((index) => index !== -1);
+  for (const lockIndex of lockIndexes) {
+    const precedingBegin = Math.max(
+      ...beginIndexes.filter((index) => index < lockIndex)
+    );
+    assert.ok(
+      precedingBegin !== -Infinity,
+      "lock acquisition must occur inside an open transaction"
+    );
+  }
+});
+
+test("applyMemoryMigrations skips a migration a concurrent process already recorded while holding the lock", async () => {
+  const pool = new FakeMemoryPool();
+  const originalQuery = pool.query.bind(pool);
+  let sawStaleSnapshot = false;
+
+  // Simulate a second process that commits migration 1 between this
+  // process's initial (now stale) pending-version snapshot and the
+  // per-migration recheck it performs immediately before running
+  // migration 1's DDL while holding the advisory lock.
+  pool.query = (async (text: string, params?: readonly unknown[]) => {
+    if (
+      text === "SELECT version FROM memory_schema_migrations" &&
+      !sawStaleSnapshot
+    ) {
+      sawStaleSnapshot = true;
+      const result = await originalQuery(text, params);
+      pool.tables.memory_schema_migrations.push({
+        version: 1,
+        description: "applied by a concurrent process"
+      });
+      return result;
+    }
+    return originalQuery(text, params);
+  }) as typeof pool.query;
+
+  await applyMemoryMigrations(pool);
+
+  assert.deepEqual(
+    pool.tables.memory_schema_migrations.map((row) => row.version),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+  );
+  // Migration 1's DDL must not run a second time: the concurrent writer's
+  // row already satisfied the per-version recheck under the lock.
+  assert.equal(
+    pool.executed.filter((sql) =>
+      sql.includes("CREATE TABLE memory_experiences")
+    ).length,
+    0
+  );
+  assert.equal(
+    pool.executed.filter(
+      (sql) =>
+        sql ===
+        "INSERT INTO memory_schema_migrations (version, description) VALUES ($1, $2)"
+    ).length,
+    10
   );
 });

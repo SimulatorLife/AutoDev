@@ -1484,7 +1484,18 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     params: readonly unknown[]
   ): MemoryQueryResult | undefined {
     let result: MemoryQueryResult | undefined;
-    if (sql.startsWith("CREATE TABLE IF NOT EXISTS memory_schema_migrations")) {
+    if (sql.startsWith("SELECT pg_advisory_xact_lock(")) {
+      // applyMemoryMigrations serializes bootstrap table creation and each
+      // migration's check/apply behind this transaction-scoped advisory
+      // lock. FakeMemoryPool runs every query sequentially (there is no
+      // real concurrency inside one JS event loop turn without awaiting
+      // across calls), so the lock itself is a no-op here; its SQL shape
+      // still needs to be recognized rather than falling through as an
+      // unrecognized statement.
+      result = { rows: [{ pg_advisory_xact_lock: null }], rowCount: 1 };
+    } else if (
+      sql.startsWith("CREATE TABLE IF NOT EXISTS memory_schema_migrations")
+    ) {
       result = { rows: [], rowCount: 0 };
     } else if (sql === "SELECT version FROM memory_schema_migrations") {
       result = {
@@ -1494,6 +1505,16 @@ export class FakeMemoryPool implements MemoryConnectionPool {
         >[],
         rowCount: this.tables.memory_schema_migrations.length
       };
+    } else if (
+      sql === "SELECT version FROM memory_schema_migrations WHERE version = $1"
+    ) {
+      // The per-migration recheck applyMemoryMigrations issues while
+      // holding the advisory lock, immediately before deciding whether to
+      // run that migration's DDL.
+      const rows = this.tables.memory_schema_migrations.filter(
+        (row) => row.version === params[0]
+      ) as unknown[] as Record<string, unknown>[];
+      result = { rows, rowCount: rows.length };
     } else if (sql.startsWith("INSERT INTO memory_schema_migrations")) {
       this.tables.memory_schema_migrations.push({
         version: params[0],
