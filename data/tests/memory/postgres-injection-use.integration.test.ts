@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 
 import type {
+  ExperienceEnvelope,
   MemoryInjectionEvent,
   MemoryReadContext,
   MemoryUseReport
@@ -372,6 +373,169 @@ test(
         ]),
         /append-only/u
       );
+    } finally {
+      await pool.end();
+    }
+  }
+);
+
+test(
+  "purgeExperience erases only the raw experience envelope; append-only curator use reports and their bounded aggregate survive the purge",
+  { skip: !databaseUrl },
+  async () => {
+    const pool = createPgMemoryPool({ connectionString: databaseUrl });
+    const identity = randomUUID();
+    const workspaceId = `memory-purge-use-test-${identity}`;
+    const repositoryId = `repo-${identity}`;
+    const taskId = `session-${identity}`;
+    const runId = `run-${identity}`;
+    const agentId = `agent-${identity}`;
+    const context: MemoryReadContext = {
+      workspaceId,
+      repositoryId,
+      taskId,
+      runId,
+      agentId,
+      canReadGlobal: false
+    };
+    const now = new Date().toISOString();
+    const trajectoryUri = `codex://captured/${identity}`;
+
+    const experience: ExperienceEnvelope = {
+      id: `exp-${identity}`,
+      workspaceId,
+      repositoryId,
+      scope: { kind: "task", workspaceId, taskId, runId },
+      taskId,
+      runId,
+      agentId,
+      startedAt: now,
+      completedAt: now,
+      outcome: "success",
+      trajectory: { format: "codex-v1", uri: trajectoryUri },
+      evidence: []
+    };
+
+    const injectionEvent: MemoryInjectionEvent = {
+      id: `inj-${identity}`,
+      workspaceId,
+      repositoryId,
+      scope: { kind: "task", workspaceId, taskId, runId },
+      taskId,
+      runId,
+      agentId,
+      correlationToken: `token-${identity}`,
+      memoryMode: "jit",
+      injectionResult: "injected",
+      packetCharacterCount: 64,
+      memoryIds: [`memory-a-${identity}`, `memory-b-${identity}`],
+      occurredAt: now,
+      reasonCode: "packet_attached",
+      evidence: [],
+      recordedBy: "purge-use-integration-test"
+    };
+
+    const useReport: MemoryUseReport = {
+      id: `use-${identity}`,
+      injectionEventId: injectionEvent.id,
+      workspaceId,
+      repositoryId,
+      scope: { kind: "task", workspaceId, taskId, runId },
+      taskId,
+      runId,
+      agentId,
+      correlationToken: injectionEvent.correlationToken,
+      useKind: "used",
+      usedMemoryIds: [...injectionEvent.memoryIds],
+      reportedAt: new Date(Date.now() + 1000).toISOString(),
+      reporterId: "caller-supplied-id-is-overridden",
+      reporterAuthority: "curator",
+      reasonCode: "reporter_supplied",
+      evidence: [{ kind: "trajectory", uri: trajectoryUri }]
+    };
+
+    let repository: PostgresMemoryRepository;
+    try {
+      await applyMemoryMigrations(pool);
+      repository = new PostgresMemoryRepository({ pool });
+
+      // The raw trajectory envelope and its independent, append-only
+      // curator-assessed use report are recorded against the same session
+      // but are stored in separate tables with no FK between them: the use
+      // report cites the injection event's correlation token and memory
+      // IDs, never the experience ID.
+      await repository.appendExperience(experience);
+      await repository.recordInjectionEvent({
+        event: injectionEvent,
+        actor: { id: "system", authority: "system" },
+        context
+      });
+      const recorded = await repository.recordInjectionUseReport({
+        report: useReport,
+        actor: { id: "curator-live", authority: "curator" },
+        context
+      });
+      assert.equal(recorded.appended, true);
+
+      assert.ok(await repository.getExperience(experience.id, context));
+      const beforePurge = await repository.getInjectionUseReport(
+        workspaceId,
+        injectionEvent.correlationToken
+      );
+      assert.equal(beforePurge?.useKind, "used");
+
+      const purgeEventId = `privacy-${identity}`;
+      const purgeResult = await repository.purgeExperience({
+        experienceId: experience.id,
+        context,
+        eventId: purgeEventId,
+        actorId: "integration-curator",
+        reason: "privacy_request",
+        occurredAt: new Date().toISOString()
+      });
+      // No durable memory_records cite this experience, so the purge is
+      // not blocked by the existence of the (unrelated) use report.
+      assert.equal(purgeResult, "purged");
+
+      // The raw envelope is now invisible...
+      assert.equal(
+        await repository.getExperience(experience.id, context),
+        null
+      );
+
+      // ...but the append-only curator use report -- bounded IDs and
+      // references, not the raw transcript payload -- remains exactly as
+      // recorded before the purge.
+      const afterPurge = await repository.getInjectionUseReport(
+        workspaceId,
+        injectionEvent.correlationToken
+      );
+      assert.equal(afterPurge?.useKind, "used");
+      assert.deepEqual(afterPurge?.usedMemoryIds, injectionEvent.memoryIds);
+      assert.equal(afterPurge?.reporterId, "curator-live");
+      assert.equal(afterPurge?.id, useReport.id);
+
+      // ...and the safe bounded aggregate -- which counts eligible packet
+      // events by their own occurred_at, not by experience lifecycle --
+      // still reports the same exposure and use-kind after the purge.
+      const cohort = await repository.aggregateInjectionUseCohorts({
+        context: { workspaceId, repositoryId, canReadGlobal: false },
+        occurredFrom: new Date(Date.now() - 60_000).toISOString(),
+        occurredUntil: new Date(Date.now() + 60_000).toISOString()
+      });
+      assert.equal(cohort.exposureCount, 1);
+      assert.equal(cohort.cells.length, 1);
+      assert.equal(cohort.cells[0]?.useKind, "used");
+
+      // The purge's own tombstone is a distinct append-only audit record
+      // (a one-way fingerprint, not the use report) proving the erasure
+      // happened.
+      const tombstone = await pool.query<{ reason: string }>(
+        "SELECT reason FROM memory_experience_privacy_events WHERE id = $1",
+        [purgeEventId]
+      );
+      assert.equal(tombstone.rows.length, 1);
+      assert.equal(tombstone.rows[0]?.reason, "privacy_request");
     } finally {
       await pool.end();
     }

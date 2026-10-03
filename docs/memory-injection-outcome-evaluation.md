@@ -113,6 +113,18 @@ session/request IDs, memory IDs, correlation tokens, evidence URIs, or reporter
 identity. Curator-reported counts can be compared to exposure, but they do not
 establish precise per-turn use or causal effectiveness.
 
+Purge/retention scope: erasing a captured `ExperienceEnvelope` via
+`purgeExperience` (the raw `memory_experiences` row) neither removes nor is
+blocked by these injection events or curator-assessed use reports. Both tables
+are append-only, keyed by their own IDs and the injection's correlation token,
+and reference the packet's `memoryIds` -- never an `experienceId`; the
+purge's only eligibility check is whether a durable `memory_records` row
+cites the experience. A purged experience therefore leaves its injection
+event, any use report, and the `aggregateInjectionUseCohorts` counts above
+intact and unchanged. Deleting those audit records themselves, or the external
+captured trajectory an evidence reference names, is outside this purge's
+scope and requires its own privacy process.
+
 ## Reporter-supplied session outcome
 
 In addition to per-token injection exposure reports, an operator can append a single session-level outcome report for a task/session using:
