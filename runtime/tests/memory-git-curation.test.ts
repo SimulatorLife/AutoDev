@@ -846,7 +846,7 @@ cat "$TMPDIR/pull-request.json"
   });
 });
 
-test("Git verifier rejects memories whose cited file matches only after a standard git revert of the source commit", async () => {
+test("Git verifier treats reverted cited-path history as stale or unknown even when bytes are restored", async () => {
   await withGitRepository(async ({ root, sourceCommit, filePath }) => {
     // Establish a base commit so reverting the source commit (which only
     // adds the cited file) does not delete the file outright.
@@ -909,10 +909,9 @@ test("Git verifier rejects memories whose cited file matches only after a standa
       "the contradicted assessment must cite the current HEAD"
     );
 
-    // A control branch without an actual revert must remain compatible even
-    // when prose in a later commit quotes the canonical marker substring.
-    // Starting at the source commit keeps the reverted commit out of this
-    // branch's reachable history without duplicating a second Git fixture.
+    // A nonstandard rollback/restoration has no canonical Revert message, so
+    // it must remain unknown rather than being misclassified as a standard
+    // contradiction or silently treated as unchanged.
     execGit(root, ["checkout", "-q", "-b", "control", sourceCommit]);
     await writeFile(filePath, "export const feature = false;\n");
     execGit(root, ["add", "src/feature.ts"]);
@@ -928,14 +927,15 @@ test("Git verifier rejects memories whose cited file matches only after a standa
     execGit(root, ["add", "src/feature.ts"]);
     execGit(root, ["commit", "-q", "-m", "Restore byte-identical contents"]);
 
-    const compatible = await verifier.verify({
+    const reconciled = await verifier.verify({
       memory: recordWithEvidence([commitEvidence, fileEvidence]),
-      task: "Use the unchanged feature flag.",
+      task: "Reconcile the manually restored feature flag.",
       // A distinct research context refreshes the verifier's per-context HEAD snapshot.
       context: { ...context },
       asOf: "2026-10-01T12:00:00.000Z"
     });
-    assert.equal(compatible.compatibility, "compatible");
-    assert.equal(compatible.reasonCode, "verified_current_state");
+    assert.equal(reconciled.compatibility, "unknown");
+    assert.equal(reconciled.reasonCode, "verification_inconclusive");
+    assert.equal(reconciled.source, "git_cited_file_history_changed");
   });
 });

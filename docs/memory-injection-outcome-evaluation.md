@@ -61,11 +61,13 @@ GraphQL lookup per research context. The PR must be closed/merged, not a draft,
 have an approved review decision, and have a successful status-check rollup;
 otherwise current-state compatibility remains unknown. The merge commit is used
 only when no explicit revision is present, and local ancestry plus exact cited-
-file identity remain mandatory. The verifier also rejects conventional
+file identity remain mandatory. The verifier rejects conventional
 descendant `git revert` records whose subject/body name the exact source commit
-and touch a cited path, even if a later commit restores identical bytes. Issue
-state, inline review-thread contents, nonstandard reverts, semantic supersession
-not reflected in cited files/history, and task outcomes remain unverified.
+and touch a cited path, even if a later commit restores identical bytes. Any
+other descendant change to a cited path followed by restored bytes remains
+unknown and is excluded from injection.
+Issue state, inline review-thread contents, semantic supersession with no cited-
+path history change, and task outcomes remain unverified.
 
 ## Curator-assessed injection-use reports
 

@@ -24,7 +24,6 @@ const GITHUB_REPOSITORY_SEGMENT_PATTERN = /^[A-Za-z0-9_.-]{1,100}$/u;
 const GITHUB_PULL_REQUEST_NUMBER_PATTERN = /^[1-9]\d{0,9}$/u;
 const GIT_TIMEOUT_MS = 2000;
 const GIT_MAX_BUFFER_BYTES = 512 * 1024;
-const GIT_LOG_RECORD_SEPARATOR = /\r?\n/u;
 const GITHUB_LOOKUPS_PER_CONTEXT = 1;
 
 interface GitHubPullRequestLocator {
@@ -203,29 +202,33 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
       return unknownAssessment(checkedAt, "verification_inconclusive");
     }
 
-    // The cited files at HEAD are byte-identical to the source commit, but a
-    // later standard `git revert <sourceCommit>` (followed by a no-op
-    // restoration of the same contents) would otherwise pass the diff check.
-    // Walk the descendants between the source commit and current HEAD, scoped
-    // to the cited paths, and require the standard `Revert` subject and
-    // body marker naming the source commit exactly. Any Git inspection failure remains
-    // inconclusive and cannot authorize the memory.
-    const revert = await inspectDescendantsForRevert(
+    // Identical final bytes do not erase intervening changes to cited files:
+    // a later semantic supersession or manual revert may restore the old text.
+    // Inspect only commits touching these paths. A canonical revert is stale;
+    // any other intervening change requires reconstruction and remains unknown.
+    const pathHistory = await inspectCitedFileHistory(
       repositoryRoot,
       sourceCommit,
       currentCommit,
       citedFiles.map((file) => file.relativePath)
     );
-    if (revert.exitCode !== 0) {
+    if (pathHistory.exitCode !== 0) {
       return unknownAssessment(checkedAt, "verification_inconclusive");
     }
-    if (revert.reverted) {
+    if (pathHistory.reverted) {
       return contradictedAssessment(
         checkedAt,
         "stale",
         input.context.repositoryId,
         currentCommit,
         citedFiles.map((file) => file.reference)
+      );
+    }
+    if (pathHistory.changed) {
+      return unknownAssessment(
+        checkedAt,
+        "verification_inconclusive",
+        "git_cited_file_history_changed"
       );
     }
 
@@ -786,45 +789,50 @@ function commitUri(repositoryId: string, commit: string): string {
 }
 
 /**
- * Detect a standard `git revert` of the exact source commit somewhere on the
- * descendant path between it and the current HEAD. `git revert` writes a
- * `Revert ...` subject and a `This reverts commit <full-sha>.` body marker;
- * both are required. Manual reverts without that canonical message are
- * intentionally outside scope. The log is scoped to the cited paths so an
- * unrelated revert elsewhere cannot flip the assessment. Git execution
- * inherits the same timeout/buffer caps as the rest of the verifier and any
- * failure returns exitCode != 0, which the caller treats as inconclusive.
+ * Inspect every descendant commit that changed a cited path. A standard
+ * `git revert <source>` is a direct contradiction even if a later commit
+ * restores the same bytes. Other path-changing history makes the memory
+ * uncertain and forces task-time reconstruction instead of silently treating
+ * old bytes as current. The path filter excludes unrelated repository churn;
+ * Git timeout/buffer failures remain inconclusive.
  */
-async function inspectDescendantsForRevert(
+async function inspectCitedFileHistory(
   repositoryRoot: string,
   sourceCommit: string,
   currentCommit: string,
   citedRelativePaths: readonly string[]
-): Promise<{ readonly exitCode: number; readonly reverted: boolean }> {
-  // Evidence may carry an unambiguous abbreviated SHA; standard `git revert`
-  // records the full object id. Match only a standalone canonical marker line,
-  // allowing the full SHA suffix after that verified prefix.
-  const marker = String.raw`^This reverts commit ${sourceCommit.toLowerCase()}[0-9a-f]*\.$`;
+): Promise<{
+  readonly exitCode: number;
+  readonly changed: boolean;
+  readonly reverted: boolean;
+}> {
+  const marker = new RegExp(
+    String.raw`^This reverts commit ${sourceCommit.toLowerCase()}[0-9a-f]*\.$`,
+    "m"
+  );
   const result = await runGit(repositoryRoot, [
     "log",
-    "--format=%H%x00%s",
-    "--grep",
-    marker,
+    "--full-history",
+    "--format=tformat:%H%x00%s%x00%B%x00%x1e",
     `${sourceCommit}..${currentCommit}`,
     "--",
     ...citedRelativePaths
   ]);
   if (result.exitCode !== 0) {
-    return { exitCode: result.exitCode, reverted: false };
+    return { exitCode: result.exitCode, changed: false, reverted: false };
   }
-  const reverted = result.stdout
-    .split(GIT_LOG_RECORD_SEPARATOR)
-    .some((record) => {
-      const subjectBoundary = record.indexOf("\u0000");
-      return (
-        subjectBoundary !== -1 &&
-        record.slice(subjectBoundary + 1).startsWith("Revert ")
-      );
-    });
-  return { exitCode: 0, reverted };
+  const records = result.stdout
+    .split("\u001E")
+    .map((record) => record.trim())
+    .filter(Boolean);
+  let reverted = false;
+  for (const record of records) {
+    const [commit, subject, ...bodyParts] = record.split("\u0000");
+    if (!commit || !COMMIT_PATTERN.test(commit) || !subject) {
+      return { exitCode: -1, changed: false, reverted: false };
+    }
+    const body = bodyParts.join("\u0000");
+    if (subject.startsWith("Revert ") && marker.test(body)) reverted = true;
+  }
+  return { exitCode: 0, changed: records.length > 0, reverted };
 }
