@@ -57,6 +57,11 @@ never infers success from retrieval, provider status, or a PR link.
 Outcome claims are reporter-supplied. The API does not query GitHub or CI to
 verify PR status, and a PR/commit reference is provenance, not proof of success.
 Neither retrieval nor a successful provider request is treated as task success.
+Separately, the JIT Git verifier rejects a conventional descendant `git revert`
+whose `Revert` subject and body marker name the exact cited source commit and
+touch a cited path, even if a later commit restores identical file bytes. This narrow local
+history check does not validate nonstandard reverts, review threads, CI/checks,
+issue state, reopened PRs, or superseding changes.
 
 ## Reporter-supplied session outcome
 

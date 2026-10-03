@@ -648,3 +648,97 @@ cat "$TMPDIR/merge-commit.txt"
     }
   });
 });
+
+test("Git verifier rejects memories whose cited file matches only after a standard git revert of the source commit", async () => {
+  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    // Establish a base commit so reverting the source commit (which only
+    // adds the cited file) does not delete the file outright.
+    await writeFile(
+      join(root, "src", "baseline.ts"),
+      "export const baseline = true;\n"
+    );
+    execGit(root, ["add", "src/baseline.ts"]);
+    execGit(root, ["commit", "-q", "-m", "Add baseline"]);
+
+    // Capture the source-commit contents before reverting; the revert
+    // deletes the file because C1 introduced it.
+    const original = await readFile(filePath, "utf8");
+    // Standard `git revert <source>` undoes the source change. The revert
+    // commit is the only descendant the verifier is expected to inspect.
+    execGit(root, ["revert", "--no-edit", sourceCommit]);
+    // Re-add a file with byte-identical contents to the source commit so the
+    // existing `git diff --quiet sourceCommit -- <file>` check would pass if
+    // applied in isolation. The verifier must still fail closed.
+    await writeFile(filePath, original);
+    execGit(root, ["add", "src/feature.ts"]);
+    execGit(root, ["commit", "-q", "-m", "Restore identical source contents"]);
+    const head = execGit(root, ["rev-parse", "HEAD"]);
+    assert.notEqual(
+      head,
+      sourceCommit,
+      "the post-revert HEAD must move past the source commit"
+    );
+
+    const abbreviatedSourceCommit = sourceCommit.slice(0, 7);
+    const fileEvidence: EvidenceReference = {
+      kind: "file",
+      uri: pathToFileURL(filePath).href,
+      revision: abbreviatedSourceCommit
+    };
+    const commitEvidence: EvidenceReference = {
+      kind: "commit",
+      uri: `git://${encodeURIComponent(context.repositoryId!)}/commit/${abbreviatedSourceCommit}`,
+      revision: abbreviatedSourceCommit
+    };
+    const verifier = new GitWorkingTreeMemoryVerifier({
+      repositories: { resolve: async () => root },
+      now: () => "2026-10-01T12:00:00.000Z"
+    });
+
+    const assessment = await verifier.verify({
+      memory: recordWithEvidence([commitEvidence, fileEvidence]),
+      task: "Use the reverted feature flag.",
+      context,
+      asOf: "2026-10-01T12:00:00.000Z"
+    });
+
+    assert.equal(assessment.compatibility, "contradicted");
+    assert.equal(assessment.reasonCode, "stale");
+    assert.ok(
+      assessment.evidence.some(
+        (reference) =>
+          reference.kind === "commit" && reference.revision === head
+      ),
+      "the contradicted assessment must cite the current HEAD"
+    );
+
+    // A control branch without an actual revert must remain compatible even
+    // when prose in a later commit quotes the canonical marker substring.
+    // Starting at the source commit keeps the reverted commit out of this
+    // branch's reachable history without duplicating a second Git fixture.
+    execGit(root, ["checkout", "-q", "-b", "control", sourceCommit]);
+    await writeFile(filePath, "export const feature = false;\n");
+    execGit(root, ["add", "src/feature.ts"]);
+    execGit(root, [
+      "commit",
+      "-q",
+      "-m",
+      "Unrelated drift",
+      "-m",
+      `This reverts commit ${sourceCommit}.`
+    ]);
+    await writeFile(filePath, original);
+    execGit(root, ["add", "src/feature.ts"]);
+    execGit(root, ["commit", "-q", "-m", "Restore byte-identical contents"]);
+
+    const compatible = await verifier.verify({
+      memory: recordWithEvidence([commitEvidence, fileEvidence]),
+      task: "Use the unchanged feature flag.",
+      // A distinct research context refreshes the verifier's per-context HEAD snapshot.
+      context: { ...context },
+      asOf: "2026-10-01T12:00:00.000Z"
+    });
+    assert.equal(compatible.compatibility, "compatible");
+    assert.equal(compatible.reasonCode, "verified_current_state");
+  });
+});
