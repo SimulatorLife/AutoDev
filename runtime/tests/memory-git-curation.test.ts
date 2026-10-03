@@ -42,11 +42,13 @@ function approvedPullRequestState(mergeCommit: string) {
     mergedAt: "2026-09-30T10:00:00.000Z",
     mergeCommit,
     reviewDecision: "APPROVED",
-    checksState: "SUCCESS"
+    checksState: "SUCCESS",
+    reviewThreadsComplete: true,
+    unresolvedReviewThreadCount: 0
   };
 }
 
-test("Git verifier requires a merged approved PR with successful checks", async () => {
+test("Git verifier requires a merged approved PR with successful checks and resolved current threads", async () => {
   await withGitRepository(async ({ root, sourceCommit, filePath }) => {
     const fileEvidence: EvidenceReference = {
       kind: "file",
@@ -70,7 +72,15 @@ test("Git verifier requires a merged approved PR with successful checks", async 
         reviewDecision: "REVIEW_REQUIRED"
       },
       { ...approvedPullRequestState(sourceCommit), checksState: "FAILURE" },
-      { ...approvedPullRequestState(sourceCommit), checksState: null }
+      { ...approvedPullRequestState(sourceCommit), checksState: null },
+      {
+        ...approvedPullRequestState(sourceCommit),
+        unresolvedReviewThreadCount: 1
+      },
+      {
+        ...approvedPullRequestState(sourceCommit),
+        reviewThreadsComplete: false
+      }
     ];
 
     for (const [index, pullRequestState] of invalidStates.entries()) {
@@ -924,7 +934,8 @@ test("GitHub CLI resolver queries same-repository merge, review, and check state
                 mergedAt: "2026-09-30T10:00:00.000Z",
                 mergeCommit: { oid: sourceCommit },
                 reviewDecision: "APPROVED",
-                statusCheckRollup: { state: "SUCCESS" }
+                statusCheckRollup: { state: "SUCCESS" },
+                reviewThreads: { totalCount: 0, nodes: [] }
               },
               issue: {
                 state: "CLOSED",
@@ -984,14 +995,85 @@ cat "$TMPDIR/pull-request.json"
       assert.match(args, /stateReason/u);
       assert.match(args, /reviewDecision/u);
       assert.match(args, /statusCheckRollup/u);
+      assert.match(args, /reviewThreads\(first: 100\)/u);
+      assert.match(args, /isResolved isOutdated/u);
+      assert.doesNotMatch(args, /comments|body/u);
       assert.equal((await readFile(hostPath, "utf8")).trim(), "github.com");
       assert.equal((await readFile(secretPath, "utf8")).trim(), "");
 
-      const successfulResponse = JSON.parse(
+      const structuredResponse = JSON.parse(
         await readFile(pullRequestPath, "utf8")
-      ) as Record<string, unknown>;
-      successfulResponse.errors = [{ message: "partial GraphQL response" }];
-      await writeFile(pullRequestPath, JSON.stringify(successfulResponse));
+      ) as {
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                totalCount: number;
+                nodes: Array<{ isResolved: boolean; isOutdated: boolean }>;
+              };
+            };
+          };
+        };
+      };
+      const verifyThreadState = async (
+        reviewThreads: {
+          totalCount: number;
+          nodes: Array<{ isResolved: boolean; isOutdated: boolean }>;
+        },
+        runId: string
+      ) => {
+        structuredResponse.data.repository.pullRequest.reviewThreads =
+          reviewThreads;
+        await writeFile(pullRequestPath, JSON.stringify(structuredResponse));
+        return new GitWorkingTreeMemoryVerifier({
+          repositories: { resolve: async () => root }
+        }).verify({
+          memory: recordWithEvidence([
+            {
+              kind: "pull_request",
+              uri: "https://github.com/owner/repo/pull/52"
+            },
+            { kind: "issue", uri: "https://github.com/owner/repo/issues/53" },
+            { kind: "file", uri: pathToFileURL(filePath).href }
+          ]),
+          task: "Use only fully reviewed current code.",
+          context: { ...context, runId },
+          asOf: "2026-10-01T12:00:00.000Z"
+        });
+      };
+      const unresolvedThreads = await verifyThreadState(
+        { totalCount: 1, nodes: [{ isResolved: false, isOutdated: false }] },
+        "unresolved-review-thread"
+      );
+      assert.equal(unresolvedThreads.compatibility, "unknown");
+      const outdatedThread = await verifyThreadState(
+        { totalCount: 1, nodes: [{ isResolved: false, isOutdated: true }] },
+        "outdated-review-thread"
+      );
+      assert.equal(outdatedThread.compatibility, "compatible");
+      const truncatedThreads = await verifyThreadState(
+        {
+          totalCount: 101,
+          nodes: Array.from({ length: 100 }, () => ({
+            isResolved: true,
+            isOutdated: false
+          }))
+        },
+        "truncated-review-threads"
+      );
+      assert.equal(truncatedThreads.compatibility, "unknown");
+
+      structuredResponse.data.repository.pullRequest.reviewThreads = {
+        totalCount: 0,
+        nodes: []
+      };
+      await writeFile(
+        pullRequestPath,
+        JSON.stringify({
+          ...structuredResponse,
+          errors: [{ message: "partial GraphQL response" }]
+        })
+      );
       const partialResponse = await new GitWorkingTreeMemoryVerifier({
         repositories: { resolve: async () => root }
       }).verify({

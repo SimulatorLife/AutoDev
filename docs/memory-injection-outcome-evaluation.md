@@ -59,8 +59,10 @@ or CI and a PR/commit reference is never proof of task success. Separately, the
 JIT Git verifier validates canonical same-repository GitHub evidence with one
 bounded GraphQL lookup per research context, batching at most one PR and one
 issue. A cited PR must be closed/merged, not a draft,
-have an approved review decision, and have a successful status-check rollup;
-otherwise current-state compatibility remains unknown. The merge commit is used
+have an approved review decision, a successful status-check rollup, and no
+unresolved current review threads. Only bounded resolved/outdated thread state
+is queried; comment bodies are not fetched. An incomplete thread list or any
+unresolved current thread leaves compatibility unknown. The merge commit is used
 only when no explicit revision is present, and local ancestry plus exact cited-
 file identity remain mandatory. The verifier rejects conventional
 descendant `git revert` records whose subject/body name the exact source commit

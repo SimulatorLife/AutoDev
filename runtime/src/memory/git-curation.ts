@@ -58,6 +58,8 @@ interface GitHubPullRequestState {
   readonly mergeCommit: string | null;
   readonly reviewDecision: string | null;
   readonly checksState: string | null;
+  readonly reviewThreadsComplete: boolean;
+  readonly unresolvedReviewThreadCount: number;
 }
 
 interface GitHubLookupState {
@@ -95,10 +97,10 @@ export interface MemoryRepositoryRootResolver {
 
 /**
  * Conservative current-state validation for memories grounded in Git files.
- * Cited same-repository PRs require merged/approved/successful checks before
- * supplying lineage. Canonical issue state is returned as dated context, never
- * as a task outcome. Local ancestry and exact cited-file identity remain
- * mandatory; unavailable GitHub state cannot authorize injection.
+ * Cited same-repository PRs require merge, approval, successful checks, and no
+ * unresolved current review threads before supplying lineage. Canonical issue
+ * state is returned as dated context, never a task outcome. Local ancestry and
+ * exact cited-file identity remain mandatory; unavailable GitHub state is unknown.
  */
 interface GitRepositorySnapshot {
   readonly root: string;
@@ -477,7 +479,7 @@ export class VerifiedMemoryReconstructor implements MemoryReconstructor {
     const baseRationale =
       input.assessment.source ===
       "git_github_pr_review_checks_and_file_identity"
-        ? "The cited PR is merged with an approved review decision and successful checks; its source commit is in the current repository lineage and cited files are unchanged."
+        ? "The cited PR is merged with an approved review decision, successful checks, and no unresolved current review threads; its source commit is in the current repository lineage and cited files are unchanged."
         : "The cited source commit is in the current repository lineage and the cited files are unchanged.";
     const issueRationale = (input.assessment.issueObservations ?? []).map(
       (observation) =>
@@ -712,6 +714,10 @@ async function githubReferenceState(
       mergeCommit { oid }
       reviewDecision
       statusCheckRollup { state }
+      reviewThreads(first: 100) {
+        totalCount
+        nodes { isResolved isOutdated }
+      }
     }`);
   }
   if (issueLocator) {
@@ -771,6 +777,9 @@ function parseGitHubPullRequestState(
   if (!pullRequest) return null;
   const mergeCommit = asRecord(pullRequest.mergeCommit);
   const statusCheckRollup = asRecord(pullRequest.statusCheckRollup);
+  const reviewThreadSummary = parseGitHubReviewThreadSummary(
+    pullRequest.reviewThreads
+  );
   if (
     typeof pullRequest.state !== "string" ||
     typeof pullRequest.isDraft !== "boolean" ||
@@ -779,7 +788,9 @@ function parseGitHubPullRequestState(
       typeof pullRequest.mergedAt !== "string") ||
     (pullRequest.reviewDecision !== null &&
       typeof pullRequest.reviewDecision !== "string") ||
-    (statusCheckRollup !== null && typeof statusCheckRollup.state !== "string")
+    (statusCheckRollup !== null &&
+      typeof statusCheckRollup.state !== "string") ||
+    !reviewThreadSummary
   ) {
     return null;
   }
@@ -797,7 +808,46 @@ function parseGitHubPullRequestState(
     checksState:
       statusCheckRollup && typeof statusCheckRollup.state === "string"
         ? statusCheckRollup.state
-        : null
+        : null,
+    reviewThreadsComplete: reviewThreadSummary.complete,
+    unresolvedReviewThreadCount: reviewThreadSummary.unresolvedCount
+  };
+}
+
+interface GitHubReviewThreadSummary {
+  readonly complete: boolean;
+  readonly unresolvedCount: number;
+}
+
+function parseGitHubReviewThreadSummary(
+  value: unknown
+): GitHubReviewThreadSummary | null {
+  const summary = asRecord(value);
+  if (
+    !summary ||
+    !Number.isSafeInteger(summary.totalCount) ||
+    (summary.totalCount as number) < 0 ||
+    !Array.isArray(summary.nodes) ||
+    summary.nodes.length > 100
+  ) {
+    return null;
+  }
+  const threads = summary.nodes.map(asRecord);
+  if (
+    threads.some(
+      (thread) =>
+        !thread ||
+        typeof thread.isResolved !== "boolean" ||
+        typeof thread.isOutdated !== "boolean"
+    )
+  ) {
+    return null;
+  }
+  return {
+    complete: summary.totalCount === threads.length && threads.length <= 100,
+    unresolvedCount: threads.filter(
+      (thread) => !thread!.isResolved && !thread!.isOutdated
+    ).length
   };
 }
 
@@ -848,7 +898,9 @@ function isVerifiedPullRequestState(
     Number.isFinite(Date.parse(value.mergedAt)) &&
     typeof value.mergeCommit === "string" &&
     value.reviewDecision === "APPROVED" &&
-    value.checksState === "SUCCESS"
+    value.checksState === "SUCCESS" &&
+    value.reviewThreadsComplete &&
+    value.unresolvedReviewThreadCount === 0
   );
 }
 
