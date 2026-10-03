@@ -22,7 +22,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 CODEX_HOME="${CODEX_HOME:-${HOME:?HOME must be set}/.codex}"
-SECRET_FILE="${SECRET_FILE:-$CODEX_HOME/openlit-secrets.env}"
+CANONICAL_SECRET_FILE="${AUTODEV_OPENLIT_SECRET_FILE:-$CODEX_HOME/openlit-secrets.env}"
+SECRET_FILE="${SECRET_FILE:-$CANONICAL_SECRET_FILE}"
 
 if [[ -d "$SECRET_FILE" ]]; then
 	echo "bootstrap-secrets.sh: secret-file path is a directory" >&2
@@ -77,11 +78,13 @@ chmod 0600 "$TEMP_FILE"
 mv -f "$TEMP_FILE" "$SECRET_FILE"
 chmod 0600 "$SECRET_FILE"
 
+EXPLICIT_REPO_ROOT="${REPO_ROOT:-}"
 REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || echo "")}"
-if [[ -n "$REPO_ROOT" && -d "$REPO_ROOT/console" ]]; then
-	CONSOLE_ENV_LOCAL="$REPO_ROOT/console/.env.local"
-	CONSOLE_TMP="${CONSOLE_ENV_LOCAL}.tmp.$$"
-	cat > "$CONSOLE_TMP" <<CONSOLE_ENV
+if [[ "$SECRET_FILE" == "$CANONICAL_SECRET_FILE" || -n "$EXPLICIT_REPO_ROOT" ]]; then
+	if [[ -n "$REPO_ROOT" && -d "$REPO_ROOT/console" ]]; then
+		CONSOLE_ENV_LOCAL="$REPO_ROOT/console/.env.local"
+		CONSOLE_TMP="${CONSOLE_ENV_LOCAL}.tmp.$$"
+		cat > "$CONSOLE_TMP" <<CONSOLE_ENV
 # Local Console environment secrets — automatically loaded by Next.js server.
 # Do not commit to version control.
 AUTODEV_CONTROL_API_TOKEN=$CONTROL_TOKEN
@@ -89,9 +92,10 @@ AUTODEV_OPENLIT_USAGE_TOKEN=$USAGE_TOKEN
 AUTODEV_CONTROL_API_BASE_URL=\${AUTODEV_CONTROL_API_BASE_URL:-http://127.0.0.1:4101}
 AUTODEV_OPENLIT_USAGE_URL=\${AUTODEV_OPENLIT_USAGE_URL:-http://127.0.0.1:3000}
 CONSOLE_ENV
-	chmod 0600 "$CONSOLE_TMP"
-	mv -f "$CONSOLE_TMP" "$CONSOLE_ENV_LOCAL"
-	chmod 0600 "$CONSOLE_ENV_LOCAL"
+		chmod 0600 "$CONSOLE_TMP"
+		mv -f "$CONSOLE_TMP" "$CONSOLE_ENV_LOCAL"
+		chmod 0600 "$CONSOLE_ENV_LOCAL"
+	fi
 fi
 
 printf '==> OpenLIT, Control, and Usage secrets are ready in %s (mode 0600; values redacted)\n' "$SECRET_FILE"

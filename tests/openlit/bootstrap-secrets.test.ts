@@ -202,3 +202,32 @@ test("OpenLIT bootstrap overwrites stale console/.env.local and enforces mode 06
     rmSync(repoRoot, { recursive: true, force: true });
   }
 });
+
+test("OpenLIT bootstrap with non-canonical secret-file does not touch repository console/.env.local without explicit REPO_ROOT", () => {
+  const secretDirectory = mkdtempSync(
+    join(tmpdir(), "autodev-openlit-secrets-custom-")
+  );
+  const secretFile = join(secretDirectory, "isolated-secrets.env");
+  const repoConsoleEnv = join(repositoryRoot, "console", ".env.local");
+  const previousContent = readFileSync(repoConsoleEnv, "utf8");
+  try {
+    const result = spawnSync(
+      "bash",
+      [
+        join(repositoryRoot, "scripts/openlit/bootstrap-secrets.sh"),
+        "--secret-file",
+        secretFile
+      ],
+      {
+        encoding: "utf8",
+        cwd: repositoryRoot,
+        stdio: ["ignore", "pipe", "pipe"]
+      }
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(repoConsoleEnv, "utf8"), previousContent);
+  } finally {
+    rmSync(secretDirectory, { recursive: true, force: true });
+  }
+});
+

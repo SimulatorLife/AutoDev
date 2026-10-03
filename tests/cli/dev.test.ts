@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -47,6 +48,47 @@ test("ensureConsoleSecrets runs without throwing in repository root", () => {
   assert.doesNotThrow(() => {
     ensureConsoleSecrets(repoRoot);
   });
+});
+
+test("ensureConsoleSecrets synchronizes out-of-sync console/.env.local", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "autodev-dev-secrets-"));
+  const consoleDir = join(tempDir, "console");
+  const scriptsDir = join(tempDir, "scripts", "openlit");
+  mkdirSync(consoleDir, { recursive: true });
+  mkdirSync(scriptsDir, { recursive: true });
+  const scriptPath = join(scriptsDir, "bootstrap-secrets.sh");
+  const consoleEnv = join(consoleDir, ".env.local");
+  writeFileSync(
+    scriptPath,
+    `#!/bin/sh\ncat > "${consoleEnv}" << 'EOF'\nAUTODEV_CONTROL_API_TOKEN=synced-token\nAUTODEV_OPENLIT_USAGE_TOKEN=synced-usage\nEOF\n`,
+    { mode: 0o755 }
+  );
+  writeFileSync(
+    consoleEnv,
+    "AUTODEV_CONTROL_API_TOKEN=stale-token\nAUTODEV_OPENLIT_USAGE_TOKEN=stale-usage\n"
+  );
+  const secretDir = mkdtempSync(join(tmpdir(), "autodev-dev-canon-"));
+  const canonSecretFile = join(secretDir, "openlit-secrets.env");
+  writeFileSync(
+    canonSecretFile,
+    "AUTODEV_CONTROL_API_TOKEN=synced-token\nAUTODEV_OPENLIT_USAGE_TOKEN=synced-usage\n"
+  );
+  const prevSecretFile = process.env.AUTODEV_OPENLIT_SECRET_FILE;
+  process.env.AUTODEV_OPENLIT_SECRET_FILE = canonSecretFile;
+  try {
+    ensureConsoleSecrets(tempDir);
+    const content = readFileSync(consoleEnv, "utf8");
+    assert.match(content, /AUTODEV_CONTROL_API_TOKEN=synced-token/);
+    assert.match(content, /AUTODEV_OPENLIT_USAGE_TOKEN=synced-usage/);
+  } finally {
+    if (prevSecretFile === undefined) {
+      delete process.env.AUTODEV_OPENLIT_SECRET_FILE;
+    } else {
+      process.env.AUTODEV_OPENLIT_SECRET_FILE = prevSecretFile;
+    }
+    rmSync(tempDir, { recursive: true, force: true });
+    rmSync(secretDir, { recursive: true, force: true });
+  }
 });
 
 test("checkBackends checks telemetry and router status without uncaught rejection", async () => {

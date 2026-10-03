@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -36,6 +39,7 @@ import {
 import {
   CONTROL_API_PATHS,
   fetchAgentDetail,
+  fetchControlApi,
   fetchPromptDetail,
   fetchProviders,
   fetchTools,
@@ -325,6 +329,62 @@ test("Control API detail fetchers encode identifiers and preserve not-found stat
   assert.equal(agent.status, 404);
   assert.equal(prompt.kind, "http-error");
   assert.equal(prompt.status, 404);
+});
+
+test("fetchControlApi extracts code and message from Control API error envelope", async () => {
+  const fetchImpl: typeof fetch = async () =>
+    Response.json(
+      {
+        error: {
+          code: "autodev_control_api_unauthorized",
+          message:
+            "Control API requires the AutoDev server-side service credential.",
+          type: "autodev_control_api_error"
+        }
+      },
+      { status: 401 }
+    );
+  const result = await fetchControlApi(
+    "/control/skills",
+    {
+      baseUrl: "http://127.0.0.1:4101",
+      serviceToken: "test"
+    },
+    { fetchImpl }
+  );
+  assert.equal(result.kind, "unauthorized");
+  if (result.kind === "unauthorized") {
+    assert.equal(result.status, 401);
+    assert.equal(result.code, "autodev_control_api_unauthorized");
+    assert.equal(
+      result.message,
+      "Control API requires the AutoDev server-side service credential."
+    );
+  }
+});
+
+test("readControlApiConfig and readOpenLITUsageConfig fall back to canonical secret file when token is unset", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "autodev-console-test-secrets-"));
+  const secretFile = join(tempDir, "openlit-secrets.env");
+  writeFileSync(
+    secretFile,
+    "AUTODEV_CONTROL_API_TOKEN=file-control-token\nAUTODEV_OPENLIT_USAGE_TOKEN=file-usage-token\n"
+  );
+  try {
+    const controlConfig = readControlApiConfig({
+      CODEX_HOME: tempDir
+    } as unknown as NodeJS.ProcessEnv);
+    assert.ok(controlConfig);
+    assert.equal(controlConfig.serviceToken, "file-control-token");
+
+    const usageConfig = readOpenLITUsageConfig({
+      CODEX_HOME: tempDir
+    });
+    assert.ok(usageConfig);
+    assert.equal(usageConfig.serviceToken, "file-usage-token");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 /**

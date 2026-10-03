@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createConnection } from "node:net";
+import { homedir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -13,7 +14,8 @@ import {
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
 export const IS_MAIN =
-  Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
+  Boolean(process.argv[1]) &&
+  import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
 
 export const repoRoot = path.resolve(resolveRuntimeSourceRoot(import.meta.dirname));
 
@@ -41,12 +43,65 @@ export function isPortListening(
 
 export function ensureConsoleSecrets(root = repoRoot): void {
   const consoleEnv = path.join(root, "console", ".env.local");
-  if (!existsSync(consoleEnv)) {
+  const codexHome =
+    process.env.CODEX_HOME?.trim() ||
+    path.join(process.env.HOME || homedir(), ".codex");
+  const canonicalSecrets =
+    process.env.AUTODEV_OPENLIT_SECRET_FILE?.trim() ||
+    path.join(codexHome, "openlit-secrets.env");
+
+  const script = path.join(root, "scripts", "openlit", "bootstrap-secrets.sh");
+  if (!existsSync(script)) return;
+
+  if (!existsSync(canonicalSecrets) || !existsSync(consoleEnv)) {
     writeLine("[dev] Initializing console secrets (console/.env.local)...");
-    const script = path.join(root, "scripts", "openlit", "bootstrap-secrets.sh");
-    if (existsSync(script)) {
-      spawnSync("bash", [script], { stdio: "inherit", cwd: root });
+    spawnSync("bash", [script], { stdio: "inherit", cwd: root });
+    return;
+  }
+
+  // Canonical secrets and console/.env.local both exist; verify they stay synchronized.
+  const parseToken = (filePath: string, key: string): string | null => {
+    try {
+      const content = readFileSync(filePath, "utf8");
+      for (const line of content.split(/\r?\n/u)) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith(`${key}=`)) {
+          return trimmed.slice(key.length + 1).trim();
+        }
+      }
+    } catch {
+      return null;
     }
+    return null;
+  };
+
+  const canonicalControlToken = parseToken(
+    canonicalSecrets,
+    "AUTODEV_CONTROL_API_TOKEN"
+  );
+  const canonicalUsageToken = parseToken(
+    canonicalSecrets,
+    "AUTODEV_OPENLIT_USAGE_TOKEN"
+  );
+  const consoleControlToken = parseToken(
+    consoleEnv,
+    "AUTODEV_CONTROL_API_TOKEN"
+  );
+  const consoleUsageToken = parseToken(
+    consoleEnv,
+    "AUTODEV_OPENLIT_USAGE_TOKEN"
+  );
+
+  if (
+    !consoleControlToken ||
+    !consoleUsageToken ||
+    consoleControlToken !== canonicalControlToken ||
+    consoleUsageToken !== canonicalUsageToken
+  ) {
+    writeLine(
+      "[dev] Synchronizing console/.env.local with active OpenLIT secrets..."
+    );
+    spawnSync("bash", [script], { stdio: "inherit", cwd: root });
   }
 }
 

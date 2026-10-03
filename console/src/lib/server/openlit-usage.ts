@@ -1,5 +1,8 @@
 /** Server-only OpenLIT Usage adapter configuration and URL filter parsing. */
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import type {
   UsageCustomRange,
   UsageFilterSelection,
@@ -39,10 +42,47 @@ export type OpenLITUsageEnvironment = Readonly<
 export type ConsoleUsageResult =
   { readonly kind: "not-configured" } | OpenLITUsageResult;
 
+function readSecretFromFile(filePath: string, key: string): string | null {
+  try {
+    const content = readFileSync(filePath, "utf8");
+    for (const line of content.split(/\r?\n/u)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const stripped = trimmed.startsWith("export ")
+        ? trimmed.slice(7).trim()
+        : trimmed;
+      if (!stripped.startsWith(`${key}=`)) continue;
+      const rawValue = stripped.slice(key.length + 1).trim();
+      const first = rawValue[0];
+      const last = rawValue.at(-1);
+      const quoted =
+        rawValue.length >= 2 &&
+        ((first === '"' && last === '"') || (first === "'" && last === "'"));
+      const value = quoted ? rawValue.slice(1, -1) : rawValue;
+      return value || null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 export function readOpenLITUsageConfig(
   env: OpenLITUsageEnvironment = process.env
 ): OpenLITUsageConfig | null {
-  const serviceToken = env.AUTODEV_OPENLIT_USAGE_TOKEN?.trim() ?? "";
+  let serviceToken = env.AUTODEV_OPENLIT_USAGE_TOKEN?.trim() ?? "";
+  if (!serviceToken) {
+    const home = env.HOME?.trim();
+    const codexHome =
+      env.CODEX_HOME?.trim() || (home ? path.join(home, ".codex") : null);
+    if (codexHome) {
+      const secretFile =
+        env.AUTODEV_OPENLIT_SECRET_FILE?.trim() ||
+        path.join(codexHome, "openlit-secrets.env");
+      serviceToken =
+        readSecretFromFile(secretFile, "AUTODEV_OPENLIT_USAGE_TOKEN") ?? "";
+    }
+  }
   if (!serviceToken) return null;
   const baseUrl =
     env.AUTODEV_OPENLIT_USAGE_URL?.trim() || DEFAULT_OPENLIT_USAGE_BASE_URL;

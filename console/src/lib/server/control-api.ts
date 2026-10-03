@@ -16,6 +16,9 @@
  * state instead of fabricating values.
  */
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { LOCAL_CONTROL_API_ACTOR } from "@simulatorlife/autodev-core";
 
 import type {
@@ -46,10 +49,47 @@ export interface ControlApiConfig {
   readonly serviceToken: string;
 }
 
+function readSecretFromFile(filePath: string, key: string): string | null {
+  try {
+    const content = readFileSync(filePath, "utf8");
+    for (const line of content.split(/\r?\n/u)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const stripped = trimmed.startsWith("export ")
+        ? trimmed.slice(7).trim()
+        : trimmed;
+      if (!stripped.startsWith(`${key}=`)) continue;
+      const rawValue = stripped.slice(key.length + 1).trim();
+      const first = rawValue[0];
+      const last = rawValue.at(-1);
+      const quoted =
+        rawValue.length >= 2 &&
+        ((first === '"' && last === '"') || (first === "'" && last === "'"));
+      const value = quoted ? rawValue.slice(1, -1) : rawValue;
+      return value || null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 export function readControlApiConfig(
   env: NodeJS.ProcessEnv = process.env
 ): ControlApiConfig | null {
-  const serviceToken = env.AUTODEV_CONTROL_API_TOKEN?.trim() ?? "";
+  let serviceToken = env.AUTODEV_CONTROL_API_TOKEN?.trim() ?? "";
+  if (!serviceToken) {
+    const home = env.HOME?.trim();
+    const codexHome =
+      env.CODEX_HOME?.trim() || (home ? path.join(home, ".codex") : null);
+    if (codexHome) {
+      const secretFile =
+        env.AUTODEV_OPENLIT_SECRET_FILE?.trim() ||
+        path.join(codexHome, "openlit-secrets.env");
+      serviceToken =
+        readSecretFromFile(secretFile, "AUTODEV_CONTROL_API_TOKEN") ?? "";
+    }
+  }
   if (!serviceToken) return null;
   const baseUrl =
     env.AUTODEV_CONTROL_API_BASE_URL?.trim() || DEFAULT_CONTROL_API_BASE_URL;
@@ -115,7 +155,16 @@ export async function fetchControlApi<T>(
 
   let body: Partial<ControlApiError> = {};
   try {
-    body = (await response.json()) as Partial<ControlApiError>;
+    const raw = (await response.json()) as
+      | Partial<ControlApiError>
+      | { readonly error?: Partial<ControlApiError> };
+    if (raw && typeof raw === "object") {
+      if ("error" in raw && raw.error && typeof raw.error === "object") {
+        body = raw.error;
+      } else {
+        body = raw as Partial<ControlApiError>;
+      }
+    }
   } catch {
     // Non-JSON error body; fall through with empty error.
   }
