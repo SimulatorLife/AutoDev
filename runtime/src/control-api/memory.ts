@@ -7,6 +7,7 @@ import path from "node:path";
 
 import {
   assertMemoryInjectionOutcomeCohortFilter,
+  assertMemorySessionOutcomeCohortFilter,
   type EvidenceReference,
   EXPERIENCE_OUTCOMES,
   type ExperienceEnvelope,
@@ -15,6 +16,7 @@ import {
   MEMORY_KINDS,
   MEMORY_OUTCOME_REPORT_KINDS,
   MEMORY_REASON_CODES,
+  MEMORY_SESSION_COHORT_ASSIGNED_MODES,
   MEMORY_STATUSES,
   type MemoryActor,
   type MemoryInjectionOutcomeCohortFilter,
@@ -25,6 +27,8 @@ import {
   type MemoryReasonCode,
   type MemoryRecord,
   type MemoryScope,
+  type MemorySessionOutcomeCohortFilter,
+  type MemorySessionOutcomeReport,
   type MemoryStatus
 } from "@simulatorlife/autodev-core";
 import {
@@ -62,6 +66,7 @@ const MEMORY_CAPTURE_ACTION = "capture_experience";
 const MEMORY_PROMOTE_SKILL_ACTION = "promote-skill";
 const MEMORY_EXPERIENCE_RESOURCE = "/control/memory/experiences";
 const MEMORY_COHORT_RESOURCE = "/control/memory/cohorts";
+const MEMORY_SESSION_COHORT_RESOURCE = "/control/memory/session-cohorts";
 const MEMORY_EXPERIENCE_NOT_FOUND = "Memory experience was not found.";
 const MAX_NATIVE_TRANSCRIPT_BYTES = 32 * 1024 * 1024;
 const MAX_FILTER_VALUE = 256;
@@ -86,7 +91,7 @@ const EVIDENCE_KINDS = [
 ] as const satisfies readonly EvidenceReference["kind"][];
 
 type MemoryControlRoute = {
-  readonly resource: "records" | "experiences" | "cohorts";
+  readonly resource: "records" | "experiences" | "cohorts" | "session-cohorts";
   readonly id?: string;
   readonly action?:
     | "history"
@@ -97,6 +102,8 @@ type MemoryControlRoute = {
     | "supersede"
     | "purge"
     | "outcomes"
+    | "session-outcome"
+    | "session-outcomes"
     | typeof MEMORY_PROMOTE_SKILL_ACTION;
 };
 
@@ -138,10 +145,15 @@ function parseRoute(pathname: string): MemoryControlRoute | null {
   if (
     resource !== "records" &&
     resource !== "experiences" &&
-    resource !== "cohorts"
+    resource !== "cohorts" &&
+    resource !== "session-cohorts"
   )
     return null;
-  if (resource === "cohorts" && parts.length !== 1) return null;
+  if (
+    (resource === "cohorts" || resource === "session-cohorts") &&
+    parts.length !== 1
+  )
+    return null;
   if (parts.length === 1) return { resource };
   if (parts.length > 3 || !parts[1]) return null;
   let id: string;
@@ -165,7 +177,11 @@ function parseRoute(pathname: string): MemoryControlRoute | null {
       MEMORY_PROMOTE_SKILL_ACTION
     ].includes(action ?? "");
   const experienceAction =
-    resource === "experiences" && (action === "purge" || action === "outcomes");
+    resource === "experiences" &&
+    (action === "purge" ||
+      action === "outcomes" ||
+      action === "session-outcome" ||
+      action === "session-outcomes");
   if (!recordAction && !experienceAction) return null;
   return {
     resource,
@@ -818,6 +834,182 @@ async function reportExperienceOutcome(
       experienceId: experience.id,
       reportId: result.id,
       appended: result.appended
+    },
+    { "cache-control": "no-store" }
+  );
+}
+
+async function reportExperienceSessionOutcome(
+  service: MemoryService,
+  route: MemoryControlRoute,
+  actor: MemoryControlActor,
+  context: MemoryReadContext,
+  body: Record<string, unknown>,
+  response: ServerResponse,
+  audit: MemoryControlAudit
+): Promise<void> {
+  if (!route.id)
+    throw new MemoryValidationError("An experience id is required.");
+  try {
+    requireTaskHistoryOperator(actor, context);
+  } catch {
+    auditMemoryFailure(audit, route, "denied", "task_history_not_granted");
+    sendMemoryError(
+      response,
+      403,
+      "autodev_memory_task_history_forbidden",
+      "Operator task-history access is required."
+    );
+    return;
+  }
+  const experience = await service.getExperience(route.id, context);
+  if (!experience) {
+    auditMemoryFailure(audit, route, "denied", "experience_not_visible");
+    sendMemoryError(
+      response,
+      404,
+      "autodev_memory_not_found",
+      MEMORY_EXPERIENCE_NOT_FOUND
+    );
+    return;
+  }
+  if (!experience.repositoryId) {
+    throw new MemoryValidationError(
+      "Session outcome report requires repository-scoped experience."
+    );
+  }
+  exactKeys(body, ["outcomeKind", "reportKind", "evidence"]);
+  if (!EXPERIENCE_OUTCOMES.includes(body.outcomeKind as never)) {
+    throw new MemoryValidationError("Memory outcome kind is invalid.");
+  }
+  if (!MEMORY_OUTCOME_REPORT_KINDS.includes(body.reportKind as never)) {
+    throw new MemoryValidationError("Memory outcome report kind is invalid.");
+  }
+  const outcomeKind = body.outcomeKind as MemorySessionOutcomeReport["outcomeKind"];
+  const reportKind = body.reportKind as MemoryOutcomeReportKind;
+  const evidence = outcomeEvidenceReferences(body.evidence);
+  if (outcomeKind !== "unknown" && evidence.length === 0) {
+    throw new MemoryValidationError(
+      "Non-unknown outcome reports require at least one evidence reference."
+    );
+  }
+  const reportContext = experienceOutcomeContext(experience, context);
+  const trustedActor = actorForControl(actor);
+  const id = `memory-session-outcome-${createHash("sha256")
+    .update(
+      `${experience.workspaceId}\u0000${experience.repositoryId}\u0000${experience.taskId}`
+    )
+    .digest("hex")
+    .slice(0, 32)}`;
+  const report: MemorySessionOutcomeReport = {
+    id,
+    workspaceId: experience.workspaceId,
+    repositoryId: experience.repositoryId,
+    taskId: experience.taskId,
+    outcomeKind,
+    reportKind,
+    reportedAt: new Date().toISOString(),
+    reporterId: trustedActor.id,
+    reporterAuthority: trustedActor.authority,
+    reasonCode:
+      outcomeKind === "unknown" ? "reporter_unknown" : "reporter_supplied",
+    evidence
+  };
+  const result = await service.recordSessionOutcomeReport({
+    report,
+    actor: trustedActor,
+    context: reportContext
+  });
+  audit({
+    action: "report_session_outcome",
+    resource: MEMORY_EXPERIENCE_RESOURCE,
+    outcome: "ok",
+    changes: {
+      outcomeKind,
+      reportKind,
+      appended: result.appended
+    }
+  });
+  sendJson(
+    response,
+    200,
+    {
+      schema: "autodev-memory-session-outcome-report-v1",
+      experienceId: experience.id,
+      reportId: result.id,
+      appended: result.appended
+    },
+    { "cache-control": "no-store" }
+  );
+}
+
+async function serveExperienceSessionOutcome(
+  service: MemoryService,
+  route: MemoryControlRoute,
+  actor: MemoryControlActor,
+  context: MemoryReadContext,
+  response: ServerResponse,
+  audit: MemoryControlAudit
+): Promise<void> {
+  if (!route.id)
+    throw new MemoryValidationError("An experience id is required.");
+  try {
+    requireTaskHistoryOperator(actor, context);
+  } catch {
+    auditMemoryFailure(audit, route, "denied", "task_history_not_granted");
+    sendMemoryError(
+      response,
+      403,
+      "autodev_memory_task_history_forbidden",
+      "Operator task-history access is required."
+    );
+    return;
+  }
+  const experience = await service.getExperience(route.id, context);
+  if (!experience) {
+    auditMemoryFailure(audit, route, "denied", "experience_not_visible");
+    sendMemoryError(
+      response,
+      404,
+      "autodev_memory_not_found",
+      MEMORY_EXPERIENCE_NOT_FOUND
+    );
+    return;
+  }
+  if (!experience.repositoryId) {
+    throw new MemoryValidationError(
+      "Session outcome report requires repository-scoped experience."
+    );
+  }
+  const report = await service.getSessionOutcomeReport(
+    experience.workspaceId,
+    experience.repositoryId,
+    experience.taskId,
+    context
+  );
+  if (!report) {
+    auditMemoryFailure(audit, route, "denied", "report_not_found");
+    sendMemoryError(
+      response,
+      404,
+      "autodev_memory_not_found",
+      "No session outcome report exists for this session."
+    );
+    return;
+  }
+  audit({
+    action: "read_session_outcome",
+    resource: MEMORY_EXPERIENCE_RESOURCE,
+    outcome: "ok",
+    changes: null
+  });
+  sendJson(
+    response,
+    200,
+    {
+      schema: "autodev-memory-session-outcome-report-v1",
+      experienceId: experience.id,
+      report
     },
     { "cache-control": "no-store" }
   );
@@ -1840,16 +2032,25 @@ function allowedMethod(
     route.resource === "experiences" &&
     Boolean(route.id) &&
     route.action === "outcomes";
+  const experienceSessionOutcomes =
+    route.resource === "experiences" &&
+    Boolean(route.id) &&
+    (route.action === "session-outcome" || route.action === "session-outcomes");
   const mutatingAction = isLifecycleAction || experiencePurge;
   const canPost =
     experiencePurge ||
     experienceOutcomes ||
+    experienceSessionOutcomes ||
     (route.resource === "records" &&
       ((!route.id && !route.action) || isLifecycleAction));
   if (method === "GET" && mutatingAction) return "POST";
   if (method === "POST" && !canPost) return "GET";
   if (method !== "GET" && method !== "POST")
-    return experienceOutcomes ? "GET, POST" : mutatingAction ? "POST" : "GET";
+    return experienceOutcomes || experienceSessionOutcomes
+      ? "GET, POST"
+      : mutatingAction
+        ? "POST"
+        : "GET";
   return null;
 }
 
@@ -1935,6 +2136,17 @@ async function mutateRequest(
             response,
             audit
           )
+        : route.resource === "experiences" &&
+            (route.action === "session-outcome" || route.action === "session-outcomes")
+          ? reportExperienceSessionOutcome(
+              service,
+              route,
+              actor,
+              context,
+              body,
+              response,
+              audit
+            )
         : route.resource === "experiences" && route.action === "purge"
           ? purgeMemoryExperience(
               service,
@@ -2098,10 +2310,97 @@ async function serveInjectionOutcomeCohorts(
   sendJson(response, 200, page, { "cache-control": "no-store" });
 }
 
+function parseSessionOutcomeCohortFilter(
+  request: IncomingMessage,
+  pathname: string,
+  actor: MemoryControlActor
+): MemorySessionOutcomeCohortFilter {
+  const params = new URL(request.url ?? pathname, "http://127.0.0.1")
+    .searchParams;
+  const allowed = new Set([
+    "workspaceId",
+    "repositoryId",
+    "includeTaskHistory",
+    "occurredFrom",
+    "occurredUntil",
+    "memoryMode",
+    "injectionResult",
+    "reportKind",
+    "outcomeKind"
+  ]);
+  if ([...params.keys()].some((key) => !allowed.has(key))) {
+    throw new TypeError(
+      "Cohort reads accept only workspace/repository/time and bounded cohort filters."
+    );
+  }
+
+  const context = readContext(params, actor);
+  if (actor.role !== "operator" || context.canReadTaskHistory !== true) {
+    throw new MemoryScopeAccessError(
+      "Operator task-history access is required for memory outcome cohorts."
+    );
+  }
+  if (!context.repositoryId) {
+    throw new TypeError("Cohort reads require a repository scope.");
+  }
+
+  const memoryModes = valuesFromQuery(
+    params,
+    "memoryMode",
+    MEMORY_SESSION_COHORT_ASSIGNED_MODES
+  );
+  const injectionResults = valuesFromQuery(
+    params,
+    "injectionResult",
+    MEMORY_INJECTION_RESULTS
+  );
+  const reportKinds = valuesFromQuery(
+    params,
+    "reportKind",
+    MEMORY_OUTCOME_REPORT_KINDS
+  );
+  const outcomeKinds = valuesFromQuery(
+    params,
+    "outcomeKind",
+    EXPERIENCE_OUTCOMES
+  );
+  const filter: MemorySessionOutcomeCohortFilter = {
+    context,
+    occurredFrom: oneFilter(params, "occurredFrom", true)!,
+    occurredUntil: oneFilter(params, "occurredUntil", true)!,
+    ...(memoryModes.length > 0 ? { memoryModes } : {}),
+    ...(injectionResults.length > 0 ? { injectionResults } : {}),
+    ...(reportKinds.length > 0 ? { reportKinds } : {}),
+    ...(outcomeKinds.length > 0 ? { outcomeKinds } : {})
+  };
+  assertMemorySessionOutcomeCohortFilter(filter);
+  return filter;
+}
+
+async function serveSessionOutcomeCohorts(
+  service: MemoryService,
+  filter: MemorySessionOutcomeCohortFilter,
+  response: ServerResponse,
+  audit: MemoryControlAudit
+): Promise<void> {
+  const page = await service.aggregateSessionOutcomeCohorts(filter);
+  audit({
+    action: "read_session_cohorts",
+    resource: MEMORY_SESSION_COHORT_RESOURCE,
+    outcome: "ok",
+    changes: null
+  });
+  sendJson(response, 200, page, { "cache-control": "no-store" });
+}
+
 type ParsedMemoryControlFilters =
   | {
       readonly kind: "cohorts";
       readonly cohort: MemoryInjectionOutcomeCohortFilter;
+    }
+  | {
+      readonly kind: "session-cohorts";
+      readonly cohort: MemorySessionOutcomeCohortFilter;
     }
   | {
       readonly kind: "standard";
@@ -2120,6 +2419,12 @@ function parseMemoryRequestFilters(
       cohort: parseInjectionOutcomeCohortFilter(request, pathname, actor)
     };
   }
+  if (route.resource === "session-cohorts") {
+    return {
+      kind: "session-cohorts",
+      cohort: parseSessionOutcomeCohortFilter(request, pathname, actor)
+    };
+  }
   return {
     kind: "standard",
     filters: parseRouteFilters(request, pathname, route, actor)
@@ -2129,9 +2434,13 @@ function parseMemoryRequestFilters(
 function memoryContextForRequest(
   parsedFilters: ParsedMemoryControlFilters
 ): MemoryReadContext {
-  return parsedFilters.kind === "cohorts"
-    ? parsedFilters.cohort.context
-    : parsedFilters.filters.context;
+  if (
+    parsedFilters.kind === "cohorts" ||
+    parsedFilters.kind === "session-cohorts"
+  ) {
+    return parsedFilters.cohort.context;
+  }
+  return parsedFilters.filters.context;
 }
 
 function serveMemoryReadRoute(
@@ -2152,6 +2461,19 @@ function serveMemoryReadRoute(
       audit
     );
   }
+  if (
+    route.resource === "experiences" &&
+    (route.action === "session-outcome" || route.action === "session-outcomes")
+  ) {
+    return serveExperienceSessionOutcome(
+      service,
+      route,
+      actor,
+      filters.context,
+      response,
+      audit
+    );
+  }
   if (route.resource === "experiences")
     return serveExperience(service, route, filters, response);
   return serveRecord(service, route, filters, response);
@@ -2167,6 +2489,14 @@ function serveMemoryRequestRead(
 ): Promise<void> {
   if (parsedFilters.kind === "cohorts") {
     return serveInjectionOutcomeCohorts(
+      service,
+      parsedFilters.cohort,
+      response,
+      audit
+    );
+  }
+  if (parsedFilters.kind === "session-cohorts") {
+    return serveSessionOutcomeCohorts(
       service,
       parsedFilters.cohort,
       response,

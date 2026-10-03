@@ -3,13 +3,17 @@ import test from "node:test";
 
 import {
   assertMemoryInjectionOutcomeCohortFilter,
+  assertMemorySessionOutcomeCohortFilter,
   type ExperienceEnvelope,
   isMemoryExperienceVisibleTo,
   isMemoryInjectionSessionCardinality,
   isMemoryScopeVisibleTo,
+  isMemorySessionCohortAssignedMode,
   type MemoryReadContext,
   type MemoryScope,
-  parseMemoryExecutionMode
+  type MemorySessionOutcomeReport,
+  parseMemoryExecutionMode,
+  sessionOutcomeReportBodyMatches
 } from "../src/memory/types.ts";
 
 const context: MemoryReadContext = {
@@ -191,4 +195,179 @@ test("isMemoryInjectionSessionCardinality accepts only the bounded single/multip
   assert.equal(isMemoryInjectionSessionCardinality("none"), false);
   assert.equal(isMemoryInjectionSessionCardinality(1), false);
   assert.equal(isMemoryInjectionSessionCardinality(undefined), false);
+});
+
+test("isMemorySessionCohortAssignedMode accepts only assigned modes", () => {
+  assert.equal(isMemorySessionCohortAssignedMode("jit"), true);
+  assert.equal(isMemorySessionCohortAssignedMode("retrieval-only"), true);
+  assert.equal(isMemorySessionCohortAssignedMode("disabled"), true);
+  assert.equal(isMemorySessionCohortAssignedMode("invalid"), false);
+  assert.equal(isMemorySessionCohortAssignedMode("unknown"), false);
+  assert.equal(isMemorySessionCohortAssignedMode("mixed"), false);
+  assert.equal(isMemorySessionCohortAssignedMode(""), false);
+  assert.equal(isMemorySessionCohortAssignedMode(undefined), false);
+});
+
+test("assertMemorySessionOutcomeCohortFilter validates bounded session cohort filters", () => {
+  const validFilter = {
+    context: {
+      workspaceId: "workspace-a",
+      repositoryId: "repo-a",
+      canReadGlobal: false,
+      canReadTaskHistory: true
+    },
+    occurredFrom: "2026-09-01T00:00:00.000Z",
+    occurredUntil: "2026-10-01T00:00:00.000Z"
+  };
+  assert.doesNotThrow(() => assertMemorySessionOutcomeCohortFilter(validFilter));
+
+  assert.throws(
+    () =>
+      assertMemorySessionOutcomeCohortFilter({
+        ...validFilter,
+        context: { ...validFilter.context, workspaceId: "" }
+      }),
+    /requires a workspace id/u
+  );
+
+  assert.throws(
+    () =>
+      assertMemorySessionOutcomeCohortFilter({
+        ...validFilter,
+        context: { ...validFilter.context, repositoryId: "" }
+      }),
+    /requires a repository id/u
+  );
+
+  for (const selector of ["role", "taskId", "runId", "agentId"] as const) {
+    assert.throws(
+      () =>
+        assertMemorySessionOutcomeCohortFilter({
+          ...validFilter,
+          context: { ...validFilter.context, [selector]: "bad" }
+        }),
+      /cannot select a role, task, run, or agent/u
+    );
+  }
+
+  assert.throws(
+    () =>
+      assertMemorySessionOutcomeCohortFilter({
+        ...validFilter,
+        occurredFrom: "invalid"
+      }),
+    /not a valid timestamp/u
+  );
+
+  assert.throws(
+    () =>
+      assertMemorySessionOutcomeCohortFilter({
+        ...validFilter,
+        occurredFrom: "2026-10-01T00:00:00.000Z",
+        occurredUntil: "2026-09-01T00:00:00.000Z"
+      }),
+    /must be greater than or equal to 'from'/u
+  );
+
+  assert.throws(
+    () =>
+      assertMemorySessionOutcomeCohortFilter({
+        ...validFilter,
+        occurredFrom: "2024-01-01T00:00:00.000Z",
+        occurredUntil: "2026-01-01T00:00:00.000Z"
+      }),
+    /exceeds the 365-day maximum/u
+  );
+
+  assert.throws(
+    () =>
+      assertMemorySessionOutcomeCohortFilter({
+        ...validFilter,
+        memoryModes: ["invalid" as never]
+      }),
+    /memoryMode is invalid/u
+  );
+
+  assert.throws(
+    () =>
+      assertMemorySessionOutcomeCohortFilter({
+        ...validFilter,
+        memoryModes: ["unknown" as never]
+      }),
+    /memoryMode is invalid/u
+  );
+
+  assert.doesNotThrow(() =>
+    assertMemorySessionOutcomeCohortFilter({
+      ...validFilter,
+      memoryModes: ["jit", "retrieval-only", "disabled"],
+      injectionResults: ["injected", "empty", "skipped"],
+      outcomeKinds: ["success", "failure"],
+      reportKinds: ["task", "pull_request"]
+    })
+  );
+
+  assert.throws(
+    () =>
+      assertMemorySessionOutcomeCohortFilter({
+        ...validFilter,
+        injectionResults: ["bad" as never]
+      }),
+    /injectionResult is invalid/u
+  );
+
+  assert.throws(
+    () =>
+      assertMemorySessionOutcomeCohortFilter({
+        ...validFilter,
+        outcomeKinds: ["bad" as never]
+      }),
+    /outcomeKind is invalid/u
+  );
+
+  assert.throws(
+    () =>
+      assertMemorySessionOutcomeCohortFilter({
+        ...validFilter,
+        reportKinds: ["bad" as never]
+      }),
+    /reportKind is invalid/u
+  );
+});
+
+test("sessionOutcomeReportBodyMatches checks outcomeKind, reportKind, and evidence", () => {
+  const base: MemorySessionOutcomeReport = {
+    id: "rep-1",
+    workspaceId: "ws-1",
+    repositoryId: "repo-1",
+    taskId: "t-1",
+    outcomeKind: "success",
+    reportKind: "task",
+    reportedAt: "2026-09-01T00:00:00.000Z",
+    reporterId: "curator-1",
+    reporterAuthority: "curator",
+    reasonCode: "reporter_supplied",
+    evidence: [{ kind: "trajectory", uri: "codex://session/1" }]
+  };
+
+  assert.equal(sessionOutcomeReportBodyMatches(base, { ...base }), true);
+  assert.equal(
+    sessionOutcomeReportBodyMatches(base, { ...base, outcomeKind: "failure" }),
+    false
+  );
+  assert.equal(
+    sessionOutcomeReportBodyMatches(base, { ...base, reportKind: "issue" }),
+    false
+  );
+  assert.equal(
+    sessionOutcomeReportBodyMatches(base, { ...base, evidence: [] }),
+    false
+  );
+  assert.equal(
+    sessionOutcomeReportBodyMatches(base, {
+      ...base,
+      evidence: [{ kind: "trajectory", uri: "codex://session/2" }]
+    }),
+    false
+  );
 });

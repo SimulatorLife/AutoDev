@@ -2,11 +2,13 @@ import { createHash } from "node:crypto";
 
 import {
   assertMemoryInjectionOutcomeCohortFilter,
+  assertMemorySessionOutcomeCohortFilter,
   isMemoryInjectionSessionCardinality,
   type ExperienceEnvelope,
   type ExperienceListRequest,
   type ExperienceOutcome,
   type ExperienceSearchRequest,
+  type MemoryAuthority,
   type MemoryExecutionMode,
   type MemoryExperiencePurgeRequest,
   type MemoryExperiencePurgeResult,
@@ -30,11 +32,18 @@ import {
   type MemoryRecord,
   type MemoryRecordInjectionEventInput,
   type MemoryRecordOutcomeReportInput,
+  type MemoryRecordSessionOutcomeReportInput,
   type MemoryRepository,
   type MemoryScope,
   type MemorySearchHit,
   type MemorySearchRequest,
-  type MemoryVersionedUpdate
+  type MemorySessionCohortAssignedMode,
+  type MemorySessionOutcomeCohortCell,
+  type MemorySessionOutcomeCohortFilter,
+  type MemorySessionOutcomeCohortPage,
+  type MemorySessionOutcomeReport,
+  type MemoryVersionedUpdate,
+  sessionOutcomeReportBodyMatches
 } from "@simulatorlife/autodev-core";
 
 import {
@@ -49,7 +58,8 @@ import {
   hydrateInjectionEventRow,
   hydrateLifecycleEventRow,
   hydrateMemoryRecordRow,
-  hydrateOutcomeReportRow
+  hydrateOutcomeReportRow,
+  hydrateSessionOutcomeReportRow
 } from "./hydration.ts";
 import {
   type MemoryConnectionPool,
@@ -77,7 +87,8 @@ import {
   injectionEventToRow,
   lifecycleEventToRow,
   memoryRecordToRow,
-  outcomeReportToRow
+  outcomeReportToRow,
+  sessionOutcomeReportToRow
 } from "./serialize.ts";
 
 export interface PostgresVectorSupport extends VectorRankingWeights {
@@ -1164,6 +1175,310 @@ export class PostgresMemoryRepository implements MemoryRepository {
       cells,
       exposureCount,
       reportCount
+    };
+  }
+
+  /**
+   * Appends one reporter-supplied session-level outcome report.
+   * Exactly one report is permitted per unique session key (workspace_id, repository_id, task_id).
+   * Scope-aligned injection event must exist.
+   * Idempotent retry returns appended: false. Conflicting retry throws MemoryConflictError.
+   */
+  async recordSessionOutcomeReport(
+    input: MemoryRecordSessionOutcomeReportInput
+  ): Promise<{ appended: boolean; id: string }> {
+    const report = input.report;
+    const workspaceId = input.context.workspaceId;
+    const repositoryId = input.context.repositoryId;
+    const taskId = input.context.taskId;
+
+    if (
+      !report.repositoryId ||
+      !report.repositoryId.trim() ||
+      !repositoryId ||
+      !repositoryId.trim()
+    ) {
+      throw new MemoryConflictError(
+        "Session outcome report requires an explicit repository scope."
+      );
+    }
+    if (
+      report.repositoryId !== repositoryId ||
+      report.workspaceId !== workspaceId ||
+      report.taskId !== taskId
+    ) {
+      throw new MemoryConflictError(
+        "Session outcome report identity must match trusted context."
+      );
+    }
+    if (!taskId || !taskId.trim()) {
+      throw new MemoryConflictError(
+        "Session outcome report requires a trusted session task context."
+      );
+    }
+    if (
+      report.outcomeKind !== "unknown" &&
+      (!report.evidence || report.evidence.length === 0)
+    ) {
+      throw new MemoryConflictError(
+        "Non-unknown outcome reports require at least one evidence reference."
+      );
+    }
+
+    // Require at least one recorded injection event for (workspaceId, repositoryId, taskId)
+    const injectionCheck = await this.pool.query<{ count: string }>(
+      `SELECT COUNT(*)::bigint AS count FROM memory_injection_events
+       WHERE workspace_id = $1 AND repository_id = $2 AND task_id = $3
+       LIMIT 1`,
+      [workspaceId, repositoryId, taskId]
+    );
+    if (!injectionCheck.rows[0] || Number(injectionCheck.rows[0].count) <= 0) {
+      throw new MemoryConflictError(
+        "Session outcome report requires at least one recorded injection event for this session key."
+      );
+    }
+
+    // Check for existing session outcome report
+    const existingReport = await this.getSessionOutcomeReport(
+      workspaceId,
+      repositoryId,
+      taskId
+    );
+    if (existingReport) {
+      if (sessionOutcomeReportBodyMatches(existingReport, report)) {
+        return { appended: false, id: existingReport.id };
+      }
+      throw new MemoryConflictError(
+        "Session outcome report conflicts with a previously recorded report for this session."
+      );
+    }
+
+    const storedReport: MemorySessionOutcomeReport = {
+      ...report,
+      workspaceId,
+      repositoryId,
+      taskId,
+      reasonCode: report.reasonCode ?? "reporter_supplied",
+      reporterId: input.actor.id,
+      reporterAuthority: input.actor.authority as MemoryAuthority
+    };
+
+    const row = sessionOutcomeReportToRow(storedReport);
+    const insert = buildInsert("memory_session_outcome_reports", row);
+    try {
+      await this.pool.query(insert.text, insert.params);
+      return { appended: true, id: storedReport.id };
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        const racedExisting = await this.getSessionOutcomeReport(
+          workspaceId,
+          repositoryId,
+          taskId
+        );
+        if (
+          racedExisting &&
+          sessionOutcomeReportBodyMatches(racedExisting, storedReport)
+        ) {
+          return { appended: false, id: racedExisting.id };
+        }
+        throw new MemoryConflictError(
+          `Session outcome report ${storedReport.id} already exists for this session key.`
+        );
+      }
+      throw error;
+    }
+  }
+
+  async getSessionOutcomeReport(
+    workspaceId: string,
+    repositoryId: string,
+    taskId: string
+  ): Promise<MemorySessionOutcomeReport | null> {
+    if (!workspaceId.trim() || !repositoryId.trim() || !taskId.trim()) {
+      return null;
+    }
+    const params = new SqlParams();
+    const w = params.add(workspaceId);
+    const r = params.add(repositoryId);
+    const t = params.add(taskId);
+    const text = `SELECT * FROM memory_session_outcome_reports
+      WHERE workspace_id = ${w}
+        AND repository_id = ${r}
+        AND task_id = ${t}
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`;
+    const result = await this.pool.query(text, params.all);
+    const matched = result.rows[0];
+    return matched ? hydrateSessionOutcomeReportRow(matched) : null;
+  }
+
+  /**
+   * Workspace/repository/time-scoped GROUP BY aggregate over canonical
+   * append-only injection events and the session outcome report table, at
+   * the unique session key unit. Derives each session's full-session mode
+   * from its complete, unfiltered injection-event set, regardless of the
+   * selected time window or mode/result filter. A session surfaces as a
+   * cell only when its full-session mode is a single assigned mode
+   * (jit/retrieval-only/disabled); mixed-mode sessions are counted only in
+   * mixedModeSessionCount, and invalid/unknown-only sessions are excluded
+   * from this response entirely. Joins the single session outcome report
+   * per session key (workspace_id, repository_id, task_id) and derives
+   * conflictingOutcomeSessionCount as a diagnostic from per-injection-token
+   * report disagreement.
+   */
+  async aggregateSessionOutcomeCohorts(
+    request: MemorySessionOutcomeCohortFilter
+  ): Promise<MemorySessionOutcomeCohortPage> {
+    assertMemorySessionOutcomeCohortFilter(request);
+    const workspaceId = request.context.workspaceId;
+    const repositoryId = request.context.repositoryId as string;
+
+    const params = new SqlParams();
+    const workspaceParam = params.add(workspaceId);
+    const repositoryParam = params.add(repositoryId);
+    const fromParam = params.add(request.occurredFrom);
+    const untilParam = params.add(request.occurredUntil);
+
+    let eventFilterSql = "";
+    if (request.memoryModes && request.memoryModes.length > 0) {
+      const modeParam = params.add(request.memoryModes);
+      eventFilterSql += ` AND i.memory_mode = ANY(${modeParam}::text[])`;
+    }
+    if (request.injectionResults && request.injectionResults.length > 0) {
+      const resultParam = params.add(request.injectionResults);
+      eventFilterSql += ` AND i.injection_result = ANY(${resultParam}::text[])`;
+    }
+
+    let reportFilterSql = "";
+    if (request.reportKinds && request.reportKinds.length > 0) {
+      const rkParam = params.add(request.reportKinds);
+      reportFilterSql += ` AND r.report_kind = ANY(${rkParam}::text[])`;
+    }
+    if (request.outcomeKinds && request.outcomeKinds.length > 0) {
+      const okParam = params.add(request.outcomeKinds);
+      reportFilterSql += ` AND r.outcome_kind = ANY(${okParam}::text[])`;
+    }
+
+    const text = `
+      WITH in_window_events AS MATERIALIZED (
+        SELECT i.workspace_id, i.repository_id, i.task_id
+        FROM memory_injection_events i
+        WHERE i.workspace_id = ${workspaceParam}
+          AND i.repository_id = ${repositoryParam}
+          AND i.occurred_at >= ${fromParam}
+          AND i.occurred_at <= ${untilParam}${eventFilterSql}
+      ),
+      in_window_sessions AS MATERIALIZED (
+        SELECT DISTINCT workspace_id, repository_id, task_id
+        FROM in_window_events
+      ),
+      full_session_stats AS MATERIALIZED (
+        SELECT
+          ws.workspace_id,
+          ws.repository_id,
+          ws.task_id,
+          COUNT(DISTINCT si.memory_mode)::int AS mode_count,
+          MIN(si.memory_mode) AS sample_mode,
+          COUNT(DISTINCT mor.outcome_kind)::int AS token_outcome_kind_count
+        FROM in_window_sessions ws
+        JOIN memory_injection_events si
+          ON si.workspace_id = ws.workspace_id
+         AND si.repository_id = ws.repository_id
+         AND si.task_id = ws.task_id
+        LEFT JOIN memory_outcome_reports mor
+          ON mor.workspace_id = si.workspace_id
+         AND mor.repository_id = si.repository_id
+         AND mor.task_id = si.task_id
+         AND mor.correlation_token = si.correlation_token
+        GROUP BY ws.workspace_id, ws.repository_id, ws.task_id
+      ),
+      session_outcomes AS MATERIALIZED (
+        SELECT
+          fss.workspace_id,
+          fss.repository_id,
+          fss.task_id,
+          CASE
+            WHEN fss.mode_count > 1 THEN 'mixed'
+            WHEN fss.sample_mode = ANY(ARRAY['jit', 'retrieval-only', 'disabled']) THEN fss.sample_mode
+            ELSE 'excluded'
+          END AS cohort_mode,
+          CASE
+            WHEN fss.token_outcome_kind_count > 1 THEN 1
+            ELSE 0
+          END AS has_conflicting_outcomes,
+          r.outcome_kind
+        FROM full_session_stats fss
+        LEFT JOIN memory_session_outcome_reports r
+          ON r.workspace_id = fss.workspace_id
+         AND r.repository_id = fss.repository_id
+         AND r.task_id = fss.task_id
+        WHERE 1 = 1${reportFilterSql}
+      )
+      SELECT
+        cohort_mode,
+        outcome_kind,
+        COUNT(*)::bigint AS session_count,
+        SUM(has_conflicting_outcomes)::bigint AS conflicting_count
+      FROM session_outcomes
+      WHERE cohort_mode <> 'excluded'
+      GROUP BY cohort_mode, outcome_kind
+      ORDER BY cohort_mode, outcome_kind NULLS FIRST
+    `;
+
+    const result = await this.pool.query<{
+      cohort_mode: string;
+      outcome_kind: string | null;
+      session_count: string | number;
+      conflicting_count: string | number;
+    }>(text, params.all);
+
+    let sessionCount = 0;
+    let reportedSessionCount = 0;
+    let unreportedSessionCount = 0;
+    let mixedModeSessionCount = 0;
+    let conflictingOutcomeSessionCount = 0;
+    const cells: MemorySessionOutcomeCohortCell[] = [];
+
+    for (const row of result.rows) {
+      const cellSessionCount = parseCohortCount(row.session_count, "session_count");
+      const cellConflictingCount = parseCohortCount(
+        row.conflicting_count ?? 0,
+        "conflicting_count"
+      );
+      conflictingOutcomeSessionCount += cellConflictingCount;
+
+      if (row.cohort_mode === "mixed") {
+        mixedModeSessionCount += cellSessionCount;
+        continue;
+      }
+
+      const outcomeKind = (row.outcome_kind ?? null) as ExperienceOutcome | null;
+      sessionCount += cellSessionCount;
+      if (outcomeKind !== null) {
+        reportedSessionCount += cellSessionCount;
+      } else {
+        unreportedSessionCount += cellSessionCount;
+      }
+
+      cells.push({
+        memoryMode: row.cohort_mode as MemorySessionCohortAssignedMode,
+        outcomeKind,
+        sessionCount: cellSessionCount
+      });
+    }
+
+    return {
+      schema: "autodev-memory-session-outcome-cohorts-v1",
+      workspaceId,
+      repositoryId,
+      occurredFrom: request.occurredFrom,
+      occurredUntil: request.occurredUntil,
+      cells,
+      sessionCount,
+      reportedSessionCount,
+      unreportedSessionCount,
+      conflictingOutcomeSessionCount,
+      mixedModeSessionCount
     };
   }
 }

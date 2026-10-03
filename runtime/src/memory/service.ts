@@ -10,6 +10,7 @@ import {
 } from "@opentelemetry/api";
 import {
   assertMemoryInjectionOutcomeCohortFilter,
+  assertMemorySessionOutcomeCohortFilter,
   type EvidenceReference,
   EXPERIENCE_OUTCOMES,
   type ExperienceEnvelope,
@@ -44,10 +45,14 @@ import {
   type MemoryRecord,
   type MemoryRecordInjectionEventInput,
   type MemoryRecordOutcomeReportInput,
+  type MemoryRecordSessionOutcomeReportInput,
   type MemoryRepository,
   type MemoryResearchRequest,
   type MemorySearchHit,
   type MemorySearchRequest,
+  type MemorySessionOutcomeCohortFilter,
+  type MemorySessionOutcomeCohortPage,
+  type MemorySessionOutcomeReport,
   type MemoryStatus,
   type MemoryVersionedUpdate,
   type MemoryWhyResult
@@ -192,6 +197,8 @@ const MEMORY_OPERATIONS = {
   injectionRecord: "memory.injection.record",
   injectionOutcomeList: "memory.injection.outcome.list",
   injectionOutcomeAggregate: "memory.injection.outcome.aggregate",
+  sessionOutcomeAggregate: "memory.session.outcome.aggregate",
+  sessionOutcomeReport: "memory.session.outcome.report",
   invalidate: "memory.invalidate",
   outcomeReport: "memory.outcome.report",
   packet: "memory.packet",
@@ -224,6 +231,7 @@ interface MemoryMetricInstruments {
   readonly packetCharacters: Histogram<MemoryMetricAttributes>;
   readonly packetTokens: Histogram<MemoryMetricAttributes>;
   readonly outcomeReports: Counter<MemoryMetricAttributes>;
+  readonly sessionOutcomeReports: Counter<MemoryMetricAttributes>;
 }
 
 function recordMemoryMetric(record: () => void): void {
@@ -298,7 +306,15 @@ function createMemoryMetricInstruments(meter: Meter): MemoryMetricInstruments {
       description:
         "Newly persisted outcome reports for memory injections, counted only when the report is appended (not on idempotent retries).",
       unit: "{report}"
-    })
+    }),
+    sessionOutcomeReports: meter.createCounter(
+      "autodev.memory.session_outcome_reports",
+      {
+        description:
+          "Newly persisted session-level outcome reports, counted only when the report is appended.",
+        unit: "{report}"
+      }
+    )
   };
 }
 
@@ -766,6 +782,122 @@ export class MemoryService {
   }
 
   /**
+   * Appends one reporter-supplied session-level outcome report.
+   * Exactly one report is permitted per unique session key (workspace_id, repository_id, task_id).
+   * Scope-aligned injection event must exist.
+   * Same-body retries return appended: false; conflicting retries fail closed.
+   */
+  recordSessionOutcomeReport(
+    input: MemoryRecordSessionOutcomeReportInput
+  ): Promise<{ readonly appended: boolean; readonly id: string }> {
+    return this.withSpan(
+      MEMORY_OPERATIONS.sessionOutcomeReport,
+      async (span) => {
+        const { report } = input;
+        this.assertActor(input.actor);
+        if (
+          input.actor.authority !== "root" &&
+          input.actor.authority !== "curator"
+        ) {
+          throw new MemoryAuthorizationError(
+            "Only root or memory curator authorities may record session outcome reports."
+          );
+        }
+        const storedAuthority: MemoryAuthority = input.actor.authority;
+        if (
+          report.workspaceId !== input.context.workspaceId ||
+          !input.context.repositoryId ||
+          report.repositoryId !== input.context.repositoryId ||
+          report.taskId !== input.context.taskId
+        ) {
+          throw new MemoryAuthorizationError(
+            "Session outcome reports are restricted to the trusted session's workspace, repository, and task."
+          );
+        }
+        const cleanEvidence = sanitizeEvidence(report.evidence);
+        if (report.outcomeKind !== "unknown" && cleanEvidence.length === 0) {
+          throw new MemoryValidationError(
+            "Non-unknown outcome reports require at least one evidence reference."
+          );
+        }
+        try {
+          const result = await this.repository.recordSessionOutcomeReport({
+            ...input,
+            report: {
+              ...report,
+              reporterAuthority: storedAuthority,
+              evidence: cleanEvidence
+            }
+          });
+          const reportKindValue: string = isMemoryOutcomeReportKind(
+            report.reportKind
+          )
+            ? report.reportKind
+            : "unknown";
+          const outcomeKindValue: string = EXPERIENCE_OUTCOMES.includes(
+            report.outcomeKind as (typeof EXPERIENCE_OUTCOMES)[number]
+          )
+            ? report.outcomeKind
+            : "unknown";
+          span.setAttribute(
+            "memory.session.outcome.report_kind",
+            reportKindValue
+          );
+          span.setAttribute("memory.session.outcome.kind", outcomeKindValue);
+          if (result.appended) {
+            recordMemoryMetric(() =>
+              this.metrics.sessionOutcomeReports.add(1, {
+                "autodev.memory.session_outcome.report_kind": reportKindValue,
+                "autodev.memory.session_outcome.kind": outcomeKindValue
+              })
+            );
+          }
+          return result;
+        } catch (error) {
+          if (error instanceof RepositoryMemoryConflictError) {
+            throw new MemoryConflictError(error.message);
+          }
+          throw error;
+        }
+      }
+    );
+  }
+
+  /**
+   * Look up the single session outcome report for a trusted session key, if any.
+   */
+  async getSessionOutcomeReport(
+    workspaceId: string,
+    repositoryId: string,
+    taskId: string,
+    context: MemoryReadContext
+  ): Promise<MemorySessionOutcomeReport | null> {
+    if (context.workspaceId !== workspaceId) {
+      throw new MemoryAuthorizationError(
+        "Workspace mismatch in session outcome report retrieval."
+      );
+    }
+    if (
+      context.repositoryId !== undefined &&
+      context.repositoryId !== repositoryId
+    ) {
+      throw new MemoryAuthorizationError(
+        "Repository mismatch in session outcome report retrieval."
+      );
+    }
+    if (!context.canReadTaskHistory && context.taskId !== taskId) {
+      throw new MemoryAuthorizationError(
+        "Task history access required to read another session's outcome report."
+      );
+    }
+    return await this.repository.getSessionOutcomeReport(
+      workspaceId,
+      repositoryId,
+      taskId
+    );
+  }
+
+  /**
    * Scoped read/join between stored injection events and their
    * reporter-supplied outcomes. Returns one row per injection; rows without a
    * matching outcome carry `outcome: null`. Reports that point at an injection
@@ -873,6 +1005,54 @@ export class MemoryService {
         span.setAttribute("memory.injection.outcome.reports", page.reportCount);
         span.setAttribute(
           "memory.injection.outcome.cohort_cells",
+          page.cells.length
+        );
+        return page;
+      }
+    );
+  }
+
+  /**
+   * Bounded workspace/repository/time aggregate over deduplicated sessions.
+   * Derives session mode and consensus outcome across the full injection set.
+   * Returns counts only; no IDs, tokens, or evidence.
+   */
+  aggregateSessionOutcomeCohorts(
+    request: MemorySessionOutcomeCohortFilter
+  ): Promise<MemorySessionOutcomeCohortPage> {
+    return this.withSpan(
+      MEMORY_OPERATIONS.sessionOutcomeAggregate,
+      async (span) => {
+        if (request.context.canReadTaskHistory !== true) {
+          throw new MemoryAuthorizationError(
+            "Task-history access is required for memory session outcome cohorts."
+          );
+        }
+        assertMemorySessionOutcomeCohortFilter(request);
+        const page =
+          await this.repository.aggregateSessionOutcomeCohorts(request);
+        span.setAttribute(
+          "memory.session.outcome.sessions",
+          page.sessionCount
+        );
+        span.setAttribute(
+          "memory.session.outcome.reported_sessions",
+          page.reportedSessionCount
+        );
+        span.setAttribute(
+          "memory.session.outcome.unreported_sessions",
+          page.unreportedSessionCount
+        );
+        span.setAttribute(
+          "memory.session.outcome.conflicting_sessions",
+          page.conflictingOutcomeSessionCount
+        );
+        span.setAttribute(
+          "memory.session.outcome.mixed_mode_sessions",
+          page.mixedModeSessionCount
+        );
+        span.setAttribute(
+          "memory.session.outcome.cohort_cells",
           page.cells.length
         );
         return page;

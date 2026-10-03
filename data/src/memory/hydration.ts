@@ -23,6 +23,7 @@ import {
   type MemoryProvenance,
   type MemoryReasonCode,
   type MemoryRecord,
+  type MemorySessionOutcomeReport,
   type MemoryStatus,
   type MemoryValidationState,
   type MemoryValidity
@@ -615,6 +616,46 @@ export function hydrateOutcomeReportRow(
       "correlation_token",
       row.correlation_token
     ),
+    outcomeKind: requireEnum<ExperienceOutcome>(
+      table,
+      "outcome_kind",
+      row.outcome_kind,
+      EXPERIENCE_OUTCOMES
+    ),
+    reportKind: requireEnum<MemoryOutcomeReportKind>(
+      table,
+      "report_kind",
+      row.report_kind,
+      MEMORY_OUTCOME_REPORT_KIND_SET
+    ),
+    reportedAt: requireIsoString(table, "reported_at", row.reported_at),
+    reporterId: requireString(table, "reporter_id", row.reporter_id),
+    reporterAuthority: requireEnum<MemoryAuthority>(
+      table,
+      "reporter_authority",
+      row.reporter_authority,
+      MEMORY_AUTHORITY_SET
+    ),
+    reasonCode: requireEnum<MemoryOutcomeReportReasonCode>(
+      table,
+      "reason_code",
+      row.reason_code,
+      MEMORY_OUTCOME_REPORT_REASON_SET
+    ),
+    evidence: parseEvidenceList(table, "evidence", row.evidence ?? "[]")
+  };
+}
+
+/** Hydrate one `memory_session_outcome_reports` row. */
+export function hydrateSessionOutcomeReportRow(
+  row: Record<string, unknown>
+): MemorySessionOutcomeReport {
+  const table = "memory_session_outcome_reports";
+  return {
+    id: requireString(table, "id", row.id),
+    workspaceId: requireString(table, "workspace_id", row.workspace_id),
+    repositoryId: requireString(table, "repository_id", row.repository_id),
+    taskId: requireString(table, "task_id", row.task_id),
     outcomeKind: requireEnum<ExperienceOutcome>(
       table,
       "outcome_kind",

@@ -423,6 +423,75 @@ CREATE TRIGGER memory_outcome_reports_no_update
 CREATE INDEX idx_memory_injection_events_session_key
   ON memory_injection_events (workspace_id, repository_id, task_id);
 `
+  },
+  {
+    version: 10,
+    description: "Create append-only session outcome reports table",
+    sql: `
+-- Session-level outcome reports are append-only: exactly one report per trusted
+-- (workspace_id, repository_id, task_id) session key.
+-- Requires repository scope and at least one recorded injection event.
+CREATE TABLE memory_session_outcome_reports (
+  id text PRIMARY KEY,
+  workspace_id text NOT NULL,
+  repository_id text NOT NULL,
+  task_id text NOT NULL,
+  outcome_kind text NOT NULL CHECK (outcome_kind IN ('success', 'partial', 'failure', 'cancelled', 'unknown')),
+  report_kind text NOT NULL CHECK (report_kind IN ('task', 'pull_request', 'issue', 'other')),
+  reported_at timestamptz NOT NULL,
+  reporter_id text NOT NULL,
+  -- "worker" and "system" must never appear in the recorded authority:
+  -- worker actors cannot author outcomes, and system actors only emit
+  -- injection events, not outcomes. Only root/curator are eligible.
+  reporter_authority text NOT NULL CHECK (reporter_authority IN ('root', 'curator')),
+  reason_code text NOT NULL CHECK (reason_code IN (${MEMORY_OUTCOME_REPORT_REASON_SQL})),
+  evidence jsonb NOT NULL DEFAULT '[]'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT chk_memory_session_outcome_evidence CHECK (
+    outcome_kind = 'unknown' OR jsonb_array_length(evidence) > 0
+  )
+);
+
+-- Unique session key constraint: exactly one outcome report per session
+CREATE UNIQUE INDEX uniq_memory_session_outcome_reports_key
+  ON memory_session_outcome_reports (workspace_id, repository_id, task_id);
+
+CREATE INDEX idx_memory_session_outcome_reports_session_key
+  ON memory_session_outcome_reports (workspace_id, repository_id, task_id);
+
+CREATE INDEX idx_memory_session_outcome_reports_reported_at
+  ON memory_session_outcome_reports (workspace_id, repository_id, reported_at);
+
+-- Trigger ensuring that at least one matching row in memory_injection_events exists for (workspace_id, repository_id, task_id)
+CREATE FUNCTION memory_session_outcome_reports_validate_session() RETURNS trigger AS $fn$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM memory_injection_events
+    WHERE workspace_id = NEW.workspace_id
+      AND repository_id = NEW.repository_id
+      AND task_id = NEW.task_id
+  ) THEN
+    RAISE EXCEPTION 'memory_session_outcome_reports requires at least one recorded injection event for (workspace_id, repository_id, task_id)';
+  END IF;
+  RETURN NEW;
+END;
+$fn$ LANGUAGE plpgsql;
+
+CREATE TRIGGER memory_session_outcome_reports_check_session
+  BEFORE INSERT ON memory_session_outcome_reports
+  FOR EACH ROW EXECUTE FUNCTION memory_session_outcome_reports_validate_session();
+
+-- Append-only trigger: prevents UPDATE or DELETE
+CREATE FUNCTION memory_session_outcome_reports_append_only() RETURNS trigger AS $fn$
+BEGIN
+  RAISE EXCEPTION 'memory_session_outcome_reports is append-only: % is not permitted', TG_OP;
+END;
+$fn$ LANGUAGE plpgsql;
+
+CREATE TRIGGER memory_session_outcome_reports_no_update
+  BEFORE UPDATE OR DELETE ON memory_session_outcome_reports
+  FOR EACH ROW EXECUTE FUNCTION memory_session_outcome_reports_append_only();
+`
   }
 ];
 

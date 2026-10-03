@@ -404,6 +404,66 @@ export interface MemoryRecordOutcomeReportInput {
 }
 
 /**
+ * Append-only, session-level task outcome report. Exactly one report may
+ * exist per trusted (workspace, repository, task) session key. This is a
+ * distinct table/contract from the per-injection `MemoryOutcomeReport`
+ * above, not a wrapper or alias over it: it is a separate session-level
+ * task outcome source for ablation analysis. The body is limited to
+ * `reportKind`, `outcomeKind`, and `evidence`; reporter identity and
+ * authority are derived only from the recording actor, never from
+ * caller-supplied fields.
+ */
+export interface MemorySessionOutcomeReport {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly repositoryId: string;
+  readonly taskId: string;
+  readonly outcomeKind: ExperienceOutcome;
+  readonly reportKind: MemoryOutcomeReportKind;
+  readonly reportedAt: string;
+  readonly reporterId: string;
+  readonly reporterAuthority: MemoryAuthority;
+  readonly reasonCode: MemoryOutcomeReportReasonCode;
+  /** Empty only when `outcomeKind === "unknown"`. */
+  readonly evidence: readonly EvidenceReference[];
+}
+
+export interface MemoryRecordSessionOutcomeReportInput {
+  readonly report: MemorySessionOutcomeReport;
+  readonly actor: MemoryActor;
+  readonly context: MemoryReadContext;
+}
+
+export interface MemoryRecordSessionOutcomeReportResult {
+  readonly appended: boolean;
+  readonly id: string;
+}
+
+/**
+ * True when two session outcome reports carry the same `reportKind`,
+ * `outcomeKind`, and evidence set (ignoring identity/timing fields); used
+ * to decide whether a retry is an idempotent no-op or a genuine conflict.
+ */
+export function sessionOutcomeReportBodyMatches(
+  a: MemorySessionOutcomeReport,
+  b: MemorySessionOutcomeReport
+): boolean {
+  if (a.outcomeKind !== b.outcomeKind || a.reportKind !== b.reportKind) {
+    return false;
+  }
+  if (a.evidence.length !== b.evidence.length) {
+    return false;
+  }
+  const normalize = (refs: readonly EvidenceReference[]) =>
+    refs
+      .map((ref) => `${ref.kind}\u0000${ref.uri}\u0000${ref.revision ?? ""}`)
+      .sort();
+  const aEvidence = normalize(a.evidence);
+  const bEvidence = normalize(b.evidence);
+  return aEvidence.every((value, index) => value === bEvidence[index]);
+}
+
+/**
  * Session-level join key. The runtime emits injection events whose `taskId`
  * is the session identity (sessionKey ?? requestId), but whose `runId` and
  * `agentId` are request-level identifiers (requestId, threadId). A reporter-
@@ -795,6 +855,70 @@ export interface MemoryRepository {
   aggregateInjectionOutcomeCohorts(
     request: MemoryInjectionOutcomeCohortFilter
   ): Promise<MemoryInjectionOutcomeCohortPage>;
+
+  /**
+   * Append-only, session-level task outcome keyed uniquely by
+   * (workspace_id, repository_id, task_id). Distinct from
+   * `recordOutcomeReport`'s per-injection-token table: this is a separate
+   * task-outcome source for ablation analysis, not a wrapper or fan-out of
+   * per-injection reports. Implementations must require a repository
+   * scope, require at least one recorded injection event for the session
+   * key, require non-empty evidence for any non-"unknown" outcomeKind,
+   * derive reporter identity/authority only from `actor`, and treat an
+   * identical-body retry as idempotent while rejecting a conflicting-body
+   * retry for the same session key.
+   */
+  recordSessionOutcomeReport(
+    input: MemoryRecordSessionOutcomeReportInput
+  ): Promise<MemoryRecordSessionOutcomeReportResult>;
+  /** Returns the single session outcome report for a session key, or null. */
+  getSessionOutcomeReport(
+    workspaceId: string,
+    repositoryId: string,
+    taskId: string
+  ): Promise<MemorySessionOutcomeReport | null>;
+
+  /**
+   * Workspace/repository/time-scoped GROUP BY aggregate over the canonical
+   * append-only injection event table and the session outcome report
+   * table, at the unique session key (workspace, repository, task) unit --
+   * distinct from `aggregateInjectionOutcomeCohorts`'s per-exposure unit.
+   *
+   * Implementations must:
+   * - parameterize every bound (workspace, repository, occurred window,
+   *   bounded enum filters) as `$n`-style placeholders;
+   * - select the observed session population as sessions with at least one
+   *   in-window injection event matching the optional memoryMode/
+   *   injectionResult filters;
+   * - derive each selected session's mode from its complete, unfiltered
+   *   injection-event set: a single distinct mode maps to that mode, and
+   *   more than one distinct mode maps to "mixed"; filters never change
+   *   this full-session classification;
+   * - represent a session as a cell only when its full-session mode is a
+   *   single assigned mode (jit/retrieval-only/disabled); mixed-mode
+   *   sessions are excluded from cells and counted only in
+   *   mixedModeSessionCount, and sessions whose full-session mode is a
+   *   single "invalid" or "unknown" mode are excluded from this
+   *   response entirely -- never coerced into the "disabled" cell or
+   *   counted anywhere in this aggregate;
+   * - count unique sessions (sessionCount, reportedSessionCount,
+   *   unreportedSessionCount, mixedModeSessionCount); sessionCount sums
+   *   only the single-assigned-mode cells;
+   * - derive conflictingOutcomeSessionCount as a diagnostic from
+   *   per-injection-token report disagreement for each selected session
+   *   (excluding invalid/unknown-only sessions); it never overrides the
+   *   canonical session outcome report and may overlap with
+   *   mixedModeSessionCount;
+   * - join each selected session to at most one session outcome report and
+   *   group cells by (memoryMode, outcomeKind), keeping unreported cells
+   *   (null outcomeKind) explicit rather than dropping them;
+   * - never include task/session ids, evidence URIs, reporter identities,
+   *   or request-exposure counts in the response; exposure counts remain
+   *   the responsibility of aggregateInjectionOutcomeCohorts.
+   */
+  aggregateSessionOutcomeCohorts(
+    request: MemorySessionOutcomeCohortFilter
+  ): Promise<MemorySessionOutcomeCohortPage>;
 }
 
 /** Current task content is transient input to JIT research and is never stored as a memory record. */
@@ -948,5 +1072,155 @@ export function assertMemoryInjectionOutcomeCohortFilter(
     filter.outcomeKinds.some((kind) => !EXPERIENCE_OUTCOMES.includes(kind))
   ) {
     throw new TypeError("Cohort filter outcomeKind is invalid.");
+  }
+}
+
+export const MEMORY_SESSION_COHORT_ASSIGNED_MODES = [
+  "jit",
+  "retrieval-only",
+  "disabled"
+] as const;
+
+export type MemorySessionCohortAssignedMode =
+  (typeof MEMORY_SESSION_COHORT_ASSIGNED_MODES)[number];
+
+export function isMemorySessionCohortAssignedMode(
+  value: unknown
+): value is MemorySessionCohortAssignedMode {
+  return (
+    typeof value === "string" &&
+    (MEMORY_SESSION_COHORT_ASSIGNED_MODES as readonly string[]).includes(value)
+  );
+}
+
+export interface MemorySessionOutcomeCohortFilter {
+  readonly context: MemoryReadContext;
+  /** Inclusive lower bound on injection occurred_at. Required, <= 365 days from occurredUntil. */
+  readonly occurredFrom: string;
+  /** Inclusive upper bound on injection occurred_at. Required, >= occurredFrom. */
+  readonly occurredUntil: string;
+  /** Optional bounded assigned-mode filter applied only to in-window session selection. */
+  readonly memoryModes?: readonly MemorySessionCohortAssignedMode[];
+  /** Optional bounded injection-result filter applied only to in-window session selection. */
+  readonly injectionResults?: readonly MemoryInjectionResult[];
+  /** Optional bounded report-kind filter applied to the joined session outcome report. */
+  readonly reportKinds?: readonly MemoryOutcomeReportKind[];
+  /** Optional bounded outcome-kind filter applied to the joined session outcome report. */
+  readonly outcomeKinds?: readonly ExperienceOutcome[];
+}
+
+export interface MemorySessionOutcomeCohortCell {
+  /**
+   * One of the three full-session single assigned modes. Mixed-mode
+   * sessions (more than one distinct mode in the full session) and
+   * invalid/unknown-only sessions are never represented as a cell: mixed
+   * sessions are counted only in `mixedModeSessionCount`, and
+   * invalid/unknown-only sessions are excluded from this response
+   * entirely -- never coerced into the "disabled" cell.
+   */
+  readonly memoryMode: MemorySessionCohortAssignedMode;
+  /** Null when no session outcome report exists for sessions in this cell. */
+  readonly outcomeKind: ExperienceOutcome | null;
+  /** Unique session count for this cell. */
+  readonly sessionCount: number;
+}
+
+export interface MemorySessionOutcomeCohortPage {
+  readonly schema: "autodev-memory-session-outcome-cohorts-v1";
+  readonly workspaceId: string;
+  readonly repositoryId: string;
+  readonly occurredFrom: string;
+  readonly occurredUntil: string;
+  readonly cells: readonly MemorySessionOutcomeCohortCell[];
+  /**
+   * Sum of cell sessionCount: unique, full-session single-assigned-mode
+   * (jit/retrieval-only/disabled) sessions observed in the filtered
+   * population. Excludes mixed-mode sessions (see
+   * `mixedModeSessionCount`) and invalid/unknown-only sessions, which
+   * this response never surfaces.
+   */
+  readonly sessionCount: number;
+  readonly reportedSessionCount: number;
+  readonly unreportedSessionCount: number;
+  /**
+   * Diagnostic count of sessions whose per-injection token reports
+   * disagree on outcome; derived from the distinct per-injection
+   * `memory_outcome_reports` rows for the session's correlation
+   * tokens. This never overrides the canonical session outcome report
+   * above and may overlap with `mixedModeSessionCount`.
+   */
+  readonly conflictingOutcomeSessionCount: number;
+  readonly mixedModeSessionCount: number;
+}
+
+export function assertMemorySessionOutcomeCohortFilter(
+  filter: MemorySessionOutcomeCohortFilter
+): void {
+  if (!filter.context.workspaceId.trim()) {
+    throw new TypeError("Session cohort filter requires a workspace id.");
+  }
+  if (
+    filter.context.repositoryId === undefined ||
+    !filter.context.repositoryId.trim()
+  ) {
+    throw new TypeError("Session cohort filter requires a repository id.");
+  }
+  if (
+    filter.context.role !== undefined ||
+    filter.context.taskId !== undefined ||
+    filter.context.runId !== undefined ||
+    filter.context.agentId !== undefined
+  ) {
+    throw new TypeError(
+      "Session cohort filters cannot select a role, task, run, or agent."
+    );
+  }
+  const fromMs = Date.parse(filter.occurredFrom);
+  const untilMs = Date.parse(filter.occurredUntil);
+  if (!Number.isFinite(fromMs)) {
+    throw new TypeError(
+      "Session cohort filter 'from' is not a valid timestamp."
+    );
+  }
+  if (!Number.isFinite(untilMs)) {
+    throw new TypeError(
+      "Session cohort filter 'until' is not a valid timestamp."
+    );
+  }
+  if (untilMs < fromMs) {
+    throw new TypeError(
+      "Session cohort filter 'until' must be greater than or equal to 'from'."
+    );
+  }
+  if (untilMs - fromMs > MEMORY_OUTCOME_COHORT_MAX_WINDOW_MS) {
+    throw new TypeError(
+      "Session cohort filter window exceeds the 365-day maximum."
+    );
+  }
+  if (
+    filter.memoryModes !== undefined &&
+    filter.memoryModes.some(
+      (mode) => !isMemorySessionCohortAssignedMode(mode)
+    )
+  ) {
+    throw new TypeError("Session cohort filter memoryMode is invalid.");
+  }
+  if (
+    filter.injectionResults !== undefined &&
+    filter.injectionResults.some((value) => !isMemoryInjectionResult(value))
+  ) {
+    throw new TypeError("Session cohort filter injectionResult is invalid.");
+  }
+  if (
+    filter.reportKinds !== undefined &&
+    filter.reportKinds.some((kind) => !isMemoryOutcomeReportKind(kind))
+  ) {
+    throw new TypeError("Session cohort filter reportKind is invalid.");
+  }
+  if (
+    filter.outcomeKinds !== undefined &&
+    filter.outcomeKinds.some((kind) => !EXPERIENCE_OUTCOMES.includes(kind))
+  ) {
+    throw new TypeError("Session cohort filter outcomeKind is invalid.");
   }
 }

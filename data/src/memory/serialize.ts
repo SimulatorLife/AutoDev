@@ -3,7 +3,8 @@ import type {
   MemoryInjectionEvent,
   MemoryLifecycleEvent,
   MemoryOutcomeReport,
-  MemoryRecord
+  MemoryRecord,
+  MemorySessionOutcomeReport
 } from "@simulatorlife/autodev-core";
 
 import { scopeToColumns } from "./scope-sql.ts";
@@ -135,6 +136,25 @@ export function outcomeReportToRow(
     run_id: report.runId,
     agent_id: report.agentId,
     correlation_token: report.correlationToken,
+    outcome_kind: report.outcomeKind,
+    report_kind: report.reportKind,
+    reported_at: report.reportedAt,
+    reporter_id: report.reporterId,
+    reporter_authority: report.reporterAuthority,
+    reason_code: report.reasonCode,
+    evidence: JSON.stringify(report.evidence)
+  };
+}
+
+/** Row values for inserting one `memory_session_outcome_reports` row. */
+export function sessionOutcomeReportToRow(
+  report: MemorySessionOutcomeReport
+): Record<string, unknown> {
+  return {
+    id: report.id,
+    workspace_id: report.workspaceId,
+    repository_id: report.repositoryId,
+    task_id: report.taskId,
     outcome_kind: report.outcomeKind,
     report_kind: report.reportKind,
     reported_at: report.reportedAt,

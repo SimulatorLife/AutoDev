@@ -29,11 +29,16 @@ import {
   type MemoryRecord,
   type MemoryRecordInjectionEventInput,
   type MemoryRecordOutcomeReportInput,
+  type MemoryRecordSessionOutcomeReportInput,
   type MemoryRepository,
   type MemoryResearchRequest,
   type MemorySearchHit,
   type MemorySearchRequest,
-  type MemoryVersionedUpdate
+  type MemorySessionOutcomeCohortFilter,
+  type MemorySessionOutcomeCohortPage,
+  type MemorySessionOutcomeReport,
+  type MemoryVersionedUpdate,
+  sessionOutcomeReportBodyMatches
 } from "@simulatorlife/autodev-core";
 import { MemoryConflictError as RepositoryMemoryConflictError } from "@simulatorlife/autodev-data";
 
@@ -81,12 +86,18 @@ class FakeMemoryRepository implements MemoryRepository {
     readonly appended: boolean;
     readonly id: string;
   }[] = [];
+  readonly sessionOutcomeReports = new Map<string, MemorySessionOutcomeReport>();
+  readonly sessionOutcomeReportResults: {
+    readonly appended: boolean;
+    readonly id: string;
+  }[] = [];
   readonly events: MemoryLifecycleEvent[] = [];
   hits: readonly MemorySearchHit[] = [];
   readonly searchRequests: MemorySearchRequest[] = [];
   readonly proposalEmbeddings: (readonly number[] | undefined)[] = [];
   readonly purgeRequests: MemoryExperiencePurgeRequest[] = [];
   readonly outcomeCohortRequests: MemoryInjectionOutcomeCohortFilter[] = [];
+  readonly sessionOutcomeCohortRequests: MemorySessionOutcomeCohortFilter[] = [];
   failNextTransition = false;
 
   async appendExperience(envelope: ExperienceEnvelope): Promise<void> {
@@ -250,6 +261,37 @@ class FakeMemoryRepository implements MemoryRepository {
     );
   }
 
+  async recordSessionOutcomeReport(
+    input: MemoryRecordSessionOutcomeReportInput
+  ): Promise<{
+    readonly appended: boolean;
+    readonly id: string;
+  }> {
+    const key = `${input.report.workspaceId}\u0000${input.report.repositoryId}\u0000${input.report.taskId}`;
+    const result = this.sessionOutcomeReportResults.shift();
+    if (result) return result;
+    const existing = this.sessionOutcomeReports.get(key);
+    if (existing) {
+      if (sessionOutcomeReportBodyMatches(existing, input.report)) {
+        return { appended: false, id: existing.id };
+      }
+      throw new RepositoryMemoryConflictError(
+        "Session outcome report conflicts with existing report."
+      );
+    }
+    this.sessionOutcomeReports.set(key, input.report);
+    return { appended: true, id: input.report.id };
+  }
+
+  async getSessionOutcomeReport(
+    workspaceId: string,
+    repositoryId: string,
+    taskId: string
+  ): Promise<MemorySessionOutcomeReport | null> {
+    const key = `${workspaceId}\u0000${repositoryId}\u0000${taskId}`;
+    return this.sessionOutcomeReports.get(key) ?? null;
+  }
+
   async findInjectionEventByTokenForSession(
     _context: MemoryInjectionEventSessionLookup,
     correlationToken: string
@@ -279,6 +321,25 @@ class FakeMemoryRepository implements MemoryRepository {
       cells: [],
       exposureCount: 0,
       reportCount: 0
+    };
+  }
+
+  async aggregateSessionOutcomeCohorts(
+    request: MemorySessionOutcomeCohortFilter
+  ): Promise<MemorySessionOutcomeCohortPage> {
+    this.sessionOutcomeCohortRequests.push(request);
+    return {
+      schema: "autodev-memory-session-outcome-cohorts-v1" as const,
+      workspaceId: request.context.workspaceId,
+      repositoryId: request.context.repositoryId!,
+      occurredFrom: request.occurredFrom,
+      occurredUntil: request.occurredUntil,
+      cells: [],
+      sessionCount: 0,
+      reportedSessionCount: 0,
+      unreportedSessionCount: 0,
+      conflictingOutcomeSessionCount: 0,
+      mixedModeSessionCount: 0
     };
   }
 }
@@ -496,6 +557,42 @@ function outcomeReportMetricPoints(exporter: InMemoryMetricExporter) {
     .flatMap((scope) => scope.metrics)
     .find((item) => item.descriptor.name === "autodev.memory.outcome_reports");
   assert.ok(metric, "outcome report counter should be exported");
+  return metric.dataPoints;
+}
+
+function sessionOutcomeReportHelper(
+  overrides: Partial<MemorySessionOutcomeReport> = {}
+): MemorySessionOutcomeReport {
+  return {
+    id: "private-session-outcome-id",
+    workspaceId: context.workspaceId,
+    repositoryId: context.repositoryId!,
+    taskId: context.taskId ?? "task-current",
+    outcomeKind: "success",
+    reportKind: "task",
+    reportedAt: "2026-09-30T10:01:00.000Z",
+    reporterId: "private-reporter-id",
+    reporterAuthority: "curator",
+    reasonCode: "reporter_supplied",
+    evidence: [
+      {
+        kind: "document",
+        uri: "https://example.test/private-session-report-evidence"
+      }
+    ],
+    ...overrides
+  };
+}
+
+function sessionOutcomeReportMetricPoints(exporter: InMemoryMetricExporter) {
+  const metric = exporter
+    .getMetrics()
+    .flatMap((resource) => resource.scopeMetrics)
+    .flatMap((scope) => scope.metrics)
+    .find(
+      (item) => item.descriptor.name === "autodev.memory.session_outcome_reports"
+    );
+  assert.ok(metric, "session outcome report counter should be exported");
   return metric.dataPoints;
 }
 
@@ -1476,6 +1573,113 @@ test("outcome-report metric dimensions exclude IDs and evidence URIs", async () 
   }
 });
 
+test("MemoryService records session outcome reports and exports metrics", async () => {
+  const repository = new FakeMemoryRepository();
+  const { exporter, provider, service } = makeOutcomeMetricHarness(repository);
+
+  try {
+    const report = sessionOutcomeReportHelper();
+    const result = await service.recordSessionOutcomeReport({
+      report,
+      actor: root,
+      context
+    });
+    assert.equal(result.appended, true);
+    await provider.forceFlush();
+
+    const points = sessionOutcomeReportMetricPoints(exporter);
+    assert.equal(points.length, 1);
+    assert.equal(points[0]?.value, 1);
+    assert.deepEqual(points[0]?.attributes, {
+      "autodev.memory.session_outcome.report_kind": "task",
+      "autodev.memory.session_outcome.kind": "success"
+    });
+
+    // Idempotent retry does not recount
+    const retry = await service.recordSessionOutcomeReport({
+      report,
+      actor: root,
+      context
+    });
+    assert.equal(retry.appended, false);
+    await provider.forceFlush();
+    assert.equal(sessionOutcomeReportMetricPoints(exporter).length, 1);
+  } finally {
+    await provider.shutdown();
+  }
+});
+
+test("MemoryService enforces actor authority and evidence for session outcome reports", async () => {
+  const repository = new FakeMemoryRepository();
+  const { provider, service } = makeOutcomeMetricHarness(repository);
+
+  try {
+    // Worker authority rejected
+    await assert.rejects(
+      async () => {
+        await service.recordSessionOutcomeReport({
+          report: sessionOutcomeReportHelper(),
+          actor: worker,
+          context
+        });
+      },
+      { message: /root or memory curator/i }
+    );
+
+    // Missing evidence for non-unknown outcome rejected
+    await assert.rejects(
+      async () => {
+        await service.recordSessionOutcomeReport({
+          report: sessionOutcomeReportHelper({ evidence: [] }),
+          actor: root,
+          context
+        });
+      },
+      { message: /evidence reference/i }
+    );
+  } finally {
+    await provider.shutdown();
+  }
+});
+
+test("MemoryService getSessionOutcomeReport retrieves report and enforces scope", async () => {
+  const repository = new FakeMemoryRepository();
+  const { provider, service } = makeOutcomeMetricHarness(repository);
+
+  try {
+    const report = sessionOutcomeReportHelper();
+    await service.recordSessionOutcomeReport({
+      report,
+      actor: root,
+      context
+    });
+
+    const fetched = await service.getSessionOutcomeReport(
+      report.workspaceId,
+      report.repositoryId,
+      report.taskId,
+      context
+    );
+    assert.notEqual(fetched, null);
+    assert.equal(fetched?.id, report.id);
+
+    // Mismatched workspace rejected
+    await assert.rejects(
+      async () => {
+        await service.getSessionOutcomeReport(
+          "other-ws",
+          report.repositoryId,
+          report.taskId,
+          context
+        );
+      },
+      { message: /Workspace mismatch/i }
+    );
+  } finally {
+    await provider.shutdown();
+  }
+});
+
 test("packet bounds use whole entries and enforce a supplied token counter", async () => {
   const repository = new FakeMemoryRepository();
   repository.hits = [record("long", { claim: "A long but valid claim." })].map(
@@ -2089,6 +2293,91 @@ test("MemoryService traces aggregate cohort counts without query identities", as
     "memory.injection.outcome.exposures": 0,
     "memory.injection.outcome.reports": 0,
     "memory.injection.outcome.cohort_cells": 0
+  });
+  assert.doesNotMatch(
+    [...attributes.keys()].join(" "),
+    /workspace|repository|task|run|agent|memory_id/u
+  );
+});
+
+test("MemoryService enforces task-history access and validates session cohort filters", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const request: MemorySessionOutcomeCohortFilter = {
+    context: {
+      workspaceId: "workspace-a",
+      repositoryId: "repo-a",
+      canReadGlobal: false,
+      canReadTaskHistory: true
+    },
+    occurredFrom: "2026-09-01T00:00:00.000Z",
+    occurredUntil: "2026-10-01T00:00:00.000Z",
+    memoryModes: ["jit"]
+  };
+
+  await assert.rejects(
+    () =>
+      service.aggregateSessionOutcomeCohorts({
+        ...request,
+        context: { ...request.context, canReadTaskHistory: false }
+      }),
+    MemoryAuthorizationError
+  );
+  assert.equal(repository.sessionOutcomeCohortRequests.length, 0);
+
+  const page = await service.aggregateSessionOutcomeCohorts(request);
+  assert.equal(page.schema, "autodev-memory-session-outcome-cohorts-v1");
+  assert.equal(page.workspaceId, request.context.workspaceId);
+  assert.equal(page.repositoryId, request.context.repositoryId);
+  assert.deepEqual(repository.sessionOutcomeCohortRequests, [request]);
+
+  await assert.rejects(
+    () =>
+      service.aggregateSessionOutcomeCohorts({
+        ...request,
+        occurredFrom: "2024-01-01T00:00:00.000Z"
+      }),
+    TypeError
+  );
+  assert.equal(repository.sessionOutcomeCohortRequests.length, 1);
+});
+
+test("MemoryService traces aggregate session cohort counts without query identities", async () => {
+  const repository = new FakeMemoryRepository();
+  const attributes = new Map<string, unknown>();
+  const spanNames: string[] = [];
+  const tracer = {
+    startActiveSpan(name: string, callback: (span: never) => Promise<unknown>) {
+      spanNames.push(name);
+      return callback({
+        setAttribute: (key: string, value: unknown) =>
+          attributes.set(key, value),
+        setStatus: () => undefined,
+        end: () => undefined
+      } as never);
+    }
+  } as unknown as Tracer;
+  const service = makeService(repository, { tracer });
+
+  await service.aggregateSessionOutcomeCohorts({
+    context: {
+      workspaceId: "workspace-a",
+      repositoryId: "repo-a",
+      canReadGlobal: false,
+      canReadTaskHistory: true
+    },
+    occurredFrom: "2026-09-01T00:00:00.000Z",
+    occurredUntil: "2026-10-01T00:00:00.000Z"
+  });
+
+  assert.deepEqual(spanNames, ["memory.session.outcome.aggregate"]);
+  assert.deepEqual(Object.fromEntries(attributes), {
+    "memory.session.outcome.sessions": 0,
+    "memory.session.outcome.reported_sessions": 0,
+    "memory.session.outcome.unreported_sessions": 0,
+    "memory.session.outcome.conflicting_sessions": 0,
+    "memory.session.outcome.mixed_mode_sessions": 0,
+    "memory.session.outcome.cohort_cells": 0
   });
   assert.doesNotMatch(
     [...attributes.keys()].join(" "),

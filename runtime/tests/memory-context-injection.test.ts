@@ -224,6 +224,22 @@ test("injectMemoryContext performs JIT research and attaches the advisory packet
       cells: [],
       exposureCount: 0,
       reportCount: 0
+    }),
+    recordSessionOutcomeReport: async () => ({ appended: false, id: "" }),
+    getSessionOutcomeReport: async () => null,
+    aggregateSessionOutcomeCohorts: async (request) => ({
+      schema: "autodev-memory-session-outcome-cohorts-v1",
+      workspaceId: request.context.workspaceId,
+      repositoryId: request.context.repositoryId!,
+      occurredFrom: request.occurredFrom,
+      occurredUntil: request.occurredUntil,
+      cells: [],
+      sessionCount: 0,
+      reportedSessionCount: 0,
+      unreportedSessionCount: 0,
+      exposureCount: 0,
+      conflictingOutcomeSessionCount: 0,
+      mixedModeSessionCount: 0
     })
   };
   let validationCalls = 0;

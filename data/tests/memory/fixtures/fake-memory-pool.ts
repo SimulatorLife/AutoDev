@@ -217,6 +217,7 @@ interface MemoryTables {
   memory_experience_privacy_events: Record<string, unknown>[];
   memory_injection_events: Map<string, Record<string, unknown>>;
   memory_outcome_reports: Map<string, Record<string, unknown>>;
+  memory_session_outcome_reports: Map<string, Record<string, unknown>>;
   memory_schema_migrations: Record<string, unknown>[];
 }
 
@@ -238,6 +239,9 @@ function cloneTables(tables: MemoryTables): MemoryTables {
     ),
     memory_outcome_reports: new Map(
       Array.from(tables.memory_outcome_reports, ([k, v]) => [k, { ...v }])
+    ),
+    memory_session_outcome_reports: new Map(
+      Array.from(tables.memory_session_outcome_reports, ([k, v]) => [k, { ...v }])
     ),
     memory_schema_migrations: tables.memory_schema_migrations.map((row) => ({
       ...row
@@ -261,6 +265,7 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     memory_experience_privacy_events: [],
     memory_injection_events: new Map(),
     memory_outcome_reports: new Map(),
+    memory_session_outcome_reports: new Map(),
     memory_schema_migrations: []
   };
 
@@ -327,6 +332,8 @@ export class FakeMemoryPool implements MemoryConnectionPool {
           this.snapshot.memory_injection_events;
         this.tables.memory_outcome_reports =
           this.snapshot.memory_outcome_reports;
+        this.tables.memory_session_outcome_reports =
+          this.snapshot.memory_session_outcome_reports;
         this.tables.memory_schema_migrations =
           this.snapshot.memory_schema_migrations;
         this.snapshot = undefined;
@@ -373,6 +380,8 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     sql: string,
     params: readonly unknown[]
   ): MemoryQueryResult | null {
+    const sessionCohorts = this.readSessionOutcomeCohorts(sql, params);
+    if (sessionCohorts) return sessionCohorts;
     const cohorts = this.readInjectionOutcomeCohorts(sql, params);
     if (cohorts) return cohorts;
     const joined = this.readInjectionOutcomeJoin(sql, params);
@@ -381,6 +390,10 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     if (sessionInjection) return sessionInjection;
     const outcomeByToken = this.readOutcomeReportByToken(sql, params);
     if (outcomeByToken) return outcomeByToken;
+    const sessionCheck = this.readSessionInjectionCount(sql, params);
+    if (sessionCheck) return sessionCheck;
+    const sessionOutcome = this.readSessionOutcomeReport(sql, params);
+    if (sessionOutcome) return sessionOutcome;
     if (sql === "SELECT * FROM memory_records WHERE id = $1 FOR SHARE") {
       const row = this.tables.memory_records.get(params[0] as string);
       const rows = row ? [row] : [];
@@ -531,6 +544,52 @@ export class FakeMemoryPool implements MemoryConnectionPool {
           String(right.id ?? ""),
           String(left.id ?? "")
         )
+      )
+      .slice(0, 1);
+    return { rows, rowCount: rows.length };
+  }
+
+  private readSessionInjectionCount(
+    sql: string,
+    params: readonly unknown[]
+  ): MemoryQueryResult | null {
+    const normalizedSql = normalizeSql(sql);
+    const match =
+      /^SELECT COUNT\(\*\)::bigint AS count FROM memory_injection_events WHERE workspace_id = \$(\d+) AND repository_id = \$(\d+) AND task_id = \$(\d+) LIMIT 1$/i.exec(
+        normalizedSql
+      );
+    if (!match) return null;
+    const wsId = String(params[Number(match[1]) - 1]);
+    const repoId = String(params[Number(match[2]) - 1]);
+    const taskId = String(params[Number(match[3]) - 1]);
+    const count = [...this.tables.memory_injection_events.values()].filter(
+      (inj) =>
+        inj.workspace_id === wsId &&
+        inj.repository_id === repoId &&
+        inj.task_id === taskId
+    ).length;
+    return { rows: [{ count: String(count) }], rowCount: 1 };
+  }
+
+  private readSessionOutcomeReport(
+    sql: string,
+    params: readonly unknown[]
+  ): MemoryQueryResult | null {
+    const normalizedSql = normalizeSql(sql);
+    const match =
+      /^SELECT \* FROM memory_session_outcome_reports WHERE workspace_id = \$(\d+) AND repository_id = \$(\d+) AND task_id = \$(\d+) ORDER BY created_at DESC, id DESC LIMIT 1$/i.exec(
+        normalizedSql
+      );
+    if (!match) return null;
+    const wsId = String(params[Number(match[1]) - 1]);
+    const repoId = String(params[Number(match[2]) - 1]);
+    const taskId = String(params[Number(match[3]) - 1]);
+    const rows = [...this.tables.memory_session_outcome_reports.values()]
+      .filter(
+        (row) =>
+          row.workspace_id === wsId &&
+          row.repository_id === repoId &&
+          row.task_id === taskId
       )
       .slice(0, 1);
     return { rows, rowCount: rows.length };
@@ -705,6 +764,213 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     });
     return { rows, rowCount: rows.length };
   }
+
+  private readSessionOutcomeCohorts(
+    sql: string,
+    params: readonly unknown[]
+  ): MemoryQueryResult | null {
+    const normalizedSql = normalizeSql(sql);
+    if (!normalizedSql.includes("in_window_events AS MATERIALIZED")) {
+      return null;
+    }
+    const workspaceId = params[0] as string;
+    const repositoryId = params[1] as string;
+    const occurredFrom = params[2] as string;
+    const occurredUntil = params[3] as string;
+
+    const fromDate = new Date(occurredFrom);
+    const untilDate = new Date(occurredUntil);
+
+    let memoryModes: readonly string[] | undefined;
+    const modeMatch = /i\.memory_mode = ANY\(\$(\d+)::text\[\]\)/i.exec(normalizedSql);
+    if (modeMatch) {
+      memoryModes = params[Number(modeMatch[1]) - 1] as readonly string[];
+    }
+    let injectionResults: readonly string[] | undefined;
+    const resultMatch = /i\.injection_result = ANY\(\$(\d+)::text\[\]\)/i.exec(normalizedSql);
+    if (resultMatch) {
+      injectionResults = params[Number(resultMatch[1]) - 1] as readonly string[];
+    }
+
+    let reportKinds: readonly string[] | undefined;
+    const rkMatch = /r\.report_kind = ANY\(\$(\d+)::text\[\]\)/i.exec(normalizedSql);
+    if (rkMatch) {
+      reportKinds = params[Number(rkMatch[1]) - 1] as readonly string[];
+    }
+    let outcomeKinds: readonly string[] | undefined;
+    const okMatch = /r\.outcome_kind = ANY\(\$(\d+)::text\[\]\)/i.exec(normalizedSql);
+    if (okMatch) {
+      outcomeKinds = params[Number(okMatch[1]) - 1] as readonly string[];
+    }
+
+    // in_window_events -> in_window_sessions: unique session keys with an
+    // in-window, filter-matching event. Only used to select the session
+    // population; exposure counts are not part of this response.
+    const inWindowSessionKeys = new Set<string>();
+    for (const event of this.tables.memory_injection_events.values()) {
+      if (
+        event.workspace_id !== workspaceId ||
+        event.repository_id !== repositoryId
+      ) {
+        continue;
+      }
+      const eventDate = new Date(event.occurred_at as string);
+      if (eventDate < fromDate || eventDate > untilDate) continue;
+      if (
+        memoryModes &&
+        memoryModes.length > 0 &&
+        !memoryModes.includes(event.memory_mode as string)
+      ) {
+        continue;
+      }
+      if (
+        injectionResults &&
+        injectionResults.length > 0 &&
+        !injectionResults.includes(event.injection_result as string)
+      ) {
+        continue;
+      }
+      const sessionKey = `${event.workspace_id}\u0000${event.repository_id}\u0000${event.task_id}`;
+      inWindowSessionKeys.add(sessionKey);
+    }
+
+    const ASSIGNED_MODES = new Set(["jit", "retrieval-only", "disabled"]);
+    const cellMap = new Map<
+      string,
+      {
+        cohort_mode: string;
+        outcome_kind: string | null;
+        session_count: number;
+        conflicting_count: number;
+      }
+    >();
+    let mixedModeSessionCount = 0;
+    let mixedModeConflictingCount = 0;
+
+    for (const sessionKey of inWindowSessionKeys) {
+      const [wsId, repoId, taskId] = sessionKey.split("\u0000") as [
+        string,
+        string,
+        string
+      ];
+
+      // full_session_stats: derive mode from the COMPLETE, unfiltered
+      // injection-event set for this session key -- never from the
+      // in-window/filtered subset.
+      const fullSessionEvents = [
+        ...this.tables.memory_injection_events.values()
+      ].filter(
+        (inj) =>
+          inj.workspace_id === wsId &&
+          inj.repository_id === repoId &&
+          inj.task_id === taskId
+      );
+      const distinctModes = new Set(
+        fullSessionEvents.map((e) => e.memory_mode as string)
+      );
+      const sampleMode = [...distinctModes][0]!;
+      let cohortMode: string;
+      if (distinctModes.size > 1) {
+        cohortMode = "mixed";
+      } else if (ASSIGNED_MODES.has(sampleMode)) {
+        cohortMode = sampleMode;
+      } else {
+        cohortMode = "excluded";
+      }
+
+      if (cohortMode === "excluded") continue;
+
+      // Check per-injection token reports for conflicts:
+      const sessionTokens = new Set(
+        fullSessionEvents
+          .map((e) => e.correlation_token as string)
+          .filter(Boolean)
+      );
+      const tokenReports = [
+        ...this.tables.memory_outcome_reports.values()
+      ].filter(
+        (mor) =>
+          mor.workspace_id === wsId &&
+          mor.repository_id === repoId &&
+          mor.task_id === taskId &&
+          sessionTokens.has(mor.correlation_token as string)
+      );
+      const distinctTokenOutcomeKinds = new Set(
+        tokenReports.map((r) => r.outcome_kind as string)
+      );
+      const hasConflictingOutcomes = distinctTokenOutcomeKinds.size > 1 ? 1 : 0;
+
+      const report = [
+        ...this.tables.memory_session_outcome_reports.values()
+      ].find(
+        (r) =>
+          r.workspace_id === wsId &&
+          r.repository_id === repoId &&
+          r.task_id === taskId
+      );
+
+      const reportKind = (report?.report_kind as string) ?? null;
+      const outcomeKind = (report?.outcome_kind as string) ?? null;
+
+      if (
+        reportKinds &&
+        reportKinds.length > 0 &&
+        (!reportKind || !reportKinds.includes(reportKind))
+      ) {
+        continue;
+      }
+      if (
+        outcomeKinds &&
+        outcomeKinds.length > 0 &&
+        (!outcomeKind || !outcomeKinds.includes(outcomeKind))
+      ) {
+        continue;
+      }
+
+      if (cohortMode === "mixed") {
+        mixedModeSessionCount += 1;
+        mixedModeConflictingCount += hasConflictingOutcomes;
+        continue;
+      }
+
+      const key = `${cohortMode}\u0000${outcomeKind ?? ""}`;
+      const existing = cellMap.get(key);
+      if (existing) {
+        existing.session_count += 1;
+        existing.conflicting_count += hasConflictingOutcomes;
+      } else {
+        cellMap.set(key, {
+          cohort_mode: cohortMode,
+          outcome_kind: outcomeKind,
+          session_count: 1,
+          conflicting_count: hasConflictingOutcomes
+        });
+      }
+    }
+
+    const rows = [...cellMap.values()].sort((a, b) => {
+      if (a.cohort_mode !== b.cohort_mode) {
+        return a.cohort_mode.localeCompare(b.cohort_mode);
+      }
+      if (a.outcome_kind !== b.outcome_kind) {
+        if (a.outcome_kind === null) return -1;
+        if (b.outcome_kind === null) return 1;
+        return a.outcome_kind.localeCompare(b.outcome_kind);
+      }
+      return 0;
+    });
+    if (mixedModeSessionCount > 0) {
+      rows.push({
+        cohort_mode: "mixed",
+        outcome_kind: null,
+        session_count: mixedModeSessionCount,
+        conflicting_count: mixedModeConflictingCount
+      });
+    }
+
+    return { rows, rowCount: rows.length };
+  }
+
 
   private readById(
     sql: string,
@@ -1028,6 +1294,9 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     if (table === "memory_outcome_reports") {
       return this.insertOutcomeReport(row);
     }
+    if (table === "memory_session_outcome_reports") {
+      return this.insertSessionOutcomeReport(row);
+    }
     if (table === "memory_lifecycle_events") {
       return this.insertLifecycleEvent(row);
     }
@@ -1105,6 +1374,50 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     ) {
       throw new Error(
         `memory_outcome_reports.reporter_authority check violation: ${row.reporter_authority}`
+      );
+    }
+    map.set(id, row);
+    return { rows: [row], rowCount: 1 };
+  }
+
+  private insertSessionOutcomeReport(row: Record<string, unknown>): MemoryQueryResult {
+    const map = this.tables.memory_session_outcome_reports;
+    const id = row.id as string;
+    if (map.has(id)) {
+      throw uniqueViolation(
+        `duplicate key value violates unique constraint "memory_session_outcome_reports_pkey"`
+      );
+    }
+    // Enforce UNIQUE (workspace_id, repository_id, task_id)
+    for (const existing of map.values()) {
+      if (
+        existing.workspace_id === row.workspace_id &&
+        existing.repository_id === row.repository_id &&
+        existing.task_id === row.task_id
+      ) {
+        throw uniqueViolation(
+          `duplicate key value violates unique constraint "uniq_memory_session_outcome_reports_key"`
+        );
+      }
+    }
+    // Validate trigger: requires at least one matching injection event
+    const hasInjection = [...this.tables.memory_injection_events.values()].some(
+      (inj) =>
+        inj.workspace_id === row.workspace_id &&
+        inj.repository_id === row.repository_id &&
+        inj.task_id === row.task_id
+    );
+    if (!hasInjection) {
+      throw new Error(
+        "memory_session_outcome_reports requires at least one recorded injection event for (workspace_id, repository_id, task_id)"
+      );
+    }
+    if (
+      row.reporter_authority !== "root" &&
+      row.reporter_authority !== "curator"
+    ) {
+      throw new Error(
+        `memory_session_outcome_reports.reporter_authority check violation: ${row.reporter_authority}`
       );
     }
     map.set(id, row);

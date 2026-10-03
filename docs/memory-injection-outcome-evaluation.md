@@ -58,6 +58,18 @@ Outcome claims are reporter-supplied. The API does not query GitHub or CI to
 verify PR status, and a PR/commit reference is provenance, not proof of success.
 Neither retrieval nor a successful provider request is treated as task success.
 
+## Reporter-supplied session outcome
+
+In addition to per-token injection exposure reports, an operator can append a single session-level outcome report for a task/session using:
+
+```text
+GET  /control/memory/experiences/:id/session-outcomes
+POST /control/memory/experiences/:id/session-outcomes
+```
+(and their singular aliases `/session-outcome`).
+
+Both routes require operator access, explicit workspace/repository scope, and `includeTaskHistory=true` while `AUTODEV_MEMORY_READ_TASK_HISTORY=1` is enabled. Identity is derived strictly from the visible captured `ExperienceEnvelope`; caller-selected IDs are rejected. Exactly one report is permitted per unique `(workspace_id, repository_id, task_id)` key and stored in the append-only `memory_session_outcome_reports` table (migration 10). Writing a session outcome report requires that at least one injection event exists for that session key. The POST body contains only `outcomeKind`, `reportKind`, and `evidence`. Non-`unknown` outcomes require evidence. Same-body retries are idempotent (`appended: false`); conflicting bodies fail closed (`409 Conflict`). Reporter authority and ID come strictly from the authenticated actor.
+
 ## Bounded outcome cohorts
 
 Operators can query aggregates over the canonical append-only event tables:
@@ -98,6 +110,66 @@ upstream Jest suites pass (66/66) and its patched client typecheck passes. Patch
 21-patch apply, patched client typecheck, and eight focused upstream Jest suites
 (58/58) pass. The linux/arm64 p21 image autodev-openlit:openlit-9938c6663866-p01204b3d1c6d87af (sha256:e18e53a018a3a5baaa81e7cac4b4fb089faddac9847abab2d72e77963cff8729) was built with the separate .tmp/openlit-p21-validation.lock. The standard lock and running OpenLIT
 container remain on p14, an isolated p21 stack returned 401 without OTLP auth and 200 with a bearer token, persisted a span, had no Controller tables on fresh ClickHouse initialization, and completed Collector shutdown on docker stop. Existing volumes are not purged automatically; deployed UI/receiver acceptance remains pending.
+
+## Bounded session outcome cohorts
+
+While `GET /control/memory/cohorts` aggregates request-level injection exposures,
+operators can query deduplicated unique session outcomes across the canonical
+append-only event tables and session outcome reports using:
+
+```text
+GET /control/memory/session-cohorts?workspaceId=...&repositoryId=...&includeTaskHistory=true&occurredFrom=...&occurredUntil=...
+```
+
+The endpoint requires operator authority with the explicit
+`AUTODEV_MEMORY_READ_TASK_HISTORY=1` grant, repository scope, and an inclusive
+time window of at most 365 days. Optional bounded filters accept assigned
+`memoryMode` values (`jit`, `retrieval-only`, `disabled`), `injectionResult`,
+`reportKind`, and `outcomeKind`. Caller-selected identities
+(`taskId`, `runId`, `agentId`, `role`) are rejected.
+
+### Sampling unit and consensus rules
+
+1. **Sampling unit:** The sampling unit is the canonical session key
+   `(workspace_id, repository_id, task_id)`, not an individual injection or request.
+2. **Full-session mode classification:** Session mode is derived from each
+   session's complete append-only injection event set across all time.
+   Sibling events outside the time window or omitted by the memory-mode
+   filter still contribute to full-session classification.
+   - If every injection event in the session shares the same mode and that
+     mode is one of the three assigned modes (`jit`, `retrieval-only`,
+     `disabled`), the session is eligible and surfaces as a cell in that mode.
+   - If the session's events span more than one distinct mode, the session is
+     `"mixed"`: it is excluded from `cells` and from `sessionCount`, and is
+     counted only in `mixedModeSessionCount`.
+   - If every injection event in the session shares a single `invalid` or
+     `unknown` mode, the session is excluded from this response entirely --
+     it is never coerced into the `"disabled"` cell and never counted in
+     `sessionCount` or `mixedModeSessionCount`.
+3. **Session outcome join:** The session outcome is joined from the single row in
+   `memory_session_outcome_reports` for `(workspace_id, repository_id, task_id)`.
+   Unreported eligible sessions have `outcomeKind: null`.
+4. **Conflicting-outcome diagnostic:** `conflictingOutcomeSessionCount` is a
+   diagnostic derived from the session's per-injection-token
+   `memory_outcome_reports` rows disagreeing on outcome kind. It never
+   overrides the canonical session outcome report above, and may overlap
+   with `mixedModeSessionCount` (a mixed-mode session can also have
+   conflicting per-injection token reports).
+5. **Grouped cells:** Cells group only eligible (single-assigned-mode)
+   sessions by `(memoryMode, outcomeKind)` and count `sessionCount` (unique
+   sessions). There is no request-exposure count in this response; use
+   `GET /control/memory/cohorts` for exposure-level counts.
+6. **Counts, not rates:** `sessionCount = reportedSessionCount +
+   unreportedSessionCount`, and `sessionCount` sums only the eligible
+   single-assigned-mode cells -- it excludes mixed-mode and invalid/unknown-only
+   sessions.
+7. **Response contract:** Response adheres to schema `autodev-memory-session-outcome-cohorts-v1`,
+   with cells shaped `{ memoryMode, outcomeKind, sessionCount }` and totals
+   `(sessionCount, reportedSessionCount, unreportedSessionCount,
+   conflictingOutcomeSessionCount, mixedModeSessionCount)`.
+8. **Retained non-goals:** Outcomes remain reporter-supplied. Session deduplication
+   does not claim verified task success, per-turn attribution, retrieval-to-use
+   evidence, or causal effectiveness.
 
 ## Correlation limits
 
