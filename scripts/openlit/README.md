@@ -139,6 +139,34 @@ Neither the token, report ID, actor identity, nor service credential is returned
 to the browser. Reports are append-only, identical retries are idempotent, and
 conflicting reports are rejected. Outcomes remain reporter-supplied: provider
 status, retrieval, and a PR link are not treated as success.
+
+## Curator-assessed injection-use reports and cohorts
+
+The retained AutoDev Memory experience detail includes a per-injection use
+assessment for an actually injected, non-empty packet. Curators choose `used`,
+`partially_used`, `not_used`, or `unobservable`; partial use must cite a strict
+subset of the packet's memory IDs. Non-`unobservable` assessments require the
+exact captured trajectory reference, which the form attaches from the visible
+experience rather than accepting free-text evidence. Empty and skipped packets
+are shown as ineligible and cannot be assessed. This is an operator judgment,
+not automatic use detection or a task outcome.
+
+The browser posts reports through the same-origin
+`POST /api/memory/experiences/:id/use-assessments` route. Experience reads stay
+on the canonical `AutoDevMemoryAdapter.get()` detail path; there is no duplicate
+assessment-history GET proxy. The server resolves the opaque join token from the
+scoped Control API read and keeps it, report identifiers, actor identity, and
+service credentials out of browser responses. Reports are append-only and
+identical retries are idempotent.
+
+The retained page's `GET /api/memory/use-cohorts` proxy reads a bounded aggregate
+of eligible exposures grouped by assigned memory mode, session exposure
+cardinality, and curator-reported use kind. Unassessed cells remain visible as
+counts. The table reports counts only—never percentages, use rates, task/PR
+success, or causal effects—and `disabled` is an accepted filter that yields no
+eligible exposures. Curator assessments are not objective evidence that a model
+used a packet.
+
 ## Usage
 
 ```sh

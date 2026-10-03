@@ -184,6 +184,7 @@ test(
     if (patches.some((p) => p.startsWith("21-"))) {
       expectedPatchNames.push("21-remove-controller-clickhouse-schema");
     }
+    expectedPatchNames.push("22-autodev-memory-injection-use");
     assert.ok(
       patches.length >= expectedPatchNames.length,
       `expected at least ${expectedPatchNames.length} maintained OpenLIT patches`
@@ -287,7 +288,14 @@ test(
       "src/client/src/__tests__/components/memory-outcome-report-form.test.tsx",
       // 16-autodev-memory-session-outcome-cohorts
       "src/client/src/app/api/memory/session-cohorts/route.ts",
-      "src/client/src/__tests__/app/api/memory/session-cohorts/route.test.ts"
+      "src/client/src/__tests__/app/api/memory/session-cohorts/route.test.ts",
+      // 22-autodev-memory-injection-use
+      "src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts",
+      "src/client/src/__tests__/app/api/memory/experiences/[id]/use-assessments/route.test.ts",
+      "src/client/src/app/api/memory/use-cohorts/route.ts",
+      "src/client/src/__tests__/app/api/memory/use-cohorts/route.test.ts",
+      "src/client/src/components/(playground)/memory/memory-injection-use-report-form.tsx",
+      "src/client/src/__tests__/components/memory-injection-use-report-form.test.tsx"
     ];
     for (const rel of expected) {
       const full = join(dir, rel);
@@ -1113,6 +1121,68 @@ test(
     );
     assert.match(autoDevMemoryAdapter, /conflictingOutcomeSessionCount/u);
 
+    // Patch 22 extends the same CE AutoDev Control API adapter with
+    // curator-authored injection-use assessment reads/writes and a bounded,
+    // count-only use cohort query. It does not add percentages or any rate
+    // or causal metric.
+    assert.match(autoDevMemoryAdapter, /readInjectionUseAssessments\(/u);
+    assert.match(autoDevMemoryAdapter, /reportInjectionUse\(/u);
+    assert.match(autoDevMemoryAdapter, /readInjectionUseCohorts\(/u);
+    assert.match(autoDevMemoryAdapter, /USE_COHORT_ASSIGNED_MODES[\s\S]*?"disabled"/u);
+    assert.match(autoDevMemoryAdapter, /USE_COHORT_ELIGIBLE_MODES/u);
+    assert.match(autoDevMemoryAdapter, /injection\.id/u);
+    assert.match(autoDevMemoryAdapter, /injectionResult !== "injected"[\s\S]*?memoryIds/u);
+    assert.doesNotMatch(
+      autoDevMemoryAdapter,
+      /correlationToken\s*:\s*(?:injection|joined|value)|reporterId\s*:/u,
+      "patch 22 must not project opaque correlation tokens or reporter identity to the UI"
+    );
+    const useAssessmentsRoute = readFileSync(
+      join(dir, "src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts"),
+      "utf8"
+    );
+    assert.doesNotMatch(
+      useAssessmentsRoute,
+      /export const GET/u,
+      "experience reads must stay with the canonical AutoDev MemoryAdapter detail path"
+    );
+    assert.match(useAssessmentsRoute, /export const POST\s*=\s*withMemoryAudit\(withMemoryAccess\("update"/u);
+    assert.match(useAssessmentsRoute, /reportInjectionUse\(/u);
+    assert.match(useAssessmentsRoute, /requiredId\(params\.id\)/u);
+    assert.match(useAssessmentsRoute, /request\.json\(\)/u);
+    assert.match(useAssessmentsRoute, /MEMORY_INJECTION_USE_REPORT_INVALID/u);
+    const useCohortsRoute = readFileSync(
+      join(dir, "src/client/src/app/api/memory/use-cohorts/route.ts"),
+      "utf8"
+    );
+    assert.match(useCohortsRoute, /export const GET\s*=\s*withMemoryAccess\("read"/u);
+    assert.match(useCohortsRoute, /readInjectionUseCohorts\(/u);
+    const useForm = readFileSync(
+      join(dir, "src/client/src/components/(playground)/memory/memory-injection-use-report-form.tsx"),
+      "utf8"
+    );
+    assert.match(useForm, /MEMORY_USE_KIND_PLACEHOLDER/u);
+    assert.match(useForm, /value=\{EMPTY_KIND\}[\s\S]*?MEMORY_USE_KIND_PLACEHOLDER/u);
+    assert.match(useForm, /formatUseKindLabel/u);
+    const useDetail = readFileSync(
+      join(dir, "src/client/src/components/(playground)/memory/memory-detail-sheet.tsx"),
+      "utf8"
+    );
+    assert.match(useDetail, /injection\.injectionResult === "injected" && packetIds\.length > 0/u);
+    assert.match(useDetail, /MEMORY_DETAIL_INJECTION_USE_INELIGIBLE/u);
+    const useCohortView = readFileSync(
+      join(dir, "src/client/src/components/(playground)/memory/memory-cohort-view.tsx"),
+      "utf8"
+    );
+    assert.match(useCohortView, /\/api\/memory\/use-cohorts/u);
+    assert.match(useCohortView, /MEMORY_USE_COHORTS_SCOPE_NOTE/u);
+    assert.match(useCohortView, /MEMORY_USE_COHORTS_UNASSESSED/u);
+    assert.doesNotMatch(
+      useCohortView,
+      /percentage|success\s*rate|(?:Math\.)?round\([^\n]*\*\s*100|toFixed\(/iu,
+      "patch 22 must render counts, not percentages or outcome/use rates"
+    );
+
     // Verify patch 17 removes OpenLIT session gating in favor of Control API:
     assert.match(
       proxy,
@@ -1341,6 +1411,7 @@ test(
       if (patches.some((p) => p.startsWith("21-"))) {
         expectedPatchNames.push("21-remove-controller-clickhouse-schema");
       }
+      expectedPatchNames.push("22-autodev-memory-injection-use");
       assert.ok(
         patches.length >= expectedPatchNames.length,
         `expected at least ${expectedPatchNames.length} maintained OpenLIT patches`
@@ -1499,6 +1570,60 @@ test(
           "patch 21 must remove Controller table creation from fresh ClickHouse initialization"
         );
       }
+
+      // 22-autodev-memory-injection-use adds curator assessment and count-only
+      // cohort UI to the existing AutoDev Memory connector. Verify the new
+      // routes and form were applied by the script after patch 21.
+      for (const rel of [
+        "src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts",
+        "src/client/src/app/api/memory/use-cohorts/route.ts",
+        "src/client/src/components/(playground)/memory/memory-injection-use-report-form.tsx"
+      ]) {
+        assert.ok(
+          statSync(join(workDirectory, rel)).isFile(),
+          `22-autodev-memory-injection-use must add ${rel}`
+        );
+      }
+      const appliedUseAssessmentsRoute = readFileSync(
+        join(workDirectory, "src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts"),
+        "utf8"
+      );
+      assert.doesNotMatch(appliedUseAssessmentsRoute, /export const GET/u);
+      assert.match(appliedUseAssessmentsRoute, /withMemoryAccess\("update"/u);
+      assert.match(appliedUseAssessmentsRoute, /reportInjectionUse\(/u);
+      const appliedUseCohortsRoute = readFileSync(
+        join(workDirectory, "src/client/src/app/api/memory/use-cohorts/route.ts"),
+        "utf8"
+      );
+      assert.match(appliedUseCohortsRoute, /withMemoryAccess\("read"/u);
+      assert.match(appliedUseCohortsRoute, /readInjectionUseCohorts\(/u);
+      const appliedUseAdapter = readFileSync(
+        join(workDirectory, "src/client/src/lib/platform/connectors/memory/autodev/adapter.ts"),
+        "utf8"
+      );
+      assert.match(appliedUseAdapter, /readInjectionUseAssessments\(/u);
+      assert.match(appliedUseAdapter, /reportInjectionUse\(/u);
+      assert.match(appliedUseAdapter, /readInjectionUseCohorts\(/u);
+      assert.doesNotMatch(
+        appliedUseAdapter,
+        /correlationToken\s*:\s*(?:injection|joined|value)|reporterId\s*:/u
+      );
+      const appliedUseDetail = readFileSync(
+        join(workDirectory, "src/client/src/components/(playground)/memory/memory-detail-sheet.tsx"),
+        "utf8"
+      );
+      assert.match(appliedUseDetail, /injection\.injectionResult === "injected" && packetIds\.length > 0/u);
+      assert.match(appliedUseDetail, /MEMORY_DETAIL_INJECTION_USE_INELIGIBLE/u);
+      const appliedUseCohortView = readFileSync(
+        join(workDirectory, "src/client/src/components/(playground)/memory/memory-cohort-view.tsx"),
+        "utf8"
+      );
+      assert.match(appliedUseCohortView, /\/api\/memory\/use-cohorts/u);
+      assert.match(appliedUseCohortView, /MEMORY_USE_COHORTS_SCOPE_NOTE/u);
+      assert.doesNotMatch(
+        appliedUseCohortView,
+        /percentage|success\s*rate|(?:Math\.)?round\([^\n]*\*\s*100|toFixed\(/iu
+      );
 
       const status = run("git", ["status", "--short"], workDirectory);
       assert.doesNotMatch(
