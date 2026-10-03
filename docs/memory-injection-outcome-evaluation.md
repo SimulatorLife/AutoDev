@@ -63,6 +63,56 @@ touch a cited path, even if a later commit restores identical file bytes. This n
 history check does not validate nonstandard reverts, review threads, CI/checks,
 issue state, reopened PRs, or superseding changes.
 
+## Curator-assessed injection-use reports
+
+Task/PR/issue outcome reports answer whether the task succeeded; they do not
+answer whether a particular injected packet was applied. A separately
+curator-assessed use report is available for an observed injection:
+
+```text
+GET  /control/memory/experiences/:id/use-assessments
+POST /control/memory/experiences/:id/use-assessments
+GET  /control/memory/use-cohorts
+```
+
+The GET/POST experience routes require operator access, explicit
+workspace/repository scope, and `includeTaskHistory=true` while
+`AUTODEV_MEMORY_READ_TASK_HISTORY=1` is enabled. The POST body is exactly
+`injectionEventId`, `useKind`, `usedMemoryIds`, and `evidence`; the server
+resolves the opaque correlation token, session scope, and reporter identity
+from authorized stored state. A report is unique per injected event and
+idempotent on an identical body; conflicting retries fail closed. Only a
+non-empty packet actually recorded as `injected` is eligible.
+
+`useKind` is reporter-supplied and separate from `outcomeKind`:
+
+- `used` means the curator assessed every memory in the packet as applied;
+- `partially_used` means a strict non-empty subset was applied;
+- `not_used` means the curator reviewed the cited trajectory and found no
+  packet item applied;
+- `unobservable` records that the packet's use could not be attributed.
+
+The cited `usedMemoryIds` must be a subset of the exact injection event's
+packet IDs and their cardinality must agree with `useKind`. Assessed kinds
+other than `unobservable` require a trajectory evidence reference matching
+the captured experience. Since one session may contain several request-level
+injections and the stored trajectory is session-level, curators should mark
+`unobservable` rather than claim attribution when they cannot distinguish the
+relevant request/turn. No model-output scanner infers these values: echoing a
+memory ID is not proof of use, and silently applying guidance need not mention
+its ID. These are curator assessments, not verified model behavior, task
+success, or a causal-effect measure.
+
+`GET /control/memory/use-cohorts` is a bounded operator/task-history read over
+workspace, repository, and an inclusive time window capped at 365 days. Its
+sampling unit is an actually injected non-empty request packet. Cells group
+`(memoryMode, sessionCardinality, useKind)`; an unassessed eligible packet is
+retained with `useKind: null`. `exposureCount` counts eligible packet events,
+not unique sessions or memory items. The aggregate returns counts only, without
+session/request IDs, memory IDs, correlation tokens, evidence URIs, or reporter
+identity. Curator-reported counts can be compared to exposure, but they do not
+establish precise per-turn use or causal effectiveness.
+
 ## Reporter-supplied session outcome
 
 In addition to per-token injection exposure reports, an operator can append a single session-level outcome report for a task/session using:

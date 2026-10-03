@@ -2,12 +2,15 @@ import { createHash } from "node:crypto";
 
 import {
   assertMemoryInjectionOutcomeCohortFilter,
+  assertMemoryInjectionUseCohortFilter,
   assertMemorySessionOutcomeCohortFilter,
-  isMemoryInjectionSessionCardinality,
+  assertMemoryUseReportInvariants,
   type ExperienceEnvelope,
   type ExperienceListRequest,
   type ExperienceOutcome,
   type ExperienceSearchRequest,
+  isMemoryInjectionSessionCardinality,
+  isMemoryUseCohortEligibleMode,
   type MemoryAuthority,
   type MemoryExecutionMode,
   type MemoryExperiencePurgeRequest,
@@ -23,6 +26,12 @@ import {
   type MemoryInjectionOutcomeJoinPage,
   type MemoryInjectionOutcomeJoinRequest,
   type MemoryInjectionResult,
+  type MemoryInjectionUseCohortCell,
+  type MemoryInjectionUseCohortFilter,
+  type MemoryInjectionUseCohortPage,
+  type MemoryInjectionUseJoin,
+  type MemoryInjectionUseJoinPage,
+  type MemoryInjectionUseJoinRequest,
   type MemoryLifecycleEvent,
   type MemoryListRequest,
   type MemoryOutcomeReport,
@@ -33,6 +42,7 @@ import {
   type MemoryRecordInjectionEventInput,
   type MemoryRecordOutcomeReportInput,
   type MemoryRecordSessionOutcomeReportInput,
+  type MemoryRecordUseReportInput,
   type MemoryRepository,
   type MemoryScope,
   type MemorySearchHit,
@@ -42,8 +52,12 @@ import {
   type MemorySessionOutcomeCohortFilter,
   type MemorySessionOutcomeCohortPage,
   type MemorySessionOutcomeReport,
+  type MemoryUseCohortEligibleMode,
+  type MemoryUseKind,
+  type MemoryUseReport,
   type MemoryVersionedUpdate,
-  sessionOutcomeReportBodyMatches
+  sessionOutcomeReportBodyMatches,
+  useReportBodyMatches
 } from "@simulatorlife/autodev-core";
 
 import {
@@ -56,6 +70,7 @@ import {
 import {
   hydrateExperienceRow,
   hydrateInjectionEventRow,
+  hydrateInjectionUseReportRow,
   hydrateLifecycleEventRow,
   hydrateMemoryRecordRow,
   hydrateOutcomeReportRow,
@@ -85,6 +100,7 @@ import {
   buildInsert,
   experienceToRow,
   injectionEventToRow,
+  injectionUseReportToRow,
   lifecycleEventToRow,
   memoryRecordToRow,
   outcomeReportToRow,
@@ -174,6 +190,41 @@ function buildSessionScopeFilter(
     ? ` AND ${alias}.repository_id = ${params.add(context.repositoryId)}`
     : "";
   return `(${alias}.scope_workspace_id = ${workspaceId}${repositoryClause} AND ${alias}.scope_task_id = ${taskId})`;
+}
+
+function assertTrustedUseReportScope(input: MemoryRecordUseReportInput): {
+  readonly workspaceId: string;
+  readonly repositoryId: string;
+  readonly taskId: string;
+} {
+  const { report, context, actor } = input;
+  const repositoryId = context.repositoryId;
+  const taskId = context.taskId;
+  if (!repositoryId?.trim() || !taskId?.trim()) {
+    throw new MemoryConflictError(
+      "Injection use reports require a trusted repository and task scope."
+    );
+  }
+  if (actor.authority !== "root" && actor.authority !== "curator") {
+    throw new MemoryConflictError(
+      "Injection use report reporter authority must be root or curator."
+    );
+  }
+  if (!report.repositoryId.trim()) {
+    throw new MemoryConflictError(
+      "Injection use reports require a repository id."
+    );
+  }
+  if (
+    report.workspaceId !== context.workspaceId ||
+    report.repositoryId !== repositoryId ||
+    report.taskId !== taskId
+  ) {
+    throw new MemoryConflictError(
+      "Injection use report identity must match trusted repository scope."
+    );
+  }
+  return { workspaceId: context.workspaceId, repositoryId, taskId };
 }
 
 /**
@@ -847,6 +898,411 @@ export class PostgresMemoryRepository implements MemoryRepository {
     return matched ? hydrateInjectionEventRow(matched) : null;
   }
 
+  async getInjectionEventByIdForSession(
+    context: MemoryInjectionEventSessionLookup,
+    injectionEventId: string
+  ): Promise<MemoryInjectionEvent | null> {
+    if (
+      !injectionEventId.trim() ||
+      !context.workspaceId.trim() ||
+      !context.repositoryId?.trim() ||
+      !context.taskId.trim()
+    ) {
+      return null;
+    }
+    const result = await this.pool.query(
+      `SELECT * FROM memory_injection_events
+       WHERE id = $1
+         AND workspace_id = $2 AND repository_id = $3 AND task_id = $4
+         AND scope_workspace_id = $2 AND scope_task_id = $4
+       LIMIT 1`,
+      [
+        injectionEventId,
+        context.workspaceId,
+        context.repositoryId,
+        context.taskId
+      ]
+    );
+    const row = result.rows[0];
+    return row ? hydrateInjectionEventRow(row) : null;
+  }
+
+  async recordInjectionUseReport(
+    input: MemoryRecordUseReportInput
+  ): Promise<{ readonly appended: boolean; readonly id: string }> {
+    const { report, context, actor } = input;
+    const { workspaceId, repositoryId, taskId } =
+      assertTrustedUseReportScope(input);
+
+    const sessionLookup: MemoryInjectionEventSessionLookup = {
+      workspaceId,
+      repositoryId,
+      taskId,
+      ...(context.runId === undefined ? {} : { runId: context.runId }),
+      ...(context.agentId === undefined ? {} : { agentId: context.agentId }),
+      canReadGlobal: false
+    };
+    const injection = await this.getInjectionEventByIdForSession(
+      sessionLookup,
+      report.injectionEventId
+    );
+    if (!injection) {
+      throw new MemoryConflictError(
+        "Injection use report targets an event that has no scope-aligned injection."
+      );
+    }
+    try {
+      assertMemoryUseReportInvariants(report, injection);
+    } catch (error) {
+      if (error instanceof TypeError) {
+        throw new MemoryConflictError(error.message);
+      }
+      throw error;
+    }
+
+    const sessionScope: MemoryScope = {
+      kind: "task",
+      workspaceId,
+      taskId,
+      runId: context.runId ?? taskId
+    };
+    const storedReport: MemoryUseReport = {
+      ...report,
+      injectionEventId: injection.id,
+      workspaceId,
+      repositoryId,
+      scope: sessionScope,
+      taskId,
+      runId: context.runId ?? taskId,
+      agentId: context.agentId ?? taskId,
+      ...(context.role === undefined ? {} : { agentRole: context.role }),
+      correlationToken: injection.correlationToken,
+      reporterId: actor.id,
+      reporterAuthority: actor.authority
+    };
+
+    const existing = await this.getInjectionUseReport(
+      workspaceId,
+      injection.correlationToken
+    );
+    if (existing) {
+      if (useReportBodyMatches(existing, storedReport)) {
+        return { appended: false, id: existing.id };
+      }
+      throw new MemoryConflictError(
+        "Injection use report conflicts with a previously recorded report for this event."
+      );
+    }
+
+    const insert = buildInsert(
+      "memory_injection_use_reports",
+      injectionUseReportToRow(storedReport)
+    );
+    try {
+      await this.pool.query(insert.text, insert.params);
+      return { appended: true, id: storedReport.id };
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        const racedExisting = await this.getInjectionUseReport(
+          workspaceId,
+          injection.correlationToken
+        );
+        if (
+          racedExisting &&
+          useReportBodyMatches(racedExisting, storedReport)
+        ) {
+          return { appended: false, id: racedExisting.id };
+        }
+        throw new MemoryConflictError(
+          `Injection use report ${storedReport.id} already exists for this event.`
+        );
+      }
+      throw error;
+    }
+  }
+
+  async getInjectionUseReport(
+    workspaceId: string,
+    correlationToken: string
+  ): Promise<MemoryUseReport | null> {
+    if (!workspaceId.trim() || !correlationToken.trim()) return null;
+    const result = await this.pool.query(
+      `SELECT * FROM memory_injection_use_reports
+       WHERE workspace_id = $1 AND correlation_token = $2
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1`,
+      [workspaceId, correlationToken]
+    );
+    const row = result.rows[0];
+    return row ? hydrateInjectionUseReportRow(row) : null;
+  }
+
+  async listInjectionUseJoins(
+    request: MemoryInjectionUseJoinRequest
+  ): Promise<MemoryInjectionUseJoinPage> {
+    const limit = Math.min(Math.max(request.limit ?? 50, 1), 100);
+    const offset = Math.max(request.offset ?? 0, 0);
+    const { workspaceId, repositoryId, taskId } = request.context;
+    if (!repositoryId?.trim() || !taskId?.trim()) {
+      return { items: [], total: 0, limit, offset };
+    }
+
+    const params = new SqlParams();
+    const workspaceParam = params.add(workspaceId);
+    const taskParam = params.add(taskId);
+    const repositoryParam = params.add(repositoryId);
+    const filters = [
+      `i.workspace_id = ${workspaceParam}`,
+      `i.repository_id = ${repositoryParam}`,
+      `i.task_id = ${taskParam}`,
+      `i.scope_workspace_id = ${workspaceParam}`,
+      `i.scope_task_id = ${taskParam}`,
+      `i.injection_result = 'injected'`,
+      `i.memory_mode IN ('jit', 'retrieval-only')`,
+      `jsonb_array_length(i.memory_ids) > 0`
+    ];
+    if (request.memoryModes && request.memoryModes.length > 0) {
+      filters.push(
+        `i.memory_mode = ANY(${params.add(request.memoryModes)}::text[])`
+      );
+    }
+    if (request.injectionResults && request.injectionResults.length > 0) {
+      filters.push(
+        `i.injection_result = ANY(${params.add(request.injectionResults)}::text[])`
+      );
+    }
+    if (request.useKinds && request.useKinds.length > 0) {
+      filters.push(`r.use_kind = ANY(${params.add(request.useKinds)}::text[])`);
+    }
+    if (request.includeUnassessed !== true) filters.push(`r.id IS NOT NULL`);
+    const whereClause = filters.join(" AND ");
+    // Freeze the count-query parameters before pagination placeholders mutate
+    // SqlParams; its `all` getter exposes the backing array.
+    const filterParams = [...params.all];
+    const limitParam = params.add(limit);
+    const offsetParam = params.add(offset);
+    const pageText = `
+      WITH session_counts AS MATERIALIZED (
+        SELECT si.workspace_id, si.repository_id, si.task_id,
+               COUNT(*)::bigint AS session_injection_count
+        FROM memory_injection_events si
+        WHERE si.workspace_id = ${workspaceParam}
+          AND si.repository_id = ${repositoryParam}
+          AND si.task_id = ${taskParam}
+        GROUP BY si.workspace_id, si.repository_id, si.task_id
+      )
+      SELECT i.*, sc.session_injection_count,
+             r.id AS use_report_id,
+             r.injection_event_id AS use_report_injection_event_id,
+             r.workspace_id AS use_report_workspace_id,
+             r.repository_id AS use_report_repository_id,
+             r.scope_kind AS use_report_scope_kind,
+             r.scope_workspace_id AS use_report_scope_workspace_id,
+             r.scope_repository_id AS use_report_scope_repository_id,
+             r.scope_role AS use_report_scope_role,
+             r.scope_task_id AS use_report_scope_task_id,
+             r.scope_run_id AS use_report_scope_run_id,
+             r.scope_agent_id AS use_report_scope_agent_id,
+             r.task_id AS use_report_task_id,
+             r.run_id AS use_report_run_id,
+             r.agent_id AS use_report_agent_id,
+             r.agent_role AS use_report_agent_role,
+             r.correlation_token AS use_report_correlation_token,
+             r.use_kind AS use_report_kind,
+             r.used_memory_ids AS use_report_memory_ids,
+             r.reported_at AS use_report_reported_at,
+             r.reporter_id AS use_report_reporter_id,
+             r.reporter_authority AS use_report_reporter_authority,
+             r.reason_code AS use_report_reason_code,
+             r.evidence AS use_report_evidence
+      FROM memory_injection_events i
+      JOIN session_counts sc
+        ON sc.workspace_id = i.workspace_id
+       AND sc.repository_id IS NOT DISTINCT FROM i.repository_id
+       AND sc.task_id = i.task_id
+      LEFT JOIN memory_injection_use_reports r
+        ON r.workspace_id = i.workspace_id
+       AND r.repository_id = i.repository_id
+       AND r.correlation_token = i.correlation_token
+       AND r.injection_event_id = i.id
+      WHERE ${whereClause}
+      ORDER BY i.occurred_at DESC, i.id DESC
+      LIMIT ${limitParam} OFFSET ${offsetParam}
+    `;
+    const rows = await this.pool.query(pageText, params.all);
+    const count = await this.pool.query<{ total: number }>(
+      `SELECT COUNT(*)::bigint AS total
+       FROM memory_injection_events i
+       LEFT JOIN memory_injection_use_reports r
+         ON r.workspace_id = i.workspace_id
+        AND r.repository_id = i.repository_id
+        AND r.correlation_token = i.correlation_token
+        AND r.injection_event_id = i.id
+       WHERE ${whereClause}`,
+      filterParams
+    );
+    const items: MemoryInjectionUseJoin[] = rows.rows.map((row) => {
+      const injection = hydrateInjectionEventRow(row);
+      const sessionInjectionCount = parseCohortCount(
+        row.session_injection_count,
+        "session_injection_count"
+      );
+      if (!row.use_report_id) {
+        return { injection, use: null, sessionInjectionCount };
+      }
+      const reportRow: Record<string, unknown> = {
+        id: row.use_report_id,
+        injection_event_id: row.use_report_injection_event_id,
+        workspace_id: row.use_report_workspace_id,
+        repository_id: row.use_report_repository_id,
+        scope_kind: row.use_report_scope_kind,
+        scope_workspace_id: row.use_report_scope_workspace_id,
+        scope_repository_id: row.use_report_scope_repository_id,
+        scope_role: row.use_report_scope_role,
+        scope_task_id: row.use_report_scope_task_id,
+        scope_run_id: row.use_report_scope_run_id,
+        scope_agent_id: row.use_report_scope_agent_id,
+        task_id: row.use_report_task_id,
+        run_id: row.use_report_run_id,
+        agent_id: row.use_report_agent_id,
+        agent_role: row.use_report_agent_role,
+        correlation_token: row.use_report_correlation_token,
+        use_kind: row.use_report_kind,
+        used_memory_ids: row.use_report_memory_ids,
+        reported_at: row.use_report_reported_at,
+        reporter_id: row.use_report_reporter_id,
+        reporter_authority: row.use_report_reporter_authority,
+        reason_code: row.use_report_reason_code,
+        evidence: row.use_report_evidence
+      };
+      return {
+        injection,
+        use: hydrateInjectionUseReportRow(reportRow),
+        sessionInjectionCount
+      };
+    });
+    return {
+      items,
+      total: Number(count.rows[0]?.total ?? 0),
+      limit,
+      offset
+    };
+  }
+
+  async aggregateInjectionUseCohorts(
+    request: MemoryInjectionUseCohortFilter
+  ): Promise<MemoryInjectionUseCohortPage> {
+    assertMemoryInjectionUseCohortFilter(request);
+    const workspaceId = request.context.workspaceId;
+    const repositoryId = request.context.repositoryId as string;
+    const params = new SqlParams();
+    const workspaceParam = params.add(workspaceId);
+    const repositoryParam = params.add(repositoryId);
+    const fromParam = params.add(request.occurredFrom);
+    const untilParam = params.add(request.occurredUntil);
+    const eligibleModes = `i.memory_mode IN ('jit', 'retrieval-only')`;
+    let modeFilterSql = "";
+    if (request.memoryModes && request.memoryModes.length > 0) {
+      modeFilterSql = ` AND i.memory_mode = ANY(${params.add(request.memoryModes)}::text[])`;
+    }
+    let useFilterSql = "";
+    if (request.useKinds && request.useKinds.length > 0) {
+      useFilterSql = ` AND r.use_kind = ANY(${params.add(request.useKinds)}::text[])`;
+    }
+    const text = `
+      WITH cohort_sessions AS MATERIALIZED (
+        SELECT DISTINCT i.workspace_id, i.repository_id, i.task_id
+        FROM memory_injection_events i
+        WHERE i.workspace_id = ${workspaceParam}
+          AND i.repository_id = ${repositoryParam}
+          AND i.occurred_at >= ${fromParam}
+          AND i.occurred_at <= ${untilParam}
+          AND i.injection_result = 'injected'
+          AND ${eligibleModes}
+          AND jsonb_array_length(i.memory_ids) > 0${modeFilterSql}
+      ),
+      session_counts AS MATERIALIZED (
+        SELECT si.workspace_id, si.repository_id, si.task_id,
+               CASE WHEN COUNT(*) > 1 THEN 'multiple' ELSE 'single' END AS session_cardinality
+        FROM cohort_sessions cs
+        JOIN memory_injection_events si
+          ON si.workspace_id = cs.workspace_id
+         AND si.repository_id = cs.repository_id
+         AND si.task_id = cs.task_id
+        GROUP BY si.workspace_id, si.repository_id, si.task_id
+      )
+      SELECT i.memory_mode, sc.session_cardinality, r.use_kind,
+             COUNT(i.id)::bigint AS exposure_count
+      FROM memory_injection_events i
+      JOIN session_counts sc
+        ON sc.workspace_id = i.workspace_id
+       AND sc.repository_id = i.repository_id
+       AND sc.task_id = i.task_id
+      LEFT JOIN memory_injection_use_reports r
+        ON r.workspace_id = i.workspace_id
+       AND r.repository_id = i.repository_id
+       AND r.correlation_token = i.correlation_token
+       AND r.injection_event_id = i.id
+      WHERE i.workspace_id = ${workspaceParam}
+        AND i.repository_id = ${repositoryParam}
+        AND i.occurred_at >= ${fromParam}
+        AND i.occurred_at <= ${untilParam}
+        AND i.injection_result = 'injected'
+        AND ${eligibleModes}
+        AND jsonb_array_length(i.memory_ids) > 0${modeFilterSql}${useFilterSql}
+      GROUP BY i.memory_mode, sc.session_cardinality, r.use_kind
+      ORDER BY i.memory_mode, sc.session_cardinality, r.use_kind NULLS FIRST
+    `;
+    const result = await this.pool.query(text, params.all);
+    let exposureCount = 0;
+    const cells: MemoryInjectionUseCohortCell[] = result.rows.map((row) => {
+      const count = parseCohortCount(row.exposure_count, "exposure_count");
+      exposureCount = parseCohortCount(exposureCount + count, "exposure_count");
+      if (!isMemoryInjectionSessionCardinality(row.session_cardinality)) {
+        throw new MemoryHydrationError(
+          "memory_injection_events",
+          "session_cardinality",
+          `expected "single" or "multiple", got ${String(row.session_cardinality)}`
+        );
+      }
+      if (!isMemoryUseCohortEligibleMode(row.memory_mode)) {
+        throw new MemoryHydrationError(
+          "memory_injection_events",
+          "memory_mode",
+          `expected eligible use mode, got ${String(row.memory_mode)}`
+        );
+      }
+      const useKind = (row.use_kind ?? null) as MemoryUseKind | null;
+      if (
+        useKind !== null &&
+        !["used", "partially_used", "not_used", "unobservable"].includes(
+          useKind
+        )
+      ) {
+        throw new MemoryHydrationError(
+          "memory_injection_use_reports",
+          "use_kind",
+          `expected a bounded use kind, got ${String(row.use_kind)}`
+        );
+      }
+      return {
+        memoryMode: row.memory_mode as MemoryUseCohortEligibleMode,
+        sessionCardinality: row.session_cardinality,
+        useKind,
+        exposureCount: count
+      };
+    });
+    return {
+      schema: "autodev-memory-injection-use-cohorts-v1",
+      workspaceId,
+      repositoryId,
+      occurredFrom: request.occurredFrom,
+      occurredUntil: request.occurredUntil,
+      cells,
+      exposureCount
+    };
+  }
+
   /**
    * Scope-free lookup of the single outcome report that already claims a
    * `(workspace_id, correlation_token)` key, used solely to decide whether
@@ -1440,7 +1896,10 @@ export class PostgresMemoryRepository implements MemoryRepository {
     const cells: MemorySessionOutcomeCohortCell[] = [];
 
     for (const row of result.rows) {
-      const cellSessionCount = parseCohortCount(row.session_count, "session_count");
+      const cellSessionCount = parseCohortCount(
+        row.session_count,
+        "session_count"
+      );
       const cellConflictingCount = parseCohortCount(
         row.conflicting_count ?? 0,
         "conflicting_count"
@@ -1452,12 +1911,13 @@ export class PostgresMemoryRepository implements MemoryRepository {
         continue;
       }
 
-      const outcomeKind = (row.outcome_kind ?? null) as ExperienceOutcome | null;
+      const outcomeKind = (row.outcome_kind ??
+        null) as ExperienceOutcome | null;
       sessionCount += cellSessionCount;
-      if (outcomeKind !== null) {
-        reportedSessionCount += cellSessionCount;
-      } else {
+      if (outcomeKind === null) {
         unreportedSessionCount += cellSessionCount;
+      } else {
+        reportedSessionCount += cellSessionCount;
       }
 
       cells.push({

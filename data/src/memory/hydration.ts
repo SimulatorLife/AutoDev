@@ -9,6 +9,8 @@ import {
   MEMORY_OUTCOME_REPORT_KINDS,
   MEMORY_OUTCOME_REPORT_REASON_CODES,
   MEMORY_REASON_CODES,
+  MEMORY_USE_KINDS,
+  MEMORY_USE_REPORT_REASON_CODES,
   type MemoryAuthority,
   type MemoryExecutionMode,
   type MemoryInjectionEvent,
@@ -25,6 +27,9 @@ import {
   type MemoryRecord,
   type MemorySessionOutcomeReport,
   type MemoryStatus,
+  type MemoryUseKind,
+  type MemoryUseReport,
+  type MemoryUseReportReasonCode,
   type MemoryValidationState,
   type MemoryValidity
 } from "@simulatorlife/autodev-core";
@@ -79,6 +84,10 @@ const MEMORY_OUTCOME_REPORT_KIND_SET: ReadonlySet<string> = new Set(
 );
 const MEMORY_OUTCOME_REPORT_REASON_SET: ReadonlySet<string> = new Set(
   MEMORY_OUTCOME_REPORT_REASON_CODES
+);
+const MEMORY_USE_KIND_SET: ReadonlySet<string> = new Set(MEMORY_USE_KINDS);
+const MEMORY_USE_REPORT_REASON_SET: ReadonlySet<string> = new Set(
+  MEMORY_USE_REPORT_REASON_CODES
 );
 const MEMORY_AUTHORITY_SET: ReadonlySet<string> = new Set([
   "worker",
@@ -513,7 +522,6 @@ export function hydrateLifecycleEventRow(
   };
 }
 
-
 /** Hydrate one `memory_injection_events` row. */
 export function hydrateInjectionEventRow(
   row: Record<string, unknown>
@@ -526,7 +534,9 @@ export function hydrateInjectionEventRow(
     workspaceId: requireString(table, "workspace_id", row.workspace_id),
     ...(row.repository_id === null || row.repository_id === undefined
       ? {}
-      : { repositoryId: requireString(table, "repository_id", row.repository_id) }),
+      : {
+          repositoryId: requireString(table, "repository_id", row.repository_id)
+        }),
     scope: columnsToScope(table, row),
     taskId: requireString(table, "task_id", row.task_id),
     runId: requireString(table, "run_id", row.run_id),
@@ -588,7 +598,11 @@ function requireNonNegativeInteger(
     value = Number(value);
   }
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-    fail(table, column, `expected a non-negative integer, got ${JSON.stringify(value)}`);
+    fail(
+      table,
+      column,
+      `expected a non-negative integer, got ${JSON.stringify(value)}`
+    );
   }
   return value;
 }
@@ -598,14 +612,16 @@ export function hydrateOutcomeReportRow(
   row: Record<string, unknown>
 ): MemoryOutcomeReport {
   const table = "memory_outcome_reports";
-  const repositoryId = optionalString(table, "repository_id", row.repository_id);
+  const repositoryId = optionalString(
+    table,
+    "repository_id",
+    row.repository_id
+  );
   const agentRole = optionalString(table, "agent_role", row.agent_role);
   return {
     id: requireString(table, "id", row.id),
     workspaceId: requireString(table, "workspace_id", row.workspace_id),
-    ...(repositoryId === undefined
-      ? {}
-      : { repositoryId }),
+    ...(repositoryId === undefined ? {} : { repositoryId }),
     scope: columnsToScope(table, row),
     taskId: requireString(table, "task_id", row.task_id),
     runId: requireString(table, "run_id", row.run_id),
@@ -643,6 +659,56 @@ export function hydrateOutcomeReportRow(
       MEMORY_OUTCOME_REPORT_REASON_SET
     ),
     evidence: parseEvidenceList(table, "evidence", row.evidence ?? "[]")
+  };
+}
+
+/** Hydrate one `memory_injection_use_reports` row. */
+export function hydrateInjectionUseReportRow(
+  row: Record<string, unknown>
+): MemoryUseReport {
+  const table = "memory_injection_use_reports";
+  const agentRole = optionalString(table, "agent_role", row.agent_role);
+  return {
+    id: requireString(table, "id", row.id),
+    injectionEventId: requireString(
+      table,
+      "injection_event_id",
+      row.injection_event_id
+    ),
+    workspaceId: requireString(table, "workspace_id", row.workspace_id),
+    repositoryId: requireString(table, "repository_id", row.repository_id),
+    scope: columnsToScope(table, row),
+    taskId: requireString(table, "task_id", row.task_id),
+    runId: requireString(table, "run_id", row.run_id),
+    agentId: requireString(table, "agent_id", row.agent_id),
+    ...(agentRole === undefined ? {} : { agentRole }),
+    correlationToken: requireString(
+      table,
+      "correlation_token",
+      row.correlation_token
+    ),
+    useKind: requireEnum<MemoryUseKind>(
+      table,
+      "use_kind",
+      row.use_kind,
+      MEMORY_USE_KIND_SET
+    ),
+    usedMemoryIds: parseIdArray(table, "used_memory_ids", row.used_memory_ids),
+    reportedAt: requireIsoString(table, "reported_at", row.reported_at),
+    reporterId: requireString(table, "reporter_id", row.reporter_id),
+    reporterAuthority: requireEnum<MemoryAuthority>(
+      table,
+      "reporter_authority",
+      row.reporter_authority,
+      new Set(["root", "curator"])
+    ),
+    reasonCode: requireEnum<MemoryUseReportReasonCode>(
+      table,
+      "reason_code",
+      row.reason_code,
+      MEMORY_USE_REPORT_REASON_SET
+    ),
+    evidence: parseEvidenceList(table, "evidence", row.evidence)
   };
 }
 

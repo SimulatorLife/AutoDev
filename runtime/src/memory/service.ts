@@ -10,7 +10,9 @@ import {
 } from "@opentelemetry/api";
 import {
   assertMemoryInjectionOutcomeCohortFilter,
+  assertMemoryInjectionUseCohortFilter,
   assertMemorySessionOutcomeCohortFilter,
+  assertMemoryUseReportInvariants,
   type EvidenceReference,
   EXPERIENCE_OUTCOMES,
   type ExperienceEnvelope,
@@ -21,6 +23,7 @@ import {
   isMemoryInjectionResult,
   isMemoryOutcomeReportKind,
   isMemoryScopeVisibleTo,
+  isMemoryUseKind,
   MEMORY_EXECUTION_MODES,
   MEMORY_OUTCOME_REPORT_KINDS,
   MEMORY_REASON_CODES,
@@ -35,6 +38,10 @@ import {
   type MemoryInjectionOutcomeCohortPage,
   type MemoryInjectionOutcomeJoinPage,
   type MemoryInjectionOutcomeJoinRequest,
+  type MemoryInjectionUseCohortFilter,
+  type MemoryInjectionUseCohortPage,
+  type MemoryInjectionUseJoinPage,
+  type MemoryInjectionUseJoinRequest,
   type MemoryLifecycleAction,
   type MemoryLifecycleEvent,
   type MemoryListRequest,
@@ -54,6 +61,8 @@ import {
   type MemorySessionOutcomeCohortPage,
   type MemorySessionOutcomeReport,
   type MemoryStatus,
+  type MemoryUseKind,
+  type MemoryUseReport,
   type MemoryVersionedUpdate,
   type MemoryWhyResult
 } from "@simulatorlife/autodev-core";
@@ -197,10 +206,13 @@ const MEMORY_OPERATIONS = {
   injectionRecord: "memory.injection.record",
   injectionOutcomeList: "memory.injection.outcome.list",
   injectionOutcomeAggregate: "memory.injection.outcome.aggregate",
+  injectionUseList: "memory.injection.use.list",
+  injectionUseAggregate: "memory.injection.use.aggregate",
   sessionOutcomeAggregate: "memory.session.outcome.aggregate",
   sessionOutcomeReport: "memory.session.outcome.report",
   invalidate: "memory.invalidate",
   outcomeReport: "memory.outcome.report",
+  useReport: "memory.use.report",
   packet: "memory.packet",
   promote: "memory.promote",
   propose: "memory.propose",
@@ -232,6 +244,7 @@ interface MemoryMetricInstruments {
   readonly packetTokens: Histogram<MemoryMetricAttributes>;
   readonly outcomeReports: Counter<MemoryMetricAttributes>;
   readonly sessionOutcomeReports: Counter<MemoryMetricAttributes>;
+  readonly useReports: Counter<MemoryMetricAttributes>;
 }
 
 function recordMemoryMetric(record: () => void): void {
@@ -314,7 +327,12 @@ function createMemoryMetricInstruments(meter: Meter): MemoryMetricInstruments {
           "Newly persisted session-level outcome reports, counted only when the report is appended.",
         unit: "{report}"
       }
-    )
+    ),
+    useReports: meter.createCounter("autodev.memory.use_reports", {
+      description:
+        "Newly persisted curator-assessed injection-use reports, counted only when appended.",
+      unit: "{report}"
+    })
   };
 }
 
@@ -360,6 +378,121 @@ function recordOutcomeReportCohortAttributes(
     "autodev.memory.outcome.memory_mode": memoryModeValue,
     "autodev.memory.outcome.injection_result": injectionResultValue
   };
+}
+
+function assertInjectionUseReportAccess(
+  actor: MemoryActor,
+  context: MemoryReadContext
+): void {
+  if (actor.authority !== "root" && actor.authority !== "curator") {
+    throw new MemoryAuthorizationError(
+      "Only root or memory curator authorities may record injection-use reports."
+    );
+  }
+  if (context.canReadTaskHistory !== true) {
+    throw new MemoryAuthorizationError(
+      "Task-history access is required to report injection use."
+    );
+  }
+  if (!context.repositoryId) {
+    throw new MemoryAuthorizationError(
+      "Repository scope is required to report injection use."
+    );
+  }
+}
+
+function contextForCapturedExperience(
+  experience: ExperienceEnvelope,
+  canReadTaskHistory: boolean
+): MemoryReadContext {
+  return {
+    workspaceId: experience.workspaceId,
+    ...(experience.repositoryId
+      ? { repositoryId: experience.repositoryId }
+      : {}),
+    ...(experience.agentRole ? { role: experience.agentRole } : {}),
+    taskId: experience.taskId,
+    runId: experience.runId,
+    agentId: experience.agentId,
+    canReadGlobal: false,
+    canReadTaskHistory
+  };
+}
+
+function buildInjectionUseReport(input: {
+  readonly event: MemoryInjectionEvent;
+  readonly experience: ExperienceEnvelope;
+  readonly useKind: MemoryUseKind;
+  readonly usedMemoryIds: readonly string[];
+  readonly evidence: readonly EvidenceReference[];
+  readonly actor: MemoryActor;
+  readonly createId: () => string;
+  readonly now: () => string;
+}): MemoryUseReport {
+  if (input.usedMemoryIds.length > MAX_INJECTION_MEMORY_IDS) {
+    throw new MemoryValidationError(
+      "Injection-use report contains too many memory ids."
+    );
+  }
+  if (input.evidence.length > MAX_EXPERIENCE_REFERENCE_COUNT) {
+    throw new MemoryValidationError(
+      "Too many injection-use evidence references."
+    );
+  }
+  const evidence = sanitizeEvidence(input.evidence);
+  const trajectoryReferences = evidence.filter(
+    (reference) => reference.kind === "trajectory"
+  );
+  if (
+    trajectoryReferences.some(
+      (reference) => reference.uri !== input.experience.trajectory.uri
+    )
+  ) {
+    throw new MemoryValidationError(
+      "Injection-use evidence must reference the captured experience trajectory."
+    );
+  }
+  if (
+    input.useKind !== "unobservable" &&
+    !trajectoryReferences.some(
+      (reference) => reference.uri === input.experience.trajectory.uri
+    )
+  ) {
+    throw new MemoryValidationError(
+      "An assessed injection-use report requires the captured trajectory as evidence."
+    );
+  }
+  const report: MemoryUseReport = {
+    id: input.createId(),
+    injectionEventId: input.event.id,
+    workspaceId: input.event.workspaceId,
+    repositoryId: input.experience.repositoryId!,
+    scope: input.event.scope,
+    taskId: input.event.taskId,
+    runId: input.event.runId,
+    agentId: input.event.agentId,
+    ...(input.event.agentRole ? { agentRole: input.event.agentRole } : {}),
+    correlationToken: input.event.correlationToken,
+    useKind: input.useKind,
+    usedMemoryIds: [...input.usedMemoryIds],
+    reportedAt: input.now(),
+    reporterId: input.actor.id,
+    reporterAuthority: input.actor.authority,
+    reasonCode:
+      input.useKind === "unobservable"
+        ? "reporter_unobservable"
+        : "reporter_supplied",
+    evidence
+  };
+  try {
+    assertMemoryUseReportInvariants(report, input.event);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new MemoryValidationError(error.message);
+    }
+    throw error;
+  }
+  return report;
 }
 
 export class MemoryAuthorizationError extends Error {
@@ -782,6 +915,193 @@ export class MemoryService {
   }
 
   /**
+   * Appends one curator-assessed use report for a concrete injected packet.
+   * This is independent of task success and is never inferred from provider
+   * output or a task/PR/issue outcome. The caller supplies only an event id;
+   * Runtime resolves the opaque correlation token from the authorized event.
+   */
+  recordInjectionUseReport(input: {
+    readonly experienceId: string;
+    readonly injectionEventId: string;
+    readonly useKind: MemoryUseKind;
+    readonly usedMemoryIds: readonly string[];
+    readonly evidence: readonly EvidenceReference[];
+    readonly actor: MemoryActor;
+    readonly context: MemoryReadContext;
+  }): Promise<{ readonly appended: boolean; readonly id: string }> {
+    return this.withSpan(MEMORY_OPERATIONS.useReport, async (span) => {
+      this.assertActor(input.actor);
+      assertInjectionUseReportAccess(input.actor, input.context);
+      if (!isMemoryUseKind(input.useKind)) {
+        throw new MemoryValidationError(
+          "Injection-use report useKind is invalid."
+        );
+      }
+      const experience = await this.getExperience(
+        input.experienceId,
+        input.context
+      );
+      if (!experience || !experience.repositoryId) {
+        throw new MemoryValidationError(
+          "Injection-use report requires a visible repository-scoped experience."
+        );
+      }
+      if (
+        input.context.workspaceId !== experience.workspaceId ||
+        input.context.repositoryId !== experience.repositoryId
+      ) {
+        throw new MemoryAuthorizationError(
+          "Injection-use report is restricted to the visible experience's workspace and repository."
+        );
+      }
+      const reportContext = contextForCapturedExperience(
+        experience,
+        input.context.canReadTaskHistory === true
+      );
+      const event = await this.repository.getInjectionEventByIdForSession(
+        {
+          workspaceId: experience.workspaceId,
+          repositoryId: experience.repositoryId,
+          taskId: experience.taskId,
+          runId: experience.runId,
+          agentId: experience.agentId,
+          canReadGlobal: false
+        },
+        input.injectionEventId
+      );
+      if (!event) {
+        throw new MemoryValidationError(
+          "Injection-use report targets an event outside the captured session."
+        );
+      }
+      const report = buildInjectionUseReport({
+        event,
+        experience,
+        useKind: input.useKind,
+        usedMemoryIds: input.usedMemoryIds,
+        evidence: input.evidence,
+        actor: input.actor,
+        createId: this.createId,
+        now: this.now
+      });
+      try {
+        const result = await this.repository.recordInjectionUseReport({
+          report,
+          actor: input.actor,
+          context: reportContext
+        });
+        const attributes = {
+          "autodev.memory.use.kind": report.useKind,
+          "autodev.memory.use.memory_mode": event.memoryMode
+        };
+        span.setAttribute("memory.use.kind", report.useKind);
+        span.setAttribute("memory.use.memory_mode", event.memoryMode);
+        if (result.appended) {
+          recordMemoryMetric(() => this.metrics.useReports.add(1, attributes));
+        }
+        return result;
+      } catch (error) {
+        if (error instanceof RepositoryMemoryConflictError) {
+          throw new MemoryConflictError(error.message);
+        }
+        throw error;
+      }
+    });
+  }
+
+  /** Scoped join of injected packets with their curator-assessed use reports. */
+  listInjectionUseJoins(
+    request: MemoryInjectionUseJoinRequest
+  ): Promise<MemoryInjectionUseJoinPage> {
+    return this.withSpan(MEMORY_OPERATIONS.injectionUseList, async (span) => {
+      if (request.context.canReadTaskHistory !== true) {
+        throw new MemoryAuthorizationError(
+          "Task-history access is required to read injection-use assessments."
+        );
+      }
+      if (request.memoryModes?.some((mode) => !isMemoryExecutionMode(mode))) {
+        throw new MemoryValidationError(
+          "Injection-use join memory mode filter is invalid."
+        );
+      }
+      if (
+        request.injectionResults?.some(
+          (value) =>
+            value !== "injected" && value !== "empty" && value !== "skipped"
+        )
+      ) {
+        throw new MemoryValidationError(
+          "Injection-use join injection-result filter is invalid."
+        );
+      }
+      if (request.useKinds?.some((kind) => !isMemoryUseKind(kind))) {
+        throw new MemoryValidationError(
+          "Injection-use join useKind filter is invalid."
+        );
+      }
+      const sessionContext: MemoryReadContext = {
+        workspaceId: request.context.workspaceId,
+        ...(request.context.repositoryId
+          ? { repositoryId: request.context.repositoryId }
+          : {}),
+        ...(request.context.role ? { role: request.context.role } : {}),
+        ...(request.context.taskId ? { taskId: request.context.taskId } : {}),
+        canReadGlobal: request.context.canReadGlobal,
+        ...(request.context.canReadTaskHistory === undefined
+          ? {}
+          : { canReadTaskHistory: request.context.canReadTaskHistory })
+      };
+      const page = await this.repository.listInjectionUseJoins({
+        ...request,
+        context: sessionContext
+      });
+      const visible = page.items.filter(
+        (join) =>
+          isInjectionOutcomeVisibleToSession(join.injection, request.context) &&
+          (join.use === null ||
+            isInjectionOutcomeVisibleToSession(join.use, request.context))
+      );
+      span.setAttribute("memory.injection.use.total", visible.length);
+      span.setAttribute(
+        "memory.injection.use.include_unassessed",
+        request.includeUnassessed === true
+      );
+      return { ...page, items: visible };
+    });
+  }
+
+  /** Bounded, operator/task-history-gated aggregate over injected packets. */
+  aggregateInjectionUseCohorts(
+    request: MemoryInjectionUseCohortFilter
+  ): Promise<MemoryInjectionUseCohortPage> {
+    return this.withSpan(
+      MEMORY_OPERATIONS.injectionUseAggregate,
+      async (span) => {
+        if (request.context.canReadTaskHistory !== true) {
+          throw new MemoryAuthorizationError(
+            "Task-history access is required for injection-use cohorts."
+          );
+        }
+        assertMemoryInjectionUseCohortFilter(request);
+        const page =
+          await this.repository.aggregateInjectionUseCohorts(request);
+        const assessedCount = page.cells.reduce(
+          (total, cell) =>
+            total + (cell.useKind === null ? 0 : cell.exposureCount),
+          0
+        );
+        span.setAttribute("memory.injection.use.exposures", page.exposureCount);
+        span.setAttribute("memory.injection.use.assessed", assessedCount);
+        span.setAttribute(
+          "memory.injection.use.cohort_cells",
+          page.cells.length
+        );
+        return page;
+      }
+    );
+  }
+
+  /**
    * Appends one reporter-supplied session-level outcome report.
    * Exactly one report is permitted per unique session key (workspace_id, repository_id, task_id).
    * Scope-aligned injection event must exist.
@@ -866,7 +1186,7 @@ export class MemoryService {
   /**
    * Look up the single session outcome report for a trusted session key, if any.
    */
-  async getSessionOutcomeReport(
+  getSessionOutcomeReport(
     workspaceId: string,
     repositoryId: string,
     taskId: string,
@@ -890,7 +1210,7 @@ export class MemoryService {
         "Task history access required to read another session's outcome report."
       );
     }
-    return await this.repository.getSessionOutcomeReport(
+    return this.repository.getSessionOutcomeReport(
       workspaceId,
       repositoryId,
       taskId
@@ -1031,10 +1351,7 @@ export class MemoryService {
         assertMemorySessionOutcomeCohortFilter(request);
         const page =
           await this.repository.aggregateSessionOutcomeCohorts(request);
-        span.setAttribute(
-          "memory.session.outcome.sessions",
-          page.sessionCount
-        );
+        span.setAttribute("memory.session.outcome.sessions", page.sessionCount);
         span.setAttribute(
           "memory.session.outcome.reported_sessions",
           page.reportedSessionCount

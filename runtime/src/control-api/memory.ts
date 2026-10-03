@@ -7,6 +7,7 @@ import path from "node:path";
 
 import {
   assertMemoryInjectionOutcomeCohortFilter,
+  assertMemoryInjectionUseCohortFilter,
   assertMemorySessionOutcomeCohortFilter,
   type EvidenceReference,
   EXPERIENCE_OUTCOMES,
@@ -18,8 +19,11 @@ import {
   MEMORY_REASON_CODES,
   MEMORY_SESSION_COHORT_ASSIGNED_MODES,
   MEMORY_STATUSES,
+  MEMORY_USE_COHORT_ASSIGNED_MODES,
+  MEMORY_USE_KINDS,
   type MemoryActor,
   type MemoryInjectionOutcomeCohortFilter,
+  type MemoryInjectionUseCohortFilter,
   type MemoryKind,
   type MemoryOutcomeReport,
   type MemoryOutcomeReportKind,
@@ -29,7 +33,8 @@ import {
   type MemoryScope,
   type MemorySessionOutcomeCohortFilter,
   type MemorySessionOutcomeReport,
-  type MemoryStatus
+  type MemoryStatus,
+  type MemoryUseKind
 } from "@simulatorlife/autodev-core";
 import {
   MemoryAuthorizationError,
@@ -67,6 +72,7 @@ const MEMORY_PROMOTE_SKILL_ACTION = "promote-skill";
 const MEMORY_EXPERIENCE_RESOURCE = "/control/memory/experiences";
 const MEMORY_COHORT_RESOURCE = "/control/memory/cohorts";
 const MEMORY_SESSION_COHORT_RESOURCE = "/control/memory/session-cohorts";
+const MEMORY_USE_COHORT_RESOURCE = "/control/memory/use-cohorts";
 const MEMORY_EXPERIENCE_NOT_FOUND = "Memory experience was not found.";
 const MAX_NATIVE_TRANSCRIPT_BYTES = 32 * 1024 * 1024;
 const MAX_FILTER_VALUE = 256;
@@ -76,6 +82,21 @@ const MAX_EVIDENCE_REFERENCES = 64;
 const MAX_EXPERIENCE_IDS = 64;
 const MAX_CLAIM_CHARACTERS = 4000;
 const MEMORY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const MEMORY_RECORDS_ROUTE = "records" as const;
+const MEMORY_EXPERIENCES_ROUTE = "experiences" as const;
+const MEMORY_COHORTS_ROUTE = "cohorts" as const;
+const MEMORY_SESSION_COHORTS_ROUTE = "session-cohorts" as const;
+const MEMORY_USE_COHORTS_ROUTE = "use-cohorts" as const;
+const MEMORY_PURGE_ACTION = "purge" as const;
+const MEMORY_OUTCOMES_ACTION = "outcomes" as const;
+const MEMORY_SESSION_OUTCOME_ACTION = "session-outcome" as const;
+const MEMORY_SESSION_OUTCOMES_ACTION = "session-outcomes" as const;
+const MEMORY_USE_ASSESSMENTS_ACTION = "use-assessments" as const;
+const MEMORY_TASK_HISTORY_ACCESS_REQUIRED =
+  "Operator task-history access is required.";
+const MEMORY_EXPERIENCE_ID_REQUIRED = "An experience id is required.";
+const MEMORY_FILTERS_INVALID = "Memory filters are invalid or incomplete.";
+const MEMORY_CONTROL_API_ORIGIN = "http://127.0.0.1";
 const PAGE_NUMBER_PATTERN = /^(0|[1-9]\d{0,8})$/u;
 const EVIDENCE_KINDS = [
   "trajectory",
@@ -91,7 +112,12 @@ const EVIDENCE_KINDS = [
 ] as const satisfies readonly EvidenceReference["kind"][];
 
 type MemoryControlRoute = {
-  readonly resource: "records" | "experiences" | "cohorts" | "session-cohorts";
+  readonly resource:
+    | typeof MEMORY_RECORDS_ROUTE
+    | typeof MEMORY_EXPERIENCES_ROUTE
+    | typeof MEMORY_COHORTS_ROUTE
+    | typeof MEMORY_SESSION_COHORTS_ROUTE
+    | typeof MEMORY_USE_COHORTS_ROUTE;
   readonly id?: string;
   readonly action?:
     | "history"
@@ -100,10 +126,11 @@ type MemoryControlRoute = {
     | "invalidate"
     | "revise"
     | "supersede"
-    | "purge"
-    | "outcomes"
-    | "session-outcome"
-    | "session-outcomes"
+    | typeof MEMORY_PURGE_ACTION
+    | typeof MEMORY_OUTCOMES_ACTION
+    | typeof MEMORY_SESSION_OUTCOME_ACTION
+    | typeof MEMORY_SESSION_OUTCOMES_ACTION
+    | typeof MEMORY_USE_ASSESSMENTS_ACTION
     | typeof MEMORY_PROMOTE_SKILL_ACTION;
 };
 
@@ -143,14 +170,17 @@ function parseRoute(pathname: string): MemoryControlRoute | null {
   const parts = pathname.slice(MEMORY_PATH_PREFIX.length).split("/");
   const resource = parts[0];
   if (
-    resource !== "records" &&
-    resource !== "experiences" &&
-    resource !== "cohorts" &&
-    resource !== "session-cohorts"
+    resource !== MEMORY_RECORDS_ROUTE &&
+    resource !== MEMORY_EXPERIENCES_ROUTE &&
+    resource !== MEMORY_COHORTS_ROUTE &&
+    resource !== MEMORY_SESSION_COHORTS_ROUTE &&
+    resource !== MEMORY_USE_COHORTS_ROUTE
   )
     return null;
   if (
-    (resource === "cohorts" || resource === "session-cohorts") &&
+    (resource === MEMORY_COHORTS_ROUTE ||
+      resource === MEMORY_SESSION_COHORTS_ROUTE ||
+      resource === MEMORY_USE_COHORTS_ROUTE) &&
     parts.length !== 1
   )
     return null;
@@ -166,7 +196,7 @@ function parseRoute(pathname: string): MemoryControlRoute | null {
   if (parts.length === 2) return { resource, id };
   const action = parts[2];
   const recordAction =
-    resource === "records" &&
+    resource === MEMORY_RECORDS_ROUTE &&
     [
       "history",
       "why",
@@ -177,11 +207,12 @@ function parseRoute(pathname: string): MemoryControlRoute | null {
       MEMORY_PROMOTE_SKILL_ACTION
     ].includes(action ?? "");
   const experienceAction =
-    resource === "experiences" &&
-    (action === "purge" ||
-      action === "outcomes" ||
-      action === "session-outcome" ||
-      action === "session-outcomes");
+    resource === MEMORY_EXPERIENCES_ROUTE &&
+    (action === MEMORY_PURGE_ACTION ||
+      action === MEMORY_OUTCOMES_ACTION ||
+      action === MEMORY_SESSION_OUTCOME_ACTION ||
+      action === MEMORY_SESSION_OUTCOMES_ACTION ||
+      action === MEMORY_USE_ASSESSMENTS_ACTION);
   if (!recordAction && !experienceAction) return null;
   return {
     resource,
@@ -345,7 +376,7 @@ function parseFilters(
   const kinds = valuesFromQuery(params, "kind", MEMORY_KINDS);
   const statuses = valuesFromQuery(params, "status", MEMORY_STATUSES);
   if (
-    resource === "records" &&
+    resource === MEMORY_RECORDS_ROUTE &&
     (params.has("memoryMode") || params.has("outcome"))
   ) {
     throw new TypeError("Experience-only filters cannot be used for records.");
@@ -416,6 +447,27 @@ function stringList(
     return item.trim();
   });
   return [...new Set(result)];
+}
+
+function memoryIdList(value: unknown): readonly string[] {
+  if (!Array.isArray(value) || value.length > MAX_EXPERIENCE_IDS) {
+    throw new MemoryValidationError("Injection-use memory ids are invalid.");
+  }
+  const ids = value.map((item) => {
+    if (
+      typeof item !== "string" ||
+      !item.trim() ||
+      item.trim().length > MAX_FILTER_VALUE ||
+      hasControlCharacters(item)
+    ) {
+      throw new MemoryValidationError("Injection-use memory ids are invalid.");
+    }
+    return item.trim();
+  });
+  if (new Set(ids).size !== ids.length) {
+    throw new MemoryValidationError("Injection-use memory ids are duplicated.");
+  }
+  return ids;
 }
 
 function evidenceReferences(value: unknown): readonly EvidenceReference[] {
@@ -701,12 +753,11 @@ async function serveExperienceOutcomes(
       response,
       403,
       "autodev_memory_task_history_forbidden",
-      "Operator task-history access is required."
+      MEMORY_TASK_HISTORY_ACCESS_REQUIRED
     );
     return;
   }
-  if (!route.id)
-    throw new MemoryValidationError("An experience id is required.");
+  if (!route.id) throw new MemoryValidationError(MEMORY_EXPERIENCE_ID_REQUIRED);
   const experience = await service.getExperience(route.id, filters.context);
   if (!experience) {
     sendMemoryError(
@@ -737,6 +788,88 @@ async function serveExperienceOutcomes(
   );
 }
 
+async function serveExperienceInjectionUseAssessments(
+  service: MemoryService,
+  route: MemoryControlRoute,
+  actor: MemoryControlActor,
+  filters: ParsedMemoryUseAssessmentFilters,
+  response: ServerResponse,
+  audit: MemoryControlAudit
+): Promise<void> {
+  try {
+    requireTaskHistoryOperator(actor, filters.context);
+  } catch {
+    auditMemoryFailure(audit, route, "denied", "task_history_not_granted");
+    sendMemoryError(
+      response,
+      403,
+      "autodev_memory_task_history_forbidden",
+      MEMORY_TASK_HISTORY_ACCESS_REQUIRED
+    );
+    return;
+  }
+  if (!route.id) throw new MemoryValidationError(MEMORY_EXPERIENCE_ID_REQUIRED);
+  const experience = await service.getExperience(route.id, filters.context);
+  if (!experience) {
+    auditMemoryFailure(audit, route, "denied", "experience_not_visible");
+    sendMemoryError(
+      response,
+      404,
+      "autodev_memory_not_found",
+      MEMORY_EXPERIENCE_NOT_FOUND
+    );
+    return;
+  }
+  const page = await service.listInjectionUseJoins({
+    context: experienceOutcomeContext(experience, filters.context),
+    includeUnassessed: true,
+    ...(filters.memoryModes.length > 0
+      ? { memoryModes: filters.memoryModes }
+      : {}),
+    ...(filters.useKinds.length > 0 ? { useKinds: filters.useKinds } : {}),
+    ...filters.page
+  });
+  const items = page.items.map(({ injection, use, sessionInjectionCount }) => ({
+    injection: {
+      id: injection.id,
+      memoryMode: injection.memoryMode,
+      injectionResult: injection.injectionResult,
+      packetCharacterCount: injection.packetCharacterCount,
+      memoryIds: injection.memoryIds,
+      occurredAt: injection.occurredAt
+    },
+    sessionInjectionCount,
+    use:
+      use === null
+        ? null
+        : {
+            useKind: use.useKind,
+            usedMemoryIds: use.usedMemoryIds,
+            reportedAt: use.reportedAt,
+            evidence: use.evidence
+          }
+  }));
+  audit({
+    action: "read_injection_use_assessments",
+    resource: MEMORY_EXPERIENCE_RESOURCE,
+    outcome: "ok",
+    changes: null
+  });
+  sendJson(
+    response,
+    200,
+    {
+      schema: "autodev-memory-injection-use-assessments-v1",
+      experienceId: experience.id,
+      items,
+      total: page.total,
+      limit: page.limit,
+      offset: page.offset
+    },
+    { "cache-control": "no-store" }
+  );
+}
+
 async function reportExperienceOutcome(
   service: MemoryService,
   route: MemoryControlRoute,
@@ -746,8 +879,7 @@ async function reportExperienceOutcome(
   response: ServerResponse,
   audit: MemoryControlAudit
 ): Promise<void> {
-  if (!route.id)
-    throw new MemoryValidationError("An experience id is required.");
+  if (!route.id) throw new MemoryValidationError(MEMORY_EXPERIENCE_ID_REQUIRED);
   requireTaskHistoryOperator(actor, context);
   const experience = await service.getExperience(route.id, context);
   if (!experience) {
@@ -839,6 +971,82 @@ async function reportExperienceOutcome(
   );
 }
 
+async function reportExperienceInjectionUse(
+  service: MemoryService,
+  route: MemoryControlRoute,
+  actor: MemoryControlActor,
+  context: MemoryReadContext,
+  body: Record<string, unknown>,
+  response: ServerResponse,
+  audit: MemoryControlAudit
+): Promise<void> {
+  if (!route.id) throw new MemoryValidationError(MEMORY_EXPERIENCE_ID_REQUIRED);
+  try {
+    requireTaskHistoryOperator(actor, context);
+  } catch {
+    auditMemoryFailure(audit, route, "denied", "task_history_not_granted");
+    sendMemoryError(
+      response,
+      403,
+      "autodev_memory_task_history_forbidden",
+      MEMORY_TASK_HISTORY_ACCESS_REQUIRED
+    );
+    return;
+  }
+  const experience = await service.getExperience(route.id, context);
+  if (!experience) {
+    auditMemoryFailure(audit, route, "denied", "experience_not_visible");
+    sendMemoryError(
+      response,
+      404,
+      "autodev_memory_not_found",
+      MEMORY_EXPERIENCE_NOT_FOUND
+    );
+    return;
+  }
+  exactKeys(body, ["injectionEventId", "useKind", "usedMemoryIds", "evidence"]);
+  const injectionEventId = requiredString(
+    body,
+    "injectionEventId",
+    MAX_FILTER_VALUE
+  );
+  if (!MEMORY_USE_KINDS.includes(body.useKind as never)) {
+    throw new MemoryValidationError("Memory injection-use kind is invalid.");
+  }
+  const usedMemoryIds = memoryIdList(body.usedMemoryIds);
+  const evidence = outcomeEvidenceReferences(body.evidence);
+  const result = await service.recordInjectionUseReport({
+    experienceId: experience.id,
+    injectionEventId,
+    useKind: body.useKind as MemoryUseKind,
+    usedMemoryIds,
+    evidence,
+    actor: actorForControl(actor),
+    context
+  });
+  audit({
+    action: "report_injection_use",
+    resource: MEMORY_EXPERIENCE_RESOURCE,
+    outcome: "ok",
+    changes: {
+      useKind: body.useKind as MemoryUseKind,
+      usedMemoryCount: usedMemoryIds.length,
+      appended: result.appended
+    }
+  });
+  sendJson(
+    response,
+    200,
+    {
+      schema: "autodev-memory-injection-use-report-v1",
+      experienceId: experience.id,
+      injectionEventId,
+      appended: result.appended
+    },
+    { "cache-control": "no-store" }
+  );
+}
+
 async function reportExperienceSessionOutcome(
   service: MemoryService,
   route: MemoryControlRoute,
@@ -848,8 +1056,7 @@ async function reportExperienceSessionOutcome(
   response: ServerResponse,
   audit: MemoryControlAudit
 ): Promise<void> {
-  if (!route.id)
-    throw new MemoryValidationError("An experience id is required.");
+  if (!route.id) throw new MemoryValidationError(MEMORY_EXPERIENCE_ID_REQUIRED);
   try {
     requireTaskHistoryOperator(actor, context);
   } catch {
@@ -858,7 +1065,7 @@ async function reportExperienceSessionOutcome(
       response,
       403,
       "autodev_memory_task_history_forbidden",
-      "Operator task-history access is required."
+      MEMORY_TASK_HISTORY_ACCESS_REQUIRED
     );
     return;
   }
@@ -885,7 +1092,8 @@ async function reportExperienceSessionOutcome(
   if (!MEMORY_OUTCOME_REPORT_KINDS.includes(body.reportKind as never)) {
     throw new MemoryValidationError("Memory outcome report kind is invalid.");
   }
-  const outcomeKind = body.outcomeKind as MemorySessionOutcomeReport["outcomeKind"];
+  const outcomeKind =
+    body.outcomeKind as MemorySessionOutcomeReport["outcomeKind"];
   const reportKind = body.reportKind as MemoryOutcomeReportKind;
   const evidence = outcomeEvidenceReferences(body.evidence);
   if (outcomeKind !== "unknown" && evidence.length === 0) {
@@ -951,8 +1159,7 @@ async function serveExperienceSessionOutcome(
   response: ServerResponse,
   audit: MemoryControlAudit
 ): Promise<void> {
-  if (!route.id)
-    throw new MemoryValidationError("An experience id is required.");
+  if (!route.id) throw new MemoryValidationError(MEMORY_EXPERIENCE_ID_REQUIRED);
   try {
     requireTaskHistoryOperator(actor, context);
   } catch {
@@ -961,7 +1168,7 @@ async function serveExperienceSessionOutcome(
       response,
       403,
       "autodev_memory_task_history_forbidden",
-      "Operator task-history access is required."
+      MEMORY_TASK_HISTORY_ACCESS_REQUIRED
     );
     return;
   }
@@ -1100,7 +1307,7 @@ async function purgeMemoryExperience(
   );
   if (purge === "not_visible") {
     audit({
-      action: "purge",
+      action: MEMORY_PURGE_ACTION,
       resource: MEMORY_EXPERIENCE_RESOURCE,
       outcome: "denied",
       changes: null,
@@ -1116,7 +1323,7 @@ async function purgeMemoryExperience(
   }
   if (purge === "referenced_by_memory") {
     audit({
-      action: "purge",
+      action: MEMORY_PURGE_ACTION,
       resource: MEMORY_EXPERIENCE_RESOURCE,
       outcome: "error",
       changes: null,
@@ -1131,7 +1338,7 @@ async function purgeMemoryExperience(
     return;
   }
   audit({
-    action: "purge",
+    action: MEMORY_PURGE_ACTION,
     resource: MEMORY_EXPERIENCE_RESOURCE,
     outcome: "ok",
     changes: { reason, result: purge }
@@ -1160,7 +1367,7 @@ async function mutateMemory(
     changes: Record<string, unknown> | null;
   };
 
-  if (route.resource !== "records")
+  if (route.resource !== MEMORY_RECORDS_ROUTE)
     throw new MemoryValidationError(
       "Experience capture uses its dedicated route."
     );
@@ -2025,28 +2232,36 @@ function allowedMethod(
     MEMORY_PROMOTE_SKILL_ACTION
   ].includes(route.action ?? "");
   const experiencePurge =
-    route.resource === "experiences" &&
+    route.resource === MEMORY_EXPERIENCES_ROUTE &&
     Boolean(route.id) &&
-    route.action === "purge";
+    route.action === MEMORY_PURGE_ACTION;
   const experienceOutcomes =
-    route.resource === "experiences" &&
+    route.resource === MEMORY_EXPERIENCES_ROUTE &&
     Boolean(route.id) &&
-    route.action === "outcomes";
+    route.action === MEMORY_OUTCOMES_ACTION;
   const experienceSessionOutcomes =
-    route.resource === "experiences" &&
+    route.resource === MEMORY_EXPERIENCES_ROUTE &&
     Boolean(route.id) &&
-    (route.action === "session-outcome" || route.action === "session-outcomes");
+    (route.action === MEMORY_SESSION_OUTCOME_ACTION ||
+      route.action === MEMORY_SESSION_OUTCOMES_ACTION);
+  const experienceUseAssessments =
+    route.resource === MEMORY_EXPERIENCES_ROUTE &&
+    Boolean(route.id) &&
+    route.action === MEMORY_USE_ASSESSMENTS_ACTION;
   const mutatingAction = isLifecycleAction || experiencePurge;
   const canPost =
     experiencePurge ||
     experienceOutcomes ||
     experienceSessionOutcomes ||
-    (route.resource === "records" &&
+    experienceUseAssessments ||
+    (route.resource === MEMORY_RECORDS_ROUTE &&
       ((!route.id && !route.action) || isLifecycleAction));
   if (method === "GET" && mutatingAction) return "POST";
   if (method === "POST" && !canPost) return "GET";
   if (method !== "GET" && method !== "POST")
-    return experienceOutcomes || experienceSessionOutcomes
+    return experienceOutcomes ||
+      experienceSessionOutcomes ||
+      experienceUseAssessments
       ? "GET, POST"
       : mutatingAction
         ? "POST"
@@ -2111,8 +2326,80 @@ function sendFilterError(response: ServerResponse, error: unknown): void {
     response,
     400,
     "autodev_memory_invalid_filter",
-    "Memory filters are invalid or incomplete."
+    MEMORY_FILTERS_INVALID
   );
+}
+
+function dispatchMemoryMutation(
+  service: MemoryService,
+  route: MemoryControlRoute,
+  actor: MemoryControlActor,
+  context: MemoryReadContext,
+  body: Record<string, unknown>,
+  response: ServerResponse,
+  audit: MemoryControlAudit
+): Promise<void> {
+  if (route.resource !== MEMORY_EXPERIENCES_ROUTE) {
+    return mutateMemory(service, route, actor, context, body, response, audit);
+  }
+  switch (route.action) {
+    case MEMORY_USE_ASSESSMENTS_ACTION: {
+      return reportExperienceInjectionUse(
+        service,
+        route,
+        actor,
+        context,
+        body,
+        response,
+        audit
+      );
+    }
+    case MEMORY_OUTCOMES_ACTION: {
+      return reportExperienceOutcome(
+        service,
+        route,
+        actor,
+        context,
+        body,
+        response,
+        audit
+      );
+    }
+    case MEMORY_SESSION_OUTCOME_ACTION:
+    case MEMORY_SESSION_OUTCOMES_ACTION: {
+      return reportExperienceSessionOutcome(
+        service,
+        route,
+        actor,
+        context,
+        body,
+        response,
+        audit
+      );
+    }
+    case MEMORY_PURGE_ACTION: {
+      return purgeMemoryExperience(
+        service,
+        route,
+        actor,
+        context,
+        body,
+        response,
+        audit
+      );
+    }
+    default: {
+      return mutateMemory(
+        service,
+        route,
+        actor,
+        context,
+        body,
+        response,
+        audit
+      );
+    }
+  }
 }
 
 async function mutateRequest(
@@ -2125,40 +2412,15 @@ async function mutateRequest(
   audit: MemoryControlAudit
 ): Promise<void> {
   try {
-    const mutation =
-      route.resource === "experiences" && route.action === "outcomes"
-        ? reportExperienceOutcome(
-            service,
-            route,
-            actor,
-            context,
-            body,
-            response,
-            audit
-          )
-        : route.resource === "experiences" &&
-            (route.action === "session-outcome" || route.action === "session-outcomes")
-          ? reportExperienceSessionOutcome(
-              service,
-              route,
-              actor,
-              context,
-              body,
-              response,
-              audit
-            )
-        : route.resource === "experiences" && route.action === "purge"
-          ? purgeMemoryExperience(
-              service,
-              route,
-              actor,
-              context,
-              body,
-              response,
-              audit
-            )
-          : mutateMemory(service, route, actor, context, body, response, audit);
-    await mutation;
+    await dispatchMemoryMutation(
+      service,
+      route,
+      actor,
+      context,
+      body,
+      response,
+      audit
+    );
   } catch (error) {
     if (
       error instanceof MemoryAuthorizationError ||
@@ -2214,10 +2476,10 @@ function parseRouteFilters(
   route: MemoryControlRoute,
   actor: MemoryControlActor
 ): ReturnType<typeof parseFilters> {
-  const params = new URL(request.url ?? pathname, "http://127.0.0.1")
+  const params = new URL(request.url ?? pathname, MEMORY_CONTROL_API_ORIGIN)
     .searchParams;
   if (
-    route.action === "outcomes" &&
+    route.action === MEMORY_OUTCOMES_ACTION &&
     ["taskId", "runId", "agentId"].some((key) => params.has(key))
   ) {
     throw new TypeError(
@@ -2232,7 +2494,7 @@ function parseInjectionOutcomeCohortFilter(
   pathname: string,
   actor: MemoryControlActor
 ): MemoryInjectionOutcomeCohortFilter {
-  const params = new URL(request.url ?? pathname, "http://127.0.0.1")
+  const params = new URL(request.url ?? pathname, MEMORY_CONTROL_API_ORIGIN)
     .searchParams;
   const allowed = new Set([
     "workspaceId",
@@ -2315,7 +2577,7 @@ function parseSessionOutcomeCohortFilter(
   pathname: string,
   actor: MemoryControlActor
 ): MemorySessionOutcomeCohortFilter {
-  const params = new URL(request.url ?? pathname, "http://127.0.0.1")
+  const params = new URL(request.url ?? pathname, MEMORY_CONTROL_API_ORIGIN)
     .searchParams;
   const allowed = new Set([
     "workspaceId",
@@ -2377,6 +2639,104 @@ function parseSessionOutcomeCohortFilter(
   return filter;
 }
 
+interface ParsedMemoryUseAssessmentFilters {
+  readonly context: MemoryReadContext;
+  readonly memoryModes: readonly (typeof MEMORY_USE_COHORT_ASSIGNED_MODES)[number][];
+  readonly useKinds: readonly MemoryUseKind[];
+  readonly page: { readonly limit: number; readonly offset: number };
+}
+
+function parseMemoryUseAssessmentFilters(
+  request: IncomingMessage,
+  pathname: string,
+  actor: MemoryControlActor
+): ParsedMemoryUseAssessmentFilters {
+  const params = new URL(request.url ?? pathname, MEMORY_CONTROL_API_ORIGIN)
+    .searchParams;
+  const allowed = new Set([
+    "workspaceId",
+    "repositoryId",
+    "includeTaskHistory",
+    "memoryMode",
+    "useKind",
+    "limit",
+    "offset"
+  ]);
+  if ([...params.keys()].some((key) => !allowed.has(key))) {
+    throw new TypeError(
+      "Use-assessment reads accept only repository/history scope, pagination, and bounded use filters."
+    );
+  }
+  const context = readContext(params, actor);
+  if (actor.role !== "operator" || context.canReadTaskHistory !== true) {
+    throw new MemoryScopeAccessError(
+      "Operator task-history access is required for injection-use assessments."
+    );
+  }
+  if (!context.repositoryId) {
+    throw new TypeError(
+      "Injection-use assessment reads require repository scope."
+    );
+  }
+  return {
+    context,
+    memoryModes: valuesFromQuery(
+      params,
+      "memoryMode",
+      MEMORY_USE_COHORT_ASSIGNED_MODES
+    ),
+    useKinds: valuesFromQuery(params, "useKind", MEMORY_USE_KINDS),
+    page: pagination(params)
+  };
+}
+
+function parseInjectionUseCohortFilter(
+  request: IncomingMessage,
+  pathname: string,
+  actor: MemoryControlActor
+): MemoryInjectionUseCohortFilter {
+  const params = new URL(request.url ?? pathname, MEMORY_CONTROL_API_ORIGIN)
+    .searchParams;
+  const allowed = new Set([
+    "workspaceId",
+    "repositoryId",
+    "includeTaskHistory",
+    "occurredFrom",
+    "occurredUntil",
+    "memoryMode",
+    "useKind"
+  ]);
+  if ([...params.keys()].some((key) => !allowed.has(key))) {
+    throw new TypeError(
+      "Use-cohort reads accept only workspace/repository/time and bounded use filters."
+    );
+  }
+  const context = readContext(params, actor);
+  if (actor.role !== "operator" || context.canReadTaskHistory !== true) {
+    throw new MemoryScopeAccessError(
+      "Operator task-history access is required for injection-use cohorts."
+    );
+  }
+  if (!context.repositoryId) {
+    throw new TypeError("Injection-use cohorts require repository scope.");
+  }
+  const memoryModes = valuesFromQuery(
+    params,
+    "memoryMode",
+    MEMORY_USE_COHORT_ASSIGNED_MODES
+  );
+  const useKinds = valuesFromQuery(params, "useKind", MEMORY_USE_KINDS);
+  const filter: MemoryInjectionUseCohortFilter = {
+    context,
+    occurredFrom: oneFilter(params, "occurredFrom", true)!,
+    occurredUntil: oneFilter(params, "occurredUntil", true)!,
+    ...(memoryModes.length > 0 ? { memoryModes } : {}),
+    ...(useKinds.length > 0 ? { useKinds } : {})
+  };
+  assertMemoryInjectionUseCohortFilter(filter);
+  return filter;
+}
+
 async function serveSessionOutcomeCohorts(
   service: MemoryService,
   filter: MemorySessionOutcomeCohortFilter,
@@ -2393,14 +2753,38 @@ async function serveSessionOutcomeCohorts(
   sendJson(response, 200, page, { "cache-control": "no-store" });
 }
 
+async function serveInjectionUseCohorts(
+  service: MemoryService,
+  filter: MemoryInjectionUseCohortFilter,
+  response: ServerResponse,
+  audit: MemoryControlAudit
+): Promise<void> {
+  const page = await service.aggregateInjectionUseCohorts(filter);
+  audit({
+    action: "read_injection_use_cohorts",
+    resource: MEMORY_USE_COHORT_RESOURCE,
+    outcome: "ok",
+    changes: null
+  });
+  sendJson(response, 200, page, { "cache-control": "no-store" });
+}
+
 type ParsedMemoryControlFilters =
   | {
-      readonly kind: "cohorts";
+      readonly kind: typeof MEMORY_COHORTS_ROUTE;
       readonly cohort: MemoryInjectionOutcomeCohortFilter;
     }
   | {
-      readonly kind: "session-cohorts";
+      readonly kind: typeof MEMORY_SESSION_COHORTS_ROUTE;
       readonly cohort: MemorySessionOutcomeCohortFilter;
+    }
+  | {
+      readonly kind: typeof MEMORY_USE_COHORTS_ROUTE;
+      readonly cohort: MemoryInjectionUseCohortFilter;
+    }
+  | {
+      readonly kind: typeof MEMORY_USE_ASSESSMENTS_ACTION;
+      readonly filters: ParsedMemoryUseAssessmentFilters;
     }
   | {
       readonly kind: "standard";
@@ -2413,16 +2797,31 @@ function parseMemoryRequestFilters(
   route: MemoryControlRoute,
   actor: MemoryControlActor
 ): ParsedMemoryControlFilters {
-  if (route.resource === "cohorts") {
+  if (route.resource === MEMORY_COHORTS_ROUTE) {
     return {
-      kind: "cohorts",
+      kind: MEMORY_COHORTS_ROUTE,
       cohort: parseInjectionOutcomeCohortFilter(request, pathname, actor)
     };
   }
-  if (route.resource === "session-cohorts") {
+  if (route.resource === MEMORY_SESSION_COHORTS_ROUTE) {
     return {
-      kind: "session-cohorts",
+      kind: MEMORY_SESSION_COHORTS_ROUTE,
       cohort: parseSessionOutcomeCohortFilter(request, pathname, actor)
+    };
+  }
+  if (route.resource === MEMORY_USE_COHORTS_ROUTE) {
+    return {
+      kind: MEMORY_USE_COHORTS_ROUTE,
+      cohort: parseInjectionUseCohortFilter(request, pathname, actor)
+    };
+  }
+  if (
+    route.resource === MEMORY_EXPERIENCES_ROUTE &&
+    route.action === MEMORY_USE_ASSESSMENTS_ACTION
+  ) {
+    return {
+      kind: MEMORY_USE_ASSESSMENTS_ACTION,
+      filters: parseMemoryUseAssessmentFilters(request, pathname, actor)
     };
   }
   return {
@@ -2435,10 +2834,14 @@ function memoryContextForRequest(
   parsedFilters: ParsedMemoryControlFilters
 ): MemoryReadContext {
   if (
-    parsedFilters.kind === "cohorts" ||
-    parsedFilters.kind === "session-cohorts"
+    parsedFilters.kind === MEMORY_COHORTS_ROUTE ||
+    parsedFilters.kind === MEMORY_SESSION_COHORTS_ROUTE ||
+    parsedFilters.kind === MEMORY_USE_COHORTS_ROUTE
   ) {
     return parsedFilters.cohort.context;
+  }
+  if (parsedFilters.kind === MEMORY_USE_ASSESSMENTS_ACTION) {
+    return parsedFilters.filters.context;
   }
   return parsedFilters.filters.context;
 }
@@ -2451,7 +2854,10 @@ function serveMemoryReadRoute(
   response: ServerResponse,
   audit: MemoryControlAudit
 ): Promise<void> {
-  if (route.resource === "experiences" && route.action === "outcomes") {
+  if (
+    route.resource === MEMORY_EXPERIENCES_ROUTE &&
+    route.action === MEMORY_OUTCOMES_ACTION
+  ) {
     return serveExperienceOutcomes(
       service,
       route,
@@ -2462,8 +2868,9 @@ function serveMemoryReadRoute(
     );
   }
   if (
-    route.resource === "experiences" &&
-    (route.action === "session-outcome" || route.action === "session-outcomes")
+    route.resource === MEMORY_EXPERIENCES_ROUTE &&
+    (route.action === MEMORY_SESSION_OUTCOME_ACTION ||
+      route.action === MEMORY_SESSION_OUTCOMES_ACTION)
   ) {
     return serveExperienceSessionOutcome(
       service,
@@ -2474,7 +2881,7 @@ function serveMemoryReadRoute(
       audit
     );
   }
-  if (route.resource === "experiences")
+  if (route.resource === MEMORY_EXPERIENCES_ROUTE)
     return serveExperience(service, route, filters, response);
   return serveRecord(service, route, filters, response);
 }
@@ -2487,7 +2894,7 @@ function serveMemoryRequestRead(
   response: ServerResponse,
   audit: MemoryControlAudit
 ): Promise<void> {
-  if (parsedFilters.kind === "cohorts") {
+  if (parsedFilters.kind === MEMORY_COHORTS_ROUTE) {
     return serveInjectionOutcomeCohorts(
       service,
       parsedFilters.cohort,
@@ -2495,10 +2902,28 @@ function serveMemoryRequestRead(
       audit
     );
   }
-  if (parsedFilters.kind === "session-cohorts") {
+  if (parsedFilters.kind === MEMORY_SESSION_COHORTS_ROUTE) {
     return serveSessionOutcomeCohorts(
       service,
       parsedFilters.cohort,
+      response,
+      audit
+    );
+  }
+  if (parsedFilters.kind === MEMORY_USE_COHORTS_ROUTE) {
+    return serveInjectionUseCohorts(
+      service,
+      parsedFilters.cohort,
+      response,
+      audit
+    );
+  }
+  if (parsedFilters.kind === MEMORY_USE_ASSESSMENTS_ACTION) {
+    return serveExperienceInjectionUseAssessments(
+      service,
+      route,
+      actor,
+      parsedFilters.filters,
       response,
       audit
     );

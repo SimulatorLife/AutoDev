@@ -137,8 +137,9 @@ class MemoryRepositoryStub implements MemoryRepository {
     return { items: [], total: 0, limit: 50, offset: 0 };
   }
   async aggregateInjectionOutcomeCohorts(): Promise<{
-    readonly schema: string;
+    readonly schema: "autodev-memory-injection-outcome-cohorts-v1";
     readonly workspaceId: string;
+    readonly repositoryId: string;
     readonly occurredFrom: string;
     readonly occurredUntil: string;
     readonly cells: readonly never[];
@@ -146,13 +147,89 @@ class MemoryRepositoryStub implements MemoryRepository {
     readonly reportCount: number;
   }> {
     return {
-      schema: "autodev-memory-injection-outcome-cohorts-v1",
+      schema: "autodev-memory-injection-outcome-cohorts-v1" as const,
       workspaceId: "workspace-a",
+      repositoryId: "owner/repo",
       occurredFrom: "",
       occurredUntil: "",
       cells: [],
       exposureCount: 0,
       reportCount: 0
+    };
+  }
+  async getInjectionEventByIdForSession(): Promise<null> {
+    return null;
+  }
+  async recordInjectionUseReport(): Promise<{
+    readonly appended: boolean;
+    readonly id: string;
+  }> {
+    return { appended: false, id: "" };
+  }
+  async getInjectionUseReport(): Promise<null> {
+    return null;
+  }
+  async listInjectionUseJoins(): Promise<{
+    readonly items: readonly never[];
+    readonly total: number;
+    readonly limit: number;
+    readonly offset: number;
+  }> {
+    return { items: [], total: 0, limit: 50, offset: 0 };
+  }
+  async aggregateInjectionUseCohorts(): Promise<{
+    readonly schema: "autodev-memory-injection-use-cohorts-v1";
+    readonly workspaceId: string;
+    readonly repositoryId: string;
+    readonly occurredFrom: string;
+    readonly occurredUntil: string;
+    readonly cells: readonly never[];
+    readonly exposureCount: number;
+  }> {
+    return {
+      schema: "autodev-memory-injection-use-cohorts-v1" as const,
+      workspaceId: "workspace-a",
+      repositoryId: "owner/repo",
+      occurredFrom: "",
+      occurredUntil: "",
+      cells: [],
+      exposureCount: 0
+    };
+  }
+  async recordSessionOutcomeReport(): Promise<{
+    readonly appended: boolean;
+    readonly id: string;
+  }> {
+    return { appended: false, id: "" };
+  }
+  async getSessionOutcomeReport(): Promise<null> {
+    return null;
+  }
+  async aggregateSessionOutcomeCohorts(): Promise<{
+    readonly schema: "autodev-memory-session-outcome-cohorts-v1";
+    readonly workspaceId: string;
+    readonly repositoryId: string;
+    readonly occurredFrom: string;
+    readonly occurredUntil: string;
+    readonly cells: readonly never[];
+    readonly sessionCount: number;
+    readonly reportedSessionCount: number;
+    readonly unreportedSessionCount: number;
+    readonly conflictingOutcomeSessionCount: number;
+    readonly mixedModeSessionCount: number;
+  }> {
+    return {
+      schema: "autodev-memory-session-outcome-cohorts-v1",
+      workspaceId: "workspace-a",
+      repositoryId: "owner/repo",
+      occurredFrom: "",
+      occurredUntil: "",
+      cells: [],
+      sessionCount: 0,
+      reportedSessionCount: 0,
+      unreportedSessionCount: 0,
+      conflictingOutcomeSessionCount: 0,
+      mixedModeSessionCount: 0
     };
   }
 }

@@ -10,7 +10,7 @@ import { FakeMemoryPool } from "./fixtures/fake-memory-pool.ts";
 test("memory migrations define append-only provenance and mandatory PostgreSQL/pgvector storage", () => {
   assert.deepEqual(
     MEMORY_MIGRATIONS.map((migration) => migration.version),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
   );
   const initial = MEMORY_MIGRATIONS[0];
   const upgrade = MEMORY_MIGRATIONS[1];
@@ -22,7 +22,9 @@ test("memory migrations define append-only provenance and mandatory PostgreSQL/p
   const injectionOutcome = MEMORY_MIGRATIONS[7];
   const injectionSessionIndex = MEMORY_MIGRATIONS[8];
   const sessionOutcomeReports = MEMORY_MIGRATIONS[9];
+  const injectionUseReports = MEMORY_MIGRATIONS[10];
   assert.ok(sessionOutcomeReports);
+  assert.ok(injectionUseReports);
   assert.ok(initial);
   assert.ok(upgrade);
   assert.ok(skillPromotion);
@@ -152,10 +154,7 @@ test("memory migrations define append-only provenance and mandatory PostgreSQL/p
     sessionOutcomeIndex[1]?.replaceAll(/\s+/g, ""),
     "workspace_id,repository_id,task_id"
   );
-  assert.match(
-    sessionOutcomeReports.sql,
-    /repository_id text NOT NULL/
-  );
+  assert.match(sessionOutcomeReports.sql, /repository_id text NOT NULL/);
   assert.match(
     sessionOutcomeReports.sql,
     /reporter_authority text NOT NULL CHECK \(reporter_authority IN \('root', 'curator'\)\)/
@@ -180,6 +179,48 @@ test("memory migrations define append-only provenance and mandatory PostgreSQL/p
   assert.doesNotMatch(sessionOutcomeReports.sql, /run_id/);
   assert.doesNotMatch(sessionOutcomeReports.sql, /agent_id/);
   assert.doesNotMatch(sessionOutcomeReports.sql, /session_injection_count/);
+
+  assert.match(
+    injectionUseReports.sql,
+    /CREATE TABLE memory_injection_use_reports/
+  );
+  assert.match(
+    injectionUseReports.sql,
+    /use_kind text NOT NULL CHECK \(use_kind IN \('used', 'partially_used', 'not_used', 'unobservable'\)\)/
+  );
+  const useIndex = injectionUseReports.sql.match(
+    /CREATE UNIQUE INDEX uniq_memory_injection_use_reports_scope_key\s+ON memory_injection_use_reports\s*\(([^)]+)\)/
+  );
+  assert.ok(useIndex);
+  assert.equal(
+    useIndex[1]?.replaceAll(/\s+/g, ""),
+    "workspace_id,correlation_token"
+  );
+  assert.match(injectionUseReports.sql, /repository_id text NOT NULL/);
+  assert.match(
+    injectionUseReports.sql,
+    /reporter_authority IN \('root', 'curator'\)/
+  );
+  assert.match(
+    injectionUseReports.sql,
+    /memory_injection_use_reports_validate_event/
+  );
+  assert.match(
+    injectionUseReports.sql,
+    /injection\.memory_mode NOT IN \('jit', 'retrieval-only'\)/
+  );
+  assert.match(
+    injectionUseReports.sql,
+    /jsonb_array_elements_text\(injection\.memory_ids\)/
+  );
+  assert.match(
+    injectionUseReports.sql,
+    /memory_injection_use_reports requires trajectory evidence/
+  );
+  assert.match(
+    injectionUseReports.sql,
+    /BEFORE UPDATE OR DELETE ON memory_injection_use_reports/
+  );
 });
 
 test("applyMemoryMigrations records applied versions and runs each migration in its own transaction", async () => {
@@ -188,10 +229,10 @@ test("applyMemoryMigrations records applied versions and runs each migration in 
 
   assert.deepEqual(
     pool.tables.memory_schema_migrations.map((row) => row.version),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
   );
-  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 10);
-  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 10);
+  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 11);
+  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 11);
 });
 
 test("applyMemoryMigrations adds migration 9 transactionally to a database already at migration 8", async () => {
@@ -207,10 +248,10 @@ test("applyMemoryMigrations adds migration 9 transactionally to a database alrea
 
   assert.deepEqual(
     pool.tables.memory_schema_migrations.map((row) => row.version),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
   );
-  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 2);
-  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 2);
+  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 3);
+  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 3);
   assert.equal(pool.executed.filter((sql) => sql === "ROLLBACK").length, 0);
   assert.ok(
     pool.executed.some((sql) =>
@@ -218,7 +259,14 @@ test("applyMemoryMigrations adds migration 9 transactionally to a database alrea
     )
   );
   assert.ok(
-    !pool.executed.some((sql) => sql.includes("CREATE TABLE memory_injection_events"))
+    !pool.executed.some((sql) =>
+      sql.includes("CREATE TABLE memory_injection_events")
+    )
+  );
+  assert.ok(
+    pool.executed.some((sql) =>
+      sql.includes("CREATE TABLE memory_injection_use_reports")
+    )
   );
 });
 
@@ -235,10 +283,10 @@ test("applyMemoryMigrations adds migration 10 transactionally to a database alre
 
   assert.deepEqual(
     pool.tables.memory_schema_migrations.map((row) => row.version),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
   );
-  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 1);
-  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 1);
+  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 2);
+  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 2);
   assert.equal(pool.executed.filter((sql) => sql === "ROLLBACK").length, 0);
   assert.ok(
     pool.executed.some((sql) =>
@@ -246,7 +294,44 @@ test("applyMemoryMigrations adds migration 10 transactionally to a database alre
     )
   );
   assert.ok(
-    !pool.executed.some((sql) => sql.includes("CREATE TABLE memory_injection_events"))
+    pool.executed.some((sql) =>
+      sql.includes("CREATE TABLE memory_injection_use_reports")
+    )
+  );
+  assert.ok(
+    !pool.executed.some((sql) =>
+      sql.includes("CREATE TABLE memory_injection_events")
+    )
+  );
+});
+
+test("applyMemoryMigrations adds migration 11 transactionally to a database already at migration 10", async () => {
+  const pool = new FakeMemoryPool();
+  pool.tables.memory_schema_migrations.push(
+    ...Array.from({ length: 10 }, (_, index) => ({
+      version: index + 1,
+      description: "already applied"
+    }))
+  );
+
+  await applyMemoryMigrations(pool);
+
+  assert.deepEqual(
+    pool.tables.memory_schema_migrations.map((row) => row.version),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+  );
+  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 1);
+  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 1);
+  assert.equal(pool.executed.filter((sql) => sql === "ROLLBACK").length, 0);
+  assert.ok(
+    pool.executed.some((sql) =>
+      sql.includes("CREATE TABLE memory_injection_use_reports")
+    )
+  );
+  assert.ok(
+    !pool.executed.some((sql) =>
+      sql.includes("CREATE TABLE memory_injection_events")
+    )
   );
 });
 
@@ -257,7 +342,7 @@ test("applyMemoryMigrations is idempotent: a second call applies nothing new", a
 
   await applyMemoryMigrations(pool);
 
-  assert.equal(pool.tables.memory_schema_migrations.length, 10);
+  assert.equal(pool.tables.memory_schema_migrations.length, 11);
   const newCalls = pool.executed.slice(executedAfterFirst);
   assert.ok(
     !newCalls.some((sql) => sql.includes("CREATE TABLE memory_experiences"))
@@ -277,6 +362,11 @@ test("applyMemoryMigrations is idempotent: a second call applies nothing new", a
   assert.ok(
     !newCalls.some((sql) =>
       sql.includes("CREATE TABLE memory_session_outcome_reports")
+    )
+  );
+  assert.ok(
+    !newCalls.some((sql) =>
+      sql.includes("CREATE TABLE memory_injection_use_reports")
     )
   );
 });

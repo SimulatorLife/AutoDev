@@ -22,6 +22,12 @@ import {
   type MemoryInjectionEvent,
   type MemoryInjectionEventSessionLookup,
   type MemoryInjectionOutcomeCohortFilter,
+  type MemoryInjectionUseCohortCell,
+  type MemoryInjectionUseCohortFilter,
+  type MemoryInjectionUseCohortPage,
+  type MemoryInjectionUseJoin,
+  type MemoryInjectionUseJoinPage,
+  type MemoryInjectionUseJoinRequest,
   type MemoryLifecycleEvent,
   type MemoryOutcomeReport,
   type MemoryPacket,
@@ -30,6 +36,7 @@ import {
   type MemoryRecordInjectionEventInput,
   type MemoryRecordOutcomeReportInput,
   type MemoryRecordSessionOutcomeReportInput,
+  type MemoryRecordUseReportInput,
   type MemoryRepository,
   type MemoryResearchRequest,
   type MemorySearchHit,
@@ -37,8 +44,10 @@ import {
   type MemorySessionOutcomeCohortFilter,
   type MemorySessionOutcomeCohortPage,
   type MemorySessionOutcomeReport,
+  type MemoryUseReport,
   type MemoryVersionedUpdate,
-  sessionOutcomeReportBodyMatches
+  sessionOutcomeReportBodyMatches,
+  useReportBodyMatches
 } from "@simulatorlife/autodev-core";
 import { MemoryConflictError as RepositoryMemoryConflictError } from "@simulatorlife/autodev-data";
 
@@ -86,7 +95,10 @@ class FakeMemoryRepository implements MemoryRepository {
     readonly appended: boolean;
     readonly id: string;
   }[] = [];
-  readonly sessionOutcomeReports = new Map<string, MemorySessionOutcomeReport>();
+  readonly sessionOutcomeReports = new Map<
+    string,
+    MemorySessionOutcomeReport
+  >();
   readonly sessionOutcomeReportResults: {
     readonly appended: boolean;
     readonly id: string;
@@ -97,7 +109,15 @@ class FakeMemoryRepository implements MemoryRepository {
   readonly proposalEmbeddings: (readonly number[] | undefined)[] = [];
   readonly purgeRequests: MemoryExperiencePurgeRequest[] = [];
   readonly outcomeCohortRequests: MemoryInjectionOutcomeCohortFilter[] = [];
-  readonly sessionOutcomeCohortRequests: MemorySessionOutcomeCohortFilter[] = [];
+  readonly sessionOutcomeCohortRequests: MemorySessionOutcomeCohortFilter[] =
+    [];
+  readonly useReports = new Map<string, MemoryUseReport>();
+  readonly useReportResults: {
+    readonly appended: boolean;
+    readonly id: string;
+  }[] = [];
+  readonly useJoinRequests: MemoryInjectionUseJoinRequest[] = [];
+  readonly useCohortRequests: MemoryInjectionUseCohortFilter[] = [];
   failNextTransition = false;
 
   async appendExperience(envelope: ExperienceEnvelope): Promise<void> {
@@ -297,6 +317,156 @@ class FakeMemoryRepository implements MemoryRepository {
     correlationToken: string
   ): Promise<MemoryInjectionEvent | null> {
     return this.injectionEvents.get(correlationToken) ?? null;
+  }
+
+  async getInjectionEventByIdForSession(
+    lookupContext: MemoryInjectionEventSessionLookup,
+    injectionEventId: string
+  ): Promise<MemoryInjectionEvent | null> {
+    for (const event of this.injectionEvents.values()) {
+      if (event.id !== injectionEventId) continue;
+      if (event.workspaceId !== lookupContext.workspaceId) continue;
+      if (
+        lookupContext.repositoryId !== undefined &&
+        event.repositoryId !== lookupContext.repositoryId
+      )
+        continue;
+      if (event.taskId !== lookupContext.taskId) continue;
+      return event;
+    }
+    return null;
+  }
+
+  async recordInjectionUseReport(
+    input: MemoryRecordUseReportInput
+  ): Promise<{ readonly appended: boolean; readonly id: string }> {
+    const queued = this.useReportResults.shift();
+    if (queued) return queued;
+    const key = `${input.report.workspaceId}\u0000${input.report.correlationToken}`;
+    const stored = this.useReports.get(key);
+    if (stored) {
+      if (useReportBodyMatches(stored, input.report)) {
+        return { appended: false, id: stored.id };
+      }
+      throw new RepositoryMemoryConflictError(
+        "Injection use report conflicts with previously recorded report."
+      );
+    }
+    this.useReports.set(key, input.report);
+    return { appended: true, id: input.report.id };
+  }
+
+  async getInjectionUseReport(
+    workspaceId: string,
+    correlationToken: string
+  ): Promise<MemoryUseReport | null> {
+    const key = `${workspaceId}\u0000${correlationToken}`;
+    return this.useReports.get(key) ?? null;
+  }
+
+  async listInjectionUseJoins(
+    request: MemoryInjectionUseJoinRequest
+  ): Promise<MemoryInjectionUseJoinPage> {
+    this.useJoinRequests.push(request);
+    const items: MemoryInjectionUseJoin[] = [];
+    for (const event of this.injectionEvents.values()) {
+      if (
+        request.context.workspaceId !== event.workspaceId ||
+        request.context.taskId !== event.taskId ||
+        (request.context.repositoryId !== undefined &&
+          request.context.repositoryId !== event.repositoryId)
+      ) {
+        continue;
+      }
+      if (event.injectionResult !== "injected") continue;
+      if (event.memoryIds.length === 0) continue;
+      if (
+        request.memoryModes &&
+        !request.memoryModes.includes(event.memoryMode)
+      )
+        continue;
+      if (
+        request.injectionResults &&
+        !request.injectionResults.includes(event.injectionResult)
+      )
+        continue;
+      const report = this.useReports.get(
+        `${event.workspaceId}\u0000${event.correlationToken}`
+      );
+      if (!report && request.includeUnassessed !== true) continue;
+      if (
+        report &&
+        request.useKinds &&
+        !request.useKinds.includes(report.useKind)
+      )
+        continue;
+      items.push({
+        injection: event,
+        use: report ?? null,
+        sessionInjectionCount: 1
+      });
+    }
+    const total = items.length;
+    const offset = request.offset ?? 0;
+    const limit = request.limit ?? 50;
+    return {
+      items: items.slice(offset, offset + limit),
+      total,
+      limit,
+      offset
+    };
+  }
+
+  async aggregateInjectionUseCohorts(
+    request: MemoryInjectionUseCohortFilter
+  ): Promise<MemoryInjectionUseCohortPage> {
+    this.useCohortRequests.push(request);
+    const eligibleModes = new Set(["jit", "retrieval-only"]);
+    const cells: MemoryInjectionUseCohortCell[] = [];
+    let exposureCount = 0;
+    for (const event of this.injectionEvents.values()) {
+      if (
+        event.workspaceId !== request.context.workspaceId ||
+        (request.context.repositoryId !== undefined &&
+          event.repositoryId !== request.context.repositoryId)
+      )
+        continue;
+      if (event.injectionResult !== "injected") continue;
+      if (event.memoryIds.length === 0) continue;
+      if (!eligibleModes.has(event.memoryMode)) continue;
+      if (
+        request.memoryModes &&
+        !request.memoryModes.includes(
+          event.memoryMode as MemoryInjectionUseCohortCell["memoryMode"]
+        )
+      )
+        continue;
+      const report = this.useReports.get(
+        `${event.workspaceId}\u0000${event.correlationToken}`
+      );
+      if (
+        request.useKinds &&
+        (!report || !request.useKinds.includes(report.useKind))
+      )
+        continue;
+      exposureCount += 1;
+      cells.push({
+        memoryMode:
+          event.memoryMode as MemoryInjectionUseCohortCell["memoryMode"],
+        sessionCardinality: "single",
+        useKind: report?.useKind ?? null,
+        exposureCount: 1
+      });
+    }
+    return {
+      schema: "autodev-memory-injection-use-cohorts-v1",
+      workspaceId: request.context.workspaceId,
+      repositoryId: request.context.repositoryId ?? "",
+      occurredFrom: request.occurredFrom,
+      occurredUntil: request.occurredUntil,
+      cells,
+      exposureCount
+    };
   }
 
   async listInjectionOutcomeJoins(): Promise<{
@@ -590,7 +760,8 @@ function sessionOutcomeReportMetricPoints(exporter: InMemoryMetricExporter) {
     .flatMap((resource) => resource.scopeMetrics)
     .flatMap((scope) => scope.metrics)
     .find(
-      (item) => item.descriptor.name === "autodev.memory.session_outcome_reports"
+      (item) =>
+        item.descriptor.name === "autodev.memory.session_outcome_reports"
     );
   assert.ok(metric, "session outcome report counter should be exported");
   return metric.dataPoints;
@@ -604,7 +775,12 @@ async function persistOutcomeInjection(
   const result = await service.recordInjectionEvent({
     event,
     actor: root,
-    context: { ...context, runId: event.runId, agentId: event.agentId }
+    context: {
+      ...context,
+      taskId: event.taskId,
+      runId: event.runId,
+      agentId: event.agentId
+    }
   });
   assert.equal(result.appended, true);
   const stored = repository.injectionEvents.get(event.correlationToken);
@@ -2383,4 +2559,428 @@ test("MemoryService traces aggregate session cohort counts without query identit
     [...attributes.keys()].join(" "),
     /workspace|repository|task|run|agent|memory_id/u
   );
+});
+
+function useInjectionEvent(
+  overrides: Partial<MemoryInjectionEvent> = {}
+): MemoryInjectionEvent {
+  return outcomeInjectionEvent({
+    memoryIds: ["mem-use-1", "mem-use-2"],
+    packetCharacterCount: 64,
+    packetTokenCount: 16,
+    taskId: "task-old",
+    runId: "run-old",
+    agentId: worker.id,
+    ...overrides
+  });
+}
+
+test("MemoryService recordInjectionUseReport enforces root/curator authority and task-history grant", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const env = experience();
+  await service.appendExperience(env, worker, {
+    ...context,
+    taskId: env.taskId,
+    runId: env.runId
+  });
+  await persistOutcomeInjection(repository, service, useInjectionEvent());
+
+  // Worker authority rejected
+  await assert.rejects(
+    service.recordInjectionUseReport({
+      experienceId: env.id,
+      injectionEventId: "private-injection-id",
+      useKind: "used",
+      usedMemoryIds: ["mem-use-1", "mem-use-2"],
+      evidence: [{ kind: "trajectory", uri: env.trajectory.uri }],
+      actor: worker,
+      context: { ...context, canReadTaskHistory: true }
+    }),
+    { message: /root or memory curator/i }
+  );
+
+  // Missing canReadTaskHistory rejected
+  await assert.rejects(
+    service.recordInjectionUseReport({
+      experienceId: env.id,
+      injectionEventId: "private-injection-id",
+      useKind: "used",
+      usedMemoryIds: ["mem-use-1", "mem-use-2"],
+      evidence: [{ kind: "trajectory", uri: env.trajectory.uri }],
+      actor: root,
+      context
+    }),
+    { message: /task-history access/i }
+  );
+
+  // Missing repository scope rejected
+  const noRepoContext: MemoryReadContext = {
+    workspaceId: context.workspaceId,
+    canReadGlobal: context.canReadGlobal,
+    canReadTaskHistory: true
+  };
+  await assert.rejects(
+    service.recordInjectionUseReport({
+      experienceId: env.id,
+      injectionEventId: "private-injection-id",
+      useKind: "used",
+      usedMemoryIds: ["mem-use-1", "mem-use-2"],
+      evidence: [{ kind: "trajectory", uri: env.trajectory.uri }],
+      actor: root,
+      context: noRepoContext
+    }),
+    { message: /repository scope/i }
+  );
+});
+
+test("MemoryService recordInjectionUseReport anchors trajectory evidence to the captured experience trajectory", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const env = experience();
+  await service.appendExperience(env, worker, {
+    ...context,
+    taskId: env.taskId,
+    runId: env.runId
+  });
+  await persistOutcomeInjection(repository, service, useInjectionEvent());
+
+  // Trajectory URI mismatch rejected
+  await assert.rejects(
+    service.recordInjectionUseReport({
+      experienceId: env.id,
+      injectionEventId: "private-injection-id",
+      useKind: "used",
+      usedMemoryIds: ["mem-use-1", "mem-use-2"],
+      evidence: [
+        { kind: "trajectory", uri: "file:///some/other/trajectory.jsonl" }
+      ],
+      actor: root,
+      context: { ...context, canReadTaskHistory: true }
+    }),
+    { message: /trajectory/i }
+  );
+
+  // Non-trajectory evidence for non-unobservable rejected
+  await assert.rejects(
+    service.recordInjectionUseReport({
+      experienceId: env.id,
+      injectionEventId: "private-injection-id",
+      useKind: "not_used",
+      usedMemoryIds: [],
+      evidence: [
+        { kind: "commit", uri: "git://workspace-a/repo-a/commit/abc123" }
+      ],
+      actor: root,
+      context: { ...context, canReadTaskHistory: true }
+    }),
+    { message: /captured trajectory/i }
+  );
+
+  // OK with matching trajectory URI
+  const result = await service.recordInjectionUseReport({
+    experienceId: env.id,
+    injectionEventId: "private-injection-id",
+    useKind: "used",
+    usedMemoryIds: ["mem-use-1", "mem-use-2"],
+    evidence: [{ kind: "trajectory", uri: env.trajectory.uri }],
+    actor: root,
+    context: { ...context, canReadTaskHistory: true }
+  });
+  assert.equal(result.appended, true);
+});
+
+test("MemoryService recordInjectionUseReport validates usedMemoryIds subset/cardinality per useKind", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const env = experience();
+  await service.appendExperience(env, worker, {
+    ...context,
+    taskId: env.taskId,
+    runId: env.runId
+  });
+  const event = useInjectionEvent();
+  await persistOutcomeInjection(repository, service, event);
+
+  // used must cite every injected id
+  await assert.rejects(
+    service.recordInjectionUseReport({
+      experienceId: env.id,
+      injectionEventId: event.id,
+      useKind: "used",
+      usedMemoryIds: ["mem-use-1"],
+      evidence: [{ kind: "trajectory", uri: env.trajectory.uri }],
+      actor: root,
+      context: { ...context, canReadTaskHistory: true }
+    }),
+    { message: /every injected memory id/i }
+  );
+
+  // partially_used must be a non-empty strict subset
+  await assert.rejects(
+    service.recordInjectionUseReport({
+      experienceId: env.id,
+      injectionEventId: event.id,
+      useKind: "partially_used",
+      usedMemoryIds: [...event.memoryIds],
+      evidence: [{ kind: "trajectory", uri: env.trajectory.uri }],
+      actor: root,
+      context: { ...context, canReadTaskHistory: true }
+    }),
+    { message: /strict subset/i }
+  );
+
+  // not_used must not cite any memory id
+  await assert.rejects(
+    service.recordInjectionUseReport({
+      experienceId: env.id,
+      injectionEventId: event.id,
+      useKind: "not_used",
+      usedMemoryIds: ["mem-use-1"],
+      evidence: [{ kind: "trajectory", uri: env.trajectory.uri }],
+      actor: root,
+      context: { ...context, canReadTaskHistory: true }
+    }),
+    { message: /must not cite any memory id/i }
+  );
+
+  // subset violation
+  await assert.rejects(
+    service.recordInjectionUseReport({
+      experienceId: env.id,
+      injectionEventId: event.id,
+      useKind: "partially_used",
+      usedMemoryIds: ["not-in-packet"],
+      evidence: [{ kind: "trajectory", uri: env.trajectory.uri }],
+      actor: root,
+      context: { ...context, canReadTaskHistory: true }
+    }),
+    { message: /subset of the injected memoryIds/i }
+  );
+});
+
+test("MemoryService recordInjectionUseReport only records on eligible injected event", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const env = experience();
+  await service.appendExperience(env, worker, {
+    ...context,
+    taskId: env.taskId,
+    runId: env.runId
+  });
+
+  // Empty packet rejected
+  const empty = useInjectionEvent({
+    id: "private-empty-id",
+    correlationToken: "private-empty-token",
+    injectionResult: "empty",
+    memoryIds: [],
+    packetCharacterCount: 0,
+    packetTokenCount: 0,
+    reasonCode: "no_packet_research_returned_empty"
+  });
+  await persistOutcomeInjection(repository, service, empty);
+  await assert.rejects(
+    service.recordInjectionUseReport({
+      experienceId: env.id,
+      injectionEventId: empty.id,
+      useKind: "used",
+      usedMemoryIds: [],
+      evidence: [{ kind: "trajectory", uri: env.trajectory.uri }],
+      actor: root,
+      context: { ...context, canReadTaskHistory: true }
+    }),
+    { message: /eligible injected event/i }
+  );
+
+  // Disabled mode rejected
+  const disabled = useInjectionEvent({
+    id: "private-disabled-id",
+    correlationToken: "private-disabled-token",
+    memoryMode: "disabled"
+  });
+  await persistOutcomeInjection(repository, service, disabled);
+  await assert.rejects(
+    service.recordInjectionUseReport({
+      experienceId: env.id,
+      injectionEventId: disabled.id,
+      useKind: "used",
+      usedMemoryIds: [...disabled.memoryIds],
+      evidence: [{ kind: "trajectory", uri: env.trajectory.uri }],
+      actor: root,
+      context: { ...context, canReadTaskHistory: true }
+    }),
+    { message: /eligible injected event/i }
+  );
+
+  // Unrelated task id rejected
+  const unrelated = useInjectionEvent({
+    id: "private-unrelated-id",
+    correlationToken: "private-unrelated-token",
+    taskId: "task-other"
+  });
+  await persistOutcomeInjection(repository, service, unrelated);
+  await assert.rejects(
+    service.recordInjectionUseReport({
+      experienceId: env.id,
+      injectionEventId: unrelated.id,
+      useKind: "used",
+      usedMemoryIds: [...unrelated.memoryIds],
+      evidence: [{ kind: "trajectory", uri: env.trajectory.uri }],
+      actor: root,
+      context: { ...context, canReadTaskHistory: true }
+    }),
+    { message: /targets an event outside the captured session/i }
+  );
+});
+
+test("MemoryService recordInjectionUseReport returns idempotent retry and conflict for conflicting retry", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const env = experience();
+  await service.appendExperience(env, worker, {
+    ...context,
+    taskId: env.taskId,
+    runId: env.runId
+  });
+  const event = useInjectionEvent();
+  await persistOutcomeInjection(repository, service, event);
+
+  const first = await service.recordInjectionUseReport({
+    experienceId: env.id,
+    injectionEventId: event.id,
+    useKind: "partially_used",
+    usedMemoryIds: ["mem-use-1"],
+    evidence: [{ kind: "trajectory", uri: env.trajectory.uri }],
+    actor: root,
+    context: { ...context, canReadTaskHistory: true }
+  });
+  assert.equal(first.appended, true);
+
+  // Idempotent retry returns appended:false with same id
+  const retry = await service.recordInjectionUseReport({
+    experienceId: env.id,
+    injectionEventId: event.id,
+    useKind: "partially_used",
+    usedMemoryIds: ["mem-use-1"],
+    evidence: [{ kind: "trajectory", uri: env.trajectory.uri }],
+    actor: root,
+    context: { ...context, canReadTaskHistory: true }
+  });
+  assert.deepEqual(retry, { appended: false, id: first.id });
+
+  // Conflicting retry throws MemoryConflictError
+  await assert.rejects(
+    service.recordInjectionUseReport({
+      experienceId: env.id,
+      injectionEventId: event.id,
+      useKind: "used",
+      usedMemoryIds: [...event.memoryIds],
+      evidence: [{ kind: "trajectory", uri: env.trajectory.uri }],
+      actor: root,
+      context: { ...context, canReadTaskHistory: true }
+    }),
+    MemoryConflictError
+  );
+});
+
+test("MemoryService listInjectionUseJoins is gated by task-history access and projects only safe fields", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const env = experience();
+  await service.appendExperience(env, worker, {
+    ...context,
+    taskId: env.taskId,
+    runId: env.runId
+  });
+  const event = useInjectionEvent();
+  await persistOutcomeInjection(repository, service, event);
+
+  await service.recordInjectionUseReport({
+    experienceId: env.id,
+    injectionEventId: event.id,
+    useKind: "partially_used",
+    usedMemoryIds: ["mem-use-1"],
+    evidence: [{ kind: "trajectory", uri: env.trajectory.uri }],
+    actor: root,
+    context: { ...context, canReadTaskHistory: true }
+  });
+
+  // Without task-history, list rejected
+  await assert.rejects(
+    service.listInjectionUseJoins({
+      context: { ...context, canReadTaskHistory: false }
+    }),
+    { message: /task-history/i }
+  );
+
+  const sessionContext = {
+    ...context,
+    canReadTaskHistory: true,
+    taskId: env.taskId,
+    runId: env.runId,
+    agentId: env.agentId
+  };
+  const page = await service.listInjectionUseJoins({
+    context: sessionContext
+  });
+  assert.equal(page.total, 1);
+  const item = page.items[0];
+  assert.ok(item);
+  assert.ok(item.use);
+  assert.equal(item.use?.useKind, "partially_used");
+  // raw event includes correlationToken; the Control API layer is responsible
+  // for projecting only safe fields onto the response payload.
+  assert.equal(typeof item.injection.correlationToken, "string");
+});
+
+test("MemoryService aggregateInjectionUseCohorts counts assessed and unassessed exposures without identities", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const env = experience();
+  await service.appendExperience(env, worker, {
+    ...context,
+    taskId: env.taskId,
+    runId: env.runId
+  });
+  const reported = useInjectionEvent({ id: "event-reported" });
+  const pending = useInjectionEvent({
+    id: "event-pending",
+    correlationToken: "token-pending",
+    runId: "private-injection-run-id-2",
+    agentId: "private-injection-agent-id-2"
+  });
+  await persistOutcomeInjection(repository, service, reported);
+  await persistOutcomeInjection(repository, service, pending);
+
+  await service.recordInjectionUseReport({
+    experienceId: env.id,
+    injectionEventId: reported.id,
+    useKind: "partially_used",
+    usedMemoryIds: ["mem-use-1"],
+    evidence: [{ kind: "trajectory", uri: env.trajectory.uri }],
+    actor: root,
+    context: { ...context, canReadTaskHistory: true }
+  });
+
+  const aggregateContext: MemoryReadContext = {
+    workspaceId: context.workspaceId,
+    ...(context.repositoryId ? { repositoryId: context.repositoryId } : {}),
+    canReadGlobal: false,
+    canReadTaskHistory: true
+  };
+  const page = await service.aggregateInjectionUseCohorts({
+    context: aggregateContext,
+    occurredFrom: "2026-09-01T00:00:00.000Z",
+    occurredUntil: "2026-10-01T00:00:00.000Z"
+  });
+  assert.equal(page.exposureCount, 2);
+  assert.ok(page.cells.some((cell) => cell.useKind === null));
+  assert.ok(page.cells.some((cell) => cell.useKind === "partially_used"));
+  // No cell leaks correlation tokens, reporter IDs, or usedMemoryIds
+  for (const cell of page.cells) {
+    assert.equal("correlationToken" in cell, false);
+    assert.equal("reporterId" in cell, false);
+    assert.equal("usedMemoryIds" in cell, false);
+  }
 });

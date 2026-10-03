@@ -548,7 +548,10 @@ omitted when no token counter is configured. `autodev.memory.injections` records
 model used a packet or that a task succeeded. `autodev.memory.outcome_reports`
 counts only newly appended reporter-supplied outcomes (not idempotent retries)
 with bounded outcome, report-kind, mode, and injection-result categories derived
-from the report and its matched injection event. Orchestrator preparation runs inside
+from the report and its matched injection event. The separate
+`autodev.memory.use_reports` counter increments only for newly appended,
+curator-assessed injection-use reports and uses only bounded `use.kind` and
+`use.memory_mode` dimensions; it never includes packet IDs or evidence. Orchestrator preparation runs inside
 the logical routed-request span, making the `memory.research` tree, actual packet
 injection result/size, and final provider-routing outcome inspectable in one trace.
 That final request outcome is not a downstream task/PR outcome. The Runtime also
@@ -563,10 +566,12 @@ same OTLP exporter. Operation-duration observations are per-span;
 nested stages overlap and must not be summed into a total. These metrics
 contain no task, repository, memory, claim, path, or actor identifiers; the existing GenAI attempt
 spans remain the source for model cost rather than duplicating it here.
-The workspace/repository/time-scoped `memory.injection.outcome.aggregate` span
-records only the resulting cohort-cell, exposure, and reporter-report counts;
-query selectors, task/run/agent IDs, memory IDs, and evidence remain out of
-telemetry.
+The workspace/repository/time-scoped `memory.injection.outcome.aggregate` and
+`memory.injection.use.aggregate` spans record only resulting cohort-cell and
+exposure/report counts; query selectors, task/run/agent IDs, memory IDs, and
+evidence remain out of telemetry. Use cohorts count curator-assessed injection
+packet use separately from task outcomes and do not infer model use from output
+text or provider routing.
 
 The explicit procedure-to-skill transaction emits `memory.promote` with only bounded target
 and outcome categories; the skill name, body, evidence URI, and memory id stay out

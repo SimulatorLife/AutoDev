@@ -4,7 +4,8 @@ import type {
   MemoryLifecycleEvent,
   MemoryOutcomeReport,
   MemoryRecord,
-  MemorySessionOutcomeReport
+  MemorySessionOutcomeReport,
+  MemoryUseReport
 } from "@simulatorlife/autodev-core";
 
 import { scopeToColumns } from "./scope-sql.ts";
@@ -94,7 +95,6 @@ export function lifecycleEventToRow(
   };
 }
 
-
 /** Row values for inserting one `memory_injection_events` row. */
 export function injectionEventToRow(
   event: MemoryInjectionEvent
@@ -138,6 +138,32 @@ export function outcomeReportToRow(
     correlation_token: report.correlationToken,
     outcome_kind: report.outcomeKind,
     report_kind: report.reportKind,
+    reported_at: report.reportedAt,
+    reporter_id: report.reporterId,
+    reporter_authority: report.reporterAuthority,
+    reason_code: report.reasonCode,
+    evidence: JSON.stringify(report.evidence)
+  };
+}
+
+/** Row values for inserting one `memory_injection_use_reports` row. */
+export function injectionUseReportToRow(
+  report: MemoryUseReport
+): Record<string, unknown> {
+  const scope = scopeToColumns(report.scope);
+  return {
+    id: report.id,
+    injection_event_id: report.injectionEventId,
+    workspace_id: report.workspaceId,
+    repository_id: report.repositoryId,
+    ...scope,
+    task_id: report.taskId,
+    run_id: report.runId,
+    agent_id: report.agentId,
+    agent_role: report.agentRole ?? null,
+    correlation_token: report.correlationToken,
+    use_kind: report.useKind,
+    used_memory_ids: JSON.stringify(report.usedMemoryIds),
     reported_at: report.reportedAt,
     reporter_id: report.reporterId,
     reporter_authority: report.reporterAuthority,

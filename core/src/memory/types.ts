@@ -287,6 +287,43 @@ export function isMemoryOutcomeReportReasonCode(
   );
 }
 
+export const MEMORY_USE_KINDS = [
+  "used",
+  "partially_used",
+  "not_used",
+  "unobservable"
+] as const;
+/**
+ * Bounded kind of a curator-assessed observation of whether an actually
+ * injected memory packet was used. This is a reported assessment, never
+ * inferred from assistant output, retrieval, or provider success; absence
+ * of a report means "unassessed", not "not_used".
+ */
+export type MemoryUseKind = (typeof MEMORY_USE_KINDS)[number];
+
+export function isMemoryUseKind(value: unknown): value is MemoryUseKind {
+  return (
+    typeof value === "string" &&
+    MEMORY_USE_KINDS.includes(value as MemoryUseKind)
+  );
+}
+
+export const MEMORY_USE_REPORT_REASON_CODES = [
+  "reporter_supplied",
+  "reporter_unobservable"
+] as const;
+export type MemoryUseReportReasonCode =
+  (typeof MEMORY_USE_REPORT_REASON_CODES)[number];
+
+export function isMemoryUseReportReasonCode(
+  value: unknown
+): value is MemoryUseReportReasonCode {
+  return (
+    typeof value === "string" &&
+    MEMORY_USE_REPORT_REASON_CODES.includes(value as MemoryUseReportReasonCode)
+  );
+}
+
 /**
  * Append-only observation of the moment the runtime actually decided whether
  * to attach a memory packet to a routed request. The durable
@@ -348,6 +385,190 @@ export interface MemoryOutcomeReport {
   readonly evidence: readonly EvidenceReference[];
 }
 
+/**
+ * Append-only, curator-assessed observation of whether an actually injected
+ * memory packet was used. Distinct from `MemoryOutcomeReport`: a use report
+ * never claims task/PR/issue success and is never inferred from assistant
+ * output. It is internally keyed by `(workspaceId, correlationToken)`,
+ * exactly like `MemoryOutcomeReport`; the `injectionEventId` field is
+ * carried for direct reference by API callers that resolved the target
+ * event by id rather than by its content-free correlation token. Only an
+ * `injected` event with non-empty `memoryIds` is eligible for a use report.
+ */
+export interface MemoryUseReport {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly repositoryId: string;
+  readonly scope: MemoryScope;
+  readonly taskId: string;
+  readonly runId: string;
+  readonly agentId: string;
+  readonly agentRole?: string;
+  readonly injectionEventId: string;
+  readonly correlationToken: string;
+  readonly useKind: MemoryUseKind;
+  /**
+   * Subset of the matched injection event's `memoryIds`. Must equal every
+   * injected id for `"used"`, a non-empty strict subset for
+   * `"partially_used"`, and be empty for `"not_used"`/`"unobservable"`.
+   */
+  readonly usedMemoryIds: readonly string[];
+  readonly reportedAt: string;
+  readonly reporterId: string;
+  /** Only `"root"` or `"curator"` reporters may author a use report. */
+  readonly reporterAuthority: MemoryAuthority;
+  readonly reasonCode: MemoryUseReportReasonCode;
+  /** Required (at least one `"trajectory"` reference) for every kind except `"unobservable"`. */
+  readonly evidence: readonly EvidenceReference[];
+}
+
+/**
+ * Validates the use-kind/usedMemoryIds/evidence invariants against the
+ * matched injection event. Implementations call this at the Data boundary
+ * so a caller cannot bypass it by skipping the MemoryService layer; Runtime
+ * additionally checks that a trajectory evidence URI matches the captured
+ * ExperienceEnvelope trajectory, which this function cannot see.
+ */
+export function assertMemoryUseReportInvariants(
+  report: Pick<
+    MemoryUseReport,
+    "repositoryId" | "useKind" | "usedMemoryIds" | "evidence" | "reasonCode"
+  >,
+  event: Pick<
+    MemoryInjectionEvent,
+    "injectionResult" | "memoryMode" | "memoryIds"
+  >
+): void {
+  if (
+    event.injectionResult !== "injected" ||
+    event.memoryIds.length === 0 ||
+    !isMemoryUseCohortEligibleMode(event.memoryMode)
+  ) {
+    throw new TypeError(
+      "Use reports require an eligible injected event with a non-empty packet in jit or retrieval-only mode."
+    );
+  }
+  if (!report.repositoryId?.trim()) {
+    throw new TypeError("Use reports require a repository id.");
+  }
+  if (!isMemoryUseKind(report.useKind)) {
+    throw new TypeError("Use report useKind is invalid.");
+  }
+  if (!isMemoryUseReportReasonCode(report.reasonCode)) {
+    throw new TypeError("Use report reasonCode is invalid.");
+  }
+  const expectedReason =
+    report.useKind === "unobservable"
+      ? "reporter_unobservable"
+      : "reporter_supplied";
+  if (report.reasonCode !== expectedReason) {
+    throw new TypeError("Use report reasonCode does not match useKind.");
+  }
+  assertMemoryUseIdsMatchKind(
+    report.useKind,
+    report.usedMemoryIds,
+    event.memoryIds
+  );
+  assertMemoryUseEvidence(report.useKind, report.evidence);
+}
+
+function assertMemoryUseIdsMatchKind(
+  useKind: MemoryUseKind,
+  usedIds: readonly string[],
+  packetIds: readonly string[]
+): void {
+  if (new Set(usedIds).size !== usedIds.length) {
+    throw new TypeError(
+      "Use report usedMemoryIds must not contain duplicates."
+    );
+  }
+  const packetIdSet = new Set(packetIds);
+  if (usedIds.some((id) => !packetIdSet.has(id))) {
+    throw new TypeError(
+      "Use report usedMemoryIds must be a subset of the injected memoryIds."
+    );
+  }
+  switch (useKind) {
+    case "used": {
+      if (usedIds.length !== packetIds.length) {
+        throw new TypeError(
+          "'used' reports must cite every injected memory id."
+        );
+      }
+      break;
+    }
+    case "partially_used": {
+      if (usedIds.length === 0 || usedIds.length >= packetIds.length) {
+        throw new TypeError(
+          "'partially_used' reports require a non-empty strict subset of injected memory ids."
+        );
+      }
+      break;
+    }
+    case "not_used":
+    case "unobservable": {
+      if (usedIds.length > 0) {
+        throw new TypeError(
+          `'${useKind}' reports must not cite any memory id.`
+        );
+      }
+      break;
+    }
+  }
+}
+
+function assertMemoryUseEvidence(
+  useKind: MemoryUseKind,
+  evidence: readonly EvidenceReference[]
+): void {
+  if (useKind === "unobservable") return;
+  if (
+    !evidence.some(
+      (reference) =>
+        reference.kind === "trajectory" && reference.uri.trim().length > 0
+    )
+  ) {
+    throw new TypeError(
+      `'${useKind}' reports require a trajectory evidence reference.`
+    );
+  }
+}
+
+function normalizeEvidenceReferences(
+  refs: readonly EvidenceReference[]
+): string[] {
+  return refs
+    .map((ref) => `${ref.kind}\u0000${ref.uri}\u0000${ref.revision ?? ""}`)
+    .sort();
+}
+
+/**
+ * True when two use reports for the same injection carry the same
+ * `useKind`, `usedMemoryIds` set, and evidence set (ignoring identity/
+ * timing fields); used to decide whether a retry is an idempotent no-op or
+ * a genuine conflict.
+ */
+export function useReportBodyMatches(
+  a: MemoryUseReport,
+  b: MemoryUseReport
+): boolean {
+  if (a.useKind !== b.useKind) return false;
+  if (a.usedMemoryIds.length !== b.usedMemoryIds.length) return false;
+  const aIds = [...a.usedMemoryIds].sort();
+  const bIds = [...b.usedMemoryIds].sort();
+  if (!aIds.every((id, index) => id === bIds[index])) return false;
+  if (a.evidence.length !== b.evidence.length) return false;
+  const aEvidence = normalizeEvidenceReferences(a.evidence);
+  const bEvidence = normalizeEvidenceReferences(b.evidence);
+  return aEvidence.every((value, index) => value === bEvidence[index]);
+}
+
+export interface MemoryRecordUseReportInput {
+  readonly report: MemoryUseReport;
+  readonly actor: MemoryActor;
+  readonly context: MemoryReadContext;
+}
+
 /** One observed injection joined to its reporter-supplied outcome, if any. */
 export interface MemoryInjectionOutcomeJoin {
   readonly injection: MemoryInjectionEvent;
@@ -386,6 +607,41 @@ export interface MemoryInjectionOutcomeJoinRequest {
 
 export interface MemoryInjectionOutcomeJoinPage {
   readonly items: readonly MemoryInjectionOutcomeJoin[];
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+}
+
+export interface MemoryInjectionUseJoin {
+  readonly injection: MemoryInjectionEvent;
+  /** Null when the stored injection has not yet received a curator-assessed use report. */
+  readonly use: MemoryUseReport | null;
+  /**
+   * Count of all injection events captured for the same session key as
+   * `injection`, inclusive of `injection` itself. Derived at read time from
+   * the full append-only event set for that session; mirrors
+   * `MemoryInjectionOutcomeJoin.sessionInjectionCount`.
+   */
+  readonly sessionInjectionCount: number;
+}
+
+export interface MemoryInjectionUseJoinRequest {
+  readonly context: MemoryReadContext;
+  readonly memoryModes?: readonly MemoryExecutionMode[];
+  readonly injectionResults?: readonly MemoryInjectionResult[];
+  readonly useKinds?: readonly MemoryUseKind[];
+  /**
+   * Default false. When false, only injection events with a matching
+   * curator-assessed use report are returned. When true, rows whose `use`
+   * is null are also surfaced so unassessed exposures can be audited.
+   */
+  readonly includeUnassessed?: boolean;
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+export interface MemoryInjectionUseJoinPage {
+  readonly items: readonly MemoryInjectionUseJoin[];
   readonly total: number;
   readonly limit: number;
   readonly offset: number;
@@ -454,12 +710,8 @@ export function sessionOutcomeReportBodyMatches(
   if (a.evidence.length !== b.evidence.length) {
     return false;
   }
-  const normalize = (refs: readonly EvidenceReference[]) =>
-    refs
-      .map((ref) => `${ref.kind}\u0000${ref.uri}\u0000${ref.revision ?? ""}`)
-      .sort();
-  const aEvidence = normalize(a.evidence);
-  const bEvidence = normalize(b.evidence);
+  const aEvidence = normalizeEvidenceReferences(a.evidence);
+  const bEvidence = normalizeEvidenceReferences(b.evidence);
   return aEvidence.every((value, index) => value === bEvidence[index]);
 }
 
@@ -830,6 +1082,18 @@ export interface MemoryRepository {
     context: MemoryInjectionEventSessionLookup,
     correlationToken: string
   ): Promise<MemoryInjectionEvent | null>;
+  /**
+   * Session-scoped lookup by the injection event's own `id`, mirroring
+   * `findInjectionEventByTokenForSession`'s (workspace, repository, task)
+   * join but keyed by id instead of the opaque correlationToken. Used by
+   * the external use-report API, which accepts only `injectionEventId`
+   * from the browser and must resolve the event's correlationToken/scope
+   * itself rather than trusting a caller-supplied token.
+   */
+  getInjectionEventByIdForSession(
+    context: MemoryInjectionEventSessionLookup,
+    injectionEventId: string
+  ): Promise<MemoryInjectionEvent | null>;
 
   /**
    * Workspace/repository/time-scoped GROUP BY aggregate over the canonical
@@ -855,6 +1119,57 @@ export interface MemoryRepository {
   aggregateInjectionOutcomeCohorts(
     request: MemoryInjectionOutcomeCohortFilter
   ): Promise<MemoryInjectionOutcomeCohortPage>;
+
+  /**
+   * Append-only, curator-assessed use report attached to an observed
+   * `injected` event with non-empty `memoryIds`, within the same
+   * (workspace, repository, task) session scope as
+   * `recordOutcomeReport`. Implementations reject reports whose target
+   * correlationToken has no scope-aligned injection event, reject a
+   * reporter authority other than root/curator, and enforce the
+   * use-kind/usedMemoryIds/evidence invariants documented on
+   * `assertMemoryUseReportInvariants` at the Data boundary. A same-body
+   * retry for the same (workspace_id, correlation_token) key is
+   * idempotent; a conflicting retry is rejected.
+   */
+  recordInjectionUseReport(
+    input: MemoryRecordUseReportInput
+  ): Promise<{ readonly appended: boolean; readonly id: string }>;
+  /** Returns the single use report for a (workspace, correlationToken) key, or null. */
+  getInjectionUseReport(
+    workspaceId: string,
+    correlationToken: string
+  ): Promise<MemoryUseReport | null>;
+  /**
+   * Scoped, filtered join between stored injection events and their
+   * curator-assessed use reports. Rows without a matching use report
+   * return `use: null`; mirrors `listInjectionOutcomeJoins`.
+   */
+  listInjectionUseJoins(
+    request: MemoryInjectionUseJoinRequest
+  ): Promise<MemoryInjectionUseJoinPage>;
+  /**
+   * Workspace/repository/time-scoped GROUP BY aggregate over the canonical
+   * append-only injection event table and its curator-assessed use
+   * reports, at the per-injection exposure unit. Distinct from
+   * `aggregateInjectionOutcomeCohorts`: the denominator is restricted to
+   * `injected` events with non-empty `memoryIds` (every other event is
+   * excluded, not merely zero-filled), and cells group only by
+   * `(memoryMode, sessionCardinality, useKind)` -- there is no
+   * `injectionResult` or `reportKind` dimension. Cells whose `useKind` is
+   * null represent an eligible exposure that has not yet received a
+   * curator assessment. `sessionCardinality` is derived from the full,
+   * unfiltered event set for each row's session key, never from the
+   * `memoryModes`/`useKinds` filters applied to this read, and never
+   * excluding sibling events outside the injected/non-empty denominator.
+   * Implementations must parameterize every bound as `$n`-style
+   * placeholders and never include correlation tokens, session/task/run/
+   * agent IDs, memory IDs, evidence URIs, or reporter identities in the
+   * response.
+   */
+  aggregateInjectionUseCohorts(
+    request: MemoryInjectionUseCohortFilter
+  ): Promise<MemoryInjectionUseCohortPage>;
 
   /**
    * Append-only, session-level task outcome keyed uniquely by
@@ -1075,6 +1390,128 @@ export function assertMemoryInjectionOutcomeCohortFilter(
   }
 }
 
+export interface MemoryInjectionUseCohortFilter {
+  readonly context: MemoryReadContext;
+  /** Inclusive lower bound on injection `occurred_at`. Required, ≤365 days from `occurredUntil`. */
+  readonly occurredFrom: string;
+  /** Inclusive upper bound on injection `occurred_at`. Required, ≥`occurredFrom`. */
+  readonly occurredUntil: string;
+  /** Optional bounded enum filter. Unspecified values surface every bounded mode. */
+  readonly memoryModes?: readonly MemoryUseCohortAssignedMode[];
+  /** Optional bounded enum filter on the *curator-assessed* use kind. */
+  readonly useKinds?: readonly MemoryUseKind[];
+}
+
+export const MEMORY_USE_COHORT_ASSIGNED_MODES = [
+  MEMORY_EXECUTION_MODES[0],
+  MEMORY_EXECUTION_MODES[1],
+  MEMORY_EXECUTION_MODES[2]
+] as const;
+export type MemoryUseCohortAssignedMode =
+  (typeof MEMORY_USE_COHORT_ASSIGNED_MODES)[number];
+
+export const MEMORY_USE_COHORT_ELIGIBLE_MODES = [
+  MEMORY_EXECUTION_MODES[0],
+  MEMORY_EXECUTION_MODES[1]
+] as const;
+export type MemoryUseCohortEligibleMode =
+  (typeof MEMORY_USE_COHORT_ELIGIBLE_MODES)[number];
+
+export function isMemoryUseCohortEligibleMode(
+  value: unknown
+): value is MemoryUseCohortEligibleMode {
+  return (
+    typeof value === "string" &&
+    (MEMORY_USE_COHORT_ELIGIBLE_MODES as readonly string[]).includes(value)
+  );
+}
+
+export interface MemoryInjectionUseCohortCell {
+  readonly memoryMode: MemoryUseCohortEligibleMode;
+  /**
+   * `"single"` when every injection event grouped into this cell belongs to
+   * a session that captured exactly one injection event in total (derived
+   * from the full, unfiltered event set); `"multiple"` otherwise.
+   */
+  readonly sessionCardinality: MemoryInjectionSessionCardinality;
+  /** Null when the cell represents an eligible-but-unassessed exposure. */
+  readonly useKind: MemoryUseKind | null;
+  /** Count of eligible (`injected`, non-empty memoryIds) exposures in this group; an integer ≥ 0. */
+  readonly exposureCount: number;
+}
+
+export interface MemoryInjectionUseCohortPage {
+  readonly schema: "autodev-memory-injection-use-cohorts-v1";
+  readonly workspaceId: string;
+  readonly repositoryId: string;
+  readonly occurredFrom: string;
+  readonly occurredUntil: string;
+  readonly cells: readonly MemoryInjectionUseCohortCell[];
+  /** Sum of `exposureCount` across cells; equals total eligible injection events seen. */
+  readonly exposureCount: number;
+}
+
+/**
+ * Validate a use cohort filter at the MemoryService/Data boundary so
+ * unbounded scans are never issued against the canonical event tables.
+ */
+export function assertMemoryInjectionUseCohortFilter(
+  filter: MemoryInjectionUseCohortFilter
+): void {
+  if (!filter.context.workspaceId.trim()) {
+    throw new TypeError("Use cohort filter requires a workspace id.");
+  }
+  if (
+    filter.context.repositoryId === undefined ||
+    !filter.context.repositoryId.trim()
+  ) {
+    throw new TypeError("Use cohort filter requires a repository id.");
+  }
+  if (
+    filter.context.role !== undefined ||
+    filter.context.taskId !== undefined ||
+    filter.context.runId !== undefined ||
+    filter.context.agentId !== undefined
+  ) {
+    throw new TypeError(
+      "Use cohort filters cannot select a role, task, run, or agent."
+    );
+  }
+  const fromMs = Date.parse(filter.occurredFrom);
+  const untilMs = Date.parse(filter.occurredUntil);
+  if (!Number.isFinite(fromMs)) {
+    throw new TypeError("Use cohort filter 'from' is not a valid timestamp.");
+  }
+  if (!Number.isFinite(untilMs)) {
+    throw new TypeError("Use cohort filter 'until' is not a valid timestamp.");
+  }
+  if (untilMs < fromMs) {
+    throw new TypeError(
+      "Use cohort filter 'until' must be greater than or equal to 'from'."
+    );
+  }
+  if (untilMs - fromMs > MEMORY_OUTCOME_COHORT_MAX_WINDOW_MS) {
+    throw new TypeError(
+      "Use cohort filter window exceeds the 365-day maximum."
+    );
+  }
+  if (
+    filter.memoryModes !== undefined &&
+    filter.memoryModes.some(
+      (mode) =>
+        !(MEMORY_USE_COHORT_ASSIGNED_MODES as readonly string[]).includes(mode)
+    )
+  ) {
+    throw new TypeError("Use cohort filter memoryMode is invalid.");
+  }
+  if (
+    filter.useKinds !== undefined &&
+    filter.useKinds.some((kind) => !isMemoryUseKind(kind))
+  ) {
+    throw new TypeError("Use cohort filter useKind is invalid.");
+  }
+}
+
 export const MEMORY_SESSION_COHORT_ASSIGNED_MODES = [
   "jit",
   "retrieval-only",
@@ -1199,9 +1636,7 @@ export function assertMemorySessionOutcomeCohortFilter(
   }
   if (
     filter.memoryModes !== undefined &&
-    filter.memoryModes.some(
-      (mode) => !isMemorySessionCohortAssignedMode(mode)
-    )
+    filter.memoryModes.some((mode) => !isMemorySessionCohortAssignedMode(mode))
   ) {
     throw new TypeError("Session cohort filter memoryMode is invalid.");
   }

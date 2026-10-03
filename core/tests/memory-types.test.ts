@@ -3,17 +3,23 @@ import test from "node:test";
 
 import {
   assertMemoryInjectionOutcomeCohortFilter,
+  assertMemoryInjectionUseCohortFilter,
   assertMemorySessionOutcomeCohortFilter,
+  assertMemoryUseReportInvariants,
   type ExperienceEnvelope,
   isMemoryExperienceVisibleTo,
   isMemoryInjectionSessionCardinality,
   isMemoryScopeVisibleTo,
   isMemorySessionCohortAssignedMode,
+  isMemoryUseKind,
+  type MemoryInjectionEvent,
   type MemoryReadContext,
   type MemoryScope,
   type MemorySessionOutcomeReport,
+  type MemoryUseReport,
   parseMemoryExecutionMode,
-  sessionOutcomeReportBodyMatches
+  sessionOutcomeReportBodyMatches,
+  useReportBodyMatches
 } from "../src/memory/types.ts";
 
 const context: MemoryReadContext = {
@@ -219,7 +225,9 @@ test("assertMemorySessionOutcomeCohortFilter validates bounded session cohort fi
     occurredFrom: "2026-09-01T00:00:00.000Z",
     occurredUntil: "2026-10-01T00:00:00.000Z"
   };
-  assert.doesNotThrow(() => assertMemorySessionOutcomeCohortFilter(validFilter));
+  assert.doesNotThrow(() =>
+    assertMemorySessionOutcomeCohortFilter(validFilter)
+  );
 
   assert.throws(
     () =>
@@ -369,5 +377,417 @@ test("sessionOutcomeReportBodyMatches checks outcomeKind, reportKind, and eviden
       evidence: [{ kind: "trajectory", uri: "codex://session/2" }]
     }),
     false
+  );
+});
+
+test("isMemoryUseKind accepts only the bounded used/partially_used/not_used/unobservable values", () => {
+  assert.equal(isMemoryUseKind("used"), true);
+  assert.equal(isMemoryUseKind("partially_used"), true);
+  assert.equal(isMemoryUseKind("not_used"), true);
+  assert.equal(isMemoryUseKind("unobservable"), true);
+  assert.equal(isMemoryUseKind("unassessed"), false);
+  assert.equal(isMemoryUseKind(undefined), false);
+});
+
+function injectedEvent(
+  overrides: Partial<
+    Pick<MemoryInjectionEvent, "injectionResult" | "memoryMode" | "memoryIds">
+  > = {}
+): Pick<MemoryInjectionEvent, "injectionResult" | "memoryMode" | "memoryIds"> {
+  return {
+    injectionResult: "injected",
+    memoryMode: "jit",
+    memoryIds: ["mem-1", "mem-2"],
+    ...overrides
+  };
+}
+
+const trajectoryEvidence = [
+  { kind: "trajectory" as const, uri: "codex://session/1" }
+];
+
+function useAssessment(
+  useKind: "used" | "partially_used" | "not_used" | "unobservable",
+  usedMemoryIds: readonly string[],
+  evidence: MemoryUseReport["evidence"]
+) {
+  return {
+    repositoryId: "repo-a",
+    useKind,
+    usedMemoryIds,
+    evidence,
+    reasonCode:
+      useKind === "unobservable"
+        ? ("reporter_unobservable" as const)
+        : ("reporter_supplied" as const)
+  };
+}
+
+test("assertMemoryUseReportInvariants rejects any use report targeting a non-injected or empty-packet event", () => {
+  assert.throws(
+    () =>
+      assertMemoryUseReportInvariants(
+        useAssessment("not_used", [], trajectoryEvidence),
+        { injectionResult: "empty", memoryMode: "jit", memoryIds: [] }
+      ),
+    /eligible injected event/u
+  );
+  assert.throws(
+    () =>
+      assertMemoryUseReportInvariants(
+        useAssessment("not_used", [], trajectoryEvidence),
+        { injectionResult: "injected", memoryMode: "jit", memoryIds: [] }
+      ),
+    /eligible injected event/u
+  );
+  assert.throws(
+    () =>
+      assertMemoryUseReportInvariants(
+        useAssessment("not_used", [], trajectoryEvidence),
+        { injectionResult: "skipped", memoryMode: "jit", memoryIds: ["mem-1"] }
+      ),
+    /eligible injected event/u
+  );
+  for (const memoryMode of ["disabled", "invalid", "unknown"] as const) {
+    assert.throws(
+      () =>
+        assertMemoryUseReportInvariants(
+          useAssessment("not_used", [], trajectoryEvidence),
+          injectedEvent({ memoryMode })
+        ),
+      /eligible injected event/u
+    );
+  }
+});
+
+test("assertMemoryUseReportInvariants requires 'used' to cite every injected memory id", () => {
+  assert.doesNotThrow(() =>
+    assertMemoryUseReportInvariants(
+      useAssessment("used", ["mem-1", "mem-2"], trajectoryEvidence),
+      injectedEvent()
+    )
+  );
+  assert.throws(
+    () =>
+      assertMemoryUseReportInvariants(
+        useAssessment("used", ["mem-1"], trajectoryEvidence),
+        injectedEvent()
+      ),
+    /'used' reports must cite every injected memory id/u
+  );
+});
+
+test("assertMemoryUseReportInvariants requires 'partially_used' to be a non-empty strict subset", () => {
+  assert.doesNotThrow(() =>
+    assertMemoryUseReportInvariants(
+      useAssessment("partially_used", ["mem-1"], trajectoryEvidence),
+      injectedEvent()
+    )
+  );
+  assert.throws(
+    () =>
+      assertMemoryUseReportInvariants(
+        useAssessment("partially_used", [], trajectoryEvidence),
+        injectedEvent()
+      ),
+    /non-empty strict subset/u
+  );
+  assert.throws(
+    () =>
+      assertMemoryUseReportInvariants(
+        useAssessment("partially_used", ["mem-1", "mem-2"], trajectoryEvidence),
+        injectedEvent()
+      ),
+    /non-empty strict subset/u
+  );
+});
+
+test("assertMemoryUseReportInvariants requires 'not_used' and 'unobservable' to carry no memory ids", () => {
+  for (const useKind of ["not_used", "unobservable"] as const) {
+    assert.doesNotThrow(() =>
+      assertMemoryUseReportInvariants(
+        useAssessment(
+          useKind,
+          [],
+          useKind === "unobservable" ? [] : trajectoryEvidence
+        ),
+        injectedEvent()
+      )
+    );
+    assert.throws(
+      () =>
+        assertMemoryUseReportInvariants(
+          useAssessment(useKind, ["mem-1"], trajectoryEvidence),
+          injectedEvent()
+        ),
+      /must not cite any memory id/u
+    );
+  }
+});
+
+test("assertMemoryUseReportInvariants rejects usedMemoryIds outside the injected packet and duplicate ids", () => {
+  assert.throws(
+    () =>
+      assertMemoryUseReportInvariants(
+        useAssessment(
+          "partially_used",
+          ["mem-not-in-packet"],
+          trajectoryEvidence
+        ),
+        injectedEvent()
+      ),
+    /subset of the injected memoryIds/u
+  );
+  assert.throws(
+    () =>
+      assertMemoryUseReportInvariants(
+        useAssessment("used", ["mem-1", "mem-1"], trajectoryEvidence),
+        injectedEvent({ memoryIds: ["mem-1"] })
+      ),
+    /must not contain duplicates/u
+  );
+});
+
+test("assertMemoryUseReportInvariants requires a trajectory evidence reference for every kind except unobservable", () => {
+  assert.throws(
+    () =>
+      assertMemoryUseReportInvariants(
+        useAssessment("not_used", [], []),
+        injectedEvent()
+      ),
+    /require a trajectory evidence reference/u
+  );
+  assert.throws(
+    () =>
+      assertMemoryUseReportInvariants(
+        useAssessment(
+          "used",
+          ["mem-1", "mem-2"],
+          [{ kind: "file", uri: "file://a.ts" }]
+        ),
+        injectedEvent()
+      ),
+    /require a trajectory evidence reference/u
+  );
+  assert.throws(
+    () =>
+      assertMemoryUseReportInvariants(
+        useAssessment(
+          "used",
+          ["mem-1", "mem-2"],
+          [{ kind: "trajectory", uri: "  " }]
+        ),
+        injectedEvent()
+      ),
+    /require a trajectory evidence reference/u
+  );
+  assert.doesNotThrow(() =>
+    assertMemoryUseReportInvariants(
+      useAssessment("unobservable", [], []),
+      injectedEvent()
+    )
+  );
+});
+
+test("assertMemoryUseReportInvariants rejects an invalid useKind", () => {
+  assert.throws(
+    () =>
+      assertMemoryUseReportInvariants(
+        {
+          ...useAssessment("used", [], trajectoryEvidence),
+          useKind: "maybe_used" as never
+        },
+        injectedEvent()
+      ),
+    /useKind is invalid/u
+  );
+});
+
+test("assertMemoryUseReportInvariants requires a repository and a valid persisted reason", () => {
+  assert.throws(
+    () =>
+      assertMemoryUseReportInvariants(
+        {
+          ...useAssessment("used", ["mem-1", "mem-2"], trajectoryEvidence),
+          repositoryId: " "
+        },
+        injectedEvent()
+      ),
+    /require a repository id/u
+  );
+  assert.throws(
+    () =>
+      assertMemoryUseReportInvariants(
+        {
+          ...useAssessment("used", ["mem-1", "mem-2"], trajectoryEvidence),
+          reasonCode: "scope_mismatch" as never
+        },
+        injectedEvent()
+      ),
+    /reasonCode is invalid/u
+  );
+  assert.throws(
+    () =>
+      assertMemoryUseReportInvariants(
+        {
+          ...useAssessment("unobservable", [], []),
+          reasonCode: "reporter_supplied"
+        },
+        injectedEvent()
+      ),
+    /reasonCode does not match useKind/u
+  );
+});
+
+function useReport(overrides: Partial<MemoryUseReport> = {}): MemoryUseReport {
+  return {
+    id: "use-1",
+    workspaceId: "ws-1",
+    repositoryId: "repo-1",
+    scope: {
+      kind: "task",
+      workspaceId: "ws-1",
+      taskId: "task-1",
+      runId: "run-1"
+    },
+    taskId: "task-1",
+    runId: "run-1",
+    agentId: "agent-1",
+    injectionEventId: "inj-1",
+    correlationToken: "token-1",
+    useKind: "used",
+    usedMemoryIds: ["mem-1", "mem-2"],
+    reportedAt: "2026-10-01T00:00:00.000Z",
+    reporterId: "curator-1",
+    reporterAuthority: "curator",
+    reasonCode: "reporter_supplied",
+    evidence: trajectoryEvidence,
+    ...overrides
+  };
+}
+
+test("useReportBodyMatches checks useKind, usedMemoryIds, and evidence ignoring order", () => {
+  const base = useReport();
+  assert.equal(useReportBodyMatches(base, { ...base }), true);
+  assert.equal(
+    useReportBodyMatches(base, {
+      ...base,
+      usedMemoryIds: ["mem-2", "mem-1"]
+    }),
+    true,
+    "order of usedMemoryIds must not affect idempotency comparison"
+  );
+  assert.equal(
+    useReportBodyMatches(base, { ...base, useKind: "partially_used" }),
+    false
+  );
+  assert.equal(
+    useReportBodyMatches(base, { ...base, usedMemoryIds: ["mem-1"] }),
+    false
+  );
+  assert.equal(useReportBodyMatches(base, { ...base, evidence: [] }), false);
+  assert.equal(
+    useReportBodyMatches(base, {
+      ...base,
+      evidence: [{ kind: "trajectory", uri: "codex://session/2" }]
+    }),
+    false
+  );
+});
+
+test("assertMemoryInjectionUseCohortFilter validates bounded use cohort filters", () => {
+  const validFilter = {
+    context: {
+      workspaceId: "workspace-a",
+      repositoryId: "repo-a",
+      canReadGlobal: false
+    },
+    occurredFrom: "2026-09-01T00:00:00.000Z",
+    occurredUntil: "2026-10-01T00:00:00.000Z"
+  };
+  assert.doesNotThrow(() => assertMemoryInjectionUseCohortFilter(validFilter));
+
+  assert.throws(
+    () =>
+      assertMemoryInjectionUseCohortFilter({
+        ...validFilter,
+        context: { ...validFilter.context, workspaceId: "" }
+      }),
+    /requires a workspace id/u
+  );
+
+  assert.throws(
+    () =>
+      assertMemoryInjectionUseCohortFilter({
+        ...validFilter,
+        context: { ...validFilter.context, repositoryId: "" }
+      }),
+    /requires a repository id/u
+  );
+
+  for (const selector of ["role", "taskId", "runId", "agentId"] as const) {
+    assert.throws(
+      () =>
+        assertMemoryInjectionUseCohortFilter({
+          ...validFilter,
+          context: { ...validFilter.context, [selector]: "caller-selected" }
+        }),
+      /cannot select a role, task, run, or agent/u
+    );
+  }
+
+  assert.throws(
+    () =>
+      assertMemoryInjectionUseCohortFilter({
+        ...validFilter,
+        occurredFrom: "not-a-date"
+      }),
+    /not a valid timestamp/u
+  );
+
+  assert.throws(
+    () =>
+      assertMemoryInjectionUseCohortFilter({
+        ...validFilter,
+        occurredFrom: "2026-10-01T00:00:00.000Z",
+        occurredUntil: "2026-09-01T00:00:00.000Z"
+      }),
+    /must be greater than or equal to 'from'/u
+  );
+
+  assert.throws(
+    () =>
+      assertMemoryInjectionUseCohortFilter({
+        ...validFilter,
+        occurredFrom: "2024-01-01T00:00:00.000Z",
+        occurredUntil: "2026-01-01T00:00:00.000Z"
+      }),
+    /exceeds the 365-day maximum/u
+  );
+
+  assert.throws(
+    () =>
+      assertMemoryInjectionUseCohortFilter({
+        ...validFilter,
+        memoryModes: ["invalid" as never]
+      }),
+    /memoryMode is invalid/u
+  );
+
+  assert.throws(
+    () =>
+      assertMemoryInjectionUseCohortFilter({
+        ...validFilter,
+        useKinds: ["bad" as never]
+      }),
+    /useKind is invalid/u
+  );
+
+  assert.doesNotThrow(() =>
+    assertMemoryInjectionUseCohortFilter({
+      ...validFilter,
+      memoryModes: ["jit", "retrieval-only", "disabled"],
+      useKinds: ["used", "partially_used", "not_used", "unobservable"]
+    })
   );
 });

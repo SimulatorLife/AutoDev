@@ -1,7 +1,9 @@
 import {
   MEMORY_INJECTION_EVENT_REASON_CODES,
   MEMORY_OUTCOME_REPORT_REASON_CODES,
-  MEMORY_REASON_CODES
+  MEMORY_REASON_CODES,
+  MEMORY_USE_KINDS,
+  MEMORY_USE_REPORT_REASON_CODES
 } from "@simulatorlife/autodev-core";
 
 import type { MemoryConnectionPool } from "./query-client.ts";
@@ -32,6 +34,14 @@ const MEMORY_INJECTION_EVENT_REASON_SQL =
   MEMORY_INJECTION_EVENT_REASON_CODES.map((reason) => `'${reason}'`).join(", ");
 
 const MEMORY_OUTCOME_REPORT_REASON_SQL = MEMORY_OUTCOME_REPORT_REASON_CODES.map(
+  (reason) => `'${reason}'`
+).join(", ");
+
+const MEMORY_USE_KIND_SQL = MEMORY_USE_KINDS.map((kind) => `'${kind}'`).join(
+  ", "
+);
+
+const MEMORY_USE_REPORT_REASON_SQL = MEMORY_USE_REPORT_REASON_CODES.map(
   (reason) => `'${reason}'`
 ).join(", ");
 
@@ -491,6 +501,131 @@ $fn$ LANGUAGE plpgsql;
 CREATE TRIGGER memory_session_outcome_reports_no_update
   BEFORE UPDATE OR DELETE ON memory_session_outcome_reports
   FOR EACH ROW EXECUTE FUNCTION memory_session_outcome_reports_append_only();
+`
+  },
+  {
+    version: 11,
+    description: "Create append-only curator-assessed injection-use reports",
+    sql: `
+-- One curator-assessed use report per actual injected packet, keyed by
+-- (workspace_id, correlation_token), independently of task outcome reports.
+CREATE TABLE memory_injection_use_reports (
+  id text PRIMARY KEY,
+  injection_event_id text NOT NULL REFERENCES memory_injection_events (id),
+  workspace_id text NOT NULL,
+  repository_id text NOT NULL,
+  ${SCOPE_COLUMNS_DDL},
+  task_id text NOT NULL,
+  run_id text NOT NULL,
+  agent_id text NOT NULL,
+  agent_role text,
+  correlation_token text NOT NULL,
+  use_kind text NOT NULL CHECK (use_kind IN (${MEMORY_USE_KIND_SQL})),
+  used_memory_ids jsonb NOT NULL CHECK (jsonb_typeof(used_memory_ids) = 'array'),
+  reported_at timestamptz NOT NULL,
+  reporter_id text NOT NULL,
+  reporter_authority text NOT NULL CHECK (reporter_authority IN ('root', 'curator')),
+  reason_code text NOT NULL CHECK (reason_code IN (${MEMORY_USE_REPORT_REASON_SQL})),
+  evidence jsonb NOT NULL CHECK (jsonb_typeof(evidence) = 'array'),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT chk_memory_injection_use_report_reason CHECK (
+    (use_kind = 'unobservable' AND reason_code = 'reporter_unobservable') OR
+    (use_kind <> 'unobservable' AND reason_code = 'reporter_supplied')
+  )
+);
+
+CREATE UNIQUE INDEX uniq_memory_injection_use_reports_scope_key
+  ON memory_injection_use_reports (workspace_id, correlation_token);
+CREATE INDEX idx_memory_injection_use_reports_scope_time
+  ON memory_injection_use_reports (scope_workspace_id, repository_id, task_id, reported_at);
+CREATE INDEX idx_memory_injection_use_reports_event
+  ON memory_injection_use_reports (injection_event_id);
+${SCOPE_KIND_CHECK("memory_injection_use_reports")}
+
+-- Validate packet eligibility, exact event/scope linkage, ID subset and
+-- use-kind cardinality in the database too, so direct SQL writers cannot
+-- bypass the repository's Core invariant checks. Runtime additionally binds
+-- trajectory evidence to the selected captured ExperienceEnvelope URI.
+CREATE FUNCTION memory_injection_use_reports_validate_event() RETURNS trigger AS $fn$
+DECLARE
+  injection memory_injection_events%ROWTYPE;
+BEGIN
+  SELECT * INTO injection
+    FROM memory_injection_events
+    WHERE id = NEW.injection_event_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'memory_injection_use_reports requires a recorded injection event';
+  END IF;
+  IF injection.injection_result <> 'injected'
+     OR injection.memory_mode NOT IN ('jit', 'retrieval-only')
+     OR jsonb_array_length(injection.memory_ids) = 0 THEN
+    RAISE EXCEPTION 'memory_injection_use_reports requires an eligible injected packet';
+  END IF;
+  IF length(btrim(NEW.repository_id)) = 0 THEN
+    RAISE EXCEPTION 'memory_injection_use_reports requires a repository id';
+  END IF;
+  IF NEW.workspace_id <> injection.workspace_id
+     OR NEW.repository_id IS DISTINCT FROM injection.repository_id
+     OR NEW.task_id <> injection.task_id
+     OR NEW.correlation_token <> injection.correlation_token
+     OR injection.scope_kind <> 'task'
+     OR injection.scope_workspace_id <> injection.workspace_id
+     OR injection.scope_task_id <> injection.task_id
+     OR NEW.scope_kind <> 'task'
+     OR NEW.scope_workspace_id <> NEW.workspace_id
+     OR NEW.scope_task_id <> NEW.task_id THEN
+    RAISE EXCEPTION 'memory_injection_use_reports event scope does not match report scope';
+  END IF;
+  IF jsonb_array_length(NEW.used_memory_ids) <>
+       (SELECT COUNT(DISTINCT memory_id)::integer
+          FROM jsonb_array_elements_text(NEW.used_memory_ids) AS ids(memory_id)) THEN
+    RAISE EXCEPTION 'memory_injection_use_reports used_memory_ids must not contain duplicates';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+      FROM jsonb_array_elements_text(NEW.used_memory_ids) AS ids(memory_id)
+      WHERE NOT EXISTS (
+        SELECT 1
+          FROM jsonb_array_elements_text(injection.memory_ids) AS packet(memory_id)
+          WHERE packet.memory_id = ids.memory_id
+      )
+  ) THEN
+    RAISE EXCEPTION 'memory_injection_use_reports used_memory_ids must be a subset of packet memory_ids';
+  END IF;
+  IF (NEW.use_kind = 'used'
+      AND jsonb_array_length(NEW.used_memory_ids) <> jsonb_array_length(injection.memory_ids))
+     OR (NEW.use_kind = 'partially_used'
+         AND (jsonb_array_length(NEW.used_memory_ids) = 0
+              OR jsonb_array_length(NEW.used_memory_ids) >= jsonb_array_length(injection.memory_ids)))
+     OR (NEW.use_kind IN ('not_used', 'unobservable')
+         AND jsonb_array_length(NEW.used_memory_ids) <> 0) THEN
+    RAISE EXCEPTION 'memory_injection_use_reports used_memory_ids cardinality does not match use_kind';
+  END IF;
+  IF NEW.use_kind <> 'unobservable' AND NOT EXISTS (
+    SELECT 1
+      FROM jsonb_array_elements(NEW.evidence) AS refs(reference)
+      WHERE refs.reference->>'kind' = 'trajectory'
+        AND length(btrim(coalesce(refs.reference->>'uri', ''))) > 0
+  ) THEN
+    RAISE EXCEPTION 'memory_injection_use_reports requires trajectory evidence';
+  END IF;
+  RETURN NEW;
+END;
+$fn$ LANGUAGE plpgsql;
+
+CREATE TRIGGER memory_injection_use_reports_check_event
+  BEFORE INSERT ON memory_injection_use_reports
+  FOR EACH ROW EXECUTE FUNCTION memory_injection_use_reports_validate_event();
+
+CREATE FUNCTION memory_injection_use_reports_append_only() RETURNS trigger AS $fn$
+BEGIN
+  RAISE EXCEPTION 'memory_injection_use_reports is append-only: % is not permitted', TG_OP;
+END;
+$fn$ LANGUAGE plpgsql;
+
+CREATE TRIGGER memory_injection_use_reports_no_update
+  BEFORE UPDATE OR DELETE ON memory_injection_use_reports
+  FOR EACH ROW EXECUTE FUNCTION memory_injection_use_reports_append_only();
 `
   }
 ];
