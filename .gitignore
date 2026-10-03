@@ -1,8 +1,11 @@
 .DS_Store
 __pycache__/
+.pytest_cache
 *.py[cod]
 node_modules/
 tmp/
+.tmp
+.venv
 *.log
 .env
 .env.*
@@ -24,6 +27,9 @@ tmp/
 /.github/hooks/
 /.agents/hooks.json
 .eslintcache
+*.tmp.cjs
+*.bak
+*.lock
 
 # Next.js build output
 console/.next/

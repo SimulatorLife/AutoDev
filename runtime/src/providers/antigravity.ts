@@ -1884,6 +1884,15 @@ function createIsolatedAntigravityHome(
       { mode: 0o600 }
     );
 
+    if (process.platform === "darwin") {
+      const origKeychains = join(originalHome, "Library", "Keychains");
+      if (existsSync(origKeychains)) {
+        const libDir = join(tempHome, "Library");
+        mkdirSync(libDir, { mode: 0o700 });
+        symlinkSync(origKeychains, join(libDir, "Keychains"));
+      }
+    }
+
     if (activeIsolatedHomeCleanups.size === 0)
       process.once("exit", cleanupIsolatedHomesAtExit);
     activeIsolatedHomeCleanups.add(cleanup);

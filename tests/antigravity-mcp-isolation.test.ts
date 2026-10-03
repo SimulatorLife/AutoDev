@@ -511,6 +511,42 @@ test("preserves non-MCP data by symlinking and enforces restrictive permissions"
   }
 });
 
+test("macOS Keychains directory is preserved via symlink in isolated home", () => {
+  const env = createFixtureEnvironment();
+  const keychainsDir = join(env.userHome, "Library", "Keychains");
+  mkdirSync(keychainsDir, { recursive: true, mode: 0o700 });
+  writeFileSync(join(keychainsDir, "login.keychain-db"), "mock-keychain", {
+    mode: 0o600
+  });
+  try {
+    const { isolatedHome, cleanup } = createIsolatedAntigravityHome(
+      "browser-tester",
+      null,
+      {
+        originalHome: env.userHome,
+        codexHome: env.codexHome,
+        cwd: REPO_ROOT
+      }
+    );
+    try {
+      if (process.platform === "darwin") {
+        const isolatedKeychains = join(isolatedHome, "Library", "Keychains");
+        assert.ok(existsSync(isolatedKeychains));
+        assert.equal(
+          readFileSync(join(isolatedKeychains, "login.keychain-db"), "utf8"),
+          "mock-keychain"
+        );
+      }
+    } finally {
+      cleanup();
+    }
+    // Verify cleanup does not delete original keychains
+    assert.ok(existsSync(join(keychainsDir, "login.keychain-db")));
+  } finally {
+    env.cleanup();
+  }
+});
+
 test("fails closed when required role MCP is missing from catalog", () => {
   const env = createFixtureEnvironment();
   try {
