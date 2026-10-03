@@ -11,6 +11,7 @@ import type {
   EvidenceReference,
   ExperienceEnvelope,
   MemoryActor,
+  MemoryInjectionEvent,
   MemoryReadContext
 } from "@simulatorlife/autodev-core";
 import {
@@ -23,6 +24,8 @@ import {
   type MemoryProposalInput
 } from "@simulatorlife/autodev-runtime/memory";
 import {
+  assignControlledAblationArm,
+  clearTrustedMemoryContextsForTest,
   closeOrchestratorMemoryHost,
   injectOrchestratorMemory
 } from "@simulatorlife/autodev-runtime/router/memory-injection";
@@ -68,6 +71,8 @@ test(
         "AUTODEV_MEMORY_RECONSTRUCTION",
         "AUTODEV_MEMORY_MODE",
         "AUTODEV_MEMORY_ABLATION",
+        "AUTODEV_MEMORY_EXPERIMENT_ID",
+        "AUTODEV_MEMORY_READ_GLOBAL",
         "AUTODEV_MEMORY_READ_TASK_HISTORY"
       ].map((key) => [key, process.env[key]])
     );
@@ -173,6 +178,7 @@ test(
         },
         requestId: `request-${identity}`,
         sessionKey: `session-${identity}`,
+        sessionScope: "identified",
         threadId: "root-thread",
         workspace: {
           key: repositoryId,
@@ -261,7 +267,11 @@ test(
         }
       );
       assert.equal(promoted.status, 200);
-      assert.equal(promoted.body.memory.status, "active");
+      assert.equal(
+        promoted.body.memory.status,
+        "active",
+        JSON.stringify(promoted.body.memory.validity)
+      );
 
       const why = await callMemoryControlApi(
         "GET",
@@ -657,7 +667,318 @@ test(
         }
       );
       assert.equal(outsideCapture.status, 400);
+
+      // Join controlled session-arm assignment to actual PostgreSQL injection
+      // events, operator session reports, and the session-cohort Control API.
+      const ablationWorkspaceId = `workspace-ablation-${randomUUID()}`;
+      const ablationRepositoryId = `router-ablation-${randomUUID()}`;
+      const experimentId = `router-ablation-${identity}`;
+      const ablationArms = ["jit", "retrieval-only", "disabled"] as const;
+      const sessionByArm = new Map<(typeof ablationArms)[number], string>();
+      for (
+        let sessionCandidateIndex = 0;
+        sessionCandidateIndex < 1000 && sessionByArm.size < 3;
+        sessionCandidateIndex += 1
+      ) {
+        const candidateSessionKey = `ablation-session-${identity}-${sessionCandidateIndex}`;
+        const assigned = assignControlledAblationArm(
+          experimentId,
+          candidateSessionKey,
+          ablationWorkspaceId,
+          ablationRepositoryId
+        );
+        if (!sessionByArm.has(assigned)) {
+          sessionByArm.set(assigned, candidateSessionKey);
+        }
+      }
+      assert.equal(
+        sessionByArm.size,
+        ablationArms.length,
+        "the bounded deterministic sample should include every experiment arm"
+      );
+
+      process.env.AUTODEV_MEMORY_EXPERIMENT_ID = experimentId;
+      process.env.AUTODEV_MEMORY_ABLATION = "1";
+      process.env.AUTODEV_MEMORY_READ_TASK_HISTORY = "1";
+      process.env.AUTODEV_MEMORY_RECONSTRUCTION = "deterministic";
+      process.env.AUTODEV_MEMORY_READ_GLOBAL = "0";
+      process.env.AUTODEV_MEMORY_MODE = "jit";
+
+      const ablationService = host!.createService({
+        resolve: async (readContext) =>
+          readContext.repositoryId === ablationRepositoryId
+            ? repositoryRoot
+            : null
+      });
+      const ablationFrom = new Date(Date.now() - 60_000).toISOString();
+      const ablationOutcomeByArm = new Map<string, string>();
+      const ablationEventsByArm = new Map<string, MemoryInjectionEvent[]>();
+
+      for (const arm of ablationArms) {
+        const sessionKey = sessionByArm.get(arm);
+        assert.ok(sessionKey, `missing trusted session for ${arm} arm`);
+        ablationOutcomeByArm.set(arm, "success");
+        const ablationTranscriptPath = join(
+          repositoryRoot,
+          "ablation-trajectories",
+          `${sessionKey}.jsonl`
+        );
+        await mkdir(join(repositoryRoot, "ablation-trajectories"), {
+          recursive: true
+        });
+        const ablationTranscript = [
+          {
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: `Run ${arm} evaluation.` }]
+            }
+          },
+          {
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: `Recorded ${arm} arm.` }]
+            }
+          }
+        ]
+          .map((record) => JSON.stringify(record))
+          .join("\n");
+        await writeFile(ablationTranscriptPath, ablationTranscript);
+        const trajectoryUri = pathToFileURL(ablationTranscriptPath).href;
+        const sessionContext: MemoryReadContext = {
+          workspaceId: ablationWorkspaceId,
+          repositoryId: ablationRepositoryId,
+          role: "orchestrator",
+          taskId: sessionKey,
+          runId: sessionKey,
+          agentId: sessionKey,
+          canReadGlobal: false,
+          canReadTaskHistory: true
+        };
+        const ablationExperience: ExperienceEnvelope = {
+          id: `experience-${sessionKey}`,
+          workspaceId: ablationWorkspaceId,
+          repositoryId: ablationRepositoryId,
+          scope: {
+            kind: "task",
+            workspaceId: ablationWorkspaceId,
+            taskId: sessionKey,
+            runId: sessionKey
+          },
+          taskId: sessionKey,
+          runId: sessionKey,
+          agentId: sessionKey,
+          agentRole: "orchestrator",
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          outcome: "unknown",
+          memoryMode: arm,
+          trajectory: {
+            format: "letta-trajectory-v1",
+            uri: trajectoryUri,
+            digest: createHash("sha256")
+              .update(ablationTranscript)
+              .digest("hex"),
+            recordCount: 2
+          },
+          evidence: [{ kind: "trajectory", uri: trajectoryUri }]
+        };
+        await ablationService.appendExperience(
+          ablationExperience,
+          rootActor,
+          sessionContext
+        );
+        const operatorHistoryContext: MemoryReadContext = {
+          workspaceId: ablationWorkspaceId,
+          repositoryId: ablationRepositoryId,
+          canReadGlobal: false,
+          canReadTaskHistory: true
+        };
+        assert.ok(
+          await ablationService.getExperience(
+            ablationExperience.id,
+            operatorHistoryContext
+          ),
+          "task-history operator context must see the captured session"
+        );
+
+        for (let requestIndex = 0; requestIndex < 2; requestIndex += 1) {
+          const ablationRequest = {
+            ...request,
+            requestId: `ablation-request-${identity}-${arm}-${requestIndex}`,
+            sessionKey,
+            sessionScope: "identified",
+            threadId: `ablation-thread-${sessionKey}`,
+            workspace: {
+              key: ablationRepositoryId,
+              cwd: repositoryRoot,
+              workspace_id: ablationWorkspaceId
+            }
+          };
+          await injectOrchestratorMemory(ablationRequest, host);
+        }
+
+        const joins = await ablationService.listInjectionOutcomeJoins({
+          context: sessionContext,
+          includeUnreported: true,
+          limit: 10
+        });
+        assert.equal(
+          joins.items.length,
+          2,
+          `${arm} must persist two request events`
+        );
+        assert.equal(
+          new Set(joins.items.map(({ injection }) => injection.runId)).size,
+          2,
+          `${arm} events must belong to distinct Router request IDs`
+        );
+        assert.doesNotMatch(
+          JSON.stringify(joins.items),
+          new RegExp(experimentId, "u")
+        );
+        assert.ok(
+          joins.items.every(
+            ({ injection }) =>
+              injection.memoryMode === arm && injection.taskId === sessionKey
+          ),
+          `${arm} request events must retain the same session assignment`
+        );
+        const expectedResult = arm === "disabled" ? "skipped" : "empty";
+        assert.ok(
+          joins.items.every(
+            ({ injection }) => injection.injectionResult === expectedResult
+          ),
+          `${arm} request events must preserve the assigned mode decision`
+        );
+        assert.ok(
+          joins.items.every(
+            ({ sessionInjectionCount }) => sessionInjectionCount === 2
+          ),
+          `${arm} rows must derive two injections for one session`
+        );
+        ablationEventsByArm.set(
+          arm,
+          joins.items.map(({ injection }) => injection)
+        );
+
+        const outcomeScopeQuery = new URLSearchParams({
+          workspaceId: ablationWorkspaceId,
+          repositoryId: ablationRepositoryId,
+          includeTaskHistory: "true"
+        }).toString();
+        const experienceRead = await callMemoryControlApi(
+          "GET",
+          `/control/memory/experiences/${encodeURIComponent(ablationExperience.id)}?${outcomeScopeQuery}`,
+          "memory-operator"
+        );
+        assert.equal(
+          experienceRead.status,
+          200,
+          JSON.stringify(experienceRead.body)
+        );
+        const outcomeUrl = `/control/memory/experiences/${encodeURIComponent(ablationExperience.id)}/session-outcomes?${outcomeScopeQuery}`;
+        const report = await callMemoryControlApi(
+          "POST",
+          outcomeUrl,
+          "memory-operator",
+          {
+            outcomeKind: "success",
+            reportKind: "task",
+            evidence: [{ kind: "trajectory", uri: trajectoryUri }]
+          }
+        );
+        assert.equal(report.status, 200);
+        assert.equal(
+          report.body.schema,
+          "autodev-memory-session-outcome-report-v1"
+        );
+        assert.equal(report.body.appended, true);
+      }
+
+      assert.equal(
+        [...ablationEventsByArm.values()].reduce(
+          (total, events) => total + events.length,
+          0
+        ),
+        6,
+        "three sessions with two requests each must persist six injection events"
+      );
+      const ablationUntil = new Date(Date.now() + 60 * 60_000).toISOString();
+      const cohortQuery = new URLSearchParams({
+        workspaceId: ablationWorkspaceId,
+        repositoryId: ablationRepositoryId,
+        includeTaskHistory: "true",
+        occurredFrom: ablationFrom,
+        occurredUntil: ablationUntil
+      });
+      const cohort = await callMemoryControlApi(
+        "GET",
+        `/control/memory/session-cohorts?${cohortQuery.toString()}`,
+        "memory-operator"
+      );
+      assert.equal(cohort.status, 200);
+      assert.equal(
+        cohort.body.schema,
+        "autodev-memory-session-outcome-cohorts-v1"
+      );
+      assert.equal(cohort.body.workspaceId, ablationWorkspaceId);
+      assert.equal(cohort.body.repositoryId, ablationRepositoryId);
+      assert.equal(cohort.body.sessionCount, 3);
+      assert.equal(cohort.body.reportedSessionCount, 3);
+      assert.equal(cohort.body.unreportedSessionCount, 0);
+      assert.equal(cohort.body.mixedModeSessionCount, 0);
+      assert.equal(cohort.body.conflictingOutcomeSessionCount, 0);
+      assert.equal(cohort.body.cells.length, 3);
+      assert.deepEqual(
+        cohort.body.cells
+          .map(
+            (cell: {
+              memoryMode: string;
+              outcomeKind: string;
+              sessionCount: number;
+            }) => ({
+              memoryMode: cell.memoryMode,
+              outcomeKind: cell.outcomeKind,
+              sessionCount: cell.sessionCount
+            })
+          )
+          .sort(
+            (left: { memoryMode: string }, right: { memoryMode: string }) =>
+              left.memoryMode < right.memoryMode
+                ? -1
+                : left.memoryMode > right.memoryMode
+                  ? 1
+                  : 0
+          ),
+        ablationArms
+          .map((memoryMode) => ({
+            memoryMode,
+            outcomeKind: ablationOutcomeByArm.get(memoryMode),
+            sessionCount: 1
+          }))
+          .sort((left, right) =>
+            left.memoryMode < right.memoryMode
+              ? -1
+              : left.memoryMode > right.memoryMode
+                ? 1
+                : 0
+          )
+      );
+      const cohortJson = JSON.stringify(cohort.body);
+      assert.doesNotMatch(
+        cohortJson,
+        /experimentId|sessionKey|taskId|runId|agentId|correlationToken|reporterId|reporterAuthority|evidence/iu
+      );
+      assert.doesNotMatch(cohortJson, new RegExp(experimentId, "u"));
+      for (const sessionKey of sessionByArm.values()) {
+        assert.doesNotMatch(cohortJson, new RegExp(sessionKey, "u"));
+      }
     } finally {
+      clearTrustedMemoryContextsForTest();
       await closeOrchestratorMemoryHost();
       await host?.close();
       await migrationPool.end();

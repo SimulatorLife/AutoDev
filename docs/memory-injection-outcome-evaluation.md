@@ -293,3 +293,11 @@ Outcomes remain strictly reporter-supplied with evidence. AutoDev does not
 infer task success, PR verification, or model packet usage from retrieval or
 provider routing outcomes. Retrieval-to-use rates and automatic PR verification
 remain separate future capabilities.
+
+The environment-gated `tests/router/memory-injection.integration.test.ts`
+exercises all three deterministic arms through real Router injection-event
+writes, including two request events per session and the disabled skip path,
+then appends session outcomes through the Control API and verifies the unique
+session cohort aggregate. This proves the assignment-to-report wiring and
+session deduplication; it does not establish per-turn outcomes, memory use, or
+effectiveness.
