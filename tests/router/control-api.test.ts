@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { LOCAL_CONTROL_API_ACTOR } from "@simulatorlife/autodev-core";
+import { RuleSyncRepository } from "@simulatorlife/autodev-data";
 import {
   CONTROL_API_PATHS,
   handleControlApiRequest
@@ -689,6 +692,116 @@ test("Control API surfaces all 12 typed resource families", async () => {
     });
     assert.equal(runtime.response.statusCode, 200);
     assert.equal(runtime.body.schema, "autodev-control-runtime-v1");
+  } finally {
+    restoreEnv(saved);
+  }
+});
+
+test("Control API prompts listing projects the canonical RuleSyncRepository.loadCommands output", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    const expectedCommands = new RuleSyncRepository()
+      .loadCommands()
+      .map((command) => ({
+        name: command.name,
+        path: command.path,
+        description: command.description ?? `RuleSync command ${command.name}`
+      }));
+    assert.ok(expectedCommands.length > 0);
+
+    const prompts = await call("GET", CONTROL_API_PATHS.prompts, {
+      actor: "viewer-a"
+    });
+    assert.equal(prompts.response.statusCode, 200);
+    assert.equal(prompts.body.schema, "autodev-control-prompts-v1");
+    assert.equal(prompts.body.source, "rulesync");
+    assert.equal(prompts.body.readOnly, true);
+    assert.equal(prompts.body.totalCommands, expectedCommands.length);
+    assert.deepEqual(prompts.body.commands, expectedCommands);
+
+    // The listing projection must strip content so it matches what
+    // RuleSyncRepository.loadCommands returns without exposing file bodies.
+    for (const command of prompts.body.commands) {
+      assert.equal(Object.hasOwn(command, "content"), false);
+      assert.deepEqual(Object.keys(command).sort(), [
+        "description",
+        "name",
+        "path"
+      ]);
+    }
+  } finally {
+    restoreEnv(saved);
+  }
+});
+
+test("Control API prompt detail serves the canonical command content from RuleSyncRepository.loadCommands", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    const assets = new RuleSyncRepository().loadCommands();
+    assert.ok(assets.length > 0);
+    const target = assets[0];
+    assert.ok(target);
+
+    const detail = await call(
+      "GET",
+      CONTROL_API_PATHS.prompts + "/" + encodeURIComponent(target.name),
+      { actor: "viewer-a" }
+    );
+    assert.equal(detail.response.statusCode, 200);
+    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v1");
+    assert.equal(detail.body.name, target.name);
+    assert.equal(detail.body.type, "command");
+    assert.equal(detail.body.source, target.path);
+    assert.equal(detail.body.content, target.content);
+
+    // The detail surface must not invent fields the canonical adapter
+    // doesn't produce; source/content are the only variable fields.
+    assert.deepEqual(Object.keys(detail.body).sort(), [
+      "content",
+      "name",
+      "schema",
+      "source",
+      "type"
+    ]);
+  } finally {
+    restoreEnv(saved);
+  }
+});
+
+test("Control API prompt detail serves an unshadowed role prompt from its canonical source file", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    const prompts = await call("GET", CONTROL_API_PATHS.prompts, {
+      actor: "viewer-a"
+    });
+    assert.equal(prompts.response.statusCode, 200);
+    const commandNames = new Set(
+      prompts.body.commands.map((command: { name: string }) => command.name)
+    );
+    const rolePrompt = prompts.body.rolePrompts.find(
+      (entry: { role: string; path: string }) => !commandNames.has(entry.role)
+    ) as { role: string; path: string } | undefined;
+    assert.ok(
+      rolePrompt,
+      "expected at least one role prompt without a command shadow"
+    );
+
+    const detail = await call(
+      "GET",
+      CONTROL_API_PATHS.prompts + "/" + encodeURIComponent(rolePrompt.role),
+      { actor: "viewer-a" }
+    );
+    assert.equal(detail.response.statusCode, 200);
+    assert.equal(detail.body.type, "role");
+    assert.equal(detail.body.name, rolePrompt.role);
+    assert.equal(detail.body.source, rolePrompt.path);
+    assert.equal(
+      detail.body.content,
+      readFileSync(join(process.cwd(), rolePrompt.path), "utf8")
+    );
   } finally {
     restoreEnv(saved);
   }

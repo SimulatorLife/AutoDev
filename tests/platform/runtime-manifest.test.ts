@@ -996,6 +996,18 @@ test("router dashboard and chart.js are decommissioned from runtime modules", ()
   assert.equal(OBSOLETE_DASHBOARD, "codex-model-router-dashboard.html");
 });
 
+test("unused chart.js is absent from root application dependencies", () => {
+  const rootPackage = JSON.parse(
+    readFileSync(join(repositoryRoot, "package.json"), "utf8")
+  ) as {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+
+  assert.equal(rootPackage.dependencies?.["chart.js"], undefined);
+  assert.equal(rootPackage.devDependencies?.["chart.js"], undefined);
+});
+
 test("AutoDev standalone OTel Collector is decommissioned with no replacement sidecar", () => {
   const runtimeModules = RUNTIME_MODULES as readonly string[];
   const obsoleteModules = OBSOLETE_RUNTIME_MODULES as readonly string[];

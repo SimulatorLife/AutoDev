@@ -814,6 +814,17 @@ Also complete workspace hygiene:
 - update root lint/format/typecheck/test scripts so all four workspaces are first-class rather than relying on root dependency hoisting or `src/`-only globs;
 - remove root dependencies once ownership moves to the appropriate workspace.
 
+Current quality-gate evidence: repository-wide `pnpm typecheck` still fails
+with diagnostics in root tests/RuleSync skill scripts and Runtime router code
+and tests. The current run reports no diagnostics in the Control API prompt
+migration files; this remains an open monorepo gate and must be repaired without
+weakening TypeScript checks.
+
+The Control API's RuleSync command collection and detail projections now use
+Data's `RuleSyncRepository.loadCommands()` instead of reparsing command files
+inside Runtime. Regression tests cover the content-free collection projection,
+canonical command detail, role-prompt fallback, and missing-resource response.
+
 #### 2. Complete `console/` as the one real product application
 
 The Console now has an App Router, same-origin server-rendered routes, a
@@ -955,7 +966,8 @@ Remaining telemetry work:
 - verify a real Codex/router producer through authenticated OpenLIT ingestion in the deployed stack;
 - remove router-owned historical OTLP aggregation, metric series, lookback history, and persistence that OpenLIT now owns;
 - remove router OTLP receiver routes and the `direct` mode after its live-control subset is separated;
-- remove dead dashboard dependencies such as `chart.js` when no retained code needs them.
+
+Completed dependency cleanup: the unused root `chart.js` dependency and its lockfile entries were removed after confirming no retained source imports it.
 
 Do not remove runtime state merely because it currently lives in the same router
 telemetry module; move the small live-control subset first if it is still required.

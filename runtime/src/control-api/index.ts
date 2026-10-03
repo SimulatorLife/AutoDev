@@ -741,26 +741,12 @@ function permissionsView(
 function promptsView(
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> {
-  const commandsDir = path.join(repositoryRoot, ".rulesync", "commands");
-  const commands: Array<{ name: string; path: string; description: string }> =
-    [];
-  if (existsSync(commandsDir)) {
-    try {
-      const files = readdirSync(commandsDir);
-      for (const file of files
-        .filter((f) => f.endsWith(".md"))
-        .sort(CONTROL_API_COLLATOR.compare)) {
-        const name = file.replace(MD_EXTENSION_PATTERN, "");
-        commands.push({
-          name,
-          path: `.rulesync/commands/${file}`,
-          description: `RuleSync command ${name}`
-        });
-      }
-    } catch {
-      // Ignore unreadable commands directory
-    }
-  }
+  const commandAssets = new RuleSyncRepository(repositoryRoot).loadCommands();
+  const commands = commandAssets.map((command) => ({
+    name: command.name,
+    path: command.path,
+    description: command.description ?? `RuleSync command ${command.name}`
+  }));
   const rolePromptsDir = path.join(
     repositoryRoot,
     "agents",
@@ -798,25 +784,16 @@ function promptDetailView(
   name: string,
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> | null {
-  const commandPath = path.join(
-    repositoryRoot,
-    ".rulesync",
-    "commands",
-    `${name}.md`
-  );
-  if (existsSync(commandPath)) {
-    try {
-      const content = readFileSync(commandPath, "utf8");
-      return {
-        schema: "autodev-control-prompt-detail-v1",
-        name,
-        type: "command",
-        source: `.rulesync/commands/${name}.md`,
-        content
-      };
-    } catch {
-      return null;
-    }
+  const commandAssets = new RuleSyncRepository(repositoryRoot).loadCommands();
+  const command = commandAssets.find((entry) => entry.name === name);
+  if (command) {
+    return {
+      schema: "autodev-control-prompt-detail-v1",
+      name,
+      type: "command",
+      source: command.path,
+      content: command.content ?? ""
+    };
   }
   const rolePath = path.join(
     repositoryRoot,
