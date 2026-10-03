@@ -744,7 +744,7 @@ Receiver authentication remains mandatory. The pinned upstream receiver does not
 
 This section records the **observed repository state**, not the desired target. It must be updated as migration slices land so target-state statements do not get mistaken for completed implementation.
 
-Current review baseline: AutoDev `main` at `b5cd560b` before the patch 22 integration recorded below.
+Current review baseline: AutoDev `main` after the patch 22 Memory UI, PR-evidence validation, and workspace-lock fixes recorded below.
 
 ### Migration status
 
