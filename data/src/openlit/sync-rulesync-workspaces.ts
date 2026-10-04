@@ -3,16 +3,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import type { WorkspaceEntry } from "@simulatorlife/autodev-core";
+
 import { ConfigRepository } from "../config/config-repository.ts";
 
 const execFileAsync = promisify(execFile);
-
-export interface RulesyncWorkspaceData {
-  readonly name: string;
-  readonly baseBranch: string;
-  readonly weight: number;
-  readonly slug: string;
-}
 
 export interface SyncWorkspacesOptions {
   readonly repositoryRoot?: string;
@@ -28,42 +23,18 @@ export interface SyncWorkspacesResult {
   readonly collapsedProjects: readonly string[];
 }
 
-const SLUG_CLEAN_REGEX = /[^a-z0-9]+/gu;
-const SLUG_TRIM_REGEX = /^-|-$/gu;
-
-/**
- * Generate a clean URL slug from a workspace/repository name.
- */
-export function slugifyWorkspace(name: string): string {
-  return name
-    .toLowerCase()
-    .replaceAll(SLUG_CLEAN_REGEX, "-")
-    .replaceAll(SLUG_TRIM_REGEX, "");
-}
-
-/** Read the validated Data-owned workspace projection and derive its OpenLIT slug. */
+/** Read the validated Data-owned workspace catalog for OpenLIT projection. */
 export function loadRulesyncWorkspaces(
   repositoryRoot: string
-): Map<string, RulesyncWorkspaceData> {
+): readonly WorkspaceEntry[] {
   const catalog = new ConfigRepository(repositoryRoot).readWorkspaceCatalog();
   if (catalog.status !== "valid") {
-    throw new Error(`weights.json workspace catalog is ${catalog.status}.`);
+    throw new Error(`Workspace catalog is ${catalog.status}.`);
   }
-  const map = new Map<string, RulesyncWorkspaceData>();
-  for (const repo of catalog.workspaces) {
-    map.set(repo.name, {
-      name: repo.name,
-      baseBranch: repo.baseBranch,
-      weight: repo.weight,
-      slug: slugifyWorkspace(repo.name)
-    });
-  }
-  return map;
+  return catalog.workspaces;
 }
 
-function buildPrismaSyncScript(
-  repoList: readonly RulesyncWorkspaceData[]
-): string {
+function buildPrismaSyncScript(workspaceIds: readonly string[]): string {
   return `
 const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
@@ -264,14 +235,14 @@ async function run() {
     }
   }
 
-  const repos = ${JSON.stringify(repoList)};
+  const workspaceIds = ${JSON.stringify(workspaceIds)};
   console.log(
     JSON.stringify({
       organisation: org.name,
       project: autoDevProject.name,
       environment: "production",
       collapsedProjects,
-      workspaces: repos.map((r) => r.name)
+      workspaces: workspaceIds
     })
   );
 }
@@ -295,9 +266,9 @@ export async function syncRulesyncWorkspaces(
     options.repositoryRoot || path.resolve(import.meta.dirname, "../../..");
   const containerName = options.containerName || "openlit";
 
-  const catalog = loadRulesyncWorkspaces(repositoryRoot);
-  const repoList = [...catalog.values()];
-  const script = buildPrismaSyncScript(repoList);
+  const workspaces = loadRulesyncWorkspaces(repositoryRoot);
+  const workspaceIds = workspaces.map((workspace) => workspace.id);
+  const script = buildPrismaSyncScript(workspaceIds);
 
   const { stdout } = await execFileAsync(
     "docker",
@@ -317,8 +288,8 @@ export async function syncRulesyncWorkspaces(
     organisation: parsed.organisation ?? "SimulatorLife",
     project: parsed.project ?? "AutoDev",
     environment: parsed.environment ?? "production",
-    totalWorkspaces: catalog.size,
-    workspaces: parsed.workspaces ?? [...catalog.keys()],
+    totalWorkspaces: workspaces.length,
+    workspaces: parsed.workspaces ?? workspaceIds,
     collapsedProjects: parsed.collapsedProjects ?? []
   };
 }

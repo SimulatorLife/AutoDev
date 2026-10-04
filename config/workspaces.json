@@ -1,0 +1,35 @@
+{
+  "schema": "autodev-workspaces-v1",
+  "workspaces": [
+    {
+      "id": "SimulatorLife/3DSpider",
+      "baseBranch": "main",
+      "enabled": true,
+      "agentRoles": null
+    },
+    {
+      "id": "SimulatorLife/AutoDev",
+      "baseBranch": "main",
+      "enabled": true,
+      "agentRoles": null
+    },
+    {
+      "id": "SimulatorLife/Colourful-Life",
+      "baseBranch": "master",
+      "enabled": true,
+      "agentRoles": null
+    },
+    {
+      "id": "SimulatorLife/GMLoop",
+      "baseBranch": "main",
+      "enabled": true,
+      "agentRoles": null
+    },
+    {
+      "id": "SimulatorLife/RacingGame",
+      "baseBranch": "main",
+      "enabled": true,
+      "agentRoles": null
+    }
+  ]
+}

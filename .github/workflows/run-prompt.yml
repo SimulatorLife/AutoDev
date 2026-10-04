@@ -6,23 +6,11 @@ on:
       target_repository:
         description: "Target repository."
         required: true
-        type: choice
-        options:
-          - SimulatorLife/3DSpider
-          - SimulatorLife/AutoDev
-          - SimulatorLife/Colourful-Life
-          - SimulatorLife/GMLoop
-          - SimulatorLife/RacingGame
+        type: string
       prompt_repository:
         description: "Repository that owns the prompt."
         required: true
-        type: choice
-        options:
-          - SimulatorLife/3DSpider
-          - SimulatorLife/AutoDev
-          - SimulatorLife/Colourful-Life
-          - SimulatorLife/GMLoop
-          - SimulatorLife/RacingGame
+        type: string
       prompt_path:
         description: "Markdown prompt under .agents/prompts/."
         required: true

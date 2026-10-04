@@ -215,7 +215,7 @@ reuses its generic list/search/detail UI; it does
 not create another AutoDev admin page or connect directly to PostgreSQL. The
 detail sheet exposes only descriptor-advertised, status-appropriate actions;
 current-state validation is performed by MemoryService when an action is
-submitted. The p22 OpenLIT image is now deployed locally and its `/memory` route/OTLP receiver were HTTP-checked. A live use-cohort read still requires a project-scoped `autodev` connector instance and an available MemoryService PostgreSQL database; see the canonical target-state deployment notes.
+submitted. The local p25 OpenLIT image now has the read-only AutoDev connector configured for the current workspace/repository. The loopback PostgreSQL/pgvector database is migrated through version 12; Control API and use-cohort reads return an empty result until captured experiences, durable memories, or injection assessments exist. Browser-rendered acceptance remains unverified when the Playwright MCP surface is unavailable.
 
 The Codex SessionEnd configuration is wired to a best-effort hook that sends only the session id,
 workspace path, and transcript path to the authenticated capture route. The

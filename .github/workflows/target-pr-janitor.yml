@@ -9,14 +9,7 @@ on:
         description: "Target repository, or all configured repositories."
         required: false
         default: "all"
-        type: choice
-        options:
-          - all
-          - SimulatorLife/3DSpider
-          - SimulatorLife/AutoDev
-          - SimulatorLife/Colourful-Life
-          - SimulatorLife/GMLoop
-          - SimulatorLife/RacingGame
+        type: string
       stale_hours:
         description: "Minimum age for an unchanged, non-draft PR before cleanup."
         required: false
@@ -46,8 +39,21 @@ jobs:
           github-token: ${{ secrets.GH_USER_TOKEN }}
           script: |
             const fs = require('node:fs');
-            const policy = JSON.parse(fs.readFileSync('.github/workflows/weights.json', 'utf8'));
-            const configured = policy.repositories.map((repository) => repository.name);
+            const catalog = JSON.parse(fs.readFileSync('config/workspaces.json', 'utf8'));
+            if (catalog.schema !== 'autodev-workspaces-v1' || !Array.isArray(catalog.workspaces)) {
+              throw new Error('Workspace catalog is invalid.');
+            }
+            const workspaces = new Map();
+            for (const workspace of catalog.workspaces) {
+              if (!/^[^/\s]+\/[^/\s]+$/.test(workspace?.id || '') || typeof workspace.enabled !== 'boolean') {
+                throw new Error('Workspace catalog contains an invalid identity or enabled flag.');
+              }
+              if (workspaces.has(workspace.id)) throw new Error(`Duplicate workspace: ${workspace.id}`);
+              workspaces.set(workspace.id, workspace);
+            }
+            const configured = [...workspaces.values()]
+              .filter((workspace) => workspace.enabled)
+              .map((workspace) => workspace.id);
             const requested = (process.env.TARGET_REPOSITORY || '').trim() || 'all';
             const repositories = requested === 'all' ? configured : [requested];
             const unknown = repositories.filter((repository) => !configured.includes(repository));

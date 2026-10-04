@@ -25,13 +25,7 @@ on:
       target_repository:
         description: "Target repository."
         required: true
-        type: choice
-        options:
-          - SimulatorLife/3DSpider
-          - SimulatorLife/AutoDev
-          - SimulatorLife/Colourful-Life
-          - SimulatorLife/GMLoop
-          - SimulatorLife/RacingGame
+        type: string
       target_pr_number:
         description: "Optional PR number to target for conflict resolution."
         required: false

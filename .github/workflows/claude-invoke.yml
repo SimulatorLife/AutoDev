@@ -11,13 +11,7 @@ on:
       target_repository:
         description: "Target repository."
         required: true
-        type: choice
-        options:
-          - SimulatorLife/3DSpider
-          - SimulatorLife/AutoDev
-          - SimulatorLife/Colourful-Life
-          - SimulatorLife/GMLoop
-          - SimulatorLife/RacingGame
+        type: string
   issue_comment:
     types: [created]
 

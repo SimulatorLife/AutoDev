@@ -4,57 +4,41 @@
       "name": "copilot",
       "weight": 0,
       "cadenceTicks": 4,
-      "category": [
-        "code",
-        "merging",
-        "regressions"
-      ]
+      "category": ["code", "merging", "regressions"]
     },
     {
       "name": "codex",
       "weight": 1,
       "cadenceTicks": 2,
-      "category": [
-        "code"
-      ],
+      "category": ["code"],
       "minComplexity": 3
     },
     {
       "name": "qwen",
       "weight": 0,
       "cadenceTicks": 2,
-      "category": [
-        "code"
-      ],
+      "category": ["code"],
       "maxComplexity": 2
     },
     {
       "name": "gemini",
       "weight": 0,
       "cadenceTicks": 4,
-      "category": [
-        "code"
-      ],
+      "category": ["code"],
       "maxComplexity": 2
     },
     {
       "name": "mini-max",
       "weight": 5,
       "cadenceTicks": 1,
-      "category": [
-        "code"
-      ],
+      "category": ["code"],
       "maxComplexity": 2
     },
     {
       "name": "claude",
       "weight": 2,
       "cadenceTicks": 2,
-      "category": [
-        "code",
-        "merging",
-        "regressions"
-      ],
+      "category": ["code", "merging", "regressions"],
       "minComplexity": 2
     }
   ],
@@ -79,29 +63,24 @@
   },
   "repositories": [
     {
-      "name": "SimulatorLife/3DSpider",
-      "weight": 0,
-      "baseBranch": "main"
+      "workspaceId": "SimulatorLife/3DSpider",
+      "weight": 0
     },
     {
-      "name": "SimulatorLife/AutoDev",
-      "weight": 0,
-      "baseBranch": "main"
+      "workspaceId": "SimulatorLife/AutoDev",
+      "weight": 0
     },
     {
-      "name": "SimulatorLife/Colourful-Life",
-      "weight": 0.2,
-      "baseBranch": "master"
+      "workspaceId": "SimulatorLife/Colourful-Life",
+      "weight": 0.2
     },
     {
-      "name": "SimulatorLife/GMLoop",
-      "weight": 0.2,
-      "baseBranch": "main"
+      "workspaceId": "SimulatorLife/GMLoop",
+      "weight": 0.2
     },
     {
-      "name": "SimulatorLife/RacingGame",
-      "weight": 1,
-      "baseBranch": "main"
+      "workspaceId": "SimulatorLife/RacingGame",
+      "weight": 1
     }
   ],
   "prompts": [

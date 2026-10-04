@@ -96,17 +96,45 @@ jobs:
           path: .autodev
           fetch-depth: 1
 
-      - name: Stage AutoDev policy for this run
+      - name: Resolve target and prompt workspaces
+        id: workspace_catalog
         env:
           PROMPT_PATH: ${{ inputs.prompt_path }}
           PROMPT_REPOSITORY: ${{ inputs.prompt_repository }}
           TARGET_REPOSITORY: ${{ inputs.target_repository }}
+          REQUESTED_BASE_BRANCH: ${{ inputs.base_branch }}
         run: |
           set -euo pipefail
           cp .autodev/.github/workflows/weights.json "$RUNNER_TEMP/autodev-weights.json"
+          cp .autodev/config/workspaces.json "$RUNNER_TEMP/autodev-workspaces.json"
+
+          jq -e '.schema == "autodev-workspaces-v1" and (.workspaces | type == "array")' \
+            "$RUNNER_TEMP/autodev-workspaces.json" >/dev/null || {
+            echo "Canonical workspace catalog is invalid." >&2
+            exit 1
+          }
+
+          target_workspace=$(jq -ce --arg id "${TARGET_REPOSITORY}" \
+            '.workspaces[] | select(.id == $id)' "$RUNNER_TEMP/autodev-workspaces.json") || {
+            echo "target_repository is not present in the canonical workspace catalog: ${TARGET_REPOSITORY}" >&2
+            exit 1
+          }
+          [[ "$(jq -r '.enabled' <<<"${target_workspace}")" == "true" ]] || {
+            echo "target_repository is disabled in the canonical workspace catalog: ${TARGET_REPOSITORY}" >&2
+            exit 1
+          }
+          canonical_base_branch=$(jq -r '.baseBranch' <<<"${target_workspace}")
+          if [[ -n "${REQUESTED_BASE_BRANCH}" && "${REQUESTED_BASE_BRANCH}" != "${canonical_base_branch}" ]]; then
+            echo "base_branch must match the Workspace registry for ${TARGET_REPOSITORY}." >&2
+            exit 1
+          fi
+          echo "base_branch=${canonical_base_branch}" >> "$GITHUB_OUTPUT"
+
           if [ -n "${PROMPT_PATH}" ]; then
-            jq -e --arg repo "${PROMPT_REPOSITORY}" '.repositories[] | select(.name == $repo)' "$RUNNER_TEMP/autodev-weights.json" >/dev/null || {
-              echo "prompt_repository is not configured in AutoDev weights: ${PROMPT_REPOSITORY}" >&2
+            jq -e --arg id "${PROMPT_REPOSITORY}" \
+              '.workspaces[] | select(.id == $id and .enabled == true)' \
+              "$RUNNER_TEMP/autodev-workspaces.json" >/dev/null || {
+              echo "prompt_repository is not enabled in the canonical workspace catalog: ${PROMPT_REPOSITORY}" >&2
               exit 1
             }
           fi
@@ -134,7 +162,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: ${{ inputs.target_repository }}
-          ref: ${{ inputs.base_branch }}
+          ref: ${{ steps.workspace_catalog.outputs.base_branch }}
           fetch-depth: 0
           token: ${{ secrets.GH_USER_TOKEN }}
 
@@ -348,7 +376,7 @@ jobs:
           git commit --allow-empty -m "${{ inputs.pr_title }}"
           git push -u origin "$BRANCH_NAME"
         env:
-          BASE_BRANCH: ${{ inputs.base_branch }}
+          BASE_BRANCH: ${{ steps.workspace_catalog.outputs.base_branch }}
           BRANCH_NAME: ${{ steps.select_agent.outputs.branch }}
           AUTHOR_NAME: ${{ inputs.author_name }}
           AUTHOR_EMAIL: ${{ inputs.author_email }}
@@ -359,7 +387,7 @@ jobs:
         env:
           PR_TITLE: ${{ inputs.pr_title }}
           PROMPT: ${{ steps.resolve_prompt.outputs.prompt || inputs.prompt }}
-          BASE_BRANCH: ${{ inputs.base_branch }}
+          BASE_BRANCH: ${{ steps.workspace_catalog.outputs.base_branch }}
           BRANCH_NAME: ${{ steps.select_agent.outputs.branch }}
           STANDARD_BODY: "Seed PR to request agent to implement a requested improvement."
         with:
@@ -402,7 +430,7 @@ jobs:
       - name: Comment to trigger AI agent (as your user)
         uses: actions/github-script@v8
         env:
-          BASE_BRANCH: ${{ inputs.base_branch }}
+          BASE_BRANCH: ${{ steps.workspace_catalog.outputs.base_branch }}
           PROMPT: ${{ steps.resolve_prompt.outputs.prompt || inputs.prompt }}
           BRANCH_NAME: ${{ steps.select_agent.outputs.branch }}
           PR_NUMBER: ${{ fromJSON(steps.pr.outputs.result).number }}

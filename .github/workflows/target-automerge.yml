@@ -9,14 +9,7 @@ on:
         description: "Target repository, or all configured repositories."
         required: false
         default: "all"
-        type: choice
-        options:
-          - all
-          - SimulatorLife/3DSpider
-          - SimulatorLife/AutoDev
-          - SimulatorLife/Colourful-Life
-          - SimulatorLife/GMLoop
-          - SimulatorLife/RacingGame
+        type: string
       pr_number:
         description: "Optional target PR number. Required when target_repository is supplied."
         required: false
@@ -52,6 +45,27 @@ jobs:
           script: |
             const fs = require('fs');
             const cfg = JSON.parse(fs.readFileSync('.github/workflows/weights.json', 'utf8'));
+            const workspaceCatalog = JSON.parse(fs.readFileSync('config/workspaces.json', 'utf8'));
+            if (workspaceCatalog.schema !== 'autodev-workspaces-v1' || !Array.isArray(workspaceCatalog.workspaces)) {
+              throw new Error('Workspace catalog is invalid.');
+            }
+            const workspaces = new Map();
+            for (const workspace of workspaceCatalog.workspaces) {
+              if (!/^[^/\s]+\/[^/\s]+$/.test(workspace?.id || '') || typeof workspace.enabled !== 'boolean') {
+                throw new Error('Workspace catalog contains an invalid identity or enabled flag.');
+              }
+              if (workspaces.has(workspace.id)) throw new Error(`Duplicate workspace: ${workspace.id}`);
+              workspaces.set(workspace.id, workspace);
+            }
+            const schedulerWeights = new Map();
+            for (const entry of cfg.repositories || []) {
+              const workspaceId = typeof entry?.workspaceId === 'string' ? entry.workspaceId.trim() : '';
+              const weight = Number(entry?.weight);
+              if (!workspaces.has(workspaceId) || !Number.isFinite(weight) || weight < 0 || schedulerWeights.has(workspaceId)) {
+                throw new Error(`Invalid or duplicate scheduler weight for workspace: ${workspaceId}`);
+              }
+              schedulerWeights.set(workspaceId, weight);
+            }
             const requestedInput = (process.env.REQUESTED_REPOSITORY || 'all').trim();
             const requestedRepository = requestedInput === 'all' ? '' : requestedInput;
             const requestedPr = (process.env.REQUESTED_PR || '').trim();
@@ -62,14 +76,24 @@ jobs:
               throw new Error('pr_number must be a positive integer when target_repository is supplied.');
             }
 
-            const repositories = requestedRepository
-              ? [{ name: requestedRepository }]
-              : (cfg.repositories || []).filter((repo) => Number(repo.weight) > 0);
+            let repositories;
+            if (requestedRepository) {
+              const workspace = workspaces.get(requestedRepository);
+              if (!workspace || !workspace.enabled) {
+                throw new Error(`Unconfigured or disabled Workspace: ${requestedRepository}`);
+              }
+              repositories = [workspace];
+            } else {
+              repositories = [...workspaces.values()].filter(
+                (workspace) =>
+                  workspace.enabled && (schedulerWeights.get(workspace.id) ?? 0) > 0
+              );
+            }
             const targets = [];
-            for (const repository of repositories) {
-              const [owner, repo] = repository.name.split('/');
+            for (const workspace of repositories) {
+              const [owner, repo] = workspace.id.split('/');
               if (requestedPr) {
-                targets.push({ repository: repository.name, pr: Number(requestedPr) });
+                targets.push({ repository: workspace.id, pr: Number(requestedPr) });
                 continue;
               }
               const pulls = await github.paginate(github.rest.pulls.list, {
@@ -83,7 +107,7 @@ jobs:
               for (const pull of pulls) {
                 const labels = new Set((pull.labels || []).map((label) => label.name));
                 const agentBranch = /^(copilot|claude|codex|gemini|qwen|mini-max|dependabot)(?:\/|$)/.test(pull.head?.ref || '');
-                if (!pull.draft && (labels.has('agent') || agentBranch)) targets.push({ repository: repository.name, pr: pull.number });
+                if (!pull.draft && (labels.has('agent') || agentBranch)) targets.push({ repository: workspace.id, pr: pull.number });
               }
             }
             core.setOutput('matrix', JSON.stringify({ include: targets }));

@@ -7,92 +7,81 @@ import { fileURLToPath } from "node:url";
 
 import {
   loadRulesyncWorkspaces,
-  slugifyWorkspace,
   syncRulesyncWorkspaces
-} from "@simulatorlife/autodev-data/openlit";
+} from "../../src/openlit/sync-rulesync-workspaces.ts";
+import { ConfigRepository } from "../../src/config/config-repository.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
-test("slugifyWorkspace generates clean, lowercase alphanumeric URL slugs", () => {
-  assert.equal(
-    slugifyWorkspace("SimulatorLife/AutoDev"),
-    "simulatorlife-autodev"
+const expectedWorkspaceIds = [
+  "SimulatorLife/3DSpider",
+  "SimulatorLife/AutoDev",
+  "SimulatorLife/Colourful-Life",
+  "SimulatorLife/GMLoop",
+  "SimulatorLife/RacingGame"
+];
+
+test("Data's workspace catalog is the single workspace identity and branch source", () => {
+  const catalog = new ConfigRepository(repositoryRoot).readWorkspaceCatalog();
+  assert.equal(catalog.status, "valid");
+  assert.deepEqual(
+    catalog.workspaces.map((workspace) => workspace.id),
+    expectedWorkspaceIds
   );
   assert.equal(
-    slugifyWorkspace("SimulatorLife/Colourful-Life"),
-    "simulatorlife-colourful-life"
+    catalog.workspaces.find(
+      (workspace) => workspace.id === "SimulatorLife/Colourful-Life"
+    )?.baseBranch,
+    "master"
   );
-  assert.equal(
-    slugifyWorkspace("  SimulatorLife/3DSpider! "),
-    "simulatorlife-3dspider"
+  assert.ok(catalog.workspaces.every((workspace) => workspace.enabled));
+  assert.ok(
+    catalog.workspaces.every((workspace) => workspace.agentRoles === null)
   );
 });
 
-test("loadRulesyncWorkspaces extracts all 5 canonical workspaces from weights.json", () => {
-  const catalog = loadRulesyncWorkspaces(repositoryRoot);
-
-  const expectedWorkspaces = [
-    "SimulatorLife/3DSpider",
-    "SimulatorLife/AutoDev",
-    "SimulatorLife/Colourful-Life",
-    "SimulatorLife/GMLoop",
-    "SimulatorLife/RacingGame"
-  ];
-
-  assert.equal(catalog.size, expectedWorkspaces.length);
-
-  for (const name of expectedWorkspaces) {
-    assert.ok(catalog.has(name), `Catalog must contain workspace "${name}"`);
-    const ws = catalog.get(name)!;
-    assert.equal(ws.name, name);
-    assert.match(ws.baseBranch, /^(main|master)$/u);
-    assert.ok(typeof ws.weight === "number" && ws.weight >= 0);
-    assert.ok(ws.slug.length > 0);
-  }
-
-  // Colourful-Life has base branch 'master'
-  const colourfulLife = catalog.get("SimulatorLife/Colourful-Life")!;
-  assert.equal(colourfulLife.baseBranch, "master");
-
-  // RacingGame has weight 1
-  const racingGame = catalog.get("SimulatorLife/RacingGame")!;
-  assert.equal(racingGame.weight, 1);
+test("OpenLIT workspace projection consumes Data's canonical workspace ids", () => {
+  const workspaces = loadRulesyncWorkspaces(repositoryRoot);
+  assert.deepEqual(
+    workspaces.map((workspace) => workspace.id),
+    expectedWorkspaceIds
+  );
 });
 
-test("loadRulesyncWorkspaces rejects an invalid shared workspace source", async () => {
+test("OpenLIT workspace projection fails closed for an invalid canonical registry", async () => {
   const isolatedRoot = await mkdtemp(
     join(tmpdir(), "autodev-workspace-source-")
   );
   try {
-    const configDirectory = join(isolatedRoot, ".github", "workflows");
+    const configDirectory = join(isolatedRoot, "config");
     await mkdir(configDirectory, { recursive: true });
     await writeFile(
-      join(configDirectory, "weights.json"),
+      join(configDirectory, "workspaces.json"),
       JSON.stringify({
-        repositories: [{ name: "missing/base-branch", weight: 1 }]
+        schema: "autodev-workspaces-v1",
+        workspaces: [{ id: "SimulatorLife/Missing", enabled: true }]
       }),
       "utf8"
     );
     assert.throws(
       () => loadRulesyncWorkspaces(isolatedRoot),
-      /workspace catalog is invalid/u
+      /Workspace catalog is invalid/u
     );
   } finally {
     await rm(isolatedRoot, { recursive: true, force: true });
   }
 });
 
-test("syncRulesyncWorkspaces synchronizes canonical AutoDev project under SimulatorLife organisation and collapses silos idempotently", async () => {
+test("syncRulesyncWorkspaces synchronizes canonical AutoDev project and collapses silos idempotently", async () => {
   try {
     const result1 = await syncRulesyncWorkspaces({ repositoryRoot });
     assert.equal(result1.organisation, "SimulatorLife");
     assert.equal(result1.project, "AutoDev");
     assert.equal(result1.environment, "production");
-    assert.equal(result1.totalWorkspaces, 5);
+    assert.equal(result1.totalWorkspaces, expectedWorkspaceIds.length);
     assert.ok(result1.workspaces.includes("SimulatorLife/AutoDev"));
     assert.ok(result1.workspaces.includes("SimulatorLife/RacingGame"));
 
-    // Second run must be completely idempotent (0 collapsed silos)
     const result2 = await syncRulesyncWorkspaces({ repositoryRoot });
     assert.equal(result2.organisation, "SimulatorLife");
     assert.equal(result2.project, "AutoDev");
@@ -102,7 +91,7 @@ test("syncRulesyncWorkspaces synchronizes canonical AutoDev project under Simula
       0,
       "Second run should have 0 projects to collapse"
     );
-    assert.equal(result2.totalWorkspaces, 5);
+    assert.equal(result2.totalWorkspaces, expectedWorkspaceIds.length);
   } catch (error) {
     const message = (error as Error).message;
     if (
@@ -110,7 +99,6 @@ test("syncRulesyncWorkspaces synchronizes canonical AutoDev project under Simula
       message.includes("No such container") ||
       message.includes("ENOENT")
     ) {
-      // Docker container not running in this environment — skip gracefully
       return;
     }
     throw error;

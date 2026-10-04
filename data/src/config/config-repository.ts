@@ -10,7 +10,7 @@ import type {
 } from "@simulatorlife/autodev-core";
 
 const DEFAULT_REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const REPOSITORY_NAME_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
+const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 
 export interface WorkspaceCatalogRead {
   readonly status: "valid" | "invalid" | "unavailable";
@@ -82,53 +82,62 @@ export class ConfigRepository {
   }
 
   readWorkspaceCatalog(): WorkspaceCatalogRead {
-    const weightsPath = path.join(
+    const catalogPath = path.join(
       this.repositoryRoot,
-      ".github",
-      "workflows",
-      "weights.json"
+      "config",
+      "workspaces.json"
     );
-    if (!existsSync(weightsPath))
+    if (!existsSync(catalogPath))
       return { status: "unavailable", workspaces: [] };
     try {
-      const raw = JSON.parse(readFileSync(weightsPath, "utf8")) as unknown;
+      const raw = JSON.parse(readFileSync(catalogPath, "utf8")) as unknown;
       if (
         raw === null ||
         typeof raw !== "object" ||
         Array.isArray(raw) ||
-        !Array.isArray((raw as { repositories?: unknown }).repositories)
+        (raw as { schema?: unknown }).schema !== "autodev-workspaces-v1" ||
+        !Array.isArray((raw as { workspaces?: unknown }).workspaces)
       ) {
         return { status: "invalid", workspaces: [] };
       }
-      const repositories = (raw as { repositories: unknown[] }).repositories;
+      const records = (raw as { workspaces: unknown[] }).workspaces;
       const workspaces: WorkspaceEntry[] = [];
       const names = new Set<string>();
-      for (const repository of repositories) {
+      for (const workspace of records) {
         if (
-          repository === null ||
-          typeof repository !== "object" ||
-          Array.isArray(repository)
+          workspace === null ||
+          typeof workspace !== "object" ||
+          Array.isArray(workspace)
         ) {
           return { status: "invalid", workspaces: [] };
         }
-        const entry = repository as Record<string, unknown>;
+        const entry = workspace as Record<string, unknown>;
+        const agentRoles = entry.agentRoles;
         if (
-          typeof entry.name !== "string" ||
-          !REPOSITORY_NAME_PATTERN.test(entry.name) ||
+          typeof entry.id !== "string" ||
+          !WORKSPACE_ID_PATTERN.test(entry.id) ||
           typeof entry.baseBranch !== "string" ||
           !entry.baseBranch.trim() ||
-          typeof entry.weight !== "number" ||
-          !Number.isFinite(entry.weight) ||
-          entry.weight < 0 ||
-          names.has(entry.name)
+          typeof entry.enabled !== "boolean" ||
+          (agentRoles !== null &&
+            (!Array.isArray(agentRoles) ||
+              !agentRoles.every(
+                (role) =>
+                  typeof role === "string" &&
+                  role.trim().length > 0 &&
+                  role.trim() === role
+              ) ||
+              new Set(agentRoles).size !== agentRoles.length)) ||
+          names.has(entry.id)
         ) {
           return { status: "invalid", workspaces: [] };
         }
-        names.add(entry.name);
+        names.add(entry.id);
         workspaces.push({
-          name: entry.name,
+          id: entry.id,
           baseBranch: entry.baseBranch,
-          weight: entry.weight
+          enabled: entry.enabled,
+          agentRoles: agentRoles === null ? null : (agentRoles as string[])
         });
       }
       return { status: "valid", workspaces };

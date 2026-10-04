@@ -16,24 +16,47 @@ jobs:
       - name: Checkout AutoDev policy
         uses: actions/checkout@v6
 
-      - name: Load routing configuration
+      - name: Load scheduling policy and Workspace registry
         id: cfg
         shell: bash
         run: |
           set -euo pipefail
           test -f .github/workflows/weights.json
+          test -f config/workspaces.json
           echo "cfg=$(jq -c . .github/workflows/weights.json)" >> "$GITHUB_OUTPUT"
+          echo "workspace_catalog=$(jq -c . config/workspaces.json)" >> "$GITHUB_OUTPUT"
 
       - name: Compute dispatch plan
         id: plan
         uses: actions/github-script@v8
         env:
           CFG_JSON: ${{ steps.cfg.outputs.cfg }}
+          WORKSPACE_CATALOG_JSON: ${{ steps.cfg.outputs.workspace_catalog }}
         with:
           script: |
             const cfg = JSON.parse(process.env.CFG_JSON || '{}');
+            const workspaceCatalog = JSON.parse(process.env.WORKSPACE_CATALOG_JSON || '{}');
             const WEIGHT_SCALE = 1000;
             const CATEGORIES = new Set(['code', 'merging', 'regressions']);
+            const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
+
+            if (workspaceCatalog.schema !== 'autodev-workspaces-v1' || !Array.isArray(workspaceCatalog.workspaces)) {
+              throw new Error('Workspace registry must use the autodev-workspaces-v1 schema.');
+            }
+            const workspaces = new Map();
+            for (const [index, workspace] of workspaceCatalog.workspaces.entries()) {
+              const id = typeof workspace?.id === 'string' ? workspace.id.trim() : '';
+              const baseBranch = typeof workspace?.baseBranch === 'string' ? workspace.baseBranch.trim() : '';
+              const agentRoles = workspace?.agentRoles;
+              if (!WORKSPACE_ID_PATTERN.test(id) || !baseBranch || typeof workspace.enabled !== 'boolean') {
+                throw new Error(`workspaces[${index}] has invalid identity, branch, or enabled state.`);
+              }
+              if (agentRoles !== null && (!Array.isArray(agentRoles) || agentRoles.some((role) => typeof role !== 'string' || !role.trim()))) {
+                throw new Error(`workspaces[${index}].agentRoles must be null or a list of role names.`);
+              }
+              if (workspaces.has(id)) throw new Error(`Workspace ids must be unique: ${id}`);
+              workspaces.set(id, { id, baseBranch, enabled: workspace.enabled, agentRoles });
+            }
 
             const finite = (value, label) => {
               const number = Number(value);
@@ -97,13 +120,22 @@ jobs:
             });
             uniqueNames(prompts, 'Prompt');
 
-            const repositories = (cfg.repositories || []).map((raw, index) => {
-              const name = typeof raw?.name === 'string' ? raw.name.trim() : '';
-              if (!/^[^/\s]+\/[^/\s]+$/.test(name)) throw new Error(`repositories[${index}].name must use owner/name.`);
-              const baseBranch = typeof raw.baseBranch === 'string' && raw.baseBranch.trim() ? raw.baseBranch.trim() : 'main';
-              return { name, baseBranch, weight: finite(raw.weight, `repositories[${index}].weight`) };
+            const workspaceWeights = (cfg.repositories || []).map((raw, index) => {
+              const workspaceId = typeof raw?.workspaceId === 'string' ? raw.workspaceId.trim() : '';
+              if (!WORKSPACE_ID_PATTERN.test(workspaceId)) throw new Error(`repositories[${index}].workspaceId must use owner/name.`);
+              if (!workspaces.has(workspaceId)) throw new Error(`repositories[${index}] references an unknown workspace: ${workspaceId}`);
+              return { workspaceId, weight: finite(raw.weight, `repositories[${index}].weight`) };
             });
-            uniqueNames(repositories, 'Repository');
+            const weightsByWorkspace = new Map();
+            for (const item of workspaceWeights) {
+              if (weightsByWorkspace.has(item.workspaceId)) throw new Error(`Workspace schedule weights must be unique: ${item.workspaceId}`);
+              weightsByWorkspace.set(item.workspaceId, item.weight);
+            }
+            const repositories = Array.from(workspaces.values()).map((workspace) => ({
+              ...workspace,
+              name: workspace.id,
+              weight: weightsByWorkspace.get(workspace.id) ?? 0
+            }));
 
             const runNumber = Math.max(1, Number.parseInt(process.env.GITHUB_RUN_NUMBER || '1', 10));
             const candidates = [];
@@ -114,7 +146,8 @@ jobs:
                 if (agent.minComplexity !== undefined && prompt.complexity < agent.minComplexity) continue;
                 if (agent.maxComplexity !== undefined && prompt.complexity > agent.maxComplexity) continue;
                 for (const repository of repositories) {
-                  if (repository.weight <= 0) continue;
+                  if (!repository.enabled || repository.weight <= 0) continue;
+                  if (Array.isArray(repository.agentRoles) && !repository.agentRoles.includes(agent.name)) continue;
                   const weight = agent.weight * prompt.weight * repository.weight;
                   if (!Number.isFinite(weight) || weight <= 0) continue;
                   candidates.push({
