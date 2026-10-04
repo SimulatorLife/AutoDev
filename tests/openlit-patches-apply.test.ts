@@ -184,7 +184,12 @@ test(
     if (patches.some((p) => p.startsWith("21-"))) {
       expectedPatchNames.push("21-remove-controller-clickhouse-schema");
     }
-    expectedPatchNames.push("22-autodev-memory-injection-use");
+    expectedPatchNames.push(
+      "22-autodev-memory-injection-use",
+      "23-autodev-memory-visible-connector",
+      "24-autodev-pricing-empty-history",
+      "25-autodev-usage-filter-options"
+    );
     assert.ok(
       patches.length >= expectedPatchNames.length,
       `expected at least ${expectedPatchNames.length} maintained OpenLIT patches`
@@ -326,6 +331,59 @@ test(
       autoDevMemoryAdapter,
       /from ["']pg["']|postgres-memory-repository/u
     );
+    // 23-autodev-memory-visible-connector adds the read-only AutoDev
+    // Memory connector to the CE UI's visible-connector allowlist so it can
+    // be created through the canonical Add Connector UI.
+    const visibleConnectorTypes = readFileSync(
+      join(dir, "src/client/src/lib/platform/connectors/visible-types.ts"),
+      "utf8"
+    );
+    assert.match(
+      visibleConnectorTypes,
+      /"autodev"/u,
+      "23-autodev-memory-visible-connector must add autodev to VISIBLE_CONNECTOR_TYPES"
+    );
+
+    const cronLogAdapter = readFileSync(
+      join(dir, "src/client/src/lib/platform/cron-log/index.ts"),
+      "utf8"
+    );
+    const cronLogTests = readFileSync(
+      join(
+        dir,
+        "src/client/src/__tests__/lib/platform/cron-log/cron-log.test.ts"
+      ),
+      "utf8"
+    );
+    assert.match(cronLogAdapter, /if \(err \|\| !Array\.isArray\(data\)\)/u);
+    assert.match(cronLogAdapter, /lastRun\?\.startedAt \?\? null/u);
+    assert.match(
+      cronLogTests,
+      /returns null when there is no successful run yet/u
+    );
+
+    const dashboardVariableLookup = readFileSync(
+      join(
+        dir,
+        "src/client/src/lib/platform/dashboard-variables/distinct-values.ts"
+      ),
+      "utf8"
+    );
+    const usageRoute = readFileSync(
+      join(dir, "src/client/src/app/api/autodev/usage/route.ts"),
+      "utf8"
+    );
+    const usageRouteTest = readFileSync(
+      join(dir, "src/client/src/__tests__/app/api/autodev/usage/route.test.ts"),
+      "utf8"
+    );
+    assert.match(dashboardVariableLookup, /aiSelector\?: boolean/u);
+    assert.match(usageRoute, /limit: 256,\s*aiSelector: false/u);
+    assert.match(
+      usageRouteTest,
+      /fetches filter values across AutoDev logical and MCP spans/u
+    );
+
     const memoryDetailSheet = readFileSync(
       join(
         dir,
@@ -1128,17 +1186,26 @@ test(
     assert.match(autoDevMemoryAdapter, /readInjectionUseAssessments\(/u);
     assert.match(autoDevMemoryAdapter, /reportInjectionUse\(/u);
     assert.match(autoDevMemoryAdapter, /readInjectionUseCohorts\(/u);
-    assert.match(autoDevMemoryAdapter, /USE_COHORT_ASSIGNED_MODES[\s\S]*?"disabled"/u);
+    assert.match(
+      autoDevMemoryAdapter,
+      /USE_COHORT_ASSIGNED_MODES[\s\S]*?"disabled"/u
+    );
     assert.match(autoDevMemoryAdapter, /USE_COHORT_ELIGIBLE_MODES/u);
     assert.match(autoDevMemoryAdapter, /injection\.id/u);
-    assert.match(autoDevMemoryAdapter, /injectionResult !== "injected"[\s\S]*?memoryIds/u);
+    assert.match(
+      autoDevMemoryAdapter,
+      /injectionResult !== "injected"[\s\S]*?memoryIds/u
+    );
     assert.doesNotMatch(
       autoDevMemoryAdapter,
       /correlationToken\s*:\s*(?:injection|joined|value)|reporterId\s*:/u,
       "patch 22 must not project opaque correlation tokens or reporter identity to the UI"
     );
     const useAssessmentsRoute = readFileSync(
-      join(dir, "src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts"),
+      join(
+        dir,
+        "src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts"
+      ),
       "utf8"
     );
     assert.doesNotMatch(
@@ -1146,7 +1213,10 @@ test(
       /export const GET/u,
       "experience reads must stay with the canonical AutoDev MemoryAdapter detail path"
     );
-    assert.match(useAssessmentsRoute, /export const POST\s*=\s*withMemoryAudit\(withMemoryAccess\("update"/u);
+    assert.match(
+      useAssessmentsRoute,
+      /export const POST\s*=\s*withMemoryAudit\(withMemoryAccess\("update"/u
+    );
     assert.match(useAssessmentsRoute, /reportInjectionUse\(/u);
     assert.match(useAssessmentsRoute, /requiredId\(params\.id\)/u);
     assert.match(useAssessmentsRoute, /request\.json\(\)/u);
@@ -1155,23 +1225,41 @@ test(
       join(dir, "src/client/src/app/api/memory/use-cohorts/route.ts"),
       "utf8"
     );
-    assert.match(useCohortsRoute, /export const GET\s*=\s*withMemoryAccess\("read"/u);
+    assert.match(
+      useCohortsRoute,
+      /export const GET\s*=\s*withMemoryAccess\("read"/u
+    );
     assert.match(useCohortsRoute, /readInjectionUseCohorts\(/u);
     const useForm = readFileSync(
-      join(dir, "src/client/src/components/(playground)/memory/memory-injection-use-report-form.tsx"),
+      join(
+        dir,
+        "src/client/src/components/(playground)/memory/memory-injection-use-report-form.tsx"
+      ),
       "utf8"
     );
     assert.match(useForm, /MEMORY_USE_KIND_PLACEHOLDER/u);
-    assert.match(useForm, /value=\{EMPTY_KIND\}[\s\S]*?MEMORY_USE_KIND_PLACEHOLDER/u);
+    assert.match(
+      useForm,
+      /value=\{EMPTY_KIND\}[\s\S]*?MEMORY_USE_KIND_PLACEHOLDER/u
+    );
     assert.match(useForm, /formatUseKindLabel/u);
     const useDetail = readFileSync(
-      join(dir, "src/client/src/components/(playground)/memory/memory-detail-sheet.tsx"),
+      join(
+        dir,
+        "src/client/src/components/(playground)/memory/memory-detail-sheet.tsx"
+      ),
       "utf8"
     );
-    assert.match(useDetail, /injection\.injectionResult === "injected" && packetIds\.length > 0/u);
+    assert.match(
+      useDetail,
+      /injection\.injectionResult === "injected" && packetIds\.length > 0/u
+    );
     assert.match(useDetail, /MEMORY_DETAIL_INJECTION_USE_INELIGIBLE/u);
     const useCohortView = readFileSync(
-      join(dir, "src/client/src/components/(playground)/memory/memory-cohort-view.tsx"),
+      join(
+        dir,
+        "src/client/src/components/(playground)/memory/memory-cohort-view.tsx"
+      ),
       "utf8"
     );
     assert.match(useCohortView, /\/api\/memory\/use-cohorts/u);
@@ -1411,7 +1499,12 @@ test(
       if (patches.some((p) => p.startsWith("21-"))) {
         expectedPatchNames.push("21-remove-controller-clickhouse-schema");
       }
-      expectedPatchNames.push("22-autodev-memory-injection-use");
+      expectedPatchNames.push(
+        "22-autodev-memory-injection-use",
+        "23-autodev-memory-visible-connector",
+        "24-autodev-pricing-empty-history",
+        "25-autodev-usage-filter-options"
+      );
       assert.ok(
         patches.length >= expectedPatchNames.length,
         `expected at least ${expectedPatchNames.length} maintained OpenLIT patches`
@@ -1585,20 +1678,29 @@ test(
         );
       }
       const appliedUseAssessmentsRoute = readFileSync(
-        join(workDirectory, "src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts"),
+        join(
+          workDirectory,
+          "src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts"
+        ),
         "utf8"
       );
       assert.doesNotMatch(appliedUseAssessmentsRoute, /export const GET/u);
       assert.match(appliedUseAssessmentsRoute, /withMemoryAccess\("update"/u);
       assert.match(appliedUseAssessmentsRoute, /reportInjectionUse\(/u);
       const appliedUseCohortsRoute = readFileSync(
-        join(workDirectory, "src/client/src/app/api/memory/use-cohorts/route.ts"),
+        join(
+          workDirectory,
+          "src/client/src/app/api/memory/use-cohorts/route.ts"
+        ),
         "utf8"
       );
       assert.match(appliedUseCohortsRoute, /withMemoryAccess\("read"/u);
       assert.match(appliedUseCohortsRoute, /readInjectionUseCohorts\(/u);
       const appliedUseAdapter = readFileSync(
-        join(workDirectory, "src/client/src/lib/platform/connectors/memory/autodev/adapter.ts"),
+        join(
+          workDirectory,
+          "src/client/src/lib/platform/connectors/memory/autodev/adapter.ts"
+        ),
         "utf8"
       );
       assert.match(appliedUseAdapter, /readInjectionUseAssessments\(/u);
@@ -1609,13 +1711,22 @@ test(
         /correlationToken\s*:\s*(?:injection|joined|value)|reporterId\s*:/u
       );
       const appliedUseDetail = readFileSync(
-        join(workDirectory, "src/client/src/components/(playground)/memory/memory-detail-sheet.tsx"),
+        join(
+          workDirectory,
+          "src/client/src/components/(playground)/memory/memory-detail-sheet.tsx"
+        ),
         "utf8"
       );
-      assert.match(appliedUseDetail, /injection\.injectionResult === "injected" && packetIds\.length > 0/u);
+      assert.match(
+        appliedUseDetail,
+        /injection\.injectionResult === "injected" && packetIds\.length > 0/u
+      );
       assert.match(appliedUseDetail, /MEMORY_DETAIL_INJECTION_USE_INELIGIBLE/u);
       const appliedUseCohortView = readFileSync(
-        join(workDirectory, "src/client/src/components/(playground)/memory/memory-cohort-view.tsx"),
+        join(
+          workDirectory,
+          "src/client/src/components/(playground)/memory/memory-cohort-view.tsx"
+        ),
         "utf8"
       );
       assert.match(appliedUseCohortView, /\/api\/memory\/use-cohorts/u);
@@ -1623,6 +1734,22 @@ test(
       assert.doesNotMatch(
         appliedUseCohortView,
         /percentage|success\s*rate|(?:Math\.)?round\([^\n]*\*\s*100|toFixed\(/iu
+      );
+
+      // 23-autodev-memory-visible-connector adds the read-only AutoDev
+      // Memory connector to the CE UI's visible-connector allowlist so it
+      // can be created through the canonical Add Connector UI.
+      const appliedVisibleConnectorTypes = readFileSync(
+        join(
+          workDirectory,
+          "src/client/src/lib/platform/connectors/visible-types.ts"
+        ),
+        "utf8"
+      );
+      assert.match(
+        appliedVisibleConnectorTypes,
+        /"autodev"/u,
+        "23-autodev-memory-visible-connector must add autodev to VISIBLE_CONNECTOR_TYPES"
       );
 
       const status = run("git", ["status", "--short"], workDirectory);

@@ -93,9 +93,7 @@ function outcomeReport(
     reporterId: "op-1",
     reporterAuthority: "root",
     reasonCode: "reporter_supplied",
-    evidence: [
-      { kind: "file", uri: "file:///workspace/repo/PULL_REQUEST.md" }
-    ],
+    evidence: [{ kind: "file", uri: "file:///workspace/repo/PULL_REQUEST.md" }],
     ...overrides
   };
 }
@@ -355,13 +353,13 @@ test("listInjectionOutcomeJoins defaults to reported-only and reveals unreported
   await repository.recordInjectionEvent({
     event: injectionEvent({
       id: "inj-pending",
-        correlationToken: "pen",
-        memoryIds: [],
-        packetCharacterCount: 0
-      }),
-      actor: { id: "system", authority: "system" },
-      context: requestContext
-    });
+      correlationToken: "pen",
+      memoryIds: [],
+      packetCharacterCount: 0
+    }),
+    actor: { id: "system", authority: "system" },
+    context: requestContext
+  });
   const reportedOnly = await repository.listInjectionOutcomeJoins({
     context: sessionContext
   });

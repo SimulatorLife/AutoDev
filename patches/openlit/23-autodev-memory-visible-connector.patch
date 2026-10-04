@@ -1,0 +1,27 @@
+diff --git a/src/client/src/__tests__/lib/platform/connectors/visible-types.test.ts b/src/client/src/__tests__/lib/platform/connectors/visible-types.test.ts
+index 607e6bab..cebf66d7 100644
+--- a/src/client/src/__tests__/lib/platform/connectors/visible-types.test.ts
++++ b/src/client/src/__tests__/lib/platform/connectors/visible-types.test.ts
+@@ -8,6 +8,10 @@ describe("isVisibleConnectorType", () => {
+ 		expect(isVisibleConnectorType(type)).toBe(true);
+ 	});
+ 
++	it("returns true for the AutoDev read-only Memory connector", () => {
++		expect(isVisibleConnectorType("autodev")).toBe(true);
++	});
++
+ 	it("returns false for an unlisted string", () => {
+ 		expect(isVisibleConnectorType("datadog")).toBe(false);
+ 	});
+diff --git a/src/client/src/lib/platform/connectors/visible-types.ts b/src/client/src/lib/platform/connectors/visible-types.ts
+index b5a055f9..cdbf4bab 100644
+--- a/src/client/src/lib/platform/connectors/visible-types.ts
++++ b/src/client/src/lib/platform/connectors/visible-types.ts
+@@ -8,6 +8,7 @@ export const VISIBLE_CONNECTOR_TYPES = [
+ 	"claude",
+ 	"mem0",
+ 	"zep",
++	"autodev",
+ ] as const;
+ 
+ export function isVisibleConnectorType(type: unknown): boolean {

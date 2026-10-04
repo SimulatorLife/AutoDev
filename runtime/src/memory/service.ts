@@ -13,6 +13,7 @@ import {
   assertMemoryInjectionUseCohortFilter,
   assertMemorySessionOutcomeCohortFilter,
   assertMemoryUseReportInvariants,
+  assertTrajectoryProvenance,
   type EvidenceReference,
   EXPERIENCE_OUTCOMES,
   type ExperienceEnvelope,
@@ -603,7 +604,11 @@ export class MemoryService {
           format: normalized.format,
           uri: normalized.uri,
           digest: normalized.digest,
-          recordCount: normalized.recordCount
+          recordCount: normalized.recordCount,
+          sourceAdapter: normalized.source,
+          normalizerId: normalized.normalizerId,
+          normalizerVersion: normalized.normalizerVersion,
+          diagnosticCodes: normalized.diagnosticCodes
         }
       },
       actor,
@@ -2583,6 +2588,14 @@ export class MemoryService {
       throw new MemoryValidationError(
         "Experience requires a trajectory reference and format."
       );
+    try {
+      assertTrajectoryProvenance(experience.trajectory);
+    } catch (error) {
+      if (error instanceof TypeError) {
+        throw new MemoryValidationError(error.message);
+      }
+      throw error;
+    }
     if (
       !Number.isFinite(Date.parse(experience.startedAt)) ||
       (experience.completedAt !== undefined &&

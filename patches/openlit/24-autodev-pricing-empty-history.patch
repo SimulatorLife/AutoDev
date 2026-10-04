@@ -1,0 +1,35 @@
+diff --git a/src/client/src/__tests__/lib/platform/cron-log/cron-log.test.ts b/src/client/src/__tests__/lib/platform/cron-log/cron-log.test.ts
+index 89bb908c..b12020f5 100644
+--- a/src/client/src/__tests__/lib/platform/cron-log/cron-log.test.ts
++++ b/src/client/src/__tests__/lib/platform/cron-log/cron-log.test.ts
+@@ -130,6 +130,11 @@ describe('getLastRunCronLogByCronId', () => {
+     );
+   });
+ 
++  it('returns null when there is no successful run yet', async () => {
++    (dataCollector as jest.Mock).mockResolvedValue({ data: [], err: null });
++    await expect(getLastRunCronLogByCronId('cron-1', 'db-1')).resolves.toBeNull();
++  });
++
+   it('returns null when data is null', async () => {
+     (dataCollector as jest.Mock).mockResolvedValue({ data: null, err: null });
+     const result = await getLastRunCronLogByCronId('cron-1');
+diff --git a/src/client/src/lib/platform/cron-log/index.ts b/src/client/src/lib/platform/cron-log/index.ts
+index 2ab73228..0477bc15 100644
+--- a/src/client/src/lib/platform/cron-log/index.ts
++++ b/src/client/src/lib/platform/cron-log/index.ts
+@@ -134,11 +134,12 @@ export async function getLastRunCronLogByCronId(
+ 		databaseConfigId
+ 	);
+ 
+-	if (err || !data) {
++	if (err || !Array.isArray(data)) {
+ 		return null;
+ 	}
+ 
+-	return (data as CronLogData[])[0].startedAt;
++	const [lastRun] = data as CronLogData[];
++	return lastRun?.startedAt ?? null;
+ }
+ 
+ export async function getLastFailureCronLogBySpanId(spanId: string) {

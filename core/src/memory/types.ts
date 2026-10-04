@@ -788,8 +788,89 @@ export interface ExperienceEnvelope {
     readonly uri: string;
     readonly digest?: string;
     readonly recordCount?: number;
+    /**
+     * Vendor-neutral identifier of the adapter/source that normalized this
+     * transcript generation (for example `"codex"` or `"claude-code"`).
+     * Optional: historical rows captured before this field existed, and
+     * manually appended envelopes, never fabricate a value here.
+     */
+    readonly sourceAdapter?: string;
+    /**
+     * Vendor-neutral identifier of the normalizer package used, carried as
+     * an opaque string (Core has no dependency on, or knowledge of, the
+     * Runtime-selected normalizer implementation). Optional for the same
+     * reason as `sourceAdapter`.
+     */
+    readonly normalizerId?: string;
+    /** Exact normalizer package version string. Optional for the same reason as `sourceAdapter`. */
+    readonly normalizerVersion?: string;
+    /**
+     * Distinct, lexicographically sorted diagnostic codes emitted while
+     * normalizing this generation. Codes only: normalization diagnostic
+     * free-text detail, transcript records, and other transcript content
+     * must never be persisted here. Optional for the same reason as
+     * `sourceAdapter`.
+     */
+    readonly diagnosticCodes?: readonly string[];
   };
   readonly evidence: readonly EvidenceReference[];
+}
+
+/** Maximum distinct normalization diagnostics retained with a trajectory. */
+export const MAX_TRAJECTORY_DIAGNOSTIC_CODES = 64;
+
+/**
+ * Validates the optional native-capture provenance on a trajectory
+ * reference. Provenance is either wholly absent (manual/historical envelope)
+ * or complete (native capture). Diagnostic codes must be distinct and
+ * lexicographically sorted so persisted provenance is stable rather than
+ * depending on normalizer emission order.
+ */
+export function assertTrajectoryProvenance(
+  trajectory: ExperienceEnvelope["trajectory"]
+): void {
+  const fields = [
+    trajectory.sourceAdapter,
+    trajectory.normalizerId,
+    trajectory.normalizerVersion,
+    trajectory.diagnosticCodes
+  ];
+  const present = fields.filter((field) => field !== undefined).length;
+  if (present === 0) return;
+  if (present !== fields.length) {
+    throw new TypeError(
+      "Trajectory provenance fields must be populated together."
+    );
+  }
+
+  for (const [name, value] of [
+    ["sourceAdapter", trajectory.sourceAdapter],
+    ["normalizerId", trajectory.normalizerId],
+    ["normalizerVersion", trajectory.normalizerVersion]
+  ] as const) {
+    if (!value?.trim()) {
+      throw new TypeError(`Trajectory ${name} must not be empty.`);
+    }
+  }
+
+  const codes = trajectory.diagnosticCodes!;
+  if (codes.length > MAX_TRAJECTORY_DIAGNOSTIC_CODES) {
+    throw new TypeError(
+      `Trajectory diagnosticCodes exceeds the maximum of ${MAX_TRAJECTORY_DIAGNOSTIC_CODES}.`
+    );
+  }
+  if (codes.some((code) => !code.trim())) {
+    throw new TypeError("Trajectory diagnosticCodes must not be empty.");
+  }
+  const sorted = [...codes].sort();
+  const isSortedAndDistinct =
+    codes.length === new Set(codes).size &&
+    codes.every((code, index) => code === sorted[index]);
+  if (!isSortedAndDistinct) {
+    throw new TypeError(
+      "Trajectory diagnosticCodes must be distinct and lexicographically sorted."
+    );
+  }
 }
 
 /**

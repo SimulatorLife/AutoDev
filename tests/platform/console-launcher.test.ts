@@ -23,7 +23,10 @@ const plistPath = join(
   "config/launchagents/com.codex.autodev-console.plist"
 );
 const runScriptPath = join(repositoryRoot, "scripts/run-codex-console.sh");
-const ensureScriptPath = join(repositoryRoot, "scripts/ensure-codex-console.sh");
+const ensureScriptPath = join(
+  repositoryRoot,
+  "scripts/ensure-codex-console.sh"
+);
 
 function withTempDir<T>(callback: (directory: string) => T): T {
   const directory = mkdtempSync(join(tmpdir(), "autodev-console-test-"));
@@ -63,7 +66,7 @@ test("console LaunchAgent plist matches label, loopback service requirements and
   ];
   for (const [key, placeholder] of requiredPlaceholders) {
     const pattern = new RegExp(
-      `<key>${key}<\\/key>\\s*<string>${placeholder}<\\/string>`,
+      String.raw`<key>${key}<\/key>\s*<string>${placeholder}<\/string>`,
       "u"
     );
     assert.match(
@@ -88,7 +91,12 @@ test("console LaunchAgent plist matches label, loopback service requirements and
     /<key>EnvironmentVariables<\/key>\s*<dict>([\s\S]*?)<\/dict>/u
   );
   assert.ok(envMatch, "EnvironmentVariables block must exist in plist");
-  assert.doesNotMatch(envMatch[1], /TOKEN|SECRET|KEY|PASSWORD/u);
+  const environmentVariables = envMatch[1];
+  assert.ok(
+    environmentVariables,
+    "EnvironmentVariables block must not be empty"
+  );
+  assert.doesNotMatch(environmentVariables, /TOKEN|SECRET|KEY|PASSWORD/u);
   assert.doesNotMatch(content, /AUTODEV_CONTROL_API_TOKEN/u);
   assert.doesNotMatch(content, /AUTODEV_OPENLIT_USAGE_TOKEN/u);
   assert.doesNotMatch(content, /OPENLIT_DB_PASSWORD/u);
@@ -254,8 +262,10 @@ test("console launcher adheres to loopback binding contract, exact-key tokens, a
     );
 
     // Verify next binary invocation arguments: must bind to loopback 127.0.0.1 and port 3300
+    const args = lines.ARGS;
+    assert.ok(args, "fake Node process must report the launched arguments");
     assert.match(
-      lines.ARGS,
+      args,
       /next start --hostname 127\.0\.0\.1 --port 3300/,
       "Must exec next start with --hostname 127.0.0.1 --port 3300"
     );
@@ -310,11 +320,7 @@ test("console ensure script resolves node and dispatches to console-ensure modul
     writeFileSync(fakeModule, "// fake console-ensure module\n");
     writeFileSync(
       fakeNode,
-      [
-        "#!/usr/bin/env bash",
-        'echo "ENSURE_DISPATCH:$1"',
-        "exit 0"
-      ].join("\n")
+      ["#!/usr/bin/env bash", 'echo "ENSURE_DISPATCH:$1"', "exit 0"].join("\n")
     );
     chmodSync(fakeNode, 0o755);
 

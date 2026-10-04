@@ -51,6 +51,9 @@
     <string>__CODEX_HOME__</string>
     <key>HOME</key>
     <string>__HOME__</string>
+    <!-- Configuration read models resolve from the authoritative checkout, not CODEX_HOME. -->
+    <key>AUTODEV_REPO_ROOT</key>
+    <string>__AUTODEV_REPO_ROOT__</string>
   </dict>
 
   <!-- Separate stdout/stderr so structured router events (autodev-router-event-v1

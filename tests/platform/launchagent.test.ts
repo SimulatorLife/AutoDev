@@ -4,12 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { LAUNCH_LABELS } from "@simulatorlife/autodev-runtime/platform/install-materializer";
 import {
   launchAgentMatches,
   renderLaunchAgent
 } from "@simulatorlife/autodev-runtime/platform/launchagent";
-
-import { LAUNCH_LABELS } from "@simulatorlife/autodev-runtime/platform/install-materializer";
 
 function withTempDir<T>(callback: (directory: string) => T): T {
   const directory = mkdtempSync(join(tmpdir(), "autodev-launchagent-"));
@@ -75,4 +74,18 @@ test("every service LaunchAgent pins the installer's Node for its launcher", () 
       `${label}: Background puts the service in the throttled darwinbg tier`
     );
   }
+});
+
+test("model router LaunchAgent resolves canonical configuration from the checkout", () => {
+  const template = readFileSync(
+    new URL(
+      "../../config/launchagents/com.codex.model-router.plist",
+      import.meta.url
+    ),
+    "utf8"
+  );
+  assert.match(
+    template,
+    /<key>AUTODEV_REPO_ROOT<\/key>\s*<string>__AUTODEV_REPO_ROOT__<\/string>/u
+  );
 });

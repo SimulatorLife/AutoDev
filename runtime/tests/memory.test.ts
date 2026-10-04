@@ -845,6 +845,19 @@ test("experience validation references are bounded and stripped of locator crede
     runId: "run-old"
   });
 
+  await assert.rejects(
+    service.appendExperience(
+      {
+        ...envelope,
+        id: "experience-partial-trajectory-provenance",
+        trajectory: { ...envelope.trajectory, sourceAdapter: "codex" }
+      },
+      worker,
+      { ...context, taskId: "task-old", runId: "run-old" }
+    ),
+    MemoryValidationError
+  );
+
   const stored = repository.experiences.get(envelope.id);
   assert.equal(
     stored?.validation?.evidence[0]?.uri,
@@ -903,7 +916,7 @@ test("captureExperience normalizes a native transcript and persists only its sou
     .map((item) => JSON.stringify(item))
     .join("\n");
 
-  await service.captureExperience(
+  const normalized = await service.captureExperience(
     {
       source: "codex",
       transcript,
@@ -917,6 +930,16 @@ test("captureExperience normalizes a native transcript and persists only its sou
   const stored = repository.experiences.get("experience-1");
   assert.equal(stored?.trajectory.format, "letta-trajectory-v1");
   assert.equal(stored?.trajectory.recordCount, 3);
+  assert.equal(stored?.trajectory.sourceAdapter, "codex");
+  assert.equal(stored?.trajectory.normalizerId, "@letta-ai/trajectory");
+  assert.equal(
+    stored?.trajectory.normalizerVersion,
+    normalized.normalizerVersion
+  );
+  assert.deepEqual(
+    stored?.trajectory.diagnosticCodes,
+    normalized.diagnosticCodes
+  );
   assert.equal(stored?.trajectory.uri, "https://memory.example/run");
   assert.doesNotMatch(
     JSON.stringify(stored),
@@ -966,6 +989,25 @@ test("captureExperience does not persist library-synthesized timestamps as sourc
   assert.equal(normalized.timestampsInferred, true);
   assert.equal(stored?.startedAt, "2026-09-30T10:00:00.000Z");
   assert.equal(stored?.completedAt, undefined);
+  assert.equal(stored?.trajectory.sourceAdapter, "claude-code");
+  assert.equal(stored?.trajectory.normalizerId, "@letta-ai/trajectory");
+  assert.equal(
+    stored?.trajectory.normalizerVersion,
+    normalized.normalizerVersion
+  );
+  assert.deepEqual(
+    stored?.trajectory.diagnosticCodes,
+    normalized.diagnosticCodes
+  );
+  assert.ok(
+    stored?.trajectory.diagnosticCodes?.some((code) =>
+      code.startsWith("timestamps_")
+    )
+  );
+  assert.doesNotMatch(
+    JSON.stringify(stored),
+    /private prompt|private response/u
+  );
 });
 
 test("durable claims are redacted proposals with append-only provenance", async () => {

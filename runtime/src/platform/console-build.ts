@@ -44,5 +44,9 @@ export function buildConsole(
       `Console dependencies are missing at ${nextCli}; run pnpm install --frozen-lockfile first.`
     );
   }
-  deps.run(options.nodeBin ?? process.execPath, [nextCli, "build"], consoleRoot);
+  deps.run(
+    options.nodeBin ?? process.execPath,
+    [nextCli, "build"],
+    consoleRoot
+  );
 }

@@ -22,7 +22,7 @@ import {
   proxyOrchestratorResponse,
   writeResponseStream
 } from "@simulatorlife/autodev-runtime/router/proxy";
-import type { ProviderRoute } from "@simulatorlife/autodev-runtime/router/routing";
+import type { Candidate } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   endAttemptSpan,
   endLogicalRequestSpan,
@@ -78,10 +78,11 @@ function responseRecorder(): any {
   };
 }
 
-const route = (provider: string, envKey: string): ProviderRoute => ({
+const route = (provider: string, envKey: string): Candidate => ({
   provider,
   pattern: /.*/,
   baseUrl: `http://${provider}.test/v1`,
+  model: provider === "claude" ? "sonnet" : "MiniMax-M3",
   envKey
 });
 

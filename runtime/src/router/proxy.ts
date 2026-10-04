@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type { ServerResponse } from "node:http";
-import path from "node:path";
 
 import type { Span } from "@opentelemetry/api";
 import { isLoopbackAddress } from "@simulatorlife/autodev-runtime/router/auth";
@@ -45,7 +43,6 @@ import {
   terminalIncompleteEvents
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
 import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
-import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
   AUTODEV_WORKSPACE_KEY_HEADER,
   safeAutoDevWorkspaceKey
@@ -67,11 +64,12 @@ import {
   upstreamPayload
 } from "./responses.ts";
 import {
-  bridgeTelemetryHeaders as subagentBridgeTelemetryHeaders,
+  AGENT_EVENTS_PATH,
+  bridgeTelemetryHeaders,
   closeBridgeSubagentsForRequest,
   FORWARDED_REQUEST_HEADERS,
   hasActiveBridgeSubagentsForSession,
-  mcpContractForRole as subagentMcpContractForRole,
+  mcpContractForRole,
   noteBridgeRequest,
   noteBridgeSession,
   noteOrchestratorSession,
@@ -141,10 +139,10 @@ export function extractSelectedSkillContext(payload: unknown): string | null {
 
 const AUTH_FILE =
   process.env.CODEX_ROUTER_AUTH_FILE ?? `${CODEX_HOME}/auth.json`;
-const HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
-const PORT = Number.parseInt(process.env.CODEX_MODEL_ROUTER_PORT ?? "4100");
-const AGENT_EVENTS_PATH = "/v1/agent-events";
-const AGENT_EVENTS_URL = `http://${HOST}:${PORT}${AGENT_EVENTS_PATH}`;
+const ROUTER_LISTENER_HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
+const ROUTER_LISTENER_PORT = Number.parseInt(
+  process.env.CODEX_MODEL_ROUTER_PORT ?? "4100"
+);
 
 export const ROUTER_INSTANCE_ID = randomUUID();
 
@@ -156,26 +154,6 @@ export const CLIENT_DISCONNECT_CODES = Object.freeze(
     "ERR_STREAM_WRITE_AFTER_END"
   ])
 );
-
-const defaultContractPath = path.join(
-  resolveRuntimeSourceRoot(import.meta.dirname),
-  "config",
-  "execution-contract.json"
-);
-const EXECUTION_CONTRACT_FILE =
-  process.env.CODEX_EXECUTION_CONTRACT_FILE ??
-  (existsSync(defaultContractPath)
-    ? defaultContractPath
-    : `${CODEX_HOME}/config/execution-contract.json`);
-
-let loadedExecutionContract: Record<string, unknown> = {};
-try {
-  loadedExecutionContract = JSON.parse(
-    readFileSync(EXECUTION_CONTRACT_FILE, "utf8")
-  );
-} catch {
-  loadedExecutionContract = {};
-}
 
 const NOOP = () => {};
 const FALLBACKABLE_BODY_REGEX =
@@ -425,24 +403,6 @@ export function carriesPendingToolResult(payload: unknown): boolean {
   return awaitedToolResults(input).outputs.size > 0;
 }
 
-export function mcpContractForRole(
-  agentRole: string | null,
-  contract = loadedExecutionContract
-): string[] {
-  return subagentMcpContractForRole(agentRole, contract);
-}
-
-export function bridgeTelemetryHeaders(
-  route: ProviderRoute,
-  requestId: string | null,
-  options: { executionContract?: unknown; agentEventsUrl?: string } = {}
-): Record<string, string> {
-  return subagentBridgeTelemetryHeaders(route, requestId, {
-    executionContract: options.executionContract ?? loadedExecutionContract,
-    agentEventsUrl: options.agentEventsUrl ?? AGENT_EVENTS_URL
-  });
-}
-
 export function recordNativeMcpExposure({
   route,
   agentRole,
@@ -488,7 +448,9 @@ export function downstreamHeaders(
   const headers: Record<string, string> = {
     "content-type": "application/json",
     accept: "text/event-stream",
-    ...bridgeTelemetryHeaders(route, requestId)
+    ...bridgeTelemetryHeaders(route, requestId, {
+      agentEventsUrl: `http://${ROUTER_LISTENER_HOST}:${ROUTER_LISTENER_PORT}${AGENT_EVENTS_PATH}`
+    })
   };
   if (route.envKey) {
     const key = process.env[route.envKey];
@@ -2056,7 +2018,7 @@ function endConcreteRequest(
     hasActiveSubagents?: boolean;
   } = {}
 ): void {
-  getDefaultUsageTracker().activityTracker.endRequest(activitySubject, {
+  getDefaultUsageTracker().activityTracker?.endRequest(activitySubject, {
     requestId,
     outcome,
     ...details
@@ -2184,7 +2146,7 @@ export async function proxyConcreteResponse(
     model: modelName,
     workspace
   });
-  getDefaultUsageTracker().activityTracker.beginRequest(activitySubject, {
+  getDefaultUsageTracker().activityTracker?.beginRequest(activitySubject, {
     requestId,
     provider: route.provider,
     model: modelName,
@@ -2391,7 +2353,7 @@ async function handleConcreteSuccess(
     ctx.modelName,
     ctx.requestId,
     ctx.modelName,
-    () => getDefaultUsageTracker().activityTracker.touch(ctx.activitySubject),
+    () => getDefaultUsageTracker().activityTracker?.touch(ctx.activitySubject),
     ctx.clientSignal
   );
   if (responseResult.clientDisconnected) {
@@ -2614,7 +2576,7 @@ function beginCandidateRequest(
     ((ctx.origin ?? usageOrigin(ctx.role, route.provider)) === "orchestrator"
       ? "orchestrator"
       : null);
-  getDefaultUsageTracker().activityTracker.beginRequest(ctx.activitySubject, {
+  getDefaultUsageTracker().activityTracker?.beginRequest(ctx.activitySubject, {
     requestId: ctx.requestId,
     provider: route.provider,
     model: route.model,
@@ -3243,7 +3205,7 @@ function finalizeFallbackFailure(
       reason: deadlineReached ? "selection_deadline" : "provider_exhausted"
     });
   closeBridgeSubagentsForRequest(ctx.requestId, "failure");
-  getDefaultUsageTracker().activityTracker.endRequest(ctx.activitySubject, {
+  getDefaultUsageTracker().activityTracker?.endRequest(ctx.activitySubject, {
     requestId: ctx.requestId,
     outcome: "failure",
     hasToolCalls: false
@@ -3437,9 +3399,9 @@ async function handleCandidateSuccess(
       ctx.requestId,
       route.model,
       () => {
-        getDefaultUsageTracker().activityTracker.touch(ctx.activitySubject);
+        getDefaultUsageTracker().activityTracker?.touch(ctx.activitySubject);
         if (ctx.sessionKey) {
-          getDefaultUsageTracker().activityTracker.touch(ctx.sessionKey);
+          getDefaultUsageTracker().activityTracker?.touch(ctx.sessionKey);
           getDefaultConcurrencyManager().touchOpenSubagentSlots(ctx.sessionKey);
         }
       },
@@ -3473,12 +3435,15 @@ async function handleCandidateSuccess(
         toolCalls: responseResult.toolCalls,
         selection
       });
-      getDefaultUsageTracker().activityTracker.endRequest(ctx.activitySubject, {
-        requestId: ctx.requestId,
-        outcome: "failure",
-        hasToolCalls: responseResult.toolCalls > 0,
-        inputRequired: Boolean(responseResult.inputRequired)
-      });
+      getDefaultUsageTracker().activityTracker?.endRequest(
+        ctx.activitySubject,
+        {
+          requestId: ctx.requestId,
+          outcome: "failure",
+          hasToolCalls: responseResult.toolCalls > 0,
+          inputRequired: Boolean(responseResult.inputRequired)
+        }
+      );
       return "terminal";
     }
     COOLDOWNS.clear(route.provider);
@@ -3497,7 +3462,7 @@ async function handleCandidateSuccess(
       toolCalls: responseResult.toolCalls,
       selection
     });
-    getDefaultUsageTracker().activityTracker.endRequest(ctx.activitySubject, {
+    getDefaultUsageTracker().activityTracker?.endRequest(ctx.activitySubject, {
       requestId: ctx.requestId,
       outcome: "success",
       hasToolCalls: responseResult.toolCalls > 0,
@@ -3554,7 +3519,7 @@ function handleCandidateUpstreamFailure(
       "x-autodev-router-instance-id": ROUTER_INSTANCE_ID
     });
     ctx.response.end(result.body);
-    getDefaultUsageTracker().activityTracker.endRequest(ctx.activitySubject, {
+    getDefaultUsageTracker().activityTracker?.endRequest(ctx.activitySubject, {
       requestId: ctx.requestId,
       outcome: "failure",
       hasToolCalls: false
@@ -3632,7 +3597,7 @@ function handleCandidateTransportError(
       }
       ctx.response.end();
     }
-    getDefaultUsageTracker().activityTracker.endRequest(ctx.activitySubject, {
+    getDefaultUsageTracker().activityTracker?.endRequest(ctx.activitySubject, {
       requestId: ctx.requestId,
       outcome: "failure",
       hasToolCalls: false

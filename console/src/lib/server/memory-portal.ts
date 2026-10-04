@@ -49,4 +49,3 @@ export function readMemoryPortalConfig(
 
   return { href: `${parsed.origin}/memory` };
 }
-

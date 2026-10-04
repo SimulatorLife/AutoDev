@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createAgentActivityTracker } from "@simulatorlife/autodev-runtime/agents";
+import type { RecordRouterEventInput } from "@simulatorlife/autodev-runtime/router/events";
 import {
   bridgeTelemetryHeaders,
   mcpContractForRole,
@@ -11,9 +13,10 @@ import {
   SubagentRegistry,
   subagentSpawnToolsFor
 } from "@simulatorlife/autodev-runtime/router/subagents";
+import type { ExecutionContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 
 test("SubagentRegistry records spawns and maintains ring buffer and aggregations", () => {
-  const recordedRouterEvents: any[] = [];
+  const recordedRouterEvents: RecordRouterEventInput[] = [];
   const registry = new SubagentRegistry({
     maxRecentSpawns: 3,
     onRecordRouterEvent: (e) => recordedRouterEvents.push(e)
@@ -140,11 +143,11 @@ test("SubagentRegistry tracks bridge request and session contexts", () => {
   assert.equal(registry.recallBridgeSessionRequestId("sess-100"), "req-100");
   const sessionCtx = registry.lookupBridgeSessionContext("sess-100");
   assert.equal(sessionCtx?.provider, "claude");
-  assert.equal((sessionCtx as any)?.requestId, undefined); // requestId stripped
+  assert.equal(sessionCtx?.requestId, undefined); // requestId stripped
 });
 
 test("SubagentRegistry records and restores spawn failures", () => {
-  const recordedRouterEvents: any[] = [];
+  const recordedRouterEvents: RecordRouterEventInput[] = [];
   const registry = new SubagentRegistry({
     onRecordRouterEvent: (e) => recordedRouterEvents.push(e)
   });
@@ -175,7 +178,7 @@ test("SubagentRegistry records and restores spawn failures", () => {
         role: "worker",
         requestedModel: "m",
         reason: "provider_exhausted",
-        timestamp: ""
+        timestamp: "2026-10-03T00:02:00.000Z"
       }
     ]
   });
@@ -200,18 +203,44 @@ test("reportedChildren parses structured children and pads to count", () => {
 });
 
 test("capabilities and telemetry headers resolve properly", () => {
-  const mockExecutionContract = {
+  const mockExecutionContract: ExecutionContract = {
     providers: {
-      claude: { spawnTools: ["Agent"], delegation: "codex-shim" },
+      claude: {
+        spawnTools: ["Agent"],
+        delegation: "codex-shim",
+        permissionMode: "native"
+      },
       antigravity: {
         spawnTools: ["invoke_subagent"],
-        delegation: "codex-shim"
+        delegation: "codex-shim",
+        permissionMode: "configured"
       },
-      copilot: { spawnTools: [], delegation: "codex-shim" },
-      codex: { spawnTools: [], delegation: "native" },
-      minimax: { spawnTools: [], delegation: "none" }
+      copilot: {
+        spawnTools: [],
+        delegation: "codex-shim",
+        permissionMode: "configured"
+      },
+      codex: {
+        spawnTools: [],
+        delegation: "native",
+        permissionMode: "native"
+      },
+      minimax: {
+        spawnTools: [],
+        delegation: "none",
+        permissionMode: "upstream"
+      }
     },
     roles: {
+      default: {
+        mcp: ["default-server"],
+        skills: ["default-skill"],
+        webResearch: {
+          search: true,
+          fetch: false,
+          optionalMcp: ["default-api"]
+        }
+      },
       orchestrator: { mcp: ["server-1"], skills: ["skill-1"] },
       explorer: {
         mcp: ["server-2"],
@@ -243,8 +272,13 @@ test("capabilities and telemetry headers resolve properly", () => {
   );
   assert.equal(
     providerCapabilities("minimax", {
+      roles: {},
       providers: {
-        minimax: { spawnTools: ["invoke_subagent"], delegation: "none" }
+        minimax: {
+          spawnTools: ["invoke_subagent"],
+          delegation: "none",
+          permissionMode: "upstream"
+        }
       }
     }).subagentSpawn,
     false
@@ -264,6 +298,38 @@ test("capabilities and telemetry headers resolve properly", () => {
   assert.ok(roleReqs.skills.has("skill-2"));
   assert.equal(roleReqs.webResearch.search, true);
   assert.equal(roleReqs.webResearch.fetch, false);
+
+  // Missing roles use the explicitly configured default contract; unknown
+  // non-empty role names stay unconfigured instead of inheriting capabilities.
+  for (const defaultRole of [null, undefined, "", "   "]) {
+    const defaultRequirements = roleCapabilityRequirements(
+      defaultRole,
+      mockExecutionContract
+    );
+    assert.deepEqual([...defaultRequirements.mcp], ["default-server"]);
+    assert.deepEqual([...defaultRequirements.skills], ["default-skill"]);
+    assert.equal(defaultRequirements.webResearch.search, true);
+    assert.equal(defaultRequirements.webResearch.fetch, false);
+    assert.deepEqual(
+      [...defaultRequirements.webResearch.optionalMcp],
+      ["default-api"]
+    );
+    assert.deepEqual(mcpContractForRole(defaultRole, mockExecutionContract), [
+      "default-server"
+    ]);
+  }
+
+  const unknownRequirements = roleCapabilityRequirements(
+    "nonexistent",
+    mockExecutionContract
+  );
+  assert.equal(unknownRequirements.mcp.size, 0);
+  assert.equal(unknownRequirements.skills.size, 0);
+  assert.equal(unknownRequirements.webResearch.search, false);
+  assert.deepEqual(
+    mcpContractForRole("nonexistent", mockExecutionContract),
+    []
+  );
 
   // bridgeTelemetryHeaders for codex returns empty
   assert.deepEqual(
@@ -338,16 +404,14 @@ test("convenience functions delegate to default SubagentRegistry", async () => {
 
 test("synthetic bridge parent activity settles with the parent outcome", () => {
   const finishes: Array<{ subject: string; outcome: string }> = [];
-  const agentActivity = {
-    beginRequest: () => undefined,
-    applyLifecycleEvent: () => true,
-    finish: (subject: string, options: { outcome?: string }) => {
-      finishes.push({ subject, outcome: options.outcome ?? "unknown" });
-      return null;
-    }
+  const agentActivity = createAgentActivityTracker();
+  const originalFinish = agentActivity.finish;
+  agentActivity.finish = (subject, options) => {
+    finishes.push({ subject, outcome: options?.outcome ?? "unknown" });
+    return originalFinish(subject, options);
   };
   const registry = new SubagentRegistry({
-    agentActivity: agentActivity as any
+    agentActivity
   });
   const context = {
     activitySubject: "parent-failure-session",
@@ -382,4 +446,92 @@ test("synthetic bridge parent activity settles with the parent outcome", () => {
     { subject: "bridge:parent-failure\0child-1", outcome: "success" },
     { subject: "bridge-parent:parent-failure", outcome: "failure" }
   ]);
+});
+
+test("SubagentRegistry restores persisted subagent telemetry preserving unknown/missing semantics", () => {
+  const registry = new SubagentRegistry();
+  registry.restoreSubagentTelemetry({
+    total: 3,
+    byMechanism: { bridge_native: 2, router_alias: 1 },
+    byProvider: { claude: 2 },
+    byRole: { worker: 2 },
+    byStatus: { started: 1, failure: 1 },
+    recent: [
+      {
+        timestamp: "2026-10-03T00:00:00.000Z",
+        mechanism: "bridge_native",
+        provider: "  ",
+        role: "worker",
+        tool: null,
+        requestId: "req-missing-status",
+        workspace: null,
+        count: 1,
+        settled: { success: 0, failure: 0 }
+      },
+      {
+        timestamp: "2026-10-03T00:01:00.000Z",
+        mechanism: "bridge_native",
+        provider: "claude",
+        role: "worker",
+        status: "started",
+        tool: "Agent",
+        requestId: "req-with-provider",
+        workspace: null,
+        count: 1,
+        settled: { success: 1, failure: 0 }
+      },
+      {
+        timestamp: "2026-10-03T00:02:00.000Z",
+        mechanism: "bridge_native",
+        provider: "claude",
+        role: "worker",
+        status: "started",
+        requestId: "req-invalid-settled",
+        count: 1,
+        settled: { success: "-2", failure: "Infinity" }
+      },
+      {
+        mechanism: "bridge_native",
+        requestId: "req-missing-timestamp",
+        count: 1
+      }
+    ]
+  });
+
+  const status = registry.subagentStatus();
+  assert.equal(status.total, 3);
+  assert.equal(status.recent.length, 3);
+
+  const restoredMissing = status.recent.find(
+    (r) => r.requestId === "req-missing-status"
+  );
+  assert.ok(restoredMissing);
+  assert.equal(restoredMissing.provider, null);
+  // Missing status must remain unknown, NOT synthesized as "success"
+  assert.equal(restoredMissing.status, "unknown");
+
+  const invalidSettled = status.recent.find(
+    (record) => record.requestId === "req-invalid-settled"
+  );
+  assert.ok(invalidSettled);
+  assert.deepEqual(invalidSettled.settled, { success: 0, failure: 0 });
+  assert.equal(
+    status.recent.some(
+      (record) => record.requestId === "req-missing-timestamp"
+    ),
+    false
+  );
+
+  registry.restoreSpawnFailureTelemetry({
+    total: 1,
+    recent: [
+      { timestamp: "2026-10-03T00:02:00.000Z", role: "worker" },
+      { role: "worker", requestedModel: "unknown-without-timestamp" }
+    ]
+  });
+  const restoredFailure = registry.spawnFailureStatus().recent[0];
+  assert.ok(restoredFailure);
+  assert.equal(restoredFailure.requestedModel, null);
+  assert.equal(restoredFailure.reason, "unknown");
+  assert.equal(registry.spawnFailureStatus().recent.length, 1);
 });

@@ -129,22 +129,28 @@ function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+interface ProviderModelsEntry {
+  models: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+function isProviderModelsEntry(value: unknown): value is ProviderModelsEntry {
+  return isRecord(value) && isRecord(value.models);
+}
+
 function rawConfig(value: unknown): Record<string, unknown> {
   if (!isRecord(value)) throw new Error("Routing config must be an object.");
   return value;
 }
 
 function validateTierGroups(
-  config: Record<string, unknown>,
+  providerGroups: Record<string, unknown>,
+  providers: Record<string, unknown>,
   tier: string
 ): void {
-  const providerGroups = config.providerGroups;
-  if (!isRecord(providerGroups))
-    throw new Error("Routing config requires providerGroups.");
   const groups = providerGroups[tier];
   if (!Array.isArray(groups) || groups.length === 0)
     throw new Error(`Routing config tier ${tier} must define provider groups.`);
-  const providers = isRecord(config.providers) ? config.providers : {};
   for (const group of groups) {
     if (
       !Array.isArray(group) ||
@@ -164,12 +170,15 @@ function validateTierGroups(
   }
 }
 
-function validateRoutesBlock(config: Record<string, unknown>): void {
-  if (config.routes === undefined) return;
-  if (!isRecord(config.routes))
+function validateRoutesBlock(
+  routes: unknown,
+  providers: Record<string, unknown>
+): void {
+  if (routes === undefined) return;
+  if (!isRecord(routes))
     throw new Error("Routing config routes must be an object.");
-  for (const provider of Object.keys(config.providers)) {
-    const route = config.routes[provider];
+  for (const provider of Object.keys(providers)) {
+    const route = routes[provider];
     if (
       !isRecord(route) ||
       !nonEmptyString(route.pattern) ||
@@ -199,18 +208,16 @@ function validateRoutesBlock(config: Record<string, unknown>): void {
  * mistyped id otherwise loads fine and only fails at the provider, turn by
  * turn, looking like an outage.
  */
-function validateProviderModelRoutes(config: Record<string, unknown>): void {
-  const routes: [string, RegExp][] = isRecord(config.routes)
-    ? Object.entries(config.routes).map(([provider, route]) => [
+function validateProviderModelRoutes(
+  routesInput: unknown,
+  providers: Record<string, ProviderModelsEntry>
+): void {
+  const routes: [string, RegExp][] = isRecord(routesInput)
+    ? Object.entries(routesInput).map(([provider, route]) => [
         provider,
         new RegExp(String((route as Record<string, unknown>).pattern))
       ])
     : DEFAULT_ROUTES.map((route) => [route.provider, route.pattern]);
-  // validateProvidersBlock has already checked every provider has a models object.
-  const providers = config.providers as Record<
-    string,
-    { models: Record<string, unknown> }
-  >;
   for (const [provider, { models }] of Object.entries(providers)) {
     // A provider without any route is never selected; route checks own that.
     if (!routes.some(([routeProvider]) => routeProvider === provider)) continue;
@@ -230,9 +237,12 @@ function validateProviderModelRoutes(config: Record<string, unknown>): void {
   }
 }
 
-function validateProvidersBlock(config: Record<string, unknown>): void {
-  for (const [provider, info] of Object.entries(config.providers)) {
-    if (!isRecord(info) || !isRecord(info.models))
+function validateProvidersBlock(
+  providers: Record<string, unknown>
+): Record<string, ProviderModelsEntry> {
+  const validated: Record<string, ProviderModelsEntry> = {};
+  for (const [provider, info] of Object.entries(providers)) {
+    if (!isProviderModelsEntry(info))
       throw new Error(
         `Routing config provider ${provider} must define a models object.`
       );
@@ -240,20 +250,29 @@ function validateProvidersBlock(config: Record<string, unknown>): void {
       throw new Error(
         `Routing config provider ${provider} must define a default model.`
       );
+    validated[provider] = info;
   }
+  return validated;
 }
 
-function validateRolesBlock(config: Record<string, unknown>): void {
+function validateRolesBlock(
+  providerGroups: Record<string, unknown>,
+  providers: Record<string, unknown>,
+  roles: Record<string, unknown>
+): void {
   for (const role of ROLE_NAMES) {
-    const roleConfig = config.roles[role];
+    const roleConfig = roles[role];
     if (!isRecord(roleConfig) || !nonEmptyString(roleConfig.tier))
       throw new Error(`Routing config role ${role} must define a tier.`);
-    validateTierGroups(config, roleConfig.tier);
+    validateTierGroups(providerGroups, providers, roleConfig.tier);
   }
 }
 
-function validateOrchestratorBlock(config: Record<string, unknown>): void {
-  const orchestrator = config.orchestrator;
+function validateOrchestratorBlock(
+  providerGroups: Record<string, unknown>,
+  providers: Record<string, unknown>,
+  orchestrator: Record<string, unknown>
+): void {
   if (
     !nonEmptyString(orchestrator.alias) ||
     !ORCHESTRATOR_ALIAS_PATTERN.test(orchestrator.alias.trim())
@@ -264,7 +283,7 @@ function validateOrchestratorBlock(config: Record<string, unknown>): void {
   }
   if (!nonEmptyString(orchestrator.tier))
     throw new Error("Routing config orchestrator must define a tier.");
-  validateTierGroups(config, orchestrator.tier);
+  validateTierGroups(providerGroups, providers, orchestrator.tier);
   if (orchestrator.reasoningEffort === undefined) return;
   if (!isRecord(orchestrator.reasoningEffort))
     throw new Error(
@@ -273,7 +292,7 @@ function validateOrchestratorBlock(config: Record<string, unknown>): void {
   for (const [provider, effort] of Object.entries(
     orchestrator.reasoningEffort
   )) {
-    if (!Object.hasOwn(config.providers, provider))
+    if (!Object.hasOwn(providers, provider))
       throw new Error(
         `Routing config orchestrator.reasoningEffort references unknown provider ${provider}.`
       );
@@ -290,15 +309,19 @@ export function validateRoutingConfig(value: unknown): RoutingConfig {
     throw new Error("Routing config requires providerGroups.");
   if (!isRecord(config.providers))
     throw new Error("Routing config requires providers.");
-  validateRoutesBlock(config);
+  validateRoutesBlock(config.routes, config.providers);
   if (!isRecord(config.roles))
     throw new Error("Routing config requires roles.");
   if (!isRecord(config.orchestrator))
     throw new Error("Routing config requires an orchestrator block.");
-  validateProvidersBlock(config);
-  validateProviderModelRoutes(config);
-  validateRolesBlock(config);
-  validateOrchestratorBlock(config);
+  const providers = validateProvidersBlock(config.providers);
+  validateProviderModelRoutes(config.routes, providers);
+  validateRolesBlock(config.providerGroups, config.providers, config.roles);
+  validateOrchestratorBlock(
+    config.providerGroups,
+    config.providers,
+    config.orchestrator
+  );
   return config as unknown as RoutingConfig;
 }
 

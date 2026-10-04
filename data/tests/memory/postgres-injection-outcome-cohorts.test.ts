@@ -640,9 +640,8 @@ test("aggregateInjectionOutcomeCohorts marks a one-injection session's cell sess
   const repository = repo(pool);
   await seedCardinalityFixtures(repository);
 
-  const page = await repository.aggregateInjectionOutcomeCohorts(
-    cohortFilterBase
-  );
+  const page =
+    await repository.aggregateInjectionOutcomeCohorts(cohortFilterBase);
   const singleCell = page.cells.find(
     (cell) => cell.sessionCardinality === "single"
   );

@@ -10,7 +10,7 @@ import { FakeMemoryPool } from "./fixtures/fake-memory-pool.ts";
 test("memory migrations define append-only provenance and mandatory PostgreSQL/pgvector storage", () => {
   assert.deepEqual(
     MEMORY_MIGRATIONS.map((migration) => migration.version),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
   );
   const initial = MEMORY_MIGRATIONS[0];
   const upgrade = MEMORY_MIGRATIONS[1];
@@ -23,8 +23,10 @@ test("memory migrations define append-only provenance and mandatory PostgreSQL/p
   const injectionSessionIndex = MEMORY_MIGRATIONS[8];
   const sessionOutcomeReports = MEMORY_MIGRATIONS[9];
   const injectionUseReports = MEMORY_MIGRATIONS[10];
+  const trajectoryProvenance = MEMORY_MIGRATIONS[11];
   assert.ok(sessionOutcomeReports);
   assert.ok(injectionUseReports);
+  assert.ok(trajectoryProvenance);
   assert.ok(initial);
   assert.ok(upgrade);
   assert.ok(skillPromotion);
@@ -221,6 +223,30 @@ test("memory migrations define append-only provenance and mandatory PostgreSQL/p
     injectionUseReports.sql,
     /BEFORE UPDATE OR DELETE ON memory_injection_use_reports/
   );
+  assert.match(
+    trajectoryProvenance.sql,
+    /ADD COLUMN trajectory_source_adapter text/
+  );
+  assert.match(
+    trajectoryProvenance.sql,
+    /ADD COLUMN trajectory_normalizer_id text/
+  );
+  assert.match(
+    trajectoryProvenance.sql,
+    /ADD COLUMN trajectory_normalizer_version text/
+  );
+  assert.match(
+    trajectoryProvenance.sql,
+    /ADD COLUMN trajectory_diagnostic_codes jsonb/
+  );
+  assert.match(
+    trajectoryProvenance.sql,
+    /memory_experiences_trajectory_provenance_check/
+  );
+  assert.match(
+    trajectoryProvenance.sql,
+    /jsonb_typeof\(trajectory_diagnostic_codes\) = 'array'/
+  );
 });
 
 test("applyMemoryMigrations records applied versions and runs each migration in its own transaction", async () => {
@@ -229,13 +255,13 @@ test("applyMemoryMigrations records applied versions and runs each migration in 
 
   assert.deepEqual(
     pool.tables.memory_schema_migrations.map((row) => row.version),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
   );
-  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 12);
-  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 12);
+  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 13);
+  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 13);
 });
 
-test("applyMemoryMigrations adds migration 9 transactionally to a database already at migration 8", async () => {
+test("applyMemoryMigrations applies migrations 9-12 transactionally to a database already at migration 8", async () => {
   const pool = new FakeMemoryPool();
   pool.tables.memory_schema_migrations.push(
     ...Array.from({ length: 8 }, (_, index) => ({
@@ -248,10 +274,10 @@ test("applyMemoryMigrations adds migration 9 transactionally to a database alrea
 
   assert.deepEqual(
     pool.tables.memory_schema_migrations.map((row) => row.version),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
   );
-  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 4);
-  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 4);
+  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 5);
+  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 5);
   assert.equal(pool.executed.filter((sql) => sql === "ROLLBACK").length, 0);
   assert.ok(
     pool.executed.some((sql) =>
@@ -270,7 +296,7 @@ test("applyMemoryMigrations adds migration 9 transactionally to a database alrea
   );
 });
 
-test("applyMemoryMigrations adds migration 10 transactionally to a database already at migration 9", async () => {
+test("applyMemoryMigrations applies migrations 10-12 transactionally to a database already at migration 9", async () => {
   const pool = new FakeMemoryPool();
   pool.tables.memory_schema_migrations.push(
     ...Array.from({ length: 9 }, (_, index) => ({
@@ -283,10 +309,10 @@ test("applyMemoryMigrations adds migration 10 transactionally to a database alre
 
   assert.deepEqual(
     pool.tables.memory_schema_migrations.map((row) => row.version),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
   );
-  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 3);
-  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 3);
+  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 4);
+  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 4);
   assert.equal(pool.executed.filter((sql) => sql === "ROLLBACK").length, 0);
   assert.ok(
     pool.executed.some((sql) =>
@@ -305,7 +331,7 @@ test("applyMemoryMigrations adds migration 10 transactionally to a database alre
   );
 });
 
-test("applyMemoryMigrations adds migration 11 transactionally to a database already at migration 10", async () => {
+test("applyMemoryMigrations applies migrations 11-12 transactionally to a database already at migration 10", async () => {
   const pool = new FakeMemoryPool();
   pool.tables.memory_schema_migrations.push(
     ...Array.from({ length: 10 }, (_, index) => ({
@@ -318,10 +344,10 @@ test("applyMemoryMigrations adds migration 11 transactionally to a database alre
 
   assert.deepEqual(
     pool.tables.memory_schema_migrations.map((row) => row.version),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
   );
-  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 2);
-  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 2);
+  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 3);
+  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 3);
   assert.equal(pool.executed.filter((sql) => sql === "ROLLBACK").length, 0);
   assert.ok(
     pool.executed.some((sql) =>
@@ -333,6 +359,40 @@ test("applyMemoryMigrations adds migration 11 transactionally to a database alre
       sql.includes("CREATE TABLE memory_injection_events")
     )
   );
+  assert.ok(
+    pool.executed.some((sql) =>
+      sql.includes("ADD COLUMN trajectory_source_adapter text")
+    )
+  );
+});
+
+test("applyMemoryMigrations adds only trajectory provenance to a database already at migration 11", async () => {
+  const pool = new FakeMemoryPool();
+  pool.tables.memory_schema_migrations.push(
+    ...Array.from({ length: 11 }, (_, index) => ({
+      version: index + 1,
+      description: "already applied"
+    }))
+  );
+
+  await applyMemoryMigrations(pool);
+
+  assert.deepEqual(
+    pool.tables.memory_schema_migrations.map((row) => row.version),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+  );
+  assert.equal(pool.executed.filter((sql) => sql === "BEGIN").length, 2);
+  assert.equal(pool.executed.filter((sql) => sql === "COMMIT").length, 2);
+  assert.ok(
+    pool.executed.some((sql) =>
+      sql.includes("ADD COLUMN trajectory_source_adapter text")
+    )
+  );
+  assert.ok(
+    !pool.executed.some((sql) =>
+      sql.includes("CREATE TABLE memory_experiences")
+    )
+  );
 });
 
 test("applyMemoryMigrations is idempotent: a second call applies nothing new", async () => {
@@ -342,7 +402,7 @@ test("applyMemoryMigrations is idempotent: a second call applies nothing new", a
 
   await applyMemoryMigrations(pool);
 
-  assert.equal(pool.tables.memory_schema_migrations.length, 11);
+  assert.equal(pool.tables.memory_schema_migrations.length, 12);
   const newCalls = pool.executed.slice(executedAfterFirst);
   assert.ok(
     !newCalls.some((sql) => sql.includes("CREATE TABLE memory_experiences"))
@@ -379,7 +439,7 @@ test("applyMemoryMigrations serializes bootstrap and every migration check behin
     sql.startsWith("SELECT pg_advisory_xact_lock(")
   );
   // One lock acquisition for bootstrap table creation, plus one per
-  // migration version (11 migrations), each re-checking under the lock
+  // migration version (12 migrations), each re-checking under the lock
   // before deciding whether to run that migration's DDL.
   assert.equal(lockCalls.length, 1 + MEMORY_MIGRATIONS.length);
   assert.ok(
@@ -439,7 +499,7 @@ test("applyMemoryMigrations skips a migration a concurrent process already recor
 
   assert.deepEqual(
     pool.tables.memory_schema_migrations.map((row) => row.version),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
   );
   // Migration 1's DDL must not run a second time: the concurrent writer's
   // row already satisfied the per-version recheck under the lock.
@@ -455,6 +515,6 @@ test("applyMemoryMigrations skips a migration a concurrent process already recor
         sql ===
         "INSERT INTO memory_schema_migrations (version, description) VALUES ($1, $2)"
     ).length,
-    10
+    11
   );
 });

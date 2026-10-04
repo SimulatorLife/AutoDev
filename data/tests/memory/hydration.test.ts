@@ -31,6 +31,87 @@ test("hydrateExperienceRow round-trips a serialized experience envelope", () => 
   assert.deepEqual(hydrated, experience);
 });
 
+test("native trajectory provenance round-trips without including transcript payloads", () => {
+  const experience = makeExperience({
+    trajectory: {
+      format: "letta-trajectory-v1",
+      uri: "codex://session/run-1",
+      digest: "a".repeat(64),
+      recordCount: 3,
+      sourceAdapter: "codex",
+      normalizerId: "@letta-ai/trajectory",
+      normalizerVersion: "0.4.3",
+      diagnosticCodes: ["injected_context_dropped", "timestamps_synthesized"]
+    }
+  });
+  const row = experienceToRow(experience);
+
+  assert.equal(row.trajectory_source_adapter, "codex");
+  assert.equal(row.trajectory_normalizer_id, "@letta-ai/trajectory");
+  assert.equal(row.trajectory_normalizer_version, "0.4.3");
+  assert.equal(
+    row.trajectory_diagnostic_codes,
+    JSON.stringify(experience.trajectory.diagnosticCodes)
+  );
+  assert.deepEqual(hydrateExperienceRow(row), experience);
+});
+
+test("hydrateExperienceRow rejects incomplete or malformed trajectory provenance", () => {
+  const row = experienceToRow(
+    makeExperience({
+      trajectory: {
+        format: "letta-trajectory-v1",
+        uri: "codex://session/run-1",
+        sourceAdapter: "codex",
+        normalizerId: "@letta-ai/trajectory",
+        normalizerVersion: "0.4.3",
+        diagnosticCodes: []
+      }
+    })
+  );
+  row.trajectory_normalizer_version = null;
+  assert.throws(() => hydrateExperienceRow(row), MemoryHydrationError);
+
+  row.trajectory_normalizer_version = "0.4.3";
+  row.trajectory_diagnostic_codes = JSON.stringify([
+    "timestamps_synthesized",
+    1
+  ]);
+  assert.throws(() => hydrateExperienceRow(row), MemoryHydrationError);
+});
+
+test("trajectory serialization and hydration reject noncanonical diagnostic codes", () => {
+  const experience = makeExperience({
+    trajectory: {
+      format: "letta-trajectory-v1",
+      uri: "codex://session/run-1",
+      sourceAdapter: "codex",
+      normalizerId: "@letta-ai/trajectory",
+      normalizerVersion: "0.4.3",
+      diagnosticCodes: ["a"]
+    }
+  });
+  for (const diagnosticCodes of [
+    ["timestamps_synthesized", "injected_context_dropped"],
+    ["injected_context_dropped", "injected_context_dropped"],
+    [""],
+    Array.from({ length: 65 }, (_, index) => `diagnostic_${index}`)
+  ]) {
+    assert.throws(
+      () =>
+        experienceToRow({
+          ...experience,
+          trajectory: { ...experience.trajectory, diagnosticCodes }
+        }),
+      TypeError
+    );
+
+    const row = experienceToRow(experience);
+    row.trajectory_diagnostic_codes = JSON.stringify(diagnosticCodes);
+    assert.throws(() => hydrateExperienceRow(row), MemoryHydrationError);
+  }
+});
+
 test("hydrateExperienceRow rejects an unknown memory mode", () => {
   const row = experienceToRow(makeExperience());
   row.memory_mode = "unrecognized-mode";

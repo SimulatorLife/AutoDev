@@ -9,7 +9,10 @@ import {
   type ProviderRole,
   type ToolCatalogItem
 } from "@simulatorlife/autodev-core";
-import { RuleSyncRepository } from "@simulatorlife/autodev-data";
+import {
+  ConfigRepository,
+  RuleSyncRepository
+} from "@simulatorlife/autodev-data";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
 import { getDefaultRouterLifecycle } from "@simulatorlife/autodev-runtime/router/lifecycle";
@@ -491,48 +494,21 @@ function runtimeView(now: number): Record<string, unknown> {
   };
 }
 
-export interface ControlWorkspaceEntry {
-  readonly name: string;
-  readonly baseBranch: string;
-  readonly weight: number;
-}
+const DEFAULT_REPO_ROOT = resolveRuntimeSourceRoot(
+  import.meta.dirname,
+  process.env.AUTODEV_REPO_ROOT
+);
 
-const DEFAULT_REPO_ROOT = resolveRuntimeSourceRoot(import.meta.dirname);
-
-export function loadConfiguredWorkspaces(
-  repositoryRoot: string = DEFAULT_REPO_ROOT
-): ControlWorkspaceEntry[] {
-  const weightsPath = path.join(
-    repositoryRoot,
-    ".github",
-    "workflows",
-    "weights.json"
-  );
-  if (!existsSync(weightsPath)) return [];
-  try {
-    const raw = JSON.parse(readFileSync(weightsPath, "utf8")) as {
-      repositories?: ControlWorkspaceEntry[];
-    };
-    return (raw.repositories ?? []).map((repo) => ({
-      name: repo.name,
-      baseBranch: repo.baseBranch ?? "main",
-      weight: repo.weight ?? 0
-    }));
-  } catch {
-    return [];
-  }
-}
-
-function workspacesView(
-  repositoryRoot: string = DEFAULT_REPO_ROOT
-): Record<string, unknown> {
-  const workspaces = loadConfiguredWorkspaces(repositoryRoot);
+function workspacesView(repositoryRoot?: string): Record<string, unknown> {
+  const catalog = new ConfigRepository(repositoryRoot).readWorkspaceCatalog();
   return {
     schema: "autodev-control-workspaces-v1",
     source: "weights.json",
     readOnly: true,
-    totalWorkspaces: workspaces.length,
-    workspaces
+    catalogStatus: catalog.status,
+    totalWorkspaces:
+      catalog.status === "valid" ? catalog.workspaces.length : null,
+    workspaces: catalog.workspaces
   };
 }
 

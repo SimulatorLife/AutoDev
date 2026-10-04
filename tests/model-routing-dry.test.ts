@@ -12,8 +12,8 @@ import {
   CONFIGURED_ORCHESTRATOR_MODEL,
   CONFIGURED_SMART_MODEL,
   ROUTING_POLICY,
-  RoutingPolicy,
-  type RoutingPolicyConfig
+  type RoutingConfig,
+  RoutingPolicy
 } from "@simulatorlife/autodev-runtime/router/routing";
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
@@ -23,48 +23,53 @@ const CODEX_CATALOG_OUTPUT = join(CATALOGS_DIR, "codex-model-catalog.json");
 
 test("config/model-routing.json is the single source of truth for model versions", async () => {
   const raw = await readFile(ROUTING_CONFIG_PATH, "utf8");
-  const config = JSON.parse(raw) as RoutingPolicyConfig;
+  const config = JSON.parse(raw) as RoutingConfig;
+  const codexConfig = config.providers.codex;
+  assert.ok(codexConfig, "routing config must define the Codex provider");
 
   // Single-source-of-truth invariants
   assert.equal(
     CONFIGURED_ORCHESTRATOR_MODEL,
-    config.providers.codex.models.orchestrator,
+    codexConfig.models.orchestrator,
     "CONFIGURED_ORCHESTRATOR_MODEL must match config/model-routing.json"
   );
   assert.equal(
     CONFIGURED_SMART_MODEL,
-    config.providers.codex.models.smart,
+    codexConfig.models.smart,
     "CONFIGURED_SMART_MODEL must match config/model-routing.json"
   );
   assert.equal(
     ROUTING_POLICY.orchestratorModel,
-    config.providers.codex.models.orchestrator
+    codexConfig.models.orchestrator
   );
-  assert.equal(ROUTING_POLICY.smartModel, config.providers.codex.models.smart);
+  assert.equal(ROUTING_POLICY.smartModel, codexConfig.models.smart);
   assert.equal(
     ROUTING_POLICY.configuredModel("codex", "orchestrator"),
-    config.providers.codex.models.orchestrator
+    codexConfig.models.orchestrator
   );
   assert.equal(
     ROUTING_POLICY.configuredModel("codex", "smart"),
-    config.providers.codex.models.smart
+    codexConfig.models.smart
   );
 });
 
 test("changing model in a single config field dynamically propagates through RoutingPolicy without code changes", () => {
-  const baseConfig = structuredClone(
-    ROUTING_POLICY.config
-  ) as RoutingPolicyConfig;
+  const baseConfig = structuredClone(ROUTING_POLICY.config) as RoutingConfig;
+  const codexConfig = baseConfig.providers.codex;
+  assert.ok(codexConfig, "routing config must define the Codex provider");
 
   // Simulate updating the model versions in ONE config file, ONE field each
   const customOrchestrator = "gpt-future-orchestrator-9000";
   const customSmart = "gpt-future-smart-9000";
 
-  baseConfig.providers.codex.models.orchestrator = customOrchestrator;
-  baseConfig.providers.codex.models.default = customOrchestrator;
-  baseConfig.providers.codex.models.smart = customSmart;
+  codexConfig.models.orchestrator = customOrchestrator;
+  codexConfig.models.default = customOrchestrator;
+  codexConfig.models.smart = customSmart;
 
-  const dynamicPolicy = new RoutingPolicy(baseConfig);
+  const dynamicPolicy = new RoutingPolicy(
+    baseConfig,
+    ROUTING_POLICY.configFile
+  );
 
   // 1. Configured model accessors reflect the new model immediately
   assert.equal(

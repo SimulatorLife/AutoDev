@@ -52,8 +52,11 @@ test("Letta trajectory normalization validates native transcripts but returns on
 
   assert.equal(summary.format, "letta-trajectory-v1");
   assert.equal(summary.source, "codex");
+  assert.equal(summary.normalizerId, "@letta-ai/trajectory");
+  assert.match(summary.normalizerVersion, /^\d+\.\d+\.\d+/u);
   assert.equal(summary.recordCount, 3);
   assert.equal(summary.diagnosticCount, 0);
+  assert.deepEqual(summary.diagnosticCodes, []);
   assert.equal(summary.timestampsInferred, false);
   assert.equal(summary.roleCounts.user, 1);
   assert.equal(summary.roleCounts.assistant, 1);
@@ -93,6 +96,13 @@ test("trajectory normalization marks synthesized times as inferred metadata", ()
   });
 
   assert.equal(summary.timestampsInferred, true);
+  assert.ok(
+    summary.diagnosticCodes.some((code) => code.startsWith("timestamps_"))
+  );
+  assert.deepEqual(
+    summary.diagnosticCodes,
+    [...summary.diagnosticCodes].sort()
+  );
   assert.match(JSON.stringify(summary), /timestampsInferred/);
   assert.doesNotMatch(
     JSON.stringify(summary),
@@ -292,6 +302,8 @@ test("Letta normalization accepts each enabled native harness source", () => {
       uri: `file:///workspace/repo/${source}.transcript`
     });
     assert.equal(summary.source, source);
+    assert.equal(summary.normalizerId, "@letta-ai/trajectory");
+    assert.ok(summary.normalizerVersion.length > 0);
     assert.ok(summary.recordCount > 0, `${source} must decode records`);
     assert.doesNotMatch(
       JSON.stringify(summary),

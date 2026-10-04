@@ -1,8 +1,10 @@
 import {
+  assertTrajectoryProvenance,
   type EvidenceReference,
   EXPERIENCE_OUTCOMES as CORE_EXPERIENCE_OUTCOMES,
   type ExperienceEnvelope,
   type ExperienceOutcome,
+  MAX_TRAJECTORY_DIAGNOSTIC_CODES,
   MEMORY_EXECUTION_MODES,
   MEMORY_INJECTION_EVENT_REASON_CODES,
   MEMORY_INJECTION_RESULTS,
@@ -210,6 +212,83 @@ function parseEvidenceList(
   );
 }
 
+function parseTrajectoryDiagnosticCodes(
+  table: string,
+  raw: unknown
+): readonly string[] {
+  const value = requireJson(table, "trajectory_diagnostic_codes", raw);
+  if (
+    !Array.isArray(value) ||
+    value.length > MAX_TRAJECTORY_DIAGNOSTIC_CODES ||
+    value.some((code) => typeof code !== "string")
+  ) {
+    fail(
+      table,
+      "trajectory_diagnostic_codes",
+      `expected an array of at most ${MAX_TRAJECTORY_DIAGNOSTIC_CODES} strings`
+    );
+  }
+  return value as string[];
+}
+
+function hydrateTrajectory(
+  table: string,
+  row: Record<string, unknown>
+): ExperienceEnvelope["trajectory"] {
+  const trajectoryDigest = optionalString(
+    table,
+    "trajectory_digest",
+    row.trajectory_digest
+  );
+  const trajectoryRecordCount =
+    row.trajectory_record_count === null ||
+    row.trajectory_record_count === undefined
+      ? undefined
+      : Number(row.trajectory_record_count);
+  const sourceAdapter = optionalString(
+    table,
+    "trajectory_source_adapter",
+    row.trajectory_source_adapter
+  );
+  const normalizerId = optionalString(
+    table,
+    "trajectory_normalizer_id",
+    row.trajectory_normalizer_id
+  );
+  const normalizerVersion = optionalString(
+    table,
+    "trajectory_normalizer_version",
+    row.trajectory_normalizer_version
+  );
+  const diagnosticCodes =
+    row.trajectory_diagnostic_codes === null ||
+    row.trajectory_diagnostic_codes === undefined
+      ? undefined
+      : parseTrajectoryDiagnosticCodes(table, row.trajectory_diagnostic_codes);
+  const trajectory: ExperienceEnvelope["trajectory"] = {
+    format: requireString(table, "trajectory_format", row.trajectory_format),
+    uri: requireString(table, "trajectory_uri", row.trajectory_uri),
+    ...(trajectoryDigest === undefined ? {} : { digest: trajectoryDigest }),
+    ...(trajectoryRecordCount === undefined
+      ? {}
+      : { recordCount: trajectoryRecordCount }),
+    ...(sourceAdapter === undefined ? {} : { sourceAdapter }),
+    ...(normalizerId === undefined ? {} : { normalizerId }),
+    ...(normalizerVersion === undefined ? {} : { normalizerVersion }),
+    ...(diagnosticCodes === undefined ? {} : { diagnosticCodes })
+  };
+  try {
+    assertTrajectoryProvenance(trajectory);
+  } catch (error) {
+    fail(
+      table,
+      "trajectory_provenance",
+      error instanceof Error ? error.message : "invalid trajectory provenance"
+    );
+  }
+  return trajectory;
+}
+
 function parseEvidence(
   table: string,
   path: string,
@@ -294,16 +373,7 @@ export function hydrateExperienceRow(
     "completed_at",
     row.completed_at
   );
-  const trajectoryDigest = optionalString(
-    table,
-    "trajectory_digest",
-    row.trajectory_digest
-  );
-  const trajectoryRecordCount =
-    row.trajectory_record_count === null ||
-    row.trajectory_record_count === undefined
-      ? undefined
-      : Number(row.trajectory_record_count);
+  const trajectory = hydrateTrajectory(table, row);
   const taskReference =
     row.task_reference === null || row.task_reference === undefined
       ? undefined
@@ -343,14 +413,7 @@ export function hydrateExperienceRow(
     outcome,
     ...(memoryMode === undefined ? {} : { memoryMode }),
     ...(validation === undefined ? {} : { validation }),
-    trajectory: {
-      format: requireString(table, "trajectory_format", row.trajectory_format),
-      uri: requireString(table, "trajectory_uri", row.trajectory_uri),
-      ...(trajectoryDigest === undefined ? {} : { digest: trajectoryDigest }),
-      ...(trajectoryRecordCount === undefined
-        ? {}
-        : { recordCount: trajectoryRecordCount })
-    },
+    trajectory,
     evidence: parseEvidenceList(table, "evidence", row.evidence ?? "[]")
   };
 }

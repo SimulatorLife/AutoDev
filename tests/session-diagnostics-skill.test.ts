@@ -617,3 +617,93 @@ test("a rollout without item events reports investigation as unavailable, not ze
     cleanup();
   }
 });
+
+test("handles malformed and partial JSON records gracefully at source boundaries", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "autodev-boundary-test-"));
+  const sessions = join(directory, "sessions", "2026", "09", "18");
+  mkdirSync(sessions, { recursive: true });
+  mkdirSync(join(directory, "run"), { recursive: true });
+  const rolloutFile = join(
+    sessions,
+    "rollout-2026-09-18T17-00-00-boundary-thread.jsonl"
+  );
+  writeFileSync(
+    rolloutFile,
+    [
+      "not-valid-json",
+      JSON.stringify({ type: "session_meta", payload: "not-an-object" }),
+      JSON.stringify({
+        type: "response_item",
+        payload: { type: "message", role: 123, content: "not-an-array" }
+      }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "reasoning",
+          summary: "not-an-array",
+          content: [{ text: 456 }]
+        }
+      }),
+      JSON.stringify({
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: 12345 }
+      }),
+      JSON.stringify({
+        type: "event_msg",
+        payload: {
+          type: "task_complete",
+          turn_id: 12345,
+          error: { message: 789 }
+        }
+      }),
+      JSON.stringify({
+        type: "event_msg",
+        payload: {
+          type: "item_completed",
+          item: {
+            type: "CommandExecution",
+            parsed_cmd: [{ type: "read", path: 123 }]
+          }
+        }
+      })
+    ].join("\n") + "\n"
+  );
+  const routerLog = join(
+    directory,
+    "run",
+    "codex-model-router.launchd.err.log"
+  );
+  writeFileSync(
+    routerLog,
+    [
+      "router raw line",
+      JSON.stringify({
+        schema: "autodev-router-event-v1",
+        timestamp: "2026-09-18T21:20:00.000Z",
+        requestId: 123,
+        phase: 456,
+        status: "not-a-number",
+        elapsedMs: "not-a-number"
+      })
+    ].join("\n") + "\n"
+  );
+  try {
+    const trace = traceThread(rolloutFile, true);
+    assert.equal(typeof trace.id, "string");
+    assert.equal(trace.turns.length, 1);
+    assert.equal(trace.turns[0]?.outcome, "failed");
+
+    const report = await buildReport({
+      id: "boundary-thread",
+      codexHome: directory,
+      routerLog,
+      items: true,
+      events: true,
+      offline: true
+    });
+    assert.equal(report.threads.length, 1);
+    assert.equal(report.router.length, 1);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

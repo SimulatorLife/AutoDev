@@ -6,7 +6,10 @@ import {
 } from "@simulatorlife/autodev-runtime/agents";
 import { ROLE_NAMES } from "@simulatorlife/autodev-runtime/router/routing";
 
+import type { AgentActivityTracker } from "./concurrency/index.ts";
 import { safeMetricLabel } from "./subagents.ts";
+
+type LiveAgentActivity = ReturnType<AgentActivityTracker["listLive"]>[number];
 
 export const UNATTRIBUTED_DIMENSION = "unattributed";
 export const MAX_UNKNOWN_WORKSPACE_IDS = 100;
@@ -17,6 +20,38 @@ export interface UsageFailureInfo {
   timestamp: string;
   class?: string | null;
   status?: number | string | null;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function isUnknownArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
+}
+
+function isUsageFailureInfo(value: unknown): value is UsageFailureInfo {
+  if (!isPlainRecord(value) || typeof value.timestamp !== "string")
+    return false;
+  if (
+    Object.hasOwn(value, "class") &&
+    value.class !== null &&
+    typeof value.class !== "string"
+  ) {
+    return false;
+  }
+  if (
+    Object.hasOwn(value, "status") &&
+    value.status !== null &&
+    typeof value.status !== "string" &&
+    typeof value.status !== "number"
+  ) {
+    return false;
+  }
+  return true;
 }
 
 export interface UsageBucket {
@@ -130,7 +165,7 @@ export interface ProjectedAgent {
 
 export interface LiveAgentsProjection {
   at: number;
-  directAgents: Record<string, unknown>[];
+  directAgents: LiveAgentActivity[];
   allLiveAgents: ProjectedAgent[];
   canonicalTotal: number;
   missingProvider: number;
@@ -245,7 +280,7 @@ export interface RecordUsageEventParams {
 }
 
 export interface UsageTrackerOptions {
-  activityTracker?: Record<string, unknown>;
+  activityTracker?: AgentActivityTracker;
   roleNames?: readonly string[];
 }
 
@@ -472,7 +507,7 @@ export function restoreUsageBucket(
   target: UsageBucket,
   saved: Record<string, unknown>
 ): void {
-  if (!saved || typeof saved !== "object") return;
+  if (!isPlainRecord(saved)) return;
   for (const field of [
     "attempts",
     "successes",
@@ -482,15 +517,14 @@ export function restoreUsageBucket(
     "maxDurationMs",
     "toolCalls"
   ] as const) {
-    if (Number.isInteger(saved[field]) && saved[field] >= 0)
-      target[field] = saved[field];
+    const value = saved[field];
+    if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+      target[field] = value;
+    }
   }
   if (saved.lastUsedAt === null || typeof saved.lastUsedAt === "string")
     target.lastUsedAt = saved.lastUsedAt;
-  if (
-    saved.lastFailure === null ||
-    (saved.lastFailure && typeof saved.lastFailure === "object")
-  )
+  if (saved.lastFailure === null || isUsageFailureInfo(saved.lastFailure))
     target.lastFailure = saved.lastFailure;
 }
 
@@ -836,22 +870,31 @@ export function usageSnapshot(
   return result;
 }
 
-function withoutActive(
-  bucket: Record<string, unknown>
-): Record<string, unknown> {
-  const copy = { ...bucket };
-  delete copy.active;
-  delete copy.workspace_id;
-  delete copy.tools;
-  delete copy.skills;
-  delete copy.bridgeObservations;
-  delete copy.mcpExposed;
+function withoutActive(bucket: UsageBucket): Omit<UsageBucket, "active"> {
+  const { active: _active, ...copy } = bucket;
+  return copy;
+}
+
+function withoutWorkspaceTransientFields(
+  bucket: WorkspaceUsageBucket
+): Omit<
+  WorkspaceUsageBucket,
+  "active" | "tools" | "skills" | "bridgeObservations" | "mcpExposed"
+> {
+  const {
+    active: _active,
+    tools: _tools,
+    skills: _skills,
+    bridgeObservations: _bridgeObservations,
+    mcpExposed: _mcpExposed,
+    ...copy
+  } = bucket;
   return copy;
 }
 
 export class UsageTracker {
   readonly roleNames: readonly string[];
-  activityTracker: Record<string, unknown>;
+  activityTracker: AgentActivityTracker | null;
   readonly usageTelemetry: UsageTelemetryState;
   readonly inFlightUsage: Map<
     string,
@@ -900,7 +943,7 @@ export class UsageTracker {
     };
   }
 
-  setActivityTracker(tracker: Record<string, unknown>): void {
+  setActivityTracker(tracker: AgentActivityTracker): void {
     this.activityTracker = tracker;
   }
 
@@ -1347,7 +1390,11 @@ export class UsageTracker {
     bucket.toolCalls +=
       Number.isInteger(toolCalls) && toolCalls > 0 ? toolCalls : 0;
     if (outcome !== "success") {
-      bucket.lastFailure = { timestamp, class: failureClass, status };
+      bucket.lastFailure = {
+        timestamp,
+        ...(failureClass === undefined ? {} : { class: failureClass }),
+        ...(status === undefined ? {} : { status })
+      };
     }
   }
 
@@ -1471,10 +1518,10 @@ export class UsageTracker {
 
   projectLiveAgents(
     at: number = Date.now(),
-    tracker?: Record<string, unknown>
+    tracker?: AgentActivityTracker
   ): LiveAgentsProjection {
     const activityTracker = tracker ?? this.activityTracker;
-    const directAgents: Record<string, unknown>[] = activityTracker
+    const directAgents: LiveAgentActivity[] = activityTracker
       ? activityTracker.listLive({}, at)
       : [];
 
@@ -1529,15 +1576,15 @@ export class UsageTracker {
 
   canonicalLiveAgentCount(
     at: number = Date.now(),
-    tracker?: Record<string, unknown>
+    tracker?: AgentActivityTracker
   ): number {
     return this.projectLiveAgents(at, tracker).canonicalTotal;
   }
 
   countLiveAgentActivity(
-    filter: Record<string, unknown> = {},
+    filter: Parameters<AgentActivityTracker["countLive"]>[0] = {},
     at: number = Date.now(),
-    tracker?: Record<string, unknown>,
+    tracker?: AgentActivityTracker,
     exceptSubject: string | null = null
   ): number {
     const activityTracker = tracker ?? this.activityTracker;
@@ -1547,14 +1594,9 @@ export class UsageTracker {
         total +
         (exceptSubject === null
           ? activityTracker.countLive({ ...filter, kind }, at)
-          : (
-              activityTracker.listLive as (
-                liveFilter: Record<string, unknown>,
-                liveAt: number
-              ) => { subject: string }[]
-            )({ ...filter, kind }, at).filter(
-              ({ subject }) => subject !== exceptSubject
-            ).length),
+          : activityTracker
+              .listLive({ ...filter, kind }, at)
+              .filter(({ subject }) => subject !== exceptSubject).length),
       0
     );
   }
@@ -1564,7 +1606,7 @@ export class UsageTracker {
     dimension: string,
     projection?: LiveAgentsProjection,
     extraFilter: Record<string, unknown> = {},
-    tracker?: Record<string, unknown>
+    tracker?: AgentActivityTracker
   ): Record<
     string,
     UsageBucket & { active: number; averageDurationMs: number }
@@ -1576,10 +1618,11 @@ export class UsageTracker {
   usageStatus(
     now: number = Date.now(),
     projection?: LiveAgentsProjection,
-    tracker?: Record<string, unknown>
+    tracker?: AgentActivityTracker
   ): UsageStatus {
     const activityTracker = tracker ?? this.activityTracker;
-    const proj = projection ?? this.projectLiveAgents(now, activityTracker);
+    const proj =
+      projection ?? this.projectLiveAgents(now, activityTracker ?? undefined);
     const at = proj.at;
     const rawActivity = activityTracker
       ? activityTracker.snapshot(at)
@@ -1641,14 +1684,13 @@ export class UsageTracker {
         const {
           tools,
           skills,
-          workspace_id: _workspaceId,
           bridgeObservations,
           mcpExposed,
           toolsCapable: _toolsCapable,
           skillsCapable: _skillsCapable,
           mcpCapable: _mcpCapable,
           ...publicBucket
-        } = bucket as Record<string, unknown>;
+        } = bucket;
         const toolsCapable =
           bucket.toolsCapable === true ||
           (bucket.toolsExecuted ?? 0) > 0 ||
@@ -1657,7 +1699,7 @@ export class UsageTracker {
         const skillsCapable =
           bucket.skillsCapable === true || (bucket.skillsExposed ?? 0) > 0;
         const formatBridgeTools = (
-          map: Map<string, Record<string, unknown>> | undefined
+          map: Map<string, WorkspaceBridgeTool> | undefined
         ) =>
           map
             ? Array.from(map.values(), (entry) => ({
@@ -1774,7 +1816,7 @@ export class UsageTracker {
         Object.entries(this.usageTelemetry.byWorkspace).map(([key, bucket]) => [
           key,
           {
-            ...withoutActive(bucket),
+            ...withoutWorkspaceTransientFields(bucket),
             skillUses: bucket.skillUses ?? 0,
             toolsUnattributed: bucket.toolsUnattributed ?? 0,
             skillsUnattributed: bucket.skillsUnattributed ?? 0,
@@ -1829,8 +1871,8 @@ export class UsageTracker {
     };
   }
 
-  restoreUsagePersistenceSnapshot(savedUsage: Record<string, unknown>): void {
-    if (!isValidUsageSnapshot(savedUsage)) return;
+  restoreUsagePersistenceSnapshot(savedUsage: unknown): void {
+    if (!isPlainRecord(savedUsage) || !isValidUsageSnapshot(savedUsage)) return;
     restoreWorkspaceRegistry(this, savedUsage);
     restoreUsageSections(this, savedUsage);
     restoreWorkspaceSnapshots(this, savedUsage);
@@ -1846,8 +1888,11 @@ function restoreWorkspaceRegistry(
   tracker: UsageTracker,
   saved: Record<string, unknown>
 ): void {
-  if (!Array.isArray(saved.workspaceRegistry)) return;
-  for (const [id, key] of saved.workspaceRegistry) {
+  const registry = saved.workspaceRegistry;
+  if (!isUnknownArray(registry)) return;
+  for (const entry of registry) {
+    if (!isUnknownArray(entry)) continue;
+    const [id, key] = entry;
     if (typeof id === "string" && typeof key === "string") {
       tracker.registerWorkspaceId(id, key);
     }
@@ -1860,9 +1905,9 @@ function restoreUsageSections(
 ): void {
   for (const section of ["byRole", "byModel", "byOrigin"] as const) {
     const values = saved[section];
-    if (!values || typeof values !== "object") continue;
+    if (!isPlainRecord(values)) continue;
     for (const [key, value] of Object.entries(values)) {
-      if (!value || typeof value !== "object") continue;
+      if (!isPlainRecord(value)) continue;
       restoreUsageBucket(
         usageBucket(tracker.usageTelemetry[section], key),
         value
@@ -1876,9 +1921,9 @@ function restoreWorkspaceSnapshots(
   saved: Record<string, unknown>
 ): void {
   const workspaces = saved.byWorkspace;
-  if (!workspaces || typeof workspaces !== "object") return;
+  if (!isPlainRecord(workspaces)) return;
   for (const [key, value] of Object.entries(workspaces)) {
-    if (!value || typeof value !== "object") continue;
+    if (!isPlainRecord(value)) continue;
     const workspace = workspaceBucket(
       tracker.usageTelemetry.byWorkspace,
       key,
@@ -1896,8 +1941,14 @@ function restoreWorkspaceCounters(
   current: WorkspaceUsageBucket,
   saved: Record<string, unknown>
 ): void {
-  if (Number.isInteger(saved.skillUses) && saved.skillUses >= 0)
-    current.skillUses = saved.skillUses;
+  const skillUses = saved.skillUses;
+  if (
+    typeof skillUses === "number" &&
+    Number.isInteger(skillUses) &&
+    skillUses >= 0
+  ) {
+    current.skillUses = skillUses;
+  }
   for (const counter of [
     "toolsUnattributed",
     "skillsUnattributed",
@@ -1906,8 +1957,10 @@ function restoreWorkspaceCounters(
     "toolsUnavailable",
     "skillsExposed"
   ] as const) {
-    if (Number.isInteger(saved[counter]) && saved[counter] >= 0)
-      current[counter] = saved[counter];
+    const value = saved[counter];
+    if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+      current[counter] = value;
+    }
   }
   for (const flag of ["toolsCapable", "skillsCapable", "mcpCapable"] as const) {
     if (saved[flag] === true) current[flag] = true;
@@ -1918,7 +1971,7 @@ function restoreWorkspaceMcp(
   current: WorkspaceUsageBucket,
   saved: Record<string, unknown>
 ): void {
-  if (saved.byMcp && typeof saved.byMcp === "object") {
+  if (isPlainRecord(saved.byMcp)) {
     for (const [mcp, count] of Object.entries(saved.byMcp)) {
       if (typeof count === "number" && Number.isFinite(count) && count >= 0) {
         current.byMcp[safeMetricLabel(mcp)] = count;
@@ -1926,10 +1979,11 @@ function restoreWorkspaceMcp(
       }
     }
   }
-  if (!Array.isArray(saved.mcpExposed)) return;
-  for (const row of saved.mcpExposed) {
+  const mcpExposed = saved.mcpExposed;
+  if (!isUnknownArray(mcpExposed)) return;
+  for (const row of mcpExposed) {
+    if (!isPlainRecord(row)) continue;
     if (
-      row &&
       typeof row.server === "string" &&
       row.server.trim() &&
       typeof row.count === "number" &&
@@ -1954,9 +2008,10 @@ function restoreWorkspaceBridgeTools(
   current: WorkspaceUsageBucket,
   saved: Record<string, unknown>
 ): void {
-  if (!Array.isArray(saved.bridgeTools)) return;
-  for (const tool of saved.bridgeTools) {
-    if (!tool || typeof tool.tool !== "string") continue;
+  const bridgeTools = saved.bridgeTools;
+  if (!isUnknownArray(bridgeTools)) return;
+  for (const tool of bridgeTools) {
+    if (!isPlainRecord(tool) || typeof tool.tool !== "string") continue;
     const restored = {
       tool: safeMetricLabel(tool.tool),
       server:
@@ -1973,7 +2028,7 @@ function restoreBridgeToolStatuses(
   restored: { byStatus: Record<string, number> },
   tool: Record<string, unknown>
 ): void {
-  if (!tool.byStatus || typeof tool.byStatus !== "object") return;
+  if (!isPlainRecord(tool.byStatus)) return;
   for (const [status, count] of Object.entries(tool.byStatus)) {
     if (typeof count === "number" && count >= 0)
       restored.byStatus[safeMetricLabel(status)] = count;
@@ -1984,10 +2039,11 @@ function restoreWorkspaceBridgeSkills(
   current: WorkspaceUsageBucket,
   saved: Record<string, unknown>
 ): void {
-  if (!Array.isArray(saved.bridgeSkills)) return;
-  for (const skill of saved.bridgeSkills) {
+  const bridgeSkills = saved.bridgeSkills;
+  if (!isUnknownArray(bridgeSkills)) return;
+  for (const skill of bridgeSkills) {
+    if (!isPlainRecord(skill)) continue;
     if (
-      skill &&
       typeof skill.skill === "string" &&
       typeof skill.count === "number" &&
       skill.count >= 0
@@ -2004,9 +2060,12 @@ function restoreWorkspaceUsageDimensions(
   saved: Record<string, unknown>
 ): void {
   for (const section of ["byRole", "byModel", "byProvider"] as const) {
-    if (!saved[section] || typeof saved[section] !== "object") continue;
-    for (const [name, value] of Object.entries(saved[section]))
+    const values = saved[section];
+    if (!isPlainRecord(values)) continue;
+    for (const [name, value] of Object.entries(values)) {
+      if (!isPlainRecord(value)) continue;
       restoreUsageBucket(usageBucket(current[section], name), value);
+    }
   }
   restoreWorkspaceTools(current, saved);
   restoreWorkspaceSkills(current, saved);
@@ -2016,9 +2075,10 @@ function restoreWorkspaceTools(
   current: WorkspaceUsageBucket,
   saved: Record<string, unknown>
 ): void {
-  if (!Array.isArray(saved.byTool)) return;
-  for (const tool of saved.byTool) {
-    if (!tool || typeof tool.tool !== "string") continue;
+  const byTool = saved.byTool;
+  if (!isUnknownArray(byTool)) return;
+  for (const tool of byTool) {
+    if (!isPlainRecord(tool) || typeof tool.tool !== "string") continue;
     const restored = {
       tool: safeMetricLabel(tool.tool, "unknown-tool"),
       source: safeMetricLabel(tool.source),
@@ -2055,9 +2115,10 @@ function restoreWorkspaceSkills(
   current: WorkspaceUsageBucket,
   saved: Record<string, unknown>
 ): void {
-  if (!Array.isArray(saved.bySkill)) return;
-  for (const skill of saved.bySkill) {
-    if (!skill || typeof skill.skill !== "string") continue;
+  const bySkill = saved.bySkill;
+  if (!isUnknownArray(bySkill)) return;
+  for (const skill of bySkill) {
+    if (!isPlainRecord(skill) || typeof skill.skill !== "string") continue;
     const restored = {
       skill: safeMetricLabel(skill.skill),
       total:
@@ -2086,7 +2147,7 @@ function restoreSkillDimensions(
     "byPlugin"
   ] as const) {
     const values = skill[dict];
-    if (!values || typeof values !== "object") continue;
+    if (!isPlainRecord(values)) continue;
     for (const [key, count] of Object.entries(values))
       if (typeof count === "number" && count >= 0)
         restored[dict][safeMetricLabel(key)] = count;
@@ -2097,7 +2158,7 @@ function restoreUsageTotals(
   tracker: UsageTracker,
   saved: Record<string, unknown>
 ): void {
-  if (saved.totals && typeof saved.totals === "object")
+  if (isPlainRecord(saved.totals))
     restoreUsageBucket(tracker.usageTelemetry.totals, saved.totals);
 }
 
@@ -2139,22 +2200,22 @@ export function recordUsageEvent(params: RecordUsageEventParams): void {
 
 export function projectLiveAgents(
   at?: number,
-  tracker?: Record<string, unknown>
+  tracker?: AgentActivityTracker
 ): LiveAgentsProjection {
   return defaultUsageTracker.projectLiveAgents(at, tracker);
 }
 
 export function canonicalLiveAgentCount(
   at?: number,
-  tracker?: Record<string, unknown>
+  tracker?: AgentActivityTracker
 ): number {
   return defaultUsageTracker.canonicalLiveAgentCount(at, tracker);
 }
 
 export function countLiveAgentActivity(
-  filter?: Record<string, unknown>,
+  filter?: Parameters<AgentActivityTracker["countLive"]>[0],
   at?: number,
-  tracker?: Record<string, unknown>,
+  tracker?: AgentActivityTracker,
   exceptSubject: string | null = null
 ): number {
   return defaultUsageTracker.countLiveAgentActivity(
@@ -2168,7 +2229,7 @@ export function countLiveAgentActivity(
 export function usageStatus(
   now?: number,
   projection?: LiveAgentsProjection,
-  tracker?: Record<string, unknown>
+  tracker?: AgentActivityTracker
 ): UsageStatus {
   return defaultUsageTracker.usageStatus(now, projection, tracker);
 }
@@ -2177,9 +2238,7 @@ export function usagePersistenceSnapshot(): UsagePersistenceSnapshot {
   return defaultUsageTracker.usagePersistenceSnapshot();
 }
 
-export function restoreUsagePersistenceSnapshot(
-  savedUsage: Record<string, unknown>
-): void {
+export function restoreUsagePersistenceSnapshot(savedUsage: unknown): void {
   defaultUsageTracker.restoreUsagePersistenceSnapshot(savedUsage);
 }
 

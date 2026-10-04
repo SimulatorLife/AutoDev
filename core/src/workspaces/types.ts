@@ -4,6 +4,8 @@ export interface WorkspaceEntry {
   readonly weight: number;
 }
 
+export type WorkspaceCatalogStatus = "valid" | "invalid" | "unavailable";
+
 export interface WorkspaceAttribution {
   readonly workspace: string;
   readonly workspaceId?: string;

@@ -1,10 +1,5 @@
 import { spawn } from "node:child_process";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  openSync
-} from "node:fs";
+import { chmodSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -38,7 +33,9 @@ export interface ConsoleEnsureDeps {
   readonly startFallback: (launcher: string, logPath: string) => void;
 }
 
-export function resolveConsolePort(value = process.env.AUTODEV_CONSOLE_PORT): number {
+export function resolveConsolePort(
+  value = process.env.AUTODEV_CONSOLE_PORT
+): number {
   const raw = value?.trim() ?? "";
   if (!raw) return DEFAULT_CONSOLE_PORT;
   if (!/^\d{1,5}$/u.test(raw))
@@ -54,8 +51,7 @@ export function resolveConsoleEnsureOptions(
 ): ConsoleEnsureOptions {
   const home = env.HOME?.trim() || homedir();
   const codexHome = env.CODEX_HOME?.trim() || path.join(home, ".codex");
-  const repositoryRoot =
-    env.AUTODEV_REPO_ROOT?.trim() || process.cwd();
+  const repositoryRoot = env.AUTODEV_REPO_ROOT?.trim() || process.cwd();
   const port = resolveConsolePort(env.AUTODEV_CONSOLE_PORT);
   return {
     host: "127.0.0.1",
@@ -69,7 +65,9 @@ export function resolveConsoleEnsureOptions(
     ),
     launcher: path.join(codexHome, "hooks", "run-codex-console.sh"),
     nodeBin: resolveServiceNode(home),
-    readyTimeoutMs: Number.parseInt(env.AUTODEV_CONSOLE_READY_TIMEOUT_MS ?? "5000", 10) || DEFAULT_READY_TIMEOUT_MS,
+    readyTimeoutMs:
+      Number.parseInt(env.AUTODEV_CONSOLE_READY_TIMEOUT_MS ?? "5000", 10) ||
+      DEFAULT_READY_TIMEOUT_MS,
     logPath: path.join(codexHome, "run", "autodev-console.fallback.log")
   };
 }
@@ -78,7 +76,8 @@ function defaultDeps(options: ConsoleEnsureOptions): ConsoleEnsureDeps {
   const endpoint = `http://${options.host}:${options.port}/api/health`;
   return {
     launchd: new LaunchdClient(),
-    launchdAvailable: () => existsSync("/bin/launchctl") || existsSync("/usr/bin/launchctl"),
+    launchdAvailable: () =>
+      existsSync("/bin/launchctl") || existsSync("/usr/bin/launchctl"),
     probe: async () => {
       try {
         const response = await fetch(endpoint, {
@@ -154,18 +153,23 @@ export async function ensureConsole(
       /* report after readiness */
     }
     if (await waitForProbe(deps, Date.now() + options.readyTimeoutMs)) return 0;
-    writeErrorLine(`Console LaunchAgent ${options.label} did not become ready.`);
+    writeErrorLine(
+      `Console LaunchAgent ${options.label} did not become ready.`
+    );
     return 1;
   }
 
   if (deps.plistExists()) {
     try {
       deps.launchd.bootstrap(options.plist);
-      if (await waitForProbe(deps, Date.now() + options.readyTimeoutMs)) return 0;
+      if (await waitForProbe(deps, Date.now() + options.readyTimeoutMs))
+        return 0;
     } catch {
       /* launchd may be unavailable inside a sandbox */
     }
-    writeErrorLine(`Console LaunchAgent ${options.label} did not become ready.`);
+    writeErrorLine(
+      `Console LaunchAgent ${options.label} did not become ready.`
+    );
     return 1;
   }
 

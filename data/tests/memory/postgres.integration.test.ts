@@ -16,6 +16,7 @@ import {
   applyMemoryMigrations,
   MEMORY_EMBEDDING_DIMENSIONS
 } from "../../src/memory/schema.ts";
+import { experienceToRow } from "../../src/memory/serialize.ts";
 
 const databaseUrl = process.env.AUTODEV_MEMORY_TEST_DATABASE_URL;
 
@@ -61,9 +62,13 @@ test(
       startedAt: now,
       outcome: "success",
       trajectory: {
-        format: "test-normalized-trajectory",
+        format: "letta-trajectory-v1",
         uri: `file:///workspace/${repositoryId}/trajectory.jsonl`,
-        recordCount: 3
+        recordCount: 3,
+        sourceAdapter: "codex",
+        normalizerId: "@letta-ai/trajectory",
+        normalizerVersion: "0.4.3",
+        diagnosticCodes: ["injected_context_dropped", "timestamps_synthesized"]
       },
       evidence: [evidence, pullRequestEvidence]
     };
@@ -108,6 +113,35 @@ test(
         vectorSupport: { dimensions: MEMORY_EMBEDDING_DIMENSIONS }
       });
       await repository.appendExperience(experience);
+      const storedExperience = await repository.getExperience(
+        experience.id,
+        context
+      );
+      assert.deepEqual(storedExperience?.trajectory, experience.trajectory);
+      const { normalizerVersion: _normalizerVersion, ...incompleteTrajectory } =
+        experience.trajectory;
+      await assert.rejects(
+        repository.appendExperience({
+          ...experience,
+          id: `exp-partial-provenance-${identity}`,
+          trajectory: incompleteTrajectory
+        }),
+        /Trajectory provenance fields must be populated together/u
+      );
+      const invalidDatabaseRow = experienceToRow({
+        ...experience,
+        id: `exp-partial-database-provenance-${identity}`
+      });
+      invalidDatabaseRow.trajectory_normalizer_version = null;
+      const columns = Object.keys(invalidDatabaseRow);
+      const placeholders = columns.map((_, index) => `$${index + 1}`);
+      await assert.rejects(
+        pool.query(
+          `INSERT INTO memory_experiences (${columns.join(", ")}) VALUES (${placeholders.join(", ")})`,
+          Object.values(invalidDatabaseRow)
+        ),
+        /memory_experiences_trajectory_provenance_check/u
+      );
       const fileReferenceHits = await repository.searchExperiences({
         query: "service",
         context

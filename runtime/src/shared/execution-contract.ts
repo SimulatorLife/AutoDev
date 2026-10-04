@@ -2,7 +2,11 @@ import { readFileSync } from "node:fs";
 
 export interface RoleContract {
   mcp: string[];
-  webResearch?: { search?: boolean; fetch?: boolean };
+  webResearch?: {
+    search?: boolean;
+    fetch?: boolean;
+    optionalMcp?: string[];
+  };
   [key: string]: unknown;
 }
 export interface ProviderContract {

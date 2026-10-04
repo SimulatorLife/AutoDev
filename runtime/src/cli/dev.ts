@@ -17,7 +17,9 @@ export const IS_MAIN =
   Boolean(process.argv[1]) &&
   import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
 
-export const repoRoot = path.resolve(resolveRuntimeSourceRoot(import.meta.dirname));
+export const repoRoot = path.resolve(
+  resolveRuntimeSourceRoot(import.meta.dirname)
+);
 
 export function isPortListening(
   port: number,
@@ -131,7 +133,9 @@ export async function checkBackends(): Promise<{
         );
         if (startCheck.status === 0) {
           telemetryActive = true;
-          writeLine("[dev] ✔ Started existing OpenLIT & ClickHouse containers.");
+          writeLine(
+            "[dev] ✔ Started existing OpenLIT & ClickHouse containers."
+          );
         } else {
           writeLine(
             "[dev] ℹ OpenLIT containers not started (run `bash scripts/openlit/up.sh` if telemetry storage is needed)."

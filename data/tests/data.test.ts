@@ -193,13 +193,51 @@ test("ConfigRepository loads agent definitions and workspaces", () => {
   assert.ok(agents.length > 0);
   assert.ok(agents.some((a) => a.role === "orchestrator"));
 
-  const workspaces = repo.loadWorkspaces();
+  const workspaceCatalog = repo.readWorkspaceCatalog();
+  assert.equal(workspaceCatalog.status, "valid");
+  const workspaces = workspaceCatalog.workspaces;
   assert.ok(workspaces.length > 0);
   assert.ok(workspaces.some((w) => w.name === "SimulatorLife/AutoDev"));
 
   const policy = repo.loadPermissionPolicy();
   assert.equal(policy.approvalPolicy, "never");
   assert.equal(policy.sandboxMode, "workspace-write");
+});
+
+test("ConfigRepository distinguishes missing and invalid workspace sources from an empty catalog", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-config-workspaces-")
+  );
+  const repository = new ConfigRepository(repositoryRoot);
+  try {
+    assert.deepEqual(repository.readWorkspaceCatalog(), {
+      status: "unavailable",
+      workspaces: []
+    });
+
+    const configDirectory = path.join(repositoryRoot, ".github", "workflows");
+    await mkdir(configDirectory, { recursive: true });
+    const weightsPath = path.join(configDirectory, "weights.json");
+    await writeFile(weightsPath, JSON.stringify({ repositories: [] }), "utf8");
+    assert.deepEqual(repository.readWorkspaceCatalog(), {
+      status: "valid",
+      workspaces: []
+    });
+
+    await writeFile(
+      weightsPath,
+      JSON.stringify({
+        repositories: [{ name: "SimulatorLife/AutoDev", weight: 1 }]
+      }),
+      "utf8"
+    );
+    assert.deepEqual(repository.readWorkspaceCatalog(), {
+      status: "invalid",
+      workspaces: []
+    });
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
 });
 
 const SERVICE_PARAM_PATTERN = /ServiceName = \{service:String\}/;

@@ -50,6 +50,23 @@ test("zeroed initial state", () => {
   assert.equal(status.threads.spawns.total, 0);
 });
 
+test("request-context correlation preserves exact source request IDs and alias priority", () => {
+  const observedRequestIds: string[] = [];
+  const tracker = new OtelTracker({
+    usageTracker: createMockUsageTracker(),
+    getBridgeRequestContext: (requestId) => {
+      observedRequestIds.push(requestId);
+      return null;
+    }
+  });
+
+  tracker.resolveTelemetryContext({ requestId: " request-native " });
+  tracker.resolveTelemetryContext({ requestId: "  ", request_id: "fallback" });
+  tracker.resolveTelemetryContext({ requestId: "", request_id: "fallback" });
+
+  assert.deepEqual(observedRequestIds, [" request-native ", "  ", "fallback"]);
+});
+
 test("attribute parsing and pure utilities", () => {
   assert.equal(otelAttributeValue(null), null);
   assert.equal(otelAttributeValue(undefined), undefined);
@@ -351,6 +368,7 @@ test("traces ingestion: mcpServer tracking, discovery spans, and status", () => 
   assert.equal(status.receiver.traces, 1);
   assert.equal(status.mcpServers.length, 1);
   const server = status.mcpServers[0];
+  assert.ok(server);
   assert.equal(server.name, "filesystem");
   assert.equal(server.initAttempts, 1);
   assert.equal(server.toolDiscoveryAttempts, 1);
@@ -660,7 +678,9 @@ test("deferred MCP model attribution retroactively attributes when conversation 
     (s: any) => s.name === "custom-mcp"
   );
   assert.ok(mcpServerPre);
-  assert.equal(mcpServerPre.byModel.unattributed.observed, 1);
+  const preByModelUnattributed = mcpServerPre.byModel.unattributed;
+  assert.ok(preByModelUnattributed);
+  assert.equal(preByModelUnattributed.observed, 1);
 
   // Now conversation start log arrives specifying model 'gpt-6-luna'
   const logPayload = {
@@ -754,7 +774,14 @@ test("additive AutoDev attribute enrichment contract", () => {
   assert.ok(enriched);
   assert.notEqual(enriched, basePayload);
 
-  const resAttrs = enriched.resourceLogs[0].resource.attributes;
+  const resourceLogs = enriched.resourceLogs;
+  assert.ok(resourceLogs);
+  const resourceLog = resourceLogs[0];
+  assert.ok(resourceLog);
+  const resource = resourceLog.resource;
+  assert.ok(resource);
+  const resAttrs = resource.attributes;
+  assert.ok(resAttrs);
   assert.ok(
     resAttrs.some(
       (a: any) =>
@@ -781,8 +808,16 @@ test("additive AutoDev attribute enrichment contract", () => {
     )
   );
 
-  const recAttrs =
-    enriched.resourceLogs[0].scopeLogs[0].logRecords[0].attributes;
+  const scopeLogs = resourceLog.scopeLogs;
+  assert.ok(scopeLogs);
+  const scopeLog = scopeLogs[0];
+  assert.ok(scopeLog);
+  const logRecords = scopeLog.logRecords;
+  assert.ok(logRecords);
+  const logRecord = logRecords[0];
+  assert.ok(logRecord);
+  const recAttrs = logRecord.attributes;
+  assert.ok(recAttrs);
   assert.ok(
     recAttrs.some(
       (a: any) =>
@@ -804,7 +839,11 @@ test("additive AutoDev attribute enrichment contract", () => {
   );
 
   // Ensure original payload was not modified
-  assert.equal(basePayload.resourceLogs![0]!.resource.attributes.length, 4);
+  const originalResourceLogs = basePayload.resourceLogs;
+  assert.ok(originalResourceLogs);
+  const originalResourceLog = originalResourceLogs[0];
+  assert.ok(originalResourceLog);
+  assert.equal(originalResourceLog.resource.attributes.length, 4);
 });
 
 test("bridge observation events: tool, skill, and mcp exposure", () => {
@@ -851,6 +890,8 @@ test("bridge observation events: tool, skill, and mcp exposure", () => {
 
   const status = tracker.codexTelemetryStatus();
   assert.equal(status.bridgeEvents.toolExecuted.total, 1);
+  assert.deepEqual(status.bridgeEvents.toolExecuted.byReason, {});
+  assert.deepEqual(status.bridgeEvents.toolRequested.byReason, {});
   assert.equal(status.bridgeEvents.toolUnavailable.total, 1);
   assert.equal(status.bridgeEvents.toolUnavailable.byReason.policy_denied, 1);
   assert.equal(status.bridgeEvents.mcpExposed.total, 1);
@@ -926,7 +967,8 @@ test("bridge observation events: activitySubject is local active correlation, no
   assert.deepEqual(activeUsage.bySkill, [
     { skill: "racecar-movement", count: 1 }
   ]);
-  const activeWorkspace = activeUsage.byWorkspace["AutoDev/Platform"]!;
+  const activeWorkspace = activeUsage.byWorkspace["AutoDev/Platform"];
+  assert.ok(activeWorkspace);
   assert.equal(activeWorkspace.skillUses, 1);
   assert.deepEqual(activeWorkspace.bySkill, [
     { skill: "racecar-movement", count: 1 }
@@ -974,6 +1016,43 @@ test("persistence snapshot and restoration (schema v6)", () => {
   const restoredStatus = freshTracker.codexTelemetryStatus();
   assert.equal(restoredStatus.turns.prompts, 1);
   assert.equal(restoredStatus.turns.promptLength, 50);
+});
+
+test("OTel restore accepts partial snapshots and ignores invalid top-level input", () => {
+  const tracker = new OtelTracker({ usageTracker: createMockUsageTracker() });
+
+  tracker.restoreOtelTelemetry({
+    schemaVersion: OTEL_PERSISTENCE_SCHEMA_VERSION,
+    turns: { prompts: 3 },
+    tools: { byTool: [{ tool: "partial-tool" }] },
+    threads: { started: { bySource: { codex: 2 } } }
+  });
+
+  const restoredStatus = tracker.codexTelemetryStatus();
+  assert.equal(restoredStatus.turns.prompts, 3);
+  assert.equal(restoredStatus.turns.completed, 0);
+  assert.equal(restoredStatus.threads.started.bySource.codex, 2);
+  assert.equal(restoredStatus.tools.byTool[0]?.tool, "partial-tool");
+
+  assert.doesNotThrow(() =>
+    tracker.restoreOtelTelemetry({
+      schemaVersion: OTEL_PERSISTENCE_SCHEMA_VERSION,
+      receiver: null,
+      turns: { prompts: "malformed" },
+      skills: {
+        injected: { bySkill: [null, { skill: 1 }] },
+        threads: { enabledTotal: false }
+      },
+      tools: { byTool: [null, { tool: 3 }] },
+      metrics: { observed: [null, { name: 8 }] },
+      sqlite: { init: { byDbStatus: [null, { db: "missing-status" }] } }
+    })
+  );
+
+  tracker.restoreOtelTelemetry({ turns: { prompts: 99 } });
+  tracker.restoreOtelTelemetry({ schemaVersion: 1, turns: { prompts: 99 } });
+  tracker.restoreOtelTelemetry(null);
+  assert.equal(tracker.codexTelemetryStatus().turns.prompts, 3);
 });
 
 test("resetOtelTelemetry clears all telemetry and triggers usageTracker reset", () => {

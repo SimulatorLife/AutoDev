@@ -55,9 +55,7 @@ function formatCallReply(
   exited: ProbeResult["exited"]
 ): { ok: boolean; text: string } {
   if (reply === null) {
-    const text = exited
-      ? "no reply: the server exited"
-      : "no reply: timed out";
+    const text = exited ? "no reply: the server exited" : "no reply: timed out";
     return { ok: false, text };
   }
   const content = reply.result?.content;
@@ -65,9 +63,7 @@ function formatCallReply(
   if (reply.error) {
     text = `error: ${JSON.stringify(reply.error)}`;
   } else if (Array.isArray(content)) {
-    text = content
-      .map((part) => part.text ?? `[${part.type}]`)
-      .join("\n");
+    text = content.map((part) => part.text ?? `[${part.type}]`).join("\n");
   } else {
     text = JSON.stringify(reply.result);
   }

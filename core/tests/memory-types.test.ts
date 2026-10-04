@@ -6,12 +6,14 @@ import {
   assertMemoryInjectionUseCohortFilter,
   assertMemorySessionOutcomeCohortFilter,
   assertMemoryUseReportInvariants,
+  assertTrajectoryProvenance,
   type ExperienceEnvelope,
   isMemoryExperienceVisibleTo,
   isMemoryInjectionSessionCardinality,
   isMemoryScopeVisibleTo,
   isMemorySessionCohortAssignedMode,
   isMemoryUseKind,
+  MAX_TRAJECTORY_DIAGNOSTIC_CODES,
   type MemoryInjectionEvent,
   type MemoryReadContext,
   type MemoryScope,
@@ -31,6 +33,69 @@ const context: MemoryReadContext = {
   agentId: "agent-a",
   canReadGlobal: false
 };
+
+test("native trajectory provenance is complete, bounded, stable, and code-only", () => {
+  const trajectory: ExperienceEnvelope["trajectory"] = {
+    format: "letta-trajectory-v1",
+    uri: "codex://session/run-a",
+    sourceAdapter: "codex",
+    normalizerId: "@letta-ai/trajectory",
+    normalizerVersion: "0.4.3",
+    diagnosticCodes: ["injected_context_dropped", "timestamps_synthesized"]
+  };
+  assert.doesNotThrow(() => assertTrajectoryProvenance(trajectory));
+  assert.doesNotThrow(() =>
+    assertTrajectoryProvenance({ format: "legacy-v1", uri: "old://run" })
+  );
+
+  assert.throws(
+    () =>
+      assertTrajectoryProvenance({
+        format: trajectory.format,
+        uri: trajectory.uri,
+        sourceAdapter: "codex"
+      }),
+    /populated together/u
+  );
+  assert.throws(
+    () =>
+      assertTrajectoryProvenance({
+        ...trajectory,
+        diagnosticCodes: ["timestamps_synthesized", "injected_context_dropped"]
+      }),
+    /distinct and lexicographically sorted/u
+  );
+  assert.throws(
+    () =>
+      assertTrajectoryProvenance({
+        ...trajectory,
+        diagnosticCodes: [
+          "injected_context_dropped",
+          "injected_context_dropped"
+        ]
+      }),
+    /distinct and lexicographically sorted/u
+  );
+  assert.throws(
+    () =>
+      assertTrajectoryProvenance({
+        ...trajectory,
+        diagnosticCodes: [""]
+      }),
+    /must not be empty/u
+  );
+  assert.throws(
+    () =>
+      assertTrajectoryProvenance({
+        ...trajectory,
+        diagnosticCodes: Array.from(
+          { length: MAX_TRAJECTORY_DIAGNOSTIC_CODES + 1 },
+          (_, index) => `diagnostic_${String(index).padStart(2, "0")}`
+        )
+      }),
+    /maximum/u
+  );
+});
 
 test("memory execution modes distinguish safe defaults, gated ablations, and invalid config", () => {
   assert.equal(parseMemoryExecutionMode(undefined), "unknown");

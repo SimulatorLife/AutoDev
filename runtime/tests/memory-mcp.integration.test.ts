@@ -24,7 +24,7 @@ test(
     const serverPath = fileURLToPath(
       new URL("../src/router/memory-mcp-main.ts", import.meta.url)
     );
-    const env: NodeJS.ProcessEnv = Object.fromEntries(
+    const env: Record<string, string> = Object.fromEntries(
       Object.entries(process.env).filter(
         (entry): entry is [string, string] => typeof entry[1] === "string"
       )

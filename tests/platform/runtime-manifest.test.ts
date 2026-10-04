@@ -11,22 +11,63 @@ import {
   OBSOLETE_RUNTIME_MODULES,
   RUNTIME_MODULES
 } from "@simulatorlife/autodev-runtime/platform/install-materializer";
+import * as ts from "typescript";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
-const STATIC_IMPORT_PATTERN =
-  /(?:^|\n)\s*(?:import|export)\b[\s\S]*?\bfrom\s+["'](\.[^"']+)["']/gu;
-const SIDE_EFFECT_IMPORT_PATTERN = /(?:^|\n)\s*import\s+["'](\.[^"']+)["']/gu;
-const DYNAMIC_IMPORT_PATTERN = /import\(\s*["'](\.[^"']+)["']\s*\)/gu;
+function relativeImportsFromSource(
+  modulePath: string,
+  source: string
+): string[] {
+  const file = ts.createSourceFile(
+    modulePath,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const directory = dirname(modulePath);
+  const imports: string[] = [];
+  const addRelativeSpecifier = (specifier: ts.Expression | undefined): void => {
+    if (
+      specifier &&
+      ts.isStringLiteralLike(specifier) &&
+      specifier.text.startsWith(".")
+    ) {
+      imports.push(normalize(join(directory, specifier.text)));
+    }
+  };
+
+  for (const statement of file.statements) {
+    if (ts.isImportDeclaration(statement)) {
+      if (!statement.importClause?.isTypeOnly)
+        addRelativeSpecifier(statement.moduleSpecifier);
+      continue;
+    }
+    if (ts.isExportDeclaration(statement) && !statement.isTypeOnly) {
+      addRelativeSpecifier(statement.moduleSpecifier);
+    }
+  }
+
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length === 1
+    ) {
+      addRelativeSpecifier(node.arguments[0]);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return imports;
+}
 
 function relativeImports(modulePath: string): string[] {
-  const source = readFileSync(join(repositoryRoot, modulePath), "utf8");
-  const directory = dirname(modulePath);
-  return [
-    ...source.matchAll(STATIC_IMPORT_PATTERN),
-    ...source.matchAll(SIDE_EFFECT_IMPORT_PATTERN),
-    ...source.matchAll(DYNAMIC_IMPORT_PATTERN)
-  ].map((match) => normalize(join(directory, match[1] ?? "")));
+  return relativeImportsFromSource(
+    modulePath,
+    readFileSync(join(repositoryRoot, modulePath), "utf8")
+  );
 }
 
 const BARE_PACKAGE_IMPORT_PATTERN =
@@ -98,6 +139,30 @@ test("installer removes stale CODEX_HOME copies of Runtime-owned source", () => 
     "utf8"
   );
   assert.match(materializer, /OBSOLETE_RUNTIME_MODULES\.map/);
+});
+
+test("runtime manifest closure follows runtime imports but ignores erased type-only imports", () => {
+  const source = [
+    'import type { AgentActivityTracker } from "./concurrency/index.ts";',
+    'export type { UsageBucket } from "./usage.ts";'
+  ].join("\n");
+  assert.deepEqual(
+    relativeImportsFromSource("runtime/src/router/usage.ts", source),
+    []
+  );
+
+  const mixedTypeReexport = 'export { type UsageBucket } from "./usage.ts";';
+  assert.deepEqual(
+    relativeImportsFromSource("runtime/src/router/index.ts", mixedTypeReexport),
+    ["runtime/src/router/usage.ts"]
+  );
+
+  const mixedImport =
+    'import { createAgentActivityTracker, type AgentActivityTracker } from "./concurrency/index.ts";';
+  assert.deepEqual(
+    relativeImportsFromSource("runtime/src/router/usage.ts", mixedImport),
+    ["runtime/src/router/concurrency/index.ts"]
+  );
 });
 
 test("runtime manifest is closed under relative imports", () => {

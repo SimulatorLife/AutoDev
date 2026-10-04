@@ -1,11 +1,12 @@
-import type {
-  ExperienceEnvelope,
-  MemoryInjectionEvent,
-  MemoryLifecycleEvent,
-  MemoryOutcomeReport,
-  MemoryRecord,
-  MemorySessionOutcomeReport,
-  MemoryUseReport
+import {
+  assertTrajectoryProvenance,
+  type ExperienceEnvelope,
+  type MemoryInjectionEvent,
+  type MemoryLifecycleEvent,
+  type MemoryOutcomeReport,
+  type MemoryRecord,
+  type MemorySessionOutcomeReport,
+  type MemoryUseReport
 } from "@simulatorlife/autodev-core";
 
 import { scopeToColumns } from "./scope-sql.ts";
@@ -14,6 +15,7 @@ import { scopeToColumns } from "./scope-sql.ts";
 export function experienceToRow(
   experience: ExperienceEnvelope
 ): Record<string, unknown> {
+  assertTrajectoryProvenance(experience.trajectory);
   const scope = scopeToColumns(experience.scope);
   return {
     id: experience.id,
@@ -46,6 +48,14 @@ export function experienceToRow(
     trajectory_uri: experience.trajectory.uri,
     trajectory_digest: experience.trajectory.digest ?? null,
     trajectory_record_count: experience.trajectory.recordCount ?? null,
+    trajectory_source_adapter: experience.trajectory.sourceAdapter ?? null,
+    trajectory_normalizer_id: experience.trajectory.normalizerId ?? null,
+    trajectory_normalizer_version:
+      experience.trajectory.normalizerVersion ?? null,
+    trajectory_diagnostic_codes:
+      experience.trajectory.diagnosticCodes === undefined
+        ? null
+        : JSON.stringify(experience.trajectory.diagnosticCodes),
     evidence: JSON.stringify(experience.evidence)
   };
 }

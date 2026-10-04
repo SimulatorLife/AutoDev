@@ -84,7 +84,12 @@ test(
 
       // Session 1: jit / reported success
       const s1TaskId = `s1-jit-success-${suffix}`;
-      const s1Inj = makeInjection(s1TaskId, "s1", "jit", "2026-10-01T12:00:00.000Z");
+      const s1Inj = makeInjection(
+        s1TaskId,
+        "s1",
+        "jit",
+        "2026-10-01T12:00:00.000Z"
+      );
       await repository.recordInjectionEvent({
         event: s1Inj,
         actor: { id: "runtime", authority: "system" },
@@ -125,7 +130,12 @@ test(
 
       // Session 2: jit / unreported
       const s2TaskId = `s2-jit-unrep-${suffix}`;
-      const s2Inj = makeInjection(s2TaskId, "s2", "jit", "2026-10-01T12:05:00.000Z");
+      const s2Inj = makeInjection(
+        s2TaskId,
+        "s2",
+        "jit",
+        "2026-10-01T12:05:00.000Z"
+      );
       await repository.recordInjectionEvent({
         event: s2Inj,
         actor: { id: "runtime", authority: "system" },
@@ -134,7 +144,12 @@ test(
 
       // Session 3: retrieval-only / failure
       const s3TaskId = `s3-retrieval-fail-${suffix}`;
-      const s3Inj = makeInjection(s3TaskId, "s3", "retrieval-only", "2026-10-01T12:10:00.000Z");
+      const s3Inj = makeInjection(
+        s3TaskId,
+        "s3",
+        "retrieval-only",
+        "2026-10-01T12:10:00.000Z"
+      );
       await repository.recordInjectionEvent({
         event: s3Inj,
         actor: { id: "runtime", authority: "system" },
@@ -148,8 +163,18 @@ test(
 
       // Session 4: multiple injections in same session (single mode)
       const s4TaskId = `s4-multi-inj-${suffix}`;
-      const s4Inj1 = makeInjection(s4TaskId, "s4-1", "jit", "2026-10-01T12:15:00.000Z");
-      const s4Inj2 = makeInjection(s4TaskId, "s4-2", "jit", "2026-10-01T12:20:00.000Z");
+      const s4Inj1 = makeInjection(
+        s4TaskId,
+        "s4-1",
+        "jit",
+        "2026-10-01T12:15:00.000Z"
+      );
+      const s4Inj2 = makeInjection(
+        s4TaskId,
+        "s4-2",
+        "jit",
+        "2026-10-01T12:20:00.000Z"
+      );
       await repository.recordInjectionEvent({
         event: s4Inj1,
         actor: { id: "runtime", authority: "system" },
@@ -168,8 +193,18 @@ test(
 
       // Session 5: mixed mode (jit and retrieval-only)
       const s5TaskId = `s5-mixed-${suffix}`;
-      const s5Inj1 = makeInjection(s5TaskId, "s5-1", "jit", "2026-10-01T12:25:00.000Z");
-      const s5Inj2 = makeInjection(s5TaskId, "s5-2", "retrieval-only", "2026-10-01T12:30:00.000Z");
+      const s5Inj1 = makeInjection(
+        s5TaskId,
+        "s5-1",
+        "jit",
+        "2026-10-01T12:25:00.000Z"
+      );
+      const s5Inj2 = makeInjection(
+        s5TaskId,
+        "s5-2",
+        "retrieval-only",
+        "2026-10-01T12:30:00.000Z"
+      );
       await repository.recordInjectionEvent({
         event: s5Inj1,
         actor: { id: "runtime", authority: "system" },
@@ -183,7 +218,12 @@ test(
 
       // Session 6: outside window
       const s6TaskId = `s6-outside-${suffix}`;
-      const s6Inj = makeInjection(s6TaskId, "s6", "jit", "2026-09-15T12:00:00.000Z");
+      const s6Inj = makeInjection(
+        s6TaskId,
+        "s6",
+        "jit",
+        "2026-09-15T12:00:00.000Z"
+      );
       await repository.recordInjectionEvent({
         event: s6Inj,
         actor: { id: "runtime", authority: "system" },
@@ -192,8 +232,18 @@ test(
 
       // Session 7: session with conflicting per-injection token reports
       const s7TaskId = `s7-conflict-${suffix}`;
-      const s7Inj1 = makeInjection(s7TaskId, "s7-1", "jit", "2026-10-01T12:35:00.000Z");
-      const s7Inj2 = makeInjection(s7TaskId, "s7-2", "jit", "2026-10-01T12:40:00.000Z");
+      const s7Inj1 = makeInjection(
+        s7TaskId,
+        "s7-1",
+        "jit",
+        "2026-10-01T12:35:00.000Z"
+      );
+      const s7Inj2 = makeInjection(
+        s7TaskId,
+        "s7-2",
+        "jit",
+        "2026-10-01T12:40:00.000Z"
+      );
       await repository.recordInjectionEvent({
         event: s7Inj1,
         actor: { id: "runtime", authority: "system" },
@@ -210,7 +260,12 @@ test(
           id: `rep-tok1-${suffix}`,
           workspaceId,
           repositoryId,
-          scope: { kind: "task", workspaceId, taskId: s7TaskId, runId: s7Inj1.runId },
+          scope: {
+            kind: "task",
+            workspaceId,
+            taskId: s7TaskId,
+            runId: s7Inj1.runId
+          },
           taskId: s7TaskId,
           runId: s7Inj1.runId,
           agentId: s7Inj1.agentId,
@@ -232,7 +287,12 @@ test(
           id: `rep-tok2-${suffix}`,
           workspaceId,
           repositoryId,
-          scope: { kind: "task", workspaceId, taskId: s7TaskId, runId: s7Inj2.runId },
+          scope: {
+            kind: "task",
+            workspaceId,
+            taskId: s7TaskId,
+            runId: s7Inj2.runId
+          },
           taskId: s7TaskId,
           runId: s7Inj2.runId,
           agentId: s7Inj2.agentId,
@@ -279,7 +339,11 @@ test(
       assert.deepEqual(page.cells, [
         { memoryMode: "jit", outcomeKind: null, sessionCount: 1 },
         { memoryMode: "jit", outcomeKind: "success", sessionCount: 3 },
-        { memoryMode: "retrieval-only", outcomeKind: "failure", sessionCount: 1 }
+        {
+          memoryMode: "retrieval-only",
+          outcomeKind: "failure",
+          sessionCount: 1
+        }
       ]);
 
       // Mode filter test: query with memoryModes: ['retrieval-only']

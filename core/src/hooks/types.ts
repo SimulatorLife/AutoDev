@@ -1,8 +1,5 @@
 export type HookEvent =
-  | "sessionStart"
-  | "subagentStart"
-  | "beforeSubmitPrompt"
-  | "preToolUse";
+  "sessionStart" | "subagentStart" | "beforeSubmitPrompt" | "preToolUse";
 
 export interface HookAction {
   readonly type: "command";

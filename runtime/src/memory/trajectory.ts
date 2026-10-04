@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import {
+  NORMALIZER_VERSION,
   normalizeTranscript,
   type TranscriptTrajectorySource
 } from "@letta-ai/trajectory";
@@ -22,6 +23,13 @@ export type NativeTrajectorySource = (typeof NATIVE_TRAJECTORY_SOURCES)[number];
 
 export const MAX_NATIVE_TRAJECTORY_BYTES = 32 * 1024 * 1024;
 
+/**
+ * Vendor-neutral identifier Runtime persists for this normalizer. Core has
+ * no dependency on this value; it is an opaque string to every layer above
+ * Runtime.
+ */
+export const LETTA_TRAJECTORY_NORMALIZER_ID = "@letta-ai/trajectory";
+
 export interface NormalizedTrajectorySummary {
   readonly format: "letta-trajectory-v1";
   readonly source: NativeTrajectorySource;
@@ -29,10 +37,20 @@ export interface NormalizedTrajectorySummary {
   readonly digest: string;
   readonly recordCount: number;
   readonly diagnosticCount: number;
+  /**
+   * Distinct, lexicographically sorted diagnostic codes emitted during
+   * normalization. Codes only; diagnostic free-text `message` detail and
+   * transcript content are never retained here or anywhere downstream.
+   */
+  readonly diagnosticCodes: readonly string[];
   readonly timestampsInferred: boolean;
   readonly roleCounts: Readonly<Partial<Record<string, number>>>;
   readonly firstTimestamp?: string;
   readonly lastTimestamp?: string;
+  /** Vendor-neutral normalizer package identifier; see `LETTA_TRAJECTORY_NORMALIZER_ID`. */
+  readonly normalizerId: string;
+  /** Exact normalizer package version, sourced from the official `NORMALIZER_VERSION` export. */
+  readonly normalizerVersion: string;
 }
 
 /**
@@ -74,6 +92,10 @@ export function normalizeNativeTrajectory(input: {
     kind: "trajectory",
     uri: input.uri
   });
+  const diagnosticCodes = [
+    ...new Set(normalized.diagnostics.map(({ code }) => code))
+  ].sort();
+
   return {
     format: "letta-trajectory-v1",
     source: input.source,
@@ -81,12 +103,15 @@ export function normalizeNativeTrajectory(input: {
     digest: createHash("sha256").update(input.transcript, "utf8").digest("hex"),
     recordCount: normalized.records.length,
     diagnosticCount: normalized.diagnostics.length,
+    diagnosticCodes,
     timestampsInferred: normalized.diagnostics.some(
       ({ code }) =>
         code === "timestamps_synthesized" || code === "timestamps_interpolated"
     ),
     roleCounts,
     ...(firstTimestamp ? { firstTimestamp } : {}),
-    ...(lastTimestamp ? { lastTimestamp } : {})
+    ...(lastTimestamp ? { lastTimestamp } : {}),
+    normalizerId: LETTA_TRAJECTORY_NORMALIZER_ID,
+    normalizerVersion: NORMALIZER_VERSION
   };
 }

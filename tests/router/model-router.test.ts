@@ -96,6 +96,10 @@ import {
   usageStatus as rawUsageStatus,
   workspaceContextFromRequest
 } from "@simulatorlife/autodev-runtime/router/server";
+import type {
+  OtelAttribute,
+  OtelLogRecord
+} from "@simulatorlife/autodev-runtime/router/otel";
 import { UsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
 import { AGENT_ROLE_HEADER } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import { RESPONSES_ITEM_ID_PREFIXES } from "@simulatorlife/autodev-runtime/shared/responses-item-ids";
@@ -3743,27 +3747,45 @@ test("ingests Codex OTEL turn and MCP lifecycle telemetry without prompt content
     },
     { observed: 3, ready: 1, error: 0, stale: 1 }
   );
-  assert.equal(
-    telemetry.mcpSummary.byModel[CONFIGURED_ORCHESTRATOR_MODEL].observed,
-    3
+  const orchestratorByModel =
+    telemetry.mcpSummary.byModel[CONFIGURED_ORCHESTRATOR_MODEL];
+  assert.ok(
+    orchestratorByModel,
+    "mcpSummary.byModel[orchestrator] must be present"
   );
-  assert.equal(telemetry.mcpSummary.byRole.unattributed.observed, 3);
-  assert.equal(telemetry.mcpSummary.byWorkspace.unattributed.observed, 3);
-  assert.equal(telemetry.mcpSummary.byAgent["conversation-otel"].observed, 3);
+  assert.equal(orchestratorByModel.observed, 3);
+  const unattributedByRole = telemetry.mcpSummary.byRole.unattributed;
+  assert.ok(
+    unattributedByRole,
+    "mcpSummary.byRole.unattributed must be present for orchestrator"
+  );
+  assert.equal(unattributedByRole.observed, 3);
+  const unattributedByWorkspace = telemetry.mcpSummary.byWorkspace.unattributed;
+  assert.ok(
+    unattributedByWorkspace,
+    "mcpSummary.byWorkspace.unattributed must be present for orchestrator"
+  );
+  assert.equal(unattributedByWorkspace.observed, 3);
+  const conversationByAgent = telemetry.mcpSummary.byAgent["conversation-otel"];
+  assert.ok(
+    conversationByAgent,
+    "mcpSummary.byAgent[conversation-otel] must be present"
+  );
+  assert.equal(conversationByAgent.observed, 3);
   const playwright = telemetry.mcpServers.find(
-    (server: any) => server.name === "playwright"
+    (server: { name: string }) => server.name === "playwright"
   );
+  assert.ok(playwright, "playwright server must be present in mcpServers");
   assert.equal(playwright.health, "ready");
   assert.equal(playwright.initAttempts, 1);
   assert.equal(playwright.toolDiscoveryAttempts, 1);
   assert.equal(playwright.averageDurationMs, 6);
   assert.equal(JSON.stringify(telemetry).includes("do-not-store-this"), false);
-  assert.equal(
-    codexTelemetryStatus(Date.now() + 121_000).mcpServers.find(
-      (server: any) => server.name === "playwright"
-    ).health,
-    "stale"
-  );
+  const stalePlaywright = codexTelemetryStatus(
+    Date.now() + 121_000
+  ).mcpServers.find((server: { name: string }) => server.name === "playwright");
+  assert.ok(stalePlaywright, "playwright server must remain after TTL");
+  assert.equal(stalePlaywright.health, "stale");
   resetOtelTelemetry();
 });
 
@@ -3900,11 +3922,13 @@ test("accepts standard OTLP JSON batches over HTTP at /v1/logs, /v1/traces, and 
     // The fixture's traces batch reports one healthy MCP server and one that
     // errored during initialize; both must be observed from the HTTP path.
     const playwright = telemetry.mcpServers.find(
-      (entry: any) => entry.name === "playwright"
+      (entry: { name: string }) => entry.name === "playwright"
     );
+    assert.ok(playwright, "playwright server must be observed via HTTP");
     const codexApps = telemetry.mcpServers.find(
-      (entry: any) => entry.name === "codex_apps"
+      (entry: { name: string }) => entry.name === "codex_apps"
     );
+    assert.ok(codexApps, "codex_apps server must be observed via HTTP");
     assert.equal(playwright.health, "ready");
     assert.equal(codexApps.health, "error");
 
@@ -4089,10 +4113,15 @@ test("dedupes repeated standard OTLP JSON batches so receiver counts climb but s
         }
       ]
     );
-    assert.equal(
-      telemetry.dimensions.mcp.byModel[CONFIGURED_ORCHESTRATOR_MODEL].count,
-      13
+    const mcpDimensions = telemetry.dimensions.mcp;
+    assert.ok(mcpDimensions, "telemetry.dimensions.mcp must be present");
+    const orchestratorMcpCount =
+      mcpDimensions.byModel[CONFIGURED_ORCHESTRATOR_MODEL];
+    assert.ok(
+      orchestratorMcpCount,
+      "dimensions.mcp.byModel[orchestrator] must be present"
     );
+    assert.equal(orchestratorMcpCount.count, 13);
     assert.deepEqual(
       {
         total: getRouterStatus().attributionDiagnostics.total,
@@ -4117,11 +4146,13 @@ test("dedupes repeated standard OTLP JSON batches so receiver counts climb but s
     // window, so the redelivered traces do not flip either server's
     // health classification.
     const playwright = telemetry.mcpServers.find(
-      (entry: any) => entry.name === "playwright"
+      (entry: { name: string }) => entry.name === "playwright"
     );
+    assert.ok(playwright, "playwright server must still be observed");
     const codexApps = telemetry.mcpServers.find(
-      (entry: any) => entry.name === "codex_apps"
+      (entry: { name: string }) => entry.name === "codex_apps"
     );
+    assert.ok(codexApps, "codex_apps server must still be observed");
     assert.equal(playwright.health, "ready");
     assert.equal(codexApps.health, "error");
 
@@ -4230,14 +4261,26 @@ test("OTLP semantics do not depend on logs/traces/metrics arrival order", async 
     resetOtelTelemetry();
     ingestOtelSignal("traces", structuredClone(fixture.traces));
     const early = codexTelemetryStatus(now);
-    assert.deepEqual(Object.keys(early.dimensions.mcp.byModel), [
-      "unattributed"
-    ]);
-    assert.equal(early.dimensions.mcp.byModel.unattributed.count, 3);
+    const earlyMcp = early.dimensions.mcp;
+    assert.ok(earlyMcp, "early.dimensions.mcp must be present");
+    assert.deepEqual(Object.keys(earlyMcp.byModel), ["unattributed"]);
+    const earlyUnattributed = earlyMcp.byModel.unattributed;
+    assert.ok(
+      earlyUnattributed,
+      "early.dimensions.mcp.byModel.unattributed must be present"
+    );
+    assert.equal(earlyUnattributed.count, 3);
     ingestOtelSignal("logs", structuredClone(fixture.logs));
     const late = codexTelemetryStatus(now);
-    assert.deepEqual(Object.keys(late.dimensions.mcp.byModel), [fixtureModel]);
-    assert.equal(late.dimensions.mcp.byModel[fixtureModel].count, 13);
+    const lateMcp = late.dimensions.mcp;
+    assert.ok(lateMcp, "late.dimensions.mcp must be present");
+    assert.deepEqual(Object.keys(lateMcp.byModel), [fixtureModel]);
+    const lateModelBucket = lateMcp.byModel[fixtureModel];
+    assert.ok(
+      lateModelBucket,
+      "late.dimensions.mcp.byModel[fixtureModel] must be present"
+    );
+    assert.equal(lateModelBucket.count, 13);
   } finally {
     resetOtelTelemetry();
   }
@@ -4502,12 +4545,38 @@ test("normalizes canonical context across tool, hook, and skill telemetry", () =
     ]
   });
   const dimensions = codexTelemetryStatus().dimensions;
-  assert.equal(dimensions.tools.byRole.worker.count, 1);
-  assert.equal(dimensions.tools.byWorkspace["ws-ctx"].count, 1);
-  assert.equal(dimensions.hooks.byModel["gpt-worker"].count, 1);
-  assert.equal(dimensions.skills.byAgent["agent-1"].agentKind, "subagent");
-  assert.equal(dimensions.skills.byAgent["agent-1"].count, 1);
-  assert.equal(typeof dimensions.tools.byRole.worker.lastSeenAt, "string");
+  const toolsDimensions = dimensions.tools;
+  assert.ok(toolsDimensions, "dimensions.tools must be present");
+  const workerToolsByRole = toolsDimensions.byRole.worker;
+  assert.ok(
+    workerToolsByRole,
+    "dimensions.tools.byRole.worker must be present"
+  );
+  assert.equal(workerToolsByRole.count, 1);
+  const ctxToolsByWorkspace = toolsDimensions.byWorkspace["ws-ctx"];
+  assert.ok(
+    ctxToolsByWorkspace,
+    "dimensions.tools.byWorkspace[ws-ctx] must be present"
+  );
+  assert.equal(ctxToolsByWorkspace.count, 1);
+  const hooksDimensions = dimensions.hooks;
+  assert.ok(hooksDimensions, "dimensions.hooks must be present");
+  const workerHooksByModel = hooksDimensions.byModel["gpt-worker"];
+  assert.ok(
+    workerHooksByModel,
+    "dimensions.hooks.byModel[gpt-worker] must be present"
+  );
+  assert.equal(workerHooksByModel.count, 1);
+  const skillsDimensions = dimensions.skills;
+  assert.ok(skillsDimensions, "dimensions.skills must be present");
+  const agent1SkillsByAgent = skillsDimensions.byAgent["agent-1"];
+  assert.ok(
+    agent1SkillsByAgent,
+    "dimensions.skills.byAgent[agent-1] must be present"
+  );
+  assert.equal(agent1SkillsByAgent.agentKind, "subagent");
+  assert.equal(agent1SkillsByAgent.count, 1);
+  assert.equal(typeof workerToolsByRole.lastSeenAt, "string");
   resetOtelTelemetry();
 });
 
@@ -4638,8 +4707,9 @@ test("ingests Codex OTEL skill metrics with cumulative dedupe and tolerates invo
   });
   assert.deepEqual(telemetry.skills.injected.byInvokeType, { auto: 2 });
   const skill = telemetry.skills.injected.bySkill.find(
-    (entry: any) => entry.skill === "lsp-mcp-server"
+    (entry: { skill: string }) => entry.skill === "lsp-mcp-server"
   );
+  assert.ok(skill, "lsp-mcp-server skill row must be present");
   assert.equal(skill.total, 7);
   assert.deepEqual(skill.byStatus, { injected: 5, skipped: 2 });
   assert.deepEqual(skill.byInvokeType, { auto: 2 });
@@ -4703,11 +4773,15 @@ test("reads skill names from skillName / skill / skill_name depending on metric 
   ]);
   const telemetry = codexTelemetryStatus();
   assert.deepEqual(
-    telemetry.skills.injected.bySkill.map((row: any) => row.skill),
+    telemetry.skills.injected.bySkill.map(
+      (row: { skill: string }) => row.skill
+    ),
     ["skill-A"]
   );
-  assert.equal(telemetry.skills.injected.bySkill[0].total, 4);
-  assert.equal(telemetry.skills.usage, undefined);
+  const firstSkillRow = telemetry.skills.injected.bySkill[0];
+  assert.ok(firstSkillRow, "skills.injected.bySkill[0] must be present");
+  assert.equal(firstSkillRow.total, 4);
+  assert.equal(Object.hasOwn(telemetry.skills, "usage"), false);
   resetOtelTelemetry();
 });
 
@@ -4771,7 +4845,7 @@ test("labels all skills without a recognised name 'unknown'", () => {
     )?.total,
     5
   );
-  assert.equal(telemetry.skills.usage, undefined);
+  assert.equal(Object.hasOwn(telemetry.skills, "usage"), false);
   resetOtelTelemetry();
 });
 
@@ -4837,6 +4911,7 @@ test("groups skill injections by agent kind, model, and plugin metadata", () => 
   assert.deepEqual(skill.byModel, { "gpt-root": 2, "gpt-child": 3 });
   assert.deepEqual(skill.byPlugin, { "plugin-root": 2, "plugin-child": 3 });
   const orchestration = skill.bySkill[0];
+  assert.ok(orchestration, "skill.bySkill[0] must be present");
   assert.deepEqual(orchestration.byAgentKind, { root: 2, subagent: 3 });
   assert.deepEqual(orchestration.byModel, { "gpt-root": 2, "gpt-child": 3 });
   assert.deepEqual(orchestration.byPlugin, {
@@ -4899,7 +4974,7 @@ test("ignores shadow-selection diagnostics instead of treating them as skill usa
   ingest([histogram("codex.skill.turn.duration_seconds", 2, 200, 10)]);
 
   const skills = codexTelemetryStatus();
-  assert.equal(skills.skills.usage, undefined);
+  assert.equal(Object.hasOwn(skills.skills, "usage"), false);
   assert.deepEqual(skills.skills.turnDuration.durationSeconds, {
     count: 2,
     sum: 200,
@@ -5351,7 +5426,9 @@ test("accepts histogram-shaped lifecycle metrics when Codex reports them as dist
     ]
   });
   const telemetry = codexTelemetryStatus();
-  assert.equal(telemetry.hooks.byHook[0].count, 2);
+  const firstHookRow = telemetry.hooks.byHook[0];
+  assert.ok(firstHookRow, "telemetry.hooks.byHook[0] must be present");
+  assert.equal(firstHookRow.count, 2);
   assert.deepEqual(telemetry.threads.started, {
     total: 3,
     bySource: { subagent: 3 }
@@ -5417,12 +5494,14 @@ test("uses canonical source attribute for hook identity so project and user hook
   });
   const telemetry = codexTelemetryStatus();
   const projectHook = telemetry.hooks.byHook.find(
-    (entry: any) => entry.source === "project"
+    (entry: { source: string }) => entry.source === "project"
   );
+  assert.ok(projectHook, "project hook row must be present");
   assert.equal(projectHook.count, 2);
   const userHook = telemetry.hooks.byHook.find(
-    (entry: any) => entry.source === "user"
+    (entry: { source: string }) => entry.source === "user"
   );
+  assert.ok(userHook, "user hook row must be present");
   assert.equal(userHook.count, 5);
   assert.equal(telemetry.hooks.byHook.length, 2);
   resetOtelTelemetry();
@@ -5494,10 +5573,11 @@ test("normalizes Codex tool success boolean into ok and error status buckets", (
   });
   const telemetry = codexTelemetryStatus();
   const exec = telemetry.tools.byTool.find(
-    (entry: any) => entry.tool === "exec_command"
+    (entry: { tool: string }) => entry.tool === "exec_command"
   );
   // boolean or string success=true → ok, success=false → error, missing → unknown.
   // Without normalization, Codex's string-encoded success would be lost.
+  assert.ok(exec, "exec_command tool row must be present");
   assert.deepEqual(exec.byStatus, { ok: 5, error: 1, unknown: 2 });
   resetOtelTelemetry();
 });
@@ -5576,12 +5656,11 @@ test("reads tool server metadata from server / mcp_server without inferring it f
   assert.deepEqual(byServer, { playwright: 1, "playwright-alt": 2, "": 3 });
   // The router never guesses that "playwright_navigate" belongs to the
   // playwright server just because of the prefix.
-  assert.equal(
-    telemetry.tools.byTool.find(
-      (entry: any) => entry.tool === "codex_apps_search"
-    ).server,
-    "codex_apps"
+  const codexAppsToolRow = telemetry.tools.byTool.find(
+    (entry: { tool: string }) => entry.tool === "codex_apps_search"
   );
+  assert.ok(codexAppsToolRow, "codex_apps_search tool row must be present");
+  assert.equal(codexAppsToolRow.server, "codex_apps");
   resetOtelTelemetry();
 });
 
@@ -5923,7 +6002,7 @@ test("persists provider telemetry and recent events across router restarts", asy
     assert.equal(restored.recentEvents[0].requestId, "req-persist");
     assert.equal(restored.recentEvents[0].toolCalls, 0);
     assert.equal(restored.codexTelemetry.skills.injected.total, 2);
-    assert.equal(restored.codexTelemetry.skills.usage, undefined);
+    assert.equal(Object.hasOwn(restored.codexTelemetry.skills, "usage"), false);
     assert.deepEqual(
       restored.codexTelemetry.skills.turnDuration.durationSeconds,
       { count: 0, sum: 0, average: 0 }
@@ -5991,7 +6070,7 @@ test("drops removed shadow-selection telemetry from persisted state", async () =
     await writeFile(stateFile, JSON.stringify(state), "utf8");
     assert.equal(loadRouterState(stateFile), true);
     const telemetry = getRouterStatus().codexTelemetry;
-    assert.equal(telemetry.skills.usage, undefined);
+    assert.equal(Object.hasOwn(telemetry.skills, "usage"), false);
     assert.equal(telemetry.skills.selection, undefined);
     assert.equal(
       telemetry.metrics.observed.some(({ name }: any) =>
@@ -7661,7 +7740,7 @@ test("native Codex requests record MCP exposure from the role contract without l
     "request-native"
   );
   assert.deepEqual(codexHeaders, {});
-  assert.deepEqual(mcpContractForRole("default"), [
+  assert.deepEqual(mcpContractForRole(null), [
     "lsp",
     "cocoindex-code",
     "codegraphcontext"
@@ -7670,7 +7749,7 @@ test("native Codex requests record MCP exposure from the role contract without l
   resetRouterTelemetry();
   recordNativeMcpExposure({
     route: { provider: "codex", model: CONFIGURED_ORCHESTRATOR_MODEL } as any,
-    agentRole: "default",
+    agentRole: null,
     workspace: { key: "SimulatorLife/NativeCodex" },
     requestId: "request-native",
     sessionKey: "native-session"
@@ -10988,6 +11067,7 @@ test("agent activity: a continuation after a wait is observed as resumed", () =>
     provider: "codex",
     model: "gpt-5"
   });
+  assert.ok(record, "beginRequest for session-a must return a snapshot");
   assert.equal(record.state, "resumed");
   assert.equal(tracker.getState("session-a"), "resumed");
   assert.equal(tracker.countLive({}), 1, "a resumed subject is still live");
@@ -10997,6 +11077,7 @@ test("agent activity: a continuation after a wait is observed as resumed", () =>
     provider: "codex",
     model: "gpt-5"
   });
+  assert.ok(fresh, "beginRequest for session-c must return a snapshot");
   assert.equal(fresh.state, "active");
 });
 
@@ -11033,9 +11114,17 @@ test("agent activity: user_wait and subagent_wait are both reachable and disting
     model: "m"
   });
   const noop = untouched.noteSubagentResolved("s");
+  assert.ok(
+    noop,
+    "noteSubagentResolved for untouched session must return a snapshot"
+  );
   assert.equal(noop.state, "active");
   // The child reports back: the parent resumes.
   const resolved = tracker.noteSubagentResolved("orchestrator-session");
+  assert.ok(
+    resolved,
+    "noteSubagentResolved for orchestrator-session must return a snapshot"
+  );
   assert.equal(resolved.state, "resumed");
 });
 
@@ -11106,6 +11195,10 @@ test("agent activity: duplicate terminal events are idempotent while later turns
     provider: "codex",
     model: "gpt-5"
   });
+  assert.ok(
+    afterBegin,
+    "beginRequest for session-a (req-2) must return a snapshot"
+  );
   assert.equal(afterBegin.state, "active");
   assert.equal(tracker.countLive({}), 1);
 
@@ -11125,16 +11218,25 @@ test("agent activity: duplicate terminal events are idempotent while later turns
     state: "finished",
     eventId: "evt-1"
   });
+  assert.ok(first, "first applyLifecycleEvent must return a snapshot");
   assert.equal(first.state, "finished");
   const redelivered = tracker2.applyLifecycleEvent("session-b", {
     state: "finished",
     eventId: "evt-1"
   });
+  assert.ok(
+    redelivered,
+    "redelivered applyLifecycleEvent must return a snapshot"
+  );
   assert.equal(redelivered.state, "finished");
   const contradicting = tracker2.applyLifecycleEvent("session-b", {
     state: "failed",
     eventId: "evt-2"
   });
+  assert.ok(
+    contradicting,
+    "contradicting applyLifecycleEvent must return a snapshot"
+  );
   assert.equal(
     contradicting.state,
     "finished",
@@ -11183,7 +11285,8 @@ test("agent activity: counts are always nonnegative, including under out-of-orde
   tracker.endRequest("never-began-2", { requestId: "y", outcome: "failure" });
   const counts = tracker.countByState({});
   for (const state of AGENT_ACTIVITY_STATES) {
-    assert.ok(counts[state] >= 0, `count for ${state} must never be negative`);
+    const stateCount = counts[state] ?? 0;
+    assert.ok(stateCount >= 0, `count for ${state} must never be negative`);
   }
   assert.ok(tracker.countLive({}) >= 0);
   assert.ok(tracker.distinctTags({}).length >= 0);
@@ -11211,10 +11314,21 @@ test("agent activity: snapshot groups live activity by provider and by provider/
   });
   const snapshot = tracker.snapshot();
   assert.equal(snapshot.live, 3);
-  assert.equal(snapshot.byProvider.codex.active, 2);
-  assert.equal(snapshot.byProvider.claude.active, 1);
-  assert.equal(snapshot.byModel["codex/gpt-5"].active, 2);
-  assert.equal(snapshot.byModel["claude/sonnet"].active, 1);
+  const codexByProvider = snapshot.byProvider.codex;
+  assert.ok(codexByProvider, "snapshot.byProvider.codex must be present");
+  assert.equal(codexByProvider.active, 2);
+  const claudeByProvider = snapshot.byProvider.claude;
+  assert.ok(claudeByProvider, "snapshot.byProvider.claude must be present");
+  assert.equal(claudeByProvider.active, 1);
+  const codexGpt5ByModel = snapshot.byModel["codex/gpt-5"];
+  assert.ok(codexGpt5ByModel, "snapshot.byModel[codex/gpt-5] must be present");
+  assert.equal(codexGpt5ByModel.active, 2);
+  const claudeSonnetByModel = snapshot.byModel["claude/sonnet"];
+  assert.ok(
+    claudeSonnetByModel,
+    "snapshot.byModel[claude/sonnet] must be present"
+  );
+  assert.equal(claudeSonnetByModel.active, 1);
   assert.equal(snapshot.ttlMs, 60_000);
 });
 
@@ -11575,7 +11689,9 @@ test("agent activity: a heartbeat cannot revive a record that already exceeded t
   clock = 5001;
 
   // A delayed heartbeat must not resurrect abandoned work and leak a slot.
-  assert.equal(tracker.touch("silent").state, "stale");
+  const silentTouch = tracker.touch("silent");
+  assert.ok(silentTouch, "touch must return a snapshot for an existing record");
+  assert.equal(silentTouch.state, "stale");
   assert.equal(tracker.getState("silent"), "stale");
   assert.equal(tracker.countLive({}), 0);
 });
@@ -11614,9 +11730,13 @@ test("agent activity: subagent_slot records do not inflate liveActivity or snaps
   const snapshot = tracker.snapshot();
   assert.equal(snapshot.total, 1);
   assert.equal(snapshot.live, 1);
-  assert.equal(snapshot.byRole.worker.active, 1);
+  const workerByRole = snapshot.byRole.worker;
+  assert.ok(workerByRole, "snapshot.byRole.worker must be present");
+  assert.equal(workerByRole.active, 1);
   assert.equal(snapshot.byRole.unattributed, undefined);
-  assert.equal(snapshot.byWorkspace.AutoDev.active, 1);
+  const autoDevByWorkspace = snapshot.byWorkspace.AutoDev;
+  assert.ok(autoDevByWorkspace, "snapshot.byWorkspace.AutoDev must be present");
+  assert.equal(autoDevByWorkspace.active, 1);
 
   // Concurrency queries with explicit kind filter still see the slot tickets
   assert.equal(tracker.countLive({ kind: "subagent_slot" }), 2);
@@ -12682,8 +12802,19 @@ test("AUTODEV_OTEL_ATTRIBUTES=v1 enriches resource and event keys without changi
 test("autodevEnrichOtlpPayload places resource keys only on resource.attributes", () => {
   const payload = autodevBuildPayload();
   const enriched = autodevEnrichOtlpPayload("logs", payload.logs);
-  const resource = enriched.resourceLogs[0].resource;
-  const resourceMap = autodevAttrMap(resource.attributes);
+  assert.ok(enriched, "autodevEnrichOtlpPayload must return a payload");
+  const enrichedLogs = enriched.resourceLogs;
+  assert.ok(enrichedLogs, "enriched.resourceLogs must be present");
+  const firstResourceLog = enrichedLogs[0];
+  assert.ok(firstResourceLog, "enriched.resourceLogs[0] must be present");
+  const resource = firstResourceLog.resource;
+  assert.ok(resource, "firstResourceLog.resource must be present");
+  const resourceAttributes = resource.attributes;
+  assert.ok(
+    resourceAttributes,
+    "firstResourceLog.resource.attributes must be present"
+  );
+  const resourceMap = autodevAttrMap(resourceAttributes);
   // Resource-scope keys from the frozen contract map directly from their aliases.
   assert.equal(resourceMap["autodev.role"], "orchestrator");
   assert.equal(resourceMap["autodev.workspace"], "ws-autodev-test");
@@ -12694,8 +12825,12 @@ test("autodevEnrichOtlpPayload places resource keys only on resource.attributes"
   assert.equal(resourceMap.role, "orchestrator");
   assert.equal(resourceMap.workspace_id, "ws-autodev-test");
   // Resource-scope keys never leak into event/span/datapoint attributes.
-  for (const scopeLog of enriched.resourceLogs[0].scopeLogs) {
-    for (const record of scopeLog.logRecords) {
+  const enrichedScopeLogs = firstResourceLog.scopeLogs;
+  assert.ok(enrichedScopeLogs, "firstResourceLog.scopeLogs must be present");
+  for (const scopeLog of enrichedScopeLogs) {
+    const scopeLogRecords = scopeLog.logRecords;
+    assert.ok(scopeLogRecords, "scopeLog.logRecords must be present");
+    for (const record of scopeLogRecords) {
       const eventMap = autodevAttrMap(record.attributes);
       assert.equal(eventMap["autodev.role"], undefined);
       assert.equal(eventMap["autodev.workspace"], undefined);
@@ -12708,12 +12843,26 @@ test("autodevEnrichOtlpPayload places resource keys only on resource.attributes"
 test("autodevEnrichOtlpPayload places event keys only on the right event types", () => {
   const payload = autodevBuildPayload();
   const logsEnriched = autodevEnrichOtlpPayload("logs", payload.logs);
-  const records = logsEnriched.resourceLogs[0].scopeLogs[0].logRecords;
+  assert.ok(logsEnriched, "logs enriched payload must be present");
+  const logsResourceLogs = logsEnriched.resourceLogs;
+  assert.ok(logsResourceLogs, "logsEnriched.resourceLogs must be present");
+  const logsResourceLog = logsResourceLogs[0];
+  assert.ok(logsResourceLog, "logsEnriched.resourceLogs[0] must be present");
+  const logsScopeLogs = logsResourceLog.scopeLogs;
+  assert.ok(logsScopeLogs, "logsResourceLog.scopeLogs must be present");
+  const firstScopeLog = logsScopeLogs[0];
+  assert.ok(firstScopeLog, "logsResourceLog.scopeLogs[0] must be present");
+  const records = firstScopeLog.logRecords;
+  assert.ok(records, "firstScopeLog.logRecords must be present");
   const byName: Record<string, any> = Object.fromEntries(
-    records.map((r: any) => [
-      r.attributes.find((a: any) => a.key === "event.name")?.value?.stringValue,
-      autodevAttrMap(r.attributes)
-    ])
+    records.map((r: OtelLogRecord) => {
+      const recordAttributes = r.attributes ?? [];
+      return [
+        recordAttributes.find((a: { key: string }) => a.key === "event.name")
+          ?.value?.stringValue,
+        autodevAttrMap(recordAttributes)
+      ];
+    })
   );
   assert.equal(
     byName["codex.subagent_spawn"]["autodev.spawn.mechanism"],
@@ -12730,25 +12879,82 @@ test("autodevEnrichOtlpPayload places event keys only on the right event types",
   assert.equal(byName["codex.tool_result"]["autodev.skill"], undefined);
 
   const tracesEnriched = autodevEnrichOtlpPayload("traces", payload.traces);
-  const spans = tracesEnriched.resourceSpans[0].scopeSpans[0].spans;
+  assert.ok(tracesEnriched, "traces enriched payload must be present");
+  const tracesResourceSpans = tracesEnriched.resourceSpans;
+  assert.ok(
+    tracesResourceSpans,
+    "tracesEnriched.resourceSpans must be present"
+  );
+  const tracesResourceSpan = tracesResourceSpans[0];
+  assert.ok(
+    tracesResourceSpan,
+    "tracesEnriched.resourceSpans[0] must be present"
+  );
+  const tracesScopeSpans = tracesResourceSpan.scopeSpans;
+  assert.ok(tracesScopeSpans, "tracesResourceSpan.scopeSpans must be present");
+  const firstScopeSpan = tracesScopeSpans[0];
+  assert.ok(firstScopeSpan, "tracesResourceSpan.scopeSpans[0] must be present");
+  const spans = firstScopeSpan.spans;
+  assert.ok(spans, "firstScopeSpan.spans must be present");
+  const firstSpan = spans[0];
+  assert.ok(firstSpan, "spans[0] must be present");
+  const firstSpanAttributes = firstSpan.attributes;
+  assert.ok(firstSpanAttributes, "spans[0].attributes must be present");
   assert.equal(
-    spans[0].attributes.find((a: any) => a.key === "autodev.mcp.server")?.value
-      ?.stringValue,
+    firstSpanAttributes.find(
+      (a: { key: string }) => a.key === "autodev.mcp.server"
+    )?.value?.stringValue,
     "playwright"
   );
   // No server_name alias → no autodev.mcp.server decoration on the unattributed span.
+  const secondSpan = spans[1];
+  assert.ok(secondSpan, "spans[1] must be present");
+  const secondSpanAttributes = secondSpan.attributes;
+  assert.ok(secondSpanAttributes, "spans[1].attributes must be present");
   assert.equal(
-    spans[1].attributes.find((a: any) => a.key === "autodev.mcp.server"),
+    secondSpanAttributes.find(
+      (a: { key: string }) => a.key === "autodev.mcp.server"
+    ),
     undefined
   );
 
   const metricsEnriched = autodevEnrichOtlpPayload("metrics", payload.metrics);
-  const dataPointAttributes =
-    metricsEnriched.resourceMetrics[0].scopeMetrics[0].metrics[0].sum
-      .dataPoints[0].attributes;
+  assert.ok(metricsEnriched, "metrics enriched payload must be present");
+  const metricsResourceMetrics = metricsEnriched.resourceMetrics;
+  assert.ok(
+    metricsResourceMetrics,
+    "metricsEnriched.resourceMetrics must be present"
+  );
+  const metricsResourceMetric = metricsResourceMetrics[0];
+  assert.ok(
+    metricsResourceMetric,
+    "metricsEnriched.resourceMetrics[0] must be present"
+  );
+  const metricsScopeMetrics = metricsResourceMetric.scopeMetrics;
+  assert.ok(
+    metricsScopeMetrics,
+    "metricsResourceMetric.scopeMetrics must be present"
+  );
+  const firstScopeMetric = metricsScopeMetrics[0];
+  assert.ok(
+    firstScopeMetric,
+    "metricsResourceMetric.scopeMetrics[0] must be present"
+  );
+  const metrics = firstScopeMetric.metrics;
+  assert.ok(metrics, "firstScopeMetric.metrics must be present");
+  const firstMetric = metrics[0];
+  assert.ok(firstMetric, "firstScopeMetric.metrics[0] must be present");
+  const firstMetricSum = firstMetric.sum;
+  assert.ok(firstMetricSum, "firstMetric.sum must be present");
+  const dataPoints = firstMetricSum.dataPoints;
+  assert.ok(dataPoints, "firstMetricSum.dataPoints must be present");
+  const firstDataPoint = dataPoints[0];
+  assert.ok(firstDataPoint, "firstMetricSum.dataPoints[0] must be present");
+  const dataPointAttributes = firstDataPoint.attributes;
+  assert.ok(dataPointAttributes, "firstDataPoint.attributes must be present");
   assert.equal(
-    dataPointAttributes.find((a: any) => a.key === "autodev.skill")?.value
-      ?.stringValue,
+    dataPointAttributes.find((a: { key: string }) => a.key === "autodev.skill")
+      ?.value?.stringValue,
     "ccc"
   );
 });
@@ -12796,13 +13002,31 @@ test("autodevEnrichOtlpPayload is non-mutating: the input is left untouched", ()
     "the input metrics payload is untouched"
   );
   // Mutating the cloned enriched result must not touch the original input.
-  enrichedLogs.resourceLogs[0].resource.attributes.push({
+  assert.ok(enrichedLogs, "enrichedLogs must be present");
+  const enrichedLogsLogs = enrichedLogs.resourceLogs;
+  assert.ok(enrichedLogsLogs, "enrichedLogs.resourceLogs must be present");
+  const enrichedLogsResourceLog = enrichedLogsLogs[0];
+  assert.ok(
+    enrichedLogsResourceLog,
+    "enrichedLogs.resourceLogs[0] must be present"
+  );
+  const enrichedLogsResource = enrichedLogsResourceLog.resource;
+  assert.ok(
+    enrichedLogsResource,
+    "enrichedLogsResourceLog.resource must be present"
+  );
+  const enrichedLogsAttributes = enrichedLogsResource.attributes;
+  assert.ok(
+    enrichedLogsAttributes,
+    "enrichedLogsResource.attributes must be present"
+  );
+  enrichedLogsAttributes.push({
     key: "autodev.injected",
     value: { stringValue: "marker" }
   });
   assert.equal(
-    payload.logs.resourceLogs[0]?.resource.attributes.find(
-      (a: any) => a.key === "autodev.injected"
+    payload.logs.resourceLogs[0]?.resource.attributes?.find(
+      (a: { key: string }) => a.key === "autodev.injected"
     ),
     undefined
   );
@@ -12815,10 +13039,12 @@ test("autodevEnrichOtlpPayload never carries prompt or response content", () => 
   // the pipeline keeps working, but no autodev.* attribute value may equal it.
   const payload = autodevBuildPayload();
   const enriched = autodevEnrichOtlpPayload("logs", payload.logs);
+  assert.ok(enriched, "autodevEnrichOtlpPayload must return a payload");
   const promptSecret = "do-not-store-this-secret";
   let inspectedAutodevEntries = 0;
-  for (const resourceLog of enriched.resourceLogs) {
-    for (const entry of resourceLog.resource.attributes) {
+  for (const resourceLog of enriched.resourceLogs ?? []) {
+    const resourceLogResource = resourceLog.resource;
+    for (const entry of resourceLogResource?.attributes ?? []) {
       if (entry.key.startsWith("autodev.")) {
         inspectedAutodevEntries += 1;
         assert.notEqual(
@@ -12830,7 +13056,7 @@ test("autodevEnrichOtlpPayload never carries prompt or response content", () => 
     }
     for (const scopeLog of resourceLog.scopeLogs ?? []) {
       for (const record of scopeLog.logRecords ?? []) {
-        for (const entry of record.attributes) {
+        for (const entry of record.attributes ?? []) {
           if (entry.key.startsWith("autodev.")) {
             inspectedAutodevEntries += 1;
             assert.notEqual(
@@ -12851,15 +13077,29 @@ test("autodevEnrichOtlpPayload never carries prompt or response content", () => 
   );
   // prompt_text is preserved verbatim on its record (the helper never edits
   // existing non-autodev keys) so the rest of the pipeline keeps working.
-  const userPromptRecord =
-    enriched.resourceLogs[0].scopeLogs[0].logRecords.find(
-      (r: any) =>
-        r.attributes.find((a: any) => a.key === "event.name")?.value
-          ?.stringValue === "codex.user_prompt"
+  const enrichedUserLogs = enriched.resourceLogs;
+  assert.ok(enrichedUserLogs, "enriched.resourceLogs must be present");
+  const firstUserResourceLog = enrichedUserLogs[0];
+  assert.ok(firstUserResourceLog, "enriched.resourceLogs[0] must be present");
+  const userScopeLogs = firstUserResourceLog.scopeLogs;
+  assert.ok(userScopeLogs, "firstUserResourceLog.scopeLogs must be present");
+  const firstUserScopeLog = userScopeLogs[0];
+  assert.ok(
+    firstUserScopeLog,
+    "firstUserResourceLog.scopeLogs[0] must be present"
+  );
+  const userLogRecords = firstUserScopeLog.logRecords;
+  assert.ok(userLogRecords, "firstUserScopeLog.logRecords must be present");
+  const userPromptRecord = userLogRecords.find((r: OtelLogRecord) => {
+    const recordAttributes = r.attributes ?? [];
+    return (
+      recordAttributes.find((a: { key: string }) => a.key === "event.name")
+        ?.value?.stringValue === "codex.user_prompt"
     );
+  });
   assert.ok(userPromptRecord, "the user_prompt record must still be present");
-  const promptText = userPromptRecord.attributes.find(
-    (a: any) => a.key === "prompt_text"
+  const promptText = (userPromptRecord.attributes ?? []).find(
+    (a: { key: string }) => a.key === "prompt_text"
   )?.value?.stringValue;
   assert.equal(
     promptText,
@@ -12901,7 +13141,19 @@ test("autodevEnrichOtlpPayload omits unknown values and avoids duplicate keys", 
     ]
   };
   const once = autodevEnrichOtlpPayload("logs", logsPayload);
-  const onceResource = autodevAttrMap(once.resourceLogs[0].resource.attributes);
+  assert.ok(once, "autodevEnrichOtlpPayload must return a payload");
+  const onceLogs = once.resourceLogs;
+  assert.ok(onceLogs, "once.resourceLogs must be present");
+  const onceResourceLog = onceLogs[0];
+  assert.ok(onceResourceLog, "once.resourceLogs[0] must be present");
+  const onceResourceInner = onceResourceLog.resource;
+  assert.ok(onceResourceInner, "onceResourceLog.resource must be present");
+  const onceResourceAttributes = onceResourceInner.attributes;
+  assert.ok(
+    onceResourceAttributes,
+    "onceResourceInner.attributes must be present"
+  );
+  const onceResource = autodevAttrMap(onceResourceAttributes);
   assert.equal(
     onceResource["autodev.role"],
     undefined,
@@ -12915,17 +13167,22 @@ test("autodevEnrichOtlpPayload omits unknown values and avoids duplicate keys", 
   assert.equal(onceResource["autodev.provider"], "openai");
   assert.equal(onceResource["autodev.model"], CONFIGURED_ORCHESTRATOR_MODEL);
   // Heartbeat has no skill / spawn_mechanism / server_name alias: nothing added.
-  const heartBeat = once.resourceLogs[0].scopeLogs[0].logRecords[0];
+  const onceScopeLogs = onceResourceLog.scopeLogs;
+  assert.ok(onceScopeLogs, "onceResourceLog.scopeLogs must be present");
+  const onceFirstScopeLog = onceScopeLogs[0];
+  assert.ok(onceFirstScopeLog, "onceResourceLog.scopeLogs[0] must be present");
+  const onceLogRecords = onceFirstScopeLog.logRecords;
+  assert.ok(onceLogRecords, "onceFirstScopeLog.logRecords must be present");
+  const heartBeat = onceLogRecords[0];
+  assert.ok(heartBeat, "onceFirstScopeLog.logRecords[0] must be present");
+  const heartBeatAttributes = heartBeat.attributes ?? [];
+  assert.equal(autodevAttrMap(heartBeatAttributes)["autodev.skill"], undefined);
   assert.equal(
-    autodevAttrMap(heartBeat.attributes)["autodev.skill"],
+    autodevAttrMap(heartBeatAttributes)["autodev.spawn.mechanism"],
     undefined
   );
   assert.equal(
-    autodevAttrMap(heartBeat.attributes)["autodev.spawn.mechanism"],
-    undefined
-  );
-  assert.equal(
-    autodevAttrMap(heartBeat.attributes)["autodev.mcp.server"],
+    autodevAttrMap(heartBeatAttributes)["autodev.mcp.server"],
     undefined
   );
 
@@ -12933,12 +13190,23 @@ test("autodevEnrichOtlpPayload omits unknown values and avoids duplicate keys", 
   // not add a second copy of any autodev.* key, and must leave existing values
   // verbatim (the helper treats presence as "do not touch").
   const twice = autodevEnrichOtlpPayload("logs", once);
-  const twiceResourceAttributes = twice.resourceLogs[0].resource.attributes;
+  assert.ok(twice, "second enrichment must return a payload");
+  const twiceLogs = twice.resourceLogs;
+  assert.ok(twiceLogs, "twice.resourceLogs must be present");
+  const twiceResourceLog = twiceLogs[0];
+  assert.ok(twiceResourceLog, "twice.resourceLogs[0] must be present");
+  const twiceResourceInner = twiceResourceLog.resource;
+  assert.ok(twiceResourceInner, "twiceResourceLog.resource must be present");
+  const twiceResourceAttributes = twiceResourceInner.attributes;
+  assert.ok(
+    twiceResourceAttributes,
+    "twiceResourceInner.attributes must be present"
+  );
   const providerOccurrences = twiceResourceAttributes.filter(
-    (a: any) => a.key === "autodev.provider"
+    (a: { key: string }) => a.key === "autodev.provider"
   );
   const modelOccurrences = twiceResourceAttributes.filter(
-    (a: any) => a.key === "autodev.model"
+    (a: { key: string }) => a.key === "autodev.model"
   );
   assert.equal(
     providerOccurrences.length,
@@ -12950,21 +13218,38 @@ test("autodevEnrichOtlpPayload omits unknown values and avoids duplicate keys", 
     1,
     "autodev.model must appear exactly once after a second enrichment pass"
   );
-  assert.equal(providerOccurrences[0].value.stringValue, "openai");
-  assert.equal(
-    modelOccurrences[0].value.stringValue,
-    CONFIGURED_ORCHESTRATOR_MODEL
-  );
+  const firstProvider = providerOccurrences[0];
+  assert.ok(firstProvider, "providerOccurrences[0] must be present");
+  const firstProviderValue = firstProvider.value;
+  assert.ok(firstProviderValue, "firstProvider.value must be present");
+  assert.equal(firstProviderValue.stringValue, "openai");
+  const firstModel = modelOccurrences[0];
+  assert.ok(firstModel, "modelOccurrences[0] must be present");
+  const firstModelValue = firstModel.value;
+  assert.ok(firstModelValue, "firstModel.value must be present");
+  assert.equal(firstModelValue.stringValue, CONFIGURED_ORCHESTRATOR_MODEL);
   // Pre-existing autodev.* entries with a non-empty value must survive a
   // second enrichment untouched (the helper does not overwrite).
-  once.resourceLogs[0].resource.attributes.unshift({
+  onceResourceAttributes.unshift({
     key: "autodev.provider",
     value: { stringValue: "pinned-openai" }
   });
   const thrice = autodevEnrichOtlpPayload("logs", once);
-  const providerValues = thrice.resourceLogs[0].resource.attributes
-    .filter((a: any) => a.key === "autodev.provider")
-    .map((a: any) => a.value.stringValue);
+  assert.ok(thrice, "third enrichment must return a payload");
+  const thriceLogs = thrice.resourceLogs;
+  assert.ok(thriceLogs, "thrice.resourceLogs must be present");
+  const thriceResourceLog = thriceLogs[0];
+  assert.ok(thriceResourceLog, "thrice.resourceLogs[0] must be present");
+  const thriceResourceInner = thriceResourceLog.resource;
+  assert.ok(thriceResourceInner, "thriceResourceLog.resource must be present");
+  const thriceResourceAttributes = thriceResourceInner.attributes;
+  assert.ok(
+    thriceResourceAttributes,
+    "thriceResourceInner.attributes must be present"
+  );
+  const providerValues = thriceResourceAttributes
+    .filter((a: OtelAttribute) => a.key === "autodev.provider")
+    .map((a: OtelAttribute) => a.value?.stringValue);
   assert.deepEqual(
     providerValues,
     ["pinned-openai", "openai"],
@@ -12978,10 +13263,57 @@ test("autodevEnrichOtlpPayload preserves aggregation semantics on metrics", () =
   const payload = autodevBuildPayload();
   const before = structuredClone(payload.metrics);
   const enriched = autodevEnrichOtlpPayload("metrics", payload.metrics);
-  const dataPointBefore =
-    before.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.dataPoints[0];
-  const dataPointAfter =
-    enriched.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.dataPoints[0];
+  assert.ok(enriched, "enriched metrics payload must be present");
+  const beforeResourceMetrics = before.resourceMetrics;
+  assert.ok(beforeResourceMetrics, "before.resourceMetrics must be present");
+  const beforeResourceMetric = beforeResourceMetrics[0];
+  assert.ok(beforeResourceMetric, "before.resourceMetrics[0] must be present");
+  const beforeScopeMetrics = beforeResourceMetric.scopeMetrics;
+  assert.ok(
+    beforeScopeMetrics,
+    "beforeResourceMetric.scopeMetrics must be present"
+  );
+  const beforeScopeMetric = beforeScopeMetrics[0];
+  assert.ok(beforeScopeMetric, "beforeScopeMetrics[0] must be present");
+  const beforeMetrics = beforeScopeMetric.metrics;
+  assert.ok(beforeMetrics, "beforeScopeMetric.metrics must be present");
+  const beforeMetric = beforeMetrics[0];
+  assert.ok(beforeMetric, "beforeScopeMetric.metrics[0] must be present");
+  const beforeSum = beforeMetric.sum;
+  assert.ok(beforeSum, "beforeMetric.sum must be present");
+  const beforeDataPoints = beforeSum.dataPoints;
+  assert.ok(beforeDataPoints, "beforeSum.dataPoints must be present");
+  const dataPointBefore = beforeDataPoints[0];
+  assert.ok(dataPointBefore, "beforeSum.dataPoints[0] must be present");
+
+  const enrichedResourceMetrics = enriched.resourceMetrics;
+  assert.ok(
+    enrichedResourceMetrics,
+    "enriched.resourceMetrics must be present"
+  );
+  const enrichedResourceMetric = enrichedResourceMetrics[0];
+  assert.ok(
+    enrichedResourceMetric,
+    "enriched.resourceMetrics[0] must be present"
+  );
+  const enrichedScopeMetrics = enrichedResourceMetric.scopeMetrics;
+  assert.ok(
+    enrichedScopeMetrics,
+    "enrichedResourceMetric.scopeMetrics must be present"
+  );
+  const enrichedScopeMetric = enrichedScopeMetrics[0];
+  assert.ok(enrichedScopeMetric, "enrichedScopeMetrics[0] must be present");
+  const enrichedMetrics = enrichedScopeMetric.metrics;
+  assert.ok(enrichedMetrics, "enrichedScopeMetric.metrics must be present");
+  const enrichedMetric = enrichedMetrics[0];
+  assert.ok(enrichedMetric, "enrichedScopeMetric.metrics[0] must be present");
+  const enrichedSum = enrichedMetric.sum;
+  assert.ok(enrichedSum, "enrichedMetric.sum must be present");
+  const enrichedDataPoints = enrichedSum.dataPoints;
+  assert.ok(enrichedDataPoints, "enrichedSum.dataPoints must be present");
+  const dataPointAfter = enrichedDataPoints[0];
+  assert.ok(dataPointAfter, "enrichedSum.dataPoints[0] must be present");
+
   assert.equal(dataPointAfter.asInt, dataPointBefore.asInt);
   assert.equal(
     dataPointAfter.startTimeUnixNano,
@@ -12989,17 +13321,14 @@ test("autodevEnrichOtlpPayload preserves aggregation semantics on metrics", () =
   );
   assert.equal(dataPointAfter.timeUnixNano, dataPointBefore.timeUnixNano);
   assert.equal(
-    enriched.resourceMetrics[0].scopeMetrics[0].metrics[0].sum
-      .aggregationTemporality,
-    before.resourceMetrics[0].scopeMetrics[0].metrics[0].sum
-      .aggregationTemporality
+    enrichedSum.aggregationTemporality,
+    beforeSum.aggregationTemporality
   );
-  assert.equal(
-    enriched.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.isMonotonic,
-    before.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.isMonotonic
-  );
+  assert.equal(enrichedSum.isMonotonic, beforeSum.isMonotonic);
   // Pre-existing data-point attributes are still there untouched.
-  const afterKeys = new Set(dataPointAfter.attributes.map((a: any) => a.key));
+  const afterKeys = new Set(
+    (dataPointAfter.attributes ?? []).map((a: OtelAttribute) => a.key)
+  );
   for (const key of ["skill", "status", "autodev.skill"])
     assert.equal(afterKeys.has(key), true);
 });

@@ -70,16 +70,51 @@ interface ResponseContentPart {
 
 /** Discriminated union over the `response_item` variants the tracer cares about. */
 type ResponseItemPayload =
-  | { type: "message"; role?: string; content?: ResponseContentPart[]; [key: string]: unknown }
-  | { type: "reasoning"; id?: string; summary?: JsonValue[]; content?: ResponseContentPart[]; [key: string]: unknown }
-  | { type: "custom_tool_call" | "function_call"; name?: string; call_id?: string; id?: string; input?: JsonValue; arguments?: JsonValue; [key: string]: unknown }
-  | { type: "custom_tool_call_output" | "function_call_output"; call_id?: string; output?: JsonValue; [key: string]: unknown };
+  | {
+      type: "message";
+      role?: string;
+      content?: ResponseContentPart[];
+      [key: string]: unknown;
+    }
+  | {
+      type: "reasoning";
+      id?: string;
+      summary?: JsonValue[];
+      content?: ResponseContentPart[];
+      [key: string]: unknown;
+    }
+  | {
+      type: "custom_tool_call" | "function_call";
+      name?: string;
+      call_id?: string;
+      id?: string;
+      input?: JsonValue;
+      arguments?: JsonValue;
+      [key: string]: unknown;
+    }
+  | {
+      type: "custom_tool_call_output" | "function_call_output";
+      call_id?: string;
+      output?: JsonValue;
+      [key: string]: unknown;
+    };
 
 /** Discriminated union over the `event_msg` variants the tracer cares about. */
 type EventMsgPayload =
   | { type: "task_started"; turn_id?: string; [key: string]: unknown }
-  | { type: "task_complete"; turn_id?: string; last_agent_message?: string; error?: JsonValue; [key: string]: unknown }
-  | { type: "turn_aborted"; turn_id?: string; reason?: string; [key: string]: unknown }
+  | {
+      type: "task_complete";
+      turn_id?: string;
+      last_agent_message?: string;
+      error?: JsonValue;
+      [key: string]: unknown;
+    }
+  | {
+      type: "turn_aborted";
+      turn_id?: string;
+      reason?: string;
+      [key: string]: unknown;
+    }
   | { type: string; [key: string]: unknown };
 
 /** A rollout JSONL line, discriminated by its `type` field. */
@@ -131,6 +166,284 @@ interface RouterStatusBody {
   agents?: RouterAgentStatus;
   startedAt?: string;
   [key: string]: unknown;
+}
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseSessionMetaPayload(raw: unknown): SessionMetaPayload {
+  if (!isRecord(raw)) return {};
+  const meta: SessionMetaPayload = { ...raw };
+  if (typeof raw.id === "string") meta.id = raw.id;
+  if (typeof raw.session_id === "string") meta.session_id = raw.session_id;
+  if (typeof raw.parent_thread_id === "string")
+    meta.parent_thread_id = raw.parent_thread_id;
+  if (typeof raw.thread_source === "string")
+    meta.thread_source = raw.thread_source;
+  if (typeof raw.agent_role === "string") meta.agent_role = raw.agent_role;
+  if (typeof raw.agent_nickname === "string")
+    meta.agent_nickname = raw.agent_nickname;
+  if (typeof raw.model_provider === "string")
+    meta.model_provider = raw.model_provider;
+  if (typeof raw.cli_version === "string") meta.cli_version = raw.cli_version;
+  if (typeof raw.cwd === "string") meta.cwd = raw.cwd;
+  if (typeof raw.timestamp === "string") meta.timestamp = raw.timestamp;
+  return meta;
+}
+
+function parseTurnContextPayload(raw: unknown): TurnContextPayload {
+  if (!isRecord(raw)) return {};
+  const context: TurnContextPayload = { ...raw };
+  if (typeof raw.model === "string") context.model = raw.model;
+  return context;
+}
+
+function parseContentParts(raw: unknown): ResponseContentPart[] | null {
+  if (!Array.isArray(raw)) return null;
+  const parts: ResponseContentPart[] = [];
+  for (const item of raw) {
+    if (isRecord(item)) {
+      const part: ResponseContentPart = { ...item };
+      if (typeof item.type === "string") part.type = item.type;
+      if (typeof item.text === "string") part.text = item.text;
+      parts.push(part);
+    }
+  }
+  return parts;
+}
+
+function parseResponseItemPayload(raw: unknown): ResponseItemPayload | null {
+  if (!isRecord(raw) || typeof raw.type !== "string") return null;
+  switch (raw.type) {
+    case "message": {
+      const payload: ResponseItemPayload = {
+        ...raw,
+        type: "message"
+      };
+      if (typeof raw.role === "string") payload.role = raw.role;
+      const content = parseContentParts(raw.content);
+      if (content !== null) payload.content = content;
+      return payload;
+    }
+    case "reasoning": {
+      const payload: ResponseItemPayload = {
+        ...raw,
+        type: "reasoning"
+      };
+      if (typeof raw.id === "string") payload.id = raw.id;
+      if (Array.isArray(raw.summary)) payload.summary = raw.summary;
+      const content = parseContentParts(raw.content);
+      if (content !== null) payload.content = content;
+      return payload;
+    }
+    case "custom_tool_call":
+    case "function_call": {
+      const payload: ResponseItemPayload = {
+        ...raw,
+        type: raw.type
+      };
+      if (typeof raw.name === "string") payload.name = raw.name;
+      if (typeof raw.call_id === "string") payload.call_id = raw.call_id;
+      if (typeof raw.id === "string") payload.id = raw.id;
+      return payload;
+    }
+    case "custom_tool_call_output":
+    case "function_call_output": {
+      const payload: ResponseItemPayload = {
+        ...raw,
+        type: raw.type
+      };
+      if (typeof raw.call_id === "string") payload.call_id = raw.call_id;
+      return payload;
+    }
+    default: {
+      return null;
+    }
+  }
+}
+
+function parseEventMsgPayload(raw: unknown): EventMsgPayload | null {
+  if (!isRecord(raw) || typeof raw.type !== "string") return null;
+  switch (raw.type) {
+    case "task_started": {
+      const payload: EventMsgPayload = {
+        ...raw,
+        type: "task_started"
+      };
+      if (typeof raw.turn_id === "string") payload.turn_id = raw.turn_id;
+      return payload;
+    }
+    case "task_complete": {
+      const payload: EventMsgPayload = {
+        ...raw,
+        type: "task_complete"
+      };
+      if (typeof raw.turn_id === "string") payload.turn_id = raw.turn_id;
+      if (typeof raw.last_agent_message === "string")
+        payload.last_agent_message = raw.last_agent_message;
+      return payload;
+    }
+    case "turn_aborted": {
+      const payload: EventMsgPayload = {
+        ...raw,
+        type: "turn_aborted"
+      };
+      if (typeof raw.turn_id === "string") payload.turn_id = raw.turn_id;
+      if (typeof raw.reason === "string") payload.reason = raw.reason;
+      return payload;
+    }
+    default: {
+      return {
+        ...raw,
+        type: raw.type
+      };
+    }
+  }
+}
+
+function isResponseItemPayload(
+  payload: unknown
+): payload is ResponseItemPayload {
+  if (!isRecord(payload) || typeof payload.type !== "string") return false;
+  return (
+    payload.type === "message" ||
+    payload.type === "reasoning" ||
+    payload.type === "custom_tool_call" ||
+    payload.type === "function_call" ||
+    payload.type === "custom_tool_call_output" ||
+    payload.type === "function_call_output"
+  );
+}
+
+function isEventMsgPayload(payload: unknown): payload is EventMsgPayload {
+  return isRecord(payload) && typeof payload.type === "string";
+}
+
+function withTimestamp<T extends { type: string }>(
+  record: T,
+  timestamp: string | undefined
+): T | (T & { timestamp: string }) {
+  return timestamp === undefined ? record : { ...record, timestamp };
+}
+
+function parseRolloutPayload(raw: unknown): RolloutPayload | null {
+  if (!isRecord(raw) || typeof raw.type !== "string") return null;
+  const timestamp =
+    typeof raw.timestamp === "string" ? raw.timestamp : undefined;
+  switch (raw.type) {
+    case "session_meta": {
+      const payload = isRecord(raw.payload)
+        ? parseSessionMetaPayload(raw.payload)
+        : undefined;
+      return withTimestamp(
+        {
+          type: "session_meta",
+          ...(payload === undefined ? {} : { payload })
+        },
+        timestamp
+      );
+    }
+    case "turn_context": {
+      const payload = isRecord(raw.payload)
+        ? parseTurnContextPayload(raw.payload)
+        : undefined;
+      return withTimestamp(
+        {
+          type: "turn_context",
+          ...(payload === undefined ? {} : { payload })
+        },
+        timestamp
+      );
+    }
+    case "response_item": {
+      const payload = parseResponseItemPayload(raw.payload);
+      return withTimestamp(
+        {
+          type: "response_item",
+          ...(payload === null ? {} : { payload })
+        },
+        timestamp
+      );
+    }
+    case "event_msg": {
+      const payload = parseEventMsgPayload(raw.payload);
+      return withTimestamp(
+        {
+          type: "event_msg",
+          ...(payload === null ? {} : { payload })
+        },
+        timestamp
+      );
+    }
+    default: {
+      const payload = isRecord(raw.payload) ? raw.payload : undefined;
+      return withTimestamp(
+        {
+          type: raw.type,
+          ...(payload === undefined ? {} : { payload })
+        },
+        timestamp
+      );
+    }
+  }
+}
+
+function parseRouterEvent(raw: unknown): RouterEventFields | null {
+  if (!isRecord(raw)) return null;
+  const result: RouterEventFields = {};
+  if (typeof raw.requestId === "string") result.requestId = raw.requestId;
+  if (typeof raw.thread === "string") result.thread = raw.thread;
+  if (typeof raw.phase === "string") result.phase = raw.phase;
+  if (typeof raw.role === "string") result.role = raw.role;
+  if (typeof raw.requestedModel === "string")
+    result.requestedModel = raw.requestedModel;
+  if (typeof raw.provider === "string") result.provider = raw.provider;
+  if (typeof raw.model === "string") result.model = raw.model;
+  if (typeof raw.outcome === "string") result.outcome = raw.outcome;
+  if (typeof raw.status === "number") result.status = raw.status;
+  if (typeof raw.failureClass === "string")
+    result.failureClass = raw.failureClass;
+  if (typeof raw.elapsedMs === "number") result.elapsedMs = raw.elapsedMs;
+  if (typeof raw.toolCalls === "number") result.toolCalls = raw.toolCalls;
+  if (typeof raw.selection === "string") result.selection = raw.selection;
+  return result;
+}
+
+function parseRouterAgentStatus(raw: unknown): RouterAgentStatus | null {
+  if (!isRecord(raw)) return null;
+  const result: RouterAgentStatus = {};
+  if (typeof raw.canonicalLiveCount === "number") {
+    result.canonicalLiveCount = raw.canonicalLiveCount;
+  }
+  if (isRecord(raw.byState)) {
+    const byState: Record<string, number> = {};
+    for (const [k, v] of Object.entries(raw.byState)) {
+      if (typeof v === "number") byState[k] = v;
+    }
+    result.byState = byState;
+  }
+  if (isRecord(raw.liveByRole)) {
+    const liveByRole: Record<string, number> = {};
+    for (const [k, v] of Object.entries(raw.liveByRole)) {
+      if (typeof v === "number") liveByRole[k] = v;
+    }
+    result.liveByRole = liveByRole;
+  }
+  return result;
+}
+
+function parseRouterStatus(raw: unknown): RouterStatusBody | null {
+  if (!isRecord(raw)) return null;
+  const result: RouterStatusBody = {};
+  if (typeof raw.startedAt === "string") {
+    result.startedAt = raw.startedAt;
+  }
+  if (isRecord(raw.agents)) {
+    const agents = parseRouterAgentStatus(raw.agents);
+    if (agents) result.agents = agents;
+  }
+  return result;
 }
 
 const COLLATOR = new Intl.Collator();
@@ -305,8 +618,12 @@ function outputText(output: unknown): string {
   if (typeof output === "string") return output;
   if (Array.isArray(output))
     return output
-      .map((part: JsonRecord) =>
-        typeof part === "string" ? part : (part?.text ?? "")
+      .map((part: unknown) =>
+        typeof part === "string"
+          ? part
+          : isRecord(part) && typeof part.text === "string"
+            ? part.text
+            : ""
       )
       .join("\n");
   return JSON.stringify(output ?? "");
@@ -318,7 +635,9 @@ function readJsonl(file: string): RolloutPayload[] {
     .filter(Boolean)
     .flatMap((line) => {
       try {
-        return [JSON.parse(line) as RolloutPayload];
+        const parsed: unknown = JSON.parse(line);
+        const validated = parseRolloutPayload(parsed);
+        return validated ? [validated] : [];
       } catch {
         return [];
       }
@@ -341,8 +660,13 @@ function firstLine(file: string): { payload?: SessionMetaPayload } | null {
       if (newline !== -1) break;
       total += read;
     }
-    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
-      payload?: SessionMetaPayload;
+    const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (!isRecord(parsed)) return null;
+    const payload = isRecord(parsed.payload)
+      ? parseSessionMetaPayload(parsed.payload)
+      : undefined;
+    return {
+      ...(payload === undefined ? {} : { payload })
     };
   } catch {
     return null;
@@ -390,7 +714,10 @@ export function findSessionRollouts(
     const meta = firstLine(file)?.payload;
     if (
       meta &&
-      (sessionIds.has(meta.session_id) || sessionIds.has(meta.parent_thread_id))
+      ((typeof meta.session_id === "string" &&
+        sessionIds.has(meta.session_id)) ||
+        (typeof meta.parent_thread_id === "string" &&
+          sessionIds.has(meta.parent_thread_id)))
     )
       matched.add(file);
   }
@@ -405,6 +732,35 @@ export interface RecentSession {
   cwd: string | null;
 }
 
+function addRecentSession(
+  sessions: Map<string, RecentSession>,
+  file: string,
+  meta: SessionMetaPayload
+): void {
+  const sessionId =
+    typeof meta.session_id === "string"
+      ? meta.session_id
+      : typeof meta.id === "string"
+        ? meta.id
+        : "";
+  if (!sessionId) return;
+  const modified = statSync(file).mtime.toISOString();
+  const entry = sessions.get(sessionId) ?? {
+    id: sessionId,
+    started: typeof meta.timestamp === "string" ? meta.timestamp : "",
+    lastWrite: modified,
+    threads: 0,
+    cwd: typeof meta.cwd === "string" ? meta.cwd : null
+  };
+  entry.threads += 1;
+  if (modified > entry.lastWrite) entry.lastWrite = modified;
+  if (meta.id === sessionId) {
+    if (typeof meta.timestamp === "string") entry.started = meta.timestamp;
+    if (typeof meta.cwd === "string") entry.cwd = meta.cwd;
+  }
+  sessions.set(sessionId, entry);
+}
+
 /** The newest root sessions, for when the user names none. */
 export function recentSessions(
   sessionsRoot: string,
@@ -413,44 +769,55 @@ export function recentSessions(
   const sessions = new Map<string, RecentSession>();
   for (const file of rolloutFiles(sessionsRoot).reverse().slice(0, 400)) {
     const meta = firstLine(file)?.payload;
-    if (!meta) continue;
-    const sessionId = String(meta.session_id ?? meta.id);
-    const modified = statSync(file).mtime.toISOString();
-    const entry = sessions.get(sessionId) ?? {
-      id: sessionId,
-      started: String(meta.timestamp ?? ""),
-      lastWrite: modified,
-      threads: 0,
-      cwd: meta.cwd ?? null
-    };
-    entry.threads += 1;
-    if (modified > entry.lastWrite) entry.lastWrite = modified;
-    if (meta.id === sessionId) {
-      entry.started = String(meta.timestamp ?? entry.started);
-      entry.cwd = meta.cwd ?? entry.cwd;
-    }
-    sessions.set(sessionId, entry);
+    if (meta) addRecentSession(sessions, file, meta);
   }
   return [...sessions.values()]
     .sort((a, b) => COLLATOR.compare(b.lastWrite, a.lastWrite))
     .slice(0, limit);
 }
 
-function itemDetail(payload: JsonRecord): string {
+function itemDetail(payload: ResponseItemPayload | JsonRecord): string {
   switch (payload.type) {
     case "message": {
-      return `${payload.role}: ${excerpt((payload.content ?? []).map((part: JsonRecord) => part.text ?? "").join(" "))}`;
+      const content = Array.isArray(payload.content) ? payload.content : [];
+      const text = content
+        .map((part) =>
+          typeof part === "string"
+            ? part
+            : isRecord(part) && typeof part.text === "string"
+              ? part.text
+              : ""
+        )
+        .join(" ");
+      const role = typeof payload.role === "string" ? payload.role : "";
+      return `${role}: ${excerpt(text)}`;
     }
     case "reasoning": {
-      return `id=${payload.id ?? "-"} ${excerpt([...(payload.summary ?? []), ...(payload.content ?? [])].map((part: JsonRecord) => part.text ?? "").join(" "))}`;
+      const summary = Array.isArray(payload.summary) ? payload.summary : [];
+      const content = Array.isArray(payload.content) ? payload.content : [];
+      const text = [...summary, ...content]
+        .map((part) =>
+          typeof part === "string"
+            ? part
+            : isRecord(part) && typeof part.text === "string"
+              ? part.text
+              : ""
+        )
+        .join(" ");
+      const id = typeof payload.id === "string" ? payload.id : "-";
+      return `id=${id} ${excerpt(text)}`;
     }
     case "custom_tool_call":
     case "function_call": {
-      return `${payload.name} call=${payload.call_id} id=${payload.id ?? "-"} ${excerpt(payload.input ?? payload.arguments)}`;
+      const name = typeof payload.name === "string" ? payload.name : "";
+      const callId = typeof payload.call_id === "string" ? payload.call_id : "";
+      const id = typeof payload.id === "string" ? payload.id : "-";
+      return `${name} call=${callId} id=${id} ${excerpt(payload.input ?? payload.arguments)}`;
     }
     case "custom_tool_call_output":
     case "function_call_output": {
-      return `call=${payload.call_id} ${excerpt(payload.output)}`;
+      const callId = typeof payload.call_id === "string" ? payload.call_id : "";
+      return `call=${callId} ${excerpt(payload.output)}`;
     }
     default: {
       return excerpt(payload);
@@ -463,14 +830,16 @@ function toolsOfCall(payload: ResponseItemPayload): string[] {
   if (payload.type !== "custom_tool_call" && payload.type !== "function_call") {
     return [];
   }
-  const name = payload.name ?? "?";
+  const name = typeof payload.name === "string" ? payload.name : "?";
   if (
     payload.type === "custom_tool_call" &&
     name === "exec" &&
     typeof payload.input === "string"
   ) {
     const nested: string[] = [];
-    for (const match of payload.input.matchAll(/tools\.([A-Za-z0-9_]+)\s*\(/g)) {
+    for (const match of payload.input.matchAll(
+      /tools\.([A-Za-z0-9_]+)\s*\(/g
+    )) {
       if (match[1]) nested.push(match[1]);
     }
     return nested.length > 0 ? nested : ["exec"];
@@ -495,7 +864,7 @@ interface ThreadTraceAccumulator {
 }
 
 function recordGapAndItems(
-  record: { type?: unknown },
+  record: RolloutPayload,
   at: string | null,
   payload: ResponseItemPayload | EventMsgPayload | undefined,
   withItems: boolean,
@@ -504,18 +873,34 @@ function recordGapAndItems(
   const isResponse = record.type === "response_item";
   const isTurnishEvent =
     record.type === "event_msg" &&
-    typeof payload === "object" &&
-    payload !== null &&
+    payload !== undefined &&
     TASK_OR_TURN_REGEX.test(payload.type);
   if (!isResponse && !isTurnishEvent) return;
-  const label =
-    isResponse && payload && (payload.type === "custom_tool_call" || payload.type === "function_call")
-      ? `${payload.type}(${payload.name ?? ""})`
-      : isResponse && payload
-        ? payload.type
-        : payload && typeof payload === "object"
-          ? payload.type
-          : "";
+  const label = traceItemLabel(payload, isResponse);
+  recordTraceGap(at, label, acc);
+  if (withItems && isResponse && at && payload)
+    acc.items.push({ at, kind: payload.type, detail: itemDetail(payload) });
+}
+
+function traceItemLabel(
+  payload: ResponseItemPayload | EventMsgPayload | undefined,
+  isResponse: boolean
+): string {
+  if (!payload) return "";
+  if (
+    isResponse &&
+    (payload.type === "custom_tool_call" || payload.type === "function_call")
+  )
+    return `${payload.type}(${typeof payload.name === "string" ? payload.name : ""})`;
+  return payload.type;
+}
+
+function recordTraceGap(
+  at: string | null,
+  label: string,
+  acc: ThreadTraceAccumulator
+): void {
+  if (!at) return;
   if (at && acc.previous && acc.open.size > 0) {
     const seconds = (Date.parse(at) - Date.parse(acc.previous.at)) / 1000;
     if (seconds >= GAP_SECONDS)
@@ -526,17 +911,11 @@ function recordGapAndItems(
         at: acc.previous.at
       });
   }
-  if (at) acc.previous = { at, label };
-  if (withItems && isResponse && at && payload)
-    acc.items.push({
-      at,
-      kind: payload.type,
-      detail: itemDetail(payload)
-    });
+  acc.previous = { at, label };
 }
 
 function recordToolUsage(
-  record: { type?: unknown },
+  record: RolloutPayload,
   at: string | null,
   payload: ResponseItemPayload | undefined,
   acc: ThreadTraceAccumulator
@@ -545,7 +924,8 @@ function recordToolUsage(
   if (payload.type === "custom_tool_call" || payload.type === "function_call") {
     const reached = toolsOfCall(payload);
     for (const tool of reached) acc.tools[tool] = (acc.tools[tool] ?? 0) + 1;
-    if (payload.call_id !== undefined) acc.callTools.set(payload.call_id, reached.join("+"));
+    if (typeof payload.call_id === "string")
+      acc.callTools.set(payload.call_id, reached.join("+"));
   } else if (
     payload.type === "custom_tool_call_output" ||
     payload.type === "function_call_output"
@@ -555,12 +935,38 @@ function recordToolUsage(
     if (failure) {
       acc.toolFailures.push({
         at: at ?? "",
-        tool: (payload.call_id !== undefined && acc.callTools.get(payload.call_id)) || "?",
-        callId: payload.call_id ?? "",
+        tool:
+          (typeof payload.call_id === "string" &&
+            acc.callTools.get(payload.call_id)) ||
+          "?",
+        callId: typeof payload.call_id === "string" ? payload.call_id : "",
         detail: excerpt(text.slice(Math.max(0, failure.index - 40)))
       });
     }
   }
+}
+
+function recordReadInvestigation(
+  cwd: string,
+  sourcePath: string,
+  acc: ThreadTraceAccumulator
+): void {
+  const file = path.resolve(cwd, sourcePath);
+  if (acc.reads.has(file)) acc.investigation.repeatedReads += 1;
+  acc.reads.add(file);
+  acc.investigation.filesRead = acc.reads.size;
+}
+
+function recordSearchInvestigation(
+  cwd: string,
+  query: string,
+  sourcePath: string,
+  acc: ThreadTraceAccumulator
+): void {
+  const key = `${query}\0${path.resolve(cwd, sourcePath)}`;
+  acc.investigation.searches += 1;
+  if (acc.searchKeys.has(key)) acc.investigation.repeatedSearches += 1;
+  acc.searchKeys.add(key);
 }
 
 function recordCommandInvestigation(
@@ -569,23 +975,20 @@ function recordCommandInvestigation(
 ): void {
   const cwd = typeof item.cwd === "string" ? item.cwd : acc.cwd;
   const parsed = Array.isArray(item.parsed_cmd) ? item.parsed_cmd : [];
-  for (const entry of parsed as JsonRecord[]) {
+  for (const entry of parsed) {
+    if (!isRecord(entry)) continue;
     if (entry.type === "read" && typeof entry.path === "string") {
-      const file = path.resolve(cwd, entry.path);
-      if (acc.reads.has(file)) acc.investigation.repeatedReads += 1;
-      acc.reads.add(file);
-      acc.investigation.filesRead = acc.reads.size;
+      recordReadInvestigation(cwd, entry.path, acc);
     } else if (entry.type === "search") {
-      const key = `${entry.query ?? ""}\0${path.resolve(cwd, typeof entry.path === "string" ? entry.path : ".")}`;
-      acc.investigation.searches += 1;
-      if (acc.searchKeys.has(key)) acc.investigation.repeatedSearches += 1;
-      acc.searchKeys.add(key);
+      const query = typeof entry.query === "string" ? entry.query : "";
+      const searchPath = typeof entry.path === "string" ? entry.path : ".";
+      recordSearchInvestigation(cwd, query, searchPath, acc);
     }
   }
 }
 
 function recordInvestigation(
-  record: { type?: unknown },
+  record: RolloutPayload,
   at: string | null,
   payload: JsonRecord,
   acc: ThreadTraceAccumulator
@@ -594,16 +997,17 @@ function recordInvestigation(
   const investigation = acc.investigation;
   if (investigation.firstEditAt !== null) return;
   if (payload.type === "token_count") {
-    const usage = (payload.info as JsonRecord | undefined)?.total_token_usage as
-      | JsonRecord
-      | undefined;
+    const info = isRecord(payload.info) ? payload.info : undefined;
+    const usage = isRecord(info?.total_token_usage)
+      ? info.total_token_usage
+      : undefined;
     // A provider that reports no usage leaves every total at 0: unknown, not zero.
     if (typeof usage?.total_tokens === "number" && usage.total_tokens > 0)
       investigation.tokens = usage.total_tokens;
     return;
   }
   if (payload.type !== "item_completed") return;
-  const item = (payload.item ?? {}) as JsonRecord;
+  const item = isRecord(payload.item) ? payload.item : {};
   const kind = typeof item.type === "string" ? item.type : "";
   investigation.observed = true;
   if (kind === "FileChange") {
@@ -619,61 +1023,89 @@ function recordInvestigation(
   }
 }
 
+function turnOutcome(payload: EventMsgPayload): string {
+  if (payload.type === "turn_aborted")
+    return `aborted:${typeof payload.reason === "string" ? payload.reason : "?"}`;
+  return payload.error === undefined ? "completed" : "failed";
+}
+
+function turnDetail(payload: EventMsgPayload): string | null {
+  if (payload.error !== undefined) {
+    const message =
+      isRecord(payload.error) && typeof payload.error.message === "string"
+        ? payload.error.message
+        : payload.error;
+    return excerpt(message);
+  }
+  return typeof payload.last_agent_message === "string"
+    ? excerpt(payload.last_agent_message)
+    : null;
+}
+
+function recordStartedTurn(
+  at: string | null,
+  payload: EventMsgPayload,
+  acc: ThreadTraceAccumulator
+): void {
+  if (payload.type !== "task_started") return;
+  const turnId = typeof payload.turn_id === "string" ? payload.turn_id : "";
+  const turn = {
+    turnId,
+    started: at,
+    ended: null,
+    outcome: "running",
+    detail: null
+  };
+  acc.open.set(turnId, turn);
+  acc.turns.push(turn);
+}
+
+function recordCompletedTurn(
+  at: string | null,
+  payload: EventMsgPayload,
+  acc: ThreadTraceAccumulator
+): void {
+  if (payload.type !== "task_complete" && payload.type !== "turn_aborted")
+    return;
+  const turnId = typeof payload.turn_id === "string" ? payload.turn_id : "";
+  const turn = acc.open.get(turnId);
+  if (!turn) return;
+  turn.ended = at;
+  turn.outcome = turnOutcome(payload);
+  turn.detail = turnDetail(payload);
+  acc.open.delete(turnId);
+}
+
 function recordTurnEvent(
-  record: { type?: unknown },
+  record: RolloutPayload,
   at: string | null,
   payload: EventMsgPayload | undefined,
   acc: ThreadTraceAccumulator
 ): void {
   if (record.type !== "event_msg" || !payload) return;
-  if (payload.type === "task_started") {
-    const turnId = payload.turn_id ?? "";
-    const turn = {
-      turnId,
-      started: at,
-      ended: null,
-      outcome: "running",
-      detail: null
-    };
-    acc.open.set(turnId, turn);
-    acc.turns.push(turn);
-  } else if (payload.type === "task_complete" || payload.type === "turn_aborted") {
-    const turnId = payload.turn_id ?? "";
-    const turn = acc.open.get(turnId);
-    if (turn) {
-      turn.ended = at;
-      turn.outcome =
-        payload.type === "turn_aborted"
-          ? `aborted:${payload.reason ?? "?"}`
-          : payload.error !== undefined
-            ? "failed"
-            : "completed";
-      if (payload.error !== undefined) {
-        const message =
-          payload.error && typeof payload.error === "object" && "message" in payload.error &&
-          typeof (payload.error as { message: unknown }).message === "string"
-            ? (payload.error as { message: string }).message
-            : payload.error;
-        turn.detail = excerpt(message);
-      } else if (typeof payload.last_agent_message === "string") {
-        turn.detail = excerpt(payload.last_agent_message);
-      } else {
-        turn.detail = null;
-      }
-      acc.open.delete(turnId);
-    }
-  }
+  recordStartedTurn(at, payload, acc);
+  recordCompletedTurn(at, payload, acc);
 }
 
-export function traceThread(file: string, withItems: boolean): ThreadTrace {
-  const records = readJsonl(file);
-  const meta =
-    (records.find((record) => record.type === "session_meta")?.payload ??
-      {}) as JsonRecord;
-  const context =
-    (records.find((record) => record.type === "turn_context")?.payload ??
-      {}) as JsonRecord;
-  const acc: ThreadTraceAccumulator = {
+function traceMetadata(records: RolloutPayload[]): {
+  meta: SessionMetaPayload;
+  context: TurnContextPayload;
+} {
+  const meta = records.find(
+    (record): record is Extract<RolloutPayload, { type: "session_meta" }> =>
+      record.type === "session_meta"
+  )?.payload;
+  const context = records.find(
+    (record): record is Extract<RolloutPayload, { type: "turn_context" }> =>
+      record.type === "turn_context"
+  )?.payload;
+  return { meta: meta ?? {}, context: context ?? {} };
+}
+
+function createTraceAccumulator(
+  meta: SessionMetaPayload
+): ThreadTraceAccumulator {
+  return {
     counts: {},
     turns: [],
     open: new Map(),
@@ -698,39 +1130,83 @@ export function traceThread(file: string, withItems: boolean): ThreadTrace {
     reads: new Set(),
     searchKeys: new Set()
   };
-  for (const record of records) {
-    const at = typeof record.timestamp === "string" ? record.timestamp : null;
-    const payload = (record.payload ?? {}) as JsonRecord;
-    const kind =
-      record.type === "response_item" || record.type === "event_msg"
-        ? `${record.type}:${payload.type}`
-        : String(record.type);
-    acc.counts[kind] = (acc.counts[kind] ?? 0) + 1;
+}
+
+function incrementCount(acc: ThreadTraceAccumulator, key: string): void {
+  acc.counts[key] = (acc.counts[key] ?? 0) + 1;
+}
+
+function accumulateTraceRecord(
+  record: RolloutPayload,
+  withItems: boolean,
+  acc: ThreadTraceAccumulator
+): void {
+  const at = typeof record.timestamp === "string" ? record.timestamp : null;
+  if (record.type === "response_item") {
+    const payload = isResponseItemPayload(record.payload)
+      ? record.payload
+      : undefined;
+    incrementCount(acc, `response_item:${payload?.type ?? ""}`);
     recordGapAndItems(record, at, payload, withItems, acc);
     recordToolUsage(record, at, payload, acc);
-    recordTurnEvent(record, at, payload, acc);
-    recordInvestigation(record, at, payload, acc);
+    return;
   }
+  if (record.type === "event_msg") {
+    const payload = isEventMsgPayload(record.payload)
+      ? record.payload
+      : undefined;
+    incrementCount(acc, `event_msg:${payload?.type ?? ""}`);
+    recordGapAndItems(record, at, payload, withItems, acc);
+    recordTurnEvent(record, at, payload, acc);
+    if (payload) recordInvestigation(record, at, payload, acc);
+    return;
+  }
+  incrementCount(acc, record.type);
+}
+
+function timestampBounds(records: RolloutPayload[]): {
+  start: string | null;
+  end: string | null;
+} {
   const stamps = records
     .map((record) => record.timestamp)
     .filter((value): value is string => typeof value === "string")
     .sort();
+  return { start: stamps[0] ?? null, end: stamps.at(-1) ?? null };
+}
+
+function buildThreadTrace(
+  file: string,
+  records: RolloutPayload[],
+  meta: SessionMetaPayload,
+  context: TurnContextPayload,
+  acc: ThreadTraceAccumulator,
+  withItems: boolean
+): ThreadTrace {
   const { counts, turns, gaps, tools, toolFailures, items, investigation } =
     acc;
+  const { start, end } = timestampBounds(records);
   return {
-    id: String(meta.id ?? file),
-    sessionId: meta.session_id ?? null,
-    parentId: meta.parent_thread_id ?? null,
-    nickname: meta.agent_nickname ?? null,
+    id: typeof meta.id === "string" ? meta.id : file,
+    sessionId: typeof meta.session_id === "string" ? meta.session_id : null,
+    parentId:
+      typeof meta.parent_thread_id === "string" ? meta.parent_thread_id : null,
+    nickname:
+      typeof meta.agent_nickname === "string" ? meta.agent_nickname : null,
     role:
-      meta.agent_role ?? (meta.thread_source === "subagent" ? null : "root"),
-    model: context.model ?? null,
-    modelProvider: meta.model_provider ?? null,
-    cliVersion: meta.cli_version ?? null,
-    cwd: meta.cwd ?? null,
+      typeof meta.agent_role === "string"
+        ? meta.agent_role
+        : meta.thread_source === "subagent"
+          ? null
+          : "root",
+    model: typeof context.model === "string" ? context.model : null,
+    modelProvider:
+      typeof meta.model_provider === "string" ? meta.model_provider : null,
+    cliVersion: typeof meta.cli_version === "string" ? meta.cli_version : null,
+    cwd: typeof meta.cwd === "string" ? meta.cwd : null,
     file,
-    start: stamps[0] ?? null,
-    end: stamps.at(-1) ?? null,
+    start,
+    end,
     counts,
     turns,
     gaps: gaps.sort((a, b) => b.seconds - a.seconds).slice(0, 5),
@@ -741,7 +1217,56 @@ export function traceThread(file: string, withItems: boolean): ThreadTrace {
   };
 }
 
+export function traceThread(file: string, withItems: boolean): ThreadTrace {
+  const records = readJsonl(file);
+  const { meta, context } = traceMetadata(records);
+  const acc = createTraceAccumulator(meta);
+  for (const record of records) accumulateTraceRecord(record, withItems, acc);
+  return buildThreadTrace(file, records, meta, context, acc, withItems);
+}
+
 /** Every router event in a time window, read in one pass over the (large) log. */
+function routerEventFromLine(
+  line: string,
+  start: string,
+  end: string
+): RouterEventRow | null {
+  const stamp = TIMESTAMP_REGEX.exec(line)?.[1];
+  if (
+    !stamp ||
+    stamp < start ||
+    stamp > end ||
+    !line.includes("autodev-router-event-v1")
+  )
+    return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  const event = parseRouterEvent(parsed);
+  if (!event) return null;
+  return {
+    at: stamp,
+    requestId: typeof event.requestId === "string" ? event.requestId : "",
+    thread: typeof event.thread === "string" ? event.thread : null,
+    phase: typeof event.phase === "string" ? event.phase : "",
+    role: typeof event.role === "string" ? event.role : null,
+    requestedModel:
+      typeof event.requestedModel === "string" ? event.requestedModel : null,
+    provider: typeof event.provider === "string" ? event.provider : null,
+    model: typeof event.model === "string" ? event.model : null,
+    outcome: typeof event.outcome === "string" ? event.outcome : null,
+    status: typeof event.status === "number" ? event.status : null,
+    failureClass:
+      typeof event.failureClass === "string" ? event.failureClass : null,
+    elapsedMs: typeof event.elapsedMs === "number" ? event.elapsedMs : null,
+    toolCalls: typeof event.toolCalls === "number" ? event.toolCalls : null,
+    selection: typeof event.selection === "string" ? event.selection : null
+  };
+}
+
 export async function routerEvents(
   logFile: string,
   start: string,
@@ -754,36 +1279,8 @@ export async function routerEvents(
     crlfDelay: Infinity
   });
   for await (const line of lines) {
-    const stamp = TIMESTAMP_REGEX.exec(line)?.[1];
-    if (
-      !stamp ||
-      stamp < start ||
-      stamp > end ||
-      !line.includes("autodev-router-event-v1")
-    )
-      continue;
-    let event: JsonRecord;
-    try {
-      event = JSON.parse(line) as JsonRecord;
-    } catch {
-      continue;
-    }
-    rows.push({
-      at: stamp,
-      requestId: String(event.requestId ?? ""),
-      thread: event.thread ?? null,
-      phase: String(event.phase ?? ""),
-      role: event.role ?? null,
-      requestedModel: event.requestedModel ?? null,
-      provider: event.provider ?? null,
-      model: event.model ?? null,
-      outcome: event.outcome ?? null,
-      status: event.status ?? null,
-      failureClass: event.failureClass ?? null,
-      elapsedMs: event.elapsedMs ?? null,
-      toolCalls: event.toolCalls ?? null,
-      selection: event.selection ?? null
-    });
+    const event = routerEventFromLine(line, start, end);
+    if (event) rows.push(event);
   }
   return rows;
 }
@@ -868,7 +1365,9 @@ function providerProcesses(): string[] {
   return run("ps", ["-Ao", "pid,ppid,etime,command"])
     .split("\n")
     .filter((line) => ACTIVE_PROCESS_REGEX.test(line))
-    .map((line) => line.trim().split(WHITESPACE_SPLIT_REGEX).slice(0, 5).join(" "));
+    .map((line) =>
+      line.trim().split(WHITESPACE_SPLIT_REGEX).slice(0, 5).join(" ")
+    );
 }
 
 /** Router and bridge processes, with when they started -- a fix is live only in a process started after it was installed. */
@@ -966,13 +1465,17 @@ async function liveReport(options: TraceOptions): Promise<LiveReport> {
       `${options.routerUrl ?? "http://127.0.0.1:4100"}/status`,
       { signal: AbortSignal.timeout(3000) }
     );
-    const status = (await response.json()) as JsonRecord;
+    const parsed: unknown = await response.json();
+    const status = parseRouterStatus(parsed);
     router = {
       reachable: true,
-      canonicalLiveCount: status.agents?.canonicalLiveCount ?? null,
-      byState: status.agents?.byState ?? null,
-      liveByRole: status.agents?.liveByRole ?? null,
-      startedAt: status.startedAt ?? null
+      canonicalLiveCount:
+        typeof status?.agents?.canonicalLiveCount === "number"
+          ? status.agents.canonicalLiveCount
+          : null,
+      byState: status?.agents?.byState ?? null,
+      liveByRole: status?.agents?.liveByRole ?? null,
+      startedAt: typeof status?.startedAt === "string" ? status.startedAt : null
     };
   } catch {
     /* router down or not reachable: reported as such */
@@ -984,9 +1487,10 @@ async function liveReport(options: TraceOptions): Promise<LiveReport> {
     .flatMap((file) => {
       const modified = statSync(file).mtimeMs;
       if (modified < cutoff || !hasOpenTurn(file)) return [];
+      const meta = firstLine(file)?.payload;
       return [
         {
-          id: String(firstLine(file)?.payload?.id ?? file),
+          id: typeof meta?.id === "string" ? meta.id : file,
           modified: new Date(modified).toISOString()
         }
       ];
@@ -1126,13 +1630,7 @@ function renderThreadSection(
 }
 
 function renderLiveSection(live: LiveReport): string[] {
-  const {
-    router,
-    openThreads,
-    processes,
-    services: running,
-    drift
-  } = live;
+  const { router, openThreads, processes, services: running, drift } = live;
   const lines: string[] = [
     "== live now",
     router.reachable
@@ -1232,7 +1730,9 @@ function parseArgs(
     else if (arg === "--codex-home") codexHome = argv[++index] ?? codexHome;
     else if (arg === "--router-log") routerLog = argv[++index] ?? "";
     else if (arg === "--recent")
-      recent = DIGITS_ONLY_REGEX.test(argv[index + 1] ?? "") ? Number(argv[++index]) : 10;
+      recent = DIGITS_ONLY_REGEX.test(argv[index + 1] ?? "")
+        ? Number(argv[++index])
+        : 10;
     else if (!arg.startsWith("--")) id = arg;
   }
   if (!id && recent === null) return null;

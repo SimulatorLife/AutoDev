@@ -65,7 +65,10 @@ test("opentelemetry skill is a repository-only canonical skill", () => {
     /single living source of truth for AutoDev's OpenLIT fork, observability architecture/
   );
   assert.match(targetState, /update it in the same PR/);
-  assert.match(targetState, /Upstream contributions are optional and must never block AutoDev/);
+  assert.match(
+    targetState,
+    /Upstream contributions are optional and must never block AutoDev/
+  );
 
   // Project-specific architecture must not regress to the old local aggregator target.
   assert.match(body, /OpenLIT first-party OTLP receiver/);

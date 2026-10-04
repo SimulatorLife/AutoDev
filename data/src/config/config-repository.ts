@@ -10,6 +10,12 @@ import type {
 } from "@simulatorlife/autodev-core";
 
 const DEFAULT_REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
+const REPOSITORY_NAME_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
+
+export interface WorkspaceCatalogRead {
+  readonly status: "valid" | "invalid" | "unavailable";
+  readonly workspaces: readonly WorkspaceEntry[];
+}
 
 export class ConfigRepository {
   readonly repositoryRoot: string;
@@ -75,25 +81,59 @@ export class ConfigRepository {
     }
   }
 
-  loadWorkspaces(): WorkspaceEntry[] {
+  readWorkspaceCatalog(): WorkspaceCatalogRead {
     const weightsPath = path.join(
       this.repositoryRoot,
       ".github",
       "workflows",
       "weights.json"
     );
-    if (!existsSync(weightsPath)) return [];
+    if (!existsSync(weightsPath))
+      return { status: "unavailable", workspaces: [] };
     try {
-      const raw = JSON.parse(readFileSync(weightsPath, "utf8")) as {
-        repositories?: WorkspaceEntry[];
-      };
-      return (raw.repositories ?? []).map((repo) => ({
-        name: repo.name,
-        baseBranch: repo.baseBranch ?? "main",
-        weight: repo.weight ?? 0
-      }));
+      const raw = JSON.parse(readFileSync(weightsPath, "utf8")) as unknown;
+      if (
+        raw === null ||
+        typeof raw !== "object" ||
+        Array.isArray(raw) ||
+        !Array.isArray((raw as { repositories?: unknown }).repositories)
+      ) {
+        return { status: "invalid", workspaces: [] };
+      }
+      const repositories = (raw as { repositories: unknown[] }).repositories;
+      const workspaces: WorkspaceEntry[] = [];
+      const names = new Set<string>();
+      for (const repository of repositories) {
+        if (
+          repository === null ||
+          typeof repository !== "object" ||
+          Array.isArray(repository)
+        ) {
+          return { status: "invalid", workspaces: [] };
+        }
+        const entry = repository as Record<string, unknown>;
+        if (
+          typeof entry.name !== "string" ||
+          !REPOSITORY_NAME_PATTERN.test(entry.name) ||
+          typeof entry.baseBranch !== "string" ||
+          !entry.baseBranch.trim() ||
+          typeof entry.weight !== "number" ||
+          !Number.isFinite(entry.weight) ||
+          entry.weight < 0 ||
+          names.has(entry.name)
+        ) {
+          return { status: "invalid", workspaces: [] };
+        }
+        names.add(entry.name);
+        workspaces.push({
+          name: entry.name,
+          baseBranch: entry.baseBranch,
+          weight: entry.weight
+        });
+      }
+      return { status: "valid", workspaces };
     } catch {
-      return [];
+      return { status: "invalid", workspaces: [] };
     }
   }
 

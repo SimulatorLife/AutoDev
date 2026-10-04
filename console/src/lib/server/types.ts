@@ -1,6 +1,7 @@
 import type {
   McpServerResource,
-  ToolCatalogItem
+  ToolCatalogItem,
+  WorkspaceCatalogStatus
 } from "@simulatorlife/autodev-core";
 
 /**
@@ -167,7 +168,8 @@ export interface ControlApiWorkspacesResponse {
   readonly schema: "autodev-control-workspaces-v1";
   readonly source: string;
   readonly readOnly: boolean;
-  readonly totalWorkspaces: number;
+  readonly catalogStatus: WorkspaceCatalogStatus;
+  readonly totalWorkspaces: number | null;
   readonly workspaces: readonly {
     readonly name: string;
     readonly baseBranch: string;

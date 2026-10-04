@@ -13,12 +13,7 @@ export interface SkillEligibility {
 }
 
 export type SkillState =
-  | "configured"
-  | "eligible"
-  | "exposed"
-  | "used"
-  | "unavailable"
-  | "error";
+  "configured" | "eligible" | "exposed" | "used" | "unavailable" | "error";
 
 export function isSkillEligibleForRole(
   skill: string,

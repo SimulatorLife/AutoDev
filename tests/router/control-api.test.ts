@@ -289,8 +289,15 @@ test("viewer reads control resources; MCP and Skills views contain configuration
     assert.equal(workspaces.response.statusCode, 200);
     assert.equal(workspaces.body.schema, "autodev-control-workspaces-v1");
     assert.equal(workspaces.body.source, "weights.json");
+    assert.equal(workspaces.body.catalogStatus, "valid");
     assert.ok(Array.isArray(workspaces.body.workspaces));
     assert.equal(workspaces.body.totalWorkspaces, 5);
+    assert.ok(
+      workspaces.body.workspaces.some(
+        (workspace: { name: string }) =>
+          workspace.name === "SimulatorLife/AutoDev"
+      )
+    );
   } finally {
     setExecutionContractForTests(priorContract);
     restoreEnv(saved);

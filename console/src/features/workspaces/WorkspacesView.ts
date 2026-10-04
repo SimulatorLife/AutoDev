@@ -111,8 +111,7 @@ export function WorkspacesView({
         data: workspaces,
         columns,
         keyExtractor: (w: WorkspaceEntry) => w.name,
-        emptyMessage:
-          "No workspaces configured. `weights.json` is the canonical registry."
+        emptyMessage: "No scheduler workspace entries are configured."
       })
     )
   );

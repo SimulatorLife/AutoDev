@@ -627,6 +627,47 @@ CREATE TRIGGER memory_injection_use_reports_no_update
   BEFORE UPDATE OR DELETE ON memory_injection_use_reports
   FOR EACH ROW EXECUTE FUNCTION memory_injection_use_reports_append_only();
 `
+  },
+  {
+    version: 12,
+    description:
+      "Record native-capture trajectory provenance: source adapter, normalizer identity/version, and diagnostic codes",
+    sql: `
+-- Vendor-neutral provenance for a native capture's normalization step. All
+-- four columns are nullable: historical rows captured before this
+-- migration, and manually appended (non-native) experience envelopes,
+-- predate this provenance and remain NULL rather than fabricating a value.
+-- Every new native capture populates all four columns together through
+-- MemoryService.captureExperience. trajectory_diagnostic_codes stores only
+-- the distinct, sorted diagnostic codes a normalizer emitted -- never
+-- diagnostic free-text detail, transcript records, or other transcript
+-- content.
+ALTER TABLE memory_experiences
+  ADD COLUMN trajectory_source_adapter text,
+  ADD COLUMN trajectory_normalizer_id text,
+  ADD COLUMN trajectory_normalizer_version text,
+  ADD COLUMN trajectory_diagnostic_codes jsonb,
+  ADD CONSTRAINT memory_experiences_trajectory_provenance_check CHECK (
+    (
+      trajectory_source_adapter IS NULL AND
+      trajectory_normalizer_id IS NULL AND
+      trajectory_normalizer_version IS NULL AND
+      trajectory_diagnostic_codes IS NULL
+    ) OR (
+      trajectory_source_adapter IS NOT NULL AND
+      length(btrim(trajectory_source_adapter)) > 0 AND
+      trajectory_normalizer_id IS NOT NULL AND
+      length(btrim(trajectory_normalizer_id)) > 0 AND
+      trajectory_normalizer_version IS NOT NULL AND
+      length(btrim(trajectory_normalizer_version)) > 0 AND
+      CASE
+        WHEN jsonb_typeof(trajectory_diagnostic_codes) = 'array'
+          THEN jsonb_array_length(trajectory_diagnostic_codes) <= 64
+        ELSE false
+      END
+    )
+  );
+`
   }
 ];
 

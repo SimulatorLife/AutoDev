@@ -811,12 +811,15 @@ test("readMemoryPortalConfig defaults to the local OpenLIT UI base URL", () => {
 test("readMemoryPortalConfig normalizes a configured URL to the fixed /memory path", () => {
   assert.deepEqual(
     readMemoryPortalConfig({
-      AUTODEV_OPENLIT_UI_URL: "https://openlit.example.com:8443/some/other/path?x=1"
+      AUTODEV_OPENLIT_UI_URL:
+        "https://openlit.example.com:8443/some/other/path?x=1"
     }),
     { href: "https://openlit.example.com:8443/memory" }
   );
   assert.deepEqual(
-    readMemoryPortalConfig({ AUTODEV_OPENLIT_UI_URL: "  http://openlit:3000/  " }),
+    readMemoryPortalConfig({
+      AUTODEV_OPENLIT_UI_URL: "  http://openlit:3000/  "
+    }),
     { href: "http://openlit:3000/memory" }
   );
 });
@@ -899,7 +902,12 @@ test("Memory page contract renders the explicit unavailable state when AUTODEV_O
   // Local harness mirroring the contract of the page's unavailable branch
   // (data-status, data-error-code, title, message, hint) so the test does
   // not need to import the .tsx route file.
-  function Unavailable(props: { title: string; code: string; message: string; hint?: string }) {
+  function Unavailable(props: {
+    title: string;
+    code: string;
+    message: string;
+    hint?: string;
+  }) {
     return React.createElement(
       "div",
       {
@@ -924,7 +932,7 @@ test("Memory page contract renders the explicit unavailable state when AUTODEV_O
   assert.match(markup, /data-status="unavailable"/);
   assert.match(markup, /data-error-code="autodev_memory_portal_url_invalid"/);
   assert.match(markup, /Memory destination URL is not configured safely/);
-  assert.equal(markup.includes("data-memory-portal-link=\"true\""), false);
+  assert.equal(markup.includes('data-memory-portal-link="true"'), false);
   assert.equal(markup.includes("autodev_control_api_disabled"), false);
   assert.equal(markup.includes("autodev_memory_adapter_pending"), false);
 });
@@ -943,7 +951,7 @@ test("Memory page contract normalizes a configured AUTODEV_OPENLIT_UI_URL to the
     markup,
     /href="https:\/\/memory.example.com\/memory"[^>]*data-memory-portal-link="true"/
   );
-  assert.equal(markup.includes("data-status=\"unavailable\""), false);
+  assert.equal(markup.includes('data-status="unavailable"'), false);
 });
 
 test("EvaluationsView with empty results renders the explicit empty state", () => {
@@ -1034,6 +1042,7 @@ test("View adapters translate Control API responses without inventing data", () 
     schema: "autodev-control-workspaces-v1",
     source: "test",
     readOnly: true,
+    catalogStatus: "valid",
     totalWorkspaces: 1,
     workspaces: [
       { name: "SimulatorLife/AutoDev", baseBranch: "main", weight: 100 }

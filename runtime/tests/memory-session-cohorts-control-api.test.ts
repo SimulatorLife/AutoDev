@@ -134,7 +134,9 @@ async function callSessionCohortRoute(
 }
 
 function mockMemoryService(
-  impl?: (req: MemorySessionOutcomeCohortFilter) => Promise<MemorySessionOutcomeCohortPage>
+  impl?: (
+    req: MemorySessionOutcomeCohortFilter
+  ) => Promise<MemorySessionOutcomeCohortPage>
 ): MemoryService {
   const defaultPage: MemorySessionOutcomeCohortPage = {
     schema: "autodev-memory-session-outcome-cohorts-v1",
@@ -156,13 +158,15 @@ function mockMemoryService(
     mixedModeSessionCount: 0
   };
   return {
-    aggregateSessionOutcomeCohorts: impl ?? (async (req) => ({
-      ...defaultPage,
-      workspaceId: req.context.workspaceId,
-      repositoryId: req.context.repositoryId!,
-      occurredFrom: req.occurredFrom,
-      occurredUntil: req.occurredUntil
-    }))
+    aggregateSessionOutcomeCohorts:
+      impl ??
+      (async (req) => ({
+        ...defaultPage,
+        workspaceId: req.context.workspaceId,
+        repositoryId: req.context.repositoryId!,
+        occurredFrom: req.occurredFrom,
+        occurredUntil: req.occurredUntil
+      }))
   } as unknown as MemoryService;
 }
 
@@ -207,7 +211,10 @@ test("GET /control/memory/session-cohorts returns 200 with session page and audi
   });
 
   assert.equal(result.response.statusCode, 200);
-  assert.equal(result.body?.schema, "autodev-memory-session-outcome-cohorts-v1");
+  assert.equal(
+    result.body?.schema,
+    "autodev-memory-session-outcome-cohorts-v1"
+  );
   assert.equal(result.body?.sessionCount, 4);
   assert.equal(result.body?.reportedSessionCount, 3);
   assert.equal(result.body?.unreportedSessionCount, 1);
@@ -279,7 +286,11 @@ test("GET /control/memory/session-cohorts rejects caller-selected taskId/runId/a
       occurredUntil: "2026-09-02T00:00:00.000Z",
       [extraKey]: "caller-selected"
     });
-    assert.equal(result.response.statusCode, 400, `expected 400 for ${extraKey}`);
+    assert.equal(
+      result.response.statusCode,
+      400,
+      `expected 400 for ${extraKey}`
+    );
   }
 });
 
@@ -296,7 +307,11 @@ test("GET /control/memory/session-cohorts rejects non-assigned modes with 400", 
       occurredUntil: "2026-09-02T00:00:00.000Z",
       memoryMode: mode
     });
-    assert.equal(result.response.statusCode, 400, `expected 400 for mode=${mode}`);
+    assert.equal(
+      result.response.statusCode,
+      400,
+      `expected 400 for mode=${mode}`
+    );
   }
 });
 

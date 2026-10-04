@@ -156,8 +156,7 @@ export async function fetchControlApi<T>(
   let body: Partial<ControlApiError> = {};
   try {
     const raw = (await response.json()) as
-      | Partial<ControlApiError>
-      | { readonly error?: Partial<ControlApiError> };
+      Partial<ControlApiError> | { readonly error?: Partial<ControlApiError> };
     if (raw && typeof raw === "object") {
       if ("error" in raw && raw.error && typeof raw.error === "object") {
         body = raw.error;

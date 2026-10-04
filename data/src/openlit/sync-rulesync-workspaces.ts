@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+
+import { ConfigRepository } from "../config/config-repository.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -27,14 +28,6 @@ export interface SyncWorkspacesResult {
   readonly collapsedProjects: readonly string[];
 }
 
-interface WeightsRepositoriesJson {
-  readonly repositories?: Array<{
-    readonly name?: string;
-    readonly baseBranch?: string;
-    readonly weight?: number;
-  }>;
-}
-
 const SLUG_CLEAN_REGEX = /[^a-z0-9]+/gu;
 const SLUG_TRIM_REGEX = /^-|-$/gu;
 
@@ -48,31 +41,20 @@ export function slugifyWorkspace(name: string): string {
     .replaceAll(SLUG_TRIM_REGEX, "");
 }
 
-/**
- * Load all canonical workspaces from .github/workflows/weights.json.
- */
+/** Read the validated Data-owned workspace projection and derive its OpenLIT slug. */
 export function loadRulesyncWorkspaces(
   repositoryRoot: string
 ): Map<string, RulesyncWorkspaceData> {
-  const weightsPath = path.join(
-    repositoryRoot,
-    ".github",
-    "workflows",
-    "weights.json"
-  );
-  if (!existsSync(weightsPath)) {
-    throw new Error(`weights.json not found: ${weightsPath}`);
+  const catalog = new ConfigRepository(repositoryRoot).readWorkspaceCatalog();
+  if (catalog.status !== "valid") {
+    throw new Error(`weights.json workspace catalog is ${catalog.status}.`);
   }
-  const raw = JSON.parse(
-    readFileSync(weightsPath, "utf8")
-  ) as WeightsRepositoriesJson;
   const map = new Map<string, RulesyncWorkspaceData>();
-  for (const repo of raw.repositories ?? []) {
-    if (!repo.name) continue;
+  for (const repo of catalog.workspaces) {
     map.set(repo.name, {
       name: repo.name,
-      baseBranch: repo.baseBranch ?? "main",
-      weight: repo.weight ?? 0,
+      baseBranch: repo.baseBranch,
+      weight: repo.weight,
       slug: slugifyWorkspace(repo.name)
     });
   }

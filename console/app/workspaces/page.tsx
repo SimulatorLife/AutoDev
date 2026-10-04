@@ -40,6 +40,26 @@ export default async function WorkspacesPage(): Promise<React.JSX.Element> {
       })
     );
   }
+  if (result.data.catalogStatus !== "valid") {
+    return React.createElement(
+      ConsolePageShell,
+      { section },
+      React.createElement(ResourceUnavailable, {
+        title:
+          result.data.catalogStatus === "invalid"
+            ? "Workspace configuration is invalid"
+            : "Workspace configuration is unavailable",
+        code:
+          result.data.catalogStatus === "invalid"
+            ? "autodev_workspace_catalog_invalid"
+            : "autodev_workspace_catalog_unavailable",
+        message:
+          result.data.catalogStatus === "invalid"
+            ? "The workspace source could not be validated; no workspace count is inferred."
+            : "The workspace source is missing or unreadable; no workspace count is inferred."
+      })
+    );
+  }
   const workspaces = workspacesFromControlApi(result.data);
   return React.createElement(
     ConsolePageShell,

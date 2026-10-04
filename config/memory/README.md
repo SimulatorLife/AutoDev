@@ -215,8 +215,7 @@ reuses its generic list/search/detail UI; it does
 not create another AutoDev admin page or connect directly to PostgreSQL. The
 detail sheet exposes only descriptor-advertised, status-appropriate actions;
 current-state validation is performed by MemoryService when an action is
-submitted. Memory-specific analytics and deployed-image acceptance remain
-unverified.
+submitted. The p22 OpenLIT image is now deployed locally and its `/memory` route/OTLP receiver were HTTP-checked. A live use-cohort read still requires a project-scoped `autodev` connector instance and an available MemoryService PostgreSQL database; see the canonical target-state deployment notes.
 
 The Codex SessionEnd configuration is wired to a best-effort hook that sends only the session id,
 workspace path, and transcript path to the authenticated capture route. The

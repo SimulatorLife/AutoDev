@@ -227,8 +227,7 @@ test("recordSessionOutcomeReport: succeeds, idempotently retries on same body, f
     },
     (err: unknown) => {
       return (
-        err instanceof MemoryConflictError &&
-        /conflict/i.test(err.message)
+        err instanceof MemoryConflictError && /conflict/i.test(err.message)
       );
     }
   );
@@ -597,7 +596,11 @@ test("aggregateSessionOutcomeCohorts: multi-session scenario with non-leaking ch
   assert.equal(json.includes("tok-"), false, "never leaks correlation tokens");
   assert.equal(json.includes("task-"), false, "never leaks task IDs");
   assert.equal(json.includes("curator-"), false, "never leaks reporter id");
-  assert.equal(json.includes("https://github.com"), false, "never leaks evidence");
+  assert.equal(
+    json.includes("https://github.com"),
+    false,
+    "never leaks evidence"
+  );
 });
 
 test("aggregateSessionOutcomeCohorts: computes conflictingOutcomeSessionCount from per-injection token reports", async () => {
@@ -632,7 +635,12 @@ test("aggregateSessionOutcomeCohorts: computes conflictingOutcomeSessionCount fr
       id: "rep-tok-1",
       workspaceId: "ws-1",
       repositoryId: "repo-1",
-      scope: { kind: "task", workspaceId: "ws-1", taskId: "session-conflict", runId: "req-1" },
+      scope: {
+        kind: "task",
+        workspaceId: "ws-1",
+        taskId: "session-conflict",
+        runId: "req-1"
+      },
       taskId: "session-conflict",
       runId: "req-1",
       agentId: "thread-1",
@@ -655,7 +663,12 @@ test("aggregateSessionOutcomeCohorts: computes conflictingOutcomeSessionCount fr
       id: "rep-tok-2",
       workspaceId: "ws-1",
       repositoryId: "repo-1",
-      scope: { kind: "task", workspaceId: "ws-1", taskId: "session-conflict", runId: "req-2" },
+      scope: {
+        kind: "task",
+        workspaceId: "ws-1",
+        taskId: "session-conflict",
+        runId: "req-2"
+      },
       taskId: "session-conflict",
       runId: "req-2",
       agentId: "thread-1",

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -54,6 +57,29 @@ test("loadRulesyncWorkspaces extracts all 5 canonical workspaces from weights.js
   // RacingGame has weight 1
   const racingGame = catalog.get("SimulatorLife/RacingGame")!;
   assert.equal(racingGame.weight, 1);
+});
+
+test("loadRulesyncWorkspaces rejects an invalid shared workspace source", async () => {
+  const isolatedRoot = await mkdtemp(
+    join(tmpdir(), "autodev-workspace-source-")
+  );
+  try {
+    const configDirectory = join(isolatedRoot, ".github", "workflows");
+    await mkdir(configDirectory, { recursive: true });
+    await writeFile(
+      join(configDirectory, "weights.json"),
+      JSON.stringify({
+        repositories: [{ name: "missing/base-branch", weight: 1 }]
+      }),
+      "utf8"
+    );
+    assert.throws(
+      () => loadRulesyncWorkspaces(isolatedRoot),
+      /workspace catalog is invalid/u
+    );
+  } finally {
+    await rm(isolatedRoot, { recursive: true, force: true });
+  }
 });
 
 test("syncRulesyncWorkspaces synchronizes canonical AutoDev project under SimulatorLife organisation and collapses silos idempotently", async () => {

@@ -81,7 +81,8 @@ test("OpenLIT bootstrap provisions separate strong Usage service credentials out
     const secrets = secretNames.map((name) => values[name]);
     assert.ok(
       secrets.every(
-        (value) => typeof value === "string" && /^[0-9a-f]{64}$/.test(value)
+        (value): value is string =>
+          typeof value === "string" && /^[0-9a-f]{64}$/.test(value)
       )
     );
     assert.equal(new Set(secrets).size, secretNames.length);
@@ -193,10 +194,7 @@ test("OpenLIT bootstrap overwrites stale console/.env.local and enforces mode 06
       false,
       "manual entries are not preserved: console/.env.local is the canonical Console environment file"
     );
-    assert.equal(
-      consoleContent.includes("AUTODEV_CONTROL_API_TOKEN"),
-      true
-    );
+    assert.equal(consoleContent.includes("AUTODEV_CONTROL_API_TOKEN"), true);
   } finally {
     rmSync(secretDirectory, { recursive: true, force: true });
     rmSync(repoRoot, { recursive: true, force: true });
@@ -230,4 +228,3 @@ test("OpenLIT bootstrap with non-canonical secret-file does not touch repository
     rmSync(secretDirectory, { recursive: true, force: true });
   }
 });
-

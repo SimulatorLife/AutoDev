@@ -33,7 +33,8 @@ import {
   MCP_SEMCONV_GENAI_REVISION,
   resetTelemetryForTest,
   setTestExporter,
-  shutdownTelemetryForTest} from "@simulatorlife/autodev-runtime/mcp";
+  shutdownTelemetryForTest
+} from "@simulatorlife/autodev-runtime/mcp";
 
 type JsonObject = Record<string, unknown>;
 

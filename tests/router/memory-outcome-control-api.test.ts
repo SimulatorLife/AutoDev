@@ -260,9 +260,14 @@ test("outcome GET passes through the Data-derived sessionInjectionCount for sing
 
   const singleSessionService = new OutcomeControlServiceStub();
   singleSessionService.sessionInjectionCount = 1;
-  const single = await callOutcomeRoute(singleSessionService, "GET", undefined, {
-    actor: "operator"
-  });
+  const single = await callOutcomeRoute(
+    singleSessionService,
+    "GET",
+    undefined,
+    {
+      actor: "operator"
+    }
+  );
   assert.equal(single.response.statusCode, 200);
   assert.equal(single.body.items[0].sessionInjectionCount, 1);
 

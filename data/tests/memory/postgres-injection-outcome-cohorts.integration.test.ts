@@ -242,7 +242,11 @@ test(
 
       // One session with exactly one injection.
       await repository.recordInjectionEvent({
-        event: makeInjection(singleTaskId, "single", "2026-10-02T12:00:00.000Z"),
+        event: makeInjection(
+          singleTaskId,
+          "single",
+          "2026-10-02T12:00:00.000Z"
+        ),
         actor: { id: "integration-runtime", authority: "system" },
         context: {
           workspaceId,
@@ -265,12 +269,20 @@ test(
         canReadGlobal: false
       };
       await repository.recordInjectionEvent({
-        event: makeInjection(multiTaskId, "multi-a", "2026-10-02T12:05:00.000Z"),
+        event: makeInjection(
+          multiTaskId,
+          "multi-a",
+          "2026-10-02T12:05:00.000Z"
+        ),
         actor: { id: "integration-runtime", authority: "system" },
         context: multiContext
       });
       await repository.recordInjectionEvent({
-        event: makeInjection(multiTaskId, "multi-b", "2026-10-02T12:06:00.000Z"),
+        event: makeInjection(
+          multiTaskId,
+          "multi-b",
+          "2026-10-02T12:06:00.000Z"
+        ),
         actor: { id: "integration-runtime", authority: "system" },
         context: multiContext
       });
@@ -313,8 +325,14 @@ test(
       const multipleCell = cohortPage.cells.find(
         (cell) => cell.sessionCardinality === "multiple"
       );
-      assert.ok(singleCell, "expected a 'single' cell for the one-injection session");
-      assert.ok(multipleCell, "expected a 'multiple' cell for the two-injection session");
+      assert.ok(
+        singleCell,
+        "expected a 'single' cell for the one-injection session"
+      );
+      assert.ok(
+        multipleCell,
+        "expected a 'multiple' cell for the two-injection session"
+      );
       assert.equal(singleCell?.exposureCount, 1);
       // The cohort's exposureCount for the 'multiple' cell (2) matches the
       // join's sessionInjectionCount (2) seen above, confirming both reads
@@ -347,7 +365,9 @@ test(
       return {
         id: `nullable-injection-${idSuffix}-${suffix}`,
         workspaceId,
-        ...(repositoryValue === undefined ? {} : { repositoryId: repositoryValue }),
+        ...(repositoryValue === undefined
+          ? {}
+          : { repositoryId: repositoryValue }),
         scope: { kind: "task", workspaceId, taskId, runId },
         taskId,
         runId,
@@ -404,7 +424,9 @@ test(
         (item) => item.injection.repositoryId === repositoryId
       );
       assert.equal(nullRepositoryRows.length, 2);
-      assert.ok(nullRepositoryRows.every((item) => item.sessionInjectionCount === 2));
+      assert.ok(
+        nullRepositoryRows.every((item) => item.sessionInjectionCount === 2)
+      );
       assert.equal(nonNullRepositoryRows.length, 1);
       assert.equal(nonNullRepositoryRows[0]!.sessionInjectionCount, 1);
     } finally {

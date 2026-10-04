@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, test } from "node:test";
 
 import {
@@ -7,11 +9,17 @@ import {
   AGENT_ACTIVITY_STATES
 } from "@simulatorlife/autodev-runtime/agents";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
+import { recordRouterEvent } from "@simulatorlife/autodev-runtime/router/events";
 import {
   agentActivity,
-  agentsStatus
+  agentsStatus,
+  resetRouterTelemetry
 } from "@simulatorlife/autodev-runtime/router/http";
-import { projectLiveAgents } from "@simulatorlife/autodev-runtime/router/usage";
+import { loadRouterState } from "@simulatorlife/autodev-runtime/router/persistence";
+import {
+  projectLiveAgents,
+  usageStatus
+} from "@simulatorlife/autodev-runtime/router/usage";
 
 type AgentActivityState = (typeof AGENT_ACTIVITY_STATES)[number];
 
@@ -367,4 +375,155 @@ describe("agent reconciliation contract: scenarios", () => {
       runScenario(name, scenario);
     });
   }
+});
+
+describe("agent reconciliation contract: router event -> usage projection keying", () => {
+  test("a router event with no requestId is not keyed into the usage projection", () => {
+    resetRouterTelemetry();
+    try {
+      recordRouterEvent({
+        phase: "result",
+        requestId: null,
+        provider: "codex",
+        model: "gpt-5.1-codex",
+        role: "worker",
+        outcome: "success"
+      });
+      const status = usageStatus();
+      assert.equal(status.totals.attempts, 0);
+      assert.equal(status.totals.successes, 0);
+    } finally {
+      resetRouterTelemetry();
+    }
+  });
+
+  test("a router event with a requestId is keyed into the usage projection", () => {
+    resetRouterTelemetry();
+    try {
+      recordRouterEvent({
+        phase: "result",
+        requestId: "contract-req-1",
+        provider: "codex",
+        model: "gpt-5.1-codex",
+        role: "worker",
+        outcome: "success"
+      });
+      const status = usageStatus();
+      assert.equal(status.totals.successes, 1);
+    } finally {
+      resetRouterTelemetry();
+    }
+  });
+
+  test("a null outcome is passed through to Usage without an explicit null value", () => {
+    resetRouterTelemetry();
+    try {
+      // The router event records "result" without ever having invented or
+      // coerced an outcome: recordUsageEvent is called with the "outcome"
+      // key entirely omitted (never "outcome: null"), which is the
+      // type-safe http.ts boundary fix under exactOptionalPropertyTypes.
+      // Usage still buckets a non-"success" outcome as a failure; that
+      // bucket math is Usage'"'"'s own contract, unchanged by this fix.
+      assert.doesNotThrow(() => {
+        recordRouterEvent({
+          phase: "result",
+          requestId: "contract-req-2",
+          provider: "codex",
+          model: "gpt-5.1-codex",
+          role: "worker",
+          outcome: null
+        });
+      });
+      const status = usageStatus();
+      assert.equal(status.totals.successes, 0);
+      assert.equal(status.totals.failures, 1);
+    } finally {
+      resetRouterTelemetry();
+    }
+  });
+
+  test("a validated workspace_id normalizes to the usage workspace key/cwd/workspace_id shape", () => {
+    resetRouterTelemetry();
+    try {
+      recordRouterEvent({
+        phase: "result",
+        requestId: "contract-req-3",
+        provider: "codex",
+        model: "gpt-5.1-codex",
+        role: "worker",
+        outcome: "success",
+        workspace: {
+          key: "AutoDev",
+          cwd: "/tmp/AutoDev",
+          workspace_id: "ws-contract-1"
+        }
+      });
+      const status = usageStatus();
+      assert.equal(Object.hasOwn(status.byWorkspace, "AutoDev"), true);
+    } finally {
+      resetRouterTelemetry();
+    }
+  });
+
+  test("persisted-event replay keys usage by requestId and survives known fields without inventing an outcome", () => {
+    resetRouterTelemetry();
+    const tmpFile = join(
+      tmpdir(),
+      `autodev-router-state-contract-${Date.now()}.json`
+    );
+    const persistedEvent = (requestId: string | null) => ({
+      schema: "autodev-router-event-v1",
+      timestamp: new Date().toISOString(),
+      routerInstanceId: "contract-replay",
+      requestId,
+      thread: null,
+      phase: "result",
+      role: "worker",
+      requestedModel: "gpt-5.1-codex",
+      provider: "codex",
+      model: "gpt-5.1-codex",
+      workspace: "AutoDev",
+      cwd: "/tmp/AutoDev",
+      outcome: "success",
+      status: 200,
+      failureClass: null,
+      denialReason: null,
+      spawnFailureReason: null,
+      elapsedMs: 10,
+      toolCalls: 2,
+      errorName: null,
+      errorCode: null,
+      syscall: null,
+      selection: null,
+      normalizedItemIds: 0,
+      droppedReasoningItems: 0
+    });
+    try {
+      writeFileSync(
+        tmpFile,
+        JSON.stringify({
+          schema: "autodev-router-persisted-state-v4",
+          updatedAt: new Date().toISOString(),
+          // Persisted events never carry the original raw
+          // RecordRouterEventInput, only the already-normalized
+          // RouterEvent fields (event.workspace/event.cwd); replay must not
+          // invent a workspace_id that was never observed.
+          recentEvents: [
+            persistedEvent(null),
+            persistedEvent("contract-restore-1")
+          ]
+        }),
+        "utf8"
+      );
+      loadRouterState(tmpFile);
+      const status = usageStatus();
+      // Only the event carrying a requestId is keyed into Usage; the
+      // null-requestId event is skipped rather than invented an identity.
+      assert.equal(status.totals.successes, 1);
+      assert.equal(Object.hasOwn(status.byWorkspace, "AutoDev"), true);
+    } finally {
+      rmSync(tmpFile, { force: true });
+      resetRouterTelemetry();
+    }
+  });
 });

@@ -1,0 +1,171 @@
+diff --git a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+new file mode 100644
+index 00000000..94bb1170
+--- /dev/null
++++ b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+@@ -0,0 +1,70 @@
++/** @jest-environment node */
++
++import { NextRequest } from "next/server";
++
++const mockFetchVariableAllowedValues = jest.fn();
++const mockResolveTelemetrySourceDescriptor = jest.fn();
++const mockGetTelemetryAdapter = jest.fn();
++const mockRunWidgetQuery = jest.fn();
++
++jest.mock("@/lib/platform/dashboard-variables", () => ({
++  fetchVariableAllowedValues: (...args: unknown[]) =>
++    mockFetchVariableAllowedValues(...args)
++}));
++jest.mock("@/lib/telemetry-source", () => ({
++  resolveTelemetrySourceDescriptor: (...args: unknown[]) =>
++    mockResolveTelemetrySourceDescriptor(...args),
++  getTelemetryAdapter: (...args: unknown[]) => mockGetTelemetryAdapter(...args)
++}));
++jest.mock("@/lib/platform/manage-dashboard/widget", () => ({
++  runWidgetQuery: (...args: unknown[]) => mockRunWidgetQuery(...args)
++}));
++
++const previousUsageToken = process.env.AUTODEV_OPENLIT_USAGE_TOKEN;
++process.env.AUTODEV_OPENLIT_USAGE_TOKEN = "server-only-usage-test-token";
++const { POST } = require("@/app/api/autodev/usage/route") as {
++  POST: (request: NextRequest) => Promise<Response>;
++};
++
++afterAll(() => {
++  if (previousUsageToken === undefined) {
++    delete process.env.AUTODEV_OPENLIT_USAGE_TOKEN;
++  } else {
++    process.env.AUTODEV_OPENLIT_USAGE_TOKEN = previousUsageToken;
++  }
++});
++
++describe("AutoDev Usage endpoint filter lookup", () => {
++  beforeEach(() => {
++    mockFetchVariableAllowedValues.mockReset();
++    mockFetchVariableAllowedValues.mockResolvedValue({
++      supported: true,
++      values: []
++    });
++    mockResolveTelemetrySourceDescriptor.mockReset();
++    mockResolveTelemetrySourceDescriptor.mockResolvedValue({ id: "source-1" });
++    mockGetTelemetryAdapter.mockReset();
++    mockGetTelemetryAdapter.mockResolvedValue({});
++    mockRunWidgetQuery.mockReset();
++    mockRunWidgetQuery.mockResolvedValue({ data: [] });
++  });
++
++  it("fetches filter values across AutoDev logical and MCP spans", async () => {
++    const request = new NextRequest("http://localhost/api/autodev/usage", {
++      method: "POST",
++      headers: {
++        authorization: "Bearer server-only-usage-test-token",
++        "content-type": "application/json"
++      },
++      body: JSON.stringify({ selection: { range: "24H", values: {} } })
++    });
++
++    const response = await POST(request);
++
++    expect(response.status).toBe(200);
++    expect(mockFetchVariableAllowedValues).toHaveBeenCalledTimes(4);
++    for (const [requestOptions] of mockFetchVariableAllowedValues.mock.calls) {
++      expect(requestOptions.aiSelector).toBe(false);
++    }
++  });
++});
+diff --git a/src/client/src/__tests__/lib/platform/dashboard-variables/distinct-values.test.ts b/src/client/src/__tests__/lib/platform/dashboard-variables/distinct-values.test.ts
+index 5fcbdc9..bb9851f 100644
+--- a/src/client/src/__tests__/lib/platform/dashboard-variables/distinct-values.test.ts
++++ b/src/client/src/__tests__/lib/platform/dashboard-variables/distinct-values.test.ts
+@@ -20,7 +20,10 @@ import {
+ 	fetchVariableAllowedValues,
+ } from "@/lib/platform/dashboard-variables";
+ import { UnsupportedCapabilityError } from "@/lib/platform/connectors/datasource/types";
+-import type { DataSourceAdapter } from "@/lib/platform/connectors/datasource/types";
++import type {
++	DataSourceAdapter,
++	OpenLITQuery,
++} from "@/lib/platform/connectors/datasource/types";
+ 
+ function fakeAdapter(
+ 	overrides: Partial<DataSourceAdapter> = {},
+@@ -57,10 +60,12 @@ describe("distinctValueLookupKey", () => {
+ describe("fetchVariableAllowedValues", () => {
+ 	it("returns { supported: true } and the adapter values when supported", async () => {
+ 		const queriedKeys: string[] = [];
++		const queriedQueries: OpenLITQuery[] = [];
+ 		const result = await fetchVariableAllowedValues({
+ 			adapter: fakeAdapter({
+-				distinctValues: async (key) => {
++				distinctValues: async (key, query) => {
+ 					queriedKeys.push(key);
++					queriedQueries.push(query);
+ 					return ["alpha", "beta", "gamma"];
+ 				},
+ 			}),
+@@ -75,6 +80,28 @@ describe("fetchVariableAllowedValues", () => {
+ 		expect(result.supported).toBe(true);
+ 		expect(result.values).toEqual(["alpha", "beta", "gamma"]);
+ 		expect(queriedKeys).toEqual(["resource:service.name"]);
++		expect(queriedQueries[0]?.aiSelector).toBeUndefined();
++	});
++
++	it("propagates an explicit AI selector override to the source adapter", async () => {
++		let queriedQuery: OpenLITQuery | undefined;
++		await fetchVariableAllowedValues({
++			adapter: fakeAdapter({
++				distinctValues: async (_key, query) => {
++					queriedQuery = query;
++					return [];
++				},
++			}),
++			signal: "traces",
++			scope: "span",
++			key: "autodev.agent.role",
++			timeRange: {
++				start: new Date("2026-01-01T00:00:00Z"),
++				end: new Date("2026-01-02T00:00:00Z"),
++			},
++			aiSelector: false,
++		});
++		expect(queriedQuery?.aiSelector).toBe(false);
+ 	});
+ 
+ 	it("returns { supported: false } when adapter has no distinctValues capability", async () => {
+diff --git a/src/client/src/app/api/autodev/usage/route.ts b/src/client/src/app/api/autodev/usage/route.ts
+index a6d18b9..2b1e198 100644
+--- a/src/client/src/app/api/autodev/usage/route.ts
++++ b/src/client/src/app/api/autodev/usage/route.ts
+@@ -186,6 +186,7 @@ async function fetchFilterOptions(
+ 					key: spec.key,
+ 					timeRange,
+ 					limit: 256,
++					aiSelector: false,
+ 				});
+ 				return [spec.id, result] as const;
+ 			} catch {
+diff --git a/src/client/src/lib/platform/dashboard-variables/distinct-values.ts b/src/client/src/lib/platform/dashboard-variables/distinct-values.ts
+index 6af01c9..6859b8c 100644
+--- a/src/client/src/lib/platform/dashboard-variables/distinct-values.ts
++++ b/src/client/src/lib/platform/dashboard-variables/distinct-values.ts
+@@ -32,6 +32,11 @@ export interface VariableAllowedValuesRequest {
+ 	timeRange: { start: Date; end: Date };
+ 	/** Maximum number of values to return. Defaults to 256. */
+ 	limit?: number;
++	/**
++	 * Override the adapter's default AI-only trace selector. Usage can disable
++	 * this to include logical routed-request and MCP spans as filter options.
++	 */
++	aiSelector?: boolean;
+ }
+ 
+ export interface VariableAllowedValuesResult {
+@@ -67,6 +72,7 @@ export async function fetchVariableAllowedValues(
+ 		signal: req.signal,
+ 		timeRange: req.timeRange,
+ 		limit: req.limit ?? 256,
++		...(req.aiSelector === undefined ? {} : { aiSelector: req.aiSelector }),
+ 	}).query;
+ 	try {
+ 		const values = await req.adapter.distinctValues(

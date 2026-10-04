@@ -33,8 +33,10 @@ import {
   getDefaultRouterEventRecorder,
   noteRequestIdentity,
   recordRouterEvent,
+  type RouterEvent,
   RouterEventRecorder,
-  setDefaultRouterEventRecorder
+  setDefaultRouterEventRecorder,
+  type WorkspaceInput
 } from "@simulatorlife/autodev-runtime/router/events";
 import {
   getDefaultRouterLifecycle,
@@ -64,6 +66,7 @@ import {
 } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   CodexStateCollector,
+  type CodexStateSnapshot,
   loadCodexStateCollectorConfig
 } from "@simulatorlife/autodev-runtime/router/state-collector";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
@@ -154,6 +157,7 @@ import {
   inFlightUsage,
   projectLiveAgents,
   recordUsageEvent,
+  type RecordUsageEventParams,
   registerWorkspaceId,
   resetUsageTelemetry,
   restoreUsagePersistenceSnapshot,
@@ -224,6 +228,63 @@ const MAX_RECENT_EVENTS = Number.parseInt(
 const liveFeedEvents = new LiveFeedRecorder();
 const OTEL_UNIX_NANOS_PATTERN = /^\d+$/;
 
+function usageWorkspaceForEvent(
+  workspaceKey: string | null,
+  cwd: string | null,
+  rawWorkspace: string | WorkspaceInput | null | undefined
+): string | { key: string; cwd?: string | null; workspace_id?: string } | null {
+  if (workspaceKey == null) return null;
+  const workspaceId =
+    rawWorkspace &&
+    typeof rawWorkspace === "object" &&
+    typeof rawWorkspace.workspace_id === "string"
+      ? rawWorkspace.workspace_id
+      : undefined;
+  return workspaceId
+    ? { key: workspaceKey, cwd, workspace_id: workspaceId }
+    : { key: workspaceKey, cwd };
+}
+
+const USAGE_ELIGIBLE_PHASES = new Set(["selected", "skipped", "result"]);
+
+// The single owner of RouterEvent -> Usage projection. Used by both the live
+// onEvent listener (which also has the raw RecordRouterEventInput, so it can
+// read an explicit, validated workspace_id) and persisted-event replay
+// (which only has the already-recorded RouterEvent fields). Requests without
+// a requestId cannot be keyed and are intentionally skipped rather than
+// invented; a null/unknown outcome is omitted rather than coerced to failure.
+function usageEventFromRouterEvent(
+  event: RouterEvent,
+  rawWorkspace: string | WorkspaceInput | null | undefined,
+  effectiveOrigin: string | null
+): RecordUsageEventParams | null {
+  if (
+    !event.requestId ||
+    !event.provider ||
+    !event.model ||
+    !USAGE_ELIGIBLE_PHASES.has(event.phase)
+  ) {
+    return null;
+  }
+  return {
+    phase: event.phase,
+    requestId: event.requestId,
+    subject: event.activitySubject ?? null,
+    role: event.role,
+    provider: event.provider,
+    model: event.model,
+    workspace: usageWorkspaceForEvent(event.workspace, event.cwd, rawWorkspace),
+    ...(event.outcome == null ? {} : { outcome: event.outcome }),
+    failureClass: event.failureClass,
+    status: event.status,
+    elapsedMs: event.elapsedMs,
+    toolCalls: event.toolCalls,
+    timestamp: event.timestamp,
+    origin:
+      effectiveOrigin ?? usageOrigin(event.role, String(event.provider ?? ""))
+  };
+}
+
 const routerEvents = new RouterEventRecorder({
   maxRecentEvents: MAX_RECENT_EVENTS,
   routerInstanceId: ROUTER_INSTANCE_ID,
@@ -251,34 +312,12 @@ const routerEvents = new RouterEventRecorder({
       durationMs: event.elapsedMs,
       name: event.model ? `${event.provider ?? ""}/${event.model}` : null
     });
-    const workspaceContext =
-      typeof input.workspace === "string"
-        ? { key: input.workspace, cwd: null }
-        : (input.workspace ?? null);
-    if (
-      event.provider &&
-      event.model &&
-      ["selected", "skipped", "result"].includes(event.phase)
-    ) {
-      recordUsageEvent({
-        phase: event.phase,
-        requestId: event.requestId,
-        subject: event.activitySubject,
-        role: event.role,
-        provider: event.provider,
-        model: event.model,
-        workspace: workspaceContext,
-        outcome: event.outcome,
-        failureClass: event.failureClass,
-        status: event.status,
-        elapsedMs: event.elapsedMs,
-        toolCalls: event.toolCalls,
-        timestamp: event.timestamp,
-        origin:
-          effectiveOrigin ??
-          usageOrigin(event.role, String(event.provider ?? ""))
-      });
-    }
+    const usageEvent = usageEventFromRouterEvent(
+      event,
+      input.workspace,
+      effectiveOrigin
+    );
+    if (usageEvent) recordUsageEvent(usageEvent);
     if (event.phase === "result")
       closeBridgeSubagentsForRequest(
         String(event.requestId ?? ""),
@@ -317,10 +356,8 @@ setDefaultRouterEventRecorder(routerEvents);
 const subagentRegistry = new SubagentRegistry({
   agentActivity,
   executionContract: getDefaultExecutionContract(),
-  onRecordRouterEvent: (event) =>
-    recordRouterEvent(event as Parameters<typeof recordRouterEvent>[0]),
-  onRecordUsageEvent: (event) =>
-    recordUsageEvent(event as Parameters<typeof recordUsageEvent>[0]),
+  onRecordRouterEvent: (event) => recordRouterEvent(event),
+  onRecordUsageEvent: (event) => recordUsageEvent(event),
   onSchedulePersist: () => scheduleRouterStatePersist(),
   onMissingProviderDiagnostic: (count) => {
     attributionDiagnostics.byReason.missing_provider += count;
@@ -339,16 +376,10 @@ setDefaultSubagentRegistry(subagentRegistry);
 const otelTracker = new OtelTracker({
   healthTtlMs: OTEL_HEALTH_TTL_MS,
   usageTracker: getDefaultUsageTracker(),
-  getConversationThread: (id) =>
-    (codexState.lastSnapshot &&
-    (codexState.lastSnapshot as Record<string, unknown>).conversationThreads &&
-    typeof (codexState.lastSnapshot as Record<string, unknown>)
-      .conversationThreads === "object"
-      ? ((
-          (codexState.lastSnapshot as Record<string, unknown>)
-            .conversationThreads as Record<string, unknown>
-        )[id as string] ?? null)
-      : null) ?? null,
+  getConversationThread: (id) => {
+    const thread = codexState.lastSnapshot?.conversationThreads?.[id];
+    return thread ? { ...thread } : null;
+  },
   getBridgeRequestContext: (id) => subagentRegistry.getBridgeRequestContext(id),
   onSchedulePersist: () => scheduleRouterStatePersist()
 });
@@ -411,25 +442,30 @@ setUpstreamShapeHooks({
 
 export const codexState = {
   collector: new CodexStateCollector(loadCodexStateCollectorConfig()),
-  lastSnapshot: null as Record<string, unknown> | null,
+  lastSnapshot: null as Partial<CodexStateSnapshot> | null,
   livePollStarted: false
 };
 
 export async function refreshCodexState(): Promise<void> {
   try {
-    const snapshot =
-      (await codexState.collector.collectSnapshot()) as unknown as Record<
-        string,
-        unknown
-      >;
+    const snapshot = await codexState.collector.collectSnapshot();
     assignCodexSnapshot(snapshot);
   } catch (error) {
     assignCodexSnapshot({
       localTelemetry: {
         status: "error",
-        pathConfigured: true,
-        reason: error instanceof Error ? error.message : String(error),
-        collectedAt: new Date().toISOString()
+        path: null,
+        schema: null,
+        capabilities: { tables: {}, columnCount: 0 },
+        recencyWindowMs: null,
+        limit: null,
+        threadCount: 0,
+        projectCount: 0,
+        edgeCount: 0,
+        fileSizeBytes: null,
+        collectedAt: new Date().toISOString(),
+        durationMs: null,
+        reason: error instanceof Error ? error.message : String(error)
       }
     });
   }
@@ -500,18 +536,20 @@ function restoreRecentEvents(
   if (parsed.usage) return;
   resetUsageTelemetry();
   for (const event of routerEvents.getRecentEvents()) {
-    if (event.provider && event.model && event.phase)
-      recordUsageEvent(event as Parameters<typeof recordUsageEvent>[0]);
+    const usageEvent = usageEventFromRouterEvent(event, null, null);
+    if (usageEvent) recordUsageEvent(usageEvent);
   }
   inFlightUsage.clear();
 }
 
-function assignCodexSnapshot(snapshot: Record<string, unknown> | null): void {
+function assignCodexSnapshot(
+  snapshot: Partial<CodexStateSnapshot> | null
+): void {
   codexState.lastSnapshot = snapshot;
 }
 
 export function setCodexStateSnapshotForTests(
-  snapshot: Record<string, unknown> | null
+  snapshot: Partial<CodexStateSnapshot> | null
 ): void {
   assignCodexSnapshot(
     snapshot && typeof snapshot === "object" ? snapshot : null
@@ -535,14 +573,11 @@ export function codexStateStatus(): Record<string, unknown> {
       }
     };
   }
-  const { path: _path, ...safeLocalTelemetry } =
-    (snapshot.localTelemetry as Record<string, unknown>) ?? {};
+  const { path: _path, ...safeLocalTelemetry } = snapshot.localTelemetry ?? {};
   return {
     localTelemetry: {
       ...safeLocalTelemetry,
-      pathConfigured: Boolean(
-        (snapshot.localTelemetry as Record<string, unknown>)?.path
-      )
+      pathConfigured: Boolean(snapshot.localTelemetry?.path)
     },
     recentThreads: snapshot.recentThreads,
     projects: snapshot.projects,
@@ -708,7 +743,7 @@ export function limitsStatus(): Record<string, unknown> {
 export function agentsStatus(at = Date.now()): Record<string, unknown> {
   const projection = projectLiveAgents(at);
   const liveAgents = projection.allLiveAgents;
-  const byState = getDefaultUsageTracker().activityTracker.snapshot(at).byState;
+  const byState = agentActivity.snapshot(at).byState;
   const liveByKind: Record<string, number> = {};
   const liveByRole: Record<string, number> = {};
   const liveByOrigin: Record<string, number> = {};
@@ -749,20 +784,15 @@ export function agentsStatus(at = Date.now()): Record<string, unknown> {
     missingModel: projection.missingModel,
     slotVsAgent: {
       agentLive: projection.canonicalTotal,
-      admissionSlots: getDefaultUsageTracker().activityTracker.countLive(
+      admissionSlots: agentActivity.countLive({ kind: SUBAGENT_SLOT_KIND }, at),
+      activeAdmissionSessions: agentActivity.distinctTags(
         { kind: SUBAGENT_SLOT_KIND },
         at
-      ),
-      activeAdmissionSessions:
-        getDefaultUsageTracker().activityTracker.distinctTags(
-          { kind: SUBAGENT_SLOT_KIND },
-          at
-        ).length,
-      processFallbackActiveThreads:
-        getDefaultUsageTracker().activityTracker.countLive(
-          { kind: SUBAGENT_SLOT_KIND, tag: PROCESS_FALLBACK_SESSION_KEY },
-          at
-        )
+      ).length,
+      processFallbackActiveThreads: agentActivity.countLive(
+        { kind: SUBAGENT_SLOT_KIND, tag: PROCESS_FALLBACK_SESSION_KEY },
+        at
+      )
     },
     reconciledWithConcurrency: true
   };
@@ -838,7 +868,7 @@ function isValidAgentEvent(event: unknown): event is Record<string, unknown> {
 }
 
 function touchAgentActivity(context: BridgeRequestContext): void {
-  getDefaultUsageTracker().activityTracker.touch(context.activitySubject);
+  agentActivity.touch(context.activitySubject);
   if (context.sessionKey)
     getDefaultConcurrencyManager().touchOpenSubagentSlots(context.sessionKey);
 }
@@ -847,9 +877,8 @@ function noteBridgeAgentActivity(
   state: string,
   context: BridgeRequestContext
 ): void {
-  const tracker = getDefaultUsageTracker().activityTracker;
   if (state === "subagent_wait") {
-    tracker.noteSubagentWait(context.activitySubject, {
+    agentActivity.noteSubagentWait(context.activitySubject, {
       provider: context.provider ?? null,
       model: context.model ?? null,
       role: context.role ?? null,
@@ -858,7 +887,7 @@ function noteBridgeAgentActivity(
   } else {
     // `resumed` resolves a bridge-native delegation; it is a no-op for an
     // agent that was not waiting on one.
-    tracker.noteSubagentResolved(context.activitySubject);
+    agentActivity.noteSubagentResolved(context.activitySubject);
   }
 }
 

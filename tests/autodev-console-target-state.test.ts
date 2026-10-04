@@ -217,11 +217,50 @@ test("root quality scripts validate all code workspaces", () => {
     assert.match(manifest.scripts.format ?? "", new RegExp(`${workspace}`));
 });
 
+test("canonical target records the current repository quality-gate evidence", () => {
+  const target = readFileSync(targetStatePath, "utf8");
+
+  assert.match(
+    target,
+    /`pnpm run typecheck` passes for the root TypeScript project and all four workspaces/
+  );
+  assert.match(target, /`pnpm run lint:ci` reports \d+ errors/);
+  assert.match(target, /`pnpm run format:check` passes repository-wide/);
+  assert.match(
+    target,
+    /Local p25 acceptance through the unified Console’s server-rendered/
+  );
+  assert.match(target, /p25 in the standard lock and running local stack/);
+  assert.match(target, /live p25 reads return five workspace entries/);
+  assert.match(
+    target,
+    /Data `ConfigRepository` validates the current `\.github\/workflows\/weights\.json` projection as valid\/invalid\/unavailable/
+  );
+  assert.match(
+    target,
+    /The p25 image is now promoted to the standard local image lock and running stack/
+  );
+  assert.doesNotMatch(
+    target,
+    /root TypeScript project still reports \d+ diagnostics/
+  );
+});
+
 test("canonical target tracks migration gaps without claiming premature cutover", () => {
   const target = readFileSync(targetStatePath, "utf8");
 
   assert.match(target, /## 12\. Current migration state and gap ledger/);
   assert.match(target, /Flat monorepo\s+\|\s+\*\*Partial\*\*/);
+  assert.match(
+    target,
+    /Workspaces\s+\|\s+\*\*Partial: Data-owned read; runtime health unknown\*\*/
+  );
+  assert.match(target, /Workspaces delegates to Data `ConfigRepository`/);
+  assert.match(
+    target,
+    /enabled state, agent\/resource scope, per-workspace configuration health/
+  );
+  assert.match(target, /model-router LaunchAgent supplies `AUTODEV_REPO_ROOT`/);
   assert.match(target, /Console\s+\|\s+\*\*Runnable foundation\*\*/);
   assert.match(target, /RuleSync ownership\s+\|\s+\*\*Partial\*\*/);
   assert.match(

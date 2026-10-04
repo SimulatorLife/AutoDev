@@ -75,6 +75,82 @@ test("typed routing validation rejects malformed tiers and unknown providers", (
   );
 });
 
+test("typed routing validation narrows providers, routes, and orchestrator blocks before use", () => {
+  const valid = structuredClone(ROUTING_POLICY.config);
+
+  assert.throws(
+    () =>
+      validateRoutingConfig({
+        ...valid,
+        providers: {
+          ...valid.providers,
+          claude: { models: { smart: "sonnet" } }
+        }
+      }),
+    /provider claude must define a default model/
+  );
+
+  const claudeProvider = valid.providers.claude;
+  assert.ok(claudeProvider);
+
+  assert.throws(
+    () =>
+      validateRoutingConfig({
+        ...valid,
+        providers: {
+          ...valid.providers,
+          claude: {
+            ...claudeProvider,
+            models: { ...claudeProvider.models, default: "MiniMax-M3" }
+          }
+        }
+      }),
+    /provider claude default model "MiniMax-M3" routes to minimax/
+  );
+
+  assert.throws(
+    () =>
+      validateRoutingConfig({
+        ...valid,
+        routes: { ...valid.routes, claude: { baseUrl: "http://example" } }
+      }),
+    /provider claude must define a route with pattern and baseUrl/
+  );
+
+  assert.throws(
+    () =>
+      validateRoutingConfig({
+        ...valid,
+        orchestrator: { ...valid.orchestrator, alias: "not-an-alias" }
+      }),
+    /orchestrator\.alias must be an autodev\/<name> alias/
+  );
+
+  assert.throws(
+    () =>
+      validateRoutingConfig({
+        ...valid,
+        orchestrator: {
+          ...valid.orchestrator,
+          reasoningEffort: { "no-such-provider": "high" }
+        }
+      }),
+    /orchestrator\.reasoningEffort references unknown provider no-such-provider/
+  );
+
+  assert.throws(
+    () =>
+      validateRoutingConfig({
+        ...valid,
+        orchestrator: {
+          ...valid.orchestrator,
+          reasoningEffort: { codex: "" }
+        }
+      }),
+    /orchestrator\.reasoningEffort\.codex must be a non-empty string/
+  );
+});
+
 test("routing policy preserves seeded ordering while honoring load and disabled-provider state", () => {
   const runtime: RoutingRuntime = {
     providerFailureStreak: (provider) => (provider === "claude" ? 2 : 0),

@@ -469,16 +469,23 @@ test("usagePersistenceSnapshot and restoreUsagePersistenceSnapshot preserve full
 
   const snapshot = tracker.usagePersistenceSnapshot();
   assert.equal(snapshot.schemaVersion, 8);
-  assert.equal((snapshot.totals as any).attempts, 1);
-  assert.equal((snapshot.totals as any).successes, 1);
-  assert.equal((snapshot.totals as any).toolCalls, 2);
+  assert.equal(snapshot.totals.attempts, 1);
+  assert.equal(snapshot.totals.successes, 1);
+  assert.equal(snapshot.totals.toolCalls, 2);
   assert.equal(snapshot.workspaceRegistry.length, 1);
+  const persistedWorkspace = snapshot.byWorkspace.RepoPersistence;
+  assert.ok(
+    persistedWorkspace &&
+      typeof persistedWorkspace === "object" &&
+      "mcpExposed" in persistedWorkspace
+  );
+  for (const transientMapField of ["tools", "skills", "bridgeObservations"])
+    assert.equal(Object.hasOwn(persistedWorkspace, transientMapField), false);
+  assert.ok(Array.isArray(persistedWorkspace.mcpExposed));
 
   // Restore into a clean tracker
   const cleanTracker = new UsageTracker();
-  cleanTracker.restoreUsagePersistenceSnapshot(
-    snapshot as unknown as Record<string, unknown>
-  );
+  cleanTracker.restoreUsagePersistenceSnapshot(snapshot);
 
   assert.equal(cleanTracker.usageTelemetry.totals.attempts, 1);
   assert.equal(cleanTracker.usageTelemetry.totals.successes, 1);
@@ -505,6 +512,30 @@ test("usagePersistenceSnapshot and restoreUsagePersistenceSnapshot preserve full
   });
   assert.equal(emptyStateTracker.usageTelemetry.totals.attempts, 0);
 
+  const malformedFailureTracker = new UsageTracker();
+  malformedFailureTracker.restoreUsagePersistenceSnapshot({
+    schemaVersion: 8,
+    totals: { lastFailure: { timestamp: 42, class: true } }
+  });
+  assert.equal(malformedFailureTracker.usageTelemetry.totals.lastFailure, null);
+
+  const nullFailureClassTracker = new UsageTracker();
+  nullFailureClassTracker.restoreUsagePersistenceSnapshot({
+    schemaVersion: 8,
+    totals: {
+      lastFailure: {
+        timestamp: "2026-10-03T00:00:00.000Z",
+        class: null,
+        status: null
+      }
+    }
+  });
+  assert.deepEqual(nullFailureClassTracker.usageTelemetry.totals.lastFailure, {
+    timestamp: "2026-10-03T00:00:00.000Z",
+    class: null,
+    status: null
+  });
+
   // Verify clearWorkspaceCapabilities
   cleanTracker.clearWorkspaceCapabilities();
   assert.equal(restoredWs.toolsCapable, false);
@@ -529,7 +560,7 @@ test("default instance convenience exports delegate correctly", () => {
   });
 
   const snapshot = usagePersistenceSnapshot();
-  assert.equal((snapshot.totals as any).attempts, 1);
+  assert.equal(snapshot.totals.attempts, 1);
 
   const status = usageStatus();
   assert.equal(status.totals.attempts, 1);
