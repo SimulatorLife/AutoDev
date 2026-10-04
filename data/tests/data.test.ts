@@ -197,7 +197,7 @@ test("ConfigRepository loads agent definitions and workspaces", () => {
   assert.equal(workspaceCatalog.status, "valid");
   const workspaces = workspaceCatalog.workspaces;
   assert.ok(workspaces.length > 0);
-  assert.ok(workspaces.some((w) => w.name === "SimulatorLife/AutoDev"));
+  assert.ok(workspaces.some((w) => w.id === "SimulatorLife/AutoDev"));
 
   const policy = repo.loadPermissionPolicy();
   assert.equal(policy.approvalPolicy, "never");

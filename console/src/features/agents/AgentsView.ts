@@ -7,12 +7,33 @@ import {
   type ColumnDef,
   DataTable
 } from "../../components/tables/DataTable.ts";
+import type {
+  ControlApiProvidersResponse,
+  ControlApiRoutingResponse,
+  ControlApiRuntimeResponse
+} from "../../lib/server/types.ts";
 
 export interface AgentsViewProps {
   readonly agents: readonly AgentDefinition[];
+  readonly providers?: ControlApiProvidersResponse | undefined;
+  readonly routing?: ControlApiRoutingResponse | undefined;
+  readonly runtime?: ControlApiRuntimeResponse | undefined;
 }
 
-export function AgentsView({ agents }: AgentsViewProps): React.JSX.Element {
+interface ProviderRoutingRow {
+  readonly id: string;
+  readonly orchestratorEnabled: boolean;
+  readonly subagentEnabled: boolean;
+  readonly baseUrl: string;
+  readonly pattern: string;
+}
+
+export function AgentsView({
+  agents,
+  providers,
+  routing,
+  runtime
+}: AgentsViewProps): React.JSX.Element {
   const readinessObserved =
     agents.length > 0 &&
     agents.every(
@@ -25,6 +46,9 @@ export function AgentsView({ agents }: AgentsViewProps): React.JSX.Element {
   const convergedAgents = agents.filter(
     (agent) => agent.convergence === "converged"
   ).length;
+
+  const inFlightCount =
+    runtime !== undefined ? runtime.inFlightRequestCount : "Not observed";
 
   const columns: ColumnDef<AgentDefinition>[] = [
     {
@@ -91,12 +115,84 @@ export function AgentsView({ agents }: AgentsViewProps): React.JSX.Element {
     }
   ];
 
+  const providerIds = Array.from(
+    new Set([
+      ...(providers?.providers.map((p) => p.id) ?? []),
+      ...(routing?.routes.map((r) => r.provider) ?? [])
+    ])
+  ).sort((a, b) => a.localeCompare(b));
+
+  const providerRows: ProviderRoutingRow[] = providerIds.map((id) => {
+    const pRecord = providers?.providers.find((p) => p.id === id);
+    const route = routing?.routes.find((r) => r.provider === id);
+    return {
+      id,
+      orchestratorEnabled: pRecord?.roles.orchestrator.enabled ?? false,
+      subagentEnabled: pRecord?.roles.subagent.enabled ?? false,
+      baseUrl: route?.baseUrl ?? "Not observed",
+      pattern: route?.pattern ?? "Default"
+    };
+  });
+
+  const providerColumns: ColumnDef<ProviderRoutingRow>[] = [
+    {
+      id: "provider",
+      header: "Provider",
+      cell: (row) =>
+        React.createElement(
+          "span",
+          { className: "font-mono font-semibold text-slate-100" },
+          row.id
+        )
+    },
+    {
+      id: "orchestrator",
+      header: "Orchestrator Role",
+      cell: (row) =>
+        React.createElement(StatusBadge, {
+          status: row.orchestratorEnabled ? "valid" : "unavailable",
+          label: row.orchestratorEnabled ? "Enabled" : "Disabled"
+        })
+    },
+    {
+      id: "subagent",
+      header: "Subagent Role",
+      cell: (row) =>
+        React.createElement(StatusBadge, {
+          status: row.subagentEnabled ? "valid" : "unavailable",
+          label: row.subagentEnabled ? "Enabled" : "Disabled"
+        })
+    },
+    {
+      id: "baseUrl",
+      header: "Upstream Base URL",
+      cell: (row) =>
+        React.createElement(
+          "span",
+          { className: "font-mono text-xs text-slate-400" },
+          row.baseUrl
+        )
+    },
+    {
+      id: "pattern",
+      header: "Route Pattern",
+      cell: (row) =>
+        React.createElement(
+          "span",
+          { className: "font-mono text-xs text-slate-400" },
+          row.pattern
+        )
+    }
+  ];
+
+  const cooldownEntries = Object.entries(routing?.cooldowns ?? {});
+
   return React.createElement(
     "div",
     { className: "flex flex-col gap-6", "data-feature": "agents" },
     React.createElement(
       "div",
-      { className: "grid grid-cols-1 gap-4 md:grid-cols-3" },
+      { className: "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4" },
       React.createElement(StatCard, {
         title: "Configured Agents",
         value: agents.length
@@ -114,12 +210,18 @@ export function AgentsView({ agents }: AgentsViewProps): React.JSX.Element {
         subtitle: convergenceObserved
           ? "Desired vs actual"
           : "No reconciliation observation"
+      }),
+      React.createElement(StatCard, {
+        title: "In-Flight Requests",
+        value: inFlightCount,
+        subtitle: runtime !== undefined ? "Active router turns" : "Not observed"
       })
     ),
     React.createElement(
       "section",
       {
-        className: "rounded-lg border border-slate-800 bg-slate-900 p-5 shadow"
+        className: "rounded-lg border border-slate-800 bg-slate-900 p-5 shadow",
+        "data-section": "configured-agents"
       },
       React.createElement(
         "h2",
@@ -134,6 +236,200 @@ export function AgentsView({ agents }: AgentsViewProps): React.JSX.Element {
         columns,
         keyExtractor: (agent: AgentDefinition) => agent.id
       })
+    ),
+    React.createElement(
+      "section",
+      {
+        className: "rounded-lg border border-slate-800 bg-slate-900 p-5 shadow",
+        "data-section": "providers-routing"
+      },
+      React.createElement(
+        "div",
+        { className: "mb-3" },
+        React.createElement(
+          "h2",
+          {
+            className:
+              "text-sm font-semibold uppercase tracking-wider text-slate-400"
+          },
+          "Providers & Routing Policy"
+        ),
+        React.createElement(
+          "p",
+          { className: "text-xs text-slate-500 mt-1" },
+          "Secondary provider eligibility by role, upstream routing endpoints, and active cooldown circuits"
+        )
+      ),
+      DataTable({
+        data: providerRows,
+        columns: providerColumns,
+        keyExtractor: (row: ProviderRoutingRow) => row.id,
+        emptyMessage: "No provider routing configuration observed."
+      }),
+      React.createElement(
+        "div",
+        { className: "mt-4 border-t border-slate-800 pt-3" },
+        React.createElement(
+          "h3",
+          {
+            className:
+              "text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2"
+          },
+          "Active Cooldown Circuits"
+        ),
+        cooldownEntries.length === 0
+          ? React.createElement(
+              "p",
+              { className: "text-xs text-slate-500" },
+              "No active provider cooldowns."
+            )
+          : React.createElement(
+              "ul",
+              { className: "flex flex-wrap gap-2" },
+              ...cooldownEntries.map(([key, val]) =>
+                React.createElement(
+                  "li",
+                  {
+                    key,
+                    className:
+                      "rounded border border-amber-800 bg-amber-950/60 px-2 py-1 font-mono text-xs text-amber-300"
+                  },
+                  `${key}: ${JSON.stringify(val)}`
+                )
+              )
+            )
+      )
+    ),
+    React.createElement(
+      "section",
+      {
+        className: "rounded-lg border border-slate-800 bg-slate-900 p-5 shadow",
+        "data-section": "runtime-health"
+      },
+      React.createElement(
+        "h2",
+        {
+          className:
+            "mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400"
+        },
+        "Runtime Concurrency & Circuit Health"
+      ),
+      React.createElement(
+        "dl",
+        { className: "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4" },
+        React.createElement(
+          "div",
+          { className: "flex flex-col gap-1" },
+          React.createElement(
+            "dt",
+            { className: "text-xs uppercase tracking-wider text-slate-400" },
+            "Router Instance ID"
+          ),
+          React.createElement(
+            "dd",
+            { className: "font-mono text-xs text-slate-300 break-all" },
+            runtime?.routerInstanceId ?? "Not observed"
+          )
+        ),
+        React.createElement(
+          "div",
+          { className: "flex flex-col gap-1" },
+          React.createElement(
+            "dt",
+            { className: "text-xs uppercase tracking-wider text-slate-400" },
+            "Lifecycle State"
+          ),
+          React.createElement(
+            "dd",
+            null,
+            React.createElement(StatusBadge, {
+              status:
+                runtime?.lifecycle.state === "ready"
+                  ? "ready"
+                  : runtime?.lifecycle.state
+                    ? "unavailable"
+                    : "not-observed",
+              label: runtime?.lifecycle.state ?? "Not observed"
+            })
+          )
+        ),
+        React.createElement(
+          "div",
+          { className: "flex flex-col gap-1" },
+          React.createElement(
+            "dt",
+            { className: "text-xs uppercase tracking-wider text-slate-400" },
+            "Session Concurrency Limit"
+          ),
+          React.createElement(
+            "dd",
+            { className: "font-mono text-sm text-slate-200" },
+            routing?.concurrency?.effectivePerSessionLimit ??
+              runtime?.concurrency.limit ??
+              "Not observed"
+          )
+        ),
+        React.createElement(
+          "div",
+          { className: "flex flex-col gap-1" },
+          React.createElement(
+            "dt",
+            { className: "text-xs uppercase tracking-wider text-slate-400" },
+            "Active Subagent Threads"
+          ),
+          React.createElement(
+            "dd",
+            { className: "font-mono text-sm text-slate-200" },
+            routing?.concurrency?.activeSubagentThreads ??
+              runtime?.concurrency.active ??
+              0
+          )
+        ),
+        React.createElement(
+          "div",
+          { className: "flex flex-col gap-1" },
+          React.createElement(
+            "dt",
+            { className: "text-xs uppercase tracking-wider text-slate-400" },
+            "Active Sessions"
+          ),
+          React.createElement(
+            "dd",
+            { className: "font-mono text-sm text-slate-200" },
+            routing?.concurrency?.activeSessions ?? 0
+          )
+        ),
+        React.createElement(
+          "div",
+          { className: "flex flex-col gap-1" },
+          React.createElement(
+            "dt",
+            { className: "text-xs uppercase tracking-wider text-slate-400" },
+            "Total Denials"
+          ),
+          React.createElement(
+            "dd",
+            { className: "font-mono text-sm text-slate-200" },
+            routing?.concurrency?.denials ?? 0
+          )
+        ),
+        React.createElement(
+          "div",
+          { className: "flex flex-col gap-1 sm:col-span-2" },
+          React.createElement(
+            "dt",
+            { className: "text-xs uppercase tracking-wider text-slate-400" },
+            "Last Denial Reason"
+          ),
+          React.createElement(
+            "dd",
+            { className: "font-mono text-xs text-slate-300" },
+            routing?.concurrency?.lastDenial
+              ? `${routing.concurrency.lastDenial.role} - ${routing.concurrency.lastDenial.reason}`
+              : "None observed"
+          )
+        )
+      )
     )
   );
 }

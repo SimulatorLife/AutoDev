@@ -1,5 +1,10 @@
 import React from "react";
 
+import { EvaluationsView } from "../../src/features/evaluations/EvaluationsView.ts";
+import {
+  controlApiFailureCode,
+  fetchEvaluations
+} from "../../src/lib/server/control-api.ts";
 import {
   ConsolePageShell,
   readNodeContext,
@@ -11,11 +16,10 @@ export const dynamic = "force-dynamic";
 /**
  * Evaluations resource view.
  *
- * The retained OpenLIT evaluation adapter is not yet integrated with the
- * AutoDev Control API. The route therefore renders an explicit unavailable
- * state instead of fabricating evaluation results.
+ * Direct resource evaluation definition and result-history view reading from
+ * the AutoDev Control API `/control/evaluations` endpoint backed by ClickHouse.
  */
-export default function EvaluationsPage(): React.JSX.Element {
+export default async function EvaluationsPage(): Promise<React.JSX.Element> {
   const { section, config } = readNodeContext("/evaluations");
   if (!config) {
     return React.createElement(
@@ -29,15 +33,25 @@ export default function EvaluationsPage(): React.JSX.Element {
       })
     );
   }
+
+  const result = await fetchEvaluations(config);
+  if (result.kind !== "ok") {
+    return React.createElement(
+      ConsolePageShell,
+      { section },
+      React.createElement(ResourceUnavailable, {
+        title: "Evaluations could not be loaded",
+        code: controlApiFailureCode(result),
+        message: result.message
+      })
+    );
+  }
+
   return React.createElement(
     ConsolePageShell,
-    { section },
-    React.createElement(ResourceUnavailable, {
-      title: "Evaluation adapters are not wired into the Console",
-      code: "autodev_evaluation_adapter_pending",
-      message:
-        "Retained OpenLIT evaluation execution and result-history adapters are not yet integrated with the Control API.",
-      hint: "Once the adapter exists, Evaluations will show definition/suite/run/history scoped to AutoDev agents and prompts."
+    { section, counts: { Evaluations: result.data.evaluations.length } },
+    React.createElement(EvaluationsView, {
+      evaluations: result.data.evaluations
     })
   );
 }

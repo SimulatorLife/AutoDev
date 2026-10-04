@@ -40,8 +40,11 @@ import {
   CONTROL_API_PATHS,
   fetchAgentDetail,
   fetchControlApi,
+  fetchEvaluations,
   fetchPromptDetail,
   fetchProviders,
+  fetchRouting,
+  fetchRuntime,
   fetchTools,
   readControlApiConfig
 } from "../src/lib/server/control-api.ts";
@@ -728,7 +731,12 @@ test("WorkspacesView never reports 'Available' without runtime evidence", () => 
   const markup = renderToStaticMarkup(
     React.createElement(WorkspacesView, {
       workspaces: [
-        { name: "SimulatorLife/AutoDev", baseBranch: "main", weight: 100 }
+        {
+          id: "SimulatorLife/AutoDev",
+          baseBranch: "main",
+          enabled: true,
+          agentRoles: null
+        }
       ]
     })
   );
@@ -964,6 +972,170 @@ test("EvaluationsView with empty results renders the explicit empty state", () =
   assert.equal(markup.includes("100%"), false);
 });
 
+test("fetchEvaluations issues authenticated GET to /control/evaluations", async () => {
+  const config = {
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "test-token-123"
+  };
+  const mockFetch: typeof fetch = async (input, init) => {
+    assert.equal(input, "http://127.0.0.1:4101/control/evaluations");
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get("authorization"), "Bearer test-token-123");
+    assert.equal(headers.get("x-autodev-actor"), LOCAL_CONTROL_API_ACTOR);
+    return Response.json({
+      schema: "autodev-control-evaluations-v1",
+      source: "openlit_evaluation",
+      readOnly: true,
+      totalEvaluations: 1,
+      evaluations: [
+        {
+          id: "eval-1",
+          agentRole: "orchestrator",
+          promptName: "dry",
+          model: "gpt-5.6-terra",
+          metrics: [{ name: "relevance", value: 0.95, pass: true }],
+          passed: true,
+          timestamp: "2026-10-04 12:00:00"
+        }
+      ]
+    });
+  };
+  const result = await fetchEvaluations(config, { fetchImpl: mockFetch });
+  assert.equal(result.kind, "ok");
+  if (result.kind === "ok") {
+    assert.equal(result.data.totalEvaluations, 1);
+    assert.equal(result.data.evaluations[0]?.agentRole, "orchestrator");
+  }
+});
+
+test("EvaluationsView renders metrics, pass rate, and outcome badges when evaluations exist", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(EvaluationsView, {
+      evaluations: [
+        {
+          id: "eval-1",
+          agentRole: "orchestrator",
+          promptName: "dry",
+          model: "gpt-5.6-terra",
+          metrics: [{ name: "relevance", value: 0.95, pass: true }],
+          passed: true,
+          timestamp: "2026-10-04 12:00:00"
+        }
+      ]
+    })
+  );
+  assert.match(markup, /data-evaluation-pass-rate-observed="true"/);
+  assert.match(markup, /100%/);
+  assert.match(markup, /orchestrator/);
+  assert.match(markup, /gpt-5\.6-terra/);
+  assert.match(markup, /relevance: 0\.95/);
+  assert.match(markup, /Passed/);
+});
+
+test("AgentsView renders secondary provider routing policy and runtime health sections", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(AgentsView, {
+      agents: [CONFIGURED_AGENT],
+      providers: {
+        schema: "autodev-control-providers-v1",
+        providers: [
+          {
+            id: "codex",
+            roles: {
+              orchestrator: { enabled: true, mutable: true },
+              subagent: { enabled: false, mutable: true }
+            }
+          }
+        ],
+        disabledOrchestratorProviders: [],
+        disabledSubagentProviders: ["codex"]
+      },
+      routing: {
+        schema: "autodev-control-routing-v1",
+        runtime: {
+          disabledOrchestratorProviders: [],
+          disabledSubagentProviders: ["codex"]
+        },
+        routes: [
+          {
+            provider: "codex",
+            pattern: "^gpt-.*$",
+            baseUrl: "https://chatgpt.com/backend-api/codex"
+          }
+        ],
+        cooldowns: {},
+        concurrency: {
+          effectivePerSessionLimit: 2,
+          activeSubagentThreads: 1,
+          activeSessions: 1,
+          denials: 0
+        }
+      },
+      runtime: {
+        schema: "autodev-control-runtime-v1",
+        routerInstanceId: "router-uuid-test",
+        lifecycle: { state: "ready", activeResponseRequests: 1 },
+        concurrency: { limit: 2, active: 1 },
+        inFlightRequestCount: 1
+      }
+    })
+  );
+  assert.match(markup, /data-section="configured-agents"/);
+  assert.match(markup, /data-section="providers-routing"/);
+  assert.match(markup, /data-section="runtime-health"/);
+  assert.match(markup, /Providers &amp; Routing Policy/);
+  assert.match(markup, /Runtime Concurrency &amp; Circuit Health/);
+  assert.match(markup, /router-uuid-test/);
+  assert.match(markup, /https:\/\/chatgpt\.com\/backend-api\/codex/);
+  assert.match(markup, /In-Flight Requests/);
+});
+
+test("AgentDetailView renders provider routes and concurrency details when observed", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(AgentDetailView, {
+      agent: CONFIGURED_AGENT,
+      routing: {
+        schema: "autodev-control-routing-v1",
+        runtime: {
+          disabledOrchestratorProviders: [],
+          disabledSubagentProviders: []
+        },
+        routes: [
+          {
+            provider: "codex",
+            pattern: "^gpt-.*$",
+            baseUrl: "https://chatgpt.com/backend-api/codex"
+          }
+        ],
+        cooldowns: {},
+        concurrency: {
+          effectivePerSessionLimit: 2,
+          activeSubagentThreads: 0
+        }
+      },
+      providers: {
+        schema: "autodev-control-providers-v1",
+        providers: [
+          {
+            id: "codex",
+            roles: {
+              orchestrator: { enabled: true, mutable: true },
+              subagent: { enabled: false, mutable: true }
+            }
+          }
+        ],
+        disabledOrchestratorProviders: [],
+        disabledSubagentProviders: []
+      }
+    })
+  );
+  assert.match(markup, /data-section="agent-provider-routes"/);
+  assert.match(markup, /data-section="agent-concurrency"/);
+  assert.match(markup, /Provider Routing &amp; Circuit Endpoints/);
+  assert.match(markup, /https:\/\/chatgpt\.com\/backend-api\/codex/);
+  assert.match(markup, /Session concurrency limit/);
+});
+
 test("HooksView only renders hooks with valid action command lists", () => {
   const hooks = hooksFromControlApi({
     schema: "autodev-control-hooks-v1",
@@ -1045,10 +1217,15 @@ test("View adapters translate Control API responses without inventing data", () 
     catalogStatus: "valid",
     totalWorkspaces: 1,
     workspaces: [
-      { name: "SimulatorLife/AutoDev", baseBranch: "main", weight: 100 }
+      {
+        id: "SimulatorLife/AutoDev",
+        baseBranch: "main",
+        enabled: true,
+        agentRoles: null
+      }
     ]
   });
-  assert.equal(workspaces[0]?.name, "SimulatorLife/AutoDev");
+  assert.equal(workspaces[0]?.id, "SimulatorLife/AutoDev");
 
   const perms = permissionsFromControlApi({
     schema: "autodev-control-permissions-v1",

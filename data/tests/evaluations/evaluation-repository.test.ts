@@ -1,0 +1,128 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { EvaluationRepository } from "../../src/evaluations/evaluation-repository.ts";
+
+test("EvaluationRepository.parseEvaluationRows parses valid ClickHouse evaluation rows", () => {
+  const repo = new EvaluationRepository();
+  const rawJson = [
+    JSON.stringify({
+      id: "9b3c5a7f-1234-4567-89ab-cdef01234567",
+      span_id: "span-abc",
+      created_at: "2026-10-04 12:00:00",
+      meta: {
+        agentRole: "orchestrator",
+        promptName: "dry",
+        model: "gpt-5.6-terra"
+      },
+      "evaluationData.evaluation": ["hallucination", "relevance"],
+      "evaluationData.classification": ["faithfulness", "quality"],
+      "evaluationData.explanation": ["No hallucinations", "Directly relevant"],
+      "evaluationData.verdict": ["pass", "pass"],
+      scores: {
+        hallucination: 0.1,
+        relevance: 0.95
+      }
+    }),
+    JSON.stringify({
+      id: "8a2b4c6e-5678-90ab-cdef-1234567890ab",
+      span_id: "span-def",
+      created_at: "2026-10-04 12:05:00",
+      meta: {
+        role: "worker",
+        model: "claude-3-5-sonnet"
+      },
+      "evaluationData.evaluation": ["accuracy"],
+      "evaluationData.verdict": ["fail"],
+      scores: {
+        accuracy: 0.3
+      }
+    })
+  ].join("\n");
+
+  const results = repo.parseEvaluationRows(rawJson);
+  assert.equal(results.length, 2);
+
+  const first = results[0]!;
+  assert.equal(first.id, "9b3c5a7f-1234-4567-89ab-cdef01234567");
+  assert.equal(first.agentRole, "orchestrator");
+  assert.equal(first.promptName, "dry");
+  assert.equal(first.model, "gpt-5.6-terra");
+  assert.equal(first.timestamp, "2026-10-04 12:00:00");
+  assert.equal(first.passed, true);
+  assert.equal(first.metrics.length, 2);
+  assert.deepEqual(first.metrics[0], {
+    name: "hallucination",
+    value: 0.1,
+    pass: true
+  });
+  assert.deepEqual(first.metrics[1], {
+    name: "relevance",
+    value: 0.95,
+    pass: true
+  });
+
+  const second = results[1]!;
+  assert.equal(second.id, "8a2b4c6e-5678-90ab-cdef-1234567890ab");
+  assert.equal(second.agentRole, "worker");
+  assert.equal(second.promptName, undefined);
+  assert.equal(second.model, "claude-3-5-sonnet");
+  assert.equal(second.passed, false);
+  assert.equal(second.metrics.length, 1);
+  assert.deepEqual(second.metrics[0], {
+    name: "accuracy",
+    value: 0.3,
+    pass: false
+  });
+});
+
+test("EvaluationRepository.parseEvaluationRows ignores empty and malformed lines", () => {
+  const repo = new EvaluationRepository();
+  const raw = "\n  \nnot-valid-json\n{}\n";
+  const results = repo.parseEvaluationRows(raw);
+  assert.deepEqual(results, []);
+});
+
+test("EvaluationRepository.listEvaluations returns parsed rows with custom fetchImpl", async () => {
+  const sampleRow = JSON.stringify({
+    id: "uuid-123",
+    created_at: "2026-10-04 10:00:00",
+    meta: { agent: "docs-researcher" },
+    scores: { quality: 0.9 }
+  });
+
+  const mockFetch: typeof fetch = async (input) => {
+    assert.match(
+      decodeURIComponent(String(input)),
+      /FROM openlit\.openlit_evaluation/
+    );
+    return new Response(sampleRow, { status: 200 });
+  };
+
+  const repo = new EvaluationRepository({ fetchImpl: mockFetch });
+  const list = await repo.listEvaluations(50);
+  assert.equal(list.length, 1);
+  assert.equal(list[0]?.id, "uuid-123");
+  assert.equal(list[0]?.agentRole, "docs-researcher");
+  assert.equal(list[0]?.model, "unknown");
+});
+
+test("EvaluationRepository.listEvaluations handles fetch failure and non-ok response safely", async () => {
+  const errorFetch: typeof fetch = async () => {
+    return new Response("Table openlit.openlit_evaluation does not exist", {
+      status: 404
+    });
+  };
+
+  const repoError = new EvaluationRepository({ fetchImpl: errorFetch });
+  const listError = await repoError.listEvaluations();
+  assert.deepEqual(listError, []);
+
+  const throwingFetch: typeof fetch = async () => {
+    throw new Error("ECONNREFUSED");
+  };
+
+  const repoThrowing = new EvaluationRepository({ fetchImpl: throwingFetch });
+  const listThrowing = await repoThrowing.listEvaluations();
+  assert.deepEqual(listThrowing, []);
+});

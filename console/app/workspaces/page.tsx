@@ -5,7 +5,6 @@ import {
   controlApiFailureCode,
   fetchWorkspaces
 } from "../../src/lib/server/control-api.ts";
-import { workspacesFromControlApi } from "../../src/lib/server/views.ts";
 import {
   ConsolePageShell,
   readNodeContext,
@@ -60,7 +59,7 @@ export default async function WorkspacesPage(): Promise<React.JSX.Element> {
       })
     );
   }
-  const workspaces = workspacesFromControlApi(result.data);
+  const workspaces = result.data.workspaces;
   return React.createElement(
     ConsolePageShell,
     { section, counts: { Workspaces: workspaces.length } },

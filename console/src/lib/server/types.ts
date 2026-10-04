@@ -1,7 +1,9 @@
 import type {
+  EvaluationResult,
   McpServerResource,
   ToolCatalogItem,
-  WorkspaceCatalogStatus
+  WorkspaceCatalogStatus,
+  WorkspaceEntry
 } from "@simulatorlife/autodev-core";
 
 /**
@@ -170,11 +172,24 @@ export interface ControlApiWorkspacesResponse {
   readonly readOnly: boolean;
   readonly catalogStatus: WorkspaceCatalogStatus;
   readonly totalWorkspaces: number | null;
-  readonly workspaces: readonly {
-    readonly name: string;
-    readonly baseBranch: string;
-    readonly weight: number;
-  }[];
+  readonly workspaces: readonly WorkspaceEntry[];
+}
+
+export interface ControlApiConcurrencyStatus {
+  readonly scope?: string;
+  readonly maxConcurrentThreadsPerSession?: number;
+  readonly effectivePerSessionLimit?: number;
+  readonly activeSubagentThreads?: number;
+  readonly activeSessions?: number;
+  readonly denials?: number;
+  readonly denialsByReason?: Readonly<Record<string, number>>;
+  readonly lastDenial?: {
+    readonly requestId?: string;
+    readonly role?: string;
+    readonly requestedModel?: string;
+    readonly reason?: string;
+    readonly timestamp?: string;
+  } | null;
 }
 
 export interface ControlApiRoutingResponse {
@@ -189,14 +204,28 @@ export interface ControlApiRoutingResponse {
     readonly baseUrl: string;
   }[];
   readonly cooldowns: Readonly<Record<string, unknown>>;
+  readonly concurrency?: ControlApiConcurrencyStatus;
 }
 
 export interface ControlApiRuntimeResponse {
   readonly schema: "autodev-control-runtime-v1";
   readonly routerInstanceId: string;
-  readonly lifecycle: { readonly state: string };
-  readonly concurrency: { readonly limit: number; readonly active: number };
+  readonly lifecycle: {
+    readonly state: string;
+    readonly draining?: boolean;
+    readonly changedAt?: string;
+    readonly activeResponseRequests?: number;
+  };
+  readonly concurrency: { readonly limit: number; readonly active: number } & ControlApiConcurrencyStatus;
   readonly inFlightRequestCount: number;
+}
+
+export interface ControlApiEvaluationsResponse {
+  readonly schema: "autodev-control-evaluations-v1";
+  readonly source: string;
+  readonly readOnly: boolean;
+  readonly totalEvaluations: number;
+  readonly evaluations: readonly EvaluationResult[];
 }
 
 export type ControlApiResult<T> =

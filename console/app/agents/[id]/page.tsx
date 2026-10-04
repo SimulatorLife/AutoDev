@@ -4,7 +4,9 @@ import React from "react";
 import { AgentDetailView } from "../../../src/features/agents/AgentDetailView.ts";
 import {
   controlApiFailureCode,
-  fetchAgentDetail
+  fetchAgentDetail,
+  fetchProviders,
+  fetchRouting
 } from "../../../src/lib/server/control-api.ts";
 import { agentDetailFromControlApi } from "../../../src/lib/server/views.ts";
 import {
@@ -35,25 +37,39 @@ export default async function AgentDetailPage({
     );
   }
 
-  const result = await fetchAgentDetail(id, config);
-  if (result.kind === "http-error" && result.status === 404) notFound();
-  if (result.kind !== "ok") {
+  const [detailResult, routingResult, providersResult] = await Promise.all([
+    fetchAgentDetail(id, config),
+    fetchRouting(config),
+    fetchProviders(config)
+  ]);
+
+  if (detailResult.kind === "http-error" && detailResult.status === 404) {
+    notFound();
+  }
+  if (detailResult.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
       { section },
       React.createElement(ResourceUnavailable, {
         title: "Agent details could not be loaded",
-        code: controlApiFailureCode(result),
-        message: result.message
+        code: controlApiFailureCode(detailResult),
+        message: detailResult.message
       })
     );
   }
+
+  const routing =
+    routingResult.kind === "ok" ? routingResult.data : undefined;
+  const providers =
+    providersResult.kind === "ok" ? providersResult.data : undefined;
 
   return React.createElement(
     ConsolePageShell,
     { section },
     React.createElement(AgentDetailView, {
-      agent: agentDetailFromControlApi(result.data)
+      agent: agentDetailFromControlApi(detailResult.data),
+      routing,
+      providers
     })
   );
 }

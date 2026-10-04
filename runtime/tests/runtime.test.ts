@@ -23,6 +23,7 @@ test("runtime exports canonical Control API paths", () => {
   assert.equal(CONTROL_API_PATHS.workspaces, "/control/workspaces");
   assert.equal(CONTROL_API_PATHS.routing, "/control/routing");
   assert.equal(CONTROL_API_PATHS.runtime, "/control/runtime");
+  assert.equal(CONTROL_API_PATHS.evaluations, "/control/evaluations");
 });
 
 test("runtime router exports policy and routes", () => {

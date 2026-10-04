@@ -191,11 +191,7 @@ export function promptDocumentFromControlApi(
 export function workspacesFromControlApi(
   response: ControlApiWorkspacesResponse
 ): readonly WorkspaceEntry[] {
-  return response.workspaces.map((workspace) => ({
-    name: workspace.name,
-    baseBranch: workspace.baseBranch,
-    weight: workspace.weight
-  }));
+  return response.workspaces;
 }
 
 export const emptyEvaluations: readonly EvaluationResult[] = [];

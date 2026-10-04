@@ -11,10 +11,11 @@ import {
 /**
  * Workspaces resource view.
  *
- * Each workspace has a configured `name`, `baseBranch`, and scheduling
- * `weight`. Its actual availability/health is a runtime concern that must be
- * reported by an authoritative runtime probe; until that adapter exists, the
- * status column renders `Unknown` rather than `Available`.
+ * Each workspace has a configured `id` (GitHub owner/repo), `baseBranch`,
+ * `enabled` status, and `agentRoles` scope. Its actual availability/health is
+ * a runtime concern that must be reported by an authoritative runtime probe;
+ * until that adapter exists, the availability column renders `Unknown` rather
+ * than `Available`.
  */
 
 export interface WorkspacesViewProps {
@@ -24,17 +25,17 @@ export interface WorkspacesViewProps {
 export function WorkspacesView({
   workspaces
 }: WorkspacesViewProps): React.JSX.Element {
-  const totalWeight = workspaces.reduce((acc, w) => acc + w.weight, 0);
+  const enabledCount = workspaces.filter((w) => w.enabled).length;
 
   const columns: ColumnDef<WorkspaceEntry>[] = [
     {
-      id: "name",
+      id: "id",
       header: "Repository / Workspace",
       cell: (ws) =>
         React.createElement(
           "span",
           { className: "font-semibold text-slate-100 font-mono" },
-          ws.name
+          ws.id
         )
     },
     {
@@ -51,17 +52,26 @@ export function WorkspacesView({
         )
     },
     {
-      id: "weight",
-      header: "Scheduling Weight",
+      id: "status",
+      header: "Status",
+      cell: (ws) =>
+        React.createElement(StatusBadge, {
+          status: ws.enabled ? "valid" : "unavailable",
+          label: ws.enabled ? "Enabled" : "Disabled"
+        })
+    },
+    {
+      id: "agentRoles",
+      header: "Role Scope",
       cell: (ws) =>
         React.createElement(
           "span",
-          { className: "text-xs font-semibold text-emerald-400 font-mono" },
-          `${ws.weight} (${totalWeight > 0 ? Math.round((ws.weight / totalWeight) * 100) : 0}%)`
+          { className: "text-xs font-mono text-slate-300" },
+          ws.agentRoles === null ? "All roles" : ws.agentRoles.join(", ")
         )
     },
     {
-      id: "status",
+      id: "availability",
       header: "Availability",
       cell: () =>
         React.createElement(StatusBadge, {
@@ -86,9 +96,9 @@ export function WorkspacesView({
         value: workspaces.length
       }),
       React.createElement(StatCard, {
-        title: "Total Weight",
-        value: totalWeight,
-        subtitle: "Deterministic routing"
+        title: "Enabled Workspaces",
+        value: enabledCount,
+        subtitle: "Active workspace scope"
       }),
       React.createElement(StatCard, {
         title: "Tenancy Model",
@@ -110,8 +120,8 @@ export function WorkspacesView({
       DataTable({
         data: workspaces,
         columns,
-        keyExtractor: (w: WorkspaceEntry) => w.name,
-        emptyMessage: "No scheduler workspace entries are configured."
+        keyExtractor: (w: WorkspaceEntry) => w.id,
+        emptyMessage: "No workspace entries are configured."
       })
     )
   );

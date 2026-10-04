@@ -25,6 +25,7 @@ import type {
   ControlApiAgentDetailResponse,
   ControlApiAgentsResponse,
   ControlApiError,
+  ControlApiEvaluationsResponse,
   ControlApiHooksResponse,
   ControlApiMcpsResponse,
   ControlApiModelsResponse,
@@ -192,7 +193,8 @@ export const CONTROL_API_PATHS = {
   prompts: "/control/prompts",
   workspaces: "/control/workspaces",
   routing: "/control/routing",
-  runtime: "/control/runtime"
+  runtime: "/control/runtime",
+  evaluations: "/control/evaluations"
 } as const;
 
 export function controlApiFailureCode(
@@ -350,3 +352,15 @@ export function fetchRuntime(
     options
   );
 }
+
+export function fetchEvaluations(
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiEvaluationsResponse>> {
+  return fetchControlApi<ControlApiEvaluationsResponse>(
+    CONTROL_API_PATHS.evaluations,
+    config,
+    options
+  );
+}
+

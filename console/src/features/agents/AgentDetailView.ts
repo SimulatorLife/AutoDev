@@ -2,13 +2,21 @@ import type { AgentDefinition } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import type {
+  ControlApiProvidersResponse,
+  ControlApiRoutingResponse
+} from "../../lib/server/types.ts";
 
 export interface AgentDetailViewProps {
   readonly agent: AgentDefinition;
+  readonly routing?: ControlApiRoutingResponse | undefined;
+  readonly providers?: ControlApiProvidersResponse | undefined;
 }
 
 export function AgentDetailView({
-  agent
+  agent,
+  routing,
+  providers
 }: AgentDetailViewProps): React.JSX.Element {
   const readiness =
     agent.status === "ready" || agent.status === "unavailable"
@@ -16,6 +24,8 @@ export function AgentDetailView({
       : "not-observed";
   const validation =
     agent.valid === null ? "not-observed" : agent.valid ? "valid" : "invalid";
+
+  const isOrchestrator = agent.kind === "orchestrator";
 
   return React.createElement(
     "div",
@@ -126,6 +136,114 @@ export function AgentDetailView({
           .filter((tool) => tool.type === "mcp")
           .map((tool) => tool.server ?? tool.name)
       })
+    ),
+    agent.providers.length > 0
+      ? React.createElement(
+          "section",
+          {
+            className:
+              "rounded-lg border border-slate-800 bg-slate-900 p-6 shadow",
+            "data-section": "agent-provider-routes"
+          },
+          React.createElement(
+            "h3",
+            {
+              className:
+                "mb-3 text-sm font-semibold uppercase tracking-wider text-slate-300"
+            },
+            "Provider Routing & Circuit Endpoints"
+          ),
+          React.createElement(
+            "div",
+            { className: "grid grid-cols-1 gap-3 md:grid-cols-2" },
+            ...agent.providers.map((p) => {
+              const route = routing?.routes.find((r) => r.provider === p);
+              const pRecord = providers?.providers.find((prov) => prov.id === p);
+              const isEnabled = isOrchestrator
+                ? (pRecord?.roles.orchestrator.enabled ?? true)
+                : (pRecord?.roles.subagent.enabled ?? true);
+
+              return React.createElement(
+                "div",
+                {
+                  key: p,
+                  className:
+                    "rounded border border-slate-800 bg-slate-950 p-4 flex flex-col gap-2"
+                },
+                React.createElement(
+                  "div",
+                  { className: "flex items-center justify-between" },
+                  React.createElement(
+                    "span",
+                    { className: "font-mono font-bold text-slate-100" },
+                    p
+                  ),
+                  React.createElement(StatusBadge, {
+                    status: isEnabled ? "valid" : "unavailable",
+                    label: isEnabled ? "Enabled" : "Disabled"
+                  })
+                ),
+                React.createElement(
+                  "div",
+                  { className: "text-xs text-slate-400 font-mono" },
+                  React.createElement(
+                    "span",
+                    { className: "text-slate-500 mr-1" },
+                    "Base:"
+                  ),
+                  route?.baseUrl ?? "Not observed"
+                ),
+                React.createElement(
+                  "div",
+                  { className: "text-xs text-slate-400 font-mono truncate" },
+                  React.createElement(
+                    "span",
+                    { className: "text-slate-500 mr-1" },
+                    "Pattern:"
+                  ),
+                  route?.pattern ?? "Default"
+                )
+              );
+            })
+          )
+        )
+      : null,
+    React.createElement(
+      "section",
+      {
+        className: "rounded-lg border border-slate-800 bg-slate-900 p-6 shadow",
+        "data-section": "agent-concurrency"
+      },
+      React.createElement(
+        "h3",
+        {
+          className:
+            "mb-3 text-sm font-semibold uppercase tracking-wider text-slate-300"
+        },
+        "Concurrency & Routing Limits"
+      ),
+      React.createElement(
+        "dl",
+        { className: "grid grid-cols-1 gap-4 sm:grid-cols-3" },
+        React.createElement(DetailValue, {
+          label: "Role execution kind",
+          value: agent.kind
+        }),
+        React.createElement(DetailValue, {
+          label: "Session concurrency limit",
+          value:
+            routing?.concurrency?.effectivePerSessionLimit !== undefined
+              ? String(routing.concurrency.effectivePerSessionLimit)
+              : "Not observed"
+        }),
+        React.createElement(DetailValue, {
+          label: "Active subagent threads",
+          value:
+            routing?.concurrency?.activeSubagentThreads !== undefined
+              ? String(routing.concurrency.activeSubagentThreads)
+              : "0"
+        })
+      )
     ),
     agent.systemPrompt === undefined
       ? React.createElement(

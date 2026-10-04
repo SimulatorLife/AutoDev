@@ -11,6 +11,7 @@ import {
 } from "@simulatorlife/autodev-core";
 import {
   ConfigRepository,
+  EvaluationRepository,
   RuleSyncRepository
 } from "@simulatorlife/autodev-data";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
@@ -48,7 +49,8 @@ export const CONTROL_API_PATHS = {
   workspaces: "/control/workspaces",
   routing: "/control/routing",
   runtime: "/control/runtime",
-  memory: "/control/memory"
+  memory: "/control/memory",
+  evaluations: "/control/evaluations"
 } as const;
 
 const PROVIDER_ROLE_PATH =
@@ -509,6 +511,18 @@ function workspacesView(repositoryRoot?: string): Record<string, unknown> {
     totalWorkspaces:
       catalog.status === "valid" ? catalog.workspaces.length : null,
     workspaces: catalog.workspaces
+  };
+}
+
+async function evaluationsView(): Promise<Record<string, unknown>> {
+  const repository = new EvaluationRepository();
+  const evaluations = await repository.listEvaluations();
+  return {
+    schema: "autodev-control-evaluations-v1",
+    source: "openlit_evaluation",
+    readOnly: true,
+    totalEvaluations: evaluations.length,
+    evaluations
   };
 }
 
@@ -1015,8 +1029,11 @@ function authorizeRequest(
 
 const READ_ONLY_COLLECTIONS: ReadonlyMap<
   string,
-  () => Record<string, unknown>
-> = new Map([
+  () => Record<string, unknown> | Promise<Record<string, unknown>>
+> = new Map<
+  string,
+  () => Record<string, unknown> | Promise<Record<string, unknown>>
+>([
   [CONTROL_API_PATHS.agents, agentsView],
   [CONTROL_API_PATHS.providers, providersView],
   [CONTROL_API_PATHS.models, modelsView],
@@ -1028,18 +1045,18 @@ const READ_ONLY_COLLECTIONS: ReadonlyMap<
   [CONTROL_API_PATHS.prompts, promptsView],
   [CONTROL_API_PATHS.workspaces, workspacesView],
   [CONTROL_API_PATHS.routing, () => routingView(Date.now())],
-  [CONTROL_API_PATHS.runtime, () => runtimeView(Date.now())]
+  [CONTROL_API_PATHS.runtime, () => runtimeView(Date.now())],
+  [CONTROL_API_PATHS.evaluations, evaluationsView]
 ]);
 
-function readOnlyCollection(
+async function readOnlyCollection(
   pathname: string,
   method: string,
   response: ServerResponse,
   actor: ControlApiActor
-): boolean {
+): Promise<boolean> {
   const renderCollection = READ_ONLY_COLLECTIONS.get(pathname);
   if (!renderCollection) return false;
-  const body = renderCollection();
   if (method !== "GET") {
     auditMutation({
       actor: actor.actor,
@@ -1060,6 +1077,7 @@ function readOnlyCollection(
     );
     return true;
   }
+  const body = await renderCollection();
   sendJson(response, 200, body, {
     "cache-control": "no-store",
     vary: CONTROL_VARY_HEADER
@@ -1230,7 +1248,7 @@ export async function handleControlApiRequest(
       promptMatch[1]!,
       PROMPT_DETAIL_ROUTE
     );
-  if (readOnlyCollection(pathname, method, response, actor)) return true;
+  if (await readOnlyCollection(pathname, method, response, actor)) return true;
   auditRejectedRequest(
     request,
     method,
