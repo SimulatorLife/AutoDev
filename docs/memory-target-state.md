@@ -223,7 +223,7 @@ The logical contract matters more than a particular database.
 - **`runtime/`** — trajectory capture, retrieval orchestration, JIT research/curation, promotion, and agent-facing context assembly.
 - **`data/`** — typed persistence/search adapters for trajectories, memories, indexes, and retained OpenLIT memory integration.
 - **`core/`** — infrastructure-independent memory types, scopes, provenance, lifecycle states, and contracts.
-- **`console/`** — retained/adapted OpenLIT Memory connector/page primitives plus AutoDev-specific provenance, lifecycle, scope/status, analytics, and management UX.
+- **`console/`** — the canonical Memory operator UI, built from adapted OpenLIT Memory connector/list/detail/graph/chart primitives plus AutoDev-specific provenance, lifecycle, scope/status, analytics, and governed management UX.
 
 Physical storage may combine append-oriented events, structured records, full-text search, vector indexes, and optional temporal/entity graphs.
 
@@ -292,11 +292,11 @@ JIT       analytics        explicit follow-up
 
 Prefer the existing provider/model abstraction for embeddings and reconstruction models. Do not create a dedicated model-routing subsystem for memory. Runtime resolves the optional embedding model through the existing provider routes and their configured credentials; no embedding model is selected by default.
 
-### Retained OpenLIT memory surface
+### OpenLIT memory capabilities and component reuse
 
-AutoDev should **reuse and adapt OpenLIT's memory connector framework and Memory page instead of building a second memory administration UI**. OpenLIT's current connector layer is descriptor- and capability-driven: a memory adapter advertises supported operations and filter/configuration fields, while shared forms, routes, list/detail/graph UI, pagination, and tool availability respond to those capabilities.
+AutoDev should reuse OpenLIT's useful Memory connector/domain capabilities and adapt its TypeScript UI primitives **inside the unified AutoDev Console**. OpenLIT's connector layer is descriptor- and capability-driven: an adapter advertises supported operations and configuration/filter fields while shared list/detail/graph, pagination, forms, and action presentation respond to those capabilities.
 
-Implement an **AutoDev Memory connector/adapter** over the canonical `MemoryService`. The connector is a presentation/integration adapter; it does not become the memory authority.
+Implement an **AutoDev Memory connector/adapter** over the canonical MemoryService. The connector remains a presentation/integration adapter; it never becomes the memory authority.
 
 ~~~text
 AutoDev MemoryService
@@ -304,30 +304,31 @@ AutoDev MemoryService
       ├── native orchestrator/JIT path
       ├── Control API
       │      ↓
-      │   AutoDev Memory connector
+      │   Console Memory feature
       │      ↓
-      │   retained OpenLIT Memory UI
+      │   adapted OpenLIT components/patterns
       │
       └── MCP facade
 ~~~
+
+The retained standalone OpenLIT Memory page may exist only as a temporary migration bridge while feature parity is being ported. It is not the target operator application and must be removed as an operator dependency once the Console Memory feature is verified.
 
 #### Reuse directly or with light adaptation
 
 | OpenLIT capability | AutoDev use |
 | --- | --- |
-| **Memory connector registry + descriptors** | Register AutoDev Memory alongside optional external/experimental stores without adding per-vendor forms or switches |
-| **Capability-driven UI/actions** | Advertise only operations AutoDev safely supports; hide unsupported actions automatically |
-| **Connector configuration and health** | Reuse connector status/test/health patterns and external-backend endpoint/secret handling when applicable |
-| **Connector-defined filters** | Drive Memory filters from AutoDev scope metadata rather than bespoke page controls |
-| **List/search/pagination** | Reuse the generic memory browser over AutoDev's indexed records |
-| **Detail sheet/panels** | Reuse the shell and extend it with provenance, lifecycle, verification, source evidence, and usage |
-| **Graph view / graph model** | Reuse for AutoDev relationships; feed native relationships or Graphiti-derived edges when enabled |
-| **Copy/import plumbing** | Reuse for migration/experiments across AutoDev, Mem0, Zep, Claude, or other write-capable connectors while retaining provenance |
-| **Audit/access hooks** | Retain equivalent access/audit integration where the reduced AutoDev Console still needs it |
-| **Otter memory tools, if Otter is retained** | Human/operator Q&A and investigation over memory records; never part of the automatic agent JIT path |
-| **OpenLIT trace/dashboard primitives** | Display memory-pipeline latency, token/cost, retrieval quality, lifecycle activity, and ablation/effectiveness metrics |
+| **Memory connector registry + descriptors** | Register AutoDev Memory alongside optional external/experimental stores without bespoke per-vendor forms |
+| **Capability-driven UI/actions** | Advertise only operations AutoDev safely supports and hide unsupported actions |
+| **Connector configuration and health** | Reuse status/test/health patterns and external-backend endpoint/secret handling where applicable |
+| **Connector-defined filters** | Drive filters from AutoDev scope metadata rather than page-specific ad hoc controls |
+| **List/search/pagination** | Reuse generic browsing primitives over AutoDev indexed records |
+| **Detail sheet/panels** | Reuse the component shell and extend it with provenance, lifecycle, verification, evidence, and usage |
+| **Graph view / graph model** | Reuse for AutoDev relationships when the relationship data justifies it |
+| **Copy/import plumbing** | Reuse for explicit migration/experiments while retaining provenance/governance |
+| **Audit/access hooks** | Retain equivalent audit/access integration where the reduced Console needs it |
+| **Trace/chart/filter primitives** | Show pipeline latency, token/cost, retrieval quality, lifecycle activity, and controlled effectiveness metrics |
 
-Do not duplicate those generic capabilities in a separate AutoDev-only Memory application unless the retained OpenLIT primitive cannot represent the required semantics cleanly.
+Do not retain Otter/chat as a Memory interface. Do not duplicate the same capabilities in a second Memory application. Normalize reused components to the Console's dark-only design system and canonical status/action vocabulary.
 
 #### Adapt the OpenLIT domain model
 
@@ -376,7 +377,7 @@ inspect provenance/history
 
 Generic `add/update/delete` may remain for external connectors and low-level compatibility, but AutoDev Memory must preserve its governance rules. In particular, deleting a stale semantic memory from the page must not silently erase the historical episode/evidence that produced it.
 
-#### Memory observability in OpenLIT
+#### Memory observability through OpenTelemetry/OpenLIT
 
 Instrument the AutoDev memory pipeline with OpenTelemetry so OpenLIT can show the same execution end-to-end:
 
@@ -402,27 +403,32 @@ Emit bounded attributes/metrics sufficient to answer:
 - invalidation/supersession/promotion activity;
 - procedures promoted into skills/rules/tests/docs.
 
-Prefer OpenLIT's retained trace, dashboard, widget, filtering, and resource-detail infrastructure for these views rather than a parallel memory analytics backend.
+The following instruments are part of the durable Memory telemetry contract:
 
-The PostgreSQL memory store is at migration 12. Migration 8 owns the
-append-only injection and reporter-outcome tables; migration 9 adds the
-B-tree index on `(workspace_id, repository_id, task_id)` used for session-wide
-injection counting; migration 10 adds the append-only `memory_session_outcome_reports`
-table keyed uniquely on `(workspace_id, repository_id, task_id)` with validation
-and append-only triggers; migration 11 adds curator-assessed injection-use
-reports; and migration 12 records native trajectory source-adapter,
-normalizer/version, and code-only diagnostic provenance. The new trajectory
-columns are nullable so pre-migration and manually appended experiences remain
-explicitly unknown rather than receiving fabricated parser history.
-Data derives join counts with one grouped session-key
-aggregate and cohort cardinality with a preaggregated session-key CTE; both use
-the complete event set, including siblings outside the selected time window or
-memory/outcome filters. These dimensions describe exposure cardinality only:
-task outcomes remain session-level and reporter-supplied, with no trustworthy
-per-turn attribution. Injection-use evidence is a separate curator assessment,
-not an automatic inference or causal claim.
+- `autodev.memory.operations` and `autodev.memory.operation.duration`: fixed operation name plus success/error outcome; nested stage durations may overlap and must not be summed as an end-to-end total.
+- `autodev.memory.candidates`: retrieved, retained, revised, rejected, packet-included, and packet-omitted candidate counts with bounded memory-kind/reason categories.
+- `autodev.memory.packet.characters` and `autodev.memory.packet.tokens`: packet size; omit the token histogram when no trustworthy token counter exists.
+- `autodev.memory.injections`: bounded `injected` / `empty` / supported skip-result categories at request assembly, plus bounded memory mode where applicable. Injection does not mean the model used the packet or the task succeeded.
+- `autodev.memory.outcome_reports` and `autodev.memory.session_outcome_reports`: increment only for newly appended reporter-supplied reports, never idempotent retries; use bounded report-kind/outcome/mode/injection-result categories and no correlation/task/session/memory identifiers.
+- `autodev.memory.use_reports`: increment only for newly appended curator-assessed injection-use reports; use bounded use-kind/memory-mode categories and never evidence or packet identifiers.
+- workspace/repository/time-scoped injection outcome/use aggregate spans may report only bounded cohort-cell and exposure/report counts; selectors, task/run/agent IDs, memory IDs, and evidence remain out of telemetry.
 
-Each experience can retain the host-selected memory mode beside its reporter-supplied outcome for scoped cohort analysis; historical rows remain unknown rather than being backfilled, and the field does not prove a packet was injected. The router annotates each logical request span with the bounded `autodev.memory.mode` category (`jit`, `retrieval-only`, `disabled`, or `invalid`); unknown values disable automatic retrieval. `retrieval-only` is gated by `AUTODEV_MEMORY_ABLATION=1` and injects only hard-scope/status/validity-filtered candidates, explicitly marked `not_evaluated` and without current-state validation/reconstruction; it is for isolated evaluation, not production. A strict no-memory cohort must also avoid separate explicit MCP access. These modes identify request cohorts but do not infer task success. The current Runtime producer exports bounded operation/duration, candidate-stage, packet-size, and actual packet-injection metrics through the OpenTelemetry API. Orchestrator memory preparation now runs within the same logical routed-request trace as provider attempts: the `memory.research` stages are children of that request, and its span records the selected mode plus whether a packet was actually appended and its bounded size. The logical request's success/failure remains a provider-routing outcome, not a task/PR outcome or proof that the agent used the packet. Configured provider-backed embedding calls use a child GenAI embeddings span with bounded model/provider metadata and observed input-token usage. When an optional embedding provider reports an unavailable condition, Runtime marks the embedding span as an error and falls back to lexical retrieval; invalid vector output remains a hard error. Memory metric dimensions are fixed operation/outcome, memory kind, lifecycle stage, and reason-code categories; the injection counter additionally uses bounded result and mode categories. The `autodev.memory.outcome_reports` counter increments only for newly appended reports, never idempotent retries, and uses bounded report-kind/outcome/mode/injection-result values from the matched event; it contains no correlation token or task/session/memory identifiers. The `autodev.memory.session_outcome_reports` counter increments only for newly appended session-level reports, keyed uniquely on `(workspace_id, repository_id, task_id)`. Packet tokens are reported only when a token counter exists. Injection counts distinguish a non-empty packet actually appended to the provider request from an empty research result; they do not assert downstream use or task success. Model cost remains owned by GenAI telemetry. Runtime now stores an append-only, content-free injection decision for each observed request (mode, injected/empty/skipped result, packet size, and durable memory IDs), including disabled/invalid skip decisions when the memory database is available and a validated repository workspace is present; missing or untrusted workspace identity leaves the cohort unknown. Disposable PostgreSQL/pgvector integration verified migrations 8–10, the end-to-end operator Control API report/join across distinct request run/thread IDs, idempotent concurrent reports, and append-only event triggers. Operators with the explicit task-history grant can inspect those events on a captured experience and append one evidence-backed report per correlation token through `GET/POST /control/memory/experiences/:id/outcomes` or a single session-level outcome report through `GET/POST /control/memory/experiences/:id/session-outcomes` (or `/session-outcome`); raw experience rows remain immutable, outcomes are never inferred from provider request success, retrieval, or a PR link, and the opaque token never enters prompts or telemetry attributes. The join is session/task-level: one captured Codex session can contain multiple request-level injections, so this does not establish a one-to-one task/run mapping or prove downstream model use. The persisted join powers `GET /control/memory/cohorts`, an operator/task-history-granted repository/time-scoped read capped at 365 days that groups observed injection exposures with reporter-supplied outcomes and retains explicit unreported cells; it returns counts and bounded dimensions, not task success or model use. The append-only store and session outcome reports power `GET /control/memory/session-cohorts`, an operator/task-history-granted repository/time-scoped read that deduplicates outcomes to unique sessions by canonical session key `(workspace_id, repository_id, task_id)`. Session mode is derived from the session's complete injection set so filters never reclassify a session. Sessions with multiple distinct modes derive mode `mixed`, are excluded from `cells`/`sessionCount`, and are counted only in `mixedModeSessionCount`; sessions whose complete injection set is a single `invalid` or `unknown` mode are excluded from this response entirely, never coerced to `disabled` and never counted in `sessionCount` or `mixedModeSessionCount`. Conflicting session outcome reports fail closed with 409 Conflict at write time; `conflictingOutcomeSessionCount` is a separate per-injection-token-report diagnostic that never overrides the canonical session report and may overlap with `mixedModeSessionCount`. Cells group only eligible single-assigned-mode sessions by `(memoryMode, outcomeKind)`, returning `sessionCount`, `reportedSessionCount`, `unreportedSessionCount`, `conflictingOutcomeSessionCount`, and `mixedModeSessionCount` matching schema `autodev-memory-session-outcome-cohorts-v1`. These counts represent intention-to-treat session outcomes, not verified task success, retrieval-to-use, or causal effect. The retained OpenLIT Memory page exposes an outcome-cohort table with bounded filters and explicit unreported cells; the tested 17-patch OpenLIT prefix passes seven focused upstream Jest suites (66/66) and its patched-client typecheck; the full 21-patch apply test passes, patched-client typecheck passes, eight focused upstream Jest suites pass (61/61), and the p21 `linux/arm64` image builds in an isolated pinned-source worktree. At the time of the p21 validation image, the standard lock and running deployment remained at p14; they have since advanced to p22 as recorded below, while deployed receiver/UI acceptance remains pending. It presents reporter-supplied counts only, not task success, model use, PR verification, or causal effectiveness. The live OpenLIT deployment remains on its previous image; the Next Console `/memory` route now provides only a validated portal link to the retained page, not a second memory UI. When `AUTODEV_MEMORY_EXPERIMENT_ID` is set, Runtime assigns one stable memory arm per Router-identified Codex session using SHA-256 bucketing across the opaque experiment salt, workspace, repository, and session key. All router replicas must share the same experiment ID. The experimental unit is a session, not an individual request; assignment requires `AUTODEV_MEMORY_ABLATION=1` and a trusted absolute workspace. Missing, process-fallback, or conflicting identity selects `invalid` (no injection), never the `disabled` control arm, and never substitutes `requestId`. Invalid requests without an identified session do not emit a synthetic exposure. When no experiment is configured, Runtime preserves the default `AUTODEV_MEMORY_MODE` behavior. The experiment ID is not persisted in injection records, so operators must record it and isolate experiments by repository and time window; deterministic hashing is approximately balanced, not fixed-block allocation. To preserve strict cohort isolation, participating agents must not have explicit Memory MCP access enabled. Cohort aggregates count request-level exposures, not unique sessions or independent tasks; outcome reports remain session-level and reporter-supplied, so sessions with multiple tasks or injections cannot support precise per-turn attribution. Experiment IDs and session identifiers remain excluded from telemetry labels. AutoDev does not infer task success, PR verification, or model use from retrieval or provider routing. The Git verifier detects conventional direct reverts of cited source commits in reachable local history by requiring the standard `Revert` subject and exact body marker, but not manual/nonstandard reverts. Semantic issue-state reconciliation, review-thread comment analysis, semantic superseding changes with no cited-path history, trustworthy per-turn task outcomes, and controlled real-task effectiveness measurements remain unimplemented; automatic memory-use inference is intentionally not used. Cited PRs now require closed/merged state, an approved review decision, a successful status-check rollup, local ancestry, and exact cited-file identity; open/reopened or incomplete PR status remains unknown. Canonical issue references now include a time-stamped state observation in the router reconstruction request; open/closed/stateReason values remain context and do not infer task success. The focused memory Git-curation suite passes 18/18; the router reconstruction suite passes 4/4; the full Runtime suite passes 127/130 with three environment-gated skips. The complete root-and-workspace `pnpm run typecheck` passes as of 2026-10-03; strict checking remains enabled for repository source and tests, with third-party declaration checking skipped at the root because Next.js owns a separate bundler-resolution check in the Console workspace. Curator-assessed injection-use counts are separately stored and queryable. Patch 22 adds trajectory-bound per-injection reporting to the retained experience detail and a bounded, count-only use-cohort table; only non-empty packets actually injected in `jit` or `retrieval-only` mode are eligible. Assessments are curator-authored, not objective use rates or causal measures. The 22-patch apply test passes, six focused OpenLIT Jest suites pass (69/69), and the patched client lint, typecheck, and Prisma validation pass. A local p22 `linux/arm64` image was built and inspected as `autodev-openlit:openlit-9938c6663866-p00823204fd1df76c` (`sha256:3cd644576391dfaf46dc286a6e860add7612655b8646531c58c5966b014adab4`), with a separate mode-0600 `.tmp/openlit-p22-validation.lock`. An isolated smoke returned `/memory` 200, rejected unauthenticated OTLP with 401, accepted a bearer OTLP request with 200, and persisted one test span; the temporary containers/volumes and secret file were removed. The p22 image is now the standard local lock and running OpenLIT image. Patch 23 adds the AutoDev connector to the visible-connector allowlist; p23 is now the active local image and the `/memory` route returns 200. Patch 24 fixes the first-run pricing cron path when no prior successful run exists. Patch 25 removes the generic AI-only filter from Usage distinct-value lookups so AutoDev workspace/agent values are discoverable. The CronLog/Pricing/Evaluation suites pass 166/166, Usage-variable/API-route suites pass 11/11, and the patched p25 client typecheck passes. The p25 linux/arm64 image is now in the standard lock and running stack. Live probes confirm `/memory` 200, OTLP 401 without auth and 200 with auth, persisted content-free spans, and non-empty Usage filters; the p23 `startedAt` TypeError has not recurred since p24 deployment. Remote deployment acceptance remains open. Live probes on 2026-10-03 found both containers healthy, `/memory` returning 200, unauthenticated OTLP returning 401, and authenticated content-free OTLP probes returning 200 with their unique spans persisted in the existing ClickHouse volume. Two marked, content-free cutover spans remain in telemetry. The local read-only AutoDev Memory connector is now configured for the observed `SimulatorLife/AutoDev` workspace/repository. `/api/connectors/types` lists `autodev`, the connector health route returns 200, and `/api/memory/use-cohorts` returns 200 with an empty cohort because this is a newly initialized memory database. The local pgvector service is healthy, migration 12 is applied, and authenticated Control API reads of durable memory and task history return 200 with zero records. The local operator task-history grant is enabled and the connector is restricted to this workspace/repository. Browser-rendered UI verification remains unavailable because no Playwright MCP tools are exposed; HTTP health and data-plane routes were verified directly.
+The `memory.research` trace remains the parent for bounded `memory.query`, `memory.retrieve`, `memory.rerank`, `memory.validate`, `memory.reconstruct`, and `memory.packet` stages; `memory.embed` exists only when an embedding adapter is configured. Orchestrator preparation should remain within the logical routed-request trace so packet injection and provider-routing outcome are inspectable together without implying a downstream task/PR result. GenAI attempt/embedding spans remain the source of model cost rather than duplicating it in Memory metrics.
+
+Prefer OpenLIT's retained **query, trace, chart/widget, filtering, and resource-detail primitives** for these views rather than a parallel memory analytics backend. This does **not** retain the generic OpenLIT dashboard-authoring application: AutoDev owns the seeded Memory views and presents them inside the unified Console.
+
+Current schema versions, patch/image history, test counts, deployed-instance evidence, and open implementation gaps belong in [autodev-console-migration.md](autodev-console-migration.md), not in this target design.
+
+The durable telemetry/evaluation invariants are:
+
+- memory mode and packet-injection state describe exposure, not downstream model use or task success;
+- reporter-supplied task/session outcomes remain separate from provider-routing outcomes;
+- controlled cohorts use explicit assignment and strict isolation rather than inferring a no-memory control from missing telemetry;
+- session/request identifiers, correlation tokens, memory IDs, evidence, prompts, claims, and transcript contents do not become metric dimensions;
+- memory cost remains attributable through the existing GenAI attempt/embedding telemetry rather than duplicated accounting;
+- injection/use reports are append-only evidence with explicit provenance and must not be presented as causal effectiveness.
+
+The detailed cohort assignment, reporter-outcome, injection-use, and experimental-unit contract is maintained in [memory-injection-outcome-evaluation.md](memory-injection-outcome-evaluation.md).
 
 ### Optional secondary dependency: Graphiti
 
@@ -508,8 +514,8 @@ Use these access paths:
 | Automatic pre-delegation JIT research | Native orchestrator → `MemoryService.research(...)` |
 | Automatic memory-packet injection | Native runtime/context assembly |
 | Consolidation, promotion, supersession, retention | Internal runtime/background workflows |
-| Console browse/manage operations | Control API → AutoDev Memory connector/adapted OpenLIT Memory surface → shared memory contracts |
-| Operator investigation/analytics | Adapted OpenLIT Memory page, traces, dashboards, and optional Otter tools |
+| Console browse/manage operations | Console Memory feature → Control API → MemoryService/shared memory contracts |
+| Operator investigation/analytics | Console Memory detail/analytics surfaces using adapted OpenLIT components plus traces/Usage links |
 | Agent discovers a new memory need during execution | Memory MCP tool call or equivalent native tool adapter |
 | External Codex/Claude/Gemini/other client | Memory MCP facade |
 | Direct PostgreSQL/Graphiti access by agents | **Never** |
@@ -596,7 +602,7 @@ Path and Git lineage are first-class evidence, not merely metadata.
 
 ### Implementation order
 
-1. **Foundation:** keep OpenLIT/OTel as execution evidence **and retain/adapt the OpenLIT Memory connector/page**; implement an AutoDev Memory connector over `MemoryService`; adopt @letta-ai/trajectory where its harness adapters fit; add PostgreSQL + pgvector/full-text persistence; implement AutoDev schemas, governance, JIT researcher/validator/curator, packet builder, and MCP facade.
+1. **Foundation:** keep OpenLIT/OTel as execution evidence; implement an AutoDev Memory connector over `MemoryService`; reuse/adapt useful OpenLIT Memory components inside the Console; adopt @letta-ai/trajectory where its harness adapters fit; add PostgreSQL + pgvector/full-text persistence; implement AutoDev schemas, governance, JIT researcher/validator/curator, packet builder, and MCP facade.
 2. **Coding-aware retrieval:** add path proximity, commit ancestry/file-change checks, PR/issue relationships, and measured retrieval/ablation telemetry.
 3. **Temporal graph only when justified:** project selected entities/relationships to Graphiti if graph queries measurably improve results.
 4. **Extractor experiments:** benchmark native extraction against Mem0/LangMem-derived candidate generators behind the same interface.
@@ -606,9 +612,11 @@ Do not introduce Qdrant, Milvus, Pinecone, a second agent framework, or another 
 
 ## 11. Console target
 
-The **adapted OpenLIT Memory page is the primary AutoDev Memory operator surface**. Extend it; do not create a parallel memory admin/dashboard application. The Next Console `/memory` route is only an entry card to the browser-reachable OpenLIT Memory page (`AUTODEV_OPENLIT_UI_URL`); it does not duplicate list/detail/cohort or mutation UI.
+The **AutoDev Console Memory feature is the sole target operator surface**. It must use the same dark-only shell, navigation, tables, filters, forms, status semantics, drawers/tabs, loading/error states, and canonical-edit rules as the rest of the Console.
 
-It should combine:
+Reuse/adapt OpenLIT's Memory connector, table, filter, detail, graph, chart, status, and trace-linking components where useful, but port them into console/ rather than preserving a second application. The standalone OpenLIT Memory page and the current Console portal link are transitional migration bridges only.
+
+The Memory feature should combine:
 
 - connector selection/configuration/health where multiple or external stores exist;
 - browse/search/pagination across episodes, semantic memories, procedures, and source trajectories;
@@ -617,14 +625,12 @@ It should combine:
 - active/superseded/invalidated/uncertain lifecycle state;
 - relationship/history/graph views where useful;
 - observed retrieval/reconstruction/injection/use and related traces;
-- memory effectiveness, quality, latency/cost, and lifecycle analytics from OpenLIT telemetry;
-- governed propose/verify/revise/invalidate/supersede/promote actions and an evidence-backed operator report form for observed injection outcomes;
-- promotion of suitable procedures through the canonical skill/configuration path;
-- optional operator Q&A through retained Otter memory tools when Otter remains in the AutoDev distribution.
+- memory effectiveness, quality, latency/cost, and lifecycle analytics from retained OpenLIT/OTel query infrastructure;
+- governed propose/verify/revise/invalidate/supersede/promote actions;
+- evidence-backed operator reporting that combines **observed packet-injection evidence** with separately **reporter-supplied task/session outcomes**; the latter are not inferred or independently verified by injection/provider telemetry;
+- promotion of suitable procedures through the canonical skill/configuration path.
 
-Reuse OpenLIT's shared table, filter, detail, graph, connector, chart, status, loading/error, and trace-linking primitives so Memory behaves like the rest of the AutoDev Console.
-
-Do not restore organization/project/environment/account tenancy concepts removed by the Console target, and do not let the OpenLIT connector/UI layer become a second memory source of truth.
+Do not restore organization/project/environment/account tenancy concepts, Otter/chat, light theme, or a separate Memory dashboard application. The connector/UI layer remains a projection over MemoryService governance, never a second source of truth.
 
 ## 12. Acceptance and evaluation
 
@@ -639,8 +645,8 @@ The target is satisfied when:
 - agents receive bounded task-specific packets rather than unbounded history;
 - workers cannot freely pollute shared durable memory;
 - proven procedures can graduate into explicit skills/rules/tests/docs;
-- memory use is observable in OpenLIT and can be compared with no-memory/simpler-memory baselines;
-- the retained OpenLIT Memory connector/page can browse and inspect AutoDev memory without bypassing `MemoryService` governance;
+- the memory pipeline is observable through the retained OpenTelemetry/OpenLIT backend and surfaced in AutoDev Console; controlled cohorts can be compared with no-memory/simpler-memory baselines without treating the standalone OpenLIT UI as a target operator surface;
+- the Console Memory feature can browse and inspect AutoDev memory through the Control API without bypassing `MemoryService` governance;
 - secrets and unnecessary sensitive payloads are not persisted by default.
 
 Measure memory changes with outcomes such as task/PR success, repeated failures, tool calls/tokens to completion, stale-memory rejection, retrieval/use rate, harmful memory application, and successful transfer to new tasks. Prefer controlled ablations over assuming more context is better. See [memory injection outcome evaluation](memory-injection-outcome-evaluation.md#controlled-ablation-assignment) for experimental unit (`sessionKey`), deterministic hash bucketing across `jit` / `retrieval-only` / `disabled`, strict cohort setup, and reporter-supplied outcomes.

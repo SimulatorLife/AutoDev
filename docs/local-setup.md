@@ -654,3 +654,64 @@ bash scripts/install.sh --materialize-only
 
 Run the normal installer later, when no active task depends on the local router,
 to restart the supervisors and load the new runtime code.
+
+## AutoDev Console and OpenLIT local operations
+
+These are current local/operator entry points. Product, UI, ownership, and migration requirements remain authoritative in [autodev-console-target-state.md](autodev-console-target-state.md) and [autodev-console-migration.md](autodev-console-migration.md).
+
+### Local stack lifecycle
+
+Current local stack lifecycle:
+
+```bash
+bash scripts/openlit/up.sh
+bash scripts/openlit/down.sh
+```
+
+### Console development
+
+Run the AutoDev Console independently while the transitional OpenLIT UI still occupies
+port 3000:
+
+```bash
+pnpm --filter @simulatorlife/autodev-console dev
+pnpm --filter @simulatorlife/autodev-console build
+pnpm --filter @simulatorlife/autodev-console start
+```
+
+The Console defaults to port 3300 (`AUTODEV_CONSOLE_PORT` overrides it). Set
+`AUTODEV_CONTROL_API_TOKEN` only in the Console server environment; the
+Control API base defaults to `http://127.0.0.1:4101` and can be configured with
+`AUTODEV_CONTROL_API_BASE_URL`. To query Usage, set
+`AUTODEV_OPENLIT_USAGE_TOKEN` in the Console server environment to the
+separately generated value in `$CODEX_HOME/openlit-secrets.env`;
+`AUTODEV_OPENLIT_USAGE_URL` defaults to `http://127.0.0.1:3000`. **During migration only**, the Console Memory portal links to the retained OpenLIT Memory page using the separately configured, browser-reachable `AUTODEV_OPENLIT_UI_URL` (same local default); it is not used as a service API credential or forwarded to the Control API. `AUTODEV_OPENLIT_UI_URL` is a transitional compatibility variable, not a target dependency: delete it and the portal-link path once the unified Console Memory feature reaches verified browse/detail/action/analytics parity. Do not add new consumers of this variable. Do not source or expose the full secret file to browser code.
+
+The two Console server-only tokens are seeded into the server environment by
+exactly one writer: `scripts/openlit/bootstrap-secrets.sh`, which is the same
+script that populates `$CODEX_HOME/openlit-secrets.env` and is invoked from
+`scripts/openlit/up.sh`. It writes the canonical secret file outside the
+repository and additionally materializes a mode-0600 `console/.env.local`
+that Next.js auto-loads on every server-side request from the `pnpm`
+Console workflow. That file carries only the two Console-required server
+credentials plus their non-secret local base URL defaults; the OpenLIT
+database password and the OTLP receiver token are deliberately not
+included. The launchd-managed Console path does not depend on
+`console/.env.local` — `scripts/run-codex-console.sh` reads the canonical
+secret file via an exact-key parser and exports only the two tokens
+needed by the Next.js server.
+
+### Transitional OpenLIT projections
+
+Current out-of-band OpenLIT projections:
+
+```bash
+pnpm --filter @simulatorlife/autodev-data openlit:sync-prompts
+pnpm --filter @simulatorlife/autodev-data openlit:sync-agents
+pnpm --filter @simulatorlife/autodev-data openlit:sync-models
+pnpm --filter @simulatorlife/autodev-data openlit:sync-workspaces
+```
+
+The Data-owned agents, prompts, and models adapters populate transitional OpenLIT read models; they do not supersede canonical RuleSync/AutoDev configuration ownership. **Do not add new product consumers, mutation authority, or canonical state to these sync paths.** Delete each sync command/adapter after its retained feature is served directly through the unified Console/Data integration and no verified consumer still requires the OpenLIT projection. The remaining workspace bootstrap is only an internal singleton migration, not a per-workspace OpenLIT tenancy adapter, and should be removed when the retained OpenLIT internals no longer require that singleton compatibility row.
+
+The asynchronous GitHub issue metrics workflow remains a separate GitHub-development reporting surface (`.github/workflows/metrics-dashboard.yml`, issue #2). It is not a replacement observability backend for AutoDev runtime telemetry.
