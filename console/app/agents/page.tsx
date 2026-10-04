@@ -17,7 +17,20 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export default async function AgentsPage(): Promise<React.JSX.Element> {
+interface AgentsPageProps {
+  readonly searchParams?: Promise<
+    Record<string, string | string[] | undefined>
+  >;
+}
+
+function hasProviderRoleFailure(raw: string | string[] | undefined): boolean {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return value === "failed";
+}
+
+export default async function AgentsPage({
+  searchParams
+}: AgentsPageProps): Promise<React.JSX.Element> {
   const { section, config } = readNodeContext("/agents");
   if (!config) {
     return React.createElement(
@@ -31,6 +44,10 @@ export default async function AgentsPage(): Promise<React.JSX.Element> {
       })
     );
   }
+  const resolvedSearchParams = (await searchParams) ?? {};
+  const providerRoleFailed = hasProviderRoleFailure(
+    resolvedSearchParams.providerRole
+  );
   const [agentsResult, providersResult, routingResult, runtimeResult] =
     await Promise.all([
       fetchAgents(config),
@@ -58,6 +75,12 @@ export default async function AgentsPage(): Promise<React.JSX.Element> {
   return React.createElement(
     ConsolePageShell,
     { section, counts: { Agents: agents.length } },
-    React.createElement(AgentsView, { agents, providers, routing, runtime })
+    React.createElement(AgentsView, {
+      agents,
+      providers,
+      routing,
+      runtime,
+      providerRoleFailed
+    })
   );
 }

@@ -11,9 +11,6 @@ const MAX_WORKFLOWS = 100;
 const MAX_BOUNDED_RUNS = 100;
 const DEFAULT_RUNS_LIMIT = 30;
 const REPO_SEGMENT_PATTERN = /^[a-zA-Z0-9_.-]+$/u;
-const CONTROL_CHARACTERS = new Set(
-  Array.from({ length: 32 }, (_, index) => index).concat(127)
-);
 const GITHUB_WORKFLOW_RECORD = "workflow";
 const GITHUB_WORKFLOW_RUN_RECORD = "workflow run";
 
@@ -528,12 +525,7 @@ export class GithubActionsAdapter {
 
   private async request(
     endpoint: string,
-    token: string,
-    options: {
-      readonly method?: "GET" | "POST" | "PUT";
-      readonly body?: Record<string, unknown>;
-      readonly expectedStatus?: number;
-    } = {}
+    token: string
   ): Promise<Record<string, unknown>> {
     if (!token || typeof token !== "string" || token.trim().length === 0) {
       throw new GithubActionsApiError(
@@ -561,11 +553,9 @@ export class GithubActionsAdapter {
         "X-GitHub-Api-Version": GITHUB_API_VERSION,
         "User-Agent": "AutoDev-Control-API"
       };
-      if (options.body) headers["Content-Type"] = "application/json";
       const response = await this.fetchFn(url, {
-        method: options.method ?? "GET",
+        method: "GET",
         headers,
-        ...(options.body ? { body: JSON.stringify(options.body) } : {}),
         signal: controller.signal,
         redirect: "error"
       });
@@ -585,22 +575,6 @@ export class GithubActionsAdapter {
           // malformed, too large, or otherwise unreadable.
         }
         throwHttpError(response, errorBody, token);
-      }
-
-      if (
-        options.expectedStatus !== undefined &&
-        response.status !== options.expectedStatus
-      ) {
-        void response.body?.cancel().catch(() => {});
-        throw new GithubActionsApiError(
-          `GitHub Actions API returned unexpected status ${response.status}`,
-          502,
-          "unexpected_status"
-        );
-      }
-      if (response.status === 204) {
-        assertRequestWithinTimeout(controller, startedAt, this.timeoutMs);
-        return {};
       }
 
       const data: unknown = await readBoundedJson(
@@ -707,148 +681,5 @@ export class GithubActionsAdapter {
       runs,
       stats
     };
-  }
-
-  async getWorkflow(
-    owner: string,
-    repo: string,
-    workflowId: number,
-    token: string
-  ): Promise<GithubApiWorkflow> {
-    this.validateRepository(owner, repo);
-    this.validateWorkflowId(workflowId);
-    const data = await this.request(
-      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows/${workflowId}`,
-      token
-    );
-    return parseApiWorkflow(data, 0);
-  }
-
-  async hasActiveWorkflowRuns(
-    owner: string,
-    repo: string,
-    workflowId: number,
-    token: string
-  ): Promise<boolean> {
-    this.validateRepository(owner, repo);
-    this.validateWorkflowId(workflowId);
-    const base = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows/${workflowId}/runs?per_page=100&status=`;
-    const statuses = ["queued", "in_progress"] as const;
-    const results = await Promise.all(
-      statuses.map(async (status) => {
-        const data = await this.request(`${base}${status}`, token);
-        if (!Array.isArray(data.workflow_runs)) {
-          throw new GithubActionsApiError(
-            "GitHub Actions API returned an invalid workflow_runs array",
-            502,
-            "invalid_payload"
-          );
-        }
-        if (
-          typeof data.total_count !== "number" ||
-          !Number.isSafeInteger(data.total_count) ||
-          data.total_count < data.workflow_runs.length
-        ) {
-          throw new GithubActionsApiError(
-            "GitHub Actions API returned an invalid active run count",
-            502,
-            "invalid_payload"
-          );
-        }
-        if (data.total_count > data.workflow_runs.length) {
-          throw new GithubActionsApiError(
-            "GitHub Actions active run result is partial",
-            502,
-            "partial_result"
-          );
-        }
-        const runs = data.workflow_runs.map(parseWorkflowRun);
-        if (runs.some((run) => run.workflowId !== workflowId)) {
-          throw new GithubActionsApiError(
-            "GitHub Actions API returned a run for a different workflow",
-            502,
-            "invalid_payload"
-          );
-        }
-        return runs.some(
-          (run) => run.status === "queued" || run.status === "in_progress"
-        );
-      })
-    );
-    return results.some(Boolean);
-  }
-
-  async dispatchWorkflow(
-    owner: string,
-    repo: string,
-    workflowId: number,
-    ref: string,
-    token: string
-  ): Promise<void> {
-    this.validateRepository(owner, repo);
-    this.validateWorkflowId(workflowId);
-    if (
-      typeof ref !== "string" ||
-      ref.trim().length === 0 ||
-      ref !== ref.trim() ||
-      Array.from(ref).some((character) =>
-        CONTROL_CHARACTERS.has(character.codePointAt(0) ?? -1)
-      )
-    ) {
-      throw new GithubActionsApiError(
-        "GitHub Actions workflow ref is invalid",
-        400,
-        "invalid_ref"
-      );
-    }
-    await this.request(
-      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows/${workflowId}/dispatches`,
-      token,
-      { method: "POST", body: { ref }, expectedStatus: 204 }
-    );
-  }
-
-  async enableWorkflow(
-    owner: string,
-    repo: string,
-    workflowId: number,
-    token: string
-  ): Promise<void> {
-    await this.setWorkflowEnabled(owner, repo, workflowId, token, true);
-  }
-
-  async disableWorkflow(
-    owner: string,
-    repo: string,
-    workflowId: number,
-    token: string
-  ): Promise<void> {
-    await this.setWorkflowEnabled(owner, repo, workflowId, token, false);
-  }
-
-  private async setWorkflowEnabled(
-    owner: string,
-    repo: string,
-    workflowId: number,
-    token: string,
-    enabled: boolean
-  ): Promise<void> {
-    this.validateRepository(owner, repo);
-    this.validateWorkflowId(workflowId);
-    await this.request(
-      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows/${workflowId}/${enabled ? "enable" : "disable"}`,
-      token,
-      { method: "PUT", expectedStatus: 204 }
-    );
-  }
-
-  private validateWorkflowId(workflowId: number): void {
-    if (!Number.isSafeInteger(workflowId) || workflowId <= 0) {
-      throw new GithubActionsApiError(
-        "GitHub Actions workflow id is invalid",
-        400,
-        "invalid_workflow_id"
-      );
-    }
   }
 }

@@ -163,8 +163,8 @@ export function AgentDetailView({
                 (prov) => prov.id === p
               );
               const isEnabled = isOrchestrator
-                ? (pRecord?.roles.orchestrator.enabled ?? true)
-                : (pRecord?.roles.subagent.enabled ?? true);
+                ? pRecord?.roles.orchestrator.enabled
+                : pRecord?.roles.subagent.enabled;
 
               return React.createElement(
                 "div",
@@ -182,8 +182,18 @@ export function AgentDetailView({
                     p
                   ),
                   React.createElement(StatusBadge, {
-                    status: isEnabled ? "valid" : "unavailable",
-                    label: isEnabled ? "Enabled" : "Disabled"
+                    status:
+                      isEnabled === undefined
+                        ? "not-observed"
+                        : isEnabled
+                          ? "valid"
+                          : "unavailable",
+                    label:
+                      isEnabled === undefined
+                        ? "Not observed"
+                        : isEnabled
+                          ? "Enabled"
+                          : "Disabled"
                   })
                 ),
                 React.createElement(

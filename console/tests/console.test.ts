@@ -15,9 +15,11 @@ import {
   type MemoryRecord,
   type MemorySessionOutcomeCohortPage
 } from "@simulatorlife/autodev-core";
+import { NextRequest } from "next/server.js";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import * as providerRoleRoute from "../app/api/providers/[provider]/roles/[role]/route.ts";
 import {
   AgentDetailView,
   AgentsView,
@@ -210,15 +212,10 @@ test("AppNav brand link has visible keyboard focus and no unsupported status pul
   // there is no runtime health evidence backing such a dot.
   const brandEnd = markup.indexOf("</a>", brandStart);
   const brandMarkup = markup.slice(brandTagStart, brandEnd);
-  assert.equal(
-    brandMarkup.includes("animate-pulse"),
-    false,
-    "AppNav brand must not render a pulsing status-like indicator"
-  );
-  assert.equal(
-    brandMarkup.includes("bg-emerald-500"),
-    false,
-    "AppNav brand must not render an unsupported health-status dot"
+  assert.doesNotMatch(
+    brandMarkup,
+    /\b(?:animate-pulse|bg-emerald-500)\b/u,
+    "AppNav brand must not render an unsupported pulsing health-status dot"
   );
 });
 
@@ -1562,6 +1559,64 @@ test("AgentDetailView renders provider routes and concurrency details when obser
   assert.match(markup, /Provider Routing &amp; Circuit Endpoints/);
   assert.match(markup, /https:\/\/chatgpt\.com\/backend-api\/codex/);
   assert.match(markup, /Session concurrency limit/);
+  assert.equal(markup.includes("<form"), false);
+});
+
+test("Agents provider roles remain not observed when provider configuration is missing", () => {
+  const routing = {
+    schema: "autodev-control-routing-v1" as const,
+    runtime: {
+      disabledOrchestratorProviders: [],
+      disabledSubagentProviders: []
+    },
+    routes: [
+      {
+        provider: "codex",
+        pattern: "^gpt-.*$",
+        baseUrl: "https://chatgpt.com/backend-api/codex"
+      }
+    ],
+    cooldowns: {},
+    concurrency: {
+      effectivePerSessionLimit: 2,
+      activeSubagentThreads: 0
+    }
+  };
+  const agentsMarkup = renderToStaticMarkup(
+    React.createElement(AgentsView, {
+      agents: [CONFIGURED_AGENT],
+      routing
+    })
+  );
+  const providersStart = agentsMarkup.indexOf(
+    'data-section="providers-routing"'
+  );
+  const runtimeStart = agentsMarkup.indexOf('data-section="runtime-health"');
+  const providerMarkup = agentsMarkup.slice(providersStart, runtimeStart);
+  assert.equal(
+    (providerMarkup.match(/data-status="not-observed"/gu) ?? []).length,
+    2
+  );
+  assert.equal(providerMarkup.includes(">Disabled</span>"), false);
+  assert.equal(providerMarkup.includes("<form"), false);
+
+  const detailMarkup = renderToStaticMarkup(
+    React.createElement(AgentDetailView, { agent: CONFIGURED_AGENT })
+  );
+  const detailsStart = detailMarkup.indexOf(
+    'data-section="agent-provider-routes"'
+  );
+  const concurrencyStart = detailMarkup.indexOf(
+    'data-section="agent-concurrency"'
+  );
+  const detailProviderMarkup = detailMarkup.slice(
+    detailsStart,
+    concurrencyStart
+  );
+  assert.match(detailProviderMarkup, /data-status="not-observed"/);
+  assert.match(detailProviderMarkup, />Not observed</);
+  assert.equal(detailProviderMarkup.includes(">Enabled</span>"), false);
+  assert.equal(detailProviderMarkup.includes(">Disabled</span>"), false);
 });
 
 test("HooksView only renders hooks with valid action command lists", () => {
@@ -1938,5 +1993,354 @@ test("fetchMemoryRecords issues authenticated GET to /control/memory/records wit
   if (result.kind === "ok") {
     assert.equal(result.data.schema, "autodev-memory-records-v1");
     assert.deepEqual(result.data.items, []);
+  }
+});
+
+test("Agents provider-role controls require observed mutable provider configuration", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(AgentsView, {
+      agents: [CONFIGURED_AGENT],
+      providers: {
+        schema: "autodev-control-providers-v1",
+        providers: [
+          {
+            id: "codex",
+            roles: {
+              orchestrator: { enabled: true, mutable: true },
+              subagent: { enabled: false, mutable: false }
+            }
+          },
+          {
+            id: "anthropic",
+            roles: {
+              orchestrator: { enabled: false, mutable: true },
+              subagent: { enabled: true, mutable: false }
+            }
+          }
+        ],
+        disabledOrchestratorProviders: [],
+        disabledSubagentProviders: []
+      }
+    })
+  );
+
+  const forms = Array.from(
+    markup.matchAll(/<form\b[^>]*>/gu),
+    (match) => match[0]
+  );
+  assert.equal(forms.length, 2);
+  assert.ok(
+    forms.every((form) =>
+      form.includes('data-provider-role-form="orchestrator"')
+    )
+  );
+  assert.ok(
+    forms.some((form) => form.includes('data-provider-role-provider="codex"'))
+  );
+  assert.ok(
+    forms.some((form) =>
+      form.includes('data-provider-role-provider="anthropic"')
+    )
+  );
+  assert.equal(markup.includes("Disable</button>"), true);
+  assert.equal(markup.includes("Enable</button>"), true);
+});
+
+test("Agents provider-role feedback reports outcomes without optimistic state claims", () => {
+  const failedMarkup = renderToStaticMarkup(
+    React.createElement(AgentsView, {
+      agents: [],
+      providerRoleFailed: true
+    })
+  );
+  assert.match(failedMarkup, /data-provider-role-outcome="failed"/);
+  assert.match(failedMarkup, /could not be confirmed/);
+  assert.match(failedMarkup, /Check the current role state before retrying/);
+  assert.doesNotMatch(failedMarkup, /No change was made/);
+});
+
+test("provider-role Console route sends only a same-origin typed PATCH with server credentials", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  const previousBaseUrl = process.env.AUTODEV_CONTROL_API_BASE_URL;
+  const token = "provider-role-route-server-token";
+  const requests: Array<{
+    readonly url: string;
+    readonly method: string | undefined;
+    readonly headers: Headers;
+    readonly body: string;
+  }> = [];
+
+  process.env.AUTODEV_CONTROL_API_TOKEN = token;
+  process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+  globalThis.fetch = async (input, init) => {
+    requests.push({
+      url: String(input),
+      method: init?.method,
+      headers: new Headers(init?.headers),
+      body: String(init?.body ?? "")
+    });
+    return Response.json({
+      schema: "autodev-control-provider-role-v1",
+      provider: "codex",
+      role: "orchestrator",
+      enabled: false,
+      previous: true,
+      actor: LOCAL_CONTROL_API_ACTOR
+    });
+  };
+
+  try {
+    const request = new NextRequest(
+      "http://console.test/api/providers/codex/roles/orchestrator",
+      {
+        method: "POST",
+        headers: {
+          origin: "http://console.test",
+          host: "console.test",
+          "sec-fetch-site": "same-origin",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({
+          provider: "codex",
+          role: "orchestrator",
+          enabled: "false"
+        }).toString()
+      }
+    );
+    const response = await providerRoleRoute.POST(request, {
+      params: Promise.resolve({ provider: "codex", role: "orchestrator" })
+    });
+
+    assert.equal(response.status, 303);
+    assert.equal(response.headers.get("location"), "/agents");
+    assert.equal(requests.length, 1);
+    assert.equal(
+      requests[0]?.url,
+      "http://127.0.0.1:4101/control/providers/codex/roles/orchestrator"
+    );
+    assert.equal(requests[0]?.method, "PATCH");
+    assert.equal(requests[0]?.headers.get("authorization"), "Bearer " + token);
+    assert.equal(
+      requests[0]?.headers.get("x-autodev-actor"),
+      LOCAL_CONTROL_API_ACTOR
+    );
+    assert.deepEqual(JSON.parse(requests[0]?.body ?? "{}"), { enabled: false });
+    assert.equal(response.headers.get("location")?.includes(token), false);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined) {
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    } else {
+      process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
+    }
+    if (previousBaseUrl === undefined) {
+      delete process.env.AUTODEV_CONTROL_API_BASE_URL;
+    } else {
+      process.env.AUTODEV_CONTROL_API_BASE_URL = previousBaseUrl;
+    }
+  }
+});
+
+test("provider-role Console route fails closed for CSRF and malformed or oversized forms", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "provider-role-no-fetch-token";
+  let fetchCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    return Response.json({ error: "unexpected mutation" }, { status: 500 });
+  };
+
+  const validBody = new URLSearchParams({
+    provider: "codex",
+    role: "orchestrator",
+    enabled: "true"
+  }).toString();
+  const cases = [
+    {
+      name: "cross-origin Origin",
+      origin: "http://attacker.test",
+      fetchSite: "cross-site",
+      provider: "codex",
+      role: "orchestrator",
+      contentType: "application/x-www-form-urlencoded",
+      body: validBody
+    },
+    {
+      name: "same-site but not same-origin fetch",
+      origin: "http://console.test",
+      fetchSite: "same-site",
+      provider: "codex",
+      role: "orchestrator",
+      contentType: "application/x-www-form-urlencoded",
+      body: validBody
+    },
+    {
+      name: "malformed Origin with a path",
+      origin: "http://console.test/attacker",
+      fetchSite: "same-origin",
+      provider: "codex",
+      role: "orchestrator",
+      contentType: "application/x-www-form-urlencoded",
+      body: validBody
+    },
+    {
+      name: "content type prefix spoof",
+      origin: "http://console.test",
+      fetchSite: "same-origin",
+      provider: "codex",
+      role: "orchestrator",
+      contentType: "application/x-www-form-urlencoded-evil",
+      body: validBody
+    },
+    {
+      name: "extra form field",
+      origin: "http://console.test",
+      fetchSite: "same-origin",
+      provider: "codex",
+      role: "orchestrator",
+      contentType: "application/x-www-form-urlencoded",
+      body: validBody + "&extra=value"
+    },
+    {
+      name: "provider and role mismatch",
+      origin: "http://console.test",
+      fetchSite: "same-origin",
+      provider: "codex",
+      role: "subagent",
+      contentType: "application/x-www-form-urlencoded",
+      body: validBody
+    },
+    {
+      name: "path traversal provider",
+      origin: "http://console.test",
+      fetchSite: "same-origin",
+      provider: "..",
+      role: "orchestrator",
+      contentType: "application/x-www-form-urlencoded",
+      body: validBody
+    },
+    {
+      name: "oversized body",
+      origin: "http://console.test",
+      fetchSite: "same-origin",
+      provider: "codex",
+      role: "orchestrator",
+      contentType: "application/x-www-form-urlencoded",
+      body: "x".repeat(4097)
+    }
+  ];
+
+  try {
+    for (const testCase of cases) {
+      const request = new NextRequest(
+        "http://console.test/api/providers/" +
+          testCase.provider +
+          "/roles/" +
+          testCase.role,
+        {
+          method: "POST",
+          headers: {
+            origin: testCase.origin,
+            host: "console.test",
+            "sec-fetch-site": testCase.fetchSite,
+            "content-type": testCase.contentType
+          },
+          body: testCase.body
+        }
+      );
+      const response = await providerRoleRoute.POST(request, {
+        params: Promise.resolve({
+          provider: testCase.provider,
+          role: testCase.role
+        })
+      });
+      assert.equal(response.status, 303, testCase.name);
+      assert.equal(
+        response.headers.get("location"),
+        "/agents?providerRole=failed",
+        testCase.name
+      );
+    }
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined) {
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    } else {
+      process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
+    }
+  }
+});
+
+test("provider-role Console route exports no non-POST mutation methods", () => {
+  assert.equal("GET" in providerRoleRoute, false);
+  assert.equal("PATCH" in providerRoleRoute, false);
+  assert.equal("PUT" in providerRoleRoute, false);
+  assert.equal("DELETE" in providerRoleRoute, false);
+});
+
+test("provider-role Console route returns an unconfirmed failure when Runtime rejects the PATCH", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  const previousBaseUrl = process.env.AUTODEV_CONTROL_API_BASE_URL;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "provider-role-rejected-token";
+  process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+  globalThis.fetch = async () =>
+    Response.json(
+      {
+        error: {
+          code: "autodev_control_api_operator_required",
+          message: "An operator actor is required.",
+          status: 403
+        }
+      },
+      { status: 403 }
+    );
+
+  try {
+    const request = new NextRequest(
+      "http://console.test/api/providers/codex/roles/orchestrator",
+      {
+        method: "POST",
+        headers: {
+          origin: "http://console.test",
+          host: "console.test",
+          "sec-fetch-site": "same-origin",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({
+          provider: "codex",
+          role: "orchestrator",
+          enabled: "false"
+        }).toString()
+      }
+    );
+    const response = await providerRoleRoute.POST(request, {
+      params: Promise.resolve({ provider: "codex", role: "orchestrator" })
+    });
+
+    assert.equal(response.status, 303);
+    assert.equal(
+      response.headers.get("location"),
+      "/agents?providerRole=failed"
+    );
+    assert.equal(
+      response.headers.get("location")?.includes("rejected-token"),
+      false
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined) {
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    } else {
+      process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
+    }
+    if (previousBaseUrl === undefined) {
+      delete process.env.AUTODEV_CONTROL_API_BASE_URL;
+    } else {
+      process.env.AUTODEV_CONTROL_API_BASE_URL = previousBaseUrl;
+    }
   }
 });

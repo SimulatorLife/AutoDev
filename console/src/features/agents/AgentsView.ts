@@ -14,6 +14,7 @@ import {
 } from "../../components/tables/DataTable.ts";
 
 const NOT_OBSERVED_LABEL = "Not observed";
+const NOT_OBSERVED_STATUS = "not-observed";
 const PROVIDER_COLLATOR = new Intl.Collator();
 
 export interface AgentsViewProps {
@@ -21,21 +22,123 @@ export interface AgentsViewProps {
   readonly providers?: ControlApiProvidersResponse | undefined;
   readonly routing?: ControlApiRoutingResponse | undefined;
   readonly runtime?: ControlApiRuntimeResponse | undefined;
+  readonly providerRoleFailed?: boolean | undefined;
 }
 
 interface ProviderRoutingRow {
   readonly id: string;
-  readonly orchestratorEnabled: boolean;
-  readonly subagentEnabled: boolean;
+  readonly orchestratorEnabled: boolean | undefined;
+  readonly orchestratorMutable: boolean | undefined;
+  readonly subagentEnabled: boolean | undefined;
+  readonly subagentMutable: boolean | undefined;
   readonly baseUrl: string;
   readonly pattern: string;
+}
+
+function providerRoleControlPath(
+  providerId: string,
+  role: "orchestrator" | "subagent"
+): string {
+  return "/api/providers/" + encodeURIComponent(providerId) + "/roles/" + role;
+}
+
+/**
+ * Renders the observed role badge and, only when the Control API reports
+ * both a provider record and `mutable === true` for this role, a bounded
+ * same-origin form POST that toggles the role to its opposite state. When
+ * provider configuration is absent the cell renders Not observed and never
+ * renders a control, so there is no false enabled/disabled fallback and no
+ * optimistic client-side state.
+ */
+function renderProviderRoleCell(
+  providerId: string,
+  role: "orchestrator" | "subagent",
+  enabled: boolean | undefined,
+  mutable: boolean | undefined
+): React.ReactNode {
+  const badge = React.createElement(StatusBadge, {
+    status:
+      enabled === undefined
+        ? NOT_OBSERVED_STATUS
+        : enabled
+          ? "valid"
+          : "unavailable",
+    label:
+      enabled === undefined
+        ? NOT_OBSERVED_LABEL
+        : enabled
+          ? "Enabled"
+          : "Disabled"
+  });
+
+  if (enabled === undefined || mutable !== true) {
+    return React.createElement(
+      "div",
+      { className: "flex flex-col gap-2" },
+      badge
+    );
+  }
+
+  const nextEnabled = !enabled;
+  return React.createElement(
+    "div",
+    { className: "flex flex-col gap-2" },
+    badge,
+    React.createElement(
+      "form",
+      {
+        method: "POST",
+        action: providerRoleControlPath(providerId, role),
+        "data-provider-role-form": role,
+        "data-provider-role-provider": providerId
+      },
+      React.createElement("input", {
+        type: "hidden",
+        name: "provider",
+        value: providerId
+      }),
+      React.createElement("input", {
+        type: "hidden",
+        name: "role",
+        value: role
+      }),
+      React.createElement("input", {
+        type: "hidden",
+        name: "enabled",
+        value: String(nextEnabled)
+      }),
+      React.createElement(
+        "button",
+        {
+          type: "submit",
+          className:
+            "rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-200 hover:bg-slate-700"
+        },
+        nextEnabled ? "Enable" : "Disable"
+      )
+    )
+  );
+}
+
+function ProviderRoleFeedback(): React.JSX.Element {
+  return React.createElement(
+    "div",
+    {
+      role: "status",
+      "data-provider-role-outcome": "failed",
+      className:
+        "mb-3 rounded border border-amber-700 bg-amber-950/40 px-3 py-2 text-xs font-medium text-amber-200"
+    },
+    "Provider role change could not be confirmed. Check the current role state before retrying."
+  );
 }
 
 export function AgentsView({
   agents,
   providers,
   routing,
-  runtime
+  runtime,
+  providerRoleFailed
 }: AgentsViewProps): React.JSX.Element {
   const readinessObserved =
     agents.length > 0 &&
@@ -44,7 +147,7 @@ export function AgentsView({
     );
   const convergenceObserved =
     agents.length > 0 &&
-    agents.every((agent) => agent.convergence !== "not-observed");
+    agents.every((agent) => agent.convergence !== NOT_OBSERVED_STATUS);
   const readyAgents = agents.filter((agent) => agent.status === "ready").length;
   const convergedAgents = agents.filter(
     (agent) => agent.convergence === "converged"
@@ -130,8 +233,10 @@ export function AgentsView({
     const route = routing?.routes.find((r) => r.provider === id);
     return {
       id,
-      orchestratorEnabled: pRecord?.roles.orchestrator.enabled ?? false,
-      subagentEnabled: pRecord?.roles.subagent.enabled ?? false,
+      orchestratorEnabled: pRecord?.roles.orchestrator.enabled,
+      orchestratorMutable: pRecord?.roles.orchestrator.mutable,
+      subagentEnabled: pRecord?.roles.subagent.enabled,
+      subagentMutable: pRecord?.roles.subagent.mutable,
       baseUrl: route?.baseUrl ?? NOT_OBSERVED_LABEL,
       pattern: route?.pattern ?? "Default"
     };
@@ -152,19 +257,23 @@ export function AgentsView({
       id: "orchestrator",
       header: "Orchestrator Role",
       cell: (row) =>
-        React.createElement(StatusBadge, {
-          status: row.orchestratorEnabled ? "valid" : "unavailable",
-          label: row.orchestratorEnabled ? "Enabled" : "Disabled"
-        })
+        renderProviderRoleCell(
+          row.id,
+          "orchestrator",
+          row.orchestratorEnabled,
+          row.orchestratorMutable
+        )
     },
     {
       id: "subagent",
       header: "Subagent Role",
       cell: (row) =>
-        React.createElement(StatusBadge, {
-          status: row.subagentEnabled ? "valid" : "unavailable",
-          label: row.subagentEnabled ? "Enabled" : "Disabled"
-        })
+        renderProviderRoleCell(
+          row.id,
+          "subagent",
+          row.subagentEnabled,
+          row.subagentMutable
+        )
     },
     {
       id: "baseUrl",
@@ -264,6 +373,7 @@ export function AgentsView({
           "Secondary provider eligibility by role, upstream routing endpoints, and active cooldown circuits"
         )
       ),
+      providerRoleFailed ? React.createElement(ProviderRoleFeedback) : null,
       DataTable({
         data: providerRows,
         columns: providerColumns,
@@ -334,7 +444,7 @@ export function AgentsView({
                 ? "ready"
                 : runtime?.lifecycle.state
                   ? "unavailable"
-                  : "not-observed",
+                  : NOT_OBSERVED_STATUS,
             label: runtime?.lifecycle.state ?? NOT_OBSERVED_LABEL
           }),
           valueClassName: null

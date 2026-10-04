@@ -1,4 +1,6 @@
-export type ProviderRole = "orchestrator" | "subagent";
+export const PROVIDER_ROLES = ["orchestrator", "subagent"] as const;
+
+export type ProviderRole = (typeof PROVIDER_ROLES)[number];
 
 export interface RouteDefinition {
   readonly provider: string;

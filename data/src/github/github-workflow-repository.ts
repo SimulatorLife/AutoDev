@@ -10,7 +10,6 @@ import { parseDocument } from "yaml";
 
 const DEFAULT_REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const WORKFLOW_FILE_PATTERN = /\.ya?ml$/u;
-const WORKFLOW_ID_PATTERN = /^[A-Za-z0-9_.-]+\.ya?ml$/u;
 
 export interface GithubWorkflowCatalogRead {
   readonly status: GithubWorkflowCatalogStatus;
@@ -21,13 +20,6 @@ interface ParsedWorkflowTriggers {
   readonly name: string | null;
   readonly events: readonly string[];
   readonly schedules: readonly string[];
-  readonly hasRequiredDispatchInput: boolean;
-}
-
-export interface GithubWorkflowDispatchContract {
-  readonly status: "valid" | "invalid" | "unavailable";
-  readonly dispatchable: boolean;
-  readonly hasRequiredInputs: boolean | null;
 }
 
 function isYamlMap(value: unknown): value is Map<unknown, unknown> {
@@ -67,23 +59,6 @@ function cronExpressionsFrom(value: unknown): readonly string[] | null {
   return Array.from(new Set(expressions)).sort();
 }
 
-function containsRequiredDispatchInput(value: unknown): boolean | null {
-  if (!isYamlMap(value)) return null;
-  const rawInputs = value.get("inputs");
-  if (rawInputs === undefined) return false;
-  if (!isYamlMap(rawInputs)) return null;
-  let required = false;
-  for (const [, definition] of rawInputs) {
-    if (!isYamlMap(definition)) return null;
-    const rawRequired = definition.get("required");
-    if (rawRequired !== undefined && typeof rawRequired !== "boolean") {
-      return null;
-    }
-    required ||= rawRequired === true;
-  }
-  return required;
-}
-
 /**
  * Parse only the fields needed for the workflow catalog, while delegating YAML
  * syntax and YAML 1.2 key semantics to the maintained `yaml` parser. In
@@ -121,21 +96,10 @@ function parseWorkflowTriggers(content: string): ParsedWorkflowTriggers | null {
       schedules = parsedSchedules;
     }
 
-    let hasRequiredDispatchInput = false;
-    if (isYamlMap(rawTriggers) && rawTriggers.has("workflow_dispatch")) {
-      const dispatchTrigger = rawTriggers.get("workflow_dispatch");
-      if (dispatchTrigger !== undefined && dispatchTrigger !== null) {
-        const parsedRequired = containsRequiredDispatchInput(dispatchTrigger);
-        if (parsedRequired === null) return null;
-        hasRequiredDispatchInput = parsedRequired;
-      }
-    }
-
     return {
       name: typeof rawName === "string" ? rawName : null,
       events,
-      schedules,
-      hasRequiredDispatchInput
+      schedules
     };
   } catch {
     return null;
@@ -179,51 +143,5 @@ export class GithubWorkflowRepository {
       });
     }
     return { status: "valid", workflows };
-  }
-
-  readDispatchContract(workflowId: string): GithubWorkflowDispatchContract {
-    if (
-      !WORKFLOW_ID_PATTERN.test(workflowId) ||
-      workflowId === ".yml" ||
-      workflowId === ".yaml" ||
-      workflowId.includes("..")
-    ) {
-      return {
-        status: "invalid",
-        dispatchable: false,
-        hasRequiredInputs: null
-      };
-    }
-
-    const workflowPath = path.join(
-      this.repositoryRoot,
-      ".github",
-      "workflows",
-      workflowId
-    );
-    let content: string;
-    try {
-      content = readFileSync(workflowPath, "utf8");
-    } catch {
-      return {
-        status: "unavailable",
-        dispatchable: false,
-        hasRequiredInputs: null
-      };
-    }
-    const parsed = parseWorkflowTriggers(content);
-    if (parsed === null) {
-      return {
-        status: "invalid",
-        dispatchable: false,
-        hasRequiredInputs: null
-      };
-    }
-    const hasDispatchTrigger = parsed.events.includes("workflow_dispatch");
-    return {
-      status: "valid",
-      dispatchable: hasDispatchTrigger && !parsed.hasRequiredDispatchInput,
-      hasRequiredInputs: parsed.hasRequiredDispatchInput
-    };
   }
 }

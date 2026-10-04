@@ -4,7 +4,6 @@ import type {
   GithubActionsRuntimeStatus,
   GithubWorkflowCatalogStatus,
   GithubWorkflowDefinition,
-  GithubWorkflowMutationResult,
   GithubWorkflowRun
 } from "../github/types.ts";
 import type { McpServerResource } from "../mcps/types.ts";
@@ -16,6 +15,7 @@ import type {
   MemorySessionOutcomeCohortPage,
   MemoryStatus
 } from "../memory/types.ts";
+import type { ProviderRole } from "../routing/types.ts";
 import type { ToolCatalogItem } from "../tools/types.ts";
 import type {
   WorkspaceCatalogStatus,
@@ -82,6 +82,15 @@ export interface ControlApiProvidersResponse {
   }[];
   readonly disabledOrchestratorProviders: readonly string[];
   readonly disabledSubagentProviders: readonly string[];
+}
+
+export interface ControlApiProviderRolePatchResponse {
+  readonly schema: "autodev-control-provider-role-v1";
+  readonly provider: string;
+  readonly role: ProviderRole;
+  readonly enabled: boolean;
+  readonly previous: boolean;
+  readonly actor: string;
 }
 
 export interface ControlApiModelsResponse {
@@ -201,18 +210,7 @@ export interface ControlApiGithubResponse {
   readonly repository: string | null;
   readonly stats: GithubActionsRunStats | null;
   readonly recentRuns: readonly GithubWorkflowRun[];
-  /**
-   * True when the Runtime Control API has validated every precondition
-   * required to compute authoritative mutation operations for this actor:
-   * a confirmed operator role, a validated enabled workspace with
-   * observed GitHub Actions runtime facts, and write-token presence.
-   * False means every workflow's `allowedOperations` is empty and the
-   * Console must render no mutation affordances.
-   */
-  readonly operationsAvailable: boolean;
 }
-
-export type ControlApiGithubMutationResponse = GithubWorkflowMutationResult;
 
 export interface ControlApiConcurrencyStatus {
   readonly scope?: string;

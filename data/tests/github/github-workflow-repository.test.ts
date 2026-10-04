@@ -53,66 +53,6 @@ test("GithubWorkflowRepository parses the real AutoDev workflow catalog", () => 
   );
 });
 
-test("GithubWorkflowRepository refuses dispatch when a required input is present or the input schema drifts", async () => {
-  const repositoryRoot = await mkdtemp(
-    path.join(tmpdir(), "autodev-github-dispatch-schema-")
-  );
-  const workflowsDir = path.join(repositoryRoot, ".github", "workflows");
-  await mkdir(workflowsDir, { recursive: true });
-  try {
-    await writeFile(
-      path.join(workflowsDir, "required.yml"),
-      [
-        "on:",
-        "  workflow_dispatch:",
-        "    inputs:",
-        "      target:",
-        "        required: true",
-        "        type: string",
-        "  schedule:",
-        '    - cron: "0 * * * *"',
-        "jobs:",
-        "  run:",
-        "    steps: []"
-      ].join("\n"),
-      "utf8"
-    );
-    await writeFile(
-      path.join(workflowsDir, "invalid-input.yml"),
-      [
-        "on:",
-        "  workflow_dispatch:",
-        "    inputs:",
-        "      target:",
-        "        required: maybe",
-        "jobs:",
-        "  run:",
-        "    steps: []"
-      ].join("\n"),
-      "utf8"
-    );
-
-    const repository = new GithubWorkflowRepository(repositoryRoot);
-    assert.deepEqual(repository.readDispatchContract("required.yml"), {
-      status: "valid",
-      dispatchable: false,
-      hasRequiredInputs: true
-    });
-    assert.deepEqual(repository.readDispatchContract("invalid-input.yml"), {
-      status: "invalid",
-      dispatchable: false,
-      hasRequiredInputs: null
-    });
-    assert.deepEqual(repository.readDispatchContract("../outside.yml"), {
-      status: "invalid",
-      dispatchable: false,
-      hasRequiredInputs: null
-    });
-  } finally {
-    await rm(repositoryRoot, { recursive: true, force: true });
-  }
-});
-
 test("GithubWorkflowRepository reports unavailable when .github/workflows is missing", async () => {
   const repositoryRoot = await mkdtemp(
     path.join(tmpdir(), "autodev-github-workflows-")

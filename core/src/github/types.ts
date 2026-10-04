@@ -4,7 +4,8 @@
  * These types describe workflow *definitions* as declared in `.github/workflows/*.yml`
  * source files (name, path, trigger events, cron schedules) along with authoritative
  * GitHub Actions runtime state and recent run statistics read via the GitHub
- * Actions API, plus typed contracts for the bounded mutation operations.
+ * Actions API. Dispatch, cancel, rerun, and schedule mutation controls remain
+ * explicitly unimplemented; this module defines read-only contracts only.
  */
 
 export type GithubWorkflowCatalogStatus = "valid" | "invalid" | "unavailable";
@@ -18,26 +19,6 @@ export type GithubWorkflowState =
   | "disabled_inactivity"
   | "deleted"
   | "unknown";
-
-/** Pure operation contract; the Runtime Control API owns workflow policy. */
-export type GithubWorkflowMutationOperation = "dispatch" | "enable" | "disable";
-
-/** Typed request accepted by the dedicated GitHub mutation route. */
-export interface GithubWorkflowMutationRequest {
-  readonly operation: GithubWorkflowMutationOperation;
-  readonly workflow: string;
-  readonly idempotencyKey: string;
-  readonly expectedState?: GithubWorkflowState;
-}
-
-/** Typed result returned for a GitHub workflow mutation or idempotent replay. */
-export interface GithubWorkflowMutationResult {
-  readonly schema: "autodev-control-github-mutation-v1";
-  readonly operation: GithubWorkflowMutationOperation;
-  readonly workflow: string;
-  readonly result: "applied" | "replayed";
-  readonly workflowState?: GithubWorkflowState;
-}
 
 export type GithubRunStatus =
   "completed" | "in_progress" | "queued" | "requested" | "waiting" | "pending";
@@ -81,16 +62,6 @@ export interface GithubWorkflowDefinition {
   readonly lastRunCreatedAt?: string | null;
   /** GitHub web URL for the most recent run for this workflow. */
   readonly lastRunHtmlUrl?: string | null;
-  /**
-   * Mutation operations the authenticated actor may currently perform on this
-   * workflow, computed by the Runtime Control API from the workflow mutation
-   * allowlist, the parsed YAML dispatch trigger/required-input schema, the
-   * observed workflow enabled state, active-run status, the validated
-   * enabled workspace, write-token presence, and the actor's confirmed
-   * operator role. Absent when operations could not be evaluated; empty when
-   * none are currently permitted.
-   */
-  readonly allowedOperations?: readonly GithubWorkflowMutationOperation[];
 }
 
 /** A single observed GitHub Actions workflow run from the bounded recent sample. */

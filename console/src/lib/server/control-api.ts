@@ -25,8 +25,6 @@ import {
   type ControlApiError,
   type ControlApiEvaluationsResponse,
   type ControlApiGithubResponse,
-  type ControlApiGithubMutationResponse,
-  type GithubWorkflowMutationRequest,
   type ControlApiHooksResponse,
   type ControlApiMcpsResponse,
   type ControlApiMemoryCohortsResponse,
@@ -40,13 +38,15 @@ import {
   type ControlApiPermissionsResponse,
   type ControlApiPromptDetailResponse,
   type ControlApiPromptsResponse,
+  type ControlApiProviderRolePatchResponse,
   type ControlApiProvidersResponse,
   type ControlApiRoutingResponse,
   type ControlApiRuntimeResponse,
   type ControlApiSkillsResponse,
   type ControlApiToolsResponse,
   type ControlApiWorkspacesResponse,
-  LOCAL_CONTROL_API_ACTOR
+  LOCAL_CONTROL_API_ACTOR,
+  type ProviderRole
 } from "@simulatorlife/autodev-core";
 
 export type ControlApiResult<T> =
@@ -207,9 +207,11 @@ export async function fetchControlApi<T>(
 }
 
 /**
- * Issues an authenticated POST against the AutoDev Control API.
+ * Sends a typed server-side Control API mutation using the shared credential,
+ * actor, timeout, and error-envelope handling.
  */
-export async function postControlApi<T>(
+async function mutateControlApi<T>(
+  method: "POST" | "PATCH",
   path: string,
   payload: unknown,
   config: ControlApiConfig,
@@ -222,10 +224,10 @@ export async function postControlApi<T>(
 
   let response: Response;
   try {
-    response = await fetchImpl(`${config.baseUrl}${path}`, {
-      method: "POST",
+    response = await fetchImpl(config.baseUrl + path, {
+      method,
       headers: {
-        Authorization: `Bearer ${config.serviceToken}`,
+        Authorization: "Bearer " + config.serviceToken,
         "X-AutoDev-Actor": LOCAL_CONTROL_API_ACTOR,
         Accept: "application/json",
         "Content-Type": "application/json"
@@ -234,7 +236,6 @@ export async function postControlApi<T>(
       signal
     });
   } catch (error) {
-    clearTimeout(timer);
     return {
       kind: "unreachable",
       message:
@@ -278,11 +279,25 @@ export async function postControlApi<T>(
         ? "unauthorized"
         : "http-error",
     status: response.status,
-    code: body.code ?? `autodev_control_api_${response.status}`,
+    code: body.code ?? "autodev_control_api_" + response.status,
     message:
       body.message ??
-      `AutoDev Control API rejected the request with status ${response.status}.`
+      "AutoDev Control API rejected the request with status " +
+        response.status +
+        "."
   };
+}
+
+/**
+ * Issues an authenticated POST against the AutoDev Control API.
+ */
+export function postControlApi<T>(
+  path: string,
+  payload: unknown,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<T>> {
+  return mutateControlApi("POST", path, payload, config, options);
 }
 
 export const CONTROL_API_PATHS = {
@@ -300,7 +315,6 @@ export const CONTROL_API_PATHS = {
   runtime: "/control/runtime",
   evaluations: "/control/evaluations",
   github: "/control/github",
-  githubMutations: "/control/github/mutations",
   memoryRecords: "/control/memory/records",
   memoryExperiences: "/control/memory/experiences",
   memoryCohorts: "/control/memory/cohorts",
@@ -341,6 +355,38 @@ export function fetchProviders(
 ): Promise<ControlApiResult<ControlApiProvidersResponse>> {
   return fetchControlApi<ControlApiProvidersResponse>(
     CONTROL_API_PATHS.providers,
+    config,
+    options
+  );
+}
+
+/**
+ * Builds the canonical provider-role PATCH path with an encoded provider
+ * segment. This remains private to the typed server mutation below.
+ */
+function providerRoleControlPath(provider: string, role: ProviderRole): string {
+  return `${CONTROL_API_PATHS.providers}/${encodeURIComponent(
+    provider
+  )}/roles/${encodeURIComponent(role)}`;
+}
+
+/**
+ * Server-only typed PATCH against the canonical provider-role route. The
+ * Console never sends provider-role mutations directly from the browser; the
+ * provider-role route handler invokes this helper with the server-side
+ * Control API credential and the canonical local actor header.
+ */
+export function patchProviderRole(
+  provider: string,
+  role: ProviderRole,
+  enabled: boolean,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiProviderRolePatchResponse>> {
+  return mutateControlApi<ControlApiProviderRolePatchResponse>(
+    "PATCH",
+    providerRoleControlPath(provider, role),
+    { enabled },
     config,
     options
   );
@@ -449,27 +495,6 @@ export function fetchGithubWorkflows(
 ): Promise<ControlApiResult<ControlApiGithubResponse>> {
   return fetchControlApi<ControlApiGithubResponse>(
     CONTROL_API_PATHS.github,
-    config,
-    options
-  );
-}
-
-export function mutateGithubWorkflow(
-  payload: GithubWorkflowMutationRequest,
-  config: ControlApiConfig,
-  options: FetchControlApiOptions = {}
-): Promise<ControlApiResult<ControlApiGithubMutationResponse>> {
-  const body: GithubWorkflowMutationRequest = {
-    operation: payload.operation,
-    workflow: payload.workflow,
-    idempotencyKey: payload.idempotencyKey,
-    ...(payload.expectedState
-      ? { expectedState: payload.expectedState }
-      : {})
-  };
-  return postControlApi<ControlApiGithubMutationResponse>(
-    CONTROL_API_PATHS.githubMutations,
-    body,
     config,
     options
   );

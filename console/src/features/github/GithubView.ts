@@ -6,11 +6,6 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import type {
-  GithubMutationForm,
-  GithubMutationForms
-} from "../../lib/server/github-mutations.ts";
-
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
@@ -34,11 +29,8 @@ const NOT_OBSERVED_STATUS = "not-observed";
  * When credentials or repository context are absent, runtime facts remain
  * explicitly "Unavailable" without synthesizing zero or healthy values.
  *
- * Allowlisted operator mutations (dispatch for `_scheduler.yml` only, and
- * whole-workflow enable/disable for the configured scheduled allowlist) are
- * rendered below each eligible workflow when the server-provided `forms`
- * prop authorizes them. Cancel, rerun, and free-form dispatch inputs remain
- * strictly unimplemented and are never offered as controls.
+ * Dispatch, cancel, rerun, and schedule mutation controls remain explicitly
+ * unimplemented; this view never renders mutation affordances.
  */
 
 export interface GithubViewProps {
@@ -49,9 +41,6 @@ export interface GithubViewProps {
   readonly repository?: string | null;
   readonly stats?: GithubActionsRunStats | null;
   readonly recentRuns?: readonly GithubWorkflowRun[];
-  readonly forms?: GithubMutationForms;
-  readonly operationsAvailable?: boolean;
-  readonly mutationNotice?: "applied" | "failed" | null;
 }
 
 export function GithubView({
@@ -61,10 +50,7 @@ export function GithubView({
   runtimeMessage,
   repository,
   stats,
-  recentRuns = [],
-  forms = {},
-  operationsAvailable = false,
-  mutationNotice = null
+  recentRuns = []
 }: GithubViewProps): React.JSX.Element {
   const scheduledCount = workflows.filter((w) => w.schedules.length > 0).length;
   const statsSampleSize = stats?.totalRuns ?? 0;
@@ -417,7 +403,7 @@ export function GithubView({
                 { className: "font-mono font-semibold text-emerald-100" },
                 repository ?? "configured workspace"
               ),
-              ". Allowlisted dispatch and enable/disable operator controls are available below for eligible workflows; cancel and rerun remain unimplemented."
+              ". Dispatch, cancel, rerun, and schedule mutation controls remain unimplemented."
             )
           )
         )
@@ -431,11 +417,9 @@ export function GithubView({
           },
           "Workflow enabled/disabled state, run history, run status, and run counts " +
             "require the GitHub Actions API and are not available without it. " +
-            "Dispatch and enable/disable operator controls require that same " +
-            "observed runtime state and remain unavailable until it is. Cancel, " +
-            "rerun, and schedule-modification controls remain unimplemented " +
-            "regardless. Only the workflow definitions and trigger configuration " +
-            "observed in YAML are shown below." +
+            "Dispatch, cancel, rerun, and schedule mutation controls remain " +
+            "unimplemented regardless. Only the workflow definitions and trigger " +
+            "configuration observed in YAML are shown below." +
             (runtimeMessage ? ` (${runtimeMessage})` : "")
         ),
     React.createElement(
