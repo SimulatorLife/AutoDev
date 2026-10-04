@@ -685,11 +685,7 @@ Control API base defaults to `http://127.0.0.1:4101` and can be configured with
 `AUTODEV_CONTROL_API_BASE_URL`. To query Usage, set
 `AUTODEV_OPENLIT_USAGE_TOKEN` in the Console server environment to the
 separately generated value in `$CODEX_HOME/openlit-secrets.env`;
-`AUTODEV_OPENLIT_USAGE_URL` defaults to `http://127.0.0.1:3000`. The Console
-Memory portal links to the retained OpenLIT Memory page using the separately
-configured, browser-reachable `AUTODEV_OPENLIT_UI_URL` (same local default); it
-is not used as a service API credential or forwarded to the Control API. Do not
-source or expose the full secret file to browser code.
+`AUTODEV_OPENLIT_USAGE_URL` defaults to `http://127.0.0.1:3000`. **During migration only**, the Console Memory portal links to the retained OpenLIT Memory page using the separately configured, browser-reachable `AUTODEV_OPENLIT_UI_URL` (same local default); it is not used as a service API credential or forwarded to the Control API. `AUTODEV_OPENLIT_UI_URL` is a transitional compatibility variable, not a target dependency: delete it and the portal-link path once the unified Console Memory feature reaches verified browse/detail/action/analytics parity. Do not add new consumers of this variable. Do not source or expose the full secret file to browser code.
 
 The two Console server-only tokens are seeded into the server environment by
 exactly one writer: `scripts/openlit/bootstrap-secrets.sh`, which is the same
@@ -716,6 +712,6 @@ pnpm --filter @simulatorlife/autodev-data openlit:sync-models
 pnpm --filter @simulatorlife/autodev-data openlit:sync-workspaces
 ```
 
-The Data-owned agents, prompts, and models adapters populate OpenLIT read models; they do not supersede canonical RuleSync/AutoDev configuration ownership. The remaining workspace bootstrap is only an internal singleton migration, not a per-workspace OpenLIT tenancy adapter.
+The Data-owned agents, prompts, and models adapters populate transitional OpenLIT read models; they do not supersede canonical RuleSync/AutoDev configuration ownership. **Do not add new product consumers, mutation authority, or canonical state to these sync paths.** Delete each sync command/adapter after its retained feature is served directly through the unified Console/Data integration and no verified consumer still requires the OpenLIT projection. The remaining workspace bootstrap is only an internal singleton migration, not a per-workspace OpenLIT tenancy adapter, and should be removed when the retained OpenLIT internals no longer require that singleton compatibility row.
 
 The asynchronous GitHub issue metrics workflow remains a separate GitHub-development reporting surface (`.github/workflows/metrics-dashboard.yml`, issue #2). It is not a replacement observability backend for AutoDev runtime telemetry.
