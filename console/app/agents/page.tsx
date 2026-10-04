@@ -52,10 +52,8 @@ export default async function AgentsPage(): Promise<React.JSX.Element> {
   const agents = agentsFromControlApi(agentsResult.data);
   const providers =
     providersResult.kind === "ok" ? providersResult.data : undefined;
-  const routing =
-    routingResult.kind === "ok" ? routingResult.data : undefined;
-  const runtime =
-    runtimeResult.kind === "ok" ? runtimeResult.data : undefined;
+  const routing = routingResult.kind === "ok" ? routingResult.data : undefined;
+  const runtime = runtimeResult.kind === "ok" ? runtimeResult.data : undefined;
 
   return React.createElement(
     ConsolePageShell,

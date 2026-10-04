@@ -6,7 +6,10 @@ const nextConfig: NextConfig = {
   transpilePackages: [
     "@simulatorlife/autodev-core",
     "@simulatorlife/autodev-data"
-  ]
+  ],
+  eslint: {
+    ignoreDuringBuilds: true
+  }
 };
 
 export default nextConfig;

@@ -8,7 +8,10 @@ import {
   type AgentDefinition,
   CANONICAL_NAVIGATION,
   type CanonicalNavSection,
-  LOCAL_CONTROL_API_ACTOR
+  type ExperienceEnvelope,
+  LOCAL_CONTROL_API_ACTOR,
+  type MemoryRecord,
+  type MemorySessionOutcomeCohortPage
 } from "@simulatorlife/autodev-core";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -22,7 +25,11 @@ import {
   HooksView,
   McpDetailView,
   McpsView,
+  MemoryCohortsView,
+  MemoryExperiencesView,
   MemoryPortalCard,
+  MemoryRecordsView,
+  MemoryView,
   PromptDetailView,
   PromptsView,
   SkillsView,
@@ -41,6 +48,11 @@ import {
   fetchAgentDetail,
   fetchControlApi,
   fetchEvaluations,
+  fetchMemoryCohorts,
+  fetchMemoryExperiences,
+  fetchMemoryHistory,
+  fetchMemoryRecord,
+  fetchMemoryRecords,
   fetchPromptDetail,
   fetchProviders,
   fetchRouting,
@@ -1376,4 +1388,241 @@ test("Canonical nav order is preserved (Agents through Workspaces)", () => {
     "Workspaces"
   ];
   assert.deepEqual([...CANONICAL_NAVIGATION], [...expected]);
+});
+
+test("MemoryRecordsView renders records, lifecycle status badges, and claim text", () => {
+  const sampleRecord: MemoryRecord = {
+    id: "mem-001",
+    kind: "procedural",
+    status: "active",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    claim: "Always execute test suites before pushing code to main.",
+    validity: { state: "verified", evidence: [] },
+    provenance: {
+      experienceIds: ["exp-1"],
+      evidence: [],
+      createdBy: "operator",
+      createdAt: "2026-10-01T00:00:00Z"
+    },
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-02T00:00:00Z"
+  };
+
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryRecordsView, {
+      records: [sampleRecord],
+      totalCount: 1,
+      currentWorkspaceId: "SimulatorLife/AutoDev"
+    })
+  );
+
+  assert.match(markup, /data-memory-record-id="mem-001"/);
+  assert.match(markup, /data-memory-kind="procedural"/);
+  assert.match(markup, /data-status="ready"/);
+  assert.match(markup, /Active/);
+  assert.match(
+    markup,
+    /Always execute test suites before pushing code to main\./
+  );
+});
+
+test("MemoryRecordsView renders record detail panel with validity and transition history", () => {
+  const sampleRecord: MemoryRecord = {
+    id: "mem-002",
+    kind: "semantic",
+    status: "proposed",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    claim:
+      "Use exact Optional Property Types throughout all TSX feature views.",
+    validity: { state: "unverified", evidence: [] },
+    provenance: {
+      experienceIds: ["exp-1"],
+      evidence: [
+        {
+          kind: "file",
+          uri: "console/src/features/memory/MemoryRecordsView.ts"
+        }
+      ],
+      createdBy: "agent-1",
+      createdAt: "2026-10-02T00:00:00Z"
+    },
+    createdAt: "2026-10-02T00:00:00Z",
+    updatedAt: "2026-10-02T00:00:00Z"
+  };
+
+  const sampleHistory = {
+    schema: "autodev-memory-history-v1" as const,
+    memory: sampleRecord,
+    transitions: [
+      {
+        toStatus: "proposed" as const,
+        actor: { id: "operator-1", authority: "operator" as const },
+        reason: "Initial proposed claim",
+        timestamp: "2026-10-02T00:00:00Z"
+      }
+    ]
+  };
+
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryRecordsView, {
+      records: [sampleRecord],
+      totalCount: 1,
+      selectedRecord: sampleRecord,
+      history: sampleHistory,
+      currentWorkspaceId: "SimulatorLife/AutoDev"
+    })
+  );
+
+  assert.match(markup, /data-selected-record-panel="mem-002"/);
+  assert.match(markup, /Durable Claim/);
+  assert.match(markup, /Validity State/);
+  assert.match(markup, /Transition History/);
+  assert.match(markup, /Verify &amp; Promote/);
+  assert.match(markup, /Invalidate/);
+});
+
+test("MemoryExperiencesView renders experiences with task, role, and validation indicators", () => {
+  const sampleExp: ExperienceEnvelope = {
+    id: "exp-001",
+    workspaceId: "SimulatorLife/AutoDev",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    taskId: "task-101",
+    runId: "run-505",
+    agentId: "agent-orch",
+    agentRole: "orchestrator",
+    startedAt: "2026-10-03T10:00:00Z",
+    outcome: "success",
+    memoryMode: "jit",
+    trajectory: {
+      format: "codex-v1",
+      uri: "file:///tmp/transcripts/run-505.jsonl",
+      sourceAdapter: "codex"
+    },
+    evidence: []
+  };
+
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryExperiencesView, {
+      experiences: [sampleExp],
+      totalCount: 1,
+      currentWorkspaceId: "SimulatorLife/AutoDev"
+    })
+  );
+
+  assert.match(markup, /data-memory-experience-id="exp-001"/);
+  assert.match(markup, /task-101/);
+  assert.match(markup, /run-505/);
+  assert.match(markup, /orchestrator/);
+  assert.match(markup, /jit/);
+  assert.match(markup, /success/);
+});
+
+test("MemoryCohortsView renders session outcome cohorts preserving explicit unreported cells", () => {
+  const sampleCohort: MemorySessionOutcomeCohortPage = {
+    schema: "autodev-memory-session-outcome-cohorts-v1",
+    workspaceId: "SimulatorLife/AutoDev",
+    repositoryId: "SimulatorLife/AutoDev",
+    occurredFrom: "2026-09-01T00:00:00Z",
+    occurredUntil: "2026-10-01T00:00:00Z",
+    cells: [
+      { memoryMode: "jit", outcomeKind: "success", sessionCount: 15 },
+      { memoryMode: "jit", outcomeKind: null, sessionCount: 6 },
+      { memoryMode: "disabled", outcomeKind: "failure", sessionCount: 2 }
+    ],
+    sessionCount: 23,
+    reportedSessionCount: 17,
+    unreportedSessionCount: 6,
+    mixedModeSessionCount: 2,
+    conflictingOutcomeSessionCount: 1
+  };
+
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryCohortsView, {
+      sessionCohorts: sampleCohort,
+      currentWorkspaceId: "SimulatorLife/AutoDev",
+      repositoryId: "SimulatorLife/AutoDev",
+      occurredFrom: "2026-09-01T00:00:00Z",
+      occurredUntil: "2026-10-01T00:00:00Z"
+    })
+  );
+
+  assert.match(markup, /data-feature="memory-cohorts"/);
+  assert.match(markup, /Observed Sessions/);
+  assert.match(markup, /Unreported Sessions/);
+  assert.match(markup, /Mixed-Mode Sessions/);
+  assert.match(markup, /Conflicting Reports/);
+  assert.match(markup, /Reported/);
+  assert.match(markup, /Unreported/);
+  assert.match(markup, /Non-inferential cohort policy/);
+});
+
+test("MemoryView renders top-level tabs and stat counts", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryView, {
+      activeTab: "records",
+      records: [],
+      totalRecords: 0,
+      experiences: [],
+      totalExperiences: 0,
+      currentWorkspaceId: "SimulatorLife/AutoDev",
+      repositoryId: "SimulatorLife/AutoDev",
+      workspaces: [
+        {
+          id: "SimulatorLife/AutoDev",
+          baseBranch: "main",
+          enabled: true,
+          agentRoles: null
+        }
+      ],
+      occurredFrom: "2026-09-01T00:00:00Z",
+      occurredUntil: "2026-10-01T00:00:00Z"
+    })
+  );
+
+  assert.match(markup, /data-feature="memory"/);
+  assert.match(markup, /data-memory-tab="records"/);
+  assert.match(markup, /data-memory-tab="experiences"/);
+  assert.match(markup, /data-memory-tab="cohorts"/);
+  assert.match(markup, /data-memory-tab="portal"/);
+  assert.match(markup, /Durable Records/);
+  assert.match(markup, /Active Claims/);
+});
+
+test("fetchMemoryRecords issues authenticated GET to /control/memory/records with workspace scope", async () => {
+  const config = {
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "test-token-memory"
+  };
+  const mockFetch: typeof fetch = async (input, init) => {
+    assert.equal(
+      input,
+      "http://127.0.0.1:4101/control/memory/records?workspaceId=SimulatorLife%2FAutoDev&query=rule"
+    );
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get("authorization"), "Bearer test-token-memory");
+    assert.equal(headers.get("x-autodev-actor"), LOCAL_CONTROL_API_ACTOR);
+    return Response.json({
+      schema: "autodev-memory-records-v1",
+      items: [],
+      totalCount: 0,
+      limit: 50,
+      offset: 0,
+      hasMore: false
+    });
+  };
+
+  const result = await fetchMemoryRecords(
+    {
+      workspaceId: "SimulatorLife/AutoDev",
+      query: "rule"
+    },
+    config,
+    { fetchImpl: mockFetch }
+  );
+
+  assert.equal(result.kind, "ok");
+  if (result.kind === "ok") {
+    assert.equal(result.data.schema, "autodev-memory-records-v1");
+    assert.deepEqual(result.data.items, []);
+  }
 });
