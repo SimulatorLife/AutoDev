@@ -26,6 +26,7 @@ import {
   AgentDetailView,
   AgentsView,
   AppNav,
+  Breadcrumbs,
   DataTable,
   EvaluationsView,
   GithubView,
@@ -225,6 +226,119 @@ test("AppNav brand link has visible keyboard focus and no unsupported status pul
   );
 });
 
+test("Breadcrumbs renders a server-renderable landmark with native ancestor links and aria-current on the current page", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(Breadcrumbs, {
+      items: [{ label: "MCPs", href: "/mcps" }, { label: "playwright" }]
+    })
+  );
+
+  // Landmarks: a single <nav aria-label="Breadcrumb"> with an ordered list.
+  assert.match(markup, /<nav aria-label="Breadcrumb"/);
+  const navStart = markup.indexOf('<nav aria-label="Breadcrumb"');
+  const navEnd = markup.indexOf("</nav>", navStart);
+  assert.ok(navStart !== -1 && navEnd !== -1);
+  const navMarkup = markup.slice(navStart, navEnd + "</nav>".length);
+  assert.match(navMarkup, /<ol/);
+  assert.match(navMarkup, /<\/ol>/);
+
+  // Ancestor item: a real <a href="/mcps"> anchor (no client-side router).
+  assert.match(navMarkup, /<a href="\/mcps"[^>]*>MCPs<\/a>/);
+  // Ancestor link must expose a visible keyboard focus state.
+  assert.match(
+    navMarkup,
+    /<a href="\/mcps"[^>]*class="[^"]*focus-visible:outline/
+  );
+
+  // Current-page item: a non-link <span aria-current="page"> with the
+  // final item's label, and no href attribute.
+  assert.match(
+    navMarkup,
+    /<span[^>]*aria-current="page"[^>]*>playwright<\/span>/
+  );
+  assert.equal(navMarkup.includes("playwright</a>"), false);
+
+  // The trail is ordered: ancestor appears before the current-page item,
+  // separated by a hidden "/" separator span.
+  const ancestorIdx = navMarkup.indexOf('href="/mcps"');
+  const currentIdx = navMarkup.indexOf('aria-current="page"');
+  assert.ok(ancestorIdx !== -1 && currentIdx !== -1);
+  assert.ok(
+    ancestorIdx < currentIdx,
+    "Breadcrumbs must place the ancestor before the current page"
+  );
+  assert.match(navMarkup, /aria-hidden="true"[^>]*>\/</);
+
+  // No synthetic Home entry is added and no placeholder href="#" is ever
+  // emitted by the component, even for ancestor items.
+  assert.equal(navMarkup.includes("Home"), false);
+  assert.equal(navMarkup.includes('href="#"'), false);
+});
+
+test('Breadcrumbs renders ancestor items without an href as non-link elements and never emits href="#"', () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(Breadcrumbs, {
+      items: [
+        { label: "Workspace hub" },
+        { label: "MCPs", href: "/mcps" },
+        { label: "Unlinked group", href: "" },
+        { label: "playwright" }
+      ]
+    })
+  );
+
+  const navStart = markup.indexOf('<nav aria-label="Breadcrumb"');
+  const navEnd = markup.indexOf("</nav>", navStart);
+  assert.ok(navStart !== -1 && navEnd !== -1);
+  const navMarkup = markup.slice(navStart, navEnd + "</nav>".length);
+
+  // The href-less ancestor renders as a plain span (no anchor wrapping it,
+  // no aria-current, no placeholder href).
+  assert.match(navMarkup, /<span class="[^"]*">Workspace hub<\/span>/);
+  assert.equal(navMarkup.includes("Workspace hub</a>"), false);
+  assert.doesNotMatch(navMarkup, /<span[^>]*Workspace hub[^>]*aria-current/);
+  assert.match(navMarkup, /<span class="[^"]*">Unlinked group<\/span>/);
+  assert.equal(navMarkup.includes("Unlinked group</a>"), false);
+  assert.equal(navMarkup.includes('href=""'), false);
+
+  // The middle ancestor still renders as a native <a href> link.
+  assert.match(navMarkup, /<a href="\/mcps"[^>]*>MCPs<\/a>/);
+
+  // Only the final item carries aria-current="page".
+  const currentMatches = navMarkup.match(/aria-current="page"/g) ?? [];
+  assert.equal(currentMatches.length, 1);
+  assert.match(
+    navMarkup,
+    /<span[^>]*aria-current="page"[^>]*>playwright<\/span>/
+  );
+
+  // Never emit a placeholder href="#" anywhere in the breadcrumb landmark.
+  assert.equal(navMarkup.includes('href="#"'), false);
+});
+
+test("Breadcrumbs exposes a custom aria-label override for the landmark", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(Breadcrumbs, {
+      ariaLabel: "MCP detail navigation",
+      items: [{ label: "MCPs", href: "/mcps" }, { label: "playwright" }]
+    })
+  );
+  assert.match(markup, /<nav aria-label="MCP detail navigation"/);
+});
+
+test("Breadcrumbs renders a single ancestor link with current-page aria state when only one parent is supplied", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(Breadcrumbs, {
+      items: [{ label: "Prompts", href: "/prompts" }, { label: "dry" }]
+    })
+  );
+  assert.match(markup, /<a href="\/prompts"[^>]*>Prompts<\/a>/);
+  assert.match(markup, /<span[^>]*aria-current="page"[^>]*>dry<\/span>/);
+  // Only one separator between the two items.
+  const separatorMatches = markup.match(/aria-hidden="true"/g) ?? [];
+  assert.equal(separatorMatches.length, 1);
+});
+
 test("StatusBadge renders valid variants", () => {
   for (const status of [
     "configured",
@@ -266,6 +380,31 @@ test("Agent detail separates configuration from unobserved runtime state", () =>
   assert.match(markup, /data-status="not-observed"/);
   assert.equal(markup.includes("Runtime healthy"), false);
   assert.equal(markup.includes("Converged"), false);
+});
+
+test("Agent detail exposes the shared breadcrumbs landmark with /agents parent and current-page aria state", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(AgentDetailView, { agent: CONFIGURED_AGENT })
+  );
+
+  // Server-rendered breadcrumbs landmark: single <nav aria-label="Breadcrumb">
+  // containing the ordered <ol> with the canonical /agents ancestor and the
+  // current-page role (agent.role = "orchestrator").
+  assert.match(markup, /<nav aria-label="Breadcrumb"/);
+  const breadcrumbNavStart = markup.indexOf('<nav aria-label="Breadcrumb"');
+  const breadcrumbNavEnd = markup.indexOf("</nav>", breadcrumbNavStart);
+  assert.ok(breadcrumbNavStart !== -1 && breadcrumbNavEnd !== -1);
+  const breadcrumbMarkup = markup.slice(
+    breadcrumbNavStart,
+    breadcrumbNavEnd + "</nav>".length
+  );
+  assert.match(breadcrumbMarkup, /<a href="\/agents"[^>]*>Agents<\/a>/);
+  assert.match(
+    breadcrumbMarkup,
+    /<span[^>]*aria-current="page"[^>]*>orchestrator<\/span>/
+  );
+  // No synthetic Home entry added.
+  assert.equal(breadcrumbMarkup.includes("Home"), false);
 });
 
 test("Prompt list links to source detail instead of synthesizing a preview", () => {
@@ -355,6 +494,27 @@ test("PromptsView and PromptDetailView render prompt types, linkage, and Git aut
   assert.match(detailMarkup, /href="\/usage\?role=orchestrator"/);
   assert.match(detailMarkup, /Canonical Markdown Source/);
   assert.match(detailMarkup, /2 lines/);
+
+  // Breadcrumb: shared breadcrumbs landmark with /prompts parent and
+  // current-page aria state for the prompt name (no inline back link).
+  assert.match(detailMarkup, /<nav aria-label="Breadcrumb"/);
+  const breadcrumbNavStart = detailMarkup.indexOf(
+    '<nav aria-label="Breadcrumb"'
+  );
+  const breadcrumbNavEnd = detailMarkup.indexOf("</nav>", breadcrumbNavStart);
+  assert.ok(breadcrumbNavStart !== -1 && breadcrumbNavEnd !== -1);
+  const breadcrumbMarkup = detailMarkup.slice(
+    breadcrumbNavStart,
+    breadcrumbNavEnd + "</nav>".length
+  );
+  assert.match(breadcrumbMarkup, /<a href="\/prompts"[^>]*>Prompts<\/a>/);
+  assert.match(
+    breadcrumbMarkup,
+    /<span[^>]*aria-current="page"[^>]*>orchestrator<\/span>/
+  );
+  // No synthetic Home entry added and no legacy back-link copy remains.
+  assert.equal(breadcrumbMarkup.includes("Home"), false);
+  assert.equal(detailMarkup.includes("← Prompts"), false);
 });
 
 test("DataTable renders table with columns and data", () => {
@@ -1095,8 +1255,16 @@ test("McpDetailView tab navigation renders all nine tabs as deterministic, URL-a
     );
   }
   const activeCurrentMatches = markup.match(/aria-current="page"/g) ?? [];
-  assert.equal(activeCurrentMatches.length, 1);
+  // The active TabNav tab carries aria-current="page", and the current-page
+  // breadcrumb item also carries aria-current="page". The McpDetailView
+  // therefore exposes exactly two aria-current markers: the active tab and
+  // the current-page breadcrumb.
+  assert.equal(activeCurrentMatches.length, 2);
   assert.match(markup, /aria-current="page"[^>]*data-tab-item="resources"/);
+  // Breadcrumb: native link to /mcps ancestor and aria-current on the
+  // current page (the MCP server name), no synthetic Home entry.
+  assert.match(markup, /href="\/mcps"/);
+  assert.match(markup, /<span[^>]*aria-current="page"[^>]*>playwright<\/span>/);
 });
 
 test("McpDetailView falls back to the Overview tab for an unknown or missing ?tab= value", () => {

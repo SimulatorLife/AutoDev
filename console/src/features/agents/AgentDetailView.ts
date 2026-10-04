@@ -5,6 +5,7 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 
 const SECTION_PANEL_CLASS =
@@ -44,10 +45,14 @@ export function AgentDetailView({
         React.createElement(
           "div",
           null,
+          React.createElement(Breadcrumbs, {
+            items: [{ label: "Agents", href: "/agents" }, { label: agent.role }]
+          }),
           React.createElement(
             "p",
             {
-              className: "mb-1 text-xs uppercase tracking-wider text-slate-400"
+              className:
+                "mb-1 mt-3 text-xs uppercase tracking-wider text-slate-400"
             },
             "Agent role"
           ),

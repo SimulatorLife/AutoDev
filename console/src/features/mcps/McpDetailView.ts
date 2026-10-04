@@ -4,6 +4,7 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
   resolveActiveTabId,
@@ -654,14 +655,9 @@ export function McpDetailView({
       React.createElement(
         "div",
         null,
-        React.createElement(
-          "a",
-          {
-            href: "/mcps",
-            className: "text-xs text-emerald-300 hover:underline"
-          },
-          "← MCP servers"
-        ),
+        React.createElement(Breadcrumbs, {
+          items: [{ label: "MCPs", href: "/mcps" }, { label: server.name }]
+        }),
         React.createElement(
           "p",
           {
