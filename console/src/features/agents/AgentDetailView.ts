@@ -1,11 +1,14 @@
-import type { AgentDefinition } from "@simulatorlife/autodev-core";
+import type {
+  AgentDefinition,
+  ControlApiProvidersResponse,
+  ControlApiRoutingResponse
+} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
-import type {
-  ControlApiProvidersResponse,
-  ControlApiRoutingResponse
-} from "../../lib/server/types.ts";
+
+const SECTION_PANEL_CLASS =
+  "rounded-lg border border-slate-800 bg-slate-900 p-6 shadow";
 
 export interface AgentDetailViewProps {
   readonly agent: AgentDefinition;
@@ -33,7 +36,7 @@ export function AgentDetailView({
     React.createElement(
       "section",
       {
-        className: "rounded-lg border border-slate-800 bg-slate-900 p-6 shadow"
+        className: SECTION_PANEL_CLASS
       },
       React.createElement(
         "div",
@@ -89,7 +92,7 @@ export function AgentDetailView({
     React.createElement(
       "section",
       {
-        className: "rounded-lg border border-slate-800 bg-slate-900 p-6 shadow",
+        className: SECTION_PANEL_CLASS,
         "aria-labelledby": "agent-runtime-heading"
       },
       React.createElement(
@@ -117,8 +120,7 @@ export function AgentDetailView({
     React.createElement(
       "section",
       {
-        className:
-          "grid grid-cols-1 gap-6 rounded-lg border border-slate-800 bg-slate-900 p-6 shadow lg:grid-cols-3"
+        className: `grid grid-cols-1 gap-6 ${SECTION_PANEL_CLASS} lg:grid-cols-3`
       },
       React.createElement(NameList, {
         heading: "Eligible providers",
@@ -141,8 +143,7 @@ export function AgentDetailView({
       ? React.createElement(
           "section",
           {
-            className:
-              "rounded-lg border border-slate-800 bg-slate-900 p-6 shadow",
+            className: SECTION_PANEL_CLASS,
             "data-section": "agent-provider-routes"
           },
           React.createElement(
@@ -213,7 +214,7 @@ export function AgentDetailView({
     React.createElement(
       "section",
       {
-        className: "rounded-lg border border-slate-800 bg-slate-900 p-6 shadow",
+        className: SECTION_PANEL_CLASS,
         "data-section": "agent-concurrency"
       },
       React.createElement(
@@ -234,16 +235,16 @@ export function AgentDetailView({
         React.createElement(DetailValue, {
           label: "Session concurrency limit",
           value:
-            routing?.concurrency?.effectivePerSessionLimit !== undefined
-              ? String(routing.concurrency.effectivePerSessionLimit)
-              : "Not observed"
+            routing?.concurrency?.effectivePerSessionLimit === undefined
+              ? "Not observed"
+              : String(routing.concurrency.effectivePerSessionLimit)
         }),
         React.createElement(DetailValue, {
           label: "Active subagent threads",
           value:
-            routing?.concurrency?.activeSubagentThreads !== undefined
-              ? String(routing.concurrency.activeSubagentThreads)
-              : "0"
+            routing?.concurrency?.activeSubagentThreads === undefined
+              ? "0"
+              : String(routing.concurrency.activeSubagentThreads)
         })
       )
     ),
@@ -260,8 +261,7 @@ export function AgentDetailView({
       : React.createElement(
           "section",
           {
-            className:
-              "rounded-lg border border-slate-800 bg-slate-900 p-6 shadow",
+            className: SECTION_PANEL_CLASS,
             "aria-labelledby": "agent-prompt-heading"
           },
           React.createElement(

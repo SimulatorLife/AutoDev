@@ -12,6 +12,12 @@ const SECTION_PANEL_CLASS =
   "rounded-lg border border-slate-800 bg-slate-900 p-6 shadow";
 const CONFIGURED_STATUS = "configured" as const;
 const NOT_OBSERVED_STATUS = "not-observed" as const;
+const FLEX_COLUMN_DETAILS_CLASS = "flex flex-col gap-2";
+const CONFIGURATION_FIELD_CLASS =
+  "rounded border border-slate-800 bg-slate-950/40 p-3";
+const CONFIGURATION_LABEL_CLASS = "text-slate-400 block mb-1";
+const CONFIGURATION_VALUE_CLASS = "text-slate-200 break-all";
+const STATUS_HELP_CLASS = "text-xs text-slate-400";
 
 export interface McpDetailViewProps {
   readonly server: McpServerResource;
@@ -72,7 +78,7 @@ function ConfiguredToolAllowlist({
       "div",
       {
         "data-tool-allowlist-projection": "unknown",
-        className: "flex flex-col gap-2"
+        className: FLEX_COLUMN_DETAILS_CLASS
       },
       React.createElement(StatusBadge, {
         status: NOT_OBSERVED_STATUS,
@@ -92,7 +98,7 @@ function ConfiguredToolAllowlist({
       {
         "data-tool-allowlist-projection": "partial-empty",
         "data-enumerated-tool-count": "0",
-        className: "flex flex-col gap-2"
+        className: FLEX_COLUMN_DETAILS_CLASS
       },
       React.createElement(StatusBadge, {
         status: NOT_OBSERVED_STATUS,
@@ -109,7 +115,7 @@ function ConfiguredToolAllowlist({
   return React.createElement(
     "ul",
     {
-      className: "flex flex-col gap-2",
+      className: FLEX_COLUMN_DETAILS_CLASS,
       "aria-label": "Configured tool allowlist",
       "data-tool-allowlist-projection": "partial",
       "data-enumerated-tool-count": String(configuredTools.length)
@@ -324,10 +330,10 @@ export function McpDetailView({
         { className: "grid gap-3 sm:grid-cols-2 text-xs font-mono" },
         React.createElement(
           "div",
-          { className: "rounded border border-slate-800 bg-slate-950/40 p-3" },
+          { className: CONFIGURATION_FIELD_CLASS },
           React.createElement(
             "span",
-            { className: "text-slate-400 block mb-1" },
+            { className: CONFIGURATION_LABEL_CLASS },
             "Transport"
           ),
           React.createElement(
@@ -340,16 +346,16 @@ export function McpDetailView({
           ? React.createElement(
               "div",
               {
-                className: "rounded border border-slate-800 bg-slate-950/40 p-3"
+                className: CONFIGURATION_FIELD_CLASS
               },
               React.createElement(
                 "span",
-                { className: "text-slate-400 block mb-1" },
+                { className: CONFIGURATION_LABEL_CLASS },
                 "Command"
               ),
               React.createElement(
                 "span",
-                { className: "text-slate-200 break-all" },
+                { className: CONFIGURATION_VALUE_CLASS },
                 server.command
               )
             )
@@ -358,17 +364,16 @@ export function McpDetailView({
           ? React.createElement(
               "div",
               {
-                className:
-                  "col-span-2 rounded border border-slate-800 bg-slate-950/40 p-3"
+                className: `col-span-2 ${CONFIGURATION_FIELD_CLASS}`
               },
               React.createElement(
                 "span",
-                { className: "text-slate-400 block mb-1" },
+                { className: CONFIGURATION_LABEL_CLASS },
                 "Arguments"
               ),
               React.createElement(
                 "span",
-                { className: "text-slate-200 break-all" },
+                { className: CONFIGURATION_VALUE_CLASS },
                 server.args.join(" ")
               )
             )
@@ -377,16 +382,16 @@ export function McpDetailView({
           ? React.createElement(
               "div",
               {
-                className: "rounded border border-slate-800 bg-slate-950/40 p-3"
+                className: CONFIGURATION_FIELD_CLASS
               },
               React.createElement(
                 "span",
-                { className: "text-slate-400 block mb-1" },
+                { className: CONFIGURATION_LABEL_CLASS },
                 "Endpoint URL"
               ),
               React.createElement(
                 "span",
-                { className: "text-slate-200 break-all" },
+                { className: CONFIGURATION_VALUE_CLASS },
                 server.url
               )
             )
@@ -395,16 +400,16 @@ export function McpDetailView({
           ? React.createElement(
               "div",
               {
-                className: "rounded border border-slate-800 bg-slate-950/40 p-3"
+                className: CONFIGURATION_FIELD_CLASS
               },
               React.createElement(
                 "span",
-                { className: "text-slate-400 block mb-1" },
+                { className: CONFIGURATION_LABEL_CLASS },
                 "Working directory"
               ),
               React.createElement(
                 "span",
-                { className: "text-slate-200 break-all" },
+                { className: CONFIGURATION_VALUE_CLASS },
                 server.cwd
               )
             )
@@ -413,11 +418,11 @@ export function McpDetailView({
           ? React.createElement(
               "div",
               {
-                className: "rounded border border-slate-800 bg-slate-950/40 p-3"
+                className: CONFIGURATION_FIELD_CLASS
               },
               React.createElement(
                 "span",
-                { className: "text-slate-400 block mb-1" },
+                { className: CONFIGURATION_LABEL_CLASS },
                 "Environment keys (values withheld)"
               ),
               React.createElement(
@@ -431,11 +436,11 @@ export function McpDetailView({
           ? React.createElement(
               "div",
               {
-                className: "rounded border border-slate-800 bg-slate-950/40 p-3"
+                className: CONFIGURATION_FIELD_CLASS
               },
               React.createElement(
                 "span",
-                { className: "text-slate-400 block mb-1" },
+                { className: CONFIGURATION_LABEL_CLASS },
                 "Default tools approval mode"
               ),
               React.createElement(
@@ -471,14 +476,14 @@ export function McpDetailView({
       ),
       React.createElement(
         "div",
-        { className: "flex flex-col gap-2" },
+        { className: FLEX_COLUMN_DETAILS_CLASS },
         React.createElement(StatusBadge, {
           status: NOT_OBSERVED_STATUS,
           label: "Probe status: Not observed"
         }),
         React.createElement(
           "p",
-          { className: "text-xs text-slate-400" },
+          { className: STATUS_HELP_CLASS },
           "Ping round trip and process health are unprobed in the static configuration. Connection requires an active runtime session."
         )
       )
@@ -550,14 +555,14 @@ export function McpDetailView({
       ),
       React.createElement(
         "div",
-        { className: "flex flex-col gap-2" },
+        { className: FLEX_COLUMN_DETAILS_CLASS },
         React.createElement(StatusBadge, {
           status: NOT_OBSERVED_STATUS,
           label: "Resources inventory: Not observed"
         }),
         React.createElement(
           "p",
-          { className: "text-xs text-slate-400" },
+          { className: STATUS_HELP_CLASS },
           "Live server resource schemas, URIs, and read/preview capabilities require an active MCP session connection."
         )
       )
@@ -576,14 +581,14 @@ export function McpDetailView({
       ),
       React.createElement(
         "div",
-        { className: "flex flex-col gap-2" },
+        { className: FLEX_COLUMN_DETAILS_CLASS },
         React.createElement(StatusBadge, {
           status: NOT_OBSERVED_STATUS,
           label: "Prompts inventory: Not observed"
         }),
         React.createElement(
           "p",
-          { className: "text-xs text-slate-400" },
+          { className: STATUS_HELP_CLASS },
           "Server prompt templates and arguments require an active MCP session connection."
         )
       )
@@ -602,14 +607,14 @@ export function McpDetailView({
       ),
       React.createElement(
         "div",
-        { className: "flex flex-col gap-2" },
+        { className: FLEX_COLUMN_DETAILS_CLASS },
         React.createElement(StatusBadge, {
           status: NOT_OBSERVED_STATUS,
           label: "Activity: Not observed"
         }),
         React.createElement(
           "p",
-          { className: "text-xs text-slate-400" },
+          { className: STATUS_HELP_CLASS },
           "Tools, resources, prompts, and activity round-trips are observed by the Codex-tools MCP shim span. No telemetry traces observed for this server."
         )
       )
@@ -628,14 +633,14 @@ export function McpDetailView({
       ),
       React.createElement(
         "div",
-        { className: "flex flex-col gap-2" },
+        { className: FLEX_COLUMN_DETAILS_CLASS },
         React.createElement(StatusBadge, {
           status: NOT_OBSERVED_STATUS,
           label: "Error logs: Not observed"
         }),
         React.createElement(
           "p",
-          { className: "text-xs text-slate-400" },
+          { className: STATUS_HELP_CLASS },
           "No errors observed. Failure states are reported when the MCP process exits non-zero or returns JSON-RPC protocol error envelopes."
         )
       )

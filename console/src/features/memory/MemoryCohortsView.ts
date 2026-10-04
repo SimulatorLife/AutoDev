@@ -1,4 +1,5 @@
 import type {
+  MemoryInjectionUseCohortCell,
   MemoryInjectionUseCohortPage,
   MemorySessionOutcomeCohortCell,
   MemorySessionOutcomeCohortPage
@@ -11,6 +12,8 @@ import {
   DataTable
 } from "../../components/tables/DataTable.ts";
 
+const MUTED_TEXT_CLASS = "text-slate-400";
+
 export interface MemoryCohortsViewProps {
   readonly sessionCohorts?: MemorySessionOutcomeCohortPage | null | undefined;
   readonly useCohorts?: MemoryInjectionUseCohortPage | null | undefined;
@@ -22,13 +25,22 @@ export interface MemoryCohortsViewProps {
 
 export function MemoryCohortsView({
   sessionCohorts,
-  useCohorts: _useCohorts,
+  useCohorts,
   currentWorkspaceId,
   repositoryId,
   occurredFrom,
   occurredUntil
 }: MemoryCohortsViewProps): React.JSX.Element {
   const sessionCells = sessionCohorts?.cells ?? [];
+  const useCells = useCohorts?.cells ?? [];
+  const assessedExposureCount = useCells.reduce(
+    (count, cell) => count + (cell.useKind === null ? 0 : cell.exposureCount),
+    0
+  );
+  const unassessedExposureCount = useCells.reduce(
+    (count, cell) => count + (cell.useKind === null ? cell.exposureCount : 0),
+    0
+  );
 
   const cellColumns: ColumnDef<MemorySessionOutcomeCohortCell>[] = [
     {
@@ -74,7 +86,7 @@ export function MemoryCohortsView({
                 ? "text-emerald-400"
                 : cell.outcomeKind === "failure"
                   ? "text-rose-400"
-                  : "text-slate-400"
+                  : MUTED_TEXT_CLASS
             }`
           },
           cell.outcomeKind ?? "unreported"
@@ -89,6 +101,57 @@ export function MemoryCohortsView({
           "span",
           { className: "font-mono text-sm font-bold text-slate-100" },
           cell.sessionCount.toLocaleString()
+        )
+    }
+  ];
+
+  const useCellColumns: ColumnDef<MemoryInjectionUseCohortCell>[] = [
+    {
+      id: "mode",
+      header: "Assigned Mode",
+      width: "160px",
+      cell: (cell) =>
+        React.createElement(
+          "span",
+          { className: "font-mono text-xs font-semibold text-slate-200" },
+          cell.memoryMode
+        )
+    },
+    {
+      id: "sessionCardinality",
+      header: "Session Cardinality",
+      width: "180px",
+      cell: (cell) =>
+        React.createElement(
+          "span",
+          { className: "font-mono text-xs text-slate-300" },
+          cell.sessionCardinality
+        )
+    },
+    {
+      id: "useKind",
+      header: "Curator Assessment",
+      width: "190px",
+      cell: (cell) =>
+        React.createElement(
+          "span",
+          {
+            className: `font-mono text-xs ${
+              cell.useKind === null ? MUTED_TEXT_CLASS : "text-cyan-300"
+            }`
+          },
+          cell.useKind ?? "Unassessed"
+        )
+    },
+    {
+      id: "exposureCount",
+      header: "Eligible Exposures",
+      width: "180px",
+      cell: (cell) =>
+        React.createElement(
+          "span",
+          { className: "font-mono text-sm font-bold text-slate-100" },
+          cell.exposureCount.toLocaleString()
         )
     }
   ];
@@ -108,7 +171,7 @@ export function MemoryCohortsView({
         { className: "flex items-center gap-2" },
         React.createElement(
           "span",
-          { className: "text-slate-400" },
+          { className: MUTED_TEXT_CLASS },
           "Repository Scope:"
         ),
         React.createElement(
@@ -120,7 +183,7 @@ export function MemoryCohortsView({
       React.createElement(
         "div",
         { className: "flex items-center gap-2" },
-        React.createElement("span", { className: "text-slate-400" }, "Window:"),
+        React.createElement("span", { className: MUTED_TEXT_CLASS }, "Window:"),
         React.createElement(
           "span",
           { className: "font-mono text-slate-200" },
@@ -196,6 +259,74 @@ export function MemoryCohortsView({
           emptyMessage:
             "No session outcome cohort data found for the specified scope and time window."
         }
+      )
+    ),
+
+    // Section: curator-assessed injection use. These are exposure counts,
+    // not task outcomes or causal effectiveness measurements.
+    React.createElement(
+      "div",
+      {
+        className: "flex flex-col gap-3",
+        "data-memory-use-cohorts-state": useCohorts ? "observed" : "unavailable"
+      },
+      React.createElement(
+        "h3",
+        {
+          className:
+            "text-sm font-semibold uppercase tracking-wider text-slate-300"
+        },
+        "Injection-Use Assessments"
+      ),
+      useCohorts
+        ? React.createElement(
+            React.Fragment,
+            null,
+            React.createElement(
+              "div",
+              { className: "grid grid-cols-2 sm:grid-cols-3 gap-4" },
+              React.createElement(StatCard, {
+                title: "Eligible Exposures",
+                value: useCohorts.exposureCount
+              }),
+              React.createElement(StatCard, {
+                title: "Assessed Exposures",
+                value: assessedExposureCount
+              }),
+              React.createElement(StatCard, {
+                title: "Unassessed Exposures",
+                value: unassessedExposureCount,
+                subtitle: "Absence is not a not-used assessment"
+              })
+            ),
+            React.createElement<DataTableProps<MemoryInjectionUseCohortCell>>(
+              DataTable,
+              {
+                data: useCells,
+                columns: useCellColumns,
+                keyExtractor: (cell: MemoryInjectionUseCohortCell) =>
+                  `${cell.memoryMode}-${cell.sessionCardinality}-${cell.useKind ?? "unassessed"}`,
+                emptyMessage:
+                  "No eligible injected memory exposures were observed for this scope and time window."
+              }
+            )
+          )
+        : React.createElement(
+            "p",
+            {
+              className:
+                "rounded-lg border border-slate-800 bg-slate-900/40 p-4 text-xs text-slate-400",
+              "data-memory-use-cohorts-empty": true
+            },
+            "Injection-use cohorts were not observed for this request. This is not evidence that no memories were used or assessed."
+          ),
+      React.createElement(
+        "p",
+        {
+          className:
+            "rounded-lg border border-slate-800 bg-slate-900/40 p-4 text-xs leading-relaxed text-slate-400"
+        },
+        "Use assessments are separately curator-reported observations about eligible injected packets. They do not report task success, infer use from model output, or establish causal effectiveness."
       )
     )
   );

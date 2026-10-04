@@ -13,6 +13,7 @@ export * from "./components/tables/DataTable.ts";
 export * from "./features/agents/AgentDetailView.ts";
 export * from "./features/agents/AgentsView.ts";
 export * from "./features/evaluations/EvaluationsView.ts";
+export * from "./features/github/GithubView.ts";
 export * from "./features/hooks/HooksView.ts";
 export * from "./features/mcps/McpDetailView.ts";
 export * from "./features/mcps/McpsView.ts";

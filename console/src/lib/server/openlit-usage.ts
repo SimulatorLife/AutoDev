@@ -16,6 +16,7 @@ import {
 
 const DEFAULT_OPENLIT_USAGE_BASE_URL = "http://127.0.0.1:3000";
 const TRAILING_SLASHES = /\/+$/u;
+const SECRET_FILE_LINE_BREAK = /\r?\n/u;
 const VALID_RANGES = new Set<UsageTimeRange>([
   "24H",
   "7D",
@@ -45,7 +46,7 @@ export type ConsoleUsageResult =
 function readSecretFromFile(filePath: string, key: string): string | null {
   try {
     const content = readFileSync(filePath, "utf8");
-    for (const line of content.split(/\r?\n/u)) {
+    for (const line of content.split(SECRET_FILE_LINE_BREAK)) {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith("#")) continue;
       const stripped = trimmed.startsWith("export ")
@@ -53,11 +54,12 @@ function readSecretFromFile(filePath: string, key: string): string | null {
         : trimmed;
       if (!stripped.startsWith(`${key}=`)) continue;
       const rawValue = stripped.slice(key.length + 1).trim();
-      const first = rawValue[0];
-      const last = rawValue.at(-1);
+      const leading = rawValue[0];
+      const trailing = rawValue.at(-1);
       const quoted =
         rawValue.length >= 2 &&
-        ((first === '"' && last === '"') || (first === "'" && last === "'"));
+        ((leading === '"' && trailing === '"') ||
+          (leading === "'" && trailing === "'"));
       const value = quoted ? rawValue.slice(1, -1) : rawValue;
       return value || null;
     }

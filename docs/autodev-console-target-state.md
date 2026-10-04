@@ -8,7 +8,7 @@
 >
 > **Focused Memory design:** [memory-target-state.md](memory-target-state.md) and [memory-injection-outcome-evaluation.md](memory-injection-outcome-evaluation.md).
 >
-> **Last reviewed:** 2026-10-04.
+> **Last reviewed:** 2026-10-04 (GitHub read-only Actions state/statistics path alignment).
 
 ## 1. Canonical-document contract
 
@@ -432,7 +432,7 @@ The Console remains one application/package. A lightweight typed feature registr
 | **Evaluations** | evaluation definitions/storage + OTel | definitions, runs/results/history, targets, comparisons, trace linkage |
 | **Memory** | MemoryService/Data; OpenLIT-adapted connector capabilities | browse/search/detail/provenance/lifecycle/actions/effectiveness through AutoDev Console |
 | **Workspaces** | AutoDev configuration + OTel | repository catalog, enablement/scope, configuration/runtime health, aggregate usage |
-| **GitHub** | workflow/config/scheduler sources + observed Actions API | workflows/schedules, runs, bounded counts, allowlisted operator controls |
+| **GitHub** | workflow YAML (definitions/cron) + config/workspaces.json (workspace identity/scope) + observed GitHub Actions API (runtime state/stats) | parsed workflow definitions + cron schedules, workspace-bound observed workflow state (active vs disabled), bounded recent run sample, bounded run statistics; allowlisted operator controls (dispatch/cancel/rerun/schedule) deferred |
 
 ### Agents
 
@@ -500,11 +500,27 @@ Retain useful evaluation definitions/results/history and trace linkage without R
 
 ### GitHub
 
-Workflow files remain authoritative for workflow definitions/cron triggers. config/workspaces.json is the target owner for workspace identity, enablement, and resource scope once that registry is completed. Scheduler weights/policy remain in the scheduler's canonical policy. The Console must not fork any of these into a second schedule/configuration authority.
+Workflow files (`.github/workflows/*.yml`) remain authoritative for workflow *definitions* and configured cron triggers. `config/workspaces.json` is the target owner for workspace identity, enablement, and resource scope. Scheduler weights/policy remain in the scheduler's canonical policy. The Console must not fork any of these into a second schedule/configuration authority, and the GitHub page must never expose raw provider credentials, arbitrary workflow IDs, or arbitrary workflow inputs to the browser.
 
-Observed run/workflow state comes from the GitHub Actions API. Missing credentials/API evidence remain unavailable/unknown, never synthetic idle/healthy.
+The Console `/github` resource and the Control API `GET /control/github` are an authenticated, read-only path that pairs parsed workflow definitions with the corresponding observed GitHub Actions runtime state:
 
-Restrict dispatch/cancel/rerun/schedule controls to explicit allowlists and configured workspace scope. Keep credentials server-side; never expose raw credentials, arbitrary workflow IDs, or arbitrary workflow inputs to the browser.
+- YAML definition facts (`name`, `path`, sorted trigger events, sorted cron schedules) come from a typed Data reader (`GithubWorkflowRepository`); `.github/workflows/*.yml` files are parsed using YAML 1.2 `on:` semantics (preserving strings vs booleans). A missing `.github/workflows` directory or any workflow file that fails YAML parse yields an explicit `unavailable`/`invalid` catalog status without synthesizing a workflow count.
+- The Control API exposes an authenticated GET-only collection endpoint (`/control/github`, `schema: autodev-control-github-v1`, `readOnly: true`) that requires valid Control API service credentials and actor verification, and strictly rejects non-`GET` methods with HTTP 405 Method Not Allowed.
+- Server-side `AUTODEV_GITHUB_TOKEN` and `AUTODEV_GITHUB_REPOSITORY` are validated against an enabled canonical workspace: `AUTODEV_GITHUB_REPOSITORY` (or standard runner `GITHUB_REPOSITORY`) must reference a recognized workspace entry in `config/workspaces.json` that is explicitly enabled (`enabled: true`). Missing credentials or unconfigured repository scopes surface as `unavailable`; an unrecognized workspace, a disabled workspace, or malformed repository coordinates surface as `invalid`. `AUTODEV_GITHUB_TOKEN` remains strictly server-side, is never transmitted to the browser, and is redacted (`[REDACTED]`) from error messages.
+- Observed Actions API runtime facts — workflow enabled/disabled state, workflow id, html URL, recent run count, last run status/conclusion/timestamp/URL, and a bounded recent run sample — come from a typed Data adapter (`GithubActionsAdapter`) enforcing strict network and parsing invariants:
+  - Fixed origin: contacts only `https://api.github.com`; caller-supplied hosts are forbidden;
+  - Redirects denied: all HTTP redirects are rejected (`redirect: "error"`);
+  - Path safety: repository path segments are URI-encoded (`encodeURIComponent`), and path traversal segments (`.` and `..`) are rejected before any network call;
+  - Streamed byte caps & timeouts: responses are streamed and strictly capped at 1MiB (`MAX_RESPONSE_BYTES = 1_048_576`), and request timeouts (`DEFAULT_TIMEOUT_MS = 10_000`) remain actively enforced throughout body consumption;
+  - Fail-closed record validation: malformed collection payloads and malformed workflow or run records fail closed (`invalid_payload` / 502) rather than silently dropping or coercing records;
+  - HTTP error preservation: oversized, unreadable, or unparseable error response bodies do not erase HTTP auth/rate status codes (HTTP 401 Unauthorized, 403 Forbidden, 429 Too Many Requests, and 404 Not Found remain authoritative);
+  - Configured workflows cap: workflow listing is capped at 100 (`per_page=100`), failing with explicit partial status (`partial_result` / 502) if more than 100 workflows exist.
+- Bounded latest-run statistics (`totalRuns`, `successfulRuns`, `failedRuns`, `inProgressRuns`, `cancelledRuns`, `successRate`) are computed over a bounded recent-run sample (default 30 runs, max bounded limit 100):
+  - `successRate` denominator is strictly all sampled completed runs (in-progress, queued, waiting, requested, and pending runs are excluded; non-success conclusions including failure, timed_out, action_required, startup_failure, cancelled, or missing conclusions remain in the denominator);
+  - `successRate` is null (never synthesized as zero or 100%) until at least one completed run has been observed in the sample.
+- State correctness and distinctions preserved: missing credentials, unconfigured repository, disabled workspace, or GitHub API failures surface as explicit `unavailable` or `invalid` runtime states with redacted diagnostic messages; the page never synthesizes idle/healthy or zero counts.
+- Dispatch, cancel, rerun, and schedule mutation controls remain **explicitly unimplemented** in both the GitHub resource surface and Control API. The Console must not expose them as browser-side affordances, and `GET /control/github` rejects non-`GET` methods with HTTP 405.
+- Acceptance boundary: runtime state and statistics are verified through the pinned Data, Runtime, and Console test suites against injected fetch adapters. No live production credential, remote repository, or browser acceptance was performed; live acceptance with production tokens remains a separate open verification step.
 
 ## 10. Usage and telemetry contract
 
@@ -615,6 +631,8 @@ Use named typed operations only; no arbitrary command endpoint.
 
 For RuleSync-owned resources, mutations change canonical RuleSync input and execute validation/generation/apply. Runtime-owned resources mutate their typed owner. Tools is primarily a composite read model. Usage uses its dedicated fixed read-only telemetry path rather than becoming a mutation/control resource.
 
+`/control/github` is a fixed read-only collection route that pairs parsed workflow definitions with observed Actions API runtime state/statistics (the schema is `autodev-control-github-v1`); it rejects non-`GET` methods with HTTP 405 and never exposes dispatch/cancel/rerun/schedule mutations. Tokens, repository coordinates outside the workspace registry, and arbitrary workflow inputs are enforced server-side; the browser never sees raw credentials or accepts arbitrary workflow identifiers.
+
 The browser uses same-origin TypeScript server routes/proxies. The private Control API listener remains separate from the model/OTLP router listener.
 
 ### Single-user identity and security
@@ -703,6 +721,16 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 - desired/actual/pending/error convergence;
 - telemetry/query paths cannot mutate AutoDev;
 - GitHub operations are typed, allowlisted, scoped, and server-credentialed.
+
+### GitHub
+
+- `.github/workflows/*.yml` files remain the authoritative source for workflow definitions and cron schedules; the Data reader preserves YAML 1.2 `on:` semantics and exposes `valid`/`invalid`/`unavailable` catalog status without fabricating a workflow count.
+- The Data `GithubActionsAdapter` contacts only the fixed `https://api.github.com` origin with server-supplied bearer tokens; redirects are denied (`redirect: "error"`), path segments are encoded with `.` and `..` traversal rejected, responses are streamed and bounded to 1MiB with active timeouts, malformed records fail closed (`invalid_payload`), and oversized or unparseable error bodies preserve HTTP auth/rate status (401, 403, 429, 404). The adapter redacts tokens from error messages and never returns a synthetic zero/healthy result when credentials, repository, or API evidence are absent.
+- The Control API `/control/github` route is an authenticated, read-only GET endpoint (`schema: autodev-control-github-v1`, `readOnly: true`, `runtimeFactsAvailable` flag) requiring Control API credentials and rejecting non-`GET` methods with HTTP 405; the Console renders explicit `Unavailable`/`Invalid` runtime status with redacted messages rather than synthesizing zeros or healthy state.
+- Server-side `AUTODEV_GITHUB_TOKEN` and `AUTODEV_GITHUB_REPOSITORY` validated against an enabled canonical workspace in `config/workspaces.json` (`enabled: true`) are required for observed runtime facts; missing credentials yield `unavailable`, while unrecognized or disabled workspaces yield `invalid`.
+- Workflows are capped at 100 with explicit partial status (`partial_result`) if more exist; run statistics are computed over a bounded recent-run sample (default 30 runs); `successRate` denominator is all sampled completed runs (in-progress excluded; non-success/missing conclusions in denominator; null when 0 completed runs in sample).
+- Dispatch, cancel, rerun, and schedule mutation controls remain explicitly unimplemented in both the Console resource and the Control API; tests must not relax this and must not introduce mutation routes.
+- Production-credential, remote-repository, and browser acceptance for the read-only state/statistics path remains unobserved; verification is strictly through the pinned Data, Runtime, and Console test suites against injected fetch adapters.
 
 ### Fork/upgrades
 

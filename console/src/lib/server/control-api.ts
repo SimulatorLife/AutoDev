@@ -17,36 +17,53 @@
  */
 
 import { readFileSync } from "node:fs";
-import { join as pathJoin } from "node:path";
+import nodePath from "node:path";
 
-import { LOCAL_CONTROL_API_ACTOR } from "@simulatorlife/autodev-core";
+import {
+  type ControlApiAgentDetailResponse,
+  type ControlApiAgentsResponse,
+  type ControlApiError,
+  type ControlApiEvaluationsResponse,
+  type ControlApiGithubResponse,
+  type ControlApiGithubMutationResponse,
+  type GithubWorkflowMutationRequest,
+  type ControlApiHooksResponse,
+  type ControlApiMcpsResponse,
+  type ControlApiMemoryCohortsResponse,
+  type ControlApiMemoryExperienceDetailResponse,
+  type ControlApiMemoryExperiencesResponse,
+  type ControlApiMemoryHistoryResponse,
+  type ControlApiMemoryRecordDetailResponse,
+  type ControlApiMemoryRecordsResponse,
+  type ControlApiMemoryUseCohortsResponse,
+  type ControlApiModelsResponse,
+  type ControlApiPermissionsResponse,
+  type ControlApiPromptDetailResponse,
+  type ControlApiPromptsResponse,
+  type ControlApiProvidersResponse,
+  type ControlApiRoutingResponse,
+  type ControlApiRuntimeResponse,
+  type ControlApiSkillsResponse,
+  type ControlApiToolsResponse,
+  type ControlApiWorkspacesResponse,
+  LOCAL_CONTROL_API_ACTOR
+} from "@simulatorlife/autodev-core";
 
-import type {
-  ControlApiAgentDetailResponse,
-  ControlApiAgentsResponse,
-  ControlApiError,
-  ControlApiEvaluationsResponse,
-  ControlApiHooksResponse,
-  ControlApiMcpsResponse,
-  ControlApiMemoryCohortsResponse,
-  ControlApiMemoryExperienceDetailResponse,
-  ControlApiMemoryExperiencesResponse,
-  ControlApiMemoryHistoryResponse,
-  ControlApiMemoryRecordDetailResponse,
-  ControlApiMemoryRecordsResponse,
-  ControlApiMemoryUseCohortsResponse,
-  ControlApiModelsResponse,
-  ControlApiPermissionsResponse,
-  ControlApiPromptDetailResponse,
-  ControlApiPromptsResponse,
-  ControlApiProvidersResponse,
-  ControlApiResult,
-  ControlApiRoutingResponse,
-  ControlApiRuntimeResponse,
-  ControlApiSkillsResponse,
-  ControlApiToolsResponse,
-  ControlApiWorkspacesResponse
-} from "./types.ts";
+export type ControlApiResult<T> =
+  | { readonly kind: "ok"; readonly data: T }
+  | {
+      readonly kind: "unauthorized";
+      readonly status: number;
+      readonly code: string;
+      readonly message: string;
+    }
+  | {
+      readonly kind: "http-error";
+      readonly status: number;
+      readonly code: string;
+      readonly message: string;
+    }
+  | { readonly kind: "unreachable"; readonly message: string };
 
 const DEFAULT_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
 const CONTROL_API_TIMEOUT_MS = 5000;
@@ -90,11 +107,11 @@ export function readControlApiConfig(
   if (!serviceToken) {
     const home = env.HOME?.trim();
     const codexHome =
-      env.CODEX_HOME?.trim() || (home ? pathJoin(home, ".codex") : null);
+      env.CODEX_HOME?.trim() || (home ? nodePath.join(home, ".codex") : null);
     if (codexHome) {
       const secretFile =
         env.AUTODEV_OPENLIT_SECRET_FILE?.trim() ||
-        pathJoin(codexHome, "openlit-secrets.env");
+        nodePath.join(codexHome, "openlit-secrets.env");
       serviceToken =
         readSecretFromFile(secretFile, "AUTODEV_CONTROL_API_TOKEN") ?? "";
     }
@@ -282,6 +299,8 @@ export const CONTROL_API_PATHS = {
   routing: "/control/routing",
   runtime: "/control/runtime",
   evaluations: "/control/evaluations",
+  github: "/control/github",
+  githubMutations: "/control/github/mutations",
   memoryRecords: "/control/memory/records",
   memoryExperiences: "/control/memory/experiences",
   memoryCohorts: "/control/memory/cohorts",
@@ -419,6 +438,38 @@ export function fetchWorkspaces(
 ): Promise<ControlApiResult<ControlApiWorkspacesResponse>> {
   return fetchControlApi<ControlApiWorkspacesResponse>(
     CONTROL_API_PATHS.workspaces,
+    config,
+    options
+  );
+}
+
+export function fetchGithubWorkflows(
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiGithubResponse>> {
+  return fetchControlApi<ControlApiGithubResponse>(
+    CONTROL_API_PATHS.github,
+    config,
+    options
+  );
+}
+
+export function mutateGithubWorkflow(
+  payload: GithubWorkflowMutationRequest,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiGithubMutationResponse>> {
+  const body: GithubWorkflowMutationRequest = {
+    operation: payload.operation,
+    workflow: payload.workflow,
+    idempotencyKey: payload.idempotencyKey,
+    ...(payload.expectedState
+      ? { expectedState: payload.expectedState }
+      : {})
+  };
+  return postControlApi<ControlApiGithubMutationResponse>(
+    CONTROL_API_PATHS.githubMutations,
+    body,
     config,
     options
   );

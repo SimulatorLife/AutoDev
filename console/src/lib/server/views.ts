@@ -6,6 +6,15 @@
 
 import type {
   AgentDefinition,
+  ControlApiAgentDetailResponse,
+  ControlApiAgentRecord,
+  ControlApiAgentsResponse,
+  ControlApiHooksResponse,
+  ControlApiPermissionsResponse,
+  ControlApiPromptDetailResponse,
+  ControlApiPromptsResponse,
+  ControlApiSkillsResponse,
+  ControlApiWorkspacesResponse,
   EvaluationResult,
   HookDefinition,
   PermissionPolicy,
@@ -15,18 +24,6 @@ import type {
   SkillDefinition,
   WorkspaceEntry
 } from "@simulatorlife/autodev-core";
-
-import type {
-  ControlApiAgentDetailResponse,
-  ControlApiAgentRecord,
-  ControlApiAgentsResponse,
-  ControlApiHooksResponse,
-  ControlApiPermissionsResponse,
-  ControlApiPromptDetailResponse,
-  ControlApiPromptsResponse,
-  ControlApiSkillsResponse,
-  ControlApiWorkspacesResponse
-} from "./types.ts";
 
 const ROLE_COLLATOR = new Intl.Collator();
 

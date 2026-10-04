@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
   type AgentDefinition,
+  CANONICAL_NAV_GROUPS,
   CANONICAL_NAVIGATION,
   type CanonicalNavSection,
   type ExperienceEnvelope,
+  type GithubWorkflowDefinition,
   LOCAL_CONTROL_API_ACTOR,
   type MemoryRecord,
   type MemorySessionOutcomeCohortPage
@@ -22,6 +24,7 @@ import {
   AppNav,
   DataTable,
   EvaluationsView,
+  GithubView,
   HooksView,
   McpDetailView,
   McpsView,
@@ -48,15 +51,10 @@ import {
   fetchAgentDetail,
   fetchControlApi,
   fetchEvaluations,
-  fetchMemoryCohorts,
-  fetchMemoryExperiences,
-  fetchMemoryHistory,
-  fetchMemoryRecord,
+  fetchGithubWorkflows,
   fetchMemoryRecords,
   fetchPromptDetail,
   fetchProviders,
-  fetchRouting,
-  fetchRuntime,
   fetchTools,
   readControlApiConfig
 } from "../src/lib/server/control-api.ts";
@@ -93,7 +91,7 @@ const CONFIGURED_AGENT: AgentDefinition = {
   toolNames: ["orchestration", "playwright"]
 };
 
-test("AppNav renders exact 11 canonical navigation items in order via URL links", () => {
+test("AppNav renders Configure/Observe/Operate groups with canonical membership, order, and URL links", () => {
   const markup = renderToStaticMarkup(
     React.createElement(AppNav, {
       activeSection: "Agents",
@@ -101,12 +99,68 @@ test("AppNav renders exact 11 canonical navigation items in order via URL links"
     })
   );
 
+  // The three canonical groups must each appear with the expected heading
+  // and an aria-labelledby binding for accessibility.
+  for (const groupId of ["Configure", "Observe", "Operate"] as const) {
+    const headingId = `autodev-nav-group-${groupId.toLowerCase()}`;
+    assert.ok(
+      markup.includes(`id="${headingId}"`),
+      `AppNav must render the heading for ${groupId}`
+    );
+    assert.ok(
+      markup.includes(`aria-labelledby="${headingId}"`),
+      `AppNav must bind the ${groupId} section to its heading`
+    );
+    assert.ok(
+      markup.includes(`data-nav-group="${groupId}"`),
+      `AppNav must expose data-nav-group="${groupId}"`
+    );
+    const visibleLabel = new RegExp(`>${groupId}<`);
+    assert.ok(
+      visibleLabel.test(markup),
+      `AppNav must render the visible label "${groupId}"`
+    );
+  }
+
+  // Each group must list its sections in canonical order, and groups must
+  // appear Configure → Observe → Operate.
+  const expectedOrder: readonly (typeof CANONICAL_NAV_GROUPS)[number][] = [
+    ...CANONICAL_NAV_GROUPS
+  ];
+  const groupIndexes = expectedOrder.map((group) =>
+    markup.indexOf(`data-nav-group="${group.id}"`)
+  );
+  for (const [i, idx] of groupIndexes.entries()) {
+    assert.ok(idx !== -1, `Group ${expectedOrder[i]?.id} must render`);
+    if (i > 0) {
+      assert.ok(
+        (idx ?? -1) > (groupIndexes[i - 1] ?? -1),
+        `Group order must be Configure → Observe → Operate`
+      );
+    }
+  }
+
   let lastIndex = -1;
-  for (const section of CANONICAL_NAVIGATION) {
-    const idx = markup.indexOf(`data-nav-item="${section.toLowerCase()}"`);
-    assert.ok(idx !== -1, `${section} must be present in AppNav`);
-    assert.ok(idx > lastIndex, `${section} must appear in canonical order`);
-    lastIndex = idx;
+  for (const group of CANONICAL_NAV_GROUPS) {
+    const groupStart = markup.indexOf(`data-nav-group="${group.id}"`);
+    let groupEnd = markup.length;
+    for (const other of CANONICAL_NAV_GROUPS) {
+      if (other.id === group.id) continue;
+      const candidate = markup.indexOf(`data-nav-group="${other.id}"`);
+      if (candidate !== -1 && candidate > groupStart && candidate < groupEnd) {
+        groupEnd = candidate;
+      }
+    }
+    for (const section of group.sections) {
+      const idx = markup.indexOf(`data-nav-item="${section.toLowerCase()}"`);
+      assert.ok(idx !== -1, `${section} must be present in AppNav`);
+      assert.ok(idx > lastIndex, `${section} must appear in canonical order`);
+      assert.ok(
+        idx >= groupStart && idx < groupEnd,
+        `${section} must be rendered inside the ${group.id} group`
+      );
+      lastIndex = idx;
+    }
   }
 
   // AppNav must render the canonical sections through real <a href="/...">
@@ -859,6 +913,180 @@ test("WorkspacesView never reports 'Available' without runtime evidence", () => 
   assert.match(markup, /data-workspace-availability-observed="false"/);
 });
 
+test("GithubView renders parsed workflow triggers and keeps Actions API facts explicitly unavailable", () => {
+  const workflows: readonly GithubWorkflowDefinition[] = [
+    {
+      id: "_scheduler.yml",
+      name: "scheduler",
+      path: ".github/workflows/_scheduler.yml",
+      events: ["schedule", "workflow_dispatch"],
+      schedules: ["*/15 * * * *"]
+    },
+    {
+      id: "agent-invoke.yml",
+      name: null,
+      path: ".github/workflows/agent-invoke.yml",
+      events: ["workflow_call"],
+      schedules: []
+    }
+  ];
+  const markup = renderToStaticMarkup(
+    React.createElement(GithubView, { workflows })
+  );
+
+  // Observed definition facts render as real content.
+  assert.ok(markup.includes("scheduler"));
+  assert.ok(markup.includes("*/15 * * * *"));
+  assert.ok(markup.includes(".github/workflows/_scheduler.yml"));
+  assert.ok(markup.includes("workflow_call"));
+  assert.ok(markup.includes("No schedule trigger"));
+
+  // Unobserved runtime facts must never be synthesized as live/healthy.
+  assert.equal(markup.includes("Enabled"), false);
+  assert.equal(markup.includes("Active"), false);
+  assert.match(markup, /data-github-actions-facts-observed="false"/);
+  assert.ok(markup.includes("Unavailable"));
+  assert.ok(
+    markup.includes("GitHub Actions API") || markup.includes("Actions API")
+  );
+
+  // No dispatch/cancel/rerun/schedule controls ship in this slice.
+  assert.equal(markup.includes("<button"), false);
+});
+
+test("GithubView renders an explicit empty state with no workflow definitions", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(GithubView, { workflows: [] })
+  );
+  assert.ok(markup.includes("No workflow definitions were found."));
+});
+
+test("GithubView renders authoritative read-only GitHub Actions runtime state and scoped stats when observed", () => {
+  const workflows: readonly GithubWorkflowDefinition[] = [
+    {
+      id: "_scheduler.yml",
+      name: "scheduler",
+      path: ".github/workflows/_scheduler.yml",
+      events: ["schedule", "workflow_dispatch"],
+      schedules: ["*/15 * * * *"],
+      actionsState: "active",
+      actionsWorkflowId: 101,
+      actionsHtmlUrl:
+        "https://github.com/SimulatorLife/AutoDev/actions/workflows/_scheduler.yml",
+      recentRunsCount: 2,
+      lastRunStatus: "completed",
+      lastRunConclusion: "success",
+      lastRunCreatedAt: "2026-10-04T05:00:00Z",
+      lastRunHtmlUrl:
+        "https://github.com/SimulatorLife/AutoDev/actions/runs/5001"
+    },
+    {
+      id: "agent-invoke.yml",
+      name: "Agent Invoke",
+      path: ".github/workflows/agent-invoke.yml",
+      events: ["workflow_call"],
+      schedules: [],
+      actionsState: "disabled_manually",
+      actionsWorkflowId: 102,
+      actionsHtmlUrl:
+        "https://github.com/SimulatorLife/AutoDev/actions/workflows/agent-invoke.yml",
+      recentRunsCount: 0,
+      lastRunStatus: null,
+      lastRunConclusion: null,
+      lastRunCreatedAt: null,
+      lastRunHtmlUrl: null
+    }
+  ];
+
+  const markup = renderToStaticMarkup(
+    React.createElement(GithubView, {
+      workflows,
+      runtimeFactsAvailable: true,
+      runtimeStatus: "available",
+      repository: "SimulatorLife/AutoDev",
+      stats: {
+        totalRuns: 1,
+        successfulRuns: 1,
+        failedRuns: 0,
+        inProgressRuns: 0,
+        cancelledRuns: 0,
+        successRate: 1
+      },
+      recentRuns: [
+        {
+          id: 5001,
+          name: "scheduler",
+          workflowId: 101,
+          workflowPath: ".github/workflows/_scheduler.yml",
+          headBranch: "main",
+          headSha: "c47aeaa297b555fbd0b3cf961028bc8ae06485ed",
+          event: "schedule",
+          status: "completed",
+          conclusion: "success",
+          htmlUrl: "https://github.com/SimulatorLife/AutoDev/actions/runs/5001",
+          createdAt: "2026-10-04T05:00:00Z",
+          updatedAt: "2026-10-04T05:05:00Z",
+          runAttempt: 1
+        }
+      ]
+    })
+  );
+
+  // Observed facts and indicators
+  assert.match(markup, /data-github-actions-facts-observed="true"/);
+  assert.ok(markup.includes("Actions API Connected"));
+  assert.ok(markup.includes("SimulatorLife/AutoDev"));
+  assert.ok(markup.includes("Active"));
+  assert.ok(markup.includes("Disabled (Manual)"));
+
+  // Statistics
+  assert.ok(markup.includes("Recent Workflow Runs"));
+  assert.ok(markup.includes(">1<"));
+  assert.ok(markup.includes("most recent 1 returned run"));
+  assert.ok(markup.includes("not total-history counts"));
+  assert.ok(markup.includes("Recent Success Rate"));
+  assert.ok(markup.includes(">100%<"));
+
+  // Recent run row
+  assert.ok(markup.includes("#5001"));
+  assert.ok(markup.includes("c47aeaa"));
+  assert.ok(markup.includes("schedule"));
+
+  // Distinguishes YAML schedule from observed state:
+  assert.ok(markup.includes("*/15 * * * *"));
+  assert.ok(markup.includes("No schedule trigger"));
+
+  // Read-only: no buttons or mutations
+  assert.equal(markup.includes("<button"), false);
+});
+
+test("GithubView displays explicit unavailable notice without synthesizing zero or healthy values", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(GithubView, {
+      workflows: [
+        {
+          id: "ci.yml",
+          name: "CI",
+          path: ".github/workflows/ci.yml",
+          events: ["push"],
+          schedules: []
+        }
+      ],
+      runtimeFactsAvailable: false,
+      runtimeStatus: "unavailable",
+      runtimeMessage: "AUTODEV_GITHUB_TOKEN is not configured on the server."
+    })
+  );
+
+  assert.match(markup, /data-github-actions-facts-observed="false"/);
+  assert.ok(
+    markup.includes("AUTODEV_GITHUB_TOKEN is not configured on the server.")
+  );
+  assert.ok(markup.includes("Unavailable"));
+  assert.equal(markup.includes("Recent Success Rate"), false);
+  assert.equal(markup.includes("Active Workflows"), false);
+});
+
 test("ToolsView falls back to 'Unknown' when status is missing", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ToolsView, {
@@ -1123,6 +1351,44 @@ test("fetchEvaluations issues authenticated GET to /control/evaluations", async 
   }
 });
 
+test("fetchGithubWorkflows issues authenticated GET to /control/github", async () => {
+  const config = {
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "test-token-123"
+  };
+  const mockFetch: typeof fetch = async (input, init) => {
+    assert.equal(input, "http://127.0.0.1:4101/control/github");
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get("authorization"), "Bearer test-token-123");
+    assert.equal(headers.get("x-autodev-actor"), LOCAL_CONTROL_API_ACTOR);
+    return Response.json({
+      schema: "autodev-control-github-v1",
+      source: ".github/workflows",
+      readOnly: true,
+      catalogStatus: "valid",
+      totalWorkflows: 1,
+      runtimeFactsAvailable: false,
+      workflows: [
+        {
+          id: "_scheduler.yml",
+          name: "scheduler",
+          path: ".github/workflows/_scheduler.yml",
+          events: ["schedule", "workflow_dispatch"],
+          schedules: ["*/15 * * * *"]
+        }
+      ]
+    });
+  };
+  const result = await fetchGithubWorkflows(config, { fetchImpl: mockFetch });
+  assert.equal(result.kind, "ok");
+  if (result.kind === "ok") {
+    assert.equal(result.data.catalogStatus, "valid");
+    assert.equal(result.data.runtimeFactsAvailable, false);
+    assert.equal(result.data.workflows[0]?.id, "_scheduler.yml");
+    assert.deepEqual(result.data.workflows[0]?.schedules, ["*/15 * * * *"]);
+  }
+});
+
 test("EvaluationsView renders metrics, pass rate, and outcome badges when evaluations exist", () => {
   const markup = renderToStaticMarkup(
     React.createElement(EvaluationsView, {
@@ -1366,26 +1632,27 @@ test("View adapters translate Control API responses without inventing data", () 
   assert.equal(perms.roleMatrices[0]?.sandboxMode, "workspace-write");
 });
 
-test("All 11 canonical Console route paths map to a canonical nav section", () => {
+test("All 12 canonical Console route paths map to a canonical nav section", () => {
   for (const section of CANONICAL_NAVIGATION) {
     const path = canonicalNavPath(section);
     assert.equal(canonicalSectionFromPath(path), section);
   }
   assert.equal(canonicalSectionFromPath("/not-a-resource"), null);
 });
-test("Canonical nav order is preserved (Agents through Workspaces)", () => {
+test("Canonical nav order matches Configure/Observe/Operate grouping", () => {
   const expected: readonly CanonicalNavSection[] = [
     "Agents",
     "MCPs",
     "Skills",
     "Hooks",
-    "Memory",
-    "Evaluations",
+    "Prompts",
     "Permissions",
     "Tools",
     "Usage",
-    "Prompts",
-    "Workspaces"
+    "Evaluations",
+    "Memory",
+    "Workspaces",
+    "GitHub"
   ];
   assert.deepEqual([...CANONICAL_NAVIGATION], [...expected]);
 });

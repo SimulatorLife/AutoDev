@@ -41,12 +41,14 @@ export interface MemoryRecordsViewProps {
   readonly currentStatus?: string | undefined;
 }
 
+const NOT_OBSERVED_STATUS = "not-observed" as const;
+
 const STATUS_VARIANT_MAP: Record<MemoryStatus, StatusBadgeVariant> = {
   active: "ready",
   proposed: "pending",
   invalidated: "invalid",
   superseded: "unavailable",
-  uncertain: "not-observed"
+  uncertain: NOT_OBSERVED_STATUS
 };
 
 const KIND_COLORS: Record<MemoryKind, string> = {
@@ -54,6 +56,8 @@ const KIND_COLORS: Record<MemoryKind, string> = {
   semantic: "bg-teal-950/60 text-teal-300 border-teal-800",
   procedural: "bg-purple-950/60 text-purple-300 border-purple-800"
 };
+const DETAIL_SECTION_HEADING_CLASS =
+  "text-xs font-semibold uppercase tracking-wider text-slate-400";
 
 function formatScopeString(scope: MemoryScope): string {
   switch (scope.kind) {
@@ -128,7 +132,7 @@ export function MemoryRecordsView({
       width: "140px",
       cell: (record) =>
         React.createElement(StatusBadge, {
-          status: STATUS_VARIANT_MAP[record.status] ?? "not-observed",
+          status: STATUS_VARIANT_MAP[record.status] ?? NOT_OBSERVED_STATUS,
           label: record.status.charAt(0).toUpperCase() + record.status.slice(1)
         })
     },
@@ -307,7 +311,7 @@ function RecordDetailPanel({
             record.kind
           ),
           React.createElement(StatusBadge, {
-            status: STATUS_VARIANT_MAP[record.status] ?? "not-observed",
+            status: STATUS_VARIANT_MAP[record.status] ?? NOT_OBSERVED_STATUS,
             label: record.status.toUpperCase()
           })
         ),
@@ -334,8 +338,7 @@ function RecordDetailPanel({
       React.createElement(
         "h4",
         {
-          className:
-            "text-xs font-semibold uppercase tracking-wider text-slate-400"
+          className: DETAIL_SECTION_HEADING_CLASS
         },
         "Durable Claim"
       ),
@@ -363,8 +366,7 @@ function RecordDetailPanel({
         React.createElement(
           "h4",
           {
-            className:
-              "text-xs font-semibold uppercase tracking-wider text-slate-400"
+            className: DETAIL_SECTION_HEADING_CLASS
           },
           "Validity State"
         ),
@@ -410,8 +412,7 @@ function RecordDetailPanel({
         React.createElement(
           "h4",
           {
-            className:
-              "text-xs font-semibold uppercase tracking-wider text-slate-400"
+            className: DETAIL_SECTION_HEADING_CLASS
           },
           "Provenance & Citations"
         ),
@@ -520,8 +521,7 @@ function RecordDetailPanel({
           React.createElement(
             "h4",
             {
-              className:
-                "text-xs font-semibold uppercase tracking-wider text-slate-400"
+              className: DETAIL_SECTION_HEADING_CLASS
             },
             "Transition History"
           ),
@@ -542,7 +542,8 @@ function RecordDetailPanel({
                   "div",
                   { className: "flex items-center gap-2" },
                   React.createElement(StatusBadge, {
-                    status: STATUS_VARIANT_MAP[t.toStatus] ?? "not-observed",
+                    status:
+                      STATUS_VARIANT_MAP[t.toStatus] ?? NOT_OBSERVED_STATUS,
                     label: `${t.fromStatus ?? "none"} → ${t.toStatus}`
                   }),
                   t.reason

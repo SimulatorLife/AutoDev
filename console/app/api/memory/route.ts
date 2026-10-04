@@ -2,11 +2,11 @@ import { type NextRequest, NextResponse } from "next/server.js";
 
 import {
   type ControlApiConfig,
+  type ControlApiResult,
   promoteMemoryProcedureToSkill,
   readControlApiConfig,
   transitionMemoryRecord
 } from "../../../src/lib/server/control-api.ts";
-import type { ControlApiResult } from "../../../src/lib/server/types.ts";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -61,10 +61,10 @@ async function parsePayload(
   }
 }
 
-async function executeAction(
+function executeAction(
   payload: MemoryActionPayload,
   config: ControlApiConfig
-): Promise<ControlApiResult<unknown> | null> {
+): Promise<ControlApiResult<unknown>> | null {
   const { action, recordId, workspaceId, reason, claim, skillName } = payload;
   switch (action) {
     case "verify": {

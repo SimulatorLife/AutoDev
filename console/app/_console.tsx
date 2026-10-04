@@ -111,5 +111,3 @@ export function ConsolePageShell({
     children
   );
 }
-
-export type { ControlApiResult } from "../src/lib/server/types.ts";

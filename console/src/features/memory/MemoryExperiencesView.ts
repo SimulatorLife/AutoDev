@@ -24,6 +24,7 @@ const VALIDATION_STATUS_MAP: Record<string, StatusBadgeVariant> = {
   partial: "pending",
   not_run: "not-observed"
 };
+const DETAIL_LABEL_CLASS = "text-slate-500 mr-2";
 
 export function MemoryExperiencesView({
   experiences,
@@ -291,7 +292,7 @@ function ExperienceDetailPanel({
           null,
           React.createElement(
             "span",
-            { className: "text-slate-500 mr-2" },
+            { className: DETAIL_LABEL_CLASS },
             "Format:"
           ),
           React.createElement(
@@ -305,7 +306,7 @@ function ExperienceDetailPanel({
           null,
           React.createElement(
             "span",
-            { className: "text-slate-500 mr-2" },
+            { className: DETAIL_LABEL_CLASS },
             "Source Adapter:"
           ),
           React.createElement(
@@ -320,7 +321,7 @@ function ExperienceDetailPanel({
               null,
               React.createElement(
                 "span",
-                { className: "text-slate-500 mr-2" },
+                { className: DETAIL_LABEL_CLASS },
                 "Normalizer:"
               ),
               React.createElement(
@@ -336,7 +337,7 @@ function ExperienceDetailPanel({
               null,
               React.createElement(
                 "span",
-                { className: "text-slate-500 mr-2" },
+                { className: DETAIL_LABEL_CLASS },
                 "Digest:"
               ),
               React.createElement(
@@ -374,7 +375,7 @@ function ExperienceDetailPanel({
           null,
           React.createElement(
             "span",
-            { className: "text-slate-500 mr-2" },
+            { className: DETAIL_LABEL_CLASS },
             "Evidence References:"
           ),
           React.createElement(
