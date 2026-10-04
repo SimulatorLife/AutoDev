@@ -353,7 +353,7 @@ The retained OpenLIT Memory page may exist only as a **temporary migration bridg
 
 These are out of scope, not merely hidden navigation:
 
-- **Accounts/users/auth product flows:** login/register UI, OAuth account buttons, profiles, invitations, membership, logout/account menus, account-scoped preferences, and application user-management.
+- **Accounts/users/auth product flows:** login/register UI, OAuth account buttons, profiles, invitations, membership, logout/account menus, account-scoped preferences, and application user-management. /login and /register must not remain interactive product routes; remove them or redirect them to the canonical Console entry. Auth middleware must not recreate an OpenLIT application-account gate.
 - **Organizations/organisations:** entities, membership, switching, organization-scoped permissions/navigation.
 - **Environments:** OpenLIT environment product selectors/management.
 - **Projects:** OpenLIT project management/isolation/selectors. AutoDev Workspaces are not tenancy silos.
@@ -406,6 +406,7 @@ Before copying third-party code, verify the source revision, license/attribution
 | --- | --- | --- |
 | **OpenLIT** | dark styling where useful; tables, filters, time range, charts/widgets, trace/detail patterns, Memory/Evaluation/Prompt/Agent components | generic product shell, Otter, docs/community chrome, auth/tenancy, generic dashboards, light theme, onboarding, removed modules |
 | **Langfuse** | dense list/detail UX, trace inspection, filters, prompt version/diff interaction, compact observability patterns | organization/project/account SaaS hierarchy |
+| **LangWatch** | composing configuration, runtime evidence, usage, failures, latency, and recent traces on one resource surface | a separate embedded observability application |
 | **Helicone** | semantic visual tokens, consistent typography/layout, compact request/log detail patterns | gateway/business-account product model |
 | **MCPJam Inspector** | MCP Tools/Resources/Prompts inspection, schemas, test/probe diagnostics, logs | playground/emulator shell |
 | **LiteLLM** | provider/model/routing semantics: priority, fallback, concurrency, limits, cooldown/circuit state | inconsistent or duplicate dashboard styling; use as control-semantics reference, not the visual source of truth |
@@ -499,7 +500,7 @@ Retain useful evaluation definitions/results/history and trace linkage without R
 
 ### GitHub
 
-Workflow files remain authoritative for workflow definitions/cron triggers. Workspace identity/enablement/scope remains in AutoDev workspace configuration. Scheduler weights/policy remain in the scheduler's canonical policy.
+Workflow files remain authoritative for workflow definitions/cron triggers. config/workspaces.json is the target owner for workspace identity, enablement, and resource scope once that registry is completed. Scheduler weights/policy remain in the scheduler's canonical policy. The Console must not fork any of these into a second schedule/configuration authority.
 
 Observed run/workflow state comes from the GitHub Actions API. Missing credentials/API evidence remain unavailable/unknown, never synthetic idle/healthy.
 
@@ -578,7 +579,7 @@ Use the retained OpenLIT time-range control. Typed single/multi-select + All var
 - agent/role;
 - skill only where safely present.
 
-Widgets opt in only to variables whose semantics apply. Bind selections through typed parameterized inputs; never concatenate browser-controlled SQL.
+Widgets opt in only to variables whose semantics apply. Unsupported signal/filter combinations fail closed rather than silently changing semantics. Bind selections through typed parameterized inputs; never concatenate browser-controlled SQL.
 
 The Console's same-origin server calls only a fixed read-only Usage adapter/endpoint with a dedicated server-to-server credential. It accepts bounded time/filter selections, not raw SQL or arbitrary widget IDs, and does not reuse mutation credentials.
 
@@ -611,6 +612,8 @@ Target resource families include:
 Use named typed operations only; no arbitrary command endpoint.
 
 For RuleSync-owned resources, mutations change canonical RuleSync input and execute validation/generation/apply. Runtime-owned resources mutate their typed owner. Tools is primarily a composite read model. Usage uses its dedicated fixed read-only telemetry path rather than becoming a mutation/control resource.
+
+The browser uses same-origin TypeScript server routes/proxies. The private Control API listener remains separate from the model/OTLP router listener.
 
 ### Single-user identity and security
 
