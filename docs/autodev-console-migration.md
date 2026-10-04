@@ -30,21 +30,97 @@ Local p25 acceptance has verified the OpenLIT container, /memory HTTP 200, unaut
 | UI/product subtraction | **Partial** | Remove remaining OpenLIT-only shell/product code, including the newly explicit dark-only/no-Otter/no-Documentation/no-generic-dashboard-builder target. Retire the old additive AutoDev OpenLIT pages after Console parity. |
 | Workspace boundaries | **Partial cleanup** | Keep callers on declared workspace contracts and remove dependency/import leaks; no root implementation facade. |
 | RuleSync ownership | **Partial** | Skills, hooks, commands/prompts, and MCP declarations are established. Agent/subagent and permission generation remain deferred until lossless parity exists for the current role/runtime contract. |
-| Control API | **Partial** | Typed reads cover most configuration resources and a partial Tools catalog. Provider-role enablement and governed Memory lifecycle operations exist; general typed mutation/reconciliation remains incomplete. |
+| Control API | **Partial** | Current collection/detail reads and mutations are inventoried below. General non-Memory collections remain read-only; provider-role enablement is the only general mutation, while Memory owns a separate governed mutation family. GitHub is not implemented. |
 | Desired/actual state | **Mostly conceptual** | Implement reusable desired/actual generations, diff, last apply/observation, operation history, and authoritative converged/pending/error state across mutable resources. |
-| Workspaces | **Partial** | Data reads the scheduler weights projection, but the canonical workspace registry still lacks complete enablement, agent/resource scope, configuration health, runtime availability, and remote acceptance. |
+| Workspaces | **Partial** | Data `ConfigRepository` currently reads `.github/workflows/weights.json` as a **provisional projection** containing repository identity, base branch, and scheduling weight. It is not the target canonical registry. Target ownership moves to `config/workspaces.json`, which must add enablement, agent/resource scope, configuration health, and runtime availability before the provisional scheduler projection can be retired. |
 | Data | **Partial** | RuleSync/OpenLIT/Usage/Memory adapters exist. Finish runtime-state, effective-tool, evaluation execution, workspace, and retained-feature integrations without creating a parallel observability backend. |
-| Usage | **Live locally; remote unverified** | Current typed range/filter/query path is live locally. Add source-confirmed context-compaction telemetry/widgets and complete remote/browser acceptance. |
-| Memory | **Backend foundation + JIT + governed APIs** | Detailed state is maintained in memory-target-state.md and memory-injection-outcome-evaluation.md. Port the retained Memory operator experience into the unified Console, complete embedding/deployment acceptance, additional harness capture, controlled real-task evaluation, and broader analytics. |
-| Evaluations | **Read integration implemented** | ClickHouse read adapter, Control API collection, and Console results/history exist. Automated execution/triggering remains deferred. |
+| Usage | **Live locally; remote unverified** | Sample values are removed. The Console exposes 24H/7D/1M/3M/CUSTOM with URL-persisted UTC bounds, explicitly states the **90-day query cap** and approximately **30-day retained telemetry window**, and uses the dedicated typed Usage endpoint. Add source-confirmed context-compaction telemetry/widgets and complete remote/browser acceptance. |
+| Memory | **Backend foundation + root JIT + governed APIs** | The focused Memory docs own target/governance semantics; the **current implementation snapshot is maintained below in this migration tracker**. Port the retained operator experience into the unified Console, complete embedding/deployment acceptance, additional harness capture, controlled real-task evaluation, and broader analytics. |
+| Evaluations | **Partial read integration** | ClickHouse read adapter, Control API collection, and Console results/history exist. Still incomplete: evaluation definitions/suites, explicit prompt/agent/model target selection, trace linkage/comparison UX, rerun actions, and automated execution/triggering. No Rule Engine or OpenGround dependency may be reintroduced. |
 | MCPs | **RuleSync-backed diagnostics** | Configuration/list/detail views exist with explicit unobserved handling. Continue runtime evidence and mutation/reconciliation integration. |
 | Prompts | **RuleSync-backed hub/detail** | Canonical content/provenance/linkage exists. Complete edit/validate/save/version/diff/preview/generate/apply flows without creating an independent OpenLIT prompt authority. |
 | Tools | **Partial read catalog** | Complete native/provider/plugin/MCP inventory, health/availability, role exposure, use/error counts, and trace linkage. Tools remains a composite read model rather than a second configuration authority. |
 | GitHub | **Not started** | Add Console route, /control/github family, typed Actions API reads, and allowlisted dispatch/cancel/rerun/schedule operations scoped to configured workspaces. |
-| Context compactions | **Not observed** | No producer currently emits the target compaction signal. Add source-owned instrumentation before adding count/rate/breakdown widgets; absence remains unavailable, never zero. |
+| Context compactions | **Not observed** | No producer currently emits `autodev.context.compactions` or another authoritative compaction signal. The target contract requires source-owned events, bounded known dimensions, and scope-compatible denominators before count/rate/breakdown widgets become observed; absence remains unavailable, never zero. |
 | OpenLIT fork | **Partial/additive** | Receiver auth, Usage, login/signup removal, branding, Controller/GPU removals, and AutoDev additions exist. Complete product subtraction and make Console the only final UI. |
 | Telemetry cutover | **Partial** | Standalone AutoDev Collector is removed. Verify a real Codex/router producer through authenticated OpenLIT, separate any required live-control correlation, then remove router historical aggregation, receiver routes, and legacy direct mode. |
 | CI | **Tests/typecheck/format green; lint red** | Current full lint reports 133 errors. Repair findings at owning source paths without weakening checks; obtain visible current-main workflow evidence for migration acceptance. |
+
+
+## Current Control API coverage
+
+This inventory is **observed current state**, not the desired API family from the target document.
+
+Current read-only collection GETs:
+
+~~~text
+/control/agents
+/control/providers
+/control/models
+/control/mcps
+/control/tools
+/control/skills
+/control/hooks
+/control/permissions
+/control/prompts
+/control/workspaces
+/control/routing
+/control/runtime
+/control/evaluations
+~~~
+
+Current read-only detail routes include Agent and Prompt detail. General collection resources reject non-GET methods.
+
+Current non-Memory mutation:
+
+~~~text
+PATCH /control/providers/:provider/roles/:role
+~~~
+
+It changes provider-role enablement through the Runtime routing policy.
+
+Memory is a separate governed family under `/control/memory/*`. Implemented resources include records, experiences, experience history/provenance and lifecycle actions, experience/session/use cohorts, native Codex/Claude capture paths, reporter-supplied outcome routes, curator use-assessment routes, guarded raw-experience purge, and procedure-to-skill promotion. Those operations remain subject to MemoryService authorization/governance rather than becoming generic Control API CRUD.
+
+`/control/github` is target-only and not implemented. General RuleSync/runtime mutations and reusable desired/actual reconciliation are also still incomplete.
+
+## OpenLIT product-subtraction checklist
+
+Track the newly explicit subtraction requirements individually so the broad `OpenLIT fork` row cannot hide unfinished product chrome.
+
+| Surface | Current migration status |
+| --- | --- |
+| Login/signup and OpenLIT session-derived actor UI | **Locally removed; remote acceptance open** |
+| Organizations / Projects / Environments | **Open** — remove product concepts and selectors; hidden singleton implementation rows may remain only while required internally |
+| Rule Engine | **Open** — remove UI/API/runtime/persistence coupling when retained features no longer depend on it |
+| OpenGround | **Open** |
+| GPU product surface | **Source removed/build verified; deployed/remote acceptance still open** |
+| Discovered/instrumented Agents + Go Controller/OpAMP/eBPF UX | **Source/image path removed; deployed/remote acceptance still open** |
+| Otter/chat, Chat Settings/history/usage, Otter-only resource-management affordances | **Open** |
+| Documentation / Community / blog / marketing / generic help chrome | **Open** |
+| Light/System themes and theme selector | **Open** — target is one dark theme |
+| Generic dashboard/board authoring | **Open** — retain only query/chart/widget primitives and seeded AutoDev views |
+| Arbitrary raw SQL/query-builder product UI | **Open unless an explicit bounded diagnostic is approved** |
+| Generic Vault/secrets/model admin superseded by AutoDev owners | **Open / dependency-check required** |
+| Generic onboarding/demo/quickstart flows | **Open** |
+| Redundant generic Settings, collaboration/share/team, update/marketing popovers | **Open / dependency-check required** |
+| Old additive OpenLIT AutoDev pages | **Transitional** — delete after unified Console feature parity |
+| Standalone OpenLIT Memory page/portal | **Transitional** — delete as an operator dependency after Console Memory parity |
+
+
+
+## Memory current-state snapshot
+
+Keep implementation state here rather than in `memory-target-state.md`, which remains the durable Memory design authority.
+
+- The PostgreSQL/pgvector store is at migration 12. Migrations 8-12 cover append-only request injection/outcome evidence, the session-key index, append-only session outcome reports, curator injection-use reports, and native trajectory source/normalizer diagnostic provenance. Historical/pre-migration values remain explicitly unknown rather than fabricated.
+- Root-router JIT research, governed `MemoryService`, PostgreSQL+pgvector/full-text retrieval, current-Git validation, bounded reconstruction, the MCP facade, scoped/paginated reads, lifecycle mutations, procedure-to-skill promotion, and native Codex capture are implemented.
+- Memory Control API reads/actions include records, experiences, history/provenance, cohorts, session cohorts, use cohorts, outcomes/session outcomes, curator use assessments, verify/revise/invalidate/supersede, guarded purge, promotion, and capture routes.
+- Task-history/cohort reads require the explicit operator task-history grant. `GET /control/memory/cohorts` requires explicit repository/time scope with a maximum 365-day window and returns bounded exposure/report counts with explicit unreported cells rather than task success or model-use claims.
+- Session cohorts derive assignment from the complete session injection set; mixed sessions remain separate rather than being coerced into an arm. Reporter-supplied outcomes, curator-assessed use, packet injection, provider-routing outcome, and downstream task success remain distinct evidence classes.
+- The local AutoDev connector is configured for the observed AutoDev workspace/repository and the current local stack has verified connector health plus authenticated zero-record durable-memory/task-history reads against a newly initialized database.
+- Claude Code capture is opt-in and operator-bound; additional native-harness capture adapters remain incomplete.
+- Remaining gaps include a configured live embedding-provider acceptance test, complete RuleSync/runtime validators, deeper semantic stale/superseding-change checks, controlled real-task effectiveness evaluation, broader Memory analytics, unified Console Memory parity, and remote/deployed acceptance.
+
 
 ## Current Usage baseline
 
@@ -118,7 +194,11 @@ As of 2026-10-04:
 - p25 patch-application suite passes 6/6;
 - patched p25 client typecheck passes;
 - local p25 health, Memory route, authenticated OTLP persistence, Usage filters, and service-token redaction probes pass;
-- remote receiver/deployment acceptance and full browser-rendered Console acceptance remain open.
+- remote deployment acceptance remains open;
+- deployed authenticated receiver **live + graceful-drain/shutdown** acceptance remains open;
+- full browser-rendered Console acceptance remains open;
+- full retained-feature Console integration/parity remains open, including retiring the external Memory bridge and old additive OpenLIT AutoDev pages;
+- visible current-`main` GitHub Actions/workflow evidence for the monorepo/OpenLIT acceptance gates remains open.
 
 Patch-by-patch implementation history, superseded local image tags, and resolved intermediate failures belong in Git history/PR evidence rather than the active target or migration requirements. Keep this tracker focused on the current baseline and still-open gaps.
 
