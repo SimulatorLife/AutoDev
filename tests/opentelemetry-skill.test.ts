@@ -60,15 +60,28 @@ test("opentelemetry skill is a repository-only canonical skill", () => {
 
   // The canonical target document carries the maintenance rule future agents need.
   const targetState = readFileSync(targetStatePath, "utf8");
-  assert.match(
-    targetState,
-    /single living source of truth for AutoDev's OpenLIT fork, observability architecture/
+  const authorityLine = targetState
+    .split("\n")
+    .find((line) => line.startsWith("> **Authority:**"));
+  assert.ok(authorityLine, "target doc must declare its authority");
+  assert.match(authorityLine, /single living source of truth/i);
+  assert.match(authorityLine, /OpenLIT.*fork/i);
+  assert.match(authorityLine, /observability/i);
+  const canonicalContract = targetState
+    .split(/^## 1\. Canonical-document contract\s*$/mu)[1]
+    ?.split(/^##\s/mu)[0];
+  assert.ok(canonicalContract, "target doc must define its canonical contract");
+  assert.match(canonicalContract, /must update this document/i);
+  assert.match(canonicalContract, /same PR/i);
+  const openLitStrategy = targetState
+    .split(/^## 12\. OpenLIT maintenance strategy\s*$/mu)[1]
+    ?.split(/^##\s/mu)[0];
+  assert.ok(
+    openLitStrategy,
+    "target doc must define OpenLIT maintenance policy"
   );
-  assert.match(targetState, /update it in the same PR/);
-  assert.match(
-    targetState,
-    /Upstream contributions are optional and must never block AutoDev/
-  );
+  assert.match(openLitStrategy, /upstream/i);
+  assert.match(openLitStrategy, /must\s+(?:not|never)\s+block AutoDev/i);
 
   // Project-specific architecture must not regress to the old local aggregator target.
   assert.match(body, /OpenLIT first-party OTLP receiver/);

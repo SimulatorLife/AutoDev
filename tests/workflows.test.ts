@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -50,11 +51,104 @@ async function enabledWorkspaceIds(): Promise<string[]> {
   return ids;
 }
 
+test("the canonical workspace catalog declares a non-empty, de-duplicated set of enabled workspace ids", async () => {
+  const ids = await enabledWorkspaceIds();
+  assert.ok(
+    ids.includes("SimulatorLife/AutoDev"),
+    "AutoDev itself must be a registered, enabled workspace"
+  );
+});
+
 // Extracts each `run: |` block's body lines, keyed by the indentation of the
 // `run:` key itself, so a malformed quote inside one block (which would
 // otherwise swallow the rest of the file as an unterminated string) is
 // caught by bash's own parser rather than by string matching.
 type RunBlock = { startLine: number; body: string };
+
+// Mirrors actions/github-script's own callAsyncFunction: it builds a
+// restricted AsyncFunction from named params (github, context, core, exec,
+// glob, io, require) and the script body text. There is no __dirname or
+// __filename in that scope -- this is the exact execution surface that
+// broke require(path.join(__dirname, ...)) in the target-* workflows.
+type GithubScriptStubs = {
+  github?: Record<string, unknown>;
+  context?: Record<string, unknown>;
+  core?: Record<string, unknown>;
+  exec?: Record<string, unknown>;
+  glob?: Record<string, unknown>;
+  io?: Record<string, unknown>;
+  env?: Record<string, string>;
+};
+
+const githubScriptRequire = createRequire(import.meta.url);
+
+async function runGithubScriptBody(
+  body: string,
+  stubs: GithubScriptStubs
+): Promise<void> {
+  const AsyncFunction = Object.getPrototypeOf(async function () {})
+    .constructor as new (
+    ...args: string[]
+  ) => (...values: unknown[]) => Promise<unknown>;
+  const fn = new AsyncFunction(
+    "github",
+    "context",
+    "core",
+    "exec",
+    "glob",
+    "io",
+    "require",
+    body
+  );
+  const previousEnv: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(stubs.env ?? {})) {
+    previousEnv[key] = process.env[key];
+    process.env[key] = value;
+  }
+  try {
+    await fn(
+      stubs.github ?? {},
+      stubs.context ?? {},
+      stubs.core ?? {},
+      stubs.exec ?? {},
+      stubs.glob ?? {},
+      stubs.io ?? {},
+      githubScriptRequire
+    );
+  } finally {
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+// Extracts `script: |` bodies the same way extractRunBlocks extracts
+// `run: |` bodies: keyed by the indentation of the `script:` key itself.
+const extractScriptBlocks = (source: string): RunBlock[] => {
+  const lines = source.split("\n");
+  const blocks: RunBlock[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    const scriptMatch = line.match(/^(\s*)script: \|-?\s*$/);
+    if (!scriptMatch) continue;
+    const scriptIndent = (scriptMatch[1] ?? "").length;
+    const body: string[] = [];
+    let j = i + 1;
+    for (; j < lines.length; j++) {
+      const nextLine = lines[j] ?? "";
+      if (nextLine.trim() === "") {
+        body.push("");
+        continue;
+      }
+      if ((nextLine.match(/^ */)?.[0].length ?? 0) <= scriptIndent) break;
+      body.push(nextLine);
+    }
+    blocks.push({ startLine: i + 1, body: body.join("\n") });
+    i = j - 1;
+  }
+  return blocks;
+};
 
 const extractRunBlocks = (source: string): RunBlock[] => {
   const lines = source.split("\n");
@@ -134,14 +228,24 @@ test("generic prompt runner supports AutoDev and target prompt scopes", async ()
   assert.match(runner, /config\/workspaces\.json/);
   assert.match(
     runner,
-    /select\(\.id == \$id\)/,
+    /workspace-catalog\.cjs/,
     "the reusable prompt runner resolves targets from the canonical catalog"
   );
   assert.match(
     runner,
-    /target_repository is not present in the canonical workspace catalog/
+    /resolve-target/,
+    "the reusable prompt runner delegates target resolution to the catalog owner"
   );
-  assert.match(runner, /base_branch must match the Workspace registry/);
+  assert.match(
+    runner,
+    /resolve-prompt/,
+    "the reusable prompt runner delegates prompt resolution to the catalog owner"
+  );
+  assert.match(
+    runner,
+    /--base-branch/,
+    "the reusable prompt runner forwards requested base branch to the catalog owner"
+  );
 });
 
 test("generic prompt catalog contains only repository-agnostic Markdown prompts", async () => {
@@ -297,10 +401,10 @@ test("central target PR janitor owns empty stale PR cleanup", async () => {
   assert.match(source, /rawStaleHours/);
   assert.ok(source.includes("Number(rawStaleHours || '1.25')"));
   assert.match(source, /config\/workspaces\.json/);
-  assert.match(source, /catalog\.schema !== 'autodev-workspaces-v1'/);
-  assert.match(source, /const configured =/);
-  assert.match(source, /filter\(\(workspace\) => workspace\.enabled\)/);
-  assert.match(source, /Unconfigured target repository/);
+  assert.match(source, /workspace-catalog\.cjs/);
+  assert.match(source, /loadCatalog/);
+  assert.match(source, /listEnabled/);
+  assert.match(source, /resolveTarget/);
   assert.match(source, /pulls\.list/);
   assert.match(source, /changed_files/);
   assert.match(source, /pulls\.update/);
@@ -567,24 +671,74 @@ test("manual repository selectors accept target_repository as string without dup
   }
 });
 
-test("target-handling workflows validate against canonical workspace catalog", async () => {
-  const janitor = await readWorkflow("target-pr-janitor.yml");
-  const automerge = await readWorkflow("target-automerge.yml");
-  const validation = await readWorkflow("target-validation.yml");
-  const openPr = await readWorkflow("_agent-open-pr-and-ping.yml");
-  const invoke = await readWorkflow("agent-invoke.yml");
-  const conflict = await readWorkflow("agent-02-resolve-merge-conflicts.yml");
+test("target-handling workflows delegate validation to the workspace-catalog owner", async () => {
+  const ownerPath = ".github/scripts/workspace-catalog.cjs";
+  const catalogPath = "config/workspaces.json";
+  const escapeForRegExp = (segment: string): string =>
+    segment.replaceAll(".", String.raw`\.`);
+  const ownerRequirePattern = new RegExp(
+    String.raw`require\(\s*path\.join\(` +
+      String.raw`[\s\S]*?` +
+      ownerPath
+        .split("/")
+        .map(escapeForRegExp)
+        .map((segment) => `['"]${segment}['"]`)
+        .join(String.raw`[\s\S]*?`) +
+      String.raw`\s*\)\s*\)`
+  );
+  const rootWorkflows = [
+    "target-pr-janitor.yml",
+    "target-automerge.yml",
+    "target-validation.yml"
+  ] as const;
+  const autodevWorkflows = [
+    "_agent-open-pr-and-ping.yml",
+    "agent-invoke.yml",
+    "agent-02-resolve-merge-conflicts.yml"
+  ] as const;
 
-  for (const [name, source] of [
-    ["target-pr-janitor.yml", janitor],
-    ["target-automerge.yml", automerge],
-    ["target-validation.yml", validation],
-    ["_agent-open-pr-and-ping.yml", openPr],
-    ["agent-invoke.yml", invoke],
-    ["agent-02-resolve-merge-conflicts.yml", conflict]
-  ]) {
-    assert.match(source, /config\/workspaces\.json/, name);
-    assert.match(source, /autodev-workspaces-v1/, name);
+  for (const name of rootWorkflows) {
+    const source = await readWorkflow(name);
+    assert.match(
+      source,
+      ownerRequirePattern,
+      `${name} loads the catalog owner via its exact repository-relative require path`
+    );
+    assert.match(
+      source,
+      new RegExp(catalogPath.replaceAll(".", String.raw`\.`)),
+      `${name} references the canonical catalog path`
+    );
+    assert.doesNotMatch(
+      source,
+      /autodev-workspaces-v1/,
+      `${name} must not duplicate the catalog schema literal`
+    );
+    assert.doesNotMatch(
+      source,
+      /\[\^\S[^\s/]*\/\S+\]/,
+      `${name} must not duplicate the identity regex`
+    );
+    assert.doesNotMatch(source, /catalog\.schema !==/, `${name}`);
+  }
+
+  for (const name of autodevWorkflows) {
+    const source = await readWorkflow(name);
+    assert.match(
+      source,
+      /workspace-catalog\.cjs/,
+      `${name} invokes the catalog owner`
+    );
+    assert.doesNotMatch(
+      source,
+      /autodev-workspaces-v1/,
+      `${name} must not duplicate the catalog schema literal`
+    );
+    assert.doesNotMatch(
+      source,
+      /\.workspaces\[\] \| select\(\.id ==/,
+      `${name} must not inline the workspace lookup jq query`
+    );
   }
 });
 
@@ -814,5 +968,115 @@ test("Node actions use the AutoDev root .nvmrc", async () => {
     const source = await readWorkflow(name);
     assert.doesNotMatch(source, /node-version:\s*["']22["']/u, name);
     assert.match(source, /node-version-file:/u, name);
+  }
+});
+
+test("target-handling github-script bodies load the workspace-catalog owner without __dirname", async () => {
+  // actions/github-script evaluates each script: body as a restricted
+  // AsyncFunction with no __dirname/__filename in scope. Executing the
+  // exact extracted bodies (not a regex over the source text) is the only
+  // way to prove require(path.join(__dirname, ...)) actually works there;
+  // before the fix this throws "__dirname is not defined" immediately.
+  const previousCwd = process.cwd();
+  process.chdir(root);
+  try {
+    const automergeSource = await readWorkflow("target-automerge.yml");
+    const planBlock = extractScriptBlocks(automergeSource).find((block) =>
+      block.body.includes("core.setOutput('matrix'")
+    );
+    assert.ok(planBlock, "expected to find the Plan target PRs script block");
+    const planOutputs: Record<string, string> = {};
+    await runGithubScriptBody(planBlock!.body, {
+      env: {
+        GITHUB_WORKSPACE: root,
+        REQUESTED_REPOSITORY: "SimulatorLife/AutoDev",
+        REQUESTED_PR: "4242"
+      },
+      core: {
+        setOutput: (key: string, value: string) => {
+          planOutputs[key] = value;
+        },
+        info: () => {}
+      },
+      github: {
+        paginate: async () => {
+          throw new Error(
+            "the requested_pr fast path must not list pull requests"
+          );
+        }
+      }
+    });
+    assert.equal(planOutputs.has_targets, "true");
+    const matrix = JSON.parse(planOutputs.matrix ?? "null") as {
+      include: Array<{ repository: string; pr: number }>;
+    };
+    assert.deepEqual(matrix.include, [
+      { repository: "SimulatorLife/AutoDev", pr: 4242 }
+    ]);
+
+    const janitorSource = await readWorkflow("target-pr-janitor.yml");
+    const janitorBlock = extractScriptBlocks(janitorSource).find((block) =>
+      block.body.includes("Target PR janitor complete")
+    );
+    assert.ok(janitorBlock, "expected to find the janitor script block");
+    const notices: string[] = [];
+    await runGithubScriptBody(janitorBlock!.body, {
+      env: {
+        GITHUB_WORKSPACE: root,
+        TARGET_REPOSITORY: "SimulatorLife/AutoDev",
+        STALE_HOURS: ""
+      },
+      core: {
+        notice: (message: string) => {
+          notices.push(message);
+        },
+        warning: () => {},
+        info: () => {}
+      },
+      github: {
+        paginate: async () => [],
+        rest: { pulls: { list: () => {} } }
+      }
+    });
+    assert.ok(
+      notices.some((message) => message.includes("closed 0 PR(s)")),
+      "janitor must complete using the catalog owner it loaded"
+    );
+
+    const validationSource = await readWorkflow("target-validation.yml");
+    const resolveBlock = extractScriptBlocks(validationSource).find((block) =>
+      block.body.includes("core.setOutput('target_sha'")
+    );
+    assert.ok(resolveBlock, "expected to find the resolve_target script block");
+    const resolveOutputs: Record<string, string> = {};
+    const sha = "a".repeat(40);
+    await runGithubScriptBody(resolveBlock!.body, {
+      env: {
+        GITHUB_WORKSPACE: root,
+        TARGET_REPOSITORY: "SimulatorLife/AutoDev",
+        TARGET_SHA: sha,
+        PR_NUMBER: ""
+      },
+      core: {
+        setOutput: (key: string, value: string) => {
+          resolveOutputs[key] = value;
+        },
+        info: () => {}
+      },
+      github: {
+        rest: {
+          pulls: {
+            get: async () => {
+              throw new Error(
+                "PR_NUMBER is unset; pulls.get must not be called"
+              );
+            }
+          }
+        }
+      }
+    });
+    assert.equal(resolveOutputs.target_sha, sha);
+  } finally {
+    process.chdir(previousCwd);
   }
 });

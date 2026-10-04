@@ -8,8 +8,8 @@ import {
   rmSync,
   writeFileSync
 } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 const repositoryRoot = new URL("../..", import.meta.url).pathname;
@@ -30,7 +30,7 @@ test("OpenLIT down stops the configured stack and preserves its volumes", () => 
     const fakeDocker = [
       "#!/usr/bin/env bash",
       'if [[ "$1" == "compose" && "$2" == "version" ]]; then exit 0; fi',
-      'printf "%s\\n" "$@" > "$OPENLIT_DOCKER_CAPTURE"'
+      String.raw`printf "%s\n" "$@" > "$OPENLIT_DOCKER_CAPTURE"`
     ].join("\n");
 
     writeFileSync(docker, fakeDocker, { mode: 0o700 });

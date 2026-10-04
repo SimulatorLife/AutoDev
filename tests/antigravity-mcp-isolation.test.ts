@@ -23,6 +23,30 @@ import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-co
 
 const REPO_ROOT = pathResolve(import.meta.dirname, "..");
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringList(value: unknown, label: string): string[] {
+  assert.ok(Array.isArray(value), label + " must be an array");
+  const entries: readonly unknown[] = value;
+  const strings = entries.filter(
+    (entry): entry is string => typeof entry === "string"
+  );
+  assert.equal(
+    strings.length,
+    entries.length,
+    label + " must contain only strings"
+  );
+  return strings;
+}
+
+function roleMcpToolList(role: string, server: string): string[] {
+  const mcpTools = roleContract(role).mcpTools;
+  assert.ok(isRecord(mcpTools), role + " must define MCP tool grants");
+  return stringList(mcpTools[server], role + " " + server + " tool grants");
+}
+
 function runSubprocess(
   code: string,
   extraEnv: Record<string, string>
@@ -193,16 +217,23 @@ test("browser-tester receives Playwright only, with exactly its declared browser
       // 1. mcp_config.json has Playwright only
       assert.deepEqual(Object.keys(mcpConfig.mcpServers), ["playwright"]);
       const playwrightServer = mcpConfig.mcpServers.playwright;
+      assert.ok(playwrightServer, "browser-tester must receive Playwright");
+      const playwrightArgs = playwrightServer.args;
+      assert.ok(playwrightArgs, "Playwright must use its tool filter");
       assert.equal(playwrightServer.command, process.execPath);
       assert.equal(
-        playwrightServer.args[0],
+        playwrightArgs[0],
         pathResolve(REPO_ROOT, "runtime/src/mcp/tool-filter.ts")
       );
-      assert.equal(playwrightServer.args[1], "bash");
+      assert.equal(playwrightArgs[1], "bash");
+      const serializedTools = playwrightArgs[3];
+      assert.ok(
+        typeof serializedTools === "string",
+        "the filter must receive a serialized tool allowlist"
+      );
       assert.deepEqual(
-        JSON.parse(playwrightServer.args[3]),
-        (roleContract("browser-tester").mcpTools as Record<string, string[]>)
-          .playwright
+        JSON.parse(serializedTools),
+        roleMcpToolList("browser-tester", "playwright")
       );
 
       // 2. Playwright cannot see autodev_spawn or global/stale servers
@@ -210,13 +241,13 @@ test("browser-tester receives Playwright only, with exactly its declared browser
       assert.equal(mcpConfig.mcpServers.stale_global_server, undefined);
 
       // 3. settings.json permissions.allow has exactly the declared playwright tools
-      const contract = roleContract("browser-tester") as {
-        mcpTools?: Record<string, string[]>;
-      };
-      const declaredTools = contract.mcpTools?.playwright ?? [];
+      const declaredTools = roleMcpToolList("browser-tester", "playwright");
       assert.ok(declaredTools.length > 0);
 
-      const allowList = settings.permissions?.allow as string[];
+      const allowList = stringList(
+        settings.permissions.allow,
+        "allow permissions"
+      );
       const playwrightAllows = allowList.filter((entry) =>
         entry.startsWith("mcp(playwright")
       );
@@ -243,7 +274,10 @@ test("browser-tester receives Playwright only, with exactly its declared browser
       assert.ok(!allowList.includes("mcp(stale_global_server/*)"));
 
       // Existing user deny rules still win
-      const denyList = settings.permissions?.deny as string[];
+      const denyList = stringList(
+        settings.permissions.deny,
+        "deny permissions"
+      );
       assert.ok(denyList.includes("run_command(ccc *)"));
       assert.ok(denyList.includes("mcp(playwright/browser_drag)"));
     } finally {
@@ -319,7 +353,10 @@ test("ordinary leaf roles cannot see or use Playwright or autodev_spawn", () => 
           `${role} must never receive autodev_spawn`
         );
 
-        const allowList = settings.permissions?.allow as string[];
+        const allowList = stringList(
+          settings.permissions.allow,
+          "allow permissions"
+        );
         assert.ok(
           !allowList.some((entry) => entry.startsWith("mcp(playwright")),
           `${role} must not receive playwright permission grants`
@@ -354,6 +391,7 @@ test("orchestrator gets only its declared MCPs and authenticated spawn shim", ()
       const servers = Object.keys(withSession.mcpConfig.mcpServers);
       assert.ok(servers.includes("autodev_spawn"));
       const spawnServer = withSession.mcpConfig.mcpServers.autodev_spawn;
+      assert.ok(spawnServer, "authorized orchestrator must receive spawn shim");
       assert.equal(spawnServer.env, undefined);
       const inherited = agyEnvironment("session-123", withSession.isolatedHome);
       assert.equal(inherited.AUTODEV_SPAWN_SESSION, "session-123");
@@ -375,7 +413,10 @@ test("orchestrator gets only its declared MCPs and authenticated spawn shim", ()
       assert.ok(!servers.includes("playwright"));
       assert.ok(!servers.includes("stale_global_server"));
 
-      const allowList = withSession.settings.permissions?.allow as string[];
+      const allowList = stringList(
+        withSession.settings.permissions.allow,
+        "allow permissions"
+      );
       assert.ok(allowList.includes("mcp(autodev_spawn)"));
       assert.ok(allowList.includes("mcp(lsp)"));
       assert.ok(allowList.includes("mcp(cocoindex-code)"));
@@ -399,7 +440,10 @@ test("orchestrator gets only its declared MCPs and authenticated spawn shim", ()
         !servers.includes("autodev_spawn"),
         "orchestrator without spawn session must not receive autodev_spawn"
       );
-      const allowList = withoutSession.settings.permissions?.allow as string[];
+      const allowList = stringList(
+        withoutSession.settings.permissions.allow,
+        "allow permissions"
+      );
       assert.ok(!allowList.includes("mcp(autodev_spawn)"));
     } finally {
       withoutSession.cleanup();
@@ -566,6 +610,31 @@ test("fails closed when required role MCP is missing from catalog", () => {
           codexHome: env.codexHome
         }),
       /MCP server playwright granted to role browser-tester is not in the bridge MCP catalogue/
+    );
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("fails closed when a catalogue stdio server has a non-object environment", () => {
+  const env = createFixtureEnvironment();
+  try {
+    const catalogPath = join(
+      env.codexHome,
+      "provider-runtime",
+      "mcp-servers.json"
+    );
+    const catalog = JSON.parse(readFileSync(catalogPath, "utf8"));
+    catalog.playwright.env = ["DISPLAY=:0"];
+    writeFileSync(catalogPath, JSON.stringify(catalog, null, 2));
+
+    assert.throws(
+      () =>
+        createIsolatedAntigravityHome("browser-tester", null, {
+          originalHome: env.userHome,
+          codexHome: env.codexHome
+        }),
+      /MCP server playwright has an invalid environment/
     );
   } finally {
     env.cleanup();
@@ -1007,8 +1076,14 @@ test("read-only Antigravity permission scope limits read_file to validated works
       }
     );
     try {
-      const allowList = settings.permissions?.allow as string[];
-      const denyList = settings.permissions?.deny as string[];
+      const allowList = stringList(
+        settings.permissions.allow,
+        "allow permissions"
+      );
+      const denyList = stringList(
+        settings.permissions.deny,
+        "deny permissions"
+      );
 
       // 1. Explicit read_file authorization limited to validated request workspace and shared agent/codex roots
       assert.ok(
@@ -1225,7 +1300,10 @@ test("write-capable roles preserve user non-MCP permissions and keep --dangerous
       }
     );
     try {
-      const allowList = settings.permissions?.allow as string[];
+      const allowList = stringList(
+        settings.permissions.allow,
+        "allow permissions"
+      );
 
       // Write-capable role keeps non-MCP permissions untouched
       assert.ok(allowList.includes("read_file(**)"));

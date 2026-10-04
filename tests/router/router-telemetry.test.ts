@@ -24,12 +24,18 @@ import {
 } from "@simulatorlife/autodev-runtime/router/proxy";
 import type { Candidate } from "@simulatorlife/autodev-runtime/router/routing";
 import {
+  compactCompactionDimension,
+  COMPACTION_DIMENSION_ALLOWLISTS,
+  COMPACTION_DIMENSION_OTHER,
   endAttemptSpan,
   endLogicalRequestSpan,
   flushTelemetryMetrics,
   getFinishedSpans,
+  METRIC_CONTEXT_COMPACTIONS,
+  recordContextCompaction,
   resetTelemetryExporter,
   resolveOtlpSignalEndpoint,
+  sanitizeCategoricalLabel,
   setTelemetryExporter,
   setTelemetryMetricExporterForTest,
   startAttemptSpan,
@@ -1466,3 +1472,1067 @@ test("the OTLP exporter is not installed when OTEL_EXPORTER_OTLP_ENDPOINT is uns
       process.env.OTEL_EXPORTER_OTLP_ENDPOINT = previousEndpoint;
   }
 });
+
+test(
+  "positive context compaction emits source-confirmed OTel counter exactly once with bounded categorical labels",
+  { concurrency: false },
+  async () => {
+    installExporter();
+    const compactionTurnMetadata = JSON.stringify({
+      request_kind: "compaction",
+      compaction: {
+        trigger: "threshold",
+        reason: "context_window_exceeded",
+        implementation: "summarize",
+        phase: "pre_turn",
+        strategy: "drop_middle"
+      },
+      workspaces: { "/path/to/repo": {} }
+    });
+
+    const logical = startLogicalRequestSpan({
+      requestId: "positive-compaction-req",
+      role: "worker",
+      providerRole: "subagent",
+      workspace: { key: "positive-compaction-workspace" },
+      subject: "compaction request",
+      requestedModel: "gpt-4o",
+      turnMetadataHeader: compactionTurnMetadata
+    });
+
+    await withLogicalSpan(logical, async () => {
+      const attempt = startAttemptSpan({
+        provider: "openai",
+        model: "gpt-4o",
+        selection: "primary",
+        attemptNumber: 1,
+        role: "worker",
+        workspace: { key: "positive-compaction-workspace" }
+      });
+      endAttemptSpan(attempt, {
+        status: "ok",
+        responseModel: "gpt-4o"
+      });
+    });
+
+    endLogicalRequestSpan(logical, {
+      status: "ok",
+      provider: "openai"
+    });
+    await flushTelemetryMetrics();
+
+    const points = findMetricPoints(METRIC_CONTEXT_COMPACTIONS).filter(
+      (p) =>
+        p.attributes["autodev.workspace"] === "positive-compaction-workspace"
+    );
+    assert.equal(
+      points.length,
+      1,
+      "exactly one compaction point must be emitted for positive case"
+    );
+    const point = points[0]!;
+    assert.equal(point.value, 1);
+    assert.equal(point.attributes["gen_ai.provider.name"], "openai");
+    assert.equal(point.attributes["gen_ai.request.model"], "gpt-4o");
+    assert.equal(
+      point.attributes["autodev.workspace"],
+      "positive-compaction-workspace"
+    );
+    assert.equal(point.attributes["autodev.agent.role"], "worker");
+    assert.equal(point.attributes["autodev.compaction.trigger"], "threshold");
+    assert.equal(
+      point.attributes["autodev.compaction.reason"],
+      "context_window_exceeded"
+    );
+    assert.equal(
+      point.attributes["autodev.compaction.implementation"],
+      "summarize"
+    );
+    assert.equal(point.attributes["autodev.compaction.phase"], "pre_turn");
+    assert.equal(
+      point.attributes["autodev.compaction.strategy"],
+      "drop_middle"
+    );
+
+    // Verify logical span recorded request_kind
+    const spans = snapshotSpans();
+    const logicalSpan = spans.find((s) => s.name === "autodev.routed_request");
+    assert.equal(logicalSpan?.attributes["autodev.request_kind"], "compaction");
+    assert.equal(
+      logicalSpan?.attributes["autodev.compaction.trigger"],
+      "threshold"
+    );
+  }
+);
+
+test(
+  "non-compaction requests including remote_compaction_v2 do not emit compaction counts",
+  { concurrency: false },
+  async () => {
+    installExporter();
+
+    // Case 1: remote_compaction_v2 is present on regular request - NOT compaction
+    const regularWithRemoteCompactionFlag = JSON.stringify({
+      remote_compaction_v2: true,
+      workspaces: { "/path/to/repo": {} }
+    });
+
+    const logical1 = startLogicalRequestSpan({
+      requestId: "normal-req-with-remote-flag",
+      role: "worker",
+      providerRole: "subagent",
+      workspace: { key: "non-compaction-workspace" },
+      subject: "regular request",
+      requestedModel: "gpt-4o",
+      turnMetadataHeader: regularWithRemoteCompactionFlag
+    });
+    endLogicalRequestSpan(logical1, { status: "ok", provider: "openai" });
+
+    // Case 2: request_kind is "chat"
+    const chatRequest = JSON.stringify({
+      request_kind: "chat",
+      compaction: { trigger: "manual" },
+      workspaces: { "/path/to/repo": {} }
+    });
+    const logical2 = startLogicalRequestSpan({
+      requestId: "chat-req",
+      role: "worker",
+      providerRole: "subagent",
+      workspace: { key: "non-compaction-workspace" },
+      subject: "chat request",
+      requestedModel: "gpt-4o",
+      turnMetadataHeader: chatRequest
+    });
+    endLogicalRequestSpan(logical2, { status: "ok", provider: "openai" });
+
+    // Case 3: missing metadata entirely
+    const logical3 = startLogicalRequestSpan({
+      requestId: "no-metadata-req",
+      role: "worker",
+      providerRole: "subagent",
+      workspace: { key: "non-compaction-workspace" },
+      subject: "no metadata request",
+      requestedModel: "gpt-4o",
+      turnMetadataHeader: null
+    });
+    endLogicalRequestSpan(logical3, { status: "ok", provider: "openai" });
+
+    await flushTelemetryMetrics();
+    const points = findMetricPoints(METRIC_CONTEXT_COMPACTIONS).filter(
+      (p) => p.attributes["autodev.workspace"] === "non-compaction-workspace"
+    );
+    assert.equal(
+      points.length,
+      0,
+      "non-compaction requests must never emit compaction metrics"
+    );
+  }
+);
+
+test(
+  "failed compaction request does not emit compaction counter",
+  { concurrency: false },
+  async () => {
+    installExporter();
+    const compactionMetadata = JSON.stringify({
+      request_kind: "compaction",
+      compaction: { trigger: "threshold", reason: "overflow" }
+    });
+
+    const logical = startLogicalRequestSpan({
+      requestId: "failed-compaction-req",
+      role: "worker",
+      providerRole: "subagent",
+      workspace: { key: "failed-compaction-workspace" },
+      subject: "failed compaction",
+      requestedModel: "gpt-4o",
+      turnMetadataHeader: compactionMetadata
+    });
+
+    // Request failed with error
+    endLogicalRequestSpan(logical, {
+      status: "error",
+      errorMessage: "upstream 503 unavailable"
+    });
+    await flushTelemetryMetrics();
+
+    const points = findMetricPoints(METRIC_CONTEXT_COMPACTIONS).filter(
+      (p) => p.attributes["autodev.workspace"] === "failed-compaction-workspace"
+    );
+    assert.equal(
+      points.length,
+      0,
+      "failed compaction requests must not increment the compaction counter"
+    );
+  }
+);
+
+test(
+  "duplicate requests and client retries with same requestId are deduplicated",
+  { concurrency: false },
+  async () => {
+    installExporter();
+    const compactionMetadata = JSON.stringify({
+      request_kind: "compaction",
+      compaction: { trigger: "threshold" }
+    });
+
+    // First attempt succeeds
+    const logical1 = startLogicalRequestSpan({
+      requestId: "dedup-same-request-id",
+      role: "worker",
+      providerRole: "subagent",
+      workspace: { key: "dedup-workspace" },
+      subject: "compaction attempt 1",
+      requestedModel: "gpt-4o",
+      turnMetadataHeader: compactionMetadata
+    });
+    endLogicalRequestSpan(logical1, { status: "ok", provider: "openai" });
+
+    // Client-side retry with same requestId succeeds again
+    const logical2 = startLogicalRequestSpan({
+      requestId: "dedup-same-request-id",
+      role: "worker",
+      providerRole: "subagent",
+      workspace: { key: "dedup-workspace" },
+      subject: "compaction retry 2",
+      requestedModel: "gpt-4o",
+      turnMetadataHeader: compactionMetadata
+    });
+    endLogicalRequestSpan(logical2, { status: "ok", provider: "openai" });
+
+    await flushTelemetryMetrics();
+    const points = findMetricPoints(METRIC_CONTEXT_COMPACTIONS).filter(
+      (p) => p.attributes["autodev.workspace"] === "dedup-workspace"
+    );
+    assert.equal(
+      points.length,
+      1,
+      "retried request with same requestId must not double count"
+    );
+    assert.equal(points[0]?.value, 1);
+  }
+);
+
+test("privacy protection sanitizes IDs, paths, prompt content, and high-cardinality values", () => {
+  // Valid categorical values pass
+  assert.equal(sanitizeCategoricalLabel("threshold"), "threshold");
+  assert.equal(
+    sanitizeCategoricalLabel("context_window_exceeded"),
+    "context_window_exceeded"
+  );
+  assert.equal(sanitizeCategoricalLabel("drop_middle"), "drop_middle");
+  assert.equal(sanitizeCategoricalLabel("pre_turn"), "pre_turn");
+  assert.equal(sanitizeCategoricalLabel("summarize"), "summarize");
+
+  // Prohibited IDs and prefixes are stripped
+  assert.equal(sanitizeCategoricalLabel("session-12345"), null);
+  assert.equal(sanitizeCategoricalLabel("thread_abc123"), null);
+  assert.equal(sanitizeCategoricalLabel("turn.001"), null);
+  assert.equal(sanitizeCategoricalLabel("window_id_99"), null);
+  assert.equal(sanitizeCategoricalLabel("req-4567"), null);
+  assert.equal(sanitizeCategoricalLabel("conv-789"), null);
+
+  // UUIDs are stripped
+  assert.equal(
+    sanitizeCategoricalLabel("123e4567-e89b-12d3-a456-426614174000"),
+    null
+  );
+
+  // Paths and URLs are stripped
+  assert.equal(sanitizeCategoricalLabel("/Users/project/path"), null);
+  assert.equal(sanitizeCategoricalLabel("http://example.com"), null);
+
+  // Content with whitespace is stripped
+  assert.equal(sanitizeCategoricalLabel("Summarize this context please"), null);
+
+  // Oversized (>64 chars) is stripped
+  assert.equal(sanitizeCategoricalLabel("a".repeat(65)), null);
+
+  // Unattributed and unknown are stripped
+  assert.equal(sanitizeCategoricalLabel("unattributed"), null);
+  assert.equal(sanitizeCategoricalLabel("unknown"), null);
+
+  // Non-string is stripped
+  assert.equal(sanitizeCategoricalLabel(123), null);
+  assert.equal(sanitizeCategoricalLabel(null), null);
+  assert.equal(sanitizeCategoricalLabel(undefined), null);
+
+  // Hex hashes are stripped
+  assert.equal(
+    sanitizeCategoricalLabel(
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    ),
+    null
+  );
+});
+
+test(
+  "exported metric plumbing verifies OTel descriptor, unit, and cumulative sum",
+  { concurrency: false },
+  async () => {
+    installExporter();
+    const result = recordContextCompaction({
+      requestId: "exported-plumbing-req",
+      provider: "anthropic",
+      model: "claude-sonnet",
+      workspace: { key: "test-workspace" },
+      role: "worker",
+      compaction: {
+        trigger: "threshold",
+        strategy: "drop_middle"
+      }
+    });
+    assert.equal(result, true);
+    await flushTelemetryMetrics();
+
+    const metric = telemetryMetricExporter
+      .getMetrics()
+      .flatMap((r) => r.scopeMetrics)
+      .flatMap((s) => s.metrics)
+      .find((m) => m.descriptor.name === METRIC_CONTEXT_COMPACTIONS);
+
+    assert.ok(metric, "metric must exist in exported metrics");
+    assert.equal(metric.descriptor.name, "autodev.context.compactions");
+    assert.equal(metric.descriptor.unit, "{compaction}");
+    assert.equal(
+      metric.descriptor.description,
+      "Source-confirmed context compactions completed by the AutoDev router."
+    );
+    const point = metric.dataPoints.find(
+      (p) =>
+        (p as { attributes: Record<string, unknown> }).attributes[
+          "autodev.workspace"
+        ] === "test-workspace"
+    ) as { value: number } | undefined;
+    assert.ok(point, "data point for test-workspace must exist");
+    assert.equal(point.value, 1);
+  }
+);
+
+test(
+  "proxyConcreteResponse emits compaction metric on successful served response",
+  { concurrency: false },
+  async () => {
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "claude-key";
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        id: "resp_compaction",
+        status: "completed",
+        model: "sonnet",
+        output: []
+      })) as typeof fetch;
+
+    installExporter();
+    const compactionHeader = JSON.stringify({
+      request_kind: "compaction",
+      compaction: {
+        trigger: "threshold",
+        reason: "window_pressure"
+      },
+      workspaces: { "/path/to/project": {} }
+    });
+
+    try {
+      await proxyConcreteResponse(
+        responseRecorder(),
+        route("claude", "LITELLM_API_KEY"),
+        { model: "sonnet", input: [], stream: false },
+        false,
+        "req-concrete-compaction-e2e",
+        compactionHeader,
+        { key: "workspace-concrete" },
+        null,
+        { key: "session-concrete-compaction", scope: "identified" }
+      );
+      await flushTelemetryMetrics();
+
+      const points = findMetricPoints(METRIC_CONTEXT_COMPACTIONS).filter(
+        (p) => p.attributes["autodev.workspace"] === "workspace-concrete"
+      );
+      assert.equal(
+        points.length,
+        1,
+        "compaction point must be emitted by proxy"
+      );
+      assert.equal(points[0]?.attributes["gen_ai.provider.name"], "claude");
+      assert.equal(points[0]?.attributes["gen_ai.request.model"], "sonnet");
+      assert.equal(
+        points[0]?.attributes["autodev.workspace"],
+        "workspace-concrete"
+      );
+      assert.equal(
+        points[0]?.attributes["autodev.compaction.trigger"],
+        "threshold"
+      );
+      assert.equal(
+        points[0]?.attributes["autodev.compaction.reason"],
+        "window_pressure"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      COOLDOWNS.clearAll();
+      resetTelemetryExporter();
+    }
+  }
+);
+
+test(
+  "proxyFallbackChain retry across candidates emits exactly one compaction point for the serving provider",
+  { concurrency: false },
+  async () => {
+    const previousClaudeKey = process.env.LITELLM_API_KEY;
+    const previousMinimaxKey = process.env.MINIMAX_API_KEY;
+    process.env.LITELLM_API_KEY = "claude-key";
+    process.env.MINIMAX_API_KEY = "minimax-key";
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      if (url.includes("claude.test")) {
+        return new Response("claude overloaded", { status: 529 });
+      }
+      return jsonResponse({
+        id: "resp_minimax",
+        status: "completed",
+        model: "MiniMax-M3",
+        output: []
+      });
+    }) as typeof fetch;
+
+    installExporter();
+    const compactionHeader = JSON.stringify({
+      request_kind: "compaction",
+      compaction: {
+        trigger: "threshold",
+        strategy: "drop_middle"
+      },
+      workspaces: { "/path/to/project": {} }
+    });
+
+    const candidates = [
+      route("claude", "LITELLM_API_KEY"),
+      route("minimax", "MINIMAX_API_KEY")
+    ];
+
+    try {
+      await proxyFallbackChain(
+        responseRecorder(),
+        {
+          candidates,
+          role: "worker",
+          subject: "fallback compaction"
+        },
+        { model: "worker-model", input: [], stream: false },
+        false,
+        "req-fallback-compaction-e2e",
+        compactionHeader,
+        { key: "workspace-fallback" },
+        null
+      );
+      await flushTelemetryMetrics();
+
+      const points = findMetricPoints(METRIC_CONTEXT_COMPACTIONS).filter(
+        (p) => p.attributes["autodev.workspace"] === "workspace-fallback"
+      );
+      assert.equal(
+        points.length,
+        1,
+        "fallback retry across multiple candidates must emit exactly one compaction count"
+      );
+      assert.equal(
+        points[0]?.attributes["gen_ai.provider.name"],
+        "minimax",
+        "must be attributed to the provider that actually served the request"
+      );
+      assert.equal(points[0]?.attributes["autodev.agent.role"], "worker");
+      assert.equal(
+        points[0]?.attributes["autodev.compaction.strategy"],
+        "drop_middle"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousClaudeKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousClaudeKey;
+      if (previousMinimaxKey === undefined) delete process.env.MINIMAX_API_KEY;
+      else process.env.MINIMAX_API_KEY = previousMinimaxKey;
+      COOLDOWNS.clearAll();
+      resetTelemetryExporter();
+    }
+  }
+);
+
+test("compactCompactionDimension maps source-supported values and collapses unfamiliar values to a single bucket", () => {
+  const { trigger, reason, implementation, phase, strategy } =
+    COMPACTION_DIMENSION_ALLOWLISTS;
+
+  // Source-supported values pass through unchanged.
+  for (const value of trigger) {
+    assert.equal(compactCompactionDimension(value, trigger), value);
+  }
+  for (const value of reason) {
+    assert.equal(compactCompactionDimension(value, reason), value);
+  }
+  for (const value of implementation) {
+    assert.equal(compactCompactionDimension(value, implementation), value);
+  }
+  for (const value of phase) {
+    assert.equal(compactCompactionDimension(value, phase), value);
+  }
+  for (const value of strategy) {
+    assert.equal(compactCompactionDimension(value, strategy), value);
+  }
+
+  // Shape-safe but unfamiliar values collapse to COMPACTION_DIMENSION_OTHER
+  // so attacker-controlled metadata cannot multiply metric series.
+  const unfamiliar = [
+    "hostile_label_1",
+    "attacker_supplied_2",
+    "unique_value_3",
+    "x".repeat(63),
+    "z".repeat(63),
+    "label.with.dots",
+    "MixedCaseValue",
+    "totally_new_category"
+  ];
+  const seen = new Set<string>();
+  for (const value of unfamiliar) {
+    const mapped = compactCompactionDimension(value, trigger);
+    assert.equal(mapped, COMPACTION_DIMENSION_OTHER);
+    if (mapped) seen.add(mapped);
+  }
+  assert.equal(
+    seen.size,
+    1,
+    "unfamiliar values must collapse to exactly one bucket"
+  );
+
+  // Non-string, empty, oversized, ID-like, or otherwise unsafe values
+  // return null so the metric recorder omits the dimension entirely.
+  assert.equal(compactCompactionLabelLike(null, trigger), null);
+  assert.equal(compactCompactionLabelLike(undefined, trigger), null);
+  assert.equal(compactCompactionLabelLike(42, trigger), null);
+  assert.equal(compactCompactionLabelLike("", trigger), null);
+  assert.equal(compactCompactionLabelLike("a".repeat(65), trigger), null);
+  assert.equal(compactCompactionLabelLike("session-12345", trigger), null);
+  assert.equal(compactCompactionLabelLike("unattributed", trigger), null);
+  assert.equal(compactCompactionLabelLike("unknown", trigger), null);
+  assert.equal(
+    compactCompactionLabelLike("123e4567-e89b-12d3-a456-426614174000", trigger),
+    null
+  );
+
+  // Allowlist size is the upper bound on cardinality for that dimension
+  // plus one. Each clamp's cardinality is strictly bounded.
+  for (const [name, set] of Object.entries(COMPACTION_DIMENSION_ALLOWLISTS)) {
+    assert.ok(
+      set.size > 0 && set.size <= 16,
+      `${name} allowlist must be small and bounded, got ${set.size}`
+    );
+  }
+});
+
+function compactCompactionLabelLike(
+  value: unknown,
+  allowlist: ReadonlySet<string>
+): string | null {
+  return compactCompactionDimension(value, allowlist);
+}
+
+test(
+  "arbitrary attacker-supplied metadata cannot multiply the compaction metric series",
+  { concurrency: false },
+  async () => {
+    installExporter();
+
+    // Generate 200 unique attacker-controlled trigger/reason/implementation/
+    // phase/strategy values, all shape-safe for `sanitizeCategoricalLabel`
+    // (64 chars, alphanumeric/_.-) but never present in any source allowlist.
+    // Each one would have created a new metric series without the bounded
+    // dimension allowlist.
+    const alphabet =
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    const seenTriggers = new Set<string>();
+    const seenReasons = new Set<string>();
+    const seenImplementations = new Set<string>();
+    const seenPhases = new Set<string>();
+    const seenStrategies = new Set<string>();
+
+    function randomLabel(): string {
+      let out = "";
+      for (let i = 0; i < 24; i += 1) {
+        const idx = Math.floor(Math.random() * alphabet.length);
+        out += alphabet[idx];
+      }
+      return out;
+    }
+
+    function unique(pool: Set<string>, prefix: string, index: number): string {
+      let candidate = `${prefix}_${index}_${randomLabel()}`;
+      while (pool.has(candidate)) candidate = `${candidate}x`;
+      pool.add(candidate);
+      return candidate;
+    }
+
+    const totalRequests = 200;
+    for (let i = 0; i < totalRequests; i += 1) {
+      const logical = startLogicalRequestSpan({
+        requestId: `cardinality-bounded-${i}`,
+        role: "worker",
+        providerRole: "subagent",
+        workspace: { key: "cardinality-bounded-workspace" },
+        subject: `bounded compaction ${i}`,
+        requestedModel: "gpt-4o",
+        turnMetadataHeader: JSON.stringify({
+          request_kind: "compaction",
+          compaction: {
+            trigger: unique(seenTriggers, "trigger", i),
+            reason: unique(seenReasons, "reason", i),
+            implementation: unique(seenImplementations, "impl", i),
+            phase: unique(seenPhases, "phase", i),
+            strategy: unique(seenStrategies, "strategy", i)
+          },
+          workspaces: { "/path/to/repo": {} }
+        })
+      });
+      await withLogicalSpan(logical, async () => {
+        const attempt = startAttemptSpan({
+          provider: "openai",
+          model: "gpt-4o",
+          selection: "primary",
+          attemptNumber: 1,
+          role: "worker",
+          workspace: { key: "cardinality-bounded-workspace" }
+        });
+        endAttemptSpan(attempt, {
+          status: "ok",
+          responseModel: "gpt-4o"
+        });
+      });
+      endLogicalRequestSpan(logical, {
+        status: "ok",
+        provider: "openai"
+      });
+    }
+
+    await flushTelemetryMetrics();
+    const points = findMetricPoints(METRIC_CONTEXT_COMPACTIONS).filter(
+      (p) =>
+        p.attributes["autodev.workspace"] === "cardinality-bounded-workspace"
+    );
+
+    // Every unknown dimension value collapses to COMPACTION_DIMENSION_OTHER,
+    // so all 200 distinct requests must collapse into a single bounded
+    // metric series, not 200 series.
+    assert.equal(
+      points.length,
+      1,
+      "200 distinct arbitrary metadata values must collapse to a single bounded metric series"
+    );
+    assert.equal(points[0]?.value, totalRequests);
+    assert.equal(
+      points[0]?.attributes["autodev.compaction.trigger"],
+      COMPACTION_DIMENSION_OTHER
+    );
+    assert.equal(
+      points[0]?.attributes["autodev.compaction.reason"],
+      COMPACTION_DIMENSION_OTHER
+    );
+    assert.equal(
+      points[0]?.attributes["autodev.compaction.implementation"],
+      COMPACTION_DIMENSION_OTHER
+    );
+    assert.equal(
+      points[0]?.attributes["autodev.compaction.phase"],
+      COMPACTION_DIMENSION_OTHER
+    );
+    assert.equal(
+      points[0]?.attributes["autodev.compaction.strategy"],
+      COMPACTION_DIMENSION_OTHER
+    );
+    assert.equal(
+      points[0]?.attributes["autodev.workspace"],
+      "cardinality-bounded-workspace"
+    );
+    assert.equal(points[0]?.attributes["autodev.agent.role"], "worker");
+    assert.equal(points[0]?.attributes["gen_ai.provider.name"], "openai");
+    assert.equal(points[0]?.attributes["gen_ai.request.model"], "gpt-4o");
+  }
+);
+
+test(
+  "unknown compaction categories still increment the counter once per source-confirmed compaction",
+  { concurrency: false },
+  async () => {
+    installExporter();
+
+    // Each invocation uses unique, unfamiliar trigger/reason/implementation
+    // values that all collapse to COMPACTION_DIMENSION_OTHER, but the
+    // counter must still increment exactly once per request because the
+    // request_kind was source-confirmed as "compaction".
+    const ids = ["unknown-cat-req-a", "unknown-cat-req-b", "unknown-cat-req-c"];
+    for (const requestId of ids) {
+      const logical = startLogicalRequestSpan({
+        requestId,
+        role: "worker",
+        providerRole: "subagent",
+        workspace: { key: "unknown-cat-workspace" },
+        subject: "unknown category compaction",
+        requestedModel: "gpt-4o",
+        turnMetadataHeader: JSON.stringify({
+          request_kind: "compaction",
+          compaction: {
+            trigger: "unfamiliar_trigger_xyz",
+            reason: "unfamiliar_reason_xyz",
+            implementation: "unfamiliar_impl_xyz",
+            phase: "unfamiliar_phase",
+            strategy: "unfamiliar_strategy"
+          },
+          workspaces: { "/path/to/repo": {} }
+        })
+      });
+      await withLogicalSpan(logical, async () => {
+        const attempt = startAttemptSpan({
+          provider: "openai",
+          model: "gpt-4o",
+          selection: "primary",
+          attemptNumber: 1,
+          role: "worker",
+          workspace: { key: "unknown-cat-workspace" }
+        });
+        endAttemptSpan(attempt, {
+          status: "ok",
+          responseModel: "gpt-4o"
+        });
+      });
+      endLogicalRequestSpan(logical, {
+        status: "ok",
+        provider: "openai"
+      });
+    }
+
+    await flushTelemetryMetrics();
+    const points = findMetricPoints(METRIC_CONTEXT_COMPACTIONS).filter(
+      (p) => p.attributes["autodev.workspace"] === "unknown-cat-workspace"
+    );
+
+    // All three requests share the same collapsed dimensions, so they
+    // aggregate into a single bounded series with sum == 3.
+    assert.equal(points.length, 1);
+    assert.equal(points[0]?.value, ids.length);
+    for (const dimension of [
+      "autodev.compaction.trigger",
+      "autodev.compaction.reason",
+      "autodev.compaction.implementation",
+      "autodev.compaction.phase",
+      "autodev.compaction.strategy"
+    ]) {
+      assert.equal(
+        points[0]?.attributes[dimension],
+        COMPACTION_DIMENSION_OTHER,
+        `${dimension} must collapse to ${COMPACTION_DIMENSION_OTHER}`
+      );
+    }
+  }
+);
+
+test(
+  "mixing source-supported and unfamiliar values keeps the supported value and only collapses the unfamiliar one",
+  { concurrency: false },
+  async () => {
+    installExporter();
+
+    // First request: trigger is allowed ("threshold"), reason is unfamiliar.
+    const logical1 = startLogicalRequestSpan({
+      requestId: "mixed-cat-req-1",
+      role: "worker",
+      providerRole: "subagent",
+      workspace: { key: "mixed-cat-workspace" },
+      subject: "mixed category compaction",
+      requestedModel: "gpt-4o",
+      turnMetadataHeader: JSON.stringify({
+        request_kind: "compaction",
+        compaction: {
+          trigger: "threshold",
+          reason: "completely_unknown_reason"
+        },
+        workspaces: { "/path/to/repo": {} }
+      })
+    });
+    await withLogicalSpan(logical1, async () => {
+      const attempt = startAttemptSpan({
+        provider: "openai",
+        model: "gpt-4o",
+        selection: "primary",
+        attemptNumber: 1,
+        role: "worker",
+        workspace: { key: "mixed-cat-workspace" }
+      });
+      endAttemptSpan(attempt, {
+        status: "ok",
+        responseModel: "gpt-4o"
+      });
+    });
+    endLogicalRequestSpan(logical1, {
+      status: "ok",
+      provider: "openai"
+    });
+
+    // Second request: trigger is unfamiliar, phase is familiar.
+    const logical2 = startLogicalRequestSpan({
+      requestId: "mixed-cat-req-2",
+      role: "worker",
+      providerRole: "subagent",
+      workspace: { key: "mixed-cat-workspace" },
+      subject: "mixed category compaction",
+      requestedModel: "gpt-4o",
+      turnMetadataHeader: JSON.stringify({
+        request_kind: "compaction",
+        compaction: {
+          trigger: "another_unfamiliar_trigger",
+          phase: "pre_turn"
+        },
+        workspaces: { "/path/to/repo": {} }
+      })
+    });
+    await withLogicalSpan(logical2, async () => {
+      const attempt = startAttemptSpan({
+        provider: "openai",
+        model: "gpt-4o",
+        selection: "primary",
+        attemptNumber: 1,
+        role: "worker",
+        workspace: { key: "mixed-cat-workspace" }
+      });
+      endAttemptSpan(attempt, {
+        status: "ok",
+        responseModel: "gpt-4o"
+      });
+    });
+    endLogicalRequestSpan(logical2, {
+      status: "ok",
+      provider: "openai"
+    });
+
+    await flushTelemetryMetrics();
+    const points = findMetricPoints(METRIC_CONTEXT_COMPACTIONS).filter(
+      (p) => p.attributes["autodev.workspace"] === "mixed-cat-workspace"
+    );
+
+    // The two requests differ in both trigger and (trigger vs reason)
+    // dimensions, so they produce two distinct bounded series rather than
+    // a single series that would lose the supported value.
+    assert.equal(points.length, 2);
+    const byTrigger = new Map<string, (typeof points)[number]>();
+    for (const point of points) {
+      byTrigger.set(
+        String(point.attributes["autodev.compaction.trigger"]),
+        point
+      );
+    }
+    assert.ok(byTrigger.has("threshold"));
+    assert.ok(byTrigger.has(COMPACTION_DIMENSION_OTHER));
+    assert.equal(byTrigger.get("threshold")?.value, 1);
+    assert.equal(
+      byTrigger.get("threshold")?.attributes["autodev.compaction.reason"],
+      COMPACTION_DIMENSION_OTHER
+    );
+    assert.equal(byTrigger.get(COMPACTION_DIMENSION_OTHER)?.value, 1);
+    assert.equal(
+      byTrigger.get(COMPACTION_DIMENSION_OTHER)?.attributes[
+        "autodev.compaction.phase"
+      ],
+      "pre_turn"
+    );
+  }
+);
+
+test(
+  "totally absent compaction dimensions do not produce the other bucket",
+  { concurrency: false },
+  async () => {
+    installExporter();
+
+    // request_kind is compaction but no compaction payload at all: no
+    // trigger/reason/implementation/phase/strategy is reported. The
+    // metric point must not be padded with placeholder dimensions; it
+    // should simply omit them so the cardinality stays at its baseline.
+    const logical = startLogicalRequestSpan({
+      requestId: "no-dimensions-req",
+      role: "worker",
+      providerRole: "subagent",
+      workspace: { key: "no-dimensions-workspace" },
+      subject: "bare compaction",
+      requestedModel: "gpt-4o",
+      turnMetadataHeader: JSON.stringify({
+        request_kind: "compaction",
+        workspaces: { "/path/to/repo": {} }
+      })
+    });
+    await withLogicalSpan(logical, async () => {
+      const attempt = startAttemptSpan({
+        provider: "openai",
+        model: "gpt-4o",
+        selection: "primary",
+        attemptNumber: 1,
+        role: "worker",
+        workspace: { key: "no-dimensions-workspace" }
+      });
+      endAttemptSpan(attempt, {
+        status: "ok",
+        responseModel: "gpt-4o"
+      });
+    });
+    endLogicalRequestSpan(logical, {
+      status: "ok",
+      provider: "openai"
+    });
+
+    await flushTelemetryMetrics();
+    const points = findMetricPoints(METRIC_CONTEXT_COMPACTIONS).filter(
+      (p) => p.attributes["autodev.workspace"] === "no-dimensions-workspace"
+    );
+
+    assert.equal(points.length, 1);
+    assert.equal(points[0]?.value, 1);
+    for (const dimension of [
+      "autodev.compaction.trigger",
+      "autodev.compaction.reason",
+      "autodev.compaction.implementation",
+      "autodev.compaction.phase",
+      "autodev.compaction.strategy"
+    ]) {
+      assert.equal(
+        Object.hasOwn(points[0]?.attributes ?? {}, dimension),
+        false,
+        `${dimension} must be omitted when not reported, not synthesized as "other"`
+      );
+    }
+  }
+);
+
+test(
+  "thread, session, and high-cardinality IDs in any compaction dimension collapse to the safe-bucket shape, never reaching the metric",
+  { concurrency: false },
+  async () => {
+    installExporter();
+
+    const hostileValues = [
+      "session-12345",
+      "thread_abc123",
+      "turn.001",
+      "window_id_99",
+      "req-4567",
+      "conv-789",
+      "123e4567-e89b-12d3-a456-426614174000",
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "/Users/project/path",
+      "a".repeat(65),
+      "",
+      null,
+      undefined,
+      42
+    ];
+
+    for (const [index, hostileValue] of hostileValues.entries()) {
+      const logical = startLogicalRequestSpan({
+        requestId: `hostile-dim-${index}`,
+        role: "worker",
+        providerRole: "subagent",
+        workspace: { key: "hostile-dim-workspace" },
+        subject: `hostile dimension ${index}`,
+        requestedModel: "gpt-4o",
+        turnMetadataHeader: JSON.stringify({
+          request_kind: "compaction",
+          compaction: {
+            trigger: hostileValue ?? "unknown",
+            reason: hostileValue ?? "unknown",
+            implementation: hostileValue ?? "unknown",
+            phase: hostileValue ?? "unknown",
+            strategy: hostileValue ?? "unknown"
+          },
+          workspaces: { "/path/to/repo": {} }
+        })
+      });
+      await withLogicalSpan(logical, async () => {
+        const attempt = startAttemptSpan({
+          provider: "openai",
+          model: "gpt-4o",
+          selection: "primary",
+          attemptNumber: 1,
+          role: "worker",
+          workspace: { key: "hostile-dim-workspace" }
+        });
+        endAttemptSpan(attempt, {
+          status: "ok",
+          responseModel: "gpt-4o"
+        });
+      });
+      endLogicalRequestSpan(logical, {
+        status: "ok",
+        provider: "openai"
+      });
+    }
+
+    await flushTelemetryMetrics();
+    const points = findMetricPoints(METRIC_CONTEXT_COMPACTIONS).filter(
+      (p) => p.attributes["autodev.workspace"] === "hostile-dim-workspace"
+    );
+
+    // No thread/session/ID/path leaked into metric dimensions; the only
+    // thing present is the bounded provider/model/workspace/role and the
+    // provider-role attribute. All compaction dimensions must be omitted
+    // because every hostile value was rejected by sanitizeCategoricalLabel
+    // and so compactCompactionDimension returned null.
+    assert.equal(
+      points.length,
+      1,
+      "every hostile dimension value must produce one bounded series"
+    );
+    assert.equal(points[0]?.value, hostileValues.length);
+    for (const dimension of [
+      "autodev.compaction.trigger",
+      "autodev.compaction.reason",
+      "autodev.compaction.implementation",
+      "autodev.compaction.phase",
+      "autodev.compaction.strategy"
+    ]) {
+      assert.equal(
+        Object.hasOwn(points[0]?.attributes ?? {}, dimension),
+        false,
+        `${dimension} must not be present for unsafe input`
+      );
+    }
+    // No thread/session/window IDs, conversation keys, or raw request
+    // identifiers leak into metric attributes. The standard
+    // `gen_ai.request.model` attribute name is a class identifier, not
+    // a per-request ID, so it is excluded from this assertion.
+    const forbiddenSubstrings = [
+      "sessionid",
+      "threadid",
+      "requestid",
+      "conversationid",
+      "windowid",
+      "userid",
+      "session_id",
+      "thread_id",
+      "request_id",
+      "conversation_id",
+      "window_id",
+      "user_id"
+    ];
+    for (const key of Object.keys(points[0]?.attributes ?? {})) {
+      const normalized = key.toLowerCase();
+      for (const forbidden of forbiddenSubstrings) {
+        assert.equal(
+          normalized.includes(forbidden),
+          false,
+          `metric attribute "${key}" must not be a high-cardinality identifier`
+        );
+      }
+    }
+  }
+);

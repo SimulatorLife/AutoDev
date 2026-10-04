@@ -1,14 +1,26 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { LOCAL_CONTROL_API_ACTOR } from "@simulatorlife/autodev-core";
-import { RuleSyncRepository } from "@simulatorlife/autodev-data";
+import {
+  GithubActionsAdapter,
+  RuleSyncRepository
+} from "@simulatorlife/autodev-data";
 import {
   CONTROL_API_PATHS,
-  handleControlApiRequest
+  githubWorkflowsView,
+  handleControlApiRequest,
+  setGithubActionsAdapterForTests
 } from "@simulatorlife/autodev-runtime/control-api";
 import {
   getDefaultPersistenceManager,
@@ -27,13 +39,19 @@ import {
 } from "@simulatorlife/autodev-runtime/router/telemetry";
 import type { ExecutionContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 
+import { handleGithubWorkflowMutation } from "../../runtime/src/control-api/github-mutations.ts";
+
 const ENV_KEYS = [
   "AUTODEV_CONTROL_API_TOKEN",
   "AUTODEV_CONTROL_VIEWERS",
   "AUTODEV_CONTROL_OPERATORS",
   "AUTODEV_MEMORY_DATABASE_URL",
   "AUTODEV_MEMORY_READ_GLOBAL",
-  "AUTODEV_MEMORY_READ_TASK_HISTORY"
+  "AUTODEV_MEMORY_READ_TASK_HISTORY",
+  "AUTODEV_GITHUB_TOKEN",
+  "AUTODEV_GITHUB_ACTIONS_WRITE_TOKEN",
+  "AUTODEV_GITHUB_REPOSITORY",
+  "GITHUB_REPOSITORY"
 ] as const;
 const SERVICE_TOKEN = "unit-test-secret-token-0123456789abcdef";
 const telemetryExporter = new InMemorySpanExporter();
@@ -55,6 +73,129 @@ function configure(): void {
   process.env.AUTODEV_CONTROL_API_TOKEN = SERVICE_TOKEN;
   process.env.AUTODEV_CONTROL_VIEWERS = "viewer-a";
   process.env.AUTODEV_CONTROL_OPERATORS = "operator-a";
+}
+
+function makeGithubMutationFetch(
+  options: {
+    initialState?: "active" | "disabled_manually";
+    activeRun?: "queued" | "in_progress" | null;
+  } = {}
+) {
+  let state = options.initialState ?? "active";
+  const requests: Array<{
+    url: string;
+    method: string;
+    headers: Headers;
+    body: string | null;
+  }> = [];
+  const fetchFn: typeof fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    requests.push({
+      url,
+      method,
+      headers: new Headers(init?.headers),
+      body: typeof init?.body === "string" ? init.body : null
+    });
+    if (url.includes("/actions/workflows/101/runs?")) {
+      const status = new URL(url).searchParams.get("status");
+      if (options.activeRun === status) {
+        return Response.json({
+          total_count: 1,
+          workflow_runs: [
+            {
+              id: 501,
+              workflow_id: 101,
+              event: "schedule",
+              status
+            }
+          ]
+        });
+      }
+      return Response.json({ total_count: 0, workflow_runs: [] });
+    }
+    if (url.endsWith("/actions/workflows/101")) {
+      return Response.json({
+        id: 101,
+        name: "scheduler",
+        path: ".github/workflows/_scheduler.yml",
+        state,
+        html_url:
+          "https://github.com/SimulatorLife/AutoDev/actions/workflows/_scheduler.yml"
+      });
+    }
+    if (url.includes("/actions/workflows?")) {
+      return Response.json({
+        total_count: 1,
+        workflows: [
+          {
+            id: 101,
+            name: "scheduler",
+            path: ".github/workflows/_scheduler.yml",
+            state,
+            html_url:
+              "https://github.com/SimulatorLife/AutoDev/actions/workflows/_scheduler.yml"
+          }
+        ]
+      });
+    }
+    if (url.endsWith("/actions/workflows/101/disable")) {
+      state = "disabled_manually";
+      return new Response(null, { status: 204 });
+    }
+    if (url.endsWith("/actions/workflows/101/enable")) {
+      state = "active";
+      return new Response(null, { status: 204 });
+    }
+    if (url.endsWith("/actions/workflows/101/dispatches")) {
+      return new Response(null, { status: 204 });
+    }
+    return Response.json({ message: "Not found" }, { status: 404 });
+  };
+  return {
+    fetchFn,
+    requests,
+    get state() {
+      return state;
+    }
+  };
+}
+
+function writeMutationWorkspace(
+  repositoryRoot: string,
+  enabled: boolean,
+  workflowYaml = [
+    "name: scheduler",
+    "on:",
+    "  schedule:",
+    '    - cron: "*/15 * * * *"',
+    "  workflow_dispatch:",
+    "jobs:",
+    "  noop:",
+    "    steps: []",
+    ""
+  ].join("\n")
+): void {
+  mkdirSync(join(repositoryRoot, ".github", "workflows"), { recursive: true });
+  mkdirSync(join(repositoryRoot, "config"), { recursive: true });
+  writeFileSync(
+    join(repositoryRoot, ".github", "workflows", "_scheduler.yml"),
+    workflowYaml
+  );
+  writeFileSync(
+    join(repositoryRoot, "config", "workspaces.json"),
+    JSON.stringify({
+      schema: "autodev-workspaces-v1",
+      workspaces: [
+        {
+          id: "SimulatorLife/AutoDev",
+          baseBranch: "main",
+          enabled,
+          agentRoles: null
+        }
+      ]
+    })
+  );
 }
 
 function makeRequest(
@@ -288,14 +429,13 @@ test("viewer reads control resources; MCP and Skills views contain configuration
     });
     assert.equal(workspaces.response.statusCode, 200);
     assert.equal(workspaces.body.schema, "autodev-control-workspaces-v1");
-    assert.equal(workspaces.body.source, "weights.json");
+    assert.equal(workspaces.body.source, "config/workspaces.json");
     assert.equal(workspaces.body.catalogStatus, "valid");
     assert.ok(Array.isArray(workspaces.body.workspaces));
     assert.equal(workspaces.body.totalWorkspaces, 5);
     assert.ok(
       workspaces.body.workspaces.some(
-        (workspace: { name: string }) =>
-          workspace.name === "SimulatorLife/AutoDev"
+        (workspace: { id: string }) => workspace.id === "SimulatorLife/AutoDev"
       )
     );
   } finally {
@@ -509,7 +649,7 @@ test("Tools catalog remains unknown when the role source is unavailable", async 
   }
 });
 
-test("Control API surfaces all 12 typed resource families", async () => {
+test("Control API surfaces all 13 typed resource families", async () => {
   const saved = saveEnv();
   try {
     configure();
@@ -699,6 +839,33 @@ test("Control API surfaces all 12 typed resource families", async () => {
     });
     assert.equal(runtime.response.statusCode, 200);
     assert.equal(runtime.body.schema, "autodev-control-runtime-v1");
+
+    // 13. GitHub: parsed workflow definitions/triggers only; never live
+    // Actions API facts.
+    const github = await call("GET", CONTROL_API_PATHS.github, {
+      actor: "viewer-a"
+    });
+    assert.equal(github.response.statusCode, 200);
+    assert.equal(github.body.schema, "autodev-control-github-v1");
+    assert.equal(github.body.source, ".github/workflows");
+    assert.equal(github.body.readOnly, true);
+    assert.equal(github.body.catalogStatus, "valid");
+    assert.equal(github.body.runtimeFactsAvailable, false);
+    assert.equal(github.body.operationsAvailable, false);
+    assert.ok(Array.isArray(github.body.workflows));
+    const scheduler = github.body.workflows.find(
+      (workflow: { id: string }) => workflow.id === "_scheduler.yml"
+    );
+    assert.ok(scheduler);
+    assert.deepEqual(scheduler.schedules, ["*/15 * * * *"]);
+    assert.ok(scheduler.events.includes("workflow_dispatch"));
+    assert.deepEqual(scheduler.allowedOperations, undefined);
+
+    const githubMutation = await call("PATCH", CONTROL_API_PATHS.github, {
+      actor: "operator-a",
+      body: {}
+    });
+    assert.equal(githubMutation.response.statusCode, 405);
   } finally {
     restoreEnv(saved);
   }
@@ -1013,6 +1180,782 @@ test("Memory Control API audits denied lifecycle writes and gates global reads",
     assert.equal(operatorGrantRequired.response.statusCode, 503);
     delete process.env.AUTODEV_MEMORY_READ_TASK_HISTORY;
   } finally {
+    restoreEnv(saved);
+  }
+});
+
+test("Control API /control/github surfaces authoritative read-only GitHub Actions runtime state and scoped stats when configured", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    process.env.AUTODEV_GITHUB_TOKEN = "ghp_mock_token_123";
+    process.env.AUTODEV_GITHUB_REPOSITORY = "SimulatorLife/AutoDev";
+    process.env.AUTODEV_GITHUB_ACTIONS_WRITE_TOKEN = "ghp_write_mock_456";
+
+    const mockFetch: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/actions/workflows/101/runs?")) {
+        return Response.json({ total_count: 0, workflow_runs: [] });
+      }
+      if (url.includes("/actions/workflows")) {
+        return Response.json(
+          {
+            total_count: 5,
+            workflows: [
+              {
+                id: 101,
+                name: "scheduler",
+                path: ".github/workflows/_scheduler.yml",
+                state: "active",
+                html_url:
+                  "https://github.com/SimulatorLife/AutoDev/actions/workflows/_scheduler.yml",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-02-01T00:00:00Z"
+              },
+              {
+                id: 102,
+                name: "Agent Invoke",
+                path: ".github/workflows/agent-invoke.yml",
+                state: "disabled_manually",
+                html_url:
+                  "https://github.com/SimulatorLife/AutoDev/actions/workflows/agent-invoke.yml",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-02-01T00:00:00Z"
+              },
+              {
+                id: 103,
+                name: "AutoDev Metrics Dashboard",
+                path: ".github/workflows/metrics-dashboard.yml",
+                state: "disabled_manually",
+                html_url:
+                  "https://github.com/SimulatorLife/AutoDev/actions/workflows/metrics-dashboard.yml",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-02-01T00:00:00Z"
+              },
+              {
+                id: 104,
+                name: "Target Auto-merge",
+                path: ".github/workflows/target-automerge.yml",
+                state: "active",
+                html_url:
+                  "https://github.com/SimulatorLife/AutoDev/actions/workflows/target-automerge.yml",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-02-01T00:00:00Z"
+              },
+              {
+                id: 105,
+                name: "Target PR Janitor",
+                path: ".github/workflows/target-pr-janitor.yml",
+                state: "disabled_inactivity",
+                html_url:
+                  "https://github.com/SimulatorLife/AutoDev/actions/workflows/target-pr-janitor.yml",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-02-01T00:00:00Z"
+              }
+            ]
+          },
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/actions/runs")) {
+        return Response.json(
+          {
+            total_count: 3,
+            workflow_runs: [
+              {
+                id: 5001,
+                name: "scheduler",
+                workflow_id: 101,
+                path: ".github/workflows/_scheduler.yml",
+                head_branch: "main",
+                head_sha: "c47aeaa297b555fbd0b3cf961028bc8ae06485ed",
+                event: "schedule",
+                status: "completed",
+                conclusion: "success",
+                html_url:
+                  "https://github.com/SimulatorLife/AutoDev/actions/runs/5001",
+                created_at: "2026-10-04T05:00:00Z",
+                updated_at: "2026-10-04T05:05:00Z",
+                run_attempt: 1
+              },
+              {
+                id: 5002,
+                name: "scheduler",
+                workflow_id: 101,
+                path: ".github/workflows/_scheduler.yml",
+                head_branch: "main",
+                head_sha: "32917704044df54124558718110ec1695f83b0a3",
+                event: "schedule",
+                status: "completed",
+                conclusion: "failure",
+                html_url:
+                  "https://github.com/SimulatorLife/AutoDev/actions/runs/5002",
+                created_at: "2026-10-04T04:45:00Z",
+                updated_at: "2026-10-04T04:50:00Z",
+                run_attempt: 1
+              },
+              {
+                id: 5003,
+                name: "Agent Invoke",
+                workflow_id: 102,
+                path: ".github/workflows/agent-invoke.yml",
+                head_branch: "feat/tests",
+                head_sha: "6031b1d2a886961d369f1e9d1e82f05026a4edcc",
+                event: "workflow_call",
+                status: "in_progress",
+                conclusion: null,
+                html_url:
+                  "https://github.com/SimulatorLife/AutoDev/actions/runs/5003",
+                created_at: "2026-10-04T05:10:00Z",
+                updated_at: "2026-10-04T05:12:00Z",
+                run_attempt: 1
+              }
+            ]
+          },
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    };
+
+    setGithubActionsAdapterForTests(
+      new GithubActionsAdapter({ fetchFn: mockFetch })
+    );
+
+    const res = await call("GET", CONTROL_API_PATHS.github, {
+      actor: "viewer-a"
+    });
+    assert.equal(res.response.statusCode, 200);
+    assert.equal(res.body.schema, "autodev-control-github-v1");
+    assert.equal(res.body.readOnly, true);
+    assert.equal(res.body.catalogStatus, "valid");
+    assert.equal(res.body.runtimeFactsAvailable, true);
+    assert.equal(res.body.runtimeStatus, "available");
+    assert.equal(res.body.repository, "SimulatorLife/AutoDev");
+
+    // Scoped statistics
+    assert.deepEqual(res.body.stats, {
+      totalRuns: 3,
+      successfulRuns: 1,
+      failedRuns: 1,
+      inProgressRuns: 1,
+      cancelledRuns: 0,
+      successRate: 0.5
+    });
+
+    assert.equal(res.body.recentRuns.length, 3);
+    assert.equal(res.body.recentRuns[0].id, 5001);
+
+    // Correlated workflow definitions
+    const scheduler = res.body.workflows.find(
+      (w: { id: string }) => w.id === "_scheduler.yml"
+    );
+    assert.ok(scheduler);
+    assert.equal(scheduler.actionsState, "active");
+    assert.equal(scheduler.actionsWorkflowId, 101);
+    assert.equal(scheduler.recentRunsCount, 2);
+    assert.equal(scheduler.lastRunStatus, "completed");
+    assert.equal(scheduler.lastRunConclusion, "success");
+    assert.deepEqual(scheduler.schedules, ["*/15 * * * *"]);
+
+    const agentInvoke = res.body.workflows.find(
+      (w: { id: string }) => w.id === "agent-invoke.yml"
+    );
+    assert.ok(agentInvoke);
+    assert.equal(agentInvoke.actionsState, "disabled_manually");
+    assert.equal(agentInvoke.actionsWorkflowId, 102);
+    assert.equal(agentInvoke.recentRunsCount, 1);
+    assert.equal(agentInvoke.lastRunStatus, "in_progress");
+    assert.equal(agentInvoke.lastRunConclusion, null);
+
+    // Viewer actors never receive mutation affordances, even when a write
+    // credential is available to the Runtime.
+    assert.equal(res.body.operationsAvailable, false);
+    assert.deepEqual(scheduler.allowedOperations, []);
+    assert.deepEqual(agentInvoke.allowedOperations, []);
+
+    // An authenticated operator receives only the operations permitted for
+    // the four scheduled workflows in the Runtime policy.
+    const operatorRes = await call("GET", CONTROL_API_PATHS.github, {
+      actor: "operator-a"
+    });
+    assert.equal(operatorRes.response.statusCode, 200);
+    assert.equal(operatorRes.body.operationsAvailable, true);
+    const operatorScheduler = operatorRes.body.workflows.find(
+      (w: { id: string }) => w.id === "_scheduler.yml"
+    );
+    assert.ok(operatorScheduler);
+    assert.deepEqual(operatorScheduler.allowedOperations, [
+      "dispatch",
+      "disable"
+    ]);
+    const operatorMetrics = operatorRes.body.workflows.find(
+      (w: { id: string }) => w.id === "metrics-dashboard.yml"
+    );
+    assert.ok(operatorMetrics);
+    assert.deepEqual(operatorMetrics.allowedOperations, ["enable"]);
+    const operatorAutomerge = operatorRes.body.workflows.find(
+      (w: { id: string }) => w.id === "target-automerge.yml"
+    );
+    assert.ok(operatorAutomerge);
+    assert.deepEqual(operatorAutomerge.allowedOperations, ["disable"]);
+    const operatorJanitor = operatorRes.body.workflows.find(
+      (w: { id: string }) => w.id === "target-pr-janitor.yml"
+    );
+    assert.ok(operatorJanitor);
+    assert.deepEqual(operatorJanitor.allowedOperations, ["enable"]);
+    const operatorAgentInvoke = operatorRes.body.workflows.find(
+      (w: { id: string }) => w.id === "agent-invoke.yml"
+    );
+    assert.ok(operatorAgentInvoke);
+    assert.deepEqual(operatorAgentInvoke.allowedOperations, []);
+
+    // A write credential is the only additional capability; the read token
+    // must never be treated as an Actions:write token.
+    delete process.env.AUTODEV_GITHUB_ACTIONS_WRITE_TOKEN;
+    const noWriteToken = await call("GET", CONTROL_API_PATHS.github, {
+      actor: "operator-a"
+    });
+    assert.equal(noWriteToken.body.operationsAvailable, false);
+    assert.ok(
+      noWriteToken.body.workflows.every(
+        (workflow: { allowedOperations?: readonly string[] }) =>
+          workflow.allowedOperations?.length === 0
+      )
+    );
+  } finally {
+    setGithubActionsAdapterForTests(null);
+    restoreEnv(saved);
+  }
+});
+
+test("Control API /control/github rejects unconfigured workspace repositories", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    process.env.AUTODEV_GITHUB_TOKEN = "ghp_mock_token_123";
+    process.env.AUTODEV_GITHUB_REPOSITORY = "UnconfiguredOrg/UntrustedRepo";
+
+    const res = await call("GET", CONTROL_API_PATHS.github, {
+      actor: "viewer-a"
+    });
+    assert.equal(res.response.statusCode, 200);
+    assert.equal(res.body.runtimeFactsAvailable, false);
+    assert.equal(res.body.runtimeStatus, "invalid");
+    assert.equal(res.body.repository, "UnconfiguredOrg/UntrustedRepo");
+    assert.equal(res.body.stats, null);
+    assert.deepEqual(res.body.recentRuns, []);
+    assert.ok(
+      res.body.runtimeMessage.includes(
+        "not a recognized workspace in config/workspaces.json"
+      )
+    );
+    // All workflows default to unavailable
+    for (const workflow of res.body.workflows) {
+      assert.equal(workflow.actionsState, "unavailable");
+    }
+  } finally {
+    restoreEnv(saved);
+  }
+});
+
+test("GitHub runtime state rejects disabled workspaces before calling GitHub", async () => {
+  const repositoryRoot = mkdtempSync(
+    join(tmpdir(), "autodev-github-disabled-")
+  );
+  let fetchCalls = 0;
+  try {
+    mkdirSync(join(repositoryRoot, ".github", "workflows"), {
+      recursive: true
+    });
+    mkdirSync(join(repositoryRoot, "config"), { recursive: true });
+    writeFileSync(
+      join(repositoryRoot, ".github", "workflows", "ci.yml"),
+      "name: CI\non:\n  push:\n"
+    );
+    writeFileSync(
+      join(repositoryRoot, "config", "workspaces.json"),
+      JSON.stringify({
+        schema: "autodev-workspaces-v1",
+        workspaces: [
+          {
+            id: "SimulatorLife/AutoDev",
+            baseBranch: "main",
+            enabled: false,
+            agentRoles: null
+          }
+        ]
+      })
+    );
+
+    const actionsAdapter = new GithubActionsAdapter({
+      fetchFn: async () => {
+        fetchCalls++;
+        return new Response("{}", { status: 200 });
+      }
+    });
+    const result = await githubWorkflowsView(repositoryRoot, {
+      actionsAdapter,
+      token: "test-token",
+      repository: "SimulatorLife/AutoDev"
+    });
+
+    assert.equal(result.runtimeFactsAvailable, false);
+    assert.equal(result.runtimeStatus, "invalid");
+    assert.equal(result.stats, null);
+    assert.deepEqual(result.recentRuns, []);
+    assert.match(String(result.runtimeMessage), /workspace .* is disabled/u);
+    assert.equal(fetchCalls, 0);
+  } finally {
+    rmSync(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test("Control API /control/github returns explicit unavailable state without synthesizing health when token is missing", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    delete process.env.AUTODEV_GITHUB_TOKEN;
+    process.env.AUTODEV_GITHUB_REPOSITORY = "SimulatorLife/AutoDev";
+
+    const res = await call("GET", CONTROL_API_PATHS.github, {
+      actor: "viewer-a"
+    });
+    assert.equal(res.response.statusCode, 200);
+    assert.equal(res.body.runtimeFactsAvailable, false);
+    assert.equal(res.body.runtimeStatus, "unavailable");
+    assert.equal(res.body.repository, "SimulatorLife/AutoDev");
+    assert.equal(res.body.stats, null);
+    assert.deepEqual(res.body.recentRuns, []);
+    assert.ok(
+      res.body.runtimeMessage.includes(
+        "AUTODEV_GITHUB_TOKEN is not configured on the server"
+      )
+    );
+  } finally {
+    restoreEnv(saved);
+  }
+});
+
+test("Control API /control/github handles API failure without leaking token", async () => {
+  const saved = saveEnv();
+  const SECRET_TOKEN = "ghp_SUPER_SECRET_TOKEN_NEVER_LOG";
+  try {
+    configure();
+    process.env.AUTODEV_GITHUB_TOKEN = SECRET_TOKEN;
+    process.env.AUTODEV_GITHUB_REPOSITORY = "SimulatorLife/AutoDev";
+
+    const mockFetch: typeof fetch = async () =>
+      Response.json(
+        {
+          message: `Invalid credentials token=${SECRET_TOKEN}`
+        },
+        { status: 401, headers: { "Content-Type": "application/json" } }
+      );
+
+    setGithubActionsAdapterForTests(
+      new GithubActionsAdapter({ fetchFn: mockFetch })
+    );
+
+    const res = await call("GET", CONTROL_API_PATHS.github, {
+      actor: "viewer-a"
+    });
+    assert.equal(res.response.statusCode, 200);
+    assert.equal(res.body.runtimeFactsAvailable, false);
+    assert.equal(res.body.runtimeStatus, "invalid");
+    assert.equal(res.body.stats, null);
+    assert.equal(res.body.runtimeMessage.includes(SECRET_TOKEN), false);
+    assert.ok(res.body.runtimeMessage.includes("[REDACTED]"));
+  } finally {
+    setGithubActionsAdapterForTests(null);
+    restoreEnv(saved);
+  }
+});
+
+test("GitHub mutation POST requires an operator and a separate write token", async () => {
+  const saved = saveEnv();
+  const api = makeGithubMutationFetch();
+  try {
+    configure();
+    process.env.AUTODEV_GITHUB_REPOSITORY = "SimulatorLife/AutoDev";
+    process.env.AUTODEV_GITHUB_TOKEN = "read-only-token-is-not-write";
+    delete process.env.AUTODEV_GITHUB_ACTIONS_WRITE_TOKEN;
+    setGithubActionsAdapterForTests(
+      new GithubActionsAdapter({ fetchFn: api.fetchFn })
+    );
+
+    const requestBody = {
+      operation: "dispatch",
+      workflow: "_scheduler.yml",
+      idempotencyKey: "operator-github-mutation-0001"
+    };
+    const viewer = await call("POST", CONTROL_API_PATHS.githubMutations, {
+      actor: "viewer-a",
+      body: requestBody
+    });
+    assert.equal(viewer.response.statusCode, 403);
+    assert.equal(
+      viewer.body.error.code,
+      "autodev_control_api_operator_required"
+    );
+    assert.equal(api.requests.length, 0);
+
+    const noWriteToken = await call("POST", CONTROL_API_PATHS.githubMutations, {
+      actor: "operator-a",
+      body: requestBody
+    });
+    assert.equal(noWriteToken.response.statusCode, 503);
+    assert.equal(
+      noWriteToken.body.error.code,
+      "github_write_token_unavailable"
+    );
+    assert.equal(api.requests.length, 0);
+
+    const getMutationRoute = await call(
+      "GET",
+      CONTROL_API_PATHS.githubMutations,
+      { actor: "operator-a" }
+    );
+    assert.equal(getMutationRoute.response.statusCode, 405);
+    assert.equal(getMutationRoute.response.headers.allow, "POST");
+
+    const readOnlyMutation = await call("PATCH", CONTROL_API_PATHS.github, {
+      actor: "operator-a",
+      body: requestBody
+    });
+    assert.equal(readOnlyMutation.response.statusCode, 405);
+    assert.equal(readOnlyMutation.response.headers.allow, "GET");
+  } finally {
+    setGithubActionsAdapterForTests(null);
+    restoreEnv(saved);
+  }
+});
+
+test("GitHub mutation rejects out-of-scope and disabled workspaces before fetch", async () => {
+  const saved = saveEnv();
+  const api = makeGithubMutationFetch();
+  try {
+    configure();
+    process.env.AUTODEV_GITHUB_ACTIONS_WRITE_TOKEN = "write-token-test";
+    process.env.AUTODEV_GITHUB_REPOSITORY = "UnknownOrg/UnknownRepo";
+    setGithubActionsAdapterForTests(
+      new GithubActionsAdapter({ fetchFn: api.fetchFn })
+    );
+
+    const outOfScope = await call("POST", CONTROL_API_PATHS.githubMutations, {
+      actor: "operator-a",
+      body: {
+        operation: "disable",
+        workflow: "_scheduler.yml",
+        expectedState: "active",
+        idempotencyKey: "out-of-scope-github-mutation-01"
+      }
+    });
+    assert.equal(outOfScope.response.statusCode, 400);
+    assert.equal(outOfScope.body.error.code, "github_repository_out_of_scope");
+    assert.equal(api.requests.length, 0);
+
+    const repositoryRoot = mkdtempSync(
+      join(tmpdir(), "autodev-github-mutation-disabled-")
+    );
+    try {
+      writeMutationWorkspace(repositoryRoot, false);
+      const direct = await handleGithubWorkflowMutation(
+        {
+          operation: "disable",
+          workflow: "_scheduler.yml",
+          expectedState: "active",
+          idempotencyKey: "disabled-github-mutation-0001"
+        },
+        "operator-a",
+        {
+          repositoryRoot,
+          adapter: new GithubActionsAdapter({ fetchFn: api.fetchFn }),
+          env: {
+            AUTODEV_GITHUB_REPOSITORY: "SimulatorLife/AutoDev",
+            AUTODEV_GITHUB_ACTIONS_WRITE_TOKEN: "write-token-test"
+          },
+          audit: () => {}
+        }
+      );
+      assert.equal(direct.status, 409);
+      assert.equal(
+        (direct.body as { error: { code: string } }).error.code,
+        "github_workspace_disabled"
+      );
+      assert.equal(api.requests.length, 0);
+    } finally {
+      rmSync(repositoryRoot, { recursive: true, force: true });
+    }
+  } finally {
+    setGithubActionsAdapterForTests(null);
+    restoreEnv(saved);
+  }
+});
+
+test("GitHub mutation rejects invalid operations and browser-supplied passthrough fields", async () => {
+  const saved = saveEnv();
+  const api = makeGithubMutationFetch();
+  try {
+    configure();
+    process.env.AUTODEV_GITHUB_REPOSITORY = "SimulatorLife/AutoDev";
+    process.env.AUTODEV_GITHUB_ACTIONS_WRITE_TOKEN = "write-token-test";
+    setGithubActionsAdapterForTests(
+      new GithubActionsAdapter({ fetchFn: api.fetchFn })
+    );
+
+    const cases = [
+      {
+        operation: "rerun",
+        workflow: "_scheduler.yml",
+        idempotencyKey: "invalid-github-operation-0001",
+        status: 400
+      },
+      {
+        operation: "dispatch",
+        workflow: "metrics-dashboard.yml",
+        idempotencyKey: "dispatch-input-workflow-0001",
+        status: 403
+      },
+      {
+        operation: "dispatch",
+        workflow: "_scheduler.yml",
+        idempotencyKey: "extra-github-fields-000001",
+        status: 400,
+        ref: "attacker-branch",
+        owner: "attacker",
+        repo: "attacker",
+        inputs: { unsafe: "value" }
+      }
+    ];
+    for (const { status, ...body } of cases) {
+      const response = await call("POST", CONTROL_API_PATHS.githubMutations, {
+        actor: "operator-a",
+        body
+      });
+      assert.equal(response.response.statusCode, status);
+    }
+    assert.equal(api.requests.length, 0);
+  } finally {
+    setGithubActionsAdapterForTests(null);
+    restoreEnv(saved);
+  }
+});
+
+test("GitHub mutation refuses required-input schema drift and active workflow runs", async () => {
+  const saved = saveEnv();
+  const api = makeGithubMutationFetch({ activeRun: "queued" });
+  const repositoryRoot = mkdtempSync(
+    join(tmpdir(), "autodev-github-mutation-required-input-")
+  );
+  try {
+    writeMutationWorkspace(
+      repositoryRoot,
+      true,
+      [
+        "name: scheduler",
+        "on:",
+        "  schedule:",
+        '    - cron: "*/15 * * * *"',
+        "  workflow_dispatch:",
+        "    inputs:",
+        "      target:",
+        "        required: true",
+        "        type: string",
+        "jobs:",
+        "  noop:",
+        "    steps: []",
+        ""
+      ].join("\n")
+    );
+    const requiredInput = await handleGithubWorkflowMutation(
+      {
+        operation: "dispatch",
+        workflow: "_scheduler.yml",
+        idempotencyKey: "required-input-dispatch-0001"
+      },
+      "operator-a",
+      {
+        repositoryRoot,
+        adapter: new GithubActionsAdapter({ fetchFn: api.fetchFn }),
+        env: {
+          AUTODEV_GITHUB_REPOSITORY: "SimulatorLife/AutoDev",
+          AUTODEV_GITHUB_ACTIONS_WRITE_TOKEN: "write-token-test"
+        },
+        audit: () => {}
+      }
+    );
+    assert.equal(requiredInput.status, 409);
+    assert.equal(
+      (requiredInput.body as { error: { code: string } }).error.code,
+      "github_dispatch_schema_not_supported"
+    );
+    assert.equal(api.requests.length, 0);
+  } finally {
+    rmSync(repositoryRoot, { recursive: true, force: true });
+    restoreEnv(saved);
+  }
+
+  const activeSaved = saveEnv();
+  try {
+    configure();
+    process.env.AUTODEV_GITHUB_REPOSITORY = "SimulatorLife/AutoDev";
+    process.env.AUTODEV_GITHUB_ACTIONS_WRITE_TOKEN = "write-token-test";
+    setGithubActionsAdapterForTests(
+      new GithubActionsAdapter({ fetchFn: api.fetchFn })
+    );
+    const active = await call("POST", CONTROL_API_PATHS.githubMutations, {
+      actor: "operator-a",
+      body: {
+        operation: "dispatch",
+        workflow: "_scheduler.yml",
+        idempotencyKey: "active-run-dispatch-000001"
+      }
+    });
+    assert.equal(active.response.statusCode, 409);
+    assert.equal(active.body.error.code, "github_workflow_run_active");
+    assert.equal(
+      api.requests.some((request) => request.url.endsWith("/dispatches")),
+      false
+    );
+  } finally {
+    setGithubActionsAdapterForTests(null);
+    restoreEnv(activeSaved);
+  }
+});
+
+test("GitHub mutation checks stale state, verifies disable/enable, and replays by actor/key", async () => {
+  const saved = saveEnv();
+  const api = makeGithubMutationFetch();
+  const writeToken = "write-token-redaction-secret-001";
+  try {
+    configure();
+    process.env.AUTODEV_GITHUB_REPOSITORY = "SimulatorLife/AutoDev";
+    process.env.AUTODEV_GITHUB_ACTIONS_WRITE_TOKEN = writeToken;
+    setGithubActionsAdapterForTests(
+      new GithubActionsAdapter({ fetchFn: api.fetchFn })
+    );
+
+    const stale = await call("POST", CONTROL_API_PATHS.githubMutations, {
+      actor: "operator-a",
+      body: {
+        operation: "disable",
+        workflow: "_scheduler.yml",
+        expectedState: "disabled_manually",
+        idempotencyKey: "stale-state-mutation-000001"
+      }
+    });
+    assert.equal(stale.response.statusCode, 409);
+    assert.equal(stale.body.error.code, "github_workflow_state_stale");
+    assert.equal(
+      api.requests.some((request) => request.method === "PUT"),
+      false
+    );
+
+    const disable = await call("POST", CONTROL_API_PATHS.githubMutations, {
+      actor: "operator-a",
+      body: {
+        operation: "disable",
+        workflow: "_scheduler.yml",
+        expectedState: "active",
+        idempotencyKey: "toggle-disable-mutation-0001"
+      }
+    });
+    assert.equal(disable.response.statusCode, 200);
+    assert.equal(disable.body.workflowState, "disabled_manually");
+    assert.equal(api.state, "disabled_manually");
+
+    const enable = await call("POST", CONTROL_API_PATHS.githubMutations, {
+      actor: "operator-a",
+      body: {
+        operation: "enable",
+        workflow: "_scheduler.yml",
+        expectedState: "disabled_manually",
+        idempotencyKey: "toggle-enable-mutation-0001"
+      }
+    });
+    assert.equal(enable.response.statusCode, 200);
+    assert.equal(enable.body.workflowState, "active");
+    assert.equal(api.state, "active");
+
+    const dispatchPayload = {
+      operation: "dispatch",
+      workflow: "_scheduler.yml",
+      idempotencyKey: "replay-dispatch-mutation-0001"
+    };
+    const first = await captureAudit(() =>
+      call("POST", CONTROL_API_PATHS.githubMutations, {
+        actor: "operator-a",
+        body: dispatchPayload
+      })
+    );
+    assert.equal(first.result.response.statusCode, 200);
+    const fetchCountAfterFirst = api.requests.length;
+    const second = await captureAudit(() =>
+      call("POST", CONTROL_API_PATHS.githubMutations, {
+        actor: "operator-a",
+        body: dispatchPayload
+      })
+    );
+    assert.equal(second.result.response.statusCode, 200);
+    assert.equal(second.result.body.result, "replayed");
+    assert.equal(api.requests.length, fetchCountAfterFirst);
+    assert.equal(first.lines.join("").includes(writeToken), false);
+    assert.equal(second.lines.join("").includes(writeToken), false);
+
+    const dispatchWrite = api.requests.find((request) =>
+      request.url.endsWith("/dispatches")
+    );
+    assert.ok(dispatchWrite);
+    assert.deepEqual(JSON.parse(dispatchWrite.body ?? "{}"), { ref: "main" });
+    assert.equal(
+      dispatchWrite.headers.get("authorization"),
+      `Bearer ${writeToken}`
+    );
+    assert.equal(
+      dispatchWrite.headers.get("x-github-api-version"),
+      "2026-03-10"
+    );
+  } finally {
+    setGithubActionsAdapterForTests(null);
+    restoreEnv(saved);
+  }
+});
+
+test("GitHub mutation audit redacts raw GitHub errors and write credentials", async () => {
+  const saved = saveEnv();
+  const writeToken = "write-token-audit-secret-002";
+  const rawResponseBody = "private GitHub diagnostic body";
+  const mockFetch: typeof fetch = async () =>
+    Response.json(
+      { message: `${rawResponseBody} ${writeToken}` },
+      { status: 403 }
+    );
+  try {
+    configure();
+    process.env.AUTODEV_GITHUB_REPOSITORY = "SimulatorLife/AutoDev";
+    process.env.AUTODEV_GITHUB_ACTIONS_WRITE_TOKEN = writeToken;
+    setGithubActionsAdapterForTests(
+      new GithubActionsAdapter({ fetchFn: mockFetch })
+    );
+
+    const audit = await captureAudit(() =>
+      call("POST", CONTROL_API_PATHS.githubMutations, {
+        actor: "operator-a",
+        body: {
+          operation: "dispatch",
+          workflow: "_scheduler.yml",
+          idempotencyKey: "audit-redaction-mutation-0001"
+        }
+      })
+    );
+    const auditText = audit.lines.join("");
+    assert.equal(audit.result.response.statusCode, 502);
+    assert.equal(auditText.includes(writeToken), false);
+    assert.equal(auditText.includes(rawResponseBody), false);
+    assert.equal(auditText.includes("github_forbidden"), true);
+  } finally {
+    setGithubActionsAdapterForTests(null);
     restoreEnv(saved);
   }
 });

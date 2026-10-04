@@ -10,9 +10,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { parse } from "smol-toml";
-
 import { ensureCodexAppMcpServerEnabled } from "@simulatorlife/autodev-runtime/platform/install-materializer";
+import { parse } from "smol-toml";
 
 const PLUGIN_VERSION = "0.1.4";
 const SENTINEL = path.join("autodev", "codex-app-tools-state.json");

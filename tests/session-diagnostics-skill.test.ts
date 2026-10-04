@@ -646,13 +646,13 @@ test("handles malformed and partial JSON records gracefully at source boundaries
       }),
       JSON.stringify({
         type: "event_msg",
-        payload: { type: "task_started", turn_id: 12345 }
+        payload: { type: "task_started", turn_id: 12_345 }
       }),
       JSON.stringify({
         type: "event_msg",
         payload: {
           type: "task_complete",
-          turn_id: 12345,
+          turn_id: 12_345,
           error: { message: 789 }
         }
       }),

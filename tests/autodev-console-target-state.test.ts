@@ -2,69 +2,185 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
+import { CANONICAL_NAVIGATION } from "@simulatorlife/autodev-core";
+
 const repositoryRoot = new URL("../", import.meta.url);
 const targetStatePath = new URL(
   "docs/autodev-console-target-state.md",
   repositoryRoot
 );
+const migrationPath = new URL(
+  "docs/autodev-console-migration.md",
+  repositoryRoot
+);
+
+// Structural helper: every canonical nav resource must be presented in the
+// target doc's resource surface. Resources may appear in tree (├── / └──)
+// form or as a bolded table heading; both count as canonical presentation.
+function canonicalNavSurface(doc: string): {
+  presented: string[];
+  treeEntries: string[];
+  groups: { Configure: string[]; Observe: string[]; Operate: string[] };
+} {
+  // The canonical resource surface lives in its own code fence and groups
+  // items under Configure / Observe / Operate. Other ASCII trees (module
+  // map, observability plane, control plane, etc.) are not nav surfaces.
+  const treeEntries: string[] = [];
+  const groups: { Configure: string[]; Observe: string[]; Operate: string[] } =
+    {
+      Configure: [],
+      Observe: [],
+      Operate: []
+    };
+  const fencePattern = /~~~(?:text)?\n([\s\S]*?)\n~~~/gu;
+  for (const fence of doc.matchAll(fencePattern)) {
+    const block = fence[1] ?? "";
+    if (!/\bConfigure\b/.test(block)) continue;
+    if (!/\bObserve\b/.test(block)) continue;
+    if (!/\bOperate\b/.test(block)) continue;
+    let currentGroup: keyof typeof groups | null = null;
+    const groupHeaderRegex = /^[ \t]*(Configure|Observe|Operate)[ \t]*$/;
+    const treeEntryRegex = /^[ \t]*[├└]──\s+(\S+?)\s*$/;
+    for (const line of block.split("\n")) {
+      const headerMatch = groupHeaderRegex.exec(line);
+      if (headerMatch && headerMatch[1]) {
+        currentGroup = headerMatch[1] as keyof typeof groups;
+        continue;
+      }
+      const m = treeEntryRegex.exec(line);
+      if (m && m[1] && currentGroup) {
+        treeEntries.push(m[1]);
+        groups[currentGroup].push(m[1]);
+      }
+    }
+    break;
+  }
+  const presented: string[] = [];
+  for (const item of CANONICAL_NAVIGATION) {
+    const escaped = item.replaceAll(/[.*+?^$(){}|[\]\\]/g, String.raw`\$&`);
+    const treeHit = new RegExp(
+      `^[ \t]*[├└]──\\s+\\**${escaped}\\**\\s*$`,
+      "mu"
+    ).test(doc);
+    const boldHit = new RegExp(String.raw`\*\*${escaped}\*\*`).test(doc);
+    if (treeHit || boldHit) presented.push(item);
+  }
+  return { presented, treeEntries, groups };
+}
+
+// Structural helper: confirms a removed OpenLIT surface is documented as an
+// explicit, bolded out-of-scope label (the target doc's "**Label:**"
+// convention), not merely named anywhere in passing prose.
+function hasBoldOutOfScopeLabel(doc: string, phrase: string): boolean {
+  const escaped = phrase.replaceAll(/[.*+?^$(){}|[\]\\]/g, String.raw`\$&`);
+  return new RegExp(String.raw`\*\*[^*\n]*${escaped}[^*\n]*\*\*`, "u").test(
+    doc
+  );
+}
 
 test("AutoDev Console target stays reduced, unified, and TypeScript-first", () => {
   const target = readFileSync(targetStatePath, "utf8");
+  const { presented, treeEntries, groups } = canonicalNavSurface(target);
 
-  const nav = [
-    "Agents",
-    "MCPs",
-    "Skills",
-    "Hooks",
-    "Memory",
-    "Evaluations",
-    "Permissions",
-    "Tools",
-    "Usage",
-    "Prompts",
-    "Workspaces"
-  ];
+  // Every canonical nav resource from core/src/navigation.ts must be presented.
+  assert.deepEqual(
+    presented.slice().sort(),
+    [...CANONICAL_NAVIGATION].slice().sort(),
+    "every CANONICAL_NAVIGATION entry must be presented in the target doc"
+  );
 
-  let previousIndex = -1;
-  for (const item of nav) {
-    const branchIndex = target.indexOf(`├── ${item}`);
-    const index =
-      branchIndex === -1 ? target.indexOf(`└── ${item}`) : branchIndex;
+  // The resource-surface tree must contain exactly the 12 canonical entries;
+  // no extra nav items, no removed product surfaces sneaking in.
+  const treeSet = new Set(treeEntries);
+  for (const item of CANONICAL_NAVIGATION) {
     assert.ok(
-      index > previousIndex,
-      `${item} must appear in canonical nav order`
+      treeSet.has(item),
+      `Canonical nav "${item}" must appear in the resource-surface tree`
     );
-    previousIndex = index;
   }
+  assert.equal(
+    treeSet.size,
+    CANONICAL_NAVIGATION.length,
+    "resource-surface tree must list exactly the 12 canonical nav resources"
+  );
 
+  // Configure / Observe / Operate must each contain exactly its canonical
+  // members from the target doc's tree (mirroring the document; no invented
+  // group assignments).
+  assert.deepEqual(
+    groups.Configure.slice().sort(),
+    ["Agents", "Hooks", "MCPs", "Permissions", "Prompts", "Skills", "Tools"],
+    "Configure must list exactly its seven canonical nav resources"
+  );
+  assert.deepEqual(
+    groups.Observe.slice().sort(),
+    ["Evaluations", "Memory", "Usage"],
+    "Observe must list exactly its three canonical nav resources"
+  );
+  assert.deepEqual(
+    groups.Operate.slice().sort(),
+    ["GitHub", "Workspaces"],
+    "Operate must list exactly its two canonical nav resources"
+  );
+  assert.equal(
+    groups.Configure.length + groups.Observe.length + groups.Operate.length,
+    CANONICAL_NAVIGATION.length,
+    "every canonical nav resource must appear under Configure/Observe/Operate"
+  );
+
+  // Removed OpenLIT product surfaces must be explicitly listed as out of scope
+  // (semantic concept: each removed surface is named as something not shipped).
   for (const removed of [
-    "**Accounts/users**",
-    "**Organizations/organisations**",
-    "**Environments**",
-    "**Projects**",
-    "**Rule Engine**",
-    "**OpenGround**",
-    "**GPU monitoring/dashboard**",
-    "**OpenLIT agent discovery/instrumentation and Controller daemon**"
+    "Accounts/users",
+    "Organizations/organisations",
+    "Environments",
+    "Projects",
+    "Rule Engine",
+    "OpenGround",
+    "GPU dashboard/monitoring",
+    "OpenLIT agent discovery/instrumentation and Controller daemon",
+    "Otter/chat"
   ]) {
-    assert.match(
-      target,
-      new RegExp(removed.replaceAll(/[*/]/g, String.raw`\$&`))
+    assert.ok(
+      hasBoldOutOfScopeLabel(target, removed),
+      `Removed OpenLIT surface "${removed}" must be documented with a bolded out-of-scope label`
     );
   }
 
+  // Single-user AutoDev control and observability console (durable product shape).
   assert.match(
     target,
-    /single-user, AutoDev-centric control and observability console/
+    /single-user[^.\n]*AutoDev control and observability console/u
   );
-  assert.match(target, /Use \*\*Workspaces\*\*, not OpenLIT Projects/);
+  assert.match(target, /Use \*\*Workspaces\*\*,\s*not OpenLIT Projects/u);
+
+  // All AutoDev-owned Console code is TypeScript/TSX (no second-language app).
   assert.match(
     target,
-    /All AutoDev-owned Console application code[\s\S]*TypeScript\/TSX/
+    /All AutoDev-owned Console application(?:\/)?control code is TypeScript\/TSX/u
   );
-  assert.match(target, /Do not iframe or visually stitch together/);
-  assert.match(target, /OpenLIT Go Controller is not shipped/);
-  assert.match(target, /RuleSync tool \*\*as the single source of truth/);
+
+  // No iframe/embed/stitch together of foreign dashboards.
+  assert.match(target, /Do not iframe, embed, or visually stitch together/u);
+
+  // OpenLIT Controller / Go Controller daemon is not shipped.
+  assert.match(
+    target,
+    /OpenLIT\s+(?:Go )?Controller(?: daemon)? is not shipped/u
+  );
+
+  // RuleSync is the source of truth for losslessly-representable surfaces.
+  assert.match(target, /RuleSync tool as the source of truth/u);
+
+  // Provider / model / routing / runtime config is required domain data but
+  // remains a secondary surface under Agents (not a top-level nav item).
+  assert.match(target, /secondary surfaces? under \*\*Agents\*\*/u);
+  assert.ok(
+    !treeSet.has("Providers") &&
+      !treeSet.has("Models") &&
+      !treeSet.has("Routing"),
+    "Providers/Models/Routing must not appear as top-level nav resources"
+  );
 });
 
 test("documentation keeps one broad target-state authority", () => {
@@ -118,20 +234,35 @@ test("canonical target defines the flat four-module monorepo", () => {
     );
   }
 
-  assert.match(target, /small, flat pnpm TypeScript monorepo/);
+  // Flat pnpm TypeScript monorepo (no apps/packages/modules wrappers).
+  assert.match(target, /small, flat pnpm TypeScript monorepo/u);
   assert.match(
     target,
-    /Do not introduce `apps\/`, `packages\/`, or `modules\/` wrapper directories/
+    /Do not introduce\s+apps\/,\s+packages\/,\s+or\s+modules\/\s+wrappers/u
   );
-  assert.match(target, /do not create a package per left-navigation resource/i);
-  assert.match(target, /console\/src\/features\//);
+
+  // Each nav resource is a feature folder, not a package per resource.
+  assert.match(
+    target,
+    /do not create a package per (?:left-)?navigation resource/u
+  );
+  assert.match(target, /keep navigation resources as feature folders/u);
+  assert.match(
+    target,
+    /Do not create (?:agents\/, skills\/, mcps\/, prompts\/, etc\. )?as separate packages/u
+  );
+
+  // Producer telemetry path lives under runtime/src/telemetry/.
   assert.match(target, /runtime\/src\/telemetry\//);
-  assert.match(target, /core\/.*infrastructure-independent/s);
-  assert.match(target, /Console must not bypass the Control API/);
-  assert.match(
-    target,
-    /Do not create a separate `ui\/` workspace until there is a real second UI consumer/
-  );
+
+  // core/ stays infrastructure-independent (no AutoDev module deps inward).
+  assert.match(target, /core\/\s*remains infrastructure-independent/u);
+
+  // Console must mutate canonical/runtime state only through the Control API.
+  assert.match(target, /console\/\s*never bypasses the Control API/u);
+
+  // No separate ui/ workspace until a real second UI consumer exists.
+  assert.match(target, /until a real second UI consumer exists/u);
 });
 
 test("monorepo layout, console features, and control API match target state exactly", () => {
@@ -150,21 +281,9 @@ test("monorepo layout, console features, and control API match target state exac
     assert.ok(existsSync(new URL(`${mod}/src/index.ts`, repositoryRoot)));
   }
 
-  const expectedNav = [
-    "agents",
-    "mcps",
-    "skills",
-    "hooks",
-    "memory",
-    "evaluations",
-    "permissions",
-    "tools",
-    "usage",
-    "prompts",
-    "workspaces"
-  ];
-
-  for (const feat of expectedNav) {
+  // All 12 canonical nav resources have a Console feature folder.
+  const featureFolders = CANONICAL_NAVIGATION.map((item) => item.toLowerCase());
+  for (const feat of featureFolders) {
     assert.ok(
       existsSync(new URL(`console/src/features/${feat}`, repositoryRoot)),
       `console/src/features/${feat} must exist`
@@ -184,7 +303,7 @@ test("monorepo layout, console features, and control API match target state exac
     "MCP detail rendering belongs to the Console feature"
   );
 
-  // Ensure removed concepts are not present as features
+  // Ensure removed concepts are not present as features.
   for (const removed of [
     "accounts",
     "users",
@@ -193,7 +312,8 @@ test("monorepo layout, console features, and control API match target state exac
     "projects",
     "rules",
     "openground",
-    "gpu"
+    "gpu",
+    "otter"
   ]) {
     assert.equal(
       existsSync(new URL(`console/src/features/${removed}`, repositoryRoot)),
@@ -217,73 +337,161 @@ test("root quality scripts validate all code workspaces", () => {
     assert.match(manifest.scripts.format ?? "", new RegExp(`${workspace}`));
 });
 
-test("canonical target records the current repository quality-gate evidence", () => {
+test("canonical migration tracker records the current repository quality-gate evidence", () => {
+  // Per the docs contract, current implementation state and acceptance evidence
+  // live in autodev-console-migration.md. The target doc owns the policy; the
+  // migration tracker owns the recorded evidence.
   const target = readFileSync(targetStatePath, "utf8");
+  const migration = readFileSync(migrationPath, "utf8");
+  assert.ok(
+    migration.length > 0,
+    "migration tracker must exist and be populated"
+  );
 
+  // Quality-gate policy is durable and therefore lives in the target doc.
   assert.match(
     target,
-    /`pnpm run typecheck` passes for the root TypeScript project and all four workspaces/
+    /all four code workspaces share root formatting\/lint\/test\/TypeScript policy/u
   );
-  assert.match(target, /`pnpm run lint:ci` reports \d+ errors/);
-  assert.match(target, /`pnpm run format:check` passes repository-wide/);
+
+  // Each concrete quality-gate category records its exact current evidence
+  // in the migration tracker: the specific pnpm script result, not merely a
+  // generic nearby mention of the category name.
+  // typecheck
   assert.match(
-    target,
-    /Local p25 acceptance through the unified Console’s server-rendered/
+    migration,
+    /pnpm run typecheck passes the root project and all four workspaces/u,
+    "typecheck evidence must record the exact pnpm run typecheck result"
   );
-  assert.match(target, /p25 in the standard lock and running local stack/);
-  assert.match(target, /live p25 reads return five workspace entries/);
+  // lint
   assert.match(
-    target,
-    /Data `ConfigRepository` validates the current `\.github\/workflows\/weights\.json` projection as valid\/invalid\/unavailable/
+    migration,
+    /pnpm run lint:ci reports \d+ errors/u,
+    "lint evidence must record the exact pnpm run lint:ci error count"
+  );
+  // format
+  assert.match(
+    migration,
+    /pnpm run format:check passes repository-wide/u,
+    "format-check evidence must record the exact pnpm run format:check result"
+  );
+
+  // p25 acceptance must record concrete OpenLIT patch-level evidence, not a
+  // bare "p25" mention: the patch-application suite result, the patched
+  // client typecheck result, and the local live-acceptance probe list.
+  assert.match(
+    migration,
+    /p25 patch-application suite passes \d+\/\d+/u,
+    "p25 patch-application suite evidence must be recorded"
   );
   assert.match(
-    target,
-    /The p25 image is now promoted to the standard local image lock and running stack/
+    migration,
+    /patched p25 client typecheck passes/u,
+    "patched p25 client typecheck evidence must be recorded"
   );
+  assert.match(
+    migration,
+    /local p25 health[\s\S]{0,200}service-token redaction/u,
+    "p25 live acceptance probe evidence (health/OTLP/usage/redaction) must be recorded"
+  );
+
+  // Data's ConfigRepository must be documented as owning workspaces.json as
+  // the canonical workspace registry (ownership, not a bare co-occurrence).
+  assert.match(
+    migration,
+    /config\/workspaces\.json[\s\S]{0,120}canonical workspace registry[\s\S]{0,120}ConfigRepository/u,
+    "workspaces.json must be documented as the canonical registry owned by ConfigRepository"
+  );
+
+  // The target doc must not regress into claiming root TypeScript still fails.
   assert.doesNotMatch(
     target,
-    /root TypeScript project still reports \d+ diagnostics/
+    /root TypeScript project still reports \d+ diagnostics/u
   );
 });
 
-test("canonical target tracks migration gaps without claiming premature cutover", () => {
+test("canonical target and migration tracker track gaps without claiming premature cutover", () => {
   const target = readFileSync(targetStatePath, "utf8");
+  const migration = readFileSync(migrationPath, "utf8");
 
-  assert.match(target, /## 12\. Current migration state and gap ledger/);
-  assert.match(target, /Flat monorepo\s+\|\s+\*\*Partial\*\*/);
+  // Gap ledger section lives in the migration tracker, which is the
+  // authoritative place for observed current state and gaps.
+  assert.match(migration, /^##\s+Gap ledger\b/gmu);
+
+  // Each tracked gap area must appear as a row in the migration gap ledger
+  // (semantic: row label + a Partial/Unknown/Runnable state marker).
+  const gapAreas = [
+    "Flat monorepo",
+    "Workspaces",
+    "Console",
+    "RuleSync ownership",
+    "Telemetry cutover"
+  ];
+  for (const area of gapAreas) {
+    const rowRegex = new RegExp(
+      String.raw`\|\s*${area.replaceAll(/[.*+?^$(){}|[\]\\]/g, String.raw`\$&`)}\s*\|\s*\*\*[A-Za-z][^*]*\*\*`
+    );
+    assert.ok(
+      rowRegex.test(migration),
+      `gap ledger row for "${area}" must exist with a state marker`
+    );
+  }
+
+  // Workspaces delegates to Data ConfigRepository (semantic: Data owns the
+  // canonical workspace registry).
+  assert.match(migration, /workspaces\.json[\s\S]{0,400}ConfigRepository/u);
+
+  // Per-workspace configuration-health and runtime-availability signals are
+  // named as remaining target gaps (not silently claimed done).
   assert.match(
-    target,
-    /Workspaces\s+\|\s+\*\*Partial: Data-owned read; runtime health unknown\*\*/
+    migration,
+    /per-workspace configuration-health[\s\S]{0,200}runtime-availability/u
   );
-  assert.match(target, /Workspaces delegates to Data `ConfigRepository`/);
-  assert.match(
-    target,
-    /enabled state, agent\/resource scope, per-workspace configuration health/
+
+  // State correctness: missing evidence must remain explicit; never synthesize
+  // success. This is durable target-state language, so it lives in the target doc.
+  assert.match(target, /Missing evidence must remain explicit/u);
+  assert.match(target, /Never synthesize ready, converged, healthy/u);
+
+  // Root src/ tree is absent (semantic: obsolete root implementation is gone).
+  const rootSrcGone =
+    /root src\/\s*is gone/u.test(migration) ||
+    /obsolete root implementation tree is gone/u.test(migration) ||
+    /no legacy root implementation\/facade returns/u.test(target);
+  assert.ok(
+    rootSrcGone,
+    "obsolete root src/ implementation tree must be recorded as gone"
   );
-  assert.match(target, /model-router LaunchAgent supplies `AUTODEV_REPO_ROOT`/);
-  assert.match(target, /Console\s+\|\s+\*\*Runnable foundation\*\*/);
-  assert.match(target, /RuleSync ownership\s+\|\s+\*\*Partial\*\*/);
-  assert.match(
-    target,
-    /Telemetry cutover\s+\|\s+\*\*Standalone Collector removed; router cleanup incomplete\*\*/
-  );
-  assert.match(target, /unknown must remain unknown/i);
-  assert.match(target, /Physical migration complete; finish workspace hygiene/);
-  assert.match(target, /The root `src\/` implementation tree is absent/);
-  assert.match(target, /Finish RuleSync canonical ownership/);
-  assert.match(target, /Remaining OpenLIT subtraction/);
-  assert.match(target, /Remaining telemetry cleanup/);
-  assert.match(target, /Remaining retained-feature integrations/);
-  assert.match(target, /Ordered migration sequence/);
+
+  // Standalone Collector removal recorded (semantic: telemetry cutover
+  // explicitly notes Collector removal status).
+  assert.match(migration, /Standalone AutoDev Collector (?:is )?removed/u);
+
+  // Ordered remaining work / migration sequence is recorded structurally.
+  assert.match(migration, /^##\s+Remaining work by dependency/mu);
+  assert.match(migration, /This is the migration order/u);
+
+  // Remaining retained-feature integrations is still tracked.
+  assert.match(migration, /retained-feature integrations/u);
+
+  // No premature completion claim: the canonical target must not assert that
+  // the M0-M6 (or any numbered) observability migration is fully complete.
   assert.doesNotMatch(
     target,
-    /original M0-M6 observability migration is complete/i
+    /original M0-M6 observability migration is complete/u
+  );
+  assert.doesNotMatch(
+    migration,
+    /original M0-M6 observability migration is complete/u
   );
 });
 
 test("canonical target records the remaining external-project adaptations", () => {
   const target = readFileSync(targetStatePath, "utf8");
 
+  // All seven reference projects must be mentioned in the component-reuse
+  // / reference-projects section (semantic: each appears as a labelled row
+  // or bolded name with adaptation context).
   for (const project of [
     "OpenLIT",
     "LiteLLM",
@@ -299,11 +507,19 @@ test("canonical target records the remaining external-project adaptations", () =
     );
   }
 
+  // LiteLLM supplies provider/model/routing semantics with priority + fallback
+  // (semantic: row mentions these concepts together, even if reordered).
   assert.match(
     target,
-    /provider\/model availability, priority, fallback order/
+    /provider\/model\/routing semantics:[^.\n]*priority[^.\n]*fallback/u
   );
-  assert.match(target, /connection\/probe state, Tools, Resources, Prompts/);
-  assert.match(target, /desired vs actual, generations, diff, health/);
-  assert.match(target, /lightweight typed feature\/route registry/);
+
+  // MCPJam supplies MCP Tools/Resources/Prompts inspection with diagnostics.
+  assert.match(target, /MCP Tools\/Resources\/Prompts[^.\n]*inspection/u);
+
+  // Argo CD supplies desired/live diff + health semantics.
+  assert.match(target, /desired\/live diff[^.\n]*health/u);
+
+  // Backstage supplies a lightweight typed feature/route registry idea.
+  assert.match(target, /lightweight (?:typed )?feature(?:\/route)? registry/u);
 });

@@ -661,10 +661,18 @@ test("the Antigravity bridge reports the subagents its own CLI spawns", () => {
     /agentEvents\.reportResults\(\{ tool: open\.tool, children: open\.children/
   );
   assert.match(source, /flushSpawns\("failure"\)/);
-  assert.match(source, /flushSpawns\("success"\)/);
+  // The streaming turn settles the tracker through one quiesce step on both
+  // exits; the non-streaming failure path flushes directly.
+  assert.match(source, /this\.turn\.spawnTracker\.flushSpawns\(outcome\);/);
+  assert.match(source, /this\.quiesce\("success"\);/);
+  assert.match(source, /this\.quiesce\("failure"\);/);
   // Only the opening transition is counted, and a step with no index must not
   // key every later spawn out of the count under a shared `undefined`.
-  assert.match(source, /Number\.isFinite\(update\.step_index\)/);
+  assert.match(
+    source,
+    /typeof index === "number" && Number\.isFinite\(index\) \? index : null/
+  );
+  assert.match(source, /stepIndex \?\? children\[0\]\?\.id \?\? "anonymous"/);
 });
 
 test("an Antigravity turn that dies names its own cause in the log", () => {
@@ -677,8 +685,9 @@ test("an Antigravity turn that dies names its own cause in the log", () => {
   // Every exit from a turn names itself and how long it took.
   assert.match(
     source,
-    /const logTurnEnd = \(outcome: string, detail = ""\) =>/
+    /function createTurnLog\(requestId: string \| null\): \(outcome: string, detail\?: string\) => void \{/
   );
+  assert.match(source, /return \(outcome, detail = ""\) =>/);
   assert.match(source, /logTurnEnd\("succeeded"\)/);
   assert.match(source, /logTurnEnd\("failed"/);
   assert.match(source, /logTurnEnd\("aborted"/);
@@ -701,19 +710,21 @@ test("an Antigravity turn that dies names its own cause in the log", () => {
   // worth seeing, and the streaming path used to return without a word.
   assert.match(
     source,
-    /if \(!turnSettled\) logTurnEnd\("failed", `\$\{message\}\$\{isWritable\(\) \? "" : " \(client already gone\)"\}`\)/
+    /if \(!this\.settled\) this\.turn\.logTurnEnd\("failed", `\$\{message\}\$\{this\.stream\.isWritable\(\) \? "" : " \(client already gone\)"\}`\)/
   );
-  const catchBlock = source.slice(source.lastIndexOf("} catch (error) {"));
+  const failBlock = source.slice(
+    source.indexOf("fail(error: unknown): void {")
+  );
   assert.ok(
-    catchBlock.indexOf("logTurnEnd(") <
-      catchBlock.indexOf("if (!isWritable()) return;"),
+    failBlock.indexOf("logTurnEnd(") <
+      failBlock.indexOf("if (!this.stream.isWritable()) return;"),
     "the failure must be logged before the writability check returns"
   );
 
   // The close that always follows a completed stream is not the client hanging
   // up, so only an unsettled turn reports an abort.
-  assert.match(source, /let turnSettled = false;/);
-  assert.match(source, /turnSettled = true;/);
+  assert.match(source, /private settled = false;/);
+  assert.match(source, /this\.settled = true;/);
 });
 
 test("a Claude orchestrator delegates through Codex, not inside its CLI", () => {
@@ -1040,7 +1051,7 @@ test("agy's own in-CLI spawns are still reported, because they cannot be denied"
   // entirely rather than merely being invisible in the app.
   const source = read("runtime/src/providers/antigravity.ts");
   assert.match(source, /createSpawnTracker\(agentEvents\)/);
-  assert.match(source, /observeSpawnStep\(event\.step_update \?\? \{\}\)/);
+  assert.match(source, /observeSpawnStep\(update\);/);
 });
 
 test("pending children from the spawn tracker gate the bridge's disconnect kill and heartbeat", () => {
@@ -1053,7 +1064,10 @@ test("pending children from the spawn tracker gate the bridge's disconnect kill 
   // delegation state both decisions read.
   const source = read("runtime/src/providers/antigravity.ts");
   assert.match(source, /pendingChildren: 0,/);
-  assert.match(source, /delegation\.pendingChildren = openSpawnCount\(\);/);
+  assert.match(
+    source,
+    /this\.delegation\.pendingChildren = this\.turn\.spawnTracker\.openSpawnCount\(\);/
+  );
   assert.match(
     source,
     /function isDelegationActive\(delegation: DelegationState\)/
@@ -1064,13 +1078,13 @@ test("pending children from the spawn tracker gate the bridge's disconnect kill 
   assert.match(source, /if \(isDelegationActive\(delegation\)\) \{/);
   assert.match(
     source,
-    /if \(!isDelegationActive\(delegation\) \|\| !streamStarted \|\| !isWritable\(\)\) return;/
+    /if \(!isDelegationActive\(this\.delegation\) \|\| !this\.stream\.started \|\| !this\.stream\.isWritable\(\)\) return;/
   );
   // The heartbeat only stops once the tracker agrees no dispatched child is
   // still open -- not merely because the dispatch step itself closed.
   assert.match(
     source,
-    /if \(transition\.kind === "exited" && !isDelegationActive\(delegation\)\) stopDelegationHeartbeat\(\);/
+    /if \(transition\.kind === "exited" && !isDelegationActive\(this\.delegation\)\) this\.stopDelegationHeartbeat\(\);/
   );
 
   // Telemetry reporting still requires a router-authorized reporter, but
@@ -1089,7 +1103,7 @@ test("pending children from the spawn tracker gate the bridge's disconnect kill 
     source,
     /if \(agentEvents\) return agentEvents\.isSpawnTool\(toolName\);/
   );
-  assert.match(source, /isSpawnToolName\(agentEvents, name\)/);
+  assert.match(source, /isSpawnToolName\(this\.turn\.agentEvents, name\)/);
 
   // A child closing deletes it from the tracker's own map, which is what
   // makes closing it a second time (a stray flush on another exit path) a
@@ -1317,18 +1331,12 @@ test("the Copilot bridge evaluates tool outcomes and reports telemetry", () => {
   const source = read("runtime/src/providers/copilot.ts");
   assert.equal(COPILOT_SKILL_EXPOSURE_SOURCE, "role_contract");
   assert.equal(COPILOT_MCP_EXPOSURE_SOURCE, "role_contract");
+  assert.match(source, /for \(const skill of contract\.skills \?\? \[\]\)/);
   assert.match(
     source,
-    /for \(const skill of bootstrapContract\.skills \?\? \[\]\)/
+    /reportSkillExposed\(\{ skill, source: SKILL_EXPOSURE_SOURCE \}\)/
   );
-  assert.match(
-    source,
-    /agentEvents\.reportSkillExposed\(\{ skill, source: SKILL_EXPOSURE_SOURCE \}\)/
-  );
-  assert.match(
-    source,
-    /for \(const server of bootstrapContract\.mcp \?\? \[\]\)/
-  );
+  assert.match(source, /for \(const server of contract\.mcp \?\? \[\]\)/);
   assert.match(
     source,
     /reportMcpExposed\(\{ server, source: MCP_EXPOSURE_SOURCE \}\)/
@@ -2062,13 +2070,10 @@ test("the Copilot bridge detects a successful canonical SKILL.md read", () => {
   ]);
 
   const source = read("runtime/src/providers/copilot.ts");
+  assert.match(source, /if \(outcome\.status !== "ok"\) return;/);
   assert.match(
     source,
-    /if \(outcome\.kind === "executed" && outcome\.status === "ok"\) \{/
-  );
-  assert.match(
-    source,
-    /const skillEvent = skillReadEvent\(\{ seenSkills, toolName, args: open\?\.args \?\? data\.arguments, callId \}\);/
+    /const skillEvent = skillReadEvent\(\{[\s\S]*?args: open\?\.args \?\? data\.arguments,[\s\S]*?\}\);/
   );
 });
 

@@ -24,6 +24,10 @@ import {
   isDraining,
   resetLifecycleForTests
 } from "@simulatorlife/autodev-runtime/router/lifecycle";
+import type {
+  OtelAttribute,
+  OtelLogRecord
+} from "@simulatorlife/autodev-runtime/router/otel";
 import * as responses from "@simulatorlife/autodev-runtime/router/responses";
 import {
   CONFIGURED_ORCHESTRATOR_MODEL,
@@ -96,10 +100,6 @@ import {
   usageStatus as rawUsageStatus,
   workspaceContextFromRequest
 } from "@simulatorlife/autodev-runtime/router/server";
-import type {
-  OtelAttribute,
-  OtelLogRecord
-} from "@simulatorlife/autodev-runtime/router/otel";
 import { UsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
 import { AGENT_ROLE_HEADER } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import { RESPONSES_ITEM_ID_PREFIXES } from "@simulatorlife/autodev-runtime/shared/responses-item-ids";

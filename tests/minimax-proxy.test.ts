@@ -932,3 +932,157 @@ test("extractWireMcpServers returns null when payload declares no tools", async 
   assert.equal(extractWireMcpServers(null), null);
   assert.equal(extractWireMcpServers({ tools: [] }), null);
 });
+
+test("toolOutputOutcome reports correct outcome states", async () => {
+  const { toolOutputOutcome } =
+    await import("@simulatorlife/autodev-runtime/providers/minimax");
+  assert.deepEqual(
+    toolOutputOutcome({
+      output: JSON.stringify({
+        metadata: { exit_code: 0, duration_seconds: 1.5 }
+      })
+    }),
+    { kind: "executed", status: "ok", durationMs: 1500 }
+  );
+  assert.deepEqual(
+    toolOutputOutcome({
+      output: JSON.stringify({ metadata: { exit_code: 1 } })
+    }),
+    { kind: "executed", status: "error", durationMs: null }
+  );
+  assert.deepEqual(toolOutputOutcome({ denied: true }), {
+    kind: "unavailable",
+    reason: "denied"
+  });
+  assert.deepEqual(toolOutputOutcome({ status: "denied" }), {
+    kind: "unavailable",
+    reason: "denied"
+  });
+  assert.deepEqual(toolOutputOutcome({ error: "permission denied" }), {
+    kind: "unavailable",
+    reason: "denied"
+  });
+});
+
+test("reportExecutedToolCalls dispatches telemetry for executed and unavailable tools", async () => {
+  const { reportExecutedToolCalls } =
+    await import("@simulatorlife/autodev-runtime/providers/minimax");
+  const executed: unknown[] = [];
+  const unavailable: unknown[] = [];
+  const fakeReporter = {
+    reportToolExecuted: (event: unknown) => {
+      executed.push(event);
+      return Promise.resolve();
+    },
+    reportToolUnavailable: (event: unknown) => {
+      unavailable.push(event);
+      return Promise.resolve();
+    }
+  };
+
+  const payload = {
+    input: [
+      {
+        type: "function_call",
+        call_id: "call_abc_1",
+        name: "test_tool",
+        server: "test_server"
+      },
+      {
+        type: "function_call_output",
+        call_id: "call_abc_1",
+        output: JSON.stringify({ metadata: { exit_code: 0 } })
+      },
+      {
+        type: "custom_tool_call",
+        call_id: "call_abc_2",
+        name: "custom_tool",
+        namespace: "custom_ns"
+      },
+      {
+        type: "custom_tool_call_output",
+        call_id: "call_abc_2",
+        denied: true
+      }
+    ]
+  };
+
+  reportExecutedToolCalls(fakeReporter as never, payload);
+  assert.equal(executed.length, 1);
+  assert.deepEqual(executed[0], {
+    tool: "test_tool",
+    callId: "call_abc_1",
+    status: "ok",
+    durationMs: null,
+    server: "test_server"
+  });
+
+  assert.equal(unavailable.length, 1);
+  assert.deepEqual(unavailable[0], {
+    tool: "custom_tool",
+    callId: "call_abc_2",
+    reason: "denied",
+    server: "custom_ns"
+  });
+
+  // Replay should deduplicate and not report again
+  reportExecutedToolCalls(fakeReporter as never, payload);
+  assert.equal(executed.length, 1);
+  assert.equal(unavailable.length, 1);
+});
+
+test("observeResponseEvent reports requested tool calls across event shapes", async () => {
+  const { observeResponseEvent } =
+    await import("@simulatorlife/autodev-runtime/providers/minimax");
+  const requested: unknown[] = [];
+  const fakeReporter = {
+    reportToolRequested: (event: unknown) => {
+      requested.push(event);
+      return Promise.resolve();
+    }
+  };
+
+  observeResponseEvent(fakeReporter as never, {
+    item: {
+      type: "function_call",
+      call_id: "call_req_1",
+      name: "tool_1",
+      server: "srv1"
+    }
+  });
+  observeResponseEvent(fakeReporter as never, {
+    response: {
+      output: [
+        {
+          type: "custom_tool_call",
+          call_id: "call_req_2",
+          name: "tool_2",
+          namespace: "srv2"
+        }
+      ]
+    }
+  });
+
+  assert.equal(requested.length, 2);
+  assert.deepEqual(requested[0], {
+    tool: "tool_1",
+    callId: "call_req_1",
+    server: "srv1"
+  });
+  assert.deepEqual(requested[1], {
+    tool: "tool_2",
+    callId: "call_req_2",
+    server: "srv2"
+  });
+
+  // Replay should deduplicate
+  observeResponseEvent(fakeReporter as never, {
+    item: {
+      type: "function_call",
+      call_id: "call_req_1",
+      name: "tool_1",
+      server: "srv1"
+    }
+  });
+  assert.equal(requested.length, 2);
+});
