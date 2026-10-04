@@ -5,11 +5,11 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { ConfigRepository } from "../../src/config/config-repository.ts";
 import {
   loadRulesyncWorkspaces,
   syncRulesyncWorkspaces
 } from "../../src/openlit/sync-rulesync-workspaces.ts";
-import { ConfigRepository } from "../../src/config/config-repository.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 

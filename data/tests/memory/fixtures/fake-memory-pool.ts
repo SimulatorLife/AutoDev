@@ -222,6 +222,386 @@ interface MemoryTables {
   memory_schema_migrations: Record<string, unknown>[];
 }
 
+interface SessionOutcomeCohortFilter {
+  readonly workspaceId: string;
+  readonly repositoryId: string;
+  readonly fromDate: Date;
+  readonly untilDate: Date;
+  readonly memoryModes?: readonly string[];
+  readonly injectionResults?: readonly string[];
+  readonly reportKinds?: readonly string[];
+  readonly outcomeKinds?: readonly string[];
+}
+
+interface SessionOutcomeCohortRow extends Record<string, unknown> {
+  cohort_mode: string;
+  outcome_kind: string | null;
+  session_count: number;
+  conflicting_count: number;
+}
+
+interface InjectionUseCohortFilter {
+  readonly workspaceId: string;
+  readonly repositoryId: string;
+  readonly occurredFrom: string;
+  readonly occurredUntil: string;
+  readonly memoryModes?: readonly string[];
+  readonly useKinds?: readonly string[];
+}
+
+interface InjectionUseCohortRow extends Record<string, unknown> {
+  memory_mode: string;
+  session_cardinality: string;
+  use_kind: string | null;
+  exposure_count: number;
+}
+
+interface InjectionOutcomeCohortRow extends Record<string, unknown> {
+  memory_mode: unknown;
+  injection_result: unknown;
+  session_cardinality: unknown;
+  report_kind: unknown;
+  outcome_kind: unknown;
+  exposure_count: number;
+  report_count: number;
+}
+
+interface InjectionOutcomeCohortAccumulator {
+  readonly predicate: (
+    injection: Record<string, unknown>,
+    report: Record<string, unknown> | null
+  ) => boolean;
+  readonly reportsByToken: Map<string, Record<string, unknown>>;
+  readonly sessionCounts: Map<string, number>;
+  readonly cells: Map<string, InjectionOutcomeCohortRow>;
+}
+
+const ASSIGNED_SESSION_MODES = new Set(["jit", "retrieval-only", "disabled"]);
+
+function readTextArrayFilter(
+  sql: string,
+  params: readonly unknown[],
+  pattern: RegExp
+): readonly string[] | undefined {
+  const match = pattern.exec(sql);
+  return match
+    ? (params[Number(match[1]) - 1] as readonly string[])
+    : undefined;
+}
+
+function parseSessionOutcomeCohortFilter(
+  sql: string,
+  params: readonly unknown[]
+): SessionOutcomeCohortFilter {
+  const memoryModes = readTextArrayFilter(
+    sql,
+    params,
+    /i\.memory_mode = ANY\(\$(\d+)::text\[\]\)/i
+  );
+  const injectionResults = readTextArrayFilter(
+    sql,
+    params,
+    /i\.injection_result = ANY\(\$(\d+)::text\[\]\)/i
+  );
+  const reportKinds = readTextArrayFilter(
+    sql,
+    params,
+    /r\.report_kind = ANY\(\$(\d+)::text\[\]\)/i
+  );
+  const outcomeKinds = readTextArrayFilter(
+    sql,
+    params,
+    /r\.outcome_kind = ANY\(\$(\d+)::text\[\]\)/i
+  );
+
+  return {
+    workspaceId: params[0] as string,
+    repositoryId: params[1] as string,
+    fromDate: new Date(params[2] as string),
+    untilDate: new Date(params[3] as string),
+    ...(memoryModes ? { memoryModes } : {}),
+    ...(injectionResults ? { injectionResults } : {}),
+    ...(reportKinds ? { reportKinds } : {}),
+    ...(outcomeKinds ? { outcomeKinds } : {})
+  };
+}
+
+function matchesSessionOutcomeWindow(
+  event: Record<string, unknown>,
+  filter: SessionOutcomeCohortFilter
+): boolean {
+  if (
+    event.workspace_id !== filter.workspaceId ||
+    event.repository_id !== filter.repositoryId
+  ) {
+    return false;
+  }
+  const eventDate = new Date(event.occurred_at as string);
+  if (eventDate < filter.fromDate || eventDate > filter.untilDate) return false;
+  if (
+    filter.memoryModes?.length &&
+    !filter.memoryModes.includes(event.memory_mode as string)
+  ) {
+    return false;
+  }
+  return !(
+    filter.injectionResults?.length &&
+    !filter.injectionResults.includes(event.injection_result as string)
+  );
+}
+
+function selectInWindowSessionKeys(
+  events: Iterable<Record<string, unknown>>,
+  filter: SessionOutcomeCohortFilter
+): Set<string> {
+  const sessionKeys = new Set<string>();
+  for (const event of events) {
+    if (!matchesSessionOutcomeWindow(event, filter)) continue;
+    sessionKeys.add(
+      `${event.workspace_id}\u0000${event.repository_id}\u0000${event.task_id}`
+    );
+  }
+  return sessionKeys;
+}
+
+function sessionMode(events: readonly Record<string, unknown>[]): string {
+  const modes = new Set(events.map((event) => event.memory_mode as string));
+  if (modes.size > 1) return "mixed";
+  const [mode] = modes;
+  return mode && ASSIGNED_SESSION_MODES.has(mode) ? mode : "excluded";
+}
+
+function countConflictingSessionOutcomes(
+  workspaceId: string,
+  repositoryId: string,
+  taskId: string,
+  events: readonly Record<string, unknown>[],
+  reports: Iterable<Record<string, unknown>>
+): number {
+  const sessionTokens = new Set(
+    events.map((event) => event.correlation_token as string).filter(Boolean)
+  );
+  const outcomeKinds = new Set(
+    [...reports]
+      .filter(
+        (report) =>
+          report.workspace_id === workspaceId &&
+          report.repository_id === repositoryId &&
+          report.task_id === taskId &&
+          sessionTokens.has(report.correlation_token as string)
+      )
+      .map((report) => report.outcome_kind as string)
+  );
+  return outcomeKinds.size > 1 ? 1 : 0;
+}
+
+function matchesSessionReportFilters(
+  reportKind: string | null,
+  outcomeKind: string | null,
+  filter: SessionOutcomeCohortFilter
+): boolean {
+  if (
+    filter.reportKinds?.length &&
+    (!reportKind || !filter.reportKinds.includes(reportKind))
+  ) {
+    return false;
+  }
+  return !(
+    filter.outcomeKinds?.length &&
+    (!outcomeKind || !filter.outcomeKinds.includes(outcomeKind))
+  );
+}
+
+function projectSessionOutcomeCohort(
+  sessionKey: string,
+  tables: MemoryTables,
+  filter: SessionOutcomeCohortFilter
+): SessionOutcomeCohortRow | null {
+  const [workspaceId, repositoryId, taskId] = sessionKey.split("\u0000") as [
+    string,
+    string,
+    string
+  ];
+  const sessionEvents = [...tables.memory_injection_events.values()].filter(
+    (event) =>
+      event.workspace_id === workspaceId &&
+      event.repository_id === repositoryId &&
+      event.task_id === taskId
+  );
+  const cohortMode = sessionMode(sessionEvents);
+  if (cohortMode === "excluded") return null;
+
+  const report = [...tables.memory_session_outcome_reports.values()].find(
+    (row) =>
+      row.workspace_id === workspaceId &&
+      row.repository_id === repositoryId &&
+      row.task_id === taskId
+  );
+  const reportKind = (report?.report_kind as string) ?? null;
+  const outcomeKind = (report?.outcome_kind as string) ?? null;
+  if (!matchesSessionReportFilters(reportKind, outcomeKind, filter))
+    return null;
+
+  return {
+    cohort_mode: cohortMode,
+    outcome_kind: outcomeKind,
+    session_count: 1,
+    conflicting_count: countConflictingSessionOutcomes(
+      workspaceId,
+      repositoryId,
+      taskId,
+      sessionEvents,
+      tables.memory_outcome_reports.values()
+    )
+  };
+}
+
+function addSessionOutcomeCohort(
+  rows: Map<string, SessionOutcomeCohortRow>,
+  cohort: SessionOutcomeCohortRow
+): void {
+  if (cohort.cohort_mode === "mixed") return;
+  const key = `${cohort.cohort_mode}\u0000${cohort.outcome_kind ?? ""}`;
+  const existing = rows.get(key);
+  if (existing) {
+    existing.session_count += cohort.session_count;
+    existing.conflicting_count += cohort.conflicting_count;
+    return;
+  }
+  rows.set(key, cohort);
+}
+
+function compareSessionOutcomeRows(
+  left: SessionOutcomeCohortRow,
+  right: SessionOutcomeCohortRow
+): number {
+  const modeOrder = OCCURRED_AT_COLLATOR.compare(
+    left.cohort_mode,
+    right.cohort_mode
+  );
+  if (modeOrder !== 0) return modeOrder;
+  return compareNullableStrings(left.outcome_kind, right.outcome_kind);
+}
+
+function addInjectionUseCohortExposure(
+  injection: Record<string, unknown>,
+  reports: Map<string, Record<string, unknown>>,
+  sessionCounts: Map<string, number>,
+  cells: Map<string, InjectionUseCohortRow>,
+  filter: InjectionUseCohortFilter
+): void {
+  if (
+    !isEligibleInjectionUseExposure(
+      injection,
+      filter.workspaceId,
+      filter.repositoryId,
+      filter.occurredFrom,
+      filter.occurredUntil,
+      filter.memoryModes
+    )
+  ) {
+    return;
+  }
+  const report = findUseReportForInjection(injection, reports);
+  const useKind = (report?.use_kind as string | undefined) ?? null;
+  if (
+    filter.useKinds?.length &&
+    (useKind === null || !filter.useKinds.includes(useKind))
+  ) {
+    return;
+  }
+
+  const sessionCardinality =
+    (sessionCounts.get(injectionSessionKey(injection)) ?? 0) > 1
+      ? "multiple"
+      : "single";
+  const key = [injection.memory_mode, sessionCardinality, useKind ?? ""].join(
+    "\u0001"
+  );
+  const cell = cells.get(key);
+  if (cell) {
+    cell.exposure_count += 1;
+    return;
+  }
+  cells.set(key, {
+    memory_mode: String(injection.memory_mode),
+    session_cardinality: sessionCardinality,
+    use_kind: useKind,
+    exposure_count: 1
+  });
+}
+
+function addInjectionOutcomeCohortExposure(
+  injection: Record<string, unknown>,
+  accumulator: InjectionOutcomeCohortAccumulator
+): void {
+  const candidate =
+    accumulator.reportsByToken.get(injectionWorkspaceTokenKey(injection)) ??
+    null;
+  const report =
+    candidate &&
+    candidate.repository_id === injection.repository_id &&
+    candidate.task_id === injection.task_id
+      ? candidate
+      : null;
+  if (!accumulator.predicate(injection, report)) return;
+
+  const sessionCardinality =
+    (accumulator.sessionCounts.get(injectionSessionKey(injection)) ?? 0) > 1
+      ? "multiple"
+      : "single";
+  const reportKind = report ? report.report_kind : null;
+  const outcomeKind = report ? report.outcome_kind : null;
+  const key = [
+    injection.memory_mode,
+    injection.injection_result,
+    sessionCardinality,
+    reportKind,
+    outcomeKind
+  ].join("\u0001");
+  const existing = accumulator.cells.get(key);
+  if (existing) {
+    existing.exposure_count += 1;
+    if (report) existing.report_count += 1;
+    return;
+  }
+  accumulator.cells.set(key, {
+    memory_mode: injection.memory_mode,
+    injection_result: injection.injection_result,
+    session_cardinality: sessionCardinality,
+    report_kind: reportKind,
+    outcome_kind: outcomeKind,
+    exposure_count: 1,
+    report_count: report ? 1 : 0
+  });
+}
+
+function compareInjectionOutcomeCohortRows(
+  left: InjectionOutcomeCohortRow,
+  right: InjectionOutcomeCohortRow
+): number {
+  const dimensions: (keyof InjectionOutcomeCohortRow)[] = [
+    "memory_mode",
+    "injection_result",
+    "session_cardinality",
+    "report_kind",
+    "outcome_kind"
+  ];
+  for (const dimension of dimensions) {
+    const leftValue = left[dimension];
+    const rightValue = right[dimension];
+    if (leftValue === rightValue) continue;
+    if (leftValue === null || leftValue === undefined) return -1;
+    if (rightValue === null || rightValue === undefined) return 1;
+    const comparison = OCCURRED_AT_COLLATOR.compare(
+      String(leftValue),
+      String(rightValue)
+    );
+    if (comparison !== 0) return comparison;
+  }
+  return 0;
+}
+
 function cloneTables(tables: MemoryTables): MemoryTables {
   return {
     memory_experiences: new Map(
@@ -827,73 +1207,32 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     ) {
       return null;
     }
-    const workspaceId = String(params[0]);
-    const repositoryId = String(params[1]);
-    const occurredFrom = String(params[2]);
-    const occurredUntil = String(params[3]);
-    const modeMatch = /i\.memory_mode = ANY\(\$(\d+)::text\[\]\)/i.exec(
-      normalizedSql
+    const memoryModes = readTextArrayFilter(
+      normalizedSql,
+      params,
+      /i\.memory_mode = ANY\(\$(\d+)::text\[\]\)/i
     );
-    const memoryModes = modeMatch
-      ? (params[Number(modeMatch[1]) - 1] as readonly string[])
-      : undefined;
-    const useMatch = /r\.use_kind = ANY\(\$(\d+)::text\[\]\)/i.exec(
-      normalizedSql
+    const useKinds = readTextArrayFilter(
+      normalizedSql,
+      params,
+      /r\.use_kind = ANY\(\$(\d+)::text\[\]\)/i
     );
-    const useKinds = useMatch
-      ? (params[Number(useMatch[1]) - 1] as readonly string[])
-      : undefined;
     const reports = indexUseReportsByInjection(
       this.tables.memory_injection_use_reports
     );
     const events = [...this.tables.memory_injection_events.values()];
     const counts = countInjectionsBySession(events);
-    const cells = new Map<
-      string,
-      {
-        memory_mode: string;
-        session_cardinality: string;
-        use_kind: string | null;
-        exposure_count: number;
-      }
-    >();
+    const cells = new Map<string, InjectionUseCohortRow>();
+    const filter: InjectionUseCohortFilter = {
+      workspaceId: String(params[0]),
+      repositoryId: String(params[1]),
+      occurredFrom: String(params[2]),
+      occurredUntil: String(params[3]),
+      ...(memoryModes ? { memoryModes } : {}),
+      ...(useKinds ? { useKinds } : {})
+    };
     for (const injection of events) {
-      if (
-        !isEligibleInjectionUseExposure(
-          injection,
-          workspaceId,
-          repositoryId,
-          occurredFrom,
-          occurredUntil,
-          memoryModes
-        )
-      ) {
-        continue;
-      }
-      const report = findUseReportForInjection(injection, reports);
-      const useKind = (report?.use_kind as string | undefined) ?? null;
-      if (useKinds && (useKind === null || !useKinds.includes(useKind)))
-        continue;
-      const sessionCardinality =
-        (counts.get(injectionSessionKey(injection)) ?? 0) > 1
-          ? "multiple"
-          : "single";
-      const key = [
-        injection.memory_mode,
-        sessionCardinality,
-        useKind ?? ""
-      ].join("\u0001");
-      const cell = cells.get(key);
-      if (cell) {
-        cell.exposure_count += 1;
-      } else {
-        cells.set(key, {
-          memory_mode: String(injection.memory_mode),
-          session_cardinality: sessionCardinality,
-          use_kind: useKind,
-          exposure_count: 1
-        });
-      }
+      addInjectionUseCohortExposure(injection, reports, counts, cells, filter);
     }
     const rows = [...cells.values()].sort(
       (left, right) =>
@@ -931,80 +1270,17 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     );
     const allInjections = [...this.tables.memory_injection_events.values()];
     const sessionCounts = countInjectionsBySession(allInjections);
-    type CellKey = string;
-    const cells = new Map<
-      CellKey,
-      {
-        memory_mode: unknown;
-        injection_result: unknown;
-        session_cardinality: unknown;
-        report_kind: unknown;
-        outcome_kind: unknown;
-        exposure_count: number;
-        report_count: number;
-      }
-    >();
+    const cells = new Map<string, InjectionOutcomeCohortRow>();
+    const accumulator: InjectionOutcomeCohortAccumulator = {
+      predicate,
+      reportsByToken,
+      sessionCounts,
+      cells
+    };
     for (const injection of this.tables.memory_injection_events.values()) {
-      const tokenKey = injectionWorkspaceTokenKey(injection);
-      const candidate = reportsByToken.get(tokenKey) ?? null;
-      const report =
-        candidate &&
-        candidate.repository_id === injection.repository_id &&
-        candidate.task_id === injection.task_id
-          ? candidate
-          : null;
-      if (!predicate(injection, report)) continue;
-      const reportKind = report ? report.report_kind : null;
-      const outcomeKind = report ? report.outcome_kind : null;
-      const sessionCardinality =
-        (sessionCounts.get(injectionSessionKey(injection)) ?? 0) > 1
-          ? "multiple"
-          : "single";
-      const key = [
-        injection.memory_mode,
-        injection.injection_result,
-        sessionCardinality,
-        reportKind,
-        outcomeKind
-      ].join("\u0001");
-      const existing = cells.get(key);
-      if (existing) {
-        existing.exposure_count += 1;
-        if (report) existing.report_count += 1;
-      } else {
-        cells.set(key, {
-          memory_mode: injection.memory_mode,
-          injection_result: injection.injection_result,
-          session_cardinality: sessionCardinality,
-          report_kind: reportKind,
-          outcome_kind: outcomeKind,
-          exposure_count: 1,
-          report_count: report ? 1 : 0
-        });
-      }
+      addInjectionOutcomeCohortExposure(injection, accumulator);
     }
-    const rows = [...cells.values()].sort((left, right) => {
-      const dimensions: (keyof typeof left)[] = [
-        "memory_mode",
-        "injection_result",
-        "session_cardinality",
-        "report_kind",
-        "outcome_kind"
-      ];
-      for (const dimension of dimensions) {
-        const leftValue = left[dimension];
-        const rightValue = right[dimension];
-        if (leftValue === rightValue) continue;
-        if (leftValue === null || leftValue === undefined) return -1;
-        if (rightValue === null || rightValue === undefined) return 1;
-        const comparison = OCCURRED_AT_COLLATOR.compare(
-          String(leftValue),
-          String(rightValue)
-        );
-        if (comparison !== 0) return comparison;
-      }
-      return 0;
-    });
+    const rows = [...cells.values()].sort(compareInjectionOutcomeCohortRows);
     return { rows, rowCount: rows.length };
   }
 
@@ -1013,205 +1289,32 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     params: readonly unknown[]
   ): MemoryQueryResult | null {
     const normalizedSql = normalizeSql(sql);
-    if (!normalizedSql.includes("in_window_events AS MATERIALIZED")) {
+    if (!normalizedSql.includes("in_window_events AS MATERIALIZED"))
       return null;
-    }
-    const workspaceId = params[0] as string;
-    const repositoryId = params[1] as string;
-    const occurredFrom = params[2] as string;
-    const occurredUntil = params[3] as string;
 
-    const fromDate = new Date(occurredFrom);
-    const untilDate = new Date(occurredUntil);
-
-    let memoryModes: readonly string[] | undefined;
-    const modeMatch = /i\.memory_mode = ANY\(\$(\d+)::text\[\]\)/i.exec(
-      normalizedSql
-    );
-    if (modeMatch) {
-      memoryModes = params[Number(modeMatch[1]) - 1] as readonly string[];
-    }
-    let injectionResults: readonly string[] | undefined;
-    const resultMatch = /i\.injection_result = ANY\(\$(\d+)::text\[\]\)/i.exec(
-      normalizedSql
-    );
-    if (resultMatch) {
-      injectionResults = params[
-        Number(resultMatch[1]) - 1
-      ] as readonly string[];
-    }
-
-    let reportKinds: readonly string[] | undefined;
-    const rkMatch = /r\.report_kind = ANY\(\$(\d+)::text\[\]\)/i.exec(
-      normalizedSql
-    );
-    if (rkMatch) {
-      reportKinds = params[Number(rkMatch[1]) - 1] as readonly string[];
-    }
-    let outcomeKinds: readonly string[] | undefined;
-    const okMatch = /r\.outcome_kind = ANY\(\$(\d+)::text\[\]\)/i.exec(
-      normalizedSql
-    );
-    if (okMatch) {
-      outcomeKinds = params[Number(okMatch[1]) - 1] as readonly string[];
-    }
-
-    // in_window_events -> in_window_sessions: unique session keys with an
-    // in-window, filter-matching event. Only used to select the session
-    // population; exposure counts are not part of this response.
-    const inWindowSessionKeys = new Set<string>();
-    for (const event of this.tables.memory_injection_events.values()) {
-      if (
-        event.workspace_id !== workspaceId ||
-        event.repository_id !== repositoryId
-      ) {
-        continue;
-      }
-      const eventDate = new Date(event.occurred_at as string);
-      if (eventDate < fromDate || eventDate > untilDate) continue;
-      if (
-        memoryModes &&
-        memoryModes.length > 0 &&
-        !memoryModes.includes(event.memory_mode as string)
-      ) {
-        continue;
-      }
-      if (
-        injectionResults &&
-        injectionResults.length > 0 &&
-        !injectionResults.includes(event.injection_result as string)
-      ) {
-        continue;
-      }
-      const sessionKey = `${event.workspace_id}\u0000${event.repository_id}\u0000${event.task_id}`;
-      inWindowSessionKeys.add(sessionKey);
-    }
-
-    const ASSIGNED_MODES = new Set(["jit", "retrieval-only", "disabled"]);
-    const cellMap = new Map<
-      string,
-      {
-        cohort_mode: string;
-        outcome_kind: string | null;
-        session_count: number;
-        conflicting_count: number;
-      }
-    >();
+    const filter = parseSessionOutcomeCohortFilter(normalizedSql, params);
+    const events = this.tables.memory_injection_events.values();
+    const inWindowSessionKeys = selectInWindowSessionKeys(events, filter);
+    const cellMap = new Map<string, SessionOutcomeCohortRow>();
     let mixedModeSessionCount = 0;
     let mixedModeConflictingCount = 0;
 
     for (const sessionKey of inWindowSessionKeys) {
-      const [wsId, repoId, taskId] = sessionKey.split("\u0000") as [
-        string,
-        string,
-        string
-      ];
-
-      // full_session_stats: derive mode from the COMPLETE, unfiltered
-      // injection-event set for this session key -- never from the
-      // in-window/filtered subset.
-      const fullSessionEvents = [
-        ...this.tables.memory_injection_events.values()
-      ].filter(
-        (inj) =>
-          inj.workspace_id === wsId &&
-          inj.repository_id === repoId &&
-          inj.task_id === taskId
+      const cohort = projectSessionOutcomeCohort(
+        sessionKey,
+        this.tables,
+        filter
       );
-      const distinctModes = new Set(
-        fullSessionEvents.map((e) => e.memory_mode as string)
-      );
-      const sampleMode = [...distinctModes][0]!;
-      let cohortMode: string;
-      if (distinctModes.size > 1) {
-        cohortMode = "mixed";
-      } else if (ASSIGNED_MODES.has(sampleMode)) {
-        cohortMode = sampleMode;
-      } else {
-        cohortMode = "excluded";
-      }
-
-      if (cohortMode === "excluded") continue;
-
-      // Check per-injection token reports for conflicts:
-      const sessionTokens = new Set(
-        fullSessionEvents
-          .map((e) => e.correlation_token as string)
-          .filter(Boolean)
-      );
-      const tokenReports = [
-        ...this.tables.memory_outcome_reports.values()
-      ].filter(
-        (mor) =>
-          mor.workspace_id === wsId &&
-          mor.repository_id === repoId &&
-          mor.task_id === taskId &&
-          sessionTokens.has(mor.correlation_token as string)
-      );
-      const distinctTokenOutcomeKinds = new Set(
-        tokenReports.map((r) => r.outcome_kind as string)
-      );
-      const hasConflictingOutcomes = distinctTokenOutcomeKinds.size > 1 ? 1 : 0;
-
-      const report = [
-        ...this.tables.memory_session_outcome_reports.values()
-      ].find(
-        (r) =>
-          r.workspace_id === wsId &&
-          r.repository_id === repoId &&
-          r.task_id === taskId
-      );
-
-      const reportKind = (report?.report_kind as string) ?? null;
-      const outcomeKind = (report?.outcome_kind as string) ?? null;
-
-      if (
-        reportKinds &&
-        reportKinds.length > 0 &&
-        (!reportKind || !reportKinds.includes(reportKind))
-      ) {
-        continue;
-      }
-      if (
-        outcomeKinds &&
-        outcomeKinds.length > 0 &&
-        (!outcomeKind || !outcomeKinds.includes(outcomeKind))
-      ) {
-        continue;
-      }
-
-      if (cohortMode === "mixed") {
+      if (!cohort) continue;
+      if (cohort.cohort_mode === "mixed") {
         mixedModeSessionCount += 1;
-        mixedModeConflictingCount += hasConflictingOutcomes;
+        mixedModeConflictingCount += cohort.conflicting_count;
         continue;
       }
-
-      const key = `${cohortMode}\u0000${outcomeKind ?? ""}`;
-      const existing = cellMap.get(key);
-      if (existing) {
-        existing.session_count += 1;
-        existing.conflicting_count += hasConflictingOutcomes;
-      } else {
-        cellMap.set(key, {
-          cohort_mode: cohortMode,
-          outcome_kind: outcomeKind,
-          session_count: 1,
-          conflicting_count: hasConflictingOutcomes
-        });
-      }
+      addSessionOutcomeCohort(cellMap, cohort);
     }
 
-    const rows = [...cellMap.values()].sort((a, b) => {
-      if (a.cohort_mode !== b.cohort_mode) {
-        return a.cohort_mode.localeCompare(b.cohort_mode);
-      }
-      if (a.outcome_kind !== b.outcome_kind) {
-        if (a.outcome_kind === null) return -1;
-        if (b.outcome_kind === null) return 1;
-        return a.outcome_kind.localeCompare(b.outcome_kind);
-      }
-      return 0;
-    });
+    const rows = [...cellMap.values()].sort(compareSessionOutcomeRows);
     if (mixedModeSessionCount > 0) {
       rows.push({
         cohort_mode: "mixed",

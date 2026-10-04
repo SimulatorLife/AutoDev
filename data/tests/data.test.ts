@@ -59,7 +59,9 @@ test("RuleSync MCP state parses canonical JSONC and target overrides without exp
     await writeFile(
       sourcePath,
       `{
-        // The server launch details and credentials are never returned by this read model.
+        // Credential values and credential references (env values, bearer_token_env_var)
+        // are never returned by this read model; launch descriptors like command, url,
+        // and env key names are.
         "mcpServers": {
           "local": { "command": "node", "env": { "TOKEN": "secret" }, },
           "remote": { "url": "https://mcp.example.test", "bearer_token_env_var": "MCP_TOKEN" },
@@ -92,12 +94,15 @@ test("RuleSync MCP state parses canonical JSONC and target overrides without exp
           name: "default-disabled",
           enabled: false,
           transport: "stdio",
+          command: "node",
           targetOverrides: []
         },
         {
           name: "local",
           enabled: true,
           transport: "stdio",
+          command: "node",
+          envKeys: ["TOKEN"],
           targetOverrides: [
             { target: "codexcli", enabled: true },
             { target: "copilotcli", enabled: false }
@@ -107,6 +112,7 @@ test("RuleSync MCP state parses canonical JSONC and target overrides without exp
           name: "remote",
           enabled: true,
           transport: "http",
+          url: "https://mcp.example.test",
           targetOverrides: [{ target: "codexcli", enabled: false }]
         },
         {
@@ -215,19 +221,24 @@ test("ConfigRepository distinguishes missing and invalid workspace sources from 
       workspaces: []
     });
 
-    const configDirectory = path.join(repositoryRoot, ".github", "workflows");
+    const configDirectory = path.join(repositoryRoot, "config");
     await mkdir(configDirectory, { recursive: true });
-    const weightsPath = path.join(configDirectory, "weights.json");
-    await writeFile(weightsPath, JSON.stringify({ repositories: [] }), "utf8");
+    const catalogPath = path.join(configDirectory, "workspaces.json");
+    await writeFile(
+      catalogPath,
+      JSON.stringify({ schema: "autodev-workspaces-v1", workspaces: [] }),
+      "utf8"
+    );
     assert.deepEqual(repository.readWorkspaceCatalog(), {
       status: "valid",
       workspaces: []
     });
 
     await writeFile(
-      weightsPath,
+      catalogPath,
       JSON.stringify({
-        repositories: [{ name: "SimulatorLife/AutoDev", weight: 1 }]
+        schema: "autodev-workspaces-v1",
+        workspaces: [{ id: "SimulatorLife/AutoDev" }]
       }),
       "utf8"
     );

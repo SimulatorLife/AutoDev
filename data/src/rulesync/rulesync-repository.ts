@@ -96,40 +96,42 @@ function isMcpConfig(value: unknown): value is Record<string, unknown> {
   );
 }
 
+function projectBaseMcpServer(
+  config: Record<string, unknown>
+): MutableMcpServer {
+  const args =
+    Array.isArray(config.args) &&
+    config.args.every((arg) => typeof arg === "string")
+      ? (config.args as string[])
+      : undefined;
+  const envKeys = isRecord(config.env)
+    ? Object.keys(config.env).sort(COLLATOR.compare)
+    : undefined;
+  const defaultToolsApprovalMode =
+    typeof config.default_tools_approval_mode === "string"
+      ? config.default_tools_approval_mode
+      : undefined;
+
+  return {
+    enabled: config.disabled !== true,
+    transport: mcpTransport(config),
+    targetOverrides: [],
+    ...(typeof config.command === "string" ? { command: config.command } : {}),
+    ...(args ? { args } : {}),
+    ...(typeof config.url === "string" ? { url: config.url } : {}),
+    ...(envKeys ? { envKeys } : {}),
+    ...(typeof config.cwd === "string" ? { cwd: config.cwd } : {}),
+    ...(defaultToolsApprovalMode ? { defaultToolsApprovalMode } : {})
+  };
+}
+
 function parseBaseMcpServers(
   declarations: Record<string, unknown>
 ): Map<string, MutableMcpServer> | null {
   const servers = new Map<string, MutableMcpServer>();
   for (const [name, config] of Object.entries(declarations)) {
     if (!name.trim() || !isMcpConfig(config)) return null;
-    const command =
-      typeof config.command === "string" ? config.command : undefined;
-    const args =
-      Array.isArray(config.args) &&
-      config.args.every((arg) => typeof arg === "string")
-        ? (config.args as string[])
-        : undefined;
-    const url = typeof config.url === "string" ? config.url : undefined;
-    const envKeys = isRecord(config.env)
-      ? Object.keys(config.env).sort(COLLATOR.compare)
-      : undefined;
-    const cwd = typeof config.cwd === "string" ? config.cwd : undefined;
-    const defaultToolsApprovalMode =
-      typeof config.default_tools_approval_mode === "string"
-        ? config.default_tools_approval_mode
-        : undefined;
-
-    servers.set(name, {
-      enabled: config.disabled !== true,
-      transport: mcpTransport(config),
-      targetOverrides: [],
-      ...(command ? { command } : {}),
-      ...(args ? { args } : {}),
-      ...(url ? { url } : {}),
-      ...(envKeys ? { envKeys } : {}),
-      ...(cwd ? { cwd } : {}),
-      ...(defaultToolsApprovalMode ? { defaultToolsApprovalMode } : {})
-    });
+    servers.set(name, projectBaseMcpServer(config));
   }
   return servers;
 }
@@ -154,37 +156,55 @@ function applyMcpTargetOverrides(
     if (!isTargetMcpConfig(target, targetConfig)) continue;
     const overrides = targetConfig.mcpServers;
     if (!isRecord(overrides)) return false;
-    for (const [name, config] of Object.entries(overrides)) {
-      if (config !== null && !isMcpConfig(config)) return false;
-      const enabled = config !== null && config.disabled !== true;
-      let server = servers.get(name);
-      if (!server) {
-        server = {
-          enabled: null,
-          transport: config === null ? "unknown" : mcpTransport(config),
-          targetOverrides: []
-        };
-        servers.set(name, server);
-      }
-      const defaultToolsApprovalMode =
-        config && typeof config.default_tools_approval_mode === "string"
-          ? config.default_tools_approval_mode
-          : undefined;
-      const enabledTools =
-        config &&
-        Array.isArray(config.enabled_tools) &&
-        config.enabled_tools.every((tool) => typeof tool === "string")
-          ? (config.enabled_tools as string[])
-          : undefined;
-      server.targetOverrides.push({
-        target,
-        enabled,
-        ...(defaultToolsApprovalMode ? { defaultToolsApprovalMode } : {}),
-        ...(enabledTools ? { enabledTools } : {})
-      });
-    }
+    if (!applyMcpOverridesForTarget(target, overrides, servers)) return false;
   }
   return true;
+}
+
+function applyMcpOverridesForTarget(
+  target: string,
+  overrides: Record<string, unknown>,
+  servers: Map<string, MutableMcpServer>
+): boolean {
+  for (const [name, config] of Object.entries(overrides)) {
+    if (config !== null && !isMcpConfig(config)) return false;
+    let server = servers.get(name);
+    if (!server) {
+      server = {
+        enabled: null,
+        transport: config === null ? "unknown" : mcpTransport(config),
+        targetOverrides: []
+      };
+      servers.set(name, server);
+    }
+    server.targetOverrides.push(projectMcpTargetOverride(target, config));
+  }
+  return true;
+}
+
+function projectMcpTargetOverride(
+  target: string,
+  config: unknown
+): McpTargetOverride {
+  const definition =
+    config === null ? null : (config as Record<string, unknown>);
+  const enabled = definition !== null && definition.disabled !== true;
+  const defaultToolsApprovalMode =
+    typeof definition?.default_tools_approval_mode === "string"
+      ? definition.default_tools_approval_mode
+      : undefined;
+  const enabledTools =
+    Array.isArray(definition?.enabled_tools) &&
+    definition.enabled_tools.every((tool) => typeof tool === "string")
+      ? (definition.enabled_tools as string[])
+      : undefined;
+
+  return {
+    target,
+    enabled,
+    ...(defaultToolsApprovalMode ? { defaultToolsApprovalMode } : {}),
+    ...(enabledTools ? { enabledTools } : {})
+  };
 }
 
 function projectMcpDefinitions(

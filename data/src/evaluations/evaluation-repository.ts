@@ -8,6 +8,8 @@ import {
   resolveOpenLitClickHouseConnection
 } from "../openlit/clickhouse-config.ts";
 
+const LINE_BREAK_PATTERN = /\r?\n/u;
+
 export interface EvaluationQueryOptions extends OpenLitClickHouseOptions {
   readonly limit?: number;
   readonly fetchImpl?: typeof fetch;
@@ -69,7 +71,7 @@ export class EvaluationRepository {
 
   parseEvaluationRows(text: string): readonly EvaluationResult[] {
     const lines = text
-      .split(/\r?\n/u)
+      .split(LINE_BREAK_PATTERN)
       .map((l) => l.trim())
       .filter((l) => l.length > 0);
 
@@ -86,12 +88,11 @@ export class EvaluationRepository {
 
         const metrics: EvaluationMetric[] = [];
         for (const [name, value] of Object.entries(scores)) {
-          const idx = evNames.indexOf(name);
-          const verdict = idx >= 0 ? verdicts[idx]?.toLowerCase() : undefined;
+          const verdict = verdicts[evNames.indexOf(name)]?.toLowerCase();
+          const effectiveVerdict =
+            verdict ?? (Number(value) >= 0.5 ? "pass" : "fail");
           const pass =
-            verdict !== undefined
-              ? verdict === "pass" || verdict === "yes"
-              : Number(value) >= 0.5;
+            effectiveVerdict === "pass" || effectiveVerdict === "yes";
 
           metrics.push({
             name,
