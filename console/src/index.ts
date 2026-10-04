@@ -10,6 +10,7 @@ export * from "./components/layout/AppShell.ts";
 export * from "./components/navigation/AppNav.ts";
 export * from "./components/status/StatusBadge.ts";
 export * from "./components/tables/DataTable.ts";
+export * from "./components/tabs/Tabs.ts";
 export * from "./features/agents/AgentDetailView.ts";
 export * from "./features/agents/AgentsView.ts";
 export * from "./features/evaluations/EvaluationsView.ts";

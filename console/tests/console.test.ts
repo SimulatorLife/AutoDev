@@ -12,8 +12,10 @@ import {
   type ExperienceEnvelope,
   type GithubWorkflowDefinition,
   LOCAL_CONTROL_API_ACTOR,
+  type McpServerResource,
   type MemoryRecord,
-  type MemorySessionOutcomeCohortPage
+  type MemorySessionOutcomeCohortPage,
+  type ToolCatalogItem
 } from "@simulatorlife/autodev-core";
 import { NextRequest } from "next/server.js";
 import React from "react";
@@ -28,6 +30,7 @@ import {
   EvaluationsView,
   GithubView,
   HooksView,
+  MCP_DETAIL_TABS,
   McpDetailView,
   McpsView,
   MemoryCohortsView,
@@ -37,9 +40,12 @@ import {
   MemoryView,
   PromptDetailView,
   PromptsView,
+  resolveActiveTabId,
   SkillsView,
   StatCard,
   StatusBadge,
+  tabHref,
+  TabNav,
   ToolsView,
   UsageView,
   WorkspacesView
@@ -715,195 +721,506 @@ test("McpsView never reports 'Connected' or '100%' without runtime evidence", ()
 });
 
 test("McpDetailView combines canonical desired state with unknown runtime health", () => {
-  const markup = renderToStaticMarkup(
+  const server: McpServerResource = {
+    name: "context7",
+    enabled: true,
+    transport: "http",
+    targetOverrides: [{ target: "codexcli", enabled: false }],
+    declared: true,
+    roles: ["docs-researcher"]
+  };
+  const overviewMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
       configuredTools: null,
-      server: {
-        name: "context7",
-        enabled: true,
-        transport: "http",
-        targetOverrides: [{ target: "codexcli", enabled: false }],
-        declared: true,
-        roles: ["docs-researcher"]
-      }
+      server,
+      activeTab: "overview"
     })
   );
-  assert.match(markup, /Desired state/);
-  assert.match(markup, /Enabled by default/);
-  assert.match(markup, /codexcli: disabled/);
-  assert.match(markup, /docs-researcher/);
-  assert.match(markup, /Runtime connection/);
-  assert.match(markup, /Not observed/);
-  assert.match(markup, /Configured tool allowlist/);
-  assert.match(markup, /Tools, resources, prompts, and activity/);
-  // Tools source is unavailable in this fixture; the section must report
-  // Unknown and must not fabricate a Connected/ready state.
-  assert.match(markup, /data-tool-allowlist-projection="unknown"/);
-  assert.match(markup, />Unknown</);
-  assert.doesNotMatch(markup, /Connected/);
+  assert.match(overviewMarkup, /Desired state/);
+  assert.match(overviewMarkup, /Enabled by default/);
+  assert.match(overviewMarkup, /Runtime connection/);
+  assert.match(overviewMarkup, /Not observed/);
+  assert.doesNotMatch(overviewMarkup, /Connected/);
+
+  const configurationMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools: null,
+      server,
+      activeTab: "configuration"
+    })
+  );
+  assert.match(configurationMarkup, /codexcli: disabled/);
+
+  const roleAccessMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools: null,
+      server,
+      activeTab: "role-access"
+    })
+  );
+  assert.match(roleAccessMarkup, /docs-researcher/);
+
+  const toolsMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools: null,
+      server,
+      activeTab: "tools"
+    })
+  );
+  assert.match(toolsMarkup, /Configured tool allowlist/);
+  assert.match(toolsMarkup, /data-tool-allowlist-projection="unknown"/);
+  assert.match(toolsMarkup, />Unknown</);
+  assert.doesNotMatch(toolsMarkup, /Connected/);
+
+  const activityMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools: null,
+      server,
+      activeTab: "activity"
+    })
+  );
+  assert.match(activityMarkup, /Tools, resources, prompts, and activity/);
 });
 
 test("McpDetailView renders populated configured tool allowlist from the Tools capability projection", () => {
-  const markup = renderToStaticMarkup(
+  const server: McpServerResource = {
+    name: "context7",
+    enabled: true,
+    transport: "http",
+    targetOverrides: [],
+    declared: true,
+    roles: ["docs-researcher"]
+  };
+  const configuredTools: readonly ToolCatalogItem[] = [
+    {
+      name: "resolve-library-id",
+      source: "mcp",
+      server: "context7",
+      exposedRoles: ["docs-researcher"]
+    },
+    {
+      name: "get-library-docs",
+      source: "mcp",
+      server: "context7",
+      exposedRoles: ["docs-researcher", "code-reviewer"]
+    }
+  ];
+  const toolsMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
-      configuredTools: [
-        {
-          name: "resolve-library-id",
-          source: "mcp",
-          server: "context7",
-          exposedRoles: ["docs-researcher"]
-        },
-        {
-          name: "get-library-docs",
-          source: "mcp",
-          server: "context7",
-          exposedRoles: ["docs-researcher", "code-reviewer"]
-        }
-      ],
-      server: {
-        name: "context7",
-        enabled: true,
-        transport: "http",
-        targetOverrides: [],
-        declared: true,
-        roles: ["docs-researcher"]
-      }
+      configuredTools,
+      server,
+      activeTab: "tools"
     })
   );
-  assert.match(markup, /Configured tool allowlist/);
-  assert.match(markup, /data-tool-allowlist-projection="partial"/);
-  assert.match(markup, /data-enumerated-tool-count="2"/);
-  assert.match(markup, /resolve-library-id/);
-  assert.match(markup, /get-library-docs/);
-  // Configured exposed roles must be visible per tool.
-  assert.match(markup, />docs-researcher</);
-  assert.match(markup, />code-reviewer</);
-  // Section must NOT claim the remote server is connected or that this is
-  // the full live tool inventory.
-  assert.doesNotMatch(markup, /Connected/);
-  assert.doesNotMatch(markup, /data-status="ready"/);
-  // Live inventory section must remain explicit "Not observed".
-  assert.match(markup, /Not observed/);
-  assert.match(markup, /Tools, resources, prompts, and activity/);
+  assert.match(toolsMarkup, /Configured tool allowlist/);
+  assert.match(toolsMarkup, /data-tool-allowlist-projection="partial"/);
+  assert.match(toolsMarkup, /data-enumerated-tool-count="2"/);
+  assert.match(toolsMarkup, /resolve-library-id/);
+  assert.match(toolsMarkup, /get-library-docs/);
+  assert.match(toolsMarkup, />docs-researcher</);
+  assert.match(toolsMarkup, />code-reviewer</);
+  assert.doesNotMatch(toolsMarkup, /Connected/);
+  assert.doesNotMatch(toolsMarkup, /data-status="ready"/);
+
+  const activityMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools,
+      server,
+      activeTab: "activity"
+    })
+  );
+  assert.match(activityMarkup, /Not observed/);
+  assert.match(activityMarkup, /Tools, resources, prompts, and activity/);
 });
 
 test("McpDetailView distinguishes no enumerated allowlist entries from an empty live inventory", () => {
-  const markup = renderToStaticMarkup(
+  const server: McpServerResource = {
+    name: "context7",
+    enabled: true,
+    transport: "http",
+    targetOverrides: [],
+    declared: true,
+    roles: ["docs-researcher"]
+  };
+  const toolsMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
       configuredTools: [],
-      server: {
-        name: "context7",
-        enabled: true,
-        transport: "http",
-        targetOverrides: [],
-        declared: true,
-        roles: ["docs-researcher"]
-      }
+      server,
+      activeTab: "tools"
     })
   );
-  assert.match(markup, /Configured tool allowlist/);
-  assert.match(markup, /data-tool-allowlist-projection="partial-empty"/);
-  assert.match(markup, /data-enumerated-tool-count="0"/);
-  assert.match(markup, /No allowlist entries enumerated/);
-  assert.match(markup, /live inventory remains unknown/);
-  // A partial projection with no entries is not evidence of no server tools.
-  assert.match(markup, /live inventory remains unknown/);
-  assert.doesNotMatch(markup, /None configured/);
-  // No fabricated live inventory claims.
-  assert.doesNotMatch(markup, /Connected/);
-  assert.doesNotMatch(markup, /data-status="ready"/);
-  // Live inventory section still stays explicitly unobserved.
-  assert.match(markup, /Not observed/);
+  assert.match(toolsMarkup, /Configured tool allowlist/);
+  assert.match(toolsMarkup, /data-tool-allowlist-projection="partial-empty"/);
+  assert.match(toolsMarkup, /data-enumerated-tool-count="0"/);
+  assert.match(toolsMarkup, /No allowlist entries enumerated/);
+  assert.match(toolsMarkup, /live inventory remains unknown/);
+  assert.doesNotMatch(toolsMarkup, /None configured/);
+  assert.doesNotMatch(toolsMarkup, /Connected/);
+  assert.doesNotMatch(toolsMarkup, /data-status="ready"/);
+
+  const overviewMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools: [],
+      server,
+      activeTab: "overview"
+    })
+  );
+  assert.match(overviewMarkup, /Not observed/);
 });
 
 test("McpDetailView distinguishes an unavailable tool source from an empty allowlist", () => {
+  const server: McpServerResource = {
+    name: "playwright",
+    enabled: false,
+    transport: "stdio",
+    targetOverrides: [],
+    declared: true,
+    roles: ["browser-tester"]
+  };
+  const toolsMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools: null,
+      server,
+      activeTab: "tools"
+    })
+  );
+  assert.match(toolsMarkup, /Configured tool allowlist/);
+  assert.match(toolsMarkup, /data-tool-allowlist-projection="unknown"/);
+  assert.doesNotMatch(toolsMarkup, /data-enumerated-tool-count="0"/);
+  assert.match(toolsMarkup, />Unknown</);
+  assert.doesNotMatch(toolsMarkup, /None configured/);
+  assert.doesNotMatch(toolsMarkup, /Connected/);
+  assert.doesNotMatch(toolsMarkup, /data-status="ready"/);
+
+  const activityMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools: null,
+      server,
+      activeTab: "activity"
+    })
+  );
+  assert.match(activityMarkup, /Tools, resources, prompts, and activity/);
+  assert.match(activityMarkup, /Not observed/);
+});
+
+test("McpDetailView renders full §14 diagnostic sub-panels across their owning tabs with configuration and unobserved runtime state", () => {
+  const server: McpServerResource = {
+    name: "lsp",
+    enabled: true,
+    transport: "stdio",
+    command: "bash",
+    args: ["-lc", "exec run-lsp.sh"],
+    cwd: "/Users/test/workspace",
+    envKeys: ["LSP_SERVER_PATH", "LSP_TIMEOUT"],
+    defaultToolsApprovalMode: "approve",
+    targetOverrides: [
+      {
+        target: "codexcli",
+        enabled: true,
+        defaultToolsApprovalMode: "approve",
+        enabledTools: ["lsp_goto_definition"]
+      }
+    ],
+    declared: true,
+    roles: ["orchestrator"]
+  };
+  const configuredTools: readonly ToolCatalogItem[] = [
+    {
+      name: "lsp_goto_definition",
+      source: "mcp",
+      server: "lsp",
+      exposedRoles: ["orchestrator"]
+    }
+  ];
+
+  const configurationMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools,
+      server,
+      activeTab: "configuration"
+    })
+  );
+  assert.match(configurationMarkup, /data-section="mcp-configuration"/);
+  assert.match(configurationMarkup, /Server configuration/);
+  assert.match(configurationMarkup, /exec run-lsp\.sh/);
+  assert.match(configurationMarkup, /\/Users\/test\/workspace/);
+  assert.match(configurationMarkup, /LSP_SERVER_PATH, LSP_TIMEOUT/);
+  assert.match(configurationMarkup, /mode: approve/);
+  assert.match(configurationMarkup, /tools: lsp_goto_definition/);
+
+  const connectionHealthMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools,
+      server,
+      activeTab: "connection-health"
+    })
+  );
+  assert.match(connectionHealthMarkup, /data-section="mcp-connection-health"/);
+  assert.match(connectionHealthMarkup, /Connection &amp; Health/);
+  assert.match(connectionHealthMarkup, /Probe status: Not observed/);
+
+  const roleAccessMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools,
+      server,
+      activeTab: "role-access"
+    })
+  );
+  assert.match(roleAccessMarkup, /data-section="mcp-role-access"/);
+
+  const toolsMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools,
+      server,
+      activeTab: "tools"
+    })
+  );
+  assert.match(toolsMarkup, /data-section="mcp-tools"/);
+
+  const resourcesMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools,
+      server,
+      activeTab: "resources"
+    })
+  );
+  assert.match(resourcesMarkup, /data-section="mcp-resources"/);
+  assert.match(resourcesMarkup, /Resources inventory: Not observed/);
+
+  const promptsMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools,
+      server,
+      activeTab: "prompts"
+    })
+  );
+  assert.match(promptsMarkup, /data-section="mcp-prompts"/);
+  assert.match(promptsMarkup, /Prompts inventory: Not observed/);
+
+  const activityMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools,
+      server,
+      activeTab: "activity"
+    })
+  );
+  assert.match(activityMarkup, /data-section="mcp-activity"/);
+  assert.match(activityMarkup, /Activity: Not observed/);
+
+  const errorsLogsMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools,
+      server,
+      activeTab: "errors-logs"
+    })
+  );
+  assert.match(errorsLogsMarkup, /data-section="mcp-errors-logs"/);
+  assert.match(errorsLogsMarkup, /Error logs: Not observed/);
+});
+
+test("MCP_DETAIL_TABS declares the exact target-state tab order and count", () => {
+  assert.equal(MCP_DETAIL_TABS.length, 9);
+  assert.deepEqual(
+    MCP_DETAIL_TABS.map((tab) => tab.id),
+    [
+      "overview",
+      "configuration",
+      "connection-health",
+      "tools",
+      "resources",
+      "prompts",
+      "role-access",
+      "activity",
+      "errors-logs"
+    ]
+  );
+  assert.deepEqual(
+    MCP_DETAIL_TABS.map((tab) => tab.label),
+    [
+      "Overview",
+      "Configuration",
+      "Connection / Health",
+      "Tools",
+      "Resources",
+      "Prompts",
+      "Role Access",
+      "Activity",
+      "Errors / Logs"
+    ]
+  );
+});
+
+test("McpDetailView tab navigation renders all nine tabs as deterministic, URL-addressable links with aria-current on the active tab", () => {
+  const server: McpServerResource = {
+    name: "playwright",
+    enabled: false,
+    transport: "stdio",
+    targetOverrides: [],
+    declared: true,
+    roles: []
+  };
   const markup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
       configuredTools: null,
-      server: {
-        name: "playwright",
-        enabled: false,
-        transport: "stdio",
-        targetOverrides: [],
-        declared: true,
-        roles: ["browser-tester"]
-      }
+      server,
+      activeTab: "resources"
     })
   );
-  // null means the tools source is unavailable -- mark Unknown explicitly.
-  assert.match(markup, /Configured tool allowlist/);
-  assert.match(markup, /data-tool-allowlist-projection="unknown"/);
-  assert.doesNotMatch(markup, /data-enumerated-tool-count="0"/);
-  assert.match(markup, />Unknown</);
-  // Critically: must NOT collapse to "None configured" (that would claim
-  // the source was observed and the allowlist is empty, which is false).
-  assert.doesNotMatch(markup, /None configured/);
-  // And must not fabricate a live connection or ready tool.
-  assert.doesNotMatch(markup, /Connected/);
-  assert.doesNotMatch(markup, /data-status="ready"/);
-  // Existing live section must remain explicitly unobserved.
-  assert.match(markup, /Tools, resources, prompts, and activity/);
-  assert.match(markup, /Not observed/);
+  assert.match(markup, /aria-label="playwright detail sections"/);
+  for (const tab of MCP_DETAIL_TABS) {
+    const expectedHref = "/mcps/playwright?tab=" + tab.id;
+    assert.ok(
+      markup.includes('href="' + expectedHref + '"'),
+      "expected tab href " + expectedHref
+    );
+  }
+  const activeCurrentMatches = markup.match(/aria-current="page"/g) ?? [];
+  assert.equal(activeCurrentMatches.length, 1);
+  assert.match(markup, /aria-current="page"[^>]*data-tab-item="resources"/);
 });
 
-test("McpDetailView renders full §14 diagnostic sub-panels with configuration and unobserved runtime state", () => {
-  const markup = renderToStaticMarkup(
+test("McpDetailView falls back to the Overview tab for an unknown or missing ?tab= value", () => {
+  const server: McpServerResource = {
+    name: "playwright",
+    enabled: false,
+    transport: "stdio",
+    targetOverrides: [],
+    declared: true,
+    roles: []
+  };
+  const unknownTabMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
-      configuredTools: [
-        {
-          name: "lsp_goto_definition",
-          source: "mcp",
-          server: "lsp",
-          exposedRoles: ["orchestrator"]
-        }
-      ],
-      server: {
-        name: "lsp",
-        enabled: true,
-        transport: "stdio",
-        command: "bash",
-        args: ["-lc", "exec run-lsp.sh"],
-        cwd: "/Users/test/workspace",
-        envKeys: ["LSP_SERVER_PATH", "LSP_TIMEOUT"],
-        defaultToolsApprovalMode: "approve",
-        targetOverrides: [
-          {
-            target: "codexcli",
-            enabled: true,
-            defaultToolsApprovalMode: "approve",
-            enabledTools: ["lsp_goto_definition"]
-          }
-        ],
-        declared: true,
-        roles: ["orchestrator"]
-      }
+      configuredTools: null,
+      server,
+      activeTab: "not-a-real-tab"
     })
   );
-  assert.match(markup, /data-section="mcp-configuration"/);
-  assert.match(markup, /data-section="mcp-connection-health"/);
-  assert.match(markup, /data-section="mcp-role-access"/);
-  assert.match(markup, /data-section="mcp-tools"/);
-  assert.match(markup, /data-section="mcp-resources"/);
-  assert.match(markup, /data-section="mcp-prompts"/);
-  assert.match(markup, /data-section="mcp-activity"/);
-  assert.match(markup, /data-section="mcp-errors-logs"/);
-  assert.match(markup, /Server configuration/);
-  assert.match(markup, /exec run-lsp\.sh/);
-  assert.match(markup, /\/Users\/test\/workspace/);
-  assert.match(markup, /LSP_SERVER_PATH, LSP_TIMEOUT/);
-  assert.match(markup, /mode: approve/);
-  assert.match(markup, /tools: lsp_goto_definition/);
-  assert.match(markup, /Connection &amp; Health/);
-  assert.match(markup, /Probe status: Not observed/);
-  assert.match(markup, /Resources inventory: Not observed/);
-  assert.match(markup, /Prompts inventory: Not observed/);
-  assert.match(markup, /Activity: Not observed/);
-  assert.match(markup, /Error logs: Not observed/);
+  assert.match(unknownTabMarkup, /data-section="mcp-overview"/);
+  assert.match(unknownTabMarkup, /Desired state/);
+  assert.doesNotMatch(unknownTabMarkup, /data-section="mcp-configuration"/);
+  assert.match(
+    unknownTabMarkup,
+    /aria-current="page"[^>]*data-tab-item="overview"/
+  );
+
+  const missingTabMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools: null,
+      server
+    })
+  );
+  assert.match(missingTabMarkup, /data-section="mcp-overview"/);
+  assert.match(missingTabMarkup, /Desired state/);
+  assert.match(
+    missingTabMarkup,
+    /aria-current="page"[^>]*data-tab-item="overview"/
+  );
+});
+
+test("McpDetailView renders exactly one data-section panel per tab with no content discarded across all nine tabs", () => {
+  const server: McpServerResource = {
+    name: "lsp",
+    enabled: true,
+    transport: "stdio",
+    command: "bash",
+    args: ["-lc", "exec run-lsp.sh"],
+    targetOverrides: [],
+    declared: true,
+    roles: ["orchestrator"]
+  };
+  const configuredTools: readonly ToolCatalogItem[] = [
+    {
+      name: "lsp_goto_definition",
+      source: "mcp",
+      server: "lsp",
+      exposedRoles: ["orchestrator"]
+    }
+  ];
+  const observedSectionIds = new Set();
+  for (const tab of MCP_DETAIL_TABS) {
+    const markup = renderToStaticMarkup(
+      React.createElement(McpDetailView, {
+        sourceValidity: true,
+        configuredTools,
+        server,
+        activeTab: tab.id
+      })
+    );
+    const sectionMatches = markup.match(/data-section="mcp-[a-z-]+"/g) ?? [];
+    assert.equal(
+      sectionMatches.length,
+      1,
+      "expected exactly one rendered data-section for tab " + tab.id
+    );
+    observedSectionIds.add(sectionMatches[0]);
+  }
+  assert.deepEqual(
+    [...observedSectionIds].sort(),
+    [
+      'data-section="mcp-activity"',
+      'data-section="mcp-configuration"',
+      'data-section="mcp-connection-health"',
+      'data-section="mcp-errors-logs"',
+      'data-section="mcp-overview"',
+      'data-section="mcp-prompts"',
+      'data-section="mcp-resources"',
+      'data-section="mcp-role-access"',
+      'data-section="mcp-tools"'
+    ].sort()
+  );
+});
+
+test("TabNav and tab helpers render accessible native links and fall back for unknown tab ids", () => {
+  const tabs = [
+    { id: "alpha", label: "Alpha" },
+    { id: "beta", label: "Beta" }
+  ];
+  assert.equal(resolveActiveTabId(tabs, "beta", "alpha"), "beta");
+  assert.equal(resolveActiveTabId(tabs, "unknown", "alpha"), "alpha");
+  assert.equal(resolveActiveTabId(tabs, undefined, "alpha"), "alpha");
+  assert.equal(tabHref("/x", "beta"), "/x?tab=beta");
+  assert.equal(tabHref("/x", "beta", "view"), "/x?view=beta");
+  assert.equal(
+    tabHref("/x", "tab value", "view name"),
+    "/x?view%20name=tab%20value"
+  );
+
+  const markup = renderToStaticMarkup(
+    React.createElement(TabNav, {
+      navLabel: "Test tabs",
+      basePath: "/x",
+      tabs,
+      activeTabId: "beta"
+    })
+  );
+  assert.match(markup, /<nav aria-label="Test tabs"/);
+  assert.match(markup, /href="\/x\?tab=alpha"/);
+  assert.match(markup, /href="\/x\?tab=beta"/);
+  const activeCurrentMatches = markup.match(/aria-current="page"/g) ?? [];
+  assert.equal(activeCurrentMatches.length, 1);
+  assert.match(markup, /aria-current="page"[^>]*data-tab-item="beta"/);
 });
 
 test("McpsView distinguishes invalid canonical configuration from an empty list", () => {

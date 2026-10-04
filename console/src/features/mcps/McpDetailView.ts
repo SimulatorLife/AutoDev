@@ -5,6 +5,11 @@ import type {
 import React from "react";
 
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import {
+  resolveActiveTabId,
+  type TabDefinition,
+  TabNav
+} from "../../components/tabs/Tabs.ts";
 
 const SECTION_HEADING_CLASS =
   "mb-3 text-xs uppercase tracking-wider text-slate-400";
@@ -18,6 +23,24 @@ const CONFIGURATION_FIELD_CLASS =
 const CONFIGURATION_LABEL_CLASS = "text-slate-400 block mb-1";
 const CONFIGURATION_VALUE_CLASS = "text-slate-200 break-all";
 const STATUS_HELP_CLASS = "text-xs text-slate-400";
+
+/**
+ * MCP detail tabs in the target-state-mandated order. The id values are the
+ * `?tab=` query values; the labels are the visible tab text.
+ */
+export const MCP_DETAIL_TABS: readonly TabDefinition[] = [
+  { id: "overview", label: "Overview" },
+  { id: "configuration", label: "Configuration" },
+  { id: "connection-health", label: "Connection / Health" },
+  { id: "tools", label: "Tools" },
+  { id: "resources", label: "Resources" },
+  { id: "prompts", label: "Prompts" },
+  { id: "role-access", label: "Role Access" },
+  { id: "activity", label: "Activity" },
+  { id: "errors-logs", label: "Errors / Logs" }
+];
+
+const DEFAULT_MCP_DETAIL_TAB = "overview";
 
 export interface McpDetailViewProps {
   readonly server: McpServerResource;
@@ -36,6 +59,12 @@ export interface McpDetailViewProps {
    * - non-empty: render the configured tool names and exposed roles.
    */
   readonly configuredTools: readonly ToolCatalogItem[] | null;
+  /**
+   * Raw `?tab=` query value, if any. An unknown or missing value falls back
+   * to the Overview tab; this resolution happens here so the component is
+   * safe to call directly with untrusted input.
+   */
+  readonly activeTab?: string | undefined;
 }
 
 function DesiredState({
@@ -176,8 +205,16 @@ function ConfiguredToolAllowlist({
 export function McpDetailView({
   server,
   sourceValidity,
-  configuredTools
+  configuredTools,
+  activeTab
 }: McpDetailViewProps): React.JSX.Element {
+  const activeTabId = resolveActiveTabId(
+    MCP_DETAIL_TABS,
+    activeTab,
+    DEFAULT_MCP_DETAIL_TAB
+  );
+  const basePath = `/mcps/${encodeURIComponent(server.name)}`;
+
   const targetOverrides =
     server.targetOverrides.length === 0
       ? React.createElement(
@@ -214,55 +251,13 @@ export function McpDetailView({
           )
         );
 
-  return React.createElement(
-    "article",
-    { className: "flex flex-col gap-6", "data-feature": "mcp-detail" },
-    React.createElement(
-      "header",
-      {
-        className:
-          "flex flex-wrap items-start justify-between gap-4 rounded-lg border border-slate-800 bg-slate-900 p-6 shadow"
-      },
-      React.createElement(
-        "div",
-        null,
-        React.createElement(
-          "a",
-          {
-            href: "/mcps",
-            className: "text-xs text-emerald-300 hover:underline"
-          },
-          "← MCP servers"
-        ),
-        React.createElement(
-          "p",
-          {
-            className:
-              "mb-1 mt-3 text-xs uppercase tracking-wider text-slate-400"
-          },
-          "Model Context Protocol server"
-        ),
-        React.createElement(
-          "h2",
-          { className: "text-2xl font-bold text-slate-100 font-mono" },
-          server.name
-        ),
-        React.createElement(
-          "p",
-          { className: "mt-2 font-mono text-xs text-slate-400" },
-          ".rulesync/mcp.jsonc"
-        )
-      ),
-      React.createElement(StatusBadge, {
-        status: server.declared ? CONFIGURED_STATUS : "invalid",
-        label: server.declared ? "Canonical declaration" : "Missing declaration"
-      })
-    ),
-    React.createElement(
+  const panelsByTabId: Record<string, React.JSX.Element> = {
+    overview: React.createElement(
       "section",
       {
         className: "grid gap-4 md:grid-cols-3",
-        "aria-label": "MCP state"
+        "aria-label": "MCP state",
+        "data-section": "mcp-overview"
       },
       React.createElement(
         "div",
@@ -313,7 +308,7 @@ export function McpDetailView({
         })
       )
     ),
-    React.createElement(
+    configuration: React.createElement(
       "section",
       {
         className: SECTION_PANEL_CLASS,
@@ -462,7 +457,7 @@ export function McpDetailView({
         targetOverrides
       )
     ),
-    React.createElement(
+    "connection-health": React.createElement(
       "section",
       {
         className: SECTION_PANEL_CLASS,
@@ -488,7 +483,79 @@ export function McpDetailView({
         )
       )
     ),
-    React.createElement(
+    tools: React.createElement(
+      "section",
+      {
+        className: SECTION_PANEL_CLASS,
+        "aria-label": "Configured tool allowlist",
+        "data-mcp-configured-tools-section": "true",
+        "data-section": "mcp-tools"
+      },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "Configured tool allowlist"
+      ),
+      React.createElement(
+        "p",
+        { className: "mb-3 text-xs text-slate-500" },
+        "Partial projection of explicitly enumerated role MCP/plugin allowlist tools joined from the Tools capability catalog. Does not imply the remote server is connected or that these are its full live tool inventory."
+      ),
+      React.createElement(ConfiguredToolAllowlist, { configuredTools })
+    ),
+    resources: React.createElement(
+      "section",
+      {
+        className: SECTION_PANEL_CLASS,
+        "aria-label": "MCP resources",
+        "data-section": "mcp-resources"
+      },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "Resources"
+      ),
+      React.createElement(
+        "div",
+        { className: FLEX_COLUMN_DETAILS_CLASS },
+        React.createElement(StatusBadge, {
+          status: NOT_OBSERVED_STATUS,
+          label: "Resources inventory: Not observed"
+        }),
+        React.createElement(
+          "p",
+          { className: STATUS_HELP_CLASS },
+          "Live server resource schemas, URIs, and read/preview capabilities require an active MCP session connection."
+        )
+      )
+    ),
+    prompts: React.createElement(
+      "section",
+      {
+        className: SECTION_PANEL_CLASS,
+        "aria-label": "MCP prompts",
+        "data-section": "mcp-prompts"
+      },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "Prompts"
+      ),
+      React.createElement(
+        "div",
+        { className: FLEX_COLUMN_DETAILS_CLASS },
+        React.createElement(StatusBadge, {
+          status: NOT_OBSERVED_STATUS,
+          label: "Prompts inventory: Not observed"
+        }),
+        React.createElement(
+          "p",
+          { className: STATUS_HELP_CLASS },
+          "Server prompt templates and arguments require an active MCP session connection."
+        )
+      )
+    ),
+    "role-access": React.createElement(
       "section",
       {
         className: SECTION_PANEL_CLASS,
@@ -521,79 +588,7 @@ export function McpDetailView({
             )
           )
     ),
-    React.createElement(
-      "section",
-      {
-        className: SECTION_PANEL_CLASS,
-        "aria-label": "Configured tool allowlist",
-        "data-mcp-configured-tools-section": "true",
-        "data-section": "mcp-tools"
-      },
-      React.createElement(
-        "h3",
-        { className: SECTION_HEADING_CLASS },
-        "Configured tool allowlist"
-      ),
-      React.createElement(
-        "p",
-        { className: "mb-3 text-xs text-slate-500" },
-        "Partial projection of explicitly enumerated role MCP/plugin allowlist tools joined from the Tools capability catalog. Does not imply the remote server is connected or that these are its full live tool inventory."
-      ),
-      React.createElement(ConfiguredToolAllowlist, { configuredTools })
-    ),
-    React.createElement(
-      "section",
-      {
-        className: SECTION_PANEL_CLASS,
-        "aria-label": "MCP resources",
-        "data-section": "mcp-resources"
-      },
-      React.createElement(
-        "h3",
-        { className: SECTION_HEADING_CLASS },
-        "Resources"
-      ),
-      React.createElement(
-        "div",
-        { className: FLEX_COLUMN_DETAILS_CLASS },
-        React.createElement(StatusBadge, {
-          status: NOT_OBSERVED_STATUS,
-          label: "Resources inventory: Not observed"
-        }),
-        React.createElement(
-          "p",
-          { className: STATUS_HELP_CLASS },
-          "Live server resource schemas, URIs, and read/preview capabilities require an active MCP session connection."
-        )
-      )
-    ),
-    React.createElement(
-      "section",
-      {
-        className: SECTION_PANEL_CLASS,
-        "aria-label": "MCP prompts",
-        "data-section": "mcp-prompts"
-      },
-      React.createElement(
-        "h3",
-        { className: SECTION_HEADING_CLASS },
-        "Prompts"
-      ),
-      React.createElement(
-        "div",
-        { className: FLEX_COLUMN_DETAILS_CLASS },
-        React.createElement(StatusBadge, {
-          status: NOT_OBSERVED_STATUS,
-          label: "Prompts inventory: Not observed"
-        }),
-        React.createElement(
-          "p",
-          { className: STATUS_HELP_CLASS },
-          "Server prompt templates and arguments require an active MCP session connection."
-        )
-      )
-    ),
-    React.createElement(
+    activity: React.createElement(
       "section",
       {
         className: SECTION_PANEL_CLASS,
@@ -619,7 +614,7 @@ export function McpDetailView({
         )
       )
     ),
-    React.createElement(
+    "errors-logs": React.createElement(
       "section",
       {
         className: SECTION_PANEL_CLASS,
@@ -645,5 +640,58 @@ export function McpDetailView({
         )
       )
     )
+  };
+
+  return React.createElement(
+    "article",
+    { className: "flex flex-col gap-6", "data-feature": "mcp-detail" },
+    React.createElement(
+      "header",
+      {
+        className:
+          "flex flex-wrap items-start justify-between gap-4 rounded-lg border border-slate-800 bg-slate-900 p-6 shadow"
+      },
+      React.createElement(
+        "div",
+        null,
+        React.createElement(
+          "a",
+          {
+            href: "/mcps",
+            className: "text-xs text-emerald-300 hover:underline"
+          },
+          "← MCP servers"
+        ),
+        React.createElement(
+          "p",
+          {
+            className:
+              "mb-1 mt-3 text-xs uppercase tracking-wider text-slate-400"
+          },
+          "Model Context Protocol server"
+        ),
+        React.createElement(
+          "h2",
+          { className: "text-2xl font-bold text-slate-100 font-mono" },
+          server.name
+        ),
+        React.createElement(
+          "p",
+          { className: "mt-2 font-mono text-xs text-slate-400" },
+          ".rulesync/mcp.jsonc"
+        )
+      ),
+      React.createElement(StatusBadge, {
+        status: server.declared ? CONFIGURED_STATUS : "invalid",
+        label: server.declared ? "Canonical declaration" : "Missing declaration"
+      })
+    ),
+    React.createElement(TabNav, {
+      navLabel: `${server.name} detail sections`,
+      basePath,
+      tabs: MCP_DETAIL_TABS,
+      activeTabId
+    }),
+    panelsByTabId[activeTabId]
   );
 }

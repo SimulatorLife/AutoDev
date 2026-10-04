@@ -366,8 +366,8 @@ test("canonical migration tracker records the current repository quality-gate ev
   // lint
   assert.match(
     migration,
-    /pnpm run lint:ci reports \d+ errors/u,
-    "lint evidence must record the exact pnpm run lint:ci error count"
+    /pnpm run lint:ci passes repository-wide with no errors or warnings/u,
+    "lint evidence must record the passing pnpm run lint:ci result"
   );
   // format
   assert.match(

@@ -15,12 +15,24 @@ import {
 
 export const dynamic = "force-dynamic";
 
+function firstSearchParam(
+  raw: string | string[] | undefined
+): string | undefined {
+  return Array.isArray(raw) ? raw[0] : raw;
+}
+
 export default async function McpDetailPage({
-  params
+  params,
+  searchParams
 }: {
   readonly params: Promise<{ readonly name: string }>;
+  readonly searchParams?: Promise<
+    Record<string, string | string[] | undefined>
+  >;
 }): Promise<React.JSX.Element> {
   const { name } = await params;
+  const resolvedSearchParams = (await searchParams) ?? {};
+  const activeTab = firstSearchParam(resolvedSearchParams.tab);
   const { section, config } = readNodeContext("/mcps");
   if (!config) {
     return React.createElement(
@@ -64,7 +76,8 @@ export default async function McpDetailPage({
       configuredTools:
         toolsResult.kind === "ok" && toolsResult.data.coverage === "partial"
           ? toolsResult.data.tools.filter((tool) => tool.server === server.name)
-          : null
+          : null,
+      activeTab
     })
   );
 }
