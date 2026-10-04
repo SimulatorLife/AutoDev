@@ -569,7 +569,11 @@ export function McpDetailView({
         "aria-label": "MCP prompts",
         "data-section": "mcp-prompts"
       },
-      React.createElement("h3", { className: SECTION_HEADING_CLASS }, "Prompts"),
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "Prompts"
+      ),
       React.createElement(
         "div",
         { className: "flex flex-col gap-2" },

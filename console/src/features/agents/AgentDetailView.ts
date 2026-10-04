@@ -158,7 +158,9 @@ export function AgentDetailView({
             { className: "grid grid-cols-1 gap-3 md:grid-cols-2" },
             ...agent.providers.map((p) => {
               const route = routing?.routes.find((r) => r.provider === p);
-              const pRecord = providers?.providers.find((prov) => prov.id === p);
+              const pRecord = providers?.providers.find(
+                (prov) => prov.id === p
+              );
               const isEnabled = isOrchestrator
                 ? (pRecord?.roles.orchestrator.enabled ?? true)
                 : (pRecord?.roles.subagent.enabled ?? true);
