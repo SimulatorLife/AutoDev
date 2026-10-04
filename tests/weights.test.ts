@@ -31,7 +31,10 @@ type WorkspaceConfig = {
 };
 
 const config = JSON.parse(
-  await readFile(new URL("../.github/workflows/weights.json", import.meta.url), "utf8")
+  await readFile(
+    new URL("../.github/workflows/weights.json", import.meta.url),
+    "utf8"
+  )
 ) as WeightConfig;
 const workspaceConfig = JSON.parse(
   await readFile(new URL("../config/workspaces.json", import.meta.url), "utf8")

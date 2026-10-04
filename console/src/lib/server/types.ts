@@ -1,6 +1,12 @@
 import type {
   EvaluationResult,
+  ExperienceEnvelope,
   McpServerResource,
+  MemoryActor,
+  MemoryInjectionUseCohortPage,
+  MemoryRecord,
+  MemorySessionOutcomeCohortPage,
+  MemoryStatus,
   ToolCatalogItem,
   WorkspaceCatalogStatus,
   WorkspaceEntry
@@ -216,7 +222,10 @@ export interface ControlApiRuntimeResponse {
     readonly changedAt?: string;
     readonly activeResponseRequests?: number;
   };
-  readonly concurrency: { readonly limit: number; readonly active: number } & ControlApiConcurrencyStatus;
+  readonly concurrency: {
+    readonly limit: number;
+    readonly active: number;
+  } & ControlApiConcurrencyStatus;
   readonly inFlightRequestCount: number;
 }
 
@@ -227,6 +236,49 @@ export interface ControlApiEvaluationsResponse {
   readonly totalEvaluations: number;
   readonly evaluations: readonly EvaluationResult[];
 }
+
+export interface ControlApiMemoryRecordsResponse {
+  readonly schema: "autodev-memory-records-v1";
+  readonly items: readonly MemoryRecord[];
+  readonly totalCount: number;
+  readonly limit: number;
+  readonly offset: number;
+  readonly hasMore: boolean;
+}
+
+export interface ControlApiMemoryRecordDetailResponse {
+  readonly schema: "autodev-memory-record-v1";
+  readonly memory: MemoryRecord;
+}
+
+export interface ControlApiMemoryHistoryResponse {
+  readonly schema: "autodev-memory-history-v1";
+  readonly memory: MemoryRecord;
+  readonly transitions: readonly {
+    readonly fromStatus?: MemoryStatus;
+    readonly toStatus: MemoryStatus;
+    readonly actor: MemoryActor;
+    readonly reason?: string;
+    readonly timestamp: string;
+  }[];
+}
+
+export interface ControlApiMemoryExperiencesResponse {
+  readonly schema: "autodev-memory-experiences-v1";
+  readonly items: readonly ExperienceEnvelope[];
+  readonly totalCount: number;
+  readonly limit: number;
+  readonly offset: number;
+  readonly hasMore: boolean;
+}
+
+export interface ControlApiMemoryExperienceDetailResponse {
+  readonly schema: "autodev-memory-experience-v1";
+  readonly experience: ExperienceEnvelope;
+}
+
+export type ControlApiMemoryCohortsResponse = MemorySessionOutcomeCohortPage;
+export type ControlApiMemoryUseCohortsResponse = MemoryInjectionUseCohortPage;
 
 export type ControlApiResult<T> =
   | { readonly kind: "ok"; readonly data: T }

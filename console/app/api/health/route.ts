@@ -49,17 +49,11 @@ function resolveConsolePort(
 ): number {
   const raw = env.AUTODEV_CONSOLE_PORT?.trim();
   if (!raw) return DEFAULT_CONSOLE_PORT;
-  const value = Number.parseInt(raw, 10);
-  if (!Number.isInteger(value) || value <= 0 || value > 65535) {
+  const value = Number.parseInt(raw);
+  if (!Number.isInteger(value) || value <= 0 || value > 65_535) {
     return DEFAULT_CONSOLE_PORT;
   }
   return value;
-}
-
-export function getConsolePort(
-  env: Readonly<Record<string, string | undefined>> = process.env
-): number {
-  return resolveConsolePort(env);
 }
 
 export const dynamic = "force-dynamic";

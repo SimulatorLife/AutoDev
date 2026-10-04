@@ -58,8 +58,7 @@ export default async function AgentDetailPage({
     );
   }
 
-  const routing =
-    routingResult.kind === "ok" ? routingResult.data : undefined;
+  const routing = routingResult.kind === "ok" ? routingResult.data : undefined;
   const providers =
     providersResult.kind === "ok" ? providersResult.data : undefined;
 

@@ -19,7 +19,10 @@ const workspaceConfig = JSON.parse(
   await readFile(new URL("../config/workspaces.json", import.meta.url), "utf8")
 ) as WorkspaceConfig;
 const weights = JSON.parse(
-  await readFile(new URL("../.github/workflows/weights.json", import.meta.url), "utf8")
+  await readFile(
+    new URL("../.github/workflows/weights.json", import.meta.url),
+    "utf8"
+  )
 ) as WeightConfig;
 const expectedRepositories = new Set([
   "SimulatorLife/3DSpider",
