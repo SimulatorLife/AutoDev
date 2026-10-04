@@ -60,6 +60,42 @@ jobs:
       - name: Verify gh CLI available
         run: gh --version
 
+      - name: Checkout AutoDev runtime policy
+        uses: actions/checkout@v6
+        with:
+          path: .autodev
+          fetch-depth: 1
+
+      - name: Validate target workspace against canonical catalog
+        shell: bash
+        env:
+          REPOSITORY: ${{ inputs.target_repository }}
+          AGENT_NAME: ${{ inputs.agent }}
+        run: |
+          set -euo pipefail
+          test -f .autodev/config/workspaces.json || { echo ".autodev/config/workspaces.json missing" >&2; exit 1; }
+          jq -e '.schema == "autodev-workspaces-v1" and (.workspaces | type == "array")' \
+            .autodev/config/workspaces.json >/dev/null || {
+            echo "Canonical workspace catalog is invalid." >&2
+            exit 1
+          }
+          target_workspace=$(jq -ce --arg id "${REPOSITORY}" \
+            '.workspaces[] | select(.id == $id)' .autodev/config/workspaces.json) || {
+            echo "target_repository is not present in the canonical workspace catalog: ${REPOSITORY}" >&2
+            exit 1
+          }
+          [[ "$(jq -r '.enabled' <<<"${target_workspace}")" == "true" ]] || {
+            echo "target_repository is disabled in the canonical workspace catalog: ${REPOSITORY}" >&2
+            exit 1
+          }
+          roles=$(jq -r '.agentRoles' <<<"${target_workspace}")
+          if [[ "${roles}" != "null" ]]; then
+            jq -e --arg agent "${AGENT_NAME}" '.agentRoles[] | select(. == $agent)' <<<"${target_workspace}" >/dev/null || {
+              echo "agent '${AGENT_NAME}' is not allowed for workspace ${REPOSITORY}." >&2
+              exit 1
+            }
+          fi
+
       - name: Validate GH_USER_TOKEN has repository push permission
         shell: bash
         env:
@@ -169,12 +205,6 @@ jobs:
           set -euo pipefail
 
           gh issue comment "${ISSUE_NUMBER}" --body "${MESSAGE}" --repo "${REPOSITORY}"
-
-      - name: Checkout AutoDev runtime policy
-        uses: actions/checkout@v6
-        with:
-          path: .autodev
-          fetch-depth: 1
 
       - name: Stage AutoDev Node version
         run: cp .autodev/.nvmrc "$RUNNER_TEMP/autodev.nvmrc"

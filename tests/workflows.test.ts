@@ -14,6 +14,42 @@ const readWorkflow = (name: string): Promise<string> =>
 const readPrompt = (name: string): Promise<string> =>
   readFile(path.join(prompts, name), "utf8");
 
+async function enabledWorkspaceIds(): Promise<string[]> {
+  const catalog = JSON.parse(
+    await readFile(path.join(root, "config", "workspaces.json"), "utf8")
+  ) as {
+    schema?: unknown;
+    workspaces?: unknown;
+  };
+  assert.equal(catalog.schema, "autodev-workspaces-v1");
+  assert.ok(Array.isArray(catalog.workspaces));
+  const workspaces = catalog.workspaces as Array<{
+    readonly id?: unknown;
+    readonly enabled?: unknown;
+  }>;
+  assert.ok(
+    workspaces.every(
+      (workspace) =>
+        typeof workspace.id === "string" &&
+        typeof workspace.enabled === "boolean"
+    ),
+    "every canonical workspace must have a stable id and enabled state"
+  );
+  const ids = workspaces
+    .filter((workspace) => workspace.enabled)
+    .map((workspace) => workspace.id as string);
+  assert.ok(
+    ids.length > 0,
+    "the canonical workspace catalog must be non-empty"
+  );
+  assert.equal(
+    new Set(ids).size,
+    ids.length,
+    "enabled workspace ids are unique"
+  );
+  return ids;
+}
+
 // Extracts each `run: |` block's body lines, keyed by the indentation of the
 // `run:` key itself, so a malformed quote inside one block (which would
 // otherwise swallow the rest of the file as an unterminated string) is
@@ -91,8 +127,21 @@ test("generic prompt runner supports AutoDev and target prompt scopes", async ()
     /uses: \.\/\.github\/workflows\/_agent-open-pr-and-ping\.yml/
   );
   assert.match(source, /prompt_repository:/);
-  assert.match(source, /SimulatorLife\/RacingGame/);
+  assert.match(source, /target_repository:[\s\S]*?type: string/);
+  assert.match(source, /prompt_repository:[\s\S]*?type: string/);
   assert.match(source, /prompt_path:/);
+  assert.doesNotMatch(source, /options:/);
+  assert.match(runner, /config\/workspaces\.json/);
+  assert.match(
+    runner,
+    /select\(\.id == \$id\)/,
+    "the reusable prompt runner resolves targets from the canonical catalog"
+  );
+  assert.match(
+    runner,
+    /target_repository is not present in the canonical workspace catalog/
+  );
+  assert.match(runner, /base_branch must match the Workspace registry/);
 });
 
 test("generic prompt catalog contains only repository-agnostic Markdown prompts", async () => {
@@ -247,8 +296,11 @@ test("central target PR janitor owns empty stale PR cleanup", async () => {
   assert.ok(source.includes("STALE_HOURS: ${{ inputs.stale_hours }}"));
   assert.match(source, /rawStaleHours/);
   assert.ok(source.includes("Number(rawStaleHours || '1.25')"));
-  assert.match(source, /SimulatorLife\/Colourful-Life/);
-  assert.match(source, /weights\.json/);
+  assert.match(source, /config\/workspaces\.json/);
+  assert.match(source, /catalog\.schema !== 'autodev-workspaces-v1'/);
+  assert.match(source, /const configured =/);
+  assert.match(source, /filter\(\(workspace\) => workspace\.enabled\)/);
+  assert.match(source, /Unconfigured target repository/);
   assert.match(source, /pulls\.list/);
   assert.match(source, /changed_files/);
   assert.match(source, /pulls\.update/);
@@ -495,19 +547,13 @@ test("private target auto-merge trusts only AutoDev validation status", async ()
   assert.match(source, /autoDevValidation\.state === 'success'/);
 });
 
-test("manual repository selectors expose the complete SimulatorLife choice list", async () => {
-  const expected = [
-    "SimulatorLife/3DSpider",
-    "SimulatorLife/AutoDev",
-    "SimulatorLife/Colourful-Life",
-    "SimulatorLife/GMLoop",
-    "SimulatorLife/RacingGame"
-  ];
+test("manual repository selectors accept target_repository as string without duplicating repository choices", async () => {
   for (const name of [
     "run-prompt.yml",
     "agent-01-custom-prompt.yml",
     "target-validation.yml",
     "target-automerge.yml",
+    "target-pr-janitor.yml",
     "minimax-invoke.yml",
     "claude-invoke.yml",
     "gemini-invoke.yml",
@@ -516,56 +562,29 @@ test("manual repository selectors expose the complete SimulatorLife choice list"
   ]) {
     const source = await readWorkflow(name);
     if (!source.includes("target_repository:")) continue;
-    assert.match(source, /type: choice/, name);
-    for (const repository of expected)
-      assert.match(
-        source,
-        new RegExp(repository.replace("/", String.raw`\/`)),
-        name
-      );
+    assert.match(source, /target_repository:[\s\S]*?type: string/, name);
+    assert.doesNotMatch(source, /options:\n\s+- SimulatorLife/, name);
   }
 });
 
-test("manual repository selectors keep each choice as a distinct option", async () => {
-  const expected = [
-    "SimulatorLife/3DSpider",
-    "SimulatorLife/AutoDev",
-    "SimulatorLife/Colourful-Life",
-    "SimulatorLife/GMLoop",
-    "SimulatorLife/RacingGame"
-  ];
-  const optionBlock = expected
-    .map((repository) => `          - ${repository}`)
-    .join("\n");
-  for (const name of [
-    "run-prompt.yml",
-    "agent-01-custom-prompt.yml",
-    "target-validation.yml",
-    "target-automerge.yml",
-    "minimax-invoke.yml",
-    "claude-invoke.yml",
-    "gemini-invoke.yml",
-    "minimax-codex-invoke.yml",
-    "qwen-invoke.yml"
+test("target-handling workflows validate against canonical workspace catalog", async () => {
+  const janitor = await readWorkflow("target-pr-janitor.yml");
+  const automerge = await readWorkflow("target-automerge.yml");
+  const validation = await readWorkflow("target-validation.yml");
+  const openPr = await readWorkflow("_agent-open-pr-and-ping.yml");
+  const invoke = await readWorkflow("agent-invoke.yml");
+  const conflict = await readWorkflow("agent-02-resolve-merge-conflicts.yml");
+
+  for (const [name, source] of [
+    ["target-pr-janitor.yml", janitor],
+    ["target-automerge.yml", automerge],
+    ["target-validation.yml", validation],
+    ["_agent-open-pr-and-ping.yml", openPr],
+    ["agent-invoke.yml", invoke],
+    ["agent-02-resolve-merge-conflicts.yml", conflict]
   ]) {
-    const source = await readWorkflow(name);
-    if (source.includes("options: *simulator_life_repositories")) {
-      assert.match(
-        source,
-        new RegExp(
-          `options: &simulator_life_repositories\n${optionBlock.replaceAll("\n", String.raw`\n`)}`
-        ),
-        name
-      );
-      continue;
-    }
-    assert.match(
-      source,
-      new RegExp(
-        `options:\n(?:          - all\n)?${optionBlock.replaceAll("\n", String.raw`\n`)}`
-      ),
-      name
-    );
+    assert.match(source, /config\/workspaces\.json/, name);
+    assert.match(source, /autodev-workspaces-v1/, name);
   }
 });
 

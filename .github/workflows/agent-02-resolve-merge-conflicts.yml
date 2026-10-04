@@ -68,6 +68,37 @@ jobs:
         env:
           GH_USER_TOKEN: ${{ secrets.GH_USER_TOKEN }}
 
+      - name: Checkout AutoDev policy repository
+        uses: actions/checkout@v6
+        with:
+          path: .autodev
+          fetch-depth: 1
+
+      - name: Validate target workspace against canonical catalog
+        shell: bash
+        env:
+          TARGET_REPOSITORY: ${{ inputs.target_repository || github.event.inputs.target_repository || github.repository }}
+        run: |
+          set -euo pipefail
+          test -f .autodev/config/workspaces.json || { echo ".autodev/config/workspaces.json missing" >&2; exit 1; }
+          jq -e '.schema == "autodev-workspaces-v1" and (.workspaces | type == "array")' \
+            .autodev/config/workspaces.json >/dev/null || {
+            echo "Canonical workspace catalog is invalid." >&2
+            exit 1
+          }
+          target_workspace=$(jq -ce --arg id "${TARGET_REPOSITORY}" \
+            '.workspaces[] | select(.id == $id)' .autodev/config/workspaces.json) || {
+            echo "target_repository is not present in the canonical workspace catalog: ${TARGET_REPOSITORY}" >&2
+            exit 1
+          }
+          [[ "$(jq -r '.enabled' <<<"${target_workspace}")" == "true" ]] || {
+            echo "target_repository is disabled in the canonical workspace catalog: ${TARGET_REPOSITORY}" >&2
+            exit 1
+          }
+
+      - name: Stage AutoDev policy
+        run: cp .autodev/.github/workflows/weights.json "$RUNNER_TEMP/autodev-weights.json"
+
       - name: Select PR needing conflict resolution
         id: select_pr
         uses: actions/github-script@v8
@@ -214,17 +245,6 @@ jobs:
             });
         env:
           TARGET_PR_NUMBER_INPUT: ${{ inputs.target_pr_number || github.event.inputs.target_pr_number || '' }}
-
-      - name: Checkout AutoDev policy repository
-        if: ${{ steps.select_pr.outputs.found == 'true' }}
-        uses: actions/checkout@v6
-        with:
-          path: .autodev
-          fetch-depth: 1
-
-      - name: Stage AutoDev policy
-        if: ${{ steps.select_pr.outputs.found == 'true' }}
-        run: cp .autodev/.github/workflows/weights.json "$RUNNER_TEMP/autodev-weights.json"
 
       - name: Checkout target repository
         if: ${{ steps.select_pr.outputs.found == 'true' }}
