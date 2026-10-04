@@ -1,5 +1,59 @@
 @import "tailwindcss";
 
+/*
+ * AutoDev Console dark-only semantic token set.
+ *
+ * This is the single source of truth for every color used across the
+ * Console UI. There is no light theme, no theme selector, no
+ * prefers-color-scheme product behavior, and no persisted theme
+ * preference: the Console has exactly one dark visual theme. Feature code
+ * must consume these semantic Tailwind utilities (for example "bg-surface",
+ * "text-fg-muted", "border-border", "text-success") instead of raw Tailwind
+ * palette utilities such as "bg-slate-900" or "text-emerald-400".
+ *
+ * Tailwind v4 exposes corresponding "bg-*", "text-*", "border-*",
+ * "divide-*", "outline-*", and "ring-*" utilities for these semantic
+ * variables when used in Console source. The static theme keeps each token
+ * emitted even before a chart series is consumed by a current widget.
+ */
+@theme static {
+  /* Background / surface hierarchy */
+  --color-background: #020617;
+  --color-surface: #0f172a;
+  --color-surface-raised: #1e293b;
+  --color-input: #1e293b;
+  --color-hover: #334155;
+  --color-selected: #123244;
+
+  /* Borders */
+  --color-border: #1e293b;
+  --color-border-strong: #334155;
+
+  /* Text */
+  --color-fg: #f1f5f9;
+  --color-fg-secondary: #cbd5e1;
+  --color-fg-muted: #94a3b8;
+  --color-fg-inverse: #020617;
+
+  /* Accent and status */
+  --color-accent: #22d3ee;
+  --color-success: #34d399;
+  --color-warning: #fde68a;
+  --color-error: #fecdd3;
+  --color-neutral: #cbd5e1;
+
+  /* Chart series (categorical/data-visualization palette) */
+  --color-chart-1: #909afa;
+  --color-chart-2: #2dd4bf;
+  --color-chart-3: #c084fc;
+  --color-chart-4: #60a5fa;
+  --color-chart-5: #38bdf8;
+}
+
+html {
+  color-scheme: dark;
+}
+
 html,
 body {
   height: 100%;

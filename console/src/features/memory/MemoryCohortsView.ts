@@ -12,7 +12,7 @@ import {
   DataTable
 } from "../../components/tables/DataTable.ts";
 
-const MUTED_TEXT_CLASS = "text-slate-400";
+const MUTED_TEXT_CLASS = "text-fg-muted";
 
 export interface MemoryCohortsViewProps {
   readonly sessionCohorts?: MemorySessionOutcomeCohortPage | null | undefined;
@@ -50,7 +50,7 @@ export function MemoryCohortsView({
       cell: (cell) =>
         React.createElement(
           "span",
-          { className: "font-mono text-xs font-semibold text-slate-200" },
+          { className: "font-mono text-xs font-semibold text-fg" },
           cell.memoryMode
         )
     },
@@ -65,8 +65,8 @@ export function MemoryCohortsView({
           {
             className: `inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${
               isReported
-                ? "bg-emerald-950/60 text-emerald-300 border-emerald-800"
-                : "bg-slate-800 text-slate-400 border-slate-700"
+                ? "bg-success/15 text-success border-success/40"
+                : "bg-surface-raised text-fg-muted border-border-strong"
             }`
           },
           isReported ? "Reported" : "Unreported"
@@ -83,9 +83,9 @@ export function MemoryCohortsView({
           {
             className: `font-mono text-xs ${
               cell.outcomeKind === "success"
-                ? "text-emerald-400"
+                ? "text-success"
                 : cell.outcomeKind === "failure"
-                  ? "text-rose-400"
+                  ? "text-error"
                   : MUTED_TEXT_CLASS
             }`
           },
@@ -99,7 +99,7 @@ export function MemoryCohortsView({
       cell: (cell) =>
         React.createElement(
           "span",
-          { className: "font-mono text-sm font-bold text-slate-100" },
+          { className: "font-mono text-sm font-bold text-fg" },
           cell.sessionCount.toLocaleString()
         )
     }
@@ -113,7 +113,7 @@ export function MemoryCohortsView({
       cell: (cell) =>
         React.createElement(
           "span",
-          { className: "font-mono text-xs font-semibold text-slate-200" },
+          { className: "font-mono text-xs font-semibold text-fg" },
           cell.memoryMode
         )
     },
@@ -124,7 +124,7 @@ export function MemoryCohortsView({
       cell: (cell) =>
         React.createElement(
           "span",
-          { className: "font-mono text-xs text-slate-300" },
+          { className: "font-mono text-xs text-fg-secondary" },
           cell.sessionCardinality
         )
     },
@@ -137,7 +137,7 @@ export function MemoryCohortsView({
           "span",
           {
             className: `font-mono text-xs ${
-              cell.useKind === null ? MUTED_TEXT_CLASS : "text-cyan-300"
+              cell.useKind === null ? MUTED_TEXT_CLASS : "text-accent"
             }`
           },
           cell.useKind ?? "Unassessed"
@@ -150,7 +150,7 @@ export function MemoryCohortsView({
       cell: (cell) =>
         React.createElement(
           "span",
-          { className: "font-mono text-sm font-bold text-slate-100" },
+          { className: "font-mono text-sm font-bold text-fg" },
           cell.exposureCount.toLocaleString()
         )
     }
@@ -164,7 +164,7 @@ export function MemoryCohortsView({
       "div",
       {
         className:
-          "flex flex-wrap items-center justify-between gap-4 p-4 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-300"
+          "flex flex-wrap items-center justify-between gap-4 p-4 rounded-lg bg-surface border border-border text-xs text-fg-secondary"
       },
       React.createElement(
         "div",
@@ -176,7 +176,7 @@ export function MemoryCohortsView({
         ),
         React.createElement(
           "span",
-          { className: "font-mono font-semibold text-cyan-300" },
+          { className: "font-mono font-semibold text-accent" },
           repositoryId || currentWorkspaceId
         )
       ),
@@ -186,7 +186,7 @@ export function MemoryCohortsView({
         React.createElement("span", { className: MUTED_TEXT_CLASS }, "Window:"),
         React.createElement(
           "span",
-          { className: "font-mono text-slate-200" },
+          { className: "font-mono text-fg" },
           `${new Date(occurredFrom).toLocaleDateString()} — ${new Date(occurredUntil).toLocaleDateString()}`
         )
       )
@@ -228,7 +228,7 @@ export function MemoryCohortsView({
       "div",
       {
         className:
-          "p-4 rounded-lg bg-slate-900/40 border border-slate-800 text-xs text-slate-400 leading-relaxed"
+          "p-4 rounded-lg bg-surface/40 border border-border text-xs text-fg-muted leading-relaxed"
       },
       React.createElement(
         "p",
@@ -245,7 +245,7 @@ export function MemoryCohortsView({
         "h3",
         {
           className:
-            "text-sm font-semibold uppercase tracking-wider text-slate-300"
+            "text-sm font-semibold uppercase tracking-wider text-fg-secondary"
         },
         "Session Outcome Breakdown"
       ),
@@ -274,7 +274,7 @@ export function MemoryCohortsView({
         "h3",
         {
           className:
-            "text-sm font-semibold uppercase tracking-wider text-slate-300"
+            "text-sm font-semibold uppercase tracking-wider text-fg-secondary"
         },
         "Injection-Use Assessments"
       ),
@@ -315,7 +315,7 @@ export function MemoryCohortsView({
             "p",
             {
               className:
-                "rounded-lg border border-slate-800 bg-slate-900/40 p-4 text-xs text-slate-400",
+                "rounded-lg border border-border bg-surface/40 p-4 text-xs text-fg-muted",
               "data-memory-use-cohorts-empty": true
             },
             "Injection-use cohorts were not observed for this request. This is not evidence that no memories were used or assessed."
@@ -324,7 +324,7 @@ export function MemoryCohortsView({
         "p",
         {
           className:
-            "rounded-lg border border-slate-800 bg-slate-900/40 p-4 text-xs leading-relaxed text-slate-400"
+            "rounded-lg border border-border bg-surface/40 p-4 text-xs leading-relaxed text-fg-muted"
         },
         "Use assessments are separately curator-reported observations about eligible injected packets. They do not report task success, infer use from model output, or establish causal effectiveness."
       )

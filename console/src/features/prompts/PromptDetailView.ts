@@ -22,7 +22,7 @@ export function PromptDetailView({
       "header",
       {
         className:
-          "flex flex-wrap items-start justify-between gap-4 rounded-lg border border-slate-800 bg-slate-900 p-6 shadow"
+          "flex flex-wrap items-start justify-between gap-4 rounded-lg border border-border bg-surface p-6 shadow"
       },
       React.createElement(
         "div",
@@ -37,18 +37,18 @@ export function PromptDetailView({
           "p",
           {
             className:
-              "mb-1 mt-3 text-xs uppercase tracking-wider text-slate-400"
+              "mb-1 mt-3 text-xs uppercase tracking-wider text-fg-muted"
           },
           prompt.kind === "command" ? "RuleSync command" : "Agent role prompt"
         ),
         React.createElement(
           "h2",
-          { className: "text-2xl font-bold text-slate-100 font-mono" },
+          { className: "text-2xl font-bold text-fg font-mono" },
           prompt.name
         ),
         React.createElement(
           "p",
-          { className: "mt-2 font-mono text-xs text-slate-400" },
+          { className: "mt-2 font-mono text-xs text-fg-muted" },
           prompt.path
         )
       ),
@@ -61,7 +61,7 @@ export function PromptDetailView({
         }),
         React.createElement(
           "span",
-          { className: "font-mono text-xs text-slate-400" },
+          { className: "font-mono text-xs text-fg-muted" },
           `${lineCount} lines | ${characterCount} chars`
         )
       )
@@ -75,10 +75,10 @@ export function PromptDetailView({
       },
       React.createElement(
         "div",
-        { className: "rounded-lg border border-slate-800 bg-slate-900 p-4" },
+        { className: "rounded-lg border border-border bg-surface p-4" },
         React.createElement(
           "h3",
-          { className: "mb-1 text-xs uppercase tracking-wider text-slate-400" },
+          { className: "mb-1 text-xs uppercase tracking-wider text-fg-muted" },
           "Authority & Versioning"
         ),
         React.createElement(StatusBadge, {
@@ -87,16 +87,16 @@ export function PromptDetailView({
         }),
         React.createElement(
           "p",
-          { className: "mt-2 text-xs text-slate-500" },
+          { className: "mt-2 text-xs text-fg-muted" },
           "Canonical source lives in working tree; version history is tracked via Git commits."
         )
       ),
       React.createElement(
         "div",
-        { className: "rounded-lg border border-slate-800 bg-slate-900 p-4" },
+        { className: "rounded-lg border border-border bg-surface p-4" },
         React.createElement(
           "h3",
-          { className: "mb-1 text-xs uppercase tracking-wider text-slate-400" },
+          { className: "mb-1 text-xs uppercase tracking-wider text-fg-muted" },
           "Related Agent"
         ),
         isRole
@@ -105,18 +105,18 @@ export function PromptDetailView({
               {
                 href: `/agents/${encodeURIComponent(prompt.name)}`,
                 className:
-                  "text-xs font-semibold text-emerald-400 hover:underline block mb-1"
+                  "text-xs font-semibold text-accent hover:underline block mb-1"
               },
               `Agent: ${prompt.name} →`
             )
           : React.createElement(
               "span",
-              { className: "text-xs text-slate-400 block mb-1" },
+              { className: "text-xs text-fg-muted block mb-1" },
               "RuleSync command (all roles)"
             ),
         React.createElement(
           "p",
-          { className: "text-xs text-slate-500" },
+          { className: "text-xs text-fg-muted" },
           isRole
             ? "Inspect execution contract, model routes, and tool permissions for this role."
             : "Commands are exposed across configured agent roles."
@@ -124,10 +124,10 @@ export function PromptDetailView({
       ),
       React.createElement(
         "div",
-        { className: "rounded-lg border border-slate-800 bg-slate-900 p-4" },
+        { className: "rounded-lg border border-border bg-surface p-4" },
         React.createElement(
           "h3",
-          { className: "mb-1 text-xs uppercase tracking-wider text-slate-400" },
+          { className: "mb-1 text-xs uppercase tracking-wider text-fg-muted" },
           "Observability Linkage"
         ),
         React.createElement(
@@ -137,7 +137,7 @@ export function PromptDetailView({
             "a",
             {
               href: `/evaluations?prompt=${encodeURIComponent(prompt.name)}`,
-              className: "text-emerald-400 hover:underline"
+              className: "text-accent hover:underline"
             },
             "Evaluations results →"
           ),
@@ -145,7 +145,7 @@ export function PromptDetailView({
             "a",
             {
               href: `/usage?role=${encodeURIComponent(prompt.name)}`,
-              className: "text-slate-300 hover:underline"
+              className: "text-fg-secondary hover:underline"
             },
             "Token & request usage →"
           )
@@ -155,7 +155,7 @@ export function PromptDetailView({
     React.createElement(
       "section",
       {
-        className: "rounded-lg border border-slate-800 bg-slate-900 p-6 shadow",
+        className: "rounded-lg border border-border bg-surface p-6 shadow",
         "aria-label": "Prompt source preview"
       },
       React.createElement(
@@ -163,12 +163,12 @@ export function PromptDetailView({
         { className: "mb-3 flex items-center justify-between" },
         React.createElement(
           "h3",
-          { className: "text-xs uppercase tracking-wider text-slate-400" },
+          { className: "text-xs uppercase tracking-wider text-fg-muted" },
           "Canonical Markdown Source"
         ),
         React.createElement(
           "span",
-          { className: "font-mono text-xs text-slate-500" },
+          { className: "font-mono text-xs text-fg-muted" },
           prompt.path
         )
       ),
@@ -176,7 +176,7 @@ export function PromptDetailView({
         ? React.createElement(
             "p",
             {
-              className: "text-sm text-slate-400",
+              className: "text-sm text-fg-muted",
               "data-prompt-content": "empty"
             },
             "The canonical source file is empty."
@@ -185,7 +185,7 @@ export function PromptDetailView({
             "pre",
             {
               className:
-                "max-h-[40rem] overflow-auto whitespace-pre-wrap rounded border border-slate-800 bg-slate-950 p-4 font-mono text-xs text-slate-300",
+                "max-h-[40rem] overflow-auto whitespace-pre-wrap rounded border border-border bg-background p-4 font-mono text-xs text-fg-secondary",
               "data-prompt-content": "observed"
             },
             prompt.content
@@ -193,7 +193,7 @@ export function PromptDetailView({
     ),
     React.createElement(
       "p",
-      { className: "text-xs text-slate-500" },
+      { className: "text-xs text-fg-muted" },
       "Read-only preview. Canonical RuleSync prompts remain authoritative in-tree. Prompt editing, version history, validation, and apply operations are governed by repository Git provenance rather than an independent database."
     )
   );

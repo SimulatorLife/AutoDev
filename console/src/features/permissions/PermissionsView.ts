@@ -26,7 +26,7 @@ export function PermissionsView({
       cell: (r) =>
         React.createElement(
           "span",
-          { className: "font-semibold text-slate-100 font-mono" },
+          { className: "font-semibold text-fg font-mono" },
           r.role
         )
     },
@@ -38,7 +38,7 @@ export function PermissionsView({
           "span",
           {
             className:
-              "text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded font-mono border border-slate-700"
+              "text-xs bg-surface-raised text-fg-secondary px-2 py-0.5 rounded font-mono border border-border-strong"
           },
           r.sandboxMode
         )
@@ -50,7 +50,7 @@ export function PermissionsView({
         React.createElement(
           "span",
           {
-            className: "text-xs text-slate-300",
+            className: "text-xs text-fg-secondary",
             "data-permission-mode": r.readOnly ? "read-only" : "workspace-write"
           },
           r.readOnly ? "Read-Only" : "Workspace-Write"
@@ -69,7 +69,7 @@ export function PermissionsView({
               {
                 key: mcp,
                 className:
-                  "text-xs bg-slate-800 text-cyan-300 px-1.5 py-0.5 rounded border border-slate-700 font-mono"
+                  "text-xs bg-surface-raised text-accent px-1.5 py-0.5 rounded border border-border-strong font-mono"
               },
               mcp
             )
@@ -77,7 +77,7 @@ export function PermissionsView({
           r.allowedMcpServers.length === 0
             ? React.createElement(
                 "span",
-                { className: "text-xs text-slate-500" },
+                { className: "text-xs text-fg-muted" },
                 "None"
               )
             : null
@@ -96,7 +96,7 @@ export function PermissionsView({
               {
                 key: skill,
                 className:
-                  "text-xs bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded border border-slate-700 font-mono"
+                  "text-xs bg-surface-raised text-fg-secondary px-1.5 py-0.5 rounded border border-border-strong font-mono"
               },
               skill
             )
@@ -104,7 +104,7 @@ export function PermissionsView({
           r.allowedSkills.length === 0
             ? React.createElement(
                 "span",
-                { className: "text-xs text-slate-500" },
+                { className: "text-xs text-fg-muted" },
                 "None"
               )
             : null
@@ -142,7 +142,7 @@ export function PermissionsView({
         "h2",
         {
           className:
-            "text-sm font-semibold uppercase tracking-wider text-slate-400 mb-3"
+            "text-sm font-semibold uppercase tracking-wider text-fg-muted mb-3"
         },
         "Effective Role Capability Matrix"
       ),

@@ -30,9 +30,9 @@ export interface UsageViewProps {
 const NOT_OBSERVED_LABEL = "Not observed";
 
 const SELECT_CLASS =
-  "bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-slate-200";
-const FILTER_GROUP_CLASS = "flex items-center gap-1.5 text-xs text-slate-400";
-const EMPTY_STATE_CLASS = "text-xs text-slate-500 italic py-2";
+  "bg-input border border-border rounded px-2.5 py-1 text-fg";
+const FILTER_GROUP_CLASS = "flex items-center gap-1.5 text-xs text-fg-muted";
+const EMPTY_STATE_CLASS = "text-xs text-fg-muted italic py-2";
 
 export function formatTokenCount(value: number | null): string {
   if (value === null) return NOT_OBSERVED_LABEL;
@@ -149,7 +149,7 @@ export function UsageView({
       "form",
       {
         className:
-          "bg-slate-900 border border-slate-800 p-4 rounded-lg flex flex-wrap gap-4 items-center justify-between shadow",
+          "bg-surface border border-border p-4 rounded-lg flex flex-wrap gap-4 items-center justify-between shadow",
         action: "/usage",
         method: "get",
         "aria-label": "Usage filters"
@@ -185,7 +185,7 @@ export function UsageView({
         React.createElement(
           "details",
           {
-            className: "flex items-center gap-2 text-xs text-slate-400",
+            className: "flex items-center gap-2 text-xs text-fg-muted",
             open: selection.range === "CUSTOM"
           },
           React.createElement(
@@ -255,14 +255,14 @@ export function UsageView({
           {
             type: "submit",
             className:
-              "rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"
+              "rounded border border-border-strong bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg hover:bg-hover"
           },
           "Apply filters"
         )
       ),
       React.createElement(
         "span",
-        { className: "text-xs text-slate-500 font-mono" },
+        { className: "text-xs text-fg-muted font-mono" },
         "Filters are stored in the URL"
       )
     ),
@@ -273,7 +273,7 @@ export function UsageView({
         "h3",
         {
           className:
-            "text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3"
+            "text-xs font-semibold uppercase tracking-wider text-fg-muted mb-3"
         },
         "Router & GenAI Observability"
       ),
@@ -310,13 +310,12 @@ export function UsageView({
       React.createElement(
         "div",
         {
-          className:
-            "bg-slate-900 border border-slate-800 rounded-lg p-5 shadow"
+          className: "bg-surface border border-border rounded-lg p-5 shadow"
         },
         React.createElement(
           "h4",
           {
-            className: "text-xs font-semibold uppercase text-slate-400 mb-3"
+            className: "text-xs font-semibold uppercase text-fg-muted mb-3"
           },
           "Requests by Agent Role"
         ),
@@ -341,16 +340,16 @@ export function UsageView({
                     {
                       key: item.role,
                       className:
-                        "flex items-center justify-between text-xs py-1 border-b border-slate-800/60 last:border-none"
+                        "flex items-center justify-between text-xs py-1 border-b border-border/60 last:border-none"
                     },
                     React.createElement(
                       "span",
-                      { className: "font-mono text-slate-200" },
+                      { className: "font-mono text-fg" },
                       item.role
                     ),
                     React.createElement(
                       "span",
-                      { className: "font-semibold text-emerald-400" },
+                      { className: "font-semibold text-chart-1" },
                       item.count
                     )
                   )
@@ -360,13 +359,12 @@ export function UsageView({
       React.createElement(
         "div",
         {
-          className:
-            "bg-slate-900 border border-slate-800 rounded-lg p-5 shadow"
+          className: "bg-surface border border-border rounded-lg p-5 shadow"
         },
         React.createElement(
           "h4",
           {
-            className: "text-xs font-semibold uppercase text-slate-400 mb-3"
+            className: "text-xs font-semibold uppercase text-fg-muted mb-3"
           },
           "Physical Attempts by Provider"
         ),
@@ -391,16 +389,16 @@ export function UsageView({
                     {
                       key: item.provider,
                       className:
-                        "flex items-center justify-between text-xs py-1 border-b border-slate-800/60 last:border-none"
+                        "flex items-center justify-between text-xs py-1 border-b border-border/60 last:border-none"
                     },
                     React.createElement(
                       "span",
-                      { className: "font-mono text-slate-200" },
+                      { className: "font-mono text-fg" },
                       item.provider
                     ),
                     React.createElement(
                       "span",
-                      { className: "font-semibold text-cyan-400" },
+                      { className: "font-semibold text-chart-2" },
                       item.count
                     )
                   )
@@ -415,7 +413,7 @@ export function UsageView({
         "h3",
         {
           className:
-            "text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3"
+            "text-xs font-semibold uppercase tracking-wider text-fg-muted mb-3"
         },
         "Model Context Protocol Shim Metrics"
       ),
@@ -442,12 +440,12 @@ export function UsageView({
     React.createElement(
       "div",
       {
-        className: "bg-slate-900 border border-slate-800 rounded-lg p-5 shadow"
+        className: "bg-surface border border-border rounded-lg p-5 shadow"
       },
       React.createElement(
         "h4",
         {
-          className: "text-xs font-semibold uppercase text-slate-400 mb-3"
+          className: "text-xs font-semibold uppercase text-fg-muted mb-3"
         },
         "MCP Calls by Tool Name"
       ),
@@ -458,7 +456,7 @@ export function UsageView({
           ? React.createElement(
               "p",
               {
-                className: "text-xs text-slate-500 italic col-span-full"
+                className: "text-xs text-fg-muted italic col-span-full"
               },
               "Tool-call telemetry not observed."
             )
@@ -466,7 +464,7 @@ export function UsageView({
             ? React.createElement(
                 "p",
                 {
-                  className: "text-xs text-slate-500 italic col-span-full"
+                  className: "text-xs text-fg-muted italic col-span-full"
                 },
                 "No MCP tool calls were observed in this time range."
               )
@@ -476,18 +474,18 @@ export function UsageView({
                   {
                     key: item.tool,
                     className:
-                      "bg-slate-950 p-3 rounded border border-slate-800 flex flex-col justify-between"
+                      "bg-background p-3 rounded border border-border flex flex-col justify-between"
                   },
                   React.createElement(
                     "span",
                     {
-                      className: "text-xs font-mono text-slate-400 truncate"
+                      className: "text-xs font-mono text-fg-muted truncate"
                     },
                     item.tool
                   ),
                   React.createElement(
                     "span",
-                    { className: "text-lg font-bold text-slate-100 mt-1" },
+                    { className: "text-lg font-bold text-fg mt-1" },
                     item.count
                   )
                 )

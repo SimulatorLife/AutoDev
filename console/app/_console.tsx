@@ -53,7 +53,7 @@ export function ResourceUnavailable({
     "div",
     {
       className:
-        "rounded-lg border border-rose-800 bg-rose-950/40 p-6 shadow flex flex-col gap-3",
+        "rounded-lg border border-error/40 bg-error/10 p-6 shadow flex flex-col gap-3",
       role: "alert",
       "data-status": "unavailable",
       "data-error-code": code
@@ -64,7 +64,7 @@ export function ResourceUnavailable({
       React.createElement(
         "h2",
         {
-          className: "text-base font-semibold text-rose-200 tracking-tight"
+          className: "text-base font-semibold text-error tracking-tight"
         },
         title
       ),
@@ -72,19 +72,19 @@ export function ResourceUnavailable({
         "span",
         {
           className:
-            "text-xs font-mono text-rose-300 bg-rose-900/60 border border-rose-800 px-2 py-0.5 rounded"
+            "text-xs font-mono text-error bg-error/15 border border-error/40 px-2 py-0.5 rounded"
         },
         code
       )
     ),
     React.createElement(
       "p",
-      { className: "text-sm text-rose-100/90 leading-relaxed" },
+      { className: "text-sm text-fg-secondary leading-relaxed" },
       message
     ),
     React.createElement(
       "p",
-      { className: "text-xs text-rose-200/70" },
+      { className: "text-xs text-fg-muted" },
       hint ??
         "Configure the required server-side integration and restart the Console."
     )

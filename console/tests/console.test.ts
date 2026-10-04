@@ -15,7 +15,8 @@ import {
   type McpServerResource,
   type MemoryRecord,
   type MemorySessionOutcomeCohortPage,
-  type ToolCatalogItem
+  type ToolCatalogItem,
+  type UsageMetricsData
 } from "@simulatorlife/autodev-core";
 import { NextRequest } from "next/server.js";
 import React from "react";
@@ -714,6 +715,29 @@ test("readControlApiConfig and readOpenLITUsageConfig fall back to canonical sec
  * Each view must report `Not observed` / `Unknown` / `Unknown` rather than
  * fabricated `100%`, `Connected`, `Active`, `Recorded`, or `Available`.
  */
+
+test("Usage role and provider breakdowns use distinct semantic chart series", () => {
+  const metrics: UsageMetricsData = {
+    logicalRequests: 3,
+    totalInputTokens: 1000,
+    totalOutputTokens: 2000,
+    cacheReadRate: 50,
+    p95LatencyMs: 100,
+    physicalAttempts: 5,
+    mcpCalls: 1,
+    p95McpDurationMs: 10,
+    mcpErrors: 0,
+    requestsByRole: [{ role: "orchestrator", count: 3 }],
+    attemptsByProvider: [{ provider: "codex", count: 5 }],
+    callsByTool: []
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, { metrics })
+  );
+
+  assert.ok(markup.includes('class="font-semibold text-chart-1">3</span>'));
+  assert.ok(markup.includes('class="font-semibold text-chart-2">5</span>'));
+});
 
 test("UsageView with no metrics renders explicit 'Not observed' values", () => {
   const markup = renderToStaticMarkup(React.createElement(UsageView, {}));

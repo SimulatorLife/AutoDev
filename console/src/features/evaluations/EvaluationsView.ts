@@ -27,7 +27,7 @@ export function EvaluationsView({
       cell: (ev) =>
         React.createElement(
           "span",
-          { className: "font-semibold text-slate-100 font-mono" },
+          { className: "font-semibold text-fg font-mono" },
           ev.agentRole
         )
     },
@@ -37,7 +37,7 @@ export function EvaluationsView({
       cell: (ev) =>
         React.createElement(
           "span",
-          { className: "font-mono text-xs text-slate-300" },
+          { className: "font-mono text-xs text-fg-secondary" },
           ev.model
         )
     },
@@ -55,8 +55,8 @@ export function EvaluationsView({
                 key: m.name,
                 className: `text-xs px-2 py-0.5 rounded font-mono border ${
                   m.pass
-                    ? "bg-emerald-950/60 text-emerald-300 border-emerald-800"
-                    : "bg-rose-950/60 text-rose-300 border-rose-800"
+                    ? "bg-success/15 text-success border-success/40"
+                    : "bg-error/15 text-error border-error/40"
                 }`
               },
               `${m.name}: ${m.value}`
@@ -79,7 +79,7 @@ export function EvaluationsView({
       cell: (ev) =>
         React.createElement(
           "span",
-          { className: "text-xs text-slate-400" },
+          { className: "text-xs text-fg-muted" },
           ev.timestamp
         )
     }
@@ -113,7 +113,7 @@ export function EvaluationsView({
         "h2",
         {
           className:
-            "text-sm font-semibold uppercase tracking-wider text-slate-400 mb-3"
+            "text-sm font-semibold uppercase tracking-wider text-fg-muted mb-3"
         },
         "Evaluation History"
       ),

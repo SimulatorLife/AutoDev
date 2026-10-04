@@ -22,7 +22,7 @@ export function StatCard({
     "div",
     {
       className:
-        "bg-slate-900 border border-slate-800 rounded-lg p-5 shadow-sm flex flex-col justify-between"
+        "bg-surface border border-border rounded-lg p-5 shadow-sm flex flex-col justify-between"
     },
     React.createElement(
       "div",
@@ -31,7 +31,7 @@ export function StatCard({
         "span",
         {
           className:
-            "text-xs font-medium text-slate-400 uppercase tracking-wider"
+            "text-xs font-medium text-fg-muted uppercase tracking-wider"
         },
         title
       ),
@@ -43,7 +43,7 @@ export function StatCard({
       React.createElement(
         "span",
         {
-          className: "text-2xl font-bold text-slate-100 tracking-tight"
+          className: "text-2xl font-bold text-fg tracking-tight"
         },
         value
       ),
@@ -52,7 +52,7 @@ export function StatCard({
             "span",
             {
               className: `text-xs font-semibold ${
-                trend.isPositive ? "text-emerald-400" : "text-rose-400"
+                trend.isPositive ? "text-success" : "text-error"
               }`
             },
             `${trend.isPositive ? "+" : ""}${trend.value}%`
@@ -62,7 +62,7 @@ export function StatCard({
     subtitle
       ? React.createElement(
           "p",
-          { className: "mt-1 text-xs text-slate-400" },
+          { className: "mt-1 text-xs text-fg-muted" },
           subtitle
         )
       : null

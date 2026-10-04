@@ -22,17 +22,17 @@ export function MemoryPortalCard({
     "div",
     {
       className:
-        "flex flex-col gap-4 rounded-lg border border-slate-800 bg-slate-900 p-6 shadow",
+        "flex flex-col gap-4 rounded-lg border border-border bg-surface p-6 shadow",
       "data-feature": "memory-portal"
     },
     React.createElement(
       "h2",
-      { className: "text-base font-semibold text-slate-100 tracking-tight" },
+      { className: "text-base font-semibold text-fg tracking-tight" },
       "Memory"
     ),
     React.createElement(
       "p",
-      { className: "text-sm text-slate-300 leading-relaxed" },
+      { className: "text-sm text-fg-secondary leading-relaxed" },
       "Memory lifecycle, provenance/history, per-experience outcomes, and the " +
         "bounded outcome-cohort view are governed in the Memory operator " +
         "destination. This Console entry links to that page; it does not " +
@@ -46,9 +46,9 @@ export function MemoryPortalCard({
         rel: "noopener noreferrer",
         "data-memory-portal-link": "true",
         className:
-          "inline-flex w-fit items-center gap-2 rounded border border-slate-700 " +
-          "bg-slate-950 px-4 py-2 text-sm font-medium text-slate-100 " +
-          "hover:border-slate-500"
+          "inline-flex w-fit items-center gap-2 rounded border border-border-strong " +
+          "bg-background px-4 py-2 text-sm font-medium text-fg " +
+          "hover:border-border-strong"
       },
       "Open AutoDev Memory"
     )

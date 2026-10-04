@@ -78,7 +78,7 @@ export function TabNav({
     "nav",
     {
       "aria-label": navLabel,
-      className: "flex flex-wrap gap-1 border-b border-slate-800"
+      className: "flex flex-wrap gap-1 border-b border-border"
     },
     React.createElement(
       "ul",
@@ -96,10 +96,10 @@ export function TabNav({
                 : tabHref(basePath, tab.id, tabParam),
               "aria-current": isActive ? "page" : undefined,
               "data-tab-item": tab.id,
-              className: `inline-block px-4 py-2.5 text-sm font-medium border-b-2 transition-colors no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400 ${
+              className: `inline-block px-4 py-2.5 text-sm font-medium border-b-2 transition-colors no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
                 isActive
-                  ? "border-emerald-400 text-emerald-300 bg-slate-900/40"
-                  : "border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700"
+                  ? "border-accent text-accent bg-surface/40"
+                  : "border-transparent text-fg-muted hover:text-fg hover:border-border-strong"
               }`
             },
             tab.label

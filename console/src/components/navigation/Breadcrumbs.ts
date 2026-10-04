@@ -30,9 +30,9 @@ export interface BreadcrumbsProps {
 }
 
 const ITEM_LINK_CLASS =
-  "rounded-sm text-emerald-300 hover:text-emerald-200 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400";
-const ITEM_PLAIN_CLASS = "rounded-sm text-slate-200 font-medium";
-const SEPARATOR_CLASS = "mx-2 select-none text-slate-500";
+  "rounded-sm text-accent hover:brightness-110 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+const ITEM_PLAIN_CLASS = "rounded-sm text-fg font-medium";
+const SEPARATOR_CLASS = "mx-2 select-none text-fg-muted";
 
 /**
  * Server-renderable breadcrumbs landmark.

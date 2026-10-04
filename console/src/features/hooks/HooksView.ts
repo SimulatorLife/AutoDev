@@ -47,7 +47,7 @@ export function HooksView({
         "h2",
         {
           className:
-            "text-sm font-semibold uppercase tracking-wider text-slate-400"
+            "text-sm font-semibold uppercase tracking-wider text-fg-muted"
         },
         "Configured Lifecycle Hooks"
       ),
@@ -56,7 +56,7 @@ export function HooksView({
             "p",
             {
               className:
-                "rounded-lg border border-slate-800 bg-slate-900 p-5 text-sm text-slate-400",
+                "rounded-lg border border-border bg-surface p-5 text-sm text-fg-muted",
               "data-hook-state":
                 sourceValidity === null
                   ? "not-observed"
@@ -76,18 +76,18 @@ export function HooksView({
               {
                 key: h.event,
                 className:
-                  "bg-slate-900 border border-slate-800 rounded-lg p-5 flex flex-col gap-3 shadow"
+                  "bg-surface border border-border rounded-lg p-5 flex flex-col gap-3 shadow"
               },
               React.createElement(
                 "div",
                 {
                   className:
-                    "flex items-center justify-between border-b border-slate-800 pb-2"
+                    "flex items-center justify-between border-b border-border pb-2"
                 },
                 React.createElement(
                   "span",
                   {
-                    className: "font-mono font-semibold text-slate-200 text-sm"
+                    className: "font-mono font-semibold text-fg text-sm"
                   },
                   h.event
                 )
@@ -101,13 +101,13 @@ export function HooksView({
                     {
                       key: index,
                       className:
-                        "bg-slate-950 p-3 rounded border border-slate-800/80 flex flex-col gap-1 text-xs font-mono"
+                        "bg-background p-3 rounded border border-border/80 flex flex-col gap-1 text-xs font-mono"
                     },
                     React.createElement(
                       "div",
                       {
                         className:
-                          "flex items-center justify-between text-slate-400"
+                          "flex items-center justify-between text-fg-muted"
                       },
                       React.createElement(
                         "span",
@@ -115,24 +115,24 @@ export function HooksView({
                         "Matcher: ",
                         React.createElement(
                           "span",
-                          { className: "text-amber-300" },
+                          { className: "text-warning" },
                           act.matcher ?? ".*"
                         )
                       ),
                       act.statusMessage
                         ? React.createElement(
                             "span",
-                            { className: "text-slate-500 italic" },
+                            { className: "text-fg-muted italic" },
                             act.statusMessage
                           )
                         : null
                     ),
                     React.createElement(
                       "div",
-                      { className: "text-slate-200" },
+                      { className: "text-fg" },
                       React.createElement(
                         "span",
-                        { className: "text-slate-500" },
+                        { className: "text-fg-muted" },
                         "$ "
                       ),
                       act.command

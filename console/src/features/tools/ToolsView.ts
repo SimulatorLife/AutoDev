@@ -47,13 +47,13 @@ export function ToolsView({
           null,
           React.createElement(
             "span",
-            { className: "font-semibold text-slate-100 font-mono" },
+            { className: "font-semibold text-fg font-mono" },
             tool.name
           ),
           tool.description
             ? React.createElement(
                 "p",
-                { className: "text-xs text-slate-400 mt-0.5" },
+                { className: "text-xs text-fg-muted mt-0.5" },
                 tool.description
               )
             : null
@@ -68,10 +68,10 @@ export function ToolsView({
           {
             className: `text-xs px-2 py-0.5 rounded font-mono border ${
               tool.source === "mcp"
-                ? "bg-cyan-950/60 text-cyan-300 border-cyan-800"
+                ? "bg-accent/15 text-accent border-accent/40"
                 : tool.source === "native"
-                  ? "bg-emerald-950/60 text-emerald-300 border-emerald-800"
-                  : "bg-purple-950/60 text-purple-300 border-purple-800"
+                  ? "bg-success/15 text-success border-success/40"
+                  : "bg-chart-3/15 text-chart-3 border-chart-3/40"
             }`
           },
           `${tool.source} ${tool.server ? `(${tool.server})` : ""}`.trim()
@@ -90,7 +90,7 @@ export function ToolsView({
               {
                 key: r,
                 className:
-                  "text-xs bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded border border-slate-700"
+                  "text-xs bg-surface-raised text-fg-secondary px-1.5 py-0.5 rounded border border-border-strong"
               },
               r
             )
@@ -98,7 +98,7 @@ export function ToolsView({
           tool.exposedRoles.length === 0
             ? React.createElement(
                 "span",
-                { className: "text-xs text-slate-500" },
+                { className: "text-xs text-fg-muted" },
                 "No role attribution"
               )
             : null
@@ -157,7 +157,7 @@ export function ToolsView({
         "h2",
         {
           className:
-            "text-sm font-semibold uppercase tracking-wider text-slate-400"
+            "text-sm font-semibold uppercase tracking-wider text-fg-muted"
         },
         "Configured Tool Declarations"
       ),
@@ -165,7 +165,7 @@ export function ToolsView({
         "div",
         {
           className:
-            "flex items-center gap-1.5 bg-slate-900 border border-slate-800 p-1 rounded-lg"
+            "flex items-center gap-1.5 bg-surface border border-border p-1 rounded-lg"
         },
         ["all", "native", "mcp", "plugin"].map((src) =>
           React.createElement(
@@ -176,8 +176,8 @@ export function ToolsView({
               onClick: () => setSourceFilter(src),
               className: `px-3 py-1 rounded text-xs font-medium capitalize transition-colors ${
                 sourceFilter === src
-                  ? "bg-slate-800 text-emerald-400"
-                  : "text-slate-400 hover:text-slate-200"
+                  ? "bg-surface-raised text-accent"
+                  : "text-fg-muted hover:text-fg"
               }`
             },
             src
@@ -189,7 +189,7 @@ export function ToolsView({
       "p",
       {
         className:
-          "rounded border border-amber-900/70 bg-amber-950/30 p-3 text-xs text-amber-200",
+          "rounded border border-warning/70 bg-warning/20 p-3 text-xs text-warning",
         "data-tools-coverage": coverage
       },
       coverage === "unknown"

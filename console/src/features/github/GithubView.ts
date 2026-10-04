@@ -70,12 +70,12 @@ export function GithubView({
           { className: "flex flex-col" },
           React.createElement(
             "span",
-            { className: "font-semibold text-slate-100" },
+            { className: "font-semibold text-fg" },
             workflow.name ?? workflow.id
           ),
           React.createElement(
             "span",
-            { className: "text-xs font-mono text-slate-500" },
+            { className: "text-xs font-mono text-fg-muted" },
             workflow.path
           )
         )
@@ -87,7 +87,7 @@ export function GithubView({
         workflow.events.length === 0
           ? React.createElement(
               "span",
-              { className: "text-xs text-slate-500" },
+              { className: "text-xs text-fg-muted" },
               "None observed"
             )
           : React.createElement(
@@ -99,7 +99,7 @@ export function GithubView({
                   {
                     key: event,
                     className:
-                      "text-xs font-mono text-slate-300 bg-slate-800 px-2 py-0.5 rounded border border-slate-700"
+                      "text-xs font-mono text-fg-secondary bg-surface-raised px-2 py-0.5 rounded border border-border-strong"
                   },
                   event
                 )
@@ -113,7 +113,7 @@ export function GithubView({
         workflow.schedules.length === 0
           ? React.createElement(
               "span",
-              { className: "text-xs text-slate-500" },
+              { className: "text-xs text-fg-muted" },
               "No schedule trigger"
             )
           : React.createElement(
@@ -124,7 +124,7 @@ export function GithubView({
                   "span",
                   {
                     key: cron,
-                    className: "text-xs font-mono text-slate-300"
+                    className: "text-xs font-mono text-fg-secondary"
                   },
                   cron
                 )
@@ -185,7 +185,7 @@ export function GithubView({
         if (!workflow.lastRunStatus && !workflow.lastRunConclusion) {
           return React.createElement(
             "span",
-            { className: "text-xs text-slate-500" },
+            { className: "text-xs text-fg-muted" },
             "No runs observed"
           );
         }
@@ -218,7 +218,7 @@ export function GithubView({
                   href: workflow.lastRunHtmlUrl,
                   target: "_blank",
                   rel: "noopener noreferrer",
-                  className: "text-xs text-cyan-400 hover:underline font-mono"
+                  className: "text-xs text-accent hover:underline font-mono"
                 },
                 "View ↗"
               )
@@ -244,18 +244,18 @@ export function GithubView({
                   target: "_blank",
                   rel: "noopener noreferrer",
                   className:
-                    "font-semibold text-slate-100 hover:text-cyan-400 hover:underline font-mono text-xs"
+                    "font-semibold text-fg hover:text-accent hover:underline font-mono text-xs"
                 },
                 `#${run.id} ${run.name ?? ""}`.trim()
               )
             : React.createElement(
                 "span",
-                { className: "font-semibold text-slate-100 font-mono text-xs" },
+                { className: "font-semibold text-fg font-mono text-xs" },
                 `#${run.id} ${run.name ?? ""}`.trim()
               ),
           React.createElement(
             "span",
-            { className: "text-xs font-mono text-slate-500" },
+            { className: "text-xs font-mono text-fg-muted" },
             run.workflowPath
           )
         )
@@ -268,7 +268,7 @@ export function GithubView({
           "span",
           {
             className:
-              "text-xs font-mono text-slate-300 bg-slate-800 px-2 py-0.5 rounded border border-slate-700"
+              "text-xs font-mono text-fg-secondary bg-surface-raised px-2 py-0.5 rounded border border-border-strong"
           },
           run.event
         )
@@ -282,12 +282,12 @@ export function GithubView({
           { className: "flex flex-col text-xs font-mono" },
           React.createElement(
             "span",
-            { className: "text-slate-300" },
+            { className: "text-fg-secondary" },
             run.headBranch ?? "—"
           ),
           React.createElement(
             "span",
-            { className: "text-slate-500" },
+            { className: "text-fg-muted" },
             run.headSha ? run.headSha.slice(0, 7) : ""
           )
         )
@@ -320,7 +320,7 @@ export function GithubView({
       cell: (run) =>
         React.createElement(
           "span",
-          { className: "text-xs text-slate-400 font-mono" },
+          { className: "text-xs text-fg-muted font-mono" },
           run.createdAt
         )
     }
@@ -383,7 +383,7 @@ export function GithubView({
           "div",
           {
             className:
-              "rounded-lg border border-emerald-800/60 bg-emerald-950/20 p-4 text-xs text-emerald-200/90 leading-relaxed flex items-center justify-between",
+              "rounded-lg border border-success/40 bg-success/10 p-4 text-xs text-success leading-relaxed flex items-center justify-between",
             role: "note",
             "data-status": "available"
           },
@@ -400,7 +400,7 @@ export function GithubView({
               "Authoritative read-only runtime state observed for ",
               React.createElement(
                 "span",
-                { className: "font-mono font-semibold text-emerald-100" },
+                { className: "font-mono font-semibold text-success" },
                 repository ?? "configured workspace"
               ),
               ". Dispatch, cancel, rerun, and schedule mutation controls remain unimplemented."
@@ -411,7 +411,7 @@ export function GithubView({
           "div",
           {
             className:
-              "rounded-lg border border-amber-800 bg-amber-950/30 p-4 text-xs text-amber-200/90 leading-relaxed",
+              "rounded-lg border border-warning/40 bg-warning/10 p-4 text-xs text-warning leading-relaxed",
             role: "note",
             "data-status": runtimeStatus ?? "unavailable"
           },
@@ -429,7 +429,7 @@ export function GithubView({
         "h2",
         {
           className:
-            "text-sm font-semibold uppercase tracking-wider text-slate-400 mb-3"
+            "text-sm font-semibold uppercase tracking-wider text-fg-muted mb-3"
         },
         "Workflow Definitions"
       ),
@@ -448,7 +448,7 @@ export function GithubView({
             "h2",
             {
               className:
-                "text-sm font-semibold uppercase tracking-wider text-slate-400"
+                "text-sm font-semibold uppercase tracking-wider text-fg-muted"
             },
             "Recent Workflow Runs"
           ),

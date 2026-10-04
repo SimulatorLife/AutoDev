@@ -38,7 +38,7 @@ export function AppNav({
     href: "/agents",
     "data-nav-brand": "autodev",
     className:
-      "flex items-center gap-2 text-inherit no-underline rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
+      "flex items-center gap-2 text-inherit no-underline rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
   };
 
   return React.createElement(
@@ -46,7 +46,7 @@ export function AppNav({
     {
       "aria-label": "AutoDev Console Navigation",
       className:
-        "autodev-nav flex flex-col w-64 h-full bg-slate-900 text-slate-100 p-4 border-r border-slate-800"
+        "autodev-nav flex flex-col w-64 h-full bg-surface text-fg p-4 border-r border-border"
     },
     React.createElement(
       "div",
@@ -94,7 +94,7 @@ function renderGroup(
         {
           id: headingId,
           className:
-            "px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500"
+            "px-3 text-[11px] font-semibold uppercase tracking-wider text-fg-muted"
         },
         group.id
       ),
@@ -126,8 +126,8 @@ function renderNavItem(
     "data-nav-item": section.toLowerCase(),
     className: `w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors no-underline ${
       isActive
-        ? "bg-slate-800 text-emerald-400 font-semibold shadow-sm"
-        : "text-slate-300 hover:bg-slate-800/60 hover:text-slate-100"
+        ? "bg-surface-raised text-accent font-semibold shadow-sm"
+        : "text-fg-secondary hover:bg-surface-raised/60 hover:text-fg"
     }`
   };
   return React.createElement(
@@ -143,7 +143,7 @@ function renderNavItem(
             "span",
             {
               className:
-                "text-xs bg-slate-800 px-2 py-0.5 rounded-full text-slate-400 border border-slate-700"
+                "text-xs bg-surface-raised px-2 py-0.5 rounded-full text-fg-muted border border-border-strong"
             },
             count
           )

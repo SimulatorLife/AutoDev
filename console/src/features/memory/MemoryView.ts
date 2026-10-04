@@ -102,12 +102,12 @@ export function MemoryView({
           null,
           React.createElement(
             "h1",
-            { className: "text-2xl font-bold tracking-tight text-slate-100" },
+            { className: "text-2xl font-bold tracking-tight text-fg" },
             "Memory"
           ),
           React.createElement(
             "p",
-            { className: "text-sm text-slate-400 mt-1" },
+            { className: "text-sm text-fg-muted mt-1" },
             "Governed AutoDev memory operator surface: durable claims, raw experiences, lifecycle governance, and bounded outcome cohorts."
           )
         ),
@@ -141,7 +141,7 @@ export function MemoryView({
               ),
               React.createElement(
                 "label",
-                { htmlFor: "memory-workspace", className: "text-slate-400" },
+                { htmlFor: "memory-workspace", className: "text-fg-muted" },
                 "Workspace:"
               ),
               React.createElement(
@@ -151,7 +151,7 @@ export function MemoryView({
                   name: "workspaceId",
                   defaultValue: currentWorkspaceId,
                   className:
-                    "px-3 py-1.5 rounded bg-slate-900 border border-slate-700 text-xs font-mono text-cyan-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                    "px-3 py-1.5 rounded bg-input border border-border-strong text-xs font-mono text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 },
                 workspaces.map((ws) =>
                   React.createElement(
@@ -166,7 +166,7 @@ export function MemoryView({
                 {
                   type: "submit",
                   className:
-                    "rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                    "rounded border border-border-strong bg-surface-raised px-2 py-1.5 text-xs font-medium text-fg hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 },
                 "Apply"
               )
@@ -247,7 +247,7 @@ export function MemoryView({
                     "div",
                     {
                       className:
-                        "p-4 rounded bg-slate-900 border border-slate-800 text-sm text-slate-400"
+                        "p-4 rounded bg-surface border border-border text-sm text-fg-muted"
                     },
                     "External OpenLIT UI URL is not configured."
                   )

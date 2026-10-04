@@ -20,7 +20,7 @@ export function AppShell({
     "div",
     {
       className:
-        "flex h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans"
+        "flex h-screen w-screen bg-background text-fg overflow-hidden font-sans"
     },
     React.createElement(AppNav, {
       activeSection,
@@ -33,7 +33,7 @@ export function AppShell({
         "header",
         {
           className:
-            "h-16 border-b border-slate-800 bg-slate-900/50 backdrop-blur px-8 flex items-center justify-between shrink-0"
+            "h-16 border-b border-border bg-surface/50 backdrop-blur px-8 flex items-center justify-between shrink-0"
         },
         React.createElement(
           "div",
@@ -42,14 +42,14 @@ export function AppShell({
             "span",
             {
               className:
-                "text-xs uppercase font-semibold text-slate-500 tracking-wider"
+                "text-xs uppercase font-semibold text-fg-muted tracking-wider"
             },
             "AutoDev Console"
           ),
-          React.createElement("span", { className: "text-slate-600" }, "/"),
+          React.createElement("span", { className: "text-fg-muted" }, "/"),
           React.createElement(
             "h1",
-            { className: "text-lg font-bold text-slate-100" },
+            { className: "text-lg font-bold text-fg" },
             activeSection
           )
         ),

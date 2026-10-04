@@ -27,7 +27,7 @@ export function DataTable<T>({
       "div",
       {
         className:
-          "p-8 text-center text-slate-400 bg-slate-900/40 rounded-lg border border-slate-800"
+          "p-8 text-center text-fg-muted bg-surface/40 rounded-lg border border-border"
       },
       React.createElement("p", { className: "text-sm" }, emptyMessage)
     );
@@ -37,16 +37,16 @@ export function DataTable<T>({
     "div",
     {
       className:
-        "overflow-x-auto rounded-lg border border-slate-800 bg-slate-900/60 shadow"
+        "overflow-x-auto rounded-lg border border-border bg-surface/60 shadow"
     },
     React.createElement(
       "table",
       {
-        className: "min-w-full divide-y divide-slate-800 text-left text-sm"
+        className: "min-w-full divide-y divide-border text-left text-sm"
       },
       React.createElement(
         "thead",
-        { className: "bg-slate-950/60 text-slate-400 font-medium" },
+        { className: "bg-background/60 text-fg-muted font-medium" },
         React.createElement(
           "tr",
           null,
@@ -66,7 +66,7 @@ export function DataTable<T>({
       ),
       React.createElement(
         "tbody",
-        { className: "divide-y divide-slate-800 text-slate-200" },
+        { className: "divide-y divide-border text-fg" },
         data.map((row) => {
           const key = keyExtractor(row);
           const isClickable = Boolean(onRowClick);
@@ -76,9 +76,7 @@ export function DataTable<T>({
               key,
               onClick: onRowClick ? () => onRowClick(row) : undefined,
               className: `transition-colors ${
-                isClickable
-                  ? "cursor-pointer hover:bg-slate-800/50"
-                  : "hover:bg-slate-850"
+                isClickable ? "cursor-pointer hover:bg-hover" : ""
               }`
             },
             columns.map((col) =>

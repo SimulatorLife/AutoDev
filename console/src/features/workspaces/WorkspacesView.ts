@@ -34,7 +34,7 @@ export function WorkspacesView({
       cell: (ws) =>
         React.createElement(
           "span",
-          { className: "font-semibold text-slate-100 font-mono" },
+          { className: "font-semibold text-fg font-mono" },
           ws.id
         )
     },
@@ -46,7 +46,7 @@ export function WorkspacesView({
           "span",
           {
             className:
-              "text-xs font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700"
+              "text-xs font-mono text-fg-muted bg-surface-raised px-2 py-0.5 rounded border border-border-strong"
           },
           ws.baseBranch
         )
@@ -66,7 +66,7 @@ export function WorkspacesView({
       cell: (ws) =>
         React.createElement(
           "span",
-          { className: "text-xs font-mono text-slate-300" },
+          { className: "text-xs font-mono text-fg-secondary" },
           ws.agentRoles === null ? "All roles" : ws.agentRoles.join(", ")
         )
     },
@@ -113,7 +113,7 @@ export function WorkspacesView({
         "h2",
         {
           className:
-            "text-sm font-semibold uppercase tracking-wider text-slate-400 mb-3"
+            "text-sm font-semibold uppercase tracking-wider text-fg-muted mb-3"
         },
         "Configured Workspaces"
       ),

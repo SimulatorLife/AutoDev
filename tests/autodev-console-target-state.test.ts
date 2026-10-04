@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { CANONICAL_NAVIGATION } from "@simulatorlife/autodev-core";
 
@@ -522,4 +523,357 @@ test("canonical target records the remaining external-project adaptations", () =
 
   // Backstage supplies a lightweight typed feature/route registry idea.
   assert.match(target, /lightweight (?:typed )?feature(?:\/route)? registry/u);
+});
+
+// --- Console dark-only semantic design token system ------------------------
+//
+// docs/autodev-console-target-state.md §3 requires a single dark-only
+// semantic token set (background/surfaces/input/hover/selected/borders/
+// text/accent/success/warning/error/chart series) with no theme feature:
+// no light theme, no theme selector/toggle, no prefers-color-scheme product
+// behavior, and no persisted theme preference. These tests verify the
+// canonical token source (console/app/globals.css), the absence of raw
+// Tailwind palette utilities across the Console's own app/src TypeScript,
+// and a WCAG AA contrast guarantee for the token palette itself so a future
+// color edit cannot silently reintroduce illegible text.
+
+const globalsCssPath = new URL("console/app/globals.css", repositoryRoot);
+
+function collectTsFiles(dirUrl: URL): URL[] {
+  const dirPath = fileURLToPath(dirUrl);
+  if (!existsSync(dirPath)) return [];
+  const results: URL[] = [];
+  for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
+    if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+    const entryUrl = new URL(
+      entry.name + (entry.isDirectory() ? "/" : ""),
+      dirUrl
+    );
+    if (entry.isDirectory()) {
+      results.push(...collectTsFiles(entryUrl));
+    } else if (/\.tsx?$/u.test(entry.name)) {
+      results.push(entryUrl);
+    }
+  }
+  return results;
+}
+
+function consoleSourceFiles(): URL[] {
+  return [
+    ...collectTsFiles(new URL("console/app/", repositoryRoot)),
+    ...collectTsFiles(new URL("console/src/", repositoryRoot))
+  ];
+}
+
+// Relative sRGB luminance and WCAG contrast ratio, used to guarantee every
+// semantic text token stays readable (>= 4.5:1, the AA threshold for normal
+// text) against every realistic Console background token.
+function srgbToLinear(channel: number): number {
+  const v = channel / 255;
+  return v <= 0.039_28 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+}
+
+function relativeLuminance(hex: string): number {
+  const r = Number.parseInt(hex.slice(1, 3), 16);
+  const g = Number.parseInt(hex.slice(3, 5), 16);
+  const b = Number.parseInt(hex.slice(5, 7), 16);
+  return (
+    0.2126 * srgbToLinear(r) +
+    0.7152 * srgbToLinear(g) +
+    0.0722 * srgbToLinear(b)
+  );
+}
+
+function contrastRatio(hexA: string, hexB: string): number {
+  const lumA = relativeLuminance(hexA);
+  const lumB = relativeLuminance(hexB);
+  const lighter = Math.max(lumA, lumB);
+  const darker = Math.min(lumA, lumB);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function compositeHex(
+  foreground: string,
+  background: string,
+  opacity: number
+): string {
+  const foregroundChannels = [1, 3, 5].map((index) =>
+    Number.parseInt(foreground.slice(index, index + 2), 16)
+  );
+  const backgroundChannels = [1, 3, 5].map((index) =>
+    Number.parseInt(background.slice(index, index + 2), 16)
+  );
+  const channels = foregroundChannels.map((channel, index) =>
+    Math.round(
+      channel * opacity + (backgroundChannels[index] ?? 0) * (1 - opacity)
+    )
+  );
+  return (
+    "#" +
+    channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")
+  );
+}
+
+function parseThemeColorTokens(css: string): Record<string, string> {
+  const tokens: Record<string, string> = {};
+  for (const match of css.matchAll(
+    /--color-([a-z0-9-]+):\s*(#[0-9a-fA-F]{6})\s*;/gu
+  )) {
+    const name = match[1];
+    const hex = match[2];
+    if (name && hex) tokens[name] = hex;
+  }
+  return tokens;
+}
+
+test("Console globals.css defines the required dark-only semantic token set", () => {
+  const css = readFileSync(globalsCssPath, "utf8");
+
+  // Exactly one dark-only theme: no light-theme selector, toggle, persisted
+  // preference, or prefers-color-scheme product behavior anywhere in the
+  // canonical token source. Checks run against the CSS with comments
+  // stripped so explanatory prose describing what is intentionally absent
+  // (for example "no light theme") cannot itself trip the assertion.
+  const cssWithoutComments = css.replaceAll(/\/\*[\s\S]*?\*\//gu, "");
+  assert.match(cssWithoutComments, /color-scheme:\s*dark/u);
+  assert.doesNotMatch(cssWithoutComments, /prefers-color-scheme/u);
+  assert.doesNotMatch(
+    cssWithoutComments,
+    /\[data-theme|theme-toggle|ThemeProvider/u
+  );
+
+  const tokens = parseThemeColorTokens(css);
+
+  // Required categories from the target doc: background, surfaces, input,
+  // hover, selected, borders, text (primary/secondary), accent, success,
+  // warning, error, and at least five chart-series tokens.
+  for (const required of [
+    "background",
+    "surface",
+    "surface-raised",
+    "input",
+    "hover",
+    "selected",
+    "border",
+    "border-strong",
+    "fg",
+    "fg-secondary",
+    "fg-muted",
+    "fg-inverse",
+    "accent",
+    "success",
+    "warning",
+    "error",
+    "neutral"
+  ]) {
+    assert.ok(tokens[required], `globals.css must define --color-${required}`);
+  }
+
+  const chartTokens = Object.keys(tokens).filter((name) =>
+    name.startsWith("chart-")
+  );
+  assert.ok(
+    chartTokens.length >= 5,
+    "globals.css must define at least five chart-series tokens"
+  );
+});
+
+test("Console app/src source contains no raw Tailwind palette utilities", () => {
+  const rawPalettePattern =
+    /(?:bg|text|border|outline|divide|ring|from|to|via|fill|stroke|placeholder|decoration|caret|accent|shadow)-(?:slate|zinc|gray|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-[0-9]{2,3}\b/u;
+
+  for (const file of consoleSourceFiles()) {
+    const source = readFileSync(file, "utf8");
+    assert.doesNotMatch(
+      source,
+      rawPalettePattern,
+      `${fileURLToPath(file)} must use semantic design tokens, not a raw Tailwind palette utility`
+    );
+  }
+});
+
+test("Console source uses semantic inverse foregrounds instead of text-white", () => {
+  for (const file of consoleSourceFiles()) {
+    const source = readFileSync(file, "utf8");
+    assert.doesNotMatch(
+      source,
+      /\btext-white\b/u,
+      "Console action labels must use semantic foreground tokens"
+    );
+  }
+});
+
+const CONSOLE_TEXT_BACKGROUND_TOKENS = [
+  "background",
+  "surface",
+  "surface-raised",
+  "input",
+  "selected"
+] as const;
+
+function textTokenContrastFailures(tokens: Record<string, string>): string[] {
+  const nonTextTokens = new Set<string>([
+    ...CONSOLE_TEXT_BACKGROUND_TOKENS,
+    "fg-inverse",
+    "hover",
+    "border",
+    "border-strong"
+  ]);
+  const textTokens = Object.keys(tokens).filter(
+    (name) => !nonTextTokens.has(name)
+  );
+  const failures: string[] = [];
+
+  for (const backgroundName of CONSOLE_TEXT_BACKGROUND_TOKENS) {
+    const background = tokens[backgroundName];
+    if (!background) continue;
+    for (const textName of textTokens) {
+      const foreground = tokens[textName];
+      if (!foreground) continue;
+      const ratio = contrastRatio(foreground, background);
+      if (ratio < 4.5) {
+        failures.push(
+          "text-" +
+            textName +
+            " on bg-" +
+            backgroundName +
+            ": " +
+            ratio.toFixed(2) +
+            ":1 (requires >= 4.5:1)"
+        );
+      }
+    }
+  }
+  return failures;
+}
+
+function maximumStatusSurfaceOpacityByToken(): Map<string, number> {
+  const maximumOpacity = new Map<string, number>();
+  for (const file of consoleSourceFiles()) {
+    const source = readFileSync(file, "utf8");
+    for (const match of source.matchAll(
+      /\bbg-(accent|success|warning|error|neutral)\/(\d+)\b/gu
+    )) {
+      const status = match[1];
+      const rawOpacity = match[2];
+      if (!status || !rawOpacity) continue;
+      const opacity = Number(rawOpacity) / 100;
+      maximumOpacity.set(
+        status,
+        Math.max(maximumOpacity.get(status) ?? 0, opacity)
+      );
+    }
+  }
+  return maximumOpacity;
+}
+
+function translucentStatusContrastFailures(
+  tokens: Record<string, string>
+): string[] {
+  // A status text color is composited against its tinted surface, not only
+  // the untouched page background. Use the highest actual status background
+  // opacity in Console source to cover badges, buttons, and callouts.
+  const maximumOpacity = maximumStatusSurfaceOpacityByToken();
+  const failures: string[] = [];
+
+  for (const [status, opacity] of maximumOpacity) {
+    const foreground = tokens[status];
+    if (!foreground) continue;
+    for (const backgroundName of CONSOLE_TEXT_BACKGROUND_TOKENS) {
+      const background = tokens[backgroundName];
+      if (!background) continue;
+      const tintedBackground = compositeHex(foreground, background, opacity);
+      const ratio = contrastRatio(foreground, tintedBackground);
+      if (ratio < 4.5) {
+        failures.push(
+          "text-" +
+            status +
+            " on bg-" +
+            status +
+            "/" +
+            Math.round(opacity * 100) +
+            " over " +
+            backgroundName +
+            ": " +
+            ratio.toFixed(2) +
+            ":1 (requires >= 4.5:1)"
+        );
+      }
+    }
+  }
+
+  return [...failures, ...unavailableCalloutContrastFailures(tokens)];
+}
+
+function unavailableCalloutContrastFailures(
+  tokens: Record<string, string>
+): string[] {
+  // ResourceUnavailable intentionally mixes neutral body/hint text into a
+  // translucent error callout on the Console canvas (rather than using the
+  // error foreground for every paragraph); verify that exact documented pair.
+  const error = tokens.error;
+  const canvas = tokens.background;
+  if (!error || !canvas) return [];
+
+  const unavailableBackground = compositeHex(error, canvas, 0.1);
+  const failures: string[] = [];
+  for (const textName of ["error", "fg-secondary", "fg-muted"]) {
+    const foreground = tokens[textName];
+    if (!foreground) continue;
+    const ratio = contrastRatio(foreground, unavailableBackground);
+    if (ratio < 4.5) {
+      failures.push(
+        "text-" +
+          textName +
+          " on ResourceUnavailable bg-error/10 over background: " +
+          ratio.toFixed(2) +
+          ":1 (requires >= 4.5:1)"
+      );
+    }
+  }
+  return failures;
+}
+
+function solidFillButtonContrastFailures(
+  tokens: Record<string, string>
+): string[] {
+  const foreground = tokens["fg-inverse"];
+  if (!foreground) return ["missing fg-inverse token"];
+
+  const failures: string[] = [];
+  for (const surfaceName of ["accent", "success", "error", "chart-3"]) {
+    const surface = tokens[surfaceName];
+    if (!surface) {
+      failures.push("missing solid-fill token " + surfaceName);
+      continue;
+    }
+    const ratio = contrastRatio(foreground, surface);
+    if (ratio < 4.5) {
+      failures.push(
+        "text-fg-inverse on bg-" +
+          surfaceName +
+          ": " +
+          ratio.toFixed(2) +
+          ":1 (requires >= 4.5:1)"
+      );
+    }
+  }
+  return failures;
+}
+
+test("Console semantic text and status surfaces meet WCAG AA contrast", () => {
+  const css = readFileSync(globalsCssPath, "utf8");
+  const tokens = parseThemeColorTokens(css);
+  const failures = [
+    ...textTokenContrastFailures(tokens),
+    ...translucentStatusContrastFailures(tokens),
+    ...solidFillButtonContrastFailures(tokens)
+  ];
+
+  assert.deepEqual(
+    failures,
+    [],
+    "WCAG AA contrast failures in console/app/globals.css:\n" +
+      failures.join("\n")
+  );
 });

@@ -39,12 +39,12 @@ export function SkillsView({
           null,
           React.createElement(
             "span",
-            { className: "font-semibold text-slate-100 font-mono" },
+            { className: "font-semibold text-fg font-mono" },
             skill.name
           ),
           React.createElement(
             "p",
-            { className: "text-xs text-slate-400 mt-0.5" },
+            { className: "text-xs text-fg-muted mt-0.5" },
             skill.description
           )
         )
@@ -55,7 +55,7 @@ export function SkillsView({
       cell: (skill) =>
         React.createElement(
           "span",
-          { className: "text-xs font-mono text-slate-400" },
+          { className: "text-xs font-mono text-fg-muted" },
           skill.path
         )
     },
@@ -68,7 +68,7 @@ export function SkillsView({
         if (roles.length === 0) {
           return React.createElement(
             "span",
-            { className: "text-xs text-slate-500" },
+            { className: "text-xs text-fg-muted" },
             "Universal / All"
           );
         }
@@ -81,7 +81,7 @@ export function SkillsView({
               {
                 key: r,
                 className:
-                  "text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700"
+                  "text-xs bg-surface-raised text-fg-secondary px-2 py-0.5 rounded border border-border-strong"
               },
               r
             )
@@ -137,7 +137,7 @@ export function SkillsView({
         "h2",
         {
           className:
-            "text-sm font-semibold uppercase tracking-wider text-slate-400 mb-3"
+            "text-sm font-semibold uppercase tracking-wider text-fg-muted mb-3"
         },
         "Agent Skills"
       ),

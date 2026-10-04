@@ -16,24 +16,38 @@ export interface StatusBadgeProps {
   readonly label?: string;
 }
 
+/**
+ * Semantic style for every status variant, expressed purely in terms of the
+ * Console's dark-only semantic tokens (accent/success/warning/error/neutral)
+ * defined in app/globals.css. No raw Tailwind palette utility is used here:
+ *
+ * - configured, pending: accent (an assigned/active value awaiting or
+ *   reflecting an operator decision; not itself a correctness claim).
+ * - valid, ready, converged: success (explicitly observed correct/healthy
+ *   state).
+ * - unavailable: warning (a known, non-fatal gap in observed state).
+ * - invalid, error: error (an explicitly observed failure/incorrect state).
+ * - not-observed: neutral (missing evidence; never implied as success).
+ */
 const BADGE_STYLES: Record<StatusBadgeVariant, string> = {
-  configured: "bg-blue-900/40 text-blue-300 border-blue-700/60",
-  valid: "bg-emerald-900/40 text-emerald-300 border-emerald-700/60",
-  invalid: "bg-rose-900/40 text-rose-300 border-rose-700/60",
-  ready: "bg-emerald-900/40 text-emerald-300 border-emerald-700/60",
-  unavailable: "bg-amber-900/40 text-amber-300 border-amber-700/60",
-  converged: "bg-teal-900/40 text-teal-300 border-teal-700/60",
-  pending: "bg-indigo-900/40 text-indigo-300 border-indigo-700/60",
-  error: "bg-rose-900/40 text-rose-300 border-rose-700/60",
-  "not-observed": "bg-slate-800 text-slate-300 border-slate-700"
+  configured: "bg-accent/15 text-accent border-accent/40",
+  valid: "bg-success/15 text-success border-success/40",
+  invalid: "bg-error/15 text-error border-error/40",
+  ready: "bg-success/15 text-success border-success/40",
+  unavailable: "bg-warning/15 text-warning border-warning/40",
+  converged: "bg-success/15 text-success border-success/40",
+  pending: "bg-accent/15 text-accent border-accent/40",
+  error: "bg-error/15 text-error border-error/40",
+  "not-observed": "bg-neutral/15 text-neutral border-neutral/40"
 };
+
+const DEFAULT_STYLE = "bg-neutral/15 text-neutral border-neutral/40";
 
 export function StatusBadge({
   status,
   label
 }: StatusBadgeProps): React.JSX.Element {
-  const style =
-    BADGE_STYLES[status] ?? "bg-slate-800 text-slate-300 border-slate-700";
+  const style = BADGE_STYLES[status] ?? DEFAULT_STYLE;
   const displayLabel =
     label ?? status.charAt(0).toUpperCase() + status.slice(1);
 

@@ -9,7 +9,7 @@ import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 
 const SECTION_PANEL_CLASS =
-  "rounded-lg border border-slate-800 bg-slate-900 p-6 shadow";
+  "rounded-lg border border-border bg-surface p-6 shadow";
 
 export interface AgentDetailViewProps {
   readonly agent: AgentDefinition;
@@ -52,13 +52,13 @@ export function AgentDetailView({
             "p",
             {
               className:
-                "mb-1 mt-3 text-xs uppercase tracking-wider text-slate-400"
+                "mb-1 mt-3 text-xs uppercase tracking-wider text-fg-muted"
             },
             "Agent role"
           ),
           React.createElement(
             "h2",
-            { className: "text-2xl font-bold text-slate-100" },
+            { className: "text-2xl font-bold text-fg" },
             agent.role
           )
         ),
@@ -87,7 +87,7 @@ export function AgentDetailView({
           { className: "flex flex-col gap-2" },
           React.createElement(
             "dt",
-            { className: "text-xs uppercase tracking-wider text-slate-400" },
+            { className: "text-xs uppercase tracking-wider text-fg-muted" },
             "Validation"
           ),
           React.createElement(StatusBadge, { status: validation })
@@ -105,7 +105,7 @@ export function AgentDetailView({
         {
           id: "agent-runtime-heading",
           className:
-            "mb-4 text-sm font-semibold uppercase tracking-wider text-slate-300"
+            "mb-4 text-sm font-semibold uppercase tracking-wider text-fg-secondary"
         },
         "Runtime observation"
       ),
@@ -155,7 +155,7 @@ export function AgentDetailView({
             "h3",
             {
               className:
-                "mb-3 text-sm font-semibold uppercase tracking-wider text-slate-300"
+                "mb-3 text-sm font-semibold uppercase tracking-wider text-fg-secondary"
             },
             "Provider Routing & Circuit Endpoints"
           ),
@@ -176,14 +176,14 @@ export function AgentDetailView({
                 {
                   key: p,
                   className:
-                    "rounded border border-slate-800 bg-slate-950 p-4 flex flex-col gap-2"
+                    "rounded border border-border bg-background p-4 flex flex-col gap-2"
                 },
                 React.createElement(
                   "div",
                   { className: "flex items-center justify-between" },
                   React.createElement(
                     "span",
-                    { className: "font-mono font-bold text-slate-100" },
+                    { className: "font-mono font-bold text-fg" },
                     p
                   ),
                   React.createElement(StatusBadge, {
@@ -203,20 +203,20 @@ export function AgentDetailView({
                 ),
                 React.createElement(
                   "div",
-                  { className: "text-xs text-slate-400 font-mono" },
+                  { className: "text-xs text-fg-muted font-mono" },
                   React.createElement(
                     "span",
-                    { className: "text-slate-500 mr-1" },
+                    { className: "text-fg-muted mr-1" },
                     "Base:"
                   ),
                   route?.baseUrl ?? "Not observed"
                 ),
                 React.createElement(
                   "div",
-                  { className: "text-xs text-slate-400 font-mono truncate" },
+                  { className: "text-xs text-fg-muted font-mono truncate" },
                   React.createElement(
                     "span",
-                    { className: "text-slate-500 mr-1" },
+                    { className: "text-fg-muted mr-1" },
                     "Pattern:"
                   ),
                   route?.pattern ?? "Default"
@@ -236,7 +236,7 @@ export function AgentDetailView({
         "h3",
         {
           className:
-            "mb-3 text-sm font-semibold uppercase tracking-wider text-slate-300"
+            "mb-3 text-sm font-semibold uppercase tracking-wider text-fg-secondary"
         },
         "Concurrency & Routing Limits"
       ),
@@ -268,7 +268,7 @@ export function AgentDetailView({
           "section",
           {
             className:
-              "rounded-lg border border-slate-800 bg-slate-900 p-6 text-sm text-slate-400",
+              "rounded-lg border border-border bg-surface p-6 text-sm text-fg-muted",
             "data-prompt-state": "unavailable"
           },
           "Role prompt content is unavailable."
@@ -284,7 +284,7 @@ export function AgentDetailView({
             {
               id: "agent-prompt-heading",
               className:
-                "mb-3 text-sm font-semibold uppercase tracking-wider text-slate-300"
+                "mb-3 text-sm font-semibold uppercase tracking-wider text-fg-secondary"
             },
             "System prompt"
           ),
@@ -292,7 +292,7 @@ export function AgentDetailView({
             "pre",
             {
               className:
-                "max-h-[32rem] overflow-auto whitespace-pre-wrap rounded border border-slate-800 bg-slate-950 p-4 font-mono text-xs text-slate-300"
+                "max-h-[32rem] overflow-auto whitespace-pre-wrap rounded border border-border bg-background p-4 font-mono text-xs text-fg-secondary"
             },
             agent.systemPrompt
           )
@@ -312,14 +312,10 @@ function DetailValue({
     { className: "flex flex-col gap-1" },
     React.createElement(
       "dt",
-      { className: "text-xs uppercase tracking-wider text-slate-400" },
+      { className: "text-xs uppercase tracking-wider text-fg-muted" },
       label
     ),
-    React.createElement(
-      "dd",
-      { className: "font-mono text-sm text-slate-200" },
-      value
-    )
+    React.createElement("dd", { className: "font-mono text-sm text-fg" }, value)
   );
 }
 
@@ -337,14 +333,14 @@ function NameList({
       "h3",
       {
         className:
-          "text-xs font-semibold uppercase tracking-wider text-slate-400"
+          "text-xs font-semibold uppercase tracking-wider text-fg-muted"
       },
       heading
     ),
     names.length === 0
       ? React.createElement(
           "p",
-          { className: "text-sm text-slate-500" },
+          { className: "text-sm text-fg-muted" },
           "None configured"
         )
       : React.createElement(
@@ -356,7 +352,7 @@ function NameList({
               {
                 key: name,
                 className:
-                  "rounded border border-slate-700 bg-slate-800 px-2 py-1 font-mono text-xs text-slate-200"
+                  "rounded border border-border-strong bg-surface-raised px-2 py-1 font-mono text-xs text-fg"
               },
               name
             )
@@ -383,7 +379,7 @@ function StatusValue({
     { className: "flex flex-col gap-2" },
     React.createElement(
       "span",
-      { className: "text-xs uppercase tracking-wider text-slate-400" },
+      { className: "text-xs uppercase tracking-wider text-fg-muted" },
       label
     ),
     React.createElement(StatusBadge, { status })

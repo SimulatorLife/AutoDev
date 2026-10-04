@@ -13,17 +13,17 @@ import {
 } from "../../components/tabs/Tabs.ts";
 
 const SECTION_HEADING_CLASS =
-  "mb-3 text-xs uppercase tracking-wider text-slate-400";
+  "mb-3 text-xs uppercase tracking-wider text-fg-muted";
 const SECTION_PANEL_CLASS =
-  "rounded-lg border border-slate-800 bg-slate-900 p-6 shadow";
+  "rounded-lg border border-border bg-surface p-6 shadow";
 const CONFIGURED_STATUS = "configured" as const;
 const NOT_OBSERVED_STATUS = "not-observed" as const;
 const FLEX_COLUMN_DETAILS_CLASS = "flex flex-col gap-2";
 const CONFIGURATION_FIELD_CLASS =
-  "rounded border border-slate-800 bg-slate-950/40 p-3";
-const CONFIGURATION_LABEL_CLASS = "text-slate-400 block mb-1";
-const CONFIGURATION_VALUE_CLASS = "text-slate-200 break-all";
-const STATUS_HELP_CLASS = "text-xs text-slate-400";
+  "rounded border border-border bg-background/40 p-3";
+const CONFIGURATION_LABEL_CLASS = "text-fg-muted block mb-1";
+const CONFIGURATION_VALUE_CLASS = "text-fg break-all";
+const STATUS_HELP_CLASS = "text-xs text-fg-muted";
 
 /**
  * MCP detail tabs in the target-state-mandated order. The id values are the
@@ -116,7 +116,7 @@ function ConfiguredToolAllowlist({
       }),
       React.createElement(
         "p",
-        { className: "text-xs text-slate-500" },
+        { className: "text-xs text-fg-muted" },
         "The Tools capability projection was not observed; the configured tool allowlist cannot be read."
       )
     );
@@ -136,7 +136,7 @@ function ConfiguredToolAllowlist({
       }),
       React.createElement(
         "p",
-        { className: "text-xs text-slate-500" },
+        { className: "text-xs text-fg-muted" },
         "No tool entries were enumerated for this MCP in the partial Tools projection. This does not establish that the server has no tools; its live inventory remains unknown."
       )
     );
@@ -156,20 +156,20 @@ function ConfiguredToolAllowlist({
         {
           key: tool.name,
           className:
-            "rounded border border-slate-800 bg-slate-950/40 p-3 font-mono text-xs"
+            "rounded border border-border bg-background/40 p-3 font-mono text-xs"
         },
         React.createElement(
           "div",
           { className: "flex flex-wrap items-center gap-2" },
           React.createElement(
             "span",
-            { className: "font-semibold text-slate-100" },
+            { className: "font-semibold text-fg" },
             tool.name
           ),
           React.createElement(
             "span",
             {
-              className: "text-[10px] uppercase tracking-wider text-slate-500"
+              className: "text-[10px] uppercase tracking-wider text-fg-muted"
             },
             `source: ${tool.source}`
           )
@@ -182,7 +182,7 @@ function ConfiguredToolAllowlist({
                 "span",
                 {
                   className:
-                    "text-[10px] uppercase tracking-wider text-slate-500"
+                    "text-[10px] uppercase tracking-wider text-fg-muted"
                 },
                 "No configured role exposure"
               )
@@ -192,7 +192,7 @@ function ConfiguredToolAllowlist({
                   {
                     key: role,
                     className:
-                      "text-[10px] bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded border border-slate-700"
+                      "text-[10px] bg-surface-raised text-fg-secondary px-1.5 py-0.5 rounded border border-border-strong"
                   },
                   role
                 )
@@ -220,7 +220,7 @@ export function McpDetailView({
     server.targetOverrides.length === 0
       ? React.createElement(
           "p",
-          { className: "text-sm text-slate-400" },
+          { className: "text-sm text-fg-muted" },
           "No explicit target overrides."
         )
       : React.createElement(
@@ -262,7 +262,7 @@ export function McpDetailView({
       },
       React.createElement(
         "div",
-        { className: "rounded-lg border border-slate-800 bg-slate-900 p-5" },
+        { className: "rounded-lg border border-border bg-surface p-5" },
         React.createElement(
           "h3",
           { className: SECTION_HEADING_CLASS },
@@ -271,13 +271,13 @@ export function McpDetailView({
         React.createElement(DesiredState, { enabled: server.enabled }),
         React.createElement(
           "p",
-          { className: "mt-2 text-xs text-slate-500" },
+          { className: "mt-2 text-xs text-fg-muted" },
           `Transport: ${server.transport.toUpperCase()}`
         )
       ),
       React.createElement(
         "div",
-        { className: "rounded-lg border border-slate-800 bg-slate-900 p-5" },
+        { className: "rounded-lg border border-border bg-surface p-5" },
         React.createElement(
           "h3",
           { className: SECTION_HEADING_CLASS },
@@ -289,13 +289,13 @@ export function McpDetailView({
         }),
         React.createElement(
           "p",
-          { className: "mt-2 text-xs text-slate-500" },
+          { className: "mt-2 text-xs text-fg-muted" },
           "A canonical declaration does not prove that a server is connected or healthy."
         )
       ),
       React.createElement(
         "div",
-        { className: "rounded-lg border border-slate-800 bg-slate-900 p-5" },
+        { className: "rounded-lg border border-border bg-surface p-5" },
         React.createElement(
           "h3",
           { className: SECTION_HEADING_CLASS },
@@ -334,7 +334,7 @@ export function McpDetailView({
           ),
           React.createElement(
             "span",
-            { className: "text-slate-200 uppercase font-semibold" },
+            { className: "text-fg uppercase font-semibold" },
             server.transport
           )
         ),
@@ -423,7 +423,7 @@ export function McpDetailView({
               ),
               React.createElement(
                 "span",
-                { className: "text-slate-200" },
+                { className: "text-fg" },
                 server.envKeys.join(", ")
               )
             )
@@ -441,7 +441,7 @@ export function McpDetailView({
               ),
               React.createElement(
                 "span",
-                { className: "text-slate-200" },
+                { className: "text-fg" },
                 server.defaultToolsApprovalMode
               )
             )
@@ -452,7 +452,7 @@ export function McpDetailView({
         { className: "mt-4" },
         React.createElement(
           "h4",
-          { className: "mb-2 text-xs font-semibold text-slate-400" },
+          { className: "mb-2 text-xs font-semibold text-fg-muted" },
           "Target overrides"
         ),
         targetOverrides
@@ -499,7 +499,7 @@ export function McpDetailView({
       ),
       React.createElement(
         "p",
-        { className: "mb-3 text-xs text-slate-500" },
+        { className: "mb-3 text-xs text-fg-muted" },
         "Partial projection of explicitly enumerated role MCP/plugin allowlist tools joined from the Tools capability catalog. Does not imply the remote server is connected or that these are its full live tool inventory."
       ),
       React.createElement(ConfiguredToolAllowlist, { configuredTools })
@@ -571,7 +571,7 @@ export function McpDetailView({
       server.roles.length === 0
         ? React.createElement(
             "p",
-            { className: "text-sm text-slate-400" },
+            { className: "text-sm text-fg-muted" },
             "No role exposure is present in the current runtime projection."
           )
         : React.createElement(
@@ -650,7 +650,7 @@ export function McpDetailView({
       "header",
       {
         className:
-          "flex flex-wrap items-start justify-between gap-4 rounded-lg border border-slate-800 bg-slate-900 p-6 shadow"
+          "flex flex-wrap items-start justify-between gap-4 rounded-lg border border-border bg-surface p-6 shadow"
       },
       React.createElement(
         "div",
@@ -662,18 +662,18 @@ export function McpDetailView({
           "p",
           {
             className:
-              "mb-1 mt-3 text-xs uppercase tracking-wider text-slate-400"
+              "mb-1 mt-3 text-xs uppercase tracking-wider text-fg-muted"
           },
           "Model Context Protocol server"
         ),
         React.createElement(
           "h2",
-          { className: "text-2xl font-bold text-slate-100 font-mono" },
+          { className: "text-2xl font-bold text-fg font-mono" },
           server.name
         ),
         React.createElement(
           "p",
-          { className: "mt-2 font-mono text-xs text-slate-400" },
+          { className: "mt-2 font-mono text-xs text-fg-muted" },
           ".rulesync/mcp.jsonc"
         )
       ),

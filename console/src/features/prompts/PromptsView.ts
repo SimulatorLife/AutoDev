@@ -30,7 +30,7 @@ export function PromptsView({ commands }: PromptsViewProps): React.JSX.Element {
           {
             href: `/prompts/${encodeURIComponent(prompt.name)}`,
             className:
-              "font-mono font-semibold text-slate-100 underline-offset-4 hover:underline",
+              "font-mono font-semibold text-fg underline-offset-4 hover:underline",
             "aria-label": `Open prompt ${prompt.name}`
           },
           prompt.kind === "role" || prompt.path.includes("roles")
@@ -55,7 +55,7 @@ export function PromptsView({ commands }: PromptsViewProps): React.JSX.Element {
       cell: (prompt) =>
         React.createElement(
           "span",
-          { className: "font-mono text-xs text-slate-400" },
+          { className: "font-mono text-xs text-fg-muted" },
           prompt.path
         )
     },
@@ -65,7 +65,7 @@ export function PromptsView({ commands }: PromptsViewProps): React.JSX.Element {
       cell: (prompt) =>
         React.createElement(
           "span",
-          { className: "text-xs text-slate-300" },
+          { className: "text-xs text-fg-secondary" },
           prompt.description ?? "Description not provided"
         )
     },
@@ -82,7 +82,7 @@ export function PromptsView({ commands }: PromptsViewProps): React.JSX.Element {
                 "a",
                 {
                   href: `/agents/${encodeURIComponent(prompt.name)}`,
-                  className: "text-emerald-400 hover:underline"
+                  className: "text-accent hover:underline"
                 },
                 "Agent profile"
               )
@@ -91,7 +91,7 @@ export function PromptsView({ commands }: PromptsViewProps): React.JSX.Element {
             "a",
             {
               href: `/evaluations?prompt=${encodeURIComponent(prompt.name)}`,
-              className: "text-slate-400 hover:underline"
+              className: "text-fg-muted hover:underline"
             },
             "Evaluations"
           )
@@ -129,13 +129,13 @@ export function PromptsView({ commands }: PromptsViewProps): React.JSX.Element {
     React.createElement(
       "section",
       {
-        className: "rounded-lg border border-slate-800 bg-slate-900 p-5 shadow"
+        className: "rounded-lg border border-border bg-surface p-5 shadow"
       },
       React.createElement(
         "h2",
         {
           className:
-            "mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400"
+            "mb-3 text-sm font-semibold uppercase tracking-wider text-fg-muted"
         },
         "Available Prompts & Commands"
       ),

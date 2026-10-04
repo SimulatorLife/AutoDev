@@ -24,7 +24,7 @@ const VALIDATION_STATUS_MAP: Record<string, StatusBadgeVariant> = {
   partial: "pending",
   not_run: "not-observed"
 };
-const DETAIL_LABEL_CLASS = "text-slate-500 mr-2";
+const DETAIL_LABEL_CLASS = "text-fg-muted mr-2";
 
 export function MemoryExperiencesView({
   experiences,
@@ -44,7 +44,7 @@ export function MemoryExperiencesView({
           {
             href: `?tab=experiences&workspaceId=${encodeURIComponent(currentWorkspaceId)}&experienceId=${encodeURIComponent(exp.id)}`,
             className:
-              "font-mono text-xs font-semibold text-cyan-400 hover:text-cyan-300 hover:underline",
+              "font-mono text-xs font-semibold text-accent hover:brightness-110 hover:underline",
             "data-memory-experience-id": exp.id
           },
           exp.id
@@ -57,7 +57,7 @@ export function MemoryExperiencesView({
       cell: (exp) =>
         React.createElement(
           "div",
-          { className: "flex flex-col font-mono text-xs text-slate-300" },
+          { className: "flex flex-col font-mono text-xs text-fg-secondary" },
           React.createElement(
             "span",
             { className: "truncate max-w-[180px]" },
@@ -65,7 +65,7 @@ export function MemoryExperiencesView({
           ),
           React.createElement(
             "span",
-            { className: "text-[11px] text-slate-500 truncate max-w-[180px]" },
+            { className: "text-[11px] text-fg-muted truncate max-w-[180px]" },
             exp.runId
           )
         )
@@ -79,7 +79,7 @@ export function MemoryExperiencesView({
           "span",
           {
             className:
-              "font-mono text-xs text-indigo-300 bg-indigo-950/40 px-2 py-0.5 rounded border border-indigo-900/60"
+              "font-mono text-xs text-chart-1 bg-chart-1/15 px-2 py-0.5 rounded border border-chart-1/40"
           },
           exp.agentRole ?? "unknown"
         )
@@ -94,10 +94,10 @@ export function MemoryExperiencesView({
           {
             className: `font-mono text-xs font-semibold ${
               exp.outcome === "success"
-                ? "text-emerald-400"
+                ? "text-success"
                 : exp.outcome === "failure"
-                  ? "text-rose-400"
-                  : "text-slate-400"
+                  ? "text-error"
+                  : "text-fg-muted"
             }`
           },
           exp.outcome
@@ -110,7 +110,7 @@ export function MemoryExperiencesView({
       cell: (exp) =>
         React.createElement(
           "span",
-          { className: "font-mono text-xs text-slate-300" },
+          { className: "font-mono text-xs text-fg-secondary" },
           exp.memoryMode ?? "unknown"
         )
     },
@@ -133,7 +133,7 @@ export function MemoryExperiencesView({
       cell: (exp) =>
         React.createElement(
           "span",
-          { className: "text-xs text-slate-400" },
+          { className: "text-xs text-fg-muted" },
           exp.startedAt ? new Date(exp.startedAt).toLocaleString() : "unknown"
         )
     }
@@ -148,7 +148,7 @@ export function MemoryExperiencesView({
       {
         method: "GET",
         className:
-          "flex flex-wrap items-center gap-3 p-4 bg-slate-900/80 rounded-lg border border-slate-800"
+          "flex flex-wrap items-center gap-3 p-4 bg-surface/80 rounded-lg border border-border"
       },
       React.createElement("input", {
         type: "hidden",
@@ -166,20 +166,20 @@ export function MemoryExperiencesView({
         defaultValue: currentQuery,
         placeholder: "Search experiences by task, run, role, or trajectory...",
         className:
-          "flex-1 min-w-[200px] px-3 py-1.5 rounded bg-slate-950 border border-slate-700 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+          "flex-1 min-w-[200px] px-3 py-1.5 rounded bg-input border border-border-strong text-sm text-fg placeholder-fg-muted focus:outline-none focus:border-accent"
       }),
       React.createElement(
         "button",
         {
           type: "submit",
           className:
-            "px-4 py-1.5 rounded bg-cyan-600 text-sm font-medium text-white hover:bg-cyan-500 transition-colors"
+            "px-4 py-1.5 rounded bg-accent text-sm font-medium text-fg-inverse hover:brightness-110 transition-colors"
         },
         "Filter"
       ),
       React.createElement(
         "span",
-        { className: "text-xs text-slate-400 ml-auto" },
+        { className: "text-xs text-fg-muted ml-auto" },
         `${experiences.length} of ${totalCount} experiences`
       )
     ),
@@ -216,7 +216,7 @@ function ExperienceDetailPanel({
     "div",
     {
       className:
-        "rounded-lg border border-indigo-800/60 bg-slate-900/90 p-6 flex flex-col gap-6 shadow-xl",
+        "rounded-lg border border-accent/60 bg-selected p-6 flex flex-col gap-6 shadow-xl",
       "data-selected-experience-panel": experience.id
     },
     // Header
@@ -224,7 +224,7 @@ function ExperienceDetailPanel({
       "div",
       {
         className:
-          "flex items-start justify-between border-b border-slate-800 pb-4"
+          "flex items-start justify-between border-b border-border pb-4"
       },
       React.createElement(
         "div",
@@ -234,14 +234,14 @@ function ExperienceDetailPanel({
           { className: "flex items-center gap-3" },
           React.createElement(
             "h3",
-            { className: "font-mono text-lg font-bold text-slate-100" },
+            { className: "font-mono text-lg font-bold text-fg" },
             experience.id
           ),
           React.createElement(
             "span",
             {
               className:
-                "px-2 py-0.5 rounded text-xs font-mono text-indigo-300 bg-indigo-950/60 border border-indigo-800"
+                "px-2 py-0.5 rounded text-xs font-mono text-chart-1 bg-chart-1/15 border border-chart-1/40"
             },
             `Role: ${experience.agentRole ?? "unknown"}`
           ),
@@ -255,7 +255,7 @@ function ExperienceDetailPanel({
         ),
         React.createElement(
           "span",
-          { className: "text-xs text-slate-400 font-mono" },
+          { className: "text-xs text-fg-muted font-mono" },
           `Task: ${experience.taskId} | Run: ${experience.runId}`
         )
       ),
@@ -263,7 +263,7 @@ function ExperienceDetailPanel({
         "a",
         {
           href: `?tab=experiences&workspaceId=${encodeURIComponent(workspaceId)}`,
-          className: "text-sm text-slate-400 hover:text-slate-200"
+          className: "text-sm text-fg-muted hover:text-fg"
         },
         "✕ Close"
       )
@@ -278,12 +278,12 @@ function ExperienceDetailPanel({
         "div",
         {
           className:
-            "rounded border border-slate-800 bg-slate-950/50 p-4 flex flex-col gap-2 text-xs"
+            "rounded border border-border bg-background/50 p-4 flex flex-col gap-2 text-xs"
         },
         React.createElement(
           "h4",
           {
-            className: "font-semibold uppercase tracking-wider text-slate-400"
+            className: "font-semibold uppercase tracking-wider text-fg-muted"
           },
           "Trajectory Provenance"
         ),
@@ -297,7 +297,7 @@ function ExperienceDetailPanel({
           ),
           React.createElement(
             "span",
-            { className: "font-mono text-slate-300" },
+            { className: "font-mono text-fg-secondary" },
             experience.trajectory.format
           )
         ),
@@ -311,7 +311,7 @@ function ExperienceDetailPanel({
           ),
           React.createElement(
             "span",
-            { className: "font-mono text-cyan-300" },
+            { className: "font-mono text-accent" },
             experience.trajectory.sourceAdapter ?? "manual/historical"
           )
         ),
@@ -326,7 +326,7 @@ function ExperienceDetailPanel({
               ),
               React.createElement(
                 "span",
-                { className: "font-mono text-slate-300" },
+                { className: "font-mono text-fg-secondary" },
                 `${experience.trajectory.normalizerId}@${experience.trajectory.normalizerVersion ?? "unknown"}`
               )
             )
@@ -343,7 +343,7 @@ function ExperienceDetailPanel({
               React.createElement(
                 "span",
                 {
-                  className: "font-mono text-slate-400"
+                  className: "font-mono text-fg-muted"
                 },
                 experience.trajectory.digest.slice(0, 16) + "..."
               )
@@ -351,7 +351,7 @@ function ExperienceDetailPanel({
           : null,
         React.createElement(
           "div",
-          { className: "break-all text-[11px] font-mono text-slate-500" },
+          { className: "break-all text-[11px] font-mono text-fg-muted" },
           experience.trajectory.uri
         )
       ),
@@ -361,12 +361,12 @@ function ExperienceDetailPanel({
         "div",
         {
           className:
-            "rounded border border-slate-800 bg-slate-950/50 p-4 flex flex-col gap-2 text-xs"
+            "rounded border border-border bg-background/50 p-4 flex flex-col gap-2 text-xs"
         },
         React.createElement(
           "h4",
           {
-            className: "font-semibold uppercase tracking-wider text-slate-400"
+            className: "font-semibold uppercase tracking-wider text-fg-muted"
           },
           "Evidence & Diagnostics"
         ),
@@ -380,7 +380,7 @@ function ExperienceDetailPanel({
           ),
           React.createElement(
             "span",
-            { className: "text-slate-300" },
+            { className: "text-fg-secondary" },
             `${experience.evidence.length} files`
           )
         ),
@@ -394,7 +394,7 @@ function ExperienceDetailPanel({
                   {
                     key: code,
                     className:
-                      "px-2 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-slate-300"
+                      "px-2 py-0.5 rounded text-[10px] font-mono bg-surface-raised text-fg-secondary"
                   },
                   code
                 )
@@ -402,7 +402,7 @@ function ExperienceDetailPanel({
             )
           : React.createElement(
               "span",
-              { className: "text-slate-500" },
+              { className: "text-fg-muted" },
               "No diagnostic codes emitted."
             )
       )
@@ -413,11 +413,11 @@ function ExperienceDetailPanel({
       "div",
       {
         className:
-          "flex items-center justify-between pt-4 border-t border-slate-800 text-xs"
+          "flex items-center justify-between pt-4 border-t border-border text-xs"
       },
       React.createElement(
         "span",
-        { className: "text-slate-400" },
+        { className: "text-fg-muted" },
         "Raw experiences cited by durable memory cannot be purged."
       ),
       React.createElement(
@@ -443,7 +443,7 @@ function ExperienceDetailPanel({
           {
             type: "submit",
             className:
-              "px-3 py-1.5 rounded bg-rose-950 border border-rose-800 text-rose-300 hover:bg-rose-900 text-xs font-medium transition-colors"
+              "px-3 py-1.5 rounded bg-error/15 border border-error/40 text-error hover:bg-error/25 text-xs font-medium transition-colors"
           },
           "Purge Experience"
         )

@@ -35,8 +35,7 @@ export function McpsView({
         React.createElement(
           "a",
           {
-            className:
-              "font-semibold text-slate-100 font-mono hover:text-emerald-300",
+            className: "font-semibold text-fg font-mono hover:text-accent",
             href: `/mcps/${encodeURIComponent(server.name)}`
           },
           server.name
@@ -55,7 +54,7 @@ export function McpsView({
               {
                 key: r,
                 className:
-                  "text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700"
+                  "text-xs bg-surface-raised text-fg-secondary px-2 py-0.5 rounded border border-border-strong"
               },
               r
             )
@@ -157,7 +156,7 @@ export function McpsView({
           "h2",
           {
             className:
-              "text-sm font-semibold uppercase tracking-wider text-slate-400"
+              "text-sm font-semibold uppercase tracking-wider text-fg-muted"
           },
           "Model Context Protocol Servers"
         ),
@@ -179,7 +178,7 @@ export function McpsView({
       sourceValidity === false
         ? React.createElement(
             "p",
-            { className: "mb-3 text-sm text-rose-300", role: "alert" },
+            { className: "mb-3 text-sm text-error", role: "alert" },
             "RuleSync `.rulesync/mcp.jsonc` is invalid; no MCP configuration was projected."
           )
         : null,

@@ -112,7 +112,7 @@ function renderProviderRoleCell(
         {
           type: "submit",
           className:
-            "rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-200 hover:bg-slate-700"
+            "rounded border border-border-strong bg-surface-raised px-2 py-0.5 text-xs font-medium text-fg hover:bg-hover"
         },
         nextEnabled ? "Enable" : "Disable"
       )
@@ -127,7 +127,7 @@ function ProviderRoleFeedback(): React.JSX.Element {
       role: "status",
       "data-provider-role-outcome": "failed",
       className:
-        "mb-3 rounded border border-amber-700 bg-amber-950/40 px-3 py-2 text-xs font-medium text-amber-200"
+        "mb-3 rounded border border-warning/40 bg-warning/15 px-3 py-2 text-xs font-medium text-warning"
     },
     "Provider role change could not be confirmed. Check the current role state before retrying."
   );
@@ -166,13 +166,13 @@ export function AgentsView({
           {
             href: `/agents/${encodeURIComponent(agent.id)}`,
             className:
-              "font-semibold text-slate-100 underline-offset-4 hover:underline",
+              "font-semibold text-fg underline-offset-4 hover:underline",
             "aria-label": `Open agent ${agent.role}`
           },
           React.createElement("span", null, agent.role),
           React.createElement(
             "span",
-            { className: "ml-2 text-xs text-slate-400 capitalize" },
+            { className: "ml-2 text-xs text-fg-muted capitalize" },
             `(${agent.kind})`
           )
         )
@@ -183,7 +183,7 @@ export function AgentsView({
       cell: (agent) =>
         React.createElement(
           "span",
-          { className: "font-mono text-xs text-slate-300" },
+          { className: "font-mono text-xs text-fg-secondary" },
           agent.primaryModel
         )
     },
@@ -205,7 +205,7 @@ export function AgentsView({
       cell: (agent) =>
         React.createElement(
           "span",
-          { className: "text-xs text-slate-300" },
+          { className: "text-xs text-fg-secondary" },
           agent.tools.filter((tool) => tool.type === "skill").length
         )
     },
@@ -215,7 +215,7 @@ export function AgentsView({
       cell: (agent) =>
         React.createElement(
           "span",
-          { className: "text-xs text-slate-300" },
+          { className: "text-xs text-fg-secondary" },
           agent.tools.filter((tool) => tool.type === "mcp").length
         )
     }
@@ -249,7 +249,7 @@ export function AgentsView({
       cell: (row) =>
         React.createElement(
           "span",
-          { className: "font-mono font-semibold text-slate-100" },
+          { className: "font-mono font-semibold text-fg" },
           row.id
         )
     },
@@ -281,7 +281,7 @@ export function AgentsView({
       cell: (row) =>
         React.createElement(
           "span",
-          { className: "font-mono text-xs text-slate-400" },
+          { className: "font-mono text-xs text-fg-muted" },
           row.baseUrl
         )
     },
@@ -291,7 +291,7 @@ export function AgentsView({
       cell: (row) =>
         React.createElement(
           "span",
-          { className: "font-mono text-xs text-slate-400" },
+          { className: "font-mono text-xs text-fg-muted" },
           row.pattern
         )
     }
@@ -333,14 +333,14 @@ export function AgentsView({
     React.createElement(
       "section",
       {
-        className: "rounded-lg border border-slate-800 bg-slate-900 p-5 shadow",
+        className: "rounded-lg border border-border bg-surface p-5 shadow",
         "data-section": "configured-agents"
       },
       React.createElement(
         "h2",
         {
           className:
-            "mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400"
+            "mb-3 text-sm font-semibold uppercase tracking-wider text-fg-muted"
         },
         "Configured Agents"
       ),
@@ -353,7 +353,7 @@ export function AgentsView({
     React.createElement(
       "section",
       {
-        className: "rounded-lg border border-slate-800 bg-slate-900 p-5 shadow",
+        className: "rounded-lg border border-border bg-surface p-5 shadow",
         "data-section": "providers-routing"
       },
       React.createElement(
@@ -363,13 +363,13 @@ export function AgentsView({
           "h2",
           {
             className:
-              "text-sm font-semibold uppercase tracking-wider text-slate-400"
+              "text-sm font-semibold uppercase tracking-wider text-fg-muted"
           },
           "Providers & Routing Policy"
         ),
         React.createElement(
           "p",
-          { className: "text-xs text-slate-500 mt-1" },
+          { className: "text-xs text-fg-muted mt-1" },
           "Secondary provider eligibility by role, upstream routing endpoints, and active cooldown circuits"
         )
       ),
@@ -382,19 +382,19 @@ export function AgentsView({
       }),
       React.createElement(
         "div",
-        { className: "mt-4 border-t border-slate-800 pt-3" },
+        { className: "mt-4 border-t border-border pt-3" },
         React.createElement(
           "h3",
           {
             className:
-              "text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2"
+              "text-xs font-semibold uppercase tracking-wider text-fg-muted mb-2"
           },
           "Active Cooldown Circuits"
         ),
         cooldownEntries.length === 0
           ? React.createElement(
               "p",
-              { className: "text-xs text-slate-500" },
+              { className: "text-xs text-fg-muted" },
               "No active provider cooldowns."
             )
           : React.createElement(
@@ -406,7 +406,7 @@ export function AgentsView({
                   {
                     key,
                     className:
-                      "rounded border border-amber-800 bg-amber-950/60 px-2 py-1 font-mono text-xs text-amber-300"
+                      "rounded border border-warning/40 bg-warning/15 px-2 py-1 font-mono text-xs text-warning"
                   },
                   `${key}: ${JSON.stringify(val)}`
                 )
@@ -417,14 +417,14 @@ export function AgentsView({
     React.createElement(
       "section",
       {
-        className: "rounded-lg border border-slate-800 bg-slate-900 p-5 shadow",
+        className: "rounded-lg border border-border bg-surface p-5 shadow",
         "data-section": "runtime-health"
       },
       React.createElement(
         "h2",
         {
           className:
-            "mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400"
+            "mb-3 text-sm font-semibold uppercase tracking-wider text-fg-muted"
         },
         "Runtime Concurrency & Circuit Health"
       ),
@@ -434,7 +434,7 @@ export function AgentsView({
         React.createElement(RuntimeMetric, {
           label: "Router Instance ID",
           value: runtime?.routerInstanceId ?? NOT_OBSERVED_LABEL,
-          valueClassName: "font-mono text-xs text-slate-300 break-all"
+          valueClassName: "font-mono text-xs text-fg-secondary break-all"
         }),
         React.createElement(RuntimeMetric, {
           label: "Lifecycle State",
@@ -476,7 +476,7 @@ export function AgentsView({
           value: routing?.concurrency?.lastDenial
             ? `${routing.concurrency.lastDenial.role} - ${routing.concurrency.lastDenial.reason}`
             : "None observed",
-          valueClassName: "font-mono text-xs text-slate-300",
+          valueClassName: "font-mono text-xs text-fg-secondary",
           rowClassName: "flex flex-col gap-1 sm:col-span-2"
         })
       )
@@ -487,7 +487,7 @@ export function AgentsView({
 function RuntimeMetric({
   label,
   value,
-  valueClassName = "font-mono text-sm text-slate-200",
+  valueClassName = "font-mono text-sm text-fg",
   rowClassName = "flex flex-col gap-1"
 }: {
   readonly label: string;
@@ -500,7 +500,7 @@ function RuntimeMetric({
     { className: rowClassName },
     React.createElement(
       "dt",
-      { className: "text-xs uppercase tracking-wider text-slate-400" },
+      { className: "text-xs uppercase tracking-wider text-fg-muted" },
       label
     ),
     React.createElement(

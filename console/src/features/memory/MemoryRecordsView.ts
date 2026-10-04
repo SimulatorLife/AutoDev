@@ -52,12 +52,12 @@ const STATUS_VARIANT_MAP: Record<MemoryStatus, StatusBadgeVariant> = {
 };
 
 const KIND_COLORS: Record<MemoryKind, string> = {
-  episodic: "bg-blue-950/60 text-blue-300 border-blue-800",
-  semantic: "bg-teal-950/60 text-teal-300 border-teal-800",
-  procedural: "bg-purple-950/60 text-purple-300 border-purple-800"
+  episodic: "bg-chart-4/15 text-chart-4 border-chart-4/40",
+  semantic: "bg-chart-2/15 text-chart-2 border-chart-2/40",
+  procedural: "bg-chart-3/15 text-chart-3 border-chart-3/40"
 };
 const DETAIL_SECTION_HEADING_CLASS =
-  "text-xs font-semibold uppercase tracking-wider text-slate-400";
+  "text-xs font-semibold uppercase tracking-wider text-fg-muted";
 
 function formatScopeString(scope: MemoryScope): string {
   switch (scope.kind) {
@@ -106,7 +106,7 @@ export function MemoryRecordsView({
           {
             href: `?tab=records&workspaceId=${encodeURIComponent(currentWorkspaceId)}&recordId=${encodeURIComponent(record.id)}`,
             className:
-              "font-mono text-xs font-semibold text-cyan-400 hover:text-cyan-300 hover:underline",
+              "font-mono text-xs font-semibold text-accent hover:brightness-110 hover:underline",
             "data-memory-record-id": record.id
           },
           record.id
@@ -120,7 +120,7 @@ export function MemoryRecordsView({
         React.createElement(
           "span",
           {
-            className: `inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-medium border ${KIND_COLORS[record.kind] ?? "bg-slate-800 text-slate-300 border-slate-700"}`,
+            className: `inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-medium border ${KIND_COLORS[record.kind] ?? "bg-surface-raised text-fg-secondary border-border-strong"}`,
             "data-memory-kind": record.kind
           },
           record.kind
@@ -142,7 +142,7 @@ export function MemoryRecordsView({
       cell: (record) =>
         React.createElement(
           "div",
-          { className: "max-w-md truncate text-sm text-slate-200" },
+          { className: "max-w-md truncate text-sm text-fg" },
           record.claim
         )
     },
@@ -155,7 +155,7 @@ export function MemoryRecordsView({
           "span",
           {
             className:
-              "font-mono text-xs text-slate-400 truncate max-w-[150px] inline-block"
+              "font-mono text-xs text-fg-muted truncate max-w-[150px] inline-block"
           },
           formatScopeString(record.scope)
         )
@@ -167,7 +167,7 @@ export function MemoryRecordsView({
       cell: (record) =>
         React.createElement(
           "span",
-          { className: "text-xs text-slate-400" },
+          { className: "text-xs text-fg-muted" },
           record.updatedAt
             ? new Date(record.updatedAt).toLocaleDateString()
             : "unknown"
@@ -184,7 +184,7 @@ export function MemoryRecordsView({
       {
         method: "GET",
         className:
-          "flex flex-wrap items-center gap-3 p-4 bg-slate-900/80 rounded-lg border border-slate-800"
+          "flex flex-wrap items-center gap-3 p-4 bg-surface/80 rounded-lg border border-border"
       },
       React.createElement("input", {
         type: "hidden",
@@ -202,7 +202,7 @@ export function MemoryRecordsView({
         defaultValue: currentQuery,
         placeholder: "Search memory claims...",
         className:
-          "flex-1 min-w-[200px] px-3 py-1.5 rounded bg-slate-950 border border-slate-700 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+          "flex-1 min-w-[200px] px-3 py-1.5 rounded bg-input border border-border-strong text-sm text-fg placeholder-fg-muted focus:outline-none focus:border-accent"
       }),
       React.createElement(
         "select",
@@ -210,7 +210,7 @@ export function MemoryRecordsView({
           name: "kind",
           defaultValue: currentKind,
           className:
-            "px-3 py-1.5 rounded bg-slate-950 border border-slate-700 text-sm text-slate-300 focus:outline-none focus:border-cyan-500"
+            "px-3 py-1.5 rounded bg-input border border-border-strong text-sm text-fg-secondary focus:outline-none focus:border-accent"
         },
         React.createElement("option", { value: "all" }, "All Kinds"),
         React.createElement("option", { value: "procedural" }, "Procedural"),
@@ -223,7 +223,7 @@ export function MemoryRecordsView({
           name: "status",
           defaultValue: currentStatus,
           className:
-            "px-3 py-1.5 rounded bg-slate-950 border border-slate-700 text-sm text-slate-300 focus:outline-none focus:border-cyan-500"
+            "px-3 py-1.5 rounded bg-input border border-border-strong text-sm text-fg-secondary focus:outline-none focus:border-accent"
         },
         React.createElement("option", { value: "all" }, "All Statuses"),
         React.createElement("option", { value: "active" }, "Active"),
@@ -237,13 +237,13 @@ export function MemoryRecordsView({
         {
           type: "submit",
           className:
-            "px-4 py-1.5 rounded bg-cyan-600 text-sm font-medium text-white hover:bg-cyan-500 transition-colors"
+            "px-4 py-1.5 rounded bg-accent text-sm font-medium text-fg-inverse hover:brightness-110 transition-colors"
         },
         "Filter"
       ),
       React.createElement(
         "span",
-        { className: "text-xs text-slate-400 ml-auto" },
+        { className: "text-xs text-fg-muted ml-auto" },
         `${records.length} of ${totalCount} records`
       )
     ),
@@ -282,7 +282,7 @@ function RecordDetailPanel({
     "div",
     {
       className:
-        "rounded-lg border border-cyan-800/60 bg-slate-900/90 p-6 flex flex-col gap-6 shadow-xl",
+        "rounded-lg border border-accent/60 bg-selected p-6 flex flex-col gap-6 shadow-xl",
       "data-selected-record-panel": record.id
     },
     // Header
@@ -290,7 +290,7 @@ function RecordDetailPanel({
       "div",
       {
         className:
-          "flex items-start justify-between border-b border-slate-800 pb-4"
+          "flex items-start justify-between border-b border-border pb-4"
       },
       React.createElement(
         "div",
@@ -300,13 +300,13 @@ function RecordDetailPanel({
           { className: "flex items-center gap-3" },
           React.createElement(
             "h3",
-            { className: "font-mono text-lg font-bold text-slate-100" },
+            { className: "font-mono text-lg font-bold text-fg" },
             record.id
           ),
           React.createElement(
             "span",
             {
-              className: `px-2 py-0.5 rounded text-xs font-mono font-medium border ${KIND_COLORS[record.kind] ?? "bg-slate-800 text-slate-300 border-slate-700"}`
+              className: `px-2 py-0.5 rounded text-xs font-mono font-medium border ${KIND_COLORS[record.kind] ?? "bg-surface-raised text-fg-secondary border-border-strong"}`
             },
             record.kind
           ),
@@ -317,7 +317,7 @@ function RecordDetailPanel({
         ),
         React.createElement(
           "span",
-          { className: "text-xs text-slate-400 font-mono" },
+          { className: "text-xs text-fg-muted font-mono" },
           `Scope: ${formatScopeString(record.scope)}`
         )
       ),
@@ -325,7 +325,7 @@ function RecordDetailPanel({
         "a",
         {
           href: `?tab=records&workspaceId=${encodeURIComponent(workspaceId)}`,
-          className: "text-sm text-slate-400 hover:text-slate-200"
+          className: "text-sm text-fg-muted hover:text-fg"
         },
         "✕ Close"
       )
@@ -346,7 +346,7 @@ function RecordDetailPanel({
         "div",
         {
           className:
-            "rounded-md border border-slate-800 bg-slate-950 p-4 font-mono text-sm text-slate-200 leading-relaxed whitespace-pre-wrap"
+            "rounded-md border border-border bg-background p-4 font-mono text-sm text-fg leading-relaxed whitespace-pre-wrap"
         },
         record.claim
       )
@@ -361,7 +361,7 @@ function RecordDetailPanel({
         "div",
         {
           className:
-            "rounded border border-slate-800 bg-slate-950/50 p-4 flex flex-col gap-2"
+            "rounded border border-border bg-background/50 p-4 flex flex-col gap-2"
         },
         React.createElement(
           "h4",
@@ -373,15 +373,11 @@ function RecordDetailPanel({
         React.createElement(
           "div",
           { className: "flex items-center gap-2 text-xs" },
-          React.createElement(
-            "span",
-            { className: "text-slate-400" },
-            "State:"
-          ),
+          React.createElement("span", { className: "text-fg-muted" }, "State:"),
           React.createElement(
             "span",
             {
-              className: `font-semibold ${record.validity.state === "verified" ? "text-emerald-400" : record.validity.state === "contradicted" ? "text-rose-400" : "text-amber-400"}`
+              className: `font-semibold ${record.validity.state === "verified" ? "text-success" : record.validity.state === "contradicted" ? "text-error" : "text-warning"}`
             },
             record.validity.state
           )
@@ -389,14 +385,14 @@ function RecordDetailPanel({
         record.validity.checkedAt
           ? React.createElement(
               "div",
-              { className: "text-xs text-slate-400" },
+              { className: "text-xs text-fg-muted" },
               `Checked at: ${new Date(record.validity.checkedAt).toLocaleString()}`
             )
           : null,
         record.validity.verificationSource
           ? React.createElement(
               "div",
-              { className: "text-xs text-slate-400 font-mono" },
+              { className: "text-xs text-fg-muted font-mono" },
               `Verification source: ${record.validity.verificationSource}`
             )
           : null
@@ -407,7 +403,7 @@ function RecordDetailPanel({
         "div",
         {
           className:
-            "rounded border border-slate-800 bg-slate-950/50 p-4 flex flex-col gap-2"
+            "rounded border border-border bg-background/50 p-4 flex flex-col gap-2"
         },
         React.createElement(
           "h4",
@@ -418,13 +414,13 @@ function RecordDetailPanel({
         ),
         React.createElement(
           "div",
-          { className: "text-xs text-slate-300" },
+          { className: "text-xs text-fg-secondary" },
           `Sources: ${record.provenance.experienceIds.length} experiences`
         ),
         record.provenance.lastVerifiedAt
           ? React.createElement(
               "div",
-              { className: "text-xs font-mono text-slate-400" },
+              { className: "text-xs font-mono text-fg-muted" },
               `Last verified: ${new Date(record.provenance.lastVerifiedAt).toLocaleString()}`
             )
           : null,
@@ -434,7 +430,7 @@ function RecordDetailPanel({
               { className: "flex flex-col gap-1 mt-1" },
               React.createElement(
                 "span",
-                { className: "text-xs text-slate-400 font-medium" },
+                { className: "text-xs text-fg-muted font-medium" },
                 "Cited Evidence Files:"
               ),
               record.provenance.evidence.map(
@@ -444,7 +440,7 @@ function RecordDetailPanel({
                     {
                       key: i,
                       className:
-                        "font-mono text-[11px] text-cyan-300 bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-900/60 truncate"
+                        "font-mono text-[11px] text-accent bg-accent/15 px-2 py-0.5 rounded border border-accent/40 truncate"
                     },
                     `${ev.kind}: ${ev.uri}`
                   )
@@ -462,7 +458,7 @@ function RecordDetailPanel({
           React.createElement(
             "h4",
             {
-              className: "font-semibold uppercase tracking-wider text-slate-400"
+              className: "font-semibold uppercase tracking-wider text-fg-muted"
             },
             "Lineage"
           ),
@@ -472,7 +468,7 @@ function RecordDetailPanel({
                 { className: "flex items-center gap-2" },
                 React.createElement(
                   "span",
-                  { className: "text-slate-400" },
+                  { className: "text-fg-muted" },
                   "Supersedes:"
                 ),
                 record.supersedes.map((id) =>
@@ -481,7 +477,7 @@ function RecordDetailPanel({
                     {
                       key: id,
                       href: `?tab=records&workspaceId=${encodeURIComponent(workspaceId)}&recordId=${encodeURIComponent(id)}`,
-                      className: "font-mono text-cyan-400 hover:underline"
+                      className: "font-mono text-accent hover:underline"
                     },
                     id
                   )
@@ -494,7 +490,7 @@ function RecordDetailPanel({
                 { className: "flex items-center gap-2" },
                 React.createElement(
                   "span",
-                  { className: "text-slate-400" },
+                  { className: "text-fg-muted" },
                   "Superseded By:"
                 ),
                 record.supersededBy.map((id) =>
@@ -503,7 +499,7 @@ function RecordDetailPanel({
                     {
                       key: id,
                       href: `?tab=records&workspaceId=${encodeURIComponent(workspaceId)}&recordId=${encodeURIComponent(id)}`,
-                      className: "font-mono text-cyan-400 hover:underline"
+                      className: "font-mono text-accent hover:underline"
                     },
                     id
                   )
@@ -529,7 +525,7 @@ function RecordDetailPanel({
             "div",
             {
               className:
-                "flex flex-col divide-y divide-slate-800 rounded border border-slate-800 bg-slate-950/60"
+                "flex flex-col divide-y divide-border rounded border border-border bg-background/60"
             },
             history.transitions.map((t, i) =>
               React.createElement(
@@ -549,7 +545,7 @@ function RecordDetailPanel({
                   t.reason
                     ? React.createElement(
                         "span",
-                        { className: "text-slate-300" },
+                        { className: "text-fg-secondary" },
                         `(${t.reason})`
                       )
                     : null
@@ -558,7 +554,7 @@ function RecordDetailPanel({
                   "div",
                   {
                     className:
-                      "flex items-center gap-3 text-slate-500 font-mono text-[11px]"
+                      "flex items-center gap-3 text-fg-muted font-mono text-[11px]"
                   },
                   React.createElement("span", null, t.actor.id),
                   React.createElement(
@@ -578,13 +574,13 @@ function RecordDetailPanel({
       "div",
       {
         className:
-          "flex flex-wrap items-center gap-3 pt-4 border-t border-slate-800"
+          "flex flex-wrap items-center gap-3 pt-4 border-t border-border"
       },
       React.createElement(
         "span",
         {
           className:
-            "text-xs font-semibold uppercase tracking-wider text-slate-400 mr-2"
+            "text-xs font-semibold uppercase tracking-wider text-fg-muted mr-2"
         },
         "Governed Actions:"
       ),
@@ -613,7 +609,7 @@ function RecordDetailPanel({
               {
                 type: "submit",
                 className:
-                  "px-3 py-1.5 rounded bg-emerald-700 hover:bg-emerald-600 text-xs font-medium text-white transition-colors"
+                  "px-3 py-1.5 rounded bg-success hover:brightness-110 text-xs font-medium text-fg-inverse transition-colors"
               },
               "Verify & Promote"
             )
@@ -645,7 +641,7 @@ function RecordDetailPanel({
               {
                 type: "submit",
                 className:
-                  "px-3 py-1.5 rounded bg-rose-800 hover:bg-rose-700 text-xs font-medium text-white transition-colors"
+                  "px-3 py-1.5 rounded bg-error hover:brightness-110 text-xs font-medium text-fg-inverse transition-colors"
               },
               "Invalidate"
             )
@@ -677,7 +673,7 @@ function RecordDetailPanel({
               {
                 type: "submit",
                 className:
-                  "px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-600 text-xs font-medium text-white transition-colors"
+                  "px-3 py-1.5 rounded bg-chart-3 hover:brightness-110 text-xs font-medium text-fg-inverse transition-colors"
               },
               "Promote to RuleSync Skill"
             )

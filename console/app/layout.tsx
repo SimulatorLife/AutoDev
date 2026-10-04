@@ -21,7 +21,7 @@ export default function RootLayout({
     React.createElement(
       "body",
       {
-        className: "bg-slate-950 text-slate-100 antialiased"
+        className: "bg-background text-fg antialiased"
       },
       children
     )
