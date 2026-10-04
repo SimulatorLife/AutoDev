@@ -38,26 +38,16 @@ jobs:
         with:
           github-token: ${{ secrets.GH_USER_TOKEN }}
           script: |
-            const fs = require('node:fs');
-            const catalog = JSON.parse(fs.readFileSync('config/workspaces.json', 'utf8'));
-            if (catalog.schema !== 'autodev-workspaces-v1' || !Array.isArray(catalog.workspaces)) {
-              throw new Error('Workspace catalog is invalid.');
-            }
-            const workspaces = new Map();
-            for (const workspace of catalog.workspaces) {
-              if (!/^[^/\s]+\/[^/\s]+$/.test(workspace?.id || '') || typeof workspace.enabled !== 'boolean') {
-                throw new Error('Workspace catalog contains an invalid identity or enabled flag.');
-              }
-              if (workspaces.has(workspace.id)) throw new Error(`Duplicate workspace: ${workspace.id}`);
-              workspaces.set(workspace.id, workspace);
-            }
-            const configured = [...workspaces.values()]
-              .filter((workspace) => workspace.enabled)
-              .map((workspace) => workspace.id);
+            const path = require('node:path');
+            const { loadCatalog, listEnabled, resolveTarget } = require(path.join(process.env.GITHUB_WORKSPACE, '.github', 'scripts', 'workspace-catalog.cjs'));
+            const catalog = loadCatalog('config/workspaces.json');
+            const configured = listEnabled(catalog);
             const requested = (process.env.TARGET_REPOSITORY || '').trim() || 'all';
             const repositories = requested === 'all' ? configured : [requested];
-            const unknown = repositories.filter((repository) => !configured.includes(repository));
-            if (unknown.length) throw new Error(`Unconfigured target repository: ${unknown.join(', ')}`);
+            for (const repository of repositories) {
+              const result = resolveTarget(catalog, repository);
+              if (!result.ok) throw new Error(result.reason);
+            }
 
             const rawStaleHours = (process.env.STALE_HOURS || '').trim();
             const staleHours = Number(rawStaleHours || '1.25');

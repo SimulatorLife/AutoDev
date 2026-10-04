@@ -80,21 +80,8 @@ jobs:
           TARGET_REPOSITORY: ${{ inputs.target_repository || github.event.inputs.target_repository || github.repository }}
         run: |
           set -euo pipefail
-          test -f .autodev/config/workspaces.json || { echo ".autodev/config/workspaces.json missing" >&2; exit 1; }
-          jq -e '.schema == "autodev-workspaces-v1" and (.workspaces | type == "array")' \
-            .autodev/config/workspaces.json >/dev/null || {
-            echo "Canonical workspace catalog is invalid." >&2
-            exit 1
-          }
-          target_workspace=$(jq -ce --arg id "${TARGET_REPOSITORY}" \
-            '.workspaces[] | select(.id == $id)' .autodev/config/workspaces.json) || {
-            echo "target_repository is not present in the canonical workspace catalog: ${TARGET_REPOSITORY}" >&2
-            exit 1
-          }
-          [[ "$(jq -r '.enabled' <<<"${target_workspace}")" == "true" ]] || {
-            echo "target_repository is disabled in the canonical workspace catalog: ${TARGET_REPOSITORY}" >&2
-            exit 1
-          }
+          node .autodev/.github/scripts/workspace-catalog.cjs resolve-target \
+            .autodev/config/workspaces.json "${TARGET_REPOSITORY}" >/dev/null
 
       - name: Stage AutoDev policy
         run: cp .autodev/.github/workflows/weights.json "$RUNNER_TEMP/autodev-weights.json"

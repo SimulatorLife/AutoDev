@@ -106,37 +106,16 @@ jobs:
         run: |
           set -euo pipefail
           cp .autodev/.github/workflows/weights.json "$RUNNER_TEMP/autodev-weights.json"
-          cp .autodev/config/workspaces.json "$RUNNER_TEMP/autodev-workspaces.json"
 
-          jq -e '.schema == "autodev-workspaces-v1" and (.workspaces | type == "array")' \
-            "$RUNNER_TEMP/autodev-workspaces.json" >/dev/null || {
-            echo "Canonical workspace catalog is invalid." >&2
-            exit 1
-          }
-
-          target_workspace=$(jq -ce --arg id "${TARGET_REPOSITORY}" \
-            '.workspaces[] | select(.id == $id)' "$RUNNER_TEMP/autodev-workspaces.json") || {
-            echo "target_repository is not present in the canonical workspace catalog: ${TARGET_REPOSITORY}" >&2
-            exit 1
-          }
-          [[ "$(jq -r '.enabled' <<<"${target_workspace}")" == "true" ]] || {
-            echo "target_repository is disabled in the canonical workspace catalog: ${TARGET_REPOSITORY}" >&2
-            exit 1
-          }
+          target_workspace=$(node .autodev/.github/scripts/workspace-catalog.cjs resolve-target \
+            .autodev/config/workspaces.json "${TARGET_REPOSITORY}" \
+            --base-branch "${REQUESTED_BASE_BRANCH}")
           canonical_base_branch=$(jq -r '.baseBranch' <<<"${target_workspace}")
-          if [[ -n "${REQUESTED_BASE_BRANCH}" && "${REQUESTED_BASE_BRANCH}" != "${canonical_base_branch}" ]]; then
-            echo "base_branch must match the Workspace registry for ${TARGET_REPOSITORY}." >&2
-            exit 1
-          fi
           echo "base_branch=${canonical_base_branch}" >> "$GITHUB_OUTPUT"
 
           if [ -n "${PROMPT_PATH}" ]; then
-            jq -e --arg id "${PROMPT_REPOSITORY}" \
-              '.workspaces[] | select(.id == $id and .enabled == true)' \
-              "$RUNNER_TEMP/autodev-workspaces.json" >/dev/null || {
-              echo "prompt_repository is not enabled in the canonical workspace catalog: ${PROMPT_REPOSITORY}" >&2
-              exit 1
-            }
+            node .autodev/.github/scripts/workspace-catalog.cjs resolve-prompt \
+              .autodev/config/workspaces.json "${PROMPT_REPOSITORY}" >/dev/null
           fi
           if [ -n "${PROMPT_PATH}" ] && [ "${PROMPT_REPOSITORY}" = "SimulatorLife/AutoDev" ]; then
             case "${PROMPT_PATH}" in .rulesync/commands/*.md) ;; *) echo "AutoDev-owned prompt_path must be .rulesync/commands/*.md" >&2; exit 1 ;; esac

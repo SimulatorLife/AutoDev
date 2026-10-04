@@ -43,25 +43,16 @@ jobs:
         with:
           github-token: ${{ secrets.GH_USER_TOKEN }}
           script: |
-            const fs = require('fs');
+            const path = require('node:path');
+            const fs = require('node:fs');
+            const { loadCatalog, resolveTarget, listEnabled } = require(path.join(process.env.GITHUB_WORKSPACE, '.github', 'scripts', 'workspace-catalog.cjs'));
             const cfg = JSON.parse(fs.readFileSync('.github/workflows/weights.json', 'utf8'));
-            const workspaceCatalog = JSON.parse(fs.readFileSync('config/workspaces.json', 'utf8'));
-            if (workspaceCatalog.schema !== 'autodev-workspaces-v1' || !Array.isArray(workspaceCatalog.workspaces)) {
-              throw new Error('Workspace catalog is invalid.');
-            }
-            const workspaces = new Map();
-            for (const workspace of workspaceCatalog.workspaces) {
-              if (!/^[^/\s]+\/[^/\s]+$/.test(workspace?.id || '') || typeof workspace.enabled !== 'boolean') {
-                throw new Error('Workspace catalog contains an invalid identity or enabled flag.');
-              }
-              if (workspaces.has(workspace.id)) throw new Error(`Duplicate workspace: ${workspace.id}`);
-              workspaces.set(workspace.id, workspace);
-            }
+            const catalog = loadCatalog('config/workspaces.json');
             const schedulerWeights = new Map();
             for (const entry of cfg.repositories || []) {
               const workspaceId = typeof entry?.workspaceId === 'string' ? entry.workspaceId.trim() : '';
               const weight = Number(entry?.weight);
-              if (!workspaces.has(workspaceId) || !Number.isFinite(weight) || weight < 0 || schedulerWeights.has(workspaceId)) {
+              if (!catalog.workspaces.has(workspaceId) || !Number.isFinite(weight) || weight < 0 || schedulerWeights.has(workspaceId)) {
                 throw new Error(`Invalid or duplicate scheduler weight for workspace: ${workspaceId}`);
               }
               schedulerWeights.set(workspaceId, weight);
@@ -78,16 +69,13 @@ jobs:
 
             let repositories;
             if (requestedRepository) {
-              const workspace = workspaces.get(requestedRepository);
-              if (!workspace || !workspace.enabled) {
-                throw new Error(`Unconfigured or disabled Workspace: ${requestedRepository}`);
-              }
-              repositories = [workspace];
+              const result = resolveTarget(catalog, requestedRepository);
+              if (!result.ok) throw new Error(result.reason);
+              repositories = [result.workspace];
             } else {
-              repositories = [...workspaces.values()].filter(
-                (workspace) =>
-                  workspace.enabled && (schedulerWeights.get(workspace.id) ?? 0) > 0
-              );
+              repositories = listEnabled(catalog)
+                .map((id) => catalog.workspaces.get(id))
+                .filter((workspace) => (schedulerWeights.get(workspace.id) ?? 0) > 0);
             }
             const targets = [];
             for (const workspace of repositories) {
