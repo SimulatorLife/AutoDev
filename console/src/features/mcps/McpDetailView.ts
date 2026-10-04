@@ -185,15 +185,26 @@ export function McpDetailView({
             className: "flex flex-wrap gap-2",
             "aria-label": "Target overrides"
           },
-          ...server.targetOverrides.map(({ target, enabled }) =>
-            React.createElement(
-              "li",
-              { key: target },
-              React.createElement(StatusBadge, {
-                status: CONFIGURED_STATUS,
-                label: `${target}: ${enabled ? "enabled" : "disabled"}`
-              })
-            )
+          ...server.targetOverrides.map(
+            ({ target, enabled, defaultToolsApprovalMode, enabledTools }) => {
+              const details = [
+                `${target}: ${enabled ? "enabled" : "disabled"}`,
+                defaultToolsApprovalMode
+                  ? `mode: ${defaultToolsApprovalMode}`
+                  : null,
+                enabledTools ? `tools: ${enabledTools.join(", ")}` : null
+              ]
+                .filter(Boolean)
+                .join(" | ");
+              return React.createElement(
+                "li",
+                { key: target },
+                React.createElement(StatusBadge, {
+                  status: CONFIGURED_STATUS,
+                  label: details
+                })
+              );
+            }
           )
         );
 
@@ -300,20 +311,184 @@ export function McpDetailView({
       "section",
       {
         className: SECTION_PANEL_CLASS,
-        "aria-label": "Target configuration"
+        "aria-label": "Server configuration",
+        "data-section": "mcp-configuration"
       },
       React.createElement(
         "h3",
         { className: SECTION_HEADING_CLASS },
-        "Explicit target overrides"
+        "Server configuration"
       ),
-      targetOverrides
+      React.createElement(
+        "div",
+        { className: "grid gap-3 sm:grid-cols-2 text-xs font-mono" },
+        React.createElement(
+          "div",
+          { className: "rounded border border-slate-800 bg-slate-950/40 p-3" },
+          React.createElement(
+            "span",
+            { className: "text-slate-400 block mb-1" },
+            "Transport"
+          ),
+          React.createElement(
+            "span",
+            { className: "text-slate-200 uppercase font-semibold" },
+            server.transport
+          )
+        ),
+        server.command
+          ? React.createElement(
+              "div",
+              {
+                className: "rounded border border-slate-800 bg-slate-950/40 p-3"
+              },
+              React.createElement(
+                "span",
+                { className: "text-slate-400 block mb-1" },
+                "Command"
+              ),
+              React.createElement(
+                "span",
+                { className: "text-slate-200 break-all" },
+                server.command
+              )
+            )
+          : null,
+        server.args && server.args.length > 0
+          ? React.createElement(
+              "div",
+              {
+                className:
+                  "col-span-2 rounded border border-slate-800 bg-slate-950/40 p-3"
+              },
+              React.createElement(
+                "span",
+                { className: "text-slate-400 block mb-1" },
+                "Arguments"
+              ),
+              React.createElement(
+                "span",
+                { className: "text-slate-200 break-all" },
+                server.args.join(" ")
+              )
+            )
+          : null,
+        server.url
+          ? React.createElement(
+              "div",
+              {
+                className: "rounded border border-slate-800 bg-slate-950/40 p-3"
+              },
+              React.createElement(
+                "span",
+                { className: "text-slate-400 block mb-1" },
+                "Endpoint URL"
+              ),
+              React.createElement(
+                "span",
+                { className: "text-slate-200 break-all" },
+                server.url
+              )
+            )
+          : null,
+        server.cwd
+          ? React.createElement(
+              "div",
+              {
+                className: "rounded border border-slate-800 bg-slate-950/40 p-3"
+              },
+              React.createElement(
+                "span",
+                { className: "text-slate-400 block mb-1" },
+                "Working directory"
+              ),
+              React.createElement(
+                "span",
+                { className: "text-slate-200 break-all" },
+                server.cwd
+              )
+            )
+          : null,
+        server.envKeys && server.envKeys.length > 0
+          ? React.createElement(
+              "div",
+              {
+                className: "rounded border border-slate-800 bg-slate-950/40 p-3"
+              },
+              React.createElement(
+                "span",
+                { className: "text-slate-400 block mb-1" },
+                "Environment keys (values withheld)"
+              ),
+              React.createElement(
+                "span",
+                { className: "text-slate-200" },
+                server.envKeys.join(", ")
+              )
+            )
+          : null,
+        server.defaultToolsApprovalMode
+          ? React.createElement(
+              "div",
+              {
+                className: "rounded border border-slate-800 bg-slate-950/40 p-3"
+              },
+              React.createElement(
+                "span",
+                { className: "text-slate-400 block mb-1" },
+                "Default tools approval mode"
+              ),
+              React.createElement(
+                "span",
+                { className: "text-slate-200" },
+                server.defaultToolsApprovalMode
+              )
+            )
+          : null
+      ),
+      React.createElement(
+        "div",
+        { className: "mt-4" },
+        React.createElement(
+          "h4",
+          { className: "mb-2 text-xs font-semibold text-slate-400" },
+          "Target overrides"
+        ),
+        targetOverrides
+      )
     ),
     React.createElement(
       "section",
       {
         className: SECTION_PANEL_CLASS,
-        "aria-label": "Role access"
+        "aria-label": "Connection and health",
+        "data-section": "mcp-connection-health"
+      },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "Connection & Health"
+      ),
+      React.createElement(
+        "div",
+        { className: "flex flex-col gap-2" },
+        React.createElement(StatusBadge, {
+          status: NOT_OBSERVED_STATUS,
+          label: "Probe status: Not observed"
+        }),
+        React.createElement(
+          "p",
+          { className: "text-xs text-slate-400" },
+          "Ping round trip and process health are unprobed in the static configuration. Connection requires an active runtime session."
+        )
+      )
+    ),
+    React.createElement(
+      "section",
+      {
+        className: SECTION_PANEL_CLASS,
+        "aria-label": "Role access",
+        "data-section": "mcp-role-access"
       },
       React.createElement(
         "h3",
@@ -346,7 +521,8 @@ export function McpDetailView({
       {
         className: SECTION_PANEL_CLASS,
         "aria-label": "Configured tool allowlist",
-        "data-mcp-configured-tools-section": "true"
+        "data-mcp-configured-tools-section": "true",
+        "data-section": "mcp-tools"
       },
       React.createElement(
         "h3",
@@ -364,17 +540,100 @@ export function McpDetailView({
       "section",
       {
         className: SECTION_PANEL_CLASS,
-        "aria-label": "Inspection and activity"
+        "aria-label": "MCP resources",
+        "data-section": "mcp-resources"
       },
       React.createElement(
         "h3",
         { className: SECTION_HEADING_CLASS },
-        "Tools, resources, prompts, and activity"
+        "Resources"
       ),
       React.createElement(
-        "p",
-        { className: "text-sm text-slate-400" },
-        "Not observed. Runtime probing and MCP inspection are not yet connected to the Control API."
+        "div",
+        { className: "flex flex-col gap-2" },
+        React.createElement(StatusBadge, {
+          status: NOT_OBSERVED_STATUS,
+          label: "Resources inventory: Not observed"
+        }),
+        React.createElement(
+          "p",
+          { className: "text-xs text-slate-400" },
+          "Live server resource schemas, URIs, and read/preview capabilities require an active MCP session connection."
+        )
+      )
+    ),
+    React.createElement(
+      "section",
+      {
+        className: SECTION_PANEL_CLASS,
+        "aria-label": "MCP prompts",
+        "data-section": "mcp-prompts"
+      },
+      React.createElement("h3", { className: SECTION_HEADING_CLASS }, "Prompts"),
+      React.createElement(
+        "div",
+        { className: "flex flex-col gap-2" },
+        React.createElement(StatusBadge, {
+          status: NOT_OBSERVED_STATUS,
+          label: "Prompts inventory: Not observed"
+        }),
+        React.createElement(
+          "p",
+          { className: "text-xs text-slate-400" },
+          "Server prompt templates and arguments require an active MCP session connection."
+        )
+      )
+    ),
+    React.createElement(
+      "section",
+      {
+        className: SECTION_PANEL_CLASS,
+        "aria-label": "Activity and telemetry",
+        "data-section": "mcp-activity"
+      },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "Activity & Telemetry"
+      ),
+      React.createElement(
+        "div",
+        { className: "flex flex-col gap-2" },
+        React.createElement(StatusBadge, {
+          status: NOT_OBSERVED_STATUS,
+          label: "Activity: Not observed"
+        }),
+        React.createElement(
+          "p",
+          { className: "text-xs text-slate-400" },
+          "Tools, resources, prompts, and activity round-trips are observed by the Codex-tools MCP shim span. No telemetry traces observed for this server."
+        )
+      )
+    ),
+    React.createElement(
+      "section",
+      {
+        className: SECTION_PANEL_CLASS,
+        "aria-label": "Errors and logs",
+        "data-section": "mcp-errors-logs"
+      },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "Errors & Logs"
+      ),
+      React.createElement(
+        "div",
+        { className: "flex flex-col gap-2" },
+        React.createElement(StatusBadge, {
+          status: NOT_OBSERVED_STATUS,
+          label: "Error logs: Not observed"
+        }),
+        React.createElement(
+          "p",
+          { className: "text-xs text-slate-400" },
+          "No errors observed. Failure states are reported when the MCP process exits non-zero or returns JSON-RPC protocol error envelopes."
+        )
       )
     )
   );

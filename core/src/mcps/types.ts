@@ -33,6 +33,8 @@ export type McpServerTransport = "stdio" | "http" | "unknown";
 export interface McpTargetOverride {
   readonly target: string;
   readonly enabled: boolean;
+  readonly defaultToolsApprovalMode?: string;
+  readonly enabledTools?: readonly string[];
 }
 
 /** Safe desired-state summary of one canonical RuleSync MCP declaration. */
@@ -43,6 +45,12 @@ export interface McpServerDefinition {
   readonly transport: McpServerTransport;
   /** Explicit overrides only; a missing target entry carries no inferred state. */
   readonly targetOverrides: readonly McpTargetOverride[];
+  readonly command?: string;
+  readonly args?: readonly string[];
+  readonly url?: string;
+  readonly envKeys?: readonly string[];
+  readonly cwd?: string;
+  readonly defaultToolsApprovalMode?: string;
 }
 
 /** Combined canonical declaration and generated role-exposure projection. */

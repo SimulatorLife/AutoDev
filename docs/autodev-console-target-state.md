@@ -38,7 +38,8 @@ AutoDev Console
 ├── Tools
 ├── Usage
 ├── Prompts
-└── Workspaces
+├── Workspaces
+└── GitHub
 ```
 
 Use **Workspaces**, not OpenLIT Projects, for AutoDev repositories/workspaces. "Project" may appear only as domain wording where an external tool requires it; it must not restore OpenLIT's project isolation/tenancy model.
@@ -479,6 +480,31 @@ Configured/Enabled → Eligible → Exposed/Selected → Used
 - aggregate and drill-down usage;
 - no OpenLIT project/environment/organization/account silo per workspace.
 
+**GitHub**
+
+- AutoDev-owned GitHub Actions workflows, their configured triggers/schedules,
+  and their current enabled/disabled state;
+- recent and in-progress runs with observed status, conclusion, duration,
+  target workspace, and bounded aggregate success/failure/run counts;
+- the scheduler's configured agent, prompt, workspace, and weight policy,
+  linked to its canonical source rather than copied into Console-owned state;
+- bounded operator controls for the supported AutoDev workflows, including
+  dispatching an allowlisted workflow and managing its supported schedule/run
+  controls;
+- run details and links back to GitHub for evidence that is not available in
+  the Console.
+
+GitHub Actions workflow files remain authoritative for workflow definitions and
+cron triggers; `config/workspaces.json` owns workspace identity, enablement,
+and scope; scheduler weights remain in the scheduler policy. The Console must
+not create a second schedule/configuration authority. Run history and workflow
+state come from GitHub's observed Actions API state; absence of credentials or
+API evidence stays unavailable, not a synthetic idle/healthy state. Keep GitHub
+credentials server-side, route mutations through the authenticated Control API,
+and restrict dispatch/cancel/rerun/schedule operations to explicit allowlists
+and configured workspace scope. Never expose raw credentials or arbitrary
+workflow IDs/inputs to the browser.
+
 ### Usage
 
 Keep a single **Usage** dashboard; do not add a redundant Analytics page.
@@ -521,6 +547,25 @@ For a failed OpenAI attempt followed by successful Anthropic fallback, count **o
 - Keep IDs, raw paths, URLs, prompts/responses, credentials, raw tool arguments/results, and free-form errors out of metric dimensions.
 - Keep metric dimensions bounded and stable.
 - Attach provider/model/role/workspace context at the producer that actually knows it. Do not infer missing attribution downstream merely to satisfy a dashboard.
+
+### Context compactions
+
+Instrument context compactions as an OpenTelemetry counter (for example,
+`autodev.context.compactions`, unit `{compaction}`), incremented once for each
+compaction that the source actually performed or explicitly reported. Record
+the signal at the producer/provider boundary that can establish that event;
+do not infer a compaction from token counts, context-window pressure, a long
+prompt, truncation, or a successful request. Correlate it with the logical
+request and bounded workspace/provider/model/agent dimensions only when those
+values are known at that source. A retry or fallback must not duplicate a
+single compaction event.
+
+Context-compaction telemetry must not contain prompt/context contents, raw
+paths, request/session IDs as metric dimensions, or other high-cardinality or
+sensitive values. Additional values such as compacted/retained token counts or
+duration are allowed only when the source reports the actual measurement.
+Unsupported or unobserved compaction signals remain **not observed/unavailable**,
+not zero.
 
 ### MCP
 
@@ -672,6 +717,14 @@ The current verified Usage board contains seven router widgets plus four MCP wid
 | MCP calls by tool              | top bounded tool-name groups                               |
 
 Provider does not filter the logical-request count because a single logical route may touch multiple providers. Provider filters apply to attempt-level widgets.
+
+The current verified widget set above does not yet include context compactions.
+The target Usage board adds a context-compaction count/time series and bounded
+breakdowns by workspace, provider, requested model, and agent/role where the
+source reports those dimensions. A per-request rate is valid only when both the
+compaction counter and logical-request denominator are supported for the same
+scope and time range; absent instrumentation remains unavailable rather than
+rendering as zero.
 
 The pinned ClickHouse adapter maps standard `service.name` queries to ClickHouse's dedicated `ServiceName` projection. Structured trace queries bind time, keys, and values using query parameters; unsupported signal/variable combinations fail closed.
 
@@ -1149,7 +1202,7 @@ Use these projects as **interaction/architecture references**, not as embedded a
 | **OpenLIT**          | telemetry/storage/query foundation plus retained Memory, Evaluations, Usage, and useful Prompt/Agent UI patterns | Backend foundation is present, but the retained product features are not yet wired into the new Console and unwanted product modules remain | Reuse/query retained infrastructure; integrate Memory/Evaluations/Usage/Prompt behavior; subtract accounts/tenancy/Rule Engine/OpenGround/GPU/discovery UX                                          |
 | **LiteLLM**          | provider/model/routing/MCP control patterns                                                                      | AutoDev currently has only limited provider-role mutation and basic provider/model views                                                    | Add provider/model availability, priority, fallback order, concurrency, limits, cooldown/circuit health, effective routing, and usage/health detail under Agents/resource detail views              |
 | **LangWatch**        | unified control + observability resource UX                                                                      | Console list pages largely separate configuration from runtime evidence                                                                     | Compose configuration, actual health/state, requests/tokens/cost/failures/latency, and recent traces on the same Agent/provider/MCP/skill/workspace pages                                           |
-| **MCPJam Inspector** | MCP inspection/debugging                                                                                         | AutoDev MCP UI is mainly server + role exposure                                                                                             | Add connection/probe state, Tools, Resources, Prompts, schemas, read/preview operations, diagnostics, activity, authorization/config context, and error/log views                                   |
+| **MCPJam Inspector** | MCP inspection/debugging                                                                                         | Implemented in Console McpDetailView (§14 sub-panels)                                                        | Canonical RuleSync projection, transport configuration, target overrides, role exposure, and explicit unobserved probe/tool/resource/prompt/activity/error diagnostic sub-panels active |
 | **Unleash**          | scoped capability enablement                                                                                     | Skills/MCP capability scope is mostly display-only and often falls back to broad defaults                                                   | Add explicit enabled state, agent-role/workspace targeting, constraints, effective state, and clear configured/eligible/observed distinctions                                                       |
 | **Argo CD**          | desired/live state and convergence                                                                               | AutoDev has convergence types but not a robust reconciliation/diff model                                                                    | Add desired vs actual, generations, diff, health, pending/applying/error, last apply/observation, and operation history across mutable resources                                                    |
 | **Backstage**        | lightweight modular frontend composition                                                                         | `ConsoleApp` still centralizes feature switching                                                                                            | Add a small typed feature/route registry so each Console feature contributes route/nav/component/data requirements without creating separate packages or adopting Backstage's full plugin framework |

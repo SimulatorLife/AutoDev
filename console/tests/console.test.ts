@@ -698,6 +698,62 @@ test("McpDetailView distinguishes an unavailable tool source from an empty allow
   assert.match(markup, /Not observed/);
 });
 
+test("McpDetailView renders full §14 diagnostic sub-panels with configuration and unobserved runtime state", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools: [
+        {
+          name: "lsp_goto_definition",
+          source: "mcp",
+          server: "lsp",
+          exposedRoles: ["orchestrator"]
+        }
+      ],
+      server: {
+        name: "lsp",
+        enabled: true,
+        transport: "stdio",
+        command: "bash",
+        args: ["-lc", "exec run-lsp.sh"],
+        cwd: "/Users/test/workspace",
+        envKeys: ["LSP_SERVER_PATH", "LSP_TIMEOUT"],
+        defaultToolsApprovalMode: "approve",
+        targetOverrides: [
+          {
+            target: "codexcli",
+            enabled: true,
+            defaultToolsApprovalMode: "approve",
+            enabledTools: ["lsp_goto_definition"]
+          }
+        ],
+        declared: true,
+        roles: ["orchestrator"]
+      }
+    })
+  );
+  assert.match(markup, /data-section="mcp-configuration"/);
+  assert.match(markup, /data-section="mcp-connection-health"/);
+  assert.match(markup, /data-section="mcp-role-access"/);
+  assert.match(markup, /data-section="mcp-tools"/);
+  assert.match(markup, /data-section="mcp-resources"/);
+  assert.match(markup, /data-section="mcp-prompts"/);
+  assert.match(markup, /data-section="mcp-activity"/);
+  assert.match(markup, /data-section="mcp-errors-logs"/);
+  assert.match(markup, /Server configuration/);
+  assert.match(markup, /exec run-lsp\.sh/);
+  assert.match(markup, /\/Users\/test\/workspace/);
+  assert.match(markup, /LSP_SERVER_PATH, LSP_TIMEOUT/);
+  assert.match(markup, /mode: approve/);
+  assert.match(markup, /tools: lsp_goto_definition/);
+  assert.match(markup, /Connection &amp; Health/);
+  assert.match(markup, /Probe status: Not observed/);
+  assert.match(markup, /Resources inventory: Not observed/);
+  assert.match(markup, /Prompts inventory: Not observed/);
+  assert.match(markup, /Activity: Not observed/);
+  assert.match(markup, /Error logs: Not observed/);
+});
+
 test("McpsView distinguishes invalid canonical configuration from an empty list", () => {
   const markup = renderToStaticMarkup(
     React.createElement(McpsView, { servers: [], sourceValidity: false })

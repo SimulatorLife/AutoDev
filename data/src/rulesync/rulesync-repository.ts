@@ -81,6 +81,12 @@ type MutableMcpServer = {
   enabled: boolean | null;
   transport: McpServerTransport;
   targetOverrides: McpTargetOverride[];
+  command?: string;
+  args?: readonly string[];
+  url?: string;
+  envKeys?: readonly string[];
+  cwd?: string;
+  defaultToolsApprovalMode?: string;
 };
 
 function isMcpConfig(value: unknown): value is Record<string, unknown> {
@@ -96,10 +102,33 @@ function parseBaseMcpServers(
   const servers = new Map<string, MutableMcpServer>();
   for (const [name, config] of Object.entries(declarations)) {
     if (!name.trim() || !isMcpConfig(config)) return null;
+    const command =
+      typeof config.command === "string" ? config.command : undefined;
+    const args =
+      Array.isArray(config.args) &&
+      config.args.every((arg) => typeof arg === "string")
+        ? (config.args as string[])
+        : undefined;
+    const url = typeof config.url === "string" ? config.url : undefined;
+    const envKeys = isRecord(config.env)
+      ? Object.keys(config.env).sort(COLLATOR.compare)
+      : undefined;
+    const cwd = typeof config.cwd === "string" ? config.cwd : undefined;
+    const defaultToolsApprovalMode =
+      typeof config.default_tools_approval_mode === "string"
+        ? config.default_tools_approval_mode
+        : undefined;
+
     servers.set(name, {
       enabled: config.disabled !== true,
       transport: mcpTransport(config),
-      targetOverrides: []
+      targetOverrides: [],
+      ...(command ? { command } : {}),
+      ...(args ? { args } : {}),
+      ...(url ? { url } : {}),
+      ...(envKeys ? { envKeys } : {}),
+      ...(cwd ? { cwd } : {}),
+      ...(defaultToolsApprovalMode ? { defaultToolsApprovalMode } : {})
     });
   }
   return servers;
@@ -137,7 +166,22 @@ function applyMcpTargetOverrides(
         };
         servers.set(name, server);
       }
-      server.targetOverrides.push({ target, enabled });
+      const defaultToolsApprovalMode =
+        config && typeof config.default_tools_approval_mode === "string"
+          ? config.default_tools_approval_mode
+          : undefined;
+      const enabledTools =
+        config &&
+        Array.isArray(config.enabled_tools) &&
+        config.enabled_tools.every((tool) => typeof tool === "string")
+          ? (config.enabled_tools as string[])
+          : undefined;
+      server.targetOverrides.push({
+        target,
+        enabled,
+        ...(defaultToolsApprovalMode ? { defaultToolsApprovalMode } : {}),
+        ...(enabledTools ? { enabledTools } : {})
+      });
     }
   }
   return true;
@@ -152,7 +196,15 @@ function projectMcpDefinitions(
     transport: definition.transport,
     targetOverrides: definition.targetOverrides.sort((left, right) =>
       COLLATOR.compare(left.target, right.target)
-    )
+    ),
+    ...(definition.command ? { command: definition.command } : {}),
+    ...(definition.args ? { args: definition.args } : {}),
+    ...(definition.url ? { url: definition.url } : {}),
+    ...(definition.envKeys ? { envKeys: definition.envKeys } : {}),
+    ...(definition.cwd ? { cwd: definition.cwd } : {}),
+    ...(definition.defaultToolsApprovalMode
+      ? { defaultToolsApprovalMode: definition.defaultToolsApprovalMode }
+      : {})
   })).sort((left, right) => COLLATOR.compare(left.name, right.name));
 }
 
