@@ -537,13 +537,15 @@ A failed OpenAI attempt followed by a successful Anthropic fallback is one logic
 
 ### Context compactions
 
-Context-compaction telemetry is a target requirement.
+Context-compaction telemetry is a target requirement for Usage and any future per-resource aggregate view.
 
-Emit a bounded source-owned counter such as autodev.context.compactions only when the producer actually performs or explicitly reports a compaction. Do not infer compaction from token counts, context pressure, truncation, long prompts, or request success.
+Emit a bounded source-owned counter such as `autodev.context.compactions`, unit `{compaction}`, only when the producer actually performs or explicitly reports a compaction. Record it at the producer/provider boundary that can establish the event. Do not infer compaction from token counts, context pressure, truncation, long prompts, or request success.
 
-A retry/fallback must not duplicate one compaction event. Prompt/context contents, request/session IDs, raw paths, and high-cardinality identifiers never become metric dimensions. Optional retained-token/duration values are valid only when actually measured.
+Correlate the event with the logical request and bounded workspace/provider/requested-model/agent dimensions **only when the owning source actually knows those values**. A retry/fallback must not duplicate one compaction event.
 
-Unsupported/unobserved signals render unavailable, not zero.
+Prompt/context contents, request/session IDs, raw paths, and other high-cardinality or sensitive values never become metric dimensions. Optional compacted/retained token counts or duration are valid only when the source reports the actual measurement.
+
+Target Usage may show count/time-series and bounded breakdowns by workspace, provider, requested model, and agent/role where those dimensions are source-confirmed. A per-request compaction rate is valid only when the compaction numerator and logical-request denominator are defined for the **same scope and time range**. Unsupported/unobserved signals remain unavailable, never zero.
 
 ### MCP
 
