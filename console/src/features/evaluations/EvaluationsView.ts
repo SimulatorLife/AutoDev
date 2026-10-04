@@ -1,4 +1,11 @@
-import type { EvaluationResult } from "@simulatorlife/autodev-core";
+import {
+  type ControlApiEvaluationDefinitionRecord,
+  type ControlApiEvaluationResultResponse,
+  type ControlApiEvaluationsResponse,
+  countEvaluationOutcomes,
+  evaluationPassRate,
+  type EvaluationRunSummary
+} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
@@ -7,123 +14,424 @@ import {
   type ColumnDef,
   DataTable
 } from "../../components/tables/DataTable.ts";
+import { EvaluationResultPanel } from "./EvaluationResultPanel.ts";
+import { EvaluationResultsTable } from "./EvaluationResultsTable.ts";
+import {
+  formatRate,
+  InlineAlert,
+  NOT_OBSERVED,
+  resultHref,
+  RunStatusBadge,
+  SectionHeading
+} from "./presentation.ts";
 
 export interface EvaluationsViewProps {
-  readonly evaluations?: readonly EvaluationResult[] | undefined;
+  readonly data: ControlApiEvaluationsResponse;
+  readonly notice?: string | null;
+  readonly selectedResult?: ControlApiEvaluationResultResponse | null;
+  readonly resultError?: {
+    readonly code: string;
+    readonly message: string;
+  } | null;
 }
 
-export function EvaluationsView({
-  evaluations = []
-}: EvaluationsViewProps): React.JSX.Element {
-  const total = evaluations.length;
-  const passed = evaluations.filter((e) => e.passed).length;
-  const passRate =
-    total > 0 ? `${Math.round((passed / total) * 100)}%` : "Not observed";
+const EVALUATIONS_PATH = "/evaluations";
 
-  const columns: ColumnDef<EvaluationResult>[] = [
+const FILTER_FIELDS = [
+  { key: "agent", label: "Agent role" },
+  { key: "model", label: "Requested model" },
+  { key: "prompt", label: "Prompt" }
+] as const;
+
+function filterParams(
+  filter: ControlApiEvaluationsResponse["filter"]
+): Record<string, string | undefined> {
+  return {
+    definition: filter.definition,
+    run: filter.run,
+    agent: filter.agent,
+    model: filter.model,
+    prompt: filter.prompt
+  };
+}
+
+function hrefWith(params: Record<string, string | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value) search.set(key, value);
+  }
+  const query = search.toString();
+  return query ? `${EVALUATIONS_PATH}?${query}` : EVALUATIONS_PATH;
+}
+
+function definitionColumns(): ColumnDef<ControlApiEvaluationDefinitionRecord>[] {
+  return [
     {
-      id: "agentRole",
-      header: "Target Role",
-      cell: (ev) =>
+      id: "name",
+      header: "Definition",
+      cell: ({ definition }) =>
         React.createElement(
-          "span",
-          { className: "font-semibold text-slate-100 font-mono" },
-          ev.agentRole
-        )
-    },
-    {
-      id: "model",
-      header: "Model",
-      cell: (ev) =>
-        React.createElement(
-          "span",
-          { className: "font-mono text-xs text-slate-300" },
-          ev.model
-        )
-    },
-    {
-      id: "metrics",
-      header: "Metrics",
-      cell: (ev) =>
-        React.createElement(
-          "div",
-          { className: "flex gap-2" },
-          ev.metrics.map((m) =>
-            React.createElement(
-              "span",
-              {
-                key: m.name,
-                className: `text-xs px-2 py-0.5 rounded font-mono border ${
-                  m.pass
-                    ? "bg-emerald-950/60 text-emerald-300 border-emerald-800"
-                    : "bg-rose-950/60 text-rose-300 border-rose-800"
-                }`
-              },
-              `${m.name}: ${m.value}`
-            )
+          "a",
+          {
+            href: `/evaluations/${encodeURIComponent(definition.id)}`,
+            className: "flex flex-col hover:underline"
+          },
+          React.createElement(
+            "span",
+            { className: "font-semibold text-slate-100" },
+            definition.name
+          ),
+          React.createElement(
+            "span",
+            { className: "font-mono text-xs text-slate-400" },
+            definition.id
           )
         )
     },
     {
-      id: "passed",
-      header: "Outcome",
-      cell: (ev) =>
-        React.createElement(StatusBadge, {
-          status: ev.passed ? "valid" : "invalid",
-          label: ev.passed ? "Passed" : "Failed"
-        })
-    },
-    {
-      id: "timestamp",
-      header: "Run Time",
-      cell: (ev) =>
+      id: "state",
+      header: "State",
+      cell: ({ definition, validation }) =>
         React.createElement(
           "span",
-          { className: "text-xs text-slate-400" },
-          ev.timestamp
+          { className: "flex gap-2" },
+          React.createElement(StatusBadge, {
+            status: definition.enabled ? "configured" : "not-observed",
+            label: definition.enabled ? "Enabled" : "Disabled"
+          }),
+          React.createElement(StatusBadge, {
+            status: validation.runnable ? "valid" : "invalid",
+            label: validation.runnable ? "Runnable" : "Unresolved"
+          })
         )
+    },
+    {
+      id: "targets",
+      header: "Targets",
+      cell: ({ definition }) =>
+        React.createElement(
+          "span",
+          { className: "font-mono text-xs text-slate-300" },
+          `${definition.targets.length} · ${definition.cases.length} cases · ${definition.criteria.length} criteria`
+        )
+    },
+    {
+      id: "judge",
+      header: "Judge",
+      cell: ({ definition }) =>
+        React.createElement(
+          "span",
+          { className: "font-mono text-xs text-slate-300" },
+          definition.judge.model
+        )
+    },
+    {
+      id: "latest",
+      header: "Latest run",
+      cell: ({ latestRun }) =>
+        latestRun
+          ? React.createElement(
+              "span",
+              { className: "flex items-center gap-2" },
+              React.createElement(RunStatusBadge, { status: latestRun.status }),
+              React.createElement(
+                "span",
+                { className: "text-xs text-slate-300" },
+                formatRate(latestRun.passRate)
+              )
+            )
+          : React.createElement(
+              "span",
+              { className: "text-xs text-slate-500" },
+              NOT_OBSERVED
+            )
     }
   ];
+}
+
+function runColumns(): ColumnDef<EvaluationRunSummary>[] {
+  return [
+    {
+      id: "started",
+      header: "Started",
+      cell: (run) =>
+        React.createElement(
+          "a",
+          {
+            href: `/evaluations/${encodeURIComponent(run.definitionId)}?run=${encodeURIComponent(run.runId)}`,
+            className: "font-mono text-xs text-emerald-400 hover:underline"
+          },
+          run.startedAt ?? run.lastResultAt ?? run.runId
+        )
+    },
+    {
+      id: "definition",
+      header: "Definition",
+      cell: (run) =>
+        React.createElement(
+          "span",
+          { className: "font-mono text-xs text-slate-200" },
+          run.definitionId
+        )
+    },
+    {
+      id: "status",
+      header: "Status",
+      cell: (run) => React.createElement(RunStatusBadge, { status: run.status })
+    },
+    {
+      id: "progress",
+      header: "Results",
+      cell: (run) => `${run.observedResults} / ${run.expectedResults ?? "?"}`
+    },
+    {
+      id: "outcomes",
+      header: "Pass / fail / error",
+      cell: (run) => `${run.passed} / ${run.failed} / ${run.errored}`
+    },
+    {
+      id: "rate",
+      header: "Pass rate",
+      cell: (run) => formatRate(run.passRate)
+    }
+  ];
+}
+
+function filterForm(data: ControlApiEvaluationsResponse): React.JSX.Element {
+  return React.createElement(
+    "form",
+    {
+      method: "get",
+      action: EVALUATIONS_PATH,
+      className: "flex flex-wrap items-end gap-3 mb-3",
+      "data-evaluation-filters": "true"
+    },
+    React.createElement(
+      "label",
+      { className: "flex flex-col gap-1 text-xs text-slate-400" },
+      "Definition",
+      React.createElement(
+        "select",
+        {
+          name: "definition",
+          defaultValue: data.filter.definition ?? "",
+          className:
+            "rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        },
+        React.createElement("option", { value: "" }, "All"),
+        data.definitions.map(({ definition }) =>
+          React.createElement(
+            "option",
+            { key: definition.id, value: definition.id },
+            definition.id
+          )
+        )
+      )
+    ),
+    FILTER_FIELDS.map((field) =>
+      React.createElement(
+        "label",
+        {
+          key: field.key,
+          className: "flex flex-col gap-1 text-xs text-slate-400"
+        },
+        field.label,
+        React.createElement("input", {
+          name: field.key,
+          defaultValue: data.filter[field.key] ?? "",
+          placeholder: "All",
+          className:
+            "rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        })
+      )
+    ),
+    React.createElement(
+      "button",
+      {
+        type: "submit",
+        className:
+          "rounded border border-slate-600 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+      },
+      "Apply"
+    ),
+    Object.values(data.filter).some(Boolean)
+      ? React.createElement(
+          "a",
+          {
+            href: EVALUATIONS_PATH,
+            className: "text-xs text-slate-400 hover:underline py-2"
+          },
+          "Clear filters"
+        )
+      : null
+  );
+}
+
+export function EvaluationsView({
+  data,
+  notice = null,
+  selectedResult = null,
+  resultError = null
+}: EvaluationsViewProps): React.JSX.Element {
+  const counts = countEvaluationOutcomes(data.results);
+  const passRate =
+    data.resultsStatus === "available" ? evaluationPassRate(counts) : null;
+  const runnable = data.definitions.filter(
+    (entry) => entry.validation.runnable
+  ).length;
+  const params = filterParams(data.filter);
 
   return React.createElement(
     "div",
     {
       className: "flex flex-col gap-6",
       "data-feature": "evaluations",
-      "data-evaluation-pass-rate-observed": total > 0 ? "true" : "false"
+      "data-results-status": data.resultsStatus,
+      "data-evaluation-pass-rate-observed": passRate === null ? "false" : "true"
     },
+    notice
+      ? React.createElement(InlineAlert, { tone: "info", title: notice })
+      : null,
     React.createElement(
       "div",
-      { className: "grid grid-cols-1 md:grid-cols-3 gap-4" },
+      { className: "grid grid-cols-1 md:grid-cols-4 gap-4" },
       React.createElement(StatCard, {
-        title: "Total Evaluations",
-        value: total
+        title: "Definitions",
+        value:
+          data.catalogStatus === "valid"
+            ? data.definitions.length
+            : data.catalogStatus === "invalid"
+              ? "Invalid"
+              : "Unavailable",
+        subtitle: data.definitionsSource
       }),
-      React.createElement(StatCard, { title: "Passed", value: passed }),
       React.createElement(StatCard, {
-        title: "Pass Rate",
-        value: passRate,
-        subtitle: "Direct resource evaluation"
+        title: "Runnable",
+        value: data.catalogStatus === "valid" ? runnable : NOT_OBSERVED,
+        subtitle: "Targets, prompts, and judge resolve"
+      }),
+      React.createElement(StatCard, {
+        title: "Results shown",
+        value:
+          data.resultsStatus === "available"
+            ? data.results.length
+            : "Unavailable",
+        subtitle: `${counts.errored} errored · ${counts.unknown} unknown`
+      }),
+      React.createElement(StatCard, {
+        title: "Pass rate",
+        value: formatRate(passRate),
+        subtitle: "Passed / judged results shown"
       })
     ),
     React.createElement(
-      "div",
+      "section",
       null,
       React.createElement(
-        "h2",
-        {
-          className:
-            "text-sm font-semibold uppercase tracking-wider text-slate-400 mb-3"
-        },
-        "Evaluation History"
+        "div",
+        { className: "flex items-center justify-between" },
+        React.createElement(SectionHeading, null, "Definitions"),
+        React.createElement(
+          "a",
+          {
+            href: "/evaluations/new",
+            className:
+              "mb-3 rounded border border-emerald-700 bg-emerald-900/40 px-3 py-1.5 text-xs font-medium text-emerald-200 hover:bg-emerald-900/70 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          },
+          "New definition"
+        )
       ),
+      data.catalogStatus === "valid"
+        ? DataTable({
+            data: data.definitions,
+            columns: definitionColumns(),
+            keyExtractor: (entry: ControlApiEvaluationDefinitionRecord) =>
+              entry.definition.id,
+            emptyMessage:
+              "No evaluation definitions are configured in config/evaluations.json."
+          })
+        : React.createElement(
+            InlineAlert,
+            {
+              tone: "error",
+              title: `config/evaluations.json is ${data.catalogStatus}`
+            },
+            React.createElement(
+              "ul",
+              { className: "list-disc pl-5 text-xs font-mono" },
+              data.catalogErrors.map((error) =>
+                React.createElement("li", { key: error }, error)
+              )
+            )
+          )
+    ),
+    data.resultsStatus === "unavailable"
+      ? React.createElement(
+          InlineAlert,
+          { tone: "warning", title: "Evaluation results are unavailable" },
+          React.createElement(
+            "p",
+            { className: "text-xs font-mono" },
+            data.resultsMessage ??
+              "The OpenLIT evaluation store did not answer."
+          ),
+          React.createElement(
+            "p",
+            { className: "text-xs" },
+            "Runs and results stay not observed until the store answers; no history is inferred."
+          )
+        )
+      : null,
+    React.createElement(
+      "section",
+      null,
+      React.createElement(SectionHeading, null, "Recent runs"),
       DataTable({
-        data: evaluations,
-        columns,
-        keyExtractor: (e: EvaluationResult) => e.id,
+        data: data.runs,
+        columns: runColumns(),
+        keyExtractor: (run: EvaluationRunSummary) => run.runId,
         emptyMessage:
-          "No evaluations run yet. Evaluations run directly against AutoDev agents and prompt traces."
+          data.resultsStatus === "available"
+            ? "No evaluation runs observed."
+            : "Stored runs are unavailable; only runs started by this Runtime are listed."
       })
+    ),
+    React.createElement(
+      "section",
+      null,
+      React.createElement(SectionHeading, null, "Result history"),
+      filterForm(data),
+      resultError
+        ? React.createElement(
+            InlineAlert,
+            { tone: "warning", title: "Result detail could not be loaded" },
+            React.createElement(
+              "span",
+              { className: "text-xs font-mono" },
+              `${resultError.code}: ${resultError.message}`
+            )
+          )
+        : null,
+      selectedResult
+        ? React.createElement(
+            "div",
+            { className: "mb-4" },
+            React.createElement(EvaluationResultPanel, {
+              detail: selectedResult,
+              closeHref: hrefWith(params)
+            })
+          )
+        : null,
+      data.resultsStatus === "available"
+        ? React.createElement(EvaluationResultsTable, {
+            results: data.results,
+            resultHref: (result) =>
+              resultHref(EVALUATIONS_PATH, params, result),
+            emptyMessage: Object.values(data.filter).some(Boolean)
+              ? "No evaluation results match these filters."
+              : "No evaluation results have been recorded."
+          })
+        : null
     )
   );
 }

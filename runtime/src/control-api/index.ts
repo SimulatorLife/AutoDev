@@ -16,7 +16,6 @@ import {
 } from "@simulatorlife/autodev-core";
 import {
   ConfigRepository,
-  EvaluationRepository,
   GithubActionsAdapter,
   GithubActionsApiError,
   type GithubActionsRuntimeSnapshot,
@@ -43,6 +42,7 @@ import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "../router/proxy.ts";
 import { getDefaultExecutionContract } from "../router/subagents.ts";
 import { routerTelemetryTracer } from "../router/telemetry.ts";
 import { readControlApiJsonObject } from "./body.ts";
+import { handleEvaluationsControlApiRequest } from "./evaluations.ts";
 import {
   GITHUB_WORKFLOW_MUTATION_POLICY,
   handleGithubWorkflowMutation
@@ -944,18 +944,6 @@ export async function githubWorkflowsView(
   }
 }
 
-async function evaluationsView(): Promise<Record<string, unknown>> {
-  const repository = new EvaluationRepository();
-  const evaluations = await repository.listEvaluations();
-  return {
-    schema: "autodev-control-evaluations-v1",
-    source: "openlit_evaluation",
-    readOnly: true,
-    totalEvaluations: evaluations.length,
-    evaluations
-  };
-}
-
 function agentsView(
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> {
@@ -1480,7 +1468,6 @@ const READ_ONLY_COLLECTIONS: ReadonlyMap<
   [CONTROL_API_PATHS.workspaces, () => workspacesView()],
   [CONTROL_API_PATHS.routing, () => routingView(Date.now())],
   [CONTROL_API_PATHS.runtime, () => runtimeView(Date.now())],
-  [CONTROL_API_PATHS.evaluations, () => evaluationsView()],
   [
     CONTROL_API_PATHS.github,
     (actor) => githubWorkflowsView(DEFAULT_REPO_ROOT, { actorRole: actor.role })
@@ -1732,6 +1719,28 @@ export async function handleControlApiRequest(
           ...(event.reason ? { reason: event.reason } : {})
         })
     );
+    return true;
+  }
+  if (
+    await handleEvaluationsControlApiRequest(
+      request,
+      response,
+      pathname,
+      actor,
+      (event) =>
+        auditMutation({
+          actor: actor.actor,
+          actorVerified: true,
+          role: actor.role,
+          action: event.action,
+          resource: event.resource,
+          outcome: event.outcome,
+          changes: event.changes,
+          ...(event.reason ? { reason: event.reason } : {})
+        }),
+      DEFAULT_REPO_ROOT
+    )
+  ) {
     return true;
   }
   if (await githubMutationRoute(request, response, actor, method, pathname)) {

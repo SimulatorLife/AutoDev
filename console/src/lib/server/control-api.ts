@@ -20,13 +20,19 @@ import { readFileSync } from "node:fs";
 import nodePath from "node:path";
 
 import {
+  CONTROL_API_EVALUATION_DETAIL_SCHEMA,
+  CONTROL_API_EVALUATION_RESULT_SCHEMA,
+  CONTROL_API_EVALUATIONS_SCHEMA,
   type ControlApiAgentDetailResponse,
   type ControlApiAgentsResponse,
   type ControlApiError,
+  type ControlApiEvaluationDefinitionWriteResponse,
+  type ControlApiEvaluationDetailResponse,
+  type ControlApiEvaluationResultResponse,
+  type ControlApiEvaluationRunResponse,
   type ControlApiEvaluationsResponse,
-  type ControlApiGithubResponse,
   type ControlApiGithubMutationResponse,
-  type GithubWorkflowMutationRequest,
+  type ControlApiGithubResponse,
   type ControlApiHooksResponse,
   type ControlApiMcpsResponse,
   type ControlApiMemoryCohortsResponse,
@@ -46,6 +52,11 @@ import {
   type ControlApiSkillsResponse,
   type ControlApiToolsResponse,
   type ControlApiWorkspacesResponse,
+  type EvaluationDefinitionDeleteRequest,
+  type EvaluationDefinitionWriteRequest,
+  type EvaluationResultsFilter,
+  type EvaluationRunRequest,
+  type GithubWorkflowMutationRequest,
   LOCAL_CONTROL_API_ACTOR
 } from "@simulatorlife/autodev-core";
 
@@ -207,9 +218,11 @@ export async function fetchControlApi<T>(
 }
 
 /**
- * Issues an authenticated POST against the AutoDev Control API.
+ * Issues an authenticated JSON mutation (POST, PUT, or DELETE) against the
+ * AutoDev Control API with the same fixed credential/actor headers as reads.
  */
-export async function postControlApi<T>(
+export async function mutateControlApi<T>(
+  method: "POST" | "PUT" | "DELETE",
   path: string,
   payload: unknown,
   config: ControlApiConfig,
@@ -223,7 +236,7 @@ export async function postControlApi<T>(
   let response: Response;
   try {
     response = await fetchImpl(`${config.baseUrl}${path}`, {
-      method: "POST",
+      method,
       headers: {
         Authorization: `Bearer ${config.serviceToken}`,
         "X-AutoDev-Actor": LOCAL_CONTROL_API_ACTOR,
@@ -463,11 +476,10 @@ export function mutateGithubWorkflow(
     operation: payload.operation,
     workflow: payload.workflow,
     idempotencyKey: payload.idempotencyKey,
-    ...(payload.expectedState
-      ? { expectedState: payload.expectedState }
-      : {})
+    ...(payload.expectedState ? { expectedState: payload.expectedState } : {})
   };
-  return postControlApi<ControlApiGithubMutationResponse>(
+  return mutateControlApi<ControlApiGithubMutationResponse>(
+    "POST",
     CONTROL_API_PATHS.githubMutations,
     body,
     config,
@@ -497,12 +509,126 @@ export function fetchRuntime(
   );
 }
 
-export function fetchEvaluations(
+/**
+ * Fails closed when the Control API answers with another schema, which means
+ * the running Runtime predates the Console's evaluation contract.
+ */
+function requireSchema<T extends { readonly schema: string }>(
+  result: ControlApiResult<T>,
+  schema: T["schema"]
+): ControlApiResult<T> {
+  if (result.kind !== "ok" || result.data.schema === schema) return result;
+  return {
+    kind: "http-error",
+    status: 502,
+    code: "autodev_control_api_schema_mismatch",
+    message: `The AutoDev Runtime answered with schema "${String(result.data.schema)}" instead of "${schema}". Reinstall and restart the Runtime so it serves the current Control API.`
+  };
+}
+
+export async function fetchEvaluations(
+  filter: EvaluationResultsFilter,
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiEvaluationsResponse>> {
-  return fetchControlApi<ControlApiEvaluationsResponse>(
-    CONTROL_API_PATHS.evaluations,
+  const search = new URLSearchParams();
+  for (const key of [
+    "definition",
+    "run",
+    "agent",
+    "model",
+    "prompt"
+  ] as const) {
+    const value = filter[key];
+    if (value) search.set(key, value);
+  }
+  const query = search.toString();
+  return requireSchema(
+    await fetchControlApi<ControlApiEvaluationsResponse>(
+      query
+        ? `${CONTROL_API_PATHS.evaluations}?${query}`
+        : CONTROL_API_PATHS.evaluations,
+      config,
+      options
+    ),
+    CONTROL_API_EVALUATIONS_SCHEMA
+  );
+}
+
+export async function fetchEvaluationDetail(
+  id: string,
+  runId: string | null,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiEvaluationDetailResponse>> {
+  const path = `${CONTROL_API_PATHS.evaluations}/${encodeURIComponent(id)}${
+    runId ? `?${new URLSearchParams({ run: runId }).toString()}` : ""
+  }`;
+  return requireSchema(
+    await fetchControlApi<ControlApiEvaluationDetailResponse>(
+      path,
+      config,
+      options
+    ),
+    CONTROL_API_EVALUATION_DETAIL_SCHEMA
+  );
+}
+
+export async function fetchEvaluationResult(
+  resultId: string,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiEvaluationResultResponse>> {
+  return requireSchema(
+    await fetchControlApi<ControlApiEvaluationResultResponse>(
+      `${CONTROL_API_PATHS.evaluations}/results/${encodeURIComponent(resultId)}`,
+      config,
+      options
+    ),
+    CONTROL_API_EVALUATION_RESULT_SCHEMA
+  );
+}
+
+export function putEvaluationDefinition(
+  id: string,
+  body: EvaluationDefinitionWriteRequest,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiEvaluationDefinitionWriteResponse>> {
+  return mutateControlApi<ControlApiEvaluationDefinitionWriteResponse>(
+    "PUT",
+    `${CONTROL_API_PATHS.evaluations}/${encodeURIComponent(id)}`,
+    { definition: body.definition, expectedRevision: body.expectedRevision },
+    config,
+    options
+  );
+}
+
+export function deleteEvaluationDefinition(
+  id: string,
+  body: EvaluationDefinitionDeleteRequest,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiEvaluationDefinitionWriteResponse>> {
+  return mutateControlApi<ControlApiEvaluationDefinitionWriteResponse>(
+    "DELETE",
+    `${CONTROL_API_PATHS.evaluations}/${encodeURIComponent(id)}`,
+    { expectedRevision: body.expectedRevision },
+    config,
+    options
+  );
+}
+
+export function startEvaluationRun(
+  id: string,
+  body: EvaluationRunRequest,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiEvaluationRunResponse>> {
+  return mutateControlApi<ControlApiEvaluationRunResponse>(
+    "POST",
+    `${CONTROL_API_PATHS.evaluations}/${encodeURIComponent(id)}/runs`,
+    { idempotencyKey: body.idempotencyKey },
     config,
     options
   );
@@ -687,7 +813,8 @@ export function proposeMemoryRecord(
 ): Promise<ControlApiResult<{ readonly memory: unknown }>> {
   const search = new URLSearchParams({ workspaceId: payload.workspaceId });
   const path = `${CONTROL_API_PATHS.memoryRecords}?${search.toString()}`;
-  return postControlApi<{ readonly memory: unknown }>(
+  return mutateControlApi<{ readonly memory: unknown }>(
+    "POST",
     path,
     payload.proposal,
     config,
@@ -709,7 +836,8 @@ export function transitionMemoryRecord(
 ): Promise<ControlApiResult<{ readonly memory: unknown }>> {
   const search = new URLSearchParams({ workspaceId: payload.workspaceId });
   const path = `${CONTROL_API_PATHS.memoryRecords}/${encodeURIComponent(id)}/${action}?${search.toString()}`;
-  return postControlApi<{ readonly memory: unknown }>(
+  return mutateControlApi<{ readonly memory: unknown }>(
+    "POST",
     path,
     payload,
     config,
@@ -729,7 +857,8 @@ export function promoteMemoryProcedureToSkill(
 ): Promise<ControlApiResult<{ readonly skill: unknown }>> {
   const search = new URLSearchParams({ workspaceId: payload.workspaceId });
   const path = `${CONTROL_API_PATHS.memoryPromoteSkill}?${search.toString()}`;
-  return postControlApi<{ readonly skill: unknown }>(
+  return mutateControlApi<{ readonly skill: unknown }>(
+    "POST",
     path,
     payload,
     config,

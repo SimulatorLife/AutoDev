@@ -11,9 +11,13 @@ export type ControlApiJsonObjectResult =
 
 const MAX_CONTROL_BODY_BYTES = 65_536;
 
-/** Shared bounded JSON-object reader for Control API mutation routes. */
+/**
+ * Shared bounded JSON-object reader for Control API mutation routes. A route
+ * whose typed payload has a larger documented bound passes it explicitly.
+ */
 export async function readControlApiJsonObject(
-  request: IncomingMessage
+  request: IncomingMessage,
+  maxBytes: number = MAX_CONTROL_BODY_BYTES
 ): Promise<ControlApiJsonObjectResult> {
   const rawContentType = request.headers["content-type"];
   const contentType = Array.isArray(rawContentType)
@@ -40,12 +44,12 @@ export async function readControlApiJsonObject(
   for await (const chunk of request) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += bytes.length;
-    if (size > MAX_CONTROL_BODY_BYTES) {
+    if (size > maxBytes) {
       return {
         ok: false,
         status: 413,
         code: "autodev_control_api_payload_too_large",
-        message: "Control API body exceeds 64 KiB."
+        message: `Control API body exceeds ${Math.floor(maxBytes / 1024)} KiB.`
       };
     }
     chunks.push(bytes);

@@ -8,7 +8,7 @@
 >
 > **Focused Memory design:** [memory-target-state.md](memory-target-state.md) and [memory-injection-outcome-evaluation.md](memory-injection-outcome-evaluation.md).
 >
-> **Last reviewed:** 2026-10-04 (GitHub read-only Actions state/statistics path alignment).
+> **Last reviewed:** 2026-10-04 (Evaluations definitions/runs/comparisons/trace-linkage contract).
 
 ## 1. Canonical-document contract
 
@@ -429,7 +429,7 @@ The Console remains one application/package. A lightweight typed feature registr
 | **Permissions** | RuleSync + effective Runtime | canonical policy, role/tool/MCP matrices, target differences/validation |
 | **Tools** | composite effective catalog + OTel | native/MCP/plugin/app capabilities, exposure, availability, historical use/error; no duplicate authority |
 | **Usage** | OTel/OpenLIT | cross-workspace/provider/model/agent/skill/MCP requests, tokens, cost, latency, failures, traces |
-| **Evaluations** | evaluation definitions/storage + OTel | definitions, runs/results/history, targets, comparisons, trace linkage |
+| **Evaluations** | config/evaluations.json (definitions) + OpenLIT evaluation storage (results) + OTel (trace linkage) | definitions with explicit agent/model (+ prompt) targets, criteria, cases, and judge; operator-triggered runs through the router; runs/results/history; target and run-over-run comparisons; per-result trace linkage |
 | **Memory** | MemoryService/Data; OpenLIT-adapted connector capabilities | browse/search/detail/provenance/lifecycle/actions/effectiveness through AutoDev Console |
 | **Workspaces** | AutoDev configuration + OTel | repository catalog, enablement/scope, configuration/runtime health, aggregate usage |
 | **GitHub** | workflow YAML (definitions/cron) + config/workspaces.json (workspace identity/scope) + observed GitHub Actions API (runtime state/stats) | parsed workflow definitions + cron schedules, workspace-bound observed workflow state (active vs disabled), bounded recent run sample, bounded run statistics; allowlisted operator controls (dispatch/cancel/rerun/schedule) deferred |
@@ -497,6 +497,15 @@ Memory governance, telemetry, retrieval, evaluation, and provenance details are 
 ### Evaluations
 
 Retain useful evaluation definitions/results/history and trace linkage without Rule Engine or OpenGround prerequisites. Evaluations target explicit AutoDev resources/telemetry.
+
+- **Definitions** are typed AutoDev configuration in `config/evaluations.json` (`schema: autodev-evaluations-v1`); RuleSync does not model evaluations. Data's `EvaluationDefinitionRepository` owns the file: it reads fail-closed (`valid`/`invalid`/`unavailable`, one malformed definition invalidates the catalog rather than being dropped) and writes atomically with deterministic canonical ordering. Each definition carries a content `revision`; every write and delete is revision-checked. Definitions are bounded (50 definitions, 8 targets, 11 criteria, 20 cases, 4000-character case input/context, 128 KiB serialized) so writes stay within transport limits. The ids `new`, `results`, and `runs` are reserved for routes.
+- **Targets are explicit AutoDev resources.** An `agent` target routes through `autodev/<role>` with that role's canonical prompt (`agents/prompts/roles/<role>.md`) as instructions and no tools; a `model` target names a concrete catalog model (never an `autodev/` alias). Either may add a RuleSync command (`prompt`) whose body is applied as instructions. The judge is a router model id from the catalog. References resolve against the execution contract, the model catalog, and `.rulesync/commands`; definitions with unresolved references are shown with per-target `unknown_agent`/`unknown_model`/`unknown_prompt` status, cannot be saved, and cannot run.
+- **Criteria** use OpenLIT's evaluation types (hallucination, bias, toxicity, relevance, coherence, faithfulness, safety, instruction_following, completeness, conciseness, sensitivity) and OpenLIT's severity semantics: a judged score in [0, 1] where higher is worse, and a criterion fails when its score exceeds the definition's threshold.
+- **Runs are operator actions executed by the Runtime.** Each target × case executes sequentially through the router's `/v1/responses` endpoint, so routing, provider policy, credentials, and telemetry stay with the router and no second model authority exists. The judge receives the case input, optional ground-truth context, and response as untrusted data and must return exactly one well-formed entry per criterion; anything else records `judge_invalid_response`. Target or judge failures are stored as bounded error codes, never as passes. Results persist per case; a run is `completed` only when every expected result was stored, `incomplete` when results are missing and nothing is executing, `failed` when the Runtime could not store results, and `running` while executing. Starting a run is idempotent per idempotency key, and one run per definition may execute at a time.
+- **Results** live in the retained OpenLIT `openlit_evaluation` store, read through Data's `EvaluationRepository` with bound ClickHouse parameters only, bounded responses, timeouts, redacted diagnostics, and fail-closed handling of malformed rows. AutoDev rows record definition, revision, run, case, target, requested/response model, prompt, judge, thresholds, outcome, and trace/span ids. OpenLIT-originated rows are shown as unattributed history: their stored `yes` verdict means the issue was detected (a failure), and their `model` meta names the judge, never the evaluated subject. OpenLIT sampling-skip and manual-feedback rows are not evaluations and are excluded. A result without judged metrics is `unknown`, never passed; pass rate is passed / (passed + failed) and remains unavailable until a judged result exists. An unreachable store renders `unavailable`, never an empty history.
+- **Comparisons** show every target of a selected run side by side (outcome counts, pass rate, per-criterion mean score and failures) against the same target in the previous run, plus a case × target outcome matrix. Missing targets or cells remain not observed.
+- **Trace linkage**: each case executes inside an `autodev.evaluation.case` span whose W3C context the router continues, so the routed request and provider attempts share the result's trace. The result stores the span/trace ids; the result detail reads only categorical span fields (name, status, duration, provider, models, tokens) of that one trace from OpenLIT telemetry. A result without a recorded link, or whose spans were never exported, renders trace `not observed`. Case inputs, outputs, and judge explanations never become span attributes or metric dimensions.
+- **Console**: `/evaluations` lists definitions with reference validation and latest run, recent runs, and URL-filterable result history (definition/agent/model/prompt; Prompts links here with `?prompt=`); `/evaluations/{id}` is the canonical edit surface (definition editor, run/delete actions, runs, comparisons, case matrix, results, result/trace detail); `/evaluations/new` creates definitions. Every action posts to the same-origin `/api/evaluations` route with a short-lived server-HMAC form token; the browser never receives the Control API credential.
 
 ### GitHub
 
@@ -631,6 +640,8 @@ Use named typed operations only; no arbitrary command endpoint.
 
 For RuleSync-owned resources, mutations change canonical RuleSync input and execute validation/generation/apply. Runtime-owned resources mutate their typed owner. Tools is primarily a composite read model. Usage uses its dedicated fixed read-only telemetry path rather than becoming a mutation/control resource.
 
+`/control/evaluations` is a named typed resource family (collection and detail schemas `autodev-control-evaluations-v2` / `autodev-control-evaluation-v2`): `GET /control/evaluations` (bounded `definition`/`run`/`agent`/`model`/`prompt`/`limit` filters), `GET /control/evaluations/{id}` (optional `run`), `GET /control/evaluations/results/{resultId}` (result plus its trace spans), operator-only revision-checked `PUT`/`DELETE /control/evaluations/{id}`, and operator-only idempotent `POST /control/evaluations/{id}/runs`. Every mutation and denial is audited; unsupported methods return HTTP 405 and unknown paths HTTP 404.
+
 `/control/github` is a fixed read-only collection route that pairs parsed workflow definitions with observed Actions API runtime state/statistics (the schema is `autodev-control-github-v1`); it rejects non-`GET` methods with HTTP 405 and never exposes dispatch/cancel/rerun/schedule mutations. Tokens, repository coordinates outside the workspace registry, and arbitrary workflow inputs are enforced server-side; the browser never sees raw credentials or accepts arbitrary workflow identifiers.
 
 The browser uses same-origin TypeScript server routes/proxies. The private Control API listener remains separate from the model/OTLP router listener.
@@ -731,6 +742,15 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 - Workflows are capped at 100 with explicit partial status (`partial_result`) if more exist; run statistics are computed over a bounded recent-run sample (default 30 runs); `successRate` denominator is all sampled completed runs (in-progress excluded; non-success/missing conclusions in denominator; null when 0 completed runs in sample).
 - Dispatch, cancel, rerun, and schedule mutation controls remain explicitly unimplemented in both the Console resource and the Control API; tests must not relax this and must not introduce mutation routes.
 - Production-credential, remote-repository, and browser acceptance for the read-only state/statistics path remains unobserved; verification is strictly through the pinned Data, Runtime, and Console test suites against injected fetch adapters.
+
+### Evaluations
+
+- Definitions are read and written only through Data's `EvaluationDefinitionRepository` and the Control API; `config/evaluations.json` fails closed when invalid and every write/delete is revision-checked, operator-only, and audited.
+- Targets, prompts, and the judge resolve to explicit AutoDev resources before a definition can be saved or run.
+- Runs execute through the AutoDev router (no second credential/model authority), persist per case, record target/judge failures as bounded error codes, and report `completed` only when every expected result is stored.
+- Result reads use bound parameters only and render an unreachable or malformed store as `unavailable`; OpenLIT `yes` verdicts are failures, results without judged metrics are `unknown`, and pass rates stay unavailable without judged results.
+- Each AutoDev result links to the trace of its case span; missing links or unexported spans render `not observed`.
+- No Rule Engine, OpenGround, or OpenLIT evaluation-settings prerequisite is reintroduced.
 
 ### Fork/upgrades
 

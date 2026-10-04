@@ -523,3 +523,56 @@ test("canonical target records the remaining external-project adaptations", () =
   // Backstage supplies a lightweight typed feature/route registry idea.
   assert.match(target, /lightweight (?:typed )?feature(?:\/route)? registry/u);
 });
+
+test("Evaluations target contract matches the shipped definitions, routes, and runtime modules", () => {
+  const target = readFileSync(targetStatePath, "utf8");
+  const migration = readFileSync(migrationPath, "utf8");
+
+  // Definitions are typed AutoDev configuration owned by Data, edited through
+  // the Control API; results keep OpenLIT severity semantics.
+  assert.match(
+    target,
+    /Definitions\*\* are typed AutoDev configuration in `config\/evaluations\.json`/u
+  );
+  assert.match(target, /EvaluationDefinitionRepository/u);
+  assert.match(target, /stored `yes` verdict means the issue was detected/u);
+  assert.match(target, /`autodev\.evaluation\.case` span/u);
+  assert.match(target, /POST \/control\/evaluations\/\{id\}\/runs/u);
+  assert.match(migration, /\|\s*Evaluations\s*\|\s*\*\*[^*]+\*\*/u);
+  assert.doesNotMatch(migration, /Partial read integration/u);
+
+  const catalog = JSON.parse(
+    readFileSync(new URL("config/evaluations.json", repositoryRoot), "utf8")
+  ) as { schema?: unknown; definitions?: unknown };
+  assert.equal(catalog.schema, "autodev-evaluations-v1");
+  assert.ok(Array.isArray(catalog.definitions));
+
+  for (const route of [
+    "console/app/evaluations/page.tsx",
+    "console/app/evaluations/[id]/page.tsx",
+    "console/app/evaluations/new/page.tsx",
+    "console/app/api/evaluations/route.ts"
+  ]) {
+    assert.ok(
+      existsSync(new URL(route, repositoryRoot)),
+      `${route} must exist`
+    );
+  }
+
+  // The router runs materialized Runtime sources; every evaluation module it
+  // imports relatively must be materialized with it.
+  const materializer = readFileSync(
+    new URL("runtime/src/platform/install-materializer.ts", repositoryRoot),
+    "utf8"
+  );
+  for (const module of [
+    "runtime/src/control-api/evaluations.ts",
+    "runtime/src/evaluations/runner.ts",
+    "runtime/src/router/routed-responses.ts"
+  ]) {
+    assert.ok(
+      materializer.includes(`"${module}"`),
+      `${module} must be in RUNTIME_MODULES`
+    );
+  }
+});

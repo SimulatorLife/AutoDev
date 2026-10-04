@@ -1,4 +1,15 @@
-import type { EvaluationResult } from "../evaluations/types.ts";
+import type {
+  EvaluationCaseMatrix,
+  EvaluationCriterionType,
+  EvaluationDefinition,
+  EvaluationDefinitionCatalogStatus,
+  EvaluationDefinitionValidation,
+  EvaluationResult,
+  EvaluationResultsFilter,
+  EvaluationRunSummary,
+  EvaluationTargetComparison,
+  EvaluationTraceSpan
+} from "../evaluations/types.ts";
 import type {
   GithubActionsRunStats,
   GithubActionsRuntimeStatus,
@@ -262,12 +273,92 @@ export interface ControlApiRuntimeResponse {
   readonly inFlightRequestCount: number;
 }
 
+export const CONTROL_API_EVALUATIONS_SCHEMA = "autodev-control-evaluations-v2";
+export const CONTROL_API_EVALUATION_DETAIL_SCHEMA =
+  "autodev-control-evaluation-v2";
+export const CONTROL_API_EVALUATION_RESULT_SCHEMA =
+  "autodev-control-evaluation-result-v2";
+
+/** Availability of the OpenLIT evaluation result store for one read. */
+export type EvaluationResultsStatus = "available" | "unavailable";
+
+export interface ControlApiEvaluationDefinitionRecord {
+  readonly definition: EvaluationDefinition;
+  /** Content revision used for optimistic concurrency on writes. */
+  readonly revision: string;
+  readonly validation: EvaluationDefinitionValidation;
+  /** Latest stored or in-process run; null when none was observed. */
+  readonly latestRun: EvaluationRunSummary | null;
+}
+
 export interface ControlApiEvaluationsResponse {
-  readonly schema: "autodev-control-evaluations-v1";
-  readonly source: string;
-  readonly readOnly: boolean;
-  readonly totalEvaluations: number;
-  readonly evaluations: readonly EvaluationResult[];
+  readonly schema: typeof CONTROL_API_EVALUATIONS_SCHEMA;
+  readonly definitionsSource: "config/evaluations.json";
+  readonly catalogStatus: EvaluationDefinitionCatalogStatus;
+  readonly catalogErrors: readonly string[];
+  readonly definitions: readonly ControlApiEvaluationDefinitionRecord[];
+  readonly criterionTypes: readonly EvaluationCriterionType[];
+  readonly resultsSource: "openlit_evaluation";
+  readonly resultsStatus: EvaluationResultsStatus;
+  readonly resultsMessage: string | null;
+  readonly filter: EvaluationResultsFilter;
+  readonly results: readonly EvaluationResult[];
+  readonly runs: readonly EvaluationRunSummary[];
+}
+
+export interface ControlApiEvaluationDetailResponse {
+  readonly schema: typeof CONTROL_API_EVALUATION_DETAIL_SCHEMA;
+  readonly definition: EvaluationDefinition;
+  readonly revision: string;
+  readonly validation: EvaluationDefinitionValidation;
+  readonly resultsStatus: EvaluationResultsStatus;
+  readonly resultsMessage: string | null;
+  readonly runs: readonly EvaluationRunSummary[];
+  /** Run whose results, comparisons, and case matrix are returned. */
+  readonly selectedRunId: string | null;
+  readonly comparisons: readonly EvaluationTargetComparison[];
+  readonly caseMatrix: EvaluationCaseMatrix | null;
+  readonly results: readonly EvaluationResult[];
+}
+
+export interface ControlApiEvaluationResultResponse {
+  readonly schema: typeof CONTROL_API_EVALUATION_RESULT_SCHEMA;
+  readonly result: EvaluationResult;
+  /** `not_observed` when the result has no trace id or no exported spans. */
+  readonly traceStatus: "available" | "not_observed" | "unavailable";
+  readonly traceMessage: string | null;
+  readonly spans: readonly EvaluationTraceSpan[];
+}
+
+/** Body of `PUT /control/evaluations/{id}`. */
+export interface EvaluationDefinitionWriteRequest {
+  readonly definition: EvaluationDefinition;
+  /** Revision the operator edited; null when creating a new definition. */
+  readonly expectedRevision: string | null;
+}
+
+/** Body of `DELETE /control/evaluations/{id}`. */
+export interface EvaluationDefinitionDeleteRequest {
+  readonly expectedRevision: string;
+}
+
+export interface ControlApiEvaluationDefinitionWriteResponse {
+  readonly schema: "autodev-control-evaluation-definition-v1";
+  readonly result: "created" | "updated" | "deleted";
+  readonly definitionId: string;
+  /** New revision; null after a delete. */
+  readonly revision: string | null;
+}
+
+/** Body of `POST /control/evaluations/{id}/runs`. */
+export interface EvaluationRunRequest {
+  readonly idempotencyKey: string;
+}
+
+export interface ControlApiEvaluationRunResponse {
+  readonly schema: "autodev-control-evaluation-run-v1";
+  readonly result: "accepted" | "replayed";
+  readonly run: EvaluationRunSummary;
 }
 
 export interface ControlApiMemoryRecordsResponse {

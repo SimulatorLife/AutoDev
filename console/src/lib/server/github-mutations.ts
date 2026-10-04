@@ -12,9 +12,15 @@ import {
   mutateGithubWorkflow,
   readControlApiConfig
 } from "./control-api.ts";
+import {
+  isSameOriginRequest,
+  readBoundedRequestText,
+  seeOther
+} from "./request-guards.ts";
 
 const FORM_TOKEN_TTL_MS = 2 * 60 * 1000;
-const MAX_FORM_BODY_BYTES = 8_192;
+const MAX_FORM_BODY_BYTES = 8192;
+const FORM_CONTENT_TYPE = /^application\/x-www-form-urlencoded(?:\s*;|$)/iu;
 const FORM_WORKFLOW_POLICY = {
   "_scheduler.yml": { enableDisable: true, dispatch: true },
   "metrics-dashboard.yml": { enableDisable: true, dispatch: false },
@@ -39,7 +45,10 @@ export type GithubMutationForms = Readonly<
   Partial<
     Record<
       keyof typeof FORM_WORKFLOW_POLICY,
-      { readonly dispatch?: GithubMutationForm; readonly toggle?: GithubMutationForm }
+      {
+        readonly dispatch?: GithubMutationForm;
+        readonly toggle?: GithubMutationForm;
+      }
     >
   >
 >;
@@ -67,14 +76,10 @@ export function createGithubMutationFormToken(
   return `${payload}.${signature}`;
 }
 
-function isFormOperationAllowed(
-  operation: string,
-  workflow: string
-): boolean {
+function isFormOperationAllowed(operation: string, workflow: string): boolean {
   if (!Object.hasOwn(FORM_WORKFLOW_POLICY, workflow)) return false;
-  const policy = FORM_WORKFLOW_POLICY[
-    workflow as keyof typeof FORM_WORKFLOW_POLICY
-  ];
+  const policy =
+    FORM_WORKFLOW_POLICY[workflow as keyof typeof FORM_WORKFLOW_POLICY];
   return operation === "dispatch"
     ? policy.dispatch
     : operation === "enable" || operation === "disable"
@@ -162,20 +167,32 @@ export function createGithubMutationForms(
   > = {};
   for (const workflow of workflows) {
     if (!Object.hasOwn(FORM_WORKFLOW_POLICY, workflow.id)) continue;
-    const policy = FORM_WORKFLOW_POLICY[
-      workflow.id as keyof typeof FORM_WORKFLOW_POLICY
-    ];
-    const row: { dispatch?: GithubMutationForm; toggle?: GithubMutationForm } = {};
+    const policy =
+      FORM_WORKFLOW_POLICY[workflow.id as keyof typeof FORM_WORKFLOW_POLICY];
+    const row: { dispatch?: GithubMutationForm; toggle?: GithubMutationForm } =
+      {};
     if (
       workflow.id === "_scheduler.yml" &&
       policy.dispatch &&
       workflow.events.includes("workflow_dispatch") &&
       workflow.actionsState === "active"
     ) {
-      row.dispatch = createForm("dispatch", workflow.id, hmacSecret, undefined, now);
+      row.dispatch = createForm(
+        "dispatch",
+        workflow.id,
+        hmacSecret,
+        undefined,
+        now
+      );
     }
     if (policy.enableDisable && workflow.actionsState === "active") {
-      row.toggle = createForm("disable", workflow.id, hmacSecret, "active", now);
+      row.toggle = createForm(
+        "disable",
+        workflow.id,
+        hmacSecret,
+        "active",
+        now
+      );
     } else if (
       policy.enableDisable &&
       (workflow.actionsState === "disabled_manually" ||
@@ -196,51 +213,12 @@ export function createGithubMutationForms(
   return forms;
 }
 
-async function readBoundedFormBody(request: Request): Promise<string | null> {
-  const contentLength = Number(request.headers.get("content-length"));
-  if (Number.isFinite(contentLength) && contentLength > MAX_FORM_BODY_BYTES) {
-    return null;
-  }
-  const reader = request.body?.getReader();
-  if (!reader) return null;
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      size += value.byteLength;
-      if (size > MAX_FORM_BODY_BYTES) {
-        await reader.cancel();
-        return null;
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    return null;
-  }
-}
-
 function errorResponse(status: number, code: string): Response {
   return Response.json({ error: { status, code } }, { status });
 }
 
-function mutationRedirect(request: Request, state: "applied" | "failed"): Response {
-  const destination = new URL("/github", request.url);
-  destination.searchParams.set("githubMutation", state);
-  return Response.redirect(destination, 303);
+function mutationRedirect(state: "applied" | "failed"): Response {
+  return seeOther(`/github?githubMutation=${state}`);
 }
 
 export interface GithubMutationFormDependencies {
@@ -256,17 +234,16 @@ export async function handleGithubMutationForm(
   request: Request,
   dependencies: GithubMutationFormDependencies = {}
 ): Promise<Response> {
-  const origin = request.headers.get("origin");
-  const fetchSite = request.headers.get("sec-fetch-site");
-  if (origin !== new URL(request.url).origin || fetchSite !== "same-origin") {
+  if (!isSameOriginRequest(request)) {
     return errorResponse(403, "github_mutation_cross_origin");
   }
   const contentType = request.headers.get("content-type") ?? "";
-  if (!/^application\/x-www-form-urlencoded(?:\s*;|$)/iu.test(contentType)) {
+  if (!FORM_CONTENT_TYPE.test(contentType)) {
     return errorResponse(415, "github_mutation_form_required");
   }
-  const body = await readBoundedFormBody(request);
-  if (body === null) return errorResponse(413, "github_mutation_form_too_large");
+  const body = await readBoundedRequestText(request, MAX_FORM_BODY_BYTES);
+  if (body === null)
+    return errorResponse(413, "github_mutation_form_too_large");
   const fields = new URLSearchParams(body);
   const expectedNames = new Set([
     "operation",
@@ -300,7 +277,8 @@ export async function handleGithubMutationForm(
   }
   const mutatingState = operation === "enable" || operation === "disable";
   if (
-    (mutatingState && (!rawState || !KNOWN_STATES.has(rawState as GithubWorkflowState))) ||
+    (mutatingState &&
+      (!rawState || !KNOWN_STATES.has(rawState as GithubWorkflowState))) ||
     (!mutatingState && rawState !== null)
   ) {
     return errorResponse(400, "github_mutation_form_invalid");
@@ -309,12 +287,10 @@ export async function handleGithubMutationForm(
     operation: operation as GithubWorkflowMutationOperation,
     workflow,
     idempotencyKey,
-    ...(mutatingState
-      ? { expectedState: rawState as GithubWorkflowState }
-      : {})
+    ...(mutatingState ? { expectedState: rawState as GithubWorkflowState } : {})
   };
   const config = dependencies.config ?? readControlApiConfig();
-  if (!config) return mutationRedirect(request, "failed");
+  if (!config) return mutationRedirect("failed");
   if (
     !verifyGithubMutationFormToken(
       formToken,
@@ -329,5 +305,5 @@ export async function handleGithubMutationForm(
     typedRequest,
     config
   );
-  return mutationRedirect(request, result.kind === "ok" ? "applied" : "failed");
+  return mutationRedirect(result.kind === "ok" ? "applied" : "failed");
 }

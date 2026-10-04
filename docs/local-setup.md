@@ -729,6 +729,40 @@ Restart the router with the normal installer when no active task depends on it
 (`--materialize-only` does not restart services). The new values apply only
 after the restart.
 
+### Evaluations
+
+Evaluation definitions live in the version-controlled `config/evaluations.json`
+(`autodev-evaluations-v1`). Edit them on the Console `/evaluations` pages, or edit
+the file directly and let the Control API validate it on the next read. The
+Console saves through `/control/evaluations`, which rewrites the file atomically
+under the router's `AUTODEV_REPO_ROOT`. Commit the resulting change like any
+other configuration edit.
+
+The `/control/evaluations` routes run inside the model router process, like
+`/control/github`. Runs need three things from that process:
+
+- **The router itself.** Targets and the judge are called through
+  `http://127.0.0.1:${CODEX_MODEL_ROUTER_PORT:-4100}/v1/responses` with
+  `CODEX_ROUTER_AUTH_TOKEN` when one is configured. Running a definition spends
+  provider quota exactly like any other routed request.
+- **OpenLIT ClickHouse.** Results are written to and read from
+  `openlit_evaluation` with `CLICKHOUSE_URL` (default
+  `http://127.0.0.1:8123`), `OPENLIT_DB_USER`/`OPENLIT_DB_NAME`, and the
+  `OPENLIT_DB_PASSWORD` from `$CODEX_HOME/openlit-secrets.env`. While the store
+  is unreachable, the Console shows results as unavailable, and a run fails
+  with `storage_unavailable` instead of reporting success.
+- **An OTLP trace exporter** (`OTEL_EXPORTER_OTLP_ENDPOINT`, set automatically
+  by OpenLIT ingress mode). Without it, case spans are not recorded, and each
+  result's trace shows as not observed.
+
+If the Console shows `autodev_control_api_unknown_path` or
+`autodev_control_api_schema_mismatch` for Evaluations, the router is running
+materialized Runtime sources that predate this Control API. Reinstall with
+`pnpm install:codex` (not `--materialize-only`) so the router restarts on the
+current `runtime/src/control-api/evaluations.ts`,
+`runtime/src/evaluations/runner.ts`, and `runtime/src/router/routed-responses.ts`
+modules.
+
 ### Transitional OpenLIT projections
 
 Current out-of-band OpenLIT projections:

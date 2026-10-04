@@ -23,7 +23,6 @@ import {
   AgentsView,
   AppNav,
   DataTable,
-  EvaluationsView,
   GithubView,
   HooksView,
   McpDetailView,
@@ -50,7 +49,6 @@ import {
   CONTROL_API_PATHS,
   fetchAgentDetail,
   fetchControlApi,
-  fetchEvaluations,
   fetchGithubWorkflows,
   fetchMemoryRecords,
   fetchPromptDetail,
@@ -210,14 +208,14 @@ test("AppNav brand link has visible keyboard focus and no unsupported status pul
   // there is no runtime health evidence backing such a dot.
   const brandEnd = markup.indexOf("</a>", brandStart);
   const brandMarkup = markup.slice(brandTagStart, brandEnd);
-  assert.equal(
-    brandMarkup.includes("animate-pulse"),
-    false,
+  assert.doesNotMatch(
+    brandMarkup,
+    /animate-pulse/u,
     "AppNav brand must not render a pulsing status-like indicator"
   );
-  assert.equal(
-    brandMarkup.includes("bg-emerald-500"),
-    false,
+  assert.doesNotMatch(
+    brandMarkup,
+    /bg-emerald-500/u,
     "AppNav brand must not render an unsupported health-status dot"
   );
 });
@@ -1352,52 +1350,6 @@ test("Memory page contract normalizes a configured AUTODEV_OPENLIT_UI_URL to the
   assert.equal(markup.includes('data-status="unavailable"'), false);
 });
 
-test("EvaluationsView with empty results renders the explicit empty state", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(EvaluationsView, { evaluations: [] })
-  );
-  assert.match(markup, /No evaluations run yet/);
-  assert.match(markup, /data-evaluation-pass-rate-observed="false"/);
-  assert.match(markup, /Not observed/);
-  assert.equal(markup.includes("100%"), false);
-});
-
-test("fetchEvaluations issues authenticated GET to /control/evaluations", async () => {
-  const config = {
-    baseUrl: "http://127.0.0.1:4101",
-    serviceToken: "test-token-123"
-  };
-  const mockFetch: typeof fetch = async (input, init) => {
-    assert.equal(input, "http://127.0.0.1:4101/control/evaluations");
-    const headers = new Headers(init?.headers);
-    assert.equal(headers.get("authorization"), "Bearer test-token-123");
-    assert.equal(headers.get("x-autodev-actor"), LOCAL_CONTROL_API_ACTOR);
-    return Response.json({
-      schema: "autodev-control-evaluations-v1",
-      source: "openlit_evaluation",
-      readOnly: true,
-      totalEvaluations: 1,
-      evaluations: [
-        {
-          id: "eval-1",
-          agentRole: "orchestrator",
-          promptName: "dry",
-          model: "gpt-5.6-terra",
-          metrics: [{ name: "relevance", value: 0.95, pass: true }],
-          passed: true,
-          timestamp: "2026-10-04 12:00:00"
-        }
-      ]
-    });
-  };
-  const result = await fetchEvaluations(config, { fetchImpl: mockFetch });
-  assert.equal(result.kind, "ok");
-  if (result.kind === "ok") {
-    assert.equal(result.data.totalEvaluations, 1);
-    assert.equal(result.data.evaluations[0]?.agentRole, "orchestrator");
-  }
-});
-
 test("fetchGithubWorkflows issues authenticated GET to /control/github", async () => {
   const config = {
     baseUrl: "http://127.0.0.1:4101",
@@ -1434,30 +1386,6 @@ test("fetchGithubWorkflows issues authenticated GET to /control/github", async (
     assert.equal(result.data.workflows[0]?.id, "_scheduler.yml");
     assert.deepEqual(result.data.workflows[0]?.schedules, ["*/15 * * * *"]);
   }
-});
-
-test("EvaluationsView renders metrics, pass rate, and outcome badges when evaluations exist", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(EvaluationsView, {
-      evaluations: [
-        {
-          id: "eval-1",
-          agentRole: "orchestrator",
-          promptName: "dry",
-          model: "gpt-5.6-terra",
-          metrics: [{ name: "relevance", value: 0.95, pass: true }],
-          passed: true,
-          timestamp: "2026-10-04 12:00:00"
-        }
-      ]
-    })
-  );
-  assert.match(markup, /data-evaluation-pass-rate-observed="true"/);
-  assert.match(markup, /100%/);
-  assert.match(markup, /orchestrator/);
-  assert.match(markup, /gpt-5\.6-terra/);
-  assert.match(markup, /relevance: 0\.95/);
-  assert.match(markup, /Passed/);
 });
 
 test("AgentsView renders secondary provider routing policy and runtime health sections", () => {
