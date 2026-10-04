@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
 /** OpenAI Responses compatibility proxy for the subscription-authenticated agy CLI. */
-import type { ChildProcess } from "node:child_process";
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   chmodSync,
@@ -15,13 +14,28 @@ import {
   symlinkSync,
   writeFileSync
 } from "node:fs";
-import type { IncomingMessage, ServerResponse } from "node:http";
-import { createServer } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse
+} from "node:http";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join, resolve as resolvePath, sep } from "node:path";
+import pathApi from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
+import {
+  bridgeSkillContext,
+  buildSpawnScript,
+  composeProviderPrompt,
+  execToolCallSseEvents,
+  isOrchestratorRole,
+  mintCallId,
+  mintCallItemId,
+  readOnlySystemPromptInjection,
+  resolveAgentRole,
+  SpawnSessionRegistry
+} from "@simulatorlife/autodev-runtime/agents";
 import {
   type RoleContract,
   roleContract
@@ -43,22 +57,9 @@ import {
   WorkspaceResolutionError
 } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
 import {
-  AUTODEV_WORKSPACE_KEY_HEADER,
-  withAutoDevOtelResourceContext
-} from "@simulatorlife/autodev-runtime/telemetry/resource-context";
-
-import {
-  bridgeSkillContext,
-  buildSpawnScript,
-  composeProviderPrompt,
-  execToolCallSseEvents,
-  isOrchestratorRole,
-  mintCallId,
-  mintCallItemId,
-  readOnlySystemPromptInjection,
-  resolveAgentRole,
-  SpawnSessionRegistry
-} from "@simulatorlife/autodev-runtime/agents";
+  resolveRuntimeSourcePath,
+  resolveRuntimeSourceRoot
+} from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
   type AgentEventReporter,
   REQUEST_ID_HEADER,
@@ -66,9 +67,9 @@ import {
   SKILL_READ_SOURCE
 } from "@simulatorlife/autodev-runtime/telemetry";
 import {
-  resolveRuntimeSourcePath,
-  resolveRuntimeSourceRoot
-} from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+  AUTODEV_WORKSPACE_KEY_HEADER,
+  withAutoDevOtelResourceContext
+} from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
 // Bind the port only when run as a program. The shared request-shaping helpers
 // below are pure and worth testing directly; importing this file must not take
@@ -77,7 +78,7 @@ const IS_MAIN =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 const HOST = process.env.AGY_PROXY_HOST ?? "127.0.0.1";
-const PORT = Number.parseInt(process.env.AGY_PROXY_PORT ?? "4002", 10);
+const PORT = Number.parseInt(process.env.AGY_PROXY_PORT ?? "4002");
 const CLI =
   process.env.AGY_CLI_PATH ??
   `${process.env.HOME ?? process.cwd()}/.local/bin/agy`;
@@ -109,8 +110,57 @@ const READ_URL_PERMISSION_PATTERN = /^read_url\(/i;
 // can silently break. Keep that dynamic edge explicit and named while the
 // transport, telemetry, and boundary operations around it stay typed. Mirrors
 // the MiniMax and Copilot adapters.
-type JsonRecord = Record<string, any>;
-type JsonValue = any;
+//
+// Bounded JSON value/record types: `JsonObject` carries an index signature so
+// vendor fields agy adds across CLI versions stay readable by name without a
+// cast; `JsonArray` and `JsonPrimitive` close the union. The recursive shape
+// means `noUncheckedIndexedAccess` adds `undefined` to indexed access, which
+// the guards below turn back into a `JsonValue` once narrow. `unknown`-typed
+// CLI input flows through `structured()` to land as one of these records.
+type JsonPrimitive = string | number | boolean | null;
+type JsonArray = JsonValue[];
+interface JsonObject {
+  [key: string]: JsonValue;
+}
+type JsonValue = JsonPrimitive | JsonObject | JsonArray;
+type JsonRecord = JsonObject;
+
+interface AntigravityMcpServerConfig extends JsonRecord {
+  command?: string;
+  args?: string[];
+  cwd?: JsonValue;
+  env?: JsonRecord;
+  serverUrl?: string;
+  bearer_token_env_var?: string;
+  headers?: JsonRecord;
+}
+
+interface AntigravityMcpConfig extends JsonRecord {
+  mcpServers: Record<string, AntigravityMcpServerConfig>;
+}
+
+interface AntigravityPermissionConfig extends JsonRecord {
+  allow: JsonArray;
+  deny: JsonArray;
+}
+
+interface AntigravitySettings extends JsonRecord {
+  permissions: AntigravityPermissionConfig;
+}
+
+interface AgyErrorDetails extends JsonRecord {
+  type: string;
+  message: string;
+  provider: "antigravity";
+  role: string;
+  workspace: string;
+  requestId: string | null;
+  code?: string;
+  phase?: string | null;
+  tool?: string | null;
+  limit?: Record<string, string | null>;
+}
+
 type AgentReporter = AgentEventReporter;
 
 /** One subagent a spawn step created, as this bridge tracks it. */
@@ -153,22 +203,226 @@ interface CloseDecision {
 
 /**
  * agy reports a failure as an error string plus an exit status; the bridge
- * attaches the classification it recovered from stderr so the router can act
- * on it. These fields are set via `Object.assign` on a real `Error`.
+ * attaches the classification it recovered from stderr (via `Object.assign`
+ * on a real `Error`) so the router can act on it. Callers receive whatever was
+ * thrown, so `agyFailure` decodes these fields from any value.
  */
-type AgyFailure = Error & {
-  exitCode?: number | null;
-  failureCode?: string;
-  failurePhase?: string | null;
-  failureTool?: string | null;
-};
+interface AgyFailure {
+  message: string | null;
+  exitCode: number | null;
+  failureCode: string | null;
+  failurePhase: string | null;
+  failureTool: string | null;
+}
+
+function textOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+/** The agy classification fields carried by a thrown value, each validated. */
+function agyFailure(error: unknown): AgyFailure {
+  if (typeof error !== "object" || error === null)
+    return {
+      message: null,
+      exitCode: null,
+      failureCode: null,
+      failurePhase: null,
+      failureTool: null
+    };
+  return {
+    message: "message" in error ? textOrNull(error.message) : null,
+    exitCode:
+      "exitCode" in error && typeof error.exitCode === "number"
+        ? error.exitCode
+        : null,
+    failureCode: "failureCode" in error ? textOrNull(error.failureCode) : null,
+    failurePhase:
+      "failurePhase" in error ? textOrNull(error.failurePhase) : null,
+    failureTool: "failureTool" in error ? textOrNull(error.failureTool) : null
+  };
+}
 
 interface RunAgyResult {
   text: string;
   result: JsonRecord;
 }
 
-type OnAgyEvent = (event: JsonValue) => void;
+/** One tool-info block carried inside an agy step_update. */
+interface AgyToolInfo extends JsonRecord {
+  name?: string;
+  args?: JsonValue;
+  output?: JsonValue;
+  result?: JsonValue;
+  status_message?: string;
+  error?: string;
+  duration_seconds?: number;
+  server?: string;
+}
+
+/** The fields of one agy step_update event this bridge actually reads. */
+interface AgyStepUpdate extends JsonRecord {
+  step_index?: number;
+  step_type?: string;
+  state?: string;
+  tool_name?: string;
+  tool_info?: AgyToolInfo;
+  tool_input?: JsonValue;
+  status_message?: string;
+  error?: string;
+  duration_seconds?: number;
+  output?: JsonValue;
+  result?: JsonValue;
+  text_delta?: string;
+  server?: string;
+}
+
+/**
+ * What one `step_type: "tool"` update proves about the call, as a discriminated
+ * union callers can switch on without a cast.
+ *
+ *   requested   -- the model asked; the router's `tool_requested`.
+ *   executed    -- the call ran; the router's `tool_executed`.
+ *   unavailable -- the call was refused/cancelled; `tool_unavailable`.
+ *   none        -- the step carries no useful evidence either way.
+ */
+type ToolStepEvidence =
+  | { kind: "requested" }
+  | { kind: "executed"; status: "ok" | "error"; durationMs: number | null }
+  | {
+      kind: "unavailable";
+      reason: "permission_denied" | "denied" | "cancelled";
+    }
+  | { kind: "none" };
+
+/** A decoded JSON line from agy's stream-json protocol. */
+interface AgyStreamEvent extends JsonRecord {
+  event?: string;
+  step_update?: JsonValue;
+  result?: JsonValue;
+  type?: string;
+  text?: string;
+}
+
+interface AgyProcessEvent {
+  type: "process";
+  child: ChildProcess;
+}
+
+interface AgyBackgroundTasksEvent {
+  type: "background_tasks_active";
+  text: string;
+}
+
+interface AgyTextDeltaEvent {
+  type: "text_delta";
+  text: string;
+}
+
+type AgyEvent =
+  | AgyStreamEvent
+  | AgyProcessEvent
+  | AgyBackgroundTasksEvent
+  | AgyTextDeltaEvent;
+
+type OnAgyEvent = (event: AgyEvent) => void;
+
+/** Validate a decoded value recursively as JSON, rejecting cycles. */
+function isJsonValue(
+  value: unknown,
+  ancestors: Set<object> = new Set<object>()
+): value is JsonValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean")
+    return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value !== "object" || ancestors.has(value)) return false;
+
+  ancestors.add(value);
+  const valid = Array.isArray(value)
+    ? value.every((entry) => isJsonValue(entry, ancestors))
+    : Object.values(value).every((entry) => isJsonValue(entry, ancestors));
+  ancestors.delete(value);
+  return valid;
+}
+
+/** A JSON object: non-null, non-array `object`. */
+function isJsonRecord(value: unknown): value is JsonRecord {
+  return (
+    isJsonValue(value) &&
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  );
+}
+
+/** A JSON array. */
+function isJsonArray(value: unknown): value is JsonArray {
+  return isJsonValue(value) && Array.isArray(value);
+}
+
+/** True when value looks like one agy step_update payload. */
+function isStepUpdate(value: unknown): value is AgyStepUpdate {
+  return isJsonRecord(value);
+}
+
+/** The finite step index a step_update carries, or null when absent/invalid. */
+function stepIndexOf(update: AgyStepUpdate): number | null {
+  const index: JsonValue | undefined = update.step_index;
+  return typeof index === "number" && Number.isFinite(index) ? index : null;
+}
+
+/** True when value looks like an agy tool_info block. */
+function isToolInfo(value: unknown): value is AgyToolInfo {
+  return isJsonRecord(value);
+}
+
+/** True when value looks like an agy stream-json event. */
+function isStreamEvent(value: unknown): value is AgyStreamEvent {
+  return isJsonRecord(value);
+}
+
+/**
+ * True for a decoded agy step_update line. Control events are built in-process
+ * without an `event` key, so the key alone separates them from stream lines
+ * without re-validating the payload that decoding already proved to be JSON.
+ */
+function isStepUpdateEvent(event: AgyEvent): event is AgyStreamEvent {
+  return "event" in event && event.event === "step_update";
+}
+
+/** Narrow the internal process notification without treating it as JSON. */
+function isProcessEvent(event: AgyEvent): event is AgyProcessEvent {
+  return (
+    "type" in event &&
+    event.type === "process" &&
+    "child" in event &&
+    typeof event.child === "object" &&
+    event.child !== null &&
+    "kill" in event.child &&
+    typeof event.child.kill === "function" &&
+    "killed" in event.child &&
+    typeof event.child.killed === "boolean"
+  );
+}
+
+function isBackgroundTasksEvent(
+  event: AgyEvent
+): event is AgyBackgroundTasksEvent {
+  return (
+    "type" in event &&
+    event.type === "background_tasks_active" &&
+    "text" in event &&
+    typeof event.text === "string"
+  );
+}
+
+function isTextDeltaEvent(event: AgyEvent): event is AgyTextDeltaEvent {
+  return (
+    "type" in event &&
+    event.type === "text_delta" &&
+    "text" in event &&
+    typeof event.text === "string"
+  );
+}
 
 // `roleContract` types the fields every consumer shares (`mcp`) and leaves the
 // rest behind an index signature. This bridge additionally reads `readOnly`
@@ -202,20 +456,21 @@ function antigravityRoleContract(role: unknown): AntigravityRoleContract {
 const MAX_SPAWN_ARG_DEPTH = 6;
 
 /** A JSON-encoded object/array parsed, a plain object/array as-is, else null. */
-function structured(value: unknown): JsonValue {
-  if (value && typeof value === "object") return value;
+function structured(value: unknown): JsonObject | JsonArray | null {
+  if (isJsonRecord(value) || isJsonArray(value)) return value;
   if (typeof value !== "string") return null;
   const text = value.trim();
   if (!text.startsWith("{") && !text.startsWith("[")) return null;
   try {
-    return JSON.parse(text);
+    const parsed: unknown = JSON.parse(text);
+    return isJsonRecord(parsed) || isJsonArray(parsed) ? parsed : null;
   } catch {
     return null;
   }
 }
 
 /** The `Subagents` batch somewhere inside a step update, or null. */
-function subagentBatch(value: unknown, depth = 0): JsonRecord[] | null {
+function subagentBatch(value: unknown, depth = 0): JsonValue[] | null {
   if (depth > MAX_SPAWN_ARG_DEPTH) return null;
   const node = structured(value);
   if (!node) return null;
@@ -223,8 +478,10 @@ function subagentBatch(value: unknown, depth = 0): JsonRecord[] | null {
     const key = Object.keys(node).find(
       (candidate) => candidate.toLowerCase() === "subagents"
     );
-    if (key !== undefined && Array.isArray(node[key]) && node[key].length > 0)
-      return node[key];
+    if (key !== undefined) {
+      const batch = node[key];
+      if (isJsonArray(batch) && batch.length > 0) return batch;
+    }
   }
   for (const child of Array.isArray(node) ? node : Object.values(node)) {
     const found = subagentBatch(child, depth + 1);
@@ -243,7 +500,7 @@ function subagentBatch(value: unknown, depth = 0): JsonRecord[] | null {
 const SELF_ARCHETYPE = "self";
 
 function subagentRole(child: JsonValue): string | null {
-  if (!child || typeof child !== "object") return null;
+  if (!isJsonRecord(child)) return null;
   // agy identifies a child by its archetype, and `define_subagent` registers
   // that archetype under `name`. Model is deliberately not a fallback: it is
   // the model, not the role, and would pollute `byRole` with model ids.
@@ -265,7 +522,7 @@ function subagentRole(child: JsonValue): string | null {
 
 /** The model one batch entry names, or null when it names none of its own. */
 function subagentModel(child: JsonValue): string | null {
-  if (!child || typeof child !== "object") return null;
+  if (!isJsonRecord(child)) return null;
   for (const key of ["Model", "model", "ModelName", "model_name"]) {
     const value = child[key];
     // agy writes `inherit` when the child runs on whatever the parent was
@@ -277,7 +534,7 @@ function subagentModel(child: JsonValue): string | null {
 
 /** agy's own id for a child conversation, or null when the entry carries none. */
 function subagentConversationId(child: JsonValue): string | null {
-  if (!child || typeof child !== "object") return null;
+  if (!isJsonRecord(child)) return null;
   for (const key of ["conversation_id", "conversationId", "ConversationId"]) {
     const value = child[key];
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -287,7 +544,7 @@ function subagentConversationId(child: JsonValue): string | null {
 
 /** Where agy is writing the child's transcript, when it says. */
 function subagentLogUri(child: JsonValue): string | null {
-  if (!child || typeof child !== "object") return null;
+  if (!isJsonRecord(child)) return null;
   for (const key of ["log_uri", "logUri", "LogUri"]) {
     const value = child[key];
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -311,10 +568,9 @@ function subagentLogUri(child: JsonValue): string | null {
  * positional id remains the fallback for an entry that carries no id of its own.
  */
 let anonymousSpawnStep = 0;
-function spawnedChildren(update: JsonValue): SpawnedChild[] {
-  const step = Number.isFinite(update?.step_index)
-    ? update.step_index
-    : `x${(anonymousSpawnStep += 1)}`;
+function spawnedChildren(update: unknown): SpawnedChild[] {
+  const stepIndex = isStepUpdate(update) ? stepIndexOf(update) : null;
+  const step: number | string = stepIndex ?? `x${(anonymousSpawnStep += 1)}`;
   const batch = subagentBatch(update);
   if (!batch)
     return [{ id: `s${step}.0`, role: null, model: null, logUri: null }];
@@ -333,19 +589,24 @@ function spawnedChildren(update: JsonValue): SpawnedChild[] {
 const LOG_SPAWN_STEPS = process.env.AGY_LOG_SPAWN_STEPS === "1";
 const SPAWN_STEP_LOG_STRING_LIMIT = 80;
 
-function shapeOnly(value: unknown, depth = 0): JsonValue {
+function shapeOnly(value: JsonValue, depth = 0): JsonValue {
   if (typeof value === "string")
     return value.length > SPAWN_STEP_LOG_STRING_LIMIT
       ? `${value.slice(0, SPAWN_STEP_LOG_STRING_LIMIT)}...<${value.length}>`
       : value;
-  if (!value || typeof value !== "object" || depth > MAX_SPAWN_ARG_DEPTH)
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    depth > MAX_SPAWN_ARG_DEPTH
+  )
     return value;
   if (Array.isArray(value))
-    return value.map((entry: unknown) => shapeOnly(entry, depth + 1));
+    return value.map((entry) => shapeOnly(entry, depth + 1));
   return Object.fromEntries(
-    Object.entries(value as JsonRecord).map(
-      ([key, entry]: [string, unknown]) => [key, shapeOnly(entry, depth + 1)]
-    )
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      shapeOnly(entry, depth + 1)
+    ])
   );
 }
 
@@ -389,12 +650,12 @@ const REPO_ROOT = resolveRuntimeSourceRoot(
   process.env.AUTODEV_REPO_ROOT
 );
 const SKILL_ROOTS = [
-  join(HOME, ".agents", "skills"),
-  join(HOME, ".codex", "skills"),
-  join(HOME, "AutoDev", ".agents", "skills"),
-  join(HOME, "AutoDev", ".rulesync", "skills"),
-  join(REPO_ROOT, ".agents", "skills"),
-  join(REPO_ROOT, ".rulesync", "skills")
+  pathApi.join(HOME, ".agents", "skills"),
+  pathApi.join(HOME, ".codex", "skills"),
+  pathApi.join(HOME, "AutoDev", ".agents", "skills"),
+  pathApi.join(HOME, "AutoDev", ".rulesync", "skills"),
+  pathApi.join(REPO_ROOT, ".agents", "skills"),
+  pathApi.join(REPO_ROOT, ".rulesync", "skills")
 ].filter((path) => existsSync(path));
 
 // Tool names agy uses to read a file's contents outright, versus the shell
@@ -416,8 +677,8 @@ function normaliseSkillReadPath(raw: unknown): string | null {
   const trimmed = raw.trim().replaceAll(/^['"]|['"]$/g, "");
   if (!trimmed) return null;
   let path = trimmed;
-  if (path.startsWith("~")) path = join(HOME, path.slice(1));
-  if (!isAbsolute(path)) path = resolvePath(path);
+  if (path.startsWith("~")) path = pathApi.join(HOME, path.slice(1));
+  if (!pathApi.isAbsolute(path)) path = pathApi.resolve(path);
   return path;
 }
 
@@ -475,10 +736,8 @@ function isPathLikeToken(token: unknown): string | null {
 // shape any tool call here actually uses.
 function flattenCommandValue(raw: unknown): string {
   let value: unknown = raw;
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    const record = value as JsonRecord;
-    value =
-      record.cmd ?? record.command ?? record.script ?? record.value ?? null;
+  if (isJsonRecord(value)) {
+    value = value.cmd ?? value.command ?? value.script ?? value.value ?? null;
   }
   if (Array.isArray(value)) {
     return value.filter((entry) => typeof entry === "string").join(" ");
@@ -520,10 +779,7 @@ function extractSkillReadPath(
   const name = String(toolName ?? "")
     .trim()
     .toLowerCase();
-  const args: JsonRecord =
-    argsObject && typeof argsObject === "object"
-      ? (argsObject as JsonRecord)
-      : {};
+  const args: JsonRecord = isJsonRecord(argsObject) ? argsObject : {};
   if (AGY_READ_TOOL_NAMES.has(name)) {
     for (const key of [
       "file_path",
@@ -556,17 +812,21 @@ function extractSkillReadPath(
 // True when `path` resolves to `<root>/<skill-name>/SKILL.md` for one of the
 // approved roots. Returns the skill's directory name -- never the absolute
 // path -- because that is all the router retains.
+const SKILL_PATH_LEADING_SEPARATOR_PATTERN = /^[\\/]+/;
+
 function matchSkillReadPath(path: string | null): string | null {
   if (!path) return null;
-  const normalised = path.replaceAll(/[\\/]+/g, sep);
+  const normalised = path.replaceAll(/[\\/]+/g, pathApi.sep);
   for (const rootRaw of SKILL_ROOTS) {
-    const root = rootRaw.replaceAll(/[\\/]+/g, sep);
-    const rootWithSep = root.endsWith(sep) ? root : root + sep;
+    const root = rootRaw.replaceAll(/[\\/]+/g, pathApi.sep);
+    const rootWithSep = root.endsWith(pathApi.sep) ? root : root + pathApi.sep;
     if (!normalised.startsWith(rootWithSep)) continue;
-    const relative = normalised.slice(root.length).replace(/^[\\/]+/, "");
-    if (!relative.endsWith(`${sep}SKILL.md`) && relative !== "SKILL.md")
+    const relative = normalised
+      .slice(root.length)
+      .replace(SKILL_PATH_LEADING_SEPARATOR_PATTERN, "");
+    if (!relative.endsWith(`${pathApi.sep}SKILL.md`) && relative !== "SKILL.md")
       continue;
-    const segments = relative.split(sep).filter(Boolean);
+    const segments = relative.split(pathApi.sep).filter(Boolean);
     if (segments.length !== 2) continue;
     const [skill] = segments;
     if (!skill || skill.includes("..")) continue;
@@ -622,16 +882,24 @@ const TERMINAL_TOOL_STATES = new Set(["DONE", "ERROR", "FAILED", "CANCELLED"]);
 
 const AGY_DENIED_PATTERN =
   /permission[_\s-]?denied|auto[_\s-]?denied|denied|not[_\s-]?permitted|not[_\s-]?allowed|no such tool|tool not found/i;
+const PERMISSION_DENIED_REASON_PATTERN = /permission|auto[_\s-]?denied/i;
 
 /** True when a step carries the tool call's own output. */
+function isToolOutput(value: JsonValue | undefined): boolean {
+  return (
+    value !== undefined &&
+    value !== null &&
+    (typeof value !== "string" || value.trim() !== "")
+  );
+}
+
 function toolOutputPresent(update: JsonValue): boolean {
-  const info = structured(update?.tool_info) ?? {};
-  for (const key of TOOL_OUTPUT_KEYS) {
-    const value = info[key] ?? update?.[key];
-    if (value === undefined || value === null) continue;
-    if (typeof value === "string" ? value.trim() !== "" : true) return true;
-  }
-  return false;
+  const record = isStepUpdate(update) ? update : null;
+  const parsed = structured(record?.tool_info);
+  const info = parsed !== null && !Array.isArray(parsed) ? parsed : {};
+  return TOOL_OUTPUT_KEYS.some((key) =>
+    isToolOutput(info[key] ?? record?.[key])
+  );
 }
 
 /** The MCP server an Antigravity tool belongs to, or null if builtin / unspecified. */
@@ -639,42 +907,49 @@ function antigravityToolServer(
   update: JsonValue,
   toolName: string
 ): string | null {
-  const rawServer = update?.server ?? update?.tool_info?.server;
+  const record = isStepUpdate(update) ? update : null;
+  const toolInfo = isToolInfo(record?.tool_info) ? record?.tool_info : null;
+  const rawServer = record?.server ?? toolInfo?.server;
   if (typeof rawServer === "string" && rawServer.trim())
     return rawServer.trim();
   const name = typeof toolName === "string" ? toolName.trim() : "";
-  if (name.startsWith("mcp__")) {
-    const parts = name.split("__");
-    if (parts.length >= 3 && parts[1]) return parts[1];
-  }
-  if (name.startsWith("mcp_")) {
-    const parts = name.split("_");
-    if (parts.length >= 3 && parts[1]) return parts[1];
-  }
-  const args =
-    structured(update?.tool_info?.args) ?? structured(update?.tool_input) ?? {};
-  if (
-    args.ServerName &&
-    typeof args.ServerName === "string" &&
-    args.ServerName.trim()
-  ) {
-    return args.ServerName.trim();
-  }
-  if (
-    args.server_name &&
-    typeof args.server_name === "string" &&
-    args.server_name.trim()
-  ) {
-    return args.server_name.trim();
+  const serverFromName = mcpServerFromToolName(name);
+  if (serverFromName) return serverFromName;
+  return (
+    serverFromArguments(structured(toolInfo?.args)) ??
+    serverFromArguments(structured(record?.tool_input))
+  );
+}
+
+function mcpServerFromToolName(name: string): string | null {
+  const separator = name.startsWith("mcp__")
+    ? "__"
+    : name.startsWith("mcp_")
+      ? "_"
+      : null;
+  if (!separator) return null;
+  const parts = name.split(separator);
+  return parts.length >= 3 ? (parts[1] ?? null) : null;
+}
+
+function serverFromArguments(
+  value: JsonObject | JsonArray | null
+): string | null {
+  if (!isJsonRecord(value)) return null;
+  for (const key of ["ServerName", "server_name"]) {
+    const server = value[key];
+    if (typeof server === "string" && server.trim()) return server.trim();
   }
   return null;
 }
 
 /** How long agy says the call took, in ms, or null when it does not say. */
 function toolDurationMs(update: JsonValue): number | null {
-  const seconds =
-    update?.duration_seconds ?? update?.tool_info?.duration_seconds;
-  return Number.isFinite(seconds)
+  const record = isStepUpdate(update) ? update : null;
+  const toolInfo = isToolInfo(record?.tool_info) ? record?.tool_info : null;
+  const seconds: JsonValue | undefined =
+    record?.duration_seconds ?? toolInfo?.duration_seconds;
+  return typeof seconds === "number" && Number.isFinite(seconds)
     ? Math.max(0, Math.round(seconds * 1000))
     : null;
 }
@@ -689,27 +964,35 @@ function toolDurationMs(update: JsonValue): number | null {
  * `duration_seconds` for the call), or a terminal state carrying the call's
  * output. A terminal state with neither -- a cancelled call, one agy refused
  * -- proves only that the model asked, which the ACTIVE step already said.
+ *
+ * The result is a discriminated union; switch on `kind` rather than re-reading
+ * loose fields from the returned record.
  */
-function toolStepEvidence(update: JsonValue): JsonRecord {
-  const state = String(update?.state ?? "").toUpperCase();
+function toolStepEvidence(update: JsonValue): ToolStepEvidence {
+  const record = isStepUpdate(update) ? update : null;
+  const toolInfo = isToolInfo(record?.tool_info) ? record?.tool_info : null;
+  const state = String(record?.state ?? "").toUpperCase();
   if (state === "ACTIVE") return { kind: "requested" };
   if (!TERMINAL_TOOL_STATES.has(state)) return { kind: "none" };
-  const info = structured(update?.tool_info) ?? {};
   const statusMessage = String(
-    update?.status_message ??
-      update?.error ??
-      info.error ??
-      info.status_message ??
+    record?.status_message ??
+      record?.error ??
+      toolInfo?.error ??
+      toolInfo?.status_message ??
       ""
   );
   const outputText = String(
-    info.output ?? info.result ?? update?.output ?? update?.result ?? ""
+    toolInfo?.output ??
+      toolInfo?.result ??
+      record?.output ??
+      record?.result ??
+      ""
   );
   if (
     AGY_DENIED_PATTERN.test(statusMessage) ||
     (state !== "DONE" && AGY_DENIED_PATTERN.test(outputText))
   ) {
-    const reason = /permission|auto[_\s-]?denied/i.test(
+    const reason = PERMISSION_DENIED_REASON_PATTERN.test(
       statusMessage || outputText
     )
       ? "permission_denied"
@@ -730,7 +1013,8 @@ function toolStepEvidence(update: JsonValue): JsonRecord {
 
 /** agy's handle on a tool call within this turn: its step index. */
 function toolCallId(update: JsonValue): string | null {
-  return Number.isFinite(update?.step_index) ? `s${update.step_index}` : null;
+  const stepIndex = isStepUpdate(update) ? stepIndexOf(update) : null;
+  return stepIndex === null ? null : `s${stepIndex}`;
 }
 
 /**
@@ -747,18 +1031,18 @@ function toolCallId(update: JsonValue): string | null {
  * chatty stream would otherwise report one call as several.
  */
 function createToolObserver(agentEvents: AgentReporter | null) {
-  const requested = new Set();
-  const settled = new Set();
+  const requested = new Set<string>();
+  const settled = new Set<string>();
   // Per-turn dedupe for skill reads: keyed on the skill name, not the call,
   // so re-reading the same SKILL.md from a second tool call in the same turn
   // still reports one use rather than two.
   const seenSkills = new Set<string>();
   const observeToolStep = (update: JsonValue) => {
     if (!agentEvents) return;
-    if (String(update?.step_type ?? "").toLowerCase() !== "tool") return;
-    const tool = String(
-      update?.tool_name ?? update?.tool_info?.name ?? ""
-    ).trim();
+    if (!isStepUpdate(update)) return;
+    if (String(update.step_type ?? "").toLowerCase() !== "tool") return;
+    const toolInfo = isToolInfo(update.tool_info) ? update.tool_info : null;
+    const tool = String(update.tool_name ?? toolInfo?.name ?? "").trim();
     if (!tool) return;
     const callId = toolCallId(update);
     const key = callId ?? tool;
@@ -793,9 +1077,15 @@ function createToolObserver(agentEvents: AgentReporter | null) {
     // A denied or failed call proves nothing was actually read, so only a
     // call agy itself reports as `ok` can ever surface a skill_used event.
     if (evidence.status === "ok") {
-      const args =
-        structured(update?.tool_info?.args) ??
-        structured(update?.tool_input) ??
+      const toolInfoArgs = structured(toolInfo?.args);
+      const toolInputArgs = structured(update.tool_input);
+      const args: JsonObject =
+        (toolInfoArgs !== null && !Array.isArray(toolInfoArgs)
+          ? toolInfoArgs
+          : null) ??
+        (toolInputArgs !== null && !Array.isArray(toolInputArgs)
+          ? toolInputArgs
+          : null) ??
         {};
       reportSkillReadIfMatched({
         agentEvents,
@@ -813,12 +1103,11 @@ function createToolObserver(agentEvents: AgentReporter | null) {
   // dashboard reading a permission gap as "the workspace never used it".
   const reportPermissionDenial = (error: unknown) => {
     if (!agentEvents) return;
-    const failure = error as AgyFailure | undefined;
-    if (failure?.failureCode !== "AGY_PERMISSION_DENIED") return;
+    const failure = agyFailure(error);
+    if (failure.failureCode !== "AGY_PERMISSION_DENIED") return;
     // `reportToolUnavailable` drops a nameless tool anyway; returning here
     // keeps that same outcome without inventing a tool name for the report.
-    const failureTool =
-      typeof failure.failureTool === "string" ? failure.failureTool : null;
+    const failureTool = failure.failureTool;
     if (!failureTool) return;
     const server = antigravityToolServer(null, failureTool);
     void agentEvents.reportToolUnavailable({
@@ -845,7 +1134,7 @@ function createToolObserver(agentEvents: AgentReporter | null) {
  * children do) being the only signal of delegation in flight.
  */
 function createSpawnTracker(agentEvents: AgentReporter | null) {
-  const reportedSpawns = new Set();
+  const reportedSpawns = new Set<number>();
   // Spawn steps whose children are still running.
   //
   // `invoke_subagent` is fire-and-forget: measured directly from agy's
@@ -861,7 +1150,14 @@ function createSpawnTracker(agentEvents: AgentReporter | null) {
   // with a number that looks like a measurement. These stay open instead and
   // are closed with the parent turn, which bounds the child honestly -- it ran
   // somewhere inside that window.
-  const openSpawns = new Map();
+  const openSpawns = new Map<
+    number | string,
+    {
+      tool: string;
+      children: SpawnedChild[];
+      startedAt: number;
+    }
+  >();
   // Count a spawn once, when the step opens. A step reports ACTIVE then DONE
   // for the same step_index, and a run may end without a DONE at all, so the
   // opening transition is the only one that appears exactly once per
@@ -869,12 +1165,15 @@ function createSpawnTracker(agentEvents: AgentReporter | null) {
   // and keying every such step under `undefined` would drop every spawn after
   // the first; ACTIVE alone still keeps those from being counted twice.
   const reportSpawns = (update: JsonValue) => {
-    const toolName = String(update?.tool_name ?? update?.tool_info?.name ?? "");
+    if (!isStepUpdate(update)) return;
+    const toolInfo = isToolInfo(update.tool_info) ? update.tool_info : null;
+    const toolName = String(update.tool_name ?? toolInfo?.name ?? "");
     if (!isSpawnToolName(agentEvents, toolName)) return;
     if (String(update.state ?? "").toUpperCase() !== "ACTIVE") return;
-    if (Number.isFinite(update.step_index)) {
-      if (reportedSpawns.has(update.step_index)) return;
-      reportedSpawns.add(update.step_index);
+    const stepIndex = stepIndexOf(update);
+    if (stepIndex !== null) {
+      if (reportedSpawns.has(stepIndex)) return;
+      reportedSpawns.add(stepIndex);
     }
     if (LOG_SPAWN_STEPS)
       writeErrorLine(`agy spawn step ${JSON.stringify(shapeOnly(update))}`);
@@ -882,10 +1181,12 @@ function createSpawnTracker(agentEvents: AgentReporter | null) {
     writeErrorLine(
       `agy spawn tool=${toolName} children=${children.length} roles=${children.map(({ role }: SpawnedChild) => role ?? "unattributed").join(",")}`
     );
-    openSpawns.set(
-      Number.isFinite(update.step_index) ? update.step_index : children[0]?.id,
-      { tool: toolName, children, startedAt: Date.now() }
-    );
+    const key: number | string = stepIndex ?? children[0]?.id ?? "anonymous";
+    openSpawns.set(key, {
+      tool: toolName,
+      children,
+      startedAt: Date.now()
+    });
     // Telemetry needs a reporter the router actually authorized; pending-child
     // tracking above does not, and must happen whether or not one exists.
     if (agentEvents)
@@ -902,7 +1203,7 @@ function createSpawnTracker(agentEvents: AgentReporter | null) {
   // second attempt to close the same spawn -- from a stray duplicate event,
   // or from flushSpawns running after an individual close already ran -- is a
   // no-op rather than a second telemetry post or a second decrement.
-  const closeSpawn = (key: string, outcome: string) => {
+  const closeSpawn = (key: number | string, outcome: string) => {
     const open = openSpawns.get(key);
     if (!open) return;
     openSpawns.delete(key);
@@ -926,17 +1227,15 @@ function createSpawnTracker(agentEvents: AgentReporter | null) {
   // Any other terminal state means the hand-off itself failed, and a child that
   // was never dispatched has no runtime to bound -- that one closes here.
   const reportSpawnResults = (update: JsonValue) => {
-    const toolName = String(update?.tool_name ?? update?.tool_info?.name ?? "");
+    if (!isStepUpdate(update)) return;
+    const toolInfo = isToolInfo(update.tool_info) ? update.tool_info : null;
+    const toolName = String(update.tool_name ?? toolInfo?.name ?? "");
     if (!isSpawnToolName(agentEvents, toolName)) return;
     const state = String(update.state ?? "").toUpperCase();
-    if (
-      !state ||
-      state === "ACTIVE" ||
-      state === "DONE" ||
-      !Number.isFinite(update.step_index)
-    )
+    const stepIndex = stepIndexOf(update);
+    if (!state || state === "ACTIVE" || state === "DONE" || stepIndex === null)
       return;
-    closeSpawn(update.step_index, "failure");
+    closeSpawn(stepIndex, "failure");
   };
   // Every child still open when the turn ends closes with it. That is the
   // normal path for a successful dispatch, not an edge case.
@@ -981,13 +1280,11 @@ function updateDelegationState(
   // it falsely. Leave the tracker untouched; the bridge always passes a
   // callback in production but this keeps the helper safe under partial mocks.
   if (typeof isSpawnTool !== "function") return { kind: "unchanged" };
-  const stepToolName = String(
-    update?.tool_name ?? update?.tool_info?.name ?? ""
-  );
-  const stepState = String(update?.state ?? "").toUpperCase();
-  const stepIndex = Number.isFinite(update?.step_index)
-    ? update.step_index
-    : null;
+  if (!isStepUpdate(update)) return { kind: "unchanged" };
+  const toolInfo = isToolInfo(update.tool_info) ? update.tool_info : null;
+  const stepToolName = String(update.tool_name ?? toolInfo?.name ?? "");
+  const stepState = String(update.state ?? "").toUpperCase();
+  const stepIndex = stepIndexOf(update);
   const isDelegator = Boolean(isSpawnTool(stepToolName));
   if (isDelegator && stepState === "ACTIVE") {
     delegation.activeTool = stepToolName;
@@ -1016,11 +1313,11 @@ function updateDelegationState(
 }
 
 function isCommandStep(update: JsonValue): boolean {
-  const stepType = String(update?.step_type ?? "").toLowerCase();
+  if (!isStepUpdate(update)) return false;
+  const toolInfo = isToolInfo(update.tool_info) ? update.tool_info : null;
+  const stepType = String(update.step_type ?? "").toLowerCase();
   if (stepType === "command") return true;
-  const tool = String(
-    update?.tool_name ?? update?.tool_info?.name ?? ""
-  ).toLowerCase();
+  const tool = String(update.tool_name ?? toolInfo?.name ?? "").toLowerCase();
   return (
     tool === "run_command" ||
     tool === "exec_command" ||
@@ -1030,11 +1327,11 @@ function isCommandStep(update: JsonValue): boolean {
 }
 
 function isWaitStep(update: JsonValue): boolean {
-  const stepType = String(update?.step_type ?? "").toLowerCase();
+  if (!isStepUpdate(update)) return false;
+  const toolInfo = isToolInfo(update.tool_info) ? update.tool_info : null;
+  const stepType = String(update.step_type ?? "").toLowerCase();
   if (stepType === "wait") return true;
-  const tool = String(
-    update?.tool_name ?? update?.tool_info?.name ?? ""
-  ).toLowerCase();
+  const tool = String(update.tool_name ?? toolInfo?.name ?? "").toLowerCase();
   return (
     tool === "ask_question" || tool === "schedule" || tool === "manage_task"
   );
@@ -1059,6 +1356,18 @@ function isDelegationActive(delegation: DelegationState): boolean {
   if (Number(delegation.activeWaits) > 0 || Boolean(delegation.activeWait))
     return true;
   return Number(delegation.pendingChildren) > 0;
+}
+
+/** Why a close/error handler left agy running, for the turn log. */
+function delegationDetail(decision: CloseDecision): string {
+  if (decision.tool) return `during ${decision.tool}`;
+  if (decision.pendingChildren > 0)
+    return `while ${decision.pendingChildren} delegated child(ren) were still running`;
+  if (decision.activeCommands > 0)
+    return `while ${decision.activeCommands} active command(s) were still running`;
+  if (decision.activeWaits > 0)
+    return `while ${decision.activeWaits} active wait(s) were pending`;
+  return "while active commands or waits were still running";
 }
 
 /**
@@ -1161,6 +1470,8 @@ function toolNames(tools: unknown): string[] {
 }
 
 /** Record what Codex offered and what the router said about this turn. */
+const ROUTING_HEADER_PATTERN = /^x-(autodev|codex)-/i;
+
 function logInboundRequest(
   payload: JsonRecord,
   headers: NodeJS.Dict<string | string[]>
@@ -1168,29 +1479,36 @@ function logInboundRequest(
   if (!LOG_TOOLS) return;
   const routing = Object.fromEntries(
     Object.entries(headers ?? {}).filter(([key]) =>
-      /^x-(autodev|codex)-/i.test(key)
+      ROUTING_HEADER_PATTERN.test(key)
     )
   );
   writeErrorLine(
-    `[stage0] tool_names=${JSON.stringify(toolNames(payload?.tools).sort())}`
+    `[stage0] tool_names=${JSON.stringify(toolNames(payload.tools).sort())}`
   );
   writeErrorLine(`[stage0] routing_headers=${JSON.stringify(routing)}`);
-  for (const tool of Array.isArray(payload?.tools) ? payload.tools : []) {
-    if (
-      typeof tool?.name === "string" &&
-      tool.name.startsWith("multi_agent_v1")
-    ) {
-      writeErrorLine(`[stage0] spawn_tool=${JSON.stringify(tool)}`);
+  const tools = payload.tools;
+  if (Array.isArray(tools)) {
+    for (const tool of tools) {
+      if (
+        isJsonRecord(tool) &&
+        typeof tool.name === "string" &&
+        tool.name.startsWith("multi_agent_v1")
+      ) {
+        writeErrorLine(`[stage0] spawn_tool=${JSON.stringify(tool)}`);
+      }
     }
   }
-  for (const item of Array.isArray(payload?.input) ? payload.input : []) {
-    if (
-      item?.type === "function_call" ||
-      item?.type === "function_call_output"
-    ) {
-      writeErrorLine(
-        `[stage0] input_item=${JSON.stringify(item).slice(0, 2000)}`
-      );
+  const input = payload.input;
+  if (Array.isArray(input)) {
+    for (const item of input) {
+      if (
+        isJsonRecord(item) &&
+        (item.type === "function_call" || item.type === "function_call_output")
+      ) {
+        writeErrorLine(
+          `[stage0] input_item=${JSON.stringify(item).slice(0, 2000)}`
+        );
+      }
     }
   }
 }
@@ -1215,11 +1533,11 @@ function modelEffort(model: unknown): string | null {
 }
 
 function resolveEffort(request: JsonValue): string {
-  const reasoning = request?.reasoning;
-  const value =
-    reasoning && typeof reasoning === "object" && "effort" in reasoning
-      ? reasoning.effort
-      : (request?.model_reasoning_effort ?? request?.reasoning_effort);
+  const record = isJsonRecord(request) ? request : null;
+  const reasoning = isJsonRecord(record?.reasoning) ? record?.reasoning : null;
+  const value = reasoning
+    ? reasoning.effort
+    : (record?.model_reasoning_effort ?? record?.reasoning_effort);
   if (typeof value !== "string") return DEFAULT_EFFORT;
   const effort = value.trim().toLowerCase();
   if (EFFORTS.has(effort)) return effort;
@@ -1286,11 +1604,12 @@ function responseMessageItem(text: string, itemId: string): JsonRecord {
  * message" makes an intermittent provider failure impossible to diagnose.
  * Stderr is bounded because agy can echo verbose tool diagnostics.
  */
+const AGY_PERMISSION_FAILURE_PATTERN =
+  /tool required the ["']([^"']+)["'] permission[^\n]*auto-denied/i;
+
 function agyPermissionFailure(stderr = "") {
   const text = String(stderr ?? "");
-  const match = text.match(
-    /tool required the ["']([^"']+)["'] permission[^\n]*auto-denied/i
-  );
+  const match = text.match(AGY_PERMISSION_FAILURE_PATTERN);
   if (!match) return {};
   return {
     failureCode: "AGY_PERMISSION_DENIED",
@@ -1302,8 +1621,8 @@ function agyPermissionFailure(stderr = "") {
 function agyProviderFailureDiagnostic(
   error: unknown
 ): ProviderFailureDiagnostic | null {
-  const failure = error as AgyFailure | undefined;
-  if (failure?.failureCode !== "AGY_PERMISSION_DENIED") return null;
+  const failure = agyFailure(error);
+  if (failure.failureCode !== "AGY_PERMISSION_DENIED") return null;
   const tool = failure.failureTool;
   return {
     code: "AGY_PERMISSION_DENIED",
@@ -1340,16 +1659,33 @@ function agyFailureMessage({
   return details.join("; ") || "agy returned no diagnostic details";
 }
 
+/**
+ * The Responses API payload this bridge returns. `output` holds JSON records
+ * this module builds alongside typed items from sibling modules (the Codex
+ * `exec` tool call), so it is typed at the serialization boundary.
+ */
+type ResponsePayload = {
+  id: string;
+  object: "response";
+  created_at: number;
+  model: JsonValue;
+  status: string;
+  output: object[];
+  output_text: string;
+  usage: { input_tokens: number; output_tokens: number; total_tokens: number };
+};
+
 function responsePayload(
-  model: unknown,
+  model: JsonValue,
   text: string,
   result: JsonValue,
   responseId: string = `resp_${randomBytes(12).toString("hex")}`,
   itemId: string = `msg_${randomBytes(10).toString("hex")}`,
-  output: JsonRecord[] | null = null,
+  output: object[] | null = null,
   status = "completed"
-) {
-  const usage = result?.usage ?? {};
+): ResponsePayload {
+  const resultRecord = isJsonRecord(result) ? result : null;
+  const usage = isJsonRecord(resultRecord?.usage) ? resultRecord.usage : {};
   const inputTokens = Number(usage.input_tokens ?? 0);
   const outputTokens = Number(usage.output_tokens ?? 0);
   const message = responseMessageItem(text, itemId);
@@ -1372,7 +1708,7 @@ function responsePayload(
 function sendJson(
   response: ServerResponse,
   status: number,
-  body: JsonRecord,
+  body: unknown,
   extraHeaders: Record<string, string | number> = {}
 ) {
   const encoded = Buffer.from(JSON.stringify(body));
@@ -1385,12 +1721,13 @@ function sendJson(
   response.end(encoded);
 }
 
-function sseLine(eventName: string, body: JsonRecord, sequenceNumber?: number) {
-  const payload =
-    sequenceNumber === undefined
-      ? body
-      : { ...body, sequence_number: sequenceNumber };
-  return `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
+const EVENT_OUTPUT_ITEM_ADDED = "response.output_item.added";
+const EVENT_OUTPUT_ITEM_DONE = "response.output_item.done";
+const EVENT_REASONING_SUMMARY_TEXT_DELTA =
+  "response.reasoning_summary_text.delta";
+
+function sseLine(eventName: string, body: object): string {
+  return `event: ${eventName}\ndata: ${JSON.stringify(body)}\n\n`;
 }
 
 const ANTIGRAVITY_WEB_RESEARCH_TOOLS = new Set([
@@ -1398,33 +1735,62 @@ const ANTIGRAVITY_WEB_RESEARCH_TOOLS = new Set([
   "read_url_content"
 ]);
 
-function activityText(event: JsonValue): string {
-  if (event?.event !== "step_update" || !event.step_update) return "";
+function activityText(event: AgyStreamEvent): string {
+  if (event.event !== "step_update") return "";
+  if (!isStepUpdate(event.step_update)) return "";
   const update = event.step_update;
+  const toolInfo = isToolInfo(update.tool_info) ? update.tool_info : null;
   const state = String(update.state ?? "").toUpperCase();
   const stepType = String(update.step_type ?? "").toLowerCase();
-  const toolName = String(update.tool_name ?? update.tool_info?.name ?? "tool");
+  const toolName = String(update.tool_name ?? toolInfo?.name ?? "tool");
 
-  if (stepType === "tool") {
-    if (toolName === "search_web") {
+  switch (stepType) {
+    case "tool": {
+      return toolActivityText(toolName, state);
+    }
+    case "agent_response": {
+      return agentResponseActivityText(state);
+    }
+    case "checkpoint": {
+      return state === "DONE" ? "Antigravity reached a checkpoint." : "";
+    }
+  }
+  return "";
+}
+
+function toolActivityText(toolName: string, state: string): string {
+  const specific = specificToolActivityText(toolName, state);
+  if (specific) return specific;
+  if (state === "ACTIVE") return `Antigravity is using ${toolName}.`;
+  if (state === "DONE") return `Antigravity finished ${toolName}.`;
+  return `Antigravity tool ${toolName}: ${state.toLowerCase()}.`;
+}
+
+function specificToolActivityText(
+  toolName: string,
+  state: string
+): string | null {
+  switch (toolName) {
+    case "search_web": {
       if (state === "ACTIVE") return "Antigravity is searching the web.";
       if (state === "DONE") return "Antigravity finished searching the web.";
+      return null;
     }
-    if (toolName === "read_url_content") {
+    case "read_url_content": {
       if (state === "ACTIVE") return "Antigravity is reading web URL content.";
       if (state === "DONE")
         return "Antigravity finished reading web URL content.";
+      return null;
     }
-    if (state === "ACTIVE") return `Antigravity is using ${toolName}.`;
-    if (state === "DONE") return `Antigravity finished ${toolName}.`;
-    return `Antigravity tool ${toolName}: ${state.toLowerCase()}.`;
+    default: {
+      return null;
+    }
   }
-  if (stepType === "agent_response") {
-    if (state === "ACTIVE") return "Antigravity is processing the next step.";
-    if (state === "DONE") return "Antigravity completed a processing step.";
-  }
-  if (stepType === "checkpoint" && state === "DONE")
-    return "Antigravity reached a checkpoint.";
+}
+
+function agentResponseActivityText(state: string): string {
+  if (state === "ACTIVE") return "Antigravity is processing the next step.";
+  if (state === "DONE") return "Antigravity completed a processing step.";
   return "";
 }
 
@@ -1447,16 +1813,16 @@ const SETTINGS_FILENAME = "settings.json";
 
 interface IsolatedHomeResult {
   isolatedHome: string;
-  mcpConfig: JsonRecord;
-  settings: JsonRecord;
+  mcpConfig: AntigravityMcpConfig;
+  settings: AntigravitySettings;
   cleanup: () => void;
 }
 
 /** The launch definition of every AutoDev MCP server, rendered by the installer from `.rulesync/mcp.jsonc`. */
 function bridgeMcpCatalogue(codexHome?: string): Record<string, JsonRecord> {
   const basePath =
-    codexHome ?? process.env.CODEX_HOME ?? join(homedir(), ".codex");
-  const path = join(basePath, "provider-runtime", "mcp-servers.json");
+    codexHome ?? process.env.CODEX_HOME ?? pathApi.join(homedir(), ".codex");
+  const path = pathApi.join(basePath, "provider-runtime", "mcp-servers.json");
   try {
     const raw = readFileSync(path, "utf8");
     const catalogue = JSON.parse(raw);
@@ -1480,7 +1846,7 @@ function bridgeMcpEntry(
   name: string,
   server: JsonRecord,
   tools: unknown
-): JsonRecord {
+): AntigravityMcpServerConfig {
   const remoteUrl = server.serverUrl ?? server.url;
   if (remoteUrl !== undefined) {
     if (Array.isArray(tools))
@@ -1498,7 +1864,7 @@ function bridgeHttpMcpEntry(
   name: string,
   server: JsonRecord,
   remoteUrl: string
-): JsonRecord {
+): AntigravityMcpServerConfig {
   const entry: JsonRecord = { serverUrl: remoteUrl };
   if (server.bearer_token_env_var !== undefined) {
     if (
@@ -1523,7 +1889,7 @@ function bridgeStdioMcpEntry(
   name: string,
   server: JsonRecord,
   tools: unknown
-): JsonRecord {
+): AntigravityMcpServerConfig {
   if (typeof server.command !== "string" || !server.command.trim())
     throw new Error(`MCP server ${name} has no supported launch definition`);
   if (
@@ -1537,7 +1903,11 @@ function bridgeStdioMcpEntry(
     : [];
   const entry: JsonRecord = {};
   if (server.cwd !== undefined) entry.cwd = server.cwd;
-  if (server.env !== undefined) entry.env = { ...server.env };
+  if (server.env !== undefined) {
+    if (!isJsonRecord(server.env))
+      throw new Error(`MCP server ${name} has an invalid environment`);
+    entry.env = { ...server.env };
+  }
   if (tools === undefined) {
     entry.command = server.command;
     entry.args = serverArgs;
@@ -1567,9 +1937,12 @@ function bridgeSpawnMcpEntry(options?: IsolatedHomeOptions): JsonRecord {
   const codexHome =
     options?.codexHome ??
     process.env.CODEX_HOME ??
-    join(options?.originalHome ?? process.env.HOME ?? homedir(), ".codex");
+    pathApi.join(
+      options?.originalHome ?? process.env.HOME ?? homedir(),
+      ".codex"
+    );
   const repoShim = resolveRuntimeSourcePath(REPO_ROOT, "mcp/spawn-shim.ts");
-  const codexShim = join(codexHome, "src", "mcp", "spawn-shim.ts");
+  const codexShim = pathApi.join(codexHome, "src", "mcp", "spawn-shim.ts");
   const targetShim = existsSync(repoShim) ? repoShim : codexShim;
   return {
     command: "bash",
@@ -1581,10 +1954,10 @@ function buildInvocationMcpConfig(
   agentRole: string | null,
   spawnSession: string | null = null,
   options?: IsolatedHomeOptions
-): JsonRecord {
+): AntigravityMcpConfig {
   const contract = antigravityRoleContract(agentRole);
   const catalogue = bridgeMcpCatalogue(options?.codexHome);
-  const mcpServers: Record<string, JsonRecord> = {};
+  const mcpServers: Record<string, AntigravityMcpServerConfig> = {};
   for (const name of contract.mcp ?? []) {
     if (name === "autodev_spawn") continue;
     const server = catalogue[name];
@@ -1601,7 +1974,7 @@ function buildInvocationMcpConfig(
 
 function invocationMcpPermissionGrants(
   contract: AntigravityRoleContract,
-  mcpConfig: JsonRecord
+  mcpConfig: AntigravityMcpConfig
 ): string[] {
   const grants: string[] = [];
   for (const server of Object.keys(mcpConfig.mcpServers ?? {})) {
@@ -1638,32 +2011,32 @@ function buildReadOnlyInvocationSettings({
 }: {
   userSettings: JsonRecord;
   userPermissions: JsonRecord;
-  existingAllow: unknown[];
-  existingDeny: unknown[];
+  existingAllow: JsonArray;
+  existingDeny: JsonArray;
   mcpGrants: string[];
   cwd: string | undefined;
   originalHome?: string | undefined;
   codexHome?: string | undefined;
-}): JsonRecord {
-  if (!cwd || !isAbsolute(cwd))
+}): AntigravitySettings {
+  if (!cwd || !pathApi.isAbsolute(cwd))
     throw new Error(
       "Antigravity read-only invocation requires a validated absolute workspace"
     );
 
   const home = originalHome ?? process.env.HOME ?? homedir();
   const resolvedCodexHome =
-    codexHome ?? process.env.CODEX_HOME ?? join(home, ".codex");
+    codexHome ?? process.env.CODEX_HOME ?? pathApi.join(home, ".codex");
 
-  const workspaceRoot = resolvePath(cwd);
+  const workspaceRoot = pathApi.resolve(cwd);
   const workspaceReadGrants = [
     `read_file(${workspaceRoot})`,
     `read_file(${workspaceRoot}/**)`
   ];
   const sharedReadGrants = [
-    `read_file(${join(home, ".agents")})`,
-    `read_file(${join(home, ".agents")}/**)`,
+    `read_file(${pathApi.join(home, ".agents")})`,
+    `read_file(${pathApi.join(home, ".agents")}/**)`,
     `read_file(${resolvedCodexHome})`,
-    `read_file(${join(resolvedCodexHome, "**")})`
+    `read_file(${pathApi.join(resolvedCodexHome, "**")})`
   ];
   const urlReadGrants = existingAllow.filter(
     (entry): entry is string =>
@@ -1695,12 +2068,12 @@ function buildReadOnlyInvocationSettings({
  */
 function buildInvocationSettings(
   agentRole: string | null,
-  mcpConfig: JsonRecord,
+  mcpConfig: AntigravityMcpConfig,
   originalHome: string = process.env.HOME ?? homedir(),
   options?: IsolatedHomeOptions
-): JsonRecord {
+): AntigravitySettings {
   const contract = antigravityRoleContract(agentRole);
-  const settingsPath = join(
+  const settingsPath = pathApi.join(
     originalHome,
     GEMINI_DIRECTORY,
     AGY_CLI_DIRECTORY,
@@ -1717,24 +2090,19 @@ function buildInvocationSettings(
         { cause: error }
       );
     }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    if (!isJsonRecord(parsed))
       throw new Error(
         `Antigravity settings must be a JSON object at ${settingsPath}`
       );
-    userSettings = parsed as JsonRecord;
+    userSettings = parsed;
   }
 
   const permissions = userSettings.permissions;
-  if (
-    permissions !== undefined &&
-    (!permissions ||
-      typeof permissions !== "object" ||
-      Array.isArray(permissions))
-  )
+  if (permissions !== undefined && !isJsonRecord(permissions))
     throw new Error(
       `Antigravity permissions must be an object at ${settingsPath}`
     );
-  const userPermissions = (permissions ?? {}) as JsonRecord;
+  const userPermissions: JsonRecord = permissions ?? {};
   if (
     userPermissions.allow !== undefined &&
     !Array.isArray(userPermissions.allow)
@@ -1750,13 +2118,13 @@ function buildInvocationSettings(
       `Antigravity permissions.deny must be an array at ${settingsPath}`
     );
 
-  const existingAllow: unknown[] = Array.isArray(userPermissions.allow)
+  const existingAllow: JsonArray = Array.isArray(userPermissions.allow)
     ? [...userPermissions.allow]
     : [];
   const nonMcpAllow = existingAllow.filter(
     (entry) => typeof entry !== "string" || !entry.startsWith("mcp(")
   );
-  const existingDeny: unknown[] = Array.isArray(userPermissions.deny)
+  const existingDeny: JsonArray = Array.isArray(userPermissions.deny)
     ? [...userPermissions.deny]
     : [];
 
@@ -1797,27 +2165,27 @@ function symlinkGeminiDirectory(
   mkdirSync(target, { recursive: true, mode: 0o700 });
   for (const name of readdirSync(source)) {
     if (name !== excludedFile)
-      symlinkSync(join(source, name), join(target, name));
+      symlinkSync(pathApi.join(source, name), pathApi.join(target, name));
   }
 }
 
 function symlinkGeminiState(source: string, target: string): void {
   for (const name of readdirSync(source)) {
-    const sourcePath = join(source, name);
+    const sourcePath = pathApi.join(source, name);
     if (name === GEMINI_CONFIG_DIRECTORY) {
       symlinkGeminiDirectory(
         sourcePath,
-        join(target, GEMINI_CONFIG_DIRECTORY),
+        pathApi.join(target, GEMINI_CONFIG_DIRECTORY),
         MCP_CONFIG_FILENAME
       );
     } else if (name === AGY_CLI_DIRECTORY) {
       symlinkGeminiDirectory(
         sourcePath,
-        join(target, AGY_CLI_DIRECTORY),
+        pathApi.join(target, AGY_CLI_DIRECTORY),
         SETTINGS_FILENAME
       );
     } else {
-      symlinkSync(sourcePath, join(target, name));
+      symlinkSync(sourcePath, pathApi.join(target, name));
     }
   }
 }
@@ -1829,7 +2197,7 @@ function createIsolatedAntigravityHome(
   options?: IsolatedHomeOptions
 ): IsolatedHomeResult {
   const originalHome = options?.originalHome ?? process.env.HOME ?? homedir();
-  const origGemini = join(originalHome, GEMINI_DIRECTORY);
+  const origGemini = pathApi.join(originalHome, GEMINI_DIRECTORY);
   if (!existsSync(origGemini))
     throw new Error(
       `Antigravity user state is missing at ${origGemini}; sign in with agy before using the bridge`
@@ -1861,35 +2229,35 @@ function createIsolatedAntigravityHome(
   };
 
   try {
-    tempHome = mkdtempSync(join(tmpdir(), "autodev-agy-home-"));
+    tempHome = mkdtempSync(pathApi.join(tmpdir(), "autodev-agy-home-"));
     chmodSync(tempHome, 0o700);
-    const geminiDir = join(tempHome, GEMINI_DIRECTORY);
+    const geminiDir = pathApi.join(tempHome, GEMINI_DIRECTORY);
     mkdirSync(geminiDir, { mode: 0o700 });
 
     symlinkGeminiState(origGemini, geminiDir);
 
-    const configDir = join(geminiDir, GEMINI_CONFIG_DIRECTORY);
+    const configDir = pathApi.join(geminiDir, GEMINI_CONFIG_DIRECTORY);
     mkdirSync(configDir, { recursive: true, mode: 0o700 });
     writeFileSync(
-      join(configDir, MCP_CONFIG_FILENAME),
+      pathApi.join(configDir, MCP_CONFIG_FILENAME),
       `${JSON.stringify(mcpConfig, null, 2)}\n`,
       { mode: 0o600 }
     );
 
-    const cliDir = join(geminiDir, AGY_CLI_DIRECTORY);
+    const cliDir = pathApi.join(geminiDir, AGY_CLI_DIRECTORY);
     mkdirSync(cliDir, { recursive: true, mode: 0o700 });
     writeFileSync(
-      join(cliDir, SETTINGS_FILENAME),
+      pathApi.join(cliDir, SETTINGS_FILENAME),
       `${JSON.stringify(settings, null, 2)}\n`,
       { mode: 0o600 }
     );
 
     if (process.platform === "darwin") {
-      const origKeychains = join(originalHome, "Library", "Keychains");
+      const origKeychains = pathApi.join(originalHome, "Library", "Keychains");
       if (existsSync(origKeychains)) {
-        const libDir = join(tempHome, "Library");
+        const libDir = pathApi.join(tempHome, "Library");
         mkdirSync(libDir, { mode: 0o700 });
-        symlinkSync(origKeychains, join(libDir, "Keychains"));
+        symlinkSync(origKeychains, pathApi.join(libDir, "Keychains"));
       }
     }
 
@@ -1915,7 +2283,7 @@ function agyEnvironment(
   spawnSession: string | null,
   isolatedHome: string | null = null
 ): NodeJS.ProcessEnv {
-  const codexHome = process.env.CODEX_HOME ?? join(homedir(), ".codex");
+  const codexHome = process.env.CODEX_HOME ?? pathApi.join(homedir(), ".codex");
   return {
     ...process.env,
     ...(isolatedHome ? { HOME: isolatedHome } : {}),
@@ -2003,6 +2371,9 @@ ${skillContext}
 ${prompt}`;
 }
 
+const BACKGROUND_TASKS_ACTIVE_PATTERN =
+  /waiting up to .* for \d+ background task/i;
+
 function runAgy(
   prompt: string,
   model: string,
@@ -2065,33 +2436,43 @@ function runAgy(
     let emitted = "";
     const lines = createInterface({ input: child.stdout! });
     lines.on("line", (line) => {
-      let event;
+      let decoded: unknown;
       try {
-        event = JSON.parse(line);
+        decoded = JSON.parse(line);
       } catch {
         return;
       }
+      // Only JSON objects are agy stream events; decode once, here.
+      if (!isStreamEvent(decoded)) return;
+      const event = decoded;
       onEvent?.(event);
       if (event.event === "step_update") {
-        const delta = String(event.step_update?.text_delta ?? "");
-        if (delta) {
-          emitted += delta;
-          onEvent?.({ type: "text_delta", text: delta });
+        const update = event.step_update;
+        if (isStepUpdate(update)) {
+          const delta = String(update.text_delta ?? "");
+          if (delta) {
+            emitted += delta;
+            onEvent?.({ type: "text_delta", text: delta });
+          }
         }
       }
-      if (event.event === "result") terminalResult = event.result ?? {};
+      // A result line without a JSON-object payload still ends the turn; it
+      // reads as an empty result rather than a missing one.
+      if (event.event === "result")
+        terminalResult = isJsonRecord(event.result) ? event.result : {};
     });
+
     child.stderr?.on("data", (chunk) => {
       const text = chunk.toString();
       stderr += text;
-      if (/waiting up to .* for \d+ background task/i.test(text)) {
+      if (BACKGROUND_TASKS_ACTIVE_PATTERN.test(text)) {
         onEvent?.({ type: "background_tasks_active", text });
       }
     });
     child.on("error", fail);
     child.on("close", (code, signal) => {
-      const result = terminalResult ?? {};
-      if (!terminalResult) {
+      const result = terminalResult;
+      if (!result) {
         // The failure mode that ends long delegating turns: agy stops without
         // ever emitting a terminal result. Which of the three it was -- killed
         // because the client went away, exited on its own, or died on a signal
@@ -2110,13 +2491,19 @@ function runAgy(
         );
         return;
       }
-      if (result.status && result.status !== "SUCCESS") {
+      const resultRecord: JsonObject = result;
+      const resultStatus =
+        typeof resultRecord.status === "string" ? resultRecord.status : "";
+      const resultError = resultRecord.error;
+      const resultResponse =
+        typeof resultRecord.response === "string" ? resultRecord.response : "";
+      if (resultStatus && resultStatus !== "SUCCESS") {
         fail(
           Object.assign(
             new Error(
               agyFailureMessage({
-                status: result.status,
-                error: result.error,
+                status: resultStatus,
+                error: resultError,
                 stderr,
                 code
               })
@@ -2137,7 +2524,7 @@ function runAgy(
         );
         return;
       }
-      const finalText = String(result.response ?? emitted);
+      const finalText = String(resultResponse || emitted);
       if (finalText && finalText !== emitted) {
         const suffix = finalText.startsWith(emitted)
           ? finalText.slice(emitted.length)
@@ -2149,7 +2536,7 @@ function runAgy(
           Object.assign(
             new Error(
               agyFailureMessage({
-                status: result.status ?? "SUCCESS",
+                status: resultStatus || "SUCCESS",
                 error: "empty response",
                 stderr,
                 code
@@ -2160,7 +2547,7 @@ function runAgy(
         );
         return;
       }
-      succeed({ text: finalText || emitted, result });
+      succeed({ text: finalText || emitted, result: resultRecord });
     });
     onEvent?.({ type: "process", child });
   });
@@ -2204,14 +2591,14 @@ function agyErrorDetails(
   role: string | null,
   workspace: string,
   requestId: string | null = null
-): JsonRecord {
-  const failure = error as AgyFailure | undefined;
-  const permissionFailure = agyProviderFailureDiagnostic(failure);
+): AgyErrorDetails {
+  const failure = agyFailure(error);
+  const permissionFailure = agyProviderFailureDiagnostic(error);
   const message = permissionFailure
     ? "Antigravity denied a required tool permission in headless mode."
-    : (failure?.message ?? String(error));
-  const details: JsonRecord = {
-    type: permissionFailure?.code ?? failure?.failureCode ?? "upstream_error",
+    : (failure.message ?? String(error));
+  const details: AgyErrorDetails = {
+    type: permissionFailure?.code ?? failure.failureCode ?? "upstream_error",
     message,
     provider: "antigravity",
     role: role ?? "default",
@@ -2222,64 +2609,32 @@ function agyErrorDetails(
     details.code = permissionFailure.code;
     details.phase = permissionFailure.phase ?? null;
     details.tool = permissionFailure.tool ?? null;
-  } else if (failure?.failureCode) {
+  } else if (failure.failureCode) {
     details.code = failure.failureCode;
-    details.phase = failure.failurePhase ?? null;
-    details.tool = failure.failureTool ?? null;
+    details.phase = failure.failurePhase;
+    details.tool = failure.failureTool;
   }
   return details;
 }
 
-async function handle(
+async function handleLocalRoute(
+  pathname: string,
   request: IncomingMessage,
   response: ServerResponse
-): Promise<void> {
-  const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+): Promise<boolean> {
   if (pathname === "/health" || pathname === "/health/liveliness") {
     sendJson(response, 200, {
       status: "ok",
       spawnSessions: spawnSessions.status()
     });
-    return;
+    return true;
   }
-  // The shim runs as a child of the agy process this bridge started and reaches
-  // back over the same loopback port, behind the same bearer check.
   if (
     pathname === "/v1/bridge-spawn/attach" ||
     pathname === "/v1/bridge-spawn/call"
   ) {
-    if (
-      AUTH_TOKEN &&
-      request.headers.authorization !== `Bearer ${AUTH_TOKEN}`
-    ) {
-      sendJson(response, 401, { error: "invalid local gateway key" });
-      return;
-    }
-    const body = await readJsonBody(request);
-    const session = typeof body?.session === "string" ? body.session : "";
-    if (pathname.endsWith("/attach")) {
-      // A leaf turn, or a CLI that outlived its request, is simply not offered
-      // the tool rather than being offered one that fails.
-      sendJson(response, 200, {
-        spawnAllowed: spawnSessions.mayDelegate(session)
-      });
-      return;
-    }
-    const result = spawnSessions.record(session, body?.children);
-    if (!result.accepted) {
-      sendJson(response, 409, { error: result.message });
-      return;
-    }
-    // Delegation is dispatched, not awaited: Codex creates the children and
-    // tracks them, so a model that waits for them here would wait forever.
-    sendJson(response, 200, {
-      text:
-        `Dispatched ${result.count} subagent(s): ${result.roles}. They are running now and are tracked by ` +
-        "the orchestration layer, not by you. End your turn now with a brief statement of what you delegated -- " +
-        "do not wait for them, and do not do their work yourself. Their results are delivered to you " +
-        "automatically on your next turn."
-    });
-    return;
+    await handleBridgeSpawnRoute(pathname, request, response);
+    return true;
   }
   if (pathname === "/v1/models") {
     sendJson(response, 200, {
@@ -2289,63 +2644,223 @@ async function handle(
       ],
       models: [modelMetadata()]
     });
+    return true;
+  }
+  return false;
+}
+
+async function handleBridgeSpawnRoute(
+  pathname: string,
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<void> {
+  // The shim reaches this loopback route behind the same bearer check.
+  if (AUTH_TOKEN && request.headers.authorization !== `Bearer ${AUTH_TOKEN}`) {
+    sendJson(response, 401, { error: "invalid local gateway key" });
     return;
   }
-  if (pathname !== "/v1/responses" || request.method !== "POST") {
-    sendJson(response, 404, {
-      error: { type: "invalid_request_error", message: "not found" }
+  const body = await readJsonBody(request);
+  const session = typeof body?.session === "string" ? body.session : "";
+  if (pathname.endsWith("/attach")) {
+    // A leaf turn, or a CLI that outlived its request, is simply not offered
+    // the tool rather than being offered one that fails.
+    sendJson(response, 200, {
+      spawnAllowed: spawnSessions.mayDelegate(session)
     });
     return;
   }
-  if (AUTH_TOKEN && request.headers.authorization !== `Bearer ${AUTH_TOKEN}`) {
+  const result = spawnSessions.record(session, body?.children);
+  if (!result.accepted) {
+    sendJson(response, 409, { error: result.message });
+    return;
+  }
+  // Dispatch, rather than await: Codex creates and tracks these children.
+  sendJson(response, 200, {
+    text:
+      `Dispatched ${result.count} subagent(s): ${result.roles}. They are running now and are tracked by ` +
+      "the orchestration layer, not by you. End your turn now with a brief statement of what you delegated -- " +
+      "do not wait for them, and do not do their work yourself. Their results are delivered to you " +
+      "automatically on your next turn."
+  });
+}
+
+function authorizeResponsesRoute(
+  pathname: string,
+  request: IncomingMessage,
+  response: ServerResponse
+): boolean {
+  if (pathname === "/v1/responses" && request.method === "POST") {
+    if (!AUTH_TOKEN || request.headers.authorization === `Bearer ${AUTH_TOKEN}`)
+      return true;
     sendJson(response, 401, {
       error: {
         type: "authentication_error",
         message: "invalid local gateway key"
       }
     });
-    return;
+    return false;
   }
+  if (pathname !== "/v1/responses" || request.method !== "POST") {
+    sendJson(response, 404, {
+      error: { type: "invalid_request_error", message: "not found" }
+    });
+    return false;
+  }
+  return true;
+}
 
-  let body = "";
-  for await (const chunk of request) body += chunk;
-  let payload;
+async function readResponsePayload(
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<JsonObject | null> {
+  let requestBody = "";
+  for await (const chunk of request) requestBody += chunk;
+  let parsed: unknown;
   try {
-    payload = JSON.parse(body);
+    parsed = JSON.parse(requestBody);
   } catch {
     sendJson(response, 400, {
       error: { type: "invalid_request_error", message: "invalid JSON" }
     });
-    return;
+    return null;
   }
+  if (!isJsonRecord(parsed)) {
+    sendJson(response, 400, {
+      error: { type: "invalid_request_error", message: "invalid payload" }
+    });
+    return null;
+  }
+  return parsed;
+}
+
+async function handle(
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<void> {
+  const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+  if (await handleLocalRoute(pathname, request, response)) return;
+  if (!authorizeResponsesRoute(pathname, request, response)) return;
+  const payload = await readResponsePayload(request, response);
+  if (!payload) return;
+  await handleResponsesRequest(request, response, payload);
+}
+
+/** A request header a sibling module has not already decoded for this bridge. */
+function headerSandboxMode(
+  headers: Record<string, unknown>
+): "read-only" | "workspace-write" | null {
+  const key = Object.keys(headers).find(
+    (c) => c.toLowerCase() === "x-autodev-sandbox-mode"
+  );
+  if (!key) return null;
+  const value = headers[key];
+  const single = Array.isArray(value) ? value[0] : value;
+  return single === "read-only" || single === "workspace-write" ? single : null;
+}
+
+function resolveSandboxMode(
+  headers: Record<string, unknown>
+): "read-only" | "workspace-write" | null {
+  return readOnlySystemPromptInjection(headers) === ""
+    ? headerSandboxMode(headers)
+    : "read-only";
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function reportTurnHeartbeat(agentEvents: AgentReporter | null): void {
+  if (typeof agentEvents?.reportHeartbeat === "function") {
+    void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
+  }
+}
+
+// Exposure, not invocation: the role contract decides which skills this turn
+// can reach before agy starts, and that decision is the fact the router
+// needs. Deriving it from what the model happened to invoke would report
+// nothing for a turn that was given skills and never reached for one --
+// exactly the case per-workspace skill attribution has to be able to show.
+function reportRoleExposure(
+  agentEvents: AgentReporter | null,
+  bootstrapContract: AntigravityRoleContract
+): void {
+  if (!agentEvents) return;
+  for (const skill of bootstrapContract.skills ?? []) {
+    void agentEvents.reportSkillExposed({
+      skill,
+      source: ANTIGRAVITY_SKILL_EXPOSURE_SOURCE
+    });
+  }
+  for (const server of bootstrapContract.mcp ?? []) {
+    if (typeof agentEvents.reportMcpExposed === "function") {
+      void agentEvents.reportMcpExposed({
+        server,
+        source: ANTIGRAVITY_MCP_EXPOSURE_SOURCE
+      });
+    } else if (typeof agentEvents.post === "function") {
+      void agentEvents.post([
+        { type: "mcp_exposed", server, source: ANTIGRAVITY_MCP_EXPOSURE_SOURCE }
+      ]);
+    }
+  }
+}
+
+// A turn logged its start and nothing else, so a failed one left only the
+// step lines that happened to precede it -- the reason it died reached the
+// router as an HTTP status and was never written down anywhere. Every exit
+// names itself and how long it took. The request id rides along so this line
+// can be matched to the router's own log of the same request without
+// exposing anything the router did not already assign.
+function createTurnLog(
+  requestId: string | null
+): (outcome: string, detail?: string) => void {
+  const turnStartedAt = Date.now();
+  const elapsed = () => `${((Date.now() - turnStartedAt) / 1000).toFixed(1)}s`;
+  return (outcome, detail = "") =>
+    writeErrorLine(
+      `agy turn ${outcome} after ${elapsed()} request=${requestId ?? "none"}${detail ? `: ${detail}` : ""}`
+    );
+}
+
+/** Everything one Responses turn resolved before agy starts. */
+interface ResponsesTurn {
+  /** The model the client named, echoed back in every response body. */
+  responseModel: JsonValue;
+  model: string;
+  effort: string;
+  agentRole: string | null;
+  workspaceKey: unknown;
+  sandboxMode: "read-only" | "workspace-write" | null;
+  skillContext: string | null;
+  agentEvents: AgentReporter | null;
+  spawnSession: string | null;
+  requestId: string | null;
+  cwd: string;
+  prompt: string;
+  spawnTracker: ReturnType<typeof createSpawnTracker>;
+  toolObserver: ReturnType<typeof createToolObserver>;
+  logTurnEnd: (outcome: string, detail?: string) => void;
+}
+
+/**
+ * Validates and resolves one Responses request. Answers the request itself
+ * (400) and returns null when the workspace cannot be resolved; delegation
+ * state is opened only after every pre-flight check passed.
+ */
+function prepareResponsesTurn(
+  request: IncomingMessage,
+  response: ServerResponse,
+  payload: JsonObject
+): ResponsesTurn | null {
   const model = resolveModel(payload.model);
   const effort = resolveEffort(payload);
   // The router classifies the turn; only it can tell this bridge that it is
   // serving the root orchestrator rather than a delegated leaf.
   const agentRole = resolveAgentRole(request.headers);
   const workspaceKey = request.headers[AUTODEV_WORKSPACE_KEY_HEADER];
-  const sandboxMode =
-    readOnlySystemPromptInjection(
-      request.headers as Record<string, unknown>
-    ) === ""
-      ? resolveSandboxModeLocal(request.headers)
-      : "read-only";
-  const skillContext = bridgeSkillContext(
-    request.headers as Record<string, unknown>
-  );
-  function resolveSandboxModeLocal(
-    headers: Record<string, unknown>
-  ): "read-only" | "workspace-write" | null {
-    const key = Object.keys(headers).find(
-      (c) => c.toLowerCase() === "x-autodev-sandbox-mode"
-    );
-    if (!key) return null;
-    const value = headers[key];
-    const single = Array.isArray(value) ? value[0] : value;
-    return single === "read-only" || single === "workspace-write"
-      ? single
-      : null;
-  }
+  const sandboxMode = resolveSandboxMode(request.headers);
+  const skillContext = bridgeSkillContext(request.headers);
   // agy delegates through its own `invoke_subagent` tool, so those children
   // never reach the router as requests. Report them, or an orchestrator turn
   // served here reads as "never delegated".
@@ -2365,13 +2880,11 @@ async function handle(
   // header) so a failure this bridge reports back can be matched to the
   // router request that produced it without carrying any prompt content.
   const requestId = headerValue(request.headers, REQUEST_ID_HEADER);
-  const { observeSpawnStep, flushSpawns, openSpawnCount } =
-    createSpawnTracker(agentEvents);
+  const spawnTracker = createSpawnTracker(agentEvents);
   // The other half of what agy does inside its own runtime: the tools it
   // reaches for. Like delegation, none of it reaches the router as a request.
-  const { observeToolStep, reportPermissionDenial } =
-    createToolObserver(agentEvents);
-  let cwd;
+  const toolObserver = createToolObserver(agentEvents);
+  let cwd: string;
   try {
     cwd = resolveCwd(payload, request.headers, PROJECT_ROOT);
   } catch (error) {
@@ -2380,7 +2893,7 @@ async function handle(
     sendJson(response, 400, {
       error: { type: "invalid_request_error", message: error.message }
     });
-    return;
+    return null;
   }
   const prompt = promptFromInput(
     payload.input ?? "",
@@ -2401,246 +2914,411 @@ async function handle(
   writeErrorLine(
     `agy request model=${model} effort=${effort} role=${isOrchestratorRole(agentRole) ? "orchestrator" : "leaf"} cwd=${cwd}`
   );
-  // Exposure, not invocation: the role contract decides which skills this turn
-  // can reach before agy starts, and that decision is the fact the router
-  // needs. Deriving it from what the model happened to invoke would report
-  // nothing for a turn that was given skills and never reached for one --
-  // exactly the case per-workspace skill attribution has to be able to show.
-  if (agentEvents) {
-    for (const skill of bootstrapContract.skills ?? []) {
-      void agentEvents.reportSkillExposed({
-        skill,
-        source: ANTIGRAVITY_SKILL_EXPOSURE_SOURCE
-      });
-    }
-    for (const server of bootstrapContract.mcp ?? []) {
-      if (typeof agentEvents.reportMcpExposed === "function") {
-        void agentEvents.reportMcpExposed({
-          server,
-          source: ANTIGRAVITY_MCP_EXPOSURE_SOURCE
-        });
-      } else if (typeof agentEvents.post === "function") {
-        void agentEvents.post([
-          {
-            type: "mcp_exposed",
-            server,
-            source: ANTIGRAVITY_MCP_EXPOSURE_SOURCE
-          }
-        ]);
-      }
-    }
-  }
-  // A turn logged its start and nothing else, so a failed one left only the
-  // step lines that happened to precede it -- the reason it died reached the
-  // router as an HTTP status and was never written down anywhere. Every exit
-  // from here on names itself and how long it took. The request id rides
-  // along so this line can be matched to the router's own log of the same
-  // request without exposing anything the router did not already assign.
-  const turnStartedAt = Date.now();
-  const elapsed = () => `${((Date.now() - turnStartedAt) / 1000).toFixed(1)}s`;
-  const logTurnEnd = (outcome: string, detail = "") =>
-    writeErrorLine(
-      `agy turn ${outcome} after ${elapsed()} request=${requestId ?? "none"}${detail ? `: ${detail}` : ""}`
-    );
+  reportRoleExposure(agentEvents, bootstrapContract);
+  return {
+    responseModel: payload.model ?? model,
+    model,
+    effort,
+    agentRole,
+    workspaceKey,
+    sandboxMode,
+    skillContext,
+    agentEvents,
+    spawnSession,
+    requestId,
+    cwd,
+    prompt,
+    spawnTracker,
+    toolObserver,
+    logTurnEnd: createTurnLog(requestId)
+  };
+}
 
-  if (!payload.stream) {
+function runTurnAgy(
+  turn: ResponsesTurn,
+  onEvent: OnAgyEvent
+): Promise<RunAgyResult> {
+  return runAgy(
+    turn.prompt,
+    turn.model,
+    turn.effort,
+    turn.cwd,
+    onEvent,
+    turn.spawnSession,
+    turn.agentRole,
+    turn.sandboxMode,
+    turn.skillContext,
+    turn.workspaceKey
+  );
+}
+
+/**
+ * Delegation this turn asked for, collected out-of-band by the shim while agy
+ * ran. Closing the session drains it; a non-empty batch becomes one `exec`
+ * call so Codex creates the children itself and they become sessions the app
+ * can show.
+ */
+function closeSpawnDelegation(
+  spawnSession: string | null,
+  outputIndex: number
+): {
+  childCount: number;
+  events: ReturnType<typeof execToolCallSseEvents>;
+} | null {
+  if (!spawnSession) return null;
+  const spawnChildren = spawnSessions.close(spawnSession);
+  if (spawnChildren.length === 0) return null;
+  const events = execToolCallSseEvents({
+    itemId: mintCallItemId(),
+    callId: mintCallId(spawnSession, outputIndex),
+    source: buildSpawnScript(spawnChildren, { recoverParentId: spawnSession }),
+    outputIndex
+  });
+  return { childCount: spawnChildren.length, events };
+}
+
+async function runNonStreamingTurn(
+  turn: ResponsesTurn,
+  response: ServerResponse
+): Promise<void> {
+  const { agentEvents, spawnSession, agentRole, cwd, requestId } = turn;
+  try {
+    const heartbeat = setInterval(() => reportTurnHeartbeat(agentEvents), 5000);
+    let result: RunAgyResult;
     try {
-      const nonStreamHeartbeat = setInterval(() => {
-        if (agentEvents && typeof agentEvents.reportHeartbeat === "function") {
-          void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
-        }
-      }, 5000);
-      let result;
-      try {
-        result = await runAgy(
-          prompt,
-          model,
-          effort,
-          cwd,
-          (event) => {
-            if (
-              agentEvents &&
-              typeof agentEvents.reportHeartbeat === "function"
-            ) {
-              void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
-            }
-            if (event.event === "step_update") {
-              observeSpawnStep(event.step_update ?? {});
-              observeToolStep(event.step_update ?? {});
-            }
-          },
-          spawnSession,
-          agentRole,
-          sandboxMode,
-          skillContext,
-          workspaceKey
-        );
-      } finally {
-        clearInterval(nonStreamHeartbeat);
-      }
-      const spawnChildren = spawnSession
-        ? spawnSessions.close(spawnSession)
-        : [];
-      const output = [
-        responseMessageItem(
-          result.text,
-          `msg_${randomBytes(10).toString("hex")}`
-        )
-      ];
-      if (spawnSession && spawnChildren.length > 0) {
-        const spawnEvents = execToolCallSseEvents({
-          itemId: mintCallItemId(),
-          callId: mintCallId(spawnSession, output.length),
-          source: buildSpawnScript(spawnChildren, {
-            recoverParentId: spawnSession
-          }),
-          outputIndex: output.length
-        });
-        output.push(spawnEvents[3][1].item);
-        writeErrorLine(
-          `agy delegating ${spawnChildren.length} subagent(s) through Codex`
-        );
-      }
-      logTurnEnd("succeeded");
-      sendJson(
-        response,
-        200,
-        responsePayload(
-          payload.model ?? model,
-          result.text,
-          result.result,
-          undefined,
-          undefined,
-          output
-        )
-      );
-    } catch (error) {
-      flushSpawns("failure");
-      reportPermissionDenial(error);
-      if (spawnSession) spawnSessions.close(spawnSession);
-      logTurnEnd(
-        "failed",
-        error instanceof Error ? error.message : String(error)
-      );
-      sendJson(response, 502, {
-        error: agyErrorDetails(error, agentRole, cwd, requestId)
+      result = await runTurnAgy(turn, (event) => {
+        reportTurnHeartbeat(agentEvents);
+        if (!isStepUpdateEvent(event)) return;
+        const update: JsonValue = isStepUpdate(event.step_update)
+          ? event.step_update
+          : {};
+        turn.spawnTracker.observeSpawnStep(update);
+        turn.toolObserver.observeToolStep(update);
       });
+    } finally {
+      clearInterval(heartbeat);
     }
-    return;
+    const output: object[] = [
+      responseMessageItem(result.text, `msg_${randomBytes(10).toString("hex")}`)
+    ];
+    const delegation = closeSpawnDelegation(spawnSession, output.length);
+    if (delegation) {
+      output.push(delegation.events[3][1].item);
+      writeErrorLine(
+        `agy delegating ${delegation.childCount} subagent(s) through Codex`
+      );
+    }
+    turn.logTurnEnd("succeeded");
+    sendJson(
+      response,
+      200,
+      responsePayload(
+        turn.responseModel,
+        result.text,
+        result.result,
+        undefined,
+        undefined,
+        output
+      )
+    );
+  } catch (error) {
+    turn.spawnTracker.flushSpawns("failure");
+    turn.toolObserver.reportPermissionDenial(error);
+    if (spawnSession) spawnSessions.close(spawnSession);
+    turn.logTurnEnd("failed", errorMessage(error));
+    sendJson(response, 502, {
+      error: agyErrorDetails(error, agentRole, cwd, requestId)
+    });
   }
+}
 
-  const responseId = `resp_${randomBytes(12).toString("hex")}`;
-  const reasoningId = `rs_${randomBytes(12).toString("hex")}`;
-  const itemId = `msg_${randomBytes(10).toString("hex")}`;
-  const activityParts: string[] = [];
-  const seenActivities = new Set();
+/**
+ * The SSE half of one streamed Responses turn. Events are buffered until the
+ * first real provider work arrives, so a provider that fails before doing
+ * anything can still be answered with an HTTP status the router can fall back
+ * on. Every event is numbered whether or not it is still deliverable.
+ */
+class ResponseEventStream {
+  readonly responseId = `resp_${randomBytes(12).toString("hex")}`;
+  readonly reasoningId = `rs_${randomBytes(12).toString("hex")}`;
+  readonly itemId = `msg_${randomBytes(10).toString("hex")}`;
+  private readonly response: ServerResponse;
+  private readonly pending: string[] = [];
+  private readonly activityParts: string[] = [];
+  private readonly seenActivities = new Set<string>();
+  private sequenceNumber = 0;
+  private streamStarted = false;
+  private clientClosed = false;
   // Exactly what this client already received, so flushing it on a failure is
   // truthful by construction rather than a second guess at the turn's output.
-  let partialText = "";
-  let sequenceNumber = 0;
-  let streamStarted = false;
-  const pendingEvents: string[] = [];
-  let clientClosed = false;
-  const isWritable = () =>
-    !clientClosed &&
-    !response.writableEnded &&
-    !response.destroyed &&
-    !response.closed;
-  const emit = (eventName: string, body: JsonRecord) => {
+  private sentText = "";
+
+  constructor(response: ServerResponse) {
+    this.response = response;
+  }
+
+  get started(): boolean {
+    return this.streamStarted;
+  }
+
+  get partialText(): string {
+    return this.sentText;
+  }
+
+  get reasoningText(): string {
+    return this.activityParts.join("\n");
+  }
+
+  markClientClosed(): void {
+    this.clientClosed = true;
+  }
+
+  isWritable(): boolean {
+    return (
+      !this.clientClosed &&
+      !this.response.writableEnded &&
+      !this.response.destroyed &&
+      !this.response.closed
+    );
+  }
+
+  // `body` is serialized immediately: internal JSON records, typed payloads
+  // from sibling modules, and shared terminal events all pass through here.
+  emit(eventName: string, body: object): void {
     const event = sseLine(eventName, {
       ...body,
-      sequence_number: ++sequenceNumber
+      sequence_number: ++this.sequenceNumber
     });
-    if (!isWritable()) return;
-    if (streamStarted) {
-      try {
-        response.write(event);
-      } catch {}
-    } else {
-      pendingEvents.push(event);
-    }
-  };
-  const startStream = () => {
-    if (streamStarted || !isWritable()) return;
-    streamStarted = true;
-    response.writeHead(200, {
+    if (!this.isWritable()) return;
+    if (this.streamStarted) this.write(event);
+    else this.pending.push(event);
+  }
+
+  start(): void {
+    if (this.streamStarted || !this.isWritable()) return;
+    this.streamStarted = true;
+    this.response.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
       connection: "close"
     });
-    response.flushHeaders();
-    response.shouldKeepAlive = false;
-    for (const event of pendingEvents.splice(0)) {
-      if (!isWritable()) break;
-      try {
-        response.write(event);
-      } catch {}
+    this.response.flushHeaders();
+    this.response.shouldKeepAlive = false;
+    for (const event of this.pending.splice(0)) {
+      if (!this.isWritable()) break;
+      this.write(event);
     }
-  };
-  const emitActivity = (text: string, key: string = text) => {
-    if (!text || seenActivities.has(key) || !isWritable()) return;
-    seenActivities.add(key);
-    activityParts.push(text);
-    emit("response.reasoning_summary_text.delta", {
-      type: "response.reasoning_summary_text.delta",
-      item_id: reasoningId,
+  }
+
+  writeKeepAlive(): void {
+    if (this.streamStarted && this.isWritable())
+      this.write(": agy-bridge keep-alive\n\n");
+  }
+
+  end(): void {
+    if (!this.isWritable()) return;
+    try {
+      this.response.end("data: [DONE]\n\n");
+    } catch {
+      // The peer may have already closed the connection; a write/end racing
+      // that close is not actionable and must not crash the turn.
+    }
+  }
+
+  emitTextDelta(text: string): void {
+    this.sentText += text;
+    this.emit("response.output_text.delta", {
+      type: "response.output_text.delta",
+      item_id: this.itemId,
+      delta: text,
+      content_index: 0,
+      output_index: 1
+    });
+  }
+
+  emitActivity(text: string, key: string = text): void {
+    if (!text || this.seenActivities.has(key) || !this.isWritable()) return;
+    this.seenActivities.add(key);
+    this.activityParts.push(text);
+    this.emitReasoningDelta(`${text}\n`);
+  }
+
+  emitReasoningDelta(delta: string): void {
+    this.emit(EVENT_REASONING_SUMMARY_TEXT_DELTA, {
+      type: EVENT_REASONING_SUMMARY_TEXT_DELTA,
+      item_id: this.reasoningId,
       output_index: 0,
       summary_index: 0,
-      delta: `${text}\n`
+      delta
     });
-  };
-  emit("response.created", {
-    type: "response.created",
-    response: {
-      id: responseId,
-      object: "response",
-      created_at: Math.floor(Date.now() / 1000),
-      model: payload.model ?? model,
-      status: "in_progress",
-      output: []
-    }
-  });
-  emit("response.output_item.added", {
-    type: "response.output_item.added",
-    output_index: 0,
-    item: {
-      id: reasoningId,
-      type: "reasoning",
-      status: "in_progress",
-      summary: [],
-      content: []
-    }
-  });
-  emit("response.reasoning_summary_part.added", {
-    type: "response.reasoning_summary_part.added",
-    item_id: reasoningId,
-    output_index: 0,
-    summary_index: 0,
-    part: { type: "summary_text", text: "" }
-  });
-  emit("response.output_item.added", {
-    type: "response.output_item.added",
-    output_index: 1,
-    item: {
-      id: itemId,
-      type: "message",
-      role: "assistant",
-      status: "in_progress",
-      content: []
-    }
-  });
-  emit("response.content_part.added", {
-    type: "response.content_part.added",
-    item_id: itemId,
-    output_index: 1,
-    content_index: 0,
-    part: { type: "output_text", text: "", annotations: [] }
-  });
-  emitActivity("Antigravity started processing.", "initial");
+  }
 
-  // Set once the turn has produced its final event, so the close that always
-  // follows a completed stream is not reported as the client hanging up.
-  let turnSettled = false;
+  emitPreamble(model: JsonValue): void {
+    this.emit("response.created", {
+      type: "response.created",
+      response: {
+        id: this.responseId,
+        object: "response",
+        created_at: Math.floor(Date.now() / 1000),
+        model,
+        status: "in_progress",
+        output: []
+      }
+    });
+    this.emit(EVENT_OUTPUT_ITEM_ADDED, {
+      type: EVENT_OUTPUT_ITEM_ADDED,
+      output_index: 0,
+      item: {
+        id: this.reasoningId,
+        type: "reasoning",
+        status: "in_progress",
+        summary: [],
+        content: []
+      }
+    });
+    this.emit("response.reasoning_summary_part.added", {
+      type: "response.reasoning_summary_part.added",
+      item_id: this.reasoningId,
+      output_index: 0,
+      summary_index: 0,
+      part: { type: "summary_text", text: "" }
+    });
+    this.emit(EVENT_OUTPUT_ITEM_ADDED, {
+      type: EVENT_OUTPUT_ITEM_ADDED,
+      output_index: 1,
+      item: {
+        id: this.itemId,
+        type: "message",
+        role: "assistant",
+        status: "in_progress",
+        content: []
+      }
+    });
+    this.emit("response.content_part.added", {
+      type: "response.content_part.added",
+      item_id: this.itemId,
+      output_index: 1,
+      content_index: 0,
+      part: { type: "output_text", text: "", annotations: [] }
+    });
+  }
+
+  /** Closes both output items and returns the completed response payload. */
+  emitCompletedItems(model: JsonValue, result: RunAgyResult): ResponsePayload {
+    const reasoningText = this.reasoningText;
+    const completedReasoning = {
+      id: this.reasoningId,
+      type: "reasoning",
+      status: "completed",
+      summary: [{ type: "summary_text", text: reasoningText }],
+      content: []
+    };
+    const completedMessage = responseMessageItem(result.text, this.itemId);
+    const completed = responsePayload(
+      model,
+      result.text,
+      result.result,
+      this.responseId,
+      this.itemId,
+      [completedReasoning, completedMessage]
+    );
+    this.emit("response.reasoning_summary_text.done", {
+      type: "response.reasoning_summary_text.done",
+      item_id: this.reasoningId,
+      output_index: 0,
+      summary_index: 0,
+      text: reasoningText
+    });
+    this.emit("response.reasoning_summary_part.done", {
+      type: "response.reasoning_summary_part.done",
+      item_id: this.reasoningId,
+      output_index: 0,
+      summary_index: 0,
+      part: { type: "summary_text", text: reasoningText }
+    });
+    this.emit(EVENT_OUTPUT_ITEM_DONE, {
+      type: EVENT_OUTPUT_ITEM_DONE,
+      output_index: 0,
+      item: completedReasoning
+    });
+    this.emit("response.output_text.done", {
+      type: "response.output_text.done",
+      item_id: this.itemId,
+      text: result.text,
+      content_index: 0,
+      output_index: 1
+    });
+    this.emit("response.content_part.done", {
+      type: "response.content_part.done",
+      item_id: this.itemId,
+      output_index: 1,
+      content_index: 0,
+      part: { type: "output_text", text: result.text, annotations: [] }
+    });
+    this.emit(EVENT_OUTPUT_ITEM_DONE, {
+      type: EVENT_OUTPUT_ITEM_DONE,
+      output_index: 1,
+      item: completedMessage
+    });
+    return completed;
+  }
+
+  /** Ends the turn as incomplete, carrying the work it names and why. */
+  emitIncomplete({
+    model,
+    ...incomplete
+  }: IncompleteTurn & { model: JsonValue }): void {
+    for (const [eventName, body] of terminalIncompleteEvents({
+      ...incomplete,
+      responseId: this.responseId,
+      itemId: this.itemId,
+      reasoningId: this.reasoningId,
+      reasoningText: this.reasoningText,
+      provider: "antigravity",
+      response: responsePayload(
+        model,
+        incomplete.text,
+        null,
+        this.responseId,
+        this.itemId,
+        [],
+        "incomplete"
+      )
+    })) {
+      if (this.isWritable()) this.emit(eventName, body);
+    }
+    this.end();
+  }
+
+  private write(chunk: string): void {
+    try {
+      this.response.write(chunk);
+    } catch {
+      // The peer may have already closed the connection; a write/end racing
+      // that close is not actionable and must not crash the turn.
+    }
+  }
+}
+
+/** The turn-specific half of a terminal incomplete event batch. */
+type IncompleteTurn = Pick<
+  Parameters<typeof terminalIncompleteEvents>[0],
+  "reason" | "limit" | "providerFailure"
+> & { text: string };
+
+/** Provider-reported throttling that maps to HTTP 429 rather than 503. */
+const THROTTLED_LIMIT_CLASSES = new Set([
+  "throttled",
+  "session_limit",
+  "quota_exhausted"
+]);
+
+/**
+ * Lifecycle of one streamed turn: which of agy's steps are still in flight,
+ * whether a client close must kill agy or leave it to finish its delegation,
+ * the keep-alive and delegation heartbeats, and how the turn ends.
+ */
+class StreamingTurn {
   // Tracks the most recent spawn-step tool the bridge saw from agy, and how
   // many of the children it dispatched the spawn tracker still has open.
   // Active spawn steps and open children are both the dangerous case: the
@@ -2650,14 +3328,14 @@ async function handle(
   // this: `invoke_subagent` reports its own step `DONE` as soon as the
   // hand-off succeeds, long before the children it dispatched finish, so
   // `pendingChildren` -- kept in sync with the spawn tracker's
-  // `openSpawnCount()` below -- is what keeps this true for the rest of the
+  // `openSpawnCount()` -- is what keeps this true for the rest of the
   // children's run. Killing agy in that window also kills the children and
   // strands any work they had buffered, so we let agy run to its
   // PRINT_TIMEOUT instead and surface the cause as
   // INCOMPLETE_REASON_CLIENT_DISCONNECTED. The launchd log distinguishes the
   // two cases by name. An ordinary disconnected turn -- no delegator ever
   // ran, or every dispatched child has already closed -- is still killed.
-  const delegation = {
+  private readonly delegation: DelegationState = {
     activeTool: null,
     activeStep: null,
     activatedAt: 0,
@@ -2665,452 +3343,350 @@ async function handle(
     activeCommands: 0,
     activeWaits: 0
   };
-  const activeCommands = new Set();
-  const activeWaits = new Set();
-  let clientDisconnectMidDelegation = false;
-  let clientDisconnectDetail = "";
+  private readonly activeCommands = new Set<number | string>();
+  private readonly activeWaits = new Set<number | string>();
+  private readonly turn: ResponsesTurn;
+  private readonly stream: ResponseEventStream;
+  private readonly response: ServerResponse;
+  private child: ChildProcess | undefined;
+  private keepAlive: NodeJS.Timeout | undefined;
   // Synthetic activity the bridge emits while agy is mid-delegation, so the
   // Codex-side idle / wall-clock timers see real Responses traffic rather
-  // than only SSE comment keep-alives. The 2-second keep-alive above is not
+  // than only SSE comment keep-alives. The 2-second keep-alive is not
   // counted as data by every fetch client; emitting a real event every 30 s
   // gives the upstream something it cannot strip.
-  let delegationHeartbeat: NodeJS.Timeout | null = null;
-  const startDelegationHeartbeat = () => {
-    if (delegationHeartbeat) return;
-    let tick = 0;
-    delegationHeartbeat = setInterval(() => {
-      if (typeof agentEvents?.reportHeartbeat === "function") {
-        void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
-      }
-      if (!isDelegationActive(delegation) || !streamStarted || !isWritable())
-        return;
-      tick += 1;
-      try {
-        emit("response.reasoning_summary_text.delta", {
-          type: "response.reasoning_summary_text.delta",
-          item_id: reasoningId,
-          output_index: 0,
-          summary_index: 0,
-          delta: ` (delegation heartbeat ${tick}; agy still working)\n`
-        });
-      } catch {}
-    }, 30_000);
-  };
-  const stopDelegationHeartbeat = () => {
-    if (!delegationHeartbeat) return;
-    clearInterval(delegationHeartbeat);
-    delegationHeartbeat = null;
-  };
-  const delegationDetail = (decision: CloseDecision) =>
-    decision.tool
-      ? `during ${decision.tool}`
-      : decision.pendingChildren > 0
-        ? `while ${decision.pendingChildren} delegated child(ren) were still running`
-        : decision.activeCommands > 0
-          ? `while ${decision.activeCommands} active command(s) were still running`
-          : decision.activeWaits > 0
-            ? `while ${decision.activeWaits} active wait(s) were pending`
-            : "while active commands or waits were still running";
-  const onResponseError = () => {
-    clientClosed = true;
-    clearInterval(keepAlive);
-    stopDelegationHeartbeat();
-    const errorDecision = decideCloseOnDelegation(delegation);
-    if (!errorDecision.kill) {
-      clientDisconnectMidDelegation = true;
-      clientDisconnectDetail = `the client connection errored ${delegationDetail(errorDecision)}; agy will continue to print-timeout`;
-      if (!turnSettled)
-        logTurnEnd("aborted-delegation", clientDisconnectDetail);
-      // Do NOT kill agy: the cause was the upstream going away while agy was
-      // delegating, and killing agy here strands the children it had spawned.
-      // runAgy will keep awaiting agy's natural completion; whatever it
-      // produces is discarded because the upstream is already gone.
-      return;
-    }
-    if (!turnSettled)
-      logTurnEnd(
-        "aborted",
-        "the client connection errored; agy was killed mid-turn"
+  private delegationHeartbeat: NodeJS.Timeout | null = null;
+  // Set once the turn has produced its final event, so the close that always
+  // follows a completed stream is not reported as the client hanging up.
+  private settled = false;
+  // Why the client went away while agy was still delegating, if it did.
+  private disconnectDetail: string | null = null;
+
+  constructor(
+    turn: ResponsesTurn,
+    stream: ResponseEventStream,
+    response: ServerResponse
+  ) {
+    this.turn = turn;
+    this.stream = stream;
+    this.response = response;
+  }
+
+  attach(): void {
+    this.response.on("error", this.onResponseError);
+    this.keepAlive = setInterval(() => {
+      reportTurnHeartbeat(this.turn.agentEvents);
+      this.stream.writeKeepAlive();
+    }, 2000);
+    this.response.on("close", () => {
+      this.response.removeListener("error", this.onResponseError);
+      // The router aborting its upstream fetch -- its 15-minute timeout, or
+      // its own client going away -- reaches this bridge as nothing but a
+      // closed socket. Naming it is the difference between "agy died", "agy
+      // was killed because nobody was listening any more", and "agy was
+      // delegating when nobody was listening any more".
+      this.clientGone("the client disconnected");
+    });
+  }
+
+  detach(): void {
+    clearInterval(this.keepAlive);
+    this.response.removeListener("error", this.onResponseError);
+  }
+
+  readonly onEvent = (event: AgyEvent): void => {
+    reportTurnHeartbeat(this.turn.agentEvents);
+    if (isProcessEvent(event)) {
+      this.child = event.child;
+    } else if (isBackgroundTasksEvent(event)) {
+      this.stream.start();
+      this.delegation.activeWaits = Math.max(
+        Number(this.delegation.activeWaits || 0),
+        1
       );
-    if (child && !child.killed) child.kill("SIGTERM");
+      this.startDelegationHeartbeat();
+    } else if (isTextDeltaEvent(event)) {
+      this.stream.start();
+      this.stream.emitTextDelta(event.text);
+    } else if (isStepUpdateEvent(event) && isStepUpdate(event.step_update)) {
+      this.observeStep(event, event.step_update);
+    }
   };
-  response.on("error", onResponseError);
 
-  const keepAlive = setInterval(() => {
-    if (typeof agentEvents?.reportHeartbeat === "function") {
-      void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
-    }
-    if (streamStarted && isWritable()) {
-      try {
-        response.write(": agy-bridge keep-alive\n\n");
-      } catch {}
-    }
-  }, 2000);
-  let child: ChildProcess | undefined;
-  response.on("close", () => {
-    clientClosed = true;
-    clearInterval(keepAlive);
-    stopDelegationHeartbeat();
-    response.removeListener("error", onResponseError);
-    // The router aborting its upstream fetch -- its 15-minute timeout, or its
-    // own client going away -- reaches this bridge as nothing but a closed
-    // socket. Naming it is the difference between "agy died", "agy was
-    // killed because nobody was listening any more", and "agy was delegating
-    // when nobody was listening any more" -- the third case is the one that
-    // was killing long-running orchestrator turns in the antigravity path
-    // before this branch was added.
-    const closeDecision = decideCloseOnDelegation(delegation);
-    if (!closeDecision.kill) {
-      clientDisconnectMidDelegation = true;
-      clientDisconnectDetail = `the client disconnected ${delegationDetail(closeDecision)}; agy will continue to print-timeout`;
-      if (!turnSettled)
-        logTurnEnd("aborted-delegation", clientDisconnectDetail);
-      // Do NOT kill agy for the same reason as onResponseError above.
-      return;
-    }
-    if (!turnSettled)
-      logTurnEnd("aborted", "the client disconnected; agy was killed mid-turn");
-    if (child && !child.killed) child.kill("SIGTERM");
-  });
-  try {
-    const result = await runAgy(
-      prompt,
-      model,
-      effort,
-      cwd,
-      (event) => {
-        if (agentEvents && typeof agentEvents.reportHeartbeat === "function") {
-          void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
-        }
-        if (event.type === "process") {
-          child = event.child;
-          return;
-        }
-        if (event.type === "background_tasks_active") {
-          startStream();
-          delegation.activeWaits = Math.max(
-            Number(delegation.activeWaits || 0),
-            1
-          );
-          startDelegationHeartbeat();
-          return;
-        }
-        if (event.type === "text_delta") {
-          startStream();
-          partialText += event.text;
-          emit("response.output_text.delta", {
-            type: "response.output_text.delta",
-            item_id: itemId,
-            delta: event.text,
-            content_index: 0,
-            output_index: 1
-          });
-        }
-        if (event.event === "step_update") {
-          const update = event.step_update ?? {};
-          const stepToolName = String(
-            update?.tool_name ?? update?.tool_info?.name ?? ""
-          );
-          const stepState = String(update?.state ?? "").toUpperCase();
-          const stepIndex = Number.isFinite(update?.step_index)
-            ? update.step_index
-            : stepToolName || "unknown";
-
-          if (isCommandStep(update)) {
-            if (stepState === "ACTIVE") activeCommands.add(stepIndex);
-            else if (
-              stepState === "DONE" ||
-              stepState === "ERROR" ||
-              stepState === "FAILED" ||
-              stepState === "CANCELLED"
-            )
-              activeCommands.delete(stepIndex);
-          }
-          if (isWaitStep(update)) {
-            if (stepState === "ACTIVE") activeWaits.add(stepIndex);
-            else if (
-              stepState === "DONE" ||
-              stepState === "ERROR" ||
-              stepState === "FAILED" ||
-              stepState === "CANCELLED"
-            )
-              activeWaits.delete(stepIndex);
-          }
-          delegation.activeCommands = activeCommands.size;
-          delegation.activeWaits = activeWaits.size;
-
-          observeSpawnStep(update);
-          observeToolStep(update);
-          // Kept in sync on every step so a dispatch step's own DONE -- which
-          // clears activeTool below -- does not read as "delegation over" while
-          // the spawn tracker still has children it dispatched open.
-          delegation.pendingChildren = openSpawnCount();
-          const activity = activityText(event);
-          const key = `${update.step_index ?? "?"}:${update.state ?? "?"}:${update.step_type ?? "?"}:${update.tool_name ?? ""}`;
-          if (activity) {
-            // A step_update is provider-produced work, so the turn is genuinely
-            // under way: commit to the SSE stream and let the parent watch the
-            // activity live. Synthetic pre-run activity stays buffered so a
-            // provider that fails before doing anything can still be reported
-            // as an HTTP status the router can fall back on.
-            startStream();
-            emitActivity(activity, key);
-          }
-          // Track the most recent delegator step so response.on("close") and
-          // response.on("error") can tell a turn that aborted during delegation
-          // apart from one that aborted before delegation started. The
-          // synthetic heartbeat rides on the same flag. isSpawnToolName falls
-          // back to agy's own tool name when the router sent no reporter, so
-          // this classification -- and therefore the kill decision -- still
-          // works when the telemetry headers are absent.
-          const transition = updateDelegationState(delegation, update, (name) =>
-            isSpawnToolName(agentEvents, name)
-          );
-          if (transition.kind === "entered" || isDelegationActive(delegation))
-            startDelegationHeartbeat();
-          // The dispatch step closing does not by itself mean delegation is
-          // over: only stop the heartbeat once the spawn tracker agrees no
-          // dispatched children are still open.
-          if (transition.kind === "exited" && !isDelegationActive(delegation))
-            stopDelegationHeartbeat();
-          if (update.step_type === "tool")
-            writeErrorLine(`agy tool=${update.tool_name ?? "unknown"}`);
-        }
-      },
-      spawnSession,
-      agentRole,
-      sandboxMode,
-      skillContext,
-      workspaceKey
-    );
-    clearInterval(keepAlive);
-    stopDelegationHeartbeat();
-    flushSpawns("success");
-    delegation.pendingChildren = openSpawnCount();
-    activeCommands.clear();
-    activeWaits.clear();
-    delegation.activeCommands = 0;
-    delegation.activeWaits = 0;
+  complete(result: RunAgyResult): void {
+    this.quiesce("success");
     // If the upstream closed mid-delegation, the run still completes here --
     // agy got its full PRINT_TIMEOUT -- but the parent is gone. Emit an
     // incomplete event carrying the cause so any future re-attach can replay
     // the work; for now the bytes go nowhere because isWritable() is false.
-    if (clientDisconnectMidDelegation) {
-      turnSettled = true;
-      logTurnEnd(
+    if (this.disconnectDetail !== null) {
+      this.settled = true;
+      this.turn.logTurnEnd(
         "succeeded-mid-delegation",
-        `agy finished after upstream close: ${clientDisconnectDetail}`
+        `agy finished after upstream close: ${this.disconnectDetail}`
       );
-      for (const [eventName, body] of terminalIncompleteEvents({
-        responseId,
-        itemId,
-        reasoningId,
-        text: result.text ?? partialText,
-        reasoningText: activityParts.join("\n"),
+      this.stream.emitIncomplete({
+        text: result.text,
         reason: INCOMPLETE_REASON_CLIENT_DISCONNECTED,
         limit: null,
-        provider: "antigravity",
-        response: responsePayload(
-          payload.model ?? model,
-          result.text ?? partialText,
-          null,
-          responseId,
-          itemId,
-          [],
-          "incomplete"
-        )
-      })) {
-        if (isWritable()) emit(eventName, body);
-      }
-      if (isWritable()) {
-        try {
-          response.end("data: [DONE]\n\n");
-        } catch {}
-      }
+        model: this.turn.responseModel
+      });
       return;
     }
-    startStream();
-    const reasoningText = activityParts.join("\n");
-    const completedReasoning = {
-      id: reasoningId,
-      type: "reasoning",
-      status: "completed",
-      summary: [{ type: "summary_text", text: reasoningText }],
-      content: []
-    };
-    const completedMessage = responseMessageItem(result.text, itemId);
-    const completed = responsePayload(
-      payload.model ?? model,
-      result.text,
-      result.result,
-      responseId,
-      itemId,
-      [completedReasoning, completedMessage]
+    this.stream.start();
+    const completed = this.stream.emitCompletedItems(
+      this.turn.responseModel,
+      result
     );
-    emit("response.reasoning_summary_text.done", {
-      type: "response.reasoning_summary_text.done",
-      item_id: reasoningId,
-      output_index: 0,
-      summary_index: 0,
-      text: reasoningText
-    });
-    emit("response.reasoning_summary_part.done", {
-      type: "response.reasoning_summary_part.done",
-      item_id: reasoningId,
-      output_index: 0,
-      summary_index: 0,
-      part: { type: "summary_text", text: reasoningText }
-    });
-    emit("response.output_item.done", {
-      type: "response.output_item.done",
-      output_index: 0,
-      item: completedReasoning
-    });
-    emit("response.output_text.done", {
-      type: "response.output_text.done",
-      item_id: itemId,
-      text: result.text,
-      content_index: 0,
-      output_index: 1
-    });
-    emit("response.content_part.done", {
-      type: "response.content_part.done",
-      item_id: itemId,
-      output_index: 1,
-      content_index: 0,
-      part: { type: "output_text", text: result.text, annotations: [] }
-    });
-    emit("response.output_item.done", {
-      type: "response.output_item.done",
-      output_index: 1,
-      item: completedMessage
-    });
-    // Delegation this turn asked for, collected out-of-band by the shim while
-    // agy ran. Emitted as one `exec` call after the message so Codex creates
-    // the children itself and they become sessions the app can show.
-    const spawnChildren = spawnSession ? spawnSessions.close(spawnSession) : [];
-    if (spawnSession && spawnChildren.length > 0) {
-      const source = buildSpawnScript(spawnChildren, {
-        recoverParentId: spawnSession
-      });
-      const spawnEvents = execToolCallSseEvents({
-        itemId: mintCallItemId(),
-        callId: mintCallId(spawnSession, completed.output.length),
-        source,
-        outputIndex: completed.output.length
-      });
-      for (const [name, event] of spawnEvents) emit(name, event);
-      completed.output.push(spawnEvents[3][1].item);
+    const delegation = closeSpawnDelegation(
+      this.turn.spawnSession,
+      completed.output.length
+    );
+    if (delegation) {
+      for (const [name, event] of delegation.events)
+        this.stream.emit(name, event);
+      completed.output.push(delegation.events[3][1].item);
       writeErrorLine(
-        `agy delegating ${spawnChildren.length} subagent(s) through Codex`
+        `agy delegating ${delegation.childCount} subagent(s) through Codex`
       );
     }
-    emit("response.completed", {
+    this.stream.emit("response.completed", {
       type: "response.completed",
       response: completed
     });
-    turnSettled = true;
-    logTurnEnd("succeeded");
-    if (isWritable()) {
-      try {
-        response.end("data: [DONE]\n\n");
-      } catch {}
-    }
-  } catch (error) {
-    clearInterval(keepAlive);
-    stopDelegationHeartbeat();
-    flushSpawns("failure");
-    activeCommands.clear();
-    activeWaits.clear();
-    delegation.activeCommands = 0;
-    delegation.activeWaits = 0;
-    // Reported before the writability check below returns: a permission gap is
-    // a fact about the workspace, not about whether the parent is still
+    this.settled = true;
+    this.turn.logTurnEnd("succeeded");
+    this.stream.end();
+  }
+
+  fail(error: unknown): void {
+    this.quiesce("failure");
+    // Reported before the writability check below returns: a permission gap
+    // is a fact about the workspace, not about whether the parent is still
     // listening, and it is the only unavailability agy ever states out loud.
-    reportPermissionDenial(error);
-    delegation.pendingChildren = openSpawnCount();
-    const message = error instanceof Error ? error.message : String(error);
+    this.turn.toolObserver.reportPermissionDenial(error);
+    const message = errorMessage(error);
     // Logged before the writability check: a turn that failed *because* the
-    // client had already gone is exactly the case worth seeing, and it used to
-    // return here without a word.
-    if (!turnSettled)
-      logTurnEnd(
+    // client had already gone is exactly the case worth seeing.
+    if (!this.settled)
+      this.turn.logTurnEnd(
         "failed",
-        `${message}${isWritable() ? "" : " (client already gone)"}`
+        `${message}${this.stream.isWritable() ? "" : " (client already gone)"}`
       );
-    turnSettled = true;
-    if (!isWritable()) return;
+    this.settled = true;
+    if (!this.stream.isWritable()) return;
     // agy reports a usage limit as nothing but an error string, so this is the
-    // one place the difference between "out of quota" and "the CLI crashed" can
-    // be recovered. It is only ever `inferred`, never enough on its own to take
-    // the provider out for a long cooldown, but it is enough to pick a status
-    // the router can act on and a retry hint it can size a wait against.
-    const limit = classifyCliLimit(
-      message,
-      (error as AgyFailure | undefined)?.exitCode ?? null
-    );
-    if (!streamStarted) {
-      const status =
-        limit &&
-        ["throttled", "session_limit", "quota_exhausted"].includes(
-          limit.limitClass
-        )
-          ? 429
-          : 503;
-      const headers = limitResponseHeaders(limit);
-      const retryAfter = retryAfterSecondsFromLimit(limit);
-      if (retryAfter !== null) headers["retry-after"] = String(retryAfter);
-      const body: JsonRecord = {
-        error: agyErrorDetails(error, agentRole, cwd, requestId)
-      };
-      const declaredLimit = limitPayload(limit);
-      if (declaredLimit) body.error.limit = declaredLimit;
-      sendJson(response, status, body, headers);
+    // one place the difference between "out of quota" and "the CLI crashed"
+    // can be recovered. It is only ever `inferred`, never enough on its own
+    // to take the provider out for a long cooldown, but it is enough to pick a
+    // status the router can act on and a retry hint it can size a wait against.
+    const limit = classifyCliLimit(message, agyFailure(error).exitCode);
+    if (!this.stream.started) {
+      this.sendFailureStatus(error, limit);
       return;
     }
-    // A failure after the stream opened cannot be replayed on another provider,
-    // so the work already sent is all the parent will ever get for this turn --
-    // and it used to be discarded with a bare `response.failed`. Close the turn
-    // as incomplete instead, carrying that work and saying why it stopped. The
-    // turn is still not completed, so the router still counts it as a failure.
-    const providerFailure = agyProviderFailureDiagnostic(error);
-    for (const [eventName, body] of terminalIncompleteEvents({
-      responseId,
-      itemId,
-      reasoningId,
-      text: partialText,
-      reasoningText: activityParts.join("\n"),
+    // A failure after the stream opened cannot be replayed on another
+    // provider, so the work already sent is all the parent will ever get for
+    // this turn. Close the turn as incomplete, carrying that work and saying
+    // why it stopped. The turn is still not completed, so the router still
+    // counts it as a failure.
+    this.stream.emitIncomplete({
+      text: this.stream.partialText,
       reason: limit
         ? INCOMPLETE_REASON_PROVIDER_LIMIT
         : INCOMPLETE_REASON_INTERRUPTED,
       limit,
-      providerFailure,
-      provider: "antigravity",
-      response: responsePayload(
-        payload.model ?? model,
-        partialText,
-        null,
-        responseId,
-        itemId,
-        [],
-        "incomplete"
-      )
-    }))
-      emit(eventName, body);
-    if (isWritable()) {
-      try {
-        response.end("data: [DONE]\n\n");
-      } catch {}
-    }
-  } finally {
-    clearInterval(keepAlive);
-    response.removeListener("error", onResponseError);
-    // The registry must not outlive the turn on any path. A stale entry would
-    // accept a delegation from a CLI that outlived its request and attach it to
-    // nothing, or -- on a reused session key -- to the next turn. Closing twice
-    // is harmless; the success path has already drained it.
-    if (spawnSession) spawnSessions.close(spawnSession);
+      providerFailure: agyProviderFailureDiagnostic(error),
+      model: this.turn.responseModel
+    });
   }
+
+  private readonly onResponseError = (): void => {
+    this.clientGone("the client connection errored");
+  };
+
+  private clientGone(cause: string): void {
+    this.stream.markClientClosed();
+    clearInterval(this.keepAlive);
+    this.stopDelegationHeartbeat();
+    const decision = decideCloseOnDelegation(this.delegation);
+    if (!decision.kill) {
+      // Do NOT kill agy: the upstream went away while agy was delegating,
+      // and killing agy here strands the children it had spawned. runAgy
+      // keeps awaiting agy's natural completion; whatever it produces is
+      // discarded because the upstream is already gone.
+      this.disconnectDetail = `${cause} ${delegationDetail(decision)}; agy will continue to print-timeout`;
+      if (!this.settled)
+        this.turn.logTurnEnd("aborted-delegation", this.disconnectDetail);
+      return;
+    }
+    if (!this.settled)
+      this.turn.logTurnEnd("aborted", `${cause}; agy was killed mid-turn`);
+    if (this.child && !this.child.killed) this.child.kill("SIGTERM");
+  }
+
+  private observeStep(event: AgyStreamEvent, update: AgyStepUpdate): void {
+    const toolInfo = isToolInfo(update.tool_info) ? update.tool_info : null;
+    const stepToolName = String(update.tool_name ?? toolInfo?.name ?? "");
+    const stepState = String(update.state ?? "").toUpperCase();
+    const stepIndex: number | string =
+      stepIndexOf(update) ?? (stepToolName || "unknown");
+    trackActiveStep(
+      this.activeCommands,
+      isCommandStep(update),
+      stepState,
+      stepIndex
+    );
+    trackActiveStep(this.activeWaits, isWaitStep(update), stepState, stepIndex);
+    this.delegation.activeCommands = this.activeCommands.size;
+    this.delegation.activeWaits = this.activeWaits.size;
+    this.turn.spawnTracker.observeSpawnStep(update);
+    this.turn.toolObserver.observeToolStep(update);
+    // Kept in sync on every step so a dispatch step's own DONE -- which
+    // clears activeTool below -- does not read as "delegation over" while
+    // the spawn tracker still has children it dispatched open.
+    this.delegation.pendingChildren = this.turn.spawnTracker.openSpawnCount();
+    const activity = activityText(event);
+    if (activity) {
+      // A step_update is provider-produced work, so the turn is genuinely
+      // under way: commit to the SSE stream and let the parent watch the
+      // activity live. Synthetic pre-run activity stays buffered so a
+      // provider that fails before doing anything can still be reported
+      // as an HTTP status the router can fall back on.
+      this.stream.start();
+      this.stream.emitActivity(activity, stepActivityKey(update));
+    }
+    this.trackDelegation(update);
+    if (update.step_type === "tool")
+      writeErrorLine(`agy tool=${update.tool_name ?? "unknown"}`);
+  }
+
+  // Track the most recent delegator step so the close and error handlers can
+  // tell a turn that aborted during delegation apart from one that aborted
+  // before delegation started. The synthetic heartbeat rides on the same
+  // flag. isSpawnToolName falls back to agy's own tool name when the router
+  // sent no reporter, so this classification -- and therefore the kill
+  // decision -- still works when the telemetry headers are absent.
+  private trackDelegation(update: AgyStepUpdate): void {
+    const transition = updateDelegationState(this.delegation, update, (name) =>
+      isSpawnToolName(this.turn.agentEvents, name)
+    );
+    if (transition.kind === "entered" || isDelegationActive(this.delegation))
+      this.startDelegationHeartbeat();
+    // The dispatch step closing does not by itself mean delegation is over:
+    // only stop the heartbeat once the spawn tracker agrees no dispatched
+    // children are still open.
+    if (transition.kind === "exited" && !isDelegationActive(this.delegation))
+      this.stopDelegationHeartbeat();
+  }
+
+  private startDelegationHeartbeat(): void {
+    if (this.delegationHeartbeat) return;
+    let tick = 0;
+    this.delegationHeartbeat = setInterval(() => {
+      reportTurnHeartbeat(this.turn.agentEvents);
+      if (
+        !isDelegationActive(this.delegation) ||
+        !this.stream.started ||
+        !this.stream.isWritable()
+      )
+        return;
+      tick += 1;
+      this.stream.emitReasoningDelta(
+        ` (delegation heartbeat ${tick}; agy still working)\n`
+      );
+    }, 30_000);
+  }
+
+  private stopDelegationHeartbeat(): void {
+    if (!this.delegationHeartbeat) return;
+    clearInterval(this.delegationHeartbeat);
+    this.delegationHeartbeat = null;
+  }
+
+  /** agy has exited: stop every timer and settle the step trackers. */
+  private quiesce(outcome: "success" | "failure"): void {
+    clearInterval(this.keepAlive);
+    this.stopDelegationHeartbeat();
+    this.turn.spawnTracker.flushSpawns(outcome);
+    this.delegation.pendingChildren = this.turn.spawnTracker.openSpawnCount();
+    this.activeCommands.clear();
+    this.activeWaits.clear();
+    this.delegation.activeCommands = 0;
+    this.delegation.activeWaits = 0;
+  }
+
+  /** Nothing was streamed yet, so the failure can still be an HTTP status. */
+  private sendFailureStatus(
+    error: unknown,
+    limit: ReturnType<typeof classifyCliLimit>
+  ): void {
+    const status =
+      limit && THROTTLED_LIMIT_CLASSES.has(limit.limitClass) ? 429 : 503;
+    const headers = limitResponseHeaders(limit);
+    const retryAfter = retryAfterSecondsFromLimit(limit);
+    if (retryAfter !== null) headers["retry-after"] = String(retryAfter);
+    const { agentRole, cwd, requestId } = this.turn;
+    const errorDetails: JsonRecord = agyErrorDetails(
+      error,
+      agentRole,
+      cwd,
+      requestId
+    );
+    const declaredLimit = limitPayload(limit);
+    if (declaredLimit) errorDetails.limit = declaredLimit;
+    sendJson(this.response, status, { error: errorDetails }, headers);
+  }
+}
+
+function trackActiveStep(
+  active: Set<number | string>,
+  matches: boolean,
+  state: string,
+  index: number | string
+): void {
+  if (!matches) return;
+  if (state === "ACTIVE") active.add(index);
+  else if (TERMINAL_TOOL_STATES.has(state)) active.delete(index);
+}
+
+/** Deduplicates repeated step_updates that carry the same activity. */
+function stepActivityKey(update: AgyStepUpdate): string {
+  return `${String(stepIndexOf(update) ?? "?")}:${update.state ?? "?"}:${update.step_type ?? "?"}:${update.tool_name ?? ""}`;
+}
+
+async function runStreamingTurn(
+  turn: ResponsesTurn,
+  response: ServerResponse
+): Promise<void> {
+  const stream = new ResponseEventStream(response);
+  stream.emitPreamble(turn.responseModel);
+  stream.emitActivity("Antigravity started processing.", "initial");
+  const streaming = new StreamingTurn(turn, stream, response);
+  streaming.attach();
+  try {
+    streaming.complete(await runTurnAgy(turn, streaming.onEvent));
+  } catch (error) {
+    streaming.fail(error);
+  } finally {
+    streaming.detach();
+    // The registry must not outlive the turn on any path. A stale entry would
+    // accept a delegation from a CLI that outlived its request and attach it
+    // to nothing, or -- on a reused session key -- to the next turn. Closing
+    // twice is harmless; the success path has already drained it.
+    if (turn.spawnSession) spawnSessions.close(turn.spawnSession);
+  }
+}
+
+async function handleResponsesRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  payload: JsonObject
+): Promise<void> {
+  const turn = prepareResponsesTurn(request, response, payload);
+  if (!turn) return;
+  if (payload.stream) await runStreamingTurn(turn, response);
+  else await runNonStreamingTurn(turn, response);
 }
 
 if (IS_MAIN) {

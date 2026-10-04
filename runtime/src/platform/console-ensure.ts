@@ -3,9 +3,10 @@ import { chmodSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { LaunchdClient } from "./macos/launchd.ts";
-import { resolveServiceNode } from "./host-arch.ts";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+
+import { resolveServiceNode } from "./host-arch.ts";
+import { LaunchdClient } from "./macos/launchd.ts";
 
 export const LABEL_AUTODEV_CONSOLE = "com.codex.autodev-console";
 export const DEFAULT_CONSOLE_PORT = 3300;
@@ -33,12 +34,14 @@ export interface ConsoleEnsureDeps {
   readonly startFallback: (launcher: string, logPath: string) => void;
 }
 
+const PORT_REGEX = /^\d{1,5}$/u;
+
 export function resolveConsolePort(
   value = process.env.AUTODEV_CONSOLE_PORT
 ): number {
   const raw = value?.trim() ?? "";
   if (!raw) return DEFAULT_CONSOLE_PORT;
-  if (!/^\d{1,5}$/u.test(raw))
+  if (!PORT_REGEX.test(raw))
     throw new Error("AUTODEV_CONSOLE_PORT must be an integer from 1 to 65535.");
   const port = Number(raw);
   if (port < 1 || port > 65_535)
@@ -51,7 +54,6 @@ export function resolveConsoleEnsureOptions(
 ): ConsoleEnsureOptions {
   const home = env.HOME?.trim() || homedir();
   const codexHome = env.CODEX_HOME?.trim() || path.join(home, ".codex");
-  const repositoryRoot = env.AUTODEV_REPO_ROOT?.trim() || process.cwd();
   const port = resolveConsolePort(env.AUTODEV_CONSOLE_PORT);
   return {
     host: "127.0.0.1",
@@ -66,7 +68,7 @@ export function resolveConsoleEnsureOptions(
     launcher: path.join(codexHome, "hooks", "run-codex-console.sh"),
     nodeBin: resolveServiceNode(home),
     readyTimeoutMs:
-      Number.parseInt(env.AUTODEV_CONSOLE_READY_TIMEOUT_MS ?? "5000", 10) ||
+      Number.parseInt(env.AUTODEV_CONSOLE_READY_TIMEOUT_MS ?? "5000") ||
       DEFAULT_READY_TIMEOUT_MS,
     logPath: path.join(codexHome, "run", "autodev-console.fallback.log")
   };
@@ -89,7 +91,10 @@ function defaultDeps(options: ConsoleEnsureOptions): ConsoleEnsureDeps {
         return false;
       }
     },
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    sleep: (ms) =>
+      new Promise((resolve) => {
+        setTimeout(resolve, ms);
+      }),
     plistExists: () => existsSync(options.plist),
     launcherExists: () => existsSync(options.launcher),
     startFallback: (launcher, logPath) => {

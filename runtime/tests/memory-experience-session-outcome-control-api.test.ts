@@ -119,10 +119,10 @@ async function callExperienceSessionOutcomeRoute(
   );
   const response = responseRecorder();
   const prevEnv = process.env.AUTODEV_MEMORY_READ_TASK_HISTORY;
-  if (!options.disableTaskHistoryEnv) {
-    process.env.AUTODEV_MEMORY_READ_TASK_HISTORY = "1";
-  } else {
+  if (options.disableTaskHistoryEnv) {
     delete process.env.AUTODEV_MEMORY_READ_TASK_HISTORY;
+  } else {
+    process.env.AUTODEV_MEMORY_READ_TASK_HISTORY = "1";
   }
   try {
     await handleMemoryControlApiRequest(

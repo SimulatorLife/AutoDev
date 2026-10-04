@@ -52,9 +52,37 @@ const HOSTED_WEB_SEARCH_TYPES = new Set(["web_search", "web_search_preview"]);
 // cannot be offered, and is skipped rather than renamed into something Codex
 // would not recognise on the way back.
 const MCP_TOOL_NAME = /^[A-Za-z0-9_-]{1,64}$/;
+const EVENT_OUTPUT_ITEM_ADDED = "response.output_item.added";
+const EVENT_OUTPUT_ITEM_DONE = "response.output_item.done";
+const DATA_URL_REGEX = /^data:([^;,]+);base64,(.*)$/su;
+const CODEX_OUTPUT_FAILED_REGEX =
+  /^(aborted|script (failed|error|timed out)|error\b)/iu;
 
 function isRecord(value: unknown): value is JsonRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseCodexTool(
+  entry: JsonRecord,
+  type: "custom" | "function",
+  namespace: string | null
+): CodexTool | null {
+  const definition =
+    type === "function" && isRecord(entry.function) ? entry.function : entry;
+  const name =
+    typeof definition.name === "string" ? definition.name.trim() : "";
+  if (!MCP_TOOL_NAME.test(name)) return null;
+  return {
+    kind: type,
+    name,
+    description:
+      typeof definition.description === "string" ? definition.description : "",
+    parameters:
+      type === "function" && isRecord(definition.parameters)
+        ? definition.parameters
+        : null,
+    namespace: namespace && namespace !== DEFAULT_NAMESPACE ? namespace : null
+  };
 }
 
 function collect(
@@ -79,26 +107,10 @@ function collect(
       continue;
     }
     if (type !== "custom" && type !== "function") continue;
-    // Chat-completions style function tools nest their definition one level down.
-    const definition =
-      type === "function" && isRecord(entry.function) ? entry.function : entry;
-    const name =
-      typeof definition.name === "string" ? definition.name.trim() : "";
-    if (!MCP_TOOL_NAME.test(name) || seen.has(name)) continue;
-    seen.add(name);
-    surface.tools.push({
-      kind: type,
-      name,
-      description:
-        typeof definition.description === "string"
-          ? definition.description
-          : "",
-      parameters:
-        type === "function" && isRecord(definition.parameters)
-          ? definition.parameters
-          : null,
-      namespace: namespace && namespace !== DEFAULT_NAMESPACE ? namespace : null
-    });
+    const tool = parseCodexTool(entry, type, namespace);
+    if (!tool || seen.has(tool.name)) continue;
+    seen.add(tool.name);
+    surface.tools.push(tool);
   }
 }
 
@@ -139,7 +151,10 @@ export function codexToolReference(tools: readonly CodexTool[]): string {
 
 /** The MCP `tools/list` entry that stands in for one Codex tool. */
 export function mcpToolDefinition(tool: CodexTool): JsonRecord {
-  const summary = tool.description.trim().split("\n", 1)[0] ?? "";
+  const trimmed = tool.description.trim();
+  const newlineIndex = trimmed.indexOf("\n");
+  const summary =
+    newlineIndex === -1 ? trimmed : trimmed.slice(0, newlineIndex);
   const description = `${summary}\n\nFull reference: the "${tool.name}" section under "Codex tools" in your instructions.`;
   if (tool.kind === "custom") {
     // A custom tool takes free-form text -- for `exec`, raw JavaScript source.
@@ -208,9 +223,9 @@ export function codexToolCallEvents(
     const input = String(item.input ?? "");
     return [
       [
-        "response.output_item.added",
+        EVENT_OUTPUT_ITEM_ADDED,
         {
-          type: "response.output_item.added",
+          type: EVENT_OUTPUT_ITEM_ADDED,
           output_index: outputIndex,
           item: { ...item, input: "", status: "in_progress" }
         }
@@ -234,17 +249,17 @@ export function codexToolCallEvents(
         }
       ],
       [
-        "response.output_item.done",
-        { type: "response.output_item.done", output_index: outputIndex, item }
+        EVENT_OUTPUT_ITEM_DONE,
+        { type: EVENT_OUTPUT_ITEM_DONE, output_index: outputIndex, item }
       ]
     ];
   }
   const argumentsText = String(item.arguments ?? "");
   return [
     [
-      "response.output_item.added",
+      EVENT_OUTPUT_ITEM_ADDED,
       {
-        type: "response.output_item.added",
+        type: EVENT_OUTPUT_ITEM_ADDED,
         output_index: outputIndex,
         item: { ...item, arguments: "", status: "in_progress" }
       }
@@ -268,8 +283,8 @@ export function codexToolCallEvents(
       }
     ],
     [
-      "response.output_item.done",
-      { type: "response.output_item.done", output_index: outputIndex, item }
+      EVENT_OUTPUT_ITEM_DONE,
+      { type: EVENT_OUTPUT_ITEM_DONE, output_index: outputIndex, item }
     ]
   ];
 }
@@ -279,6 +294,27 @@ const TOOL_OUTPUT_TYPES = new Set([
   "custom_tool_call_output"
 ]);
 
+/** Appends one array element of a Codex tool output to the MCP content list. */
+function appendOutputPart(
+  part: unknown,
+  content: JsonRecord[],
+  addText: (text: string) => void
+): void {
+  if (typeof part === "string") {
+    addText(part);
+    return;
+  }
+  if (!isRecord(part)) return;
+  if (typeof part.text === "string") {
+    addText(part.text);
+    return;
+  }
+  const url = typeof part.image_url === "string" ? part.image_url : null;
+  const match = url ? DATA_URL_REGEX.exec(url) : null;
+  if (match)
+    content.push({ type: "image", mimeType: match[1], data: match[2] });
+}
+
 /** An MCP `tools/call` result carrying what Codex returned for the call. */
 export function mcpResultFromCodexOutput(output: unknown): JsonRecord {
   const content: JsonRecord[] = [];
@@ -287,21 +323,7 @@ export function mcpResultFromCodexOutput(output: unknown): JsonRecord {
   };
   if (typeof output === "string") addText(output);
   else if (Array.isArray(output)) {
-    for (const part of output) {
-      if (typeof part === "string") {
-        addText(part);
-        continue;
-      }
-      if (!isRecord(part)) continue;
-      if (typeof part.text === "string") {
-        addText(part.text);
-        continue;
-      }
-      const url = typeof part.image_url === "string" ? part.image_url : null;
-      const match = url ? /^data:([^;,]+);base64,(.*)$/s.exec(url) : null;
-      if (match)
-        content.push({ type: "image", mimeType: match[1], data: match[2] });
-    }
+    for (const part of output) appendOutputPart(part, content, addText);
   } else if (isRecord(output) && typeof output.content === "string")
     addText(output.content);
   else if (output !== undefined && output !== null)
@@ -317,8 +339,10 @@ export function mcpResultFromCodexOutput(output: unknown): JsonRecord {
  * failure line), and a call Codex cut short comes back as "aborted".
  */
 export function codexOutputFailed(output: unknown): boolean {
-  const first = outputText(output).trimStart().split("\n", 1)[0] ?? "";
-  return /^(aborted|script (failed|error|timed out)|error\b)/i.test(first);
+  const trimmed = outputText(output).trimStart();
+  const newlineIndex = trimmed.indexOf("\n");
+  const first = newlineIndex === -1 ? trimmed : trimmed.slice(0, newlineIndex);
+  return CODEX_OUTPUT_FAILED_REGEX.test(first);
 }
 
 function textOf(content: unknown): string {

@@ -2104,7 +2104,8 @@ export async function proxyConcreteResponse(
     providerRole: "subagent",
     workspace,
     subject: "concrete request",
-    requestedModel: modelName
+    requestedModel: modelName,
+    turnMetadataHeader
   });
 
   if (!ROUTING_POLICY.isProviderEnabledForRole(route.provider, "subagent")) {
@@ -2183,10 +2184,11 @@ export async function proxyConcreteResponse(
   } catch (error) {
     handleConcreteOuterFailure(ctx, error);
   } finally {
+    const finalOutcome = logicalOutcome as "ok" | "error";
     endLogicalRequestSpan(logicalSpan, {
-      status: logicalOutcome,
-      errorMessage:
-        logicalOutcome === "error" ? "provider request failed" : null
+      status: finalOutcome,
+      errorMessage: finalOutcome === "error" ? "provider request failed" : null,
+      provider: finalOutcome === "ok" ? route.provider : null
     });
     decrementActiveRequests(route.provider);
   }
@@ -2688,6 +2690,7 @@ export async function proxyFallbackChain(
     workspace,
     subject,
     requestedModel: modelName || null,
+    turnMetadataHeader,
     ...(isOrchestratorTurn
       ? {
           memoryMode: currentRouterMemoryMode({
@@ -2750,6 +2753,7 @@ export async function proxyFallbackChain(
 
   let logicalOutcome: "ok" | "error" = "error";
   let logicalErrorMessage: string | null = null;
+  let servedProvider: string | null = null;
 
   const tryCandidate = async (
     route: Candidate,
@@ -2795,6 +2799,7 @@ export async function proxyFallbackChain(
     if (outcome === "served") {
       logicalOutcome = "ok";
       logicalErrorMessage = null;
+      servedProvider = route.provider;
     } else if (outcome === "terminal") {
       logicalErrorMessage = "provider attempt returned a terminal failure";
     }
@@ -2855,9 +2860,11 @@ export async function proxyFallbackChain(
       logicalErrorMessage = "no candidate served the request";
     });
   } finally {
+    const finalOutcome = logicalOutcome as "ok" | "error";
     endLogicalRequestSpan(logicalSpan, {
-      status: logicalOutcome,
-      errorMessage: logicalErrorMessage
+      status: finalOutcome,
+      errorMessage: logicalErrorMessage,
+      provider: finalOutcome === "ok" ? servedProvider : null
     });
   }
 }

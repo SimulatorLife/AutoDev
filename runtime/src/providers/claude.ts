@@ -20,13 +20,21 @@
  * out from under the running bridge.
  */
 import { spawn } from "node:child_process";
-import type { IncomingMessage, ServerResponse } from "node:http";
-import { createServer } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse
+} from "node:http";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
+import {
+  bridgeSkillContext,
+  readOnlySystemPromptInjection,
+  resolveAgentRole
+} from "@simulatorlife/autodev-runtime/agents";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
@@ -46,40 +54,33 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
 import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
 import {
-  AUTODEV_WORKSPACE_KEY_HEADER,
-  validatedAutoDevOtelResourceAttributes,
-  withAutoDevOtelResourceContext
-} from "@simulatorlife/autodev-runtime/telemetry/resource-context";
-import {
   resolveRuntimeSourcePath,
   resolveRuntimeSourceRoot
 } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
-
-import {
-  bridgeSkillContext,
-  readOnlySystemPromptInjection,
-  resolveAgentRole
-} from "@simulatorlife/autodev-runtime/agents";
 import {
   type AgentEventReporter,
   resolveAgentEventReporter
 } from "@simulatorlife/autodev-runtime/telemetry";
-import type { CodexToolSurface } from "./claude-codex-tools.ts";
+import {
+  AUTODEV_WORKSPACE_KEY_HEADER,
+  validatedAutoDevOtelResourceAttributes,
+  withAutoDevOtelResourceContext
+} from "@simulatorlife/autodev-runtime/telemetry/resource-context";
+
 import {
   CODEX_TOOLS_SERVER,
   codexToolReference,
+  type CodexToolSurface,
   codexToolSurface,
   renderCodexTranscript
 } from "./claude-codex-tools.ts";
-import type {
-  ClaudeCliEvent,
-  TurnFailure,
-  TurnReporter
-} from "./claude-turn.ts";
 import {
+  type ClaudeCliEvent,
   ClaudeTurn,
   ClaudeTurnRegistry,
-  ResponseStream
+  ResponseStream,
+  type TurnFailure,
+  type TurnReporter
 } from "./claude-turn.ts";
 
 // Bind the port only when run as a program, so this file can be imported for
@@ -92,7 +93,7 @@ const HOST = process.env.CLAUDE_BRIDGE_HOST ?? "127.0.0.1";
 // Overridable so a second instance can be exercised without taking the port out
 // from under the running service, matching the MiniMax and Antigravity proxies.
 // The launchd service sets neither and keeps the default.
-const PORT = Number.parseInt(process.env.CLAUDE_BRIDGE_PORT ?? "4000", 10);
+const PORT = Number.parseInt(process.env.CLAUDE_BRIDGE_PORT ?? "4000");
 const MODEL = "claude-subscription";
 const AUTH_TOKEN = process.env.LITELLM_API_KEY ?? "";
 const PROJECT_ROOT = process.env.CODEX_PROJECT_ROOT ?? null;
@@ -110,7 +111,7 @@ const CLAUDE_PARK_SECONDS = Number.parseFloat(
 );
 const CLI =
   process.env.CLAUDE_BIN ??
-  join(process.env.HOME ?? homedir(), ".local/bin/claude");
+  path.join(process.env.HOME ?? homedir(), ".local/bin/claude");
 const DEFAULT_CLAUDE_MODEL = "sonnet";
 const DEFAULT_CLAUDE_EFFORT = "medium";
 // The only built-in tools the CLI ever keeps, and only when Codex offered its
@@ -151,10 +152,10 @@ export class ClaudeRateLimitError extends Error {
   readonly source: string;
   constructor(
     message: string,
+    source: string,
     limitClass = "session_limit",
     limitType: string | null = null,
-    resetsAt: string | null = null,
-    source: string
+    resetsAt: string | null = null
   ) {
     super(message);
     this.name = "ClaudeRateLimitError";
@@ -196,6 +197,14 @@ export class ClaudeModelUnavailableError extends Error {
 
 const CLAUDE_MODEL_UNAVAILABLE_PATTERN =
   /issue with the selected model|does not support this model/i;
+// A rejected weekly or billing window is exhaustion until it resets; a
+// rejected session window is a session limit.
+const QUOTA_LIMIT_TYPE_PATTERN = /week|month|quota|billing|credit/i;
+const RATE_LIMIT_MESSAGE_PATTERN =
+  /rate.?limit|weekly.?limit|quota|credit|session.?limit|too many requests/i;
+const OVERLOAD_MESSAGE_PATTERN = /overload|high.?demand|capacity/i;
+const TIMED_OUT_PATTERN = /timed out/i;
+const DIGITS_ONLY_PATTERN = /^\d+$/;
 
 export function resolvedModel(requested: unknown): string {
   if (typeof requested !== "string") return DEFAULT_CLAUDE_MODEL;
@@ -311,17 +320,17 @@ export function rateLimitEventError(
   const resetsAt = normalizeResetsAt(info.resetsAt);
   // A rejected weekly or billing window is exhaustion until it resets; a
   // rejected session window is a session limit.
-  const limitClass = /week|month|quota|billing|credit/i.test(String(limitType))
+  const limitClass = QUOTA_LIMIT_TYPE_PATTERN.test(String(limitType))
     ? "quota_exhausted"
     : "session_limit";
   let message = `Claude rate limit (${limitType}): status is ${status}`;
   if (resetsAt) message += ` (resets at ${resetsAt})`;
   return new ClaudeRateLimitError(
     message,
+    "reported",
     limitClass,
     String(limitType),
-    resetsAt,
-    "reported"
+    resetsAt
   );
 }
 
@@ -336,18 +345,10 @@ export function classifyClaudeError(
   const text = String(message ?? "");
   if (CLAUDE_MODEL_UNAVAILABLE_PATTERN.test(text))
     return ClaudeModelUnavailableError;
-  if (
-    errorCode === "rate_limit" ||
-    /rate.?limit|weekly.?limit|quota|credit|session.?limit|too many requests/i.test(
-      text
-    )
-  ) {
+  if (errorCode === "rate_limit" || RATE_LIMIT_MESSAGE_PATTERN.test(text)) {
     return ClaudeRateLimitError;
   }
-  if (
-    errorCode === "overloaded_error" ||
-    /overload|high.?demand|capacity/i.test(text)
-  ) {
+  if (errorCode === "overloaded_error" || OVERLOAD_MESSAGE_PATTERN.test(text)) {
     return ClaudeOverloadedError;
   }
   return null;
@@ -367,10 +368,10 @@ export function raiseClassifiedClaudeError(
     const limit = classifyCliLimit(message);
     throw new ClaudeRateLimitError(
       String(message),
+      "inferred",
       limit?.limitClass ?? "throttled",
       limit?.limitType ?? null,
-      limit?.resetsAt ?? null,
-      "inferred"
+      limit?.resetsAt ?? null
     );
   }
   throw new ClaudeOverloadedError(String(message));
@@ -428,7 +429,7 @@ export function normalizeResetsAt(value: unknown): string | null {
   } else if (typeof value === "string") {
     const trimmed = value.trim();
     if (!trimmed) return null;
-    if (/^\d+$/.test(trimmed)) {
+    if (DIGITS_ONLY_PATTERN.test(trimmed)) {
       const numeric = Number(trimmed);
       ms = numeric > 1e11 ? numeric : numeric * 1000;
     } else {
@@ -629,13 +630,188 @@ interface ClaudeStreamOptions extends ClaudeCliOptions {
    */
   selectedSkillContext?: string | null;
 }
-
 /**
  * Run the CLI for one turn and translate its stream-json into turn events.
  *
  * The prompt is written to stdin rather than passed as an argument: it is the
  * whole Codex transcript, which can exceed the platform's argument limit.
  */
+
+/** Mutable progress through one Claude CLI stream-json session. */
+interface ClaudeStreamState {
+  terminalResult: JsonRecord | null;
+  sawStreamText: boolean;
+  assistantSnapshot: string;
+}
+
+type ClaudeLineSignal = { kind: "line"; line: string } | { kind: "timeout" };
+
+/** Queues CLI lines while starting an idle-timeout only when the consumer waits. */
+class ClaudeLineQueue implements AsyncIterableIterator<ClaudeLineSignal> {
+  private readonly pending: ClaudeLineSignal[] = [];
+  private resolveNext:
+    ((result: IteratorResult<ClaudeLineSignal>) => void) | null = null;
+  private timeout: ReturnType<typeof setTimeout> | null = null;
+  private closed = false;
+  private readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    this.timeoutMs = timeoutMs;
+  }
+
+  [Symbol.asyncIterator](): AsyncIterableIterator<ClaudeLineSignal> {
+    return this;
+  }
+
+  next(): Promise<IteratorResult<ClaudeLineSignal>> {
+    const signal = this.pending.shift();
+    if (signal) return Promise.resolve({ done: false, value: signal });
+    if (this.closed) return Promise.resolve({ done: true, value: undefined });
+    return new Promise((resolve) => {
+      this.resolveNext = resolve;
+      this.timeout = setTimeout(() => {
+        this.resolve({ done: false, value: { kind: "timeout" } });
+      }, this.timeoutMs);
+    });
+  }
+
+  return(): Promise<IteratorResult<ClaudeLineSignal>> {
+    this.close();
+    return Promise.resolve({ done: true, value: undefined });
+  }
+
+  push(line: string): void {
+    this.enqueue({ kind: "line", line });
+  }
+
+  close(): void {
+    this.closed = true;
+    if (this.pending.length === 0)
+      this.resolve({ done: true, value: undefined });
+  }
+
+  private enqueue(signal: ClaudeLineSignal): void {
+    if (this.resolveNext) this.resolve({ done: false, value: signal });
+    else this.pending.push(signal);
+  }
+
+  private resolve(result: IteratorResult<ClaudeLineSignal>): void {
+    const resolveNext = this.resolveNext;
+    if (!resolveNext) return;
+    this.resolveNext = null;
+    if (this.timeout !== null) clearTimeout(this.timeout);
+    this.timeout = null;
+    resolveNext(result);
+  }
+}
+
+/** Translates the Anthropic stream event nested inside a `stream_event` line. */
+function* translateInnerStreamEvent(
+  inner: JsonRecord,
+  completedTool: JsonRecord | null,
+  options: ClaudeStreamOptions,
+  state: ClaudeStreamState
+): Generator<ClaudeCliEvent, void, void> {
+  if (inner.type === "message_start") {
+    yield { kind: "message_start" };
+  } else if (inner.type === "message_stop") {
+    yield { kind: "message_stop" };
+  } else if (inner.type === "content_block_delta") {
+    const delta = inner.delta as JsonRecord | undefined;
+    if (delta?.type === "thinking_delta" && typeof delta.thinking === "string")
+      yield { kind: "thinking", text: delta.thinking };
+    else if (delta?.type === "text_delta" && typeof delta.text === "string") {
+      state.sawStreamText = true;
+      yield { kind: "text", text: delta.text };
+    }
+  } else if (inner.type === "content_block_stop") {
+    // A Codex tool call is carried by the shim, which has its arguments; only
+    // the CLI's own web tools are recorded from here. Any other name is a
+    // tool the CLI does not have, which it rejects without running.
+    const name =
+      typeof completedTool?.name === "string" ? completedTool.name : "";
+    if (completedTool && options.webSearch && CLAUDE_WEB_TOOLS.includes(name)) {
+      const input =
+        completedTool.input && typeof completedTool.input === "object"
+          ? (completedTool.input as JsonRecord)
+          : {};
+      yield { kind: "native_tool", name, input };
+    }
+    yield { kind: "block_stop" };
+  }
+}
+
+/** Translates the CLI's finished-message snapshot event. */
+function* translateAssistantEvent(
+  event: JsonRecord,
+  state: ClaudeStreamState
+): Generator<ClaudeCliEvent, void, void> {
+  // The CLI's snapshot of a finished message. Its text is streamed already
+  // unless this CLI emitted no partial messages at all.
+  if (!state.sawStreamText) {
+    const fullText = textFromContent(
+      (event.message as JsonRecord | undefined)?.content
+    );
+    const delta = fullText.startsWith(state.assistantSnapshot)
+      ? fullText.slice(state.assistantSnapshot.length)
+      : fullText;
+    state.assistantSnapshot = fullText;
+    if (delta) yield { kind: "text", text: delta };
+  }
+  yield { kind: "message_stop" };
+}
+
+/**
+ * Translates one parsed stream-json line, mutating `state` and yielding the
+ * turn events it carries. Throws when the line reports a provider failure.
+ */
+function* translateClaudeStreamLine(
+  event: JsonRecord,
+  toolUses: ToolUseAccumulator,
+  options: ClaudeStreamOptions,
+  state: ClaudeStreamState
+): Generator<ClaudeCliEvent, void, void> {
+  const eventType = event.type;
+  if (eventType === "rate_limit_event") {
+    const rateError = rateLimitEventError(event);
+    if (rateError !== null) throw rateError;
+    return;
+  }
+  if (
+    event.is_api_error_message ||
+    event.error === "rate_limit" ||
+    event.error === "overloaded_error"
+  ) {
+    const errMsg =
+      textFromContent((event.message as JsonRecord | undefined)?.content) ||
+      String(event.error ?? "Claude API error");
+    raiseClassifiedClaudeError(errMsg, event.error);
+    return;
+  }
+  if (
+    eventType === "stream_event" &&
+    event.event &&
+    typeof event.event === "object"
+  ) {
+    const inner = event.event as JsonRecord;
+    const completedTool = toolUses.feed(inner);
+    yield* translateInnerStreamEvent(inner, completedTool, options, state);
+    return;
+  }
+  if (eventType === "assistant") {
+    yield* translateAssistantEvent(event, state);
+    return;
+  }
+  if (eventType === "result") {
+    state.terminalResult = event;
+    if (event.is_error) {
+      const message = String(event.result ?? "Claude CLI returned an error");
+      raiseClassifiedClaudeError(message, undefined);
+      throw new Error(message);
+    }
+  }
+}
+
 export async function* runClaudeStream(
   prompt: string,
   model: string,
@@ -658,162 +834,59 @@ export async function* runClaudeStream(
   options.signal.addEventListener("abort", kill, { once: true });
 
   let stderr = "";
-  let terminalResult: JsonRecord | null = null;
-  let sawStreamText = false;
-  let assistantSnapshot = "";
+  const state: ClaudeStreamState = {
+    terminalResult: null,
+    sawStreamText: false,
+    assistantSnapshot: ""
+  };
   const toolUses = new ToolUseAccumulator();
 
   const lines = createInterface({ input: child.stdout });
-  const lineQueue: string[] = [];
-  let resolveNext: (() => void) | null = null;
-  lines.on("line", (line: string) => {
-    lineQueue.push(line);
-    if (resolveNext) resolveNext();
-  });
+  const lineQueue = new ClaudeLineQueue(CLAUDE_TIMEOUT_SECONDS * 1000);
+  lines.on("line", (line: string) => lineQueue.push(line));
   child.stderr.on("data", (chunk: Buffer) => {
     stderr += chunk.toString();
   });
-  const childClosed = new Promise<void>((resolveClose) => {
-    child.once("close", () => resolveClose());
+  const childClosed = new Promise<void>((resolve) => {
+    child.once("close", () => {
+      lineQueue.close();
+      resolve();
+    });
   });
 
   try {
-    for (;;) {
-      while (lineQueue.length > 0) {
-        const line = lineQueue.shift()!;
-        let event: JsonRecord;
-        try {
-          event = JSON.parse(line) as JsonRecord;
-        } catch {
-          // Stderr that landed on stdout (it happens): skip but keep draining.
-          continue;
-        }
-        const eventType = event.type;
-        if (eventType === "rate_limit_event") {
-          const rateError = rateLimitEventError(event);
-          if (rateError !== null) throw rateError;
-          continue;
-        }
-        if (
-          event.is_api_error_message ||
-          event.error === "rate_limit" ||
-          event.error === "overloaded_error"
-        ) {
-          const errMsg =
-            textFromContent(
-              (event.message as JsonRecord | undefined)?.content
-            ) || String(event.error ?? "Claude API error");
-          raiseClassifiedClaudeError(errMsg, event.error);
-          continue;
-        }
-        if (
-          eventType === "stream_event" &&
-          event.event &&
-          typeof event.event === "object"
-        ) {
-          const inner = event.event as JsonRecord;
-          const completedTool = toolUses.feed(inner);
-          if (inner.type === "message_start") yield { kind: "message_start" };
-          else if (inner.type === "message_stop")
-            yield { kind: "message_stop" };
-          else if (inner.type === "content_block_delta") {
-            const delta = inner.delta as JsonRecord | undefined;
-            if (
-              delta?.type === "thinking_delta" &&
-              typeof delta.thinking === "string"
-            )
-              yield { kind: "thinking", text: delta.thinking };
-            else if (
-              delta?.type === "text_delta" &&
-              typeof delta.text === "string"
-            ) {
-              sawStreamText = true;
-              yield { kind: "text", text: delta.text };
-            }
-          } else if (inner.type === "content_block_stop") {
-            // A Codex tool call is carried by the shim, which has its
-            // arguments; only the CLI's own web tools are recorded from here.
-            // Any other name is a tool the CLI does not have, which it
-            // rejects without running.
-            const name =
-              typeof completedTool?.name === "string" ? completedTool.name : "";
-            if (
-              completedTool &&
-              options.webSearch &&
-              CLAUDE_WEB_TOOLS.includes(name)
-            ) {
-              const input =
-                completedTool.input && typeof completedTool.input === "object"
-                  ? (completedTool.input as JsonRecord)
-                  : {};
-              yield { kind: "native_tool", name, input };
-            }
-            yield { kind: "block_stop" };
-          }
-        } else if (eventType === "assistant") {
-          // The CLI's snapshot of a finished message. Its text is streamed
-          // already unless this CLI emitted no partial messages at all.
-          if (!sawStreamText) {
-            const fullText = textFromContent(
-              (event.message as JsonRecord | undefined)?.content
-            );
-            const delta = fullText.startsWith(assistantSnapshot)
-              ? fullText.slice(assistantSnapshot.length)
-              : fullText;
-            assistantSnapshot = fullText;
-            if (delta) yield { kind: "text", text: delta };
-          }
-          yield { kind: "message_stop" };
-        } else if (eventType === "result") {
-          terminalResult = event;
-          if (event.is_error) {
-            const message = String(
-              event.result ?? "Claude CLI returned an error"
-            );
-            raiseClassifiedClaudeError(message, undefined);
-            throw new Error(message);
-          }
-        }
-      }
-      if (terminalResult !== null) break;
-      if (options.signal.aborted) throw new Error("Claude turn cancelled");
-      const next = new Promise<void>((resolveLine) => {
-        resolveNext = () => resolveLine();
-      });
-      const raced = await Promise.race([
-        next,
-        childClosed.then(() => "close" as const),
-        new Promise<"timeout">((resolveTimeout) =>
-          setTimeout(
-            () => resolveTimeout("timeout"),
-            CLAUDE_TIMEOUT_SECONDS * 1000
-          )
-        )
-      ]);
-      resolveNext = null;
-      if (raced === "close") {
-        // Lines the CLI wrote just before exiting are still queued.
-        if (lineQueue.length > 0) continue;
+    let timedOut = false;
+    for await (const signal of lineQueue) {
+      if (signal.kind === "timeout") {
+        if (options.waitingOnCodex()) continue;
+        timedOut = true;
+        kill();
         break;
       }
-      if (raced === "timeout" && !options.waitingOnCodex()) {
-        kill();
-        await childClosed.catch(() => undefined);
-        throw new Error(
-          `Claude CLI timed out after ${CLAUDE_TIMEOUT_SECONDS}s`
-        );
+      let event: JsonRecord;
+      try {
+        event = JSON.parse(signal.line) as JsonRecord;
+      } catch {
+        // Stderr that landed on stdout (it happens): skip but keep draining.
+        continue;
       }
+      yield* translateClaudeStreamLine(event, toolUses, options, state);
+      if (state.terminalResult !== null) break;
     }
-    if (terminalResult === null) {
+    if (timedOut) {
+      await childClosed.catch(() => undefined);
+      throw new Error(`Claude CLI timed out after ${CLAUDE_TIMEOUT_SECONDS}s`);
+    }
+    if (state.terminalResult === null) {
       if (options.signal.aborted) throw new Error("Claude turn cancelled");
       throw new Error(
         `Claude CLI exited without a terminal result event: ${stderr.slice(-4000)}`
       );
     }
-    const usage = (terminalResult.usage as JsonRecord | undefined) ?? {};
+    const usage = (state.terminalResult.usage as JsonRecord | undefined) ?? {};
     yield {
       kind: "complete",
-      text: String(terminalResult.result ?? ""),
+      text: String(state.terminalResult.result ?? ""),
       usage: {
         input_tokens: Number(usage.input_tokens ?? 0),
         output_tokens: Number(usage.output_tokens ?? 0)
@@ -828,7 +901,6 @@ export async function* runClaudeStream(
     }
   }
 }
-
 function sendJson(
   response: ServerResponse,
   status: number,
@@ -860,7 +932,7 @@ export function describeFailure(error: unknown): TurnFailure {
         : null;
   const reason = limit
     ? INCOMPLETE_REASON_PROVIDER_LIMIT
-    : error instanceof ClaudeOverloadedError || /timed out/i.test(message)
+    : error instanceof ClaudeOverloadedError || TIMED_OUT_PATTERN.test(message)
       ? INCOMPLETE_REASON_TIMEOUT
       : INCOMPLETE_REASON_INTERRUPTED;
   return { error, reason, limit };
@@ -896,78 +968,65 @@ function turnReporter(agentEvents: AgentEventReporter | null): TurnReporter {
   };
 }
 
-async function handle(
+/** Handles `/v1/bridge-tools/list` and `/v1/bridge-tools/call`, the tools shim's loopback calls into this bridge. */
+async function handleBridgeTools(
+  pathname: string,
   request: IncomingMessage,
   response: ServerResponse
 ): Promise<void> {
-  const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
-  if (pathname === "/health" || pathname === "/health/liveliness") {
-    sendJson(response, 200, { status: "ok", turns: turns.status() });
-    return;
-  }
   // The tools shim runs as a grandchild of this bridge and reaches back over
   // the same loopback port, behind the same bearer check.
-  if (
-    pathname === "/v1/bridge-tools/list" ||
-    pathname === "/v1/bridge-tools/call"
-  ) {
-    if (
-      AUTH_TOKEN &&
-      request.headers.authorization !== `Bearer ${AUTH_TOKEN}`
-    ) {
-      sendJson(response, 401, { error: "invalid local gateway key" });
-      return;
-    }
-    const body = await readJsonBody(request);
-    const turn = turns.byId(typeof body?.turn === "string" ? body.turn : "");
-    if (pathname.endsWith("/list")) {
-      sendJson(response, 200, { tools: turn ? turn.toolDefinitions() : [] });
-      return;
-    }
-    if (!turn) {
-      sendJson(response, 409, {
-        error: "This Claude turn is no longer active; the call was not run."
-      });
-      return;
-    }
-    const result = await turn.requestTool(
-      typeof body?.name === "string" ? body.name : "",
-      body?.arguments ?? {}
-    );
-    if (!response.destroyed) sendJson(response, 200, result);
-    return;
-  }
-  if (pathname === "/v1/models") {
-    sendJson(response, 200, {
-      object: "list",
-      data: [{ id: MODEL, object: "model", owned_by: "anthropic" }],
-      models: [claudeModelMetadata()]
-    });
-    return;
-  }
-  if (pathname !== "/v1/responses" || request.method !== "POST") {
-    sendJson(response, 404, {
-      error: { type: "invalid_request_error", message: "not found" }
-    });
-    return;
-  }
   if (AUTH_TOKEN && request.headers.authorization !== `Bearer ${AUTH_TOKEN}`) {
-    sendJson(response, 401, {
-      error: {
-        type: "authentication_error",
-        message: "invalid local gateway key"
-      }
+    sendJson(response, 401, { error: "invalid local gateway key" });
+    return;
+  }
+  const body = await readJsonBody(request);
+  const turn = turns.byId(typeof body?.turn === "string" ? body.turn : "");
+  if (pathname.endsWith("/list")) {
+    sendJson(response, 200, { tools: turn ? turn.toolDefinitions() : [] });
+    return;
+  }
+  if (!turn) {
+    sendJson(response, 409, {
+      error: "This Claude turn is no longer active; the call was not run."
     });
     return;
   }
+  const result = await turn.requestTool(
+    typeof body?.name === "string" ? body.name : "",
+    body?.arguments ?? {}
+  );
+  if (!response.destroyed) sendJson(response, 200, result);
+}
 
-  const payload = await readJsonBody(request);
-  if (!payload) {
+/** Resolves the turn's workspace, reporting the failure itself when it cannot. */
+function resolveTurnCwd(
+  payload: JsonRecord,
+  request: IncomingMessage,
+  response: ServerResponse
+): string | null {
+  try {
+    return resolveCwd(
+      payload,
+      request.headers as Record<string, string | string[] | undefined>,
+      PROJECT_ROOT
+    );
+  } catch (error) {
+    if (!(error instanceof WorkspaceResolutionError)) throw error;
+    writeErrorLine(`claude workspace resolution failed: ${error.message}`);
     sendJson(response, 400, {
-      error: { type: "invalid_request_error", message: "invalid JSON" }
+      error: { type: "invalid_request_error", message: error.message }
     });
-    return;
+    return null;
   }
+}
+
+/** Starts a Claude CLI turn for a `/v1/responses` request, or resumes a parked one. */
+function startResponsesTurn(
+  request: IncomingMessage,
+  response: ServerResponse,
+  payload: JsonRecord
+): void {
   const model = resolvedModel(payload.model);
   const effort = resolveClaudeEffort(requestedEffort(payload));
   // The router classifies the turn; only it can tell this bridge which role
@@ -979,21 +1038,8 @@ async function handle(
   const agentEvents = resolveAgentEventReporter(
     request.headers as Record<string, unknown>
   );
-  let cwd: string;
-  try {
-    cwd = resolveCwd(
-      payload,
-      request.headers as Record<string, string | string[] | undefined>,
-      PROJECT_ROOT
-    );
-  } catch (error) {
-    if (!(error instanceof WorkspaceResolutionError)) throw error;
-    writeErrorLine(`claude workspace resolution failed: ${error.message}`);
-    sendJson(response, 400, {
-      error: { type: "invalid_request_error", message: error.message }
-    });
-    return;
-  }
+  const cwd = resolveTurnCwd(payload, request, response);
+  if (cwd === null) return;
   if (agentEvents) {
     for (const server of roleContract(agentRole).mcp ?? []) {
       void agentEvents.reportMcpExposed({
@@ -1075,6 +1121,55 @@ ${orchestratorSkillContext}
   );
 }
 
+async function handle(
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<void> {
+  const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+  if (pathname === "/health" || pathname === "/health/liveliness") {
+    sendJson(response, 200, { status: "ok", turns: turns.status() });
+    return;
+  }
+  if (
+    pathname === "/v1/bridge-tools/list" ||
+    pathname === "/v1/bridge-tools/call"
+  ) {
+    await handleBridgeTools(pathname, request, response);
+    return;
+  }
+  if (pathname === "/v1/models") {
+    sendJson(response, 200, {
+      object: "list",
+      data: [{ id: MODEL, object: "model", owned_by: "anthropic" }],
+      models: [claudeModelMetadata()]
+    });
+    return;
+  }
+  if (pathname !== "/v1/responses" || request.method !== "POST") {
+    sendJson(response, 404, {
+      error: { type: "invalid_request_error", message: "not found" }
+    });
+    return;
+  }
+  if (AUTH_TOKEN && request.headers.authorization !== `Bearer ${AUTH_TOKEN}`) {
+    sendJson(response, 401, {
+      error: {
+        type: "authentication_error",
+        message: "invalid local gateway key"
+      }
+    });
+    return;
+  }
+
+  const payload = await readJsonBody(request);
+  if (!payload) {
+    sendJson(response, 400, {
+      error: { type: "invalid_request_error", message: "invalid JSON" }
+    });
+    return;
+  }
+  startResponsesTurn(request, response, payload);
+}
 function handleNonStreamingError(
   response: ServerResponse,
   failure: TurnFailure
@@ -1129,7 +1224,7 @@ function handleNonStreamingError(
     });
     return;
   }
-  if (message && /timed out/i.test(message)) {
+  if (message && TIMED_OUT_PATTERN.test(message)) {
     sendJson(response, 504, {
       error: { message: "Claude CLI timed out", type: "timeout_error" }
     });

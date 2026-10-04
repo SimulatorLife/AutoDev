@@ -5,6 +5,11 @@ import path from "node:path";
 
 import { SpanStatusCode } from "@opentelemetry/api";
 import {
+  type GithubActionsRuntimeStatus,
+  type GithubWorkflowDefinition,
+  type GithubWorkflowMutationOperation,
+  type GithubWorkflowRun,
+  type GithubWorkflowState,
   LOCAL_CONTROL_API_ACTOR,
   type ProviderRole,
   type ToolCatalogItem
@@ -12,6 +17,11 @@ import {
 import {
   ConfigRepository,
   EvaluationRepository,
+  GithubActionsAdapter,
+  GithubActionsApiError,
+  type GithubActionsRuntimeSnapshot,
+  type GithubApiWorkflow,
+  GithubWorkflowRepository,
   RuleSyncRepository
 } from "@simulatorlife/autodev-data";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
@@ -33,6 +43,10 @@ import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "../router/proxy.ts";
 import { getDefaultExecutionContract } from "../router/subagents.ts";
 import { routerTelemetryTracer } from "../router/telemetry.ts";
 import { readControlApiJsonObject } from "./body.ts";
+import {
+  GITHUB_WORKFLOW_MUTATION_POLICY,
+  handleGithubWorkflowMutation
+} from "./github-mutations.ts";
 import { handleMemoryControlApiRequest } from "./memory.ts";
 
 export const CONTROL_API_BASE = "/control";
@@ -50,7 +64,9 @@ export const CONTROL_API_PATHS = {
   routing: "/control/routing",
   runtime: "/control/runtime",
   memory: "/control/memory",
-  evaluations: "/control/evaluations"
+  evaluations: "/control/evaluations",
+  github: "/control/github",
+  githubMutations: "/control/github/mutations"
 } as const;
 
 const PROVIDER_ROLE_PATH =
@@ -62,6 +78,8 @@ const CONTROL_API_COLLATOR = new Intl.Collator();
 const EXECUTION_CONTRACT_SOURCE = "execution-contract" as const;
 const MD_EXTENSION_PATTERN = /\.md$/u;
 const CONTROL_VARY_HEADER = "Authorization, X-AutoDev-Actor";
+const GITHUB_CONTROL_API_SCHEMA = "autodev-control-github-v1";
+const GITHUB_WORKFLOW_YAML_SOURCE = ".github/workflows";
 
 export type ControlApiRole = "viewer" | "operator";
 export interface ControlApiActor {
@@ -505,13 +523,425 @@ function workspacesView(repositoryRoot?: string): Record<string, unknown> {
   const catalog = new ConfigRepository(repositoryRoot).readWorkspaceCatalog();
   return {
     schema: "autodev-control-workspaces-v1",
-    source: "weights.json",
+    source: "config/workspaces.json",
     readOnly: true,
     catalogStatus: catalog.status,
     totalWorkspaces:
       catalog.status === "valid" ? catalog.workspaces.length : null,
     workspaces: catalog.workspaces
   };
+}
+
+let githubActionsAdapterOverride: GithubActionsAdapter | null = null;
+
+export function setGithubActionsAdapterForTests(
+  adapter: GithubActionsAdapter | null
+): void {
+  githubActionsAdapterOverride = adapter;
+}
+
+export interface GithubWorkflowsViewOptions {
+  readonly actionsAdapter?: GithubActionsAdapter;
+  readonly token?: string;
+  readonly repository?: string;
+  /** Confirmed role of the authenticated Control API actor making this request. */
+  readonly actorRole?: ControlApiRole;
+  /** Overrides AUTODEV_GITHUB_ACTIONS_WRITE_TOKEN presence for tests. */
+  readonly writeToken?: string;
+}
+
+type GithubWorkflowCatalogStatus = "valid" | "invalid" | "unavailable";
+
+interface GithubUnavailableResponseOptions {
+  readonly catalogStatus: GithubWorkflowCatalogStatus;
+  readonly totalWorkflows: number | null;
+  readonly workflows: readonly GithubWorkflowDefinition[];
+  readonly runtimeStatus: GithubActionsRuntimeStatus;
+  readonly runtimeMessage: string;
+  readonly repository: string | null;
+}
+
+function unavailableGithubResponse(
+  options: GithubUnavailableResponseOptions
+): Record<string, unknown> {
+  return {
+    schema: GITHUB_CONTROL_API_SCHEMA,
+    source: GITHUB_WORKFLOW_YAML_SOURCE,
+    readOnly: true,
+    catalogStatus: options.catalogStatus,
+    totalWorkflows: options.totalWorkflows,
+    workflows: options.workflows,
+    runtimeFactsAvailable: false,
+    runtimeStatus: options.runtimeStatus,
+    runtimeMessage: options.runtimeMessage,
+    repository: options.repository,
+    stats: null,
+    recentRuns: [],
+    operationsAvailable: false
+  };
+}
+
+function unavailableWorkflowDefinitions(
+  workflows: readonly GithubWorkflowDefinition[]
+): GithubWorkflowDefinition[] {
+  return workflows.map((workflow) => ({
+    ...workflow,
+    actionsState: "unavailable",
+    actionsWorkflowId: null,
+    actionsHtmlUrl: null,
+    recentRunsCount: null,
+    lastRunStatus: null,
+    lastRunConclusion: null,
+    lastRunCreatedAt: null,
+    lastRunHtmlUrl: null
+  }));
+}
+
+type GithubRuntimeBindingResolution =
+  | {
+      readonly available: true;
+      readonly owner: string;
+      readonly repo: string;
+      readonly repository: string;
+      readonly token: string;
+      readonly unavailableWorkflows: readonly GithubWorkflowDefinition[];
+    }
+  | {
+      readonly available: false;
+      readonly response: Record<string, unknown>;
+    };
+
+function resolveGithubRuntimeBinding(
+  root: string,
+  workflows: readonly GithubWorkflowDefinition[],
+  options: GithubWorkflowsViewOptions
+): GithubRuntimeBindingResolution {
+  const unavailableWorkflows = unavailableWorkflowDefinitions(workflows);
+  const token = options.token ?? process.env.AUTODEV_GITHUB_TOKEN;
+  const repository =
+    options.repository ??
+    process.env.AUTODEV_GITHUB_REPOSITORY ??
+    process.env.GITHUB_REPOSITORY ??
+    null;
+
+  const unavailable = (
+    runtimeStatus: GithubActionsRuntimeStatus,
+    runtimeMessage: string
+  ): GithubRuntimeBindingResolution => ({
+    available: false,
+    response: unavailableGithubResponse({
+      catalogStatus: "valid",
+      totalWorkflows: workflows.length,
+      workflows: unavailableWorkflows,
+      runtimeStatus,
+      runtimeMessage,
+      repository
+    })
+  });
+
+  if (!repository) {
+    return unavailable(
+      "unavailable",
+      "AUTODEV_GITHUB_REPOSITORY is not configured; no repository is bound."
+    );
+  }
+
+  const workspaceCatalog = new ConfigRepository(root).readWorkspaceCatalog();
+  const workspace =
+    workspaceCatalog.status === "valid"
+      ? workspaceCatalog.workspaces.find((entry) => entry.id === repository)
+      : undefined;
+  if (!workspace) {
+    return unavailable(
+      "invalid",
+      `Configured repository "${repository}" is not a recognized workspace in config/workspaces.json.`
+    );
+  }
+
+  if (!workspace.enabled) {
+    return unavailable(
+      "invalid",
+      `Configured workspace "${repository}" is disabled in config/workspaces.json.`
+    );
+  }
+
+  if (!token || token.trim().length === 0) {
+    return unavailable(
+      "unavailable",
+      "AUTODEV_GITHUB_TOKEN is not configured on the server."
+    );
+  }
+
+  const [owner, repo, extraSegment] = repository.split("/");
+  if (!owner || !repo || extraSegment !== undefined) {
+    return unavailable(
+      "invalid",
+      `Invalid repository identifier format: "${repository}". Expected "owner/repo".`
+    );
+  }
+
+  return {
+    available: true,
+    owner,
+    repo,
+    repository,
+    token,
+    unavailableWorkflows
+  };
+}
+
+function addToIndex<Key, Value>(
+  index: Map<Key, Value[]>,
+  key: Key,
+  value: Value
+): void {
+  const values = index.get(key);
+  if (values) {
+    values.push(value);
+  } else {
+    index.set(key, [value]);
+  }
+}
+
+function githubWorkflowState(state: string | undefined): GithubWorkflowState {
+  if (
+    state === "active" ||
+    state === "disabled_manually" ||
+    state === "disabled_inactivity" ||
+    state === "deleted"
+  ) {
+    return state;
+  }
+  return "unknown";
+}
+
+interface ProjectedGithubWorkflows {
+  readonly workflows: readonly GithubWorkflowDefinition[];
+  /** Workflow ids with at least one queued or in-progress run in the bounded recent-run sample. */
+  readonly activeRunWorkflowIds: ReadonlySet<string>;
+}
+
+const ACTIVE_RUN_STATUSES = new Set(["queued", "in_progress"]);
+
+function projectGithubWorkflows(
+  definitions: readonly GithubWorkflowDefinition[],
+  snapshot: GithubActionsRuntimeSnapshot
+): ProjectedGithubWorkflows {
+  const apiWorkflowByPathOrFile = new Map<string, GithubApiWorkflow>();
+  for (const workflow of snapshot.workflows) {
+    apiWorkflowByPathOrFile.set(workflow.path, workflow);
+    apiWorkflowByPathOrFile.set(path.basename(workflow.path), workflow);
+  }
+
+  const runsByWorkflowId = new Map<number, GithubWorkflowRun[]>();
+  const runsByWorkflowPath = new Map<string, GithubWorkflowRun[]>();
+  for (const run of snapshot.runs) {
+    addToIndex(runsByWorkflowId, run.workflowId, run);
+    if (run.workflowPath) {
+      addToIndex(runsByWorkflowPath, run.workflowPath, run);
+      addToIndex(runsByWorkflowPath, path.basename(run.workflowPath), run);
+    }
+  }
+
+  const activeRunWorkflowIds = new Set<string>();
+  const workflows = definitions.map((definition) => {
+    const apiWorkflow =
+      apiWorkflowByPathOrFile.get(definition.path) ??
+      apiWorkflowByPathOrFile.get(definition.id);
+    const matchedRuns = apiWorkflow
+      ? (runsByWorkflowId.get(apiWorkflow.id) ?? [])
+      : (runsByWorkflowPath.get(definition.path) ??
+        runsByWorkflowPath.get(definition.id) ??
+        []);
+    const latestRun = matchedRuns[0];
+    if (matchedRuns.some((run) => ACTIVE_RUN_STATUSES.has(run.status))) {
+      activeRunWorkflowIds.add(definition.id);
+    }
+
+    return {
+      ...definition,
+      actionsState: githubWorkflowState(apiWorkflow?.state),
+      actionsWorkflowId: apiWorkflow?.id ?? null,
+      actionsHtmlUrl: apiWorkflow?.htmlUrl ?? null,
+      recentRunsCount: matchedRuns.length,
+      lastRunStatus: latestRun?.status ?? null,
+      lastRunConclusion: latestRun?.conclusion ?? null,
+      lastRunCreatedAt: latestRun?.createdAt ?? null,
+      lastRunHtmlUrl: latestRun?.htmlUrl ?? null
+    };
+  });
+  return { workflows, activeRunWorkflowIds };
+}
+
+function computeGithubOperationsAvailable(
+  options: GithubWorkflowsViewOptions
+): boolean {
+  const writeToken =
+    options.writeToken ?? process.env.AUTODEV_GITHUB_ACTIONS_WRITE_TOKEN;
+  return options.actorRole === "operator" && Boolean(writeToken?.trim());
+}
+
+function computeAllowedOperationsForWorkflow(
+  definition: GithubWorkflowDefinition,
+  root: string,
+  hasActiveRun: boolean,
+  operationsAvailable: boolean
+): GithubWorkflowMutationOperation[] {
+  if (!operationsAvailable) return [];
+  if (!Object.hasOwn(GITHUB_WORKFLOW_MUTATION_POLICY, definition.id)) return [];
+  const policy =
+    GITHUB_WORKFLOW_MUTATION_POLICY[
+      definition.id as keyof typeof GITHUB_WORKFLOW_MUTATION_POLICY
+    ];
+  const operations: GithubWorkflowMutationOperation[] = [];
+  if (policy.dispatch) {
+    const dispatchContract = new GithubWorkflowRepository(
+      root
+    ).readDispatchContract(definition.id);
+    if (
+      definition.actionsState === "active" &&
+      !hasActiveRun &&
+      dispatchContract.status === "valid" &&
+      dispatchContract.dispatchable
+    ) {
+      operations.push("dispatch");
+    }
+  }
+  if (policy.enableDisable) {
+    if (definition.actionsState === "active") {
+      operations.push("disable");
+    } else if (
+      definition.actionsState === "disabled_manually" ||
+      definition.actionsState === "disabled_inactivity"
+    ) {
+      operations.push("enable");
+    }
+  }
+  return operations;
+}
+
+/**
+ * Observed GitHub Actions workflow *definitions* parsed from
+ * `.github/workflows/*.yml` along with authoritative read-only GitHub Actions
+ * runtime state and bounded recent run statistics.
+ *
+ * Runtime Control API owns authentication and validates explicit server-side
+ * AUTODEV_GITHUB_TOKEN and configured AUTODEV_GITHUB_REPOSITORY (or standard
+ * runner GITHUB_REPOSITORY). Returns an explicit unavailable/invalid state when
+ * credentials, configuration, or API are absent/invalid.
+ */
+export async function githubWorkflowsView(
+  repositoryRoot?: string,
+  options: GithubWorkflowsViewOptions = {}
+): Promise<Record<string, unknown>> {
+  const root = repositoryRoot ?? DEFAULT_REPO_ROOT;
+  const catalog = new GithubWorkflowRepository(root).readWorkflowCatalog();
+
+  if (catalog.status !== "valid") {
+    return unavailableGithubResponse({
+      catalogStatus: catalog.status,
+      totalWorkflows: null,
+      workflows: [],
+      runtimeStatus: catalog.status === "invalid" ? "invalid" : "unavailable",
+      runtimeMessage:
+        catalog.status === "invalid"
+          ? "Workflow YAML definitions under .github/workflows could not be parsed."
+          : ".github/workflows directory is missing or unreadable.",
+      repository: null
+    });
+  }
+
+  const binding = resolveGithubRuntimeBinding(root, catalog.workflows, options);
+  if (!binding.available) {
+    return binding.response;
+  }
+
+  const adapter =
+    options.actionsAdapter ??
+    githubActionsAdapterOverride ??
+    new GithubActionsAdapter();
+
+  try {
+    const snapshot = await adapter.fetchRuntimeSnapshot(
+      binding.owner,
+      binding.repo,
+      binding.token,
+      { limit: 30 }
+    );
+    const projected = projectGithubWorkflows(catalog.workflows, snapshot);
+    const operationsAvailable = computeGithubOperationsAvailable(options);
+    const dispatchActivity = new Map<string, boolean>();
+    if (operationsAvailable) {
+      const dispatchCandidates = projected.workflows.filter(
+        (workflow) =>
+          Object.hasOwn(GITHUB_WORKFLOW_MUTATION_POLICY, workflow.id) &&
+          GITHUB_WORKFLOW_MUTATION_POLICY[
+            workflow.id as keyof typeof GITHUB_WORKFLOW_MUTATION_POLICY
+          ].dispatch &&
+          workflow.actionsWorkflowId !== null &&
+          workflow.actionsWorkflowId !== undefined
+      );
+      const activityResults = await Promise.all(
+        dispatchCandidates.map(async (workflow) => {
+          try {
+            const active = await adapter.hasActiveWorkflowRuns(
+              binding.owner,
+              binding.repo,
+              workflow.actionsWorkflowId!,
+              binding.token
+            );
+            return [workflow.id, active] as const;
+          } catch {
+            // Unknown activity is unsafe for dispatch; fail closed.
+            return [workflow.id, true] as const;
+          }
+        })
+      );
+      for (const [workflowId, active] of activityResults) {
+        dispatchActivity.set(workflowId, active);
+      }
+    }
+    const workflows = projected.workflows.map((workflow) => ({
+      ...workflow,
+      allowedOperations: computeAllowedOperationsForWorkflow(
+        workflow,
+        root,
+        dispatchActivity.get(workflow.id) ??
+          projected.activeRunWorkflowIds.has(workflow.id),
+        operationsAvailable
+      )
+    }));
+
+    return {
+      schema: GITHUB_CONTROL_API_SCHEMA,
+      source: GITHUB_WORKFLOW_YAML_SOURCE,
+      readOnly: true,
+      catalogStatus: "valid",
+      totalWorkflows: catalog.workflows.length,
+      workflows,
+      runtimeFactsAvailable: true,
+      runtimeStatus: "available",
+      runtimeMessage: null,
+      repository: binding.repository,
+      stats: snapshot.stats,
+      recentRuns: snapshot.runs,
+      operationsAvailable
+    };
+  } catch (error: unknown) {
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const isAuthFailure =
+      error instanceof GithubActionsApiError &&
+      (error.status === 401 || error.status === 403);
+
+    return unavailableGithubResponse({
+      catalogStatus: "valid",
+      totalWorkflows: binding.unavailableWorkflows.length,
+      workflows: binding.unavailableWorkflows,
+      runtimeStatus: isAuthFailure ? "invalid" : "unavailable",
+      runtimeMessage: `GitHub Actions API error: ${rawMessage}`,
+      repository: binding.repository
+    });
+  }
 }
 
 async function evaluationsView(): Promise<Record<string, unknown>> {
@@ -1029,24 +1459,32 @@ function authorizeRequest(
 
 const READ_ONLY_COLLECTIONS: ReadonlyMap<
   string,
-  () => Record<string, unknown> | Promise<Record<string, unknown>>
+  (
+    actor: ControlApiActor
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>
 > = new Map<
   string,
-  () => Record<string, unknown> | Promise<Record<string, unknown>>
+  (
+    actor: ControlApiActor
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>
 >([
-  [CONTROL_API_PATHS.agents, agentsView],
-  [CONTROL_API_PATHS.providers, providersView],
-  [CONTROL_API_PATHS.models, modelsView],
-  [CONTROL_API_PATHS.mcps, mcpsView],
-  [CONTROL_API_PATHS.tools, toolsView],
-  [CONTROL_API_PATHS.skills, skillsView],
-  [CONTROL_API_PATHS.hooks, hooksView],
-  [CONTROL_API_PATHS.permissions, permissionsView],
-  [CONTROL_API_PATHS.prompts, promptsView],
-  [CONTROL_API_PATHS.workspaces, workspacesView],
+  [CONTROL_API_PATHS.agents, () => agentsView()],
+  [CONTROL_API_PATHS.providers, () => providersView()],
+  [CONTROL_API_PATHS.models, () => modelsView()],
+  [CONTROL_API_PATHS.mcps, () => mcpsView()],
+  [CONTROL_API_PATHS.tools, () => toolsView()],
+  [CONTROL_API_PATHS.skills, () => skillsView()],
+  [CONTROL_API_PATHS.hooks, () => hooksView()],
+  [CONTROL_API_PATHS.permissions, () => permissionsView()],
+  [CONTROL_API_PATHS.prompts, () => promptsView()],
+  [CONTROL_API_PATHS.workspaces, () => workspacesView()],
   [CONTROL_API_PATHS.routing, () => routingView(Date.now())],
   [CONTROL_API_PATHS.runtime, () => runtimeView(Date.now())],
-  [CONTROL_API_PATHS.evaluations, evaluationsView]
+  [CONTROL_API_PATHS.evaluations, () => evaluationsView()],
+  [
+    CONTROL_API_PATHS.github,
+    (actor) => githubWorkflowsView(DEFAULT_REPO_ROOT, { actorRole: actor.role })
+  ]
 ]);
 
 async function readOnlyCollection(
@@ -1077,8 +1515,90 @@ async function readOnlyCollection(
     );
     return true;
   }
-  const body = await renderCollection();
+  const body = await renderCollection(actor);
   sendJson(response, 200, body, {
+    "cache-control": "no-store",
+    vary: CONTROL_VARY_HEADER
+  });
+  return true;
+}
+
+async function githubMutationRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  method: string,
+  pathname: string
+): Promise<boolean> {
+  if (pathname !== CONTROL_API_PATHS.githubMutations) return false;
+  if (method !== "POST") {
+    auditRejectedRequest(
+      request,
+      method,
+      pathname,
+      "method_not_allowed",
+      actor
+    );
+    response.setHeader("allow", "POST");
+    sendControlError(
+      response,
+      405,
+      "autodev_control_api_method_not_allowed",
+      "GitHub workflow mutations require POST."
+    );
+    return true;
+  }
+  if (actor.role !== "operator") {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "github_mutation",
+      resource: pathname,
+      outcome: "denied",
+      changes: null,
+      reason: "operator_required"
+    });
+    sendControlError(
+      response,
+      403,
+      "autodev_control_api_operator_required",
+      "GitHub workflow mutations require an operator actor."
+    );
+    return true;
+  }
+
+  const parsed = await readControlApiJsonObject(request);
+  if (!parsed.ok) {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "github_mutation",
+      resource: pathname,
+      outcome: "denied",
+      changes: null,
+      reason: parsed.code
+    });
+    sendControlError(response, parsed.status, parsed.code, parsed.message);
+    return true;
+  }
+  const result = await handleGithubWorkflowMutation(parsed.body, actor.actor, {
+    repositoryRoot: DEFAULT_REPO_ROOT,
+    adapter: githubActionsAdapterOverride ?? new GithubActionsAdapter(),
+    audit: (event) =>
+      auditMutation({
+        actor: actor.actor,
+        actorVerified: true,
+        role: actor.role,
+        action: event.action,
+        resource: event.resource,
+        outcome: event.outcome,
+        changes: event.changes,
+        ...(event.reason ? { reason: event.reason } : {})
+      })
+  });
+  sendJson(response, result.status, result.body, {
     "cache-control": "no-store",
     vary: CONTROL_VARY_HEADER
   });
@@ -1212,6 +1732,9 @@ export async function handleControlApiRequest(
           ...(event.reason ? { reason: event.reason } : {})
         })
     );
+    return true;
+  }
+  if (await githubMutationRoute(request, response, actor, method, pathname)) {
     return true;
   }
   const providerMatch = pathname.match(PROVIDER_ROLE_PATH);

@@ -109,10 +109,10 @@ async function callSessionCohortRoute(
   const request = makeRequest(method, `${pathname}?${search.toString()}`);
   const response = responseRecorder();
   const prevEnv = process.env.AUTODEV_MEMORY_READ_TASK_HISTORY;
-  if (!options.disableTaskHistoryEnv) {
-    process.env.AUTODEV_MEMORY_READ_TASK_HISTORY = "1";
-  } else {
+  if (options.disableTaskHistoryEnv) {
     delete process.env.AUTODEV_MEMORY_READ_TASK_HISTORY;
+  } else {
+    process.env.AUTODEV_MEMORY_READ_TASK_HISTORY = "1";
   }
   try {
     await handleMemoryControlApiRequest(
@@ -357,5 +357,5 @@ test("POST /control/memory/session-cohorts returns 405 Method Not Allowed", asyn
   );
 
   assert.equal(result.response.statusCode, 405);
-  assert.equal(result.response.headers["allow"], "GET");
+  assert.equal(result.response.headers.allow, "GET");
 });

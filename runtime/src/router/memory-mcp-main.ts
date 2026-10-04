@@ -1,7 +1,8 @@
 import { pathToFileURL } from "node:url";
 
-import { startMemoryMcpFromEnvironment } from "../memory/mcp-main.ts";
 import type { MemoryEmbeddingProvider } from "@simulatorlife/autodev-runtime/memory";
+
+import { startMemoryMcpFromEnvironment } from "../memory/mcp-main.ts";
 
 async function optionalEmbeddingProvider(): Promise<
   MemoryEmbeddingProvider | undefined

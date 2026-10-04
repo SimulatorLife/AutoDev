@@ -1,7 +1,6 @@
-import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
-
 import { runInstallCheck } from "@simulatorlife/autodev-runtime/platform/install-check";
 import { runInstallCommand } from "@simulatorlife/autodev-runtime/platform/install-command";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 export interface InstallCommandBackend {
   install(args?: readonly string[]): number;

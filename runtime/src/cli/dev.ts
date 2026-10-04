@@ -43,6 +43,23 @@ export function isPortListening(
   });
 }
 
+const NEWLINE_SPLIT_REGEX = /\r?\n/u;
+
+function parseToken(filePath: string, key: string): string | null {
+  try {
+    const content = readFileSync(filePath, "utf8");
+    for (const line of content.split(NEWLINE_SPLIT_REGEX)) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith(`${key}=`)) {
+        return trimmed.slice(key.length + 1).trim();
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 export function ensureConsoleSecrets(root = repoRoot): void {
   const consoleEnv = path.join(root, "console", ".env.local");
   const codexHome =
@@ -62,20 +79,6 @@ export function ensureConsoleSecrets(root = repoRoot): void {
   }
 
   // Canonical secrets and console/.env.local both exist; verify they stay synchronized.
-  const parseToken = (filePath: string, key: string): string | null => {
-    try {
-      const content = readFileSync(filePath, "utf8");
-      for (const line of content.split(/\r?\n/u)) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith(`${key}=`)) {
-          return trimmed.slice(key.length + 1).trim();
-        }
-      }
-    } catch {
-      return null;
-    }
-    return null;
-  };
 
   const canonicalControlToken = parseToken(
     canonicalSecrets,

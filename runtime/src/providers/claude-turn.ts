@@ -26,9 +26,9 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
 import type { AwaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
 
-import type { CodexTool } from "./claude-codex-tools.ts";
 import {
   codexOutputFailed,
+  type CodexTool,
   codexToolCallEvents,
   codexToolCallItem,
   mcpResultFromCodexOutput,
@@ -37,6 +37,14 @@ import {
 } from "./claude-codex-tools.ts";
 
 type JsonRecord = Record<string, unknown>;
+
+const EVENT_OUTPUT_ITEM_ADDED = "response.output_item.added";
+const EVENT_OUTPUT_ITEM_DONE = "response.output_item.done";
+const DEFAULT_USAGE = { input_tokens: 0, output_tokens: 0 };
+const DEFAULT_AWAITED: AwaitedToolResults = {
+  outputs: new Map(),
+  messages: []
+};
 
 /** What the CLI driver reports, stripped of the CLI's own wire format. */
 export type ClaudeCliEvent =
@@ -212,8 +220,8 @@ export class ResponseStream {
         summary: [],
         content: []
       });
-      this.emit("response.output_item.added", {
-        type: "response.output_item.added",
+      this.emit(EVENT_OUTPUT_ITEM_ADDED, {
+        type: EVENT_OUTPUT_ITEM_ADDED,
         output_index: this.reasoning.index,
         item: {
           id: this.reasoning.id,
@@ -258,8 +266,8 @@ export class ResponseStream {
         status: "in_progress",
         content: []
       });
-      this.emit("response.output_item.added", {
-        type: "response.output_item.added",
+      this.emit(EVENT_OUTPUT_ITEM_ADDED, {
+        type: EVENT_OUTPUT_ITEM_ADDED,
         output_index: this.message.index,
         item: {
           id: this.message.id,
@@ -313,8 +321,8 @@ export class ResponseStream {
       summary_index: 0,
       part: { type: "summary_text", text: open.text }
     });
-    this.emit("response.output_item.done", {
-      type: "response.output_item.done",
+    this.emit(EVENT_OUTPUT_ITEM_DONE, {
+      type: EVENT_OUTPUT_ITEM_DONE,
       output_index: open.index,
       item
     });
@@ -346,8 +354,8 @@ export class ResponseStream {
       content_index: 0,
       part: { type: "output_text", text: open.text, annotations: [] }
     });
-    this.emit("response.output_item.done", {
-      type: "response.output_item.done",
+    this.emit(EVENT_OUTPUT_ITEM_DONE, {
+      type: EVENT_OUTPUT_ITEM_DONE,
       output_index: open.index,
       item
     });
@@ -406,10 +414,7 @@ export class ResponseStream {
   }
 
   complete(
-    usage: { input_tokens: number; output_tokens: number } = {
-      input_tokens: 0,
-      output_tokens: 0
-    }
+    usage: { input_tokens: number; output_tokens: number } = DEFAULT_USAGE
   ): void {
     this.closeBlocks();
     this.end({
@@ -519,7 +524,7 @@ export class ClaudeTurn {
   attach(
     stream: ResponseStream,
     reporter: TurnReporter,
-    awaited: AwaitedToolResults = { outputs: new Map(), messages: [] }
+    awaited: AwaitedToolResults = DEFAULT_AWAITED
   ): void {
     this.clearParkTimer();
     this.stream = stream;
@@ -589,8 +594,8 @@ export class ClaudeTurn {
       return Promise.resolve(
         toolErrorResult("This turn has ended; the call was not run.")
       );
-    return new Promise((resolveCall) => {
-      this.queued.push({ tool, args, resolve: resolveCall });
+    return new Promise((resolve) => {
+      this.queued.push({ tool, args, resolve });
       this.scheduleGather();
     });
   }
