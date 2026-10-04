@@ -2242,7 +2242,7 @@ test("MemoryCohortsView renders session outcome cohorts preserving explicit unre
   assert.match(markup, /Non-inferential cohort policy/);
 });
 
-test("MemoryView renders top-level tabs and stat counts", () => {
+test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace filter", () => {
   const markup = renderToStaticMarkup(
     React.createElement(MemoryView, {
       activeTab: "records",
@@ -2258,20 +2258,67 @@ test("MemoryView renders top-level tabs and stat counts", () => {
           baseBranch: "main",
           enabled: true,
           agentRoles: null
+        },
+        {
+          id: "SimulatorLife/Other",
+          baseBranch: "main",
+          enabled: true,
+          agentRoles: null
         }
       ],
+      query: "fallback",
+      kind: "procedure",
+      status: "active",
       occurredFrom: "2026-09-01T00:00:00Z",
       occurredUntil: "2026-10-01T00:00:00Z"
     })
   );
 
   assert.match(markup, /data-feature="memory"/);
-  assert.match(markup, /data-memory-tab="records"/);
-  assert.match(markup, /data-memory-tab="experiences"/);
-  assert.match(markup, /data-memory-tab="cohorts"/);
-  assert.match(markup, /data-memory-tab="portal"/);
+  assert.match(markup, /data-tab-item="records"/);
+  assert.match(markup, /data-tab-item="experiences"/);
+  assert.match(markup, /data-tab-item="cohorts"/);
+  assert.match(markup, /data-tab-item="portal"/);
+  assert.match(markup, /aria-label="Memory sections"/);
+  assert.match(markup, /aria-current="page"[^>]*data-tab-item="records"/);
+  const experiencesLink = markup
+    .split("<a")
+    .find((anchor) => anchor.includes('data-tab-item="experiences"'));
+  assert.ok(experiencesLink);
+  const href = experiencesLink.match(/href="([^"]+)"/u)?.[1];
+  assert.ok(href);
+  const tabUrl = new URL(href.replaceAll("&amp;", "&"), "http://console.test");
+  assert.equal(tabUrl.pathname, "/memory");
+  assert.deepEqual(Array.from(tabUrl.searchParams.entries()), [
+    ["tab", "experiences"],
+    ["workspaceId", "SimulatorLife/AutoDev"],
+    ["from", "2026-09-01T00:00:00Z"],
+    ["until", "2026-10-01T00:00:00Z"],
+    ["query", "fallback"],
+    ["kind", "procedure"],
+    ["status", "active"]
+  ]);
   assert.match(markup, /Durable Records/);
   assert.match(markup, /Active Claims/);
+
+  const selectorStart = markup.indexOf('data-memory-workspace-form="true"');
+  const formStart = markup.lastIndexOf("<form", selectorStart);
+  const formEnd = markup.indexOf("</form>", formStart);
+  assert.notEqual(selectorStart, -1);
+  assert.notEqual(formStart, -1);
+  assert.ok(formEnd > formStart);
+  const workspaceForm = markup.slice(formStart, formEnd);
+  assert.match(workspaceForm, /method="GET"/);
+  assert.match(workspaceForm, /action="\/memory"/);
+  assert.match(workspaceForm, /name="workspaceId"/);
+  assert.match(workspaceForm, /name="tab" value="records"/);
+  assert.match(workspaceForm, /name="query" value="fallback"/);
+  assert.match(workspaceForm, /name="kind" value="procedure"/);
+  assert.match(workspaceForm, /name="status" value="active"/);
+  assert.match(workspaceForm, /name="from" value="2026-09-01T00:00:00Z"/);
+  assert.match(workspaceForm, /name="until" value="2026-10-01T00:00:00Z"/);
+  assert.match(workspaceForm, /SimulatorLife\/Other/);
+  assert.doesNotMatch(workspaceForm, /name="recordId"|name="experienceId"/);
 });
 
 test("fetchMemoryRecords issues authenticated GET to /control/memory/records with workspace scope", async () => {

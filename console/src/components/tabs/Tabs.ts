@@ -14,6 +14,8 @@ export interface TabNavProps {
   readonly activeTabId: string;
   /** Query parameter name carrying the active tab id. Defaults to `tab`. */
   readonly tabParam?: string;
+  /** Optional URL builder when a page must preserve additional query state. */
+  readonly hrefFor?: ((tabId: string) => string) | undefined;
 }
 
 const DEFAULT_TAB_PARAM = "tab";
@@ -69,7 +71,8 @@ export function TabNav({
   basePath,
   tabs,
   activeTabId,
-  tabParam = DEFAULT_TAB_PARAM
+  tabParam = DEFAULT_TAB_PARAM,
+  hrefFor
 }: TabNavProps): React.JSX.Element {
   return React.createElement(
     "nav",
@@ -88,7 +91,9 @@ export function TabNav({
           React.createElement(
             "a",
             {
-              href: tabHref(basePath, tab.id, tabParam),
+              href: hrefFor
+                ? hrefFor(tab.id)
+                : tabHref(basePath, tab.id, tabParam),
               "aria-current": isActive ? "page" : undefined,
               "data-tab-item": tab.id,
               className: `inline-block px-4 py-2.5 text-sm font-medium border-b-2 transition-colors no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400 ${

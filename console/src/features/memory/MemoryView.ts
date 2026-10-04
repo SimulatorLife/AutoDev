@@ -8,6 +8,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { TabNav } from "../../components/tabs/Tabs.ts";
 import { MemoryCohortsView } from "./MemoryCohortsView.ts";
 import { MemoryExperiencesView } from "./MemoryExperiencesView.ts";
 import { MemoryPortalCard } from "./MemoryPortalCard.ts";
@@ -73,6 +74,19 @@ export function MemoryView({
     { id: "portal", label: "OpenLIT Portal" }
   ];
 
+  const hrefForTab = (tabId: string): string => {
+    const params = new URLSearchParams({
+      tab: tabId,
+      workspaceId: currentWorkspaceId,
+      from: occurredFrom,
+      until: occurredUntil
+    });
+    if (query) params.set("query", query);
+    if (kind && kind !== "all") params.set("kind", kind);
+    if (status && status !== "all") params.set("status", status);
+    return "/memory?" + params.toString();
+  };
+
   return React.createElement(
     "div",
     { className: "flex flex-col gap-8", "data-feature": "memory" },
@@ -97,22 +111,47 @@ export function MemoryView({
             "Governed AutoDev memory operator surface: durable claims, raw experiences, lifecycle governance, and bounded outcome cohorts."
           )
         ),
-        // Workspace selector
+        // Workspace selector submits a bounded scope change through the
+        // existing URL-driven Memory page. Retain filters and time range,
+        // but intentionally clear selected record/experience detail on scope
+        // change so a detail from another workspace is never reused.
         workspaces.length > 0
           ? React.createElement(
-              "div",
-              { className: "flex items-center gap-2 text-xs" },
+              "form",
+              {
+                method: "GET",
+                action: "/memory",
+                className: "flex items-center gap-2 text-xs",
+                "data-memory-workspace-form": "true"
+              },
+              ...[
+                ["tab", activeTab],
+                ["query", query ?? ""],
+                ["kind", kind ?? "all"],
+                ["status", status ?? "all"],
+                ["from", occurredFrom],
+                ["until", occurredUntil]
+              ].map(([name, value]) =>
+                React.createElement("input", {
+                  key: name,
+                  type: "hidden",
+                  name,
+                  value
+                })
+              ),
               React.createElement(
-                "span",
-                { className: "text-slate-400" },
+                "label",
+                { htmlFor: "memory-workspace", className: "text-slate-400" },
                 "Workspace:"
               ),
               React.createElement(
                 "select",
                 {
+                  id: "memory-workspace",
+                  name: "workspaceId",
                   defaultValue: currentWorkspaceId,
                   className:
-                    "px-3 py-1.5 rounded bg-slate-900 border border-slate-700 text-xs font-mono text-cyan-300 focus:outline-none focus:border-cyan-500"
+                    "px-3 py-1.5 rounded bg-slate-900 border border-slate-700 text-xs font-mono text-cyan-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
                 },
                 workspaces.map((ws) =>
                   React.createElement(
@@ -121,6 +160,15 @@ export function MemoryView({
                     ws.id
                   )
                 )
+              ),
+              React.createElement(
+                "button",
+                {
+                  type: "submit",
+                  className:
+                    "rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                },
+                "Apply"
               )
             )
           : null
@@ -153,28 +201,13 @@ export function MemoryView({
       })
     ),
 
-    // Tab bar
-    React.createElement(
-      "div",
-      { className: "flex border-b border-slate-800 gap-1" },
-      tabButtons.map((tab) => {
-        const isActive = activeTab === tab.id;
-        return React.createElement(
-          "a",
-          {
-            key: tab.id,
-            href: `?tab=${tab.id}&workspaceId=${encodeURIComponent(currentWorkspaceId)}`,
-            className: `px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              isActive
-                ? "border-cyan-400 text-cyan-300 bg-slate-900/40"
-                : "border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700"
-            }`,
-            "data-memory-tab": tab.id
-          },
-          tab.label
-        );
-      })
-    ),
+    React.createElement(TabNav, {
+      navLabel: "Memory sections",
+      basePath: "/memory",
+      tabs: tabButtons,
+      activeTabId: activeTab,
+      hrefFor: hrefForTab
+    }),
 
     // Active tab body
     activeTab === "records"
