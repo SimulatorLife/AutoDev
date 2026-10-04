@@ -180,6 +180,48 @@ test("AppNav renders Configure/Observe/Operate groups with canonical membership,
   assert.equal(markup.includes("OpenGround"), false);
 });
 
+test("AppNav brand link has visible keyboard focus and no unsupported status pulse", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(AppNav, {
+      activeSection: "Agents"
+    })
+  );
+
+  const brandStart = markup.indexOf('data-nav-brand="autodev"');
+  assert.ok(brandStart !== -1, "AppNav must render the brand link");
+  const brandTagStart = markup.lastIndexOf("<a", brandStart);
+  const brandTagEnd = markup.indexOf(">", brandStart);
+  const brandTag = markup.slice(brandTagStart, brandTagEnd + 1);
+
+  // The brand link must not silently remove the keyboard focus indicator
+  // without providing a replacement; a visible focus-visible style must be
+  // present instead.
+  assert.equal(
+    brandTag.includes("focus:outline-none"),
+    false,
+    "AppNav brand link must not remove focus outline without a visible replacement"
+  );
+  assert.ok(
+    /focus-visible:outline(?!-none)/.test(brandTag),
+    "AppNav brand link must define a visible focus-visible outline"
+  );
+
+  // The brand must not render a pulsing/health-status indicator beside it;
+  // there is no runtime health evidence backing such a dot.
+  const brandEnd = markup.indexOf("</a>", brandStart);
+  const brandMarkup = markup.slice(brandTagStart, brandEnd);
+  assert.equal(
+    brandMarkup.includes("animate-pulse"),
+    false,
+    "AppNav brand must not render a pulsing status-like indicator"
+  );
+  assert.equal(
+    brandMarkup.includes("bg-emerald-500"),
+    false,
+    "AppNav brand must not render an unsupported health-status dot"
+  );
+});
+
 test("StatusBadge renders valid variants", () => {
   for (const status of [
     "configured",
@@ -1056,8 +1098,13 @@ test("GithubView renders authoritative read-only GitHub Actions runtime state an
   assert.ok(markup.includes("*/15 * * * *"));
   assert.ok(markup.includes("No schedule trigger"));
 
-  // Read-only: no buttons or mutations
+  // Read-only: the page displays observations but exposes no browser mutation
+  // affordances, including forms, buttons, or operator-action labels.
+  assert.equal(markup.includes("<form"), false);
   assert.equal(markup.includes("<button"), false);
+  assert.equal(markup.includes("Dispatch workflow"), false);
+  assert.equal(markup.includes("Enable workflow"), false);
+  assert.equal(markup.includes("Disable workflow"), false);
 });
 
 test("GithubView displays explicit unavailable notice without synthesizing zero or healthy values", () => {

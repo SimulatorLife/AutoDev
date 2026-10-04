@@ -38,7 +38,7 @@ export function AppNav({
     href: "/agents",
     "data-nav-brand": "autodev",
     className:
-      "flex items-center gap-2 text-inherit no-underline focus:outline-none"
+      "flex items-center gap-2 text-inherit no-underline rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
   };
 
   return React.createElement(
@@ -54,9 +54,6 @@ export function AppNav({
       React.createElement(
         "a",
         brandLinkProps,
-        React.createElement("div", {
-          className: "w-3 h-3 rounded-full bg-emerald-500 animate-pulse"
-        }),
         React.createElement(
           "span",
           { className: "font-semibold text-lg tracking-tight" },

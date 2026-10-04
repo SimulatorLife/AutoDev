@@ -73,6 +73,7 @@
     "./shared/execution-contract": "./src/shared/execution-contract.ts",
     "./shared/output": "./src/shared/output.ts",
     "./shared/provider-limits": "./src/shared/provider-limits.ts",
+    "./shared/provider-model-ids": "./src/shared/provider-model-ids.ts",
     "./shared/resolve-workspace": "./src/shared/resolve-workspace.ts",
     "./shared/responses-continuation": "./src/shared/responses-continuation.ts",
     "./shared/responses-item-ids": "./src/shared/responses-item-ids.ts",

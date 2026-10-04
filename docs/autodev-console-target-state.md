@@ -130,7 +130,7 @@ Every domain concept has one canonical editable surface. Other pages may show a 
 | Memory lifecycle/configuration | Memory | read-only links/summaries elsewhere |
 | Evaluation definitions/actions | Evaluations | related result summaries elsewhere |
 | Workspace configuration | Workspaces | workspace badges/scope links |
-| GitHub workflow/operator actions | GitHub | read-only run links elsewhere |
+| GitHub workflow catalog and Actions runtime state | GitHub (read-only; workflow definitions remain repository-owned) | read-only workflow/run links elsewhere |
 | Historical telemetry | Usage | small scoped summaries with links to Usage |
 
 Do not duplicate provider, routing, permission, prompt, MCP, tool, skill, or workspace controls across several pages for convenience.
