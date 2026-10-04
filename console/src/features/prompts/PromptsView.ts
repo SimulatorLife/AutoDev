@@ -2,6 +2,7 @@ import type { PromptAsset } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
   type ColumnDef,
   DataTable
@@ -12,6 +13,13 @@ export interface PromptsViewProps {
 }
 
 export function PromptsView({ commands }: PromptsViewProps): React.JSX.Element {
+  const commandCount = commands.filter(
+    (c) => c.kind === "command" || c.path.includes("commands")
+  ).length;
+  const rolePromptCount = commands.filter(
+    (c) => c.kind === "role" || c.path.includes("roles")
+  ).length;
+
   const columns: ColumnDef<PromptAsset>[] = [
     {
       id: "name",
@@ -25,8 +33,21 @@ export function PromptsView({ commands }: PromptsViewProps): React.JSX.Element {
               "font-mono font-semibold text-slate-100 underline-offset-4 hover:underline",
             "aria-label": `Open prompt ${prompt.name}`
           },
-          `/${prompt.name}`
+          prompt.kind === "role" || prompt.path.includes("roles")
+            ? prompt.name
+            : `/${prompt.name}`
         )
+    },
+    {
+      id: "kind",
+      header: "Type",
+      cell: (prompt) => {
+        const isRole = prompt.kind === "role" || prompt.path.includes("roles");
+        return React.createElement(StatusBadge, {
+          status: "configured",
+          label: isRole ? "Role prompt" : "Command"
+        });
+      }
     },
     {
       id: "path",
@@ -47,6 +68,35 @@ export function PromptsView({ commands }: PromptsViewProps): React.JSX.Element {
           { className: "text-xs text-slate-300" },
           prompt.description ?? "Description not provided"
         )
+    },
+    {
+      id: "related",
+      header: "Related",
+      cell: (prompt) => {
+        const isRole = prompt.kind === "role" || prompt.path.includes("roles");
+        return React.createElement(
+          "div",
+          { className: "flex flex-wrap gap-2 text-xs" },
+          isRole
+            ? React.createElement(
+                "a",
+                {
+                  href: `/agents/${encodeURIComponent(prompt.name)}`,
+                  className: "text-emerald-400 hover:underline"
+                },
+                "Agent profile"
+              )
+            : null,
+          React.createElement(
+            "a",
+            {
+              href: `/evaluations?prompt=${encodeURIComponent(prompt.name)}`,
+              className: "text-slate-400 hover:underline"
+            },
+            "Evaluations"
+          )
+        );
+      }
     }
   ];
 
@@ -55,20 +105,25 @@ export function PromptsView({ commands }: PromptsViewProps): React.JSX.Element {
     { className: "flex flex-col gap-6", "data-feature": "prompts" },
     React.createElement(
       "div",
-      { className: "grid grid-cols-1 gap-4 md:grid-cols-3" },
+      { className: "grid grid-cols-1 gap-4 md:grid-cols-4" },
       React.createElement(StatCard, {
         title: "Canonical Prompts",
         value: commands.length
       }),
       React.createElement(StatCard, {
-        title: "Current sources",
-        value: "Commands + role prompts",
-        subtitle: "Canonical paths are shown per resource"
+        title: "RuleSync Commands",
+        value: commandCount,
+        subtitle: ".rulesync/commands"
       }),
       React.createElement(StatCard, {
-        title: "Editing and Apply",
-        value: "Unavailable",
-        subtitle: "Control API mutation flow not implemented"
+        title: "Agent Role Prompts",
+        value: rolePromptCount,
+        subtitle: "agents/prompts/roles"
+      }),
+      React.createElement(StatCard, {
+        title: "Authority",
+        value: "RuleSync",
+        subtitle: "Working-tree Markdown files"
       })
     ),
     React.createElement(

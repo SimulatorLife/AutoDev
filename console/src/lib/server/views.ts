@@ -167,12 +167,14 @@ export function promptsFromControlApi(
     ...response.commands.map((command) => ({
       name: command.name,
       path: command.path,
+      kind: "command" as const,
       description: command.description
     })),
     ...response.rolePrompts.map((prompt) => ({
       name: prompt.role,
       path: prompt.path,
-      description: "Agent role prompt"
+      kind: "role" as const,
+      description: `Agent role prompt for ${prompt.role}`
     }))
   ];
 }

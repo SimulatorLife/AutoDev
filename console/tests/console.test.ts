@@ -199,6 +199,53 @@ test("Prompt detail renders canonical text and reports an actually empty source"
   assert.equal(emptyMarkup.includes("# /dry"), false);
 });
 
+test("PromptsView and PromptDetailView render prompt types, linkage, and Git authority metadata", () => {
+  const listMarkup = renderToStaticMarkup(
+    React.createElement(PromptsView, {
+      commands: [
+        {
+          name: "dry",
+          path: ".rulesync/commands/dry.md",
+          kind: "command",
+          description: "Dry-run command"
+        },
+        {
+          name: "orchestrator",
+          path: "agents/prompts/roles/orchestrator.md",
+          kind: "role",
+          description: "Agent role prompt for orchestrator"
+        }
+      ]
+    })
+  );
+  assert.match(listMarkup, /RuleSync Commands/);
+  assert.match(listMarkup, /Agent Role Prompts/);
+  assert.match(listMarkup, /Role prompt/);
+  assert.match(listMarkup, /href="\/agents\/orchestrator"/);
+  assert.match(listMarkup, /href="\/evaluations\?prompt=orchestrator"/);
+
+  const detailMarkup = renderToStaticMarkup(
+    React.createElement(PromptDetailView, {
+      prompt: {
+        name: "orchestrator",
+        kind: "role",
+        path: "agents/prompts/roles/orchestrator.md",
+        content: "# Orchestrator System Prompt\nYou are an orchestrator."
+      }
+    })
+  );
+  assert.match(detailMarkup, /data-section="prompt-linkage"/);
+  assert.match(detailMarkup, /Authority &amp; Versioning/);
+  assert.match(detailMarkup, /RuleSync Git provenance/);
+  assert.match(detailMarkup, /Related Agent/);
+  assert.match(detailMarkup, /href="\/agents\/orchestrator"/);
+  assert.match(detailMarkup, /Observability Linkage/);
+  assert.match(detailMarkup, /href="\/evaluations\?prompt=orchestrator"/);
+  assert.match(detailMarkup, /href="\/usage\?role=orchestrator"/);
+  assert.match(detailMarkup, /Canonical Markdown Source/);
+  assert.match(detailMarkup, /2 lines/);
+});
+
 test("DataTable renders table with columns and data", () => {
   interface TestRow {
     readonly id: string;

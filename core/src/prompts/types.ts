@@ -1,6 +1,7 @@
 export interface PromptAsset {
   readonly name: string;
   readonly path: string;
+  readonly kind?: "command" | "role";
   readonly description?: string;
   readonly content?: string;
 }
