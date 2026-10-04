@@ -377,7 +377,7 @@ inspect provenance/history
 
 Generic `add/update/delete` may remain for external connectors and low-level compatibility, but AutoDev Memory must preserve its governance rules. In particular, deleting a stale semantic memory from the page must not silently erase the historical episode/evidence that produced it.
 
-#### Memory observability in OpenLIT
+#### Memory observability through OpenTelemetry/OpenLIT
 
 Instrument the AutoDev memory pipeline with OpenTelemetry so OpenLIT can show the same execution end-to-end:
 
@@ -403,7 +403,19 @@ Emit bounded attributes/metrics sufficient to answer:
 - invalidation/supersession/promotion activity;
 - procedures promoted into skills/rules/tests/docs.
 
-Prefer OpenLIT's retained trace, dashboard, widget, filtering, and resource-detail infrastructure for these views rather than a parallel memory analytics backend.
+The following instruments are part of the durable Memory telemetry contract:
+
+- `autodev.memory.operations` and `autodev.memory.operation.duration`: fixed operation name plus success/error outcome; nested stage durations may overlap and must not be summed as an end-to-end total.
+- `autodev.memory.candidates`: retrieved, retained, revised, rejected, packet-included, and packet-omitted candidate counts with bounded memory-kind/reason categories.
+- `autodev.memory.packet.characters` and `autodev.memory.packet.tokens`: packet size; omit the token histogram when no trustworthy token counter exists.
+- `autodev.memory.injections`: bounded `injected` / `empty` / supported skip-result categories at request assembly, plus bounded memory mode where applicable. Injection does not mean the model used the packet or the task succeeded.
+- `autodev.memory.outcome_reports` and `autodev.memory.session_outcome_reports`: increment only for newly appended reporter-supplied reports, never idempotent retries; use bounded report-kind/outcome/mode/injection-result categories and no correlation/task/session/memory identifiers.
+- `autodev.memory.use_reports`: increment only for newly appended curator-assessed injection-use reports; use bounded use-kind/memory-mode categories and never evidence or packet identifiers.
+- workspace/repository/time-scoped injection outcome/use aggregate spans may report only bounded cohort-cell and exposure/report counts; selectors, task/run/agent IDs, memory IDs, and evidence remain out of telemetry.
+
+The `memory.research` trace remains the parent for bounded `memory.query`, `memory.retrieve`, `memory.rerank`, `memory.validate`, `memory.reconstruct`, and `memory.packet` stages; `memory.embed` exists only when an embedding adapter is configured. Orchestrator preparation should remain within the logical routed-request trace so packet injection and provider-routing outcome are inspectable together without implying a downstream task/PR result. GenAI attempt/embedding spans remain the source of model cost rather than duplicating it in Memory metrics.
+
+Prefer OpenLIT's retained **query, trace, chart/widget, filtering, and resource-detail primitives** for these views rather than a parallel memory analytics backend. This does **not** retain the generic OpenLIT dashboard-authoring application: AutoDev owns the seeded Memory views and presents them inside the unified Console.
 
 Current schema versions, patch/image history, test counts, deployed-instance evidence, and open implementation gaps belong in [autodev-console-migration.md](autodev-console-migration.md), not in this target design.
 
@@ -615,7 +627,7 @@ The Memory feature should combine:
 - observed retrieval/reconstruction/injection/use and related traces;
 - memory effectiveness, quality, latency/cost, and lifecycle analytics from retained OpenLIT/OTel query infrastructure;
 - governed propose/verify/revise/invalidate/supersede/promote actions;
-- evidence-backed operator reporting for observed injection/task outcomes;
+- evidence-backed operator reporting that combines **observed packet-injection evidence** with separately **reporter-supplied task/session outcomes**; the latter are not inferred or independently verified by injection/provider telemetry;
 - promotion of suitable procedures through the canonical skill/configuration path.
 
 Do not restore organization/project/environment/account tenancy concepts, Otter/chat, light theme, or a separate Memory dashboard application. The connector/UI layer remains a projection over MemoryService governance, never a second source of truth.
@@ -633,7 +645,7 @@ The target is satisfied when:
 - agents receive bounded task-specific packets rather than unbounded history;
 - workers cannot freely pollute shared durable memory;
 - proven procedures can graduate into explicit skills/rules/tests/docs;
-- memory use is observable in OpenLIT and can be compared with no-memory/simpler-memory baselines;
+- the memory pipeline is observable through the retained OpenTelemetry/OpenLIT backend and surfaced in AutoDev Console; controlled cohorts can be compared with no-memory/simpler-memory baselines without treating the standalone OpenLIT UI as a target operator surface;
 - the Console Memory feature can browse and inspect AutoDev memory through the Control API without bypassing `MemoryService` governance;
 - secrets and unnecessary sensitive payloads are not persisted by default.
 
