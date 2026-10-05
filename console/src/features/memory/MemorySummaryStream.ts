@@ -4,6 +4,12 @@ import React from "react";
 
 import { MemorySummary, type MemorySummaryCounts } from "./MemorySummary.ts";
 
+const UNOBSERVED_COUNTS: MemorySummaryCounts = {
+  records: null,
+  experiences: null,
+  cohortSessions: null
+};
+
 interface ResolvedCounts {
   readonly source: Promise<MemorySummaryCounts>;
   readonly counts: MemorySummaryCounts;
@@ -27,10 +33,11 @@ export function MemorySummaryStream({
   const [resolved, setResolved] = React.useState<ResolvedCounts | null>(null);
   React.useEffect(() => {
     let current = true;
-    void counts.then((value) => {
+    const settle = (value: MemorySummaryCounts): void => {
       if (current) setResolved({ source: counts, counts: value });
-      return value;
-    });
+    };
+    // A failed stream is an unobserved summary, never a stuck spinner.
+    counts.then(settle).catch(() => settle(UNOBSERVED_COUNTS));
     return () => {
       current = false;
     };
