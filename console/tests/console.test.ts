@@ -438,6 +438,13 @@ test("ConsoleForm renders a native GET form that is not busy at rest", () => {
   );
 });
 
+test("the Console ships an app icon so documents never request a missing favicon", () => {
+  // Without one, every document load requested /favicon.ico and received an
+  // uncacheable server-rendered 404 page.
+  const icon = readFileSync(join(CONSOLE_ROOT, "app/icon.svg"), "utf8");
+  assert.match(icon, /^<svg\b[^>]*viewBox="0 0 32 32"/u);
+});
+
 test("the Console root redirects to Agents before any rendering", () => {
   const config = readFileSync(join(CONSOLE_ROOT, "next.config.ts"), "utf8");
   assert.match(
