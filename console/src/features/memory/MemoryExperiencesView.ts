@@ -1,6 +1,8 @@
 import type { ExperienceEnvelope } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import { ConsoleForm } from "../../components/navigation/ConsoleForm.ts";
+import { ConsoleLink } from "../../components/navigation/ConsoleLink.ts";
 import {
   StatusBadge,
   type StatusBadgeVariant
@@ -40,7 +42,7 @@ export function MemoryExperiencesView({
       width: "180px",
       cell: (exp) =>
         React.createElement(
-          "a",
+          ConsoleLink,
           {
             href: `?tab=experiences&workspaceId=${encodeURIComponent(currentWorkspaceId)}&experienceId=${encodeURIComponent(exp.id)}`,
             className:
@@ -144,9 +146,9 @@ export function MemoryExperiencesView({
     { className: "flex flex-col gap-6", "data-feature": "memory-experiences" },
     // Filter controls
     React.createElement(
-      "form",
+      ConsoleForm,
       {
-        method: "GET",
+        action: "/memory",
         className:
           "flex flex-wrap items-center gap-3 p-4 bg-surface/80 rounded-lg border border-border"
       },
@@ -260,7 +262,7 @@ function ExperienceDetailPanel({
         )
       ),
       React.createElement(
-        "a",
+        ConsoleLink,
         {
           href: `?tab=experiences&workspaceId=${encodeURIComponent(workspaceId)}`,
           className: "text-sm text-fg-muted hover:text-fg"

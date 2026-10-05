@@ -2,6 +2,7 @@ import type { PromptAsset } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { ConsoleLink } from "../../components/navigation/ConsoleLink.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
   type ColumnDef,
@@ -26,7 +27,7 @@ export function PromptsView({ commands }: PromptsViewProps): React.JSX.Element {
       header: "Command / Prompt",
       cell: (prompt) =>
         React.createElement(
-          "a",
+          ConsoleLink,
           {
             href: `/prompts/${encodeURIComponent(prompt.name)}`,
             className:
@@ -79,7 +80,7 @@ export function PromptsView({ commands }: PromptsViewProps): React.JSX.Element {
           { className: "flex flex-wrap gap-2 text-xs" },
           isRole
             ? React.createElement(
-                "a",
+                ConsoleLink,
                 {
                   href: `/agents/${encodeURIComponent(prompt.name)}`,
                   className: "text-accent hover:underline"
@@ -88,7 +89,7 @@ export function PromptsView({ commands }: PromptsViewProps): React.JSX.Element {
               )
             : null,
           React.createElement(
-            "a",
+            ConsoleLink,
             {
               href: `/evaluations?prompt=${encodeURIComponent(prompt.name)}`,
               className: "text-fg-muted hover:underline"

@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -27,11 +33,14 @@ import {
   AgentDetailView,
   AgentsView,
   AppNav,
+  AppShell,
   Breadcrumbs,
+  ConsoleLink,
   DataTable,
   EvaluationsView,
   GithubView,
   HooksView,
+  LinkPendingIndicator,
   MCP_DETAIL_TABS,
   McpDetailView,
   McpsView,
@@ -82,6 +91,13 @@ import {
   workspacesFromControlApi
 } from "../src/lib/server/views.ts";
 
+/** Opening `<a>` tag carrying `href`, independent of attribute order. */
+function anchorTagFor(markup: string, href: string): string | undefined {
+  return Array.from(markup.matchAll(/<a\b[^>]*>/gu), ([tag]) => tag).find(
+    (tag) => tag.includes(`href="${href}"`)
+  );
+}
+
 const CONFIGURED_AGENT: AgentDefinition = {
   id: "orchestrator",
   role: "orchestrator",
@@ -103,10 +119,7 @@ const CONFIGURED_AGENT: AgentDefinition = {
 
 test("AppNav renders Configure/Observe/Operate groups with canonical membership, order, and URL links", () => {
   const markup = renderToStaticMarkup(
-    React.createElement(AppNav, {
-      activeSection: "Agents",
-      counts: { Agents: 8, MCPs: 5 }
-    })
+    React.createElement(AppNav, { activeSection: "Agents" })
   );
 
   // The three canonical groups must each appear with the expected heading
@@ -182,12 +195,142 @@ test("AppNav renders Configure/Observe/Operate groups with canonical membership,
       `AppNav must expose a URL link for ${section} (${href})`
     );
   }
+  // Only the active section is marked as the current page.
+  assert.deepEqual(
+    Array.from(
+      markup.matchAll(/<a\b[^>]*aria-current="page"[^>]*>/gu),
+      ([tag]) => /data-nav-item="([^"]+)"/u.exec(tag)?.[1]
+    ),
+    ["agents"]
+  );
   assert.equal(markup.includes("<button"), false);
   assert.equal(markup.includes("Projects"), false);
   assert.equal(markup.includes("Organizations"), false);
   assert.equal(markup.includes("Environments"), false);
   assert.equal(markup.includes("Rule Engine"), false);
   assert.equal(markup.includes("OpenGround"), false);
+});
+
+test("AppNav marks no item current outside a canonical section route", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(AppNav, { activeSection: null })
+  );
+  assert.equal(markup.includes('aria-current="page"'), false);
+  for (const section of CANONICAL_NAVIGATION) {
+    assert.ok(markup.includes(`href="/${section.toLowerCase()}"`));
+  }
+});
+
+test("AppShell owns persistent navigation chrome around the routed page body", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      AppShell,
+      null,
+      React.createElement("p", { "data-page-body": "true" }, "body")
+    )
+  );
+  assert.equal(
+    markup.match(/aria-label="AutoDev Console Navigation"/gu)?.length,
+    1
+  );
+  assert.match(markup, /<header\b/u);
+  assert.match(markup, /<main\b[^>]*>[\s\S]*data-page-body="true"/u);
+  // Without a routed pathname there is no section to claim as current.
+  assert.equal(markup.includes('aria-current="page"'), false);
+});
+
+const CONSOLE_ROOT = join(import.meta.dirname, "..");
+
+function consoleSourceFiles(directory: string): string[] {
+  return readdirSync(join(CONSOLE_ROOT, directory), { recursive: true })
+    .map(String)
+    .filter((file) => /\.tsx?$/u.test(file))
+    .map((file) => join(directory, file));
+}
+
+test("the root layout is the single owner of the Console shell", () => {
+  const layout = readFileSync(join(CONSOLE_ROOT, "app/layout.tsx"), "utf8");
+  assert.match(layout, /React\.createElement\(AppShell, null, children\)/u);
+  for (const file of consoleSourceFiles("app")) {
+    if (file === join("app", "layout.tsx")) continue;
+    const source = readFileSync(join(CONSOLE_ROOT, file), "utf8");
+    assert.doesNotMatch(
+      source,
+      /\b(?:AppShell|AppNav|ActiveAppNav|ConsolePageShell)\b/u,
+      `${file} must render page content only; the root layout owns the shell`
+    );
+  }
+});
+
+test("routes declare no loading.tsx boundaries", () => {
+  // Next.js 15.5 reuses a same-path prefetch entry ("aliased" prefetch) for
+  // search-param navigations whenever the prefetched segment data carries a
+  // route loading component, and that path intermittently never commits the
+  // navigation (tab, filter, and record-selection clicks silently stall).
+  // Navigation feedback therefore comes from ConsoleLink's pending indicator
+  // instead of route loading boundaries.
+  for (const file of consoleSourceFiles("app")) {
+    assert.doesNotMatch(
+      file,
+      /(?:^|\/)loading\.tsx?$/u,
+      `${file} would route search-param navigations through aliased prefetches`
+    );
+  }
+});
+
+test("internal Console navigation goes through ConsoleLink and ConsoleForm", () => {
+  const navigationPrimitives = new Map([
+    [join("src", "components", "navigation", "ConsoleLink.ts"), "next/link"],
+    [join("src", "components", "navigation", "ConsoleForm.ts"), "next/form"]
+  ]);
+  for (const file of [
+    ...consoleSourceFiles("src"),
+    ...consoleSourceFiles("app")
+  ]) {
+    const source = readFileSync(join(CONSOLE_ROOT, file), "utf8");
+    assert.doesNotMatch(
+      source,
+      /createElement\(\s*"a",\s*\{[^}]*\bhref:\s*[`"][/?]/u,
+      `${file} must render internal links with ConsoleLink`
+    );
+    assert.doesNotMatch(
+      source,
+      /createElement\(\s*"form",\s*\{[^}]*\bmethod:\s*"get"/iu,
+      `${file} must submit GET filters with ConsoleForm`
+    );
+    for (const [primitive, nextModule] of navigationPrimitives) {
+      if (file === primitive) continue;
+      assert.equal(
+        source.includes(`from "${nextModule}`),
+        false,
+        `${file} must use ${primitive} instead of importing ${nextModule}`
+      );
+    }
+  }
+});
+
+test("ConsoleLink renders a real anchor with no pending indicator at rest", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      ConsoleLink,
+      {
+        href: "/mcps/playwright",
+        className: "font-mono",
+        "data-probe": "link"
+      },
+      "playwright"
+    )
+  );
+  assert.match(
+    markup,
+    /^<a\b[^>]*href="\/mcps\/playwright"[^>]*>playwright<\/a>$/u
+  );
+  assert.match(markup, /data-probe="link"/u);
+  assert.equal(markup.includes("data-link-pending"), false);
+  assert.equal(
+    renderToStaticMarkup(React.createElement(LinkPendingIndicator)),
+    ""
+  );
 });
 
 test("AppNav brand link has visible keyboard focus and no unsupported status pulse", () => {
@@ -243,12 +386,12 @@ test("Breadcrumbs renders a server-renderable landmark with native ancestor link
   assert.match(navMarkup, /<ol/);
   assert.match(navMarkup, /<\/ol>/);
 
-  // Ancestor item: a real <a href="/mcps"> anchor (no client-side router).
-  assert.match(navMarkup, /<a href="\/mcps"[^>]*>MCPs<\/a>/);
+  // Ancestor item: a real <a href="/mcps"> anchor rendered by ConsoleLink.
+  assert.match(navMarkup, /<a\b[^>]*href="\/mcps"[^>]*>MCPs<\/a>/);
   // Ancestor link must expose a visible keyboard focus state.
   assert.match(
-    navMarkup,
-    /<a href="\/mcps"[^>]*class="[^"]*focus-visible:outline/
+    anchorTagFor(navMarkup, "/mcps") ?? "",
+    /class="[^"]*focus-visible:outline/
   );
 
   // Current-page item: a non-link <span aria-current="page"> with the
@@ -302,8 +445,8 @@ test('Breadcrumbs renders ancestor items without an href as non-link elements an
   assert.equal(navMarkup.includes("Unlinked group</a>"), false);
   assert.equal(navMarkup.includes('href=""'), false);
 
-  // The middle ancestor still renders as a native <a href> link.
-  assert.match(navMarkup, /<a href="\/mcps"[^>]*>MCPs<\/a>/);
+  // The middle ancestor still renders as a real <a href> link.
+  assert.match(navMarkup, /<a\b[^>]*href="\/mcps"[^>]*>MCPs<\/a>/);
 
   // Only the final item carries aria-current="page".
   const currentMatches = navMarkup.match(/aria-current="page"/g) ?? [];
@@ -333,7 +476,7 @@ test("Breadcrumbs renders a single ancestor link with current-page aria state wh
       items: [{ label: "Prompts", href: "/prompts" }, { label: "dry" }]
     })
   );
-  assert.match(markup, /<a href="\/prompts"[^>]*>Prompts<\/a>/);
+  assert.match(markup, /<a\b[^>]*href="\/prompts"[^>]*>Prompts<\/a>/);
   assert.match(markup, /<span[^>]*aria-current="page"[^>]*>dry<\/span>/);
   // Only one separator between the two items.
   const separatorMatches = markup.match(/aria-hidden="true"/g) ?? [];
@@ -399,7 +542,7 @@ test("Agent detail exposes the shared breadcrumbs landmark with /agents parent a
     breadcrumbNavStart,
     breadcrumbNavEnd + "</nav>".length
   );
-  assert.match(breadcrumbMarkup, /<a href="\/agents"[^>]*>Agents<\/a>/);
+  assert.match(breadcrumbMarkup, /<a\b[^>]*href="\/agents"[^>]*>Agents<\/a>/);
   assert.match(
     breadcrumbMarkup,
     /<span[^>]*aria-current="page"[^>]*>orchestrator<\/span>/
@@ -508,7 +651,7 @@ test("PromptsView and PromptDetailView render prompt types, linkage, and Git aut
     breadcrumbNavStart,
     breadcrumbNavEnd + "</nav>".length
   );
-  assert.match(breadcrumbMarkup, /<a href="\/prompts"[^>]*>Prompts<\/a>/);
+  assert.match(breadcrumbMarkup, /<a\b[^>]*href="\/prompts"[^>]*>Prompts<\/a>/);
   assert.match(
     breadcrumbMarkup,
     /<span[^>]*aria-current="page"[^>]*>orchestrator<\/span>/
@@ -818,7 +961,10 @@ test("UsageView persists selected filters in GET controls without defaults", () 
       }
     })
   );
-  assert.match(markup, /method="get"/);
+  // ConsoleForm submits GET filters as a soft navigation; the rendered form
+  // keeps the native default GET method (no explicit POST) for no-JS use.
+  assert.match(markup, /<form\b[^>]*action="\/usage"/);
+  assert.doesNotMatch(markup, /method="post"/iu);
   assert.match(markup, /name="range"/);
   assert.match(markup, /value="7D" selected/);
   assert.match(markup, /name="startDate" value="2026-09-20"/);
@@ -2500,7 +2646,7 @@ test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace
   assert.notEqual(formStart, -1);
   assert.ok(formEnd > formStart);
   const workspaceForm = markup.slice(formStart, formEnd);
-  assert.match(workspaceForm, /method="GET"/);
+  assert.doesNotMatch(workspaceForm, /method="post"/iu);
   assert.match(workspaceForm, /action="\/memory"/);
   assert.match(workspaceForm, /name="workspaceId"/);
   assert.match(workspaceForm, /name="tab" value="records"/);

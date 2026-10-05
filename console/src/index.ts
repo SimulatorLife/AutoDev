@@ -1,14 +1,19 @@
 /**
  * Public Console component/utility surface.
  *
- * The URL-addressable shell components are server-renderable and use native
- * anchor links. The legacy client-side section-switching wrapper was removed.
+ * Navigation is URL-addressable: every internal link is a `ConsoleLink`
+ * (a Next.js `Link`, i.e. a real `<a href>`) so the App Router swaps only the
+ * page segment while the root-layout shell persists. Active-section state is
+ * derived from the route, never from local section-switching state.
  */
 
 export * from "./components/cards/StatCard.ts";
 export * from "./components/layout/AppShell.ts";
+export * from "./components/navigation/ActiveSection.ts";
 export * from "./components/navigation/AppNav.ts";
 export * from "./components/navigation/Breadcrumbs.ts";
+export * from "./components/navigation/ConsoleForm.ts";
+export * from "./components/navigation/ConsoleLink.ts";
 export * from "./components/status/StatusBadge.ts";
 export * from "./components/tables/DataTable.ts";
 export * from "./components/tabs/Tabs.ts";

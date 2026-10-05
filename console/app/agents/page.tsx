@@ -6,14 +6,11 @@ import {
   fetchAgents,
   fetchProviders,
   fetchRouting,
-  fetchRuntime
+  fetchRuntime,
+  readControlApiConfig
 } from "../../src/lib/server/control-api.ts";
 import { agentsFromControlApi } from "../../src/lib/server/views.ts";
-import {
-  ConsolePageShell,
-  readNodeContext,
-  ResourceUnavailable
-} from "../_console.tsx";
+import { ResourceUnavailable } from "../_console.tsx";
 
 export const dynamic = "force-dynamic";
 
@@ -31,18 +28,14 @@ function hasProviderRoleFailure(raw: string | string[] | undefined): boolean {
 export default async function AgentsPage({
   searchParams
 }: AgentsPageProps): Promise<React.JSX.Element> {
-  const { section, config } = readNodeContext("/agents");
+  const config = readControlApiConfig();
   if (!config) {
-    return React.createElement(
-      ConsolePageShell,
-      { section },
-      React.createElement(ResourceUnavailable, {
-        title: "Control API credential is not configured",
-        code: "autodev_control_api_disabled",
-        message:
-          "Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read agent configuration."
-      })
-    );
+    return React.createElement(ResourceUnavailable, {
+      title: "Control API credential is not configured",
+      code: "autodev_control_api_disabled",
+      message:
+        "Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read agent configuration."
+    });
   }
   const resolvedSearchParams = (await searchParams) ?? {};
   const providerRoleFailed = hasProviderRoleFailure(
@@ -56,15 +49,11 @@ export default async function AgentsPage({
       fetchRuntime(config)
     ]);
   if (agentsResult.kind !== "ok") {
-    return React.createElement(
-      ConsolePageShell,
-      { section },
-      React.createElement(ResourceUnavailable, {
-        title: "Agents could not be loaded",
-        code: controlApiFailureCode(agentsResult),
-        message: agentsResult.message
-      })
-    );
+    return React.createElement(ResourceUnavailable, {
+      title: "Agents could not be loaded",
+      code: controlApiFailureCode(agentsResult),
+      message: agentsResult.message
+    });
   }
   const agents = agentsFromControlApi(agentsResult.data);
   const providers =
@@ -72,15 +61,11 @@ export default async function AgentsPage({
   const routing = routingResult.kind === "ok" ? routingResult.data : undefined;
   const runtime = runtimeResult.kind === "ok" ? runtimeResult.data : undefined;
 
-  return React.createElement(
-    ConsolePageShell,
-    { section, counts: { Agents: agents.length } },
-    React.createElement(AgentsView, {
-      agents,
-      providers,
-      routing,
-      runtime,
-      providerRoleFailed
-    })
-  );
+  return React.createElement(AgentsView, {
+    agents,
+    providers,
+    routing,
+    runtime,
+    providerRoleFailed
+  });
 }

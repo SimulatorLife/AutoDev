@@ -1,9 +1,11 @@
 import React from "react";
 
+import { ConsoleLink } from "./ConsoleLink.ts";
+
 /**
- * A single breadcrumb trail item. Items with an `href` render as native
- * anchor links; items without an `href` render as non-link spans. The last
- * entry in the trail is treated as the current page and additionally
+ * A single breadcrumb trail item. Items with an `href` render as
+ * `ConsoleLink` anchors; items without an `href` render as non-link spans.
+ * The last entry in the trail is treated as the current page and additionally
  * receives `aria-current="page"` so assistive tech identifies it as the
  * present location without offering a stale self-link.
  */
@@ -38,10 +40,11 @@ const SEPARATOR_CLASS = "mx-2 select-none text-fg-muted";
  * Server-renderable breadcrumbs landmark.
  *
  * Renders a single `<nav aria-label="Breadcrumb"><ol>...</ol></nav>` with
- * ancestor items that carry an `href` rendered as native `<a href>` links
- * (visible keyboard focus state, no client-side routing required) and any
- * ancestor without an `href` rendered as a non-link span. The final item is
- * always the current page, rendered as a non-link `<span aria-current="page">`.
+ * ancestor items that carry an `href` rendered as `ConsoleLink` anchors
+ * (real `<a href>` with a visible keyboard focus state, soft App Router
+ * navigation when hydrated) and any ancestor without an `href` rendered as a
+ * non-link span. The final item is always the current page, rendered as a
+ * non-link `<span aria-current="page">`.
  * The trail starts with the supplied ancestors and always ends on the current
  * page; no synthetic "Home" entry is added and no placeholder `href="#"` is
  * ever emitted.
@@ -105,7 +108,7 @@ function renderItem(
   }
   if (item.href) {
     return React.createElement(
-      "a",
+      ConsoleLink,
       {
         href: item.href,
         className: ITEM_LINK_CLASS

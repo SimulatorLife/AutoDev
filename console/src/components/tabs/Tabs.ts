@@ -1,5 +1,10 @@
 import React from "react";
 
+import {
+  ConsoleLink,
+  type ConsoleLinkProps
+} from "../navigation/ConsoleLink.ts";
+
 export interface TabDefinition {
   readonly id: string;
   readonly label: string;
@@ -54,11 +59,13 @@ export function resolveActiveTabId(
 /**
  * Shared, server-rendered tab navigation primitive.
  *
- * Renders a real `<nav>` landmark containing native `<a href>` links, one
- * per tab, with `aria-current="page"` marking the active tab. There is no
- * client-side hydration or state: navigating between tabs is a normal
- * full-URL navigation (`?tab=<id>`), so every tab is independently
- * addressable, bookmarkable, and shareable.
+ * Renders a real `<nav>` landmark containing one `ConsoleLink` (a real
+ * `<a href>`) per tab, with `aria-current="page"` marking the active tab.
+ * Tab state lives only in the URL (`?tab=<id>`), so every tab is
+ * independently addressable, bookmarkable, and shareable. Switching tabs is
+ * a soft App Router navigation that re-renders only the page segment and
+ * keeps the current scroll position; without JavaScript the same links fall
+ * back to ordinary full-URL navigation.
  *
  * This intentionally does NOT use the ARIA `tablist`/`tab`/`tabpanel` widget
  * roles, because those roles carry a contract of arrow-key roving-tabindex
@@ -85,25 +92,21 @@ export function TabNav({
       { className: "flex flex-wrap gap-1 list-none p-0 m-0" },
       ...tabs.map((tab) => {
         const isActive = tab.id === activeTabId;
+        const linkProps: ConsoleLinkProps = {
+          href: hrefFor ? hrefFor(tab.id) : tabHref(basePath, tab.id, tabParam),
+          "aria-current": isActive ? "page" : undefined,
+          "data-tab-item": tab.id,
+          scroll: false,
+          className: `inline-block px-4 py-2.5 text-sm font-medium border-b-2 transition-colors no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+            isActive
+              ? "border-accent text-accent bg-surface/40"
+              : "border-transparent text-fg-muted hover:text-fg hover:border-border-strong"
+          }`
+        };
         return React.createElement(
           "li",
           { key: tab.id },
-          React.createElement(
-            "a",
-            {
-              href: hrefFor
-                ? hrefFor(tab.id)
-                : tabHref(basePath, tab.id, tabParam),
-              "aria-current": isActive ? "page" : undefined,
-              "data-tab-item": tab.id,
-              className: `inline-block px-4 py-2.5 text-sm font-medium border-b-2 transition-colors no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-                isActive
-                  ? "border-accent text-accent bg-surface/40"
-                  : "border-transparent text-fg-muted hover:text-fg hover:border-border-strong"
-              }`
-            },
-            tab.label
-          )
+          React.createElement(ConsoleLink, linkProps, tab.label)
         );
       })
     )

@@ -2,6 +2,7 @@ import type { PromptDocument } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { ConsoleLink } from "../../components/navigation/ConsoleLink.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 
 export interface PromptDetailViewProps {
@@ -101,7 +102,7 @@ export function PromptDetailView({
         ),
         isRole
           ? React.createElement(
-              "a",
+              ConsoleLink,
               {
                 href: `/agents/${encodeURIComponent(prompt.name)}`,
                 className:
@@ -134,7 +135,7 @@ export function PromptDetailView({
           "div",
           { className: "flex flex-col gap-1 text-xs" },
           React.createElement(
-            "a",
+            ConsoleLink,
             {
               href: `/evaluations?prompt=${encodeURIComponent(prompt.name)}`,
               className: "text-accent hover:underline"
@@ -142,7 +143,7 @@ export function PromptDetailView({
             "Evaluations results →"
           ),
           React.createElement(
-            "a",
+            ConsoleLink,
             {
               href: `/usage?role=${encodeURIComponent(prompt.name)}`,
               className: "text-fg-secondary hover:underline"

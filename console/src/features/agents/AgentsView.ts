@@ -7,6 +7,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { ConsoleLink } from "../../components/navigation/ConsoleLink.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
   type ColumnDef,
@@ -162,7 +163,7 @@ export function AgentsView({
       header: "Role / Agent",
       cell: (agent) =>
         React.createElement(
-          "a",
+          ConsoleLink,
           {
             href: `/agents/${encodeURIComponent(agent.id)}`,
             className:

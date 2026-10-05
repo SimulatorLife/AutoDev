@@ -1,6 +1,7 @@
 import type {
-  CanonicalNavSection,
-  ControlApiMemoryRecordsResponse
+  ControlApiMemoryRecordsResponse,
+  ControlApiWorkspacesResponse,
+  WorkspaceEntry
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
@@ -18,21 +19,17 @@ import {
   fetchMemoryRecord,
   fetchMemoryRecords,
   fetchMemoryUseCohorts,
-  fetchWorkspaces
+  fetchWorkspaces,
+  readControlApiConfig
 } from "../../src/lib/server/control-api.ts";
 import {
   type MemoryPortalConfig,
   readMemoryPortalConfig
 } from "../../src/lib/server/memory-portal.ts";
-import {
-  ConsolePageShell,
-  readNodeContext,
-  ResourceUnavailable
-} from "../_console.tsx";
+import { ResourceUnavailable } from "../_console.tsx";
 
 export const dynamic = "force-dynamic";
 
-const SECTION: CanonicalNavSection = "Memory";
 const DEFAULT_WORKSPACE_ID = "SimulatorLife/AutoDev";
 
 interface PageProps {
@@ -86,27 +83,31 @@ function parseMemoryQueryParams(
   };
 }
 
-function renderNoControlApiShell(
-  portal: MemoryPortalConfig | null
-): React.JSX.Element {
-  return React.createElement(
-    ConsolePageShell,
-    { section: SECTION },
-    React.createElement(ResourceUnavailable, {
-      title: "Control API credential is not configured",
-      code: "autodev_control_api_disabled",
-      message:
-        "Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read governed memory.",
-      ...(portal
-        ? {
-            hint: "You can still access the external OpenLIT memory operator UI."
-          }
-        : {})
-    })
-  );
+function workspacesFromResult(
+  result: ControlApiResult<ControlApiWorkspacesResponse>
+): readonly WorkspaceEntry[] {
+  return result.kind === "ok" && result.data.catalogStatus === "valid"
+    ? result.data.workspaces
+    : [];
 }
 
-function renderRecordsUnavailableShell(
+function renderNoControlApiState(
+  portal: MemoryPortalConfig | null
+): React.JSX.Element {
+  return React.createElement(ResourceUnavailable, {
+    title: "Control API credential is not configured",
+    code: "autodev_control_api_disabled",
+    message:
+      "Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read governed memory.",
+    ...(portal
+      ? {
+          hint: "You can still access the external OpenLIT memory operator UI."
+        }
+      : {})
+  });
+}
+
+function renderRecordsUnavailableState(
   recordsResult: Exclude<
     ControlApiResult<ControlApiMemoryRecordsResponse>,
     { readonly kind: "ok" }
@@ -115,66 +116,44 @@ function renderRecordsUnavailableShell(
   const isUnavailable =
     recordsResult.kind !== "unreachable" &&
     recordsResult.code === "autodev_memory_unavailable";
-  return React.createElement(
-    ConsolePageShell,
-    { section: SECTION },
-    React.createElement(
-      "div",
-      { className: "flex flex-col gap-6" },
-      React.createElement(ResourceUnavailable, {
-        title: isUnavailable
-          ? "Memory storage is not configured"
-          : "Memory records could not be loaded",
-        code: controlApiFailureCode(recordsResult),
-        message: recordsResult.message,
-        ...(isUnavailable
-          ? {
-              hint: "Configure AUTODEV_MEMORY_DATABASE_URL in the AutoDev runtime environment to enable PostgreSQL / pgvector memory persistence."
-            }
-          : {})
-      })
-    )
-  );
+  return React.createElement(ResourceUnavailable, {
+    title: isUnavailable
+      ? "Memory storage is not configured"
+      : "Memory records could not be loaded",
+    code: controlApiFailureCode(recordsResult),
+    message: recordsResult.message,
+    ...(isUnavailable
+      ? {
+          hint: "Configure AUTODEV_MEMORY_DATABASE_URL in the AutoDev runtime environment to enable PostgreSQL / pgvector memory persistence."
+        }
+      : {})
+  });
 }
 
 export default async function MemoryPage(
   props: PageProps
 ): Promise<React.JSX.Element> {
-  const { config } = readNodeContext("/memory");
+  const config = readControlApiConfig();
   const portal = readMemoryPortalConfig();
 
   const rawParams = props.searchParams ? await props.searchParams : {};
   const params = parseMemoryQueryParams(rawParams);
 
-  if (!config) return renderNoControlApiShell(portal);
+  if (!config) return renderNoControlApiState(portal);
 
-  // Load workspaces to populate workspace dropdown
-  const workspacesResult = await fetchWorkspaces(config);
-  const workspaces =
-    workspacesResult.kind === "ok" &&
-    workspacesResult.data.catalogStatus === "valid"
-      ? workspacesResult.data.workspaces
-      : [];
+  // The workspace catalog populates the selector and only decides the scope
+  // when the URL names none. Tab, filter, and selection links always carry
+  // workspaceId, so the catalog normally loads in parallel with the scoped
+  // memory reads instead of serially ahead of them.
+  const workspacesRequest = fetchWorkspaces(config);
   const currentWorkspaceId =
-    params.workspaceIdParam || workspaces[0]?.id || DEFAULT_WORKSPACE_ID;
+    params.workspaceIdParam ||
+    workspacesFromResult(await workspacesRequest)[0]?.id ||
+    DEFAULT_WORKSPACE_ID;
 
-  // Fetch records
-  const recordsResult = await fetchMemoryRecords(
-    {
-      workspaceId: currentWorkspaceId,
-      ...(params.query ? { query: params.query } : {}),
-      ...(params.kind === "all" ? {} : { kind: params.kind }),
-      ...(params.status === "all" ? {} : { status: params.status })
-    },
-    config
-  );
-
-  if (recordsResult.kind !== "ok") {
-    return renderRecordsUnavailableShell(recordsResult);
-  }
-
-  // Fetch optional selected record detail and history
   const [
+    workspacesResult,
+    recordsResult,
     selectedRecordResult,
     historyResult,
     experiencesResult,
@@ -182,6 +161,16 @@ export default async function MemoryPage(
     cohortsResult,
     useCohortsResult
   ] = await Promise.all([
+    workspacesRequest,
+    fetchMemoryRecords(
+      {
+        workspaceId: currentWorkspaceId,
+        ...(params.query ? { query: params.query } : {}),
+        ...(params.kind === "all" ? {} : { kind: params.kind }),
+        ...(params.status === "all" ? {} : { status: params.status })
+      },
+      config
+    ),
     params.recordId
       ? fetchMemoryRecord(params.recordId, currentWorkspaceId, config)
       : Promise.resolve(null),
@@ -225,6 +214,10 @@ export default async function MemoryPage(
       : Promise.resolve(null)
   ]);
 
+  if (recordsResult.kind !== "ok") {
+    return renderRecordsUnavailableState(recordsResult);
+  }
+
   const totalRecords = recordsResult.data.totalCount;
   const experiences =
     experiencesResult.kind === "ok" ? experiencesResult.data.items : [];
@@ -235,40 +228,31 @@ export default async function MemoryPage(
   const useCohorts =
     useCohortsResult?.kind === "ok" ? useCohortsResult.data : null;
 
-  return React.createElement(
-    ConsolePageShell,
-    {
-      section: SECTION,
-      counts: {
-        Memory: recordsResult.data.items.length
-      }
-    },
-    React.createElement(MemoryView, {
-      activeTab: params.activeTab,
-      records: recordsResult.data.items,
-      totalRecords,
-      experiences,
-      totalExperiences,
-      sessionCohorts,
-      useCohorts,
-      selectedRecord:
-        selectedRecordResult?.kind === "ok"
-          ? selectedRecordResult.data.memory
-          : null,
-      selectedHistory: historyResult?.kind === "ok" ? historyResult.data : null,
-      selectedExperience:
-        selectedExperienceResult?.kind === "ok"
-          ? selectedExperienceResult.data.experience
-          : null,
-      currentWorkspaceId,
-      repositoryId: currentWorkspaceId,
-      workspaces,
-      query: params.query,
-      kind: params.kind,
-      status: params.status,
-      occurredFrom: params.occurredFrom,
-      occurredUntil: params.occurredUntil,
-      portalHref: portal?.href ?? null
-    })
-  );
+  return React.createElement(MemoryView, {
+    activeTab: params.activeTab,
+    records: recordsResult.data.items,
+    totalRecords,
+    experiences,
+    totalExperiences,
+    sessionCohorts,
+    useCohorts,
+    selectedRecord:
+      selectedRecordResult?.kind === "ok"
+        ? selectedRecordResult.data.memory
+        : null,
+    selectedHistory: historyResult?.kind === "ok" ? historyResult.data : null,
+    selectedExperience:
+      selectedExperienceResult?.kind === "ok"
+        ? selectedExperienceResult.data.experience
+        : null,
+    currentWorkspaceId,
+    repositoryId: currentWorkspaceId,
+    workspaces: workspacesFromResult(workspacesResult),
+    query: params.query,
+    kind: params.kind,
+    status: params.status,
+    occurredFrom: params.occurredFrom,
+    occurredUntil: params.occurredUntil,
+    portalHref: portal?.href ?? null
+  });
 }

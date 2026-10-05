@@ -1,40 +1,12 @@
 /**
  * Server-side helpers shared by every Console route.
  *
- * Server-only. Imports `./src/lib/server/...` and `./src/components/...`.
- * Must never be imported from any client component.
+ * Server-only. Must never be imported from any client component. The
+ * persistent navigation shell is owned by the root layout, so pages render
+ * only their own content (or an explicit unavailable state).
  */
 
-import { type CanonicalNavSection } from "@simulatorlife/autodev-core";
 import React from "react";
-
-import { AppShell } from "../src/components/layout/AppShell.ts";
-import { canonicalSectionFromPath } from "../src/lib/routes.ts";
-import {
-  type ControlApiConfig,
-  readControlApiConfig
-} from "../src/lib/server/control-api.ts";
-
-export interface NodeContext {
-  readonly config: ControlApiConfig | null;
-  readonly section: CanonicalNavSection;
-}
-
-/**
- * Resolve the shared, server-only Console context for a route. The control API
- * configuration is `null` when the service token is missing; the route is
- * responsible for rendering an explicit unavailable state instead of falling
- * back to fabricated data.
- */
-export function readNodeContext(pathname: string): NodeContext {
-  const section = canonicalSectionFromPath(pathname);
-  if (!section) {
-    throw new Error(
-      `Console route path '${pathname}' does not map to a canonical section.`
-    );
-  }
-  return { section, config: readControlApiConfig() };
-}
 
 export interface UnavailableProps {
   readonly title: string;
@@ -88,26 +60,5 @@ export function ResourceUnavailable({
       hint ??
         "Configure the required server-side integration and restart the Console."
     )
-  );
-}
-
-/**
- * Render a Console page with the shared AppShell using the canonical section
- * for navigation highlighting. Counts are surfaced from the props when known
- * so the sidebar reflects the loaded resource state.
- */
-export function ConsolePageShell({
-  section,
-  counts,
-  children
-}: {
-  readonly section: CanonicalNavSection;
-  readonly counts?: Partial<Record<CanonicalNavSection, number>> | undefined;
-  readonly children?: React.ReactNode;
-}): React.JSX.Element {
-  return React.createElement(
-    AppShell,
-    { activeSection: section, counts },
-    children
   );
 }

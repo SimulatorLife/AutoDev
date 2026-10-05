@@ -3,6 +3,8 @@ import "./globals.css";
 import type { Metadata } from "next";
 import React from "react";
 
+import { AppShell } from "../src/components/layout/AppShell.ts";
+
 export const metadata: Metadata = {
   title: "AutoDev Console",
   description: "AutoDev single-user control and observability console.",
@@ -23,7 +25,7 @@ export default function RootLayout({
       {
         className: "bg-background text-fg antialiased"
       },
-      children
+      React.createElement(AppShell, null, children)
     )
   );
 }

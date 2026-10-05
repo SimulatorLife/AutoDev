@@ -8,6 +8,10 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import {
+  ConsoleForm,
+  type ConsoleFormProps
+} from "../../components/navigation/ConsoleForm.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
 import { MemoryCohortsView } from "./MemoryCohortsView.ts";
 import { MemoryExperiencesView } from "./MemoryExperiencesView.ts";
@@ -87,6 +91,12 @@ export function MemoryView({
     return "/memory?" + params.toString();
   };
 
+  const workspaceFormProps: ConsoleFormProps = {
+    action: "/memory",
+    className: "flex items-center gap-2 text-xs",
+    "data-memory-workspace-form": "true"
+  };
+
   return React.createElement(
     "div",
     { className: "flex flex-col gap-8", "data-feature": "memory" },
@@ -117,13 +127,8 @@ export function MemoryView({
         // change so a detail from another workspace is never reused.
         workspaces.length > 0
           ? React.createElement(
-              "form",
-              {
-                method: "GET",
-                action: "/memory",
-                className: "flex items-center gap-2 text-xs",
-                "data-memory-workspace-form": "true"
-              },
+              ConsoleForm,
+              workspaceFormProps,
               ...[
                 ["tab", activeTab],
                 ["query", query ?? ""],

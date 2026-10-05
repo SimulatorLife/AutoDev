@@ -6,14 +6,11 @@ import {
   controlApiFailureCode,
   fetchAgentDetail,
   fetchProviders,
-  fetchRouting
+  fetchRouting,
+  readControlApiConfig
 } from "../../../src/lib/server/control-api.ts";
 import { agentDetailFromControlApi } from "../../../src/lib/server/views.ts";
-import {
-  ConsolePageShell,
-  readNodeContext,
-  ResourceUnavailable
-} from "../../_console.tsx";
+import { ResourceUnavailable } from "../../_console.tsx";
 
 export const dynamic = "force-dynamic";
 
@@ -23,18 +20,14 @@ export default async function AgentDetailPage({
   readonly params: Promise<{ readonly id: string }>;
 }): Promise<React.JSX.Element> {
   const { id } = await params;
-  const { section, config } = readNodeContext("/agents");
+  const config = readControlApiConfig();
   if (!config) {
-    return React.createElement(
-      ConsolePageShell,
-      { section },
-      React.createElement(ResourceUnavailable, {
-        title: "Control API credential is not configured",
-        code: "autodev_control_api_disabled",
-        message:
-          "Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read agent configuration."
-      })
-    );
+    return React.createElement(ResourceUnavailable, {
+      title: "Control API credential is not configured",
+      code: "autodev_control_api_disabled",
+      message:
+        "Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read agent configuration."
+    });
   }
 
   const [detailResult, routingResult, providersResult] = await Promise.all([
@@ -47,28 +40,20 @@ export default async function AgentDetailPage({
     notFound();
   }
   if (detailResult.kind !== "ok") {
-    return React.createElement(
-      ConsolePageShell,
-      { section },
-      React.createElement(ResourceUnavailable, {
-        title: "Agent details could not be loaded",
-        code: controlApiFailureCode(detailResult),
-        message: detailResult.message
-      })
-    );
+    return React.createElement(ResourceUnavailable, {
+      title: "Agent details could not be loaded",
+      code: controlApiFailureCode(detailResult),
+      message: detailResult.message
+    });
   }
 
   const routing = routingResult.kind === "ok" ? routingResult.data : undefined;
   const providers =
     providersResult.kind === "ok" ? providersResult.data : undefined;
 
-  return React.createElement(
-    ConsolePageShell,
-    { section },
-    React.createElement(AgentDetailView, {
-      agent: agentDetailFromControlApi(detailResult.data),
-      routing,
-      providers
-    })
-  );
+  return React.createElement(AgentDetailView, {
+    agent: agentDetailFromControlApi(detailResult.data),
+    routing,
+    providers
+  });
 }

@@ -7,6 +7,8 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import { ConsoleForm } from "../../components/navigation/ConsoleForm.ts";
+import { ConsoleLink } from "../../components/navigation/ConsoleLink.ts";
 import {
   StatusBadge,
   type StatusBadgeVariant
@@ -102,7 +104,7 @@ export function MemoryRecordsView({
       width: "180px",
       cell: (record) =>
         React.createElement(
-          "a",
+          ConsoleLink,
           {
             href: `?tab=records&workspaceId=${encodeURIComponent(currentWorkspaceId)}&recordId=${encodeURIComponent(record.id)}`,
             className:
@@ -180,9 +182,9 @@ export function MemoryRecordsView({
     { className: "flex flex-col gap-6", "data-feature": "memory-records" },
     // Filter controls
     React.createElement(
-      "form",
+      ConsoleForm,
       {
-        method: "GET",
+        action: "/memory",
         className:
           "flex flex-wrap items-center gap-3 p-4 bg-surface/80 rounded-lg border border-border"
       },
@@ -322,7 +324,7 @@ function RecordDetailPanel({
         )
       ),
       React.createElement(
-        "a",
+        ConsoleLink,
         {
           href: `?tab=records&workspaceId=${encodeURIComponent(workspaceId)}`,
           className: "text-sm text-fg-muted hover:text-fg"
@@ -473,7 +475,7 @@ function RecordDetailPanel({
                 ),
                 record.supersedes.map((id) =>
                   React.createElement(
-                    "a",
+                    ConsoleLink,
                     {
                       key: id,
                       href: `?tab=records&workspaceId=${encodeURIComponent(workspaceId)}&recordId=${encodeURIComponent(id)}`,
@@ -495,7 +497,7 @@ function RecordDetailPanel({
                 ),
                 record.supersededBy.map((id) =>
                   React.createElement(
-                    "a",
+                    ConsoleLink,
                     {
                       key: id,
                       href: `?tab=records&workspaceId=${encodeURIComponent(workspaceId)}&recordId=${encodeURIComponent(id)}`,

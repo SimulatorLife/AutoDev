@@ -7,11 +7,7 @@ import {
   type UsageSearchParams,
   usageSelectionFromSearchParams
 } from "../../src/lib/server/openlit-usage.ts";
-import {
-  ConsolePageShell,
-  readNodeContext,
-  ResourceUnavailable
-} from "../_console.tsx";
+import { ResourceUnavailable } from "../_console.tsx";
 
 export const dynamic = "force-dynamic";
 
@@ -22,15 +18,14 @@ interface UsagePageProps {
 export default async function UsagePage({
   searchParams
 }: UsagePageProps): Promise<React.JSX.Element> {
-  const { section } = readNodeContext("/usage");
   const selection: UsageFilterSelection = usageSelectionFromSearchParams(
     await searchParams
   );
   const result = await loadOpenLITUsage(selection);
   if (result.kind === "not-configured") {
     return React.createElement(
-      ConsolePageShell,
-      { section },
+      React.Fragment,
+      null,
       React.createElement(ResourceUnavailable, {
         title: "OpenLIT Usage credential is not configured",
         code: "autodev_usage_credentials_disabled",
@@ -56,8 +51,8 @@ export default async function UsagePage({
           ? "OpenLIT Usage rejected the server credential"
           : "OpenLIT Usage query failed";
     return React.createElement(
-      ConsolePageShell,
-      { section },
+      React.Fragment,
+      null,
       React.createElement(ResourceUnavailable, {
         title,
         code,
@@ -71,13 +66,9 @@ export default async function UsagePage({
     );
   }
 
-  return React.createElement(
-    ConsolePageShell,
-    { section },
-    React.createElement(UsageView, {
-      metrics: result.data.metrics,
-      filterOptions: result.data.filterOptions,
-      selection
-    })
-  );
+  return React.createElement(UsageView, {
+    metrics: result.data.metrics,
+    filterOptions: result.data.filterOptions,
+    selection
+  });
 }

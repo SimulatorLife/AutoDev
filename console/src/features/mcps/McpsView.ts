@@ -2,6 +2,7 @@ import type { McpServerResource } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { ConsoleLink } from "../../components/navigation/ConsoleLink.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
   type ColumnDef,
@@ -33,7 +34,7 @@ export function McpsView({
       header: "Server Name",
       cell: (server) =>
         React.createElement(
-          "a",
+          ConsoleLink,
           {
             className: "font-semibold text-fg font-mono hover:text-accent",
             href: `/mcps/${encodeURIComponent(server.name)}`

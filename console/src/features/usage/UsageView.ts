@@ -6,6 +6,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { ConsoleForm } from "../../components/navigation/ConsoleForm.ts";
 
 /**
  * Observability Usage view.
@@ -146,12 +147,11 @@ export function UsageView({
       "data-usage-observed": observed ? "true" : "false"
     },
     React.createElement(
-      "form",
+      ConsoleForm,
       {
         className:
           "bg-surface border border-border p-4 rounded-lg flex flex-wrap gap-4 items-center justify-between shadow",
         action: "/usage",
-        method: "get",
         "aria-label": "Usage filters"
       },
       React.createElement(

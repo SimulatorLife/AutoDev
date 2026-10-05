@@ -7,18 +7,14 @@ import {
 import React from "react";
 
 import { canonicalNavPath } from "../../lib/routes.ts";
+import { ConsoleLink, type ConsoleLinkProps } from "./ConsoleLink.ts";
 
 export { canonicalNavPath } from "../../lib/routes.ts";
 
 export interface AppNavProps {
-  readonly activeSection: CanonicalNavSection;
-  readonly counts?: Partial<Record<CanonicalNavSection, number>> | undefined;
+  /** Section owning the current route, or `null` outside canonical routes. */
+  readonly activeSection: CanonicalNavSection | null;
 }
-
-type NavigationLinkProps = React.AnchorHTMLAttributes<HTMLAnchorElement> & {
-  readonly "data-nav-brand"?: string;
-  readonly "data-nav-item"?: string;
-};
 
 type GroupSectionProps = React.HTMLAttributes<HTMLElement> & {
   readonly "data-nav-group"?: CanonicalNavGroupId;
@@ -26,15 +22,14 @@ type GroupSectionProps = React.HTMLAttributes<HTMLElement> & {
 
 /**
  * URL-addressable navigation grouped by Configure / Observe / Operate. Each
- * item still renders a real `<a href="/section">` link, so navigating
- * updates the address bar and is reflected in the route. Group headings
- * label the presentation buckets without changing first-class routes.
+ * item renders a `ConsoleLink` (a real `<a href="/section">`), so
+ * navigating updates the address bar and is reflected in the route while the
+ * App Router swaps only the page segment instead of reloading the document.
+ * Group headings label the presentation buckets without changing first-class
+ * routes.
  */
-export function AppNav({
-  activeSection,
-  counts
-}: AppNavProps): React.JSX.Element {
-  const brandLinkProps: NavigationLinkProps = {
+export function AppNav({ activeSection }: AppNavProps): React.JSX.Element {
+  const brandLinkProps: ConsoleLinkProps = {
     href: "/agents",
     "data-nav-brand": "autodev",
     className:
@@ -52,7 +47,7 @@ export function AppNav({
       "div",
       { className: "flex items-center gap-2 mb-6 px-2" },
       React.createElement(
-        "a",
+        ConsoleLink,
         brandLinkProps,
         React.createElement(
           "span",
@@ -66,17 +61,14 @@ export function AppNav({
       {
         className: "flex flex-col gap-4 list-none p-0 m-0"
       },
-      CANONICAL_NAV_GROUPS.map((group) =>
-        renderGroup(group, activeSection, counts)
-      )
+      CANONICAL_NAV_GROUPS.map((group) => renderGroup(group, activeSection))
     )
   );
 }
 
 function renderGroup(
   group: CanonicalNavGroup<CanonicalNavSection>,
-  activeSection: CanonicalNavSection,
-  counts: Partial<Record<CanonicalNavSection, number>> | undefined
+  activeSection: CanonicalNavSection | null
 ): React.JSX.Element {
   const groupSectionProps: GroupSectionProps = {
     className: "flex flex-col gap-1",
@@ -104,9 +96,7 @@ function renderGroup(
           className: "flex flex-col gap-1 list-none p-0 m-0",
           "aria-label": `${group.label} navigation`
         },
-        group.sections.map((section) =>
-          renderNavItem(section, activeSection, counts)
-        )
+        group.sections.map((section) => renderNavItem(section, activeSection))
       )
     )
   );
@@ -114,14 +104,11 @@ function renderGroup(
 
 function renderNavItem(
   section: CanonicalNavSection,
-  activeSection: CanonicalNavSection,
-  counts: Partial<Record<CanonicalNavSection, number>> | undefined
+  activeSection: CanonicalNavSection | null
 ): React.JSX.Element {
   const isActive = activeSection === section;
-  const count = counts?.[section];
-  const href = canonicalNavPath(section);
-  const linkProps: NavigationLinkProps = {
-    href,
+  const linkProps: ConsoleLinkProps = {
+    href: canonicalNavPath(section),
     "aria-current": isActive ? "page" : undefined,
     "data-nav-item": section.toLowerCase(),
     className: `w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors no-underline ${
@@ -134,19 +121,9 @@ function renderNavItem(
     "li",
     { key: section },
     React.createElement(
-      "a",
+      ConsoleLink,
       linkProps,
-      React.createElement("span", null, section),
-      count === undefined
-        ? null
-        : React.createElement(
-            "span",
-            {
-              className:
-                "text-xs bg-surface-raised px-2 py-0.5 rounded-full text-fg-muted border border-border-strong"
-            },
-            count
-          )
+      React.createElement("span", null, section)
     )
   );
 }

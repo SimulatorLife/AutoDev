@@ -159,6 +159,16 @@ Configuration does not prove runtime availability. Eligibility/exposure does not
 - Core workflows must remain usable at typical desktop widths; secondary details may collapse into drawers/tabs rather than creating alternate mobile product structures.
 - URL-addressable list/detail/filter state is preferred when it improves operator navigation and debugging.
 
+### Navigation responsiveness
+
+Moving between sections, list/detail views, tabs, and filters must feel immediate and must never reload the document:
+
+- The root layout is the single owner of the persistent shell (sidebar and header); pages render only their own content or an explicit unavailable state. The active section is derived from the route, not threaded through pages.
+- Every internal link is a `ConsoleLink` (a Next.js `Link`, i.e. a real `<a href>`), so the App Router swaps only the page segment. Each `ConsoleLink` shows a delayed pending indicator while the destination's server data loads, because client navigation keeps the current page visible and suppresses the browser's own loading indicator. External destinations remain plain anchors.
+- GET filter/scope forms submit through `next/form` for the same soft navigation; mutations remain same-origin POST routes.
+- Routes declare no `loading.tsx` boundaries: on Next.js 15.5, a prefetched route loading component makes same-path search-param navigations (tabs, filters, record selection) reuse an aliased prefetch entry that intermittently never commits.
+- Page data loads in parallel; a page must not serialize independent Control API reads.
+
 ## 4. Repository and module architecture
 
 AutoDev is a **small, flat pnpm TypeScript monorepo**. Do not introduce apps/, packages/, or modules/ wrappers merely to classify code, and do not create a package per navigation resource.
