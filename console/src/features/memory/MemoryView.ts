@@ -82,7 +82,7 @@ export function MemoryView({
     { id: "records", label: "Durable Records" },
     { id: "experiences", label: "Experiences" },
     { id: "cohorts", label: "Outcome Cohorts" },
-    { id: "portal", label: "OpenLIT Portal" }
+    { id: "portal", label: "External Memory UI" }
   ];
 
   const hrefForTab = (tabId: string): string =>
@@ -212,7 +212,7 @@ export function MemoryView({
                         className:
                           "p-4 rounded bg-surface border border-border text-sm text-fg-muted"
                       },
-                      "External OpenLIT UI URL is not configured."
+                      "External Memory UI URL is not configured."
                     )
               )
   );

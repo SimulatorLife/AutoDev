@@ -14,6 +14,13 @@ const LINE_BREAK_PATTERN = /\r?\n/u;
 // Console abandons the whole Control API request.
 const DEFAULT_QUERY_TIMEOUT_MS = 3000;
 
+export class EvaluationSourceUnavailableError extends Error {
+  constructor() {
+    super("Evaluation history is unavailable.");
+    this.name = "EvaluationSourceUnavailableError";
+  }
+}
+
 export interface EvaluationQueryOptions extends OpenLitClickHouseOptions {
   readonly limit?: number;
   readonly fetchImpl?: typeof fetch;
@@ -32,17 +39,6 @@ export interface RawClickHouseEvaluationRow {
   readonly scores?: Record<string, number>;
 }
 
-/**
- * Outcome of reading evaluation results. A failed or timed-out read is
- * reported as unavailable, never as an observed empty result set.
- */
-export type EvaluationRead =
-  | {
-      readonly status: "available";
-      readonly evaluations: readonly EvaluationResult[];
-    }
-  | { readonly status: "unavailable"; readonly message: string };
-
 export class EvaluationRepository {
   private readonly options: OpenLitClickHouseOptions;
   private readonly fetchImpl: typeof fetch;
@@ -56,12 +52,10 @@ export class EvaluationRepository {
 
   /**
    * Reads evaluation results from ClickHouse `openlit.openlit_evaluation`.
-   * Only a successful query yields results (possibly none); a rejected,
-   * unreachable, or timed-out query is reported as unavailable. Messages
-   * never include the ClickHouse endpoint, which can carry credentials.
+   * A query that has not completed within the timeout, body included, is
+   * unavailable like any other failed read.
    */
-  async listEvaluations(limit = 100): Promise<EvaluationRead> {
-    const { endpoint } = resolveOpenLitClickHouseConnection(this.options);
+  async listEvaluations(limit = 100): Promise<readonly EvaluationResult[]> {
     const safeLimit = Math.max(1, Math.min(limit, 1000));
     const query =
       "SELECT id, span_id, created_at, meta, scores, " +
@@ -69,105 +63,118 @@ export class EvaluationRepository {
       "FROM openlit.openlit_evaluation " +
       `ORDER BY created_at DESC LIMIT ${safeLimit} FORMAT JSONEachRow`;
 
-    let connected = false;
     try {
-      const signal = AbortSignal.timeout(this.timeoutMs);
+      const { endpoint } = resolveOpenLitClickHouseConnection(this.options);
       const response = await this.fetchImpl(
         `${endpoint}&query=${encodeURIComponent(query)}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          signal
+          signal: AbortSignal.timeout(this.timeoutMs)
         }
       );
 
-      if (!response.ok) {
-        return {
-          status: "unavailable",
-          message: `ClickHouse rejected the evaluation query with HTTP ${response.status}.`
-        };
-      }
-
-      connected = true;
-      const evaluations = this.parseEvaluationRows(await response.text());
-      // ClickHouse reports an error raised mid-stream as trailing text after
-      // an HTTP 200, so any unreadable line means the read did not complete.
-      return evaluations
-        ? { status: "available", evaluations }
-        : {
-            status: "unavailable",
-            message: "ClickHouse returned an unreadable evaluation result."
-          };
+      if (!response.ok) throw new EvaluationSourceUnavailableError();
+      return this.parseEvaluationRows(await response.text());
     } catch (error) {
-      return {
-        status: "unavailable",
-        message:
-          error instanceof Error && error.name === "TimeoutError"
-            ? `ClickHouse did not complete the evaluation query within ${this.timeoutMs}ms.`
-            : connected
-              ? "ClickHouse ended the evaluation result before it completed."
-              : "ClickHouse is unreachable."
-      };
+      if (error instanceof EvaluationSourceUnavailableError) throw error;
+      throw new EvaluationSourceUnavailableError();
     }
   }
 
-  /**
-   * Parses ClickHouse `JSONEachRow` output. Returns `null` when any non-empty
-   * line is not a JSON row, so a partial or error body is never mistaken for
-   * a complete result set.
-   */
-  parseEvaluationRows(text: string): readonly EvaluationResult[] | null {
+  parseEvaluationRows(text: string): readonly EvaluationResult[] {
     const lines = text
       .split(LINE_BREAK_PATTERN)
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
 
-    const results: EvaluationResult[] = [];
-
-    for (const line of lines) {
-      let row: RawClickHouseEvaluationRow;
+    return lines.map((line) => {
+      let parsed: unknown;
       try {
-        row = JSON.parse(line) as RawClickHouseEvaluationRow;
+        parsed = JSON.parse(line);
       } catch {
-        return null;
+        throw new EvaluationSourceUnavailableError();
       }
-      if (!row.id) continue;
+      if (
+        typeof parsed !== "object" ||
+        parsed === null ||
+        Array.isArray(parsed)
+      ) {
+        throw new EvaluationSourceUnavailableError();
+      }
+
+      const row = parsed as RawClickHouseEvaluationRow;
+      if (
+        typeof row.id !== "string" ||
+        row.id.trim().length === 0 ||
+        (row.span_id !== undefined &&
+          (typeof row.span_id !== "string" || row.span_id.length > 256)) ||
+        typeof row.created_at !== "string" ||
+        row.created_at.trim().length === 0 ||
+        (row.meta !== undefined &&
+          (typeof row.meta !== "object" ||
+            row.meta === null ||
+            Array.isArray(row.meta)))
+      ) {
+        throw new EvaluationSourceUnavailableError();
+      }
 
       const evNames = row["evaluationData.evaluation"] ?? [];
       const verdicts = row["evaluationData.verdict"] ?? [];
       const scores = row.scores ?? {};
-
-      const metrics: EvaluationMetric[] = [];
-      for (const [name, value] of Object.entries(scores)) {
-        const verdict = verdicts[evNames.indexOf(name)]?.toLowerCase();
-        const effectiveVerdict =
-          verdict ?? (Number(value) >= 0.5 ? "pass" : "fail");
-        const pass = effectiveVerdict === "pass" || effectiveVerdict === "yes";
-
-        metrics.push({
-          name,
-          value: Number(value),
-          pass
-        });
+      if (
+        !Array.isArray(evNames) ||
+        !evNames.every((name) => typeof name === "string") ||
+        !Array.isArray(verdicts) ||
+        !verdicts.every((verdict) => typeof verdict === "string") ||
+        typeof scores !== "object" ||
+        scores === null ||
+        Array.isArray(scores)
+      ) {
+        throw new EvaluationSourceUnavailableError();
       }
 
-      const passed = metrics.length > 0 ? metrics.every((m) => m.pass) : true;
+      const metrics: EvaluationMetric[] = Object.entries(scores).map(
+        ([name, value]) => {
+          if (typeof value !== "number" || !Number.isFinite(value)) {
+            throw new EvaluationSourceUnavailableError();
+          }
+          const rawVerdict = verdicts[evNames.indexOf(name)]
+            ?.trim()
+            .toLowerCase();
+          const pass =
+            rawVerdict === "pass" ||
+            rawVerdict === "passed" ||
+            rawVerdict === "yes"
+              ? true
+              : rawVerdict === "fail" ||
+                  rawVerdict === "failed" ||
+                  rawVerdict === "no"
+                ? false
+                : null;
+          return { name, value, pass };
+        }
+      );
+
+      const hasFailedMetric = metrics.some((metric) => metric.pass === false);
+      const allMetricsPassed =
+        metrics.length > 0 && metrics.every((metric) => metric.pass === true);
+      const passed = hasFailedMetric ? false : allMetricsPassed ? true : null;
       const meta = row.meta ?? {};
       const agentRole = meta.agentRole ?? meta.role ?? meta.agent ?? "unknown";
       const model = meta.model ?? meta["gen_ai.request.model"] ?? "unknown";
       const promptName = meta.promptName ?? meta.prompt ?? undefined;
 
-      results.push({
+      return {
         id: row.id,
+        ...(row.span_id?.trim() ? { spanId: row.span_id.trim() } : {}),
         agentRole,
         ...(promptName ? { promptName } : {}),
         model,
         metrics,
         passed,
         timestamp: row.created_at
-      });
-    }
-
-    return results;
+      };
+    });
   }
 }

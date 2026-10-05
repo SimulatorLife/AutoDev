@@ -7,7 +7,7 @@ import {
   readControlApiConfig
 } from "../../src/lib/server/control-api.ts";
 import { promptsFromControlApi } from "../../src/lib/server/views.ts";
-import { ResourceUnavailable } from "../_console.tsx";
+import { ResourceUnavailable } from "../_console.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -30,5 +30,8 @@ export default async function PromptsPage(): Promise<React.JSX.Element> {
     });
   }
   const commands = promptsFromControlApi(result.data);
-  return React.createElement(PromptsView, { commands });
+  return React.createElement(PromptsView, {
+    commands,
+    commandSourceValidity: result.data.valid
+  });
 }

@@ -949,7 +949,7 @@ index 00000000..612688f3
 +		href: "/autodev/skills",
 +		label: "Skills",
 +		description:
-+			"Configured skills and the roles that currently expose them. Read-only on this control surface.",
++			"Canonical RuleSync skills and their configured role eligibility. Read-only on this control surface.",
 +		readOnly: true,
 +	},
 +	{
@@ -1470,7 +1470,7 @@ new file mode 100644
 index 00000000..6714b894
 --- /dev/null
 +++ b/src/client/src/app/(playground)/autodev/skills/page.tsx
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,145 @@
 +"use client";
 +
 +import { useEffect, useState } from "react";
@@ -1478,12 +1478,10 @@ index 00000000..6714b894
 +/**
 + * /autodev/skills
 + *
-+ * Renders the read-only skills exposure list sourced from the
-+ * `autodev-control-skills-v1` schema (defined in runtime/src/control-api/index.ts).
-+ * The AutoDev API derives exposure from the configured role bindings on
-+ * each skill; it does NOT advertise a separate `enabled` or `available`
-+ * flag — those derive from the role binding presence the control API
-+ * already reports.
++ * Renders the read-only RuleSync skill catalog joined to execution-contract
++ * role assignments from the `autodev-control-skills-v2` schema. A canonical
++ * skill definition is not proof of runtime exposure or use; those remain
++ * unobserved without producer-owned telemetry.
 + *
 + * Confirmed skill use is rendered by the stock OpenLIT dashboards view
 + * with the `autodev.skill.*` attribute family.
@@ -1495,7 +1493,7 @@ index 00000000..6714b894
 +}
 +
 +interface SkillsResponse {
-+	schema: "autodev-control-skills-v1";
++	schema: "autodev-control-skills-v2";
 +	source: string;
 +	readOnly: true;
 +	skills: SkillEntry[];
@@ -1549,13 +1547,26 @@ index 00000000..6714b894
 +		);
 +	}
 +
++	if (data.valid !== true) {
++		return (
++			<section>
++				<h1 className="text-xl font-semibold">Skills</h1>
++				<p className="mt-3 rounded border border-amber-300 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-800 p-3 text-sm" role={data.valid === false ? "alert" : "status"}>
++					{data.valid === false
++						? "The canonical RuleSync skills source is invalid."
++						: "The canonical RuleSync skills source has not been observed."}
++				</p>
++			</section>
++		);
++	}
++
 +	return (
 +		<section>
 +			<h1 className="text-xl font-semibold">Skills</h1>
 +			<p className="mt-2 text-sm text-stone-600 dark:text-stone-300 max-w-3xl">
-+				Configured skills and the roles that currently expose them. This
-+				control surface is read-only: mutations require an authoritative
-+				writable configuration that does not yet exist on the AutoDev side.
++				Canonical RuleSync skills and their configured role eligibility.
++				This control surface is read-only. Eligibility does not prove
++				runtime exposure or use; those require source-owned telemetry.
 +				Confirmed skill use is rendered by the stock OpenLIT{" "}
 +				<a className="underline" href="/dashboards">dashboards</a> view
 +				filtered by the <code>autodev.skill.*</code> attribute family.
@@ -1565,8 +1576,16 @@ index 00000000..6714b894
 +				<code>{data.source}</code> · read-only:{" "}
 +				<code>{String(data.readOnly)}</code>
 +			</p>
++			{data.skills.length === 0 ? (
++				<p className="mt-6 text-sm text-stone-500">No canonical RuleSync skills are configured.</p>
++			) : null}
++			{data.unresolvedAssignments.length > 0 ? (
++				<p className="mt-4 rounded border border-amber-300 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-800 p-3 text-sm" role="alert">
++					No canonical RuleSync source exists for role assignments: {data.unresolvedAssignments.map((item) => item.name).join(", ")}
++				</p>
++			) : null}
 +			<ul className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
-+				{(data.skills ?? []).map((s) => (
++				{data.skills.map((s) => (
 +					<li
 +						key={s.name}
 +						className="rounded border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4"
@@ -1574,11 +1593,15 @@ index 00000000..6714b894
 +						<div className="flex items-center justify-between">
 +							<span className="font-medium">{s.name}</span>
 +						</div>
++						<p className="mt-1 text-xs text-stone-500">{s.description}</p>
++						<p className="mt-1 font-mono text-xs text-stone-500">{s.path}</p>
 +						<div className="mt-2 text-sm">
 +							<span className="text-xs uppercase text-stone-500 mr-2">
-+								exposed to roles:
++								eligible for roles:
 +							</span>
-+							{(s.roles ?? []).map((r) => (
++							{s.roles.length === 0 ? (
++								<span className="text-xs text-stone-500">No roles assigned</span>
++							) : s.roles.map((r) => (
 +								<span
 +									key={r}
 +									className="inline-block mr-2 px-2 py-0.5 rounded text-xs bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300"
@@ -1615,7 +1638,7 @@ new file mode 100644
 index 00000000..5b1d0eb9
 --- /dev/null
 +++ b/src/client/src/lib/autodev/control-api.ts
-@@ -0,0 +1,505 @@
+@@ -0,0 +1,510 @@
 +/**
 + * Same-origin server-side proxy to the AutoDev Control API.
 + *
@@ -1664,10 +1687,12 @@ index 00000000..5b1d0eb9
 + *          servers: [{ name, roles: string[] }] }
 + *
 + *   GET    /control/skills      (read-only)
-+ *     -> { schema: "autodev-control-skills-v1",
-+ *          source: "execution-contract",
++ *     -> { schema: "autodev-control-skills-v2",
++ *          source: ".rulesync/skills+execution-contract",
 + *          readOnly: true,
-+ *          skills: [{ name, roles: string[] }] }
++ *          valid: boolean | null,
++ *          skills: [{ name, description, path, roles: string[] }],
++ *          unresolvedAssignments: [{ name, roles: string[] }] }
 + *
 + *   GET    /control/runtime     (current state only)
 + *     -> { schema: "autodev-control-runtime-v1",
@@ -1762,20 +1787,23 @@ index 00000000..5b1d0eb9
 +}
 +
 +/**
-+ * Response shape returned by `GET /control/skills`. Mirrors the
-+ * `autodev-control-skills-v1` schema. The upstream API does not advertise a
-+ * separate `enabled` or `available` flag; those derive from the role binding
-+ * presence the control API already reports.
++ * Response shape returned by `GET /control/skills`. Canonical RuleSync skill
++ * metadata is joined to execution-contract eligibility; runtime exposure and
++ * use remain owned by telemetry producers.
 + */
 +export interface SkillEntry {
 +	name: string;
++	description: string;
++	path: string;
 +	roles: string[];
 +}
 +export interface SkillsResponse {
-+	schema: "autodev-control-skills-v1";
++	schema: "autodev-control-skills-v2";
 +	source: string;
 +	readOnly: true;
++	valid: boolean | null;
 +	skills: SkillEntry[];
++	unresolvedAssignments: Array<{ name: string; roles: string[] }>;
 +}
 +
 +/**
@@ -2126,7 +2154,7 @@ new file mode 100644
 index 00000000..cc89a735
 --- /dev/null
 +++ b/src/client/src/lib/autodev/index.ts
-@@ -0,0 +1 @@
+@@ -0,0 +1,1 @@
 +export * from "./control-api";
 diff --git a/src/client/src/middleware.ts b/src/client/src/middleware.ts
 index 80452e03..e05ad913 100644

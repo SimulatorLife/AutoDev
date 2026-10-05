@@ -6,8 +6,12 @@ import {
   fetchSkills,
   readControlApiConfig
 } from "../../src/lib/server/control-api.ts";
-import { skillsFromControlApi } from "../../src/lib/server/views.ts";
-import { ResourceUnavailable } from "../_console.tsx";
+import {
+  skillEligibilityFromControlApi,
+  skillsFromControlApi,
+  unresolvedSkillAssignmentsFromControlApi
+} from "../../src/lib/server/views.ts";
+import { ResourceUnavailable } from "../_console.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +33,12 @@ export default async function SkillsPage(): Promise<React.JSX.Element> {
       message: result.message
     });
   }
-  const skills = skillsFromControlApi(result.data);
-  return React.createElement(SkillsView, { skills });
+  return React.createElement(SkillsView, {
+    skills: skillsFromControlApi(result.data),
+    eligibility: skillEligibilityFromControlApi(result.data),
+    unresolvedAssignments: unresolvedSkillAssignmentsFromControlApi(
+      result.data
+    ),
+    sourceValidity: result.data.valid
+  });
 }

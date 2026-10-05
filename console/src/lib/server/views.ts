@@ -22,6 +22,7 @@ import type {
   PromptDocument,
   RoleCapabilityMatrix,
   SkillDefinition,
+  SkillEligibility,
   WorkspaceEntry
 } from "@simulatorlife/autodev-core";
 
@@ -73,13 +74,30 @@ export function agentDetailFromControlApi(
 }
 
 export function skillsFromControlApi(
-  response: ControlApiSkillsResponse | undefined
+  response: ControlApiSkillsResponse
 ): readonly SkillDefinition[] {
-  if (!response) return [];
+  return response.skills.map(({ name, description, path }) => ({
+    name,
+    description,
+    path
+  }));
+}
+
+export function skillEligibilityFromControlApi(
+  response: ControlApiSkillsResponse
+): readonly SkillEligibility[] {
   return response.skills.map((skill) => ({
-    name: skill.name,
-    description: `Skill declared in ${skill.name}`,
-    path: `.rulesync/skills/${skill.name}`
+    skill: skill.name,
+    roles: skill.roles
+  }));
+}
+
+export function unresolvedSkillAssignmentsFromControlApi(
+  response: ControlApiSkillsResponse
+): readonly SkillEligibility[] {
+  return response.unresolvedAssignments.map(({ name, roles }) => ({
+    skill: name,
+    roles
   }));
 }
 
@@ -165,7 +183,9 @@ export function promptsFromControlApi(
       name: command.name,
       path: command.path,
       kind: "command" as const,
-      description: command.description
+      ...(command.description === undefined
+        ? {}
+        : { description: command.description })
     })),
     ...response.rolePrompts.map((prompt) => ({
       name: prompt.role,
@@ -183,7 +203,8 @@ export function promptDocumentFromControlApi(
     name: response.name,
     kind: response.type,
     path: response.source,
-    content: response.content
+    content: response.content,
+    revision: response.revision
   };
 }
 

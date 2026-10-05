@@ -160,3 +160,162 @@ test("OpenLITUsageClient rejects malformed metric rows without fabricating value
   assert.equal(result.data.metrics.logicalRequests, null);
   assert.equal(result.data.metrics.physicalAttempts, null);
 });
+
+test("OpenLITUsageClient fetches a bounded, typed trace summary with server credentials", async () => {
+  const selectedSpanId = "0123456789abcdef";
+  const traceId = "0123456789abcdef0123456789abcdef";
+  let requestedUrl = "";
+  let requestedInit: RequestInit | undefined;
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local/",
+    serviceToken: "secret",
+    fetchImpl: async (input, init) => {
+      requestedUrl = String(input);
+      requestedInit = init;
+      return response({
+        schema: "autodev-openlit-trace-detail-v1",
+        traceId,
+        selectedSpanId,
+        spans: [
+          {
+            spanId: selectedSpanId,
+            parentSpanId: null,
+            spanName: "gen_ai.client_operation",
+            serviceName: "autodev-router",
+            timestamp: "2026-10-05T12:00:00.000Z",
+            durationNs: 1_250_000,
+            statusCode: "OK",
+            spanAttributes: { prompt: "must not reach the Console view" }
+          }
+        ],
+        partial: false
+      });
+    }
+  });
+
+  const result = await client.queryTrace(selectedSpanId);
+  assert.equal(
+    requestedUrl,
+    `http://openlit.local/api/autodev/usage/span/${selectedSpanId}`
+  );
+  assert.equal(requestedInit?.method, "GET");
+  assert.equal(
+    (requestedInit?.headers as Record<string, string>).Authorization,
+    "Bearer secret"
+  );
+  assert.equal(requestedInit?.body, undefined);
+  assert.equal(result.kind, "ok");
+  if (result.kind === "ok") {
+    assert.deepEqual(result.data, {
+      schema: "autodev-openlit-trace-detail-v1",
+      traceId,
+      selectedSpanId,
+      spans: [
+        {
+          spanId: selectedSpanId,
+          parentSpanId: null,
+          spanName: "gen_ai.client_operation",
+          serviceName: "autodev-router",
+          timestamp: "2026-10-05T12:00:00.000Z",
+          durationNs: 1_250_000,
+          statusCode: "OK"
+        }
+      ],
+      partial: false
+    });
+    assert.equal(JSON.stringify(result.data).includes("must not reach"), false);
+  }
+});
+
+test("OpenLITUsageClient rejects invalid trace IDs before fetch and preserves not-found", async () => {
+  let fetchCount = 0;
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => {
+      fetchCount += 1;
+      return response(
+        { error: { code: "autodev_usage_trace_not_found" } },
+        404
+      );
+    }
+  });
+
+  assert.deepEqual(await client.queryTrace("span-id with query?x=1"), {
+    kind: "invalid-span-id"
+  });
+  assert.equal(fetchCount, 0);
+  assert.deepEqual(await client.queryTrace("0123456789abcdef"), {
+    kind: "not-found"
+  });
+  assert.equal(fetchCount, 1);
+
+  const genericNotFound = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response({ error: "route not found" }, 404)
+  });
+  assert.deepEqual(await genericNotFound.queryTrace("0123456789abcdef"), {
+    kind: "http-error",
+    status: 404
+  });
+});
+
+test("OpenLITUsageClient treats malformed or over-limit trace detail as unavailable", async () => {
+  const invalidDetails: unknown[] = [
+    {
+      schema: "wrong",
+      traceId: "0123456789abcdef0123456789abcdef",
+      selectedSpanId: "0123456789abcdef",
+      spans: [],
+      partial: false
+    },
+    {
+      schema: "autodev-openlit-trace-detail-v1",
+      traceId: "0123456789abcdef0123456789abcdef",
+      selectedSpanId: "ffffffffffffffff",
+      spans: [
+        {
+          spanId: "0123456789abcdef",
+          parentSpanId: null,
+          spanName: "span",
+          serviceName: "svc",
+          timestamp: "2026-10-05T12:00:00.000Z",
+          durationNs: 1,
+          statusCode: "OK"
+        }
+      ],
+      partial: false
+    }
+  ];
+  const overLimit = {
+    schema: "autodev-openlit-trace-detail-v1",
+    traceId: "0123456789abcdef0123456789abcdef",
+    selectedSpanId: "0123456789abcdef",
+    spans: Array.from({ length: 201 }, (_, index) => ({
+      spanId: index.toString(16).padStart(16, "0"),
+      parentSpanId: null,
+      spanName: "span",
+      serviceName: "svc",
+      timestamp: "2026-10-05T12:00:00.000Z",
+      durationNs: 1,
+      statusCode: "OK"
+    })),
+    partial: true
+  };
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(invalidDetails.shift() ?? overLimit)
+  });
+
+  assert.deepEqual(await client.queryTrace("0123456789abcdef"), {
+    kind: "unreachable"
+  });
+  assert.deepEqual(await client.queryTrace("0123456789abcdef"), {
+    kind: "unreachable"
+  });
+  assert.deepEqual(await client.queryTrace("0123456789abcdef"), {
+    kind: "unreachable"
+  });
+});

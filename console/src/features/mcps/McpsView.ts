@@ -14,9 +14,10 @@ const NOT_OBSERVED_STATUS = "not-observed" as const;
 /**
  * MCP servers resource view.
  *
- * This view combines canonical RuleSync declarations with role exposure, but
- * connection state remains unobserved until a Runtime probe reports it. Only
- * explicit target overrides are shown; missing entries are not inferred.
+ * This view combines canonical RuleSync declarations with configured role
+ * assignments, but connection state remains unobserved until a Runtime probe
+ * reports it. Only explicit target overrides are shown; missing entries are
+ * not inferred.
  */
 
 export interface McpsViewProps {
@@ -44,23 +45,29 @@ export function McpsView({
     },
     {
       id: "roles",
-      header: "Exposed Roles",
+      header: "Configured roles",
       cell: (server) =>
-        React.createElement(
-          "div",
-          { className: "flex flex-wrap gap-1" },
-          server.roles.map((r) =>
-            React.createElement(
+        server.roles.length === 0
+          ? React.createElement(
               "span",
-              {
-                key: r,
-                className:
-                  "text-xs bg-surface-raised text-fg-secondary px-2 py-0.5 rounded border border-border-strong"
-              },
-              r
+              { className: "text-xs text-fg-muted" },
+              "No roles assigned"
             )
-          )
-        )
+          : React.createElement(
+              "div",
+              { className: "flex flex-wrap gap-1" },
+              server.roles.map((r) =>
+                React.createElement(
+                  "span",
+                  {
+                    key: r,
+                    className:
+                      "text-xs bg-surface-raised text-fg-secondary px-2 py-0.5 rounded border border-border-strong"
+                  },
+                  r
+                )
+              )
+            )
     },
     {
       id: "declaration",

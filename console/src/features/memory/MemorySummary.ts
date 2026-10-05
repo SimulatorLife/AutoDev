@@ -46,7 +46,13 @@ export function MemorySummary({
         stale ? "opacity-60" : ""
       }`,
       "aria-busy": pending || stale ? "true" : undefined,
-      "data-memory-summary": pending ? "pending" : stale ? "stale" : "observed"
+      "data-memory-summary": pending ? "pending" : stale ? "stale" : "observed",
+      "data-memory-experiences-observed": pending
+        ? undefined
+        : String(counts.experiences !== null),
+      "data-memory-session-cohorts-observed": pending
+        ? undefined
+        : String(counts.cohortSessions !== null)
     },
     React.createElement(StatCard, {
       title: "Durable Records",
@@ -66,7 +72,7 @@ export function MemorySummary({
     React.createElement(StatCard, {
       title: "Cohort Sessions",
       value: value(counts?.cohortSessions),
-      subtitle: "In window"
+      subtitle: pending || counts.cohortSessions === null ? "" : "In window"
     })
   );
 }

@@ -173,6 +173,17 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
   // RuleSync is the source of truth for losslessly-representable surfaces.
   assert.match(target, /RuleSync tool as the source of truth/u);
 
+  // Skill definitions and eligibility have distinct canonical owners; runtime
+  // exposure/use remain telemetry facts and missing sources stay explicit.
+  assert.match(
+    target,
+    /Canonical skill definitions and descriptive metadata come from `\.rulesync\/skills`; role eligibility is joined from the execution contract/u
+  );
+  assert.match(
+    target,
+    /A missing or invalid RuleSync catalog is not a successful empty catalog/u
+  );
+
   // Provider / model / routing / runtime config is required domain data but
   // remains a secondary surface under Agents (not a top-level nav item).
   assert.match(target, /secondary surfaces? under \*\*Agents\*\*/u);
@@ -394,6 +405,11 @@ test("canonical migration tracker records the current repository quality-gate ev
     migration,
     /local p25 health[\s\S]{0,200}service-token redaction/u,
     "p25 live acceptance probe evidence (health/OTLP/usage/redaction) must be recorded"
+  );
+  assert.match(
+    migration,
+    /p26 trace-detail source applies to p25[\s\S]{0,260}isolated p26 validation image builds successfully[\s\S]{0,120}active image remains p25/u,
+    "p26 trace-detail source/build evidence must distinguish isolated build from active runtime acceptance"
   );
 
   // Data's ConfigRepository must be documented as owning workspaces.json as

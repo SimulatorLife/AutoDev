@@ -5,6 +5,8 @@ export interface ColumnDef<T> {
   readonly header: string;
   readonly cell: (row: T) => React.ReactNode;
   readonly width?: string | undefined;
+  /** Let long cell content wrap instead of widening the table. */
+  readonly wrap?: boolean | undefined;
 }
 
 export interface DataTableProps<T> {
@@ -65,18 +67,23 @@ export function DataTable<T>({
       // Cell styles are declared once on the body rather than on every
       // cell: each repeated class string is sent in both the HTML and the RSC
       // payload, and tables are the largest pages the Console renders.
+      // Wrapping columns mark their cells with `data-wrap`.
       React.createElement(
         "tbody",
         {
           className:
-            "divide-y divide-border text-fg [&>tr>td]:px-4 [&>tr>td]:py-3 [&>tr>td]:whitespace-nowrap"
+            "divide-y divide-border text-fg [&>tr>td]:px-4 [&>tr>td]:py-3 [&>tr>td]:whitespace-nowrap [&>tr>td[data-wrap]]:whitespace-normal [&>tr>td[data-wrap]]:break-words"
         },
         data.map((row) =>
           React.createElement(
             "tr",
             { key: keyExtractor(row) },
             columns.map((col) =>
-              React.createElement("td", { key: col.id }, col.cell(row))
+              React.createElement(
+                "td",
+                { key: col.id, "data-wrap": col.wrap ? "" : undefined },
+                col.cell(row)
+              )
             )
           )
         )

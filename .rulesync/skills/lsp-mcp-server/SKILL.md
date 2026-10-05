@@ -1,6 +1,6 @@
 ---
 name: lsp-mcp-server
-description: Use LSP when exact language/compiler semantics are needed after structural discovery: definitions, references, inferred types, diagnostics, rename, refactoring, and precise navigation. Do not use LSP to rebuild broad code relationships that CodeGraphContext already maps.
+description: "Use LSP when exact language/compiler semantics are needed after structural discovery: definitions, references, inferred types, diagnostics, rename, refactoring, and precise navigation. Do not use LSP to rebuild broad code relationships that CodeGraphContext already maps."
 targets: ["copilot"]
 ---
 

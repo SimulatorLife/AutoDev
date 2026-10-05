@@ -29,6 +29,16 @@ export interface UsageViewProps {
 }
 
 const NOT_OBSERVED_LABEL = "Not observed";
+const COUNT_FORMATTER = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 0
+});
+const TOKEN_FORMATTER = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1
+});
+const DURATION_FORMATTER = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 1
+});
 
 const SELECT_CLASS =
   "bg-input border border-border rounded px-2.5 py-1 text-fg";
@@ -37,7 +47,7 @@ const EMPTY_STATE_CLASS = "text-xs text-fg-muted italic py-2";
 
 export function formatTokenCount(value: number | null): string {
   if (value === null) return NOT_OBSERVED_LABEL;
-  return `${(value / 1000).toFixed(0)}k`;
+  return TOKEN_FORMATTER.format(value);
 }
 
 export function formatCacheRate(value: number | null): string {
@@ -47,11 +57,20 @@ export function formatCacheRate(value: number | null): string {
 
 export function formatLatency(value: number | null): string {
   if (value === null) return NOT_OBSERVED_LABEL;
-  return `${value} ms`;
+  if (value >= 3_600_000)
+    return `${DURATION_FORMATTER.format(value / 3_600_000)} h`;
+  if (value >= 60_000)
+    return `${DURATION_FORMATTER.format(value / 60_000)} min`;
+  if (value >= 1000) return `${DURATION_FORMATTER.format(value / 1000)} s`;
+  return `${DURATION_FORMATTER.format(value)} ms`;
 }
 
 export function formatCount(value: number | null): string {
-  return value === null ? NOT_OBSERVED_LABEL : String(value);
+  return value === null ? NOT_OBSERVED_LABEL : COUNT_FORMATTER.format(value);
+}
+
+function formatDimension(value: string): string {
+  return value.trim().length === 0 ? "Not attributed" : value;
 }
 
 const DEFAULT_SELECTION: UsageFilterSelection = {
@@ -224,7 +243,7 @@ export function UsageView({
           React.createElement(
             "span",
             null,
-            "Custom range accepts up to 90 days; current OpenLIT retention is about 30 days."
+            "Custom range accepts up to 90 days; current telemetry retention is about 30 days."
           )
         ),
         renderFilterSelect(
@@ -346,12 +365,12 @@ export function UsageView({
                     React.createElement(
                       "span",
                       { className: "font-mono text-fg" },
-                      item.role
+                      formatDimension(item.role)
                     ),
                     React.createElement(
                       "span",
                       { className: "font-semibold text-chart-1" },
-                      item.count
+                      formatCount(item.count)
                     )
                   )
                 )
@@ -395,12 +414,12 @@ export function UsageView({
                     React.createElement(
                       "span",
                       { className: "font-mono text-fg" },
-                      item.provider
+                      formatDimension(item.provider)
                     ),
                     React.createElement(
                       "span",
                       { className: "font-semibold text-chart-2" },
-                      item.count
+                      formatCount(item.count)
                     )
                   )
                 )
@@ -482,12 +501,12 @@ export function UsageView({
                     {
                       className: "text-xs font-mono text-fg-muted truncate"
                     },
-                    item.tool
+                    formatDimension(item.tool)
                   ),
                   React.createElement(
                     "span",
                     { className: "text-lg font-bold text-fg mt-1" },
-                    item.count
+                    formatCount(item.count)
                   )
                 )
               )

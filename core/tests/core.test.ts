@@ -7,6 +7,8 @@ import {
   canonicalNavGroupOf,
   isCanonicalNavGroupId,
   isCanonicalNavSection,
+  isOpenTelemetrySpanId,
+  isOpenTelemetryTraceId,
   isSkillEligibleForRole,
   navOrderOf,
   validateAgentDefinition
@@ -112,4 +114,17 @@ test("isSkillEligibleForRole checks role list accurately", () => {
     false
   );
   assert.equal(isSkillEligibleForRole("unknown", "orchestrator", list), false);
+});
+
+test("OpenTelemetry trace and span identifiers require valid non-zero W3C ids", () => {
+  assert.equal(
+    isOpenTelemetryTraceId("0123456789abcdef0123456789abcdef"),
+    true
+  );
+  assert.equal(isOpenTelemetryTraceId("0".repeat(32)), false);
+  assert.equal(isOpenTelemetryTraceId("not-a-trace-id"), false);
+  assert.equal(isOpenTelemetrySpanId("0123456789abcdef"), true);
+  assert.equal(isOpenTelemetrySpanId("0".repeat(16)), false);
+  assert.equal(isOpenTelemetrySpanId("offline_012345"), false);
+  assert.equal(isOpenTelemetrySpanId(null), false);
 });

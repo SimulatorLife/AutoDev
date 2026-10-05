@@ -10,7 +10,7 @@ import {
   readControlApiConfig
 } from "../../../src/lib/server/control-api.ts";
 import { agentDetailFromControlApi } from "../../../src/lib/server/views.ts";
-import { ResourceUnavailable } from "../../_console.tsx";
+import { ResourceUnavailable } from "../../_console.ts";
 
 export const dynamic = "force-dynamic";
 

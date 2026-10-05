@@ -2,7 +2,6 @@ import type {
   ControlApiMemoryCohortsResponse,
   ControlApiMemoryExperiencesResponse,
   ControlApiMemoryRecordsResponse,
-  ControlApiWorkspacesResponse,
   WorkspaceEntry
 } from "@simulatorlife/autodev-core";
 import React from "react";
@@ -32,11 +31,9 @@ import {
   type MemoryPortalConfig,
   readMemoryPortalConfig
 } from "../../src/lib/server/memory-portal.ts";
-import { ResourceUnavailable } from "../_console.tsx";
+import { ResourceUnavailable } from "../_console.ts";
 
 export const dynamic = "force-dynamic";
-
-const DEFAULT_WORKSPACE_ID = "SimulatorLife/AutoDev";
 
 interface PageProps {
   readonly searchParams?: Promise<
@@ -89,12 +86,82 @@ function parseMemoryQueryParams(
   };
 }
 
-function workspacesFromResult(
-  result: ControlApiResult<ControlApiWorkspacesResponse>
-): readonly WorkspaceEntry[] {
-  return result.kind === "ok" && result.data.catalogStatus === "valid"
-    ? result.data.workspaces
-    : [];
+interface MemoryWorkspaceScope {
+  readonly workspaces: readonly WorkspaceEntry[];
+  readonly currentWorkspaceId: string;
+}
+
+type MemoryWorkspaceScopeResult =
+  | { readonly kind: "ok"; readonly scope: MemoryWorkspaceScope }
+  | {
+      readonly kind: "unavailable";
+      readonly title: string;
+      readonly code: string;
+      readonly message: string;
+    };
+
+/**
+ * Resolves the URL scope exclusively against the canonical workspace source.
+ * Nothing is read from Memory until the scope is known to be configured, so
+ * no default workspace is ever substituted and an unknown scope is never
+ * queried.
+ */
+async function resolveMemoryWorkspaceScope(
+  config: ControlApiConfig,
+  requestedWorkspaceId: string
+): Promise<MemoryWorkspaceScopeResult> {
+  const result = await fetchWorkspaces(config);
+  if (result.kind !== "ok") {
+    return {
+      kind: "unavailable",
+      title: "Workspace configuration could not be loaded",
+      code: controlApiFailureCode(result),
+      message: result.message
+    };
+  }
+
+  if (result.data.catalogStatus === "invalid") {
+    return {
+      kind: "unavailable",
+      title: "Workspace configuration is invalid",
+      code: "autodev_workspace_catalog_invalid",
+      message:
+        "The workspace source could not be validated; no Memory scope is inferred."
+    };
+  }
+  if (result.data.catalogStatus === "unavailable") {
+    return {
+      kind: "unavailable",
+      title: "Workspace configuration is unavailable",
+      code: "autodev_workspace_catalog_unavailable",
+      message:
+        "The workspace source is missing or unreadable; no Memory scope is inferred."
+    };
+  }
+
+  const workspaces = result.data.workspaces;
+  if (workspaces.length === 0) {
+    return {
+      kind: "unavailable",
+      title: "No canonical workspace is configured",
+      code: "autodev_workspace_catalog_empty",
+      message:
+        "Memory requires a configured workspace scope; no default workspace is substituted."
+    };
+  }
+
+  const currentWorkspaceId = requestedWorkspaceId || workspaces[0]!.id;
+  if (!workspaces.some((workspace) => workspace.id === currentWorkspaceId)) {
+    return {
+      kind: "unavailable",
+      title: "Requested Memory workspace is not configured",
+      code: "autodev_memory_workspace_unknown",
+      message:
+        "Select a workspace from the canonical workspace catalog; the requested scope was not queried."
+    };
+  }
+
+  return { kind: "ok", scope: { workspaces, currentWorkspaceId } };
 }
 
 function renderNoControlApiState(
@@ -107,7 +174,7 @@ function renderNoControlApiState(
       "Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read governed memory.",
     ...(portal
       ? {
-          hint: "You can still access the external OpenLIT memory operator UI."
+          hint: "You can still access the temporary external Memory UI."
         }
       : {})
   });
@@ -115,23 +182,15 @@ function renderNoControlApiState(
 
 type FailedRead = Exclude<ControlApiResult<unknown>, { readonly kind: "ok" }>;
 
-const TAB_SUBJECT: Readonly<Record<Exclude<MemoryTab, "portal">, string>> = {
-  records: "Memory records",
-  experiences: "Memory experiences",
-  cohorts: "Memory outcome cohorts"
-};
-
 function renderTabUnavailableState(
-  tab: Exclude<MemoryTab, "portal">,
+  title: string,
   result: FailedRead
 ): React.JSX.Element {
   const isUnavailable =
     result.kind !== "unreachable" &&
     result.code === "autodev_memory_unavailable";
   return React.createElement(ResourceUnavailable, {
-    title: isUnavailable
-      ? "Memory storage is not configured"
-      : `${TAB_SUBJECT[tab]} could not be loaded`,
+    title: isUnavailable ? "Memory storage is not configured" : title,
     code: controlApiFailureCode(result),
     message: result.message,
     ...(isUnavailable
@@ -203,6 +262,7 @@ type TabLoad =
   | {
       readonly kind: "failed";
       readonly tab: Exclude<MemoryTab, "portal">;
+      readonly title: string;
       readonly result: FailedRead;
     };
 
@@ -227,7 +287,30 @@ async function loadRecordsTab(
       : null
   ]);
   if (records.kind !== "ok") {
-    return { kind: "failed", tab: "records", result: records };
+    return {
+      kind: "failed",
+      tab: "records",
+      title: "Memory records could not be loaded",
+      result: records
+    };
+  }
+  // A selected record is shown with its history or not at all; a failed
+  // detail read is reported rather than rendered as an unselected list.
+  if (selected && selected.kind !== "ok") {
+    return {
+      kind: "failed",
+      tab: "records",
+      title: "Selected memory record could not be loaded",
+      result: selected
+    };
+  }
+  if (history && history.kind !== "ok") {
+    return {
+      kind: "failed",
+      tab: "records",
+      title: "Memory record history could not be loaded",
+      result: history
+    };
   }
   return {
     kind: "ok",
@@ -235,8 +318,8 @@ async function loadRecordsTab(
       tab: "records",
       records: records.data.items,
       totalRecords: records.data.totalCount,
-      selectedRecord: selected?.kind === "ok" ? selected.data.memory : null,
-      selectedHistory: history?.kind === "ok" ? history.data : null
+      selectedRecord: selected?.data.memory ?? null,
+      selectedHistory: history?.data ?? null
     }
   };
 }
@@ -253,7 +336,20 @@ async function loadExperiencesTab(
       : null
   ]);
   if (experiences.kind !== "ok") {
-    return { kind: "failed", tab: "experiences", result: experiences };
+    return {
+      kind: "failed",
+      tab: "experiences",
+      title: "Memory experiences could not be loaded",
+      result: experiences
+    };
+  }
+  if (selected && selected.kind !== "ok") {
+    return {
+      kind: "failed",
+      tab: "experiences",
+      title: "Selected memory experience could not be loaded",
+      result: selected
+    };
   }
   return {
     kind: "ok",
@@ -261,8 +357,7 @@ async function loadExperiencesTab(
       tab: "experiences",
       experiences: experiences.data.items,
       totalExperiences: experiences.data.totalCount,
-      selectedExperience:
-        selected?.kind === "ok" ? selected.data.experience : null
+      selectedExperience: selected?.data.experience ?? null
     }
   };
 }
@@ -290,7 +385,12 @@ async function loadCohortsTab(
     )
   ]);
   if (sessionCohorts.kind !== "ok") {
-    return { kind: "failed", tab: "cohorts", result: sessionCohorts };
+    return {
+      kind: "failed",
+      tab: "cohorts",
+      title: "Memory outcome cohorts could not be loaded",
+      result: sessionCohorts
+    };
   }
   return {
     kind: "ok",
@@ -365,23 +465,27 @@ export default async function MemoryPage(
 
   if (!config) return renderNoControlApiState(portal);
 
-  // The workspace catalog populates the selector and only decides the scope
-  // when the URL names none. Tab, filter, and selection links always carry
-  // workspaceId, so the catalog normally loads in parallel with the active
-  // tab's reads instead of serially ahead of them.
-  const workspacesRequest = fetchWorkspaces(config);
-  const currentWorkspaceId =
-    params.workspaceIdParam ||
-    workspacesFromResult(await workspacesRequest)[0]?.id ||
-    DEFAULT_WORKSPACE_ID;
+  const workspaceScope = await resolveMemoryWorkspaceScope(
+    config,
+    params.workspaceIdParam
+  );
+  if (workspaceScope.kind !== "ok") {
+    return React.createElement(ResourceUnavailable, {
+      title: workspaceScope.title,
+      code: workspaceScope.code,
+      message: workspaceScope.message
+    });
+  }
+  const { workspaces, currentWorkspaceId } = workspaceScope.scope;
 
   // Started before the tab's reads and deliberately not awaited: the summary
   // streams to the client after the page renders.
   const summaryCounts = loadSummaryCounts(config, currentWorkspaceId, params);
-  const [workspacesResult, tabLoad] = await Promise.all([
-    workspacesRequest,
-    TAB_LOADERS[params.activeTab](params, currentWorkspaceId, config)
-  ]);
+  const tabLoad = await TAB_LOADERS[params.activeTab](
+    params,
+    currentWorkspaceId,
+    config
+  );
   return React.createElement(MemoryView, {
     // A failed tab read is reported in the tab body, so the tabs, scope
     // selector, and summary stay available for moving to a working view.
@@ -390,7 +494,10 @@ export default async function MemoryPage(
         ? tabLoad.content
         : {
             tab: tabLoad.tab,
-            unavailable: renderTabUnavailableState(tabLoad.tab, tabLoad.result)
+            unavailable: renderTabUnavailableState(
+              tabLoad.title,
+              tabLoad.result
+            )
           },
     summary: React.createElement(MemorySummaryStream, {
       counts: summaryCounts
@@ -404,7 +511,7 @@ export default async function MemoryPage(
       occurredUntil: params.occurredUntil
     },
     repositoryId: currentWorkspaceId,
-    workspaces: workspacesFromResult(workspacesResult),
+    workspaces,
     portalHref: portal?.href ?? null
   });
 }

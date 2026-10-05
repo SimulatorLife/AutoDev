@@ -1,11 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  readdirSync,
+  readFileSync,
+  realpathSync
+} from "node:fs";
 import {
   link,
   lstat,
   mkdir,
   readFile,
   realpath,
+  rename,
   unlink,
   writeFile
 } from "node:fs/promises";
@@ -24,11 +31,19 @@ import type {
   SkillDefinition
 } from "@simulatorlife/autodev-core";
 import { parse, type ParseError } from "jsonc-parser";
+import { parse as parseYaml } from "yaml";
 
 const DEFAULT_REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const COLLATOR = new Intl.Collator();
 const MD_EXTENSION_PATTERN = /\.md$/u;
-const SKILL_DESCRIPTION_PATTERN = /description:\s*([^\n]+)/i;
+const COMMANDS_SOURCE = ".rulesync/commands" as const;
+const COMMAND_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
+const COMMAND_CONTENT_MAX_BYTES = 48_000;
+const COMMAND_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
+const COMMAND_FRONTMATTER_PATTERN =
+  /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/u;
+const SKILLS_SOURCE = ".rulesync/skills" as const;
+const SKILL_FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u;
 const SKILL_NAME_PATTERN = /^[a-z0-9-]{1,64}$/u;
 const SKILL_DESCRIPTION_MAX = 512;
 const SKILL_CONTENT_MAX = 20_000;
@@ -43,6 +58,48 @@ export interface RuleSyncHooksState {
   readonly source: ".rulesync/hooks.jsonc";
   readonly valid: boolean | null;
   readonly hooks: readonly HookDefinition[];
+}
+
+export interface RuleSyncCommand extends PromptAsset {
+  readonly name: string;
+  readonly path: string;
+  readonly kind: "command";
+  readonly content: string;
+  readonly prompt: string;
+  readonly targets: readonly string[];
+  readonly revision: string;
+}
+
+export interface RuleSyncCommandsState {
+  readonly source: typeof COMMANDS_SOURCE;
+  readonly valid: boolean | null;
+  readonly commands: readonly RuleSyncCommand[];
+}
+
+export interface RuleSyncCommandUpdateInput {
+  readonly name: string;
+  readonly expectedRevision: string;
+  readonly content: string;
+}
+
+export class RuleSyncCommandConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RuleSyncCommandConflictError";
+  }
+}
+
+export class RuleSyncCommandValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RuleSyncCommandValidationError";
+  }
+}
+
+export interface RuleSyncSkillsState {
+  readonly source: typeof SKILLS_SOURCE;
+  readonly valid: boolean | null;
+  readonly skills: readonly SkillDefinition[];
 }
 
 export interface RuleSyncSkillPromotionInput {
@@ -313,6 +370,90 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
 }
 
+interface CanonicalRuleSyncDirectory {
+  readonly valid: boolean | null;
+  readonly path: string | null;
+}
+
+function resolveCanonicalRuleSyncDirectory(
+  repositoryRoot: string,
+  childDirectory: "commands" | "skills"
+): CanonicalRuleSyncDirectory {
+  let root: string;
+  try {
+    root = realpathSync(repositoryRoot);
+  } catch (error) {
+    return {
+      valid: isMissingFileError(error) ? null : false,
+      path: null
+    };
+  }
+  const rootPath = path.join(root, ".rulesync");
+  let rootStat: ReturnType<typeof lstatSync>;
+  try {
+    rootStat = lstatSync(rootPath);
+  } catch (error) {
+    return {
+      valid: isMissingFileError(error) ? null : false,
+      path: null
+    };
+  }
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    return { valid: false, path: null };
+  }
+  const sourcePath = path.join(rootPath, childDirectory);
+  let sourceStat: ReturnType<typeof lstatSync>;
+  try {
+    sourceStat = lstatSync(sourcePath);
+  } catch (error) {
+    return {
+      valid: isMissingFileError(error) ? null : false,
+      path: null
+    };
+  }
+  if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) {
+    return { valid: false, path: null };
+  }
+  return { valid: true, path: sourcePath };
+}
+
+function parseRuleSyncCommand(name: string, content: string): RuleSyncCommand {
+  const frontmatter = content.match(COMMAND_FRONTMATTER_PATTERN);
+  if (!frontmatter) {
+    throw new RuleSyncCommandValidationError(
+      `Command "${name}" must have valid YAML frontmatter.`
+    );
+  }
+  const metadata: unknown = parseYaml(frontmatter[1]!);
+  if (!isRecord(metadata)) {
+    throw new RuleSyncCommandValidationError(
+      `Command "${name}" frontmatter must be a mapping.`
+    );
+  }
+  const description = metadata.description;
+  const targets = metadata.targets ?? ["*"];
+  if (
+    (description !== undefined && typeof description !== "string") ||
+    !Array.isArray(targets) ||
+    !targets.every((target) => typeof target === "string") ||
+    (metadata.name !== undefined && metadata.name !== name)
+  ) {
+    throw new RuleSyncCommandValidationError(
+      `Command "${name}" frontmatter metadata is invalid.`
+    );
+  }
+  return {
+    name,
+    path: `${COMMANDS_SOURCE}/${name}.md`,
+    kind: "command",
+    content,
+    prompt: frontmatter[2]?.trim() ?? "",
+    targets,
+    revision: createHash("sha256").update(content, "utf8").digest("hex"),
+    ...(description === undefined ? {} : { description })
+  };
+}
+
 export class RuleSyncRepository {
   readonly repositoryRoot: string;
 
@@ -320,33 +461,138 @@ export class RuleSyncRepository {
     this.repositoryRoot = repositoryRoot;
   }
 
-  loadCommands(): PromptAsset[] {
-    const commandsDir = path.join(this.repositoryRoot, ".rulesync", "commands");
-    if (!existsSync(commandsDir)) return [];
-    try {
-      const files = readdirSync(commandsDir);
-      return files
-        .filter((file) => file.endsWith(".md"))
-        .sort((a, b) => COLLATOR.compare(a, b))
-        .map((file) => {
-          const name = file.replace(MD_EXTENSION_PATTERN, "");
-          const fullPath = path.join(commandsDir, file);
-          let content = "";
-          try {
-            content = readFileSync(fullPath, "utf8");
-          } catch {
-            // Ignore unreadable file
-          }
-          return {
-            name,
-            path: `.rulesync/commands/${file}`,
-            description: `RuleSync command ${name}`,
-            content
-          };
-        });
-    } catch {
-      return [];
+  loadCommands(): RuleSyncCommandsState {
+    const directory = resolveCanonicalRuleSyncDirectory(
+      this.repositoryRoot,
+      "commands"
+    );
+    if (directory.valid !== true || directory.path === null) {
+      return {
+        source: COMMANDS_SOURCE,
+        valid: directory.valid,
+        commands: []
+      };
     }
+    const commandsDir = directory.path;
+
+    try {
+      const commands: RuleSyncCommand[] = [];
+      for (const entry of readdirSync(commandsDir, { withFileTypes: true })) {
+        if (!entry.name.endsWith(".md")) continue;
+        if (entry.isSymbolicLink() || !entry.isFile()) {
+          return { source: COMMANDS_SOURCE, valid: false, commands: [] };
+        }
+        const name = entry.name.replace(MD_EXTENSION_PATTERN, "");
+        commands.push(
+          parseRuleSyncCommand(
+            name,
+            readFileSync(path.join(commandsDir, entry.name), "utf8")
+          )
+        );
+      }
+      commands.sort((left, right) => COLLATOR.compare(left.name, right.name));
+      return { source: COMMANDS_SOURCE, valid: true, commands };
+    } catch {
+      return { source: COMMANDS_SOURCE, valid: false, commands: [] };
+    }
+  }
+
+  async updateCommand(
+    input: RuleSyncCommandUpdateInput
+  ): Promise<RuleSyncCommand> {
+    const name = input.name;
+    if (!COMMAND_NAME_PATTERN.test(name)) {
+      throw new RuleSyncCommandValidationError(
+        "Command name must be a lowercase hyphenated slug."
+      );
+    }
+    if (!COMMAND_REVISION_PATTERN.test(input.expectedRevision)) {
+      throw new RuleSyncCommandValidationError(
+        "Expected command revision is invalid."
+      );
+    }
+    const content = input.content
+      .replaceAll("\r\n", "\n")
+      .replaceAll("\r", "\n");
+    if (
+      Buffer.byteLength(content, "utf8") > COMMAND_CONTENT_MAX_BYTES ||
+      hasControlCharacters(content)
+    ) {
+      throw new RuleSyncCommandValidationError(
+        "Command content contains unsafe controls or exceeds its safe size bound."
+      );
+    }
+
+    const state = this.loadCommands();
+    if (state.valid !== true) {
+      throw new RuleSyncCommandValidationError(
+        "Canonical RuleSync command source is not valid."
+      );
+    }
+    const current = state.commands.find((command) => command.name === name);
+    if (!current) {
+      throw new RuleSyncCommandConflictError(
+        `Canonical command "${name}" no longer exists.`
+      );
+    }
+    if (current.revision !== input.expectedRevision) {
+      throw new RuleSyncCommandConflictError(
+        `Canonical command "${name}" changed since it was loaded.`
+      );
+    }
+
+    const updated = parseRuleSyncCommand(name, content);
+    if (updated.revision === current.revision) return current;
+
+    const directory = resolveCanonicalRuleSyncDirectory(
+      this.repositoryRoot,
+      "commands"
+    );
+    if (directory.valid !== true || directory.path === null) {
+      throw new RuleSyncCommandConflictError(
+        "Canonical RuleSync command directory is no longer available."
+      );
+    }
+    const commandsDir = directory.path;
+    const commandPath = path.join(commandsDir, `${name}.md`);
+    const commandStat = await lstat(commandPath);
+    if (!commandStat.isFile() || commandStat.isSymbolicLink()) {
+      throw new RuleSyncCommandConflictError(
+        `Canonical command "${name}" is not a regular file.`
+      );
+    }
+    const latestContent = await readFile(commandPath, "utf8");
+    if (
+      createHash("sha256").update(latestContent, "utf8").digest("hex") !==
+      input.expectedRevision
+    ) {
+      throw new RuleSyncCommandConflictError(
+        `Canonical command "${name}" changed before the update was written.`
+      );
+    }
+
+    const temporaryPath = path.join(
+      commandsDir,
+      `.${name}.${randomUUID()}.tmp`
+    );
+    try {
+      await writeFile(temporaryPath, content, {
+        encoding: "utf8",
+        flag: "wx",
+        mode: 0o644
+      });
+      await rename(temporaryPath, commandPath);
+    } finally {
+      await unlink(temporaryPath).catch(() => undefined);
+    }
+
+    const persistedContent = await readFile(commandPath, "utf8");
+    if (persistedContent !== content) {
+      throw new RuleSyncCommandConflictError(
+        `Canonical command "${name}" changed during the update.`
+      );
+    }
+    return parseRuleSyncCommand(name, persistedContent);
   }
 
   loadHooksState(): RuleSyncHooksState {
@@ -504,47 +750,55 @@ export class RuleSyncRepository {
     };
   }
 
-  loadSkills(): SkillDefinition[] {
-    const skillsDir = path.join(this.repositoryRoot, ".rulesync", "skills");
-    if (!existsSync(skillsDir)) return [];
+  loadSkills(): RuleSyncSkillsState {
+    const directory = resolveCanonicalRuleSyncDirectory(
+      this.repositoryRoot,
+      "skills"
+    );
+    if (directory.valid !== true || directory.path === null) {
+      return { source: SKILLS_SOURCE, valid: directory.valid, skills: [] };
+    }
+    const skillsDir = directory.path;
+
     try {
-      const entries = readdirSync(skillsDir, { withFileTypes: true });
-      return entries
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => {
-          const name = entry.name;
-          const skillMd = path.join(skillsDir, name, "SKILL.md");
-          let description = `RuleSync skill ${name}`;
-          if (existsSync(skillMd)) {
-            try {
-              const text = readFileSync(skillMd, "utf8");
-              const descMatch = text.match(SKILL_DESCRIPTION_PATTERN);
-              if (descMatch?.[1]) {
-                const rawDescription = descMatch[1].trim();
-                if (rawDescription.startsWith('"')) {
-                  try {
-                    const parsed: unknown = JSON.parse(rawDescription);
-                    if (typeof parsed === "string") description = parsed;
-                  } catch {
-                    description = rawDescription;
-                  }
-                } else {
-                  description = rawDescription;
-                }
-              }
-            } catch {
-              // Ignore unreadable SKILL.md
-            }
-          }
-          return {
-            name,
-            description,
-            path: `.rulesync/skills/${name}/SKILL.md`
-          };
-        })
-        .sort((a, b) => COLLATOR.compare(a.name, b.name));
+      const skills: SkillDefinition[] = [];
+      for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
+        if (entry.isSymbolicLink()) {
+          return { source: SKILLS_SOURCE, valid: false, skills: [] };
+        }
+        if (!entry.isDirectory()) continue;
+        if (!SKILL_NAME_PATTERN.test(entry.name)) {
+          return { source: SKILLS_SOURCE, valid: false, skills: [] };
+        }
+        const skillPath = path.join(skillsDir, entry.name, "SKILL.md");
+        const skillStat = lstatSync(skillPath);
+        if (!skillStat.isFile() || skillStat.isSymbolicLink()) {
+          return { source: SKILLS_SOURCE, valid: false, skills: [] };
+        }
+        const text = readFileSync(skillPath, "utf8");
+        const frontmatter = text.match(SKILL_FRONTMATTER_PATTERN);
+        if (!frontmatter) {
+          return { source: SKILLS_SOURCE, valid: false, skills: [] };
+        }
+        const metadata: unknown = parseYaml(frontmatter[1]!);
+        if (
+          !isRecord(metadata) ||
+          metadata.name !== entry.name ||
+          typeof metadata.description !== "string" ||
+          metadata.description.trim().length === 0
+        ) {
+          return { source: SKILLS_SOURCE, valid: false, skills: [] };
+        }
+        skills.push({
+          name: entry.name,
+          description: metadata.description,
+          path: `.rulesync/skills/${entry.name}/SKILL.md`
+        });
+      }
+      skills.sort((left, right) => COLLATOR.compare(left.name, right.name));
+      return { source: SKILLS_SOURCE, valid: true, skills };
     } catch {
-      return [];
+      return { source: SKILLS_SOURCE, valid: false, skills: [] };
     }
   }
 }

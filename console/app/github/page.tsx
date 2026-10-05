@@ -6,7 +6,7 @@ import {
   fetchGithubWorkflows,
   readControlApiConfig
 } from "../../src/lib/server/control-api.ts";
-import { ResourceUnavailable } from "../_console.tsx";
+import { ResourceUnavailable } from "../_console.ts";
 
 export const dynamic = "force-dynamic";
 

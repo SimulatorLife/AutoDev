@@ -15,8 +15,8 @@ import {
 const MUTED_TEXT_CLASS = "text-fg-muted";
 
 export interface MemoryCohortsViewProps {
-  readonly sessionCohorts?: MemorySessionOutcomeCohortPage | null | undefined;
-  readonly useCohorts?: MemoryInjectionUseCohortPage | null | undefined;
+  readonly sessionCohorts: MemorySessionOutcomeCohortPage | null;
+  readonly useCohorts: MemoryInjectionUseCohortPage | null;
   readonly currentWorkspaceId: string;
   readonly repositoryId: string;
   readonly occurredFrom: string;
@@ -31,6 +31,7 @@ export function MemoryCohortsView({
   occurredFrom,
   occurredUntil
 }: MemoryCohortsViewProps): React.JSX.Element {
+  const hasSessionCohorts = sessionCohorts !== null;
   const sessionCells = sessionCohorts?.cells ?? [];
   const useCells = useCohorts?.cells ?? [];
   const assessedExposureCount = useCells.reduce(
@@ -240,7 +241,12 @@ export function MemoryCohortsView({
     // Section: Session Outcome Cohorts
     React.createElement(
       "div",
-      { className: "flex flex-col gap-3" },
+      {
+        className: "flex flex-col gap-3",
+        "data-memory-session-cohorts-state": hasSessionCohorts
+          ? "observed"
+          : "unavailable"
+      },
       React.createElement(
         "h3",
         {
@@ -249,17 +255,28 @@ export function MemoryCohortsView({
         },
         "Session Outcome Breakdown"
       ),
-      React.createElement<DataTableProps<MemorySessionOutcomeCohortCell>>(
-        DataTable,
-        {
-          data: sessionCells,
-          columns: cellColumns,
-          keyExtractor: (c: MemorySessionOutcomeCohortCell) =>
-            `${c.memoryMode}-${c.outcomeKind ?? "unreported"}-${c.sessionCount}`,
-          emptyMessage:
-            "No session outcome cohort data found for the specified scope and time window."
-        }
-      )
+      hasSessionCohorts
+        ? React.createElement<DataTableProps<MemorySessionOutcomeCohortCell>>(
+            DataTable,
+            {
+              data: sessionCells,
+              columns: cellColumns,
+              keyExtractor: (c: MemorySessionOutcomeCohortCell) =>
+                `${c.memoryMode}-${c.outcomeKind ?? "unreported"}-${c.sessionCount}`,
+              emptyMessage:
+                "No session outcome cohort data found for the specified scope and time window."
+            }
+          )
+        : React.createElement(
+            "div",
+            {
+              role: "alert",
+              className:
+                "rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm text-warning",
+              "data-status": "unavailable"
+            },
+            "Session outcome cohort data is unavailable; no session count is inferred."
+          )
     ),
 
     // Section: curator-assessed injection use. These are exposure counts,
@@ -268,7 +285,8 @@ export function MemoryCohortsView({
       "div",
       {
         className: "flex flex-col gap-3",
-        "data-memory-use-cohorts-state": useCohorts ? "observed" : "unavailable"
+        "data-memory-use-cohorts-state":
+          useCohorts === null ? "unavailable" : "observed"
       },
       React.createElement(
         "h3",
@@ -314,11 +332,13 @@ export function MemoryCohortsView({
         : React.createElement(
             "p",
             {
+              role: "alert",
               className:
-                "rounded-lg border border-border bg-surface/40 p-4 text-xs text-fg-muted",
+                "rounded-lg border border-warning/40 bg-warning/10 p-4 text-xs text-warning",
+              "data-status": "unavailable",
               "data-memory-use-cohorts-empty": true
             },
-            "Injection-use cohorts were not observed for this request. This is not evidence that no memories were used or assessed."
+            "Injection-use cohorts are unavailable for this request. This is not evidence that no memories were used or assessed."
           ),
       React.createElement(
         "p",

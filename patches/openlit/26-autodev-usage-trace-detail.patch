@@ -1,0 +1,530 @@
+diff --git a/src/client/public/openapi.yaml b/src/client/public/openapi.yaml
+index 48ae9082..8021a2ac 100644
+--- a/src/client/public/openapi.yaml
++++ b/src/client/public/openapi.yaml
+@@ -30,7 +30,9 @@ info:
+ 
+     ## Authentication
+ 
+-    All documented endpoints require Bearer API key auth (`ApiKeyAuth`).
++    All documented endpoints require Bearer API key auth (`ApiKeyAuth`) except
++    the fixed AutoDev Usage trace endpoint, which requires its dedicated
++    server-to-server `AUTODEV_OPENLIT_USAGE_TOKEN`.
+   version: 1.28.0
+ servers:
+   - url: http://localhost:3000
+@@ -56,6 +58,43 @@ tags:
+     description: Manage browser/SDK access keys
+ 
+ paths:
++  /api/autodev/usage/span/{spanId}:
++    get:
++      tags:
++        - Telemetry
++      summary: Read bounded AutoDev trace context by span ID
++      description: >
++        Fixed, read-only server-to-server telemetry lookup. The AutoDev Usage
++        bearer token is required; raw SQL, trace attributes, events and content
++        fields are never accepted or returned. Results are limited to 200
++        privacy-filtered span summaries.
++      security:
++        - AutoDevUsageAuth: []
++      parameters:
++        - name: spanId
++          in: path
++          required: true
++          description: Non-zero 16-hex-character OpenTelemetry SpanId.
++          schema:
++            type: string
++            pattern: '^[0-9a-fA-F]{16}$'
++      responses:
++        '200':
++          description: Bounded, privacy-filtered trace detail.
++          content:
++            application/json:
++              schema:
++                $ref: '#/components/schemas/AutoDevTraceDetail'
++        '400':
++          description: Invalid SpanId.
++        '401':
++          $ref: '#/components/responses/UnauthorizedError'
++        '404':
++          description: The span was not observed in the configured trace source.
++        '502':
++          description: The trace source returned invalid data.
++        '503':
++          description: The dedicated Usage service or telemetry source is unavailable.
+   /api/telemetry/logs:
+     post:
+       tags:
+@@ -1485,6 +1524,11 @@ components:
+         type: string
+         example: dbcfg_01HXYZ
+   securitySchemes:
++    AutoDevUsageAuth:
++      type: http
++      scheme: bearer
++      bearerFormat: AUTODEV_OPENLIT_USAGE_TOKEN
++      description: Dedicated server-to-server AutoDev Usage token; never use in a browser.
+     ApiKeyAuth:
+       type: http
+       scheme: bearer
+@@ -1495,6 +1539,51 @@ components:
+         `x-openlit-database-config-id`.
+ 
+   schemas:
++    AutoDevTraceDetail:
++      type: object
++      required: [schema, traceId, selectedSpanId, spans, partial]
++      properties:
++        schema:
++          type: string
++          enum: [autodev-openlit-trace-detail-v1]
++        traceId:
++          type: string
++          pattern: '^[0-9a-fA-F]{32}$'
++        selectedSpanId:
++          type: string
++          pattern: '^[0-9a-fA-F]{16}$'
++        partial:
++          type: boolean
++        spans:
++          type: array
++          maxItems: 200
++          items:
++            $ref: '#/components/schemas/AutoDevTraceSpanSummary'
++    AutoDevTraceSpanSummary:
++      type: object
++      required: [spanId, parentSpanId, spanName, serviceName, timestamp, durationNs, statusCode]
++      properties:
++        spanId:
++          type: string
++          pattern: '^[0-9a-fA-F]{16}$'
++        parentSpanId:
++          type: string
++          nullable: true
++        spanName:
++          type: string
++          maxLength: 256
++        serviceName:
++          type: string
++          maxLength: 256
++        timestamp:
++          type: string
++          format: date-time
++        durationNs:
++          type: integer
++          minimum: 0
++        statusCode:
++          type: string
++          enum: [OK, ERROR, UNSET, UNKNOWN]
+     TimeLimit:
+       type: object
+       required:
+diff --git a/src/client/src/__tests__/app/api/autodev/usage/span/route.test.ts b/src/client/src/__tests__/app/api/autodev/usage/span/route.test.ts
+new file mode 100644
+index 00000000..d18ace7d
+--- /dev/null
++++ b/src/client/src/__tests__/app/api/autodev/usage/span/route.test.ts
+@@ -0,0 +1,156 @@
++/** @jest-environment node */
++
++const mockResolveTelemetrySourceDescriptor = jest.fn();
++const mockGetTelemetryAdapter = jest.fn();
++const mockGetSpan = jest.fn();
++const mockGetTraceSpans = jest.fn();
++
++jest.mock("@/lib/telemetry-source", () => ({
++  resolveTelemetrySourceDescriptor: (...args: unknown[]) =>
++    mockResolveTelemetrySourceDescriptor(...args),
++  getTelemetryAdapter: (...args: unknown[]) => mockGetTelemetryAdapter(...args)
++}));
++
++const previousUsageToken = process.env.AUTODEV_OPENLIT_USAGE_TOKEN;
++process.env.AUTODEV_OPENLIT_USAGE_TOKEN = "trace-route-test-token";
++const { GET } = require("@/app/api/autodev/usage/span/[spanId]/route") as {
++  GET: (request: Request, context: { params: { spanId: string } }) => Promise<Response>;
++};
++
++const TRACE_ID = "0123456789abcdef0123456789abcdef";
++const SELECTED_SPAN_ID = "0123456789abcdef";
++
++function span(spanId: string, parentSpanId = "") {
++  return {
++    traceId: TRACE_ID,
++    spanId,
++    parentSpanId,
++    name: "gen_ai.client_operation",
++    serviceName: "autodev-router",
++    timestamp: "2026-10-05T12:00:00.000Z",
++    durationNs: 1_250_000,
++    statusCode: "Ok",
++    statusMessage: "private status message",
++    spanAttributes: { "gen_ai.prompt": "private prompt content" },
++    resourceAttributes: { "host.name": "private-host" }
++  };
++}
++
++function request(spanId: string, token = "trace-route-test-token"): Request {
++  return new Request(`http://openlit.local/api/autodev/usage/span/${spanId}`, {
++    headers: { authorization: `Bearer ${token}` }
++  });
++}
++
++function context(spanId: string) {
++  return { params: { spanId } };
++}
++
++beforeEach(() => {
++  mockResolveTelemetrySourceDescriptor.mockReset();
++  mockResolveTelemetrySourceDescriptor.mockResolvedValue({ id: "source-1" });
++  mockGetTelemetryAdapter.mockReset();
++  mockGetTelemetryAdapter.mockResolvedValue({
++    getSpan: mockGetSpan,
++    getTraceSpans: mockGetTraceSpans
++  });
++  mockGetSpan.mockReset();
++  mockGetSpan.mockResolvedValue(span(SELECTED_SPAN_ID));
++  mockGetTraceSpans.mockReset();
++  mockGetTraceSpans.mockResolvedValue([span(SELECTED_SPAN_ID)]);
++});
++
++afterAll(() => {
++  if (previousUsageToken === undefined) {
++    delete process.env.AUTODEV_OPENLIT_USAGE_TOKEN;
++  } else {
++    process.env.AUTODEV_OPENLIT_USAGE_TOKEN = previousUsageToken;
++  }
++});
++
++describe("AutoDev Usage trace detail endpoint", () => {
++  it("returns a bounded privacy-filtered span summary", async () => {
++    const response = await GET(request(SELECTED_SPAN_ID), context(SELECTED_SPAN_ID));
++    const body = await response.json();
++
++    expect(response.status).toBe(200);
++    expect(body).toMatchObject({
++      schema: "autodev-openlit-trace-detail-v1",
++      traceId: TRACE_ID,
++      selectedSpanId: SELECTED_SPAN_ID,
++      partial: false,
++      spans: [
++        {
++          spanId: SELECTED_SPAN_ID,
++          parentSpanId: null,
++          spanName: "gen_ai.client_operation",
++          serviceName: "autodev-router",
++          timestamp: "2026-10-05T12:00:00.000Z",
++          durationNs: 1_250_000,
++          statusCode: "OK"
++        }
++      ]
++    });
++    expect(JSON.stringify(body)).not.toContain("private prompt content");
++    expect(JSON.stringify(body)).not.toContain("private status message");
++    expect(JSON.stringify(body)).not.toContain("private-host");
++    expect(mockGetTelemetryAdapter).toHaveBeenCalledWith({
++      signal: "traces",
++      sourceId: "source-1"
++    });
++  });
++
++  it("requires the dedicated Usage bearer credential", async () => {
++    const response = await GET(
++      request(SELECTED_SPAN_ID, "wrong-token"),
++      context(SELECTED_SPAN_ID)
++    );
++    expect(response.status).toBe(401);
++    expect(mockGetTelemetryAdapter).not.toHaveBeenCalled();
++  });
++
++  it("rejects invalid span IDs before querying the telemetry adapter", async () => {
++    const response = await GET(request("not-a-span-id"), context("not-a-span-id"));
++    expect(response.status).toBe(400);
++    expect(mockGetTelemetryAdapter).not.toHaveBeenCalled();
++  });
++
++  it("returns a typed not-found response when the source has no matching span", async () => {
++    mockGetSpan.mockResolvedValue(null);
++    const response = await GET(request(SELECTED_SPAN_ID), context(SELECTED_SPAN_ID));
++    const body = await response.json();
++    expect(response.status).toBe(404);
++    expect(body.error.code).toBe("autodev_usage_trace_not_found");
++    expect(mockGetTraceSpans).not.toHaveBeenCalled();
++  });
++
++  it("caps large trace responses and keeps the selected span in the sample", async () => {
++    const spans = Array.from({ length: 205 }, (_, index) =>
++      span((index + 1).toString(16).padStart(16, "0"))
++    );
++    const selected = spans.at(-1)!;
++    mockGetSpan.mockResolvedValue(selected);
++    mockGetTraceSpans.mockResolvedValue(spans);
++
++    const response = await GET(
++      request(selected.spanId),
++      context(selected.spanId)
++    );
++    const body = await response.json();
++    expect(response.status).toBe(200);
++    expect(body.partial).toBe(true);
++    expect(body.spans).toHaveLength(200);
++    expect(body.spans.map((entry: { spanId: string }) => entry.spanId)).toContain(
++      selected.spanId
++    );
++  });
++
++  it("returns a generic unavailable response when the source fails", async () => {
++    mockGetTelemetryAdapter.mockRejectedValue(new Error("private connection detail"));
++    const response = await GET(request(SELECTED_SPAN_ID), context(SELECTED_SPAN_ID));
++    const body = await response.json();
++    expect(response.status).toBe(503);
++    expect(body.error.code).toBe("autodev_usage_trace_unavailable");
++    expect(JSON.stringify(body)).not.toContain("private connection detail");
++  });
++});
+diff --git a/src/client/src/__tests__/middleware/check-auth.test.ts b/src/client/src/__tests__/middleware/check-auth.test.ts
+index 06851f0f..42b73aad 100644
+--- a/src/client/src/__tests__/middleware/check-auth.test.ts
++++ b/src/client/src/__tests__/middleware/check-auth.test.ts
+@@ -73,6 +73,35 @@ describe('checkAuth', () => {
+     expect(nextHandler).not.toHaveBeenCalled();
+   });
+ 
++  describe('dedicated AutoDev Usage trace auth', () => {
++    it('passes the fixed trace endpoint through to its own service-token check', async () => {
++      const req = makeRequest(
++        'GET',
++        '/api/autodev/usage/span/0123456789abcdef',
++        '',
++        { Authorization: 'Bearer usage-service-token' }
++      );
++      await middleware(req as any, makeFetchEvent());
++      expect(NextResponse.next).toHaveBeenCalled();
++      expect(getToken).not.toHaveBeenCalled();
++      expect(nextHandler).not.toHaveBeenCalled();
++    });
++
++    it('does not exempt adjacent arbitrary API paths', async () => {
++      const req = makeRequest(
++        'GET',
++        '/api/autodev/usage/span/0123456789abcdef/extra',
++        '',
++        { Authorization: 'Bearer usage-service-token' }
++      );
++      await middleware(req as any, makeFetchEvent());
++      expect(NextResponse.json).toHaveBeenCalledWith(
++        { error: 'Forbidden' },
++        { status: 403 }
++      );
++    });
++  });
++
+   describe('Bearer token / API key auth', () => {
+     afterEach(() => {
+       delete (global as any).fetch;
+diff --git a/src/client/src/app/api/autodev/usage/span/[spanId]/route.ts b/src/client/src/app/api/autodev/usage/span/[spanId]/route.ts
+new file mode 100644
+index 00000000..b175d225
+--- /dev/null
++++ b/src/client/src/app/api/autodev/usage/span/[spanId]/route.ts
+@@ -0,0 +1,153 @@
++import {
++	getTelemetryAdapter,
++	resolveTelemetrySourceDescriptor,
++} from "@/lib/telemetry-source";
++import type { NormalizedSpan } from "@/lib/platform/connectors/datasource/types";
++import {
++	isUsageServiceRequestAuthorized,
++	isUsageTraceId,
++	parseUsageTraceSpanId,
++} from "@/lib/autodev/usage-api";
++
++export const runtime = "nodejs";
++
++const SERVICE_TOKEN = process.env.AUTODEV_OPENLIT_USAGE_TOKEN ?? "";
++const TRACE_DETAIL_SCHEMA = "autodev-openlit-trace-detail-v1" as const;
++const MAX_RESPONSE_SPANS = 200;
++const SOURCE_TRACE_SPAN_LIMIT = 5_000;
++const MAX_LABEL_LENGTH = 256;
++
++type UsageTraceStatus = "OK" | "ERROR" | "UNSET" | "UNKNOWN";
++interface UsageTraceSpan {
++	readonly spanId: string;
++	readonly parentSpanId: string | null;
++	readonly spanName: string;
++	readonly serviceName: string;
++	readonly timestamp: string;
++	readonly durationNs: number;
++	readonly statusCode: UsageTraceStatus;
++}
++
++function errorResponse(
++	status: number,
++	code: string,
++	message: string,
++): Response {
++	return Response.json(
++		{ error: { code, message } },
++		{ status, headers: { "cache-control": "no-store" } },
++	);
++}
++
++function safeLabel(value: unknown): string | null {
++	if (typeof value !== "string") return null;
++	return value.slice(0, MAX_LABEL_LENGTH);
++}
++
++function toSafeSpan(span: NormalizedSpan): UsageTraceSpan | null {
++	const timestamp = new Date(span.timestamp);
++	if (
++		!parseUsageTraceSpanId(span.spanId) ||
++		(span.parentSpanId !== "" && !parseUsageTraceSpanId(span.parentSpanId)) ||
++		!isUsageTraceId(span.traceId) ||
++		!Number.isSafeInteger(span.durationNs) ||
++		span.durationNs < 0 ||
++		!Number.isFinite(timestamp.getTime())
++	) {
++		return null;
++	}
++	const spanName = safeLabel(span.name);
++	const serviceName = safeLabel(span.serviceName);
++	if (spanName === null || serviceName === null) return null;
++	if (typeof span.statusCode !== "string") return null;
++	const sourceStatus = span.statusCode.toUpperCase().replace(/^STATUS_CODE_/u, "");
++	const statusCode: UsageTraceStatus =
++		sourceStatus === "OK" || sourceStatus === "ERROR" || sourceStatus === "UNSET"
++			? sourceStatus
++			: "UNKNOWN";
++	return {
++		spanId: span.spanId.toLowerCase(),
++		parentSpanId: span.parentSpanId ? span.parentSpanId.toLowerCase() : null,
++		spanName,
++		serviceName,
++		timestamp: timestamp.toISOString(),
++		durationNs: span.durationNs,
++		statusCode,
++	};
++}
++
++function compareSpanTime(a: UsageTraceSpan, b: UsageTraceSpan): number {
++	return Date.parse(a.timestamp) - Date.parse(b.timestamp);
++}
++
++export async function GET(
++	request: Request,
++	context: { readonly params: { readonly spanId?: string } },
++): Promise<Response> {
++	if (!SERVICE_TOKEN) {
++		return errorResponse(503, "autodev_usage_not_configured", "Usage service is not configured.");
++	}
++	if (!isUsageServiceRequestAuthorized(request.headers.get("authorization"), SERVICE_TOKEN)) {
++		return errorResponse(401, "autodev_usage_unauthorized", "Unauthorized.");
++	}
++
++	const spanId = parseUsageTraceSpanId(context.params.spanId);
++	if (!spanId) {
++		return errorResponse(400, "autodev_usage_trace_span_id_invalid", "A valid OpenTelemetry SpanId is required.");
++	}
++
++	try {
++		const descriptor = await resolveTelemetrySourceDescriptor({ signal: "traces" });
++		const adapter = await getTelemetryAdapter({ signal: "traces", sourceId: descriptor.id });
++		const selected = await adapter.getSpan(spanId);
++		if (!selected) {
++			return errorResponse(404, "autodev_usage_trace_not_found", "The referenced span was not found.");
++		}
++		if (!isUsageTraceId(selected.traceId)) {
++			return errorResponse(502, "autodev_usage_trace_invalid", "The telemetry source returned an invalid trace reference.");
++		}
++
++		const sourceSpans = await adapter.getTraceSpans(selected.traceId);
++		const summaries = new Map<string, UsageTraceSpan>();
++		let partial = sourceSpans.length >= SOURCE_TRACE_SPAN_LIMIT;
++		for (const span of sourceSpans) {
++			if (span.traceId !== selected.traceId) {
++				partial = true;
++				continue;
++			}
++			const safeSpan = toSafeSpan(span);
++			if (!safeSpan) {
++				partial = true;
++				continue;
++			}
++			summaries.set(safeSpan.spanId.toLowerCase(), safeSpan);
++		}
++
++		const selectedSpan = toSafeSpan(selected);
++		if (!selectedSpan) {
++			return errorResponse(502, "autodev_usage_trace_invalid", "The telemetry source returned an invalid selected span.");
++		}
++		if (!summaries.has(selectedSpan.spanId.toLowerCase())) partial = true;
++		summaries.set(selectedSpan.spanId.toLowerCase(), selectedSpan);
++		const ordered = Array.from(summaries.values()).sort(compareSpanTime);
++		partial ||= ordered.length > MAX_RESPONSE_SPANS;
++		let spans = ordered.slice(0, MAX_RESPONSE_SPANS);
++		if (!spans.some((span) => span.spanId.toLowerCase() === selectedSpan.spanId.toLowerCase())) {
++			spans = [...spans.slice(0, MAX_RESPONSE_SPANS - 1), selectedSpan].sort(compareSpanTime);
++			partial = true;
++		}
++
++		return Response.json(
++			{
++				schema: TRACE_DETAIL_SCHEMA,
++				traceId: selected.traceId.toLowerCase(),
++				selectedSpanId: selectedSpan.spanId,
++				spans,
++				partial,
++			},
++			{ headers: { "cache-control": "no-store" } },
++		);
++	} catch {
++		return errorResponse(503, "autodev_usage_trace_unavailable", "Trace details are unavailable.");
++	}
++}
+diff --git a/src/client/src/lib/autodev/usage-api.ts b/src/client/src/lib/autodev/usage-api.ts
+index 1ef321ba..736e1bcf 100644
+--- a/src/client/src/lib/autodev/usage-api.ts
++++ b/src/client/src/lib/autodev/usage-api.ts
+@@ -161,3 +161,25 @@ function isUsageTimeRange(value: unknown): value is UsageTimeRange {
+ function isUsageVariableId(value: string): value is UsageVariableId {
+ 	return USAGE_VARIABLE_IDS.some((id) => id === value);
+ }
++const USAGE_TRACE_SPAN_ID_PATTERN = /^[0-9a-f]{16}$/iu;
++const USAGE_TRACE_ID_PATTERN = /^[0-9a-f]{32}$/iu;
++
++/** Return only a valid, non-zero OpenTelemetry SpanId for fixed trace lookups. */
++export function parseUsageTraceSpanId(value: unknown): string | null {
++	if (
++		typeof value !== "string" ||
++		!USAGE_TRACE_SPAN_ID_PATTERN.test(value) ||
++		/^0{16}$/u.test(value)
++	) {
++		return null;
++	}
++	return value;
++}
++
++export function isUsageTraceId(value: unknown): value is string {
++	return (
++		typeof value === "string" &&
++		USAGE_TRACE_ID_PATTERN.test(value) &&
++		!/^0{32}$/u.test(value)
++	);
++}
+diff --git a/src/client/src/middleware/check-auth.ts b/src/client/src/middleware/check-auth.ts
+index 0464da26..9bfb2cc7 100644
+--- a/src/client/src/middleware/check-auth.ts
++++ b/src/client/src/middleware/check-auth.ts
+@@ -122,7 +122,10 @@ export default function checkAuth(next: NextMiddleware) {
+ 			// server-to-server bearer credential. It deliberately does not
+ 			// accept NextAuth sessions or OpenLIT API keys; the route handler
+ 			// validates AUTODEV_OPENLIT_USAGE_TOKEN before querying telemetry.
+-			if (pathname === "/api/autodev/usage") {
++			if (
++				pathname === "/api/autodev/usage" ||
++				/^\/api\/autodev\/usage\/span\/[^/]+$/u.test(pathname)
++			) {
+ 				return continueWithoutClientTenant();
+ 			}
+ 

@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { EvaluationRepository } from "../../src/evaluations/evaluation-repository.ts";
+import {
+  EvaluationRepository,
+  EvaluationSourceUnavailableError
+} from "../../src/evaluations/evaluation-repository.ts";
 
 test("EvaluationRepository.parseEvaluationRows parses valid ClickHouse evaluation rows", () => {
   const repo = new EvaluationRepository();
   const rawJson = [
     JSON.stringify({
       id: "9b3c5a7f-1234-4567-89ab-cdef01234567",
-      span_id: "span-abc",
+      span_id: "0123456789abcdef",
       created_at: "2026-10-04 12:00:00",
       meta: {
         agentRole: "orchestrator",
@@ -26,7 +29,7 @@ test("EvaluationRepository.parseEvaluationRows parses valid ClickHouse evaluatio
     }),
     JSON.stringify({
       id: "8a2b4c6e-5678-90ab-cdef-1234567890ab",
-      span_id: "span-def",
+      span_id: "fedcba9876543210",
       created_at: "2026-10-04 12:05:00",
       meta: {
         role: "worker",
@@ -41,11 +44,11 @@ test("EvaluationRepository.parseEvaluationRows parses valid ClickHouse evaluatio
   ].join("\n");
 
   const results = repo.parseEvaluationRows(rawJson);
-  assert.ok(results);
   assert.equal(results.length, 2);
 
   const first = results[0]!;
   assert.equal(first.id, "9b3c5a7f-1234-4567-89ab-cdef01234567");
+  assert.equal(first.spanId, "0123456789abcdef");
   assert.equal(first.agentRole, "orchestrator");
   assert.equal(first.promptName, "dry");
   assert.equal(first.model, "gpt-5.6-terra");
@@ -65,6 +68,7 @@ test("EvaluationRepository.parseEvaluationRows parses valid ClickHouse evaluatio
 
   const second = results[1]!;
   assert.equal(second.id, "8a2b4c6e-5678-90ab-cdef-1234567890ab");
+  assert.equal(second.spanId, "fedcba9876543210");
   assert.equal(second.agentRole, "worker");
   assert.equal(second.promptName, undefined);
   assert.equal(second.model, "claude-3-5-sonnet");
@@ -77,17 +81,82 @@ test("EvaluationRepository.parseEvaluationRows parses valid ClickHouse evaluatio
   });
 });
 
-test("EvaluationRepository.parseEvaluationRows skips blank and id-less rows but rejects unreadable output", () => {
+test("EvaluationRepository distinguishes empty history from malformed rows", () => {
   const repo = new EvaluationRepository();
-  assert.deepEqual(repo.parseEvaluationRows("\n  \n{}\n"), []);
-  assert.equal(repo.parseEvaluationRows("\n{}\nnot-valid-json\n"), null);
-  // ClickHouse appends a mid-stream exception as plain text after HTTP 200.
-  assert.equal(
-    repo.parseEvaluationRows(
-      '{"id":"e1","created_at":"2026-10-04 10:00:00"}\nCode: 241. DB::Exception: Memory limit exceeded\n'
-    ),
-    null
+  assert.deepEqual(repo.parseEvaluationRows("\n  \n"), []);
+  assert.throws(
+    () => repo.parseEvaluationRows("not-valid-json"),
+    EvaluationSourceUnavailableError
   );
+  assert.throws(
+    () =>
+      repo.parseEvaluationRows(
+        [
+          JSON.stringify({ id: "valid-row", created_at: "2026-10-04" }),
+          "not-valid-json"
+        ].join("\n")
+      ),
+    EvaluationSourceUnavailableError
+  );
+  assert.throws(
+    () => repo.parseEvaluationRows(JSON.stringify({ id: "missing-time" })),
+    EvaluationSourceUnavailableError
+  );
+  assert.throws(
+    () =>
+      repo.parseEvaluationRows(
+        JSON.stringify({
+          id: "invalid-meta",
+          created_at: "2026-10-04",
+          meta: []
+        })
+      ),
+    EvaluationSourceUnavailableError
+  );
+  assert.throws(
+    () =>
+      repo.parseEvaluationRows(
+        JSON.stringify({
+          id: "invalid-span-id",
+          created_at: "2026-10-04",
+          span_id: 42
+        })
+      ),
+    EvaluationSourceUnavailableError
+  );
+  assert.throws(
+    () =>
+      repo.parseEvaluationRows(
+        JSON.stringify({
+          id: "oversized-span-id",
+          created_at: "2026-10-04",
+          span_id: "x".repeat(257)
+        })
+      ),
+    EvaluationSourceUnavailableError
+  );
+});
+
+test("EvaluationRepository does not infer verdicts from scores or missing metrics", () => {
+  const repo = new EvaluationRepository();
+  const results = repo.parseEvaluationRows(
+    [
+      JSON.stringify({
+        id: "score-without-verdict",
+        created_at: "2026-10-04 10:00:00",
+        "evaluationData.evaluation": ["quality"],
+        scores: { quality: 0.99 }
+      }),
+      JSON.stringify({
+        id: "no-metrics",
+        created_at: "2026-10-04 10:01:00"
+      })
+    ].join("\n")
+  );
+  assert.equal(results[0]?.metrics[0]?.pass, null);
+  assert.equal(results[0]?.passed, null);
+  assert.equal(results[1]?.metrics.length, 0);
+  assert.equal(results[1]?.passed, null);
 });
 
 test("EvaluationRepository.listEvaluations returns parsed rows with custom fetchImpl", async () => {
@@ -107,16 +176,14 @@ test("EvaluationRepository.listEvaluations returns parsed rows with custom fetch
   };
 
   const repo = new EvaluationRepository({ fetchImpl: mockFetch });
-  const read = await repo.listEvaluations(50);
-  assert.equal(read.status, "available");
-  const list = read.status === "available" ? read.evaluations : [];
+  const list = await repo.listEvaluations(50);
   assert.equal(list.length, 1);
   assert.equal(list[0]?.id, "uuid-123");
   assert.equal(list[0]?.agentRole, "docs-researcher");
   assert.equal(list[0]?.model, "unknown");
 });
 
-test("EvaluationRepository.listEvaluations reports failed reads as unavailable, never as empty", async () => {
+test("EvaluationRepository reports fetch failure and non-ok response as unavailable", async () => {
   const errorFetch: typeof fetch = async () => {
     return new Response("Table openlit.openlit_evaluation does not exist", {
       status: 404
@@ -124,40 +191,21 @@ test("EvaluationRepository.listEvaluations reports failed reads as unavailable, 
   };
 
   const repoError = new EvaluationRepository({ fetchImpl: errorFetch });
-  assert.deepEqual(await repoError.listEvaluations(), {
-    status: "unavailable",
-    message: "ClickHouse rejected the evaluation query with HTTP 404."
-  });
+  await assert.rejects(
+    repoError.listEvaluations(),
+    EvaluationSourceUnavailableError
+  );
 
   const throwingFetch: typeof fetch = async () => {
-    throw new Error("ECONNREFUSED http://user:secret@clickhouse:8123");
+    throw new Error("ECONNREFUSED");
   };
 
   const repoThrowing = new EvaluationRepository({ fetchImpl: throwingFetch });
-  const unreachable = await repoThrowing.listEvaluations();
-  assert.deepEqual(unreachable, {
-    status: "unavailable",
-    message: "ClickHouse is unreachable."
+  await assert.rejects(repoThrowing.listEvaluations(), (error: unknown) => {
+    assert.ok(error instanceof EvaluationSourceUnavailableError);
+    assert.doesNotMatch(error.message, /ECONNREFUSED/u);
+    return true;
   });
-
-  const truncatedFetch: typeof fetch = async () =>
-    new Response('{"id":"e1"}\nCode: 241. DB::Exception: Memory limit\n');
-  assert.deepEqual(
-    await new EvaluationRepository({
-      fetchImpl: truncatedFetch
-    }).listEvaluations(),
-    {
-      status: "unavailable",
-      message: "ClickHouse returned an unreadable evaluation result."
-    }
-  );
-
-  const emptyFetch: typeof fetch = async () =>
-    new Response("", { status: 200 });
-  assert.deepEqual(
-    await new EvaluationRepository({ fetchImpl: emptyFetch }).listEvaluations(),
-    { status: "available", evaluations: [] }
-  );
 });
 
 test("EvaluationRepository.listEvaluations abandons an unresponsive ClickHouse within its timeout", async () => {
@@ -176,9 +224,9 @@ test("EvaluationRepository.listEvaluations abandons an unresponsive ClickHouse w
     timeoutMs: 25
   });
   const startedAt = performance.now();
-  assert.deepEqual(await repository.listEvaluations(), {
-    status: "unavailable",
-    message: "ClickHouse did not complete the evaluation query within 25ms."
-  });
+  await assert.rejects(
+    repository.listEvaluations(),
+    EvaluationSourceUnavailableError
+  );
   assert.ok(performance.now() - startedAt < 1000);
 });

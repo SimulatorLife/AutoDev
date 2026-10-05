@@ -1,40 +1,68 @@
 import assert from "node:assert/strict";
-import { readdirSync } from "node:fs";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { RuleSyncRepository } from "@simulatorlife/autodev-data";
 import {
   deterministicUuid,
-  loadRulesyncPrompts,
-  parseRulesyncPrompt,
   syncRulesyncPrompts
 } from "@simulatorlife/autodev-data/openlit";
 
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const commandsDir = join(repositoryRoot, ".rulesync", "commands");
 
-test("parseRulesyncPrompt extracts description, targets, and body correctly", () => {
-  const content = `---
-targets: ["codexcli", "claude"]
-description: Custom command for refactoring.
----
-# Refactor command
+test("RuleSyncRepository parses canonical command metadata and prompt body", async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "rulesync-command-read-"));
+  try {
+    const temporaryCommandsDir = join(temporaryRoot, ".rulesync", "commands");
+    await mkdir(temporaryCommandsDir, { recursive: true });
+    await writeFile(
+      join(temporaryCommandsDir, "test-refactor.md"),
+      `---\ntargets: [codexcli, claudecode]\ndescription: Custom command for refactoring.\n---\n# Refactor command\n\nDo something cleanly.\n`
+    );
 
-Do something cleanly.`;
-
-  const parsed = parseRulesyncPrompt("test-refactor", content);
-  assert.equal(parsed.name, "test-refactor");
-  assert.equal(parsed.description, "Custom command for refactoring.");
-  assert.deepEqual(parsed.targets, ["codexcli", "claude"]);
-  assert.equal(parsed.prompt, "# Refactor command\n\nDo something cleanly.");
+    const state = new RuleSyncRepository(temporaryRoot).loadCommands();
+    assert.equal(state.valid, true);
+    assert.deepEqual(state.commands, [
+      {
+        name: "test-refactor",
+        path: ".rulesync/commands/test-refactor.md",
+        kind: "command",
+        content:
+          "---\ntargets: [codexcli, claudecode]\ndescription: Custom command for refactoring.\n---\n# Refactor command\n\nDo something cleanly.\n",
+        prompt: "# Refactor command\n\nDo something cleanly.",
+        description: "Custom command for refactoring.",
+        targets: ["codexcli", "claudecode"]
+      }
+    ]);
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
 });
 
-test("parseRulesyncPrompt throws when frontmatter is missing", () => {
-  assert.throws(
-    () => parseRulesyncPrompt("bad", "# Missing frontmatter\n\nJust text"),
-    /missing valid YAML frontmatter/i
+test("RuleSyncRepository reports invalid command frontmatter instead of a partial catalog", async () => {
+  const temporaryRoot = await mkdtemp(
+    join(tmpdir(), "rulesync-command-invalid-")
   );
+  try {
+    const temporaryCommandsDir = join(temporaryRoot, ".rulesync", "commands");
+    await mkdir(temporaryCommandsDir, { recursive: true });
+    await writeFile(
+      join(temporaryCommandsDir, "bad.md"),
+      "# Missing frontmatter\n"
+    );
+
+    assert.deepEqual(new RuleSyncRepository(temporaryRoot).loadCommands(), {
+      source: ".rulesync/commands",
+      valid: false,
+      commands: []
+    });
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
 });
 
 test("deterministicUuid produces valid RFC 4122 v5 UUIDs", () => {
@@ -55,24 +83,24 @@ test("deterministicUuid produces valid RFC 4122 v5 UUIDs", () => {
   );
 });
 
-test("loadRulesyncPrompts exactly mirrors the canonical command directory", () => {
-  const catalog = loadRulesyncPrompts(repositoryRoot);
-  const onDiskNames = readdirSync(commandsDir)
+test("RuleSyncRepository catalog exactly mirrors canonical commands with real metadata", async () => {
+  const state = new RuleSyncRepository(repositoryRoot).loadCommands();
+  const onDiskNames = (await readdir(commandsDir))
     .filter((file) => file.endsWith(".md"))
     .map((file) => file.replace(/\.md$/u, ""))
     .sort();
-
-  assert.deepEqual([...catalog.keys()].sort(), onDiskNames);
-  for (const name of onDiskNames) {
-    const entry = catalog.get(name)!;
+  assert.equal(state.valid, true);
+  assert.deepEqual(
+    state.commands.map((command) => command.name).sort(),
+    onDiskNames
+  );
+  for (const command of state.commands) {
     assert.ok(
-      entry.description.length > 0,
-      `Prompt "${name}" must have description`
+      command.description,
+      `Command "${command.name}" needs source metadata`
     );
-    assert.ok(
-      entry.prompt.length > 0,
-      `Prompt "${name}" must have prompt body`
-    );
+    assert.ok(command.targets.length > 0);
+    assert.ok(command.prompt.length > 0);
   }
 });
 
