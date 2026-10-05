@@ -120,6 +120,30 @@ test("OpenLITUsageClient keeps authentication and transport failures explicit", 
   assert.deepEqual(await unavailable.query(selection), { kind: "unreachable" });
 });
 
+test("OpenLITUsageClient abandons a Usage endpoint that stops responding", async () => {
+  // The timer keeps the stub pending like an open socket; aborting ends it.
+  const hangingFetch: typeof fetch = (_input, init) =>
+    new Promise((_resolve, reject) => {
+      const socket = setInterval(() => {}, 1000);
+      init?.signal?.addEventListener("abort", () => {
+        clearInterval(socket);
+        reject(init.signal?.reason);
+      });
+    });
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: hangingFetch,
+    timeoutMs: 25
+  });
+  const startedAt = performance.now();
+  assert.deepEqual(await client.query(selection), { kind: "unreachable" });
+  assert.deepEqual(await client.queryTrace("0123456789abcdef"), {
+    kind: "unreachable"
+  });
+  assert.ok(performance.now() - startedAt < 1000);
+});
+
 test("OpenLITUsageClient rejects duplicate widgets and keeps invalid ratios unavailable", async () => {
   const duplicate = structuredClone(partialPayload);
   duplicate.widgets.push(duplicate.widgets[0]!);

@@ -383,6 +383,35 @@ test(
       usageRouteTest,
       /fetches filter values across AutoDev logical and MCP spans/u
     );
+    // Every Usage telemetry read is bounded, so one stalled ClickHouse query
+    // degrades to an unobserved widget instead of holding the response, and
+    // the Console's request timeout stays above the route's deadline.
+    assert.match(usageRoute, /await withDeadline\(runWidgetQuery\(/u);
+    assert.match(
+      usageRoute,
+      /await withDeadline\(fetchVariableAllowedValues\(/u
+    );
+    assert.match(
+      usageRouteTest,
+      /reports stalled telemetry reads as unobserved once their deadline passes/u
+    );
+    const routeDeadlineMs = Number(
+      /const QUERY_DEADLINE_MS = ([\d_]+);/u
+        .exec(usageRoute)?.[1]
+        ?.replaceAll("_", "")
+    );
+    const consoleTimeoutMs = Number(
+      /const DEFAULT_REQUEST_TIMEOUT_MS = ([\d_]+);/u
+        .exec(
+          readFileSync(
+            join(repositoryRoot, "data/src/usage/openlit-usage-client.ts"),
+            "utf8"
+          )
+        )?.[1]
+        ?.replaceAll("_", "")
+    );
+    assert.ok(routeDeadlineMs > 0);
+    assert.ok(consoleTimeoutMs > routeDeadlineMs);
 
     const memoryDetailSheet = readFileSync(
       join(

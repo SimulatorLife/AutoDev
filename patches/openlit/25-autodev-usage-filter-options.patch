@@ -1,9 +1,9 @@
 diff --git a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
 new file mode 100644
-index 00000000..94bb1170
+index 00000000..ff53df74
 --- /dev/null
 +++ b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,112 @@
 +/** @jest-environment node */
 +
 +import { NextRequest } from "next/server";
@@ -73,6 +73,48 @@ index 00000000..94bb1170
 +      expect(requestOptions.aiSelector).toBe(false);
 +    }
 +  });
++
++  it("reports stalled telemetry reads as unobserved once their deadline passes", async () => {
++    jest.useFakeTimers();
++    try {
++      // The logical-requests widget query and the first filter lookup never
++      // settle; every other read answers immediately.
++      mockRunWidgetQuery.mockImplementation((widgetId: string) =>
++        widgetId === "47c52af8-0c4a-4e85-8a9e-a8f85745b101"
++          ? new Promise(() => {})
++          : Promise.resolve({ data: [] })
++      );
++      mockFetchVariableAllowedValues.mockImplementationOnce(
++        () => new Promise(() => {})
++      );
++      const request = new NextRequest("http://localhost/api/autodev/usage", {
++        method: "POST",
++        headers: {
++          authorization: "Bearer server-only-usage-test-token",
++          "content-type": "application/json"
++        },
++        body: JSON.stringify({ selection: { range: "24H", values: {} } })
++      });
++
++      const pending = POST(request);
++      await jest.advanceTimersByTimeAsync(8_000);
++      const response = await pending;
++
++      expect(response.status).toBe(200);
++      const body = (await response.json()) as {
++        widgets: { key: string; observed: boolean }[];
++        filterOptions: Record<string, { supported: boolean }>;
++      };
++      expect(
++        body.widgets.filter((widget) => !widget.observed).map(({ key }) => key)
++      ).toEqual(["logical-requests"]);
++      expect(
++        Object.values(body.filterOptions).filter((option) => !option.supported)
++      ).toHaveLength(1);
++    } finally {
++      jest.useRealTimers();
++    }
++  });
 +});
 diff --git a/src/client/src/__tests__/lib/platform/dashboard-variables/distinct-values.test.ts b/src/client/src/__tests__/lib/platform/dashboard-variables/distinct-values.test.ts
 index 5fcbdc9..bb9851f 100644
@@ -134,15 +176,15 @@ index 5fcbdc9..bb9851f 100644
  
  	it("returns { supported: false } when adapter has no distinctValues capability", async () => {
 diff --git a/src/client/src/app/api/autodev/usage/route.ts b/src/client/src/app/api/autodev/usage/route.ts
-index a6d18b9..2b1e198 100644
+index 287b882..96d63bb 100644
 --- a/src/client/src/app/api/autodev/usage/route.ts
 +++ b/src/client/src/app/api/autodev/usage/route.ts
-@@ -191,6 +191,7 @@ async function fetchFilterOptions(
+@@ -215,6 +215,7 @@ async function fetchFilterOptions(
  					key: spec.key,
  					timeRange,
  					limit: 256,
 +					aiSelector: false,
- 				});
+ 				}));
  				return [spec.id, result] as const;
  			} catch {
 diff --git a/src/client/src/lib/platform/dashboard-variables/distinct-values.ts b/src/client/src/lib/platform/dashboard-variables/distinct-values.ts

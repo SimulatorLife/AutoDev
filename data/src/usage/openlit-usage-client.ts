@@ -15,7 +15,11 @@ import {
 const TRAILING_SLASHES = /\/+$/u;
 const USAGE_API_PATH = "/api/autodev/usage";
 const TRACE_DETAIL_API_PATH = "/api/autodev/usage/span";
-const REQUEST_TIMEOUT_MS = 30_000;
+// Just above the OpenLIT Usage route's 8s per-query deadline: the route
+// answers with partial results once that deadline passes, so this only fires
+// when OpenLIT itself has stopped responding, and a Usage navigation is never
+// held longer than that.
+const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const MAX_TRACE_SPANS = 200;
 const TRACE_STATUS_CODES = new Set<UsageTraceStatus>([
   "OK",
@@ -77,6 +81,7 @@ export interface OpenLITUsageClientConfig {
   readonly baseUrl: string;
   readonly serviceToken: string;
   readonly fetchImpl?: typeof fetch | undefined;
+  readonly timeoutMs?: number | undefined;
 }
 
 export type OpenLITUsageResult =
@@ -97,18 +102,20 @@ export class OpenLITUsageClient {
   readonly baseUrl: string;
   readonly serviceToken: string;
   readonly fetchImpl: typeof fetch;
+  readonly timeoutMs: number;
 
   constructor(config: OpenLITUsageClientConfig) {
     this.baseUrl = config.baseUrl.replace(TRAILING_SLASHES, "");
     this.serviceToken = config.serviceToken;
     this.fetchImpl = config.fetchImpl ?? globalThis.fetch;
+    this.timeoutMs = config.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   }
 
   async queryTrace(spanId: string): Promise<OpenLITTraceResult> {
     if (!isOpenTelemetrySpanId(spanId)) return { kind: "invalid-span-id" };
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const response = await this.fetchImpl(
         `${this.baseUrl}${TRACE_DETAIL_API_PATH}/${encodeURIComponent(spanId)}`,
@@ -153,7 +160,7 @@ export class OpenLITUsageClient {
 
   async query(selection: UsageFilterSelection): Promise<OpenLITUsageResult> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const response = await this.fetchImpl(
         `${this.baseUrl}${USAGE_API_PATH}`,

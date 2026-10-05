@@ -63,5 +63,7 @@ for patch in "${PATCH_FILES[@]}"; do
 	git apply "$patch"
 done
 echo "==> Patch set applied to fresh pinned worktree $WORK_DIR"
-git status --short | head -30
+# Show at most 30 changed paths. awk consumes the whole listing, so git never
+# writes into a closed pipe (a SIGPIPE would fail the run under pipefail).
+git status --short | awk 'NR <= 30'
 popd >/dev/null
