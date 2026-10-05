@@ -8,8 +8,8 @@ import { PendingSpinner } from "./PendingSpinner.ts";
 
 const Link = moduleDefault(NextLink);
 
-/** How long a hover must rest on a link before it counts as intent. */
-const HOVER_INTENT_MS = 65;
+/** How long hover or focus must rest on a link before it counts as intent. */
+const INTENT_REST_MS = 65;
 
 type NextLinkProps = React.ComponentProps<typeof Link>;
 
@@ -31,12 +31,12 @@ export type ConsoleLinkProps = Omit<NextLinkProps, "href" | "prefetch"> & {
  * dynamic, so viewport prefetches could only return layout data the client
  * already holds). Intent enables a full prefetch of the destination page, so
  * its server data usually arrives between pointing at a link and clicking
- * it, and the click renders from the router cache. A hover counts as intent
- * once it rests for `HOVER_INTENT_MS`, so sweeping the pointer across the
- * sidebar does not fire a full page render (and its GitHub, OpenLIT, or
- * Memory reads) per item passed; focus, touch, and mouse-down count
- * immediately, so even a quick click starts its fetch before the click
- * completes. `next.config.ts` bounds how long a prefetched page may be
+ * it, and the click renders from the router cache. Hover and keyboard focus
+ * count as intent once they rest on the link for `INTENT_REST_MS`, so
+ * sweeping the pointer across the sidebar or tabbing through a table does
+ * not fire a full page render (and its GitHub, OpenLIT, or Memory reads)
+ * per link passed; touch and mouse-down count immediately, so even a quick
+ * click starts its fetch before the click completes. `next.config.ts` bounds how long a prefetched page may be
  * reused. Pointing at the link for the page already shown never prefetches
  * it again.
  *
@@ -52,19 +52,25 @@ export function ConsoleLink({
   onMouseDown,
   onTouchStart,
   onFocus,
+  onBlur,
   ...props
 }: ConsoleLinkProps): React.JSX.Element {
   const [prefetch, setPrefetch] = React.useState(false);
-  const hoverTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelHover = (): void => {
-    if (hoverTimer.current === null) return;
-    clearTimeout(hoverTimer.current);
-    hoverTimer.current = null;
+  const restTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelRest = (): void => {
+    if (restTimer.current === null) return;
+    clearTimeout(restTimer.current);
+    restTimer.current = null;
   };
-  React.useEffect(() => cancelHover, []);
+  React.useEffect(() => cancelRest, []);
   const signalIntent = (anchor: HTMLAnchorElement): void => {
-    cancelHover();
+    cancelRest();
     if (!isCurrentLocation(anchor)) setPrefetch(true);
+  };
+  const awaitRest = (anchor: HTMLAnchorElement): void => {
+    if (prefetch) return;
+    cancelRest();
+    restTimer.current = setTimeout(() => signalIntent(anchor), INTENT_REST_MS);
   };
   return React.createElement(
     Link,
@@ -73,17 +79,19 @@ export function ConsoleLink({
       prefetch,
       onMouseEnter(event: React.MouseEvent<HTMLAnchorElement>) {
         onMouseEnter?.(event);
-        if (prefetch) return;
-        const anchor = event.currentTarget;
-        cancelHover();
-        hoverTimer.current = setTimeout(
-          () => signalIntent(anchor),
-          HOVER_INTENT_MS
-        );
+        awaitRest(event.currentTarget);
       },
       onMouseLeave(event: React.MouseEvent<HTMLAnchorElement>) {
         onMouseLeave?.(event);
-        cancelHover();
+        cancelRest();
+      },
+      onFocus(event: React.FocusEvent<HTMLAnchorElement>) {
+        onFocus?.(event);
+        awaitRest(event.currentTarget);
+      },
+      onBlur(event: React.FocusEvent<HTMLAnchorElement>) {
+        onBlur?.(event);
+        cancelRest();
       },
       onMouseDown(event: React.MouseEvent<HTMLAnchorElement>) {
         onMouseDown?.(event);
@@ -91,10 +99,6 @@ export function ConsoleLink({
       },
       onTouchStart(event: React.TouchEvent<HTMLAnchorElement>) {
         onTouchStart?.(event);
-        signalIntent(event.currentTarget);
-      },
-      onFocus(event: React.FocusEvent<HTMLAnchorElement>) {
-        onFocus?.(event);
         signalIntent(event.currentTarget);
       }
     },
