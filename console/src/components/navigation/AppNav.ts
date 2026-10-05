@@ -107,11 +107,14 @@ function renderNavItem(
   activeSection: CanonicalNavSection | null
 ): React.JSX.Element {
   const isActive = activeSection === section;
+  // No color transition: the active item must change in the same frame as
+  // the page it names, and an animated change would repaint the sidebar for
+  // several frames after every navigation.
   const linkProps: ConsoleLinkProps = {
     href: canonicalNavPath(section),
     "aria-current": isActive ? "page" : undefined,
     "data-nav-item": section.toLowerCase(),
-    className: `w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors no-underline ${
+    className: `w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium no-underline ${
       isActive
         ? "bg-surface-raised text-accent font-semibold shadow-sm"
         : "text-fg-secondary hover:bg-surface-raised/60 hover:text-fg"

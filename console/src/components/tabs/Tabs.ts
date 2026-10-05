@@ -97,7 +97,9 @@ export function TabNav({
           "aria-current": isActive ? "page" : undefined,
           "data-tab-item": tab.id,
           scroll: false,
-          className: `inline-block px-4 py-2.5 text-sm font-medium border-b-2 transition-colors no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+          // Like the sidebar, the active tab changes without a transition so
+          // it switches in the same frame as the tab's content.
+          className: `inline-block px-4 py-2.5 text-sm font-medium border-b-2 no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
             isActive
               ? "border-accent text-accent bg-surface/40"
               : "border-transparent text-fg-muted hover:text-fg hover:border-border-strong"

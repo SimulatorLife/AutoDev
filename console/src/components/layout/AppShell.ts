@@ -32,11 +32,14 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
     React.createElement(
       "main",
       { className: "flex-1 flex flex-col min-w-0" },
+      // The header scrolls with the document and nothing passes beneath it,
+      // so it carries no backdrop filter: one would only add a filtered
+      // compositing layer to repaint on every navigation.
       React.createElement(
         "header",
         {
           className:
-            "h-16 border-b border-border bg-surface/50 backdrop-blur px-8 flex items-center shrink-0"
+            "h-16 border-b border-border bg-surface/50 px-8 flex items-center shrink-0"
         },
         React.createElement(
           "div",

@@ -177,6 +177,30 @@ const CONFIGURED_AGENT: AgentDefinition = {
   toolNames: ["orchestration", "playwright"]
 };
 
+test("navigation chrome switches its active item without CSS transitions", () => {
+  // An animated active-state change lags the page it names and repaints the
+  // sidebar or tab bar for several frames after every navigation.
+  const nav = renderToStaticMarkup(
+    React.createElement(AppNav, { activeSection: "Agents" })
+  );
+  const tabs = renderToStaticMarkup(
+    React.createElement(TabNav, {
+      navLabel: "Sections",
+      basePath: "/mcps/example",
+      tabs: [
+        { id: "configuration", label: "Configuration" },
+        { id: "tools", label: "Tools" }
+      ],
+      activeTabId: "configuration"
+    })
+  );
+  for (const markup of [nav, tabs]) {
+    for (const [anchor] of markup.matchAll(/<a\b[^>]*>/gu)) {
+      assert.doesNotMatch(anchor, /\btransition/u, anchor);
+    }
+  }
+});
+
 test("AppNav renders Configure/Observe/Operate groups with canonical membership, order, and URL links", () => {
   const markup = renderToStaticMarkup(
     React.createElement(AppNav, { activeSection: "Agents" })
