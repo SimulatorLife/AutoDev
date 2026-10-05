@@ -53,7 +53,13 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
           React.createElement(ActiveSectionHeading)
         )
       ),
-      React.createElement("div", { className: "flex-1 p-8 min-w-0" }, children)
+      // Wide content scrolls horizontally inside the page body instead of
+      // widening the document under the pinned sidebar.
+      React.createElement(
+        "div",
+        { className: "flex-1 p-8 min-w-0 overflow-x-auto" },
+        children
+      )
     )
   );
 }

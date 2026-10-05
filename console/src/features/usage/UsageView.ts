@@ -149,10 +149,7 @@ export function UsageView({
     React.createElement(
       ConsoleForm,
       {
-        // Uncontrolled fields only read their defaults on mount; keying by
-        // the URL selection remounts them when a navigation (Back, a link)
-        // changes the selection instead of leaving stale typed values.
-        key: JSON.stringify(selection),
+        defaultsKey: JSON.stringify(selection),
         className:
           "bg-surface border border-border p-4 rounded-lg flex flex-wrap gap-4 items-center justify-between shadow",
         action: "/usage",

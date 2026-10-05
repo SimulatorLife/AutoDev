@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { SpanStatusCode } from "@opentelemetry/api";
 import {
+  type ControlApiEvaluationsResponse,
   type GithubActionsRuntimeStatus,
   type GithubWorkflowDefinition,
   type GithubWorkflowRun,
@@ -837,13 +838,13 @@ export async function githubWorkflowsView(
   }
 }
 
-async function evaluationsView(): Promise<Record<string, unknown>> {
+async function evaluationsView(): Promise<ControlApiEvaluationsResponse> {
   const read = await new EvaluationRepository().listEvaluations();
   const base = {
     schema: "autodev-control-evaluations-v1",
     source: "openlit_evaluation",
     readOnly: true
-  };
+  } as const;
   return read.status === "available"
     ? {
         ...base,

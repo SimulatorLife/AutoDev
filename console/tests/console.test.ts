@@ -47,12 +47,15 @@ import {
   McpsView,
   MemoryCohortsView,
   MemoryExperiencesView,
+  memoryHref,
   MemoryPortalCard,
   MemoryRecordsView,
   MemorySummary,
   type MemorySummaryCounts,
   MemorySummaryStream,
+  type MemoryUrlScope,
   MemoryView,
+  observeSummaryCounts,
   PromptDetailView,
   PromptsView,
   resolveActiveTabId,
@@ -341,7 +344,7 @@ test("ConsoleForm renders a native GET form that is not busy at rest", () => {
   const markup = renderToStaticMarkup(
     React.createElement(
       ConsoleForm,
-      { action: "/usage", "data-probe": "filters" },
+      { defaultsKey: "range=24H", action: "/usage", "data-probe": "filters" },
       React.createElement("input", { name: "range", defaultValue: "24H" })
     )
   );
@@ -2479,7 +2482,14 @@ test("MemoryRecordsView renders records, lifecycle status badges, and claim text
     React.createElement(MemoryRecordsView, {
       records: [sampleRecord],
       totalCount: 1,
-      currentWorkspaceId: "SimulatorLife/AutoDev"
+      scope: {
+        workspaceId: "SimulatorLife/AutoDev",
+        query: "",
+        kind: "all",
+        status: "all",
+        occurredFrom: "2026-09-01T00:00:00Z",
+        occurredUntil: "2026-10-01T00:00:00Z"
+      }
     })
   );
 
@@ -2536,7 +2546,14 @@ test("MemoryRecordsView renders record detail panel with validity and transition
       totalCount: 1,
       selectedRecord: sampleRecord,
       history: sampleHistory,
-      currentWorkspaceId: "SimulatorLife/AutoDev"
+      scope: {
+        workspaceId: "SimulatorLife/AutoDev",
+        query: "",
+        kind: "all",
+        status: "all",
+        occurredFrom: "2026-09-01T00:00:00Z",
+        occurredUntil: "2026-10-01T00:00:00Z"
+      }
     })
   );
 
@@ -2572,7 +2589,14 @@ test("MemoryExperiencesView renders experiences with task, role, and validation 
     React.createElement(MemoryExperiencesView, {
       experiences: [sampleExp],
       totalCount: 1,
-      currentWorkspaceId: "SimulatorLife/AutoDev"
+      scope: {
+        workspaceId: "SimulatorLife/AutoDev",
+        query: "",
+        kind: "all",
+        status: "all",
+        occurredFrom: "2026-09-01T00:00:00Z",
+        occurredUntil: "2026-10-01T00:00:00Z"
+      }
     })
   );
 
@@ -2634,7 +2658,14 @@ test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace
           cohortSessions: 0
         }
       }),
-      currentWorkspaceId: "SimulatorLife/AutoDev",
+      scope: {
+        workspaceId: "SimulatorLife/AutoDev",
+        query: "fallback",
+        kind: "procedure",
+        status: "active",
+        occurredFrom: "2026-09-01T00:00:00Z",
+        occurredUntil: "2026-10-01T00:00:00Z"
+      },
       repositoryId: "SimulatorLife/AutoDev",
       workspaces: [
         {
@@ -2649,12 +2680,7 @@ test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace
           enabled: true,
           agentRoles: null
         }
-      ],
-      query: "fallback",
-      kind: "procedure",
-      status: "active",
-      occurredFrom: "2026-09-01T00:00:00Z",
-      occurredUntil: "2026-10-01T00:00:00Z"
+      ]
     })
   );
 
@@ -2703,6 +2729,140 @@ test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace
   assert.match(workspaceForm, /name="until" value="2026-10-01T00:00:00Z"/);
   assert.match(workspaceForm, /SimulatorLife\/Other/);
   assert.doesNotMatch(workspaceForm, /name="recordId"|name="experienceId"/);
+});
+
+test("Memory links and filter forms carry the full URL scope", () => {
+  const scope: MemoryUrlScope = {
+    workspaceId: "SimulatorLife/AutoDev",
+    query: "fallback",
+    kind: "procedural",
+    status: "active",
+    occurredFrom: "2026-09-01T00:00:00Z",
+    occurredUntil: "2026-10-01T00:00:00Z"
+  };
+  const scopeEntries = [
+    ["workspaceId", "SimulatorLife/AutoDev"],
+    ["from", "2026-09-01T00:00:00Z"],
+    ["until", "2026-10-01T00:00:00Z"],
+    ["query", "fallback"],
+    ["kind", "procedural"],
+    ["status", "active"]
+  ];
+  const searchEntries = (href: string | undefined): string[][] => {
+    assert.ok(href);
+    const url = new URL(href.replaceAll("&amp;", "&"), "http://console.test");
+    assert.equal(url.pathname, "/memory");
+    return Array.from(url.searchParams.entries());
+  };
+  const firstForm = (markup: string): string => {
+    const start = markup.indexOf("<form");
+    assert.notEqual(start, -1);
+    return markup.slice(start, markup.indexOf("</form>", start));
+  };
+  const hiddenNames = (form: string): string[] =>
+    Array.from(
+      form.matchAll(/<input type="hidden" name="([^"]+)"/gu),
+      ([, name]) => name ?? ""
+    );
+
+  // Unfiltered values are left out of the URL instead of encoded as "all".
+  assert.deepEqual(
+    searchEntries(
+      memoryHref({ ...scope, query: "", kind: "all", status: "all" }, "cohorts")
+    ),
+    [
+      ["tab", "cohorts"],
+      ["workspaceId", "SimulatorLife/AutoDev"],
+      ["from", "2026-09-01T00:00:00Z"],
+      ["until", "2026-10-01T00:00:00Z"]
+    ]
+  );
+
+  const record: MemoryRecord = {
+    id: "mem-010",
+    kind: "procedural",
+    status: "active",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    claim: "Scoped claim.",
+    validity: { state: "verified", evidence: [] },
+    provenance: {
+      experienceIds: [],
+      evidence: [],
+      createdBy: "operator",
+      createdAt: "2026-10-01T00:00:00Z"
+    },
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-01T00:00:00Z"
+  };
+  const records = renderToStaticMarkup(
+    React.createElement(MemoryRecordsView, {
+      records: [record],
+      totalCount: 1,
+      scope
+    })
+  );
+  // Selecting a record keeps the workspace, filters, and time window.
+  assert.deepEqual(
+    searchEntries(
+      records
+        .match(/<a[^>]*data-memory-record-id="mem-010"[^>]*>/u)?.[0]
+        .match(/href="([^"]+)"/u)?.[1]
+    ),
+    [["tab", "records"], ...scopeEntries, ["recordId", "mem-010"]]
+  );
+  // The record filter edits query, kind, and status; the rest rides along.
+  const recordFilter = firstForm(records);
+  assert.deepEqual(hiddenNames(recordFilter), [
+    "tab",
+    "workspaceId",
+    "from",
+    "until"
+  ]);
+  assert.match(recordFilter, /name="query" value="fallback"/u);
+
+  const experience: ExperienceEnvelope = {
+    id: "exp-010",
+    workspaceId: "SimulatorLife/AutoDev",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    taskId: "task-1",
+    runId: "run-1",
+    agentId: "agent-1",
+    agentRole: "orchestrator",
+    startedAt: "2026-10-03T10:00:00Z",
+    outcome: "success",
+    memoryMode: "jit",
+    trajectory: {
+      format: "codex-v1",
+      uri: "file:///tmp/transcripts/run-1.jsonl",
+      sourceAdapter: "codex"
+    },
+    evidence: []
+  };
+  const experiences = renderToStaticMarkup(
+    React.createElement(MemoryExperiencesView, {
+      experiences: [experience],
+      totalCount: 1,
+      scope
+    })
+  );
+  assert.deepEqual(
+    searchEntries(
+      experiences
+        .match(/<a[^>]*data-memory-experience-id="exp-010"[^>]*>/u)?.[0]
+        .match(/href="([^"]+)"/u)?.[1]
+    ),
+    [["tab", "experiences"], ...scopeEntries, ["experienceId", "exp-010"]]
+  );
+  // The experience filter edits only the search text; the record filters
+  // stay in the URL so returning to Durable Records keeps them.
+  assert.deepEqual(hiddenNames(firstForm(experiences)), [
+    "tab",
+    "workspaceId",
+    "from",
+    "until",
+    "kind",
+    "status"
+  ]);
 });
 
 test("MemorySummary streams as pending, dims stale counts, and never synthesizes zero", () => {
@@ -2754,14 +2914,53 @@ test("MemorySummary streams as pending, dims stale counts, and never synthesizes
   assert.match(text, /Cohort Sessions 3/u);
 });
 
+test("observeSummaryCounts settles from a React Flight thenable, reporting a failed stream as unobserved", async () => {
+  // React Flight hands the client a thenable whose `then` returns nothing and
+  // which has no `catch`.
+  const flightThenable = (
+    outcome:
+      { readonly value: MemorySummaryCounts } | { readonly reason: Error }
+  ): PromiseLike<MemorySummaryCounts> =>
+    ({
+      // eslint-disable-next-line unicorn/no-thenable -- models React Flight's client thenable.
+      then(onFulfilled, onRejected) {
+        if ("value" in outcome) onFulfilled?.(outcome.value);
+        else onRejected?.(outcome.reason);
+      }
+    }) as PromiseLike<MemorySummaryCounts>;
+  const counts: MemorySummaryCounts = {
+    records: { total: 2, inScope: 1, active: 1 },
+    experiences: null,
+    cohortSessions: 4
+  };
+
+  const settled: MemorySummaryCounts[] = [];
+  await observeSummaryCounts(flightThenable({ value: counts }), (value) =>
+    settled.push(value)
+  );
+  await observeSummaryCounts(
+    flightThenable({ reason: new Error("stream closed") }),
+    (value) => settled.push(value)
+  );
+  assert.deepEqual(settled, [
+    counts,
+    { records: null, experiences: null, cohortSessions: null }
+  ]);
+});
+
 test("MemoryView renders only the active tab's content", () => {
   const shared = {
     summary: null,
-    currentWorkspaceId: "SimulatorLife/AutoDev",
+    scope: {
+      workspaceId: "SimulatorLife/AutoDev",
+      query: "",
+      kind: "all",
+      status: "all",
+      occurredFrom: "2026-09-01T00:00:00Z",
+      occurredUntil: "2026-10-01T00:00:00Z"
+    },
     repositoryId: "SimulatorLife/AutoDev",
-    workspaces: [],
-    occurredFrom: "2026-09-01T00:00:00Z",
-    occurredUntil: "2026-10-01T00:00:00Z"
+    workspaces: []
   };
   const experiences = renderToStaticMarkup(
     React.createElement(MemoryView, {

@@ -12,6 +12,12 @@ import {
   type ConsoleFormProps
 } from "../../components/navigation/ConsoleForm.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
+import {
+  memoryHref,
+  memoryScopeHiddenInputs,
+  type MemoryTab,
+  type MemoryUrlScope
+} from "./memory-scope.ts";
 import { MemoryCohortsView } from "./MemoryCohortsView.ts";
 import { MemoryExperiencesView } from "./MemoryExperiencesView.ts";
 import { MemoryPortalCard } from "./MemoryPortalCard.ts";
@@ -19,8 +25,6 @@ import {
   type MemoryRecordHistory,
   MemoryRecordsView
 } from "./MemoryRecordsView.ts";
-
-export type MemoryTab = "records" | "experiences" | "cohorts" | "portal";
 
 /**
  * Data for the active tab only. Each tab loads just what it renders, so a
@@ -59,28 +63,18 @@ export interface MemoryViewProps {
    * `MemorySummaryStream`) so the active tab never waits on summary reads.
    */
   readonly summary: React.ReactNode;
-  readonly currentWorkspaceId: string;
+  readonly scope: MemoryUrlScope;
   readonly repositoryId: string;
   readonly workspaces: readonly WorkspaceEntry[];
-  readonly query?: string | undefined;
-  readonly kind?: string | undefined;
-  readonly status?: string | undefined;
-  readonly occurredFrom: string;
-  readonly occurredUntil: string;
   readonly portalHref?: string | null | undefined;
 }
 
 export function MemoryView({
   content,
   summary,
-  currentWorkspaceId,
+  scope,
   repositoryId,
   workspaces,
-  query,
-  kind,
-  status,
-  occurredFrom,
-  occurredUntil,
   portalHref
 }: MemoryViewProps): React.JSX.Element {
   const activeTab = content.tab;
@@ -91,31 +85,11 @@ export function MemoryView({
     { id: "portal", label: "OpenLIT Portal" }
   ];
 
-  const hrefForTab = (tabId: string): string => {
-    const params = new URLSearchParams({
-      tab: tabId,
-      workspaceId: currentWorkspaceId,
-      from: occurredFrom,
-      until: occurredUntil
-    });
-    if (query) params.set("query", query);
-    if (kind && kind !== "all") params.set("kind", kind);
-    if (status && status !== "all") params.set("status", status);
-    return "/memory?" + params.toString();
-  };
+  const hrefForTab = (tabId: string): string =>
+    memoryHref(scope, tabId as MemoryTab);
 
   const workspaceFormProps: ConsoleFormProps = {
-    // Keyed by the URL scope so Back/forward remounts the uncontrolled
-    // workspace selector with the scope actually shown.
-    key: JSON.stringify([
-      currentWorkspaceId,
-      activeTab,
-      query,
-      kind,
-      status,
-      occurredFrom,
-      occurredUntil
-    ]),
+    defaultsKey: memoryHref(scope, activeTab),
     action: "/memory",
     className: "flex items-center gap-2 text-xs",
     "data-memory-workspace-form": "true"
@@ -153,21 +127,7 @@ export function MemoryView({
           ? React.createElement(
               ConsoleForm,
               workspaceFormProps,
-              ...[
-                ["tab", activeTab],
-                ["query", query ?? ""],
-                ["kind", kind ?? "all"],
-                ["status", status ?? "all"],
-                ["from", occurredFrom],
-                ["until", occurredUntil]
-              ].map(([name, value]) =>
-                React.createElement("input", {
-                  key: name,
-                  type: "hidden",
-                  name,
-                  value
-                })
-              ),
+              ...memoryScopeHiddenInputs(scope, activeTab, ["workspaceId"]),
               React.createElement(
                 "label",
                 { htmlFor: "memory-workspace", className: "text-fg-muted" },
@@ -178,7 +138,7 @@ export function MemoryView({
                 {
                   id: "memory-workspace",
                   name: "workspaceId",
-                  defaultValue: currentWorkspaceId,
+                  defaultValue: scope.workspaceId,
                   className:
                     "px-3 py-1.5 rounded bg-input border border-border-strong text-xs font-mono text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 },
@@ -223,27 +183,23 @@ export function MemoryView({
             totalCount: content.totalRecords,
             selectedRecord: content.selectedRecord,
             history: content.selectedHistory,
-            currentWorkspaceId,
-            currentQuery: query,
-            currentKind: kind,
-            currentStatus: status
+            scope
           })
         : content.tab === "experiences"
           ? React.createElement(MemoryExperiencesView, {
               experiences: content.experiences,
               totalCount: content.totalExperiences,
               selectedExperience: content.selectedExperience,
-              currentWorkspaceId,
-              currentQuery: query
+              scope
             })
           : content.tab === "cohorts"
             ? React.createElement(MemoryCohortsView, {
                 sessionCohorts: content.sessionCohorts,
                 useCohorts: content.useCohorts,
-                currentWorkspaceId,
+                currentWorkspaceId: scope.workspaceId,
                 repositoryId,
-                occurredFrom,
-                occurredUntil
+                occurredFrom: scope.occurredFrom,
+                occurredUntil: scope.occurredUntil
               })
             : React.createElement(
                 "div",

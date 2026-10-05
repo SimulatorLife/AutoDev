@@ -25,6 +25,7 @@ export * from "./features/github/GithubView.ts";
 export * from "./features/hooks/HooksView.ts";
 export * from "./features/mcps/McpDetailView.ts";
 export * from "./features/mcps/McpsView.ts";
+export * from "./features/memory/memory-scope.ts";
 export * from "./features/memory/MemoryCohortsView.ts";
 export * from "./features/memory/MemoryExperiencesView.ts";
 export * from "./features/memory/MemoryPortalCard.ts";

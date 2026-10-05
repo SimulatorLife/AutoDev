@@ -11,8 +11,24 @@ const UNOBSERVED_COUNTS: MemorySummaryCounts = {
 };
 
 interface ResolvedCounts {
-  readonly source: Promise<MemorySummaryCounts>;
+  readonly source: PromiseLike<MemorySummaryCounts>;
   readonly counts: MemorySummaryCounts;
+}
+
+/**
+ * Delivers the streamed counts to `settle` once they arrive, or unobserved
+ * counts when the stream fails, so a failed stream is an unobserved summary
+ * and never a stuck spinner.
+ *
+ * React Flight hands the client a thenable, not a native promise: it has no
+ * `catch`, and its `then` returns nothing to chain from. `Promise.resolve`
+ * adopts it into a native promise before anything is chained.
+ */
+export function observeSummaryCounts(
+  counts: PromiseLike<MemorySummaryCounts>,
+  settle: (counts: MemorySummaryCounts) => void
+): Promise<void> {
+  return Promise.resolve(counts).then(settle, () => settle(UNOBSERVED_COUNTS));
 }
 
 /**
@@ -28,16 +44,14 @@ interface ResolvedCounts {
 export function MemorySummaryStream({
   counts
 }: {
-  readonly counts: Promise<MemorySummaryCounts>;
+  readonly counts: PromiseLike<MemorySummaryCounts>;
 }): React.JSX.Element {
   const [resolved, setResolved] = React.useState<ResolvedCounts | null>(null);
   React.useEffect(() => {
     let current = true;
-    const settle = (value: MemorySummaryCounts): void => {
+    void observeSummaryCounts(counts, (value) => {
       if (current) setResolved({ source: counts, counts: value });
-    };
-    // A failed stream is an unobserved summary, never a stuck spinner.
-    counts.then(settle).catch(() => settle(UNOBSERVED_COUNTS));
+    });
     return () => {
       current = false;
     };

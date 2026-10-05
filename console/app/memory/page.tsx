@@ -7,10 +7,10 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import type { MemoryTab } from "../../src/features/memory/memory-scope.ts";
 import type { MemorySummaryCounts } from "../../src/features/memory/MemorySummary.ts";
 import { MemorySummaryStream } from "../../src/features/memory/MemorySummaryStream.ts";
 import {
-  type MemoryTab,
   type MemoryTabContent,
   MemoryView
 } from "../../src/features/memory/MemoryView.ts";
@@ -395,14 +395,16 @@ export default async function MemoryPage(
     summary: React.createElement(MemorySummaryStream, {
       counts: summaryCounts
     }),
-    currentWorkspaceId,
+    scope: {
+      workspaceId: currentWorkspaceId,
+      query: params.query,
+      kind: params.kind,
+      status: params.status,
+      occurredFrom: params.occurredFrom,
+      occurredUntil: params.occurredUntil
+    },
     repositoryId: currentWorkspaceId,
     workspaces: workspacesFromResult(workspacesResult),
-    query: params.query,
-    kind: params.kind,
-    status: params.status,
-    occurredFrom: params.occurredFrom,
-    occurredUntil: params.occurredUntil,
     portalHref: portal?.href ?? null
   });
 }

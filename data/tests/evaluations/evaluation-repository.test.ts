@@ -41,6 +41,7 @@ test("EvaluationRepository.parseEvaluationRows parses valid ClickHouse evaluatio
   ].join("\n");
 
   const results = repo.parseEvaluationRows(rawJson);
+  assert.ok(results);
   assert.equal(results.length, 2);
 
   const first = results[0]!;
@@ -76,11 +77,17 @@ test("EvaluationRepository.parseEvaluationRows parses valid ClickHouse evaluatio
   });
 });
 
-test("EvaluationRepository.parseEvaluationRows ignores empty and malformed lines", () => {
+test("EvaluationRepository.parseEvaluationRows skips blank and id-less rows but rejects unreadable output", () => {
   const repo = new EvaluationRepository();
-  const raw = "\n  \nnot-valid-json\n{}\n";
-  const results = repo.parseEvaluationRows(raw);
-  assert.deepEqual(results, []);
+  assert.deepEqual(repo.parseEvaluationRows("\n  \n{}\n"), []);
+  assert.equal(repo.parseEvaluationRows("\n{}\nnot-valid-json\n"), null);
+  // ClickHouse appends a mid-stream exception as plain text after HTTP 200.
+  assert.equal(
+    repo.parseEvaluationRows(
+      '{"id":"e1","created_at":"2026-10-04 10:00:00"}\nCode: 241. DB::Exception: Memory limit exceeded\n'
+    ),
+    null
+  );
 });
 
 test("EvaluationRepository.listEvaluations returns parsed rows with custom fetchImpl", async () => {
@@ -133,6 +140,18 @@ test("EvaluationRepository.listEvaluations reports failed reads as unavailable, 
     message: "ClickHouse is unreachable."
   });
 
+  const truncatedFetch: typeof fetch = async () =>
+    new Response('{"id":"e1"}\nCode: 241. DB::Exception: Memory limit\n');
+  assert.deepEqual(
+    await new EvaluationRepository({
+      fetchImpl: truncatedFetch
+    }).listEvaluations(),
+    {
+      status: "unavailable",
+      message: "ClickHouse returned an unreadable evaluation result."
+    }
+  );
+
   const emptyFetch: typeof fetch = async () =>
     new Response("", { status: 200 });
   assert.deepEqual(
@@ -142,11 +161,15 @@ test("EvaluationRepository.listEvaluations reports failed reads as unavailable, 
 });
 
 test("EvaluationRepository.listEvaluations abandons an unresponsive ClickHouse within its timeout", async () => {
+  // `AbortSignal.timeout` uses an unref'd timer, so the stub holds a handle
+  // open while it hangs, as a real request's socket would.
   const hangingFetch: typeof fetch = (_input, init) =>
     new Promise((_resolve, reject) => {
-      init?.signal?.addEventListener("abort", () =>
-        reject(init.signal?.reason)
-      );
+      const socket = setInterval(() => {}, 1000);
+      init?.signal?.addEventListener("abort", () => {
+        clearInterval(socket);
+        reject(init.signal?.reason);
+      });
     });
   const repository = new EvaluationRepository({
     fetchImpl: hangingFetch,
@@ -155,7 +178,7 @@ test("EvaluationRepository.listEvaluations abandons an unresponsive ClickHouse w
   const startedAt = performance.now();
   assert.deepEqual(await repository.listEvaluations(), {
     status: "unavailable",
-    message: "ClickHouse did not answer the evaluation query within 25ms."
+    message: "ClickHouse did not complete the evaluation query within 25ms."
   });
   assert.ok(performance.now() - startedAt < 1000);
 });

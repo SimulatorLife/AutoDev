@@ -69,6 +69,7 @@ export class EvaluationRepository {
       "FROM openlit.openlit_evaluation " +
       `ORDER BY created_at DESC LIMIT ${safeLimit} FORMAT JSONEachRow`;
 
+    let connected = false;
     try {
       const signal = AbortSignal.timeout(this.timeoutMs);
       const response = await this.fetchImpl(
@@ -87,23 +88,35 @@ export class EvaluationRepository {
         };
       }
 
-      const text = await response.text();
-      return {
-        status: "available",
-        evaluations: this.parseEvaluationRows(text)
-      };
+      connected = true;
+      const evaluations = this.parseEvaluationRows(await response.text());
+      // ClickHouse reports an error raised mid-stream as trailing text after
+      // an HTTP 200, so any unreadable line means the read did not complete.
+      return evaluations
+        ? { status: "available", evaluations }
+        : {
+            status: "unavailable",
+            message: "ClickHouse returned an unreadable evaluation result."
+          };
     } catch (error) {
       return {
         status: "unavailable",
         message:
           error instanceof Error && error.name === "TimeoutError"
-            ? `ClickHouse did not answer the evaluation query within ${this.timeoutMs}ms.`
-            : "ClickHouse is unreachable."
+            ? `ClickHouse did not complete the evaluation query within ${this.timeoutMs}ms.`
+            : connected
+              ? "ClickHouse ended the evaluation result before it completed."
+              : "ClickHouse is unreachable."
       };
     }
   }
 
-  parseEvaluationRows(text: string): readonly EvaluationResult[] {
+  /**
+   * Parses ClickHouse `JSONEachRow` output. Returns `null` when any non-empty
+   * line is not a JSON row, so a partial or error body is never mistaken for
+   * a complete result set.
+   */
+  parseEvaluationRows(text: string): readonly EvaluationResult[] | null {
     const lines = text
       .split(LINE_BREAK_PATTERN)
       .map((l) => l.trim())
@@ -112,48 +125,47 @@ export class EvaluationRepository {
     const results: EvaluationResult[] = [];
 
     for (const line of lines) {
+      let row: RawClickHouseEvaluationRow;
       try {
-        const row = JSON.parse(line) as RawClickHouseEvaluationRow;
-        if (!row.id) continue;
-
-        const evNames = row["evaluationData.evaluation"] ?? [];
-        const verdicts = row["evaluationData.verdict"] ?? [];
-        const scores = row.scores ?? {};
-
-        const metrics: EvaluationMetric[] = [];
-        for (const [name, value] of Object.entries(scores)) {
-          const verdict = verdicts[evNames.indexOf(name)]?.toLowerCase();
-          const effectiveVerdict =
-            verdict ?? (Number(value) >= 0.5 ? "pass" : "fail");
-          const pass =
-            effectiveVerdict === "pass" || effectiveVerdict === "yes";
-
-          metrics.push({
-            name,
-            value: Number(value),
-            pass
-          });
-        }
-
-        const passed = metrics.length > 0 ? metrics.every((m) => m.pass) : true;
-        const meta = row.meta ?? {};
-        const agentRole =
-          meta.agentRole ?? meta.role ?? meta.agent ?? "unknown";
-        const model = meta.model ?? meta["gen_ai.request.model"] ?? "unknown";
-        const promptName = meta.promptName ?? meta.prompt ?? undefined;
-
-        results.push({
-          id: row.id,
-          agentRole,
-          ...(promptName ? { promptName } : {}),
-          model,
-          metrics,
-          passed,
-          timestamp: row.created_at
-        });
+        row = JSON.parse(line) as RawClickHouseEvaluationRow;
       } catch {
-        // Skip malformed rows
+        return null;
       }
+      if (!row.id) continue;
+
+      const evNames = row["evaluationData.evaluation"] ?? [];
+      const verdicts = row["evaluationData.verdict"] ?? [];
+      const scores = row.scores ?? {};
+
+      const metrics: EvaluationMetric[] = [];
+      for (const [name, value] of Object.entries(scores)) {
+        const verdict = verdicts[evNames.indexOf(name)]?.toLowerCase();
+        const effectiveVerdict =
+          verdict ?? (Number(value) >= 0.5 ? "pass" : "fail");
+        const pass = effectiveVerdict === "pass" || effectiveVerdict === "yes";
+
+        metrics.push({
+          name,
+          value: Number(value),
+          pass
+        });
+      }
+
+      const passed = metrics.length > 0 ? metrics.every((m) => m.pass) : true;
+      const meta = row.meta ?? {};
+      const agentRole = meta.agentRole ?? meta.role ?? meta.agent ?? "unknown";
+      const model = meta.model ?? meta["gen_ai.request.model"] ?? "unknown";
+      const promptName = meta.promptName ?? meta.prompt ?? undefined;
+
+      results.push({
+        id: row.id,
+        agentRole,
+        ...(promptName ? { promptName } : {}),
+        model,
+        metrics,
+        passed,
+        timestamp: row.created_at
+      });
     }
 
     return results;

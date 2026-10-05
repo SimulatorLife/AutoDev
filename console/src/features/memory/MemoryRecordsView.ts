@@ -17,6 +17,11 @@ import {
   type ColumnDef,
   DataTable
 } from "../../components/tables/DataTable.ts";
+import {
+  memoryHref,
+  memoryScopeHiddenInputs,
+  type MemoryUrlScope
+} from "./memory-scope.ts";
 
 export interface MemoryRecordTransition {
   readonly fromStatus?: MemoryStatus;
@@ -37,10 +42,7 @@ export interface MemoryRecordsViewProps {
   readonly totalCount: number;
   readonly selectedRecord?: MemoryRecord | null | undefined;
   readonly history?: MemoryRecordHistory | null | undefined;
-  readonly currentWorkspaceId: string;
-  readonly currentQuery?: string | undefined;
-  readonly currentKind?: string | undefined;
-  readonly currentStatus?: string | undefined;
+  readonly scope: MemoryUrlScope;
 }
 
 const NOT_OBSERVED_STATUS = "not-observed" as const;
@@ -92,10 +94,7 @@ export function MemoryRecordsView({
   totalCount,
   selectedRecord,
   history,
-  currentWorkspaceId,
-  currentQuery = "",
-  currentKind = "all",
-  currentStatus = "all"
+  scope
 }: MemoryRecordsViewProps): React.JSX.Element {
   const columns: ColumnDef<MemoryRecord>[] = [
     {
@@ -106,7 +105,7 @@ export function MemoryRecordsView({
         React.createElement(
           ConsoleLink,
           {
-            href: `?tab=records&workspaceId=${encodeURIComponent(currentWorkspaceId)}&recordId=${encodeURIComponent(record.id)}`,
+            href: memoryHref(scope, "records", { recordId: record.id }),
             className:
               "font-mono text-xs font-semibold text-accent hover:brightness-110 hover:underline",
             "data-memory-record-id": record.id
@@ -180,35 +179,21 @@ export function MemoryRecordsView({
   return React.createElement(
     "div",
     { className: "flex flex-col gap-6", "data-feature": "memory-records" },
-    // Filter controls, keyed by the URL scope so a navigation that changes
-    // it remounts the uncontrolled fields with the URL's values.
+    // Filter controls. Submitting changes only the record filters; the rest
+    // of the scope (workspace, time window) is carried along.
     React.createElement(
       ConsoleForm,
       {
-        key: JSON.stringify([
-          currentWorkspaceId,
-          currentQuery,
-          currentKind,
-          currentStatus
-        ]),
+        defaultsKey: memoryHref(scope, "records"),
         action: "/memory",
         className:
           "flex flex-wrap items-center gap-3 p-4 bg-surface/80 rounded-lg border border-border"
       },
-      React.createElement("input", {
-        type: "hidden",
-        name: "tab",
-        value: "records"
-      }),
-      React.createElement("input", {
-        type: "hidden",
-        name: "workspaceId",
-        value: currentWorkspaceId
-      }),
+      ...memoryScopeHiddenInputs(scope, "records", ["query", "kind", "status"]),
       React.createElement("input", {
         type: "text",
         name: "query",
-        defaultValue: currentQuery,
+        defaultValue: scope.query,
         placeholder: "Search memory claims...",
         className:
           "flex-1 min-w-[200px] px-3 py-1.5 rounded bg-input border border-border-strong text-sm text-fg placeholder-fg-muted focus:outline-none focus:border-accent"
@@ -217,7 +202,7 @@ export function MemoryRecordsView({
         "select",
         {
           name: "kind",
-          defaultValue: currentKind,
+          defaultValue: scope.kind,
           className:
             "px-3 py-1.5 rounded bg-input border border-border-strong text-sm text-fg-secondary focus:outline-none focus:border-accent"
         },
@@ -230,7 +215,7 @@ export function MemoryRecordsView({
         "select",
         {
           name: "status",
-          defaultValue: currentStatus,
+          defaultValue: scope.status,
           className:
             "px-3 py-1.5 rounded bg-input border border-border-strong text-sm text-fg-secondary focus:outline-none focus:border-accent"
         },
@@ -270,7 +255,7 @@ export function MemoryRecordsView({
       ? React.createElement(RecordDetailPanel, {
           record: selectedRecord,
           history,
-          workspaceId: currentWorkspaceId
+          scope
         })
       : null
   );
@@ -279,14 +264,15 @@ export function MemoryRecordsView({
 interface RecordDetailPanelProps {
   readonly record: MemoryRecord;
   readonly history?: MemoryRecordHistory | null | undefined;
-  readonly workspaceId: string;
+  readonly scope: MemoryUrlScope;
 }
 
 function RecordDetailPanel({
   record,
   history,
-  workspaceId
+  scope
 }: RecordDetailPanelProps): React.JSX.Element {
+  const { workspaceId } = scope;
   return React.createElement(
     "div",
     {
@@ -333,7 +319,7 @@ function RecordDetailPanel({
       React.createElement(
         ConsoleLink,
         {
-          href: `?tab=records&workspaceId=${encodeURIComponent(workspaceId)}`,
+          href: memoryHref(scope, "records"),
           className: "text-sm text-fg-muted hover:text-fg"
         },
         "✕ Close"
@@ -485,7 +471,7 @@ function RecordDetailPanel({
                     ConsoleLink,
                     {
                       key: id,
-                      href: `?tab=records&workspaceId=${encodeURIComponent(workspaceId)}&recordId=${encodeURIComponent(id)}`,
+                      href: memoryHref(scope, "records", { recordId: id }),
                       className: "font-mono text-accent hover:underline"
                     },
                     id
@@ -507,7 +493,7 @@ function RecordDetailPanel({
                     ConsoleLink,
                     {
                       key: id,
-                      href: `?tab=records&workspaceId=${encodeURIComponent(workspaceId)}&recordId=${encodeURIComponent(id)}`,
+                      href: memoryHref(scope, "records", { recordId: id }),
                       className: "font-mono text-accent hover:underline"
                     },
                     id

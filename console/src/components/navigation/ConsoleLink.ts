@@ -1,6 +1,7 @@
 "use client";
 
 import NextLink, { useLinkStatus } from "next/link.js";
+import { useRouter } from "next/navigation.js";
 import React from "react";
 
 import { moduleDefault } from "../../lib/module-default.ts";
@@ -36,9 +37,9 @@ export type ConsoleLinkProps = Omit<NextLinkProps, "href" | "prefetch"> & {
  * sweeping the pointer across the sidebar or tabbing through a table does
  * not fire a full page render (and its GitHub, OpenLIT, or Memory reads)
  * per link passed; touch and mouse-down count immediately, so even a quick
- * click starts its fetch before the click completes. `next.config.ts` bounds how long a prefetched page may be
- * reused. Pointing at the link for the page already shown never prefetches
- * it again.
+ * click starts its fetch before the click completes. Leaving the link ends
+ * intent. `next.config.ts` bounds how long a prefetched page may be reused.
+ * Pointing at the link for the page already shown never prefetches it.
  *
  * Every link also carries a `LinkPendingIndicator`, so a click whose data
  * has not arrived yet (slow GitHub, OpenLIT, or Memory storage reads) is
@@ -47,6 +48,7 @@ export type ConsoleLinkProps = Omit<NextLinkProps, "href" | "prefetch"> & {
  */
 export function ConsoleLink({
   children,
+  href,
   onMouseEnter,
   onMouseLeave,
   onMouseDown,
@@ -55,7 +57,7 @@ export function ConsoleLink({
   onBlur,
   ...props
 }: ConsoleLinkProps): React.JSX.Element {
-  const [prefetch, setPrefetch] = React.useState(false);
+  const [intent, setIntent] = React.useState(false);
   const restTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelRest = (): void => {
     if (restTimer.current === null) return;
@@ -65,26 +67,24 @@ export function ConsoleLink({
   React.useEffect(() => cancelRest, []);
   const signalIntent = (anchor: HTMLAnchorElement): void => {
     cancelRest();
-    if (!isCurrentLocation(anchor)) setPrefetch(true);
-  };
-  // Prefetching stays enabled only while intent lasts. Next's Link prefetches
-  // on every hover once enabled, so leaving it on would bypass the rest
-  // threshold (and the current-page check) on every later pass. Disabling it
-  // does not cancel a prefetch already issued.
-  const endIntent = (): void => {
-    cancelRest();
-    setPrefetch(false);
+    if (!isCurrentLocation(anchor)) setIntent(true);
   };
   const awaitRest = (anchor: HTMLAnchorElement): void => {
-    if (prefetch) return;
     cancelRest();
     restTimer.current = setTimeout(() => signalIntent(anchor), INTENT_REST_MS);
+  };
+  const endIntent = (): void => {
+    cancelRest();
+    setIntent(false);
   };
   return React.createElement(
     Link,
     {
       ...props,
-      prefetch,
+      href,
+      // Next's own viewport and hover prefetching stays off; IntentPrefetch
+      // issues the full prefetch only while intent lasts.
+      prefetch: false,
       onMouseEnter(event: React.MouseEvent<HTMLAnchorElement>) {
         onMouseEnter?.(event);
         awaitRest(event.currentTarget);
@@ -111,8 +111,23 @@ export function ConsoleLink({
       }
     },
     children,
-    React.createElement(LinkPendingIndicator)
+    React.createElement(LinkPendingIndicator),
+    intent ? React.createElement(IntentPrefetch, { href }) : null
   );
+}
+
+/**
+ * Fully prefetches `href` when mounted, i.e. each time intent begins. Next's
+ * router reuses a still-fresh prefetched page instead of fetching it again.
+ * Rendered only after client-side intent, so the router hook never runs
+ * outside a mounted App Router.
+ */
+function IntentPrefetch({ href }: { readonly href: string }): null {
+  const router = useRouter();
+  React.useEffect(() => {
+    router.prefetch(href);
+  }, [router, href]);
+  return null;
 }
 
 function isCurrentLocation(anchor: HTMLAnchorElement): boolean {

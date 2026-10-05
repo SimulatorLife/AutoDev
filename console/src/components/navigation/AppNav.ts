@@ -41,7 +41,7 @@ export function AppNav({ activeSection }: AppNavProps): React.JSX.Element {
     {
       "aria-label": "AutoDev Console Navigation",
       className:
-        "autodev-nav flex flex-col w-64 h-full bg-surface text-fg p-4 border-r border-border"
+        "autodev-nav flex flex-col w-64 min-h-full bg-surface text-fg p-4 border-r border-border"
     },
     React.createElement(
       "div",

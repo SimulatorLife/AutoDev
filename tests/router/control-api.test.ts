@@ -6,6 +6,8 @@ import {
   rmSync,
   writeFileSync
 } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -48,7 +50,9 @@ const ENV_KEYS = [
   "AUTODEV_MEMORY_READ_TASK_HISTORY",
   "AUTODEV_GITHUB_TOKEN",
   "AUTODEV_GITHUB_REPOSITORY",
-  "GITHUB_REPOSITORY"
+  "GITHUB_REPOSITORY",
+  "CLICKHOUSE_URL",
+  "OPENLIT_DB_PASSWORD"
 ] as const;
 const SERVICE_TOKEN = "unit-test-secret-token-0123456789abcdef";
 const telemetryExporter = new InMemorySpanExporter();
@@ -1323,6 +1327,70 @@ test("GitHub runtime state rejects disabled workspaces before calling GitHub", a
     assert.equal(fetchCalls, 0);
   } finally {
     rmSync(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test("Control API /control/evaluations reports an incomplete or unreachable ClickHouse read as unavailable, never as zero results", async () => {
+  const saved = saveEnv();
+  const bodies = [
+    JSON.stringify({
+      id: "eval-1",
+      created_at: "2026-10-04 12:00:00",
+      meta: { agentRole: "orchestrator", model: "gpt-5.6-terra" },
+      scores: { relevance: 0.9 }
+    }) + "\n",
+    // ClickHouse reports an error raised mid-stream as trailing text after an
+    // HTTP 200 and the rows it already sent.
+    JSON.stringify({ id: "eval-2", created_at: "2026-10-04 12:00:00" }) +
+      "\nCode: 241. DB::Exception: Memory limit exceeded\n"
+  ];
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/x-ndjson" });
+    response.end(bodies.shift() ?? "");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    configure();
+    const { port } = server.address() as AddressInfo;
+    process.env.CLICKHOUSE_URL = `http://127.0.0.1:${port}`;
+    process.env.OPENLIT_DB_PASSWORD = "clickhouse-secret-password";
+
+    const available = await call("GET", CONTROL_API_PATHS.evaluations, {
+      actor: "viewer-a"
+    });
+    assert.equal(available.response.statusCode, 200);
+    assert.equal(available.body.schema, "autodev-control-evaluations-v1");
+    assert.equal(available.body.status, "available");
+    assert.equal(available.body.message, null);
+    assert.equal(available.body.totalEvaluations, 1);
+    assert.equal(available.body.evaluations[0].agentRole, "orchestrator");
+
+    const truncated = await call("GET", CONTROL_API_PATHS.evaluations, {
+      actor: "viewer-a"
+    });
+    assert.equal(truncated.response.statusCode, 200);
+    assert.equal(truncated.body.status, "unavailable");
+    assert.equal(
+      truncated.body.message,
+      "ClickHouse returned an unreadable evaluation result."
+    );
+    assert.equal(truncated.body.totalEvaluations, null);
+    assert.deepEqual(truncated.body.evaluations, []);
+
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    const unreachable = await call("GET", CONTROL_API_PATHS.evaluations, {
+      actor: "viewer-a"
+    });
+    assert.equal(unreachable.body.status, "unavailable");
+    assert.equal(unreachable.body.message, "ClickHouse is unreachable.");
+    assert.equal(unreachable.body.totalEvaluations, null);
+    assert.doesNotMatch(
+      unreachable.response.body,
+      /clickhouse-secret-password|127\.0\.0\.1:/u
+    );
+  } finally {
+    server.close();
+    restoreEnv(saved);
   }
 });
 

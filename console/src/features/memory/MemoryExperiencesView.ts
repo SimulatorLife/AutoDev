@@ -11,13 +11,17 @@ import {
   type ColumnDef,
   DataTable
 } from "../../components/tables/DataTable.ts";
+import {
+  memoryHref,
+  memoryScopeHiddenInputs,
+  type MemoryUrlScope
+} from "./memory-scope.ts";
 
 export interface MemoryExperiencesViewProps {
   readonly experiences: readonly ExperienceEnvelope[];
   readonly totalCount: number;
   readonly selectedExperience?: ExperienceEnvelope | null | undefined;
-  readonly currentWorkspaceId: string;
-  readonly currentQuery?: string | undefined;
+  readonly scope: MemoryUrlScope;
 }
 
 const VALIDATION_STATUS_MAP: Record<string, StatusBadgeVariant> = {
@@ -32,8 +36,7 @@ export function MemoryExperiencesView({
   experiences,
   totalCount,
   selectedExperience,
-  currentWorkspaceId,
-  currentQuery = ""
+  scope
 }: MemoryExperiencesViewProps): React.JSX.Element {
   const columns: ColumnDef<ExperienceEnvelope>[] = [
     {
@@ -44,7 +47,7 @@ export function MemoryExperiencesView({
         React.createElement(
           ConsoleLink,
           {
-            href: `?tab=experiences&workspaceId=${encodeURIComponent(currentWorkspaceId)}&experienceId=${encodeURIComponent(exp.id)}`,
+            href: memoryHref(scope, "experiences", { experienceId: exp.id }),
             className:
               "font-mono text-xs font-semibold text-accent hover:brightness-110 hover:underline",
             "data-memory-experience-id": exp.id
@@ -144,30 +147,21 @@ export function MemoryExperiencesView({
   return React.createElement(
     "div",
     { className: "flex flex-col gap-6", "data-feature": "memory-experiences" },
-    // Filter controls, keyed by the URL scope so a navigation that changes
-    // it remounts the uncontrolled fields with the URL's values.
+    // Filter controls. Submitting changes only the search text; the rest of
+    // the scope (workspace, record filters, time window) is carried along.
     React.createElement(
       ConsoleForm,
       {
-        key: JSON.stringify([currentWorkspaceId, currentQuery]),
+        defaultsKey: memoryHref(scope, "experiences"),
         action: "/memory",
         className:
           "flex flex-wrap items-center gap-3 p-4 bg-surface/80 rounded-lg border border-border"
       },
-      React.createElement("input", {
-        type: "hidden",
-        name: "tab",
-        value: "experiences"
-      }),
-      React.createElement("input", {
-        type: "hidden",
-        name: "workspaceId",
-        value: currentWorkspaceId
-      }),
+      ...memoryScopeHiddenInputs(scope, "experiences", ["query"]),
       React.createElement("input", {
         type: "text",
         name: "query",
-        defaultValue: currentQuery,
+        defaultValue: scope.query,
         placeholder: "Search experiences by task, run, role, or trajectory...",
         className:
           "flex-1 min-w-[200px] px-3 py-1.5 rounded bg-input border border-border-strong text-sm text-fg placeholder-fg-muted focus:outline-none focus:border-accent"
@@ -201,7 +195,7 @@ export function MemoryExperiencesView({
     selectedExperience
       ? React.createElement(ExperienceDetailPanel, {
           experience: selectedExperience,
-          workspaceId: currentWorkspaceId
+          scope
         })
       : null
   );
@@ -209,12 +203,12 @@ export function MemoryExperiencesView({
 
 interface ExperienceDetailPanelProps {
   readonly experience: ExperienceEnvelope;
-  readonly workspaceId: string;
+  readonly scope: MemoryUrlScope;
 }
 
 function ExperienceDetailPanel({
   experience,
-  workspaceId
+  scope
 }: ExperienceDetailPanelProps): React.JSX.Element {
   return React.createElement(
     "div",
@@ -266,7 +260,7 @@ function ExperienceDetailPanel({
       React.createElement(
         ConsoleLink,
         {
-          href: `?tab=experiences&workspaceId=${encodeURIComponent(workspaceId)}`,
+          href: memoryHref(scope, "experiences"),
           className: "text-sm text-fg-muted hover:text-fg"
         },
         "✕ Close"
@@ -440,7 +434,7 @@ function ExperienceDetailPanel({
         React.createElement("input", {
           type: "hidden",
           name: "workspaceId",
-          value: workspaceId
+          value: scope.workspaceId
         }),
         React.createElement(
           "button",
