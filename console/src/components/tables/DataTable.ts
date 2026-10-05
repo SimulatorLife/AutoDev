@@ -12,15 +12,13 @@ export interface DataTableProps<T> {
   readonly columns: readonly ColumnDef<T>[];
   readonly keyExtractor: (row: T) => string;
   readonly emptyMessage?: string | undefined;
-  readonly onRowClick?: ((row: T) => void) | undefined;
 }
 
 export function DataTable<T>({
   data,
   columns,
   keyExtractor,
-  emptyMessage = "No items to display.",
-  onRowClick
+  emptyMessage = "No items to display."
 }: DataTableProps<T>): React.JSX.Element {
   if (data.length === 0) {
     return React.createElement(
@@ -64,33 +62,24 @@ export function DataTable<T>({
           )
         )
       ),
+      // Cell styles are declared once on the body rather than on every
+      // cell: each repeated class string is sent in both the HTML and the RSC
+      // payload, and tables are the largest pages the Console renders.
       React.createElement(
         "tbody",
-        { className: "divide-y divide-border text-fg" },
-        data.map((row) => {
-          const key = keyExtractor(row);
-          const isClickable = Boolean(onRowClick);
-          return React.createElement(
+        {
+          className:
+            "divide-y divide-border text-fg [&>tr>td]:px-4 [&>tr>td]:py-3 [&>tr>td]:whitespace-nowrap"
+        },
+        data.map((row) =>
+          React.createElement(
             "tr",
-            {
-              key,
-              onClick: onRowClick ? () => onRowClick(row) : undefined,
-              className: `transition-colors ${
-                isClickable ? "cursor-pointer hover:bg-hover" : ""
-              }`
-            },
+            { key: keyExtractor(row) },
             columns.map((col) =>
-              React.createElement(
-                "td",
-                {
-                  key: col.id,
-                  className: "px-4 py-3 whitespace-nowrap"
-                },
-                col.cell(row)
-              )
+              React.createElement("td", { key: col.id }, col.cell(row))
             )
-          );
-        })
+          )
+        )
       )
     )
   );

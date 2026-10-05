@@ -51,15 +51,12 @@ export function StatusBadge({
   const displayLabel =
     label ?? status.charAt(0).toUpperCase() + status.slice(1);
 
+  // The badge shape and its leading dot come from the `status-badge` utility
+  // in app/globals.css, so a table with a badge per row repeats only the
+  // variant's colors.
   return React.createElement(
     "span",
-    {
-      className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${style}`,
-      "data-status": status
-    },
-    React.createElement("span", {
-      className: "w-1.5 h-1.5 rounded-full bg-current mr-1.5 opacity-80"
-    }),
+    { className: `status-badge ${style}`, "data-status": status },
     displayLabel
   );
 }

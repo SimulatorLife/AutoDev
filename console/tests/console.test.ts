@@ -543,7 +543,17 @@ test("StatusBadge renders valid variants", () => {
       React.createElement(StatusBadge, { status })
     );
     assert.ok(markup.includes(`data-status="${status}"`));
+    // The shape and dot come from the shared utility, so each badge sends
+    // only its variant colors and no extra dot element.
+    assert.match(
+      markup,
+      /^<span class="status-badge [^"]+"[^>]*>[^<]+<\/span>$/u
+    );
   }
+  assert.match(
+    readFileSync(join(CONSOLE_ROOT, "app/globals.css"), "utf8"),
+    /@utility status-badge \{[^}]*&::before \{/u
+  );
 });
 
 test("AgentsView keeps readiness and convergence unknown without observations", () => {
@@ -727,6 +737,10 @@ test("DataTable renders table with columns and data", () => {
   assert.ok(markup.includes("Alpha"));
   assert.ok(markup.includes("Beta"));
   assert.ok(markup.includes("<table"));
+  // Row and cell styling is declared once on the body, not per row or cell.
+  assert.match(markup, /<tbody class="[^"]*\[&amp;&gt;tr&gt;td\]:px-4/u);
+  assert.equal(markup.match(/<td>/gu)?.length, data.length * 2);
+  assert.doesNotMatch(markup, /<(?:tr|td)\s/u);
 });
 
 test("StatCard renders value and title", () => {

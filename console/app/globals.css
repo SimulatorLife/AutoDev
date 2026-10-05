@@ -67,6 +67,21 @@
   }
 }
 
+/*
+ * Shape shared by every StatusBadge. Tables render a badge per row, so the
+ * shape is defined once here instead of as utility strings repeated in the
+ * HTML and RSC payload of every row; the leading dot is drawn by ::before
+ * rather than an extra element.
+ */
+@utility status-badge {
+  @apply inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium;
+
+  &::before {
+    @apply mr-1.5 size-1.5 shrink-0 rounded-full bg-current opacity-80;
+    content: "";
+  }
+}
+
 html {
   color-scheme: dark;
 }

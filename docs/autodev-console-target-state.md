@@ -170,6 +170,7 @@ Moving between sections, list/detail views, tabs, and filters must feel immediat
 - GET filter/scope forms submit through `ConsoleForm` (`next/form`) for the same soft navigation and show the same delayed pending indicator, marking the form busy, until the filtered page commits; mutations remain same-origin POST routes.
 - Routes declare no `loading.tsx` boundaries: on Next.js 15.5, a prefetched route loading component makes same-path search-param navigations (tabs, filters, record selection) reuse an aliased prefetch entry that intermittently never commits.
 - Page data loads in parallel; a page must not serialize independent Control API reads, and Control API reads must not redo deterministic work whose inputs are unchanged (for example, workflow YAML is re-parsed only when a file's content changes).
+- Every server-rendered element is sent twice on a document load (HTML and the RSC payload) and parsed again during server rendering, so payload size is navigation latency. Styling repeated per row is declared once: `DataTable` styles its cells from the table body, and `StatusBadge` takes its shape and dot from the `status-badge` utility in `app/globals.css`, leaving only each variant's colors per badge.
 - A view awaits only the reads its visible content needs. Secondary, scope-wide summaries that need extra reads stream after the page and must never hold a tab switch; while they refresh they keep the previous values visibly marked as refreshing.
 
 ## 4. Repository and module architecture
