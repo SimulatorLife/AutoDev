@@ -527,6 +527,8 @@ function workspacesView(repositoryRoot?: string): Record<string, unknown> {
 }
 
 let githubActionsAdapterOverride: GithubActionsAdapter | null = null;
+// One process-wide adapter, so its ETag cache carries across Console views.
+let defaultGithubActionsAdapter: GithubActionsAdapter | null = null;
 
 export function setGithubActionsAdapterForTests(
   adapter: GithubActionsAdapter | null
@@ -793,7 +795,7 @@ export async function githubWorkflowsView(
   const adapter =
     options.actionsAdapter ??
     githubActionsAdapterOverride ??
-    new GithubActionsAdapter();
+    (defaultGithubActionsAdapter ??= new GithubActionsAdapter());
 
   try {
     const snapshot = await adapter.fetchRuntimeSnapshot(

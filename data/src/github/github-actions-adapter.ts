@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type {
   GithubActionsRunStats,
   GithubWorkflowRun
@@ -5,7 +7,12 @@ import type {
 
 const GITHUB_API_ORIGIN = "https://api.github.com";
 const GITHUB_API_VERSION = "2026-03-10";
-const DEFAULT_TIMEOUT_MS = 10_000;
+// Stays below the Console's 5s Control API budget so a slow GitHub API
+// degrades /control/github to an explicit runtime-unavailable state (with the
+// workflow catalog intact) instead of failing the whole Console page.
+const DEFAULT_TIMEOUT_MS = 3000;
+const HTTP_NOT_MODIFIED = 304;
+const MAX_CONDITIONAL_CACHE_ENTRIES = 32;
 const MAX_RESPONSE_BYTES = 1_048_576;
 const MAX_WORKFLOWS = 100;
 const MAX_BOUNDED_RUNS = 100;
@@ -491,13 +498,41 @@ export function computeRunStats(
   };
 }
 
+interface ConditionalCacheEntry {
+  readonly etag: string;
+  readonly data: Record<string, unknown>;
+}
+
 export class GithubActionsAdapter {
   private readonly fetchFn: typeof fetch;
   private readonly timeoutMs: number;
+  /**
+   * Last validated body per (token, endpoint), keyed by a token digest so the
+   * raw credential is never stored. Every read still asks GitHub: the cached
+   * ETag only turns an unchanged answer into a bodiless 304, which GitHub
+   * does not count against the rate limit, so freshness is unchanged while
+   * repeated Console views skip re-downloading and re-parsing the payload.
+   */
+  private readonly conditionalCache = new Map<string, ConditionalCacheEntry>();
 
   constructor(options: GithubActionsAdapterOptions = {}) {
     this.fetchFn = options.fetchFn ?? globalThis.fetch;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
+
+  private conditionalCacheKey(endpoint: string, token: string): string {
+    const tokenDigest = createHash("sha256").update(token).digest("hex");
+    return `${tokenDigest} ${endpoint}`;
+  }
+
+  private rememberResponse(key: string, entry: ConditionalCacheEntry): void {
+    this.conditionalCache.delete(key);
+    this.conditionalCache.set(key, entry);
+    while (this.conditionalCache.size > MAX_CONDITIONAL_CACHE_ENTRIES) {
+      const oldest = this.conditionalCache.keys().next().value;
+      if (oldest === undefined) break;
+      this.conditionalCache.delete(oldest);
+    }
   }
 
   private validateRepository(
@@ -546,12 +581,15 @@ export class GithubActionsAdapter {
     }, this.timeoutMs);
     timer.unref();
 
+    const cacheKey = this.conditionalCacheKey(endpoint, token);
+    const cached = this.conditionalCache.get(cacheKey);
     try {
       const headers: Record<string, string> = {
         Accept: "application/vnd.github+json",
         Authorization: `Bearer ${token}`,
         "X-GitHub-Api-Version": GITHUB_API_VERSION,
-        "User-Agent": "AutoDev-Control-API"
+        "User-Agent": "AutoDev-Control-API",
+        ...(cached ? { "If-None-Match": cached.etag } : {})
       };
       const response = await this.fetchFn(url, {
         method: "GET",
@@ -559,6 +597,12 @@ export class GithubActionsAdapter {
         signal: controller.signal,
         redirect: "error"
       });
+
+      if (response.status === HTTP_NOT_MODIFIED && cached) {
+        await response.body?.cancel();
+        this.rememberResponse(cacheKey, cached);
+        return cached.data;
+      }
 
       if (!response.ok) {
         let errorBody: unknown = null;
@@ -592,6 +636,12 @@ export class GithubActionsAdapter {
           502,
           "invalid_payload"
         );
+      }
+      const etag = response.headers.get("etag");
+      if (etag) {
+        this.rememberResponse(cacheKey, { etag, data });
+      } else {
+        this.conditionalCache.delete(cacheKey);
       }
       return data;
     } catch (error: unknown) {

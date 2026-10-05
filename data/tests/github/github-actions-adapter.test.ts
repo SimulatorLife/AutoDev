@@ -703,3 +703,63 @@ test("GithubActionsAdapter handles errors without leaking secrets or tokens", as
     { code: "invalid_repository" }
   );
 });
+
+test("GithubActionsAdapter revalidates with ETags and serves 304s from its last validated body", async () => {
+  const requests: Array<Record<string, string>> = [];
+  let workflowsVersion = 1;
+  const workflowsBody = (version: number) => ({
+    total_count: 1,
+    workflows: [
+      {
+        id: version,
+        name: `ci v${version}`,
+        path: ".github/workflows/ci.yml",
+        state: "active",
+        html_url:
+          "https://github.com/SimulatorLife/AutoDev/actions/workflows/ci.yml",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-02T00:00:00Z"
+      }
+    ]
+  });
+  const mockFetch: typeof fetch = async (_input, init) => {
+    const headers = init?.headers as Record<string, string>;
+    requests.push(headers);
+    const etag = `"workflows-v${workflowsVersion}"`;
+    if (headers["If-None-Match"] === etag) {
+      return new Response(null, { status: 304, headers: { ETag: etag } });
+    }
+    return Response.json(workflowsBody(workflowsVersion), {
+      headers: { ETag: etag }
+    });
+  };
+  const adapter = new GithubActionsAdapter({ fetchFn: mockFetch });
+  const token = "ghp_etag_token_123";
+
+  const first = await adapter.listWorkflows("SimulatorLife", "AutoDev", token);
+  assert.equal(requests[0]?.["If-None-Match"], undefined);
+  assert.equal(first[0]?.name, "ci v1");
+
+  // Unchanged upstream: the conditional request is answered with 304 and the
+  // previously validated body is reused.
+  const second = await adapter.listWorkflows("SimulatorLife", "AutoDev", token);
+  assert.equal(requests[1]?.["If-None-Match"], '"workflows-v1"');
+  assert.deepEqual(second, first);
+
+  // Changed upstream: GitHub returns a new body and ETag, which replace the
+  // cached ones.
+  workflowsVersion = 2;
+  const third = await adapter.listWorkflows("SimulatorLife", "AutoDev", token);
+  assert.equal(third[0]?.name, "ci v2");
+  const fourth = await adapter.listWorkflows("SimulatorLife", "AutoDev", token);
+  assert.equal(requests[3]?.["If-None-Match"], '"workflows-v2"');
+  assert.deepEqual(fourth, third);
+
+  // A different credential never revalidates against another token's body.
+  await adapter.listWorkflows(
+    "SimulatorLife",
+    "AutoDev",
+    "ghp_other_token_456"
+  );
+  assert.equal(requests[4]?.["If-None-Match"], undefined);
+});

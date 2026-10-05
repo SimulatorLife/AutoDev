@@ -522,7 +522,8 @@ The Console `/github` resource and the Control API `GET /control/github` are an 
   - Fixed origin: contacts only `https://api.github.com`; caller-supplied hosts are forbidden;
   - Redirects denied: all HTTP redirects are rejected (`redirect: "error"`);
   - Path safety: repository path segments are URI-encoded (`encodeURIComponent`), and path traversal segments (`.` and `..`) are rejected before any network call;
-  - Streamed byte caps & timeouts: responses are streamed and strictly capped at 1MiB (`MAX_RESPONSE_BYTES = 1_048_576`), and request timeouts (`DEFAULT_TIMEOUT_MS = 10_000`) remain actively enforced throughout body consumption;
+  - Streamed byte caps & timeouts: responses are streamed and strictly capped at 1MiB (`MAX_RESPONSE_BYTES = 1_048_576`), and request timeouts (`DEFAULT_TIMEOUT_MS = 3000`, below the Console's 5s Control API budget so a slow GitHub API degrades to an explicit runtime-unavailable state instead of failing the page) remain actively enforced throughout body consumption;
+  - Conditional revalidation: the long-lived Control API adapter remembers each endpoint's last validated body and ETag per credential digest and sends `If-None-Match`; every read still reaches GitHub, but unchanged answers return a bodiless 304 (not counted against the rate limit) instead of a re-downloaded, re-parsed payload;
   - Fail-closed record validation: malformed collection payloads and malformed workflow or run records fail closed (`invalid_payload` / 502) rather than silently dropping or coercing records;
   - HTTP error preservation: oversized, unreadable, or unparseable error response bodies do not erase HTTP auth/rate status codes (HTTP 401 Unauthorized, 403 Forbidden, 429 Too Many Requests, and 404 Not Found remain authoritative);
   - Configured workflows cap: workflow listing is capped at 100 (`per_page=100`), failing with explicit partial status (`partial_result` / 502) if more than 100 workflows exist.
