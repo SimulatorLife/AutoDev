@@ -42,8 +42,8 @@ import {
   WEB_SEARCH_TOOL
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
-import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "../router/proxy.ts";
 import { materializeCommands } from "../platform/install-materializer.ts";
+import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "../router/proxy.ts";
 import { getDefaultExecutionContract } from "../router/subagents.ts";
 import { routerTelemetryTracer } from "../router/telemetry.ts";
 import { readControlApiJsonObject } from "./body.ts";
@@ -1732,7 +1732,10 @@ async function promptDetailRoute(
     const route: ReadOnlyDetailRoute = {
       ...PROMPT_DETAIL_ROUTE,
       read: (identifier) =>
-        promptDetailView(identifier, options.repositoryRoot ?? DEFAULT_REPO_ROOT)
+        promptDetailView(
+          identifier,
+          options.repositoryRoot ?? DEFAULT_REPO_ROOT
+        )
     };
     return readOnlyDetailRoute(
       request,

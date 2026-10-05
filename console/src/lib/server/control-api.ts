@@ -76,6 +76,7 @@ const DEFAULT_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
 const CONTROL_API_TIMEOUT_MS = 5000;
 const TRAILING_SLASHES = /\/+$/u;
 const LINE_SPLIT_PATTERN = /\r?\n/u;
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/u;
 
 export interface ControlApiConfig {
   readonly baseUrl: string;
@@ -576,7 +577,7 @@ function isControlApiPromptDetailResponse(
     typeof value.source === "string" &&
     typeof value.content === "string" &&
     typeof value.revision === "string" &&
-    /^[a-f0-9]{64}$/u.test(value.revision)
+    SHA256_HEX_PATTERN.test(value.revision)
   );
 }
 

@@ -225,10 +225,14 @@ const architecturePolicies = [
     "runtime-shared",
     "runtime-telemetry-context"
   ]),
+  // A RuleSync-owned mutation through the Control API validates the
+  // canonical source, then generates and applies its projections (target
+  // state §6); the platform materializer owns that generate/apply step.
   allowOnly("runtime-control-api", [
     "core",
     "data",
     "runtime-memory",
+    "runtime-platform",
     "runtime-router",
     "runtime-router-concurrency",
     "runtime-router-cooldown",

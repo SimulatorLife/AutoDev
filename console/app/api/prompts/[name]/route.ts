@@ -3,13 +3,13 @@
 import { type NextRequest, NextResponse } from "next/server.js";
 
 import {
-  isSameOriginMutation,
-  readStrictUrlEncodedFormBody
-} from "../../../../src/lib/server/form-mutation.ts";
-import {
   patchPromptCommand,
   readControlApiConfig
 } from "../../../../src/lib/server/control-api.ts";
+import {
+  isSameOriginMutation,
+  readStrictUrlEncodedFormBody
+} from "../../../../src/lib/server/form-mutation.ts";
 
 const COMMAND_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const REVISION_PATTERN = /^[a-f0-9]{64}$/u;
@@ -36,14 +36,18 @@ function saveOutcomeForFailure(
 ): "conflict" | "validation" | "apply-failed" | "failed" {
   if (result.kind !== "http-error") return "failed";
   switch (result.code) {
-    case "autodev_control_prompt_revision_conflict":
+    case "autodev_control_prompt_revision_conflict": {
       return "conflict";
-    case "autodev_control_prompt_invalid_source":
+    }
+    case "autodev_control_prompt_invalid_source": {
       return "validation";
-    case "autodev_control_prompt_apply_failed":
+    }
+    case "autodev_control_prompt_apply_failed": {
       return "apply-failed";
-    default:
+    }
+    default: {
       return "failed";
+    }
   }
 }
 
@@ -56,10 +60,7 @@ export async function POST(
     return redirectToPrompt(name, "failed");
   }
 
-  const form = await readStrictUrlEncodedFormBody(
-    request,
-    MAX_FORM_BODY_BYTES
-  );
+  const form = await readStrictUrlEncodedFormBody(request, MAX_FORM_BODY_BYTES);
   if (
     !form ||
     form.size !== 2 ||
