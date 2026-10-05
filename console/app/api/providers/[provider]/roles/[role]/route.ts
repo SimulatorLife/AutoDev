@@ -1,20 +1,25 @@
 /**
  * Server-only Console provider-role mutation route.
  *
- * Receives the bounded form submission from the canonical Agents surface,
- * validates its same-origin browser context, and forwards a typed PATCH to
- * Runtime using the server-side Control API credential. The browser never
- * receives that credential and never bypasses Runtime.
+ * Receives the bounded form submission from a provider-role toggle on a
+ * Providers page, validates its same-origin browser context, and forwards a
+ * typed PATCH to Runtime using the server-side Control API credential. The
+ * browser never receives that credential and never bypasses Runtime.
  *
- * Only POST is exported. Any missing/invalid evidence or failed request
- * returns a 303 failure notice. A successful request returns to the Agents
- * page without a query-derived success claim; the refreshed role value is
- * authoritative.
+ * Only POST is exported. The response redirects back to the Providers page
+ * the toggle was rendered on; any missing/invalid evidence or failed request
+ * adds a could-not-be-confirmed notice instead of a success claim, because the
+ * refreshed role value is authoritative.
  */
 
 import { PROVIDER_ROLES, type ProviderRole } from "@simulatorlife/autodev-core";
 import { type NextRequest, NextResponse } from "next/server.js";
 
+import {
+  isProvidersReturnPath,
+  providersPath,
+  withControlFailure
+} from "../../../../../../src/features/providers/paths.ts";
 import {
   patchProviderRole,
   readControlApiConfig
@@ -34,18 +39,8 @@ function isProviderRole(value: string): value is ProviderRole {
   return PROVIDER_ROLES.includes(value as ProviderRole);
 }
 
-function redirectWithFailure(): NextResponse {
-  return new NextResponse(null, {
-    status: 303,
-    headers: { location: "/agents?providerRole=failed" }
-  });
-}
-
-function redirectToAgents(): NextResponse {
-  return new NextResponse(null, {
-    status: 303,
-    headers: { location: "/agents" }
-  });
+function redirectTo(location: string): NextResponse {
+  return new NextResponse(null, { status: 303, headers: { location } });
 }
 
 function parseEnabled(raw: string | null): boolean | null {
@@ -58,31 +53,33 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ provider: string; role: string }> }
 ): Promise<NextResponse> {
-  if (!isSameOriginMutation(request)) {
-    return redirectWithFailure();
-  }
+  const failed = (returnTo: string = providersPath()): NextResponse =>
+    redirectTo(withControlFailure(returnTo));
+  if (!isSameOriginMutation(request)) return failed();
 
   const { provider, role } = await context.params;
   if (!PROVIDER_ID_PATTERN.test(provider) || !isProviderRole(role)) {
-    return redirectWithFailure();
+    return failed();
   }
 
   const form = await readStrictUrlEncodedFormBody(request, MAX_FORM_BODY_BYTES);
-  if (!form) return redirectWithFailure();
+  if (!form) return failed();
 
+  const returnTo = form.get("returnTo");
+  if (!isProvidersReturnPath(returnTo)) return failed();
   const enabled = parseEnabled(form.get("enabled"));
   if (
     enabled === null ||
     form.get("provider") !== provider ||
     form.get("role") !== role ||
-    form.size !== 3
+    form.size !== 4
   ) {
-    return redirectWithFailure();
+    return failed(returnTo);
   }
 
   const config = readControlApiConfig();
-  if (!config) return redirectWithFailure();
+  if (!config) return failed(returnTo);
 
   const result = await patchProviderRole(provider, role, enabled, config);
-  return result.kind === "ok" ? redirectToAgents() : redirectWithFailure();
+  return result.kind === "ok" ? redirectTo(returnTo) : failed(returnTo);
 }

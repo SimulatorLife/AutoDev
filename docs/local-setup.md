@@ -689,7 +689,7 @@ pnpm --filter @simulatorlife/autodev-console start
 `next dev` writes to `console/.next-dev`; `next build` (and the Runtime
 installer's console-build step) writes the production build that `next start`
 and the Console LaunchAgent serve to `console/.next`. The split lives in
-`console/next.config.ts`, so a build cannot delete the chunks a running dev
+`console/src/lib/build-output.ts` (applied by `console/next.config.ts`), so a build cannot delete the chunks a running dev
 server loads (the `Cannot find module './<n>.js'` crash from `_document.js`).
 `console/next-env.d.ts` points at whichever directory generated it last, so it
 is gitignored; `pnpm --filter @simulatorlife/autodev-console typecheck` runs

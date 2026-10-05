@@ -21,6 +21,7 @@ import {
   type Candidate,
   type OrchestratorCandidate,
   type ProviderRoute,
+  type RouteDisabledReason,
   ROUTING_POLICY
 } from "@simulatorlife/autodev-runtime/router/routing";
 import { TOOL_CALL_OWNERSHIP } from "@simulatorlife/autodev-runtime/router/tool-call-ownership";
@@ -2108,11 +2109,25 @@ export async function proxyConcreteResponse(
     turnMetadataHeader
   });
 
-  if (!ROUTING_POLICY.isProviderEnabledForRole(route.provider, "subagent")) {
-    rejectConcreteRequest(response, route, requestId, modelName, workspace);
+  const disabledReason = ROUTING_POLICY.routeDisabledReason(
+    { provider: route.provider, model: modelName },
+    "subagent"
+  );
+  if (disabledReason) {
+    rejectConcreteRequest(
+      response,
+      route,
+      requestId,
+      modelName,
+      workspace,
+      disabledReason
+    );
     endLogicalRequestSpan(logicalSpan, {
       status: "error",
-      errorMessage: "provider is disabled for this request"
+      errorMessage:
+        disabledReason === "model_disabled"
+          ? "model is disabled for this request"
+          : "provider is disabled for this request"
     });
     return;
   }
@@ -2199,7 +2214,8 @@ function rejectConcreteRequest(
   route: ProviderRoute,
   requestId: string,
   modelName: string,
-  workspace: { key: string; cwd?: string | null } | null
+  workspace: { key: string; cwd?: string | null } | null,
+  failureClass: RouteDisabledReason
 ): void {
   recordRouterEvent({
     phase: "skipped",
@@ -2208,7 +2224,7 @@ function rejectConcreteRequest(
     provider: route.provider,
     model: modelName,
     workspace,
-    failureClass: "provider_disabled"
+    failureClass
   });
   recordRouterEvent({
     phase: "result",
@@ -2219,18 +2235,20 @@ function rejectConcreteRequest(
     workspace,
     outcome: "failure",
     status: 503,
-    failureClass: "provider_disabled"
+    failureClass
   });
   sendJson(
     response,
     503,
     errorBody(
-      `Direct concrete request to ${modelName} (${route.provider}) is unavailable because provider ${route.provider} is disabled.`,
+      failureClass === "model_disabled"
+        ? `Direct concrete request to ${modelName} (${route.provider}) is unavailable because model ${modelName} is disabled.`
+        : `Direct concrete request to ${modelName} (${route.provider}) is unavailable because provider ${route.provider} is disabled.`,
       "router_provider_unavailable",
       {
         code: "router_provider_unavailable",
         retryable: false,
-        failureClass: "provider_disabled",
+        failureClass,
         provider: route.provider,
         model: modelName,
         requestId
@@ -2759,19 +2777,12 @@ export async function proxyFallbackChain(
     route: Candidate,
     selection: string
   ): Promise<"served" | "terminal" | "fallback" | "unavailable"> => {
-    if (
-      !ROUTING_POLICY.isProviderEnabledForRole(
-        route.provider,
-        fbCtx.providerRole
-      )
-    ) {
-      recordFallbackSkip(
-        fbCtx,
-        route,
-        "disabled",
-        "provider_disabled",
-        failures
-      );
+    const disabledReason = ROUTING_POLICY.routeDisabledReason(
+      route,
+      fbCtx.providerRole
+    );
+    if (disabledReason) {
+      recordFallbackSkip(fbCtx, route, "disabled", disabledReason, failures);
       skipped.push(route);
       return "unavailable";
     }
@@ -2905,7 +2916,7 @@ function rejectFallbackChain(
     response,
     503,
     errorBody(
-      `No enabled providers available for ${subject}.`,
+      `No enabled providers or models available for ${subject}.`,
       "router_provider_exhausted",
       {
         code: "router_provider_exhausted",
@@ -2943,10 +2954,12 @@ async function tryPrimaryRoute(
     state.deadlineReached = true;
     return false;
   }
-  if (
-    !ROUTING_POLICY.isProviderEnabledForRole(route.provider, ctx.providerRole)
-  ) {
-    recordFallbackSkip(ctx, route, "disabled", "provider_disabled", []);
+  const disabledReason = ROUTING_POLICY.routeDisabledReason(
+    route,
+    ctx.providerRole
+  );
+  if (disabledReason) {
+    recordFallbackSkip(ctx, route, "disabled", disabledReason, []);
     skipped.push(route);
     return tryPrimaryRoute(
       ctx,
@@ -3071,10 +3084,7 @@ function runLastResortPass(
   const eligible = skipped
     .filter(
       (route) =>
-        ROUTING_POLICY.isProviderEnabledForRole(
-          route.provider,
-          ctx.providerRole
-        ) &&
+        ROUTING_POLICY.routeDisabledReason(route, ctx.providerRole) === null &&
         !isTried(route.provider) &&
         COOLDOWNS.allowsLastResort(
           COOLDOWNS.get(route.provider, Date.now(), route.model)
@@ -3116,10 +3126,8 @@ async function runExhaustionWait(
   const attempted = new Set<string>(); // placeholder; actual set tracked elsewhere
   const waitCandidates = candidates.filter(
     (route) =>
-      ROUTING_POLICY.isProviderEnabledForRole(
-        route.provider,
-        ctx.providerRole
-      ) && !attempted.has(route.provider)
+      ROUTING_POLICY.routeDisabledReason(route, ctx.providerRole) === null &&
+      !attempted.has(route.provider)
   );
   const waitMs = COOLDOWNS.nextRetryMs(
     waitCandidates.map(({ provider }) => provider)

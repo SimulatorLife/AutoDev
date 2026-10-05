@@ -6,4 +6,6 @@ export * from "./github/github-workflow-repository.ts";
 export * from "./memory/index.ts";
 export * as openlit from "./openlit/index.ts";
 export * from "./rulesync/rulesync-repository.ts";
+export * from "./rulesync/tool-catalog-repository.ts";
 export * from "./usage/index.ts";
+export * from "./control-api/operation-history.ts";

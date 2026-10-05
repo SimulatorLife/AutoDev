@@ -116,6 +116,7 @@ export interface RouterPersistenceSnapshot {
   updatedAt: string;
   disabledOrchestratorProviders?: string[] | undefined;
   disabledSubagentProviders?: string[] | undefined;
+  disabledModels?: string[] | undefined;
   providerTelemetry?: Record<string, unknown> | undefined;
   usage?: unknown;
   concurrency?: unknown;

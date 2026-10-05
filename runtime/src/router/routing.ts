@@ -75,6 +75,16 @@ export interface RoutingRuntime {
 export interface RoutingRuntimeState {
   disabledOrchestratorProviders: string[];
   disabledSubagentProviders: string[];
+  disabledModels: string[];
+}
+
+/** Why a provider/model route may not serve a role right now. */
+export type RouteDisabledReason = "provider_disabled" | "model_disabled";
+
+export interface ConfiguredModel {
+  model: string;
+  provider: string;
+  tiers: string[];
 }
 
 const ORCHESTRATOR_ALIAS_PATTERN = /^autodev\/[a-z0-9-]+$/u;
@@ -386,6 +396,7 @@ export class RoutingPolicy {
   private runtime: RoutingRuntime;
   private readonly disabledOrchestratorProviders = new Set<string>();
   private readonly disabledSubagentProviders = new Set<string>();
+  private readonly disabledModels = new Set<string>();
 
   constructor(
     config: RoutingConfig,
@@ -435,19 +446,90 @@ export class RoutingPolicy {
     ).clear();
   }
 
+  /**
+   * Every model the routing config maps a provider tier to, once per model,
+   * with the tiers that provider serves with it. Model ids are unique across
+   * providers because each must match its own provider's route.
+   */
+  configuredModels(): ConfiguredModel[] {
+    const byModel = new Map<string, ConfiguredModel>();
+    for (const [provider, { models }] of Object.entries(
+      this.config.providers
+    )) {
+      for (const [tier, rawModel] of Object.entries(models)) {
+        const model = rawModel.trim();
+        const entry = byModel.get(model) ?? { model, provider, tiers: [] };
+        entry.tiers.push(tier);
+        byModel.set(model, entry);
+      }
+    }
+    return [...byModel.values()];
+  }
+
+  isConfiguredModel(model: unknown): model is string {
+    return (
+      typeof model === "string" &&
+      this.configuredModels().some((entry) => entry.model === model.trim())
+    );
+  }
+
+  isModelEnabled(model: unknown): boolean {
+    if (typeof model !== "string" || model.trim().length === 0) return false;
+    return !this.disabledModels.has(model.trim());
+  }
+
+  setModelEnabled(model: unknown, enabled: boolean): void {
+    if (!this.isConfiguredModel(model)) return;
+    const key = model.trim();
+    if (enabled) this.disabledModels.delete(key);
+    else this.disabledModels.add(key);
+  }
+
+  resetDisabledModels(): void {
+    this.disabledModels.clear();
+  }
+
+  /**
+   * The single enablement check for a provider/model route: the provider must
+   * be enabled for the role and, when the route names a model, that model must
+   * be enabled too.
+   */
+  routeDisabledReason(
+    route: { provider: string; model?: string | null | undefined },
+    role: ProviderRole
+  ): RouteDisabledReason | null {
+    if (!this.isProviderEnabledForRole(route.provider, role))
+      return "provider_disabled";
+    if (
+      typeof route.model === "string" &&
+      route.model.trim().length > 0 &&
+      !this.isModelEnabled(route.model)
+    )
+      return "model_disabled";
+    return null;
+  }
+
   runtimeState(): RoutingRuntimeState {
     return {
       disabledOrchestratorProviders: [
         ...this.disabledOrchestratorProviders
       ].sort(),
-      disabledSubagentProviders: [...this.disabledSubagentProviders].sort()
+      disabledSubagentProviders: [...this.disabledSubagentProviders].sort(),
+      disabledModels: [...this.disabledModels].sort()
     };
   }
 
   restoreRuntimeState(state: unknown): void {
     this.disabledOrchestratorProviders.clear();
     this.disabledSubagentProviders.clear();
+    this.disabledModels.clear();
     if (!isRecord(state)) return;
+    if (Array.isArray(state.disabledModels)) {
+      for (const model of state.disabledModels) {
+        if (this.isConfiguredModel(model))
+          this.disabledModels.add(model.trim());
+      }
+    }
     for (const [role, disabled] of [
       ["orchestrator", state.disabledOrchestratorProviders],
       ["subagent", state.disabledSubagentProviders]
@@ -531,9 +613,8 @@ export class RoutingPolicy {
   ): Candidate[] {
     if (!tier) return [];
     return this.providerPriority(tier, random, role).flatMap((provider) => {
-      const providerModels = this.config.providers[provider]?.models;
-      const model = providerModels?.[tier] || providerModels?.default;
-      if (!model) return [];
+      const model = this.configuredModel(provider, tier);
+      if (!model || !this.isModelEnabled(model)) return [];
       const route = this.routeForModel(model);
       return route ? [{ ...route, model }] : [];
     });

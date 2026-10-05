@@ -866,10 +866,11 @@ without leaking a stale tracker.
 
 ### Provider administration and disable semantics
 
-Provider role enablement is mutable runtime/configuration state. The supported control boundary is the dedicated AutoDev Control API, not the model-router HTTP surface:
+Provider role enablement and model enablement are mutable runtime state. The supported control boundary is the dedicated AutoDev Control API, not the model-router HTTP surface:
 
-- `GET /control/providers` returns provider configuration and current role enablement.
-- `PATCH /control/providers/:provider/roles/:role` accepts only `{"enabled": boolean}`.
+- `GET /control/providers` (v2) returns each provider's route, credential presence, role enablement, tier models, priority groups, orchestrator reasoning effort, and live router health.
+- `GET /control/models` (v2) returns each model the routing config maps a provider tier to, with its provider, tiers, and enablement.
+- `PATCH /control/providers/:provider/roles/:role` and `PATCH /control/models/:model` accept only `{"enabled": boolean}`.
 - Mutations require operator authorization, are audited, persist atomically, and roll back the in-memory change when persistence fails.
 
 The router may retain a loopback-only direct mutation endpoint temporarily as a compatibility implementation detail while callers migrate, but it is not an AutoDev Console/API contract and must not be used by new UI or automation. The canonical target is to remove duplicate mutation paths.
@@ -877,8 +878,8 @@ The router may retain a loopback-only direct mutation endpoint temporarily as a 
 #### Persistence and default behavior
 
 - **Default state:** Every configured provider starts enabled for both roles.
-- **Immediate atomic persistence:** A successful role mutation persists `disabledOrchestratorProviders` and `disabledSubagentProviders` atomically to `$CODEX_HOME/codex-router-state.json`.
-- **Survives restarts:** router-state loading restores both role-specific arrays.
+- **Immediate atomic persistence:** A successful role or model mutation persists `disabledOrchestratorProviders`, `disabledSubagentProviders`, and `disabledModels` atomically to `$CODEX_HOME/codex-router-state.json`.
+- **Survives restarts:** router-state loading restores all three arrays; a restored model that is no longer configured is dropped.
 
 #### Disable semantics across routing tiers
 
@@ -897,14 +898,24 @@ Each skipped candidate records skip reason `"disabled"` and failure class
 `"provider_disabled"`; disabled providers are never probed, attempted, or counted against
 attempt budgets for that role.
 
-#### Provider role controls
+#### Model disable semantics
 
-The retired router HTML dashboard is not a control surface. Provider-role mutations belong to the dedicated AutoDev Control API:
+A disabled model is removed from every tier its provider serves with it, for both roles:
+the provider is skipped for those tiers (it does not fall back to its `default` model), and
+other providers in the tier's groups serve instead. A direct concrete request that names a
+disabled model fails with HTTP 503 `router_provider_unavailable` and
+`failureClass: "model_disabled"`. Fallback passes re-check enablement before each attempt, so
+a model disabled mid-request is skipped with failure class `"model_disabled"`. A provider
+that is itself disabled for the role reports `"provider_disabled"` first.
 
-- `GET /control/providers` returns provider configuration/current role enablement.
-- `PATCH /control/providers/:provider/roles/:role` accepts only `{"enabled": boolean}`.
-- Mutations require the Control API's operator authorization, persist the role setting, audit success/failure, and roll back the in-memory value when persistence fails.
-- The AutoDev Console may render these controls under **Agents**/provider detail views, but browser UI code must call the authenticated Control API path rather than a router-local dashboard endpoint.
+#### Provider and model controls
+
+The retired router HTML dashboard is not a control surface. Provider-role and model mutations belong to the dedicated AutoDev Control API:
+
+- `GET /control/providers` and `GET /control/models` return configuration, live state, and current enablement.
+- `PATCH /control/providers/:provider/roles/:role` and `PATCH /control/models/:model` accept only `{"enabled": boolean}`.
+- Mutations require the Control API's operator authorization, persist the setting, audit success/failure, and roll back the in-memory value when persistence fails.
+- The AutoDev Console renders these controls in **Providers**: each provider's role toggles on its Providers row and detail page, and each model's toggle on its Models row, its detail page, and its provider's model list. Console routes forward to the authenticated Control API; browser code never calls a router-local endpoint. **Agents** shows provider eligibility read-only and links to Providers.
 
 ### Local provider/workspace diagnostics
 

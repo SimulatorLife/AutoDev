@@ -7,6 +7,7 @@ import React from "react";
 
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import { AgentProviderSummary } from "./AgentProviderSummary.ts";
 
 const SECTION_PANEL_CLASS =
   "rounded-lg border border-border bg-surface p-6 shadow";
@@ -125,12 +126,8 @@ export function AgentDetailView({
     React.createElement(
       "section",
       {
-        className: `grid grid-cols-1 gap-6 ${SECTION_PANEL_CLASS} lg:grid-cols-3`
+        className: `grid grid-cols-1 gap-6 ${SECTION_PANEL_CLASS} lg:grid-cols-2`
       },
-      React.createElement(NameList, {
-        heading: "Eligible providers",
-        names: agent.providers
-      }),
       React.createElement(NameList, {
         heading: "Assigned skills",
         names: agent.tools
@@ -144,88 +141,29 @@ export function AgentDetailView({
           .map((tool) => tool.server ?? tool.name)
       })
     ),
-    agent.providers.length > 0
-      ? React.createElement(
-          "section",
-          {
-            className: SECTION_PANEL_CLASS,
-            "data-section": "agent-provider-routes"
-          },
-          React.createElement(
-            "h3",
-            {
-              className:
-                "mb-3 text-sm font-semibold uppercase tracking-wider text-fg-secondary"
-            },
-            "Provider Routing & Circuit Endpoints"
-          ),
-          React.createElement(
-            "div",
-            { className: "grid grid-cols-1 gap-3 md:grid-cols-2" },
-            ...agent.providers.map((p) => {
-              const route = routing?.routes.find((r) => r.provider === p);
-              const pRecord = providers?.providers.find(
-                (prov) => prov.id === p
-              );
-              const isEnabled = isOrchestrator
-                ? pRecord?.roles.orchestrator.enabled
-                : pRecord?.roles.subagent.enabled;
-
-              return React.createElement(
-                "div",
-                {
-                  key: p,
-                  className:
-                    "rounded border border-border bg-background p-4 flex flex-col gap-2"
-                },
-                React.createElement(
-                  "div",
-                  { className: "flex items-center justify-between" },
-                  React.createElement(
-                    "span",
-                    { className: "font-mono font-bold text-fg" },
-                    p
-                  ),
-                  React.createElement(StatusBadge, {
-                    status:
-                      isEnabled === undefined
-                        ? "not-observed"
-                        : isEnabled
-                          ? "valid"
-                          : "unavailable",
-                    label:
-                      isEnabled === undefined
-                        ? "Not observed"
-                        : isEnabled
-                          ? "Enabled"
-                          : "Disabled"
-                  })
-                ),
-                React.createElement(
-                  "div",
-                  { className: "text-xs text-fg-muted font-mono" },
-                  React.createElement(
-                    "span",
-                    { className: "text-fg-muted mr-1" },
-                    "Base:"
-                  ),
-                  route?.baseUrl ?? "Not observed"
-                ),
-                React.createElement(
-                  "div",
-                  { className: "text-xs text-fg-muted font-mono truncate" },
-                  React.createElement(
-                    "span",
-                    { className: "text-fg-muted mr-1" },
-                    "Pattern:"
-                  ),
-                  route?.pattern ?? "Default"
-                )
-              );
-            })
-          )
-        )
-      : null,
+    React.createElement(
+      "section",
+      {
+        className: SECTION_PANEL_CLASS,
+        "data-section": "agent-providers"
+      },
+      React.createElement(
+        "h3",
+        {
+          className:
+            "mb-1 text-sm font-semibold uppercase tracking-wider text-fg-secondary"
+        },
+        "Eligible providers"
+      ),
+      React.createElement(
+        "p",
+        { className: "mb-3 text-xs text-fg-muted" },
+        isOrchestrator
+          ? "Orchestrator-role enablement. Provider controls and routing live in Providers."
+          : "Subagent-role enablement. Provider controls and routing live in Providers."
+      ),
+      React.createElement(AgentProviderSummary, { agent, providers })
+    ),
     React.createElement(
       "section",
       {

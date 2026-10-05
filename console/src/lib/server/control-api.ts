@@ -34,6 +34,7 @@ import {
   type ControlApiMemoryRecordDetailResponse,
   type ControlApiMemoryRecordsResponse,
   type ControlApiMemoryUseCohortsResponse,
+  type ControlApiModelPatchResponse,
   type ControlApiModelsResponse,
   type ControlApiPermissionsResponse,
   type ControlApiPromptCommandPatchRequest,
@@ -369,15 +370,70 @@ export function fetchAgentDetail(
   return fetchControlApi<ControlApiAgentDetailResponse>(path, config, options);
 }
 
-export function fetchProviders(
+function isEnablement(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.enabled === "boolean" &&
+    typeof value.mutable === "boolean"
+  );
+}
+
+function isRoleConvergence(value: unknown): boolean {
+  return isRecord(value) && typeof value.convergence === "string";
+}
+
+function isControlApiProvidersResponse(
+  value: unknown
+): value is ControlApiProvidersResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-providers-v2" &&
+    typeof value.orchestratorTier === "string" &&
+    Array.isArray(value.tiers) &&
+    value.tiers.every(
+      (tier) =>
+        isRecord(tier) &&
+        typeof tier.tier === "string" &&
+        Array.isArray(tier.groups) &&
+        tier.groups.every(isStringList)
+    ) &&
+    Array.isArray(value.providers) &&
+    value.providers.every(
+      (provider) =>
+        isRecord(provider) &&
+        typeof provider.id === "string" &&
+        isRecord(provider.roles) &&
+        isEnablement(provider.roles.orchestrator) &&
+        isRoleConvergence(provider.roles.orchestrator) &&
+        isEnablement(provider.roles.subagent) &&
+        isRoleConvergence(provider.roles.subagent) &&
+        isRecord(provider.credential) &&
+        typeof provider.credential.configured === "boolean" &&
+        Array.isArray(provider.models) &&
+        Array.isArray(provider.priorities)
+    )
+  );
+}
+
+export async function fetchProviders(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiProvidersResponse>> {
-  return fetchControlApi<ControlApiProvidersResponse>(
+  const result = await fetchControlApi<unknown>(
     CONTROL_API_PATHS.providers,
     config,
     options
   );
+  if (result.kind !== "ok") return result;
+  if (isControlApiProvidersResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_providers_response",
+    message:
+      "AutoDev Control API returned an incompatible Providers response; the Console requires the v2 provider contract."
+  };
 }
 
 /**
@@ -412,12 +468,61 @@ export function patchProviderRole(
   );
 }
 
-export function fetchModels(
+function isControlApiModelsResponse(
+  value: unknown
+): value is ControlApiModelsResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-models-v2" &&
+    typeof value.source === "string" &&
+    Array.isArray(value.models) &&
+    value.models.every(
+      (model) =>
+        isRecord(model) &&
+        typeof model.id === "string" &&
+        typeof model.provider === "string" &&
+        isStringList(model.tiers) &&
+        (model.displayName === null || typeof model.displayName === "string") &&
+        isEnablement(model.enablement)
+    )
+  );
+}
+
+export async function fetchModels(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiModelsResponse>> {
-  return fetchControlApi<ControlApiModelsResponse>(
+  const result = await fetchControlApi<unknown>(
     CONTROL_API_PATHS.models,
+    config,
+    options
+  );
+  if (result.kind !== "ok") return result;
+  if (isControlApiModelsResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_models_response",
+    message:
+      "AutoDev Control API returned an incompatible Models response; the Console requires the v2 model contract."
+  };
+}
+
+/**
+ * Server-only typed PATCH against the canonical model enablement route,
+ * invoked by the Console model route handler with the server credential.
+ */
+export function patchModel(
+  model: string,
+  enabled: boolean,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiModelPatchResponse>> {
+  return mutateControlApi<ControlApiModelPatchResponse>(
+    "PATCH",
+    `${CONTROL_API_PATHS.models}/${encodeURIComponent(model)}`,
+    { enabled },
     config,
     options
   );
@@ -578,19 +683,65 @@ export async function fetchPrompts(
   };
 }
 
+function isControlApiReconciliation(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const status = value.status;
+  if (!isRecord(status)) return false;
+  if (
+    typeof status.convergence !== "string" ||
+    (status.desiredGeneration !== null &&
+      typeof status.desiredGeneration !== "string") ||
+    (status.observedGeneration !== null &&
+      typeof status.observedGeneration !== "string") ||
+    (status.lastApplyAt !== null && typeof status.lastApplyAt !== "string") ||
+    (status.lastObservationAt !== null &&
+      typeof status.lastObservationAt !== "string") ||
+    (status.lastError !== null && typeof status.lastError !== "string") ||
+    typeof status.explanation !== "string"
+  ) {
+    return false;
+  }
+  if (!Array.isArray(value.history)) return false;
+  return value.history.every((entry) => {
+    if (!isRecord(entry)) return false;
+    return (
+      typeof entry.action === "string" &&
+      typeof entry.resource === "string" &&
+      typeof entry.timestamp === "string" &&
+      (entry.actor === null || typeof entry.actor === "string") &&
+      (entry.outcome === "ok" ||
+        entry.outcome === "denied" ||
+        entry.outcome === "error") &&
+      (entry.reason === null || typeof entry.reason === "string") &&
+      isRecord(entry.changes) &&
+      typeof entry.changes.restartRequired === "boolean"
+    );
+  });
+}
+
+function isReconciliationDiff(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.summary === "string" &&
+    typeof value.identifier === "string"
+  );
+}
+
 function isControlApiPromptDetailResponse(
   value: unknown
 ): value is ControlApiPromptDetailResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-prompt-detail-v3" &&
+    value.schema === "autodev-control-prompt-detail-v4" &&
     typeof value.name === "string" &&
     (value.type === "command" || value.type === "role") &&
     typeof value.source === "string" &&
     typeof value.content === "string" &&
     typeof value.preview === "string" &&
     typeof value.revision === "string" &&
-    CONTROL_API_REVISION_PATTERN.test(value.revision)
+    CONTROL_API_REVISION_PATTERN.test(value.revision) &&
+    isReconciliationDiff(value.diff) &&
+    isControlApiReconciliation(value.reconciliation)
   );
 }
 
@@ -609,7 +760,7 @@ export async function fetchPromptDetail(
     kind: INVALID_RESPONSE_KIND,
     code: "autodev_control_api_invalid_prompt_detail_response",
     message:
-      "AutoDev Control API returned an incompatible Prompt detail response; the Console requires the v3 Markdown-preview contract."
+      "AutoDev Control API returned an incompatible Prompt detail response; the Console requires the v4 reconciliation contract."
   };
 }
 

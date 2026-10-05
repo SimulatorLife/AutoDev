@@ -233,7 +233,8 @@ test("provider role administration is independent", () => {
   policy.setProviderEnabledForRole("claude", "subagent", false);
   assert.deepEqual(policy.runtimeState(), {
     disabledOrchestratorProviders: ["claude"],
-    disabledSubagentProviders: ["claude"]
+    disabledSubagentProviders: ["claude"],
+    disabledModels: []
   });
   policy.restoreRuntimeState({
     disabledOrchestratorProviders: [],
@@ -241,4 +242,101 @@ test("provider role administration is independent", () => {
   });
   assert.equal(policy.isProviderEnabledForRole("claude", "orchestrator"), true);
   assert.equal(policy.isProviderEnabledForRole("claude", "subagent"), false);
+});
+
+test("model enablement removes a model from every tier it serves and survives restore", () => {
+  const config = validateRoutingConfig({
+    providerGroups: {
+      default: [["claude", "minimax"]],
+      smart: [["claude"]],
+      orchestrator: [["claude"], ["minimax"]]
+    },
+    providers: {
+      claude: {
+        models: {
+          default: "sonnet",
+          orchestrator: "claude-opus-5-5",
+          smart: "claude-opus-5-5"
+        }
+      },
+      minimax: { models: { default: "MiniMax-M3" } }
+    },
+    roles: {
+      default: { tier: "default" },
+      "docs-researcher": { tier: "default" },
+      "browser-tester": { tier: "default" },
+      explorer: { tier: "default" },
+      worker: { tier: "default" },
+      validator: { tier: "default" },
+      smart: { tier: "smart" }
+    },
+    orchestrator: { alias: "autodev/orchestrator", tier: "orchestrator" }
+  });
+  const policy = new RoutingPolicy(config, "model-routing.json", {});
+
+  assert.deepEqual(policy.configuredModels(), [
+    { model: "sonnet", provider: "claude", tiers: ["default"] },
+    {
+      model: "claude-opus-5-5",
+      provider: "claude",
+      tiers: ["orchestrator", "smart"]
+    },
+    { model: "MiniMax-M3", provider: "minimax", tiers: ["default"] }
+  ]);
+
+  policy.setModelEnabled("claude-opus-5-5", false);
+  assert.equal(policy.isModelEnabled("claude-opus-5-5"), false);
+  assert.deepEqual(
+    policy
+      .orchestratorCandidates(seeded(3))
+      .map(({ provider, model }) => [provider, model]),
+    [["minimax", "MiniMax-M3"]]
+  );
+  assert.deepEqual(policy.roleCandidates("smart", seeded(3)), []);
+  assert.ok(
+    policy
+      .roleCandidates("default", seeded(3))
+      .some(
+        ({ provider, model }) => provider === "claude" && model === "sonnet"
+      )
+  );
+  assert.equal(
+    policy.routeDisabledReason(
+      { provider: "claude", model: "claude-opus-5-5" },
+      "orchestrator"
+    ),
+    "model_disabled"
+  );
+  assert.equal(
+    policy.routeDisabledReason(
+      { provider: "claude", model: "sonnet" },
+      "subagent"
+    ),
+    null
+  );
+  policy.setProviderEnabledForRole("claude", "orchestrator", false);
+  assert.equal(
+    policy.routeDisabledReason(
+      { provider: "claude", model: "claude-opus-5-5" },
+      "orchestrator"
+    ),
+    "provider_disabled",
+    "a disabled provider is reported before its model"
+  );
+
+  // Only configured models can be disabled or restored.
+  policy.setModelEnabled("gpt-unconfigured", false);
+  assert.equal(policy.isModelEnabled("gpt-unconfigured"), true);
+  assert.deepEqual(policy.runtimeState().disabledModels, ["claude-opus-5-5"]);
+  policy.restoreRuntimeState({
+    disabledOrchestratorProviders: [],
+    disabledSubagentProviders: [],
+    disabledModels: ["sonnet", "gpt-unconfigured", 7]
+  });
+  assert.deepEqual(policy.runtimeState(), {
+    disabledOrchestratorProviders: [],
+    disabledSubagentProviders: [],
+    disabledModels: ["sonnet"]
+  });
+  assert.equal(policy.isModelEnabled("claude-opus-5-5"), true);
 });

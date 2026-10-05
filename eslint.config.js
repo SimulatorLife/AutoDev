@@ -282,6 +282,8 @@ const architecturePolicies = [
   allowFileOnly("test", ["runtime-router-status"]),
   allowFileOnly("runtime-router", ["runtime-router-state-collector"]),
   allowFileOnly("test", ["runtime-router-state-collector"]),
+  // next.config.ts applies Console build policy owned by console/src/lib.
+  allowFileOnly("package-config", ["console-lib"]),
   allowFileOnly("console-entrypoint", [
     "console-app",
     "console-components",
@@ -290,9 +292,7 @@ const architecturePolicies = [
   ]),
   {
     from: { element: { type: "test" } },
-    allow: {
-      to: { file: { categories: ["console-entrypoint", "package-config"] } }
-    }
+    allow: { to: { file: { categories: "console-entrypoint" } } }
   },
   // Skill scripts ship inside a skill folder and run standalone.
   allowOnly("skill-script", []),

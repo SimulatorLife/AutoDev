@@ -8,7 +8,9 @@ export interface RouteDefinition {
   readonly baseUrl: string;
 }
 
+/** Operator-controlled routing enablement persisted by the Runtime router. */
 export interface RoutingPolicyState {
   readonly disabledOrchestratorProviders: readonly string[];
   readonly disabledSubagentProviders: readonly string[];
+  readonly disabledModels: readonly string[];
 }

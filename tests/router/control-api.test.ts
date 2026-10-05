@@ -24,6 +24,7 @@ import {
   type ControlApiRequestOptions,
   githubWorkflowsView,
   handleControlApiRequest,
+  setControlApiProviderHealthSource,
   setGithubActionsAdapterForTests
 } from "@simulatorlife/autodev-runtime/control-api";
 import {
@@ -280,7 +281,7 @@ test("viewer reads control resources; MCP and Skills views contain configuration
       actor: "viewer-a"
     });
     assert.equal(providers.response.statusCode, 200);
-    assert.equal(providers.body.schema, "autodev-control-providers-v1");
+    assert.equal(providers.body.schema, "autodev-control-providers-v2");
 
     const mcps = await call("GET", CONTROL_API_PATHS.mcps, {
       actor: "viewer-a"
@@ -513,6 +514,213 @@ test("failed persistence rolls back the in-memory provider policy", async () => 
   }
 });
 
+test("providers v2 reports routes, credential presence, tier models, priorities, and router health only when observed", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    const unobserved = await call("GET", CONTROL_API_PATHS.providers, {
+      actor: "viewer-a"
+    });
+    assert.equal(unobserved.response.statusCode, 200);
+    const body = unobserved.body;
+    assert.equal(
+      body.orchestratorTier,
+      ROUTING_POLICY.config.orchestrator.tier
+    );
+    assert.deepEqual(
+      body.tiers.map(({ tier }: { tier: string }) => tier).sort(),
+      Object.keys(ROUTING_POLICY.config.providerGroups).sort()
+    );
+    const claude = body.providers.find(
+      (provider: { id: string }) => provider.id === "claude"
+    );
+    assert.ok(claude);
+    assert.equal(typeof claude.route.baseUrl, "string");
+    assert.equal(claude.credential.envKey, "LITELLM_API_KEY");
+    assert.equal(typeof claude.credential.configured, "boolean");
+    assert.equal(JSON.stringify(body).includes(SERVICE_TOKEN), false);
+    assert.deepEqual(
+      claude.models,
+      Object.entries(ROUTING_POLICY.config.providers.claude!.models).map(
+        ([tier, model]) => ({ tier, model })
+      )
+    );
+    for (const { tier, group } of claude.priorities) {
+      assert.ok(
+        ROUTING_POLICY.config.providerGroups[tier]![group - 1]!.includes(
+          "claude"
+        )
+      );
+    }
+    assert.deepEqual(claude.roles.orchestrator, {
+      enabled: ROUTING_POLICY.isProviderEnabledForRole(
+        "claude",
+        "orchestrator"
+      ),
+      mutable: true
+    });
+    assert.equal(claude.health, null, "no router evidence means unobserved");
+
+    setControlApiProviderHealthSource(() => ({
+      claude: {
+        cooldown: null,
+        failureStreak: 0,
+        probeFailureStreak: 0,
+        inFlightRequests: 2,
+        activeAgents: 1,
+        attempts: 5,
+        successes: 5,
+        failures: 0,
+        lastSuccessAt: "2026-10-05T15:00:00.000Z",
+        lastFailure: null
+      }
+    }));
+    const observed = await call("GET", CONTROL_API_PATHS.providers, {
+      actor: "viewer-a"
+    });
+    const observedClaude = observed.body.providers.find(
+      (provider: { id: string }) => provider.id === "claude"
+    );
+    assert.equal(observedClaude.health.inFlightRequests, 2);
+    assert.equal(
+      observed.body.providers.find(
+        (provider: { id: string }) => provider.id === "codex"
+      ).health,
+      null
+    );
+  } finally {
+    setControlApiProviderHealthSource(null);
+    restoreEnv(saved);
+  }
+});
+
+test("models v2 lists each routed model once with its provider, tiers, and enablement", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    const result = await call("GET", CONTROL_API_PATHS.models, {
+      actor: "viewer-a"
+    });
+    assert.equal(result.response.statusCode, 200);
+    assert.equal(result.body.schema, "autodev-control-models-v2");
+    const ids = result.body.models.map((model: { id: string }) => model.id);
+    assert.equal(new Set(ids).size, ids.length);
+    assert.deepEqual(
+      [...ids].sort(),
+      ROUTING_POLICY.configuredModels()
+        .map(({ model }) => model)
+        .sort()
+    );
+    for (const model of result.body.models) {
+      assert.equal(
+        ROUTING_POLICY.routeForModel(model.id)?.provider,
+        model.provider
+      );
+      assert.ok(model.tiers.length > 0);
+      assert.deepEqual(model.enablement, {
+        enabled: ROUTING_POLICY.isModelEnabled(model.id),
+        mutable: true
+      });
+    }
+    const sonnet = result.body.models.find(
+      (model: { id: string }) => model.id === "sonnet"
+    );
+    assert.equal(sonnet?.displayName, "Claude Sonnet subscription");
+  } finally {
+    restoreEnv(saved);
+  }
+});
+
+test("operator model PATCH validates, persists, audits, and rolls back on persistence failure", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  const model = ROUTING_POLICY.configuredModels()[0]!.model;
+  const path = CONTROL_API_PATHS.models + "/" + model;
+  let persistCalls = 0;
+  let failPersist = false;
+  setDefaultPersistenceManager({
+    async persistNow() {
+      persistCalls += 1;
+      if (failPersist) throw new Error("disk failure");
+      return true;
+    }
+  } as unknown as RouterPersistence);
+  try {
+    configure();
+    const viewer = await call("PATCH", path, {
+      actor: "viewer-a",
+      body: { enabled: false }
+    });
+    assert.equal(viewer.response.statusCode, 403);
+
+    const extraField = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { enabled: false, tier: "default" }
+    });
+    assert.equal(extraField.response.statusCode, 400);
+
+    const unknown = await call(
+      "PATCH",
+      CONTROL_API_PATHS.models + "/gpt-not-configured",
+      { actor: "operator-a", body: { enabled: false } }
+    );
+    assert.equal(unknown.response.statusCode, 404);
+    assert.equal(unknown.body.error.code, "autodev_control_api_unknown_model");
+
+    const read = await call("GET", path, { actor: "operator-a" });
+    assert.equal(read.response.statusCode, 405);
+    assert.equal(read.response.headers.allow, "PATCH");
+    assert.equal(persistCalls, 0);
+
+    resetTelemetryExporter();
+    const captured = await captureAudit(() =>
+      call("PATCH", path, { actor: "operator-a", body: { enabled: false } })
+    );
+    assert.equal(captured.result.response.statusCode, 200);
+    assert.deepEqual(captured.result.body, {
+      schema: "autodev-control-model-v1",
+      model,
+      enabled: false,
+      previous: true,
+      actor: "operator-a"
+    });
+    assert.equal(ROUTING_POLICY.isModelEnabled(model), false);
+    assert.deepEqual(ROUTING_POLICY.runtimeState().disabledModels, [model]);
+    assert.equal(persistCalls, 1);
+    const audit = captured.lines
+      .map((line) => JSON.parse(line))
+      .find((entry) => entry.schema === "autodev-control-api-audit-v1");
+    assert.equal(audit.action, "patch_model");
+    assert.equal(audit.resource, model);
+    assert.deepEqual(audit.changes, { enabled: false, previous: true });
+    assert.equal(
+      getFinishedSpans().find(
+        (span) =>
+          span.name === "autodev.control.mutation" &&
+          span.attributes["autodev.control.action"] === "patch_model"
+      )?.attributes["autodev.control.outcome"],
+      "ok"
+    );
+
+    failPersist = true;
+    const failed = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { enabled: true }
+    });
+    assert.equal(failed.response.statusCode, 500);
+    assert.equal(
+      ROUTING_POLICY.isModelEnabled(model),
+      false,
+      "a failed persist rolls the model back to its previous state"
+    );
+  } finally {
+    resetTelemetryExporter();
+    ROUTING_POLICY.resetDisabledModels();
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
 test("read-only collections reject mutations and the removed admin route stays absent", async () => {
   const saved = saveEnv();
   try {
@@ -538,7 +746,7 @@ test("read-only collections reject mutations and the removed admin route stays a
   }
 });
 
-test("Tools catalog remains unknown when the role source is unavailable", async () => {
+test("Tools catalog stays authoritative when the role projection is empty but the RuleSync MCP source is valid", async () => {
   const saved = saveEnv();
   const priorContract = getDefaultExecutionContract();
   try {
@@ -551,9 +759,21 @@ test("Tools catalog remains unknown when the role source is unavailable", async 
       actor: "viewer-a"
     });
     assert.equal(tools.response.statusCode, 200);
-    assert.equal(tools.body.coverage, "unknown");
-    assert.equal(tools.body.totalTools, null);
-    assert.deepEqual(tools.body.tools, []);
+    assert.equal(tools.body.schema, "autodev-control-tools-v2");
+    // The composite read model still reports declared MCP/plugin tools
+    // because the canonical RuleSync source is authoritative on its own.
+    assert.equal(tools.body.coverage, "complete");
+    assert.equal(tools.body.validity, "valid");
+    assert.equal(typeof tools.body.totalTools, "number");
+    assert.ok(Array.isArray(tools.body.tools));
+    assert.ok(
+      tools.body.tools.every(
+        (tool: { exposedRoles: readonly string[] }) =>
+          Array.isArray(tool.exposedRoles) && tool.exposedRoles.length === 0
+      )
+    );
+    assert.equal(tools.body.usageLink, "/usage");
+    assert.equal(tools.body.readOnly, true);
   } finally {
     setExecutionContractForTests(priorContract);
     restoreEnv(saved);
@@ -612,15 +832,15 @@ test("Control API surfaces all 13 typed resource families", async () => {
       actor: "viewer-a"
     });
     assert.equal(providers.response.statusCode, 200);
-    assert.equal(providers.body.schema, "autodev-control-providers-v1");
+    assert.equal(providers.body.schema, "autodev-control-providers-v2");
 
     // 3. Models
     const models = await call("GET", CONTROL_API_PATHS.models, {
       actor: "viewer-a"
     });
     assert.equal(models.response.statusCode, 200);
-    assert.equal(models.body.schema, "autodev-control-models-v1");
-    assert.ok(models.body.totalModels > 0);
+    assert.equal(models.body.schema, "autodev-control-models-v2");
+    assert.ok(models.body.models.length > 0);
 
     // 4. MCPs
     const mcps = await call("GET", CONTROL_API_PATHS.mcps, {
@@ -661,27 +881,56 @@ test("Control API surfaces all 13 typed resource families", async () => {
       /CONTEXT7_API_KEY|MCP_TOKEN|bearer_token/u
     );
 
-    // 5. Tools: known capability declarations only; health and use are unknown.
+    // 5. Tools: composite read model joining RuleSync MCP declarations with
+    // the execution-contract role projection; per-tool historical use/error
+    // evidence lives on the dedicated Usage path and is not synthesized here.
     const tools = await call("GET", CONTROL_API_PATHS.tools, {
       actor: "viewer-a"
     });
     assert.equal(tools.response.statusCode, 200);
-    assert.equal(tools.body.schema, "autodev-control-tools-v1");
-    assert.equal(tools.body.source, "execution-contract");
-    assert.equal(tools.body.coverage, "partial");
+    assert.equal(tools.body.schema, "autodev-control-tools-v2");
+    assert.equal(tools.body.source, ".rulesync/mcp.jsonc");
+    assert.equal(tools.body.readOnly, true);
+    assert.ok(["complete", "partial"].includes(tools.body.coverage));
+    assert.equal(tools.body.validity, "valid");
+    assert.equal(tools.body.usageLink, "/usage");
+    assert.equal(typeof tools.body.totalTools, "number");
     const webSearch = tools.body.tools.find(
-      (tool: { name: string; source: string }) =>
-        tool.name === "web_search" && tool.source === "native"
+      (tool: { name: string; source: string; sourceAuthority: string }) =>
+        tool.name === "web_search" &&
+        tool.source === "native" &&
+        tool.sourceAuthority === "codex-native"
     );
     assert.ok(webSearch);
     assert.ok(webSearch.exposedRoles.includes("docs-researcher"));
+    assert.equal(webSearch.availability, "configured");
+    assert.ok(webSearch.canonicalEditSurface);
     const appTool = tools.body.tools.find(
-      (tool: { name: string; source: string }) =>
-        tool.name === "request_user_input" && tool.source === "plugin"
+      (tool: { name: string; source: string; sourceAuthority: string }) =>
+        tool.name === "request_user_input" &&
+        tool.source === "plugin" &&
+        tool.sourceAuthority === "rulesync-plugin"
     );
     assert.ok(appTool);
     assert.ok(appTool.exposedRoles.includes("orchestrator"));
     assert.equal("status" in webSearch, false);
+    // The RuleSync plugin entry for codex_app surfaces through the
+    // composite catalog so the Console can pivot to its canonical edit
+    // surface (MCP codex_app) without inventing per-tool evidence.
+    assert.ok(
+      tools.body.tools.some(
+        (tool: { source: string; sourceAuthority: string; server?: string }) =>
+          tool.source === "plugin" &&
+          tool.sourceAuthority === "rulesync-plugin" &&
+          tool.server === "codex_app"
+      )
+    );
+    // The payload must never invent per-tool use/error evidence.
+    assert.ok(
+      tools.body.tools.every(
+        (tool: { usage?: unknown }) => tool.usage === undefined
+      )
+    );
 
     // 6. Skills
     const skills = await call("GET", CONTROL_API_PATHS.skills, {
