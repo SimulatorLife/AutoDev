@@ -333,6 +333,14 @@ test("ConsoleLink renders a real anchor with no pending indicator at rest", () =
   );
 });
 
+test("router cache reuse is bounded to intent prefetches for at most 30 seconds", () => {
+  // Ordinary navigations always re-read live runtime state; only pages
+  // ConsoleLink fully prefetched on hover/focus/touch may be reused, for the
+  // shortest window Next.js allows.
+  const config = readFileSync(join(CONSOLE_ROOT, "next.config.ts"), "utf8");
+  assert.match(config, /staleTimes: \{ dynamic: 0, static: 30 \}/u);
+});
+
 test("AppNav brand link has visible keyboard focus and no unsupported status pulse", () => {
   const markup = renderToStaticMarkup(
     React.createElement(AppNav, {

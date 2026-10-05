@@ -216,3 +216,58 @@ test("GithubWorkflowRepository rejects malformed YAML instead of partially parsi
     await rm(repositoryRoot, { recursive: true, force: true });
   }
 });
+
+test("GithubWorkflowRepository observes workflow edits between catalog reads", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-github-workflows-")
+  );
+  const workflowsDir = path.join(repositoryRoot, ".github", "workflows");
+  await mkdir(workflowsDir, { recursive: true });
+  const workflowPath = path.join(workflowsDir, "nightly.yml");
+  const withCron = (cron: string): string =>
+    [
+      "name: nightly",
+      "on:",
+      "  schedule:",
+      `    - cron: "${cron}"`,
+      "jobs: {}",
+      ""
+    ].join("\n");
+  try {
+    const repository = new GithubWorkflowRepository(repositoryRoot);
+    await writeFile(workflowPath, withCron("0 1 * * *"), "utf8");
+    assert.deepEqual(repository.readWorkflowCatalog().workflows[0]?.schedules, [
+      "0 1 * * *"
+    ]);
+    // An unchanged file is served from the parse cache with the same facts.
+    assert.deepEqual(repository.readWorkflowCatalog().workflows[0]?.schedules, [
+      "0 1 * * *"
+    ]);
+
+    await writeFile(workflowPath, withCron("0 2 * * *"), "utf8");
+    assert.deepEqual(repository.readWorkflowCatalog().workflows[0]?.schedules, [
+      "0 2 * * *"
+    ]);
+
+    await writeFile(workflowPath, "name: [unterminated\n", "utf8");
+    assert.equal(repository.readWorkflowCatalog().status, "invalid");
+
+    await writeFile(workflowPath, withCron("0 3 * * *"), "utf8");
+    await writeFile(
+      path.join(workflowsDir, "manual.yml"),
+      ["name: manual", "on: workflow_dispatch", "jobs: {}", ""].join("\n"),
+      "utf8"
+    );
+    const catalog = repository.readWorkflowCatalog();
+    assert.equal(catalog.status, "valid");
+    assert.deepEqual(
+      catalog.workflows.map((workflow) => [workflow.id, workflow.schedules]),
+      [
+        ["manual.yml", []],
+        ["nightly.yml", ["0 3 * * *"]]
+      ]
+    );
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});

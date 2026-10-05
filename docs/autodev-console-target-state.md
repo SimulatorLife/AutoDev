@@ -164,10 +164,10 @@ Configuration does not prove runtime availability. Eligibility/exposure does not
 Moving between sections, list/detail views, tabs, and filters must feel immediate and must never reload the document:
 
 - The root layout is the single owner of the persistent shell (sidebar and header); pages render only their own content or an explicit unavailable state. The active section is derived from the route, not threaded through pages.
-- Every internal link is a `ConsoleLink` (a Next.js `Link`, i.e. a real `<a href>`), so the App Router swaps only the page segment. Each `ConsoleLink` shows a delayed pending indicator while the destination's server data loads, because client navigation keeps the current page visible and suppresses the browser's own loading indicator. External destinations remain plain anchors.
+- Every internal link is a `ConsoleLink` (a Next.js `Link`, i.e. a real `<a href>`), so the App Router swaps only the page segment. Links never prefetch merely for being in the viewport; the first hover, focus, or touch fully prefetches the destination page so its server data usually arrives before the click. Ordinary navigations are never served from the client router cache (`staleTimes.dynamic: 0`); intent-prefetched pages may be reused for at most 30 seconds (`staleTimes.static: 30`, the Next.js minimum). Each `ConsoleLink` also shows a delayed pending indicator while a destination's server data is still loading, because client navigation keeps the current page visible and suppresses the browser's own loading indicator. External destinations remain plain anchors.
 - GET filter/scope forms submit through `next/form` for the same soft navigation; mutations remain same-origin POST routes.
 - Routes declare no `loading.tsx` boundaries: on Next.js 15.5, a prefetched route loading component makes same-path search-param navigations (tabs, filters, record selection) reuse an aliased prefetch entry that intermittently never commits.
-- Page data loads in parallel; a page must not serialize independent Control API reads.
+- Page data loads in parallel; a page must not serialize independent Control API reads, and Control API reads must not redo deterministic work whose inputs are unchanged (for example, workflow YAML is re-parsed only when a file's content changes).
 
 ## 4. Repository and module architecture
 

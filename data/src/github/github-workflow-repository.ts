@@ -60,6 +60,29 @@ function cronExpressionsFrom(value: unknown): readonly string[] | null {
 }
 
 /**
+ * Parsed triggers keyed by absolute workflow path. Parsing is a pure function
+ * of the file content, so a cached result is reused only while the content
+ * read on this request is byte-identical; any edit re-parses. Every catalog
+ * read still lists and reads the directory, so additions, removals, and
+ * edits are observed immediately.
+ */
+const parsedWorkflowCache = new Map<
+  string,
+  { readonly content: string; readonly parsed: ParsedWorkflowTriggers | null }
+>();
+
+function cachedWorkflowTriggers(
+  filePath: string,
+  content: string
+): ParsedWorkflowTriggers | null {
+  const cached = parsedWorkflowCache.get(filePath);
+  if (cached?.content === content) return cached.parsed;
+  const parsed = parseWorkflowTriggers(content);
+  parsedWorkflowCache.set(filePath, { content, parsed });
+  return parsed;
+}
+
+/**
  * Parse only the fields needed for the workflow catalog, while delegating YAML
  * syntax and YAML 1.2 key semantics to the maintained `yaml` parser. In
  * particular, YAML 1.2 preserves GitHub's top-level `on` key as a string
@@ -126,13 +149,14 @@ export class GithubWorkflowRepository {
 
     const workflows: GithubWorkflowDefinition[] = [];
     for (const filename of filenames) {
+      const filePath = path.join(workflowsDir, filename);
       let content: string;
       try {
-        content = readFileSync(path.join(workflowsDir, filename), "utf8");
+        content = readFileSync(filePath, "utf8");
       } catch {
         return { status: "unavailable", workflows: [] };
       }
-      const parsed = parseWorkflowTriggers(content);
+      const parsed = cachedWorkflowTriggers(filePath, content);
       if (parsed === null) return { status: "invalid", workflows: [] };
       workflows.push({
         id: filename,
