@@ -2579,6 +2579,81 @@ test("EvaluationsPage loads the linked trace through the Usage token and keeps p
   }
 });
 
+test("EvaluationsPage starts the trace lookup without waiting for the evaluation read", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousEnv = saveConsolePageEnvironment();
+  const isolatedHome = mkdtempSync(join(tmpdir(), "autodev-evaluations-page-"));
+  const spanId = "0123456789abcdef";
+  let traceRequested: () => void = () => {};
+  const traceStarted = new Promise<void>((resolve) => {
+    traceRequested = resolve;
+  });
+  try {
+    process.env.HOME = isolatedHome;
+    process.env.CODEX_HOME = isolatedHome;
+    process.env.AUTODEV_OPENLIT_SECRET_FILE = join(isolatedHome, "missing.env");
+    process.env.AUTODEV_CONTROL_API_TOKEN = "evaluation-control-test-token";
+    process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+    process.env.AUTODEV_OPENLIT_USAGE_TOKEN = "evaluation-usage-test-token";
+    process.env.AUTODEV_OPENLIT_USAGE_URL = "http://127.0.0.1:3000";
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/control/evaluations")) {
+        // Answers only once the trace lookup is in flight; a page that
+        // waited for this read before starting the lookup would time out.
+        await Promise.race([
+          traceStarted,
+          new Promise((_resolve, reject) =>
+            setTimeout(
+              () => reject(new Error("trace lookup not started")),
+              1000
+            )
+          )
+        ]);
+        return Response.json({
+          schema: "autodev-control-evaluations-v1",
+          source: "openlit_evaluation",
+          readOnly: true,
+          totalEvaluations: 0,
+          evaluations: []
+        });
+      }
+      if (url.endsWith(`/api/autodev/usage/span/${spanId}`)) {
+        traceRequested();
+        return Response.json({
+          schema: "autodev-openlit-trace-detail-v1",
+          traceId: "0123456789abcdef0123456789abcdef",
+          selectedSpanId: spanId,
+          partial: false,
+          spans: [
+            {
+              spanId,
+              parentSpanId: null,
+              spanName: "gen_ai.client_operation",
+              serviceName: "autodev-router",
+              timestamp: "2026-10-05T12:00:00.000Z",
+              durationNs: 12_300_000,
+              statusCode: "OK",
+              spanAttributes: {}
+            }
+          ]
+        });
+      }
+      throw new Error(`Unexpected Evaluations page request: ${url}`);
+    };
+
+    const markup = renderToStaticMarkup(
+      await EvaluationsPage({ searchParams: Promise.resolve({ spanId }) })
+    );
+    assert.match(markup, /data-feature="evaluations"/);
+    assert.match(markup, /data-trace-state="observed"/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreConsolePageEnvironment(previousEnv);
+    rmSync(isolatedHome, { recursive: true, force: true });
+  }
+});
+
 test("EvaluationsPage rejects malformed trace query IDs without calling the Usage endpoint", async () => {
   const previousFetch = globalThis.fetch;
   const previousEnv = saveConsolePageEnvironment();

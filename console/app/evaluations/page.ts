@@ -82,7 +82,16 @@ export default async function EvaluationsPage({
     });
   }
 
-  const result = await fetchEvaluations(config);
+  // The trace lookup depends only on the URL, so it runs alongside the
+  // evaluation read instead of waiting for it.
+  const [result, traceLookup] = await Promise.all([
+    fetchEvaluations(config),
+    spanIdValues === undefined
+      ? null
+      : hasInvalidSpanSelection
+        ? ({ kind: "invalid-span-id" } as const)
+        : loadOpenLITTrace(requestedSpanId!).then(evaluationTraceState)
+  ]);
   if (result.kind !== "ok") {
     return React.createElement(ResourceUnavailable, {
       title: "Evaluations could not be loaded",
@@ -96,13 +105,6 @@ export default async function EvaluationsPage({
         (evaluation) => evaluation.promptName === promptFilter
       )
     : result.data.evaluations;
-  let traceLookup: EvaluationTraceLookup | null = null;
-  if (spanIdValues !== undefined) {
-    traceLookup = hasInvalidSpanSelection
-      ? { kind: "invalid-span-id" }
-      : evaluationTraceState(await loadOpenLITTrace(requestedSpanId!));
-  }
-
   return React.createElement(EvaluationsView, {
     evaluations,
     ...(promptFilter ? { promptFilter } : {}),
