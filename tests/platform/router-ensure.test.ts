@@ -205,20 +205,7 @@ interface MakeDepsOptions {
   nextLauncherPid?: () => number;
   nextLauncherPids?: number[];
   launcherAppends?: string[];
-}
-
-interface MakeDepsOptions {
-  home: string;
-  fake: FakeLaunchd;
-  fs: FakeFs;
-  probeResult?: boolean | (() => boolean);
-  pidExists?: (pid: number) => boolean;
-  pidCommandLine?: (pid: number) => string | null;
-  listenerPid?: (port: number) => number | null;
-  startLauncher?: RouterEnsureDeps["startLauncher"];
-  nextLauncherPid?: () => number;
-  nextLauncherPids?: number[];
-  launcherAppends?: string[];
+  launchctlAvailable?: boolean;
 }
 
 function makeDeps(
@@ -249,6 +236,7 @@ function makeDeps(
     });
   return {
     launchd: fakeLaunchdClient(opts.fake),
+    launchctlAvailable: () => opts.launchctlAvailable ?? true,
     fake: opts.fake,
     fs: opts.fs,
     probe: probeFn,
@@ -436,6 +424,23 @@ test("launchdOwnsListener requires both the launchd child pid and the listening 
   assert.equal(__testing.launchdOwnsListener(deps1, opts, 4242), true);
   assert.equal(__testing.launchdOwnsListener(deps2, opts, 4242), false);
   assert.equal(__testing.launchdOwnsListener(deps1, opts, null), false);
+});
+
+test("ensureViaLaunchd leaves a host without launchd to the fallback launcher", async () => {
+  await withTempHome(async (home) => {
+    const deps = makeDeps({
+      home,
+      fake: { calls: [], loaded: true, printOutput: "" },
+      fs: new FakeFs(),
+      probeResult: true,
+      launchctlAvailable: false
+    });
+    assert.equal(
+      await __testing.ensureViaLaunchd(deps, defaultOptions(home)),
+      2
+    );
+    assert.deepEqual(deps.fake.calls, []);
+  });
 });
 
 test("ensureViaLaunchd returns 0 when the loaded job owns a healthy listener", async () => {

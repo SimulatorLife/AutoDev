@@ -54,6 +54,8 @@ export interface StartedLauncher {
 
 export interface RouterEnsureDeps {
   readonly launchd: LaunchdClient;
+  /** Whether this host has launchd at all; without it the fallback launcher runs. */
+  readonly launchctlAvailable: () => boolean;
   readonly probe: () => Promise<boolean>;
   readonly pidExists: (pid: number) => boolean;
   readonly pidCommandLine: (pid: number) => string | null;
@@ -234,6 +236,7 @@ export function createDefaultRouterEnsureDeps(
   const probeUrl = `http://${options.routerHost}:${options.routerPort}/health/liveliness`;
   return {
     launchd: new LaunchdClient(),
+    launchctlAvailable: launchctlInstalled,
     probe: async () => {
       try {
         const res = await fetch(probeUrl, {
@@ -459,7 +462,7 @@ async function rotateLog(
   }
 }
 
-function safeLaunchctlAvailable(): boolean {
+function launchctlInstalled(): boolean {
   return existsSync("/bin/launchctl") || existsSync("/usr/bin/launchctl");
 }
 
@@ -478,7 +481,7 @@ async function ensureViaLaunchd(
   deps: RouterEnsureDeps,
   options: RouterEnsureOptions
 ): Promise<0 | 1 | 2> {
-  if (!safeLaunchctlAvailable()) return 2;
+  if (!deps.launchctlAvailable()) return 2;
 
   if (deps.launchd.isLoaded(options.label)) {
     if (await deps.probe()) {
@@ -662,7 +665,6 @@ export const __testing = {
   acquireLock,
   ensureViaLaunchd,
   ensureViaFallback,
-  safeLaunchctlAvailable,
   safeLaunchctlPrint,
   fallbackPidOwned,
   launchdOwnsListener,
