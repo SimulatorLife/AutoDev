@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -27,6 +28,7 @@ import type {
   McpServerTransport,
   McpTargetOverride,
   PromptAsset,
+  PromptVersion,
   RuleSyncMcpState,
   SkillDefinition
 } from "@simulatorlife/autodev-core";
@@ -39,7 +41,12 @@ const MD_EXTENSION_PATTERN = /\.md$/u;
 const COMMANDS_SOURCE = ".rulesync/commands" as const;
 const COMMAND_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const COMMAND_CONTENT_MAX_BYTES = 48_000;
+const COMMAND_DIFF_MAX_BYTES = 196_608;
+const COMMAND_HISTORY_LIMIT = 20;
+const COMMAND_HISTORY_FETCH_LIMIT = COMMAND_HISTORY_LIMIT + 1;
+const COMMAND_GIT_TIMEOUT_MS = 3_000;
 const COMMAND_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
+const GIT_REVISION_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const COMMAND_FRONTMATTER_PATTERN =
   /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/u;
 const SKILLS_SOURCE = ".rulesync/skills" as const;
@@ -53,6 +60,28 @@ const HOOK_EVENTS: ReadonlySet<string> = new Set([
   "beforeSubmitPrompt",
   "preToolUse"
 ]);
+const COMMAND_UPDATE_QUEUES = new Map<string, Promise<void>>();
+
+async function withCommandUpdateLock<T>(
+  commandPath: string,
+  update: () => Promise<T>
+): Promise<T> {
+  const previous = COMMAND_UPDATE_QUEUES.get(commandPath) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  COMMAND_UPDATE_QUEUES.set(commandPath, current);
+  await previous;
+  try {
+    return await update();
+  } finally {
+    release();
+    if (COMMAND_UPDATE_QUEUES.get(commandPath) === current) {
+      COMMAND_UPDATE_QUEUES.delete(commandPath);
+    }
+  }
+}
 
 export interface RuleSyncHooksState {
   readonly source: ".rulesync/hooks.jsonc";
@@ -80,6 +109,34 @@ export interface RuleSyncCommandUpdateInput {
   readonly name: string;
   readonly expectedRevision: string;
   readonly content: string;
+}
+
+export interface RuleSyncCommandVersionReference {
+  readonly versionHash: string;
+  readonly updatedAt: string;
+}
+
+export type RuleSyncCommandHistory =
+  | {
+      readonly status: "available";
+      readonly versions: readonly RuleSyncCommandVersionReference[];
+      readonly hasMore: boolean;
+    }
+  | {
+      readonly status: "unavailable";
+      readonly versions: readonly [];
+      readonly hasMore: false;
+    };
+
+export interface RuleSyncCommandVersion extends PromptVersion {
+  readonly diff: string;
+}
+
+export class RuleSyncCommandHistoryUnavailableError extends Error {
+  constructor(message = "Canonical command history is unavailable.") {
+    super(message);
+    this.name = "RuleSyncCommandHistoryUnavailableError";
+  }
 }
 
 export class RuleSyncCommandConflictError extends Error {
@@ -424,7 +481,14 @@ function parseRuleSyncCommand(name: string, content: string): RuleSyncCommand {
       `Command "${name}" must have valid YAML frontmatter.`
     );
   }
-  const metadata: unknown = parseYaml(frontmatter[1]!);
+  let metadata: unknown;
+  try {
+    metadata = parseYaml(frontmatter[1]!);
+  } catch {
+    throw new RuleSyncCommandValidationError(
+      `Command "${name}" frontmatter is invalid YAML.`
+    );
+  }
   if (!isRecord(metadata)) {
     throw new RuleSyncCommandValidationError(
       `Command "${name}" frontmatter must be a mapping.`
@@ -497,18 +561,192 @@ export class RuleSyncRepository {
     }
   }
 
-  async updateCommand(
-    input: RuleSyncCommandUpdateInput
-  ): Promise<RuleSyncCommand> {
+  loadCommandHistory(name: string): RuleSyncCommandHistory | null {
+    if (!COMMAND_NAME_PATTERN.test(name)) return null;
+    const state = this.loadCommands();
+    if (
+      state.valid !== true ||
+      !state.commands.some((item) => item.name === name)
+    )
+      return null;
+
+    const commandPath = `${COMMANDS_SOURCE}/${name}.md`;
+    let repositoryRoot: string;
+    try {
+      repositoryRoot = realpathSync(this.repositoryRoot);
+      const isRepository = execFileSync(
+        "git",
+        ["-C", repositoryRoot, "rev-parse", "--is-inside-work-tree"],
+        {
+          encoding: "utf8",
+          maxBuffer: 1_024,
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: COMMAND_GIT_TIMEOUT_MS
+        }
+      );
+      if (isRepository.trim() !== "true") {
+        return {
+          status: "unavailable",
+          versions: [],
+          hasMore: false
+        };
+      }
+    } catch {
+      return {
+        status: "unavailable",
+        versions: [],
+        hasMore: false
+      };
+    }
+
+    try {
+      execFileSync(
+        "git",
+        ["-C", repositoryRoot, "rev-parse", "--verify", "HEAD"],
+        {
+          encoding: "utf8",
+          maxBuffer: 1_024,
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: COMMAND_GIT_TIMEOUT_MS
+        }
+      );
+    } catch {
+      return { status: "available", versions: [], hasMore: false };
+    }
+
+    try {
+      const output = execFileSync(
+        "git",
+        [
+          "-C",
+          repositoryRoot,
+          "log",
+          "--format=%H%x00%cI",
+          `--max-count=${COMMAND_HISTORY_FETCH_LIMIT}`,
+          "--",
+          commandPath
+        ],
+        {
+          encoding: "utf8",
+          maxBuffer: 8_192,
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: COMMAND_GIT_TIMEOUT_MS
+        }
+      );
+      const entries = output
+        .split(/\r?\n/u)
+        .filter(Boolean)
+        .map((entry) => {
+          const [versionHash, updatedAt] = entry.split("\0");
+          if (
+            !versionHash ||
+            !GIT_REVISION_PATTERN.test(versionHash) ||
+            !updatedAt ||
+            !Number.isFinite(Date.parse(updatedAt))
+          ) {
+            throw new RuleSyncCommandHistoryUnavailableError(
+              "Git returned malformed command history metadata."
+            );
+          }
+          return { versionHash, updatedAt };
+        });
+      return {
+        status: "available",
+        versions: entries.slice(0, COMMAND_HISTORY_LIMIT),
+        hasMore: entries.length > COMMAND_HISTORY_LIMIT
+      };
+    } catch {
+      return {
+        status: "unavailable",
+        versions: [],
+        hasMore: false
+      };
+    }
+  }
+
+  loadCommandVersion(
+    name: string,
+    versionHash: string
+  ): RuleSyncCommandVersion | null {
+    if (!GIT_REVISION_PATTERN.test(versionHash)) return null;
+    const state = this.loadCommands();
+    const command =
+      state.valid === true
+        ? state.commands.find((item) => item.name === name)
+        : undefined;
+    if (!command) return null;
+
+    const history = this.loadCommandHistory(name);
+    if (history === null || history.status === "unavailable") {
+      throw new RuleSyncCommandHistoryUnavailableError();
+    }
+    const version = history.versions.find(
+      (item) => item.versionHash === versionHash
+    );
+    if (!version) return null;
+
+    const repositoryRoot = realpathSync(this.repositoryRoot);
+    try {
+      const content = execFileSync(
+        "git",
+        ["-C", repositoryRoot, "show", `${versionHash}:${command.path}`],
+        {
+          encoding: "utf8",
+          maxBuffer: COMMAND_CONTENT_MAX_BYTES,
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: COMMAND_GIT_TIMEOUT_MS
+        }
+      );
+      const diff = execFileSync(
+        "git",
+        [
+          "-C",
+          repositoryRoot,
+          "diff",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--no-color",
+          "--no-renames",
+          "--unified=3",
+          versionHash,
+          "--",
+          command.path
+        ],
+        {
+          encoding: "utf8",
+          maxBuffer: COMMAND_DIFF_MAX_BYTES,
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: COMMAND_GIT_TIMEOUT_MS
+        }
+      );
+      return {
+        name,
+        versionHash,
+        updatedAt: version.updatedAt,
+        content,
+        diff
+      };
+    } catch {
+      throw new RuleSyncCommandHistoryUnavailableError(
+        "The selected command version or its bounded diff could not be read."
+      );
+    }
+  }
+
+  updateCommand(input: RuleSyncCommandUpdateInput): Promise<RuleSyncCommand> {
     const name = input.name;
     if (!COMMAND_NAME_PATTERN.test(name)) {
-      throw new RuleSyncCommandValidationError(
-        "Command name must be a lowercase hyphenated slug."
+      return Promise.reject(
+        new RuleSyncCommandValidationError(
+          "Command name must be a lowercase hyphenated slug."
+        )
       );
     }
     if (!COMMAND_REVISION_PATTERN.test(input.expectedRevision)) {
-      throw new RuleSyncCommandValidationError(
-        "Expected command revision is invalid."
+      return Promise.reject(
+        new RuleSyncCommandValidationError(
+          "Expected command revision is invalid."
+        )
       );
     }
     const content = input.content
@@ -518,81 +756,92 @@ export class RuleSyncRepository {
       Buffer.byteLength(content, "utf8") > COMMAND_CONTENT_MAX_BYTES ||
       hasControlCharacters(content)
     ) {
-      throw new RuleSyncCommandValidationError(
-        "Command content contains unsafe controls or exceeds its safe size bound."
+      return Promise.reject(
+        new RuleSyncCommandValidationError(
+          "Command content contains unsafe controls or exceeds its safe size bound."
+        )
       );
     }
-
-    const state = this.loadCommands();
-    if (state.valid !== true) {
-      throw new RuleSyncCommandValidationError(
-        "Canonical RuleSync command source is not valid."
-      );
-    }
-    const current = state.commands.find((command) => command.name === name);
-    if (!current) {
-      throw new RuleSyncCommandConflictError(
-        `Canonical command "${name}" no longer exists.`
-      );
-    }
-    if (current.revision !== input.expectedRevision) {
-      throw new RuleSyncCommandConflictError(
-        `Canonical command "${name}" changed since it was loaded.`
-      );
-    }
-
-    const updated = parseRuleSyncCommand(name, content);
-    if (updated.revision === current.revision) return current;
 
     const directory = resolveCanonicalRuleSyncDirectory(
       this.repositoryRoot,
       "commands"
     );
     if (directory.valid !== true || directory.path === null) {
-      throw new RuleSyncCommandConflictError(
-        "Canonical RuleSync command directory is no longer available."
+      return Promise.reject(
+        new RuleSyncCommandValidationError(
+          "Canonical RuleSync command source is not valid."
+        )
       );
     }
     const commandsDir = directory.path;
     const commandPath = path.join(commandsDir, `${name}.md`);
-    const commandStat = await lstat(commandPath);
-    if (!commandStat.isFile() || commandStat.isSymbolicLink()) {
-      throw new RuleSyncCommandConflictError(
-        `Canonical command "${name}" is not a regular file.`
-      );
-    }
-    const latestContent = await readFile(commandPath, "utf8");
-    if (
-      createHash("sha256").update(latestContent, "utf8").digest("hex") !==
-      input.expectedRevision
-    ) {
-      throw new RuleSyncCommandConflictError(
-        `Canonical command "${name}" changed before the update was written.`
-      );
-    }
-
-    const temporaryPath = path.join(
-      commandsDir,
-      `.${name}.${randomUUID()}.tmp`
-    );
+    let updated: RuleSyncCommand;
     try {
-      await writeFile(temporaryPath, content, {
-        encoding: "utf8",
-        flag: "wx",
-        mode: 0o644
-      });
-      await rename(temporaryPath, commandPath);
-    } finally {
-      await unlink(temporaryPath).catch(() => undefined);
+      updated = parseRuleSyncCommand(name, content);
+    } catch (error) {
+      return Promise.reject(error);
     }
+    return withCommandUpdateLock(commandPath, async () => {
+      const state = this.loadCommands();
+      if (state.valid !== true) {
+        throw new RuleSyncCommandValidationError(
+          "Canonical RuleSync command source is not valid."
+        );
+      }
+      const current = state.commands.find((command) => command.name === name);
+      if (!current) {
+        throw new RuleSyncCommandConflictError(
+          `Canonical command "${name}" no longer exists.`
+        );
+      }
+      if (current.revision !== input.expectedRevision) {
+        throw new RuleSyncCommandConflictError(
+          `Canonical command "${name}" changed since it was loaded.`
+        );
+      }
 
-    const persistedContent = await readFile(commandPath, "utf8");
-    if (persistedContent !== content) {
-      throw new RuleSyncCommandConflictError(
-        `Canonical command "${name}" changed during the update.`
+      if (updated.revision === current.revision) return current;
+
+      const commandStat = await lstat(commandPath);
+      if (!commandStat.isFile() || commandStat.isSymbolicLink()) {
+        throw new RuleSyncCommandConflictError(
+          `Canonical command "${name}" is not a regular file.`
+        );
+      }
+      const latestContent = await readFile(commandPath, "utf8");
+      if (
+        createHash("sha256").update(latestContent, "utf8").digest("hex") !==
+        input.expectedRevision
+      ) {
+        throw new RuleSyncCommandConflictError(
+          `Canonical command "${name}" changed before the update was written.`
+        );
+      }
+
+      const temporaryPath = path.join(
+        commandsDir,
+        `.${name}.${randomUUID()}.tmp`
       );
-    }
-    return parseRuleSyncCommand(name, persistedContent);
+      try {
+        await writeFile(temporaryPath, content, {
+          encoding: "utf8",
+          flag: "wx",
+          mode: 0o644
+        });
+        await rename(temporaryPath, commandPath);
+      } finally {
+        await unlink(temporaryPath).catch(() => undefined);
+      }
+
+      const persistedContent = await readFile(commandPath, "utf8");
+      if (persistedContent !== content) {
+        throw new RuleSyncCommandConflictError(
+          `Canonical command "${name}" changed during the update.`
+        );
+      }
+      return parseRuleSyncCommand(name, persistedContent);
+    });
   }
 
   loadHooksState(): RuleSyncHooksState {

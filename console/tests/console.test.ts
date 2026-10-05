@@ -77,6 +77,10 @@ import {
   readControlApiConfig
 } from "../src/lib/server/control-api.ts";
 import { readMemoryPortalConfig } from "../src/lib/server/memory-portal.ts";
+const unavailablePromptHistory = {
+  status: "unavailable",
+  message: "Git history unavailable in this test."
+} as const;
 import {
   readOpenLITUsageConfig,
   usageSelectionFromSearchParams
@@ -505,7 +509,10 @@ test("Prompt detail renders canonical text and reports an actually empty source"
     revision: "a".repeat(64)
   });
   const markup = renderToStaticMarkup(
-    React.createElement(PromptDetailView, { prompt })
+    React.createElement(PromptDetailView, {
+      prompt,
+      history: unavailablePromptHistory
+    })
   );
   assert.match(markup, /Use a dry run\./);
   assert.match(markup, /\.rulesync\/commands\/dry\.md/);
@@ -513,6 +520,43 @@ test("Prompt detail renders canonical text and reports an actually empty source"
   assert.match(markup, /action="\/api\/prompts\/dry"/);
   assert.match(markup, /name="expectedRevision" value="a{64}"/);
   assert.match(markup, /Save &amp; Apply/);
+  assert.match(markup, /data-prompt-history="unavailable"/);
+  assert.match(markup, /Git history unavailable in this test\./);
+
+  const versionHash = "b".repeat(40);
+  const comparisonMarkup = renderToStaticMarkup(
+    React.createElement(PromptDetailView, {
+      prompt,
+      history: {
+        status: "available",
+        versions: [{ versionHash, updatedAt: "2026-01-02T03:04:05Z" }],
+        hasMore: false
+      },
+      selectedVersion: {
+        schema: "autodev-control-prompt-version-v1",
+        name: "dry",
+        versionHash,
+        updatedAt: "2026-01-02T03:04:05Z",
+        content: source,
+        diff: "-Use a dry run.\n+Use the current source.\n"
+      }
+    })
+  );
+  assert.match(comparisonMarkup, new RegExp(`revision=${versionHash}`));
+  assert.match(comparisonMarkup, /data-prompt-version-comparison=/);
+  assert.match(comparisonMarkup, /data-prompt-diff="observed"/);
+  assert.match(comparisonMarkup, /Use the current source\./);
+  assert.match(comparisonMarkup, /Preview committed source/);
+
+  const applyFailedMarkup = renderToStaticMarkup(
+    React.createElement(PromptDetailView, {
+      prompt,
+      history: unavailablePromptHistory,
+      saveOutcome: "apply-failed"
+    })
+  );
+  assert.match(applyFailedMarkup, /data-prompt-save-outcome="apply-failed"/);
+  assert.match(applyFailedMarkup, /source was saved, but RuleSync generation/);
 
   const roleMarkup = renderToStaticMarkup(
     React.createElement(PromptDetailView, {
@@ -522,7 +566,8 @@ test("Prompt detail renders canonical text and reports an actually empty source"
         path: "agents/prompts/roles/orchestrator.md",
         content: "# Role prompt",
         revision: "d".repeat(64)
-      }
+      },
+      history: unavailablePromptHistory
     })
   );
   assert.match(roleMarkup, /data-prompt-editor="read-only"/);
@@ -530,7 +575,8 @@ test("Prompt detail renders canonical text and reports an actually empty source"
 
   const emptyMarkup = renderToStaticMarkup(
     React.createElement(PromptDetailView, {
-      prompt: { ...prompt, content: "" }
+      prompt: { ...prompt, content: "" },
+      history: unavailablePromptHistory
     })
   );
   assert.match(emptyMarkup, /data-prompt-content="empty"/);
@@ -571,7 +617,8 @@ test("PromptsView and PromptDetailView render prompt types, linkage, and Git aut
         path: "agents/prompts/roles/orchestrator.md",
         content: "# Orchestrator System Prompt\nYou are an orchestrator.",
         revision: "c".repeat(64)
-      }
+      },
+      history: unavailablePromptHistory
     })
   );
   assert.match(detailMarkup, /data-section="prompt-linkage"/);
@@ -3473,7 +3520,7 @@ test("Prompt edit form submits only source content and its revision through the 
   const previousBaseUrl = process.env.AUTODEV_CONTROL_API_BASE_URL;
   const token = "prompt-route-server-token";
   const content =
-    "---\ntargets: [\"*\"]\ndescription: Updated command.\n---\n\n# Updated\n\nSave canonical text.\n";
+    '---\ntargets: ["*"]\ndescription: Updated command.\n---\n\n# Updated\n\nSave canonical text.\n';
   const requests: Array<{
     readonly url: string;
     readonly method: string | undefined;
@@ -3500,22 +3547,19 @@ test("Prompt edit form submits only source content and its revision through the 
   };
 
   try {
-    const request = new NextRequest(
-      "http://console.test/api/prompts/dry",
-      {
-        method: "POST",
-        headers: {
-          origin: "http://console.test",
-          host: "console.test",
-          "sec-fetch-site": "same-origin",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        body: new URLSearchParams({
-          expectedRevision: "a".repeat(64),
-          content
-        }).toString()
-      }
-    );
+    const request = new NextRequest("http://console.test/api/prompts/dry", {
+      method: "POST",
+      headers: {
+        origin: "http://console.test",
+        host: "console.test",
+        "sec-fetch-site": "same-origin",
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({
+        expectedRevision: "a".repeat(64),
+        content
+      }).toString()
+    });
     const response = await promptMutationRoute.POST(request, {
       params: Promise.resolve({ name: "dry" })
     });
@@ -3523,10 +3567,7 @@ test("Prompt edit form submits only source content and its revision through the 
     assert.equal(response.status, 303);
     assert.equal(response.headers.get("location"), "/prompts/dry");
     assert.equal(requests.length, 1);
-    assert.equal(
-      requests[0]?.url,
-      "http://127.0.0.1:4101/control/prompts/dry"
-    );
+    assert.equal(requests[0]?.url, "http://127.0.0.1:4101/control/prompts/dry");
     assert.equal(requests[0]?.method, "PATCH");
     assert.equal(requests[0]?.headers.get("authorization"), `Bearer ${token}`);
     assert.equal(
@@ -3540,11 +3581,60 @@ test("Prompt edit form submits only source content and its revision through the 
     assert.equal(response.headers.get("location")?.includes(token), false);
   } finally {
     globalThis.fetch = previousFetch;
-    if (previousToken === undefined) delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    if (previousToken === undefined)
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
     else process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
     if (previousBaseUrl === undefined)
       delete process.env.AUTODEV_CONTROL_API_BASE_URL;
     else process.env.AUTODEV_CONTROL_API_BASE_URL = previousBaseUrl;
+  }
+});
+
+test("Prompt edit route returns an explicit apply-failed state without a success claim", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "prompt-apply-failure-token";
+  globalThis.fetch = async () =>
+    Response.json(
+      {
+        error: {
+          code: "autodev_control_prompt_apply_failed",
+          message: "The canonical source was saved, but apply failed."
+        }
+      },
+      { status: 503 }
+    );
+  try {
+    const request = new NextRequest("http://console.test/api/prompts/dry", {
+      method: "POST",
+      headers: {
+        origin: "http://console.test",
+        host: "console.test",
+        "sec-fetch-site": "same-origin",
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({
+        expectedRevision: "a".repeat(64),
+        content: '---\ntargets: ["*"]\ndescription: Save me.\n---\n\nBody\n'
+      }).toString()
+    });
+    const response = await promptMutationRoute.POST(request, {
+      params: Promise.resolve({ name: "dry" })
+    });
+    assert.equal(response.status, 303);
+    assert.equal(
+      response.headers.get("location"),
+      "/prompts/dry?save=apply-failed"
+    );
+    assert.equal(
+      response.headers.get("location")?.includes("prompt-apply-failure-token"),
+      false
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined)
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    else process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
   }
 });
 
@@ -3560,7 +3650,7 @@ test("Prompt edit route rejects CSRF, malformed forms, and exposes no mutation m
 
   const validForm = new URLSearchParams({
     expectedRevision: "a".repeat(64),
-    content: "---\ntargets: [\"*\"]\ndescription: Valid.\n---\n\nPrompt\n"
+    content: '---\ntargets: ["*"]\ndescription: Valid.\n---\n\nPrompt\n'
   }).toString();
   const cases = [
     {
@@ -3595,19 +3685,16 @@ test("Prompt edit route rejects CSRF, malformed forms, and exposes no mutation m
 
   try {
     for (const testCase of cases) {
-      const request = new NextRequest(
-        "http://console.test/api/prompts/dry",
-        {
-          method: "POST",
-          headers: {
-            origin: testCase.origin,
-            host: "console.test",
-            "sec-fetch-site": testCase.fetchSite,
-            "content-type": testCase.contentType
-          },
-          body: testCase.body
-        }
-      );
+      const request = new NextRequest("http://console.test/api/prompts/dry", {
+        method: "POST",
+        headers: {
+          origin: testCase.origin,
+          host: "console.test",
+          "sec-fetch-site": testCase.fetchSite,
+          "content-type": testCase.contentType
+        },
+        body: testCase.body
+      });
       const response = await promptMutationRoute.POST(request, {
         params: Promise.resolve({ name: "dry" })
       });
@@ -3621,7 +3708,8 @@ test("Prompt edit route rejects CSRF, malformed forms, and exposes no mutation m
     assert.equal(fetchCalls, 0);
   } finally {
     globalThis.fetch = previousFetch;
-    if (previousToken === undefined) delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    if (previousToken === undefined)
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
     else process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
   }
 

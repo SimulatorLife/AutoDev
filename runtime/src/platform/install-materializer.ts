@@ -14,6 +14,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { RuleSyncRepository } from "@simulatorlife/autodev-data";
 import {
   atomicWrite,
   parseTomlFile,
@@ -232,92 +233,11 @@ export const SKILLS = [
   "writing-agent-skills"
 ] as const;
 /**
- * Codex custom prompts (slash commands) installed at $CODEX_HOME/prompts/<name>.md.
- *
- * Source of truth is `.rulesync/commands/<name>.md`. This catalog is the
- * union of the prior AutoDev Codex prompt catalog (build-fix, css-cleanup,
- * dedupe-helper, file-organize, merge-prs, new-feature, optimize,
- * resolve-merges, test-fix) and the AutoDev-owned generic scheduler catalog
- * formerly published at `.agents/prompts/*.md`. The three slugs that
- * appeared under both names (bug-fix, lint-fix, dedupe-helper / former
- * helper-substitution) were merged in place so the AutoDev rulesync body
- * remains the only scheduled entry for each.
- *
- * Rulesync's codexcli commands feature is global-only and respects $HOME
- * rather than $CODEX_HOME, so the materializer runs rulesync with $HOME
- * pointed at a throwaway directory and copies each generated prompt into
- * the real $CODEX_HOME/prompts/. The AutoDev-owned prompts directory is
- * then reconciled against this catalog: `*.md` files in $CODEX_HOME/prompts/
- * that are not listed here are removed during install. Upstream Codex marks
- * custom prompts deprecated in favour of skills, but the catalog stays here
- * because prompts remain functional and the AutoDev agents surface them
- * through `/<name>` invocations.
+ * Codex custom prompts (slash commands) are materialized at
+ * `$CODEX_HOME/prompts/<name>.md` from the canonical `.rulesync/commands/`
+ * source. Data owns parsing and validation; Runtime selects the `codexcli`
+ * target and manages its generated projection.
  */
-export const COMMANDS = [
-  "abstraction-layer",
-  "advance-autodev",
-  "architectural-audit",
-  "bad-test-remediation",
-  "bloat-trimming",
-  "bug-fix",
-  "build-fix",
-  "cohesion-refactor",
-  "composition-over-inheritance",
-  "configuration-improvement",
-  "consolidate-files",
-  "control-flow-clarity",
-  "css-cleanup",
-  "dead-code-audit",
-  "decouple-architecture",
-  "dedupe-helper",
-  "defensive-input",
-  "demeter",
-  "dependency-hygiene",
-  "docstrings-comments",
-  "document-intent",
-  "documentation-refresh",
-  "dry",
-  "duplicate-report",
-  "error-handling",
-  "extensibility",
-  "file-organize",
-  "floating-point-safety",
-  "generalization",
-  "interface-segregation",
-  "kiss",
-  "legacy-api-migration",
-  "legacy-shim-removal",
-  "lint-fix",
-  "logic-deduplication",
-  "loop-mutation",
-  "low-coupling",
-  "memory-footprint",
-  "merge-prs",
-  "micro-optimization",
-  "new-feature",
-  "nullability-guardrails",
-  "optimize",
-  "organization",
-  "parameter-flexibility",
-  "pola",
-  "policy-mechanism",
-  "polymorphic-collaborators",
-  "resolve-merges",
-  "resource-leak",
-  "single-responsibility",
-  "split-long-file",
-  "style-consistency",
-  "test-coverage",
-  "test-deduplication",
-  "test-duration",
-  "test-fix",
-  "test-isolation",
-  "todo-implementation",
-  "typed-flags",
-  "unnecessary-labels",
-  "usability",
-  "validation-failure-recovery"
-] as const;
 export const LEGACY_SKILL_DIRS = ["skills", "agents/skills"] as const;
 export const RULES = ["default.rules"] as const;
 export const LAUNCH_LABELS = [
@@ -1003,19 +923,29 @@ function sameContent(source: string, target: string): boolean {
   }
 }
 
+export function loadCodexCommands(repositoryRoot: string) {
+  const commandState = new RuleSyncRepository(repositoryRoot).loadCommands();
+  if (commandState.valid !== true) {
+    throw new Error(
+      "Cannot load an absent or invalid RuleSync command catalog."
+    );
+  }
+  return commandState.commands.filter(
+    (command) =>
+      command.targets.includes("*") || command.targets.includes("codexcli")
+  );
+}
+
 /**
- * Project Codex custom prompts (`COMMANDS`) into $CODEX_HOME/prompts/.
+ * Project canonical RuleSync commands into `$CODEX_HOME/prompts/`.
  *
  * Rulesync's `codexcli` commands feature is global-only and honors `$HOME`
  * rather than `$CODEX_HOME`, so we run rulesync with `$HOME` pointing at a
- * throwaway directory (created via `mkdtempSync`, cleaned in `finally`,
- * same spirit as `materializeRenderedAgents`) and copy each generated prompt
- * into the real `$CODEX_HOME/prompts/` with `materializeRuntimeFile`. The
- * prompts directory is then reconciled against the `COMMANDS` catalog via
- * `removeStalePaths` so the catalog is the single source of truth: any
- * `*.md` in the directory that is not in the catalog is removed.
+ * throwaway directory and copy each generated prompt into the real Codex home.
+ * The directory is reconciled against canonical commands whose targets
+ * include `codexcli` or `*`.
  *
- * Returns the names of the prompts whose installed content changed (added,
+ * Returns the names of prompts whose installed content changed (added,
  * rewritten, or removed), sorted, so the caller can tell the user a running
  * Codex app must be restarted to see them.
  */
@@ -1023,6 +953,8 @@ export function materializeCommands(
   options: Pick<MaterializeOptions, "repositoryRoot">,
   promptsDir: string
 ): string[] {
+  const codexCommands = loadCodexCommands(options.repositoryRoot);
+  const catalog = new Set(codexCommands.map((command) => command.name));
   mkdirSync(promptsDir, { recursive: true, mode: 0o700 });
   const projectedHome = mkdtempSync(
     path.join(options.repositoryRoot, ".autodev-commands-home-")
@@ -1050,40 +982,45 @@ export function materializeCommands(
         .filter((entry) => entry.endsWith(".md"))
         .sort();
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      if (
+        (error as NodeJS.ErrnoException).code === "ENOENT" &&
+        codexCommands.length === 0
+      ) {
+        projectedFiles = [];
+      } else if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         throw new Error(
           `rulesync did not generate $CODEX_HOME/prompts under $HOME=${projectedHome}`
         );
+      } else {
+        throw error;
       }
-      throw error;
     }
     const projectedNames = new Set(
       projectedFiles.map((entry) => entry.replace(MD_EXTENSION_PATTERN, ""))
     );
-    const catalog = new Set<string>(COMMANDS);
     const updated: string[] = [];
     for (const entry of projectedFiles) {
       const name = entry.replace(MD_EXTENSION_PATTERN, "");
       if (!catalog.has(name))
         throw new Error(
-          `rulesync produced prompt "${name}" that is not in the COMMANDS catalog`
+          `rulesync produced prompt "${name}" without a canonical Codex target`
         );
     }
-    for (const name of catalog) {
+    for (const command of codexCommands) {
+      const name = command.name;
       if (!projectedNames.has(name))
         throw new Error(
-          `COMMANDS catalog entry "${name}" produced no rulesync projection`
+          `RuleSync command "${name}" produced no codexcli projection`
         );
       const projected = path.join(projectedDir, `${name}.md`);
       const target = path.join(promptsDir, `${name}.md`);
       if (!sameContent(projected, target)) updated.push(name);
       materializeRuntimeFile(projected, target, 0o644);
     }
-    const catalogSet = new Set<string>(COMMANDS);
     const staleEntries = readdirSync(promptsDir).filter(
       (entry) =>
         entry.endsWith(".md") &&
-        !catalogSet.has(entry.replace(MD_EXTENSION_PATTERN, ""))
+        !catalog.has(entry.replace(MD_EXTENSION_PATTERN, ""))
     );
     if (staleEntries.length > 0) {
       removeStalePaths(

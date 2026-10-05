@@ -198,7 +198,7 @@ const architecturePolicies = [
     "runtime-shared",
     "runtime-telemetry"
   ]),
-  allowOnly("runtime-platform", ["runtime-config", "runtime-shared"]),
+  allowOnly("runtime-platform", ["data", "runtime-config", "runtime-shared"]),
   allowOnly("runtime-mcp", ["runtime-shared"]),
   allowOnly("runtime-agents", ["runtime-shared"]),
   allowOnly("runtime-providers", [
@@ -225,10 +225,13 @@ const architecturePolicies = [
     "runtime-shared",
     "runtime-telemetry-context"
   ]),
+  // The Control API applies named RuleSync mutations through the existing
+  // platform materializer; it does not shell out to caller-selected commands.
   allowOnly("runtime-control-api", [
     "core",
     "data",
     "runtime-memory",
+    "runtime-platform",
     "runtime-router",
     "runtime-router-concurrency",
     "runtime-router-cooldown",

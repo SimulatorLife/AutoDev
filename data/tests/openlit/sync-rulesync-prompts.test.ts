@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,10 +20,8 @@ test("RuleSyncRepository parses canonical command metadata and prompt body", asy
   try {
     const temporaryCommandsDir = join(temporaryRoot, ".rulesync", "commands");
     await mkdir(temporaryCommandsDir, { recursive: true });
-    await writeFile(
-      join(temporaryCommandsDir, "test-refactor.md"),
-      `---\ntargets: [codexcli, claudecode]\ndescription: Custom command for refactoring.\n---\n# Refactor command\n\nDo something cleanly.\n`
-    );
+    const content = `---\ntargets: [codexcli, claudecode]\ndescription: Custom command for refactoring.\n---\n# Refactor command\n\nDo something cleanly.\n`;
+    await writeFile(join(temporaryCommandsDir, "test-refactor.md"), content);
 
     const state = new RuleSyncRepository(temporaryRoot).loadCommands();
     assert.equal(state.valid, true);
@@ -31,9 +30,9 @@ test("RuleSyncRepository parses canonical command metadata and prompt body", asy
         name: "test-refactor",
         path: ".rulesync/commands/test-refactor.md",
         kind: "command",
-        content:
-          "---\ntargets: [codexcli, claudecode]\ndescription: Custom command for refactoring.\n---\n# Refactor command\n\nDo something cleanly.\n",
+        content,
         prompt: "# Refactor command\n\nDo something cleanly.",
+        revision: createHash("sha256").update(content, "utf8").digest("hex"),
         description: "Custom command for refactoring.",
         targets: ["codexcli", "claudecode"]
       }

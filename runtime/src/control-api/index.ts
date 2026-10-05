@@ -24,6 +24,7 @@ import {
   type GithubApiWorkflow,
   GithubWorkflowRepository,
   RuleSyncCommandConflictError,
+  RuleSyncCommandHistoryUnavailableError,
   RuleSyncCommandValidationError,
   RuleSyncRepository
 } from "@simulatorlife/autodev-data";
@@ -42,8 +43,8 @@ import {
   WEB_SEARCH_TOOL
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
-import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "../router/proxy.ts";
 import { materializeCommands } from "../platform/install-materializer.ts";
+import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "../router/proxy.ts";
 import { getDefaultExecutionContract } from "../router/subagents.ts";
 import { routerTelemetryTracer } from "../router/telemetry.ts";
 import { readControlApiJsonObject } from "./body.ts";
@@ -72,6 +73,8 @@ const PROVIDER_ROLE_PATH =
   /^\/control\/providers\/([a-zA-Z0-9._-]+)\/roles\/(orchestrator|subagent)$/u;
 const AGENT_DETAIL_PATH = /^\/control\/agents\/([a-zA-Z0-9._-]+)$/u;
 const PROMPT_DETAIL_PATH = /^\/control\/prompts\/([a-zA-Z0-9._-]+)$/u;
+const PROMPT_VERSIONS_PATH =
+  /^\/control\/prompts\/([a-z0-9][a-z0-9-]{0,63})\/versions(?:\/([a-f0-9]{40}|[a-f0-9]{64}))?$/u;
 const ACTOR_ID_PATTERN = /^[A-Za-z0-9@._:+-]{1,128}$/u;
 const CONTROL_API_COLLATOR = new Intl.Collator();
 const EXECUTION_CONTRACT_SOURCE = "execution-contract" as const;
@@ -1169,6 +1172,43 @@ function promptDetailView(
   return null;
 }
 
+function promptVersionsView(
+  name: string,
+  repositoryRoot: string = DEFAULT_REPO_ROOT
+): Record<string, unknown> | null {
+  const history = new RuleSyncRepository(repositoryRoot).loadCommandHistory(
+    name
+  );
+  if (!history) return null;
+  return {
+    schema: "autodev-control-prompt-versions-v1",
+    name,
+    status: history.status,
+    versions: history.versions,
+    hasMore: history.hasMore
+  };
+}
+
+function promptVersionView(
+  name: string,
+  versionHash: string,
+  repositoryRoot: string = DEFAULT_REPO_ROOT
+): Record<string, unknown> | null {
+  const version = new RuleSyncRepository(repositoryRoot).loadCommandVersion(
+    name,
+    versionHash
+  );
+  if (!version) return null;
+  return {
+    schema: "autodev-control-prompt-version-v1",
+    name: version.name,
+    versionHash: version.versionHash,
+    updatedAt: version.updatedAt,
+    content: version.content,
+    diff: version.diff
+  };
+}
+
 function routingView(now: number): Record<string, unknown> {
   const activeCooldowns: Record<string, unknown> = {};
   for (const route of ROUTES) {
@@ -1717,6 +1757,63 @@ async function patchPromptCommand(
   );
 }
 
+function promptVersionsRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  method: string,
+  pathname: string,
+  name: string,
+  versionHash: string | undefined,
+  options: ControlApiRequestOptions
+): boolean {
+  const route: ReadOnlyDetailRoute = {
+    action: versionHash ? "Prompt version" : "Prompt versions",
+    unknownReason: versionHash ? "unknown_prompt_version" : "unknown_prompt",
+    unknownCode: versionHash
+      ? "autodev_control_api_unknown_prompt_version"
+      : "autodev_control_api_unknown_prompt",
+    unknownMessage: versionHash
+      ? "Unknown committed prompt version."
+      : "Unknown prompt.",
+    read: () =>
+      versionHash
+        ? promptVersionView(
+            name,
+            versionHash,
+            options.repositoryRoot ?? DEFAULT_REPO_ROOT
+          )
+        : promptVersionsView(name, options.repositoryRoot ?? DEFAULT_REPO_ROOT)
+  };
+  try {
+    return readOnlyDetailRoute(
+      request,
+      response,
+      actor,
+      method,
+      pathname,
+      name,
+      route
+    );
+  } catch (error) {
+    if (!(error instanceof RuleSyncCommandHistoryUnavailableError)) throw error;
+    auditRejectedRequest(
+      request,
+      method,
+      pathname,
+      "prompt_history_unavailable",
+      actor
+    );
+    sendControlError(
+      response,
+      503,
+      "autodev_control_api_prompt_history_unavailable",
+      "Committed prompt history is unavailable for this source."
+    );
+    return true;
+  }
+}
+
 async function promptDetailRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -1730,7 +1827,10 @@ async function promptDetailRoute(
     const route: ReadOnlyDetailRoute = {
       ...PROMPT_DETAIL_ROUTE,
       read: (identifier) =>
-        promptDetailView(identifier, options.repositoryRoot ?? DEFAULT_REPO_ROOT)
+        promptDetailView(
+          identifier,
+          options.repositoryRoot ?? DEFAULT_REPO_ROOT
+        )
     };
     return readOnlyDetailRoute(
       request,
@@ -1822,6 +1922,18 @@ export async function handleControlApiRequest(
       pathname,
       agentMatch[1]!,
       AGENT_DETAIL_ROUTE
+    );
+  const promptVersionsMatch = pathname.match(PROMPT_VERSIONS_PATH);
+  if (promptVersionsMatch)
+    return promptVersionsRoute(
+      request,
+      response,
+      actor,
+      method,
+      pathname,
+      promptVersionsMatch[1]!,
+      promptVersionsMatch[2],
+      options
     );
   const promptMatch = pathname.match(PROMPT_DETAIL_PATH);
   if (promptMatch)

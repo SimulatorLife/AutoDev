@@ -87,7 +87,7 @@
     "memory:capture": "node src/memory/capture-main.ts",
     "memory:mcp": "node src/router/memory-mcp-main.ts",
     "memory:retention": "node src/memory/retention-main.ts",
-    "test": "node --test tests/**/*.test.ts",
+    "test": "node --test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

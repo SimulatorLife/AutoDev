@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import {
   cpSync,
   mkdirSync,
@@ -859,6 +860,117 @@ test("Control API prompts listing projects the canonical RuleSyncRepository.load
   }
 });
 
+test("Control API exposes bounded Git prompt history and selected-version diff as read-only data", async () => {
+  const saved = saveEnv();
+  const repositoryRoot = mkdtempSync(
+    join(tmpdir(), "autodev-prompt-history-control-")
+  );
+  try {
+    configure();
+    const commandsDir = join(repositoryRoot, ".rulesync", "commands");
+    mkdirSync(commandsDir, { recursive: true });
+    const commandPath = join(commandsDir, "audit.md");
+    const canonical =
+      "---\ntargets: [codexcli]\ndescription: Review source.\n---\n\n# Audit\n\nReview the source.\n";
+    await writeFileSync(commandPath, canonical);
+    execFileSync("git", ["-C", repositoryRoot, "init", "-q"]);
+    execFileSync("git", ["-C", repositoryRoot, "config", "user.name", "Tests"]);
+    execFileSync("git", [
+      "-C",
+      repositoryRoot,
+      "config",
+      "user.email",
+      "tests@example.invalid"
+    ]);
+    execFileSync("git", [
+      "-C",
+      repositoryRoot,
+      "add",
+      ".rulesync/commands/audit.md"
+    ]);
+    execFileSync("git", [
+      "-C",
+      repositoryRoot,
+      "commit",
+      "-q",
+      "-m",
+      "Initial command"
+    ]);
+    await writeFileSync(
+      commandPath,
+      canonical.replace("Review the source.", "Review the current source.")
+    );
+
+    const options = { repositoryRoot };
+    const list = await call(
+      "GET",
+      `${CONTROL_API_PATHS.prompts}/audit/versions`,
+      { actor: "viewer-a" },
+      options
+    );
+    assert.equal(list.response.statusCode, 200);
+    assert.equal(list.body.schema, "autodev-control-prompt-versions-v1");
+    assert.equal(list.body.name, "audit");
+    assert.equal(list.body.status, "available");
+    assert.equal(list.body.hasMore, false);
+    assert.equal(list.body.versions.length, 1);
+    const revision = list.body.versions[0].versionHash as string;
+
+    const version = await call(
+      "GET",
+      `${CONTROL_API_PATHS.prompts}/audit/versions/${revision}`,
+      { actor: "viewer-a" },
+      options
+    );
+    assert.equal(version.response.statusCode, 200);
+    assert.equal(version.body.schema, "autodev-control-prompt-version-v1");
+    assert.equal(version.body.name, "audit");
+    assert.equal(version.body.versionHash, revision);
+    assert.equal(version.body.content, canonical);
+    assert.match(version.body.diff, /-Review the source\./u);
+    assert.match(version.body.diff, /\+Review the current source\./u);
+
+    const mutation = await call(
+      "PATCH",
+      `${CONTROL_API_PATHS.prompts}/audit/versions/${revision}`,
+      { actor: "operator-a", body: {} },
+      options
+    );
+    assert.equal(mutation.response.statusCode, 405);
+    assert.equal(mutation.response.headers.allow, "GET");
+
+    const unavailableRepository = mkdtempSync(
+      join(tmpdir(), "autodev-prompt-history-no-git-")
+    );
+    try {
+      const noGitCommands = join(
+        unavailableRepository,
+        ".rulesync",
+        "commands"
+      );
+      mkdirSync(noGitCommands, { recursive: true });
+      writeFileSync(
+        join(noGitCommands, "audit.md"),
+        "---\ndescription: Review source.\n---\n\n# Audit\n"
+      );
+      const unavailable = await call(
+        "GET",
+        `${CONTROL_API_PATHS.prompts}/audit/versions`,
+        { actor: "viewer-a" },
+        { repositoryRoot: unavailableRepository }
+      );
+      assert.equal(unavailable.response.statusCode, 200);
+      assert.equal(unavailable.body.status, "unavailable");
+      assert.deepEqual(unavailable.body.versions, []);
+    } finally {
+      rmSync(unavailableRepository, { recursive: true, force: true });
+    }
+  } finally {
+    restoreEnv(saved);
+    rmSync(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
 test("Control API prompt detail serves the canonical command content from RuleSyncRepository.loadCommands", async () => {
   const saved = saveEnv();
   try {
@@ -919,7 +1031,7 @@ test("operator Prompt PATCH validates source, applies the Rulesync projection, a
     const current = source.commands.find((command) => command.name === "dry");
     assert.ok(current);
     const content =
-      "---\ntargets: [\"*\"]\ndescription: Edited through AutoDev Console.\n---\n\n# Edited command\n\nA canonical edit reaches the generated Codex prompt.\n";
+      '---\ntargets: ["*"]\ndescription: Edited through AutoDev Console.\n---\n\n# Edited command\n\nA canonical edit reaches the generated Codex prompt.\n';
     const runtimeOptions = { repositoryRoot, codexHome };
 
     const viewerAttempt = await call(
@@ -951,10 +1063,7 @@ test("operator Prompt PATCH validates source, applies the Rulesync projection, a
       )
     );
     assert.equal(result.response.statusCode, 200);
-    assert.equal(
-      result.body.schema,
-      "autodev-control-prompt-command-patch-v1"
-    );
+    assert.equal(result.body.schema, "autodev-control-prompt-command-patch-v1");
     assert.equal(result.body.name, "dry");
     assert.match(result.body.revision, /^[a-f0-9]{64}$/u);
     assert.equal(result.body.changed, true);
@@ -962,9 +1071,9 @@ test("operator Prompt PATCH validates source, applies the Rulesync projection, a
     assert.equal(result.body.restartRequired, true);
     assert.doesNotMatch(lines.join(""), /A canonical edit reaches/u);
     assert.equal(
-      new RuleSyncRepository(repositoryRoot).loadCommands().commands.find(
-        (command) => command.name === "dry"
-      )?.content,
+      new RuleSyncRepository(repositoryRoot)
+        .loadCommands()
+        .commands.find((command) => command.name === "dry")?.content,
       content
     );
     assert.match(
@@ -983,6 +1092,30 @@ test("operator Prompt PATCH validates source, applies the Rulesync projection, a
     assert.equal(detail.body.revision, result.body.revision);
     assert.equal(detail.body.content, content);
 
+    const invalidSource = await call(
+      "PATCH",
+      CONTROL_API_PATHS.prompts + "/dry",
+      {
+        actor: "operator-a",
+        body: {
+          content: "not frontmatter",
+          expectedRevision: result.body.revision
+        }
+      },
+      runtimeOptions
+    );
+    assert.equal(invalidSource.response.statusCode, 400);
+    assert.equal(
+      invalidSource.body.error.code,
+      "autodev_control_prompt_invalid_source"
+    );
+    assert.equal(
+      new RuleSyncRepository(repositoryRoot)
+        .loadCommands()
+        .commands.find((command) => command.name === "dry")?.content,
+      content
+    );
+
     const stale = await call(
       "PATCH",
       CONTROL_API_PATHS.prompts + "/dry",
@@ -997,6 +1130,17 @@ test("operator Prompt PATCH validates source, applies the Rulesync projection, a
       stale.body.error.code,
       "autodev_control_prompt_revision_conflict"
     );
+    const wrongMethod = await call(
+      "POST",
+      CONTROL_API_PATHS.prompts + "/dry",
+      {
+        actor: "operator-a",
+        body: { content, expectedRevision: result.body.revision }
+      },
+      runtimeOptions
+    );
+    assert.equal(wrongMethod.response.statusCode, 405);
+    assert.equal(wrongMethod.response.headers.allow, "GET, PATCH");
   } finally {
     restoreEnv(saved);
     rmSync(repositoryRoot, { recursive: true, force: true });

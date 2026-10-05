@@ -345,8 +345,17 @@ test("root quality scripts validate all code workspaces", () => {
     manifest.scripts.typecheck ?? "",
     /typecheck:root.*--recursive.*typecheck/u
   );
-  for (const workspace of ["core", "data", "console", "runtime"])
+  for (const workspace of ["core", "data", "console", "runtime"]) {
     assert.match(manifest.scripts.format ?? "", new RegExp(`${workspace}`));
+    const workspaceManifest = JSON.parse(
+      readFileSync(new URL(`${workspace}/package.json`, repositoryRoot), "utf8")
+    ) as { scripts: Record<string, string> };
+    assert.equal(
+      workspaceManifest.scripts.test,
+      "node --test",
+      `${workspace} must use Node's recursive test discovery without shell globs`
+    );
+  }
 });
 
 test("canonical migration tracker records the current repository quality-gate evidence", () => {

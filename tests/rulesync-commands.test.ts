@@ -1,17 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
-  chmodSync,
-  copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
-  renameSync,
   rmSync,
-  unlinkSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,8 +15,9 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { RuleSyncRepository } from "@simulatorlife/autodev-data";
 import {
-  COMMANDS,
+  loadCodexCommands,
   materializeCommands
 } from "@simulatorlife/autodev-runtime/platform/install-materializer";
 
@@ -49,6 +46,9 @@ const materializerPath = join(
   "platform",
   "install-materializer.ts"
 );
+const codexCommandNames = loadCodexCommands(repositoryRoot)
+  .map((command) => command.name)
+  .sort();
 
 function splitFrontmatter(text: string): { front: string; body: string } {
   const match = /^---\n(?<front>[\s\S]*?)\n---\n(?<body>[\s\S]*)$/u.exec(text);
@@ -66,7 +66,7 @@ function splitFrontmatter(text: string): { front: string; body: string } {
   const targetsList = JSON.parse(targets.groups.value) as unknown;
   assert.ok(
     Array.isArray(targetsList) &&
-      targetsList.every((v) => typeof v === "string"),
+      targetsList.every((value) => typeof value === "string"),
     "frontmatter `targets` must be a list of strings"
   );
   const description = /^description:[ \t]*(?<value>\S.*)$/mu.exec(
@@ -123,31 +123,10 @@ function generateGlobal(outputHome: string): void {
   );
 }
 
-/**
- * Mirror the AutoDev installer's materializeCommands materialization: copy the
- * projected prompt into a target file with `materializeRuntimeFile`-style atomic
- * rename and 0o644 mode. The tests call this directly because they only need
- * to exercise the projected-content contract; the typed `materializeCommands`
- * step is asserted separately against the source files.
- */
-function copyProjectedTo(
-  projectedDir: string,
-  name: string,
-  promptsDir: string
-): void {
-  const sourcePath = join(projectedDir, `${name}.md`);
-  const targetPath = join(promptsDir, `${name}.md`);
-  const staged = `${targetPath}.autodev-${process.pid}-${Date.now()}-${name}`;
-  copyFileSync(sourcePath, staged);
-  chmodSync(staged, 0o644);
-  renameSync(staged, targetPath);
-}
-
-test("every .rulesync/commands/*.md has valid frontmatter with targets and description", () => {
-  const files = readdirSync(catalogRoot).filter((f) => f.endsWith(".md"));
+test("every canonical RuleSync command has valid targets, description, and body", () => {
+  const files = readdirSync(catalogRoot).filter((file) => file.endsWith(".md"));
   for (const file of files) {
-    const full = join(catalogRoot, file);
-    const text = readFileSync(full, "utf8");
+    const text = readFileSync(join(catalogRoot, file), "utf8");
     const { front, body } = splitFrontmatter(text);
     assert.match(
       front,
@@ -163,43 +142,88 @@ test("every .rulesync/commands/*.md has valid frontmatter with targets and descr
   }
 });
 
-test("COMMANDS catalog exactly matches the on-disk .rulesync/commands files", () => {
+test("Data exposes the canonical RuleSync command catalog without a Runtime inventory", () => {
+  const state = new RuleSyncRepository(repositoryRoot).loadCommands();
+  assert.equal(state.valid, true);
+  assert.equal(state.source, ".rulesync/commands");
+
   const onDisk = readdirSync(catalogRoot)
-    .filter((f) => f.endsWith(".md"))
-    .map((f) => f.replace(/\.md$/u, ""))
+    .filter((file) => file.endsWith(".md"))
+    .map((file) => file.replace(/\.md$/u, ""))
     .sort();
   assert.deepEqual(
-    [...COMMANDS].sort(),
+    state.commands.map((command) => command.name),
     onDisk,
-    "COMMANDS catalog drift: keep runtime/src/platform/install-materializer.ts COMMANDS and .rulesync/commands/*.md in lockstep"
+    "Data's validated catalog must cover every canonical command file"
   );
 });
 
-test("every catalog entry produces a rulesync codexcli commands projection with description-only frontmatter", () => {
+test("Codex materialization selects only codexcli and wildcard RuleSync targets", () => {
+  const temporaryRoot = mkdtempSync(
+    join(tmpdir(), "autodev-rulesync-command-targets-")
+  );
+  const commandsRoot = join(temporaryRoot, ".rulesync", "commands");
+  mkdirSync(commandsRoot, { recursive: true });
+  const writeCommand = (name: string, targets?: readonly string[]) => {
+    const targetLine =
+      targets === undefined
+        ? ""
+        : `targets: [${targets.map((target) => JSON.stringify(target)).join(", ")}]\n`;
+    writeFileSync(
+      join(commandsRoot, `${name}.md`),
+      `---\ndescription: ${name}\n${targetLine}---\nPrompt body for ${name}.\n`
+    );
+  };
+
+  try {
+    writeCommand("codex-only", ["codexcli"]);
+    writeCommand("shared", ["*"]);
+    writeCommand("other-provider", ["claudecode"]);
+    writeCommand("default-target");
+
+    assert.deepEqual(
+      new RuleSyncRepository(temporaryRoot)
+        .loadCommands()
+        .commands.map((command) => command.name),
+      ["codex-only", "default-target", "other-provider", "shared"]
+    );
+    assert.deepEqual(
+      loadCodexCommands(temporaryRoot).map((command) => command.name),
+      ["codex-only", "default-target", "shared"]
+    );
+    assert.throws(
+      () => loadCodexCommands(join(temporaryRoot, "missing")),
+      /load an absent or invalid RuleSync command catalog/u
+    );
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("RuleSync's codexcli projection contains exactly the canonical Codex commands", () => {
   const outputHome = mkdtempSync(join(tmpdir(), "autodev-rulesync-commands-"));
   try {
     generateGlobal(outputHome);
     const promptsDir = join(outputHome, ".codex", "prompts");
     const projected = readdirSync(promptsDir)
-      .filter((f) => f.endsWith(".md"))
+      .filter((file) => file.endsWith(".md"))
       .sort();
     assert.deepEqual(
       projected,
-      Array.from(COMMANDS, (n) => `${n}.md`).sort(),
-      "projected prompts must match the COMMANDS catalog exactly"
+      codexCommandNames.map((name) => `${name}.md`),
+      "Rulesync must project only canonical commands targeted at codexcli or *"
     );
-    for (const name of COMMANDS) {
-      const projectedPath = join(promptsDir, `${name}.md`);
-      const text = readFileSync(projectedPath, "utf8");
+    for (const name of codexCommandNames) {
+      const text = readFileSync(join(promptsDir, `${name}.md`), "utf8");
       assert.match(
         text,
         /^---\ndescription:/mu,
-        `${name} must keep a description in its frontmatter`
+        `${name} must keep its description in projected frontmatter`
       );
       assert.doesNotMatch(
         text,
         /^targets:/mu,
-        `${name} projected frontmatter must not leak rulesync's internal ` +
+        `${name} projected frontmatter must not leak RuleSync's internal ` +
           "`targets` key into Codex output"
       );
     }
@@ -208,18 +232,27 @@ test("every catalog entry produces a rulesync codexcli commands projection with 
   }
 });
 
-test("materializeCommands writes one prompt per catalog entry and is idempotent", () => {
-  const outputHome = mkdtempSync(join(tmpdir(), "autodev-rulesync-commands-"));
+test("materializeCommands applies, reconciles, and reports real Codex prompt changes", () => {
   const codexHome = mkdtempSync(join(tmpdir(), "autodev-commands-codex-"));
+  const promptsDir = join(codexHome, "prompts");
+  const canonicalCommands = new Map(
+    new RuleSyncRepository(repositoryRoot)
+      .loadCommands()
+      .commands.map((command) => [command.name, command])
+  );
   try {
-    generateGlobal(outputHome);
-    const projectedDir = join(outputHome, ".codex", "prompts");
-    const promptsDir = join(codexHome, "prompts");
-    mkdirSync(promptsDir, { recursive: true, mode: 0o700 });
-    for (const name of COMMANDS) {
-      copyProjectedTo(projectedDir, name, promptsDir);
+    assert.deepEqual(
+      materializeCommands({ repositoryRoot }, promptsDir),
+      codexCommandNames,
+      "a first install reports each projected Codex prompt"
+    );
+    assert.deepEqual(
+      readdirSync(promptsDir).sort(),
+      codexCommandNames.map((name) => `${name}.md`),
+      "only Codex-targeted commands are installed"
+    );
+    for (const name of codexCommandNames) {
       const target = join(promptsDir, `${name}.md`);
-      assert.equal(existsSync(target), true, name);
       const stat = lstatSync(target);
       assert.equal(stat.isFile(), true, `${name} must be a regular file`);
       assert.equal(
@@ -227,82 +260,58 @@ test("materializeCommands writes one prompt per catalog entry and is idempotent"
         false,
         `${name} must not be a symlink`
       );
-    }
-    for (const name of COMMANDS) {
-      const sourceBody = readFileSync(
-        join(catalogRoot, `${name}.md`),
-        "utf8"
-      ).replace(/^---\n[\s\S]*?\n---\n/u, "");
-      const targetText = readFileSync(join(promptsDir, `${name}.md`), "utf8");
-      const targetBody = targetText.replace(/^---\n[\s\S]*?\n---\n/u, "");
-      // Rulesync drops the blank line separating the frontmatter from the
-      // body and appends a trailing newline regardless of whether the source
-      // body had one. Normalize so the verbatim-body
-      // assertion is meaningful for catalog entries that follow the AutoDev
-      // single-paragraph convention (e.g. advance-autodev.md).
+      assert.equal(stat.mode & 0o777, 0o644, `${name} must be mode 0o644`);
+
+      const source = canonicalCommands.get(name);
+      assert.ok(source, `missing canonical source for ${name}`);
+      const sourceBody = source.content.replace(/^---\n[\s\S]*?\n---\n/u, "");
+      const installedBody = readFileSync(target, "utf8").replace(
+        /^---\n[\s\S]*?\n---\n/u,
+        ""
+      );
       assert.equal(
-        targetBody.replace(/^\n/u, "").replace(/\n?$/u, ""),
+        installedBody.replace(/^\n/u, "").replace(/\n?$/u, ""),
         sourceBody.replace(/^\n/u, "").replace(/\n?$/u, ""),
-        `${name} body must be preserved verbatim through projection`
+        `${name} body must survive the canonical Rulesync projection`
       );
     }
-    // Re-run is idempotent: a second pass with the same projection must
-    // produce a directory whose entry list and content match the first pass.
-    for (const name of COMMANDS)
-      copyProjectedTo(projectedDir, name, promptsDir);
-    assert.equal(
-      readdirSync(promptsDir).sort().length,
-      COMMANDS.length,
-      "idempotent install keeps exactly one file per catalog entry"
+    assert.deepEqual(
+      materializeCommands({ repositoryRoot }, promptsDir),
+      [],
+      "an unchanged install reports no prompt changes"
     );
-    for (const name of COMMANDS) {
-      const expected = readFileSync(join(projectedDir, `${name}.md`), "utf8");
-      const actual = readFileSync(join(promptsDir, `${name}.md`), "utf8");
-      assert.equal(actual, expected, `${name} re-run is a no-op`);
-    }
-  } finally {
-    rmSync(outputHome, { recursive: true, force: true });
-    rmSync(codexHome, { recursive: true, force: true });
-  }
-});
 
-test("pre-existing non-catalog prompt file is removed by reconciliation", () => {
-  const outputHome = mkdtempSync(join(tmpdir(), "autodev-rulesync-commands-"));
-  const codexHome = mkdtempSync(join(tmpdir(), "autodev-commands-codex-"));
-  try {
-    generateGlobal(outputHome);
-    const projectedDir = join(outputHome, ".codex", "prompts");
-    const promptsDir = join(codexHome, "prompts");
-    mkdirSync(promptsDir, { recursive: true, mode: 0o700 });
-    for (const name of COMMANDS)
-      copyProjectedTo(projectedDir, name, promptsDir);
-    const stray = join(promptsDir, "legacy-handoff.md");
-    writeFileSync(stray, "# unmanaged prompt\n");
-    assert.equal(existsSync(stray), true);
-    for (const name of COMMANDS)
-      copyProjectedTo(projectedDir, name, promptsDir);
-    const catalog = new Set<string>(COMMANDS);
-    for (const entry of readdirSync(promptsDir)) {
-      if (!entry.endsWith(".md")) continue;
-      const stem = entry.replace(/\.md$/u, "");
-      if (!catalog.has(stem)) unlinkSync(join(promptsDir, entry));
-    }
-    assert.equal(existsSync(stray), false, "stray prompt must be removed");
+    writeFileSync(join(promptsDir, "bug-fix.md"), "old wording\n");
+    writeFileSync(join(promptsDir, "retired.md"), "# retired\n");
+    assert.deepEqual(
+      materializeCommands({ repositoryRoot }, promptsDir),
+      ["bug-fix", "retired"],
+      "a rewritten prompt and removed stale prompt are both reported"
+    );
+    assert.notEqual(
+      readFileSync(join(promptsDir, "bug-fix.md"), "utf8"),
+      "old wording\n"
+    );
+    assert.equal(existsSync(join(promptsDir, "retired.md")), false);
     assert.deepEqual(
       readdirSync(promptsDir).sort(),
-      Array.from(COMMANDS, (n) => `${n}.md`).sort()
+      codexCommandNames.map((name) => `${name}.md`)
     );
   } finally {
-    rmSync(outputHome, { recursive: true, force: true });
     rmSync(codexHome, { recursive: true, force: true });
   }
 });
 
-test("installer materializes the prompt catalog and the install-check verifies it", () => {
+test("installer and install-check both use the Data-owned RuleSync catalog", () => {
   const materializer = readFileSync(materializerPath, "utf8");
-  assert.match(materializer, /^export const COMMANDS = \[/mu);
-  assert.match(materializer, /function materializeCommands\(/mu);
+  assert.match(materializer, /export function loadCodexCommands\(/mu);
+  assert.match(materializer, /export function materializeCommands\(/mu);
   assert.match(materializer, /materializeCommands\(options, prompts\)/mu);
+  const check = readFileSync(checkModulePath, "utf8");
+  assert.match(check, /loadCodexCommands\(paths\.repositoryRoot\)/mu);
+  assert.match(check, /function checkCommands\(/mu);
+  assert.match(check, /checkCommands\(paths, failures\)/mu);
+
   // The commands feature stays out of rulesync.jsonc's project-mode features:
   // codexcli commands is global-only and would throw if used in project mode
   // alongside the other targets.
@@ -317,53 +326,15 @@ test("installer materializes the prompt catalog and the install-check verifies i
   assert.equal(config.global, false);
   assert.equal(config.delete, true);
   assert.deepEqual(config.outputRoots, ["."]);
-  const check = readFileSync(checkModulePath, "utf8");
-  assert.match(check, /function checkCommands\(/mu);
-  assert.match(check, /checkCommands\(paths, failures\)/mu);
   const installer = readFileSync(installerPath, "utf8");
   assert.match(installer, /src\/cli\/install\.ts/);
 });
 
-test("drift workflow runs the commands suite alongside the other rulesync suites", () => {
+test("drift workflow runs the commands suite alongside the other RuleSync suites", () => {
   const workflow = readFileSync(driftWorkflowPath, "utf8");
   assert.match(
     workflow,
     /node --test tests\/rulesync-mcp\.test\.ts tests\/rulesync-hooks-shadow\.test\.ts tests\/rulesync-skills\.test\.ts tests\/rulesync-permissions-inventory\.test\.ts tests\/rulesync-commands\.test\.ts/
   );
   assert.match(workflow, /- "tests\/rulesync-\*\.test\.ts"/);
-});
-
-test("materializeCommands reports exactly the prompts whose installed content changed", () => {
-  // The Codex desktop app reads $CODEX_HOME/prompts only when its window
-  // opens (observed 2026-09-24: a fresh install left `/prompts:bug-fix`
-  // expanding the old text in the running app). The installer can only say
-  // which prompts changed, so that report has to be exact.
-  const codexHome = mkdtempSync(join(tmpdir(), "autodev-commands-report-"));
-  const promptsDir = join(codexHome, "prompts");
-  try {
-    assert.deepEqual(
-      materializeCommands({ repositoryRoot }, promptsDir),
-      [...COMMANDS].sort(),
-      "a first install reports every prompt"
-    );
-    assert.deepEqual(
-      materializeCommands({ repositoryRoot }, promptsDir),
-      [],
-      "an unchanged re-install reports nothing"
-    );
-    writeFileSync(join(promptsDir, "bug-fix.md"), "old wording\n");
-    writeFileSync(join(promptsDir, "retired.md"), "# retired\n");
-    assert.deepEqual(
-      materializeCommands({ repositoryRoot }, promptsDir),
-      ["bug-fix", "retired"],
-      "a rewritten and a removed prompt are both reported"
-    );
-    assert.notEqual(
-      readFileSync(join(promptsDir, "bug-fix.md"), "utf8"),
-      "old wording\n"
-    );
-    assert.equal(existsSync(join(promptsDir, "retired.md")), false);
-  } finally {
-    rmSync(codexHome, { recursive: true, force: true });
-  }
 });

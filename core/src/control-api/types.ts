@@ -197,6 +197,28 @@ export interface ControlApiPromptDetailResponse {
   readonly revision: string;
 }
 
+export interface ControlApiPromptVersionReference {
+  readonly versionHash: string;
+  readonly updatedAt: string;
+}
+
+export interface ControlApiPromptVersionsResponse {
+  readonly schema: "autodev-control-prompt-versions-v1";
+  readonly name: string;
+  readonly status: "available" | "unavailable";
+  readonly versions: readonly ControlApiPromptVersionReference[];
+  readonly hasMore: boolean;
+}
+
+export interface ControlApiPromptVersionResponse {
+  readonly schema: "autodev-control-prompt-version-v1";
+  readonly name: string;
+  readonly versionHash: string;
+  readonly updatedAt: string;
+  readonly content: string;
+  readonly diff: string;
+}
+
 export interface ControlApiPromptCommandPatchRequest {
   readonly expectedRevision: string;
   readonly content: string;

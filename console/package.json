@@ -9,7 +9,7 @@
     "dev": "next dev -p ${AUTODEV_CONSOLE_PORT:-3300}",
     "build": "next build",
     "start": "next start -p ${AUTODEV_CONSOLE_PORT:-3300}",
-    "test": "node --test tests/**/*.test.ts tests/**/*.test.tsx",
+    "test": "node --test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -1,22 +1,343 @@
-import type { PromptDocument } from "@simulatorlife/autodev-core";
+import type {
+  ControlApiPromptVersionReference,
+  ControlApiPromptVersionResponse,
+  PromptDocument
+} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 
 export type PromptSaveOutcome =
-  | "conflict"
-  | "validation"
-  | "apply-failed"
-  | "failed";
+  "conflict" | "validation" | "apply-failed" | "failed";
+
+export type PromptHistoryState =
+  | {
+      readonly status: "available";
+      readonly versions: readonly ControlApiPromptVersionReference[];
+      readonly hasMore: boolean;
+    }
+  | { readonly status: "unavailable"; readonly message: string };
 
 export interface PromptDetailViewProps {
   readonly prompt: PromptDocument;
+  readonly history: PromptHistoryState;
+  readonly selectedVersion?: ControlApiPromptVersionResponse | undefined;
+  readonly versionSelectionError?: string | undefined;
   readonly saveOutcome?: PromptSaveOutcome | undefined;
+}
+
+function saveOutcomeMessage(outcome: PromptSaveOutcome): string {
+  switch (outcome) {
+    case "conflict": {
+      return "This command changed after you loaded it. The current canonical source is shown; review it before saving again.";
+    }
+    case "validation": {
+      return "The canonical command was not updated because its source is invalid. Review the frontmatter and try again.";
+    }
+    case "apply-failed": {
+      return "The canonical source was saved, but RuleSync generation or projection apply failed. The editor shows the current source; verify it before retrying.";
+    }
+    case "failed": {
+      return "The save and apply result could not be confirmed. Reload the canonical source before retrying.";
+    }
+  }
+  return "The save and apply result could not be confirmed.";
+}
+
+function renderSaveOutcome(
+  outcome: PromptSaveOutcome | undefined
+): React.ReactNode {
+  if (!outcome) return null;
+  const className =
+    outcome === "conflict" || outcome === "validation"
+      ? "rounded border border-warning/40 bg-warning/10 p-3 text-sm text-warning"
+      : "rounded border border-error/40 bg-error/10 p-3 text-sm text-error";
+  return React.createElement(
+    "p",
+    { className, role: "alert", "data-prompt-save-outcome": outcome },
+    saveOutcomeMessage(outcome)
+  );
+}
+
+function renderPromptSource(prompt: PromptDocument): React.ReactNode {
+  if (prompt.kind === "command") {
+    return React.createElement(
+      "form",
+      {
+        method: "POST",
+        action: `/api/prompts/${encodeURIComponent(prompt.name)}`,
+        className: "flex flex-col gap-3",
+        "aria-label": `Edit command ${prompt.name}`
+      },
+      React.createElement("input", {
+        type: "hidden",
+        name: "expectedRevision",
+        value: prompt.revision
+      }),
+      React.createElement(
+        "label",
+        { htmlFor: "prompt-content", className: "sr-only" },
+        "Canonical Markdown source"
+      ),
+      React.createElement("textarea", {
+        id: "prompt-content",
+        name: "content",
+        required: true,
+        rows: 24,
+        spellCheck: false,
+        defaultValue: prompt.content,
+        "data-prompt-content":
+          prompt.content.length === 0 ? "empty" : "observed",
+        className:
+          "min-h-[32rem] w-full resize-y overflow-auto rounded border border-border bg-background p-4 font-mono text-xs text-fg-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      }),
+      React.createElement(
+        "div",
+        { className: "flex flex-wrap items-center justify-between gap-3" },
+        React.createElement(
+          "p",
+          { className: "max-w-2xl text-xs text-fg-muted" },
+          "Saving validates the canonical RuleSync command, regenerates and applies the Codex prompt projection, and may require restarting Codex to load changed prompt files."
+        ),
+        React.createElement(
+          "button",
+          {
+            type: "submit",
+            className:
+              "rounded border border-accent/60 bg-accent/15 px-3 py-2 text-sm font-medium text-accent hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          },
+          "Save & Apply"
+        )
+      )
+    );
+  }
+
+  if (prompt.content.length === 0) {
+    return React.createElement(
+      "p",
+      {
+        className: "text-sm text-fg-muted",
+        "data-prompt-content": "empty"
+      },
+      "The canonical source file is empty."
+    );
+  }
+
+  return React.createElement(
+    "pre",
+    {
+      className:
+        "max-h-[40rem] overflow-auto whitespace-pre-wrap rounded border border-border bg-background p-4 font-mono text-xs text-fg-secondary",
+      "data-prompt-content": "observed"
+    },
+    prompt.content
+  );
+}
+
+function renderPromptHistory(
+  prompt: PromptDocument,
+  history: PromptHistoryState,
+  selectedVersion: ControlApiPromptVersionResponse | undefined,
+  versionSelectionError: string | undefined
+): React.ReactNode {
+  if (prompt.kind !== "command") return null;
+
+  const promptUrl = `/prompts/${encodeURIComponent(prompt.name)}`;
+  return React.createElement(
+    "section",
+    {
+      className: "rounded-lg border border-border bg-surface p-6 shadow",
+      "aria-label": "Prompt version history",
+      "data-prompt-history": history.status
+    },
+    React.createElement(
+      "div",
+      { className: "mb-4 flex flex-wrap items-start justify-between gap-3" },
+      React.createElement(
+        "div",
+        null,
+        React.createElement(
+          "h3",
+          { className: "text-xs uppercase tracking-wider text-fg-muted" },
+          "Git Version History"
+        ),
+        React.createElement(
+          "p",
+          { className: "mt-1 text-xs text-fg-secondary" },
+          "Committed RuleSync revisions compared with the current working-tree source."
+        )
+      ),
+      selectedVersion
+        ? React.createElement(
+            "a",
+            {
+              href: promptUrl,
+              className:
+                "text-xs font-medium text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            },
+            "Return to current source"
+          )
+        : null
+    ),
+    history.status === "unavailable"
+      ? React.createElement(
+          "p",
+          {
+            className: "text-sm text-warning",
+            role: "status",
+            "data-prompt-history-unavailable": "true"
+          },
+          history.message
+        )
+      : history.versions.length === 0
+        ? React.createElement(
+            "p",
+            { className: "text-sm text-fg-muted", role: "status" },
+            "No committed versions are available; the current working tree remains the source of truth."
+          )
+        : React.createElement(
+            "ol",
+            {
+              className: "mb-4 flex flex-col gap-2",
+              "aria-label": "Recent committed versions"
+            },
+            ...history.versions.map((version) => {
+              const selected =
+                selectedVersion?.versionHash === version.versionHash;
+              return React.createElement(
+                "li",
+                { key: version.versionHash },
+                React.createElement(
+                  "a",
+                  {
+                    href: `${promptUrl}?revision=${encodeURIComponent(version.versionHash)}`,
+                    ...(selected ? { "aria-current": "page" as const } : {}),
+                    className:
+                      "flex flex-wrap items-center gap-2 rounded border border-border px-3 py-2 text-xs hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                    "data-prompt-version": version.versionHash
+                  },
+                  React.createElement(
+                    "time",
+                    {
+                      dateTime: version.updatedAt,
+                      className: "text-fg-secondary"
+                    },
+                    version.updatedAt
+                  ),
+                  React.createElement(
+                    "span",
+                    { className: "font-mono text-fg-muted" },
+                    version.versionHash.slice(0, 12)
+                  ),
+                  selected
+                    ? React.createElement(
+                        "span",
+                        { className: "text-accent" },
+                        "Selected"
+                      )
+                    : null
+                )
+              );
+            })
+          ),
+    history.status === "available" && history.hasMore
+      ? React.createElement(
+          "p",
+          {
+            className: "mb-4 text-xs text-fg-muted",
+            "data-prompt-history-truncated": "true"
+          },
+          "Showing the newest 20 committed versions. Older history remains available in Git."
+        )
+      : null,
+    versionSelectionError
+      ? React.createElement(
+          "p",
+          {
+            className:
+              "mb-4 rounded border border-warning/40 bg-warning/10 p-3 text-sm text-warning",
+            role: "status",
+            "data-prompt-version-error": "true"
+          },
+          versionSelectionError
+        )
+      : null,
+    selectedVersion
+      ? React.createElement(
+          "div",
+          {
+            className: "flex flex-col gap-3 border-t border-border pt-4",
+            "data-prompt-version-comparison": selectedVersion.versionHash
+          },
+          React.createElement(
+            "h4",
+            { className: "text-sm font-semibold text-fg" },
+            `Changes since ${selectedVersion.versionHash.slice(0, 12)} (${selectedVersion.updatedAt})`
+          ),
+          selectedVersion.diff.length > 0
+            ? React.createElement(
+                "pre",
+                {
+                  className:
+                    "max-h-[32rem] overflow-auto whitespace-pre-wrap rounded border border-border bg-background p-4 font-mono text-xs text-fg-secondary",
+                  "aria-label":
+                    "Unified diff from committed version to working tree",
+                  "data-prompt-diff": "observed"
+                },
+                selectedVersion.diff
+              )
+            : React.createElement(
+                "p",
+                {
+                  className: "text-sm text-fg-muted",
+                  "data-prompt-diff": "unchanged"
+                },
+                "The selected committed version matches the current working tree."
+              ),
+          React.createElement(
+            "details",
+            { className: "rounded border border-border bg-background p-3" },
+            React.createElement(
+              "summary",
+              {
+                className:
+                  "cursor-pointer text-xs font-medium text-fg-secondary"
+              },
+              "Preview committed source"
+            ),
+            React.createElement(
+              "pre",
+              {
+                className:
+                  "mt-3 max-h-[32rem] overflow-auto whitespace-pre-wrap font-mono text-xs text-fg-secondary",
+                "data-prompt-version-content": "observed"
+              },
+              selectedVersion.content
+            )
+          )
+        )
+      : null
+  );
+}
+
+function renderPromptFooter(prompt: PromptDocument): React.JSX.Element {
+  const message =
+    prompt.kind === "command"
+      ? "Version history is tracked by Git; compare canonical commits in the repository."
+      : "Role prompt edits remain read-only until their configuration owner has a lossless validated apply flow.";
+  return React.createElement(
+    "p",
+    { className: "text-xs text-fg-muted" },
+    message
+  );
 }
 
 export function PromptDetailView({
   prompt,
+  history,
+  selectedVersion,
+  versionSelectionError,
   saveOutcome
 }: PromptDetailViewProps): React.JSX.Element {
   const lineCount = prompt.content ? prompt.content.split("\n").length : 0;
@@ -47,7 +368,7 @@ export function PromptDetailView({
             className:
               "mb-1 mt-3 text-xs uppercase tracking-wider text-fg-muted"
           },
-          prompt.kind === "command" ? "RuleSync command" : "Agent role prompt"
+          isRole ? "Agent role prompt" : "RuleSync command"
         ),
         React.createElement(
           "h2",
@@ -160,34 +481,17 @@ export function PromptDetailView({
         )
       )
     ),
-    saveOutcome
-      ? React.createElement(
-          "p",
-          {
-            className:
-              saveOutcome === "apply-failed"
-                ? "rounded border border-error/40 bg-error/10 p-3 text-sm text-error"
-                : saveOutcome === "failed"
-                  ? "rounded border border-error/40 bg-error/10 p-3 text-sm text-error"
-                  : "rounded border border-warning/40 bg-warning/10 p-3 text-sm text-warning",
-            role: "alert",
-            "data-prompt-save-outcome": saveOutcome
-          },
-          saveOutcome === "conflict"
-            ? "This command changed after you loaded it. The current canonical source is shown; review it before saving again."
-            : saveOutcome === "validation"
-              ? "The canonical command was not updated because its source is invalid. Review the frontmatter and try again."
-              : saveOutcome === "apply-failed"
-                ? "The canonical source was saved, but RuleSync generation or projection apply failed. The editor shows the current source; verify it before retrying."
-                : "The save and apply result could not be confirmed. Reload the canonical source before retrying."
-        )
-      : null,
+    renderSaveOutcome(saveOutcome),
     React.createElement(
       "section",
       {
         className: "rounded-lg border border-border bg-surface p-6 shadow",
-        "aria-label": prompt.kind === "command" ? "Prompt source editor" : "Prompt source preview",
-        "data-prompt-editor": prompt.kind === "command" ? "canonical" : "read-only"
+        "aria-label":
+          prompt.kind === "command"
+            ? "Prompt source editor"
+            : "Prompt source preview",
+        "data-prompt-editor":
+          prompt.kind === "command" ? "canonical" : "read-only"
       },
       React.createElement(
         "div",
@@ -205,83 +509,14 @@ export function PromptDetailView({
           prompt.path
         )
       ),
-      prompt.kind === "command"
-        ? React.createElement(
-            "form",
-            {
-              method: "POST",
-              action: `/api/prompts/${encodeURIComponent(prompt.name)}`,
-              className: "flex flex-col gap-3",
-              "aria-label": `Edit command ${prompt.name}`
-            },
-            React.createElement("input", {
-              type: "hidden",
-              name: "expectedRevision",
-              value: prompt.revision
-            }),
-            React.createElement("label", {
-              htmlFor: "prompt-content",
-              className: "sr-only"
-            }, "Canonical Markdown source"),
-            React.createElement("textarea", {
-              id: "prompt-content",
-              name: "content",
-              required: true,
-              rows: 24,
-              spellCheck: false,
-              defaultValue: prompt.content,
-              "data-prompt-content": prompt.content.length === 0 ? "empty" : "observed",
-              className:
-                "min-h-[32rem] w-full resize-y overflow-auto rounded border border-border bg-background p-4 font-mono text-xs text-fg-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-            }),
-            React.createElement(
-              "div",
-              { className: "flex flex-wrap items-center justify-between gap-3" },
-              React.createElement(
-                "p",
-                { className: "max-w-2xl text-xs text-fg-muted" },
-                "Saving validates the canonical RuleSync command, regenerates and applies the Codex prompt projection, and may require restarting Codex to load changed prompt files."
-              ),
-              React.createElement(
-                "button",
-                {
-                  type: "submit",
-                  className:
-                    "rounded border border-accent/60 bg-accent/15 px-3 py-2 text-sm font-medium text-accent hover:bg-accent/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                },
-                "Save & Apply"
-              )
-            )
-          )
-        : prompt.content.length === 0
-          ? React.createElement(
-              "p",
-              {
-                className: "text-sm text-fg-muted",
-                "data-prompt-content": "empty"
-              },
-              "The canonical source file is empty."
-            )
-          : React.createElement(
-              "pre",
-              {
-                className:
-                  "max-h-[40rem] overflow-auto whitespace-pre-wrap rounded border border-border bg-background p-4 font-mono text-xs text-fg-secondary",
-                "data-prompt-content": "observed"
-              },
-              prompt.content
-            )
+      renderPromptSource(prompt)
     ),
-    prompt.kind === "command"
-      ? React.createElement(
-          "p",
-          { className: "text-xs text-fg-muted" },
-          "Version history is tracked by Git; compare canonical commits in the repository."
-        )
-      : React.createElement(
-          "p",
-          { className: "text-xs text-fg-muted" },
-          "Role prompt edits remain read-only until their configuration owner has a lossless validated apply flow."
-        )
+    renderPromptHistory(
+      prompt,
+      history,
+      selectedVersion,
+      versionSelectionError
+    ),
+    renderPromptFooter(prompt)
   );
 }

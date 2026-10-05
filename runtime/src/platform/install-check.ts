@@ -39,9 +39,9 @@ import { createCodexMcpSource } from "./install-command.ts";
 import {
   CATALOGS,
   checkHookTrust,
-  COMMANDS,
   HOOKS,
   LAUNCH_LABELS,
+  loadCodexCommands,
   MCP_LAUNCHERS,
   OBSOLETE_CLAUDE_SKILL_VIEWS,
   OBSOLETE_DASHBOARD,
@@ -395,6 +395,56 @@ function checkRuntimeAndOt(
     );
 }
 
+function projectedCommandFiles(
+  projectedDir: string,
+  allowEmptyCatalog: boolean
+): string[] {
+  try {
+    return readdirSync(projectedDir)
+      .filter((entry) => entry.endsWith(".md"))
+      .sort();
+  } catch (error) {
+    if (
+      (error as NodeJS.ErrnoException).code === "ENOENT" &&
+      allowEmptyCatalog
+    ) {
+      return [];
+    }
+    throw error;
+  }
+}
+
+function installedPromptMatches(
+  installedPath: string,
+  projectedPath: string
+): boolean {
+  try {
+    const stat = lstatSync(installedPath);
+    return (
+      stat.isFile() &&
+      !stat.isSymbolicLink() &&
+      readFileSync(installedPath).equals(readFileSync(projectedPath))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function checkStaleCommandPrompts(
+  promptsDir: string,
+  catalog: ReadonlySet<string>,
+  failures: { value: number }
+): void {
+  if (!existsSync(promptsDir)) return;
+  for (const entry of readdirSync(promptsDir)) {
+    if (!entry.endsWith(".md")) continue;
+    const name = entry.replace(MD_EXTENSION_PATTERN, "");
+    if (catalog.has(name)) continue;
+    writeLine(`obsolete-runtime-path ${path.join(promptsDir, entry)}`);
+    failures.value = 1;
+  }
+}
+
 function checkCommands(
   paths: RunInstallPaths,
   failures: { value: number }
@@ -407,6 +457,8 @@ function checkCommands(
   );
   const rendered = mkdtempSync(path.join(tmpdir(), "autodev-check-prompts-"));
   try {
+    const commands = loadCodexCommands(paths.repositoryRoot);
+    const catalog = new Set(commands.map((command) => command.name));
     execFileSync(
       rulesyncBin,
       [
@@ -427,45 +479,31 @@ function checkCommands(
       }
     );
     const projectedDir = path.join(rendered, ".codex", "prompts");
-    const projectedFiles = readdirSync(projectedDir)
-      .filter((entry) => entry.endsWith(".md"))
-      .sort();
-    const catalog = new Set<string>(COMMANDS);
-    for (const name of COMMANDS) {
-      const installedPath = path.join(paths.prompts, `${name}.md`);
-      const projectedPath = path.join(projectedDir, `${name}.md`);
-      let match = false;
-      try {
-        const stat = lstatSync(installedPath);
-        if (stat.isFile() && !stat.isSymbolicLink()) {
-          match = readFileSync(installedPath).equals(
-            readFileSync(projectedPath)
-          );
-        }
-      } catch {
-        /* not installed */
-      }
-      check(`prompt ${name}`, match, failures);
+    const projectedFiles = projectedCommandFiles(
+      projectedDir,
+      commands.length === 0
+    );
+    for (const command of commands) {
+      const name = command.name;
+      check(
+        `prompt ${name}`,
+        installedPromptMatches(
+          path.join(paths.prompts, `${name}.md`),
+          path.join(projectedDir, `${name}.md`)
+        ),
+        failures
+      );
     }
     const extraProjected = projectedFiles
       .map((entry) => entry.replace(MD_EXTENSION_PATTERN, ""))
       .find((name) => !catalog.has(name));
     if (extraProjected !== undefined) {
       writeLine(
-        `missing-or-drifted rulesync produced prompt "${extraProjected}" that is not in the COMMANDS catalog`
+        `missing-or-drifted rulesync produced prompt "${extraProjected}" without a canonical Codex target`
       );
       failures.value = 1;
     }
-    if (existsSync(paths.prompts)) {
-      for (const entry of readdirSync(paths.prompts)) {
-        if (!entry.endsWith(".md")) continue;
-        const name = entry.replace(MD_EXTENSION_PATTERN, "");
-        if (!catalog.has(name)) {
-          writeLine(`obsolete-runtime-path ${path.join(paths.prompts, entry)}`);
-          failures.value = 1;
-        }
-      }
-    }
+    checkStaleCommandPrompts(paths.prompts, catalog, failures);
   } catch (error) {
     writeLine(
       `missing-or-drifted commands check failed: ${

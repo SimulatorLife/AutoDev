@@ -39,6 +39,8 @@ import {
   type ControlApiPromptCommandPatchRequest,
   type ControlApiPromptCommandPatchResponse,
   type ControlApiPromptDetailResponse,
+  type ControlApiPromptVersionResponse,
+  type ControlApiPromptVersionsResponse,
   type ControlApiPromptsResponse,
   type ControlApiProviderRolePatchResponse,
   type ControlApiProvidersResponse,
@@ -74,6 +76,8 @@ export type ControlApiResult<T> =
 
 const DEFAULT_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
 const CONTROL_API_TIMEOUT_MS = 5000;
+const CONTROL_API_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
+const CONTROL_API_GIT_REVISION_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const TRAILING_SLASHES = /\/+$/u;
 const LINE_SPLIT_PATTERN = /\r?\n/u;
 
@@ -576,7 +580,7 @@ function isControlApiPromptDetailResponse(
     typeof value.source === "string" &&
     typeof value.content === "string" &&
     typeof value.revision === "string" &&
-    /^[a-f0-9]{64}$/u.test(value.revision)
+    CONTROL_API_REVISION_PATTERN.test(value.revision)
   );
 }
 
@@ -596,6 +600,88 @@ export async function fetchPromptDetail(
     code: "autodev_control_api_invalid_prompt_detail_response",
     message:
       "AutoDev Control API returned an incompatible Prompt detail response; the Console requires the v2 revision contract."
+  };
+}
+
+function isControlApiPromptVersionsResponse(
+  value: unknown
+): value is ControlApiPromptVersionsResponse {
+  if (
+    !isRecord(value) ||
+    value.schema !== "autodev-control-prompt-versions-v1" ||
+    typeof value.name !== "string" ||
+    (value.status !== "available" && value.status !== "unavailable") ||
+    typeof value.hasMore !== "boolean" ||
+    !Array.isArray(value.versions) ||
+    !value.versions.every(
+      (version) =>
+        isRecord(version) &&
+        typeof version.versionHash === "string" &&
+        CONTROL_API_GIT_REVISION_PATTERN.test(version.versionHash) &&
+        typeof version.updatedAt === "string" &&
+        Number.isFinite(Date.parse(version.updatedAt))
+    )
+  ) {
+    return false;
+  }
+  return (
+    value.status !== "unavailable" ||
+    (value.versions.length === 0 && value.hasMore === false)
+  );
+}
+
+export async function fetchPromptVersions(
+  name: string,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiPromptVersionsResponse>> {
+  const path = `${CONTROL_API_PATHS.prompts}/${encodeURIComponent(name)}/versions`;
+  const result = await fetchControlApi<unknown>(path, config, options);
+  if (result.kind !== "ok") return result;
+  if (isControlApiPromptVersionsResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: "invalid-response",
+    code: "autodev_control_api_invalid_prompt_versions_response",
+    message:
+      "AutoDev Control API returned an incompatible Prompt version-history response."
+  };
+}
+
+function isControlApiPromptVersionResponse(
+  value: unknown
+): value is ControlApiPromptVersionResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-prompt-version-v1" &&
+    typeof value.name === "string" &&
+    typeof value.versionHash === "string" &&
+    CONTROL_API_GIT_REVISION_PATTERN.test(value.versionHash) &&
+    typeof value.updatedAt === "string" &&
+    Number.isFinite(Date.parse(value.updatedAt)) &&
+    typeof value.content === "string" &&
+    typeof value.diff === "string"
+  );
+}
+
+export async function fetchPromptVersion(
+  name: string,
+  versionHash: string,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiPromptVersionResponse>> {
+  const path = `${CONTROL_API_PATHS.prompts}/${encodeURIComponent(name)}/versions/${encodeURIComponent(versionHash)}`;
+  const result = await fetchControlApi<unknown>(path, config, options);
+  if (result.kind !== "ok") return result;
+  if (isControlApiPromptVersionResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: "invalid-response",
+    code: "autodev_control_api_invalid_prompt_version_response",
+    message:
+      "AutoDev Control API returned an incompatible Prompt version response."
   };
 }
 
