@@ -1,3 +1,5 @@
+import "./codex-home-fixture.ts";
+
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -109,6 +111,13 @@ import {
 } from "@simulatorlife/autodev-runtime/telemetry";
 
 import { normalizedSource } from "../source-text.ts";
+
+// Created by ./codex-home-fixture.ts inside the isolated $CODEX_HOME.
+const FIXTURE_AUTODEV_WORKSPACE = join(
+  process.env.CODEX_HOME!,
+  "workspaces",
+  "AutoDev"
+);
 
 const getRouterStatus = (...args: any[]): any =>
   (rawGetRouterStatus as any)(...args);
@@ -3273,7 +3282,7 @@ test("forwards x-codex-turn-metadata to the upstream provider bridge without lea
     // forward that exact JSON shape verbatim, with no reformatting.
     const turnMetadata = JSON.stringify({
       workspaces: {
-        "/Users/henrykirk/AutoDev": { git: { branch: "main", sha: "abc123" } }
+        [FIXTURE_AUTODEV_WORKSPACE]: { git: { branch: "main", sha: "abc123" } }
       }
     });
     const response = await originalFetch(
@@ -3337,7 +3346,7 @@ test("relays the canonical workspaces-map-keyed turn metadata even when it arriv
     // under client_metadata["x-codex-turn-metadata"]; the router must
     // normalize that back into the canonical header before forwarding.
     const canonical = {
-      workspaces: { "/Users/henrykirk/AutoDev": { git: { branch: "main" } } }
+      workspaces: { [FIXTURE_AUTODEV_WORKSPACE]: { git: { branch: "main" } } }
     };
     const response = await originalFetch(
       `http://127.0.0.1:${address.port}/v1/responses`,
@@ -3472,7 +3481,7 @@ test("sends the router's own headers to the Antigravity adapter and discards the
   try {
     const address = server.address() as AddressInfo;
     const turnMetadata = JSON.stringify({
-      workspaces: { "/Users/henrykirk/AutoDev": { git: { branch: "main" } } }
+      workspaces: { [FIXTURE_AUTODEV_WORKSPACE]: { git: { branch: "main" } } }
     });
     const response = await originalFetch(
       `http://127.0.0.1:${address.port}/v1/responses`,
