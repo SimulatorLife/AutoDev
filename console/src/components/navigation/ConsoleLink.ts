@@ -8,6 +8,9 @@ import { PendingSpinner } from "./PendingSpinner.ts";
 
 const Link = moduleDefault(NextLink);
 
+/** How long a hover must rest on a link before it counts as intent. */
+const HOVER_INTENT_MS = 65;
+
 type NextLinkProps = React.ComponentProps<typeof Link>;
 
 export type ConsoleLinkProps = Omit<NextLinkProps, "href" | "prefetch"> & {
@@ -26,12 +29,16 @@ export type ConsoleLinkProps = Omit<NextLinkProps, "href" | "prefetch"> & {
  * Prefetching is intent-driven: nothing is fetched while a link merely sits
  * in the viewport (tables render hundreds of links, and Console routes are
  * dynamic, so viewport prefetches could only return layout data the client
- * already holds). The first hover, focus, or touch enables a full prefetch
- * of the destination page, so its server data usually arrives during the
- * time between pointing at a link and clicking it, and the click renders
- * from the router cache. `next.config.ts` bounds how long a prefetched page
- * may be reused. Hovering the link for the page already shown never
- * prefetches it again.
+ * already holds). Intent enables a full prefetch of the destination page, so
+ * its server data usually arrives between pointing at a link and clicking
+ * it, and the click renders from the router cache. A hover counts as intent
+ * once it rests for `HOVER_INTENT_MS`, so sweeping the pointer across the
+ * sidebar does not fire a full page render (and its GitHub, OpenLIT, or
+ * Memory reads) per item passed; focus, touch, and mouse-down count
+ * immediately, so even a quick click starts its fetch before the click
+ * completes. `next.config.ts` bounds how long a prefetched page may be
+ * reused. Pointing at the link for the page already shown never prefetches
+ * it again.
  *
  * Every link also carries a `LinkPendingIndicator`, so a click whose data
  * has not arrived yet (slow GitHub, OpenLIT, or Memory storage reads) is
@@ -41,12 +48,22 @@ export type ConsoleLinkProps = Omit<NextLinkProps, "href" | "prefetch"> & {
 export function ConsoleLink({
   children,
   onMouseEnter,
+  onMouseLeave,
+  onMouseDown,
   onTouchStart,
   onFocus,
   ...props
 }: ConsoleLinkProps): React.JSX.Element {
   const [prefetch, setPrefetch] = React.useState(false);
+  const hoverTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelHover = (): void => {
+    if (hoverTimer.current === null) return;
+    clearTimeout(hoverTimer.current);
+    hoverTimer.current = null;
+  };
+  React.useEffect(() => cancelHover, []);
   const signalIntent = (anchor: HTMLAnchorElement): void => {
+    cancelHover();
     if (!isCurrentLocation(anchor)) setPrefetch(true);
   };
   return React.createElement(
@@ -56,6 +73,20 @@ export function ConsoleLink({
       prefetch,
       onMouseEnter(event: React.MouseEvent<HTMLAnchorElement>) {
         onMouseEnter?.(event);
+        if (prefetch) return;
+        const anchor = event.currentTarget;
+        cancelHover();
+        hoverTimer.current = setTimeout(
+          () => signalIntent(anchor),
+          HOVER_INTENT_MS
+        );
+      },
+      onMouseLeave(event: React.MouseEvent<HTMLAnchorElement>) {
+        onMouseLeave?.(event);
+        cancelHover();
+      },
+      onMouseDown(event: React.MouseEvent<HTMLAnchorElement>) {
+        onMouseDown?.(event);
         signalIntent(event.currentTarget);
       },
       onTouchStart(event: React.TouchEvent<HTMLAnchorElement>) {
