@@ -35,6 +35,7 @@ import {
   AppNav,
   AppShell,
   Breadcrumbs,
+  ConsoleForm,
   ConsoleLink,
   DataTable,
   EvaluationsView,
@@ -329,10 +330,26 @@ test("ConsoleLink renders a real anchor with no pending indicator at rest", () =
     /^<a\b[^>]*href="\/mcps\/playwright"[^>]*>playwright<\/a>$/u
   );
   assert.match(markup, /data-probe="link"/u);
-  assert.equal(markup.includes("data-link-pending"), false);
+  assert.equal(markup.includes("data-navigation-pending"), false);
   assert.equal(
     renderToStaticMarkup(React.createElement(LinkPendingIndicator)),
     ""
+  );
+});
+
+test("ConsoleForm renders a native GET form that is not busy at rest", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      ConsoleForm,
+      { action: "/usage", "data-probe": "filters" },
+      React.createElement("input", { name: "range", defaultValue: "24H" })
+    )
+  );
+  assert.match(markup, /^<form\b[^>]*action="\/usage"/u);
+  assert.match(markup, /data-probe="filters"/u);
+  assert.doesNotMatch(
+    markup,
+    /method="post"|aria-busy|data-navigation-pending/iu
   );
 });
 

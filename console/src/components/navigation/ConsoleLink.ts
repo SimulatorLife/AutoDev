@@ -4,6 +4,7 @@ import NextLink, { useLinkStatus } from "next/link.js";
 import React from "react";
 
 import { moduleDefault } from "../../lib/module-default.ts";
+import { PendingSpinner } from "./PendingSpinner.ts";
 
 const Link = moduleDefault(NextLink);
 
@@ -81,28 +82,10 @@ function isCurrentLocation(anchor: HTMLAnchorElement): boolean {
 }
 
 /**
- * Inline feedback for a client-side navigation that is still waiting on the
- * server. Client navigation keeps the current page visible until the
- * destination's server data arrives and suppresses the browser's own loading
- * indicator, so the clicked link signals the in-flight navigation itself.
- * The spinner fades in after a short delay so fast navigations never flash
- * it. Must be rendered inside a Next.js `Link`.
+ * Shows the shared pending spinner while this link's navigation is waiting
+ * on the server. Must be rendered inside a Next.js `Link`.
  */
 export function LinkPendingIndicator(): React.JSX.Element | null {
   const { pending } = useLinkStatus();
-  if (!pending) return null;
-  return React.createElement(
-    "span",
-    {
-      role: "status",
-      "aria-label": "Loading",
-      "data-link-pending": "true",
-      className:
-        "ml-2 inline-flex shrink-0 align-middle animate-link-pending-in"
-    },
-    React.createElement("span", {
-      className:
-        "block size-3 rounded-full border-2 border-accent border-t-transparent animate-spin"
-    })
-  );
+  return pending ? React.createElement(PendingSpinner) : null;
 }

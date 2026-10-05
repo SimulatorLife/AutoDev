@@ -14,6 +14,7 @@ export * from "./components/navigation/AppNav.ts";
 export * from "./components/navigation/Breadcrumbs.ts";
 export * from "./components/navigation/ConsoleForm.ts";
 export * from "./components/navigation/ConsoleLink.ts";
+export * from "./components/navigation/PendingSpinner.ts";
 export * from "./components/status/StatusBadge.ts";
 export * from "./components/tables/DataTable.ts";
 export * from "./components/tabs/Tabs.ts";
