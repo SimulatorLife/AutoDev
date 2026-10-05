@@ -10,6 +10,7 @@ import {
   loadRulesyncWorkspaces,
   syncRulesyncWorkspaces
 } from "../../src/openlit/sync-rulesync-workspaces.ts";
+import { openLitContainerSkipReason } from "./live-services.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
@@ -72,8 +73,10 @@ test("OpenLIT workspace projection fails closed for an invalid canonical registr
   }
 });
 
-test("syncRulesyncWorkspaces synchronizes canonical AutoDev project and collapses silos idempotently", async () => {
-  try {
+test(
+  "syncRulesyncWorkspaces synchronizes canonical AutoDev project and collapses silos idempotently",
+  { skip: await openLitContainerSkipReason() },
+  async () => {
     const result1 = await syncRulesyncWorkspaces({ repositoryRoot });
     assert.equal(result1.organisation, "SimulatorLife");
     assert.equal(result1.project, "AutoDev");
@@ -92,15 +95,5 @@ test("syncRulesyncWorkspaces synchronizes canonical AutoDev project and collapse
       "Second run should have 0 projects to collapse"
     );
     assert.equal(result2.totalWorkspaces, expectedWorkspaceIds.length);
-  } catch (error) {
-    const message = (error as Error).message;
-    if (
-      message.includes("Cannot connect to the Docker daemon") ||
-      message.includes("No such container") ||
-      message.includes("ENOENT")
-    ) {
-      return;
-    }
-    throw error;
   }
-});
+);

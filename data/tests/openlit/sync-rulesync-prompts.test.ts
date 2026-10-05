@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +11,8 @@ import {
   deterministicUuid,
   syncRulesyncPrompts
 } from "@simulatorlife/autodev-data/openlit";
+
+import { clickHouseSkipReason } from "./live-services.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const commandsDir = join(repositoryRoot, ".rulesync", "commands");
@@ -25,17 +28,19 @@ test("RuleSyncRepository parses canonical command metadata and prompt body", asy
     );
 
     const state = new RuleSyncRepository(temporaryRoot).loadCommands();
+    const content =
+      "---\ntargets: [codexcli, claudecode]\ndescription: Custom command for refactoring.\n---\n# Refactor command\n\nDo something cleanly.\n";
     assert.equal(state.valid, true);
     assert.deepEqual(state.commands, [
       {
         name: "test-refactor",
         path: ".rulesync/commands/test-refactor.md",
         kind: "command",
-        content:
-          "---\ntargets: [codexcli, claudecode]\ndescription: Custom command for refactoring.\n---\n# Refactor command\n\nDo something cleanly.\n",
+        content,
         prompt: "# Refactor command\n\nDo something cleanly.",
         description: "Custom command for refactoring.",
-        targets: ["codexcli", "claudecode"]
+        targets: ["codexcli", "claudecode"],
+        revision: createHash("sha256").update(content, "utf8").digest("hex")
       }
     ]);
   } finally {
@@ -104,8 +109,10 @@ test("RuleSyncRepository catalog exactly mirrors canonical commands with real me
   }
 });
 
-test("syncRulesyncPrompts synchronizes rulesync prompts idempotently against ClickHouse", async () => {
-  try {
+test(
+  "syncRulesyncPrompts synchronizes rulesync prompts idempotently against ClickHouse",
+  { skip: await clickHouseSkipReason() },
+  async () => {
     const result1 = await syncRulesyncPrompts({ repositoryRoot });
     assert.ok(
       result1.totalCatalogPrompts >= 54,
@@ -122,11 +129,5 @@ test("syncRulesyncPrompts synchronizes rulesync prompts idempotently against Cli
       result2.totalCatalogPrompts,
       "All prompts must be unchanged on second run"
     );
-  } catch (error) {
-    if ((error as Error).message.includes("ECONNREFUSED")) {
-      // ClickHouse container not running in this environment — skip gracefully
-      return;
-    }
-    throw error;
   }
-});
+);

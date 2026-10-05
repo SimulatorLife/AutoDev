@@ -11,6 +11,8 @@ import {
   syncRulesyncAgents
 } from "@simulatorlife/autodev-data/openlit";
 
+import { clickHouseSkipReason } from "./live-services.ts";
+
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
 test("computeAgentKey produces deterministic 16-character hex string matching OpenLIT key algorithm", () => {
@@ -125,8 +127,10 @@ test("loadRulesyncAgents extracts all roles from execution contract and role pro
   assert.equal(explorer.primaryModel, "autodev/subagent");
 });
 
-test("syncRulesyncAgents synchronizes agent roles idempotently against ClickHouse", async () => {
-  try {
+test(
+  "syncRulesyncAgents synchronizes agent roles idempotently against ClickHouse",
+  { skip: await clickHouseSkipReason() },
+  async () => {
     const result1 = await syncRulesyncAgents({ repositoryRoot });
     assert.ok(
       result1.totalCatalogAgents >= 8,
@@ -143,11 +147,5 @@ test("syncRulesyncAgents synchronizes agent roles idempotently against ClickHous
       result2.totalCatalogAgents,
       "All catalog agents must be unchanged on second run"
     );
-  } catch (error) {
-    if ((error as Error).message.includes("ECONNREFUSED")) {
-      // ClickHouse container not running in this environment — skip gracefully
-      return;
-    }
-    throw error;
   }
-});
+);

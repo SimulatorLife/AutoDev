@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "node runtime/src/cli/dev.ts",
     "dev:console": "pnpm --filter @simulatorlife/autodev-console dev",
-    "test:root": "node --test tests/*.test.ts tests/**/*.test.ts",
+    "test:root": "node --test 'tests/**/*.test.ts'",
     "test": "pnpm run test:root && pnpm --recursive --if-present test",
     "typecheck:root": "tsc --noEmit",
     "typecheck": "pnpm run typecheck:root; root_status=$?; pnpm --recursive --if-present typecheck; workspace_status=$?; test \"$root_status\" -eq 0 -a \"$workspace_status\" -eq 0",

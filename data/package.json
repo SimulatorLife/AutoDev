@@ -24,7 +24,7 @@
     "openlit:sync-models": "node src/openlit/sync-rulesync-models.ts",
     "openlit:sync-prompts": "node src/openlit/sync-rulesync-prompts.ts",
     "openlit:sync-workspaces": "node src/openlit/sync-rulesync-workspaces.ts",
-    "test": "node --test tests/**/*.test.ts",
+    "test": "node --test 'tests/**/*.test.ts'",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
