@@ -51,6 +51,7 @@ const baseIgnorePatterns = [
   "**/node_modules/**",
   "**/coverage/**",
   "**/.next/**",
+  "**/.next-dev/**",
   ".tmp/**",
   "**/*.md",
   ".DS_Store",
@@ -289,7 +290,9 @@ const architecturePolicies = [
   ]),
   {
     from: { element: { type: "test" } },
-    allow: { to: { file: { categories: "console-entrypoint" } } }
+    allow: {
+      to: { file: { categories: ["console-entrypoint", "package-config"] } }
+    }
   },
   // Skill scripts ship inside a skill folder and run standalone.
   allowOnly("skill-script", []),

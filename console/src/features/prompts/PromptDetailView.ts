@@ -4,9 +4,12 @@ import type {
   PromptDocument
 } from "@simulatorlife/autodev-core";
 import React from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
 
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
+
+const PROMPT_CARD_CLASS_NAME = "rounded-lg border border-border bg-surface p-4";
 
 export type PromptSaveOutcome =
   "conflict" | "validation" | "apply-failed" | "failed";
@@ -132,6 +135,122 @@ function renderPromptSource(prompt: PromptDocument): React.ReactNode {
       "data-prompt-content": "observed"
     },
     prompt.content
+  );
+}
+
+const PROMPT_MARKDOWN_COMPONENTS: Components = {
+  h1: ({ children }) =>
+    React.createElement(
+      "h1",
+      { className: "mb-3 text-xl font-semibold text-fg" },
+      children
+    ),
+  h2: ({ children }) =>
+    React.createElement(
+      "h2",
+      { className: "mb-2 mt-4 text-lg font-semibold text-fg" },
+      children
+    ),
+  h3: ({ children }) =>
+    React.createElement(
+      "h3",
+      { className: "mb-2 mt-3 text-base font-semibold text-fg" },
+      children
+    ),
+  p: ({ children }) =>
+    React.createElement(
+      "p",
+      { className: "mb-3 text-sm text-fg-secondary" },
+      children
+    ),
+  ul: ({ children }) =>
+    React.createElement(
+      "ul",
+      { className: "mb-3 list-disc space-y-1 pl-6 text-sm text-fg-secondary" },
+      children
+    ),
+  ol: ({ children }) =>
+    React.createElement(
+      "ol",
+      {
+        className: "mb-3 list-decimal space-y-1 pl-6 text-sm text-fg-secondary"
+      },
+      children
+    ),
+  li: ({ children }) => React.createElement("li", null, children),
+  blockquote: ({ children }) =>
+    React.createElement(
+      "blockquote",
+      {
+        className:
+          "mb-3 border-l-2 border-border-strong pl-4 text-sm text-fg-muted"
+      },
+      children
+    ),
+  pre: ({ children }) =>
+    React.createElement(
+      "pre",
+      {
+        className:
+          "mb-3 overflow-auto rounded border border-border bg-background p-3 font-mono text-xs text-fg-secondary"
+      },
+      children
+    ),
+  code: ({ children }) =>
+    React.createElement(
+      "code",
+      {
+        className:
+          "rounded bg-input px-1 py-0.5 font-mono text-xs text-fg-secondary"
+      },
+      children
+    ),
+  a: ({ href, children }) =>
+    React.createElement(
+      "a",
+      {
+        href,
+        target: "_blank",
+        rel: "noreferrer",
+        className: "text-accent underline underline-offset-2"
+      },
+      children
+    ),
+  hr: () => React.createElement("hr", { className: "my-4 border-border" })
+};
+
+function renderPromptPreview(prompt: PromptDocument): React.ReactNode {
+  return React.createElement(
+    "details",
+    {
+      className: PROMPT_CARD_CLASS_NAME,
+      "data-prompt-preview": "markdown"
+    },
+    React.createElement(
+      "summary",
+      {
+        className:
+          "cursor-pointer text-xs font-semibold uppercase tracking-wider text-fg-muted"
+      },
+      "Preview rendered Markdown"
+    ),
+    prompt.preview.length > 0
+      ? React.createElement(
+          "div",
+          { className: "mt-4", "data-prompt-preview-body": "observed" },
+          React.createElement(ReactMarkdown, {
+            components: PROMPT_MARKDOWN_COMPONENTS,
+            children: prompt.preview
+          })
+        )
+      : React.createElement(
+          "p",
+          {
+            className: "mt-4 text-sm text-fg-muted",
+            "data-prompt-preview-body": "empty"
+          },
+          "The canonical Markdown body is empty."
+        )
   );
 }
 
@@ -304,7 +423,7 @@ function renderPromptHistory(
                 className:
                   "cursor-pointer text-xs font-medium text-fg-secondary"
               },
-              "Preview committed source"
+              "View committed source"
             ),
             React.createElement(
               "pre",
@@ -404,7 +523,7 @@ export function PromptDetailView({
       },
       React.createElement(
         "div",
-        { className: "rounded-lg border border-border bg-surface p-4" },
+        { className: PROMPT_CARD_CLASS_NAME },
         React.createElement(
           "h3",
           { className: "mb-1 text-xs uppercase tracking-wider text-fg-muted" },
@@ -422,7 +541,7 @@ export function PromptDetailView({
       ),
       React.createElement(
         "div",
-        { className: "rounded-lg border border-border bg-surface p-4" },
+        { className: PROMPT_CARD_CLASS_NAME },
         React.createElement(
           "h3",
           { className: "mb-1 text-xs uppercase tracking-wider text-fg-muted" },
@@ -453,7 +572,7 @@ export function PromptDetailView({
       ),
       React.createElement(
         "div",
-        { className: "rounded-lg border border-border bg-surface p-4" },
+        { className: PROMPT_CARD_CLASS_NAME },
         React.createElement(
           "h3",
           { className: "mb-1 text-xs uppercase tracking-wider text-fg-muted" },
@@ -511,6 +630,7 @@ export function PromptDetailView({
       ),
       renderPromptSource(prompt)
     ),
+    renderPromptPreview(prompt),
     renderPromptHistory(
       prompt,
       history,

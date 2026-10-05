@@ -73,8 +73,8 @@ const PROVIDER_ROLE_PATH =
   /^\/control\/providers\/([a-zA-Z0-9._-]+)\/roles\/(orchestrator|subagent)$/u;
 const AGENT_DETAIL_PATH = /^\/control\/agents\/([a-zA-Z0-9._-]+)$/u;
 const PROMPT_DETAIL_PATH = /^\/control\/prompts\/([a-zA-Z0-9._-]+)$/u;
-const PROMPT_VERSIONS_PATH =
-  /^\/control\/prompts\/([a-z0-9][a-z0-9-]{0,63})\/versions(?:\/([a-f0-9]{40}|[a-f0-9]{64}))?$/u;
+const PROMPT_COMMAND_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
+const GIT_REVISION_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const ACTOR_ID_PATTERN = /^[A-Za-z0-9@._:+-]{1,128}$/u;
 const CONTROL_API_COLLATOR = new Intl.Collator();
 const EXECUTION_CONTRACT_SOURCE = "execution-contract" as const;
@@ -1139,11 +1139,12 @@ function promptDetailView(
       : undefined;
   if (command) {
     return {
-      schema: "autodev-control-prompt-detail-v2",
+      schema: "autodev-control-prompt-detail-v3",
       name,
       type: "command",
       source: command.path,
       content: command.content,
+      preview: command.prompt,
       revision: command.revision
     };
   }
@@ -1158,11 +1159,12 @@ function promptDetailView(
     try {
       const content = readFileSync(rolePath, "utf8");
       return {
-        schema: "autodev-control-prompt-detail-v2",
+        schema: "autodev-control-prompt-detail-v3",
         name,
         type: "role",
         source: `agents/prompts/roles/${name}.md`,
         content,
+        preview: content,
         revision: createHash("sha256").update(content, "utf8").digest("hex")
       };
     } catch {
@@ -1757,6 +1759,26 @@ async function patchPromptCommand(
   );
 }
 
+function promptVersionsPath(
+  pathname: string
+): { readonly name: string; readonly versionHash?: string } | null {
+  const segments = pathname.split("/");
+  if (
+    (segments.length !== 5 && segments.length !== 6) ||
+    segments[1] !== "control" ||
+    segments[2] !== "prompts" ||
+    !PROMPT_COMMAND_NAME_PATTERN.test(segments[3] ?? "") ||
+    segments[4] !== "versions"
+  ) {
+    return null;
+  }
+  if (segments.length === 5) return { name: segments[3]! };
+  const versionHash = segments[5] ?? "";
+  return GIT_REVISION_PATTERN.test(versionHash)
+    ? { name: segments[3]!, versionHash }
+    : null;
+}
+
 function promptVersionsRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -1923,7 +1945,7 @@ export async function handleControlApiRequest(
       agentMatch[1]!,
       AGENT_DETAIL_ROUTE
     );
-  const promptVersionsMatch = pathname.match(PROMPT_VERSIONS_PATH);
+  const promptVersionsMatch = promptVersionsPath(pathname);
   if (promptVersionsMatch)
     return promptVersionsRoute(
       request,
@@ -1931,8 +1953,8 @@ export async function handleControlApiRequest(
       actor,
       method,
       pathname,
-      promptVersionsMatch[1]!,
-      promptVersionsMatch[2],
+      promptVersionsMatch.name,
+      promptVersionsMatch.versionHash,
       options
     );
   const promptMatch = pathname.match(PROMPT_DETAIL_PATH);

@@ -470,6 +470,13 @@ Codex target. The `$CODEX_HOME/prompts/` directory is AutoDev-owned and
 reconciled — any `*.md` not in the selected catalog is removed during install
 via `removeStalePaths`, so unmanaged prompts cannot drift in.
 
+The Console's Prompt detail also renders the canonical Markdown body with raw
+HTML disabled. Its read-only Git history lists the newest 20 committed versions;
+selecting one displays its source and a unified diff against the current working
+tree. These views use GET-only `/control/prompts/:name/versions` routes and do
+not check out or modify Git state. A non-Git repository reports history as
+unavailable rather than as an empty version list.
+
 The Codex desktop app reads `$CODEX_HOME/prompts/` only when its window
 opens (the Electron main process sends `custom-prompts-updated` from its
 renderer-ready handler and never watches the directory). A running app keeps
@@ -678,6 +685,16 @@ pnpm --filter @simulatorlife/autodev-console dev
 pnpm --filter @simulatorlife/autodev-console build
 pnpm --filter @simulatorlife/autodev-console start
 ```
+
+`next dev` writes to `console/.next-dev`; `next build` (and the Runtime
+installer's console-build step) writes the production build that `next start`
+and the Console LaunchAgent serve to `console/.next`. The split lives in
+`console/next.config.ts`, so a build cannot delete the chunks a running dev
+server loads (the `Cannot find module './<n>.js'` crash from `_document.js`).
+`console/next-env.d.ts` points at whichever directory generated it last, so it
+is gitignored; `pnpm --filter @simulatorlife/autodev-console typecheck` runs
+`next typegen` first, which regenerates it and the `console/.next/types` route
+types. The dev server's `console/.next-dev/types` stay out of the type-check.
 
 The Console defaults to port 3300 (`AUTODEV_CONSOLE_PORT` overrides it). Set
 `AUTODEV_CONTROL_API_TOKEN` only in the Console server environment; the

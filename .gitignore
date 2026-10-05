@@ -31,5 +31,8 @@ tmp/
 *.bak
 *.lock
 
-# Next.js build output
+# Next.js output: production build (.next), dev server (.next-dev), and the
+# next-env.d.ts that points at whichever of them generated it last
 console/.next/
+console/.next-dev/
+console/next-env.d.ts

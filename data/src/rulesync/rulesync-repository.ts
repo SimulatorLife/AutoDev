@@ -44,7 +44,8 @@ const COMMAND_CONTENT_MAX_BYTES = 48_000;
 const COMMAND_DIFF_MAX_BYTES = 196_608;
 const COMMAND_HISTORY_LIMIT = 20;
 const COMMAND_HISTORY_FETCH_LIMIT = COMMAND_HISTORY_LIMIT + 1;
-const COMMAND_GIT_TIMEOUT_MS = 3_000;
+const COMMAND_HISTORY_LINE_SPLIT_PATTERN = /\r?\n/u;
+const COMMAND_GIT_TIMEOUT_MS = 3000;
 const COMMAND_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const GIT_REVISION_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const COMMAND_FRONTMATTER_PATTERN =
@@ -570,71 +571,54 @@ export class RuleSyncRepository {
     )
       return null;
 
-    const commandPath = `${COMMANDS_SOURCE}/${name}.md`;
     let repositoryRoot: string;
     try {
       repositoryRoot = realpathSync(this.repositoryRoot);
-      const isRepository = execFileSync(
-        "git",
-        ["-C", repositoryRoot, "rev-parse", "--is-inside-work-tree"],
-        {
-          encoding: "utf8",
-          maxBuffer: 1_024,
-          stdio: ["ignore", "pipe", "ignore"],
-          timeout: COMMAND_GIT_TIMEOUT_MS
-        }
-      );
-      if (isRepository.trim() !== "true") {
-        return {
-          status: "unavailable",
-          versions: [],
-          hasMore: false
-        };
-      }
     } catch {
-      return {
-        status: "unavailable",
-        versions: [],
-        hasMore: false
-      };
+      return { status: "unavailable", versions: [], hasMore: false };
     }
+    const git = (args: readonly string[], maxBuffer: number): string =>
+      execFileSync("git", ["-C", repositoryRoot, ...args], {
+        encoding: "utf8",
+        maxBuffer,
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: COMMAND_GIT_TIMEOUT_MS
+      });
 
+    let output: string;
     try {
-      execFileSync(
-        "git",
-        ["-C", repositoryRoot, "rev-parse", "--verify", "HEAD"],
-        {
-          encoding: "utf8",
-          maxBuffer: 1_024,
-          stdio: ["ignore", "pipe", "ignore"],
-          timeout: COMMAND_GIT_TIMEOUT_MS
-        }
-      );
-    } catch {
-      return { status: "available", versions: [], hasMore: false };
-    }
-
-    try {
-      const output = execFileSync(
-        "git",
+      output = git(
         [
-          "-C",
-          repositoryRoot,
           "log",
           "--format=%H%x00%cI",
           `--max-count=${COMMAND_HISTORY_FETCH_LIMIT}`,
           "--",
-          commandPath
+          `${COMMANDS_SOURCE}/${name}.md`
         ],
-        {
-          encoding: "utf8",
-          maxBuffer: 8_192,
-          stdio: ["ignore", "pipe", "ignore"],
-          timeout: COMMAND_GIT_TIMEOUT_MS
-        }
+        8192
       );
+    } catch {
+      try {
+        if (
+          git(["rev-parse", "--is-inside-work-tree"], 1024).trim() !== "true"
+        ) {
+          return { status: "unavailable", versions: [], hasMore: false };
+        }
+        git(["rev-parse", "--verify", "HEAD"], 1024);
+        return { status: "unavailable", versions: [], hasMore: false };
+      } catch {
+        try {
+          git(["status", "--porcelain"], 8192);
+          return { status: "available", versions: [], hasMore: false };
+        } catch {
+          return { status: "unavailable", versions: [], hasMore: false };
+        }
+      }
+    }
+
+    try {
       const entries = output
-        .split(/\r?\n/u)
+        .split(COMMAND_HISTORY_LINE_SPLIT_PATTERN)
         .filter(Boolean)
         .map((entry) => {
           const [versionHash, updatedAt] = entry.split("\0");
@@ -656,11 +640,7 @@ export class RuleSyncRepository {
         hasMore: entries.length > COMMAND_HISTORY_LIMIT
       };
     } catch {
-      return {
-        status: "unavailable",
-        versions: [],
-        hasMore: false
-      };
+      return { status: "unavailable", versions: [], hasMore: false };
     }
   }
 
@@ -668,7 +648,12 @@ export class RuleSyncRepository {
     name: string,
     versionHash: string
   ): RuleSyncCommandVersion | null {
-    if (!GIT_REVISION_PATTERN.test(versionHash)) return null;
+    if (
+      !COMMAND_NAME_PATTERN.test(name) ||
+      !GIT_REVISION_PATTERN.test(versionHash)
+    ) {
+      return null;
+    }
     const state = this.loadCommands();
     const command =
       state.valid === true
@@ -685,8 +670,8 @@ export class RuleSyncRepository {
     );
     if (!version) return null;
 
-    const repositoryRoot = realpathSync(this.repositoryRoot);
     try {
+      const repositoryRoot = realpathSync(this.repositoryRoot);
       const content = execFileSync(
         "git",
         ["-C", repositoryRoot, "show", `${versionHash}:${command.path}`],

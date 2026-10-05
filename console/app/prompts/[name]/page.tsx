@@ -1,7 +1,6 @@
+import type { ControlApiPromptVersionResponse } from "@simulatorlife/autodev-core";
 import { notFound } from "next/navigation";
 import React from "react";
-
-import type { ControlApiPromptVersionResponse } from "@simulatorlife/autodev-core";
 
 import {
   PromptDetailView,
@@ -24,6 +23,77 @@ import {
 export const dynamic = "force-dynamic";
 
 const GIT_REVISION_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
+
+const UNAVAILABLE_PROMPT_HISTORY: PromptHistoryState = {
+  status: "unavailable",
+  message: "Committed version history is only available for RuleSync commands."
+};
+
+function promptHistoryState(
+  result: Awaited<ReturnType<typeof fetchPromptVersions>>
+): PromptHistoryState {
+  if (result.kind !== "ok") {
+    return {
+      status: "unavailable",
+      message:
+        "Committed version history could not be loaded; the canonical working-tree source remains available."
+    };
+  }
+  if (result.data.status === "unavailable") {
+    return {
+      status: "unavailable",
+      message:
+        "Git history is unavailable for this repository; the canonical working-tree source remains available."
+    };
+  }
+  return {
+    status: "available",
+    versions: result.data.versions,
+    hasMore: result.data.hasMore
+  };
+}
+
+async function promptVersionSelection(
+  name: string,
+  requestedRevision: string | readonly string[] | undefined,
+  history: PromptHistoryState,
+  config: NonNullable<ReturnType<typeof readNodeContext>["config"]>
+): Promise<{
+  readonly selectedVersion?: ControlApiPromptVersionResponse;
+  readonly error?: string;
+}> {
+  if (requestedRevision === undefined) return {};
+  if (
+    typeof requestedRevision !== "string" ||
+    !GIT_REVISION_PATTERN.test(requestedRevision)
+  ) {
+    return { error: "Select one valid committed prompt revision." };
+  }
+  if (
+    history.status !== "available" ||
+    !history.versions.some(
+      (version) => version.versionHash === requestedRevision
+    )
+  ) {
+    return {
+      error:
+        "That revision is not in the available recent history for this command."
+    };
+  }
+
+  const result = await fetchPromptVersion(name, requestedRevision, config);
+  if (
+    result.kind === "ok" &&
+    result.data.name === name &&
+    result.data.versionHash === requestedRevision
+  ) {
+    return { selectedVersion: result.data };
+  }
+  return {
+    error:
+      "The selected committed version could not be loaded; the current source is unchanged."
+  };
+}
 
 function promptSaveOutcome(
   value: string | readonly string[] | undefined
@@ -83,80 +153,29 @@ export default async function PromptDetailPage({
   }
 
   const prompt = promptDocumentFromControlApi(result.data);
-  let history: PromptHistoryState = {
-    status: "unavailable",
-    message:
-      "Committed version history is only available for RuleSync commands."
-  };
-  let selectedVersion: ControlApiPromptVersionResponse | undefined;
-  let versionSelectionError: string | undefined;
-
-  if (prompt.kind === "command") {
-    const historyResult = await fetchPromptVersions(prompt.name, config);
-    if (historyResult.kind === "ok") {
-      history =
-        historyResult.data.status === "available"
-          ? {
-              status: "available",
-              versions: historyResult.data.versions,
-              hasMore: historyResult.data.hasMore
-            }
-          : {
-              status: "unavailable",
-              message:
-                "Git history is unavailable for this repository; the canonical working-tree source remains available."
-            };
-    } else {
-      history = {
-        status: "unavailable",
-        message:
-          "Committed version history could not be loaded; the canonical working-tree source remains available."
-      };
-    }
-
-    const requestedRevision = query.revision;
-    if (requestedRevision !== undefined) {
-      if (
-        typeof requestedRevision !== "string" ||
-        !GIT_REVISION_PATTERN.test(requestedRevision)
-      ) {
-        versionSelectionError = "Select one valid committed prompt revision.";
-      } else if (
-        history.status !== "available" ||
-        !history.versions.some(
-          (version) => version.versionHash === requestedRevision
-        )
-      ) {
-        versionSelectionError =
-          "That revision is not in the available recent history for this command.";
-      } else {
-        const selected = await fetchPromptVersion(
+  const history =
+    prompt.kind === "command"
+      ? promptHistoryState(await fetchPromptVersions(prompt.name, config))
+      : UNAVAILABLE_PROMPT_HISTORY;
+  const selection =
+    prompt.kind === "command"
+      ? await promptVersionSelection(
           prompt.name,
-          requestedRevision,
+          query.revision,
+          history,
           config
-        );
-        if (
-          selected.kind === "ok" &&
-          selected.data.name === prompt.name &&
-          selected.data.versionHash === requestedRevision
-        ) {
-          selectedVersion = selected.data;
-        } else {
-          versionSelectionError =
-            "The selected committed version could not be loaded; the current source is unchanged.";
-        }
-      }
-    }
-  }
-
+        )
+      : {};
   return React.createElement(
     ConsolePageShell,
     { section },
     React.createElement(PromptDetailView, {
       prompt,
       history,
-      ...(selectedVersion ? { selectedVersion } : {}),
-      ...(versionSelectionError ? { versionSelectionError } : {}),
+      ...(selection.selectedVersion
+        ? { selectedVersion: selection.selectedVersion }
+        : {}),
+      ...(selection.error ? { versionSelectionError: selection.error } : {}),
       ...(saveOutcome ? { saveOutcome } : {})
     })
   );

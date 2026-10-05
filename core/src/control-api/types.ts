@@ -189,11 +189,12 @@ export interface ControlApiPromptsResponse {
 }
 
 export interface ControlApiPromptDetailResponse {
-  readonly schema: "autodev-control-prompt-detail-v2";
+  readonly schema: "autodev-control-prompt-detail-v3";
   readonly name: string;
   readonly type: "command" | "role";
   readonly source: string;
   readonly content: string;
+  readonly preview: string;
   readonly revision: string;
 }
 

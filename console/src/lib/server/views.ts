@@ -204,6 +204,7 @@ export function promptDocumentFromControlApi(
     kind: response.type,
     path: response.source,
     content: response.content,
+    preview: response.preview,
     revision: response.revision
   };
 }

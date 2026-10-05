@@ -39,9 +39,9 @@ import {
   type ControlApiPromptCommandPatchRequest,
   type ControlApiPromptCommandPatchResponse,
   type ControlApiPromptDetailResponse,
+  type ControlApiPromptsResponse,
   type ControlApiPromptVersionResponse,
   type ControlApiPromptVersionsResponse,
-  type ControlApiPromptsResponse,
   type ControlApiProviderRolePatchResponse,
   type ControlApiProvidersResponse,
   type ControlApiRoutingResponse,
@@ -69,13 +69,15 @@ export type ControlApiResult<T> =
     }
   | { readonly kind: "unreachable"; readonly message: string }
   | {
-      readonly kind: "invalid-response";
+      readonly kind: typeof INVALID_RESPONSE_KIND;
       readonly code: string;
       readonly message: string;
     };
 
 const DEFAULT_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
 const CONTROL_API_TIMEOUT_MS = 5000;
+const INVALID_RESPONSE_KIND = "invalid-response" as const;
+const PROMPT_VERSION_TIMEOUT_MS = 12_000;
 const CONTROL_API_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const CONTROL_API_GIT_REVISION_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const TRAILING_SLASHES = /\/+$/u;
@@ -136,6 +138,7 @@ export function readControlApiConfig(
 export interface FetchControlApiOptions {
   readonly fetchImpl?: typeof fetch;
   readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
 }
 
 /**
@@ -152,7 +155,10 @@ export async function fetchControlApi<T>(
 ): Promise<ControlApiResult<T>> {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CONTROL_API_TIMEOUT_MS);
+  const timer = setTimeout(
+    () => controller.abort(),
+    options.timeoutMs ?? CONTROL_API_TIMEOUT_MS
+  );
   const signal = options.signal ?? controller.signal;
   let response: Response;
   try {
@@ -230,7 +236,10 @@ async function mutateControlApi<T>(
 ): Promise<ControlApiResult<T>> {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CONTROL_API_TIMEOUT_MS);
+  const timer = setTimeout(
+    () => controller.abort(),
+    options.timeoutMs ?? CONTROL_API_TIMEOUT_MS
+  );
   const signal = options.signal ?? controller.signal;
 
   let response: Response;
@@ -488,7 +497,7 @@ export async function fetchSkills(
     return { kind: "ok", data: result.data };
   }
   return {
-    kind: "invalid-response",
+    kind: INVALID_RESPONSE_KIND,
     code: "autodev_control_api_invalid_skills_response",
     message:
       "AutoDev Control API returned an incompatible Skills response; the Console requires the v2 canonical catalog contract."
@@ -562,7 +571,7 @@ export async function fetchPrompts(
     return { kind: "ok", data: result.data };
   }
   return {
-    kind: "invalid-response",
+    kind: INVALID_RESPONSE_KIND,
     code: "autodev_control_api_invalid_prompts_response",
     message:
       "AutoDev Control API returned an incompatible Prompts response; the Console requires the v2 source-validity contract."
@@ -574,11 +583,12 @@ function isControlApiPromptDetailResponse(
 ): value is ControlApiPromptDetailResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-prompt-detail-v2" &&
+    value.schema === "autodev-control-prompt-detail-v3" &&
     typeof value.name === "string" &&
     (value.type === "command" || value.type === "role") &&
     typeof value.source === "string" &&
     typeof value.content === "string" &&
+    typeof value.preview === "string" &&
     typeof value.revision === "string" &&
     CONTROL_API_REVISION_PATTERN.test(value.revision)
   );
@@ -596,10 +606,10 @@ export async function fetchPromptDetail(
     return { kind: "ok", data: result.data };
   }
   return {
-    kind: "invalid-response",
+    kind: INVALID_RESPONSE_KIND,
     code: "autodev_control_api_invalid_prompt_detail_response",
     message:
-      "AutoDev Control API returned an incompatible Prompt detail response; the Console requires the v2 revision contract."
+      "AutoDev Control API returned an incompatible Prompt detail response; the Console requires the v3 Markdown-preview contract."
   };
 }
 
@@ -638,11 +648,14 @@ export async function fetchPromptVersions(
   const path = `${CONTROL_API_PATHS.prompts}/${encodeURIComponent(name)}/versions`;
   const result = await fetchControlApi<unknown>(path, config, options);
   if (result.kind !== "ok") return result;
-  if (isControlApiPromptVersionsResponse(result.data)) {
+  if (
+    isControlApiPromptVersionsResponse(result.data) &&
+    result.data.name === name
+  ) {
     return { kind: "ok", data: result.data };
   }
   return {
-    kind: "invalid-response",
+    kind: INVALID_RESPONSE_KIND,
     code: "autodev_control_api_invalid_prompt_versions_response",
     message:
       "AutoDev Control API returned an incompatible Prompt version-history response."
@@ -672,13 +685,20 @@ export async function fetchPromptVersion(
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiPromptVersionResponse>> {
   const path = `${CONTROL_API_PATHS.prompts}/${encodeURIComponent(name)}/versions/${encodeURIComponent(versionHash)}`;
-  const result = await fetchControlApi<unknown>(path, config, options);
+  const result = await fetchControlApi<unknown>(path, config, {
+    ...options,
+    timeoutMs: options.timeoutMs ?? PROMPT_VERSION_TIMEOUT_MS
+  });
   if (result.kind !== "ok") return result;
-  if (isControlApiPromptVersionResponse(result.data)) {
+  if (
+    isControlApiPromptVersionResponse(result.data) &&
+    result.data.name === name &&
+    result.data.versionHash === versionHash
+  ) {
     return { kind: "ok", data: result.data };
   }
   return {
-    kind: "invalid-response",
+    kind: INVALID_RESPONSE_KIND,
     code: "autodev_control_api_invalid_prompt_version_response",
     message:
       "AutoDev Control API returned an incompatible Prompt version response."

@@ -758,7 +758,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
       actor: "viewer-a"
     });
     assert.equal(promptDetail.response.statusCode, 200);
-    assert.equal(promptDetail.body.schema, "autodev-control-prompt-detail-v2");
+    assert.equal(promptDetail.body.schema, "autodev-control-prompt-detail-v3");
     assert.equal(promptDetail.body.name, "dry");
 
     const unknownPrompt = await call(
@@ -987,17 +987,19 @@ test("Control API prompt detail serves the canonical command content from RuleSy
       { actor: "viewer-a" }
     );
     assert.equal(detail.response.statusCode, 200);
-    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v2");
+    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v3");
     assert.equal(detail.body.name, target.name);
     assert.equal(detail.body.type, "command");
     assert.equal(detail.body.source, target.path);
     assert.equal(detail.body.content, target.content);
+    assert.equal(detail.body.preview, target.prompt);
     assert.equal(detail.body.revision, target.revision);
 
     // The detail surface contains only canonical content and its revision.
     assert.deepEqual(Object.keys(detail.body).sort(), [
       "content",
       "name",
+      "preview",
       "revision",
       "schema",
       "source",
@@ -1088,9 +1090,13 @@ test("operator Prompt PATCH validates source, applies the Rulesync projection, a
       runtimeOptions
     );
     assert.equal(detail.response.statusCode, 200);
-    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v2");
+    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v3");
     assert.equal(detail.body.revision, result.body.revision);
     assert.equal(detail.body.content, content);
+    assert.equal(
+      detail.body.preview,
+      "# Edited command\n\nA canonical edit reaches the generated Codex prompt."
+    );
 
     const invalidSource = await call(
       "PATCH",
@@ -1173,7 +1179,7 @@ test("Control API prompt detail serves an unshadowed role prompt from its canoni
       { actor: "viewer-a" }
     );
     assert.equal(detail.response.statusCode, 200);
-    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v2");
+    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v3");
     assert.equal(detail.body.type, "role");
     assert.equal(detail.body.name, rolePrompt.role);
     assert.match(detail.body.revision, /^[a-f0-9]{64}$/u);
@@ -1182,6 +1188,7 @@ test("Control API prompt detail serves an unshadowed role prompt from its canoni
       detail.body.content,
       readFileSync(join(process.cwd(), rolePrompt.path), "utf8")
     );
+    assert.equal(detail.body.preview, detail.body.content);
   } finally {
     restoreEnv(saved);
   }

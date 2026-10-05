@@ -18,6 +18,11 @@ import {
   type ToolCatalogItem,
   type UsageMetricsData
 } from "@simulatorlife/autodev-core";
+import {
+  PHASE_DEVELOPMENT_SERVER,
+  PHASE_PRODUCTION_BUILD,
+  PHASE_PRODUCTION_SERVER
+} from "next/constants.js";
 import { NextRequest } from "next/server.js";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -26,6 +31,10 @@ import * as promptMutationRoute from "../app/api/prompts/[name]/route.ts";
 import * as providerRoleRoute from "../app/api/providers/[provider]/roles/[role]/route.ts";
 import EvaluationsPage from "../app/evaluations/page.ts";
 import MemoryPage from "../app/memory/page.ts";
+import nextConfig, {
+  CONSOLE_BUILD_DIST_DIR,
+  CONSOLE_DEV_DIST_DIR
+} from "../next.config.ts";
 import {
   AgentDetailView,
   AgentsView,
@@ -71,16 +80,14 @@ import {
   fetchMemoryRecords,
   fetchPromptDetail,
   fetchPrompts,
+  fetchPromptVersion,
+  fetchPromptVersions,
   fetchProviders,
   fetchSkills,
   fetchTools,
   readControlApiConfig
 } from "../src/lib/server/control-api.ts";
 import { readMemoryPortalConfig } from "../src/lib/server/memory-portal.ts";
-const unavailablePromptHistory = {
-  status: "unavailable",
-  message: "Git history unavailable in this test."
-} as const;
 import {
   readOpenLITUsageConfig,
   usageSelectionFromSearchParams
@@ -95,6 +102,11 @@ import {
   unresolvedSkillAssignmentsFromControlApi,
   workspacesFromControlApi
 } from "../src/lib/server/views.ts";
+
+const unavailablePromptHistory = {
+  status: "unavailable",
+  message: "Git history unavailable in this test."
+} as const;
 
 const MEMORY_PAGE_ENV_KEYS = [
   "HOME",
@@ -501,11 +513,12 @@ test("PromptsView distinguishes an unavailable command source from a valid empty
 test("Prompt detail renders canonical text and reports an actually empty source", () => {
   const source = "# /dry\n\nUse a dry run.";
   const prompt = promptDocumentFromControlApi({
-    schema: "autodev-control-prompt-detail-v2",
+    schema: "autodev-control-prompt-detail-v3",
     name: "dry",
     type: "command",
     source: ".rulesync/commands/dry.md",
     content: source,
+    preview: "## Rendered Prompt\n\n**Use a dry run.**",
     revision: "a".repeat(64)
   });
   const markup = renderToStaticMarkup(
@@ -515,6 +528,11 @@ test("Prompt detail renders canonical text and reports an actually empty source"
     })
   );
   assert.match(markup, /Use a dry run\./);
+  assert.match(
+    markup,
+    /<h2 class="mb-2 mt-4 text-lg font-semibold text-fg">Rendered Prompt<\/h2>/
+  );
+  assert.match(markup, /<strong>Use a dry run\.<\/strong>/);
   assert.match(markup, /\.rulesync\/commands\/dry\.md/);
   assert.match(markup, /data-prompt-editor="canonical"/);
   assert.match(markup, /action="\/api\/prompts\/dry"/);
@@ -522,6 +540,18 @@ test("Prompt detail renders canonical text and reports an actually empty source"
   assert.match(markup, /Save &amp; Apply/);
   assert.match(markup, /data-prompt-history="unavailable"/);
   assert.match(markup, /Git history unavailable in this test\./);
+
+  const hostilePreview = renderToStaticMarkup(
+    React.createElement(PromptDetailView, {
+      prompt: {
+        ...prompt,
+        preview: "<script>alert(1)</script>\n\n[unsafe](javascript:alert(1))"
+      },
+      history: unavailablePromptHistory
+    })
+  );
+  assert.doesNotMatch(hostilePreview, /<script>/iu);
+  assert.doesNotMatch(hostilePreview, /href="javascript:/iu);
 
   const versionHash = "b".repeat(40);
   const comparisonMarkup = renderToStaticMarkup(
@@ -546,7 +576,7 @@ test("Prompt detail renders canonical text and reports an actually empty source"
   assert.match(comparisonMarkup, /data-prompt-version-comparison=/);
   assert.match(comparisonMarkup, /data-prompt-diff="observed"/);
   assert.match(comparisonMarkup, /Use the current source\./);
-  assert.match(comparisonMarkup, /Preview committed source/);
+  assert.match(comparisonMarkup, /View committed source/);
 
   const applyFailedMarkup = renderToStaticMarkup(
     React.createElement(PromptDetailView, {
@@ -565,6 +595,7 @@ test("Prompt detail renders canonical text and reports an actually empty source"
         kind: "role",
         path: "agents/prompts/roles/orchestrator.md",
         content: "# Role prompt",
+        preview: "# Role prompt",
         revision: "d".repeat(64)
       },
       history: unavailablePromptHistory
@@ -616,6 +647,7 @@ test("PromptsView and PromptDetailView render prompt types, linkage, and Git aut
         kind: "role",
         path: "agents/prompts/roles/orchestrator.md",
         content: "# Orchestrator System Prompt\nYou are an orchestrator.",
+        preview: "# Orchestrator System Prompt\nYou are an orchestrator.",
         revision: "c".repeat(64)
       },
       history: unavailablePromptHistory
@@ -792,6 +824,109 @@ test("Control API detail fetchers encode identifiers and preserve not-found stat
   assert.equal(agent.status, 404);
   assert.equal(prompt.kind, "http-error");
   assert.equal(prompt.status, 404);
+
+  const stalePrompt = await fetchPromptDetail("dry", config, {
+    fetchImpl: async () =>
+      Response.json({
+        schema: "autodev-control-prompt-detail-v2",
+        name: "dry",
+        type: "command",
+        source: ".rulesync/commands/dry.md",
+        content: "# Dry",
+        revision: "a".repeat(64)
+      })
+  });
+  assert.equal(stalePrompt.kind, "invalid-response");
+  if (stalePrompt.kind === "invalid-response") {
+    assert.equal(
+      stalePrompt.code,
+      "autodev_control_api_invalid_prompt_detail_response"
+    );
+    assert.match(stalePrompt.message, /v3 Markdown-preview contract/);
+  }
+});
+
+test("Prompt version fetchers validate recent history and selected revision identity", async () => {
+  const config = {
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "server-only"
+  };
+  const versionHash = "a".repeat(40);
+  const urls: string[] = [];
+  const payloads: unknown[] = [
+    {
+      schema: "autodev-control-prompt-versions-v1",
+      name: "audit",
+      status: "available",
+      versions: [{ versionHash, updatedAt: "2026-01-02T03:04:05Z" }],
+      hasMore: false
+    },
+    {
+      schema: "autodev-control-prompt-version-v1",
+      name: "audit",
+      versionHash,
+      updatedAt: "2026-01-02T03:04:05Z",
+      content: "# Audit",
+      diff: ""
+    }
+  ];
+  const fetchImpl: typeof fetch = async (input) => {
+    urls.push(String(input));
+    return Response.json(payloads.shift());
+  };
+
+  const versions = await fetchPromptVersions("audit", config, { fetchImpl });
+  const version = await fetchPromptVersion("audit", versionHash, config, {
+    fetchImpl
+  });
+  assert.equal(versions.kind, "ok");
+  assert.equal(version.kind, "ok");
+  assert.deepEqual(urls, [
+    "http://127.0.0.1:4101/control/prompts/audit/versions",
+    `http://127.0.0.1:4101/control/prompts/audit/versions/${versionHash}`
+  ]);
+
+  const mismatchedVersion = await fetchPromptVersion(
+    "audit",
+    versionHash,
+    config,
+    {
+      fetchImpl: async () =>
+        Response.json({
+          schema: "autodev-control-prompt-version-v1",
+          name: "other-command",
+          versionHash,
+          updatedAt: "2026-01-02T03:04:05Z",
+          content: "# Other",
+          diff: ""
+        })
+    }
+  );
+  assert.equal(mismatchedVersion.kind, "invalid-response");
+
+  const mismatchedHistory = await fetchPromptVersions("audit", config, {
+    fetchImpl: async () =>
+      Response.json({
+        schema: "autodev-control-prompt-versions-v1",
+        name: "other-command",
+        status: "available",
+        versions: [],
+        hasMore: false
+      })
+  });
+  assert.equal(mismatchedHistory.kind, "invalid-response");
+
+  const malformedUnavailable = await fetchPromptVersions("audit", config, {
+    fetchImpl: async () =>
+      Response.json({
+        schema: "autodev-control-prompt-versions-v1",
+        name: "audit",
+        status: "unavailable",
+        versions: [{ versionHash, updatedAt: "2026-01-02T03:04:05Z" }],
+        hasMore: false
+      })
+  });
+  assert.equal(malformedUnavailable.kind, "invalid-response");
 });
 
 test("Skills fetcher validates the v2 catalog contract and rejects stale responses", async () => {
@@ -2993,11 +3128,12 @@ test("View adapters translate Control API responses without inventing data", () 
   assert.equal(prompts[1]?.name, "orchestrator");
 
   const promptDocument = promptDocumentFromControlApi({
-    schema: "autodev-control-prompt-detail-v2",
+    schema: "autodev-control-prompt-detail-v3",
     name: "dry",
     type: "command",
     source: ".rulesync/commands/dry.md",
     content: "Exact source",
+    preview: "Parsed prompt body",
     revision: "b".repeat(64)
   });
   assert.deepEqual(promptDocument, {
@@ -3005,6 +3141,7 @@ test("View adapters translate Control API responses without inventing data", () 
     kind: "command",
     path: ".rulesync/commands/dry.md",
     content: "Exact source",
+    preview: "Parsed prompt body",
     revision: "b".repeat(64)
   });
 
@@ -4003,4 +4140,23 @@ test("provider-role Console route returns an unconfirmed failure when Runtime re
       process.env.AUTODEV_CONTROL_API_BASE_URL = previousBaseUrl;
     }
   }
+});
+
+test("next dev and the production build never share a dist directory", () => {
+  // The LaunchAgent's `next start` and run-codex-console.sh's BUILD_ID gate
+  // read the production build from console/.next.
+  assert.equal(CONSOLE_BUILD_DIST_DIR, ".next");
+  assert.notEqual(CONSOLE_DEV_DIST_DIR, CONSOLE_BUILD_DIST_DIR);
+  assert.equal(
+    nextConfig(PHASE_DEVELOPMENT_SERVER).distDir,
+    CONSOLE_DEV_DIST_DIR
+  );
+  assert.equal(
+    nextConfig(PHASE_PRODUCTION_BUILD).distDir,
+    CONSOLE_BUILD_DIST_DIR
+  );
+  assert.equal(
+    nextConfig(PHASE_PRODUCTION_SERVER).distDir,
+    CONSOLE_BUILD_DIST_DIR
+  );
 });

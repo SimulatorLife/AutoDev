@@ -10,14 +10,15 @@
     "build": "next build",
     "start": "next start -p ${AUTODEV_CONSOLE_PORT:-3300}",
     "test": "node --test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {
     "@simulatorlife/autodev-core": "workspace:*",
     "@simulatorlife/autodev-data": "workspace:*",
     "next": "15.5.27",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "react-markdown": "10.1.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.3",

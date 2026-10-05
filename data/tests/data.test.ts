@@ -127,6 +127,48 @@ test("RuleSyncRepository reads bounded Git command history and compares it with 
   }
 });
 
+test("RuleSyncRepository bounds command history and reports older revisions", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-rulesync-command-history-bound-")
+  );
+  try {
+    const commandsDir = path.join(repositoryRoot, ".rulesync", "commands");
+    await mkdir(commandsDir, { recursive: true });
+    const commandPath = path.join(commandsDir, "audit.md");
+    git(repositoryRoot, ["init", "-q"]);
+    git(repositoryRoot, ["config", "user.name", "AutoDev Tests"]);
+    git(repositoryRoot, [
+      "config",
+      "user.email",
+      "autodev-tests@example.invalid"
+    ]);
+
+    for (let revision = 0; revision < 21; revision += 1) {
+      await writeFile(
+        commandPath,
+        `---\ntargets: [codexcli]\ndescription: Audit revision ${revision}.\n---\n\n# Audit\n\nRevision ${revision}.\n`
+      );
+      git(repositoryRoot, ["add", ".rulesync/commands/audit.md"]);
+      git(repositoryRoot, [
+        "commit",
+        "-q",
+        "-m",
+        `Command revision ${revision}`
+      ]);
+    }
+
+    const history = new RuleSyncRepository(repositoryRoot).loadCommandHistory(
+      "audit"
+    );
+    assert.ok(history);
+    assert.equal(history.status, "available");
+    assert.equal(history.versions.length, 20);
+    assert.equal(history.hasMore, true);
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
 test("RuleSyncRepository distinguishes unavailable Git history from an empty command history", async () => {
   const repositoryRoot = await mkdtemp(
     path.join(tmpdir(), "autodev-rulesync-command-no-git-")
