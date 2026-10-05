@@ -10,6 +10,13 @@ const nextConfig: NextConfig = {
   eslint: {
     ignoreDuringBuilds: true
   },
+  // The Console has no landing page; answer `/` from the router before any
+  // rendering instead of server-rendering a page that only redirects.
+  redirects() {
+    return Promise.resolve([
+      { source: "/", destination: "/agents", permanent: false }
+    ]);
+  },
   experimental: {
     // Client router cache lifetimes, in seconds. Pages reached by an
     // ordinary navigation are never reused (`dynamic: 0`), so live runtime

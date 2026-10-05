@@ -353,6 +353,19 @@ test("ConsoleForm renders a native GET form that is not busy at rest", () => {
   );
 });
 
+test("the Console root redirects to Agents before any rendering", () => {
+  const config = readFileSync(join(CONSOLE_ROOT, "next.config.ts"), "utf8");
+  assert.match(
+    config,
+    /\{ source: "\/", destination: "\/agents", permanent: false \}/u
+  );
+  assert.equal(
+    consoleSourceFiles("app").includes(join("app", "page.tsx")),
+    false,
+    "a root page would server-render the shell only to redirect"
+  );
+});
+
 test("router cache reuse is bounded to intent prefetches for at most 30 seconds", () => {
   // Ordinary navigations always re-read live runtime state; only pages
   // ConsoleLink fully prefetched on hover/focus/touch may be reused, for the
