@@ -62,6 +62,62 @@ test("RuleSyncRepository loads canonical RuleSync sources", () => {
   ]);
 });
 
+test("RuleSyncRepository reflects command and skill edits, additions, and removals between reads", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-rulesync-reread-")
+  );
+  try {
+    const commandsDir = path.join(repositoryRoot, ".rulesync", "commands");
+    const skillDir = path.join(repositoryRoot, ".rulesync", "skills", "audit");
+    await mkdir(commandsDir, { recursive: true });
+    await mkdir(skillDir, { recursive: true });
+    const command = (description: string): string =>
+      `---\ntargets: [codexcli]\ndescription: ${description}\n---\n\n# Body\n`;
+    const skill = (description: string): string =>
+      `---\nname: audit\ndescription: ${description}\n---\n\n# Audit\n`;
+    await writeFile(path.join(commandsDir, "audit.md"), command("First."));
+    await writeFile(path.join(skillDir, "SKILL.md"), skill("First skill."));
+
+    // Parses are cached by content, so each read must still observe the
+    // current files rather than an earlier parse.
+    const repo = new RuleSyncRepository(repositoryRoot);
+    assert.equal(repo.loadCommands().commands[0]?.description, "First.");
+    assert.equal(repo.loadSkills().skills[0]?.description, "First skill.");
+
+    await writeFile(path.join(commandsDir, "audit.md"), command("Edited."));
+    await writeFile(path.join(commandsDir, "review.md"), command("Added."));
+    await writeFile(path.join(skillDir, "SKILL.md"), skill("Edited skill."));
+    const edited = repo.loadCommands();
+    assert.deepEqual(
+      edited.commands.map(({ name, description }) => [name, description]),
+      [
+        ["audit", "Edited."],
+        ["review", "Added."]
+      ]
+    );
+    assert.equal(
+      edited.commands[0]?.revision,
+      createHash("sha256").update(command("Edited."), "utf8").digest("hex")
+    );
+    assert.equal(repo.loadSkills().skills[0]?.description, "Edited skill.");
+
+    await rm(path.join(commandsDir, "review.md"));
+    assert.deepEqual(
+      repo.loadCommands().commands.map(({ name }) => name),
+      ["audit"]
+    );
+
+    await writeFile(path.join(commandsDir, "audit.md"), "No frontmatter.\n");
+    assert.deepEqual(repo.loadCommands(), {
+      source: ".rulesync/commands",
+      valid: false,
+      commands: []
+    });
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
 test("RuleSyncRepository updates an existing command with revision checks", async () => {
   const repositoryRoot = await mkdtemp(
     path.join(tmpdir(), "autodev-rulesync-command-update-")

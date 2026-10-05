@@ -454,6 +454,55 @@ function parseRuleSyncCommand(name: string, content: string): RuleSyncCommand {
   };
 }
 
+/**
+ * Parsed RuleSync sources keyed by absolute file path. Parsing is a pure
+ * function of the file content, so a cached result is reused only while the
+ * content read on this request is byte-identical; any edit re-parses. Every
+ * catalog read still lists and reads its directory, so additions, removals,
+ * and edits are observed immediately.
+ */
+const parsedCommandCache = new Map<
+  string,
+  { readonly content: string; readonly command: RuleSyncCommand }
+>();
+const parsedSkillMetadataCache = new Map<
+  string,
+  { readonly content: string; readonly metadata: unknown }
+>();
+
+/** Drops cached parses whose source file was not listed on this read. */
+function pruneParsedSources(
+  cache: Map<string, unknown>,
+  listed: ReadonlySet<string>,
+  isInDirectory: (filePath: string) => boolean
+): void {
+  for (const filePath of cache.keys()) {
+    if (isInDirectory(filePath) && !listed.has(filePath)) {
+      cache.delete(filePath);
+    }
+  }
+}
+
+function cachedRuleSyncCommand(
+  filePath: string,
+  name: string,
+  content: string
+): RuleSyncCommand {
+  const cached = parsedCommandCache.get(filePath);
+  if (cached?.content === content) return cached.command;
+  const command = parseRuleSyncCommand(name, content);
+  parsedCommandCache.set(filePath, { content, command });
+  return command;
+}
+
+function cachedSkillMetadata(filePath: string, frontmatter: string): unknown {
+  const cached = parsedSkillMetadataCache.get(filePath);
+  if (cached?.content === frontmatter) return cached.metadata;
+  const metadata: unknown = parseYaml(frontmatter);
+  parsedSkillMetadataCache.set(filePath, { content: frontmatter, metadata });
+  return metadata;
+}
+
 export class RuleSyncRepository {
   readonly repositoryRoot: string;
 
@@ -477,19 +526,24 @@ export class RuleSyncRepository {
 
     try {
       const commands: RuleSyncCommand[] = [];
+      const listed = new Set<string>();
       for (const entry of readdirSync(commandsDir, { withFileTypes: true })) {
         if (!entry.name.endsWith(".md")) continue;
         if (entry.isSymbolicLink() || !entry.isFile()) {
           return { source: COMMANDS_SOURCE, valid: false, commands: [] };
         }
         const name = entry.name.replace(MD_EXTENSION_PATTERN, "");
+        const filePath = path.join(commandsDir, entry.name);
+        listed.add(filePath);
         commands.push(
-          parseRuleSyncCommand(
-            name,
-            readFileSync(path.join(commandsDir, entry.name), "utf8")
-          )
+          cachedRuleSyncCommand(filePath, name, readFileSync(filePath, "utf8"))
         );
       }
+      pruneParsedSources(
+        parsedCommandCache,
+        listed,
+        (filePath) => path.dirname(filePath) === commandsDir
+      );
       commands.sort((left, right) => COLLATOR.compare(left.name, right.name));
       return { source: COMMANDS_SOURCE, valid: true, commands };
     } catch {
@@ -762,6 +816,7 @@ export class RuleSyncRepository {
 
     try {
       const skills: SkillDefinition[] = [];
+      const listed = new Set<string>();
       for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
         if (entry.isSymbolicLink()) {
           return { source: SKILLS_SOURCE, valid: false, skills: [] };
@@ -780,7 +835,8 @@ export class RuleSyncRepository {
         if (!frontmatter) {
           return { source: SKILLS_SOURCE, valid: false, skills: [] };
         }
-        const metadata: unknown = parseYaml(frontmatter[1]!);
+        listed.add(skillPath);
+        const metadata = cachedSkillMetadata(skillPath, frontmatter[1]!);
         if (
           !isRecord(metadata) ||
           metadata.name !== entry.name ||
@@ -795,6 +851,11 @@ export class RuleSyncRepository {
           path: `.rulesync/skills/${entry.name}/SKILL.md`
         });
       }
+      pruneParsedSources(
+        parsedSkillMetadataCache,
+        listed,
+        (filePath) => path.dirname(path.dirname(filePath)) === skillsDir
+      );
       skills.sort((left, right) => COLLATOR.compare(left.name, right.name));
       return { source: SKILLS_SOURCE, valid: true, skills };
     } catch {
