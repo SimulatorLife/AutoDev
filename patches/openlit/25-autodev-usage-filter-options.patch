@@ -137,7 +137,7 @@ diff --git a/src/client/src/app/api/autodev/usage/route.ts b/src/client/src/app/
 index a6d18b9..2b1e198 100644
 --- a/src/client/src/app/api/autodev/usage/route.ts
 +++ b/src/client/src/app/api/autodev/usage/route.ts
-@@ -186,6 +186,7 @@ async function fetchFilterOptions(
+@@ -191,6 +191,7 @@ async function fetchFilterOptions(
  					key: spec.key,
  					timeRange,
  					limit: 256,

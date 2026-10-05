@@ -9,10 +9,15 @@ import {
 } from "../openlit/clickhouse-config.ts";
 
 const LINE_BREAK_PATTERN = /\r?\n/u;
+// Stays below the Console's 5s Control API budget so an unresponsive
+// ClickHouse ends this read instead of holding the Evaluations page until the
+// Console abandons the whole Control API request.
+const DEFAULT_QUERY_TIMEOUT_MS = 3000;
 
 export interface EvaluationQueryOptions extends OpenLitClickHouseOptions {
   readonly limit?: number;
   readonly fetchImpl?: typeof fetch;
+  readonly timeoutMs?: number;
 }
 
 export interface RawClickHouseEvaluationRow {
@@ -30,10 +35,12 @@ export interface RawClickHouseEvaluationRow {
 export class EvaluationRepository {
   private readonly options: OpenLitClickHouseOptions;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs: number;
 
   constructor(options: EvaluationQueryOptions = {}) {
     this.options = options;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_QUERY_TIMEOUT_MS;
   }
 
   /**
@@ -50,11 +57,13 @@ export class EvaluationRepository {
       `ORDER BY created_at DESC LIMIT ${safeLimit} FORMAT JSONEachRow`;
 
     try {
+      const signal = AbortSignal.timeout(this.timeoutMs);
       const response = await this.fetchImpl(
         `${endpoint}&query=${encodeURIComponent(query)}`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" }
+          headers: { "Content-Type": "application/json" },
+          signal
         }
       );
 

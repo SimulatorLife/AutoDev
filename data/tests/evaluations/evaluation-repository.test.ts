@@ -126,3 +126,19 @@ test("EvaluationRepository.listEvaluations handles fetch failure and non-ok resp
   const listThrowing = await repoThrowing.listEvaluations();
   assert.deepEqual(listThrowing, []);
 });
+
+test("EvaluationRepository.listEvaluations abandons an unresponsive ClickHouse within its timeout", async () => {
+  const hangingFetch: typeof fetch = (_input, init) =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () =>
+        reject(init.signal?.reason)
+      );
+    });
+  const repository = new EvaluationRepository({
+    fetchImpl: hangingFetch,
+    timeoutMs: 25
+  });
+  const startedAt = performance.now();
+  assert.deepEqual(await repository.listEvaluations(), []);
+  assert.ok(performance.now() - startedAt < 1000);
+});

@@ -105,7 +105,7 @@ new file mode 100644
 index 0000000..a6d18b9
 --- /dev/null
 +++ b/src/client/src/app/api/autodev/usage/route.ts
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,211 @@
 +import { NextRequest } from "next/server";
 +import usageDashboard from "@/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json";
 +import type { MetricParams } from "@/lib/platform/common";
@@ -220,51 +220,56 @@ index 0000000..a6d18b9
 +	const selectedValues = Object.fromEntries(
 +		USAGE_VARIABLE_IDS.map((id) => [id, [...(selection.values[id] ?? [])]]),
 +	);
-+	const filterOptions = await fetchFilterOptions(adapter, timeRange);
-+	const widgets = await Promise.all(
-+		(Object.entries(USAGE_WIDGET_IDS) as [UsageWidgetId, string][]).map(
-+			async ([key, widgetId]) => {
-+				const seedWidget = WIDGETS[widgetId];
-+				const properties = seedWidget?.properties ?? {};
-+				let data: unknown;
-+				let err: string | undefined;
-+				if (seedWidget) {
-+					try {
-+						({ data, err } = await runWidgetQuery(widgetId, {
-+							filter: { timeLimit: usageTimeRange(selection) } as MetricParams,
-+							sourceId: descriptor.id,
-+							signal: "traces",
-+							structuredQuery: seedWidget.config?.structuredQuery,
-+							dashboardVariables: {
-+								specs: DASHBOARD_VARIABLES,
-+								state: { values: selectedValues },
-+							},
-+						}));
-+					} catch {
-+						err = "Widget query failed";
++	// Filter options and widget queries are independent, so run them
++	// concurrently instead of holding every widget query behind the
++	// filter-option lookups.
++	const [filterOptions, widgets] = await Promise.all([
++		fetchFilterOptions(adapter, timeRange),
++		Promise.all(
++			(Object.entries(USAGE_WIDGET_IDS) as [UsageWidgetId, string][]).map(
++				async ([key, widgetId]) => {
++					const seedWidget = WIDGETS[widgetId];
++					const properties = seedWidget?.properties ?? {};
++					let data: unknown;
++					let err: string | undefined;
++					if (seedWidget) {
++						try {
++							({ data, err } = await runWidgetQuery(widgetId, {
++								filter: { timeLimit: usageTimeRange(selection) } as MetricParams,
++								sourceId: descriptor.id,
++								signal: "traces",
++								structuredQuery: seedWidget.config?.structuredQuery,
++								dashboardVariables: {
++									specs: DASHBOARD_VARIABLES,
++									state: { values: selectedValues },
++								},
++							}));
++						} catch {
++							err = "Widget query failed";
++						}
++					} else {
++						err = "Widget missing from the Usage seed";
 +					}
-+				} else {
-+					err = "Widget missing from the Usage seed";
-+				}
-+				const rows = Array.isArray(data) ? data : [];
-+				return {
-+					key,
-+					observed: !err && Array.isArray(data),
-+					rows,
-+					...(typeof properties.value === "string"
-+						? { valuePath: properties.value }
-+						: {}),
-+					...(isRecord(properties.ratio) ? { ratio: properties.ratio } : {}),
-+					...(typeof properties.xAxis === "string"
-+						? { xAxis: properties.xAxis }
-+						: {}),
-+					...(typeof properties.yAxis === "string"
-+						? { yAxis: properties.yAxis }
-+						: {}),
-+				};
-+			},
++					const rows = Array.isArray(data) ? data : [];
++					return {
++						key,
++						observed: !err && Array.isArray(data),
++						rows,
++						...(typeof properties.value === "string"
++							? { valuePath: properties.value }
++							: {}),
++						...(isRecord(properties.ratio) ? { ratio: properties.ratio } : {}),
++						...(typeof properties.xAxis === "string"
++							? { xAxis: properties.xAxis }
++							: {}),
++						...(typeof properties.yAxis === "string"
++							? { yAxis: properties.yAxis }
++							: {}),
++					};
++				},
++			),
 +		),
-+	);
++	]);
 +
 +	return Response.json({
 +		schema: "autodev-openlit-usage-v1",
