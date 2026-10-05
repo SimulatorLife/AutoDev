@@ -8,7 +8,10 @@ import { PendingSpinner } from "./PendingSpinner.ts";
 
 const Form = moduleDefault(NextForm);
 
-export type ConsoleFormProps = React.ComponentProps<typeof Form> & {
+export type ConsoleFormProps = Omit<
+  React.ComponentProps<typeof Form>,
+  "prefetch"
+> & {
   readonly [dataAttribute: `data-${string}`]: string | undefined;
 };
 
@@ -37,6 +40,9 @@ export function ConsoleForm({
     Form,
     {
       ...props,
+      // Console routes are dynamic, so a viewport prefetch of the action URL
+      // could only return layout data the client already holds.
+      prefetch: false,
       "aria-busy": pending ? "true" : undefined,
       onSubmit(event: React.SubmitEvent<HTMLFormElement>) {
         onSubmit?.(event);

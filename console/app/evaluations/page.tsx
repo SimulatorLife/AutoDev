@@ -36,6 +36,15 @@ export default async function EvaluationsPage(): Promise<React.JSX.Element> {
     });
   }
 
+  if (result.data.status === "unavailable") {
+    return React.createElement(ResourceUnavailable, {
+      title: "Evaluation results are unavailable",
+      code: "autodev_evaluations_unavailable",
+      message: result.data.message,
+      hint: "No evaluation count is inferred while the evaluation store cannot be read."
+    });
+  }
+
   return React.createElement(EvaluationsView, {
     evaluations: result.data.evaluations
   });

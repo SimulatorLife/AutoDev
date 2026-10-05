@@ -838,15 +838,27 @@ export async function githubWorkflowsView(
 }
 
 async function evaluationsView(): Promise<Record<string, unknown>> {
-  const repository = new EvaluationRepository();
-  const evaluations = await repository.listEvaluations();
-  return {
+  const read = await new EvaluationRepository().listEvaluations();
+  const base = {
     schema: "autodev-control-evaluations-v1",
     source: "openlit_evaluation",
-    readOnly: true,
-    totalEvaluations: evaluations.length,
-    evaluations
+    readOnly: true
   };
+  return read.status === "available"
+    ? {
+        ...base,
+        status: "available",
+        message: null,
+        totalEvaluations: read.evaluations.length,
+        evaluations: read.evaluations
+      }
+    : {
+        ...base,
+        status: "unavailable",
+        message: read.message,
+        totalEvaluations: null,
+        evaluations: []
+      };
 }
 
 function agentsView(

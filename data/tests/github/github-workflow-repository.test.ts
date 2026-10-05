@@ -267,6 +267,12 @@ test("GithubWorkflowRepository observes workflow edits between catalog reads", a
         ["nightly.yml", ["0 3 * * *"]]
       ]
     );
+
+    await rm(path.join(workflowsDir, "manual.yml"));
+    assert.deepEqual(
+      repository.readWorkflowCatalog().workflows.map((workflow) => workflow.id),
+      ["nightly.yml"]
+    );
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });
   }

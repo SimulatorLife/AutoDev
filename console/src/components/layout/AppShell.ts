@@ -14,18 +14,24 @@ export interface AppShellProps {
  * and header survive client-side navigation; only `children` (the active
  * route segment) is swapped, so moving between sections or tabs never
  * reloads the document or re-hydrates the shell.
+ *
+ * The document itself scrolls (the sidebar stays pinned with `sticky`), which
+ * is the model the App Router's navigation scroll reset assumes: a new page
+ * whose top is out of view scrolls the document back to the top, header
+ * included, rather than aligning the page inside a nested scroller.
  */
 export function AppShell({ children }: AppShellProps): React.JSX.Element {
   return React.createElement(
     "div",
-    {
-      className:
-        "flex h-screen w-screen bg-background text-fg overflow-hidden font-sans"
-    },
-    React.createElement(ActiveAppNav),
+    { className: "flex min-h-screen bg-background text-fg font-sans" },
+    React.createElement(
+      "div",
+      { className: "sticky top-0 h-screen shrink-0 overflow-y-auto" },
+      React.createElement(ActiveAppNav)
+    ),
     React.createElement(
       "main",
-      { className: "flex-1 flex flex-col min-w-0 overflow-y-auto" },
+      { className: "flex-1 flex flex-col min-w-0" },
       React.createElement(
         "header",
         {

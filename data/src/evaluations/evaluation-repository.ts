@@ -32,6 +32,17 @@ export interface RawClickHouseEvaluationRow {
   readonly scores?: Record<string, number>;
 }
 
+/**
+ * Outcome of reading evaluation results. A failed or timed-out read is
+ * reported as unavailable, never as an observed empty result set.
+ */
+export type EvaluationRead =
+  | {
+      readonly status: "available";
+      readonly evaluations: readonly EvaluationResult[];
+    }
+  | { readonly status: "unavailable"; readonly message: string };
+
 export class EvaluationRepository {
   private readonly options: OpenLitClickHouseOptions;
   private readonly fetchImpl: typeof fetch;
@@ -45,9 +56,11 @@ export class EvaluationRepository {
 
   /**
    * Reads evaluation results from ClickHouse `openlit.openlit_evaluation`.
-   * Returns empty array if table has no rows or if ClickHouse is unreachable.
+   * Only a successful query yields results (possibly none); a rejected,
+   * unreachable, or timed-out query is reported as unavailable. Messages
+   * never include the ClickHouse endpoint, which can carry credentials.
    */
-  async listEvaluations(limit = 100): Promise<readonly EvaluationResult[]> {
+  async listEvaluations(limit = 100): Promise<EvaluationRead> {
     const { endpoint } = resolveOpenLitClickHouseConnection(this.options);
     const safeLimit = Math.max(1, Math.min(limit, 1000));
     const query =
@@ -68,13 +81,25 @@ export class EvaluationRepository {
       );
 
       if (!response.ok) {
-        return [];
+        return {
+          status: "unavailable",
+          message: `ClickHouse rejected the evaluation query with HTTP ${response.status}.`
+        };
       }
 
       const text = await response.text();
-      return this.parseEvaluationRows(text);
-    } catch {
-      return [];
+      return {
+        status: "available",
+        evaluations: this.parseEvaluationRows(text)
+      };
+    } catch (error) {
+      return {
+        status: "unavailable",
+        message:
+          error instanceof Error && error.name === "TimeoutError"
+            ? `ClickHouse did not answer the evaluation query within ${this.timeoutMs}ms.`
+            : "ClickHouse is unreachable."
+      };
     }
   }
 

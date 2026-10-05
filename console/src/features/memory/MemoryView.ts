@@ -45,7 +45,12 @@ export type MemoryTabContent =
       readonly sessionCohorts: MemorySessionOutcomeCohortPage | null;
       readonly useCohorts: MemoryInjectionUseCohortPage | null;
     }
-  | { readonly tab: "portal" };
+  | { readonly tab: "portal" }
+  | {
+      /** The active tab's own read failed; the view keeps tabs and scope. */
+      readonly tab: Exclude<MemoryTab, "portal">;
+      readonly unavailable: React.ReactNode;
+    };
 
 export interface MemoryViewProps {
   readonly content: MemoryTabContent;
@@ -100,6 +105,17 @@ export function MemoryView({
   };
 
   const workspaceFormProps: ConsoleFormProps = {
+    // Keyed by the URL scope so Back/forward remounts the uncontrolled
+    // workspace selector with the scope actually shown.
+    key: JSON.stringify([
+      currentWorkspaceId,
+      activeTab,
+      query,
+      kind,
+      status,
+      occurredFrom,
+      occurredUntil
+    ]),
     action: "/memory",
     className: "flex items-center gap-2 text-xs",
     "data-memory-workspace-form": "true"
@@ -199,47 +215,49 @@ export function MemoryView({
     }),
 
     // Active tab body
-    content.tab === "records"
-      ? React.createElement(MemoryRecordsView, {
-          records: content.records,
-          totalCount: content.totalRecords,
-          selectedRecord: content.selectedRecord,
-          history: content.selectedHistory,
-          currentWorkspaceId,
-          currentQuery: query,
-          currentKind: kind,
-          currentStatus: status
-        })
-      : content.tab === "experiences"
-        ? React.createElement(MemoryExperiencesView, {
-            experiences: content.experiences,
-            totalCount: content.totalExperiences,
-            selectedExperience: content.selectedExperience,
+    "unavailable" in content
+      ? content.unavailable
+      : content.tab === "records"
+        ? React.createElement(MemoryRecordsView, {
+            records: content.records,
+            totalCount: content.totalRecords,
+            selectedRecord: content.selectedRecord,
+            history: content.selectedHistory,
             currentWorkspaceId,
-            currentQuery: query
+            currentQuery: query,
+            currentKind: kind,
+            currentStatus: status
           })
-        : content.tab === "cohorts"
-          ? React.createElement(MemoryCohortsView, {
-              sessionCohorts: content.sessionCohorts,
-              useCohorts: content.useCohorts,
+        : content.tab === "experiences"
+          ? React.createElement(MemoryExperiencesView, {
+              experiences: content.experiences,
+              totalCount: content.totalExperiences,
+              selectedExperience: content.selectedExperience,
               currentWorkspaceId,
-              repositoryId,
-              occurredFrom,
-              occurredUntil
+              currentQuery: query
             })
-          : React.createElement(
-              "div",
-              { className: "flex flex-col gap-4 max-w-xl" },
-              portalHref
-                ? React.createElement(MemoryPortalCard, { href: portalHref })
-                : React.createElement(
-                    "div",
-                    {
-                      className:
-                        "p-4 rounded bg-surface border border-border text-sm text-fg-muted"
-                    },
-                    "External OpenLIT UI URL is not configured."
-                  )
-            )
+          : content.tab === "cohorts"
+            ? React.createElement(MemoryCohortsView, {
+                sessionCohorts: content.sessionCohorts,
+                useCohorts: content.useCohorts,
+                currentWorkspaceId,
+                repositoryId,
+                occurredFrom,
+                occurredUntil
+              })
+            : React.createElement(
+                "div",
+                { className: "flex flex-col gap-4 max-w-xl" },
+                portalHref
+                  ? React.createElement(MemoryPortalCard, { href: portalHref })
+                  : React.createElement(
+                      "div",
+                      {
+                        className:
+                          "p-4 rounded bg-surface border border-border text-sm text-fg-muted"
+                      },
+                      "External OpenLIT UI URL is not configured."
+                    )
+              )
   );
 }

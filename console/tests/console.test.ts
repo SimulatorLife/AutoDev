@@ -2069,6 +2069,8 @@ test("fetchEvaluations issues authenticated GET to /control/evaluations", async 
       schema: "autodev-control-evaluations-v1",
       source: "openlit_evaluation",
       readOnly: true,
+      status: "available",
+      message: null,
       totalEvaluations: 1,
       evaluations: [
         {
@@ -2782,6 +2784,25 @@ test("MemoryView renders only the active tab's content", () => {
     })
   );
   assert.match(portal, /data-feature="memory-portal"/u);
+
+  // A failed tab read is reported in the tab body; tabs stay navigable.
+  const failed = renderToStaticMarkup(
+    React.createElement(MemoryView, {
+      ...shared,
+      content: {
+        tab: "cohorts",
+        unavailable: React.createElement(
+          "p",
+          { "data-probe": "unavailable" },
+          "cohorts could not be loaded"
+        )
+      }
+    })
+  );
+  assert.match(failed, /data-probe="unavailable"/u);
+  assert.match(failed, /aria-current="page"[^>]*data-tab-item="cohorts"/u);
+  assert.match(failed, /data-tab-item="records"/u);
+  assert.doesNotMatch(failed, /data-feature="memory-cohorts"/u);
   assert.doesNotMatch(
     portal,
     /data-feature="memory-(?:records|experiences|cohorts)"/u

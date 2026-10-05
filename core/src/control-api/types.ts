@@ -260,13 +260,25 @@ export interface ControlApiRuntimeResponse {
   readonly inFlightRequestCount: number;
 }
 
-export interface ControlApiEvaluationsResponse {
+export type ControlApiEvaluationsResponse = {
   readonly schema: "autodev-control-evaluations-v1";
   readonly source: string;
   readonly readOnly: boolean;
-  readonly totalEvaluations: number;
-  readonly evaluations: readonly EvaluationResult[];
-}
+} & (
+  | {
+      readonly status: "available";
+      readonly message: null;
+      readonly totalEvaluations: number;
+      readonly evaluations: readonly EvaluationResult[];
+    }
+  | {
+      /** The evaluation store could not be read; nothing is inferred. */
+      readonly status: "unavailable";
+      readonly message: string;
+      readonly totalEvaluations: null;
+      readonly evaluations: readonly [];
+    }
+);
 
 export interface ControlApiMemoryRecordsResponse {
   readonly schema: "autodev-memory-records-v1";

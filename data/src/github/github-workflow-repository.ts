@@ -71,6 +71,18 @@ const parsedWorkflowCache = new Map<
   { readonly content: string; readonly parsed: ParsedWorkflowTriggers | null }
 >();
 
+/** Drops cached parses for workflows no longer listed in `workflowsDir`. */
+function pruneParsedWorkflows(
+  workflowsDir: string,
+  listed: ReadonlySet<string>
+): void {
+  for (const filePath of parsedWorkflowCache.keys()) {
+    if (path.dirname(filePath) === workflowsDir && !listed.has(filePath)) {
+      parsedWorkflowCache.delete(filePath);
+    }
+  }
+}
+
 function cachedWorkflowTriggers(
   filePath: string,
   content: string
@@ -147,6 +159,10 @@ export class GithubWorkflowRepository {
       return { status: "unavailable", workflows: [] };
     }
 
+    pruneParsedWorkflows(
+      workflowsDir,
+      new Set(filenames.map((filename) => path.join(workflowsDir, filename)))
+    );
     const workflows: GithubWorkflowDefinition[] = [];
     for (const filename of filenames) {
       const filePath = path.join(workflowsDir, filename);

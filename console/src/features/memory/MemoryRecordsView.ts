@@ -180,10 +180,17 @@ export function MemoryRecordsView({
   return React.createElement(
     "div",
     { className: "flex flex-col gap-6", "data-feature": "memory-records" },
-    // Filter controls
+    // Filter controls, keyed by the URL scope so a navigation that changes
+    // it remounts the uncontrolled fields with the URL's values.
     React.createElement(
       ConsoleForm,
       {
+        key: JSON.stringify([
+          currentWorkspaceId,
+          currentQuery,
+          currentKind,
+          currentStatus
+        ]),
         action: "/memory",
         className:
           "flex flex-wrap items-center gap-3 p-4 bg-surface/80 rounded-lg border border-border"

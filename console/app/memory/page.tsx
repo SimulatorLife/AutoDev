@@ -382,12 +382,16 @@ export default async function MemoryPage(
     workspacesRequest,
     TAB_LOADERS[params.activeTab](params, currentWorkspaceId, config)
   ]);
-  if (tabLoad.kind === "failed") {
-    return renderTabUnavailableState(tabLoad.tab, tabLoad.result);
-  }
-
   return React.createElement(MemoryView, {
-    content: tabLoad.content,
+    // A failed tab read is reported in the tab body, so the tabs, scope
+    // selector, and summary stay available for moving to a working view.
+    content:
+      tabLoad.kind === "ok"
+        ? tabLoad.content
+        : {
+            tab: tabLoad.tab,
+            unavailable: renderTabUnavailableState(tabLoad.tab, tabLoad.result)
+          },
     summary: React.createElement(MemorySummaryStream, {
       counts: summaryCounts
     }),

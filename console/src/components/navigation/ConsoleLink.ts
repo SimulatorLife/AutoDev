@@ -67,6 +67,14 @@ export function ConsoleLink({
     cancelRest();
     if (!isCurrentLocation(anchor)) setPrefetch(true);
   };
+  // Prefetching stays enabled only while intent lasts. Next's Link prefetches
+  // on every hover once enabled, so leaving it on would bypass the rest
+  // threshold (and the current-page check) on every later pass. Disabling it
+  // does not cancel a prefetch already issued.
+  const endIntent = (): void => {
+    cancelRest();
+    setPrefetch(false);
+  };
   const awaitRest = (anchor: HTMLAnchorElement): void => {
     if (prefetch) return;
     cancelRest();
@@ -83,7 +91,7 @@ export function ConsoleLink({
       },
       onMouseLeave(event: React.MouseEvent<HTMLAnchorElement>) {
         onMouseLeave?.(event);
-        cancelRest();
+        endIntent();
       },
       onFocus(event: React.FocusEvent<HTMLAnchorElement>) {
         onFocus?.(event);
@@ -91,7 +99,7 @@ export function ConsoleLink({
       },
       onBlur(event: React.FocusEvent<HTMLAnchorElement>) {
         onBlur?.(event);
-        cancelRest();
+        endIntent();
       },
       onMouseDown(event: React.MouseEvent<HTMLAnchorElement>) {
         onMouseDown?.(event);

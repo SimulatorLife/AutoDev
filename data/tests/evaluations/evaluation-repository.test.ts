@@ -100,14 +100,16 @@ test("EvaluationRepository.listEvaluations returns parsed rows with custom fetch
   };
 
   const repo = new EvaluationRepository({ fetchImpl: mockFetch });
-  const list = await repo.listEvaluations(50);
+  const read = await repo.listEvaluations(50);
+  assert.equal(read.status, "available");
+  const list = read.status === "available" ? read.evaluations : [];
   assert.equal(list.length, 1);
   assert.equal(list[0]?.id, "uuid-123");
   assert.equal(list[0]?.agentRole, "docs-researcher");
   assert.equal(list[0]?.model, "unknown");
 });
 
-test("EvaluationRepository.listEvaluations handles fetch failure and non-ok response safely", async () => {
+test("EvaluationRepository.listEvaluations reports failed reads as unavailable, never as empty", async () => {
   const errorFetch: typeof fetch = async () => {
     return new Response("Table openlit.openlit_evaluation does not exist", {
       status: 404
@@ -115,16 +117,28 @@ test("EvaluationRepository.listEvaluations handles fetch failure and non-ok resp
   };
 
   const repoError = new EvaluationRepository({ fetchImpl: errorFetch });
-  const listError = await repoError.listEvaluations();
-  assert.deepEqual(listError, []);
+  assert.deepEqual(await repoError.listEvaluations(), {
+    status: "unavailable",
+    message: "ClickHouse rejected the evaluation query with HTTP 404."
+  });
 
   const throwingFetch: typeof fetch = async () => {
-    throw new Error("ECONNREFUSED");
+    throw new Error("ECONNREFUSED http://user:secret@clickhouse:8123");
   };
 
   const repoThrowing = new EvaluationRepository({ fetchImpl: throwingFetch });
-  const listThrowing = await repoThrowing.listEvaluations();
-  assert.deepEqual(listThrowing, []);
+  const unreachable = await repoThrowing.listEvaluations();
+  assert.deepEqual(unreachable, {
+    status: "unavailable",
+    message: "ClickHouse is unreachable."
+  });
+
+  const emptyFetch: typeof fetch = async () =>
+    new Response("", { status: 200 });
+  assert.deepEqual(
+    await new EvaluationRepository({ fetchImpl: emptyFetch }).listEvaluations(),
+    { status: "available", evaluations: [] }
+  );
 });
 
 test("EvaluationRepository.listEvaluations abandons an unresponsive ClickHouse within its timeout", async () => {
@@ -139,6 +153,9 @@ test("EvaluationRepository.listEvaluations abandons an unresponsive ClickHouse w
     timeoutMs: 25
   });
   const startedAt = performance.now();
-  assert.deepEqual(await repository.listEvaluations(), []);
+  assert.deepEqual(await repository.listEvaluations(), {
+    status: "unavailable",
+    message: "ClickHouse did not answer the evaluation query within 25ms."
+  });
   assert.ok(performance.now() - startedAt < 1000);
 });
