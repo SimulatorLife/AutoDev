@@ -10,6 +10,7 @@ import type {
   UsageVariableId
 } from "@simulatorlife/autodev-core";
 import {
+  type OpenLITTraceResult,
   OpenLITUsageClient,
   type OpenLITUsageResult
 } from "@simulatorlife/autodev-data/usage";
@@ -42,6 +43,9 @@ export type OpenLITUsageEnvironment = Readonly<
 
 export type ConsoleUsageResult =
   { readonly kind: "not-configured" } | OpenLITUsageResult;
+
+export type ConsoleTraceResult =
+  { readonly kind: "not-configured" } | OpenLITTraceResult;
 
 function readSecretFromFile(filePath: string, key: string): string | null {
   try {
@@ -98,6 +102,15 @@ export function loadOpenLITUsage(
   const config = readOpenLITUsageConfig(env);
   if (!config) return Promise.resolve({ kind: "not-configured" });
   return new OpenLITUsageClient(config).query(selection);
+}
+
+export function loadOpenLITTrace(
+  spanId: string,
+  env: OpenLITUsageEnvironment = process.env
+): Promise<ConsoleTraceResult> {
+  const config = readOpenLITUsageConfig(env);
+  if (!config) return Promise.resolve({ kind: "not-configured" });
+  return new OpenLITUsageClient(config).queryTrace(spanId);
 }
 
 export type UsageSearchParams = Readonly<

@@ -12,10 +12,9 @@ import {
  * Workspaces resource view.
  *
  * Each workspace has a configured `id` (GitHub owner/repo), `baseBranch`,
- * `enabled` status, and `agentRoles` scope. Its actual availability/health is
- * a runtime concern that must be reported by an authoritative runtime probe;
- * until that adapter exists, the availability column renders `Unknown` rather
- * than `Available`.
+ * `enabled` state, and `agentRoles` scope (`null` means not configured). Its
+ * actual availability/health is a runtime concern that must be reported by an
+ * authoritative probe; until that adapter exists, availability is `Not observed`.
  */
 
 export interface WorkspacesViewProps {
@@ -52,11 +51,11 @@ export function WorkspacesView({
         )
     },
     {
-      id: "status",
-      header: "Status",
+      id: "enablement",
+      header: "Enablement",
       cell: (ws) =>
         React.createElement(StatusBadge, {
-          status: ws.enabled ? "valid" : "unavailable",
+          status: "configured",
           label: ws.enabled ? "Enabled" : "Disabled"
         })
     },
@@ -66,8 +65,20 @@ export function WorkspacesView({
       cell: (ws) =>
         React.createElement(
           "span",
-          { className: "text-xs font-mono text-fg-secondary" },
-          ws.agentRoles === null ? "All roles" : ws.agentRoles.join(", ")
+          {
+            className: "text-xs font-mono text-fg-secondary",
+            "data-role-scope":
+              ws.agentRoles === null
+                ? "not-configured"
+                : ws.agentRoles.length === 0
+                  ? "empty"
+                  : "configured"
+          },
+          ws.agentRoles === null
+            ? "Not configured"
+            : ws.agentRoles.length === 0
+              ? "No roles assigned"
+              : ws.agentRoles.join(", ")
         )
     },
     {
@@ -75,8 +86,8 @@ export function WorkspacesView({
       header: "Availability",
       cell: () =>
         React.createElement(StatusBadge, {
-          status: "unavailable",
-          label: "Unknown"
+          status: "not-observed",
+          label: "Not observed"
         })
     }
   ];
@@ -98,7 +109,7 @@ export function WorkspacesView({
       React.createElement(StatCard, {
         title: "Enabled Workspaces",
         value: enabledCount,
-        subtitle: "Active workspace scope"
+        subtitle: "Configuration, not runtime availability"
       }),
       React.createElement(StatCard, {
         title: "Tenancy Model",

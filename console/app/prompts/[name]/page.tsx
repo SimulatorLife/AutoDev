@@ -1,7 +1,10 @@
 import { notFound } from "next/navigation";
 import React from "react";
 
-import { PromptDetailView } from "../../../src/features/prompts/PromptDetailView.ts";
+import {
+  PromptDetailView,
+  type PromptSaveOutcome
+} from "../../../src/features/prompts/PromptDetailView.ts";
 import {
   controlApiFailureCode,
   fetchPromptDetail
@@ -11,16 +14,36 @@ import {
   ConsolePageShell,
   readNodeContext,
   ResourceUnavailable
-} from "../../_console.tsx";
+} from "../../_console.ts";
 
 export const dynamic = "force-dynamic";
 
+function promptSaveOutcome(
+  value: string | readonly string[] | undefined
+): PromptSaveOutcome | undefined {
+  const outcome = typeof value === "string" ? value : value?.[0];
+  return outcome === "conflict" ||
+    outcome === "validation" ||
+    outcome === "apply-failed" ||
+    outcome === "failed"
+    ? outcome
+    : undefined;
+}
+
 export default async function PromptDetailPage({
-  params
+  params,
+  searchParams
 }: {
   readonly params: Promise<{ readonly name: string }>;
+  readonly searchParams?: Promise<
+    Record<string, string | readonly string[] | undefined>
+  >;
 }): Promise<React.JSX.Element> {
-  const { name } = await params;
+  const [{ name }, query] = await Promise.all([
+    params,
+    searchParams ?? Promise.resolve({})
+  ]);
+  const saveOutcome = promptSaveOutcome(query.save);
   const { section, config } = readNodeContext("/prompts");
   if (!config) {
     return React.createElement(
@@ -53,7 +76,8 @@ export default async function PromptDetailPage({
     ConsolePageShell,
     { section },
     React.createElement(PromptDetailView, {
-      prompt: promptDocumentFromControlApi(result.data)
+      prompt: promptDocumentFromControlApi(result.data),
+      ...(saveOutcome ? { saveOutcome } : {})
     })
   );
 }

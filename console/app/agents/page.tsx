@@ -13,7 +13,7 @@ import {
   ConsolePageShell,
   readNodeContext,
   ResourceUnavailable
-} from "../_console.tsx";
+} from "../_console.ts";
 
 export const dynamic = "force-dynamic";
 

@@ -10,6 +10,13 @@ import {
 
 const LINE_BREAK_PATTERN = /\r?\n/u;
 
+export class EvaluationSourceUnavailableError extends Error {
+  constructor() {
+    super("Evaluation history is unavailable.");
+    this.name = "EvaluationSourceUnavailableError";
+  }
+}
+
 export interface EvaluationQueryOptions extends OpenLitClickHouseOptions {
   readonly limit?: number;
   readonly fetchImpl?: typeof fetch;
@@ -36,12 +43,8 @@ export class EvaluationRepository {
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
   }
 
-  /**
-   * Reads evaluation results from ClickHouse `openlit.openlit_evaluation`.
-   * Returns empty array if table has no rows or if ClickHouse is unreachable.
-   */
+  /** Reads evaluation results from ClickHouse `openlit.openlit_evaluation`. */
   async listEvaluations(limit = 100): Promise<readonly EvaluationResult[]> {
-    const { endpoint } = resolveOpenLitClickHouseConnection(this.options);
     const safeLimit = Math.max(1, Math.min(limit, 1000));
     const query =
       "SELECT id, span_id, created_at, meta, scores, " +
@@ -50,6 +53,7 @@ export class EvaluationRepository {
       `ORDER BY created_at DESC LIMIT ${safeLimit} FORMAT JSONEachRow`;
 
     try {
+      const { endpoint } = resolveOpenLitClickHouseConnection(this.options);
       const response = await this.fetchImpl(
         `${endpoint}&query=${encodeURIComponent(query)}`,
         {
@@ -58,70 +62,107 @@ export class EvaluationRepository {
         }
       );
 
-      if (!response.ok) {
-        return [];
-      }
-
-      const text = await response.text();
-      return this.parseEvaluationRows(text);
-    } catch {
-      return [];
+      if (!response.ok) throw new EvaluationSourceUnavailableError();
+      return this.parseEvaluationRows(await response.text());
+    } catch (error) {
+      if (error instanceof EvaluationSourceUnavailableError) throw error;
+      throw new EvaluationSourceUnavailableError();
     }
   }
 
   parseEvaluationRows(text: string): readonly EvaluationResult[] {
     const lines = text
       .split(LINE_BREAK_PATTERN)
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
 
-    const results: EvaluationResult[] = [];
-
-    for (const line of lines) {
+    return lines.map((line) => {
+      let parsed: unknown;
       try {
-        const row = JSON.parse(line) as RawClickHouseEvaluationRow;
-        if (!row.id) continue;
-
-        const evNames = row["evaluationData.evaluation"] ?? [];
-        const verdicts = row["evaluationData.verdict"] ?? [];
-        const scores = row.scores ?? {};
-
-        const metrics: EvaluationMetric[] = [];
-        for (const [name, value] of Object.entries(scores)) {
-          const verdict = verdicts[evNames.indexOf(name)]?.toLowerCase();
-          const effectiveVerdict =
-            verdict ?? (Number(value) >= 0.5 ? "pass" : "fail");
-          const pass =
-            effectiveVerdict === "pass" || effectiveVerdict === "yes";
-
-          metrics.push({
-            name,
-            value: Number(value),
-            pass
-          });
-        }
-
-        const passed = metrics.length > 0 ? metrics.every((m) => m.pass) : true;
-        const meta = row.meta ?? {};
-        const agentRole =
-          meta.agentRole ?? meta.role ?? meta.agent ?? "unknown";
-        const model = meta.model ?? meta["gen_ai.request.model"] ?? "unknown";
-        const promptName = meta.promptName ?? meta.prompt ?? undefined;
-
-        results.push({
-          id: row.id,
-          agentRole,
-          ...(promptName ? { promptName } : {}),
-          model,
-          metrics,
-          passed,
-          timestamp: row.created_at
-        });
+        parsed = JSON.parse(line);
       } catch {
-        // Skip malformed rows
+        throw new EvaluationSourceUnavailableError();
       }
-    }
+      if (
+        typeof parsed !== "object" ||
+        parsed === null ||
+        Array.isArray(parsed)
+      ) {
+        throw new EvaluationSourceUnavailableError();
+      }
 
-    return results;
+      const row = parsed as RawClickHouseEvaluationRow;
+      if (
+        typeof row.id !== "string" ||
+        row.id.trim().length === 0 ||
+        (row.span_id !== undefined &&
+          (typeof row.span_id !== "string" || row.span_id.length > 256)) ||
+        typeof row.created_at !== "string" ||
+        row.created_at.trim().length === 0 ||
+        (row.meta !== undefined &&
+          (typeof row.meta !== "object" ||
+            row.meta === null ||
+            Array.isArray(row.meta)))
+      ) {
+        throw new EvaluationSourceUnavailableError();
+      }
+
+      const evNames = row["evaluationData.evaluation"] ?? [];
+      const verdicts = row["evaluationData.verdict"] ?? [];
+      const scores = row.scores ?? {};
+      if (
+        !Array.isArray(evNames) ||
+        !evNames.every((name) => typeof name === "string") ||
+        !Array.isArray(verdicts) ||
+        !verdicts.every((verdict) => typeof verdict === "string") ||
+        typeof scores !== "object" ||
+        scores === null ||
+        Array.isArray(scores)
+      ) {
+        throw new EvaluationSourceUnavailableError();
+      }
+
+      const metrics: EvaluationMetric[] = Object.entries(scores).map(
+        ([name, value]) => {
+          if (typeof value !== "number" || !Number.isFinite(value)) {
+            throw new EvaluationSourceUnavailableError();
+          }
+          const rawVerdict = verdicts[evNames.indexOf(name)]
+            ?.trim()
+            .toLowerCase();
+          const pass =
+            rawVerdict === "pass" ||
+            rawVerdict === "passed" ||
+            rawVerdict === "yes"
+              ? true
+              : rawVerdict === "fail" ||
+                  rawVerdict === "failed" ||
+                  rawVerdict === "no"
+                ? false
+                : null;
+          return { name, value, pass };
+        }
+      );
+
+      const hasFailedMetric = metrics.some((metric) => metric.pass === false);
+      const allMetricsPassed =
+        metrics.length > 0 && metrics.every((metric) => metric.pass === true);
+      const passed = hasFailedMetric ? false : allMetricsPassed ? true : null;
+      const meta = row.meta ?? {};
+      const agentRole = meta.agentRole ?? meta.role ?? meta.agent ?? "unknown";
+      const model = meta.model ?? meta["gen_ai.request.model"] ?? "unknown";
+      const promptName = meta.promptName ?? meta.prompt ?? undefined;
+
+      return {
+        id: row.id,
+        ...(row.span_id?.trim() ? { spanId: row.span_id.trim() } : {}),
+        agentRole,
+        ...(promptName ? { promptName } : {}),
+        model,
+        metrics,
+        passed,
+        timestamp: row.created_at
+      };
+    });
   }
 }

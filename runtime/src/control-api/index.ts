@@ -1,6 +1,7 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { type IncomingMessage, type ServerResponse } from "node:http";
+import { homedir } from "node:os";
 import path from "node:path";
 
 import { SpanStatusCode } from "@opentelemetry/api";
@@ -16,11 +17,14 @@ import {
 import {
   ConfigRepository,
   EvaluationRepository,
+  EvaluationSourceUnavailableError,
   GithubActionsAdapter,
   GithubActionsApiError,
   type GithubActionsRuntimeSnapshot,
   type GithubApiWorkflow,
   GithubWorkflowRepository,
+  RuleSyncCommandConflictError,
+  RuleSyncCommandValidationError,
   RuleSyncRepository
 } from "@simulatorlife/autodev-data";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
@@ -39,6 +43,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "../router/proxy.ts";
+import { materializeCommands } from "../platform/install-materializer.ts";
 import { getDefaultExecutionContract } from "../router/subagents.ts";
 import { routerTelemetryTracer } from "../router/telemetry.ts";
 import { readControlApiJsonObject } from "./body.ts";
@@ -76,6 +81,13 @@ const GITHUB_CONTROL_API_SCHEMA = "autodev-control-github-v1";
 const GITHUB_WORKFLOW_YAML_SOURCE = ".github/workflows";
 
 export type ControlApiRole = "viewer" | "operator";
+
+/** Trusted host options for isolated Control API integration tests. */
+export interface ControlApiRequestOptions {
+  readonly repositoryRoot?: string;
+  readonly codexHome?: string;
+}
+
 export interface ControlApiActor {
   actor: string;
   role: ControlApiRole;
@@ -488,12 +500,28 @@ function toolsView(): Record<string, unknown> {
   };
 }
 
-function skillsView(): Record<string, unknown> {
+function skillsView(
+  repositoryRoot: string = DEFAULT_REPO_ROOT
+): Record<string, unknown> {
+  const catalog = new RuleSyncRepository(repositoryRoot).loadSkills();
+  const assignments = configuredRoleExposure("skills");
+  const rolesBySkill = new Map(
+    assignments.map(({ name, roles }) => [name, roles])
+  );
+  const catalogNames = new Set(catalog.skills.map((skill) => skill.name));
   return {
-    schema: "autodev-control-skills-v1",
-    source: EXECUTION_CONTRACT_SOURCE,
+    schema: "autodev-control-skills-v2",
+    source: `${catalog.source}+${EXECUTION_CONTRACT_SOURCE}`,
     readOnly: true,
-    skills: configuredRoleExposure("skills")
+    valid: catalog.valid,
+    skills: catalog.skills.map((skill) => ({
+      ...skill,
+      roles: rolesBySkill.get(skill.name) ?? []
+    })),
+    unresolvedAssignments:
+      catalog.valid === true
+        ? assignments.filter(({ name }) => !catalogNames.has(name))
+        : []
   };
 }
 
@@ -1052,12 +1080,17 @@ function permissionsView(
 function promptsView(
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> {
-  const commandAssets = new RuleSyncRepository(repositoryRoot).loadCommands();
-  const commands = commandAssets.map((command) => ({
-    name: command.name,
-    path: command.path,
-    description: command.description ?? `RuleSync command ${command.name}`
-  }));
+  const commandState = new RuleSyncRepository(repositoryRoot).loadCommands();
+  const commands =
+    commandState.valid === true
+      ? commandState.commands.map((command) => ({
+          name: command.name,
+          path: command.path,
+          ...(command.description === undefined
+            ? {}
+            : { description: command.description })
+        }))
+      : [];
   const rolePromptsDir = path.join(
     repositoryRoot,
     "agents",
@@ -1082,10 +1115,11 @@ function promptsView(
     }
   }
   return {
-    schema: "autodev-control-prompts-v1",
-    source: "rulesync",
+    schema: "autodev-control-prompts-v2",
+    source: commandState.source,
     readOnly: true,
-    totalCommands: commands.length,
+    valid: commandState.valid,
+    totalCommands: commandState.valid === true ? commands.length : null,
     commands,
     rolePrompts
   };
@@ -1095,15 +1129,19 @@ function promptDetailView(
   name: string,
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> | null {
-  const commandAssets = new RuleSyncRepository(repositoryRoot).loadCommands();
-  const command = commandAssets.find((entry) => entry.name === name);
+  const commandState = new RuleSyncRepository(repositoryRoot).loadCommands();
+  const command =
+    commandState.valid === true
+      ? commandState.commands.find((entry) => entry.name === name)
+      : undefined;
   if (command) {
     return {
-      schema: "autodev-control-prompt-detail-v1",
+      schema: "autodev-control-prompt-detail-v2",
       name,
       type: "command",
       source: command.path,
-      content: command.content ?? ""
+      content: command.content,
+      revision: command.revision
     };
   }
   const rolePath = path.join(
@@ -1117,11 +1155,12 @@ function promptDetailView(
     try {
       const content = readFileSync(rolePath, "utf8");
       return {
-        schema: "autodev-control-prompt-detail-v1",
+        schema: "autodev-control-prompt-detail-v2",
         name,
         type: "role",
         source: `agents/prompts/roles/${name}.md`,
-        content
+        content,
+        revision: createHash("sha256").update(content, "utf8").digest("hex")
       };
     } catch {
       return null;
@@ -1403,7 +1442,19 @@ async function readOnlyCollection(
     );
     return true;
   }
-  const body = await renderCollection(actor);
+  let body: Record<string, unknown>;
+  try {
+    body = await renderCollection(actor);
+  } catch (error) {
+    if (!(error instanceof EvaluationSourceUnavailableError)) throw error;
+    sendControlError(
+      response,
+      503,
+      "autodev_control_evaluations_unavailable",
+      "Evaluation history is unavailable from the telemetry store."
+    );
+    return true;
+  }
   sendJson(response, 200, body, {
     "cache-control": "no-store",
     vary: CONTROL_VARY_HEADER
@@ -1511,10 +1562,219 @@ const PROMPT_DETAIL_ROUTE: ReadOnlyDetailRoute = {
   read: promptDetailView
 };
 
+async function patchPromptCommand(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  name: string,
+  repositoryRoot: string,
+  codexHome: string
+): Promise<void> {
+  const resource = `.rulesync/commands/${name}.md`;
+  if (actor.role !== "operator") {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_rule_sync_command",
+      resource,
+      outcome: "denied",
+      changes: null,
+      reason: "operator_required"
+    });
+    sendControlError(
+      response,
+      403,
+      "autodev_control_api_forbidden",
+      "Updating canonical RuleSync commands requires an operator."
+    );
+    return;
+  }
+  const parsed = await readControlApiJsonObject(request);
+  if (!parsed.ok) {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_rule_sync_command",
+      resource,
+      outcome: "error",
+      changes: null,
+      reason: parsed.code
+    });
+    sendControlError(response, parsed.status, parsed.code, parsed.message);
+    return;
+  }
+  const { body } = parsed;
+  if (
+    Object.keys(body).length !== 2 ||
+    typeof body.content !== "string" ||
+    typeof body.expectedRevision !== "string"
+  ) {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_rule_sync_command",
+      resource,
+      outcome: "error",
+      changes: null,
+      reason: "invalid_body"
+    });
+    sendControlError(
+      response,
+      400,
+      "autodev_control_api_invalid_body",
+      "Command updates require exactly the expected revision and Markdown content."
+    );
+    return;
+  }
+
+  let updated;
+  try {
+    updated = await new RuleSyncRepository(repositoryRoot).updateCommand({
+      name,
+      expectedRevision: body.expectedRevision,
+      content: body.content
+    });
+  } catch (error) {
+    const conflict = error instanceof RuleSyncCommandConflictError;
+    const validation = error instanceof RuleSyncCommandValidationError;
+    if (!conflict && !validation) throw error;
+    const status = conflict ? 409 : 400;
+    const code = conflict
+      ? "autodev_control_prompt_revision_conflict"
+      : "autodev_control_prompt_invalid_source";
+    const message =
+      error instanceof Error ? error.message : "Command source is invalid.";
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_rule_sync_command",
+      resource,
+      outcome: "error",
+      changes: null,
+      reason: conflict ? "revision_conflict" : "invalid_source"
+    });
+    sendControlError(response, status, code, message);
+    return;
+  }
+
+  let updatedPrompts: readonly string[];
+  try {
+    updatedPrompts = materializeCommands(
+      { repositoryRoot },
+      path.join(codexHome, "prompts")
+    );
+  } catch {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_rule_sync_command",
+      resource,
+      outcome: "error",
+      changes: { name, revision: updated.revision },
+      reason: "projection_apply_failed"
+    });
+    sendControlError(
+      response,
+      503,
+      "autodev_control_prompt_apply_failed",
+      "Canonical source was updated, but RuleSync generation or projection apply failed. Reload the prompt before retrying."
+    );
+    return;
+  }
+
+  const projectionUpdated = updatedPrompts.includes(name);
+  auditMutation({
+    actor: actor.actor,
+    actorVerified: true,
+    role: actor.role,
+    action: "update_rule_sync_command",
+    resource,
+    outcome: "ok",
+    changes: {
+      name,
+      revision: updated.revision,
+      projectionUpdated,
+      restartRequired: projectionUpdated
+    }
+  });
+  sendJson(
+    response,
+    200,
+    {
+      schema: "autodev-control-prompt-command-patch-v1",
+      name,
+      revision: updated.revision,
+      changed: updated.revision !== body.expectedRevision,
+      projectionUpdated,
+      restartRequired: projectionUpdated
+    },
+    { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
+  );
+}
+
+async function promptDetailRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  method: string,
+  pathname: string,
+  name: string,
+  options: ControlApiRequestOptions
+): Promise<boolean> {
+  if (method === "GET") {
+    const route: ReadOnlyDetailRoute = {
+      ...PROMPT_DETAIL_ROUTE,
+      read: (identifier) =>
+        promptDetailView(identifier, options.repositoryRoot ?? DEFAULT_REPO_ROOT)
+    };
+    return readOnlyDetailRoute(
+      request,
+      response,
+      actor,
+      method,
+      pathname,
+      name,
+      route
+    );
+  }
+  if (method === "PATCH") {
+    const home = process.env.HOME?.trim() || homedir();
+    const codexHome =
+      options.codexHome?.trim() ||
+      process.env.CODEX_HOME?.trim() ||
+      path.join(home, ".codex");
+    await patchPromptCommand(
+      request,
+      response,
+      actor,
+      name,
+      options.repositoryRoot ?? DEFAULT_REPO_ROOT,
+      codexHome
+    );
+    return true;
+  }
+
+  auditRejectedRequest(request, method, pathname, "method_not_allowed", actor);
+  response.setHeader("allow", "GET, PATCH");
+  sendControlError(
+    response,
+    405,
+    "autodev_control_api_method_not_allowed",
+    "Prompt details are read via GET and canonical commands are updated via PATCH."
+  );
+  return true;
+}
+
 export async function handleControlApiRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  pathname: string
+  pathname: string,
+  options: ControlApiRequestOptions = {}
 ): Promise<boolean> {
   if (!pathname.startsWith(CONTROL_API_BASE + "/")) return false;
   const method = request.method ?? "GET";
@@ -1565,14 +1825,14 @@ export async function handleControlApiRequest(
     );
   const promptMatch = pathname.match(PROMPT_DETAIL_PATH);
   if (promptMatch)
-    return readOnlyDetailRoute(
+    return promptDetailRoute(
       request,
       response,
       actor,
       method,
       pathname,
       promptMatch[1]!,
-      PROMPT_DETAIL_ROUTE
+      options
     );
   if (await readOnlyCollection(pathname, method, response, actor)) return true;
   auditRejectedRequest(

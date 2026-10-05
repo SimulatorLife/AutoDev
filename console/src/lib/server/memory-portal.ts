@@ -1,12 +1,10 @@
 /**
- * Server-only resolver for the public OpenLIT Memory portal URL.
+ * Server-only resolver for the transitional external Memory UI destination.
  *
- * The retained, AutoDev-branded OpenLIT `/memory` page is the sole Memory
- * operator UI (lifecycle actions, provenance/history, per-experience
- * outcomes, and the bounded cohort view). This module never talks to the
- * Memory Control API and never reads a service token; it only resolves a
- * public browser-facing base URL and normalizes it to the fixed `/memory`
- * path so the Console can link out to it.
+ * The AutoDev Console is the primary Memory operator surface. This module
+ * never talks to the Memory Control API and never reads a service token; it
+ * only resolves the temporary external UI URL and normalizes it to the fixed
+ * `/memory` path.
  *
  * The configured value is a server environment variable, never a
  * browser-supplied header, query parameter, or request host. The resolved
@@ -19,12 +17,12 @@ const DEFAULT_OPENLIT_UI_BASE_URL = "http://127.0.0.1:3000";
 export type OpenLITUiEnvironment = Readonly<Record<string, string | undefined>>;
 
 export interface MemoryPortalConfig {
-  /** The public OpenLIT Memory page URL, always ending in `/memory`. */
+  /** The validated external Memory UI URL, always ending in `/memory`. */
   readonly href: string;
 }
 
 /**
- * Resolves the configured (or default local) OpenLIT UI base URL and
+ * Resolves the configured (or default local) external Memory UI URL and
  * normalizes it to the fixed `/memory` path.
  *
  * Returns `null` when the configured value is not a valid http/https URL or

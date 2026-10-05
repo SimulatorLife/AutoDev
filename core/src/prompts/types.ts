@@ -11,6 +11,7 @@ export interface PromptDocument {
   readonly kind: "command" | "role";
   readonly path: string;
   readonly content: string;
+  readonly revision: string;
 }
 
 export interface PromptVersion {

@@ -41,6 +41,7 @@ export function ToolsView({
     {
       id: "name",
       header: "Tool Name",
+      wrap: true,
       cell: (tool) =>
         React.createElement(
           "div",

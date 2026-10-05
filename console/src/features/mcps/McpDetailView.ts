@@ -49,7 +49,7 @@ export interface McpDetailViewProps {
   /**
    * Partial projection of explicitly enumerated role MCP/plugin allowlist
    * tools joined from the Tools capability catalog. These entries describe
-   * what is configured to be exposed -- they are NOT a live server-discovered
+   * what is configured for role access -- they are NOT a live server-discovered
    * tool inventory, and they do NOT prove the remote server is connected.
    *
    * - `null`: the tools source was unavailable or unknown (Control API
@@ -566,13 +566,13 @@ export function McpDetailView({
       React.createElement(
         "h3",
         { className: SECTION_HEADING_CLASS },
-        "Role access"
+        "Configured role access"
       ),
       server.roles.length === 0
         ? React.createElement(
             "p",
             { className: "text-sm text-fg-muted" },
-            "No role exposure is present in the current runtime projection."
+            "No roles assigned to this server."
           )
         : React.createElement(
             "ul",

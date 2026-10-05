@@ -122,10 +122,17 @@ export interface ControlApiToolsResponse {
 }
 
 export interface ControlApiSkillsResponse {
-  readonly schema: "autodev-control-skills-v1";
+  readonly schema: "autodev-control-skills-v2";
   readonly source: string;
   readonly readOnly: boolean;
+  readonly valid: boolean | null;
   readonly skills: readonly {
+    readonly name: string;
+    readonly description: string;
+    readonly path: string;
+    readonly roles: readonly string[];
+  }[];
+  readonly unresolvedAssignments: readonly {
     readonly name: string;
     readonly roles: readonly string[];
   }[];
@@ -165,14 +172,15 @@ export interface ControlApiPermissionsResponse {
 }
 
 export interface ControlApiPromptsResponse {
-  readonly schema: "autodev-control-prompts-v1";
+  readonly schema: "autodev-control-prompts-v2";
   readonly source: string;
   readonly readOnly: boolean;
-  readonly totalCommands: number;
+  readonly valid: boolean | null;
+  readonly totalCommands: number | null;
   readonly commands: readonly {
     readonly name: string;
     readonly path: string;
-    readonly description: string;
+    readonly description?: string;
   }[];
   readonly rolePrompts: readonly {
     readonly role: string;
@@ -181,11 +189,26 @@ export interface ControlApiPromptsResponse {
 }
 
 export interface ControlApiPromptDetailResponse {
-  readonly schema: "autodev-control-prompt-detail-v1";
+  readonly schema: "autodev-control-prompt-detail-v2";
   readonly name: string;
   readonly type: "command" | "role";
   readonly source: string;
   readonly content: string;
+  readonly revision: string;
+}
+
+export interface ControlApiPromptCommandPatchRequest {
+  readonly expectedRevision: string;
+  readonly content: string;
+}
+
+export interface ControlApiPromptCommandPatchResponse {
+  readonly schema: "autodev-control-prompt-command-patch-v1";
+  readonly name: string;
+  readonly revision: string;
+  readonly changed: boolean;
+  readonly projectionUpdated: boolean;
+  readonly restartRequired: boolean;
 }
 
 export interface ControlApiWorkspacesResponse {

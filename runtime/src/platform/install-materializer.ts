@@ -314,6 +314,7 @@ export const COMMANDS = [
   "test-isolation",
   "todo-implementation",
   "typed-flags",
+  "unnecessary-labels",
   "usability",
   "validation-failure-recovery"
 ] as const;

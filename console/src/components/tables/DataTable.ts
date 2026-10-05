@@ -5,6 +5,7 @@ export interface ColumnDef<T> {
   readonly header: string;
   readonly cell: (row: T) => React.ReactNode;
   readonly width?: string | undefined;
+  readonly wrap?: boolean | undefined;
 }
 
 export interface DataTableProps<T> {
@@ -84,7 +85,7 @@ export function DataTable<T>({
                 "td",
                 {
                   key: col.id,
-                  className: "px-4 py-3 whitespace-nowrap"
+                  className: `px-4 py-3 ${col.wrap ? "whitespace-normal break-words" : "whitespace-nowrap"}`
                 },
                 col.cell(row)
               )

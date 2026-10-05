@@ -8,7 +8,7 @@
 >
 > **Focused Memory design:** [memory-target-state.md](memory-target-state.md) and [memory-injection-outcome-evaluation.md](memory-injection-outcome-evaluation.md).
 >
-> **Last reviewed:** 2026-10-04 (GitHub read-only Actions state/statistics path alignment).
+> **Last reviewed:** 2026-10-05 (RuleSync skill catalog and role-eligibility contract).
 
 ## 1. Canonical-document contract
 
@@ -484,7 +484,7 @@ Injected
 Used
 ~~~
 
-Only an owning producer may assert observed exposure/use/error. Do not infer later stages from configuration.
+Canonical skill definitions and descriptive metadata come from `.rulesync/skills`; role eligibility is joined from the execution contract by skill name. The Console lists the complete canonical skill catalog, including skills with no assigned roles, and explicitly surfaces role references with no canonical source. A missing or invalid RuleSync catalog is not a successful empty catalog. Only an owning producer may assert observed exposure/use/error. Do not infer later stages from configuration or eligibility.
 
 ### Memory
 
@@ -496,7 +496,7 @@ Memory governance, telemetry, retrieval, evaluation, and provenance details are 
 
 ### Evaluations
 
-Retain useful evaluation definitions/results/history and trace linkage without Rule Engine or OpenGround prerequisites. Evaluations target explicit AutoDev resources/telemetry.
+Retain useful evaluation definitions/results/history and trace linkage without Rule Engine or OpenGround prerequisites. Evaluations target explicit AutoDev resources/telemetry. A result is passed/failed only when its source supplies an explicit verdict; missing verdicts, missing metrics, or unknown verdict values remain **Not observed**, never inferred from an arbitrary score threshold. An unavailable or malformed evaluation source must not be represented as a successful empty result set. A malformed row invalidates that query sample rather than silently dropping the row and biasing displayed totals or pass-rate denominators.
 
 ### GitHub
 
@@ -599,9 +599,9 @@ Use the retained OpenLIT time-range control. Typed single/multi-select + All var
 
 Widgets opt in only to variables whose semantics apply. Unsupported signal/filter combinations fail closed rather than silently changing semantics. Bind selections through typed parameterized inputs; never concatenate browser-controlled SQL.
 
-The Console's same-origin server calls only a fixed read-only Usage adapter/endpoint with a dedicated server-to-server credential. It accepts bounded time/filter selections, not raw SQL or arbitrary widget IDs, and does not reuse mutation credentials.
+The Console's same-origin server calls only fixed read-only Usage telemetry endpoints with a dedicated server-to-server credential. The Usage summary endpoint accepts bounded time/filter selections, not raw SQL or arbitrary widget IDs; the trace-detail endpoint accepts only a validated OpenTelemetry SpanId and resolves its TraceId server-side. Both use the dedicated Usage credential and never reuse mutation credentials.
 
-Target views include logical requests, attempts/provider reliability, input/output/cache tokens, cost, latency, failures, MCP activity, relevant skill evidence, traces, and source-confirmed context compactions. Current verified widgets/evidence belong in the migration tracker.
+Target views include logical requests, attempts/provider reliability, input/output/cache tokens, cost, latency, failures, MCP activity, relevant skill evidence, traces, and source-confirmed context compactions. Current verified widgets/evidence belong in the migration tracker. Evaluation-to-trace navigation uses the fixed read-only `GET /api/autodev/usage/span/:spanId` endpoint with the dedicated Usage service credential. It accepts only a validated OpenTelemetry SpanId, resolves its TraceId server-side, and returns at most 200 privacy-filtered span summaries (IDs/parent, operation/service, timestamp, duration, status) without span attributes, events, prompts, responses, tool arguments, SQL, or tenant context.
 
 ## 11. Control API and authorization
 

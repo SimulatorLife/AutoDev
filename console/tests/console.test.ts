@@ -22,7 +22,10 @@ import { NextRequest } from "next/server.js";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import * as promptMutationRoute from "../app/api/prompts/[name]/route.ts";
 import * as providerRoleRoute from "../app/api/providers/[provider]/roles/[role]/route.ts";
+import EvaluationsPage from "../app/evaluations/page.ts";
+import MemoryPage from "../app/memory/page.ts";
 import {
   AgentDetailView,
   AgentsView,
@@ -30,6 +33,9 @@ import {
   Breadcrumbs,
   DataTable,
   EvaluationsView,
+  formatCount,
+  formatLatency,
+  formatTokenCount,
   GithubView,
   HooksView,
   MCP_DETAIL_TABS,
@@ -64,7 +70,9 @@ import {
   fetchGithubWorkflows,
   fetchMemoryRecords,
   fetchPromptDetail,
+  fetchPrompts,
   fetchProviders,
+  fetchSkills,
   fetchTools,
   readControlApiConfig
 } from "../src/lib/server/control-api.ts";
@@ -78,9 +86,38 @@ import {
   permissionsFromControlApi,
   promptDocumentFromControlApi,
   promptsFromControlApi,
+  skillEligibilityFromControlApi,
   skillsFromControlApi,
+  unresolvedSkillAssignmentsFromControlApi,
   workspacesFromControlApi
 } from "../src/lib/server/views.ts";
+
+const MEMORY_PAGE_ENV_KEYS = [
+  "HOME",
+  "CODEX_HOME",
+  "AUTODEV_CONTROL_API_TOKEN",
+  "AUTODEV_CONTROL_API_BASE_URL",
+  "AUTODEV_OPENLIT_SECRET_FILE",
+  "AUTODEV_OPENLIT_UI_URL",
+  "AUTODEV_OPENLIT_USAGE_TOKEN",
+  "AUTODEV_OPENLIT_USAGE_URL"
+] as const;
+
+function saveConsolePageEnvironment(): Record<string, string | undefined> {
+  return Object.fromEntries(
+    MEMORY_PAGE_ENV_KEYS.map((key) => [key, process.env[key]])
+  );
+}
+
+function restoreConsolePageEnvironment(
+  saved: Record<string, string | undefined>
+): void {
+  for (const key of MEMORY_PAGE_ENV_KEYS) {
+    const value = saved[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+}
 
 const CONFIGURED_AGENT: AgentDefinition = {
   id: "orchestrator",
@@ -417,7 +454,8 @@ test("Prompt list links to source detail instead of synthesizing a preview", () 
           path: ".rulesync/commands/dry.md",
           description: "Dry-run command"
         }
-      ]
+      ],
+      commandSourceValidity: true
     })
   );
 
@@ -426,20 +464,69 @@ test("Prompt list links to source detail instead of synthesizing a preview", () 
   assert.equal(markup.includes("Lossless round-trip"), false);
 });
 
+test("PromptsView distinguishes an unavailable command source from a valid empty source", () => {
+  const commands = [
+    {
+      name: "orchestrator",
+      path: "agents/prompts/roles/orchestrator.md",
+      kind: "role" as const
+    }
+  ];
+  const invalid = renderToStaticMarkup(
+    React.createElement(PromptsView, {
+      commands,
+      commandSourceValidity: false
+    })
+  );
+  assert.match(invalid, /data-prompt-command-source="false"/);
+  assert.match(invalid, /RuleSync `.rulesync\/commands\/` is invalid/);
+  assert.match(invalid, /Agent Role Prompts/);
+  assert.doesNotMatch(invalid, /RuleSync Commands[\s\S]*?>0</);
+
+  const missing = renderToStaticMarkup(
+    React.createElement(PromptsView, {
+      commands: [],
+      commandSourceValidity: null
+    })
+  );
+  assert.match(missing, /data-prompt-command-source="not-observed"/);
+  assert.match(missing, /RuleSync `.rulesync\/commands\/` was not observed/);
+  assert.match(missing, /Not observed/);
+});
+
 test("Prompt detail renders canonical text and reports an actually empty source", () => {
   const source = "# /dry\n\nUse a dry run.";
   const prompt = promptDocumentFromControlApi({
-    schema: "autodev-control-prompt-detail-v1",
+    schema: "autodev-control-prompt-detail-v2",
     name: "dry",
     type: "command",
     source: ".rulesync/commands/dry.md",
-    content: source
+    content: source,
+    revision: "a".repeat(64)
   });
   const markup = renderToStaticMarkup(
     React.createElement(PromptDetailView, { prompt })
   );
   assert.match(markup, /Use a dry run\./);
   assert.match(markup, /\.rulesync\/commands\/dry\.md/);
+  assert.match(markup, /data-prompt-editor="canonical"/);
+  assert.match(markup, /action="\/api\/prompts\/dry"/);
+  assert.match(markup, /name="expectedRevision" value="a{64}"/);
+  assert.match(markup, /Save &amp; Apply/);
+
+  const roleMarkup = renderToStaticMarkup(
+    React.createElement(PromptDetailView, {
+      prompt: {
+        name: "orchestrator",
+        kind: "role",
+        path: "agents/prompts/roles/orchestrator.md",
+        content: "# Role prompt",
+        revision: "d".repeat(64)
+      }
+    })
+  );
+  assert.match(roleMarkup, /data-prompt-editor="read-only"/);
+  assert.equal(roleMarkup.includes("/api/prompts/orchestrator"), false);
 
   const emptyMarkup = renderToStaticMarkup(
     React.createElement(PromptDetailView, {
@@ -466,7 +553,8 @@ test("PromptsView and PromptDetailView render prompt types, linkage, and Git aut
           kind: "role",
           description: "Agent role prompt for orchestrator"
         }
-      ]
+      ],
+      commandSourceValidity: true
     })
   );
   assert.match(listMarkup, /RuleSync Commands/);
@@ -481,13 +569,14 @@ test("PromptsView and PromptDetailView render prompt types, linkage, and Git aut
         name: "orchestrator",
         kind: "role",
         path: "agents/prompts/roles/orchestrator.md",
-        content: "# Orchestrator System Prompt\nYou are an orchestrator."
+        content: "# Orchestrator System Prompt\nYou are an orchestrator.",
+        revision: "c".repeat(64)
       }
     })
   );
   assert.match(detailMarkup, /data-section="prompt-linkage"/);
   assert.match(detailMarkup, /Authority &amp; Versioning/);
-  assert.match(detailMarkup, /RuleSync Git provenance/);
+  assert.match(detailMarkup, /Role prompt source/);
   assert.match(detailMarkup, /Related Agent/);
   assert.match(detailMarkup, /href="\/agents\/orchestrator"/);
   assert.match(detailMarkup, /Observability Linkage/);
@@ -532,7 +621,7 @@ test("DataTable renders table with columns and data", () => {
       data,
       columns: [
         { id: "id", header: "ID", cell: (r: TestRow) => r.id },
-        { id: "name", header: "Name", cell: (r: TestRow) => r.name }
+        { id: "name", header: "Name", cell: (r: TestRow) => r.name, wrap: true }
       ],
       keyExtractor: (r: TestRow) => r.id
     })
@@ -540,6 +629,11 @@ test("DataTable renders table with columns and data", () => {
   assert.ok(markup.includes("Alpha"));
   assert.ok(markup.includes("Beta"));
   assert.ok(markup.includes("<table"));
+  assert.match(markup, /<td class="px-4 py-3 whitespace-nowrap">1<\/td>/);
+  assert.match(
+    markup,
+    /<td class="px-4 py-3 whitespace-normal break-words">Alpha<\/td>/
+  );
 });
 
 test("StatCard renders value and title", () => {
@@ -653,6 +747,48 @@ test("Control API detail fetchers encode identifiers and preserve not-found stat
   assert.equal(prompt.status, 404);
 });
 
+test("Skills fetcher validates the v2 catalog contract and rejects stale responses", async () => {
+  const config = {
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "server-only"
+  };
+  const payload = {
+    schema: "autodev-control-skills-v2",
+    source: ".rulesync/skills+execution-contract",
+    readOnly: true,
+    valid: true,
+    skills: [
+      {
+        name: "audit",
+        description: "Review canonical sources.",
+        path: ".rulesync/skills/audit/SKILL.md",
+        roles: ["validator"]
+      }
+    ],
+    unresolvedAssignments: []
+  };
+  const valid = await fetchSkills(config, {
+    fetchImpl: async () => Response.json(payload)
+  });
+  assert.equal(valid.kind, "ok");
+  if (valid.kind === "ok") assert.deepEqual(valid.data, payload);
+
+  const stale = await fetchSkills(config, {
+    fetchImpl: async () =>
+      Response.json({
+        schema: "autodev-control-skills-v1",
+        source: "execution-contract",
+        readOnly: true,
+        skills: [{ name: "audit", roles: ["validator"] }]
+      })
+  });
+  assert.equal(stale.kind, "invalid-response");
+  if (stale.kind === "invalid-response") {
+    assert.equal(stale.code, "autodev_control_api_invalid_skills_response");
+    assert.match(stale.message, /requires the v2 canonical catalog contract/);
+  }
+});
+
 test("fetchControlApi extracts code and message from Control API error envelope", async () => {
   const fetchImpl: typeof fetch = async () =>
     Response.json(
@@ -756,6 +892,41 @@ test("UsageView with no metrics renders explicit 'Not observed' values", () => {
   );
 });
 
+test("Usage values stay readable at large scales and keep unattributed groups explicit", () => {
+  assert.equal(formatCount(8320), "8,320");
+  assert.equal(formatTokenCount(1_443_517_000), "1.4B");
+  assert.equal(formatTokenCount(3_561_000), "3.6M");
+  assert.equal(formatLatency(42_364.660_695_649_996), "42.4 s");
+  assert.equal(formatLatency(84.313_416_499_999_99), "84.3 ms");
+  assert.equal(formatLatency(null), "Not observed");
+
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      metrics: {
+        logicalRequests: 8320,
+        totalInputTokens: 1_443_517_000,
+        totalOutputTokens: 3_561_000,
+        cacheReadRate: null,
+        p95LatencyMs: 42_364.660_695_649_996,
+        physicalAttempts: 8320,
+        mcpCalls: 6,
+        p95McpDurationMs: 84.313_416_499_999_99,
+        mcpErrors: 0,
+        requestsByRole: [{ role: "", count: 126 }],
+        attemptsByProvider: [{ provider: "codex", count: 3419 }],
+        callsByTool: [{ tool: "", count: 1234 }]
+      }
+    })
+  );
+  assert.match(markup, /1\.4B \/ 3\.6M/);
+  assert.match(markup, /42\.4 s/);
+  assert.match(markup, /84\.3 ms/);
+  assert.match(markup, /Not attributed/);
+  assert.match(markup, /8,320/);
+  assert.match(markup, /3,419/);
+  assert.match(markup, /1,234/);
+});
+
 test("Usage URL filters preserve stock time ranges, custom dates, and server-only credentials", () => {
   const now = new Date("2026-10-01T12:00:00.000Z");
   assert.deepEqual(
@@ -830,7 +1001,7 @@ test("UsageView persists selected filters in GET controls without defaults", () 
   assert.match(markup, /data-usage-observed="false"/);
 });
 
-test("UsageView exposes OpenLIT custom-range controls with UTC date state", () => {
+test("UsageView exposes custom-range controls with UTC date state", () => {
   const markup = renderToStaticMarkup(
     React.createElement(UsageView, {
       selection: {
@@ -847,7 +1018,8 @@ test("UsageView exposes OpenLIT custom-range controls with UTC date state", () =
   assert.match(markup, /value="3M"/);
   assert.match(markup, /value="CUSTOM" selected/);
   assert.match(markup, /Custom range accepts up to 90 days/);
-  assert.match(markup, /current OpenLIT retention is about 30 days/);
+  assert.match(markup, /current telemetry retention is about 30 days/);
+  assert.equal(markup.includes("OpenLIT"), false);
 });
 
 test("UsageView with empty arrays still reports no synthetic counts", () => {
@@ -1415,6 +1587,48 @@ test("TabNav and tab helpers render accessible native links and fall back for un
   assert.match(markup, /aria-current="page"[^>]*data-tab-item="beta"/);
 });
 
+test("McpDetailView labels execution-contract role assignments as configured access, not runtime exposure", () => {
+  const server: McpServerResource = {
+    name: "lsp",
+    enabled: true,
+    transport: "stdio",
+    declared: true,
+    roles: [],
+    targetOverrides: []
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      configuredTools: [],
+      server,
+      activeTab: "role-access"
+    })
+  );
+  assert.match(markup, /Configured role access/);
+  assert.match(markup, /No roles assigned to this server/);
+  assert.equal(markup.includes("runtime projection"), false);
+});
+
+test("McpsView renders an explicit empty configured-role scope", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(McpsView, {
+      servers: [
+        {
+          name: "lsp",
+          enabled: true,
+          transport: "stdio",
+          declared: true,
+          roles: [],
+          targetOverrides: []
+        }
+      ],
+      sourceValidity: true
+    })
+  );
+  assert.match(markup, /Configured roles/);
+  assert.match(markup, /No roles assigned/);
+});
+
 test("McpsView distinguishes invalid canonical configuration from an empty list", () => {
   const markup = renderToStaticMarkup(
     React.createElement(McpsView, { servers: [], sourceValidity: false })
@@ -1436,7 +1650,10 @@ test("SkillsView never reports 'Active' or 'Recorded' without OTel evidence", ()
           description: "Coordination",
           path: ".rulesync/skills/orchestration"
         }
-      ]
+      ],
+      eligibility: [],
+      unresolvedAssignments: [],
+      sourceValidity: true
     })
   );
   assert.equal(markup.includes("Active"), false);
@@ -1444,7 +1661,49 @@ test("SkillsView never reports 'Active' or 'Recorded' without OTel evidence", ()
   assert.match(markup, /data-skill-runtime-observed="false"/);
 });
 
-test("WorkspacesView never reports 'Available' without runtime evidence", () => {
+test("SkillsView distinguishes declared role scope from missing eligibility evidence", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(SkillsView, {
+      skills: [
+        { name: "assigned", description: "", path: "assigned" },
+        { name: "unscoped", description: "", path: "unscoped" },
+        { name: "unobserved", description: "", path: "unobserved" }
+      ],
+      eligibility: [
+        { skill: "assigned", roles: ["orchestrator"] },
+        { skill: "unscoped", roles: [] }
+      ],
+      unresolvedAssignments: [{ skill: "missing", roles: ["worker"] }],
+      sourceValidity: true
+    })
+  );
+  assert.match(markup, /Role-assigned/);
+  assert.match(markup, /of 3 configured/);
+  assert.match(markup, /orchestrator/);
+  assert.match(markup, /No roles assigned/);
+  assert.match(markup, /Not observed/);
+  assert.equal(markup.includes("Universal / All"), false);
+  assert.match(markup, /Unresolved role assignments/);
+  assert.match(markup, /Assigned to: worker/);
+});
+
+test("SkillsView does not synthesize empty catalog counts for an unavailable RuleSync source", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(SkillsView, {
+      skills: [],
+      eligibility: [],
+      unresolvedAssignments: [],
+      sourceValidity: null
+    })
+  );
+  assert.match(markup, /data-skill-source-validity="not-observed"/);
+  assert.match(markup, /RuleSync `.rulesync\/skills\/` has not been observed/);
+  assert.match(markup, /Not observed/);
+  assert.doesNotMatch(markup, /Configured[\s\S]*?>0</);
+  assert.match(markup, /RuleSync `.rulesync\/skills\/` was not observed/);
+});
+
+test("WorkspacesView keeps availability and unconfigured role scope explicit", () => {
   const markup = renderToStaticMarkup(
     React.createElement(WorkspacesView, {
       workspaces: [
@@ -1453,12 +1712,27 @@ test("WorkspacesView never reports 'Available' without runtime evidence", () => 
           baseBranch: "main",
           enabled: true,
           agentRoles: null
+        },
+        {
+          id: "SimulatorLife/Other",
+          baseBranch: "main",
+          enabled: false,
+          agentRoles: []
         }
       ]
     })
   );
   assert.equal(markup.includes("Available"), false);
+  assert.equal(markup.includes("All roles"), false);
   assert.match(markup, /data-workspace-availability-observed="false"/);
+  assert.match(markup, /Configuration, not runtime availability/);
+  assert.match(markup, /Enablement/);
+  assert.equal((markup.match(/data-status="not-observed"/gu) ?? []).length, 2);
+  assert.equal((markup.match(/data-status="configured"/gu) ?? []).length, 2);
+  assert.match(markup, /data-role-scope="not-configured">Not configured/);
+  assert.match(markup, /data-role-scope="empty">No roles assigned/);
+  assert.match(markup, />Enabled</);
+  assert.match(markup, />Disabled</);
 });
 
 test("GithubView renders parsed workflow triggers and keeps Actions API facts explicitly unavailable", () => {
@@ -1762,21 +2036,17 @@ test("MemoryPortalCard links to the resolved Memory destination and never expose
   );
   assert.match(markup, /target="_blank"/);
   assert.match(markup, /rel="noopener noreferrer"/);
-  assert.match(markup, /Open AutoDev Memory/);
+  assert.match(markup, /Open external Memory UI/);
   assert.equal(/openlit/i.test(markup), false);
   assert.equal(markup.toLowerCase().includes("token"), false);
   assert.equal(markup.toLowerCase().includes("secret"), false);
   assert.equal(markup.toLowerCase().includes("bearer"), false);
 });
 
-test("Memory page contract renders the portal card on the default local destination without requiring the Control API token", () => {
-  // Mirrors the branch logic of console/app/memory/page.tsx without
-  // importing the App Router file (the test runner loads .ts only).
-  const env = {
-    AUTODEV_CONTROL_API_TOKEN: undefined,
+test("MemoryPortalCard links to its default local destination", () => {
+  const portal = readMemoryPortalConfig({
     AUTODEV_OPENLIT_UI_URL: undefined
-  };
-  const portal = readMemoryPortalConfig(env);
+  });
   assert.ok(portal, "default portal config must resolve");
   const markup = renderToStaticMarkup(
     React.createElement(MemoryPortalCard, { href: portal.href })
@@ -1784,64 +2054,191 @@ test("Memory page contract renders the portal card on the default local destinat
   assert.match(markup, /data-feature="memory-portal"/);
   assert.match(
     markup,
-    /href="http:\/\/127.0.0.1:3000\/memory"[^>]*data-memory-portal-link="true"/
+    /href="http:\/\/127\.0\.0\.1:3000\/memory"[^>]*data-memory-portal-link="true"/
   );
   assert.match(markup, /target="_blank"/);
   assert.match(markup, /rel="noopener noreferrer"/);
-  assert.match(markup, /Open AutoDev Memory/);
-  // The page must never surface the Control API credential gate or the
-  // historical "adapter pending" placeholder.
-  assert.equal(markup.includes("autodev_control_api_disabled"), false);
-  assert.equal(markup.includes("AUTODEV_CONTROL_API_TOKEN"), false);
-  assert.equal(markup.includes("autodev_memory_adapter_pending"), false);
+  assert.match(markup, /Open external Memory UI/);
 });
 
-test("Memory page contract renders the explicit unavailable state when AUTODEV_OPENLIT_UI_URL is unsafe", () => {
-  const env = {
-    AUTODEV_CONTROL_API_TOKEN: undefined,
+test("readMemoryPortalConfig rejects credentialed destinations", () => {
+  const portal = readMemoryPortalConfig({
     AUTODEV_OPENLIT_UI_URL: "https://admin:s3cret@openlit.example.com"
-  };
-  const portal = readMemoryPortalConfig(env);
+  });
   assert.equal(portal, null);
-  // Local harness mirroring the contract of the page's unavailable branch
-  // (data-status, data-error-code, title, message, hint) so the test does
-  // not need to import the .tsx route file.
-  function Unavailable(props: {
-    title: string;
-    code: string;
-    message: string;
-    hint?: string;
-  }) {
-    return React.createElement(
-      "div",
-      {
-        role: "alert",
-        "data-status": "unavailable",
-        "data-error-code": props.code
-      },
-      React.createElement("h2", null, props.title),
-      React.createElement("p", null, props.message),
-      React.createElement("p", null, props.hint)
-    );
-  }
-  const markup = renderToStaticMarkup(
-    React.createElement(Unavailable, {
-      title: "Memory destination URL is not configured safely",
-      code: "autodev_memory_portal_url_invalid",
-      message:
-        "AUTODEV_OPENLIT_UI_URL must be an http or https URL with no embedded credentials.",
-      hint: "Set AUTODEV_OPENLIT_UI_URL in the Next.js server environment, or unset it to use the local default."
-    })
-  );
-  assert.match(markup, /data-status="unavailable"/);
-  assert.match(markup, /data-error-code="autodev_memory_portal_url_invalid"/);
-  assert.match(markup, /Memory destination URL is not configured safely/);
-  assert.equal(markup.includes('data-memory-portal-link="true"'), false);
-  assert.equal(markup.includes("autodev_control_api_disabled"), false);
-  assert.equal(markup.includes("autodev_memory_adapter_pending"), false);
+  assert.doesNotMatch(JSON.stringify(portal), /s3cret|openlit\.example\.com/u);
 });
 
-test("Memory page contract normalizes a configured AUTODEV_OPENLIT_UI_URL to the fixed /memory path", () => {
+test("MemoryPage requires a valid canonical workspace catalog before querying memory", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousEnv = saveConsolePageEnvironment();
+  const isolatedHome = mkdtempSync(join(tmpdir(), "autodev-memory-page-"));
+  const requests: string[] = [];
+  try {
+    process.env.HOME = isolatedHome;
+    process.env.CODEX_HOME = isolatedHome;
+    process.env.AUTODEV_OPENLIT_SECRET_FILE = join(isolatedHome, "missing.env");
+    process.env.AUTODEV_CONTROL_API_TOKEN = "memory-page-test-token";
+    process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+    globalThis.fetch = async (input) => {
+      requests.push(String(input));
+      return Response.json({
+        schema: "autodev-control-workspaces-v1",
+        source: "config/workspaces.json",
+        readOnly: true,
+        catalogStatus: "invalid",
+        totalWorkspaces: 0,
+        workspaces: []
+      });
+    };
+
+    const markup = renderToStaticMarkup(
+      await MemoryPage({ searchParams: Promise.resolve({}) })
+    );
+    assert.match(markup, /data-error-code="autodev_workspace_catalog_invalid"/);
+    assert.match(markup, /no Memory scope is inferred/);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.includes("/control/memory/"), false);
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreConsolePageEnvironment(previousEnv);
+    rmSync(isolatedHome, { recursive: true, force: true });
+  }
+});
+
+test("MemoryPage rejects URL workspace ids outside the canonical catalog before memory reads", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousEnv = saveConsolePageEnvironment();
+  const isolatedHome = mkdtempSync(join(tmpdir(), "autodev-memory-page-"));
+  const requests: string[] = [];
+  try {
+    process.env.HOME = isolatedHome;
+    process.env.CODEX_HOME = isolatedHome;
+    process.env.AUTODEV_OPENLIT_SECRET_FILE = join(isolatedHome, "missing.env");
+    process.env.AUTODEV_CONTROL_API_TOKEN = "memory-page-test-token";
+    process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+    globalThis.fetch = async (input) => {
+      requests.push(String(input));
+      return Response.json({
+        schema: "autodev-control-workspaces-v1",
+        source: "config/workspaces.json",
+        readOnly: true,
+        catalogStatus: "valid",
+        totalWorkspaces: 1,
+        workspaces: [
+          {
+            id: "SimulatorLife/AutoDev",
+            baseBranch: "main",
+            enabled: true,
+            agentRoles: null
+          }
+        ]
+      });
+    };
+
+    const markup = renderToStaticMarkup(
+      await MemoryPage({
+        searchParams: Promise.resolve({ workspaceId: "Unlisted/Repository" })
+      })
+    );
+    assert.match(markup, /data-error-code="autodev_memory_workspace_unknown"/);
+    assert.match(markup, /requested scope was not queried/);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.includes("/control/memory/"), false);
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreConsolePageEnvironment(previousEnv);
+    rmSync(isolatedHome, { recursive: true, force: true });
+  }
+});
+
+test("MemoryPage reports failed experience history instead of rendering an empty list", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousEnv = saveConsolePageEnvironment();
+  const isolatedHome = mkdtempSync(join(tmpdir(), "autodev-memory-page-"));
+  try {
+    process.env.HOME = isolatedHome;
+    process.env.CODEX_HOME = isolatedHome;
+    process.env.AUTODEV_OPENLIT_SECRET_FILE = join(isolatedHome, "missing.env");
+    process.env.AUTODEV_CONTROL_API_TOKEN = "memory-page-test-token";
+    process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/control/workspaces")) {
+        return Response.json({
+          schema: "autodev-control-workspaces-v1",
+          source: "config/workspaces.json",
+          readOnly: true,
+          catalogStatus: "valid",
+          totalWorkspaces: 1,
+          workspaces: [
+            {
+              id: "SimulatorLife/AutoDev",
+              baseBranch: "main",
+              enabled: true,
+              agentRoles: null
+            }
+          ]
+        });
+      }
+      if (url.includes("/control/memory/records")) {
+        return Response.json({
+          schema: "autodev-memory-records-v1",
+          items: [],
+          totalCount: 0,
+          limit: 50,
+          offset: 0,
+          hasMore: false
+        });
+      }
+      if (url.includes("/control/memory/experiences")) {
+        return Response.json(
+          {
+            error: {
+              code: "autodev_memory_unavailable",
+              message: "Experience history is unavailable."
+            }
+          },
+          { status: 503 }
+        );
+      }
+      if (url.includes("/control/memory/cohorts")) {
+        return Response.json({
+          schema: "autodev-memory-session-outcome-cohorts-v1",
+          workspaceId: "SimulatorLife/AutoDev",
+          repositoryId: "SimulatorLife/AutoDev",
+          occurredFrom: "2026-09-01T00:00:00Z",
+          occurredUntil: "2026-10-01T00:00:00Z",
+          cells: [],
+          sessionCount: 0,
+          reportedSessionCount: 0,
+          unreportedSessionCount: 0,
+          mixedModeSessionCount: 0,
+          conflictingOutcomeSessionCount: 0
+        });
+      }
+      throw new Error(`Unexpected Memory page request: ${url}`);
+    };
+
+    const markup = renderToStaticMarkup(
+      await MemoryPage({
+        searchParams: Promise.resolve({ tab: "experiences" })
+      })
+    );
+    assert.match(markup, /data-status="unavailable"/);
+    assert.match(markup, /Experience history is unavailable\./);
+    assert.equal(
+      markup.includes("No captured memory experiences found"),
+      false
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreConsolePageEnvironment(previousEnv);
+    rmSync(isolatedHome, { recursive: true, force: true });
+  }
+});
+
+test("MemoryPortalCard uses the normalized safe Memory destination", () => {
   const env = {
     AUTODEV_CONTROL_API_TOKEN: undefined,
     AUTODEV_OPENLIT_UI_URL: "https://memory.example.com/some/other/path?x=1"
@@ -1858,14 +2255,272 @@ test("Memory page contract normalizes a configured AUTODEV_OPENLIT_UI_URL to the
   assert.equal(markup.includes('data-status="unavailable"'), false);
 });
 
+test("EvaluationsPage loads the linked trace through the Usage token and keeps prompt scope", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousEnv = saveConsolePageEnvironment();
+  const isolatedHome = mkdtempSync(join(tmpdir(), "autodev-evaluations-page-"));
+  const requests: Array<{
+    url: string;
+    headers: Headers;
+    method: string | undefined;
+  }> = [];
+  const spanId = "0123456789abcdef";
+  const traceId = "0123456789abcdef0123456789abcdef";
+  try {
+    process.env.HOME = isolatedHome;
+    process.env.CODEX_HOME = isolatedHome;
+    process.env.AUTODEV_OPENLIT_SECRET_FILE = join(isolatedHome, "missing.env");
+    process.env.AUTODEV_CONTROL_API_TOKEN = "evaluation-control-test-token";
+    process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+    process.env.AUTODEV_OPENLIT_USAGE_TOKEN = "evaluation-usage-test-token";
+    process.env.AUTODEV_OPENLIT_USAGE_URL = "http://127.0.0.1:3000";
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      requests.push({
+        url,
+        headers: new Headers(init?.headers),
+        method: init?.method
+      });
+      if (url.endsWith("/control/evaluations")) {
+        return Response.json({
+          schema: "autodev-control-evaluations-v1",
+          source: "openlit_evaluation",
+          readOnly: true,
+          totalEvaluations: 1,
+          evaluations: [
+            {
+              id: "evaluation-1",
+              spanId,
+              agentRole: "orchestrator",
+              promptName: "dry",
+              model: "gpt-5.6-terra",
+              metrics: [{ name: "quality", value: 1, pass: true }],
+              passed: true,
+              timestamp: "2026-10-05T12:00:00.000Z"
+            }
+          ]
+        });
+      }
+      if (url.endsWith(`/api/autodev/usage/span/${spanId}`)) {
+        return Response.json({
+          schema: "autodev-openlit-trace-detail-v1",
+          traceId,
+          selectedSpanId: spanId,
+          partial: false,
+          spans: [
+            {
+              spanId,
+              parentSpanId: null,
+              spanName: "gen_ai.client_operation",
+              serviceName: "autodev-router",
+              timestamp: "2026-10-05T12:00:00.000Z",
+              durationNs: 12_300_000,
+              statusCode: "OK",
+              spanAttributes: { prompt: "sensitive prompt value" }
+            }
+          ]
+        });
+      }
+      throw new Error(`Unexpected Evaluations page request: ${url}`);
+    };
+
+    const markup = renderToStaticMarkup(
+      await EvaluationsPage({
+        searchParams: Promise.resolve({ prompt: "dry", spanId })
+      })
+    );
+    assert.match(markup, /data-trace-state="observed"/);
+    assert.match(markup, /Trace ID:/);
+    assert.match(markup, /gen_ai\.client_operation/);
+    assert.match(markup, /Root span/);
+    assert.match(markup, /12\.3 ms/);
+    assert.match(
+      markup,
+      /href="\/evaluations\?prompt=dry&amp;spanId=0123456789abcdef"/
+    );
+    assert.equal(markup.includes("sensitive prompt value"), false);
+    assert.equal(requests.length, 2);
+    assert.equal(
+      requests[0]?.headers.get("authorization"),
+      "Bearer evaluation-control-test-token"
+    );
+    assert.equal(requests[1]?.method, "GET");
+    assert.equal(
+      requests[1]?.headers.get("authorization"),
+      "Bearer evaluation-usage-test-token"
+    );
+    assert.equal(markup.includes("evaluation-usage-test-token"), false);
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreConsolePageEnvironment(previousEnv);
+    rmSync(isolatedHome, { recursive: true, force: true });
+  }
+});
+
+test("EvaluationsPage rejects malformed trace query IDs without calling the Usage endpoint", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousEnv = saveConsolePageEnvironment();
+  const isolatedHome = mkdtempSync(join(tmpdir(), "autodev-evaluations-page-"));
+  let usageRequests = 0;
+  try {
+    process.env.HOME = isolatedHome;
+    process.env.CODEX_HOME = isolatedHome;
+    process.env.AUTODEV_OPENLIT_SECRET_FILE = join(isolatedHome, "missing.env");
+    process.env.AUTODEV_CONTROL_API_TOKEN = "evaluation-control-test-token";
+    process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+    process.env.AUTODEV_OPENLIT_USAGE_TOKEN = "evaluation-usage-test-token";
+    process.env.AUTODEV_OPENLIT_USAGE_URL = "http://127.0.0.1:3000";
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/control/evaluations")) {
+        return Response.json({
+          schema: "autodev-control-evaluations-v1",
+          source: "openlit_evaluation",
+          readOnly: true,
+          totalEvaluations: 0,
+          evaluations: []
+        });
+      }
+      usageRequests += 1;
+      throw new Error(`Unexpected trace lookup: ${url}`);
+    };
+
+    const markup = renderToStaticMarkup(
+      await EvaluationsPage({
+        searchParams: Promise.resolve({ spanId: "not-a-span-id" })
+      })
+    );
+    assert.match(markup, /data-trace-state="invalid-span-id"/);
+    assert.equal(usageRequests, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreConsolePageEnvironment(previousEnv);
+    rmSync(isolatedHome, { recursive: true, force: true });
+  }
+});
+
 test("EvaluationsView with empty results renders the explicit empty state", () => {
   const markup = renderToStaticMarkup(
     React.createElement(EvaluationsView, { evaluations: [] })
   );
-  assert.match(markup, /No evaluations run yet/);
+  assert.match(
+    markup,
+    /No evaluation results are present in the available history/
+  );
   assert.match(markup, /data-evaluation-pass-rate-observed="false"/);
   assert.match(markup, /Not observed/);
   assert.equal(markup.includes("100%"), false);
+});
+
+test("EvaluationsView renders safe trace details and prompt-preserving span links", () => {
+  const spanId = "0123456789abcdef";
+  const markup = renderToStaticMarkup(
+    React.createElement(EvaluationsView, {
+      evaluations: [],
+      promptFilter: "dry",
+      traceLookup: {
+        kind: "observed",
+        detail: {
+          schema: "autodev-openlit-trace-detail-v1",
+          traceId: "0123456789abcdef0123456789abcdef",
+          selectedSpanId: spanId,
+          partial: true,
+          spans: [
+            {
+              spanId,
+              parentSpanId: null,
+              spanName: "gen_ai.client_operation",
+              serviceName: "autodev-router",
+              timestamp: "2026-10-05T12:00:00.000Z",
+              durationNs: 1_250_000,
+              statusCode: "OK"
+            }
+          ]
+        }
+      }
+    })
+  );
+  assert.match(markup, /data-feature="evaluation-trace-detail"/);
+  assert.match(markup, /data-trace-partial="true"/);
+  assert.match(markup, /Trace ID:/);
+  assert.match(markup, /gen_ai\.client_operation/);
+  assert.match(markup, /autodev-router/);
+  assert.match(
+    markup,
+    /href="\/evaluations\?prompt=dry&amp;spanId=0123456789abcdef"/
+  );
+  assert.match(markup, /Back to evaluations/);
+});
+
+test("EvaluationsView keeps a missing trace out of its empty-history state", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(EvaluationsView, {
+      evaluations: [],
+      traceLookup: { kind: "not-found" }
+    })
+  );
+  assert.match(markup, /data-trace-state="not-found"/);
+  assert.match(markup, /data-status="not-observed"/);
+  assert.match(markup, /was not observed in retained telemetry/);
+  assert.match(markup, /No evaluation results are present/);
+});
+
+test("EvaluationsView keeps missing verdicts unobserved", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(EvaluationsView, {
+      evaluations: [
+        {
+          id: "eval-unscored",
+          agentRole: "orchestrator",
+          model: "unknown",
+          metrics: [{ name: "quality", value: 0.99, pass: null }],
+          passed: null,
+          timestamp: "2026-10-04 12:00:00"
+        }
+      ]
+    })
+  );
+  assert.match(markup, /data-evaluation-pass-rate-observed="false"/);
+  assert.match(markup, /Not observed/);
+  assert.match(markup, /quality: 0\.99 · Not observed/);
+  assert.equal(markup.includes(">Failed<"), false);
+  assert.equal(markup.includes("99%"), false);
+});
+
+test("EvaluationsView links valid span references and marks invalid ones", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(EvaluationsView, {
+      evaluations: [
+        {
+          id: "eval-with-trace",
+          spanId: "0123456789abcdef",
+          agentRole: "orchestrator",
+          model: "gpt-5.6-terra",
+          metrics: [],
+          passed: null,
+          timestamp: "2026-10-04 12:00:00"
+        },
+        {
+          id: "eval-without-otel-span",
+          spanId: "offline_0123",
+          agentRole: "worker",
+          model: "unknown",
+          metrics: [],
+          passed: null,
+          timestamp: "2026-10-04 12:01:00"
+        }
+      ]
+    })
+  );
+  assert.match(
+    markup,
+    /href="\/evaluations\?spanId=0123456789abcdef"[^>]*data-evaluation-trace-span-id="0123456789abcdef"/
+  );
+  assert.match(markup, /Invalid reference/);
+  assert.equal(
+    markup.includes('data-evaluation-trace-span-id="offline_0123"'),
+    false
+  );
 });
 
 test("fetchEvaluations issues authenticated GET to /control/evaluations", async () => {
@@ -1886,6 +2541,7 @@ test("fetchEvaluations issues authenticated GET to /control/evaluations", async 
       evaluations: [
         {
           id: "eval-1",
+          spanId: "0123456789abcdef",
           agentRole: "orchestrator",
           promptName: "dry",
           model: "gpt-5.6-terra",
@@ -1901,6 +2557,79 @@ test("fetchEvaluations issues authenticated GET to /control/evaluations", async 
   if (result.kind === "ok") {
     assert.equal(result.data.totalEvaluations, 1);
     assert.equal(result.data.evaluations[0]?.agentRole, "orchestrator");
+    assert.equal(result.data.evaluations[0]?.spanId, "0123456789abcdef");
+  }
+});
+
+test("fetchEvaluations preserves unavailable telemetry status", async () => {
+  const result = await fetchEvaluations(
+    {
+      baseUrl: "http://127.0.0.1:4101",
+      serviceToken: "test-token-123"
+    },
+    {
+      fetchImpl: async () =>
+        Response.json(
+          {
+            error: {
+              code: "autodev_control_evaluations_unavailable",
+              message:
+                "Evaluation history is unavailable from the telemetry store."
+            }
+          },
+          { status: 503 }
+        )
+    }
+  );
+  assert.equal(result.kind, "http-error");
+  if (result.kind === "http-error") {
+    assert.equal(result.status, 503);
+    assert.equal(result.code, "autodev_control_evaluations_unavailable");
+  }
+});
+
+test("Prompts fetcher validates source state and rejects stale contracts", async () => {
+  const config = {
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "server-only"
+  };
+  const current = await fetchPrompts(config, {
+    fetchImpl: async () =>
+      Response.json({
+        schema: "autodev-control-prompts-v2",
+        source: ".rulesync/commands",
+        readOnly: true,
+        valid: true,
+        totalCommands: 1,
+        commands: [
+          {
+            name: "dry",
+            path: ".rulesync/commands/dry.md",
+            description: "Run a dry pass."
+          }
+        ],
+        rolePrompts: []
+      })
+  });
+  assert.equal(current.kind, "ok");
+  if (current.kind === "ok")
+    assert.equal(current.data.commands[0]?.description, "Run a dry pass.");
+
+  const stale = await fetchPrompts(config, {
+    fetchImpl: async () =>
+      Response.json({
+        schema: "autodev-control-prompts-v1",
+        source: "rulesync",
+        readOnly: true,
+        totalCommands: 1,
+        commands: [],
+        rolePrompts: []
+      })
+  });
+  assert.equal(stale.kind, "invalid-response");
+  if (stale.kind === "invalid-response") {
+    assert.equal(stale.code, "autodev_control_api_invalid_prompts_response");
+    assert.match(stale.message, /requires the v2 source-validity contract/);
   }
 });
 
@@ -2162,18 +2891,46 @@ test("HooksView distinguishes an invalid source from an absent one", () => {
 });
 
 test("View adapters translate Control API responses without inventing data", () => {
-  const skills = skillsFromControlApi({
-    schema: "autodev-control-skills-v1",
-    source: "test",
+  const skillsResponse = {
+    schema: "autodev-control-skills-v2" as const,
+    source: ".rulesync/skills+execution-contract",
     readOnly: true,
-    skills: [{ name: "playwright", roles: ["browser-tester"] }]
+    valid: true,
+    skills: [
+      {
+        name: "playwright",
+        description: "Run browser checks.",
+        path: ".rulesync/skills/playwright/SKILL.md",
+        roles: ["browser-tester", "validator"]
+      },
+      {
+        name: "audit",
+        description: "Audit catalog state.",
+        path: ".rulesync/skills/audit/SKILL.md",
+        roles: []
+      }
+    ],
+    unresolvedAssignments: [{ name: "missing", roles: ["worker"] }]
+  };
+  const skills = skillsFromControlApi(skillsResponse);
+  assert.deepEqual(skills[0], {
+    name: "playwright",
+    description: "Run browser checks.",
+    path: ".rulesync/skills/playwright/SKILL.md"
   });
-  assert.deepEqual(skills[0]?.name, "playwright");
+  assert.deepEqual(skillEligibilityFromControlApi(skillsResponse), [
+    { skill: "playwright", roles: ["browser-tester", "validator"] },
+    { skill: "audit", roles: [] }
+  ]);
+  assert.deepEqual(unresolvedSkillAssignmentsFromControlApi(skillsResponse), [
+    { skill: "missing", roles: ["worker"] }
+  ]);
 
   const prompts = promptsFromControlApi({
-    schema: "autodev-control-prompts-v1",
-    source: "test",
+    schema: "autodev-control-prompts-v2",
+    source: ".rulesync/commands",
     readOnly: true,
+    valid: true,
     totalCommands: 1,
     commands: [
       { name: "dry", path: ".rulesync/commands/dry.md", description: "DRY" }
@@ -2189,17 +2946,19 @@ test("View adapters translate Control API responses without inventing data", () 
   assert.equal(prompts[1]?.name, "orchestrator");
 
   const promptDocument = promptDocumentFromControlApi({
-    schema: "autodev-control-prompt-detail-v1",
+    schema: "autodev-control-prompt-detail-v2",
     name: "dry",
     type: "command",
     source: ".rulesync/commands/dry.md",
-    content: "Exact source"
+    content: "Exact source",
+    revision: "b".repeat(64)
   });
   assert.deepEqual(promptDocument, {
     name: "dry",
     kind: "command",
     path: ".rulesync/commands/dry.md",
-    content: "Exact source"
+    content: "Exact source",
+    revision: "b".repeat(64)
   });
 
   const workspaces = workspacesFromControlApi({
@@ -2417,6 +3176,7 @@ test("MemoryCohortsView renders session outcome cohorts preserving explicit unre
   const markup = renderToStaticMarkup(
     React.createElement(MemoryCohortsView, {
       sessionCohorts: sampleCohort,
+      useCohorts: null,
       currentWorkspaceId: "SimulatorLife/AutoDev",
       repositoryId: "SimulatorLife/AutoDev",
       occurredFrom: "2026-09-01T00:00:00Z",
@@ -2434,6 +3194,78 @@ test("MemoryCohortsView renders session outcome cohorts preserving explicit unre
   assert.match(markup, /Non-inferential cohort policy/);
 });
 
+test("MemoryCohortsView does not render unavailable session data as an empty cohort", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryCohortsView, {
+      sessionCohorts: null,
+      useCohorts: null,
+      currentWorkspaceId: "SimulatorLife/AutoDev",
+      repositoryId: "SimulatorLife/AutoDev",
+      occurredFrom: "2026-09-01T00:00:00Z",
+      occurredUntil: "2026-10-01T00:00:00Z"
+    })
+  );
+  assert.match(markup, /data-memory-session-cohorts-state="unavailable"/);
+  assert.match(markup, /role="alert"/);
+  assert.match(markup, /data-status="unavailable"/);
+  assert.match(markup, /Session outcome cohort data is unavailable/);
+  assert.equal(markup.includes("No session outcome cohort data found"), false);
+  assert.equal(markup.includes("Observed Sessions"), false);
+});
+
+test("MemoryCohortsView distinguishes an observed empty cohort from unavailable data", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryCohortsView, {
+      sessionCohorts: {
+        schema: "autodev-memory-session-outcome-cohorts-v1",
+        workspaceId: "SimulatorLife/AutoDev",
+        repositoryId: "SimulatorLife/AutoDev",
+        occurredFrom: "2026-09-01T00:00:00Z",
+        occurredUntil: "2026-10-01T00:00:00Z",
+        cells: [],
+        sessionCount: 0,
+        reportedSessionCount: 0,
+        unreportedSessionCount: 0,
+        mixedModeSessionCount: 0,
+        conflictingOutcomeSessionCount: 0
+      },
+      useCohorts: null,
+      currentWorkspaceId: "SimulatorLife/AutoDev",
+      repositoryId: "SimulatorLife/AutoDev",
+      occurredFrom: "2026-09-01T00:00:00Z",
+      occurredUntil: "2026-10-01T00:00:00Z"
+    })
+  );
+  assert.match(markup, /data-memory-session-cohorts-state="observed"/);
+  assert.match(markup, /Observed Sessions/);
+  assert.match(markup, /No session outcome cohort data found/);
+  assert.doesNotMatch(markup, /Session outcome cohort data is unavailable/);
+});
+
+test("MemoryView keeps an unavailable experience tab out of its successful-empty state", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryView, {
+      activeTab: "experiences",
+      records: [],
+      totalRecords: 0,
+      experiences: [],
+      totalExperiences: null,
+      sessionCohorts: null,
+      useCohorts: null,
+      currentWorkspaceId: "SimulatorLife/AutoDev",
+      repositoryId: "SimulatorLife/AutoDev",
+      workspaces: [],
+      occurredFrom: "2026-09-01T00:00:00Z",
+      occurredUntil: "2026-10-01T00:00:00Z"
+    })
+  );
+  assert.match(markup, /data-memory-experiences-observed="false"/);
+  assert.match(markup, /data-status="unavailable"/);
+  assert.match(markup, /Memory experiences are unavailable/);
+  assert.equal(markup.includes("No captured memory experiences found"), false);
+  assert.equal(markup.includes('data-feature="memory-experiences"'), false);
+});
+
 test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace filter", () => {
   const markup = renderToStaticMarkup(
     React.createElement(MemoryView, {
@@ -2441,7 +3273,9 @@ test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace
       records: [],
       totalRecords: 0,
       experiences: [],
-      totalExperiences: 0,
+      totalExperiences: null,
+      sessionCohorts: null,
+      useCohorts: null,
       currentWorkspaceId: "SimulatorLife/AutoDev",
       repositoryId: "SimulatorLife/AutoDev",
       workspaces: [
@@ -2467,10 +3301,28 @@ test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace
   );
 
   assert.match(markup, /data-feature="memory"/);
+  assert.match(markup, /data-memory-experiences-observed="false"/);
+  assert.match(markup, /data-memory-session-cohorts-observed="false"/);
+  const experiencesLabel = markup.indexOf(">Experiences</span>");
+  const cohortSessionsLabel = markup.indexOf(">Cohort Sessions</span>");
+  const tabsStart = markup.indexOf("<nav", cohortSessionsLabel);
+  assert.notEqual(experiencesLabel, -1);
+  assert.ok(cohortSessionsLabel > experiencesLabel);
+  assert.ok(tabsStart > cohortSessionsLabel);
+  assert.match(
+    markup.slice(experiencesLabel, cohortSessionsLabel),
+    />Not observed<\/span>/
+  );
+  assert.match(
+    markup.slice(cohortSessionsLabel, tabsStart),
+    />Not observed<\/span>/
+  );
   assert.match(markup, /data-tab-item="records"/);
   assert.match(markup, /data-tab-item="experiences"/);
   assert.match(markup, /data-tab-item="cohorts"/);
   assert.match(markup, /data-tab-item="portal"/);
+  assert.match(markup, />External Memory UI</);
+  assert.equal(markup.includes("OpenLIT Portal"), false);
   assert.match(markup, /aria-label="Memory sections"/);
   assert.match(markup, /aria-current="page"[^>]*data-tab-item="records"/);
   const experiencesLink = markup
@@ -2613,6 +3465,170 @@ test("Agents provider-role feedback reports outcomes without optimistic state cl
   assert.match(failedMarkup, /could not be confirmed/);
   assert.match(failedMarkup, /Check the current role state before retrying/);
   assert.doesNotMatch(failedMarkup, /No change was made/);
+});
+
+test("Prompt edit form submits only source content and its revision through the typed Control API", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  const previousBaseUrl = process.env.AUTODEV_CONTROL_API_BASE_URL;
+  const token = "prompt-route-server-token";
+  const content =
+    "---\ntargets: [\"*\"]\ndescription: Updated command.\n---\n\n# Updated\n\nSave canonical text.\n";
+  const requests: Array<{
+    readonly url: string;
+    readonly method: string | undefined;
+    readonly headers: Headers;
+    readonly body: string;
+  }> = [];
+  process.env.AUTODEV_CONTROL_API_TOKEN = token;
+  process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+  globalThis.fetch = async (input, init) => {
+    requests.push({
+      url: String(input),
+      method: init?.method,
+      headers: new Headers(init?.headers),
+      body: String(init?.body ?? "")
+    });
+    return Response.json({
+      schema: "autodev-control-prompt-command-patch-v1",
+      name: "dry",
+      revision: "b".repeat(64),
+      changed: true,
+      projectionUpdated: true,
+      restartRequired: true
+    });
+  };
+
+  try {
+    const request = new NextRequest(
+      "http://console.test/api/prompts/dry",
+      {
+        method: "POST",
+        headers: {
+          origin: "http://console.test",
+          host: "console.test",
+          "sec-fetch-site": "same-origin",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({
+          expectedRevision: "a".repeat(64),
+          content
+        }).toString()
+      }
+    );
+    const response = await promptMutationRoute.POST(request, {
+      params: Promise.resolve({ name: "dry" })
+    });
+
+    assert.equal(response.status, 303);
+    assert.equal(response.headers.get("location"), "/prompts/dry");
+    assert.equal(requests.length, 1);
+    assert.equal(
+      requests[0]?.url,
+      "http://127.0.0.1:4101/control/prompts/dry"
+    );
+    assert.equal(requests[0]?.method, "PATCH");
+    assert.equal(requests[0]?.headers.get("authorization"), `Bearer ${token}`);
+    assert.equal(
+      requests[0]?.headers.get("x-autodev-actor"),
+      LOCAL_CONTROL_API_ACTOR
+    );
+    assert.deepEqual(JSON.parse(requests[0]?.body ?? "{}"), {
+      expectedRevision: "a".repeat(64),
+      content
+    });
+    assert.equal(response.headers.get("location")?.includes(token), false);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined) delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    else process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
+    if (previousBaseUrl === undefined)
+      delete process.env.AUTODEV_CONTROL_API_BASE_URL;
+    else process.env.AUTODEV_CONTROL_API_BASE_URL = previousBaseUrl;
+  }
+});
+
+test("Prompt edit route rejects CSRF, malformed forms, and exposes no mutation methods", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "prompt-route-no-fetch-token";
+  let fetchCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    return Response.json({ error: "unexpected mutation" }, { status: 500 });
+  };
+
+  const validForm = new URLSearchParams({
+    expectedRevision: "a".repeat(64),
+    content: "---\ntargets: [\"*\"]\ndescription: Valid.\n---\n\nPrompt\n"
+  }).toString();
+  const cases = [
+    {
+      name: "cross-origin origin",
+      origin: "http://attacker.test",
+      fetchSite: "cross-site",
+      contentType: "application/x-www-form-urlencoded",
+      body: validForm
+    },
+    {
+      name: "non-same-origin fetch",
+      origin: "http://console.test",
+      fetchSite: "same-site",
+      contentType: "application/x-www-form-urlencoded",
+      body: validForm
+    },
+    {
+      name: "extra form field",
+      origin: "http://console.test",
+      fetchSite: "same-origin",
+      contentType: "application/x-www-form-urlencoded",
+      body: `${validForm}&extra=value`
+    },
+    {
+      name: "oversized body",
+      origin: "http://console.test",
+      fetchSite: "same-origin",
+      contentType: "application/x-www-form-urlencoded",
+      body: "x".repeat(160_001)
+    }
+  ];
+
+  try {
+    for (const testCase of cases) {
+      const request = new NextRequest(
+        "http://console.test/api/prompts/dry",
+        {
+          method: "POST",
+          headers: {
+            origin: testCase.origin,
+            host: "console.test",
+            "sec-fetch-site": testCase.fetchSite,
+            "content-type": testCase.contentType
+          },
+          body: testCase.body
+        }
+      );
+      const response = await promptMutationRoute.POST(request, {
+        params: Promise.resolve({ name: "dry" })
+      });
+      assert.equal(response.status, 303, testCase.name);
+      assert.equal(
+        response.headers.get("location"),
+        "/prompts/dry?save=failed",
+        testCase.name
+      );
+    }
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined) delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    else process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
+  }
+
+  assert.equal("GET" in promptMutationRoute, false);
+  assert.equal("PATCH" in promptMutationRoute, false);
+  assert.equal("PUT" in promptMutationRoute, false);
+  assert.equal("DELETE" in promptMutationRoute, false);
 });
 
 test("provider-role Console route sends only a same-origin typed PATCH with server credentials", async () => {

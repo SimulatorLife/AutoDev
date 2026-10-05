@@ -22,17 +22,43 @@ import {
 
 export interface SkillsViewProps {
   readonly skills: readonly SkillDefinition[];
-  readonly eligibility?: readonly SkillEligibility[];
+  readonly eligibility: readonly SkillEligibility[];
+  readonly unresolvedAssignments: readonly SkillEligibility[];
+  readonly sourceValidity: boolean | null;
 }
 
 export function SkillsView({
   skills,
-  eligibility = []
+  eligibility,
+  unresolvedAssignments,
+  sourceValidity
 }: SkillsViewProps): React.JSX.Element {
+  const catalogNames = new Set(skills.map((skill) => skill.name));
+  const eligibleSkills = new Set(
+    eligibility
+      .filter((item) => item.roles.length > 0 && catalogNames.has(item.skill))
+      .map((item) => item.skill)
+  );
+  const configuredCount =
+    sourceValidity === true
+      ? skills.length
+      : sourceValidity === false
+        ? "Invalid"
+        : "Not observed";
+  const assignedCount =
+    sourceValidity === true ? eligibleSkills.size : "Not observed";
+  const emptyMessage =
+    sourceValidity === false
+      ? "RuleSync `.rulesync/skills/` is invalid; no catalog was projected."
+      : sourceValidity === null
+        ? "RuleSync `.rulesync/skills/` was not observed."
+        : "No skills configured in RuleSync `.rulesync/skills/`.";
+
   const columns: ColumnDef<SkillDefinition>[] = [
     {
       id: "name",
       header: "Skill Name",
+      wrap: true,
       cell: (skill) =>
         React.createElement(
           "div",
@@ -44,7 +70,11 @@ export function SkillsView({
           ),
           React.createElement(
             "p",
-            { className: "text-xs text-fg-muted mt-0.5" },
+            {
+              className: "text-xs text-fg-muted mt-0.5 line-clamp-2",
+              title: skill.description,
+              style: { maxWidth: "28rem", whiteSpace: "normal" }
+            },
             skill.description
           )
         )
@@ -52,10 +82,15 @@ export function SkillsView({
     {
       id: "path",
       header: "Path",
+      wrap: true,
       cell: (skill) =>
         React.createElement(
           "span",
-          { className: "text-xs font-mono text-fg-muted" },
+          {
+            className:
+              "block max-w-64 truncate text-xs font-mono text-fg-muted",
+            title: skill.path
+          },
           skill.path
         )
     },
@@ -64,12 +99,19 @@ export function SkillsView({
       header: "Eligible Roles",
       cell: (skill) => {
         const item = eligibility.find((e) => e.skill === skill.name);
-        const roles = item?.roles ?? [];
+        if (!item) {
+          return React.createElement(
+            "span",
+            { className: "text-xs text-fg-muted" },
+            "Not observed"
+          );
+        }
+        const roles = item.roles;
         if (roles.length === 0) {
           return React.createElement(
             "span",
             { className: "text-xs text-fg-muted" },
-            "Universal / All"
+            "No roles assigned"
           );
         }
         return React.createElement(
@@ -105,19 +147,44 @@ export function SkillsView({
     {
       className: "flex flex-col gap-6",
       "data-feature": "skills",
-      "data-skill-runtime-observed": "false"
+      "data-skill-runtime-observed": "false",
+      "data-skill-source-validity":
+        sourceValidity === null ? "not-observed" : String(sourceValidity)
     },
+    sourceValidity === false
+      ? React.createElement(
+          "p",
+          {
+            className:
+              "rounded border border-error/40 bg-error/10 p-3 text-sm text-error",
+            role: "alert"
+          },
+          "RuleSync `.rulesync/skills/` is invalid; catalog contents are unavailable."
+        )
+      : sourceValidity === null
+        ? React.createElement(
+            "p",
+            {
+              className:
+                "rounded border border-warning/40 bg-warning/10 p-3 text-sm text-warning",
+              role: "status"
+            },
+            "RuleSync `.rulesync/skills/` has not been observed."
+          )
+        : null,
     React.createElement(
       "div",
       { className: "grid grid-cols-1 md:grid-cols-4 gap-4" },
       React.createElement(StatCard, {
         title: "Configured",
-        value: skills.length
+        value: configuredCount
       }),
       React.createElement(StatCard, {
-        title: "Eligible",
-        value: skills.length,
-        subtitle: "Role-assigned"
+        title: "Role-assigned",
+        value: assignedCount,
+        ...(sourceValidity === true
+          ? { subtitle: `of ${skills.length} configured` }
+          : {})
       }),
       React.createElement(StatCard, {
         title: "Observed Exposure",
@@ -130,6 +197,46 @@ export function SkillsView({
         subtitle: "skill_used events not wired"
       })
     ),
+    unresolvedAssignments.length > 0
+      ? React.createElement(
+          "section",
+          {
+            className:
+              "rounded border border-warning/40 bg-warning/10 p-4 text-sm text-warning",
+            role: "alert",
+            "data-unresolved-skill-assignments": unresolvedAssignments.length
+          },
+          React.createElement(
+            "h2",
+            { className: "font-semibold" },
+            "Unresolved role assignments"
+          ),
+          React.createElement(
+            "p",
+            { className: "mt-1 text-xs" },
+            "The execution contract assigns these skills, but no canonical RuleSync skill source exists:"
+          ),
+          React.createElement(
+            "ul",
+            { className: "mt-2 flex flex-col gap-1" },
+            unresolvedAssignments.map((item) =>
+              React.createElement(
+                "li",
+                { key: item.skill },
+                React.createElement(StatusBadge, {
+                  status: "invalid",
+                  label: item.skill
+                }),
+                React.createElement(
+                  "span",
+                  { className: "ml-2 text-xs" },
+                  `Assigned to: ${item.roles.join(", ")}`
+                )
+              )
+            )
+          )
+        )
+      : null,
     React.createElement(
       "div",
       null,
@@ -145,8 +252,7 @@ export function SkillsView({
         data: skills,
         columns,
         keyExtractor: (s: SkillDefinition) => s.name,
-        emptyMessage:
-          "No skills configured. RuleSync `.rulesync/skills/` is the canonical source."
+        emptyMessage
       })
     )
   );

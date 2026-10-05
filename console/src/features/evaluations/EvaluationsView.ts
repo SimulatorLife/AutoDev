@@ -1,4 +1,9 @@
-import type { EvaluationResult } from "@simulatorlife/autodev-core";
+import {
+  type EvaluationResult,
+  isOpenTelemetrySpanId,
+  type UsageTraceDetail,
+  type UsageTraceSpan
+} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
@@ -8,17 +13,272 @@ import {
   DataTable
 } from "../../components/tables/DataTable.ts";
 
+const NOT_OBSERVED_LABEL = "Not observed";
+
+export type EvaluationTraceLookup =
+  | { readonly kind: "invalid-span-id" }
+  | { readonly kind: "not-configured" }
+  | { readonly kind: "not-found" }
+  | { readonly kind: "unavailable" }
+  | { readonly kind: "observed"; readonly detail: UsageTraceDetail };
+
 export interface EvaluationsViewProps {
   readonly evaluations?: readonly EvaluationResult[] | undefined;
+  readonly promptFilter?: string | undefined;
+  readonly traceLookup?: EvaluationTraceLookup | null | undefined;
+}
+
+function traceHref(spanId: string, promptFilter?: string): string {
+  const params = new URLSearchParams();
+  if (promptFilter) params.set("prompt", promptFilter);
+  params.set("spanId", spanId);
+  return "/evaluations?" + params.toString();
+}
+
+function traceReference(
+  evaluation: EvaluationResult,
+  promptFilter?: string
+): React.ReactNode {
+  if (!evaluation.spanId) {
+    return React.createElement(StatusBadge, {
+      status: "not-observed",
+      label: NOT_OBSERVED_LABEL
+    });
+  }
+  if (!isOpenTelemetrySpanId(evaluation.spanId)) {
+    return React.createElement(StatusBadge, {
+      status: "invalid",
+      label: "Invalid reference"
+    });
+  }
+  return React.createElement(
+    "a",
+    {
+      href: traceHref(evaluation.spanId, promptFilter),
+      className:
+        "font-mono text-xs font-medium text-accent underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+      "aria-label": `View trace for evaluation ${evaluation.id}`,
+      "data-evaluation-trace-span-id": evaluation.spanId
+    },
+    "View trace"
+  );
+}
+
+function traceSpanLink(
+  spanId: string,
+  label: string,
+  promptFilter?: string
+): React.JSX.Element {
+  return React.createElement(
+    "a",
+    {
+      href: traceHref(spanId, promptFilter),
+      className:
+        "font-mono text-xs text-accent underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+      "aria-label": `Open span ${spanId}`,
+      "data-trace-span-id": spanId
+    },
+    label
+  );
+}
+
+function traceSpanLabel(
+  span: UsageTraceSpan,
+  promptFilter?: string
+): React.ReactNode {
+  return traceSpanLink(span.spanId, span.spanId.slice(0, 8), promptFilter);
+}
+
+function traceColumns(
+  promptFilter?: string
+): readonly ColumnDef<UsageTraceSpan>[] {
+  return [
+    {
+      id: "span",
+      header: "Span",
+      cell: (span) => traceSpanLabel(span, promptFilter)
+    },
+    {
+      id: "parent",
+      header: "Parent span",
+      cell: (span) =>
+        span.parentSpanId
+          ? traceSpanLink(
+              span.parentSpanId,
+              span.parentSpanId.slice(0, 8),
+              promptFilter
+            )
+          : "Root span"
+    },
+    {
+      id: "name",
+      header: "Operation",
+      cell: (span) => span.spanName || NOT_OBSERVED_LABEL
+    },
+    {
+      id: "service",
+      header: "Service",
+      cell: (span) => span.serviceName || NOT_OBSERVED_LABEL
+    },
+    {
+      id: "timestamp",
+      header: "Start time",
+      cell: (span) =>
+        React.createElement(
+          "span",
+          { className: "font-mono text-xs text-fg-muted" },
+          span.timestamp
+        )
+    },
+    {
+      id: "duration",
+      header: "Duration",
+      cell: (span) =>
+        React.createElement(
+          "span",
+          { className: "font-mono text-xs text-fg-secondary" },
+          `${(span.durationNs / 1_000_000).toFixed(1)} ms`
+        )
+    },
+    {
+      id: "status",
+      header: "Span status",
+      cell: (span) => {
+        const style =
+          span.statusCode === "ERROR"
+            ? "text-error"
+            : span.statusCode === "OK"
+              ? "text-success"
+              : "text-fg-muted";
+        return React.createElement(
+          "span",
+          { className: `font-mono text-xs ${style}` },
+          span.statusCode === "UNSET" ? NOT_OBSERVED_LABEL : span.statusCode
+        );
+      }
+    }
+  ];
+}
+
+function renderTraceLookup(
+  traceLookup: EvaluationTraceLookup,
+  promptFilter?: string
+): React.JSX.Element {
+  if (traceLookup.kind !== "observed") {
+    const messages: Record<
+      Exclude<EvaluationTraceLookup["kind"], "observed">,
+      string
+    > = {
+      "invalid-span-id":
+        "The selected evaluation does not contain a valid trace reference.",
+      "not-configured": "Trace lookup is not configured on the Console server.",
+      "not-found":
+        "The referenced span was not observed in retained telemetry.",
+      unavailable: "Trace details are currently unavailable."
+    };
+    const status =
+      traceLookup.kind === "invalid-span-id"
+        ? "invalid"
+        : traceLookup.kind === "not-found"
+          ? "not-observed"
+          : "unavailable";
+    return React.createElement(
+      "div",
+      {
+        role: "alert",
+        className:
+          "rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm text-warning",
+        "data-feature": "evaluation-trace-detail",
+        "data-trace-state": traceLookup.kind,
+        "data-status": status
+      },
+      messages[traceLookup.kind]
+    );
+  }
+
+  const { detail } = traceLookup;
+  return React.createElement(
+    "section",
+    {
+      className:
+        "flex flex-col gap-4 rounded-lg border border-border bg-surface p-5",
+      "aria-labelledby": "evaluation-trace-heading",
+      "data-feature": "evaluation-trace-detail",
+      "data-trace-state": "observed",
+      "data-trace-partial": detail.partial ? "true" : "false"
+    },
+    React.createElement(
+      "div",
+      { className: "flex flex-wrap items-center justify-between gap-3" },
+      React.createElement(
+        "h2",
+        {
+          id: "evaluation-trace-heading",
+          className:
+            "text-sm font-semibold uppercase tracking-wider text-fg-secondary"
+        },
+        "Trace detail"
+      ),
+      React.createElement(
+        "a",
+        {
+          href: promptFilter
+            ? "/evaluations?prompt=" + encodeURIComponent(promptFilter)
+            : "/evaluations",
+          className:
+            "text-xs text-accent underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        },
+        "Back to evaluations"
+      )
+    ),
+    React.createElement(
+      "div",
+      { className: "flex flex-wrap gap-4 text-xs text-fg-secondary" },
+      React.createElement(
+        "span",
+        null,
+        "Trace ID: ",
+        React.createElement(
+          "code",
+          { className: "font-mono text-fg" },
+          detail.traceId
+        )
+      ),
+      React.createElement("span", null, `${detail.spans.length} spans shown`),
+      detail.partial
+        ? React.createElement(
+            "span",
+            { role: "status", className: "text-warning" },
+            "Trace is partial; additional spans were omitted by the bounded result limit."
+          )
+        : null
+    ),
+    DataTable({
+      data: detail.spans,
+      columns: traceColumns(promptFilter),
+      keyExtractor: (span) => span.spanId,
+      emptyMessage: "No trace spans were observed."
+    })
+  );
 }
 
 export function EvaluationsView({
-  evaluations = []
+  evaluations = [],
+  promptFilter,
+  traceLookup
 }: EvaluationsViewProps): React.JSX.Element {
   const total = evaluations.length;
-  const passed = evaluations.filter((e) => e.passed).length;
+  const passed = evaluations.filter(
+    (evaluation) => evaluation.passed === true
+  ).length;
+  const failed = evaluations.filter(
+    (evaluation) => evaluation.passed === false
+  ).length;
+  const observedOutcomes = passed + failed;
   const passRate =
-    total > 0 ? `${Math.round((passed / total) * 100)}%` : "Not observed";
+    observedOutcomes > 0
+      ? `${Math.round((passed / observedOutcomes) * 100)}%`
+      : NOT_OBSERVED_LABEL;
 
   const columns: ColumnDef<EvaluationResult>[] = [
     {
@@ -48,20 +308,28 @@ export function EvaluationsView({
         React.createElement(
           "div",
           { className: "flex gap-2" },
-          ev.metrics.map((m) =>
-            React.createElement(
+          ev.metrics.map((m) => {
+            const verdict =
+              m.pass === null
+                ? NOT_OBSERVED_LABEL
+                : m.pass
+                  ? "Passed"
+                  : "Failed";
+            return React.createElement(
               "span",
               {
                 key: m.name,
                 className: `text-xs px-2 py-0.5 rounded font-mono border ${
-                  m.pass
+                  m.pass === true
                     ? "bg-success/15 text-success border-success/40"
-                    : "bg-error/15 text-error border-error/40"
+                    : m.pass === false
+                      ? "bg-error/15 text-error border-error/40"
+                      : "bg-neutral/15 text-neutral border-neutral/40"
                 }`
               },
-              `${m.name}: ${m.value}`
-            )
-          )
+              `${m.name}: ${m.value} · ${verdict}`
+            );
+          })
         )
     },
     {
@@ -69,9 +337,24 @@ export function EvaluationsView({
       header: "Outcome",
       cell: (ev) =>
         React.createElement(StatusBadge, {
-          status: ev.passed ? "valid" : "invalid",
-          label: ev.passed ? "Passed" : "Failed"
+          status:
+            ev.passed === null
+              ? "not-observed"
+              : ev.passed
+                ? "valid"
+                : "invalid",
+          label:
+            ev.passed === null
+              ? NOT_OBSERVED_LABEL
+              : ev.passed
+                ? "Passed"
+                : "Failed"
         })
+    },
+    {
+      id: "trace",
+      header: "Trace",
+      cell: (ev) => traceReference(ev, promptFilter)
     },
     {
       id: "timestamp",
@@ -85,16 +368,42 @@ export function EvaluationsView({
     }
   ];
 
+  const filteredPromptNotice = promptFilter
+    ? React.createElement(
+        "p",
+        {
+          className:
+            "rounded border border-border bg-surface/60 px-3 py-2 text-xs text-fg-secondary",
+          "data-evaluations-prompt-filter": promptFilter
+        },
+        "Filtered to prompt ",
+        React.createElement(
+          "code",
+          { className: "font-mono text-fg" },
+          promptFilter
+        ),
+        " · ",
+        React.createElement(
+          "a",
+          { href: "/evaluations", className: "text-accent hover:underline" },
+          "Clear filter"
+        )
+      )
+    : null;
+
   return React.createElement(
     "div",
     {
       className: "flex flex-col gap-6",
       "data-feature": "evaluations",
-      "data-evaluation-pass-rate-observed": total > 0 ? "true" : "false"
+      "data-evaluation-pass-rate-observed":
+        observedOutcomes > 0 ? "true" : "false"
     },
+    filteredPromptNotice,
+    traceLookup ? renderTraceLookup(traceLookup, promptFilter) : null,
     React.createElement(
       "div",
-      { className: "grid grid-cols-1 md:grid-cols-3 gap-4" },
+      { className: "grid grid-cols-1 gap-4 md:grid-cols-3" },
       React.createElement(StatCard, {
         title: "Total Evaluations",
         value: total
@@ -103,7 +412,7 @@ export function EvaluationsView({
       React.createElement(StatCard, {
         title: "Pass Rate",
         value: passRate,
-        subtitle: "Direct resource evaluation"
+        subtitle: `${observedOutcomes} of ${total} with explicit verdicts`
       })
     ),
     React.createElement(
@@ -122,7 +431,7 @@ export function EvaluationsView({
         columns,
         keyExtractor: (e: EvaluationResult) => e.id,
         emptyMessage:
-          "No evaluations run yet. Evaluations run directly against AutoDev agents and prompt traces."
+          "No evaluation results are present in the available history."
       })
     )
   );

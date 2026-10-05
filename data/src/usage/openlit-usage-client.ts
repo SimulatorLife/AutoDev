@@ -1,15 +1,28 @@
-import type {
-  UsageFilterOptions,
-  UsageFilterSelection,
-  UsageMetricsData,
-  UsageSnapshot,
-  UsageVariableId,
-  UsageWidgetId
+import {
+  isOpenTelemetrySpanId,
+  isOpenTelemetryTraceId,
+  type UsageFilterOptions,
+  type UsageFilterSelection,
+  type UsageMetricsData,
+  type UsageSnapshot,
+  type UsageTraceDetail,
+  type UsageTraceSpan,
+  type UsageTraceStatus,
+  type UsageVariableId,
+  type UsageWidgetId
 } from "@simulatorlife/autodev-core";
 
 const TRAILING_SLASHES = /\/+$/u;
 const USAGE_API_PATH = "/api/autodev/usage";
+const TRACE_DETAIL_API_PATH = "/api/autodev/usage/span";
 const REQUEST_TIMEOUT_MS = 30_000;
+const MAX_TRACE_SPANS = 200;
+const TRACE_STATUS_CODES = new Set<UsageTraceStatus>([
+  "OK",
+  "ERROR",
+  "UNSET",
+  "UNKNOWN"
+]);
 type SupportedUsageVariableId = Exclude<UsageVariableId, "skill">;
 
 const USAGE_VARIABLE_IDS: readonly SupportedUsageVariableId[] = [
@@ -72,6 +85,14 @@ export type OpenLITUsageResult =
   | { readonly kind: "http-error"; readonly status: number }
   | { readonly kind: "unreachable" };
 
+export type OpenLITTraceResult =
+  | { readonly kind: "ok"; readonly data: UsageTraceDetail }
+  | { readonly kind: "invalid-span-id" }
+  | { readonly kind: "not-found" }
+  | { readonly kind: "unauthorized"; readonly status: number }
+  | { readonly kind: "http-error"; readonly status: number }
+  | { readonly kind: "unreachable" };
+
 export class OpenLITUsageClient {
   readonly baseUrl: string;
   readonly serviceToken: string;
@@ -81,6 +102,53 @@ export class OpenLITUsageClient {
     this.baseUrl = config.baseUrl.replace(TRAILING_SLASHES, "");
     this.serviceToken = config.serviceToken;
     this.fetchImpl = config.fetchImpl ?? globalThis.fetch;
+  }
+
+  async queryTrace(spanId: string): Promise<OpenLITTraceResult> {
+    if (!isOpenTelemetrySpanId(spanId)) return { kind: "invalid-span-id" };
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const response = await this.fetchImpl(
+        `${this.baseUrl}${TRACE_DETAIL_API_PATH}/${encodeURIComponent(spanId)}`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${this.serviceToken}`,
+            Accept: "application/json"
+          },
+          signal: controller.signal
+        }
+      );
+      if (response.status === 401 || response.status === 403) {
+        return { kind: "unauthorized", status: response.status };
+      }
+      if (response.status === 404) {
+        try {
+          const error = await response.json();
+          if (
+            isRecord(error) &&
+            isRecord(error.error) &&
+            error.error.code === "autodev_usage_trace_not_found"
+          ) {
+            return { kind: "not-found" };
+          }
+        } catch {
+          // A generic 404 (for example a not-yet-deployed trace route) is not
+          // evidence that this span is absent from the telemetry source.
+        }
+        return { kind: "http-error", status: 404 };
+      }
+      if (!response.ok) return { kind: "http-error", status: response.status };
+
+      const detail = parseOpenLITTraceDetail(await response.json());
+      return detail ? { kind: "ok", data: detail } : { kind: "unreachable" };
+    } catch {
+      return { kind: "unreachable" };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async query(selection: UsageFilterSelection): Promise<OpenLITUsageResult> {
@@ -117,6 +185,70 @@ export class OpenLITUsageClient {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseOpenLITTraceDetail(value: unknown): UsageTraceDetail | null {
+  if (
+    !isRecord(value) ||
+    value.schema !== "autodev-openlit-trace-detail-v1" ||
+    typeof value.traceId !== "string" ||
+    !isOpenTelemetryTraceId(value.traceId) ||
+    typeof value.selectedSpanId !== "string" ||
+    !isOpenTelemetrySpanId(value.selectedSpanId) ||
+    typeof value.partial !== "boolean" ||
+    !Array.isArray(value.spans) ||
+    value.spans.length === 0 ||
+    value.spans.length > MAX_TRACE_SPANS
+  ) {
+    return null;
+  }
+
+  const spans: UsageTraceSpan[] = [];
+  const spanIds = new Set<string>();
+  for (const candidate of value.spans) {
+    if (
+      !isRecord(candidate) ||
+      typeof candidate.spanId !== "string" ||
+      !isOpenTelemetrySpanId(candidate.spanId) ||
+      spanIds.has(candidate.spanId) ||
+      (candidate.parentSpanId !== null &&
+        (typeof candidate.parentSpanId !== "string" ||
+          !isOpenTelemetrySpanId(candidate.parentSpanId))) ||
+      typeof candidate.spanName !== "string" ||
+      candidate.spanName.length > 256 ||
+      typeof candidate.serviceName !== "string" ||
+      candidate.serviceName.length > 256 ||
+      typeof candidate.timestamp !== "string" ||
+      !Number.isFinite(Date.parse(candidate.timestamp)) ||
+      typeof candidate.durationNs !== "number" ||
+      !Number.isSafeInteger(candidate.durationNs) ||
+      candidate.durationNs < 0 ||
+      typeof candidate.statusCode !== "string" ||
+      !TRACE_STATUS_CODES.has(candidate.statusCode as UsageTraceStatus)
+    ) {
+      return null;
+    }
+
+    spanIds.add(candidate.spanId);
+    spans.push({
+      spanId: candidate.spanId,
+      parentSpanId: candidate.parentSpanId as string | null,
+      spanName: candidate.spanName,
+      serviceName: candidate.serviceName,
+      timestamp: candidate.timestamp,
+      durationNs: candidate.durationNs,
+      statusCode: candidate.statusCode as UsageTraceStatus
+    });
+  }
+
+  if (!spanIds.has(value.selectedSpanId)) return null;
+  return {
+    schema: "autodev-openlit-trace-detail-v1",
+    traceId: value.traceId,
+    selectedSpanId: value.selectedSpanId,
+    spans,
+    partial: value.partial
+  };
 }
 
 function parseOpenLITUsageResponse(

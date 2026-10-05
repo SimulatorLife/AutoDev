@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import {
+  cpSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
@@ -18,6 +20,7 @@ import {
 } from "@simulatorlife/autodev-data";
 import {
   CONTROL_API_PATHS,
+  type ControlApiRequestOptions,
   githubWorkflowsView,
   handleControlApiRequest,
   setGithubActionsAdapterForTests
@@ -48,7 +51,8 @@ const ENV_KEYS = [
   "AUTODEV_MEMORY_READ_TASK_HISTORY",
   "AUTODEV_GITHUB_TOKEN",
   "AUTODEV_GITHUB_REPOSITORY",
-  "GITHUB_REPOSITORY"
+  "GITHUB_REPOSITORY",
+  "CLICKHOUSE_URL"
 ] as const;
 const SERVICE_TOKEN = "unit-test-secret-token-0123456789abcdef";
 const telemetryExporter = new InMemorySpanExporter();
@@ -148,13 +152,15 @@ function makeResponse() {
 async function call(
   method: string,
   url: string,
-  options: Parameters<typeof makeRequest>[2] = {}
+  options: Parameters<typeof makeRequest>[2] = {},
+  runtimeOptions: ControlApiRequestOptions = {}
 ) {
   const response = makeResponse();
   const handled = await handleControlApiRequest(
     makeRequest(method, url, options) as any,
     response as any,
-    new URL(url, "http://127.0.0.1").pathname
+    new URL(url, "http://127.0.0.1").pathname,
+    runtimeOptions
   );
   return {
     handled,
@@ -179,6 +185,25 @@ async function captureAudit<T>(action: () => Promise<T>): Promise<{
     process.stderr.write = original;
   }
 }
+
+test("Control API does not turn an unavailable evaluation store into empty history", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    process.env.CLICKHOUSE_URL = "http://127.0.0.1:1";
+    const result = await call("GET", CONTROL_API_PATHS.evaluations, {
+      actor: "viewer-a"
+    });
+    assert.equal(result.response.statusCode, 503);
+    assert.equal(
+      result.body?.error?.code,
+      "autodev_control_evaluations_unavailable"
+    );
+    assert.doesNotMatch(result.response.body, /ECONNREFUSED/u);
+  } finally {
+    restoreEnv(saved);
+  }
+});
 
 test("Control API requires a service credential and rejects missing or untrusted actors", async () => {
   const saved = saveEnv();
@@ -285,10 +310,21 @@ test("viewer reads control resources; MCP and Skills views contain configuration
       actor: "viewer-a"
     });
     assert.equal(skills.response.statusCode, 200);
-    assert.deepEqual(skills.body.skills, [
-      { name: "lsp-mcp-server", roles: ["reviewer"] },
-      { name: "orchestration", roles: ["default"] }
-    ]);
+    assert.equal(skills.body.schema, "autodev-control-skills-v2");
+    assert.equal(skills.body.valid, true);
+    const lspSkill = skills.body.skills.find(
+      (skill: { name: string }) => skill.name === "lsp-mcp-server"
+    );
+    assert.ok(lspSkill);
+    assert.equal(lspSkill.path, ".rulesync/skills/lsp-mcp-server/SKILL.md");
+    assert.match(lspSkill.description, /Use LSP/);
+    assert.deepEqual(lspSkill.roles, ["reviewer"]);
+    const orchestrationSkill = skills.body.skills.find(
+      (skill: { name: string }) => skill.name === "orchestration"
+    );
+    assert.ok(orchestrationSkill);
+    assert.deepEqual(orchestrationSkill.roles, ["default"]);
+    assert.deepEqual(skills.body.unresolvedAssignments, []);
     assert.equal("bridgeUsage" in skills.body, false);
 
     const runtime = await call("GET", CONTROL_API_PATHS.runtime, {
@@ -651,7 +687,44 @@ test("Control API surfaces all 13 typed resource families", async () => {
       actor: "viewer-a"
     });
     assert.equal(skills.response.statusCode, 200);
-    assert.equal(skills.body.schema, "autodev-control-skills-v1");
+    assert.equal(skills.body.schema, "autodev-control-skills-v2");
+    assert.equal(skills.body.source, ".rulesync/skills+execution-contract");
+    const canonicalSkills = new RuleSyncRepository().loadSkills();
+    assert.equal(canonicalSkills.valid, true);
+    assert.equal(skills.body.valid, true);
+    assert.deepEqual(
+      skills.body.skills.map(
+        (skill: { name: string; description: string; path: string }) => ({
+          name: skill.name,
+          description: skill.description,
+          path: skill.path
+        })
+      ),
+      canonicalSkills.skills
+    );
+    const executionRoles = getDefaultExecutionContract().roles ?? {};
+    assert.deepEqual(
+      skills.body.skills.map(
+        (skill: { name: string; roles: readonly string[] }) => ({
+          name: skill.name,
+          roles: skill.roles
+        })
+      ),
+      canonicalSkills.skills.map((skill) => ({
+        name: skill.name,
+        roles: Object.entries(executionRoles)
+          .filter(([, raw]) => {
+            if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+              return false;
+            }
+            const values = (raw as Record<string, unknown>).skills;
+            return Array.isArray(values) && values.includes(skill.name);
+          })
+          .map(([role]) => role)
+          .sort()
+      }))
+    );
+    assert.deepEqual(skills.body.unresolvedAssignments, []);
 
     // 7. Hooks
     const hooks = await call("GET", CONTROL_API_PATHS.hooks, {
@@ -675,14 +748,16 @@ test("Control API surfaces all 13 typed resource families", async () => {
       actor: "viewer-a"
     });
     assert.equal(prompts.response.statusCode, 200);
-    assert.equal(prompts.body.schema, "autodev-control-prompts-v1");
+    assert.equal(prompts.body.schema, "autodev-control-prompts-v2");
+    assert.equal(prompts.body.valid, true);
+    assert.equal(prompts.body.source, ".rulesync/commands");
     assert.ok(prompts.body.totalCommands > 0);
 
     const promptDetail = await call("GET", CONTROL_API_PATHS.prompts + "/dry", {
       actor: "viewer-a"
     });
     assert.equal(promptDetail.response.statusCode, 200);
-    assert.equal(promptDetail.body.schema, "autodev-control-prompt-detail-v1");
+    assert.equal(promptDetail.body.schema, "autodev-control-prompt-detail-v2");
     assert.equal(promptDetail.body.name, "dry");
 
     const unknownPrompt = await call(
@@ -747,21 +822,24 @@ test("Control API prompts listing projects the canonical RuleSyncRepository.load
   const saved = saveEnv();
   try {
     configure();
-    const expectedCommands = new RuleSyncRepository()
-      .loadCommands()
-      .map((command) => ({
-        name: command.name,
-        path: command.path,
-        description: command.description ?? `RuleSync command ${command.name}`
-      }));
+    const commandState = new RuleSyncRepository().loadCommands();
+    assert.equal(commandState.valid, true);
+    const expectedCommands = commandState.commands.map((command) => ({
+      name: command.name,
+      path: command.path,
+      ...(command.description === undefined
+        ? {}
+        : { description: command.description })
+    }));
     assert.ok(expectedCommands.length > 0);
 
     const prompts = await call("GET", CONTROL_API_PATHS.prompts, {
       actor: "viewer-a"
     });
     assert.equal(prompts.response.statusCode, 200);
-    assert.equal(prompts.body.schema, "autodev-control-prompts-v1");
-    assert.equal(prompts.body.source, "rulesync");
+    assert.equal(prompts.body.schema, "autodev-control-prompts-v2");
+    assert.equal(prompts.body.source, ".rulesync/commands");
+    assert.equal(prompts.body.valid, true);
     assert.equal(prompts.body.readOnly, true);
     assert.equal(prompts.body.totalCommands, expectedCommands.length);
     assert.deepEqual(prompts.body.commands, expectedCommands);
@@ -786,8 +864,9 @@ test("Control API prompt detail serves the canonical command content from RuleSy
   try {
     configure();
     const assets = new RuleSyncRepository().loadCommands();
-    assert.ok(assets.length > 0);
-    const target = assets[0];
+    assert.equal(assets.valid, true);
+    assert.ok(assets.commands.length > 0);
+    const target = assets.commands[0];
     assert.ok(target);
 
     const detail = await call(
@@ -796,23 +875,132 @@ test("Control API prompt detail serves the canonical command content from RuleSy
       { actor: "viewer-a" }
     );
     assert.equal(detail.response.statusCode, 200);
-    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v1");
+    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v2");
     assert.equal(detail.body.name, target.name);
     assert.equal(detail.body.type, "command");
     assert.equal(detail.body.source, target.path);
     assert.equal(detail.body.content, target.content);
+    assert.equal(detail.body.revision, target.revision);
 
-    // The detail surface must not invent fields the canonical adapter
-    // doesn't produce; source/content are the only variable fields.
+    // The detail surface contains only canonical content and its revision.
     assert.deepEqual(Object.keys(detail.body).sort(), [
       "content",
       "name",
+      "revision",
       "schema",
       "source",
       "type"
     ]);
   } finally {
     restoreEnv(saved);
+  }
+});
+
+test("operator Prompt PATCH validates source, applies the Rulesync projection, and audits only metadata", async () => {
+  const saved = saveEnv();
+  const repositoryRoot = mkdtempSync(
+    join(tmpdir(), "autodev-prompt-control-repository-")
+  );
+  const codexHome = mkdtempSync(join(tmpdir(), "autodev-prompt-control-home-"));
+  const commandsDir = join(repositoryRoot, ".rulesync", "commands");
+  try {
+    configure();
+    cpSync(join(process.cwd(), ".rulesync", "commands"), commandsDir, {
+      recursive: true
+    });
+    symlinkSync(
+      resolve(process.cwd(), "node_modules"),
+      join(repositoryRoot, "node_modules"),
+      "dir"
+    );
+
+    const source = new RuleSyncRepository(repositoryRoot).loadCommands();
+    assert.equal(source.valid, true);
+    const current = source.commands.find((command) => command.name === "dry");
+    assert.ok(current);
+    const content =
+      "---\ntargets: [\"*\"]\ndescription: Edited through AutoDev Console.\n---\n\n# Edited command\n\nA canonical edit reaches the generated Codex prompt.\n";
+    const runtimeOptions = { repositoryRoot, codexHome };
+
+    const viewerAttempt = await call(
+      "PATCH",
+      CONTROL_API_PATHS.prompts + "/dry",
+      {
+        actor: "viewer-a",
+        body: { content, expectedRevision: current.revision }
+      },
+      runtimeOptions
+    );
+    assert.equal(viewerAttempt.response.statusCode, 403);
+    assert.equal(
+      new RuleSyncRepository(repositoryRoot)
+        .loadCommands()
+        .commands.find((command) => command.name === "dry")?.revision,
+      current.revision
+    );
+
+    const { result, lines } = await captureAudit(() =>
+      call(
+        "PATCH",
+        CONTROL_API_PATHS.prompts + "/dry",
+        {
+          actor: "operator-a",
+          body: { content, expectedRevision: current.revision }
+        },
+        runtimeOptions
+      )
+    );
+    assert.equal(result.response.statusCode, 200);
+    assert.equal(
+      result.body.schema,
+      "autodev-control-prompt-command-patch-v1"
+    );
+    assert.equal(result.body.name, "dry");
+    assert.match(result.body.revision, /^[a-f0-9]{64}$/u);
+    assert.equal(result.body.changed, true);
+    assert.equal(result.body.projectionUpdated, true);
+    assert.equal(result.body.restartRequired, true);
+    assert.doesNotMatch(lines.join(""), /A canonical edit reaches/u);
+    assert.equal(
+      new RuleSyncRepository(repositoryRoot).loadCommands().commands.find(
+        (command) => command.name === "dry"
+      )?.content,
+      content
+    );
+    assert.match(
+      readFileSync(join(codexHome, "prompts", "dry.md"), "utf8"),
+      /A canonical edit reaches the generated Codex prompt\./u
+    );
+
+    const detail = await call(
+      "GET",
+      CONTROL_API_PATHS.prompts + "/dry",
+      { actor: "viewer-a" },
+      runtimeOptions
+    );
+    assert.equal(detail.response.statusCode, 200);
+    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v2");
+    assert.equal(detail.body.revision, result.body.revision);
+    assert.equal(detail.body.content, content);
+
+    const stale = await call(
+      "PATCH",
+      CONTROL_API_PATHS.prompts + "/dry",
+      {
+        actor: "operator-a",
+        body: { content: current.content, expectedRevision: current.revision }
+      },
+      runtimeOptions
+    );
+    assert.equal(stale.response.statusCode, 409);
+    assert.equal(
+      stale.body.error.code,
+      "autodev_control_prompt_revision_conflict"
+    );
+  } finally {
+    restoreEnv(saved);
+    rmSync(repositoryRoot, { recursive: true, force: true });
+    rmSync(codexHome, { recursive: true, force: true });
   }
 });
 
@@ -841,8 +1029,10 @@ test("Control API prompt detail serves an unshadowed role prompt from its canoni
       { actor: "viewer-a" }
     );
     assert.equal(detail.response.statusCode, 200);
+    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v2");
     assert.equal(detail.body.type, "role");
     assert.equal(detail.body.name, rolePrompt.role);
+    assert.match(detail.body.revision, /^[a-f0-9]{64}$/u);
     assert.equal(detail.body.source, rolePrompt.path);
     assert.equal(
       detail.body.content,

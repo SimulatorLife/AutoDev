@@ -1,19 +1,12 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { RuleSyncRepository } from "../rulesync/rulesync-repository.ts";
 import {
   type OpenLitClickHouseOptions,
   resolveOpenLitClickHouseConnection
 } from "./clickhouse-config.ts";
-
-export interface RulesyncPromptData {
-  readonly name: string;
-  readonly description: string;
-  readonly targets: readonly string[];
-  readonly prompt: string;
-}
 
 export interface SyncPromptsOptions extends OpenLitClickHouseOptions {
   readonly repositoryRoot?: string;
@@ -54,10 +47,6 @@ interface PromptMutationPlan {
   readonly metaProperties: string;
 }
 
-const FRONTMATTER_REGEX = /^---\n(?<front>[\s\S]*?)\n---\n(?<body>[\s\S]*)$/u;
-const TARGETS_REGEX = /^targets:[ \t]*(?<value>\[[^\]]*\])[ \t]*$/mu;
-const DESCRIPTION_REGEX = /^description:[ \t]*(?<value>\S.*)$/mu;
-const MD_EXTENSION_REGEX = /\.md$/u;
 const NUMERIC_COLLATOR = new Intl.Collator(undefined, { numeric: true });
 
 /**
@@ -75,59 +64,6 @@ export function deterministicUuid(input: string): string {
     clockSeq,
     hash.slice(20, 32)
   ].join("-");
-}
-
-/**
- * Parse frontmatter and body from a rulesync command markdown file.
- */
-export function parseRulesyncPrompt(
-  name: string,
-  content: string
-): RulesyncPromptData {
-  const match = FRONTMATTER_REGEX.exec(content);
-  if (!match?.groups?.front || match.groups.body === undefined) {
-    throw new Error(`Prompt "${name}" is missing valid YAML frontmatter.`);
-  }
-  const targetsMatch = TARGETS_REGEX.exec(match.groups.front);
-  let targets: string[] = ["*"];
-  if (targetsMatch?.groups?.value) {
-    try {
-      const parsed = JSON.parse(targetsMatch.groups.value) as unknown;
-      if (Array.isArray(parsed) && parsed.every((v) => typeof v === "string")) {
-        targets = parsed;
-      }
-    } catch {
-      // Fallback to default wildcard if JSON parsing fails
-    }
-  }
-  const descMatch = DESCRIPTION_REGEX.exec(match.groups.front);
-  const description = descMatch?.groups?.value
-    ? descMatch.groups.value.trim()
-    : "";
-  const prompt = match.groups.body.trim();
-  return { name, description, targets, prompt };
-}
-
-/**
- * Read and validate all rulesync commands from `.rulesync/commands/`.
- */
-export function loadRulesyncPrompts(
-  repositoryRoot: string
-): Map<string, RulesyncPromptData> {
-  const commandsDir = path.join(repositoryRoot, ".rulesync", "commands");
-  if (!existsSync(commandsDir)) {
-    throw new Error(`Rulesync commands directory not found: ${commandsDir}`);
-  }
-  const files = readdirSync(commandsDir)
-    .filter((f) => f.endsWith(".md"))
-    .sort();
-  const map = new Map<string, RulesyncPromptData>();
-  for (const file of files) {
-    const name = file.replace(MD_EXTENSION_REGEX, "");
-    const content = readFileSync(path.join(commandsDir, file), "utf8");
-    map.set(name, parseRulesyncPrompt(name, content));
-  }
-  return map;
 }
 
 async function fetchExistingPrompts(
@@ -274,7 +210,25 @@ export async function syncRulesyncPrompts(
   const { clickhouseUrl, endpoint } =
     resolveOpenLitClickHouseConnection(options);
 
-  const catalog = loadRulesyncPrompts(repositoryRoot);
+  const source = new RuleSyncRepository(repositoryRoot).loadCommands();
+  if (source.valid !== true) {
+    throw new Error(
+      source.valid === null
+        ? "The canonical RuleSync command directory was not observed."
+        : "The canonical RuleSync command directory is invalid."
+    );
+  }
+  const catalog = new Map(
+    source.commands.map((command) => [
+      command.name,
+      {
+        name: command.name,
+        description: command.description ?? "",
+        targets: command.targets,
+        prompt: command.prompt
+      }
+    ])
+  );
 
   const existingPrompts = await fetchExistingPrompts(endpoint, clickhouseUrl);
   const existingVersions = await fetchExistingVersions(endpoint);

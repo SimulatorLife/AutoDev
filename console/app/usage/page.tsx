@@ -11,7 +11,7 @@ import {
   ConsolePageShell,
   readNodeContext,
   ResourceUnavailable
-} from "../_console.tsx";
+} from "../_console.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +32,7 @@ export default async function UsagePage({
       ConsolePageShell,
       { section },
       React.createElement(ResourceUnavailable, {
-        title: "OpenLIT Usage credential is not configured",
+        title: "Usage telemetry credential is not configured",
         code: "autodev_usage_credentials_disabled",
         message:
           "Set AUTODEV_OPENLIT_USAGE_TOKEN in the Next.js server environment to read telemetry.",
@@ -51,10 +51,10 @@ export default async function UsagePage({
           : `autodev_openlit_usage_http_${result.status}`;
     const title =
       result.kind === "unreachable"
-        ? "OpenLIT Usage could not be reached"
+        ? "Usage telemetry service could not be reached"
         : result.kind === "unauthorized"
-          ? "OpenLIT Usage rejected the server credential"
-          : "OpenLIT Usage query failed";
+          ? "Usage telemetry service rejected the server credential"
+          : "Usage query failed";
     return React.createElement(
       ConsolePageShell,
       { section },
@@ -63,9 +63,9 @@ export default async function UsagePage({
         code,
         message:
           result.kind === "unreachable"
-            ? "The OpenLIT Usage endpoint is unavailable or returned an invalid response."
-            : `The OpenLIT Usage endpoint returned HTTP ${result.status}.`,
-        hint: "Telemetry values remain not observed until OpenLIT returns validated query data."
+            ? "The read-only Usage endpoint is unavailable or returned an invalid response."
+            : `The Usage endpoint returned HTTP ${result.status}.`,
+        hint: "Telemetry values remain not observed until the Usage endpoint returns validated query data."
       }),
       React.createElement(UsageView, { selection })
     );

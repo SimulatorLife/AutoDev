@@ -36,6 +36,8 @@ import {
   type ControlApiMemoryUseCohortsResponse,
   type ControlApiModelsResponse,
   type ControlApiPermissionsResponse,
+  type ControlApiPromptCommandPatchRequest,
+  type ControlApiPromptCommandPatchResponse,
   type ControlApiPromptDetailResponse,
   type ControlApiPromptsResponse,
   type ControlApiProviderRolePatchResponse,
@@ -63,7 +65,12 @@ export type ControlApiResult<T> =
       readonly code: string;
       readonly message: string;
     }
-  | { readonly kind: "unreachable"; readonly message: string };
+  | { readonly kind: "unreachable"; readonly message: string }
+  | {
+      readonly kind: "invalid-response";
+      readonly code: string;
+      readonly message: string;
+    };
 
 const DEFAULT_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
 const CONTROL_API_TIMEOUT_MS = 5000;
@@ -425,15 +432,63 @@ export function fetchTools(
   );
 }
 
-export function fetchSkills(
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isStringList(value: unknown): value is readonly string[] {
+  return (
+    Array.isArray(value) && value.every((entry) => typeof entry === "string")
+  );
+}
+
+function isControlApiSkillsResponse(
+  value: unknown
+): value is ControlApiSkillsResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-skills-v2" &&
+    typeof value.source === "string" &&
+    value.readOnly === true &&
+    (value.valid === true || value.valid === false || value.valid === null) &&
+    Array.isArray(value.skills) &&
+    value.skills.every(
+      (skill) =>
+        isRecord(skill) &&
+        typeof skill.name === "string" &&
+        typeof skill.description === "string" &&
+        typeof skill.path === "string" &&
+        isStringList(skill.roles)
+    ) &&
+    Array.isArray(value.unresolvedAssignments) &&
+    value.unresolvedAssignments.every(
+      (assignment) =>
+        isRecord(assignment) &&
+        typeof assignment.name === "string" &&
+        isStringList(assignment.roles)
+    )
+  );
+}
+
+export async function fetchSkills(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiSkillsResponse>> {
-  return fetchControlApi<ControlApiSkillsResponse>(
+  const result = await fetchControlApi<unknown>(
     CONTROL_API_PATHS.skills,
     config,
     options
   );
+  if (result.kind !== "ok") return result;
+  if (isControlApiSkillsResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: "invalid-response",
+    code: "autodev_control_api_invalid_skills_response",
+    message:
+      "AutoDev Control API returned an incompatible Skills response; the Console requires the v2 canonical catalog contract."
+  };
 }
 
 export function fetchHooks(
@@ -458,24 +513,105 @@ export function fetchPermissions(
   );
 }
 
-export function fetchPrompts(
+function isControlApiPromptsResponse(
+  value: unknown
+): value is ControlApiPromptsResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-prompts-v2" &&
+    typeof value.source === "string" &&
+    value.readOnly === true &&
+    (value.valid === true || value.valid === false || value.valid === null) &&
+    (value.totalCommands === null ||
+      (Number.isSafeInteger(value.totalCommands) &&
+        (value.totalCommands as number) >= 0)) &&
+    Array.isArray(value.commands) &&
+    value.commands.every(
+      (command) =>
+        isRecord(command) &&
+        typeof command.name === "string" &&
+        typeof command.path === "string" &&
+        (command.description === undefined ||
+          typeof command.description === "string")
+    ) &&
+    Array.isArray(value.rolePrompts) &&
+    value.rolePrompts.every(
+      (prompt) =>
+        isRecord(prompt) &&
+        typeof prompt.role === "string" &&
+        typeof prompt.path === "string"
+    )
+  );
+}
+
+export async function fetchPrompts(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiPromptsResponse>> {
-  return fetchControlApi<ControlApiPromptsResponse>(
+  const result = await fetchControlApi<unknown>(
     CONTROL_API_PATHS.prompts,
     config,
     options
   );
+  if (result.kind !== "ok") return result;
+  if (isControlApiPromptsResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: "invalid-response",
+    code: "autodev_control_api_invalid_prompts_response",
+    message:
+      "AutoDev Control API returned an incompatible Prompts response; the Console requires the v2 source-validity contract."
+  };
 }
 
-export function fetchPromptDetail(
+function isControlApiPromptDetailResponse(
+  value: unknown
+): value is ControlApiPromptDetailResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-prompt-detail-v2" &&
+    typeof value.name === "string" &&
+    (value.type === "command" || value.type === "role") &&
+    typeof value.source === "string" &&
+    typeof value.content === "string" &&
+    typeof value.revision === "string" &&
+    /^[a-f0-9]{64}$/u.test(value.revision)
+  );
+}
+
+export async function fetchPromptDetail(
   name: string,
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiPromptDetailResponse>> {
   const path = `${CONTROL_API_PATHS.prompts}/${encodeURIComponent(name)}`;
-  return fetchControlApi<ControlApiPromptDetailResponse>(path, config, options);
+  const result = await fetchControlApi<unknown>(path, config, options);
+  if (result.kind !== "ok") return result;
+  if (isControlApiPromptDetailResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: "invalid-response",
+    code: "autodev_control_api_invalid_prompt_detail_response",
+    message:
+      "AutoDev Control API returned an incompatible Prompt detail response; the Console requires the v2 revision contract."
+  };
+}
+
+export function patchPromptCommand(
+  name: string,
+  payload: ControlApiPromptCommandPatchRequest,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiPromptCommandPatchResponse>> {
+  return mutateControlApi<ControlApiPromptCommandPatchResponse>(
+    "PATCH",
+    `${CONTROL_API_PATHS.prompts}/${encodeURIComponent(name)}`,
+    payload,
+    config,
+    options
+  );
 }
 
 export function fetchWorkspaces(

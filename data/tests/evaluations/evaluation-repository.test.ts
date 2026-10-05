@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { EvaluationRepository } from "../../src/evaluations/evaluation-repository.ts";
+import {
+  EvaluationRepository,
+  EvaluationSourceUnavailableError
+} from "../../src/evaluations/evaluation-repository.ts";
 
 test("EvaluationRepository.parseEvaluationRows parses valid ClickHouse evaluation rows", () => {
   const repo = new EvaluationRepository();
   const rawJson = [
     JSON.stringify({
       id: "9b3c5a7f-1234-4567-89ab-cdef01234567",
-      span_id: "span-abc",
+      span_id: "0123456789abcdef",
       created_at: "2026-10-04 12:00:00",
       meta: {
         agentRole: "orchestrator",
@@ -26,7 +29,7 @@ test("EvaluationRepository.parseEvaluationRows parses valid ClickHouse evaluatio
     }),
     JSON.stringify({
       id: "8a2b4c6e-5678-90ab-cdef-1234567890ab",
-      span_id: "span-def",
+      span_id: "fedcba9876543210",
       created_at: "2026-10-04 12:05:00",
       meta: {
         role: "worker",
@@ -45,6 +48,7 @@ test("EvaluationRepository.parseEvaluationRows parses valid ClickHouse evaluatio
 
   const first = results[0]!;
   assert.equal(first.id, "9b3c5a7f-1234-4567-89ab-cdef01234567");
+  assert.equal(first.spanId, "0123456789abcdef");
   assert.equal(first.agentRole, "orchestrator");
   assert.equal(first.promptName, "dry");
   assert.equal(first.model, "gpt-5.6-terra");
@@ -64,6 +68,7 @@ test("EvaluationRepository.parseEvaluationRows parses valid ClickHouse evaluatio
 
   const second = results[1]!;
   assert.equal(second.id, "8a2b4c6e-5678-90ab-cdef-1234567890ab");
+  assert.equal(second.spanId, "fedcba9876543210");
   assert.equal(second.agentRole, "worker");
   assert.equal(second.promptName, undefined);
   assert.equal(second.model, "claude-3-5-sonnet");
@@ -76,11 +81,82 @@ test("EvaluationRepository.parseEvaluationRows parses valid ClickHouse evaluatio
   });
 });
 
-test("EvaluationRepository.parseEvaluationRows ignores empty and malformed lines", () => {
+test("EvaluationRepository distinguishes empty history from malformed rows", () => {
   const repo = new EvaluationRepository();
-  const raw = "\n  \nnot-valid-json\n{}\n";
-  const results = repo.parseEvaluationRows(raw);
-  assert.deepEqual(results, []);
+  assert.deepEqual(repo.parseEvaluationRows("\n  \n"), []);
+  assert.throws(
+    () => repo.parseEvaluationRows("not-valid-json"),
+    EvaluationSourceUnavailableError
+  );
+  assert.throws(
+    () =>
+      repo.parseEvaluationRows(
+        [
+          JSON.stringify({ id: "valid-row", created_at: "2026-10-04" }),
+          "not-valid-json"
+        ].join("\n")
+      ),
+    EvaluationSourceUnavailableError
+  );
+  assert.throws(
+    () => repo.parseEvaluationRows(JSON.stringify({ id: "missing-time" })),
+    EvaluationSourceUnavailableError
+  );
+  assert.throws(
+    () =>
+      repo.parseEvaluationRows(
+        JSON.stringify({
+          id: "invalid-meta",
+          created_at: "2026-10-04",
+          meta: []
+        })
+      ),
+    EvaluationSourceUnavailableError
+  );
+  assert.throws(
+    () =>
+      repo.parseEvaluationRows(
+        JSON.stringify({
+          id: "invalid-span-id",
+          created_at: "2026-10-04",
+          span_id: 42
+        })
+      ),
+    EvaluationSourceUnavailableError
+  );
+  assert.throws(
+    () =>
+      repo.parseEvaluationRows(
+        JSON.stringify({
+          id: "oversized-span-id",
+          created_at: "2026-10-04",
+          span_id: "x".repeat(257)
+        })
+      ),
+    EvaluationSourceUnavailableError
+  );
+});
+
+test("EvaluationRepository does not infer verdicts from scores or missing metrics", () => {
+  const repo = new EvaluationRepository();
+  const results = repo.parseEvaluationRows(
+    [
+      JSON.stringify({
+        id: "score-without-verdict",
+        created_at: "2026-10-04 10:00:00",
+        "evaluationData.evaluation": ["quality"],
+        scores: { quality: 0.99 }
+      }),
+      JSON.stringify({
+        id: "no-metrics",
+        created_at: "2026-10-04 10:01:00"
+      })
+    ].join("\n")
+  );
+  assert.equal(results[0]?.metrics[0]?.pass, null);
+  assert.equal(results[0]?.passed, null);
+  assert.equal(results[1]?.metrics.length, 0);
+  assert.equal(results[1]?.passed, null);
 });
 
 test("EvaluationRepository.listEvaluations returns parsed rows with custom fetchImpl", async () => {
@@ -107,7 +183,7 @@ test("EvaluationRepository.listEvaluations returns parsed rows with custom fetch
   assert.equal(list[0]?.model, "unknown");
 });
 
-test("EvaluationRepository.listEvaluations handles fetch failure and non-ok response safely", async () => {
+test("EvaluationRepository reports fetch failure and non-ok response as unavailable", async () => {
   const errorFetch: typeof fetch = async () => {
     return new Response("Table openlit.openlit_evaluation does not exist", {
       status: 404
@@ -115,14 +191,19 @@ test("EvaluationRepository.listEvaluations handles fetch failure and non-ok resp
   };
 
   const repoError = new EvaluationRepository({ fetchImpl: errorFetch });
-  const listError = await repoError.listEvaluations();
-  assert.deepEqual(listError, []);
+  await assert.rejects(
+    repoError.listEvaluations(),
+    EvaluationSourceUnavailableError
+  );
 
   const throwingFetch: typeof fetch = async () => {
     throw new Error("ECONNREFUSED");
   };
 
   const repoThrowing = new EvaluationRepository({ fetchImpl: throwingFetch });
-  const listThrowing = await repoThrowing.listEvaluations();
-  assert.deepEqual(listThrowing, []);
+  await assert.rejects(repoThrowing.listEvaluations(), (error: unknown) => {
+    assert.ok(error instanceof EvaluationSourceUnavailableError);
+    assert.doesNotMatch(error.message, /ECONNREFUSED/u);
+    return true;
+  });
 });

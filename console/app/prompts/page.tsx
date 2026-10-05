@@ -10,7 +10,7 @@ import {
   ConsolePageShell,
   readNodeContext,
   ResourceUnavailable
-} from "../_console.tsx";
+} from "../_console.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +43,15 @@ export default async function PromptsPage(): Promise<React.JSX.Element> {
   const commands = promptsFromControlApi(result.data);
   return React.createElement(
     ConsolePageShell,
-    { section, counts: { Prompts: commands.length } },
-    React.createElement(PromptsView, { commands })
+    {
+      section,
+      ...(result.data.valid === true
+        ? { counts: { Prompts: commands.length } }
+        : {})
+    },
+    React.createElement(PromptsView, {
+      commands,
+      commandSourceValidity: result.data.valid
+    })
   );
 }

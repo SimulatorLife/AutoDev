@@ -19,14 +19,16 @@ import {
 
 export type MemoryTab = "records" | "experiences" | "cohorts" | "portal";
 
+const NOT_OBSERVED_LABEL = "Not observed";
+
 export interface MemoryViewProps {
   readonly activeTab: MemoryTab;
   readonly records: readonly MemoryRecord[];
   readonly totalRecords: number;
   readonly experiences: readonly ExperienceEnvelope[];
-  readonly totalExperiences: number;
-  readonly sessionCohorts?: MemorySessionOutcomeCohortPage | null | undefined;
-  readonly useCohorts?: MemoryInjectionUseCohortPage | null | undefined;
+  readonly totalExperiences: number | null;
+  readonly sessionCohorts: MemorySessionOutcomeCohortPage | null;
+  readonly useCohorts: MemoryInjectionUseCohortPage | null;
   readonly selectedRecord?: MemoryRecord | null | undefined;
   readonly selectedHistory?: MemoryRecordHistory | null | undefined;
   readonly selectedExperience?: ExperienceEnvelope | null | undefined;
@@ -65,13 +67,13 @@ export function MemoryView({
   const activeRecordsCount = records.filter(
     (r) => r.status === "active"
   ).length;
-  const totalObservedSessions = sessionCohorts?.sessionCount ?? 0;
+  const totalObservedSessions = sessionCohorts?.sessionCount ?? null;
 
   const tabButtons: { readonly id: MemoryTab; readonly label: string }[] = [
     { id: "records", label: "Durable Records" },
     { id: "experiences", label: "Experiences" },
     { id: "cohorts", label: "Outcome Cohorts" },
-    { id: "portal", label: "OpenLIT Portal" }
+    { id: "portal", label: "External Memory UI" }
   ];
 
   const hrefForTab = (tabId: string): string => {
@@ -89,7 +91,14 @@ export function MemoryView({
 
   return React.createElement(
     "div",
-    { className: "flex flex-col gap-8", "data-feature": "memory" },
+    {
+      className: "flex flex-col gap-8",
+      "data-feature": "memory",
+      "data-memory-experiences-observed":
+        totalExperiences === null ? "false" : "true",
+      "data-memory-session-cohorts-observed":
+        sessionCohorts === null ? "false" : "true"
+    },
     // Header
     React.createElement(
       "div",
@@ -191,13 +200,17 @@ export function MemoryView({
       }),
       React.createElement(StatCard, {
         title: "Experiences",
-        value: totalExperiences,
-        subtitle: `${experiences.length} in scope`
+        value: totalExperiences ?? NOT_OBSERVED_LABEL,
+        subtitle:
+          totalExperiences === null
+            ? NOT_OBSERVED_LABEL
+            : `${experiences.length} in scope`
       }),
       React.createElement(StatCard, {
         title: "Cohort Sessions",
-        value: totalObservedSessions,
-        subtitle: "In window"
+        value: totalObservedSessions ?? NOT_OBSERVED_LABEL,
+        subtitle:
+          totalObservedSessions === null ? NOT_OBSERVED_LABEL : "In window"
       })
     ),
 
@@ -222,13 +235,24 @@ export function MemoryView({
           currentStatus: status
         })
       : activeTab === "experiences"
-        ? React.createElement(MemoryExperiencesView, {
-            experiences,
-            totalCount: totalExperiences,
-            selectedExperience,
-            currentWorkspaceId,
-            currentQuery: query
-          })
+        ? totalExperiences === null
+          ? React.createElement(
+              "div",
+              {
+                role: "alert",
+                className:
+                  "rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm text-warning",
+                "data-status": "unavailable"
+              },
+              "Memory experiences are unavailable; no list or count is inferred."
+            )
+          : React.createElement(MemoryExperiencesView, {
+              experiences,
+              totalCount: totalExperiences,
+              selectedExperience,
+              currentWorkspaceId,
+              currentQuery: query
+            })
         : activeTab === "cohorts"
           ? React.createElement(MemoryCohortsView, {
               sessionCohorts,
@@ -249,7 +273,7 @@ export function MemoryView({
                       className:
                         "p-4 rounded bg-surface border border-border text-sm text-fg-muted"
                     },
-                    "External OpenLIT UI URL is not configured."
+                    "External Memory UI URL is not configured."
                   )
             )
   );
