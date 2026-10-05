@@ -168,6 +168,7 @@ Moving between sections, list/detail views, tabs, and filters must feel immediat
 - GET filter/scope forms submit through `next/form` for the same soft navigation; mutations remain same-origin POST routes.
 - Routes declare no `loading.tsx` boundaries: on Next.js 15.5, a prefetched route loading component makes same-path search-param navigations (tabs, filters, record selection) reuse an aliased prefetch entry that intermittently never commits.
 - Page data loads in parallel; a page must not serialize independent Control API reads, and Control API reads must not redo deterministic work whose inputs are unchanged (for example, workflow YAML is re-parsed only when a file's content changes).
+- A view awaits only the reads its visible content needs. Secondary, scope-wide summaries that need extra reads stream after the page and must never hold a tab switch; while they refresh they keep the previous values visibly marked as refreshing.
 
 ## 4. Repository and module architecture
 

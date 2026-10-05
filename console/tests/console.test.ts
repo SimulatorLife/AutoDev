@@ -48,6 +48,9 @@ import {
   MemoryExperiencesView,
   MemoryPortalCard,
   MemoryRecordsView,
+  MemorySummary,
+  type MemorySummaryCounts,
+  MemorySummaryStream,
   MemoryView,
   PromptDetailView,
   PromptsView,
@@ -2591,11 +2594,14 @@ test("MemoryCohortsView renders session outcome cohorts preserving explicit unre
 test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace filter", () => {
   const markup = renderToStaticMarkup(
     React.createElement(MemoryView, {
-      activeTab: "records",
-      records: [],
-      totalRecords: 0,
-      experiences: [],
-      totalExperiences: 0,
+      content: { tab: "records", records: [], totalRecords: 0 },
+      summary: React.createElement(MemorySummary, {
+        counts: {
+          records: { total: 0, inScope: 0, active: 0 },
+          experiences: { total: 0, inScope: 0 },
+          cohortSessions: 0
+        }
+      }),
       currentWorkspaceId: "SimulatorLife/AutoDev",
       repositoryId: "SimulatorLife/AutoDev",
       workspaces: [
@@ -2665,6 +2671,91 @@ test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace
   assert.match(workspaceForm, /name="until" value="2026-10-01T00:00:00Z"/);
   assert.match(workspaceForm, /SimulatorLife\/Other/);
   assert.doesNotMatch(workspaceForm, /name="recordId"|name="experienceId"/);
+});
+
+test("MemorySummary streams as pending, dims stale counts, and never synthesizes zero", () => {
+  const pending = renderToStaticMarkup(React.createElement(MemorySummary));
+  assert.match(pending, /data-memory-summary="pending"/u);
+  assert.match(pending, /aria-busy="true"/u);
+  assert.doesNotMatch(pending.replaceAll(/<[^>]*>/gu, " "), /\d/u);
+
+  const unobserved = renderToStaticMarkup(
+    React.createElement(MemorySummary, {
+      counts: { records: null, experiences: null, cohortSessions: null }
+    })
+  );
+  assert.match(unobserved, /data-memory-summary="observed"/u);
+  assert.equal(unobserved.match(/Not observed/gu)?.length, 4);
+  assert.doesNotMatch(unobserved.replaceAll(/<[^>]*>/gu, " "), /\d/u);
+
+  const stale = renderToStaticMarkup(
+    React.createElement(MemorySummary, {
+      counts: { records: null, experiences: null, cohortSessions: 3 },
+      stale: true
+    })
+  );
+  assert.match(stale, /data-memory-summary="stale"/u);
+  assert.match(stale, /aria-busy="true"/u);
+  assert.match(stale, /opacity-60/u);
+
+  // Until the streamed counts resolve on the client, the summary is pending.
+  const streaming = renderToStaticMarkup(
+    React.createElement(MemorySummaryStream, {
+      counts: new Promise<MemorySummaryCounts>(() => {})
+    })
+  );
+  assert.match(streaming, /data-memory-summary="pending"/u);
+
+  const observed = renderToStaticMarkup(
+    React.createElement(MemorySummary, {
+      counts: {
+        records: { total: 12, inScope: 10, active: 7 },
+        experiences: { total: 40, inScope: 25 },
+        cohortSessions: 3
+      }
+    })
+  );
+  const text = observed.replaceAll(/<[^>]*>/gu, " ").replaceAll(/\s+/gu, " ");
+  assert.match(text, /Durable Records 12 10 in scope/u);
+  assert.match(text, /Active Claims 7/u);
+  assert.match(text, /Experiences 40 25 in scope/u);
+  assert.match(text, /Cohort Sessions 3/u);
+});
+
+test("MemoryView renders only the active tab's content", () => {
+  const shared = {
+    summary: null,
+    currentWorkspaceId: "SimulatorLife/AutoDev",
+    repositoryId: "SimulatorLife/AutoDev",
+    workspaces: [],
+    occurredFrom: "2026-09-01T00:00:00Z",
+    occurredUntil: "2026-10-01T00:00:00Z"
+  };
+  const experiences = renderToStaticMarkup(
+    React.createElement(MemoryView, {
+      ...shared,
+      content: { tab: "experiences", experiences: [], totalExperiences: 0 }
+    })
+  );
+  assert.match(experiences, /data-feature="memory-experiences"/u);
+  assert.doesNotMatch(experiences, /data-feature="memory-records"/u);
+  assert.match(
+    experiences,
+    /aria-current="page"[^>]*data-tab-item="experiences"/u
+  );
+
+  const portal = renderToStaticMarkup(
+    React.createElement(MemoryView, {
+      ...shared,
+      content: { tab: "portal" },
+      portalHref: "http://127.0.0.1:3000/memory"
+    })
+  );
+  assert.match(portal, /data-feature="memory-portal"/u);
+  assert.doesNotMatch(
+    portal,
+    /data-feature="memory-(?:records|experiences|cohorts)"/u
+  );
 });
 
 test("fetchMemoryRecords issues authenticated GET to /control/memory/records with workspace scope", async () => {

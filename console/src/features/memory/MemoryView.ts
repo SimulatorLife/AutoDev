@@ -7,7 +7,6 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import { StatCard } from "../../components/cards/StatCard.ts";
 import {
   ConsoleForm,
   type ConsoleFormProps
@@ -23,17 +22,38 @@ import {
 
 export type MemoryTab = "records" | "experiences" | "cohorts" | "portal";
 
+/**
+ * Data for the active tab only. Each tab loads just what it renders, so a
+ * tab switch never waits on another tab's reads.
+ */
+export type MemoryTabContent =
+  | {
+      readonly tab: "records";
+      readonly records: readonly MemoryRecord[];
+      readonly totalRecords: number;
+      readonly selectedRecord?: MemoryRecord | null | undefined;
+      readonly selectedHistory?: MemoryRecordHistory | null | undefined;
+    }
+  | {
+      readonly tab: "experiences";
+      readonly experiences: readonly ExperienceEnvelope[];
+      readonly totalExperiences: number;
+      readonly selectedExperience?: ExperienceEnvelope | null | undefined;
+    }
+  | {
+      readonly tab: "cohorts";
+      readonly sessionCohorts: MemorySessionOutcomeCohortPage | null;
+      readonly useCohorts: MemoryInjectionUseCohortPage | null;
+    }
+  | { readonly tab: "portal" };
+
 export interface MemoryViewProps {
-  readonly activeTab: MemoryTab;
-  readonly records: readonly MemoryRecord[];
-  readonly totalRecords: number;
-  readonly experiences: readonly ExperienceEnvelope[];
-  readonly totalExperiences: number;
-  readonly sessionCohorts?: MemorySessionOutcomeCohortPage | null | undefined;
-  readonly useCohorts?: MemoryInjectionUseCohortPage | null | undefined;
-  readonly selectedRecord?: MemoryRecord | null | undefined;
-  readonly selectedHistory?: MemoryRecordHistory | null | undefined;
-  readonly selectedExperience?: ExperienceEnvelope | null | undefined;
+  readonly content: MemoryTabContent;
+  /**
+   * Scope-wide summary cards. The page streams them separately (see
+   * `MemorySummaryStream`) so the active tab never waits on summary reads.
+   */
+  readonly summary: React.ReactNode;
   readonly currentWorkspaceId: string;
   readonly repositoryId: string;
   readonly workspaces: readonly WorkspaceEntry[];
@@ -46,16 +66,8 @@ export interface MemoryViewProps {
 }
 
 export function MemoryView({
-  activeTab,
-  records,
-  totalRecords,
-  experiences,
-  totalExperiences,
-  sessionCohorts,
-  useCohorts,
-  selectedRecord,
-  selectedHistory,
-  selectedExperience,
+  content,
+  summary,
   currentWorkspaceId,
   repositoryId,
   workspaces,
@@ -66,11 +78,7 @@ export function MemoryView({
   occurredUntil,
   portalHref
 }: MemoryViewProps): React.JSX.Element {
-  const activeRecordsCount = records.filter(
-    (r) => r.status === "active"
-  ).length;
-  const totalObservedSessions = sessionCohorts?.sessionCount ?? 0;
-
+  const activeTab = content.tab;
   const tabButtons: { readonly id: MemoryTab; readonly label: string }[] = [
     { id: "records", label: "Durable Records" },
     { id: "experiences", label: "Experiences" },
@@ -180,31 +188,7 @@ export function MemoryView({
       )
     ),
 
-    // Top stat cards
-    React.createElement(
-      "div",
-      { className: "grid grid-cols-2 sm:grid-cols-4 gap-4" },
-      React.createElement(StatCard, {
-        title: "Durable Records",
-        value: totalRecords,
-        subtitle: `${records.length} in scope`
-      }),
-      React.createElement(StatCard, {
-        title: "Active Claims",
-        value: activeRecordsCount,
-        subtitle: "Verified & in service"
-      }),
-      React.createElement(StatCard, {
-        title: "Experiences",
-        value: totalExperiences,
-        subtitle: `${experiences.length} in scope`
-      }),
-      React.createElement(StatCard, {
-        title: "Cohort Sessions",
-        value: totalObservedSessions,
-        subtitle: "In window"
-      })
-    ),
+    summary,
 
     React.createElement(TabNav, {
       navLabel: "Memory sections",
@@ -215,29 +199,29 @@ export function MemoryView({
     }),
 
     // Active tab body
-    activeTab === "records"
+    content.tab === "records"
       ? React.createElement(MemoryRecordsView, {
-          records,
-          totalCount: totalRecords,
-          selectedRecord,
-          history: selectedHistory,
+          records: content.records,
+          totalCount: content.totalRecords,
+          selectedRecord: content.selectedRecord,
+          history: content.selectedHistory,
           currentWorkspaceId,
           currentQuery: query,
           currentKind: kind,
           currentStatus: status
         })
-      : activeTab === "experiences"
+      : content.tab === "experiences"
         ? React.createElement(MemoryExperiencesView, {
-            experiences,
-            totalCount: totalExperiences,
-            selectedExperience,
+            experiences: content.experiences,
+            totalCount: content.totalExperiences,
+            selectedExperience: content.selectedExperience,
             currentWorkspaceId,
             currentQuery: query
           })
-        : activeTab === "cohorts"
+        : content.tab === "cohorts"
           ? React.createElement(MemoryCohortsView, {
-              sessionCohorts,
-              useCohorts,
+              sessionCohorts: content.sessionCohorts,
+              useCohorts: content.useCohorts,
               currentWorkspaceId,
               repositoryId,
               occurredFrom,

@@ -28,6 +28,8 @@ export * from "./features/memory/MemoryCohortsView.ts";
 export * from "./features/memory/MemoryExperiencesView.ts";
 export * from "./features/memory/MemoryPortalCard.ts";
 export * from "./features/memory/MemoryRecordsView.ts";
+export * from "./features/memory/MemorySummary.ts";
+export * from "./features/memory/MemorySummaryStream.ts";
 export * from "./features/memory/MemoryView.ts";
 export * from "./features/permissions/PermissionsView.ts";
 export * from "./features/prompts/PromptDetailView.ts";
