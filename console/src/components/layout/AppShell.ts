@@ -58,7 +58,14 @@ export function AppShell({
         "header",
         {
           className:
-            "min-h-16 border-b border-border bg-surface/50 backdrop-blur px-4 xl:px-8 py-3 flex items-center justify-between gap-6 shrink-0"
+            // `flex-wrap` so the title column and the actions slot can stack
+            // rather than compete. Without it the row has a minimum intrinsic
+            // width set by whichever child refuses to shrink, and on a narrow
+            // window the *title* absorbs all of it -- the same failure the
+            // section-heading rows on `/mcps` and `/prompts` had, one level up.
+            // No page fills `actions` yet, so this changes nothing today; it is
+            // here so the first one to use the prop does not inherit the bug.
+            "min-h-16 border-b border-border bg-surface/50 backdrop-blur px-4 xl:px-8 py-3 flex flex-wrap items-center justify-between gap-6 shrink-0"
         },
         React.createElement(
           "div",

@@ -41,7 +41,15 @@ export function McpsView({
     {
       id: "name",
       header: "Server Name",
-      weight: 150,
+      // The primary key of the row, and the link target. It was declared at 150,
+      // tied with the RuleSync declaration column and below `Configured roles`,
+      // so at the table's 864px floor -- what every viewport under 864 sees --
+      // it resolved to 105px against roles' 135. Measured at 390px, every server
+      // name rendered as eight characters plus an ellipsis: `cocoind…`,
+      // `codegra…`, `openaiD…`. Weight is only a share of the floor, so the way
+      // to widen the key is to take the width from the columns an operator reads
+      // second.
+      weight: 230,
       cell: (server) =>
         React.createElement(
           "a",
@@ -58,7 +66,7 @@ export function McpsView({
       id: "roles",
       header: "Configured roles",
       align: "tokens",
-      weight: 192,
+      weight: 180,
       cell: (server) =>
         chipList({
           items: server.roles,
@@ -107,7 +115,9 @@ export function McpsView({
     {
       id: "targets",
       header: "Overrides",
-      weight: 224,
+      // The widest column on the page at the floor, for what is usually a count
+      // or one chip. Part of what the Server Name column now has.
+      weight: 196,
       align: "tokens",
       cell: (server) =>
         server.targetOverrides.length === 0
@@ -174,7 +184,7 @@ export function McpsView({
       null,
       React.createElement(
         "div",
-        { className: "mb-3 flex items-center justify-between gap-3" },
+        { className: "mb-3 flex flex-wrap items-center justify-between gap-3" },
         React.createElement(
           "h2",
           {

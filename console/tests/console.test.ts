@@ -630,6 +630,67 @@ test("the shell lets a keyboard user reach the page body without walking the nav
   );
 });
 
+test("a heading that shares a row with a sibling sits in a row that can wrap", () => {
+  // A flex row that spaces its children apart has a minimum intrinsic width set
+  // by whichever child refuses to shrink, and no amount of wrapping *inside* the
+  // other child reduces it. On `/mcps` the section heading "Model Context
+  // Protocol Servers" shared a non-wrapping row with a `whitespace-nowrap`
+  // StatusBadge, and at 390px the heading collapsed into a 129px, three-line
+  // column beside the badge: measured, not inferred. `/prompts` had the same
+  // shape on "Edit Canonical Markdown Source", and `AppShell`'s header had it
+  // one level up.
+  //
+  // The rule is that the *row* wraps, not that the heading is made flexible --
+  // a heading squeezed beside a sibling reads as a rendering fault, and there is
+  // no title to recover it from the way a truncated value has one.
+  const roots = ["app", "src"].map((root) =>
+    join(import.meta.dirname, "..", root)
+  );
+  const offenders: string[] = [];
+
+  for (const root of roots) {
+    for (const relative of readdirSync(root, { recursive: true })) {
+      const file = join(root, relative.toString());
+      if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
+      const source = readFileSync(file, "utf8");
+      for (const m of source.matchAll(/"([^"]*\bflex\b[^"]*)"/gu)) {
+        if (!headingRowWithoutWrap(source, m)) continue;
+        offenders.push(
+          `${relative.toString()}:${source.slice(0, m.index).split("\n").length}  "${m[1]}"`
+        );
+      }
+    }
+  }
+  // A rule, not a measurement: it matches nothing today and is expected to
+  // match nothing. What it must not do is miss a regression, so it is
+  // mutation-tested rather than asserting a count.
+  assert.deepEqual(
+    offenders,
+    [],
+    `These rows space a heading against a sibling but cannot wrap, so the ` +
+      `heading absorbs the squeeze instead. Add flex-wrap to the row:\n${offenders.join("\n")}`
+  );
+});
+
+/**
+ * Whether a `flex` class string is a row that spaces its children apart, holds
+ * a heading, and cannot wrap.
+ *
+ * The heading is part of the test rather than the rule because a row of two
+ * equal chips has nothing to starve.
+ */
+function headingRowWithoutWrap(
+  source: string,
+  match: RegExpMatchArray
+): boolean {
+  const classList = match[1] ?? "";
+  if (!/\bjustify-(?:between|end)\b/u.test(classList)) return false;
+  if (!/\bitems-center\b/u.test(classList)) return false;
+  if (/\bflex-(?:wrap|col|reverse)\b/u.test(classList)) return false;
+  const after = source.slice(match.index ?? 0, (match.index ?? 0) + 900);
+  return /createElement\(\s*"h[1-6]"/u.test(after);
+}
+
 test("a disabled control states why it is disabled", () => {
   // The target state requires an unobserved or immutable control to stay in
   // place, disabled, "with the reason available". Measured across all 20 routes,
