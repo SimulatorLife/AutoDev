@@ -36,3 +36,10 @@ tmp/
 console/.next/
 console/.next-dev/
 console/next-env.d.ts
+
+# Throwaway working files. A stub server or a captured page kept around to
+# make one measurement reproducible must never reach the repository: a
+# concurrent commit that stages the whole working tree will pick them up,
+# and a stub that answers /control/* looks like a legitimate backend to
+# anyone who finds it later.
+.scratch-*
