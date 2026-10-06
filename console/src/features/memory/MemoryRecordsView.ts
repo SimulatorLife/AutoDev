@@ -14,6 +14,7 @@ import {
 } from "../../components/filters/FilterBar.ts";
 import { Button } from "../../components/forms/Button.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
+import { TextField } from "../../components/forms/TextField.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { Pagination } from "../../components/navigation/Pagination.ts";
@@ -39,6 +40,7 @@ import {
   memoryDetailHref,
   memoryFilterHref,
   memoryListHref,
+  memoryListQuery,
   type MemoryListScope,
   memoryPageHref
 } from "./memory-list-url.ts";
@@ -605,99 +607,143 @@ function RecordDetailPanel({
       ),
       // Verify & Promote
       record.status === "proposed" || record.status === "invalidated"
-        ? React.createElement(
-            "form",
-            { method: "POST", action: "/api/memory" },
-            React.createElement("input", {
-              type: "hidden",
-              name: "action",
-              value: "verify"
-            }),
-            React.createElement("input", {
-              type: "hidden",
-              name: "recordId",
-              value: record.id
-            }),
-            React.createElement("input", {
-              type: "hidden",
-              name: "workspaceId",
-              value: listScope.workspaceId
-            }),
-            React.createElement(
-              Button,
-              {
-                type: "submit",
-                variant: "primary",
-                testId: "memory-verify"
-              },
-              "Verify & Promote"
-            )
-          )
+        ? React.createElement(RecordActionForm, {
+            record,
+            listScope,
+            action: "verify",
+            label: "Verify & Promote",
+            variant: "primary",
+            testId: "memory-verify",
+            withReason: true
+          })
         : null,
 
       // Invalidate
       record.status === "active" || record.status === "proposed"
-        ? React.createElement(
-            "form",
-            { method: "POST", action: "/api/memory" },
-            React.createElement("input", {
-              type: "hidden",
-              name: "action",
-              value: "invalidate"
-            }),
-            React.createElement("input", {
-              type: "hidden",
-              name: "recordId",
-              value: record.id
-            }),
-            React.createElement("input", {
-              type: "hidden",
-              name: "workspaceId",
-              value: listScope.workspaceId
-            }),
-            React.createElement(
-              Button,
-              {
-                type: "submit",
-                variant: "destructive",
-                testId: "memory-invalidate"
-              },
-              "Invalidate"
-            )
-          )
+        ? React.createElement(RecordActionForm, {
+            record,
+            listScope,
+            action: "invalidate",
+            label: "Invalidate",
+            variant: "destructive",
+            testId: "memory-invalidate",
+            withReason: true
+          })
         : null,
 
       // Promote Procedure to RuleSync Skill
       record.kind === "procedural" && record.status === "active"
-        ? React.createElement(
-            "form",
-            { method: "POST", action: "/api/memory" },
-            React.createElement("input", {
-              type: "hidden",
-              name: "action",
-              value: "promote-skill"
-            }),
-            React.createElement("input", {
-              type: "hidden",
-              name: "recordId",
-              value: record.id
-            }),
-            React.createElement("input", {
-              type: "hidden",
-              name: "workspaceId",
-              value: listScope.workspaceId
-            }),
-            React.createElement(
-              Button,
-              {
-                type: "submit",
-                variant: "secondary",
-                testId: "memory-promote-skill"
-              },
-              "Promote to RuleSync Skill"
-            )
-          )
+        ? React.createElement(RecordActionForm, {
+            record,
+            listScope,
+            action: "promote-skill",
+            label: "Promote to RuleSync Skill",
+            variant: "secondary",
+            testId: "memory-promote-skill"
+          })
         : null
-    )
+    ),
+
+    // Revise lives outside the action row because it is the one lifecycle
+    // action that is not a single click: the operator has to write the new
+    // claim, and the route refuses `revise` without one.
+    record.status === "active" || record.status === "uncertain"
+      ? React.createElement(RecordActionForm, {
+          record,
+          listScope,
+          action: "revise",
+          label: "Revise Claim",
+          variant: "secondary",
+          testId: "memory-revise",
+          withReason: true,
+          claim: record.claim
+        })
+      : null
+  );
+}
+
+/**
+ * One governed record action, submitted to the Console's own memory route.
+ *
+ * The three lifecycle forms were written out separately and differed only in
+ * three hidden fields and a button label, so a fourth action -- `revise` -- would
+ * have been a fourth copy of the same block, and the one that most needs a
+ * reason and a claim is the one most likely to be built without them. Keeping
+ * the shape in one place is what makes "does this action carry an audit reason?"
+ * a single question with a single answer.
+ */
+interface RecordActionFormProps {
+  readonly record: MemoryRecord;
+  readonly listScope: MemoryListScope;
+  readonly action: "verify" | "invalidate" | "revise" | "promote-skill";
+  readonly label: string;
+  readonly variant: "primary" | "secondary" | "destructive";
+  readonly testId: string;
+  /**
+   * Offer an audit-reason box.
+   *
+   * Every lifecycle transition records an append-only reason, and the route
+   * substituted a canned sentence when the form sent none -- so the audit trail
+   * could not distinguish "verified against the passing suite" from "verified
+   * because it looked right". Leaving it blank is allowed and falls back to that
+   * sentence; it just stops being the only option.
+   */
+  readonly withReason?: boolean | undefined;
+  /** Pre-fill for a revision's replacement claim. */
+  readonly claim?: string | undefined;
+}
+
+function RecordActionForm({
+  record,
+  listScope,
+  action,
+  label,
+  variant,
+  testId,
+  withReason,
+  claim
+}: RecordActionFormProps): React.JSX.Element {
+  const hidden = (name: string, value: string): React.JSX.Element =>
+    React.createElement("input", { key: name, type: "hidden", name, value });
+  return React.createElement(
+    "form",
+    {
+      method: "POST",
+      action: "/api/memory",
+      // The reason and claim boxes sit above the button, so the row this form
+      // occupies grows with its content rather than with the label.
+      className: "flex flex-wrap items-end gap-2"
+    },
+    hidden("action", action),
+    hidden("recordId", record.id),
+    hidden("workspaceId", listScope.workspaceId),
+    // The list this action was made on, so the route's redirect lands back
+    // inside the filters the operator was working in rather than at the top of
+    // an unfiltered 30-day list.
+    hidden("returned", memoryListQuery(listScope)),
+    claim === undefined
+      ? null
+      : React.createElement(TextField, {
+          name: "claim",
+          id: `memory-revise-claim-${record.id}`,
+          label: "Revised claim",
+          hideLabel: true,
+          defaultValue: claim,
+          rows: 3,
+          className: "basis-64 grow",
+          testId: "memory-revise-claim"
+        }),
+    withReason === true
+      ? React.createElement(TextField, {
+          name: "reason",
+          id: `memory-${action}-reason-${record.id}`,
+          label: `Reason for ${label.toLowerCase()}`,
+          hideLabel: true,
+          placeholder: "Why this transition?",
+          className: "basis-56 grow",
+          testId: `memory-${action}-reason`
+        })
+      : null,
+    React.createElement(Button, { type: "submit", variant, testId }, label)
   );
 }

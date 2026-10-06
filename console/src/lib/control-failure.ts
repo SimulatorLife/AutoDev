@@ -39,6 +39,7 @@ export const CONTROL_REFUSAL_PARAM = "refusal";
 export const CONTROL_REFUSAL_REASONS = [
   "confirmation_missing",
   "reason_not_accepted",
+  "claim_required",
   "runtime_refused"
 ] as const;
 export type ControlRefusalReason = (typeof CONTROL_REFUSAL_REASONS)[number];

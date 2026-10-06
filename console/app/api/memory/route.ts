@@ -27,6 +27,15 @@ interface MemoryActionPayload {
   readonly skillName: string;
   readonly isForm: boolean;
   /**
+   * The query string of the list this action was made on.
+   *
+   * A redirect that rebuilds its query from scratch returns the operator to an
+   * unfiltered 30-day list, so a verify made inside `kind=procedural` on a
+   * 90-day window lands them somewhere they were not working. Only the filter
+   * keys are read back; see `memoryReturnQuery`.
+   */
+  readonly returned?: string | undefined;
+  /**
    * Explicit operator confirmation for an irreversible action. Purge is
    * destructive and cannot be undone, so the form must carry this rather than
    * letting a single click erase a raw experience envelope.
@@ -60,6 +69,68 @@ function selectionQuery(isPurge: boolean, identifier: string): URLSearchParams {
   });
 }
 
+/**
+ * The filter keys a mutation may carry back from the list it was made on.
+ *
+ * Everything else is dropped, including anything that could name another
+ * destination. The route never follows a submitted string: it re-parses these
+ * keys and rebuilds `/memory?…` from them, so the field is a set of facts about
+ * the operator's filters rather than a redirect target, and a crafted value can
+ * at worst describe a filter the page will then refuse to apply and name.
+ */
+const MEMORY_RETURN_KEYS: ReadonlySet<string> = new Set([
+  "query",
+  "kind",
+  "status",
+  "from",
+  "until",
+  "limit",
+  "offset"
+]);
+
+/** A carried filter value is read, never rendered into the page unescaped. */
+const MAX_RETURN_VALUE_LENGTH = 256;
+/** The whole carried query is bounded too, so the parse is cheap. */
+const MAX_RETURN_QUERY_LENGTH = 2048;
+
+/**
+ * Where a Memory mutation sends the browser back to.
+ *
+ * The action decides the tab and the selection — a purge acts on an experience
+ * whatever it was submitted from, and the operator comes back to the item they
+ * acted on rather than to the top of a list — while the filters they were
+ * working inside come from the form.
+ */
+function memoryReturnQuery(
+  payload: MemoryActionPayload,
+  isPurge: boolean,
+  identifier: string | undefined
+): URLSearchParams {
+  const query = new URLSearchParams();
+  const returned = payload.returned;
+  if (returned !== undefined && returned.length <= MAX_RETURN_QUERY_LENGTH) {
+    for (const [key, value] of new URLSearchParams(returned)) {
+      if (
+        MEMORY_RETURN_KEYS.has(key) &&
+        value.length <= MAX_RETURN_VALUE_LENGTH
+      ) {
+        query.set(key, value);
+      }
+    }
+  }
+  if (identifier === undefined || identifier === "") {
+    query.set("tab", isPurge ? "experiences" : "records");
+  } else {
+    const selection = selectionQuery(isPurge, identifier);
+    query.set("tab", selection.get("tab") ?? "records");
+    query.set(isPurge ? "experienceId" : "recordId", identifier);
+  }
+  if (payload.workspaceId !== "") {
+    query.set("workspaceId", payload.workspaceId);
+  }
+  return query;
+}
+
 async function parsePayload(
   request: NextRequest
 ): Promise<MemoryActionPayload | null> {
@@ -81,6 +152,9 @@ async function parsePayload(
       claim: String(formData.get("claim") ?? "").trim(),
       skillName: String(formData.get("skillName") ?? "").trim(),
       confirm: String(formData.get("confirm") ?? "").trim(),
+      ...(formData.has("returned")
+        ? { returned: String(formData.get("returned") ?? "") }
+        : {}),
       isForm: true
     };
   }
@@ -97,6 +171,7 @@ async function parsePayload(
       claim: String(json.claim ?? "").trim(),
       skillName: String(json.skillName ?? "").trim(),
       confirm: String(json.confirm ?? "").trim(),
+      ...(typeof json.returned === "string" ? { returned: json.returned } : {}),
       isForm: false
     };
   } catch {
@@ -162,7 +237,10 @@ function executeAction(
       );
     }
     case "revise": {
-      if (!claim) return null;
+      // A revision *is* the replacement text. Without one there is nothing to
+      // send, and saying "reason not accepted" would blame a reason the
+      // operator filled in perfectly.
+      if (!claim) return "claim_required";
       return transitionMemoryRecord(
         recordId,
         "revise",
@@ -210,17 +288,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // tab without the item the operator acted on leaves them to work out
       // which of the rows in the table failed, which is not something the notice
       // can tell them.
-      const query =
-        identifier === undefined || identifier === ""
-          ? new URLSearchParams({ tab: isPurge ? "experiences" : "records" })
-          : selectionQuery(isPurge, identifier);
-      if (payload.workspaceId !== "") {
-        query.set("workspaceId", payload.workspaceId);
-      }
       return redirectTo(
         refusal === undefined
-          ? withControlFailure(`/memory?${query.toString()}`)
-          : withControlRefusal(`/memory?${query.toString()}`, refusal)
+          ? withControlFailure(
+              `/memory?${memoryReturnQuery(payload, isPurge, identifier).toString()}`
+            )
+          : withControlRefusal(
+              `/memory?${memoryReturnQuery(payload, isPurge, identifier).toString()}`,
+              refusal
+            )
       );
     }
     return NextResponse.json({ error }, { status });
@@ -267,9 +343,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   if (payload.isForm) {
-    const query = selectionQuery(isPurge, identifier);
-    query.set("workspaceId", payload.workspaceId);
-    return redirectTo(`/memory?${query.toString()}`);
+    return redirectTo(
+      `/memory?${memoryReturnQuery(payload, isPurge, identifier).toString()}`
+    );
   }
 
   return NextResponse.json({

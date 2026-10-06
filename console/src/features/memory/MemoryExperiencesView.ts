@@ -34,6 +34,7 @@ import {
   memoryDetailHref,
   memoryFilterHref,
   memoryListHref,
+  memoryListQuery,
   type MemoryListScope,
   memoryPageHref
 } from "./memory-list-url.ts";
@@ -433,6 +434,13 @@ function ExperienceDetailPanel({
           type: "hidden",
           name: "workspaceId",
           value: listScope.workspaceId
+        }),
+        // The list this purge was made on, so the redirect lands back inside
+        // the filters the operator was working in.
+        React.createElement("input", {
+          type: "hidden",
+          name: "returned",
+          value: memoryListQuery(listScope)
         }),
         // Purge erases the raw envelope irreversibly, so the operator states a
         // reason the Runtime accepts and confirms explicitly. Both are enforced

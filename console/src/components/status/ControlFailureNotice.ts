@@ -18,6 +18,8 @@ const REFUSAL_DETAIL: Record<ControlRefusalReason, string> = {
     "This action needs the confirmation box ticked before it can run; nothing was sent to the Runtime.",
   reason_not_accepted:
     "The Runtime does not accept that reason for this action, so nothing was changed.",
+  claim_required:
+    "A revision needs the replacement claim text; nothing was sent to the Runtime.",
   runtime_refused:
     "The Runtime refused the change. It may still be citing this record, in which case the action cannot proceed."
 };

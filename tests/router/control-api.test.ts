@@ -1936,44 +1936,6 @@ test("Memory Control API rejects invalid filters before opening the memory host"
   }
 });
 
-test("Memory Control API audits denied lifecycle writes and gates global reads", async () => {
-  const saved = saveEnv();
-  try {
-    configure();
-    delete process.env.AUTODEV_MEMORY_DATABASE_URL;
-    process.env.AUTODEV_MEMORY_READ_GLOBAL = "1";
-    const write = await captureAudit(() =>
-      call("POST", "/control/memory/records?workspaceId=workspace-a", {
-        actor: "viewer-a",
-        body: {}
-      })
-    );
-    assert.equal(write.result.response.statusCode, 403);
-    assert.equal(write.lines.length, 1);
-    const audit = JSON.parse(write.lines[0] ?? "null") as {
-      outcome: string;
-      reason: string;
-      resource: string;
-    };
-    assert.equal(audit.outcome, "denied");
-    assert.equal(audit.reason, "viewer_cannot_mutate");
-    assert.equal(audit.resource, "/control/memory/records");
-
-    const getPurge = await call(
-      "GET",
-      "/control/memory/experiences/experience-a/purge?workspaceId=workspace-a&repositoryId=owner%2Frepo",
-      { actor: "operator-a" }
-    );
-    assert.equal(getPurge.response.statusCode, 405);
-    assert.equal(getPurge.response.headers.allow, "POST");
-
-    const viewerPurge = await captureAudit(() =>
-      call(
-        "POST",
-        "/control/memory/experiences/experience-a/purge?workspaceId=workspace-a&repositoryId=owner%2Frepo",
-        {
-          actor: "viewer-a",
-          body: { reason: "privacy_request" }
 test("Memory Control API bounds the records and experiences time window", async () => {
   const saved = saveEnv();
   try {
@@ -2037,6 +1999,44 @@ test("Memory Control API bounds the records and experiences time window", async 
     assert.equal(purgeAudit.reason, "viewer_cannot_mutate");
 
     const unavailablePurge = await captureAudit(() =>
+test("Memory Control API audits denied lifecycle writes and gates global reads", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    delete process.env.AUTODEV_MEMORY_DATABASE_URL;
+    process.env.AUTODEV_MEMORY_READ_GLOBAL = "1";
+    const write = await captureAudit(() =>
+      call("POST", "/control/memory/records?workspaceId=workspace-a", {
+        actor: "viewer-a",
+        body: {}
+      })
+    );
+    assert.equal(write.result.response.statusCode, 403);
+    assert.equal(write.lines.length, 1);
+    const audit = JSON.parse(write.lines[0] ?? "null") as {
+      outcome: string;
+      reason: string;
+      resource: string;
+    };
+    assert.equal(audit.outcome, "denied");
+    assert.equal(audit.reason, "viewer_cannot_mutate");
+    assert.equal(audit.resource, "/control/memory/records");
+
+    const getPurge = await call(
+      "GET",
+      "/control/memory/experiences/experience-a/purge?workspaceId=workspace-a&repositoryId=owner%2Frepo",
+      { actor: "operator-a" }
+    );
+    assert.equal(getPurge.response.statusCode, 405);
+    assert.equal(getPurge.response.headers.allow, "POST");
+
+    const viewerPurge = await captureAudit(() =>
+      call(
+        "POST",
+        "/control/memory/experiences/experience-a/purge?workspaceId=workspace-a&repositoryId=owner%2Frepo",
+        {
+          actor: "viewer-a",
+          body: { reason: "privacy_request" }
       call(
         "POST",
         "/control/memory/experiences/experience-a/purge?workspaceId=workspace-a&repositoryId=owner%2Frepo",

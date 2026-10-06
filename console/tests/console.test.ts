@@ -89,6 +89,7 @@ import {
   CodeEditor,
   DataTable,
   type DataTableProps,
+  DEFAULT_MEMORY_PAGE_SIZE,
   DETAIL_DRAWER_CLASS,
   DETAIL_DRAWER_HEADER_CLASS,
   DETAIL_DRAWER_SUBTITLE_CLASS,
@@ -107,19 +108,19 @@ import {
   GithubView,
   HooksView,
   isProvidersReturnPath,
+  MAX_MEMORY_OFFSET,
   MCP_DETAIL_TABS,
   McpDetailView,
   McpsView,
   MemoryCohortsView,
-  MemoryExperiencesView,
-  type MemoryListScope,
-  MemoryRecordsView,
-  MemoryView,
-  MAX_MEMORY_OFFSET,
   memoryDetailHref,
+  MemoryExperiencesView,
   memoryFilterHref,
   memoryListHref,
+  type MemoryListScope,
   memoryPageHref,
+  MemoryRecordsView,
+  MemoryView,
   ModelDetailView,
   NOT_OBSERVED_LABEL,
   PermissionsView,
@@ -127,7 +128,6 @@ import {
   PromptsView,
   ProviderDetailView,
   ProvidersView,
-  DEFAULT_MEMORY_PAGE_SIZE,
   resolveActiveTabId,
   resolveMemoryPage,
   SECTION_HEADING_CLASS,
@@ -8398,6 +8398,204 @@ test("Memory purge requires an experience id rather than a record id", async () 
       "/memory?tab=experiences&workspaceId=SimulatorLife%2FAutoDev&control=failed"
     );
     assert.equal(requests.length, 0);
+  });
+});
+
+test("a record's governed actions submit the revision the route requires", () => {
+  // `revise` existed in the route and nowhere else: it returns null without a
+  // `claim`, and no form sent one, so the action the migration tracker listed as
+  // shipped could never be performed from the Console.
+  const record: MemoryRecord = {
+    id: "mem-governed",
+    kind: "semantic",
+    status: "active",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    claim: "The claim as it stands.",
+    validity: { state: "verified", evidence: [] },
+    provenance: {
+      experienceIds: [],
+      evidence: [],
+      createdBy: "operator",
+      createdAt: "2026-10-01T00:00:00Z"
+    },
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-02T00:00:00Z"
+  };
+
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryRecordsView, {
+      records: [record],
+      total: 1,
+      selectedRecord: record,
+      listScope: memoryListScope()
+    })
+  );
+
+  const form = (testId: string): string => {
+    const start = markup.indexOf(`data-button="${testId}"`);
+    assert.notEqual(start, -1, `${testId} must render`);
+    const open = markup.lastIndexOf("<form", start);
+    const close = markup.indexOf("</form>", start);
+    assert.ok(open !== -1 && close > open, `${testId} must sit in a form`);
+    return markup.slice(open, close);
+  };
+
+  const revise = form("memory-revise");
+  assert.match(revise, /name="action" value="revise"/);
+  assert.match(revise, /name="recordId" value="mem-governed"/);
+  // The replacement claim, pre-filled from the record so the operator edits the
+  // text rather than retyping it.
+  assert.match(revise, /data-text-field="memory-revise-claim"/);
+  assert.match(revise, /The claim as it stands\./);
+
+  // An append-only lifecycle reason is recorded for every transition, so the
+  // forms that make one carry a box for it. Blank still falls back to the
+  // route's sentence; it just stops being the only option.
+  for (const testId of ["memory-invalidate", "memory-revise"]) {
+    assert.match(
+      form(testId),
+      /data-text-field="memory-[a-z-]+-reason"/,
+      `${testId} must offer an audit reason`
+    );
+  }
+
+  // Labels must be real: a placeholder disappears once the field has a value,
+  // leaving the control with no accessible name at all.
+  assert.match(revise, /<label for="memory-revise-claim-mem-governed"/);
+  assert.match(revise, /<label for="memory-revise-reason-mem-governed"/);
+
+  // Verify applies to a claim awaiting review, and carries the same reason box.
+  const proposed = renderToStaticMarkup(
+    React.createElement(MemoryRecordsView, {
+      records: [{ ...record, status: "proposed" }],
+      total: 1,
+      selectedRecord: { ...record, status: "proposed" },
+      listScope: memoryListScope()
+    })
+  );
+  assert.match(proposed, /data-button="memory-verify"/);
+  assert.match(proposed, /data-text-field="memory-verify-reason"/);
+
+  // A superseded or invalidated claim is not editable, so no revision form.
+  const closed = renderToStaticMarkup(
+    React.createElement(MemoryRecordsView, {
+      records: [{ ...record, status: "superseded" }],
+      total: 1,
+      selectedRecord: { ...record, status: "superseded" },
+      listScope: memoryListScope()
+    })
+  );
+  assert.equal(closed.includes('data-button="memory-revise"'), false);
+});
+
+test("Memory revise reaches the Runtime only with a replacement claim", async () => {
+  await withMemoryRoute(async (requests) => {
+    const refused = await memoryRoute.POST(
+      memoryPurgeRequest({
+        action: "revise",
+        recordId: "mem-1",
+        workspaceId: "SimulatorLife/AutoDev",
+        reason: "Outgrew its wording."
+      })
+    );
+    assert.equal(refused.status, 303);
+    assert.equal(
+      refused.headers.get("location"),
+      "/memory?tab=records&recordId=mem-1&workspaceId=SimulatorLife%2FAutoDev&control=failed&refusal=claim_required"
+    );
+    assert.equal(
+      requests.length,
+      0,
+      "a revision with no claim is not a request"
+    );
+  });
+
+  await withMemoryRoute(async (requests) => {
+    const response = await memoryRoute.POST(
+      memoryPurgeRequest({
+        action: "revise",
+        recordId: "mem-1",
+        workspaceId: "SimulatorLife/AutoDev",
+        claim: "The revised claim.",
+        reason: "Outgrew its wording."
+      })
+    );
+    assert.equal(response.status, 303);
+    assert.equal(
+      response.headers.get("location"),
+      "/memory?tab=records&recordId=mem-1&workspaceId=SimulatorLife%2FAutoDev"
+    );
+    assert.equal(requests.length, 1);
+    // The form fields become the control-API body, so the revision's claim is
+    // asserted there rather than on the submitted form.
+    const sent = JSON.parse(requests[0]?.body ?? "{}") as Record<
+      string,
+      unknown
+    >;
+    assert.equal(sent.claim, "The revised claim.");
+    assert.equal(sent.reason, "Outgrew its wording.");
+  });
+});
+
+test("a Memory mutation returns to the list it was made on, and only to it", async () => {
+  await withMemoryRoute(async (_requests) => {
+    const response = await memoryRoute.POST(
+      memoryPurgeRequest({
+        action: "verify",
+        recordId: "mem-1",
+        workspaceId: "SimulatorLife/AutoDev",
+        reason: "Checked against the suite.",
+        // What the record form submits: the list the operator was working in.
+        returned:
+          "tab=records&workspaceId=SimulatorLife%2FAutoDev&kind=procedural" +
+          "&status=proposed&from=2026-09-01T00%3A00%3A00Z&until=2026-10-01T00%3A00%3A00Z&limit=25&offset=50"
+      })
+    );
+    assert.equal(response.status, 303);
+    const back = new URL(
+      response.headers.get("location") ?? "",
+      "http://console.test"
+    );
+    // Still the same list: a verify made inside a 25-row page 3 of a
+    // 90-day window must not return the operator to an unfiltered 30-day list.
+    assert.equal(back.pathname, "/memory");
+    assert.equal(back.searchParams.get("kind"), "procedural");
+    assert.equal(back.searchParams.get("status"), "proposed");
+    assert.equal(back.searchParams.get("from"), "2026-09-01T00:00:00Z");
+    assert.equal(back.searchParams.get("until"), "2026-10-01T00:00:00Z");
+    assert.equal(back.searchParams.get("limit"), "25");
+    assert.equal(back.searchParams.get("offset"), "50");
+    // And the acted-on item is re-selected, which is what the route already did.
+    assert.equal(back.searchParams.get("recordId"), "mem-1");
+    assert.equal(back.searchParams.get("tab"), "records");
+  });
+
+  // The carried value is a set of filter facts, not a redirect target: the
+  // route re-parses named keys and rebuilds `/memory?…`, so a crafted value
+  // cannot send the browser anywhere else, and cannot smuggle a selection in
+  // either -- the action decides what is selected.
+  await withMemoryRoute(async (_requests) => {
+    const response = await memoryRoute.POST(
+      memoryPurgeRequest({
+        action: "verify",
+        recordId: "mem-1",
+        workspaceId: "SimulatorLife/AutoDev",
+        returned:
+          "https://evil.test/steal&tab=cohorts&recordId=mem-other" +
+          "&experienceId=exp-other&workspaceId=Somewhere%2FElse"
+      })
+    );
+    const location = response.headers.get("location") ?? "";
+    assert.match(location, /^\/memory\?/, "must never redirect off-site");
+    assert.equal(location.includes("evil.test"), false);
+    assert.equal(location.includes("Somewhere"), false);
+    const back = new URL(location, "http://console.test");
+    assert.equal(back.searchParams.get("tab"), "records");
+    assert.equal(back.searchParams.get("recordId"), "mem-1");
+    assert.equal(back.searchParams.get("experienceId"), null);
+    // `workspaceId` comes from the request the route already trusted, not from
+    // the carried list.
+    assert.equal(back.searchParams.get("workspaceId"), "SimulatorLife/AutoDev");
   });
 });
 

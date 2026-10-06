@@ -92,9 +92,25 @@ function listParams(scope: MemoryListScope, offset: number): URLSearchParams {
   return params;
 }
 
+/**
+ * The list's query string, without the route.
+ *
+ * Exposed separately because a governed action has to carry the list forward
+ * too: the Console's mutation route redirects back to `/memory`, and a redirect
+ * that rebuilds the query from scratch is how an operator loses the filters
+ * they had just acted within. The route re-parses these keys rather than
+ * trusting this string, so it is a set of facts and not a URL to be followed.
+ */
+export function memoryListQuery(
+  scope: MemoryListScope,
+  offset: number = scope.offset
+): string {
+  return listParams(scope, offset).toString();
+}
+
 /** The current list, with nothing selected. */
 export function memoryListHref(scope: MemoryListScope): string {
-  return `${ROUTE}?${listParams(scope, scope.offset).toString()}`;
+  return `${ROUTE}?${memoryListQuery(scope)}`;
 }
 
 /**
