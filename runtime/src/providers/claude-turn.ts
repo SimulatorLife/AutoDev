@@ -119,7 +119,14 @@ export class ResponseStream {
     options.response.on("close", () => {
       if (this.ended) return;
       this.ended = true;
-      for (const listener of this.closeListeners) listener();
+      // Walk a snapshot, not the live array: `for...of` over the array itself
+      // also visits anything a listener appends while the cascade runs, and
+      // `ended` is already true, so such a listener was never registered before
+      // the stream ended and cannot satisfy `onClientClose`'s contract. Worse, a
+      // listener that registers another on every call would keep growing the
+      // array the loop is walking and drive the cascade without bound.
+      const registered = this.closeListeners.slice();
+      for (const listener of registered) listener();
     });
   }
 
