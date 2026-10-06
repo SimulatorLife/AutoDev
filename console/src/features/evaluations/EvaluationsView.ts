@@ -312,6 +312,11 @@ export function EvaluationsView({
     {
       id: "metrics",
       header: "Metrics",
+      // Gives the share the Outcome and Trace pills need. Every column on this
+      // table was left at the 100-unit default, which is wide enough for a
+      // header and too narrow for the content — and a `Tag` here is 130px of
+      // content, so it is the cheapest column to narrow.
+      weight: 87,
       cell: (ev) =>
         React.createElement(
           "div",
@@ -340,6 +345,10 @@ export function EvaluationsView({
     {
       id: "passed",
       header: "Outcome",
+      // This table's declared weights total 600, which is under the 864px cap, so
+      // the floor is the sum itself and a weight *is* the column's pixel width.
+      // "Not observed" is a 112px pill and needs 144px.
+      weight: 148,
       cell: (ev) =>
         React.createElement(StatusBadge, {
           status:
@@ -359,6 +368,11 @@ export function EvaluationsView({
     {
       id: "trace",
       header: "Trace",
+      // "Invalid reference" is the longest content on the table at a 131px pill,
+      // so it needs the largest width of the six. Raising these two takes the
+      // declared sum to 702, which is still under the cap, so the floor moves
+      // with them rather than squeezing every other column back down.
+      weight: 167,
       cell: (ev) => traceReference(ev, promptFilter)
     },
     {

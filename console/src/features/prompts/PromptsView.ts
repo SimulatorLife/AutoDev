@@ -77,14 +77,14 @@ export function PromptsView({
     {
       id: "kind",
       header: "Type",
-      // Sized for the badge, not for the header. A `StatusBadge` is the widest
-      // thing in this column by a wide margin -- status dot, rounded padding
-      // and all -- and at 96 the cell cut it to "Comman" on every one of the 63
-      // command rows. A header-width check cannot see this: "Type" is short.
-      // The width is a share of the whole table rather than a pixel count, so
-      // "Role prompt" -- the longest of the two labels -- needed 130 here to
-      // stop being cut to "Role promp" at a 390px viewport.
-      weight: 130,
+      // Sized against the pill, not the word. A `StatusBadge` is the widest thing
+      // in this column by a wide margin -- status dot, rounded padding and all
+      // -- and at 96 the cell cut it to "Comman" on every one of the 63 command
+      // rows. A header-width check cannot see this: "Type" is short. The width
+      // is a share of the whole table rather than a pixel count, so it is sized
+      // against the table's 864px floor rather than against the viewport it was
+      // measured at: "Role prompt" is a 105px pill and needs 137px of column.
+      weight: 163,
       cell: (prompt) => {
         const isRole = prompt.kind === "role" || prompt.path.includes("roles");
         return React.createElement(StatusBadge, {
@@ -109,7 +109,11 @@ export function PromptsView({
       header: "Description",
       align: "prose",
       clampLines: 2,
-      weight: 320,
+      // Gives the share the Type column needs for its pill. A clamped
+      // description is the cheapest column to narrow on this page: it already
+      // discards its tail by design, and the command name beside it is the
+      // row's primary key.
+      weight: 287,
       cell: (prompt) => {
         const description = prompt.description;
         return React.createElement(

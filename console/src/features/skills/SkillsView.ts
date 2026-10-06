@@ -70,7 +70,7 @@ export function SkillsView({
     {
       id: "name",
       header: "Skill Name",
-      weight: 384,
+      weight: 373,
       // The description below is prose that must wrap inside the column, so
       // this cell opts out of the default single-line truncation.
       align: "prose",
@@ -102,7 +102,11 @@ export function SkillsView({
     {
       id: "path",
       header: "Path",
-      weight: 288,
+      // Gives the share the State column needs for its badge. A path already
+      // truncates recoverably and keeps its leading root and trailing segments,
+      // so it is the cheaper place to take width than the skill name, which is
+      // the row's primary key.
+      weight: 269,
       cell: (skill) => {
         // A truncated head (".rulesync/skills/autodev-code…") hides the part
         // that distinguishes one skill from another, so the column keeps the
@@ -141,7 +145,15 @@ export function SkillsView({
       header: "State",
       // Sized for the badge. Declared no weight at all, so this column took the
       // 100-unit default and clipped "Configured" at its last glyph.
-      weight: 116,
+      //
+      // The badge needs 86px of text plus 32px of cell padding, and the table
+      // is at its 864px floor below that, so 131 is the share that fits it at
+      // 390px rather than at the width it was measured at. `StatusBadge` now
+      // truncates recoverably regardless, because a share of a container is not
+      // a width: this number is the difference between a badge that reads whole
+      // and one that reads "Configure…", not the difference between one that
+      // reads "Configure…" and one that reads nothing at all.
+      weight: 146,
       cell: () =>
         React.createElement(StatusBadge, {
           status: "configured",

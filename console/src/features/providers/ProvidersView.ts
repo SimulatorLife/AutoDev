@@ -97,7 +97,7 @@ function providerColumns(
       // room for the model and tier chips that actually need width.
       id: "roles",
       header: "Role enablement",
-      weight: 183,
+      weight: 165,
       align: "tokens",
       // Each row is a flex line holding a fixed 80px role label and a
       // `whitespace-nowrap` toggle badge, so it has a minimum intrinsic width
@@ -146,10 +146,12 @@ function providerColumns(
     {
       id: "health",
       header: "Health",
-      // The widest health badge ("Configured", plus its status dot) measures
-      // 68px, so this column carried ~28px of dead width. That slack is what
-      // lets Tier priority pack two chips per line below.
-      weight: 100,
+      // Sized against the pill, not the word. An earlier note here read the
+      // widest badge as 68px and banked the difference as slack; measured in
+      // the browser the pill is 70px with its dot and padding and needs 102px
+      // of column, so "Ready" was cut on every row at 1280 while the column
+      // still had room for the header twice over.
+      weight: 122,
       cell: (provider) =>
         React.createElement(ProviderHealthBadge, { health: provider.health })
     },
@@ -158,7 +160,7 @@ function providerColumns(
       header: "Credential",
       // A missing-credential badge names a long environment variable and is
       // expected to truncate; the untruncated name stays on its hover title.
-      weight: 156,
+      weight: 162,
       cell: (provider) =>
         React.createElement(CredentialBadge, {
           credential: provider.credential
@@ -170,7 +172,7 @@ function providerColumns(
       align: "tokens",
       // Longest observed model chip is 184px, so this column cannot go below
       // ~216px of cell width without truncating a model name.
-      weight: 213,
+      weight: 203,
       cell: (provider) =>
         chipList({
           items: uniqueModels(provider),

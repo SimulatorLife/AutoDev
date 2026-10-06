@@ -84,7 +84,10 @@ export function AgentsView({
     {
       id: "primaryModel",
       header: "Primary Model",
-      weight: 210,
+      // Gives the share the two badge columns need. The model id titles itself,
+      // so narrowing it costs a truncation the reader can recover rather than a
+      // status word with nothing behind it.
+      weight: 178,
       cell: (agent) =>
         React.createElement(
           "span",
@@ -100,21 +103,32 @@ export function AgentsView({
       id: "providers",
       header: "Providers",
       align: "tokens",
-      weight: 190,
+      // Gives the share the two badge columns need. The provider chips still
+      // wrap — that is the target state's rule for discrete cell content — and
+      // wrapping costs height, not legibility, so this is the cheapest column
+      // on the page to narrow.
+      weight: 176,
       cell: (agent) =>
         React.createElement(AgentProviderSummary, { agent, providers })
     },
     {
       id: "status",
       header: "Status",
-      weight: 136,
+      // "Configured" is 99px of pill plus 32px of cell padding. A weight is a share
+      // of the table rather than a width, so it has to clear that at the table's
+      // 864px floor instead of at the viewport the badge was measured at — 136
+      // left it cut at its last glyph on every row, and measuring against the
+      // badge's already-clamped width understated it by a further 8px.
+      weight: 171,
       cell: (agent) =>
         React.createElement(StatusBadge, { status: agent.status })
     },
     {
       id: "convergence",
       header: "Convergence",
-      weight: 180,
+      // "Not-observed" is the longest label on this table at 115px of pill, so
+      // this column needs more than Status even though it reads less often.
+      weight: 191,
       cell: (agent) =>
         React.createElement(StatusBadge, { status: agent.convergence })
     },

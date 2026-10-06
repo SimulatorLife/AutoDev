@@ -126,18 +126,31 @@ export function StatusBadge({
   return React.createElement(
     "span",
     {
-      // A badge is an atomic status word: it never wraps and never triggers a
-      // cell's `text-overflow: ellipsis`. A column that cannot fit a badge is a
-      // column-width problem, and the word stays legible rather than becoming
-      // "Not-observed…".
+      // A badge is an atomic status word: it never wraps. A column that cannot
+      // fit a badge is a column-width problem, and the word should stay legible
+      // rather than becoming "Not-observed…".
+      //
+      // It cannot always, though, and this is why the truncation lives here
+      // rather than at each call site's `weight`. A weight is a share of the
+      // table, and the table's width is whatever the container gives it, so one
+      // number cannot be right for a box whose pixel width is fixed: three
+      // columns here had been widened by hand, each with a comment recording
+      // that the badge had been cut, and each still cut it at 390px because
+      // the next narrower viewport moved the ground.
       className: `inline-flex w-fit max-w-full items-center whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium border ${style}`,
       "data-status": status,
-      ...(title === undefined ? {} : { title })
+      // A caller may pass a longer explanation than the word; otherwise the
+      // word itself is what the reader needs back when it is cut.
+      title: title ?? displayLabel
     },
     React.createElement("span", {
       className:
         "w-1.5 h-1.5 shrink-0 rounded-full bg-current mr-1.5 opacity-80"
     }),
-    displayLabel
+    // The ellipsis has to live on the label rather than on the badge. The badge
+    // is a flex container, and `text-overflow` does not apply to one — which is
+    // why the cut was invisible: the box simply ran out. `min-w-0` is what lets
+    // this item shrink below its `white-space: nowrap` min-content at all.
+    React.createElement("span", { className: "min-w-0 truncate" }, displayLabel)
   );
 }

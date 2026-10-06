@@ -66,7 +66,7 @@ export function McpsView({
       id: "roles",
       header: "Configured roles",
       align: "tokens",
-      weight: 180,
+      weight: 177,
       cell: (server) =>
         chipList({
           items: server.roles,
@@ -77,7 +77,10 @@ export function McpsView({
     {
       id: "declaration",
       header: "RuleSync",
-      weight: 150,
+      // "Canonical" is a 91px pill and needs 123px of column at the table's
+      // 864px floor. Sized against the pill rather than the word: the word is
+      // 55px, which is what an earlier measurement read.
+      weight: 181,
       cell: (server) =>
         React.createElement(StatusBadge, {
           status: server.declared ? "configured" : "invalid",
@@ -94,7 +97,7 @@ export function McpsView({
       // cell granted 109, so every not-observed server's pill was clipped 8px
       // at its right edge on every viewport up to 768. A header-width check
       // cannot see this: the header was never the problem.
-      weight: 176,
+      weight: 212,
       cell: (server) =>
         React.createElement(StatusBadge, {
           status: server.enabled === null ? NOT_OBSERVED_STATUS : "configured",
@@ -109,15 +112,18 @@ export function McpsView({
     {
       id: "transport",
       header: "Transport",
-      weight: 164,
+      // Gives the share the three pill columns need. "STDIO" is the only content
+      // this column ever holds, so it is the cheapest width on the page.
+      weight: 120,
       cell: (server) => server.transport.toUpperCase()
     },
     {
       id: "targets",
       header: "Overrides",
       // The widest column on the page at the floor, for what is usually a count
-      // or one chip. Part of what the Server Name column now has.
-      weight: 196,
+      // or one chip. Part of what the Server Name column now has, and part of
+      // what the three pill columns now have.
+      weight: 140,
       align: "tokens",
       cell: (server) =>
         server.targetOverrides.length === 0
@@ -136,7 +142,9 @@ export function McpsView({
     {
       id: "status",
       header: "Connection",
-      weight: 176,
+      // Carries the same "Not observed" pill as Default State, so it needs the
+      // same share; at 176 it was cut 11px on every row.
+      weight: 212,
       cell: () =>
         React.createElement(StatusBadge, {
           status: NOT_OBSERVED_STATUS,

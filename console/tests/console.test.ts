@@ -1323,6 +1323,60 @@ test("StatusBadge renders valid variants", () => {
   }
 });
 
+test("StatusBadge gives back a status word it has to cut", () => {
+  // The badge is an `inline-flex` box, and `text-overflow` does not apply to a
+  // flex container -- so a `truncate` written on the badge is inert and the word
+  // is cut with no ellipsis and nothing on hover. Measured in headless Chromium
+  // at 1280, `/skills` drew "Configured" with its right border and last glyph
+  // gone on all fourteen rows, `/agents` and `/prompts` cut theirs by 9px and
+  // 11px, and `/providers` cut a 284px environment variable name inside a 143px
+  // cell. Three of those four carried no title at all.
+  //
+  // It was not fixed at the call sites' `weight`, and the comments on two of
+  // those columns recorded a previous attempt at exactly that: a weight is a
+  // share of a table whose width is whatever the container gives it, while the
+  // badge's pixel width is fixed, so one number cannot serve every viewport.
+  // The columns were widened against the table's 864px floor as well; this is
+  // what makes the residual recoverable.
+  const cut = renderToStaticMarkup(
+    React.createElement(StatusBadge, {
+      status: "configured",
+      label: "Role prompt"
+    })
+  );
+  assert.ok(
+    cut.includes('title="Role prompt"'),
+    `a badge that can be cut must give its label back on hover, got: ${cut}`
+  );
+  // On the label, not on the badge, and with `min-w-0` beside it: a flex item's
+  // automatic minimum size is its min-content, and `white-space: nowrap` makes
+  // that the whole word, so without it the item never shrinks and the ellipsis
+  // never appears.
+  assert.match(
+    cut,
+    /<span class="min-w-0 truncate">Role prompt<\/span>/,
+    `the ellipsis must live on the label span, got: ${cut}`
+  );
+
+  // An explicit title is an explanation longer than the word and still wins.
+  const explained = renderToStaticMarkup(
+    React.createElement(StatusBadge, {
+      status: "invalid",
+      label: "Missing CODEX_ROUTER_COPILOT_API_KEY",
+      title: "Set CODEX_ROUTER_COPILOT_API_KEY in the environment"
+    })
+  );
+  assert.ok(
+    explained.includes(
+      'title="Set CODEX_ROUTER_COPILOT_API_KEY in the environment"'
+    ),
+    `a caller's own explanation must not be replaced by the bare label, got: ${explained}`
+  );
+
+  // The label still is the label: the status word is not consumed by the title.
+  assert.match(explained, />Missing CODEX_ROUTER_COPILOT_API_KEY</);
+});
+
 test("AgentsView keeps readiness and convergence unknown without observations", () => {
   const markup = renderToStaticMarkup(
     React.createElement(AgentsView, { agents: [CONFIGURED_AGENT] })
@@ -9034,15 +9088,16 @@ test("nothing truncates text it cannot give back", () => {
   const roots = ["app", "src"].map((root) =>
     join(import.meta.dirname, "..", root)
   );
-  // These own a shape and title it themselves in a form this scan cannot read:
-  // `StatusBadge`'s title is spread conditionally (`{ title }`, not `title:`) and
-  // `Chips` titles from its own child, so both are held by the assertions on
-  // those components directly. `Tag` is deliberately *not* exempt -- it owns the
-  // shape and the title in the ordinary way, so it has to keep passing this rule.
-  const SHAPE_OWNERS = new Set([
-    join("components", "status", "StatusBadge.ts"),
-    join("components", "tables", "Chips.ts")
-  ]);
+  // `StatusBadge` used to be exempt here, because its title was spread
+  // conditionally (`{ title }`, not `title:`) and the scan reads the ordinary
+  // form. It no longer needs to be: it titles itself with `title: title ?? …`,
+  // so it is held by this rule like every other element. An exemption kept after
+  // its reason has gone is a hole waiting for the next change to use it.
+  // `Chips` titles from its own child, so it stays, and it is held by the
+  // assertions on that component directly. `Tag` is deliberately *not* exempt --
+  // it owns the shape and the title in the ordinary way, so it has to keep
+  // passing this rule.
+  const SHAPE_OWNERS = new Set([join("components", "tables", "Chips.ts")]);
   const offenders: string[] = [];
   // Every exported shape class list in the product, resolved before any call
   // site is read. Resolving them per module does not work: a call site writes
@@ -9082,10 +9137,20 @@ function unrecoverableTruncations(
   shapes: ReadonlyMap<string, readonly string[]>
 ): readonly number[] {
   const found: number[] = [];
+  // The calls currently open around the scan point, outermost first, with the
+  // props object each one opened with. Truncation is recoverable from anywhere
+  // above it, so an enclosing element that carries the title covers its
+  // descendants: `StatusBadge` titles itself once and puts the ellipsis on a
+  // child label, and reading only the child's own props calls that a
+  // truncation with nothing to give it back. That exemption is the whole reason
+  // this is a stack rather than a flat loop -- a per-file exemption is a hole
+  // the next `truncate` in that file walks straight through.
+  const open: { props: string; end: number }[] = [];
   for (let at = source.indexOf("React.createElement("); at !== -1;) {
     const propsStart = source.indexOf("{", at + "React.createElement(".length);
     const propsEnd = matchingBrace(source, propsStart);
     if (propsStart === -1 || propsEnd === -1) break;
+    while (open.length > 0 && (open.at(-1)?.end ?? -1) < at) open.pop();
     const props = source.slice(propsStart, propsEnd + 1);
     const line = source.slice(0, at).split("\n").length;
     const written = writtenClassName(props);
@@ -9094,7 +9159,9 @@ function unrecoverableTruncations(
       .flatMap(([, values]) => values);
     const cuts =
       cutsItsOwnText(written) || composed.some((v) => cutsItsOwnText(v));
-    if (cuts && !/\btitle:/u.test(props)) {
+    const titled = /\btitle:/u.test(props);
+    const titledAbove = open.some((frame) => /\btitle:/u.test(frame.props));
+    if (cuts && !titled && !titledAbove) {
       found.push(line);
     }
     // Resume at the *next* call, not one character past this props object.
@@ -9102,6 +9169,10 @@ function unrecoverableTruncations(
     // `createElement(` offset, so every following props object was read from
     // the wrong origin and attributed to the wrong line -- which is how a real
     // unrecoverable truncation passed a guard that was scanning all along.
+    open.push({
+      props,
+      end: matchingParen(source, at + "React.createElement(".length - 1)
+    });
     at = source.indexOf("React.createElement(", propsEnd);
   }
   return found;
@@ -9166,6 +9237,20 @@ function cutsItsOwnText(classList: string): boolean {
 /** The literal `className` value on one `createElement` props object. */
 function writtenClassName(props: string): string {
   return props.match(/className:\s*(["'`])([\s\S]*?)\1/u)?.[2] ?? "";
+}
+
+/** Index of the `)` matching the `(` at `from`, or -1 within the bound. */
+function matchingParen(source: string, from: number): number {
+  let depth = 0;
+  for (let i = from; i < source.length && i < from + 4000; i++) {
+    const ch = source[i];
+    if (ch === "(") depth++;
+    else if (ch === ")") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
 }
 
 /**
