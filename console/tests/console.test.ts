@@ -5954,6 +5954,76 @@ test("a records page without a lifecycle rollup is refused, not rendered as zero
   );
 });
 
+test("an expired validity window is stated, because the Runtime will not inject it", () => {
+  // The defect: `isEligibleRecord` refuses a record whose `validTo` has passed,
+  // so an active, verified claim whose window closed is never handed to an
+  // agent. The detail panel showed the state and the check date and said nothing
+  // about the window, so the one question this panel is opened to answer — "is
+  // this claim actually in use?" — rendered as a healthy claim.
+  const renderWith = (
+    validity: Partial<MemoryRecord["validity"]>
+  ): string => {
+    const record: MemoryRecord = {
+      id: "mem-expired",
+      kind: "procedural",
+      status: "active",
+      scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+      claim: "Run the suite before pushing to main.",
+      validity: { state: "verified", evidence: [], ...validity },
+      provenance: {
+        experienceIds: ["exp-1"],
+        evidence: [],
+        createdBy: "operator",
+        createdAt: "2026-10-01T00:00:00Z"
+      },
+      createdAt: "2026-10-01T00:00:00Z",
+      updatedAt: "2026-10-02T00:00:00Z"
+    };
+    return renderToStaticMarkup(
+      React.createElement(MemoryRecordsView, {
+        records: [record],
+        total: 1,
+        // The validity panel is the drawer, not the row, so the panel has to be
+        // opened for it to say anything.
+        selectedRecord: record,
+        listScope: memoryListScope()
+      })
+    );
+  };
+
+  const expired = renderWith({
+    validFrom: "2026-09-01T00:00:00Z",
+    validTo: "2026-09-15T00:00:00Z"
+  });
+  assert.match(expired, /Out of validity window/);
+  assert.match(
+    expired,
+    /the Runtime will not inject this claim/,
+    "the panel names the consequence, not just the fact"
+  );
+
+  // An open window is stated and is not the same claim as a closed one.
+  const open = renderWith({
+    validFrom: "2026-09-01T00:00:00Z",
+    validTo: "2099-01-01T00:00:00Z"
+  });
+  assert.doesNotMatch(open, /Out of validity window/);
+  assert.match(open, /Valid /);
+
+  // An absent bound is the absence of a decision. Rendering a dash would claim
+  // either "valid forever" or "expired", and the Runtime injects it.
+  const unbounded = renderWith({});
+  assert.doesNotMatch(unbounded, /Out of validity window/);
+  assert.doesNotMatch(unbounded, /Valid (from|until)/);
+
+  // An unparseable bound is treated as absent, because the Runtime would not
+  // parse it either and refusing a claim it will inject is the worse error.
+  assert.doesNotMatch(
+    renderWith({ validTo: "not-a-date" }),
+    /Out of validity window/
+  );
+});
+
 test("MemoryView keeps an unavailable experience tab out of its successful-empty state", () => {
   const markup = renderToStaticMarkup(
     React.createElement(MemoryView, {

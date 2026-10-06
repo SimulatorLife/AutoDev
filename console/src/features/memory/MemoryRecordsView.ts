@@ -4,7 +4,8 @@ import type {
   MemoryKind,
   MemoryRecord,
   MemoryScope,
-  MemoryStatus
+  MemoryStatus,
+  MemoryValidity
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
@@ -59,6 +60,130 @@ export interface MemoryRecordHistory {
   readonly schema: string;
   readonly memory: MemoryRecord;
   readonly transitions: readonly MemoryRecordTransition[];
+}
+
+/**
+ * Whether a claim's validity window has closed, as the Runtime decides it.
+ *
+ * `isEligibleRecord` refuses a record when `validTo <= asOf`, and this is that
+ * same comparison against the same kind of timestamp. Kept as one helper so the
+ * panel and the Runtime cannot drift into disagreeing about which claims are
+ * live — a Console that called a live claim expired would be its own version of
+ * the bug this panel exists to fix.
+ *
+ * Only a present, parseable bound closes the window. An unparseable one is
+ * treated as absent rather than as expired: the Runtime would not parse it
+ * either, and refusing a claim the Runtime is willing to inject is the worse
+ * error.
+ */
+function isValidityWindowClosed(
+  validity: MemoryValidity,
+  asOf: string
+): boolean {
+  const validTo = validity.validTo;
+  if (validTo === undefined) return false;
+  const until = Date.parse(validTo);
+  if (!Number.isFinite(until)) return false;
+  return validTo <= asOf;
+}
+
+/** The render instant, compared as the Runtime compares its own `asOf`. */
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+/**
+ * The validity window, as one sentence, or nothing when there is no window.
+ *
+ * Only a bound that exists is spoken about. An absent one is the absence of a
+ * decision -- not "valid forever", not "expired" -- and rendering a dash would
+ * claim one of those. Each shape is its own string rather than an assembled
+ * phrase, so a half-written window cannot read as a complete sentence.
+ */
+function validityWindowLabel(
+  validity: MemoryValidity
+): string | null {
+  const from = validity.validFrom;
+  const to = validity.validTo;
+  if (from !== undefined && to !== undefined) {
+    return `Valid ${new Date(from).toLocaleString()} to ${new Date(to).toLocaleString()}`;
+  }
+  if (from !== undefined) {
+    return `Valid from ${new Date(from).toLocaleString()}`;
+  }
+  if (to !== undefined) {
+    return `Valid until ${new Date(to).toLocaleString()}`;
+  }
+  return null;
+}
+
+/**
+ * What is known about a claim's validity, and whether that means it is injected.
+ *
+ * Its own component because the window is not an extra detail here -- it is the
+ * fact that decides whether the Runtime will hand this claim to an agent at all.
+ * `isEligibleRecord` refuses a record whose `validTo` has passed, so a claim
+ * reading "active" and "verified" can be one nothing will ever use, and an
+ * operator inspecting this panel is asking precisely that question.
+ */
+function ValidityFacts({
+  validity,
+  renderedAt
+}: {
+  readonly validity: MemoryValidity;
+  readonly renderedAt: string;
+}): React.JSX.Element {
+  // Computed once: the label is needed both to decide whether to render the row
+  // and to fill it, and formatting one window twice can produce two strings.
+  const window = validityWindowLabel(validity);
+  return React.createElement(
+    "div",
+    {
+      className:
+        "rounded border border-border bg-background/50 p-4 flex flex-col gap-2"
+    },
+    React.createElement(
+      "h3",
+      { className: SECTION_HEADING_CLASS },
+      "Validity State"
+    ),
+    React.createElement(
+      "div",
+      { className: "flex items-center gap-2 text-xs" },
+      React.createElement("span", { className: MUTED_TEXT_CLASS }, "State:"),
+      React.createElement(
+        "span",
+        {
+          className: `font-semibold ${validity.state === "verified" ? "text-success" : validity.state === "contradicted" ? "text-error" : "text-warning"}`
+        },
+        validity.state
+      )
+    ),
+    validity.checkedAt
+      ? React.createElement(
+          "div",
+          { className: MUTED_META_CLASS },
+          `Checked at: ${new Date(validity.checkedAt).toLocaleString()}`
+        )
+      : null,
+    validity.verificationSource
+      ? React.createElement(
+          "div",
+          { className: MONO_META_CLASS },
+          `Verification source: ${validity.verificationSource}`
+        )
+      : null,
+    window === null
+      ? null
+      : React.createElement("div", { className: MONO_META_CLASS }, window),
+    isValidityWindowClosed(validity, renderedAt)
+      ? React.createElement(
+          "div",
+          { className: "text-error font-semibold" },
+          "Out of validity window — the Runtime will not inject this claim."
+        )
+      : null
+  );
 }
 
 export interface MemoryRecordsViewProps {
@@ -129,6 +254,11 @@ export function MemoryRecordsView({
   why,
   listScope
 }: MemoryRecordsViewProps): React.JSX.Element {
+  // One instant for the whole page, not one per record: a claim whose window
+  // closes between two records' checks would otherwise render one as expired
+  // and its neighbour as open, on the same screen, with nothing between them to
+  // say why.
+  const renderedAt = nowIso();
   const columns: ColumnDef<MemoryRecord>[] = [
     {
       id: "id",
@@ -300,7 +430,8 @@ export function MemoryRecordsView({
           record: selectedRecord,
           history,
           why,
-          listScope
+          listScope,
+          renderedAt
         })
       : null
   );
@@ -390,14 +521,20 @@ interface RecordDetailPanelProps {
   readonly history?: MemoryRecordHistory | null | undefined;
   readonly why?: ControlApiMemoryWhyResponse | null | undefined;
   readonly listScope: MemoryListScope;
+  /** The page's single render instant, so every claim is judged against one clock. */
+  readonly renderedAt: string;
 }
 
 function RecordDetailPanel({
   record,
   history,
   why,
-  listScope
+  listScope,
+  renderedAt
 }: RecordDetailPanelProps): React.JSX.Element {
+  // Computed once: the label is needed both to decide whether to render the row
+  // and to fill it, and formatting the same window twice can produce two
+  // different strings for one claim.
   return React.createElement(
     DetailDrawer,
     {
@@ -449,50 +586,10 @@ function RecordDetailPanel({
       "div",
       { className: gridRowClass(2) },
       // Validity
-      React.createElement(
-        "div",
-        {
-          className:
-            "rounded border border-border bg-background/50 p-4 flex flex-col gap-2"
-        },
-        React.createElement(
-          "h3",
-          {
-            className: SECTION_HEADING_CLASS
-          },
-          "Validity State"
-        ),
-        React.createElement(
-          "div",
-          { className: "flex items-center gap-2 text-xs" },
-          React.createElement(
-            "span",
-            { className: MUTED_TEXT_CLASS },
-            "State:"
-          ),
-          React.createElement(
-            "span",
-            {
-              className: `font-semibold ${record.validity.state === "verified" ? "text-success" : record.validity.state === "contradicted" ? "text-error" : "text-warning"}`
-            },
-            record.validity.state
-          )
-        ),
-        record.validity.checkedAt
-          ? React.createElement(
-              "div",
-              { className: MUTED_META_CLASS },
-              `Checked at: ${new Date(record.validity.checkedAt).toLocaleString()}`
-            )
-          : null,
-        record.validity.verificationSource
-          ? React.createElement(
-              "div",
-              { className: MONO_META_CLASS },
-              `Verification source: ${record.validity.verificationSource}`
-            )
-          : null
-      ),
+      React.createElement(ValidityFacts, {
+        validity: record.validity,
+        renderedAt
+      }),
 
       // Provenance
       React.createElement(
