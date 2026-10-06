@@ -44,7 +44,11 @@ import * as promptMutationRoute from "../app/api/prompts/[name]/route.ts";
 import * as providerRoleRoute from "../app/api/providers/[provider]/roles/[role]/route.ts";
 import EvaluationsPage from "../app/evaluations/page.ts";
 import MemoryPage from "../app/memory/page.ts";
-import { NAV_ICONS, navIcon } from "../src/components/icons/Icon.ts";
+import {
+  ICON_PATHS,
+  NAV_ICONS,
+  navIcon
+} from "../src/components/icons/Icon.ts";
 import {
   MONO_ID_CLASS,
   MONO_META_CLASS,
@@ -253,6 +257,50 @@ test("every canonical navigation resource has its own icon, and no icon is orpha
   // `null` rather than a fallback precisely so an unknown section cannot
   // inherit some other section's icon.
   assert.equal(navIcon("NotAResource"), null);
+});
+
+test("the icon set holds no glyph that nothing renders", () => {
+  // `ICON_PATHS` describes itself as a deliberately closed set, which is what
+  // keeps stroke weight and optical size consistent. A dead entry is not a
+  // harmless spare part: it is a second spelling of a decision (this icon
+  // drawn at 16 here, a hand-rolled one at 14 there) waiting to be used, and it
+  // survives because nothing checks. Four entries had accumulated exactly that
+  // way before this guard existed.
+  //
+  // A name is rendered either through the nav list or by a `name:` prop, so
+  // both forms count as usage. The scan covers `app/` as well as `src/`
+  // because routes render icons too, and skips `Icon.ts` itself so the
+  // declarations do not mark themselves as used.
+  const consoleRoot = join(import.meta.dirname, "..");
+  const usage = new Set<string>(NAV_ICONS);
+  for (const dir of ["src", "app"]) {
+    for (const relative of readdirSync(join(consoleRoot, dir), {
+      recursive: true
+    })) {
+      const file = join(consoleRoot, dir, relative.toString());
+      if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
+      if (file.endsWith(join("icons", "Icon.ts"))) continue;
+      const source = readFileSync(file, "utf8");
+      // Match the property, not any occurrence of the word: a section name like
+      // "Tools" also appears in prose, in a route path, and in a test id.
+      for (const match of source.matchAll(/\bname:\s*["'`]([\w]+)["'`]/gu)) {
+        const name = match[1];
+        if (name !== undefined) usage.add(name);
+      }
+    }
+  }
+
+  const dead = Object.keys(ICON_PATHS).filter((name) => !usage.has(name));
+  assert.deepEqual(
+    dead,
+    [],
+    `These icons are declared but never rendered: ${dead.join(", ")}`
+  );
+
+  // The set is closed in the other direction too: a `name:` prop is typed
+  // against `IconName`, so the compiler already rejects a glyph that is not
+  // declared. That is why only the dead direction needs a test.
+  assert.ok(Object.keys(ICON_PATHS).length > 0, "the icon set is not empty");
 });
 
 test("AppNav renders Configure/Observe/Operate groups with canonical membership, order, and URL links", () => {

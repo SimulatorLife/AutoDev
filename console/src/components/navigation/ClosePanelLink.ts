@@ -26,7 +26,7 @@ export function ClosePanelLink({
         "inline-flex items-center gap-1.5 text-sm text-fg-muted hover:text-fg"
     },
     // Decorative: the adjacent word is the accessible name.
-    React.createElement(Icon, { name: "Close" }),
+    React.createElement(Icon, { name: "close" }),
     label
   );
 }

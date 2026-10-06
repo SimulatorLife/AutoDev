@@ -12,7 +12,12 @@ import React from "react";
  * Geometry is the Feather 24x24 stroke grid (2px stroke, round caps and
  * joins) so weights match the type scale instead of reading as a separate icon
  * family. The set is deliberately closed: a bounded set is what keeps icon
- * sizing and stroke weight consistent across the product.
+ * sizing and stroke weight consistent across the product, and a bounded set is
+ * only a bounded set if every entry is still used -- so an icon nobody renders
+ * is deleted rather than parked here as a spare. Status is carried by
+ * `StatusBadge`'s vocabulary rather than by pictograms, which is why there is
+ * no "warning" or "info" glyph here: colour plus a written label reads the
+ * same in both themes and survives a monochrome rendering.
  */
 export const ICON_PATHS = {
   Agents: [
@@ -66,28 +71,8 @@ export const ICON_PATHS = {
     "M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6",
     "M18 9a9 9 0 0 1-9 9"
   ],
-  externalLink: [
-    "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
-    "M15 3h6v6",
-    "M10 14 21 3"
-  ],
-  chevronRight: ["M9 18l6-6-6-6"],
   chevronDown: ["M6 9l6 6 6-6"],
-  search: ["M19 11a8 8 0 1 0 0 8 8 8 0 0 0 0-8", "M21 21l-4.35-4.35"],
-  clock: ["M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20", "M12 6v6l4 2"],
-  info: ["M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20", "M12 16v-4", "M12 8h.01"],
-  warning: [
-    "M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z",
-    "M12 9v4",
-    "M12 17h.01"
-  ],
-  refresh: [
-    "M23 4v6h-6",
-    "M1 20v-6h6",
-    "M3.51 9a9 9 0 0 1 14.85-3.36L23 10",
-    "M1 14l4.64 4.36A9 9 0 0 0 20.49 15"
-  ],
-  Close: ["M18 6 6 18", "m6 6 12 12"],
+  close: ["M18 6 6 18", "m6 6 12 12"],
   empty: [
     "M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-7L10 4H5a2 2 0 0 0-2 2z",
     "M9 13h6"
