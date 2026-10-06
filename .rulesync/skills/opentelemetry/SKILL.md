@@ -38,6 +38,8 @@ Use OpenTelemetry as AutoDev's standard telemetry transport and interoperability
 
 Do not promote request-, session-, trace-, conversation-, path-, or other high-cardinality identifiers into metric dimensions. Use trace/span/log context for per-session investigation.
 
+Every router metric dimension and aggregation key is reduced by `safeMetricLabel` in `runtime/src/router/metric-label.ts`, which is the single owner of that bounding. Import it from there rather than reaching through another router module or keeping a local copy.
+
 ## Instrumentation
 
 - Instrument the component that actually owns each operation.

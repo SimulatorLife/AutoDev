@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { safeMetricLabel } from "./subagents.ts";
+import { safeMetricLabel } from "./metric-label.ts";
 import { recordSkillObservation } from "./telemetry.ts";
 import {
   extractWorkspaceIdWithAmbiguity,
@@ -6546,5 +6546,3 @@ export function otelPersistenceSnapshot(): OtelPersistenceSnapshot {
 export function restoreOtelTelemetry(snapshot: unknown): void {
   defaultOtelTracker.restoreOtelTelemetry(snapshot);
 }
-
-export { safeMetricLabel } from "./subagents.ts";

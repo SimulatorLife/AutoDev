@@ -86,6 +86,7 @@ import {
   handleControlApiRequest,
   setControlApiProviderHealthSource
 } from "../control-api/index.ts";
+import { safeMetricLabel } from "./metric-label.ts";
 import {
   codexTelemetryStatus,
   getDefaultOtelTracker,
@@ -146,7 +147,6 @@ import {
   reportedChildren,
   resetSpawnFailureTelemetry,
   resetSubagentTelemetry,
-  safeMetricLabel,
   setDefaultSubagentRegistry,
   spawnFailureStatus,
   SubagentRegistry,

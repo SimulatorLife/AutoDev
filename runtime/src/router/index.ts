@@ -4,6 +4,7 @@ export * from "./cooldown/index.ts";
 export * from "./events.ts";
 export * from "./lifecycle/index.ts";
 export * from "./live-feed.ts";
+export * from "./metric-label.ts";
 export * from "./persistence/index.ts";
 export * from "./proxy.ts";
 export * from "./routing.ts";
@@ -41,7 +42,6 @@ export {
   resetSubagentTelemetry,
   type RoleCapabilityRequirements,
   roleCapabilityRequirements,
-  safeMetricLabel,
   setDefaultSubagentRegistry,
   type SpawnFailureRecord,
   type SpawnFailureStatus,

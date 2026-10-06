@@ -55,6 +55,7 @@
     "./router/http": "./src/router/http.ts",
     "./router/lifecycle": "./src/router/lifecycle/index.ts",
     "./router/live-feed": "./src/router/live-feed.ts",
+    "./router/metric-label": "./src/router/metric-label.ts",
     "./router/memory-embedding": "./src/router/memory-embedding.ts",
     "./router/memory-injection": "./src/router/memory-injection.ts",
     "./router/memory-reconstruction": "./src/router/memory-reconstruction.ts",

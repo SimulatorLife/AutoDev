@@ -10,6 +10,8 @@ import { createHash } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 
+import { safeMetricLabel } from "./metric-label.ts";
+
 export type SqliteRow = Record<string, unknown>;
 
 export interface SqliteStatement {
@@ -257,25 +259,6 @@ function safeWorkspaceId(value: unknown): string | null {
     return `ws_${digest}`;
   }
   return trimmed.slice(0, 100);
-}
-
-// Strip ASCII control characters from a metric label. Implemented with
-// String.prototype.charCodeAt instead of a regex with control characters,
-// because eslint-plugin-regexp/no-control-regex forbids raw control
-// characters in regular expression patterns.
-function stripAsciiControlCharacters(value: string): string {
-  let stripped = "";
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code < 0x20 || code === 0x7f) continue;
-    stripped += value[index];
-  }
-  return stripped;
-}
-
-function safeMetricLabel(value: unknown, fallback = "unknown"): string {
-  if (typeof value !== "string" || !value.trim()) return fallback;
-  return stripAsciiControlCharacters(value.trim()).slice(0, 100) || fallback;
 }
 
 function isRow(value: unknown): value is SqliteRow {

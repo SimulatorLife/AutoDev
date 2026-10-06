@@ -7,7 +7,7 @@ import {
 import { ROLE_NAMES } from "@simulatorlife/autodev-runtime/router/routing";
 
 import type { AgentActivityTracker } from "./concurrency/index.ts";
-import { safeMetricLabel } from "./subagents.ts";
+import { safeMetricLabel } from "./metric-label.ts";
 
 type LiveAgentActivity = ReturnType<AgentActivityTracker["listLive"]>[number];
 

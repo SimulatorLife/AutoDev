@@ -12,6 +12,7 @@ import type {
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
 import type { RecordRouterEventInput } from "./events.ts";
+import { safeMetricLabel } from "./metric-label.ts";
 import type { RecordUsageEventParams } from "./usage.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -81,25 +82,6 @@ export const ORCHESTRATOR_AGENT_ROLE = "orchestrator";
 export const FORWARDED_REQUEST_HEADERS = Object.freeze([
   "x-codex-turn-metadata"
 ]);
-
-// Strip ASCII control characters from a metric label without using a
-// regular expression. `eslint-plugin-regexp/no-control-regex` rejects raw
-// control characters inside regex character classes, so we walk the string
-// once with `charCodeAt`.
-function stripAsciiControlCharacters(value: string): string {
-  let stripped = "";
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code < 0x20 || code === 0x7f) continue;
-    stripped += value[index];
-  }
-  return stripped;
-}
-
-export function safeMetricLabel(value: unknown, fallback = "unknown"): string {
-  if (typeof value !== "string" || !value.trim()) return fallback;
-  return stripAsciiControlCharacters(value.trim()).slice(0, 100) || fallback;
-}
 
 function restoredMetricLabel<Fallback extends string | null>(
   value: unknown,
