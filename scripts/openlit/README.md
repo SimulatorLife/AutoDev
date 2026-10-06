@@ -16,6 +16,29 @@ The split is deliberate:
 - `pin-image.sh` — pull and verify the first-party OpenLIT image digest so
   deployments can use an immutable ref.
 
+## Patch series ownership
+
+`tests/openlit-patch-series.ts` is the single owner of the series: it exports
+`OPENLIT_PATCH_NAMES` (every patch, in apply order) and
+`assertOpenlitPatchSeries()`, the rule that decides whether a directory listing
+_is_ that series. Both gates in `tests/openlit-patches-apply.test.ts` call that
+one function rather than carrying a list of their own.
+
+This matters because those two gates require a `git clone` of the pinned OpenLIT
+commit. Where cloning is not possible, a stale or missing patch name was
+invisible. That already happened: the series had grown to 39 patches while a
+second hand-maintained list in the applying test still stopped at 25, so patches
+26–39 were never order-checked anywhere.
+
+`tests/openlit-patch-series.test.ts` therefore checks the invariant against the
+files on disk with no clone, and runs in `pnpm test:root`. It also asserts
+completeness (the directory holds every maintained patch and nothing else),
+because `assertOpenlitPatchSeries()` intersects the expected series with what is
+present in order to tolerate a checkout predating the newest patches — a
+tolerance the apply path needs, and one that means the series rule alone cannot
+see a patch that is simply absent. Adding or renaming a patch means updating
+`OPENLIT_PATCH_NAMES` and the directory together.
+
 ## Pinned upstream
 
 | Identifier         | Value                                                                     |
@@ -190,14 +213,14 @@ Control API, receiver, and Usage tokens are stored together in
 `$CODEX_HOME/openlit-secrets.env`; the OTLP token is also materialized at
 `$CODEX_HOME/openlit-otlp-api-key`. Neither file is in the repository.
 
-| Script                  | Responsibility                                                                                                   |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `apply-patches.sh`      | Apply all local patches to the exact pinned OpenLIT commit.                                                      |
-| `build-local.sh`        | Build the patched image and record source, patch, image-ID, and digest metadata outside the repo.                |
+| Script                  | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apply-patches.sh`      | Apply all local patches to the exact pinned OpenLIT commit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `build-local.sh`        | Build the patched image and record source, patch, image-ID, and digest metadata outside the repo.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `bootstrap-secrets.sh`  | Generate/preserve strong DB, Control API, OTLP receiver, and Console Usage tokens. Writes the canonical `$CODEX_HOME/openlit-secrets.env` (mode 0600, outside the repo) and additionally materializes the two Console server-only tokens plus their local base URL defaults into `console/.env.local` (mode 0600, ignored by `.env.*`) for Next.js to auto-load on `pnpm --filter @simulatorlife/autodev-console dev/build/start`. The launchd-managed Console (`scripts/run-codex-console.sh`) continues to source the canonical secret file directly and does not depend on `console/.env.local`. |
-| `bootstrap-otlp-key.sh` | Materialize the same generated receiver token for producers; it does not call an OpenLIT API.                    |
-| `up.sh`                 | Build, prepare secrets, then start the locally patched image with the non-secret template.                       |
-| `down.sh`               | Stop the local stack while preserving its durable ClickHouse and OpenLIT data volumes.                           |
+| `bootstrap-otlp-key.sh` | Materialize the same generated receiver token for producers; it does not call an OpenLIT API.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `up.sh`                 | Build, prepare secrets, then start the locally patched image with the non-secret template.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `down.sh`               | Stop the local stack while preserving its durable ClickHouse and OpenLIT data volumes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 The bring-up runner cleans up only its own fresh scratch clone. It never edits the
 tracked env template or removes pre-existing `.tmp` data. The down runner leaves

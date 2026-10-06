@@ -25,6 +25,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { assertOpenlitPatchSeries } from "./openlit-patch-series.ts";
+
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 
 const PINNED_COMMIT = "9938c66638666ca5d3bcb850350faa82e510924b";
@@ -592,48 +594,6 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   );
 }
 
-/** Every patch in the maintained OpenLIT series, in apply order. */
-const EXPECTED_OPENLIT_PATCH_NAMES = [
-  "01-generic-dashboard-variables",
-  "02-autodev-pages",
-  "03-otlp-receiver-auth",
-  "04-autodev-usage-dashboard",
-  "05-remove-login-signup",
-  "06-autodev-branding",
-  "07-autodev-usage-api",
-  "08-autodev-memory-connector",
-  "09-autodev-memory-lifecycle-actions",
-  "10-autodev-memory-action-hardening",
-  "11-autodev-memory-lifecycle-ui",
-  "12-autodev-memory-outcomes",
-  "13-autodev-memory-outcome-cohorts",
-  "14-autodev-memory-outcome-reporting",
-  "15-remove-gpu-product",
-  "16-autodev-memory-session-outcome-cohorts",
-  "17-remove-openlit-memory-session-authorization",
-  "18-remove-openlit-controller-discovery",
-  "19-remove-controller-image-runtime",
-  "20-remove-stale-controller-messages",
-  "21-remove-controller-clickhouse-schema",
-  "22-autodev-memory-injection-use",
-  "23-autodev-memory-visible-connector",
-  "24-autodev-pricing-empty-history",
-  "25-autodev-usage-filter-options",
-  "26-autodev-usage-trace-detail",
-  "27-remove-otter-chat-docs-onboarding-chrome",
-  "28-remove-autodev-pages",
-  "29-remove-openground",
-  "30-remove-rule-engine",
-  "31-remove-theme-switching-and-marketing-404",
-  "32-remove-organisations-projects-environments",
-  "33-remove-dashboard-authoring",
-  "34-remove-board-authoring-tables",
-  "35-remove-vault-administration",
-  "36-dead-surfaces-and-broken-sidebar-nav",
-  "37-remove-duplicate-agents-shell",
-  "38-remove-docs-and-account-surfaces",
-  "39-remove-database-config-sharing"
-] as const;
 test(
   "openlit patch set applies cleanly to pinned commit",
   { timeout: 180_000 },
@@ -648,53 +608,12 @@ test(
       .trim()
       .split("\n")
       .filter((f) => f.endsWith(".patch"));
-    const expectedPatchNames = [
-      "01-generic-dashboard-variables",
-      "02-autodev-pages",
-      "03-otlp-receiver-auth",
-      "04-autodev-usage-dashboard",
-      "05-remove-login-signup",
-      "06-autodev-branding",
-      "07-autodev-usage-api",
-      "08-autodev-memory-connector",
-      "09-autodev-memory-lifecycle-actions",
-      "10-autodev-memory-action-hardening",
-      "11-autodev-memory-lifecycle-ui",
-      "12-autodev-memory-outcomes",
-      "13-autodev-memory-outcome-cohorts",
-      "14-autodev-memory-outcome-reporting",
-      "15-remove-gpu-product",
-      "16-autodev-memory-session-outcome-cohorts",
-      "17-remove-openlit-memory-session-authorization"
-    ];
-    if (patches.some((p) => p.startsWith("18-"))) {
-      expectedPatchNames.push("18-remove-openlit-controller-discovery");
-    }
-    if (patches.some((p) => p.startsWith("19-"))) {
-      expectedPatchNames.push("19-remove-controller-image-runtime");
-    }
-    if (patches.some((p) => p.startsWith("20-"))) {
-      expectedPatchNames.push("20-remove-stale-controller-messages");
-    }
-    if (patches.some((p) => p.startsWith("21-"))) {
-      expectedPatchNames.push("21-remove-controller-clickhouse-schema");
-    }
-    expectedPatchNames.push(
-      "22-autodev-memory-injection-use",
-      "23-autodev-memory-visible-connector",
-      "24-autodev-pricing-empty-history",
-      "25-autodev-usage-filter-options"
-    );
-    assert.ok(
-      patches.length >= expectedPatchNames.length,
-      `expected at least ${expectedPatchNames.length} maintained OpenLIT patches`
-    );
-    for (const [index, expectedName] of expectedPatchNames.entries()) {
-      assert.ok(
-        patches[index]?.startsWith(expectedName),
-        `expected patch ${index + 1} (${expectedName}) in order, got ${patches[index]}`
-      );
-    }
+    // One owner for the series: the exact-order rule, the names, and the
+    // per-patch loop this replaced all live in tests/openlit-patch-series.ts.
+    // They used to be a 25-name list here and the real 39-name list further
+    // down this same file, and the short copy silently stopped order-checking
+    // everything after patch 25.
+    assertOpenlitPatchSeries(patches);
 
     for (const patch of patches) {
       assertPatchHunkCounts(join(PATCHES_DIR, patch));
@@ -1827,28 +1746,7 @@ test(
         .trim()
         .split("\n")
         .filter((f) => f.endsWith(".patch"));
-      // Data-driven rather than one `if` per patch: the ladder this
-      // replaced grew the callback past the cognitive-complexity ceiling,
-      // and asserting the series equals the known names in order is a
-      // stronger check than a prefix walk — an unexpected patch now fails.
-      const appliedPatchNames = patches.map((file) =>
-        file.replace(/\.patch$/u, "")
-      );
-      const expectedPatchNames = EXPECTED_OPENLIT_PATCH_NAMES.filter((name) =>
-        appliedPatchNames.includes(name)
-      );
-      assert.deepEqual(
-        appliedPatchNames,
-        expectedPatchNames,
-        "the OpenLIT patch series must be exactly the known patches, in order"
-      );
-
-      for (const [index, expectedName] of expectedPatchNames.entries()) {
-        assert.ok(
-          patches[index]?.startsWith(expectedName),
-          `expected patch ${index + 1} (${expectedName}) in order in the series, got ${patches[index]}`
-        );
-      }
+      assertOpenlitPatchSeries(patches);
 
       // 06-autodev-branding depends on files created by 01-05; its
       // presence after a clean script run proves later patches applied
