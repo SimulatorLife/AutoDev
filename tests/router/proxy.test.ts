@@ -17,7 +17,9 @@ import {
   exhaustionHeaders,
   exhaustionWaitWindowMs,
   fallbackable,
+  nonNegativeDuration,
   payloadForCandidate,
+  positiveDuration,
   proxyConcreteResponse,
   proxyFallbackChain,
   proxyOrchestratorResponse,
@@ -720,6 +722,29 @@ test("an orchestrator turn may wait out a first-strike transient cooldown; a rol
   assert.ok(
     exhaustionWaitWindowMs(true) >= COOLDOWN_CONFIG.providerCooldownMs,
     "with a shorter window a single-provider orchestrator tier can never be rescued by waiting"
+  );
+});
+
+test("duration settings are strictly positive except the bounded wait, which takes 0 to mean never wait", () => {
+  // docs/provider-routing.md makes this distinction explicit after promising a
+  // `0` that, read against CODEX_ROUTER_PROVIDER_COOLDOWN_MS, would have been a
+  // lie: every cooldown duration ignores 0 and falls back silently.
+  assert.equal(positiveDuration("0", 30_000), 30_000);
+  assert.equal(positiveDuration("-1", 30_000), 30_000);
+  assert.equal(positiveDuration("", 30_000), 30_000);
+  assert.equal(positiveDuration("nonsense", 30_000), 30_000);
+  assert.equal(positiveDuration("15000", 30_000), 15_000);
+
+  assert.equal(nonNegativeDuration("0", 20_000), 0);
+  assert.equal(nonNegativeDuration("-1", 20_000), 20_000);
+  assert.equal(nonNegativeDuration("", 20_000), 20_000);
+  assert.equal(nonNegativeDuration("nonsense", 20_000), 20_000);
+
+  // And the default-shaped environment really is the documented one: the wait
+  // window disables at 0, the cooldown duration cannot.
+  assert.ok(
+    COOLDOWN_CONFIG.providerCooldownMs > 0,
+    "a zero transient cooldown would remove load-shedding entirely, which is why it is not accepted"
   );
 });
 

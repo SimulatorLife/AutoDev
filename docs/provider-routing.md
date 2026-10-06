@@ -499,8 +499,10 @@ come up empty:
    typically 2. An orchestrator turn holds no slot and its failure ends every
    child's work, so its window is at least one first-strike transient cooldown
    (`CODEX_ROUTER_PROVIDER_COOLDOWN_MS`, 30s): otherwise a single-provider
-   orchestrator tier could never be rescued by waiting. Set it to `0` to disable
-   waiting entirely.
+   orchestrator tier could never be rescued by waiting. Set
+   `CODEX_ROUTER_EXHAUSTION_WAIT_MS` to `0` to disable waiting entirely. That is
+   the wait window, not the cooldown: `CODEX_ROUTER_PROVIDER_COOLDOWN_MS=0`
+   disables nothing, it silently falls back to 30s.
 
 `CODEX_ROUTER_CHAIN_SELECTION_DEADLINE_MS` (default 120s) bounds how long the
 router may spend _looking_ for a provider. It is checked only before starting a
@@ -508,7 +510,9 @@ candidate and never during one, so a long turn that lands on the last candidate
 still gets the full `CODEX_ROUTER_UPSTREAM_TIMEOUT_MS`. Without it, a tier of
 five hanging providers could hold a subagent slot for over an hour.
 
-All of these are positive-millisecond environment variables:
+All of these are millisecond environment variables, and every one of them except
+the last is strictly positive: `0`, a negative value, or a non-number falls back
+to the default rather than failing startup.
 `CODEX_ROUTER_PROVIDER_COOLDOWN_MS` (30_000),
 `CODEX_ROUTER_PROVIDER_COOLDOWN_MAX_MS` (600_000),
 `CODEX_ROUTER_HARD_COOLDOWN_MS` (900_000),
@@ -517,8 +521,11 @@ All of these are positive-millisecond environment variables:
 `CODEX_ROUTER_PROBE_COOLDOWN_MAX_MS` (30_000),
 `CODEX_ROUTER_PROBE_TIMEOUT_MS` (700),
 `CODEX_ROUTER_LAST_RESORT_MAX_ATTEMPTS` (2),
-`CODEX_ROUTER_EXHAUSTION_WAIT_MS` (20_000, `0` disables) and
-`CODEX_ROUTER_CHAIN_SELECTION_DEADLINE_MS` (120_000).
+`CODEX_ROUTER_CHAIN_SELECTION_DEADLINE_MS` (120_000), and
+`CODEX_ROUTER_EXHAUSTION_WAIT_MS` (20_000), which alone accepts `0` to mean
+"never wait" instead of falling back. Because an unusable value is a silent
+fallback rather than a startup error, a typo in one of the others leaves the
+default quietly in place.
 
 ### Declared limits
 
