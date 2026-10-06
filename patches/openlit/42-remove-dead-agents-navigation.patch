@@ -1,0 +1,107 @@
+diff --git a/src/client/src/__tests__/utils/active-app.test.ts b/src/client/src/__tests__/utils/active-app.test.ts
+index a921db1b..17d001f1 100644
+--- a/src/client/src/__tests__/utils/active-app.test.ts
++++ b/src/client/src/__tests__/utils/active-app.test.ts
+@@ -13,10 +13,6 @@ describe('getActiveApp', () => {
+ 	});
+ 
+ 	it('returns sidebar apps for other routes', () => {
+-		expect(getActiveApp('/agents')).toEqual({
+-			title: 'Agents',
+-			href: '/agents',
+-		});
+ 		expect(getActiveApp('/context')).toEqual({
+ 			title: 'Contexts',
+ 			href: '/context',
+@@ -27,11 +23,12 @@ describe('getActiveApp', () => {
+ 		});
+ 	});
+ 
+-	it('maps coding-agents routes to Agents', () => {
+-		expect(getActiveApp('/coding-agents/users/test@example.com')).toEqual({
+-			title: 'Agents',
+-			href: '/agents',
+-		});
++	it('does not map the removed agents route', () => {
++		// The duplicate agents shell is gone, so neither /agents nor
++		// /coding-agents resolves to an app any more. A header that still
++		// labelled them would be pointing at a 404.
++		expect(getActiveApp('/agents')).toBeNull();
++		expect(getActiveApp('/coding-agents/users/test@example.com')).toBeNull();
+ 	});
+ 
+ 	it('does not map the removed board route', () => {
+@@ -49,15 +46,4 @@ describe('getActiveApp', () => {
+ 	it('returns null when the pathname matches no sidebar app', () => {
+ 		expect(getActiveApp('/this-route-does-not-exist')).toBeNull();
+ 	});
+-
+-	it('falls back to a default Agents entry when the sidebar has no /agents link', () => {
+-		jest.isolateModules(() => {
+-			jest.doMock('@/constants/sidebar', () => ({ SIDEBAR_ITEMS: [] }));
+-			const { getActiveApp: getActiveAppWithoutAgentsLink } =
+-				require('@/utils/active-app');
+-			expect(
+-				getActiveAppWithoutAgentsLink('/coding-agents/users/test@example.com')
+-			).toEqual({ title: 'Agents', href: '/agents' });
+-		});
+-	});
+ });
+diff --git a/src/client/src/constants/sidebar.tsx b/src/client/src/constants/sidebar.tsx
+index d23b9584..43c22332 100644
+--- a/src/client/src/constants/sidebar.tsx
++++ b/src/client/src/constants/sidebar.tsx
+@@ -5,19 +5,14 @@ import {
+ 	Activity,
+ 	Cable,
+ 	BookOpen,
+-	Bot,
+ 	Boxes,
+ 	BrainCircuit,
+-	Building2,
+ 	CircleDollarSign,
+ 	Component,
+-	FolderKanban,
+-	Home,
+ 	Key,
+ 	LayoutDashboard,
+ 	MonitorCog,
+ 	SettingsIcon,
+-	User,
+ } from "lucide-react";
+ 
+ export const ICON_CLASSES = "flex-shrink-0 size-4";
+@@ -46,12 +41,6 @@ export const SIDEBAR_ITEMS: SidebarItemProps[] = [
+ 						type: "action",
+ 					},
+ 					...getEnterpriseSidebarItems("monitoring", ICON_CLASSES),
+-					{
+-						icon: <Bot className={ICON_CLASSES} />,
+-						text: "Agents",
+-						link: "/agents",
+-						type: "action",
+-					},
+ 					{
+ 						icon: <MonitorCog className={ICON_CLASSES} />,
+ 						text: m.FEATURE_EVALS,
+diff --git a/src/client/src/utils/active-app.ts b/src/client/src/utils/active-app.ts
+index 6b8d8fcd..e731717f 100644
+--- a/src/client/src/utils/active-app.ts
++++ b/src/client/src/utils/active-app.ts
+@@ -50,16 +50,6 @@ export function getActiveApp(pathname: string): ActiveApp | null {
+ 		return null;
+ 	}
+ 
+-	if (pathname.startsWith("/coding-agents")) {
+-		const agents = flattenSidebarActions(SIDEBAR_ITEMS).find(
+-			(item) => item.link === "/agents"
+-		);
+-		return agents?.link
+-			? resolveApp(agents.link, agents.text)
+-			: { title: "Agents", href: "/agents" };
+-	}
+-
+-
+ 	const actions = flattenSidebarActions(SIDEBAR_ITEMS)
+ 		.filter((item) => item.link && !item.target)
+ 		.sort((a, b) => (b.link?.length || 0) - (a.link?.length || 0));

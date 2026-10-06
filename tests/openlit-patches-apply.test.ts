@@ -752,6 +752,33 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     /EVALUATION_RULE_ENGINE_DETAILS|EVALUATION_RULES_APPLIED/u,
     "the orphaned Rule Engine strings must not survive in the message catalog"
   );
+
+  // Patch 37 deleted the agents page and left its sidebar entry, so primary
+  // navigation sent every operator to a 404. The link audit is what found it,
+  // after three others of the same shape got through by hand.
+  const sidebarSource = readFileSync(
+    join(dir, "src/client/src/constants/sidebar.tsx"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    sidebarSource,
+    /link:\s*["'`]?\/agents/u,
+    "the sidebar must not link to a page patch 37 removed"
+  );
+  assert.doesNotMatch(
+    sidebarSource,
+    /<Bot\b/u,
+    "the Agents entry's icon import must go with it"
+  );
+  const activeApp = readFileSync(
+    join(dir, "src/client/src/utils/active-app.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    activeApp,
+    /\/coding-agents|href: "\/agents"/u,
+    "the header app resolver must not map a deleted route onto a deleted href"
+  );
 }
 
 test(
