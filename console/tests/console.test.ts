@@ -26,6 +26,7 @@ import {
   type McpServerResource,
   type MemoryRecord,
   type MemorySessionOutcomeCohortPage,
+  PROVIDER_ROLES,
   SANDBOX_MODES,
   type ToolCatalogItem,
   type UsageMetricsData
@@ -6724,11 +6725,12 @@ test("provider-role Console route sends only a same-origin typed PATCH and retur
         body: String(init?.body ?? "")
       });
       return Response.json({
-        schema: "autodev-control-provider-role-v2",
+        schema: "autodev-control-provider-role-v3",
         provider: "codex",
         role: "orchestrator",
-        enabled: false,
-        previous: true,
+        priority: "disabled",
+        model: null,
+        previous: null,
         actor: LOCAL_CONTROL_API_ACTOR
       });
     },
@@ -6739,7 +6741,8 @@ test("provider-role Console route sends only a same-origin typed PATCH and retur
           new URLSearchParams({
             provider: "codex",
             role: "orchestrator",
-            enabled: "false",
+            priority: "disabled",
+            model: "",
             returnTo: "/providers/codex"
           }).toString()
         ),
@@ -6763,7 +6766,8 @@ test("provider-role Console route sends only a same-origin typed PATCH and retur
         LOCAL_CONTROL_API_ACTOR
       );
       assert.deepEqual(JSON.parse(requests[0]?.body ?? "{}"), {
-        enabled: false
+        priority: "disabled",
+        model: null
       });
     }
   );
@@ -6774,7 +6778,8 @@ test("provider-role Console route fails closed for CSRF, foreign return paths, a
   const validFields = {
     provider: "codex",
     role: "orchestrator",
-    enabled: "true",
+    priority: "1",
+    model: "gpt-6-luna",
     returnTo: "/providers/codex"
   };
   const validBody = new URLSearchParams(validFields).toString();
@@ -6836,6 +6841,22 @@ test("provider-role Console route fails closed for CSRF, foreign return paths, a
     {
       name: "provider and role mismatch",
       role: "subagent",
+      expected: PAGE_FAILURE
+    },
+    {
+      name: "priority the operator never chose",
+      body: new URLSearchParams({
+        ...validFields,
+        priority: ""
+      }).toString(),
+      expected: PAGE_FAILURE
+    },
+    {
+      name: "priority outside P1/P2/P3/Disabled",
+      body: new URLSearchParams({
+        ...validFields,
+        priority: "P1"
+      }).toString(),
       expected: PAGE_FAILURE
     }
   ];
@@ -8207,21 +8228,24 @@ test("a catalog row missing the fields its view reads fails closed instead of th
   // --- nested record is nullable, but omitting the key yields `undefined`,
   // --- which is not `null`, so the badge's `!== null` test passes and the
   // --- read throws. This one crashed /providers in the browser sweep.
+  const providerRole = (overrides: Record<string, unknown> = {}) => ({
+    priority: 1,
+    model: "anthropic/claude",
+    mutable: false,
+    convergence: reconciliation,
+    ...overrides
+  });
   const providerRow = {
     id: "anthropic",
+    disabled: false,
+    agentLimits: { perSession: 2, acrossSessions: null },
     route: null,
     credential: { envKey: "ANTHROPIC_API_KEY", configured: true },
     roles: {
-      orchestrator: {
-        enabled: true,
-        mutable: false,
-        convergence: reconciliation
-      },
-      subagent: {
-        enabled: true,
-        mutable: false,
-        convergence: reconciliation
-      }
+      default: providerRole(),
+      smart: providerRole(),
+      orchestrator: providerRole(),
+      subagent: providerRole()
     },
     models: [{ tier: "orchestrator", model: "anthropic/claude" }],
     priorities: [{ tier: "orchestrator", group: 1 }],
@@ -8244,7 +8268,9 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     "credential",
     "models",
     "priorities",
-    "roles"
+    "roles",
+    "disabled",
+    "agentLimits"
   ]) {
     const incomplete = await fetchProviders(
       config,
@@ -8254,6 +8280,22 @@ test("a catalog row missing the fields its view reads fails closed instead of th
       incomplete.kind,
       "invalid-response",
       `a provider row without "${dropped}" must not reach the view`
+    );
+  }
+  // Every role Core declares must be present: a role missing from the response
+  // is unobserved, and rendering a control for it would let an operator pick a
+  // priority the Runtime never reported.
+  for (const role of PROVIDER_ROLES) {
+    const roles = { ...providerRow.roles } as Record<string, unknown>;
+    delete roles[role];
+    const missingRole = await fetchProviders(
+      config,
+      serve(providersEnvelope([{ ...providerRow, roles }]))
+    );
+    assert.equal(
+      missingRole.kind,
+      "invalid-response",
+      `a provider row missing the "${role}" role must not reach the view`
     );
   }
   // A half-present nested record is as unreadable as an absent one.

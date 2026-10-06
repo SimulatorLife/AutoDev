@@ -54,7 +54,9 @@ import {
   type ConvergenceStatus,
   isSandboxMode,
   LOCAL_CONTROL_API_ACTOR,
+  PROVIDER_ROLES,
   type ProviderRole,
+  type ProviderRolePriority,
   type ReconciliationStatus
 } from "@simulatorlife/autodev-core";
 
@@ -501,6 +503,51 @@ function isReconciliationBundle(value: unknown): boolean {
  * toggle — provider role and model alike — carries it, so the check is named
  * for the contract rather than for one resource that happens to use it.
  */
+/**
+ * Narrows one provider role assignment. `disabled` is a member of the priority
+ * enum rather than a separate flag, so an assignment cannot claim both a
+ * priority and an enabled state, and `model` may only be null or a string.
+ */
+function isProviderRoleAssignment(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    (value.priority === 1 ||
+      value.priority === 2 ||
+      value.priority === 3 ||
+      value.priority === "disabled") &&
+    (value.model === null || typeof value.model === "string") &&
+    typeof value.mutable === "boolean" &&
+    isReconciliationStatus(value.convergence)
+  );
+}
+
+/**
+ * Narrows the role map of one provider. Every role Core declares must be
+ * present: a role missing from the response is unobserved, and rendering the
+ * control for it would let an operator pick a priority for a role the Runtime
+ * never reported.
+ */
+function isProviderRoles(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    PROVIDER_ROLES.every((role) => isProviderRoleAssignment(value[role]))
+  );
+}
+
+/**
+ * Narrows a provider's agent limits. `null` means Unlimited and is a decision
+ * the operator made, so it is distinguished from an absent key: a payload that
+ * omits `agentLimits` must not validate as "unlimited".
+ */
+function isProviderAgentLimits(value: unknown): boolean {
+  if (value === null) return true;
+  return (
+    isRecord(value) &&
+    (value.perSession === null || typeof value.perSession === "number") &&
+    (value.acrossSessions === null || typeof value.acrossSessions === "number")
+  );
+}
+
 function isEnablementWithConvergence(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -555,10 +602,9 @@ function isControlApiProvidersResponse(
         isRecord(provider) &&
         typeof provider.id === "string" &&
         isRecord(provider.roles) &&
-        isEnablement(provider.roles.orchestrator) &&
-        isEnablementWithConvergence(provider.roles.orchestrator) &&
-        isEnablement(provider.roles.subagent) &&
-        isEnablementWithConvergence(provider.roles.subagent) &&
+        isProviderRoles(provider.roles) &&
+        typeof provider.disabled === "boolean" &&
+        isProviderAgentLimits(provider.agentLimits) &&
         isRecord(provider.credential) &&
         typeof provider.credential.configured === "boolean" &&
         Array.isArray(provider.models) &&
@@ -610,14 +656,14 @@ function providerRoleControlPath(provider: string, role: ProviderRole): string {
 export function patchProviderRole(
   provider: string,
   role: ProviderRole,
-  enabled: boolean,
+  assignment: { priority: ProviderRolePriority; model: string | null },
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiProviderRolePatchResponse>> {
   return mutateControlApi<ControlApiProviderRolePatchResponse>(
     "PATCH",
     providerRoleControlPath(provider, role),
-    { enabled },
+    { priority: assignment.priority, model: assignment.model },
     config,
     options
   );

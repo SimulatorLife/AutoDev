@@ -1,18 +1,22 @@
 /**
  * Server-only Console provider-role mutation route.
  *
- * Receives the bounded form submission from a provider-role toggle on a
+ * Receives the bounded form submission from a provider-role control on a
  * Providers page, validates its same-origin browser context, and forwards a
  * typed PATCH to Runtime using the server-side Control API credential. The
  * browser never receives that credential and never bypasses Runtime.
  *
  * Only POST is exported. The response redirects back to the Providers page
- * the toggle was rendered on; any missing/invalid evidence or failed request
+ * the control was rendered on; any missing/invalid evidence or failed request
  * adds a could-not-be-confirmed notice instead of a success claim, because the
  * refreshed role value is authoritative.
  */
 
-import { PROVIDER_ROLES, type ProviderRole } from "@simulatorlife/autodev-core";
+import {
+  PROVIDER_ROLES,
+  type ProviderRole,
+  type ProviderRolePriority
+} from "@simulatorlife/autodev-core";
 import { type NextRequest, NextResponse } from "next/server.js";
 
 import {
@@ -43,10 +47,21 @@ function redirectTo(location: string): NextResponse {
   return new NextResponse(null, { status: 303, headers: { location } });
 }
 
-function parseEnabled(raw: string | null): boolean | null {
-  if (raw === "true") return true;
-  if (raw === "false") return false;
+/**
+ * Parse the submitted priority. The empty string means the model selector was
+ * submitted without a priority, which is not a decision the operator made, so it
+ * is rejected rather than defaulted.
+ */
+function parsePriority(raw: string | null): ProviderRolePriority | null {
+  if (raw === "1") return 1;
+  if (raw === "2") return 2;
+  if (raw === "3") return 3;
+  if (raw === "disabled") return "disabled";
   return null;
+}
+
+function parseModel(raw: string | null): string | null {
+  return raw !== null && raw.length > 0 ? raw : null;
 }
 
 export async function POST(
@@ -67,12 +82,13 @@ export async function POST(
 
   const returnTo = form.get("returnTo");
   if (!isProvidersReturnPath(returnTo)) return failed();
-  const enabled = parseEnabled(form.get("enabled"));
+  const priority = parsePriority(form.get("priority"));
+  const model = parseModel(form.get("model"));
   if (
-    enabled === null ||
+    priority === null ||
     form.get("provider") !== provider ||
     form.get("role") !== role ||
-    form.size !== 4
+    form.size !== 5
   ) {
     return failed(returnTo);
   }
@@ -80,6 +96,11 @@ export async function POST(
   const config = readControlApiConfig();
   if (!config) return failed(returnTo);
 
-  const result = await patchProviderRole(provider, role, enabled, config);
+  const result = await patchProviderRole(
+    provider,
+    role,
+    { priority, model },
+    config
+  );
   return result.kind === "ok" ? redirectTo(returnTo) : failed(returnTo);
 }
