@@ -63,7 +63,7 @@ every event and looked like "the router logged nothing".
 | Which provider served each request? | `$CODEX_HOME/run/codex-model-router.launchd.err.log` (`autodev-router-event-v1`, with `thread`) |
 | What did a bridge do? | `$CODEX_HOME/hooks/<bridge>.launchd.log` (no timestamps: correlate by order and router times) |
 | Health, cooldowns, agent counts, MCP usage now | `curl -s 127.0.0.1:4100/status \| jq` -- `providers.<name>`, `agents` (`canonicalLiveCount`, `byState`, `liveByRole`), `usage.byWorkspace.<ws>.byMcp`, `spawnFailures`. Bridges: `curl 127.0.0.1:{4000,4002,4003,18765}/health`. (`autodev router status` is not wired up.) |
-| Does an MCP server work? | `node "$SKILL_DIR/scripts/mcp-probe.ts" <server> --cwd <repo> --call <tool> '<json>'` starts it exactly as Codex does (installed launcher, minimal env) and prints its stderr if it dies |
+| Does an MCP server work? | `node "$SKILL_DIR/scripts/mcp-probe.ts" <server> --cwd <repo> --call <tool> '<json>'` starts it exactly as Codex does (installed launcher, minimal env) and prints its stderr if it dies. `<server>` must be a canonical AutoDev name -- `lsp`, `playwright`, `cocoindex-code`, `codegraphcontext` (`runtime/src/mcp/launcher.ts`); anything else exits 2 with `unsupported AutoDev MCP`. A binary's package name is often not its server name: the LSP server is `lsp-mcp-server` on disk and on disk's `PATH`, but `lsp` everywhere AutoDev names it. |
 | Codex's own view of a turn | `sqlite3 $CODEX_HOME/logs_2.sqlite "select ... from logs where thread_id='<id>'"` |
 | Did work happen despite an empty thread? | the thread's `cwd`: `git status`, mtimes vs the timeline; running CLIs |
 | Did a skill get read? | `$CODEX_HOME/run/skill-read-telemetry/<thread>.json`; `exec` inputs reading `SKILL.md` |
@@ -132,6 +132,37 @@ every event and looked like "the router logged nothing".
   descriptions).
 - **Clean up after your own probes**: a server killed through its shell wrapper
   left its language server orphaned; the bundled probe kills the whole group.
+- **`playwright` is disabled at user level on purpose.** `.rulesync/mcp.jsonc`
+  ships it `disabled: true` and only `agents/roles/browser-tester.toml` and
+  `agents/roles/smart.toml` set `enabled = true`, because a role block would
+  otherwise inherit the user-level `false`. So zero `playwright` entries in
+  `usage.byWorkspace.<ws>.byMcp` is the expected steady state, not a telemetry
+  gap, and probing `playwright` directly bypasses that gating -- a working probe
+  there proves only that a browser can start, not that any role can use it.
+- **A second `playwright` probe fails on a shared browser profile, by design.**
+  `playwright-mcp` launches headed Chrome against one persistent profile
+  (`~/Library/Caches/ms-playwright-mcp/mcp-chrome-<hash>`), so a second
+  instance gets `Browser is already in use for <dir>, use --isolated`. The
+  pinned `node_modules/.bin/playwright-mcp` (0.0.80) fails this *silently* --
+  tools list, then no reply, no stderr -- while 0.0.83 names the cause. Read
+  that silence as "old version plus an already-held profile", never as a healthy
+  server, and never as proof the server is broken.
+- **A CocoIndex `paths` filter that matches nothing returns `success: true` with
+  an empty list and no warning**, so "not indexed" is the wrong reading. Its
+  `**` requires at least one intermediate directory: `runtime/src/mcp/**\/*.ts`
+  returns 0 results even though that directory holds indexed files, while
+  `runtime/src/mcp/*` and `runtime/src/mcp/**\/*/**\/*.ts` both return them.
+  Confirm with one unfiltered query before concluding a path is unindexed.
+- **`codegraphcontext`'s `get_repository_stats` reports `0` functions and classes
+  for a fully indexed repo** (verified 2026-10-05: the graph held 9,505
+  `Function` and 262 `Class` nodes; the tool returned `functions: 0,
+  classes: 0` with `success: true`). It counts through
+  `MATCH (r:Repository)-[:CONTAINS*]->(:Function|:Class)`, but the indexer emits
+  `CONTAINS` from `File` to `Function` exactly once across the whole graph and
+  never from `File` to `Class`; functions hang off files via `CALLS` and
+  `HEURISTIC_CALLS` instead. Trust its `files`/`modules`, and get real counts
+  from `MATCH (n) RETURN labels(n), count(*)`. Upstream bug, not AutoDev's
+  (pipx 0.6.13, already current), so report it rather than patching site-packages.
 - **Never restart launchd services or run the installer without asking**: it
   interrupts every in-flight session.
 - **Never print tokens or paste prompts**; quote ids, counts, and timestamps.
