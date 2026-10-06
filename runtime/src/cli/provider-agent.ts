@@ -19,7 +19,7 @@ import {
   createDefaultRouterEnsureDeps,
   resolveRouterEnsureOptions,
   runRouterEnsure
-} from "@simulatorlife/autodev-runtime/platform/router-ensure";
+} from "@simulatorlife/autodev-runtime/platform";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 

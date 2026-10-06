@@ -1,5 +1,7 @@
-import { runInstallCheck } from "@simulatorlife/autodev-runtime/platform/install-check";
-import { runInstallCommand } from "@simulatorlife/autodev-runtime/platform/install-command";
+import {
+  runInstallCheck,
+  runInstallCommand
+} from "@simulatorlife/autodev-runtime/platform";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 export interface InstallCommandBackend {
