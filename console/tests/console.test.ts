@@ -7276,38 +7276,74 @@ test("DataTable caps its scroll floor so a table never scrolls at desktop width"
   assert.ok(narrowFloor < wideFloor, "narrow tables must floor below the cap");
 });
 
-test("the resource failure shell keeps its error tint and lets a long error code wrap", () => {
+test("the resource failure shell breaks an error code only at its own separators", () => {
   // The failure shell is what every route renders when a resource cannot be
   // loaded, so it is the one place a page must never look healthy by accident.
   //
-  // Two failure modes are guarded here, both invisible to the type checker:
-  // composing `${DETAIL_PANEL_CLASS} bg-error/10` silently keeps `bg-surface`,
-  // because Tailwind resolves two utilities on the same property by
-  // stylesheet order rather than by class-attribute order; and a shape
-  // constant that set `whitespace-nowrap` could not be relaxed to `normal`
-  // by appending another utility, which left the long unbroken error code
-  // unable to wrap on a narrow viewport.
+  // Three failure modes are guarded here, all invisible to the type checker.
+  // Composing `${DETAIL_PANEL_CLASS} bg-error/10` silently keeps `bg-surface`,
+  // because Tailwind resolves two utilities on the same property by stylesheet
+  // order rather than by class-attribute order. A shape constant that set
+  // `whitespace-nowrap` could not be relaxed to `normal` by appending another
+  // utility, which left the long code unable to wrap at all.
+  //
+  // The third is the one that rendered a value the page does not hold. The code
+  // was given `break-all`, so a 45-character snake_case code had no choice but
+  // to be cut at an arbitrary character, and the shell showed
+  // `autodev_control_api_invalid_perm` + `issions_response` — two strings that
+  // are not the code and match no log line. `break-all` on a machine token
+  // makes an arbitrary cut permanent rather than a last resort.
+  const code = "autodev_control_api_invalid_permissions_response";
   const markup = renderToStaticMarkup(
     React.createElement(ResourceUnavailable, {
       title: "Permissions could not be loaded",
-      code: "autodev_control_api_invalid_permissions_response",
+      code,
       message: "The Control API returned an incompatible response."
     })
   );
 
-  assert.match(
-    markup,
-    /data-error-code="autodev_control_api_invalid_permissions_response"/
-  );
+  assert.match(markup, new RegExp(`data-error-code="${code}"`));
   assert.match(markup, /bg-error\/10/);
   assert.doesNotMatch(
     markup,
     /bg-surface/,
     "the default panel surface must not win over the error tint"
   );
-  assert.match(markup, /break-all/);
-  assert.doesNotMatch(markup, /whitespace-nowrap/);
   assert.match(markup, /rounded-lg border shadow p-6/);
+  assert.doesNotMatch(
+    markup,
+    /whitespace-nowrap/,
+    "an error code must be able to wrap on a narrow card"
+  );
+
+  // The rendered code must still be the code. This is the assertion that would
+  // have caught the defect: `break-all` left the text intact too, so asserting
+  // on the string alone passes on both the broken and the fixed shell.
+  const visible = /<span class="max-w-full[^"]*"[^>]*>([\s\S]*?)<\/span>/.exec(
+    markup
+  )?.[1];
+  assert.ok(visible, "the failure shell renders the code in its own span");
+  const text = visible.replaceAll(/<wbr\s*\/?>/g, "");
+  assert.equal(
+    text,
+    code,
+    "breaking the code must not add, drop or split any character of the value"
+  );
+
+  // Every separator is a break opportunity, so the browser's choice of where to
+  // cut is constrained to positions between groups. `break-all`/`break-words`
+  // remain only as the last resort for a single group too wide for the card.
+  for (const group of code.split(/(?<=_)/u)) {
+    assert.ok(
+      visible.includes(`${group}<wbr`),
+      `"${group}" must be followed by a break opportunity, not cut mid-segment`
+    );
+  }
+  assert.doesNotMatch(
+    markup,
+    /break-all/,
+    "break-all cuts a machine token at an arbitrary character on every render"
+  );
 });
 
 test("a memory row missing a member its view dereferences fails closed instead of throwing", async () => {

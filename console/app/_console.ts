@@ -45,6 +45,37 @@ export interface UnavailableProps {
   readonly hint?: string;
 }
 
+/**
+ * Give a machine token line-break opportunities at its own separators.
+ *
+ * `overflow-wrap: break-word` cannot do this on its own: CSS has no break
+ * opportunity at `_`, so a snake_case code is one unbreakable word and the
+ * browser has to cut it somewhere arbitrary. `break-all` made that arbitrary
+ * cut permanent instead of a last resort, and the failure shell then rendered
+ * `autodev_control_api_invalid_perm` + `issions_response` — two strings that
+ * are not the code, and neither of which matches a line in a log.
+ *
+ * A `<wbr>` after each separator makes those positions real break
+ * opportunities, so the token wraps only between its own groups and each line
+ * is a true prefix of the value. It renders no characters, so the element's
+ * text is still exactly `code`.
+ */
+/** Keeps each separator with the group it ends, so a break lands after it. */
+const AFTER_UNDERSCORE = /(?<=_)/u;
+
+function breakableToken(value: string): React.ReactNode[] {
+  return value
+    .split(AFTER_UNDERSCORE)
+    .map((part, index) =>
+      React.createElement(
+        React.Fragment,
+        { key: index },
+        part,
+        React.createElement("wbr")
+      )
+    );
+}
+
 export function ResourceUnavailable({
   title,
   code,
@@ -80,17 +111,20 @@ export function ResourceUnavailable({
         "span",
         {
           // An error code is an unbroken machine token that is routinely longer
-          // than a narrow card, and it has nowhere to break but mid-word. This
-          // is deliberately not the shared tag shape: that shape sets
-          // `whitespace-nowrap`, and a later `whitespace-normal` in the class
-          // attribute does not override it — Tailwind resolves two utilities on
-          // the same property by stylesheet order. The surrounding row still
-          // wraps, so a long code never pushes the card or the document
+          // than a narrow card. It is deliberately not the shared tag shape: that
+          // shape sets `whitespace-nowrap`, and a later `whitespace-normal` in
+          // the class attribute does not override it — Tailwind resolves two
+          // utilities on the same property by stylesheet order. The surrounding
+          // row wraps, so a long code never pushes the card or the document
           // sideways.
+          //
+          // `break-words` is the last resort, not the plan: it only cuts a group
+          // that cannot fit a line even on its own. The break opportunities that
+          // do the real work are the `<wbr>` elements inside.
           className:
-            "max-w-full break-all rounded border border-error/40 bg-error/15 px-2 py-0.5 font-mono text-xs text-error"
+            "max-w-full break-words rounded border border-error/40 bg-error/15 px-2 py-0.5 font-mono text-xs text-error"
         },
-        code
+        breakableToken(code)
       )
     ),
     React.createElement(
