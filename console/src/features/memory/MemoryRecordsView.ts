@@ -38,6 +38,7 @@ import {
 } from "../../components/ui/text-classes.ts";
 import {
   memoryDetailHref,
+  memoryExperienceHref,
   memoryFilterHref,
   memoryListHref,
   memoryListQuery,
@@ -300,6 +301,52 @@ export function MemoryRecordsView({
   );
 }
 
+/**
+ * The experiences a record's claim was derived from.
+ *
+ * A claim is only as good as the evidence behind it, so "Sources: 2
+ * experiences" was the one line on this panel an operator could not act on. The
+ * ids are already in the record; all that was missing was somewhere to go with
+ * them.
+ */
+function ProvenanceSources({
+  record,
+  listScope
+}: {
+  readonly record: MemoryRecord;
+  readonly listScope: MemoryListScope;
+}): React.JSX.Element {
+  const ids = record.provenance.experienceIds;
+  if (ids.length === 0) {
+    return React.createElement(
+      "span",
+      { "data-provenance-sources": "none" },
+      "No source experiences are cited."
+    );
+  }
+  return React.createElement(
+    "div",
+    { className: "flex flex-col gap-1", "data-provenance-sources": "linked" },
+    React.createElement(
+      "span",
+      null,
+      `Sources: ${ids.length} experience${ids.length === 1 ? "" : "s"}`
+    ),
+    ids.map((id) =>
+      React.createElement(
+        "a",
+        {
+          key: id,
+          href: memoryExperienceHref(listScope, id),
+          className: "font-mono text-accent hover:underline",
+          "data-provenance-experience": id
+        },
+        id
+      )
+    )
+  );
+}
+
 interface RecordDetailPanelProps {
   readonly record: MemoryRecord;
   readonly history?: MemoryRecordHistory | null | undefined;
@@ -424,7 +471,11 @@ function RecordDetailPanel({
         React.createElement(
           "div",
           { className: "text-xs text-fg-secondary" },
-          `Sources: ${record.provenance.experienceIds.length} experiences`
+          // Each source is a link to the experience the claim was derived from.
+          // It used to be a count: the panel said a claim had three sources and
+          // offered no way to reach any of them, which is the one thing an
+          // operator reading "Provenance & Citations" is there to do.
+          React.createElement(ProvenanceSources, { record, listScope })
         ),
         record.provenance.lastVerifiedAt
           ? React.createElement(

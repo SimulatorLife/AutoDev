@@ -165,6 +165,27 @@ export function memoryDetailHref(
   return `${ROUTE}?${params.toString()}`;
 }
 
+/**
+ * One experience, opened from another tab.
+ *
+ * A record says which experiences it was derived from, and those ids were
+ * rendered as a bare count — the operator could read that a claim had three
+ * sources and had no way to reach any of them. This crosses tabs deliberately,
+ * because the thing being identified is only addressable on the Experiences
+ * tab.
+ *
+ * The current window travels with it, so the drawer closes back into the list
+ * the operator came from rather than into an unfiltered default.
+ */
+export function memoryExperienceHref(
+  scope: MemoryListScope,
+  id: string
+): string {
+  const params = listParams({ ...scope, tab: "experiences" }, scope.offset);
+  params.set("experienceId", id);
+  return `${ROUTE}?${params.toString()}`;
+}
+
 /** A different page of the same list, with the same filters. */
 export function memoryPageHref(scope: MemoryListScope, offset: number): string {
   return `${ROUTE}?${listParams(scope, Math.max(0, offset)).toString()}`;

@@ -9046,6 +9046,80 @@ test("cohort filters reach the Runtime and stay on the cohorts tab", async () =>
   }
 });
 
+test("a record's source experiences are reachable, not just counted", () => {
+  // "Provenance & Citations" used to report "Sources: 2 experiences" and offer
+  // no way to reach either. An operator checking whether a claim still holds has
+  // to read the claim's sources, so a count is the one thing that block could
+  // not give them.
+  const record: MemoryRecord = {
+    id: "mem-sourced",
+    kind: "semantic",
+    status: "active",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    claim: "A claim with sources.",
+    validity: { state: "verified", evidence: [] },
+    provenance: {
+      experienceIds: ["exp-a", "exp-b"],
+      evidence: [],
+      createdBy: "operator",
+      createdAt: "2026-10-01T00:00:00Z"
+    },
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-02T00:00:00Z"
+  };
+
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryRecordsView, {
+      records: [record],
+      total: 1,
+      selectedRecord: record,
+      listScope: memoryListScope({
+        query: "guard",
+        from: "2026-09-01T00:00:00Z",
+        until: "2026-10-01T00:00:00Z"
+      })
+    })
+  );
+
+  assert.match(markup, /data-provenance-sources="linked"/);
+  for (const id of ["exp-a", "exp-b"]) {
+    const anchor = markup
+      .split("<a")
+      .find((a) => a.includes(`data-provenance-experience="${id}"`));
+    assert.ok(anchor, `${id} must be a link`);
+    const href = anchor.match(/href="([^"]+)"/u)?.[1];
+    assert.ok(href);
+    const url = new URL(href.replaceAll("&amp;", "&"), "http://console.test");
+    // The experience is only addressable on its own tab, so the link crosses.
+    assert.equal(url.pathname, "/memory");
+    assert.equal(url.searchParams.get("tab"), "experiences");
+    assert.equal(url.searchParams.get("experienceId"), id);
+    assert.equal(url.searchParams.get("workspaceId"), "SimulatorLife/AutoDev");
+    // And it comes back to the list the operator was working in.
+    assert.equal(url.searchParams.get("from"), "2026-09-01T00:00:00Z");
+    assert.equal(url.searchParams.get("until"), "2026-10-01T00:00:00Z");
+  }
+
+  // A claim with no cited source says so, rather than showing an empty list
+  // under a heading that promises citations.
+  const uncited = renderToStaticMarkup(
+    React.createElement(MemoryRecordsView, {
+      records: [
+        { ...record, provenance: { ...record.provenance, experienceIds: [] } }
+      ],
+      total: 1,
+      selectedRecord: {
+        ...record,
+        provenance: { ...record.provenance, experienceIds: [] }
+      },
+      listScope: memoryListScope()
+    })
+  );
+  assert.match(uncited, /data-provenance-sources="none"/);
+  assert.match(uncited, /No source experiences are cited\./);
+  assert.doesNotMatch(uncited, /data-provenance-experience=/);
+});
+
 test("ClosePanelLink renders the shared close mark and keeps its accessible name", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ClosePanelLink, { href: "/memory?tab=records" })
