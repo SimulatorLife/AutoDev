@@ -219,6 +219,61 @@ test("manual native capture normalizes, scopes, bounds, and deduplicates a sourc
   }
 });
 
+test("two distinct transcripts are captured separately rather than deduplicated", async () => {
+  const temporaryRoot = await mkdtemp(
+    join(tmpdir(), "autodev-memory-capture-distinct-")
+  );
+  try {
+    const repositoryRoot = join(temporaryRoot, "repo");
+    const transcriptRoot = join(temporaryRoot, "provider-history");
+    await mkdir(repositoryRoot);
+    await mkdir(join(transcriptRoot, "project"), { recursive: true });
+    const firstPath = join(transcriptRoot, "project", "first.jsonl");
+    const secondPath = join(transcriptRoot, "project", "second.jsonl");
+    await writeFile(firstPath, claudeTranscript());
+    await writeFile(
+      secondPath,
+      [
+        claudeTranscript(),
+        JSON.stringify({
+          type: "assistant",
+          uuid: "assistant-record-2",
+          sessionId: "session-a",
+          timestamp: "2026-10-01T10:02:00.000Z",
+          cwd: "/workspace/repo",
+          message: { role: "assistant", content: "a later turn" }
+        })
+      ].join("\n")
+    );
+    const configuration = memoryCaptureConfiguration({
+      ...enabledEnvironment,
+      AUTODEV_MEMORY_REPOSITORY_ROOT: repositoryRoot,
+      AUTODEV_MEMORY_CAPTURE_ROOT: transcriptRoot,
+      AUTODEV_MEMORY_CAPTURE_PATH: "project/first.jsonl"
+    });
+    const { service, experiences } = captureServiceStub();
+
+    // A transcript is identified by its digest and its URI, so different
+    // contents at a different path are a different capture -- never a repeat.
+    const first = await runMemoryCapture(service, configuration);
+    const second = await runMemoryCapture(service, {
+      ...configuration,
+      transcriptRelativePath: "project/second.jsonl"
+    });
+
+    assert.equal(first.appended, true);
+    assert.equal(second.appended, true);
+    assert.notEqual(first.id, second.id);
+    assert.notEqual(first.digest, second.digest);
+    assert.equal(
+      experiences.get(second.id)?.trajectory.uri,
+      pathToFileURL(await realpath(secondPath)).href
+    );
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test("manual native capture rejects disabled, unsupported, and symlink-escaped inputs", async () => {
   assert.throws(
     () =>

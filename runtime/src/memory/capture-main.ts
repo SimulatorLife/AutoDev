@@ -242,10 +242,7 @@ export async function runMemoryCapture(
   configuration: MemoryCaptureConfiguration
 ): Promise<MemoryCaptureResult> {
   const transcript = await readTranscriptSource(configuration);
-  const digest = createHash("sha256")
-    .update(transcript.contents, "utf8")
-    .digest("hex");
-  const trajectoryUri = pathToFileURL(transcript.path).href;
+  const { digest, trajectoryUri } = transcriptFingerprint(transcript);
   const id = captureExperienceId({
     workspaceId: configuration.workspaceId,
     repositoryId: configuration.repositoryId,
@@ -256,11 +253,103 @@ export async function runMemoryCapture(
     trajectoryUri,
     digest
   });
+  const experience = captureExperienceRecord({
+    configuration,
+    id,
+    trajectoryUri
+  });
+  try {
+    const normalized = await service.captureExperience(
+      {
+        source: configuration.source,
+        transcript: transcript.contents,
+        trajectoryUri,
+        experience
+      },
+      configuration.actor,
+      configuration.context
+    );
+    return {
+      id,
+      appended: true,
+      source: configuration.source,
+      digest: normalized.digest,
+      recordCount: normalized.recordCount,
+      diagnosticCount: normalized.diagnosticCount,
+      outcome: configuration.outcome,
+      memoryMode: configuration.memoryMode
+    };
+  } catch (error) {
+    if (!(error instanceof MemoryConflictError)) throw error;
+    const reconciled = await reconcileConflictingCapture({
+      service,
+      configuration,
+      id,
+      trajectoryUri,
+      digest
+    });
+    if (reconciled) return reconciled;
+    throw error;
+  }
+}
+
+export async function runMemoryCaptureFromEnvironment(
+  env: NodeJS.ProcessEnv = process.env
+): Promise<MemoryCaptureResult> {
+  const configuration = memoryCaptureConfiguration(env);
+  const runtime = createPostgresMemoryRuntime({
+    databaseUrl: configuration.databaseUrl,
+    repositories: {
+      resolve: (context) =>
+        Promise.resolve(
+          context.workspaceId === configuration.workspaceId &&
+            context.repositoryId === configuration.repositoryId
+            ? configuration.repositoryRoot
+            : null
+        )
+    }
+  });
+  try {
+    return await runMemoryCapture(runtime.service, configuration);
+  } finally {
+    await runtime.close();
+  }
+}
+
+/**
+ * How one transcript is identified: the digest is what makes a repeated capture
+ * idempotent, and the URI is the evidence reference every record points at.
+ */
+function transcriptFingerprint(transcript: TranscriptSource): {
+  readonly digest: string;
+  readonly trajectoryUri: string;
+} {
+  return {
+    digest: createHash("sha256")
+      .update(transcript.contents, "utf8")
+      .digest("hex"),
+    trajectoryUri: pathToFileURL(transcript.path).href
+  };
+}
+
+/**
+ * The record one capture persists. A change to what a capture stores is a
+ * change here alone; the orchestration around it does not move.
+ */
+function captureExperienceRecord({
+  configuration,
+  id,
+  trajectoryUri
+}: {
+  readonly configuration: MemoryCaptureConfiguration;
+  readonly id: string;
+  readonly trajectoryUri: string;
+}): MemoryExperienceCaptureInput["experience"] {
   const trajectoryEvidence = {
     kind: "trajectory" as const,
     uri: trajectoryUri
   };
-  const experience: MemoryExperienceCaptureInput["experience"] = {
+  return {
     id,
     workspaceId: configuration.workspaceId,
     repositoryId: configuration.repositoryId,
@@ -293,70 +382,42 @@ export async function runMemoryCapture(
     taskReference: trajectoryEvidence,
     evidence: [trajectoryEvidence]
   };
-
-  try {
-    const normalized = await service.captureExperience(
-      {
-        source: configuration.source,
-        transcript: transcript.contents,
-        trajectoryUri,
-        experience
-      },
-      configuration.actor,
-      configuration.context
-    );
-    return {
-      id,
-      appended: true,
-      source: configuration.source,
-      digest: normalized.digest,
-      recordCount: normalized.recordCount,
-      diagnosticCount: normalized.diagnosticCount,
-      outcome: configuration.outcome,
-      memoryMode: configuration.memoryMode
-    };
-  } catch (error) {
-    if (!(error instanceof MemoryConflictError)) throw error;
-    const existing = await service.getExperience(id, configuration.context);
-    if (
-      existing?.trajectory.uri === trajectoryUri &&
-      existing.trajectory.digest === digest
-    ) {
-      return {
-        id,
-        appended: false,
-        source: configuration.source,
-        digest,
-        recordCount: existing.trajectory.recordCount ?? 0,
-        outcome: existing.outcome,
-        memoryMode: existing.memoryMode ?? "unknown"
-      };
-    }
-    throw error;
-  }
 }
 
-export async function runMemoryCaptureFromEnvironment(
-  env: NodeJS.ProcessEnv = process.env
-): Promise<MemoryCaptureResult> {
-  const configuration = memoryCaptureConfiguration(env);
-  const runtime = createPostgresMemoryRuntime({
-    databaseUrl: configuration.databaseUrl,
-    repositories: {
-      resolve: (context) =>
-        Promise.resolve(
-          context.workspaceId === configuration.workspaceId &&
-            context.repositoryId === configuration.repositoryId
-            ? configuration.repositoryRoot
-            : null
-        )
-    }
-  });
-  try {
-    return await runMemoryCapture(runtime.service, configuration);
-  } finally {
-    await runtime.close();
+/**
+ * Whether a capture conflict is this same trajectory arriving twice, which is a
+ * successful no-op rather than a failure. Returns null when the stored record
+ * is a different trajectory, leaving the caller to rethrow the conflict.
+ */
+async function reconcileConflictingCapture({
+  service,
+  configuration,
+  id,
+  trajectoryUri,
+  digest
+}: {
+  readonly service: Pick<MemoryService, "captureExperience" | "getExperience">;
+  readonly configuration: MemoryCaptureConfiguration;
+  readonly id: string;
+  readonly trajectoryUri: string;
+  readonly digest: string;
+}): Promise<MemoryCaptureResult | null> {
+  const existing = await service.getExperience(id, configuration.context);
+  if (
+    existing?.trajectory.uri !== trajectoryUri ||
+    existing.trajectory.digest !== digest
+  ) {
+    return null;
   }
+  return {
+    id,
+    appended: false,
+    source: configuration.source,
+    digest,
+    recordCount: existing.trajectory.recordCount ?? 0,
+    outcome: existing.outcome,
+    memoryMode: existing.memoryMode ?? "unknown"
+  };
 }
 
 async function readTranscriptSource(
