@@ -121,6 +121,10 @@ export function GithubView({
     {
       id: "schedules",
       header: "Cron Schedule",
+      // Wide enough for "Schedule" at the default share the header had 68px of
+      // content and the word needed 71, so it split mid-word on a 390px
+      // viewport.
+      weight: 116,
       cell: (workflow) =>
         workflow.schedules.length === 0
           ? React.createElement(
@@ -146,6 +150,10 @@ export function GithubView({
     {
       id: "actionsState",
       header: "GitHub Actions State",
+      // Wide enough for "Actions", the longest word in the header. At the
+      // default share this column was 68px of content and the word needed 70,
+      // so the header broke inside it on a 390px viewport.
+      weight: 140,
       cell: (workflow) => {
         if (
           !runtimeFactsAvailable ||
