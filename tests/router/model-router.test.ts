@@ -110,6 +110,29 @@ import {
 
 import { normalizedSource } from "../source-text.ts";
 
+const DISABLED_ASSIGNMENT = { priority: "disabled" as const, model: null };
+/** The wire body that disables a role, sent as-is by the operator requests below. */
+const DISABLE_SUBAGENT_BODY = DISABLED_ASSIGNMENT;
+
+/**
+ * Restore a provider's role participation exactly as it was found. An unobserved
+ * assignment is left unobserved rather than materialised as a default, because
+ * "never configured" and "configured at priority 1" are different states and
+ * only the second one is a decision the operator made.
+ *
+ * The unobserved case clears this provider's assignment only: resetting the
+ * role across every provider would silently undo sibling providers' state
+ * that this test never touched.
+ */
+function restoreAssignment(
+  provider: string,
+  role: "default" | "smart" | "orchestrator" | "subagent",
+  assignment: { priority: 1 | 2 | 3 | "disabled"; model: string | null } | undefined
+): void {
+  if (assignment) routing.setProviderAssignment(provider, role, assignment);
+  else routing.clearProviderAssignment(provider, role);
+}
+
 const getRouterStatus = (...args: any[]): any =>
   (rawGetRouterStatus as any)(...args);
 const usageStatus = (...args: any[]): any => (rawUsageStatus as any)(...args);
@@ -9546,14 +9569,14 @@ test("a model the provider rejects fails the turn once, non-retryably, and leave
       },
       () => {
         for (const provider of others) {
-          routing.setProviderEnabledForRole(provider, "orchestrator", false);
-          routing.setProviderEnabledForRole(provider, "subagent", false);
+          routing.setProviderAssignment(provider, "orchestrator", DISABLED_ASSIGNMENT);
+          routing.setProviderAssignment(provider, "subagent", DISABLED_ASSIGNMENT);
         }
       }
     );
   } finally {
-    routing.resetDisabledProvidersForRole("subagent");
-    routing.resetDisabledProvidersForRole("orchestrator");
+    routing.resetRoleAssignment("subagent");
+    routing.resetRoleAssignment("orchestrator");
     cooldowns.clear("claude");
   }
 });
@@ -10480,8 +10503,8 @@ transport = "streamable_http"
 });
 
 test("router status includes sanitized routing and limits metadata", () => {
-  routing.resetDisabledProvidersForRole("subagent");
-  routing.resetDisabledProvidersForRole("orchestrator");
+  routing.resetRoleAssignment("subagent");
+  routing.resetRoleAssignment("orchestrator");
   const status = getRouterStatus();
 
   // Status shape for routing metadata
@@ -10499,7 +10522,10 @@ test("router status includes sanitized routing and limits metadata", () => {
   assert.ok(status.routing.configuredProviders.includes("claude"));
   assert.ok(status.routing.configuredProviders.includes("codex"));
   assert.ok(Array.isArray(status.routing.enabledSubagentProviders));
-  assert.ok(Array.isArray(status.routing.disabledSubagentProviders));
+  assert.equal(typeof status.routing.roleAssignments, "object");
+  assert.ok(Array.isArray(status.routing.disabledProviders));
+  assert.ok(Array.isArray(status.routing.disabledModels));
+  assert.equal(typeof status.routing.providerLimits, "object");
   assert.equal(typeof status.routing.routes, "object");
   for (const [_provider, route] of Object.entries(status.routing.routes) as [
     string,
@@ -10552,11 +10578,14 @@ test("authenticated Control API provider role mutation validates, persists, and 
   const previousControlToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   const previousControlViewers = process.env.AUTODEV_CONTROL_VIEWERS;
   const previousControlOperators = process.env.AUTODEV_CONTROL_OPERATORS;
-  const previousSubagent = routing.isProviderEnabledForRole(
+  const previousSubagent = routing.assignmentFor("claude", "subagent");
+  const previousOrchestrator = routing.assignmentFor(
     "claude",
-    "subagent"
+    "orchestrator"
   );
-  const previousOrchestrator = routing.isProviderEnabledForRole(
+  // The prior *enablement*, which is what the per-role independence assertion
+  // compares against; the assignment above is only what a restore needs.
+  const wasOrchestratorEnabled = routing.isProviderEnabledForRole(
     "claude",
     "orchestrator"
   );
@@ -10585,21 +10614,21 @@ test("authenticated Control API provider role mutation validates, persists, and 
     const missingCredential = await originalFetch(endpoint, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabled: false })
+      body: JSON.stringify(DISABLE_SUBAGENT_BODY)
     });
     assert.equal(missingCredential.status, 401);
 
     const viewerMutation = await originalFetch(endpoint, {
       method: "PATCH",
       headers: headers("viewer-a"),
-      body: JSON.stringify({ enabled: false })
+      body: JSON.stringify(DISABLE_SUBAGENT_BODY)
     });
     assert.equal(viewerMutation.status, 403);
 
     const unknownActor = await originalFetch(endpoint, {
       method: "PATCH",
       headers: headers("intruder"),
-      body: JSON.stringify({ enabled: false })
+      body: JSON.stringify(DISABLE_SUBAGENT_BODY)
     });
     assert.equal(unknownActor.status, 403);
 
@@ -10624,7 +10653,7 @@ test("authenticated Control API provider role mutation validates, persists, and 
       {
         method: "PATCH",
         headers: headers("operator-a"),
-        body: JSON.stringify({ enabled: false })
+        body: JSON.stringify(DISABLE_SUBAGENT_BODY)
       }
     );
     assert.equal(unknownProvider.status, 404);
@@ -10638,7 +10667,7 @@ test("authenticated Control API provider role mutation validates, persists, and 
       {
         method: "PATCH",
         headers: headers("operator-a"),
-        body: JSON.stringify({ enabled: false })
+        body: JSON.stringify(DISABLE_SUBAGENT_BODY)
       }
     );
     assert.equal(invalidRole.status, 404);
@@ -10653,38 +10682,40 @@ test("authenticated Control API provider role mutation validates, persists, and 
     const badBody = await originalFetch(endpoint, {
       method: "PATCH",
       headers: headers("operator-a"),
-      body: JSON.stringify({ enabled: "false" })
+      body: JSON.stringify({ priority: "P1", model: null })
     });
     assert.equal(badBody.status, 400);
 
     const extraFields = await originalFetch(endpoint, {
       method: "PATCH",
       headers: headers("operator-a"),
-      body: JSON.stringify({ enabled: false, role: "subagent" })
+      body: JSON.stringify({ ...DISABLE_SUBAGENT_BODY, role: "subagent" })
     });
     assert.equal(extraFields.status, 400);
 
     const disable = await originalFetch(endpoint, {
       method: "PATCH",
       headers: headers("operator-a"),
-      body: JSON.stringify({ enabled: false })
+      body: JSON.stringify(DISABLE_SUBAGENT_BODY)
     });
     assert.equal(disable.status, 200);
     const disabled = await disable.json();
-    assert.equal(disabled.schema, "autodev-control-provider-role-v2");
+    assert.equal(disabled.schema, "autodev-control-provider-role-v3");
     assert.equal(disabled.provider, "claude");
     assert.equal(disabled.role, "subagent");
-    assert.equal(disabled.enabled, false);
+    assert.equal(disabled.priority, "disabled");
     assert.equal(routing.isProviderEnabledForRole("claude", "subagent"), false);
     assert.equal(
       routing.isProviderEnabledForRole("claude", "orchestrator"),
-      previousOrchestrator
+      wasOrchestratorEnabled,
+      "disabling one role must not disturb another role on the same provider"
     );
 
     const statusAfterDisable = getRouterStatus();
     assert.equal(statusAfterDisable.providers.claude.subagentEnabled, false);
-    assert.ok(
-      statusAfterDisable.routing.disabledSubagentProviders.includes("claude")
+    assert.equal(
+      statusAfterDisable.routing.roleAssignments.claude?.subagent?.priority,
+      "disabled"
     );
 
     const orchestratorEndpoint =
@@ -10692,7 +10723,7 @@ test("authenticated Control API provider role mutation validates, persists, and 
     const disableOrchestrator = await originalFetch(orchestratorEndpoint, {
       method: "PATCH",
       headers: headers("operator-a"),
-      body: JSON.stringify({ enabled: false })
+      body: JSON.stringify(DISABLE_SUBAGENT_BODY)
     });
     assert.equal(disableOrchestrator.status, 200);
     assert.equal(
@@ -10702,11 +10733,13 @@ test("authenticated Control API provider role mutation validates, persists, and 
 
     assert.equal(existsSync(stateFile), true);
     const savedState = JSON.parse(await readFile(stateFile, "utf8"));
-    assert.deepEqual(savedState.disabledOrchestratorProviders, ["claude"]);
-    assert.deepEqual(savedState.disabledSubagentProviders, ["claude"]);
+    assert.deepEqual(savedState.roleAssignments.claude, {
+      subagent: DISABLED_ASSIGNMENT,
+      orchestrator: DISABLED_ASSIGNMENT
+    });
 
-    routing.resetDisabledProvidersForRole("subagent");
-    routing.resetDisabledProvidersForRole("orchestrator");
+    routing.resetRoleAssignment("subagent");
+    routing.resetRoleAssignment("orchestrator");
     assert.equal(loadRouterState(stateFile), true);
     assert.equal(routing.isProviderEnabledForRole("claude", "subagent"), false);
     assert.equal(
@@ -10717,10 +10750,10 @@ test("authenticated Control API provider role mutation validates, persists, and 
     const enable = await originalFetch(endpoint, {
       method: "PATCH",
       headers: headers("operator-a"),
-      body: JSON.stringify({ enabled: true })
+      body: JSON.stringify({ priority: 1, model: null })
     });
     assert.equal(enable.status, 200);
-    assert.equal((await enable.json()).enabled, true);
+    assert.equal((await enable.json()).priority, 1);
     assert.equal(routing.isProviderEnabledForRole("claude", "subagent"), true);
 
     const legacyRoute = await originalFetch(baseUrl + "/v1/providers/claude", {
@@ -10743,12 +10776,8 @@ test("authenticated Control API provider role mutation validates, persists, and 
     if (previousControlOperators === undefined)
       delete process.env.AUTODEV_CONTROL_OPERATORS;
     else process.env.AUTODEV_CONTROL_OPERATORS = previousControlOperators;
-    routing.setProviderEnabledForRole("claude", "subagent", previousSubagent);
-    routing.setProviderEnabledForRole(
-      "claude",
-      "orchestrator",
-      previousOrchestrator
-    );
+    restoreAssignment("claude", "subagent", previousSubagent);
+    restoreAssignment("claude", "orchestrator", previousOrchestrator);
     await rm(directory, { recursive: true, force: true });
     resetRouterTelemetry();
   }
@@ -10756,15 +10785,15 @@ test("authenticated Control API provider role mutation validates, persists, and 
 
 test("disabled providers are excluded across role aliases, orchestrator, and fallback chains", async () => {
   resetRouterTelemetry();
-  routing.resetDisabledProvidersForRole("subagent");
-  routing.resetDisabledProvidersForRole("orchestrator");
+  routing.resetRoleAssignment("subagent");
+  routing.resetRoleAssignment("orchestrator");
 
   // Baseline: all enabled
   const baselineCandidates = routing.roleCandidates("default", () => 0.5);
   assert.ok(baselineCandidates.some((c) => c.provider === "claude"));
 
   // 1. Role aliases exclude disabled provider
-  routing.setProviderEnabledForRole("claude", "subagent", false);
+  routing.setProviderAssignment("claude", "subagent", DISABLED_ASSIGNMENT);
   const filteredCandidates = routing.roleCandidates("default", () => 0.5);
   assert.equal(
     filteredCandidates.some((c) => c.provider === "claude"),
@@ -10777,7 +10806,7 @@ test("disabled providers are excluded across role aliases, orchestrator, and fal
   const baselineOrch = routing.orchestratorCandidates(() => 0.5);
   assert.equal(baselineOrch[0]!.provider, "codex");
 
-  routing.setProviderEnabledForRole("codex", "orchestrator", false);
+  routing.setProviderAssignment("codex", "orchestrator", DISABLED_ASSIGNMENT);
   const filteredOrch = routing.orchestratorCandidates(() => 0.5);
   assert.equal(
     filteredOrch.some((c) => c.provider === "codex"),
@@ -10895,27 +10924,36 @@ test("disabled providers are excluded across role aliases, orchestrator, and fal
       else process.env[key] = value;
     }
     resetRouterTelemetry();
-    routing.resetDisabledProvidersForRole("subagent");
-    routing.resetDisabledProvidersForRole("orchestrator");
+    routing.resetRoleAssignment("subagent");
+    routing.resetRoleAssignment("orchestrator");
   }
 });
 
 test("all-disabled behavior rejects aliases, orchestrator, and concrete requests", async () => {
   resetRouterTelemetry();
-  routing.resetDisabledProvidersForRole("subagent");
-  routing.resetDisabledProvidersForRole("orchestrator");
+  routing.resetRoleAssignment("subagent");
+  routing.resetRoleAssignment("orchestrator");
   const allProviders = ["claude", "antigravity", "minimax", "copilot", "codex"];
   for (const provider of allProviders) {
-    routing.setProviderEnabledForRole(provider, "subagent", false);
-    routing.setProviderEnabledForRole(provider, "orchestrator", false);
+    routing.setProviderAssignment(provider, "subagent", DISABLED_ASSIGNMENT);
+    routing.setProviderAssignment(provider, "orchestrator", DISABLED_ASSIGNMENT);
   }
 
   const status = getRouterStatus();
   assert.equal(status.routing.enabledSubagentProviders.length, 0);
-  assert.deepEqual(
-    status.routing.disabledSubagentProviders,
-    allProviders.sort()
-  );
+  assert.equal(status.routing.enabledOrchestratorProviders.length, 0);
+  // Per-role enablement is no longer carried by its own disabled list; it is
+  // derived from the assignments, so the disabled set is what the assignments
+  // and the configured providers do not agree on.
+  const disabledFor = (role: string): string[] =>
+    [...status.routing.configuredProviders].sort().filter(
+      (provider) =>
+        status.routing.roleAssignments[provider]?.[role]?.priority ===
+        "disabled"
+    );
+  assert.deepEqual(disabledFor("subagent"), allProviders.sort());
+  assert.deepEqual(disabledFor("orchestrator"), allProviders.sort());
+  assert.deepEqual(status.routing.disabledProviders, []);
   for (const p of Object.values(status.providers) as any[]) {
     assert.equal(p.orchestratorEnabled, false);
     assert.equal(p.subagentEnabled, false);
@@ -10974,16 +11012,16 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
     assert.equal(concreteJson.error?.provider, "codex");
   } finally {
     await closeServer(server);
-    routing.resetDisabledProvidersForRole("subagent");
-    routing.resetDisabledProvidersForRole("orchestrator");
+    routing.resetRoleAssignment("subagent");
+    routing.resetRoleAssignment("orchestrator");
     resetRouterTelemetry();
   }
 });
 
 test("a disabled model is skipped for role aliases and rejected for direct requests", async () => {
   resetRouterTelemetry();
-  routing.resetDisabledProvidersForRole("subagent");
-  routing.resetDisabledProvidersForRole("orchestrator");
+  routing.resetRoleAssignment("subagent");
+  routing.resetRoleAssignment("orchestrator");
   routing.resetDisabledModels();
   const model = routing.configuredModel("claude", "default")!;
   const originalCredential = process.env.LITELLM_API_KEY;

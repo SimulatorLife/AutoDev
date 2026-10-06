@@ -214,8 +214,27 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
   );
   assert.match(
     target,
-    /\| Provider orchestrator\/subagent enablement, model enablement, priority\/fallback groups, per-tier models, routing \| Providers \(Providers and Models tabs\) \|/u
+    /\| Per-role priority and model assignment for Default\/Smart\/Orchestrator\/Subagent, provider-wide agent limits, provider enable\/disable, model enablement, priority\/fallback groups, per-tier models, routing \| Providers \(Providers and Models tabs\) \|/u
   );
+  // The Providers table is a single four-column configuration surface, so the
+  // guard pins those columns rather than accepting any Providers layout.
+  assert.match(
+    target,
+    /single four-column configuration table \(Provider, Status, Roles, Agent Limits\)/u
+  );
+  for (const removedColumn of [
+    "Role Enablement",
+    "Health",
+    "Credential",
+    "Available Models",
+    "Tier Priority"
+  ]) {
+    assert.doesNotMatch(
+      target,
+      new RegExp(String.raw`\| ${removedColumn} \|`, "u"),
+      `Providers must not restore the removed ${removedColumn} column`
+    );
+  }
 
   // Item-scoped controls live with their item: on its list row and in its
   // detail view inside the owning resource, never on a detached page.

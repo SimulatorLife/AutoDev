@@ -1,7 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import type { ProviderRole } from "@simulatorlife/autodev-core";
+import {
+  PROVIDER_ROLES,
+  type ProviderAgentLimits,
+  type ProviderRole,
+  type ProviderRoleAssignment
+} from "@simulatorlife/autodev-core";
 import { MINIMAX_MODEL_PATTERN } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
@@ -74,9 +79,25 @@ export interface RoutingRuntime {
 }
 
 export interface RoutingRuntimeState {
-  disabledOrchestratorProviders: string[];
-  disabledSubagentProviders: string[];
+  roleAssignments: Record<
+    string,
+    Partial<Record<ProviderRole, ProviderRoleAssignment>>
+  >;
+  disabledProviders: string[];
   disabledModels: string[];
+  providerLimits: Record<string, ProviderAgentLimits>;
+}
+
+/**
+ * A limit is either a positive integer or `null` for unlimited. Anything else —
+ * a negative number, a float, a string — normalises to `null` rather than being
+ * stored, so an unrecognised persisted value cannot become an active limit.
+ */
+function normaliseLimit(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  if (!Number.isInteger(value) || value < 1) return null;
+  return value;
 }
 
 /** Why a provider/model route may not serve a role right now. */
@@ -138,6 +159,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+/**
+ * Read one persisted role assignment, or `null` when the stored value is not
+ * one. Rejecting a malformed entry rather than coercing it keeps an unreadable
+ * persisted value from becoming an active routing decision.
+ */
+function readRoleAssignment(value: unknown): ProviderRoleAssignment | null {
+  if (!isRecord(value)) return null;
+  const { priority } = value;
+  if (priority !== 1 && priority !== 2 && priority !== 3 && priority !== "disabled")
+    return null;
+  return {
+    priority,
+    model: nonEmptyString(value.model) ? value.model.trim() : null
+  };
 }
 
 interface ProviderModelsEntry {
@@ -395,9 +432,19 @@ export class RoutingPolicy {
   readonly routes: readonly ProviderRoute[];
   readonly configFile: string;
   private runtime: RoutingRuntime;
-  private readonly disabledOrchestratorProviders = new Set<string>();
-  private readonly disabledSubagentProviders = new Set<string>();
+  /**
+   * Per-provider, per-role priority and model. A provider absent from this map
+   * has never been configured for a role, which is a different answer from
+   * having been configured as `disabled` — the first is unobserved, the second
+   * is a decision the operator made.
+   */
+  private readonly roleAssignments = new Map<
+    string,
+    Partial<Record<ProviderRole, ProviderRoleAssignment>>
+  >();
+  private readonly disabledProviders = new Set<string>();
   private readonly disabledModels = new Set<string>();
+  private readonly providerLimits = new Map<string, ProviderAgentLimits>();
 
   constructor(
     config: RoutingConfig,
@@ -415,36 +462,122 @@ export class RoutingPolicy {
     this.runtime = runtime;
   }
 
-  isProviderEnabledForRole(provider: unknown, role: ProviderRole): boolean {
+  private providerKey(provider: string): string {
+    return provider.toLowerCase().trim();
+  }
+
+  isProviderEnabled(provider: unknown): boolean {
     if (typeof provider !== "string" || provider.trim().length === 0)
       return false;
-    const disabled =
-      role === "orchestrator"
-        ? this.disabledOrchestratorProviders
-        : this.disabledSubagentProviders;
-    return !disabled.has(provider.toLowerCase().trim());
+    return !this.disabledProviders.has(this.providerKey(provider));
   }
 
-  setProviderEnabledForRole(
+  /**
+   * A provider serves a role when it is not globally disabled and its
+   * assignment for that role is not `disabled`. An unobserved assignment counts
+   * as enabled: a provider that was never configured away must keep routing,
+   * which is the same default the previous per-role disable lists had.
+   */
+  isProviderEnabledForRole(provider: unknown, role: ProviderRole): boolean {
+    if (!this.isProviderEnabled(provider)) return false;
+    const assignment = this.assignmentFor(provider, role);
+    return assignment?.priority !== "disabled";
+  }
+
+  /** The provider's assignment for a role, or `undefined` when unobserved. */
+  assignmentFor(
+    provider: unknown,
+    role: ProviderRole
+  ): ProviderRoleAssignment | undefined {
+    const assignments =
+      typeof provider === "string" && provider.trim().length > 0
+        ? this.roleAssignments.get(this.providerKey(provider))
+        : undefined;
+    return assignments?.[role];
+  }
+
+  setProviderAssignment(
     provider: unknown,
     role: ProviderRole,
-    enabled: boolean
+    assignment: ProviderRoleAssignment
   ): void {
     if (typeof provider !== "string" || !provider.trim()) return;
-    const key = provider.toLowerCase().trim();
-    const disabled =
-      role === "orchestrator"
-        ? this.disabledOrchestratorProviders
-        : this.disabledSubagentProviders;
-    if (enabled) disabled.delete(key);
-    else disabled.add(key);
+    const key = this.providerKey(provider);
+    if (!Object.hasOwn(this.config.providers, key)) return;
+    const existing = this.roleAssignments.get(key) ?? {};
+    // The model is preserved when a role is disabled so re-enabling restores
+    // the previous choice rather than forcing the operator to re-pick it.
+    existing[role] = {
+      priority: assignment.priority,
+      model: assignment.model
+    };
+    this.roleAssignments.set(key, existing);
   }
 
-  resetDisabledProvidersForRole(role: ProviderRole): void {
-    (role === "orchestrator"
-      ? this.disabledOrchestratorProviders
-      : this.disabledSubagentProviders
-    ).clear();
+  /**
+   * Forget a provider's assignment for one role, returning it to the
+   * unobserved default. This is the counterpart a rollback needs: restoring
+   * "no assignment" is not the same as writing back the assignment the change
+   * was replacing, because leaving the rejected assignment in place would let a
+   * change that never persisted keep affecting routing.
+   */
+  clearProviderAssignment(provider: unknown, role: ProviderRole): void {
+    if (typeof provider !== "string" || !provider.trim()) return;
+    const key = this.providerKey(provider);
+    const assignments = this.roleAssignments.get(key);
+    if (!assignments || !Object.hasOwn(assignments, role)) return;
+    const next = { ...assignments };
+    delete next[role];
+    if (Object.keys(next).length === 0) this.roleAssignments.delete(key);
+    else this.roleAssignments.set(key, next);
+  }
+
+  isProviderDisabled(provider: unknown): boolean {
+    return !this.isProviderEnabled(provider);
+  }
+
+  setProviderEnabled(provider: unknown, enabled: boolean): void {
+    if (typeof provider !== "string" || !provider.trim()) return;
+    const key = this.providerKey(provider);
+    if (!Object.hasOwn(this.config.providers, key)) return;
+    if (enabled) this.disabledProviders.delete(key);
+    else this.disabledProviders.add(key);
+  }
+
+  resetDisabledProviders(): void {
+    this.disabledProviders.clear();
+  }
+
+  /**
+   * Clear one role's assignments across every provider, returning those
+   * providers to the unobserved default. This is the counterpart of
+   * `resetDisabledProviders`/`resetDisabledModels`: a role is a dimension of
+   * the same state, so resetting one dimension must be possible independently.
+   */
+  resetRoleAssignment(role: ProviderRole): void {
+    for (const [provider, assignments] of this.roleAssignments) {
+      if (!Object.hasOwn(assignments, role)) continue;
+      const next = { ...assignments };
+      delete next[role];
+      if (Object.keys(next).length === 0) this.roleAssignments.delete(provider);
+      else this.roleAssignments.set(provider, next);
+    }
+  }
+
+  limitsFor(provider: unknown): ProviderAgentLimits | undefined {
+    return typeof provider === "string" && provider.trim().length > 0
+      ? this.providerLimits.get(this.providerKey(provider))
+      : undefined;
+  }
+
+  setProviderLimits(provider: unknown, limits: ProviderAgentLimits): void {
+    if (typeof provider !== "string" || !provider.trim()) return;
+    const key = this.providerKey(provider);
+    if (!Object.hasOwn(this.config.providers, key)) return;
+    this.providerLimits.set(key, {
+      perSession: normaliseLimit(limits.perSession),
+      acrossSessions: normaliseLimit(limits.acrossSessions)
+    });
   }
 
   /**
@@ -511,42 +644,83 @@ export class RoutingPolicy {
   }
 
   runtimeState(): RoutingRuntimeState {
+    const roleAssignments: Record<
+      string,
+      Partial<Record<ProviderRole, ProviderRoleAssignment>>
+    > = {};
+    for (const [provider, assignments] of this.roleAssignments) {
+      roleAssignments[provider] = { ...assignments };
+    }
     return {
-      disabledOrchestratorProviders: [
-        ...this.disabledOrchestratorProviders
-      ].sort(),
-      disabledSubagentProviders: [...this.disabledSubagentProviders].sort(),
-      disabledModels: [...this.disabledModels].sort()
+      roleAssignments,
+      disabledProviders: [...this.disabledProviders].sort(),
+      disabledModels: [...this.disabledModels].sort(),
+      providerLimits: Object.fromEntries(this.providerLimits)
     };
   }
 
   restoreRuntimeState(state: unknown): void {
-    this.disabledOrchestratorProviders.clear();
-    this.disabledSubagentProviders.clear();
+    this.roleAssignments.clear();
+    this.disabledProviders.clear();
     this.disabledModels.clear();
+    this.providerLimits.clear();
     if (!isRecord(state)) return;
-    if (Array.isArray(state.disabledModels)) {
-      for (const model of state.disabledModels) {
-        if (this.isConfiguredModel(model))
-          this.disabledModels.add(model.trim());
+
+    this.restoreRoleAssignments(state.roleAssignments);
+    this.restoreDisabledModels(state.disabledModels);
+    this.restoreDisabledProviders(state.disabledProviders);
+    this.restoreProviderLimits(state.providerLimits);
+  }
+
+  /**
+   * Rebuild role assignments from persisted state. A provider or role whose
+   * persisted entry is malformed is skipped rather than restored as a default,
+   * because an unreadable value is not the same as an operator's decision to
+   * leave the role at priority 1.
+   */
+  private restoreRoleAssignments(raw: unknown): void {
+    if (!isRecord(raw)) return;
+    for (const [provider, assignments] of Object.entries(raw)) {
+      if (
+        typeof provider !== "string" ||
+        !Object.hasOwn(this.config.providers, this.providerKey(provider)) ||
+        !isRecord(assignments)
+      )
+        continue;
+      for (const role of PROVIDER_ROLES) {
+        const assignment = readRoleAssignment(assignments[role]);
+        if (assignment) this.setProviderAssignment(provider, role, assignment);
       }
     }
-    for (const [role, disabled] of [
-      ["orchestrator", state.disabledOrchestratorProviders],
-      ["subagent", state.disabledSubagentProviders]
-    ] as const) {
-      if (!Array.isArray(disabled)) continue;
-      const target =
-        role === "orchestrator"
-          ? this.disabledOrchestratorProviders
-          : this.disabledSubagentProviders;
-      for (const provider of disabled) {
-        if (
-          typeof provider === "string" &&
-          Object.hasOwn(this.config.providers, provider.toLowerCase())
-        )
-          target.add(provider.toLowerCase());
-      }
+  }
+
+  private restoreDisabledModels(raw: unknown): void {
+    if (!Array.isArray(raw)) return;
+    for (const model of raw) {
+      if (this.isConfiguredModel(model)) this.disabledModels.add(model.trim());
+    }
+  }
+
+  private restoreDisabledProviders(raw: unknown): void {
+    if (!Array.isArray(raw)) return;
+    for (const provider of raw) {
+      if (
+        typeof provider === "string" &&
+        Object.hasOwn(this.config.providers, this.providerKey(provider))
+      )
+        this.disabledProviders.add(this.providerKey(provider));
+    }
+  }
+
+  private restoreProviderLimits(raw: unknown): void {
+    if (!isRecord(raw)) return;
+    for (const [provider, limits] of Object.entries(raw)) {
+      if (typeof provider !== "string" || !isRecord(limits)) continue;
+      this.setProviderLimits(provider, {
+        perSession: (limits.perSession as number | null | undefined) ?? null,
+        acrossSessions:
+          (limits.acrossSessions as number | null | undefined) ?? null
+      });
     }
   }
 

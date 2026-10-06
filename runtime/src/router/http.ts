@@ -88,11 +88,11 @@ import {
 } from "../control-api/index.ts";
 import { safeMetricLabel } from "./metric-label.ts";
 import {
+  checkOtelPayload,
   codexTelemetryStatus,
   getDefaultOtelTracker,
   ingestOtelSignal,
   OTEL_HEALTH_TTL_MS,
-  checkOtelPayload,
   otelPersistenceSnapshot,
   otelTelemetry,
   OtelTracker,
@@ -507,17 +507,24 @@ function restorePersistedSection(args: {
     COOLDOWNS.restoreHardEntries(value, Date.now());
     return;
   }
-  if (section === "disabledOrchestratorProviders") {
+  if (section === "roleAssignments") {
     ROUTING_POLICY.restoreRuntimeState({
       ...ROUTING_POLICY.runtimeState(),
-      disabledOrchestratorProviders: value
+      roleAssignments: value
     });
     return;
   }
-  if (section === "disabledSubagentProviders") {
+  if (section === "disabledProviders") {
     ROUTING_POLICY.restoreRuntimeState({
       ...ROUTING_POLICY.runtimeState(),
-      disabledSubagentProviders: value
+      disabledProviders: value
+    });
+    return;
+  }
+  if (section === "providerLimits") {
+    ROUTING_POLICY.restoreRuntimeState({
+      ...ROUTING_POLICY.runtimeState(),
+      providerLimits: value
     });
     return;
   }
@@ -620,11 +627,10 @@ const routerPersistence = new RouterPersistence({
   ),
   debounceMs: 500,
   getSnapshot: () => ({
-    disabledOrchestratorProviders:
-      ROUTING_POLICY.runtimeState().disabledOrchestratorProviders,
-    disabledSubagentProviders:
-      ROUTING_POLICY.runtimeState().disabledSubagentProviders,
+    roleAssignments: ROUTING_POLICY.runtimeState().roleAssignments,
+    disabledProviders: ROUTING_POLICY.runtimeState().disabledProviders,
     disabledModels: ROUTING_POLICY.runtimeState().disabledModels,
+    providerLimits: ROUTING_POLICY.runtimeState().providerLimits,
     providerTelemetry: Object.fromEntries(providerTelemetry),
     usage: usagePersistenceSnapshot(),
     concurrency: concurrencyManager.telemetry,
@@ -704,11 +710,10 @@ export function routingStatus(): Record<string, unknown> {
     enabledSubagentProviders: Object.keys(ROUTING.providers).filter((p) =>
       ROUTING_POLICY.isProviderEnabledForRole(p, "subagent")
     ),
-    disabledOrchestratorProviders:
-      ROUTING_POLICY.runtimeState().disabledOrchestratorProviders,
-    disabledSubagentProviders:
-      ROUTING_POLICY.runtimeState().disabledSubagentProviders,
+    roleAssignments: ROUTING_POLICY.runtimeState().roleAssignments,
+    disabledProviders: ROUTING_POLICY.runtimeState().disabledProviders,
     disabledModels: ROUTING_POLICY.runtimeState().disabledModels,
+    providerLimits: ROUTING_POLICY.runtimeState().providerLimits,
     routes: Object.fromEntries(
       ROUTES.map((route) => [
         route.provider,
@@ -1392,11 +1397,10 @@ function buildRouterStatus(
     authentication: authStatus(),
     routing: routingStatus(),
     limits: limitsStatus(),
-    disabledOrchestratorProviders:
-      ROUTING_POLICY.runtimeState().disabledOrchestratorProviders,
-    disabledSubagentProviders:
-      ROUTING_POLICY.runtimeState().disabledSubagentProviders,
+    roleAssignments: ROUTING_POLICY.runtimeState().roleAssignments,
+    disabledProviders: ROUTING_POLICY.runtimeState().disabledProviders,
     disabledModels: ROUTING_POLICY.runtimeState().disabledModels,
+    providerLimits: ROUTING_POLICY.runtimeState().providerLimits,
     usage: usageStatus(now, projection),
     attributionDiagnostics: attributionDiagnosticsStatus(),
     liveAgentAttribution: {

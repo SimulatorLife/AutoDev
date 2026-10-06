@@ -34,14 +34,17 @@ const PROVIDERS = ["claude", "antigravity", "minimax", "copilot", "codex"];
 
 function cleanState() {
   for (const provider of PROVIDERS) cooldowns.clear(provider);
-  routing.resetDisabledProvidersForRole("subagent");
-  routing.resetDisabledProvidersForRole("orchestrator");
+  routing.resetRoleAssignment("subagent");
+  routing.resetRoleAssignment("orchestrator");
 }
 
 function applySetup(setup: JsonRecord[] | undefined): void {
   for (const step of setup ?? []) {
     if (step && typeof step === "object" && typeof step.disable === "string") {
-      routing.setProviderEnabledForRole(step.disable, "subagent", false);
+      routing.setProviderAssignment(step.disable, "subagent", {
+        priority: "disabled",
+        model: null
+      });
       continue;
     }
     cooldowns.cooldownProvider(step.provider, {

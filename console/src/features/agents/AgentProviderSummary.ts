@@ -48,19 +48,22 @@ export function AgentProviderSummary({
       const record = providers?.providers.find(
         (entry) => entry.id === provider
       );
-      const enabled = record?.roles[role].enabled;
+      // A role's participation is its priority; `disabled` is the only state
+      // that means "will not serve this role". An absent record is a different
+      // answer from a disabled role, so the two stay distinct.
+      const assignment = record?.roles[role];
       const status: StatusBadgeVariant =
-        enabled === undefined
+        assignment === undefined
           ? "not-observed"
-          : enabled
-            ? "valid"
-            : "unavailable";
+          : assignment.priority === "disabled"
+            ? "unavailable"
+            : "valid";
       const state =
-        enabled === undefined
+        assignment === undefined
           ? NOT_OBSERVED_LABEL
-          : enabled
-            ? "Enabled"
-            : "Disabled";
+          : assignment.priority === "disabled"
+            ? "Disabled"
+            : `P${assignment.priority}`;
       return React.createElement(
         "li",
         { key: provider, className: "flex min-w-0 items-center" },

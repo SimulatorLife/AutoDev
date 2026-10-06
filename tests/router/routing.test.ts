@@ -9,6 +9,8 @@ import {
   validateRoutingConfig
 } from "@simulatorlife/autodev-runtime/router/routing";
 
+const DISABLED_ASSIGNMENT = { priority: "disabled" as const, model: null };
+
 function seeded(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
@@ -168,15 +170,15 @@ test("routing policy preserves seeded ordering while honoring load and disabled-
   );
   const baseline = policy.roleCandidates("default", seeded(0xc0_ff_ee));
   assert.ok(baseline.length > 0);
-  policy.setProviderEnabledForRole("claude", "subagent", false);
+  policy.setProviderAssignment("claude", "subagent", DISABLED_ASSIGNMENT);
   assert.equal(
     policy
       .roleCandidates("default", seeded(0xc0_ff_ee))
       .some((candidate) => candidate.provider === "claude"),
     false
   );
-  policy.resetDisabledProvidersForRole("subagent");
-  policy.resetDisabledProvidersForRole("orchestrator");
+  policy.resetRoleAssignment("subagent");
+  policy.resetRoleAssignment("orchestrator");
   const preferred = policy.orchestratorCandidates(seeded(0xc0_ff_ee), "claude");
   assert.equal(preferred[0]?.provider, "claude");
 });
@@ -201,7 +203,7 @@ test("a role turn prefers the provider whose tool calls it is answering", () => 
     "the rest keep their order"
   );
   // A disabled owner is skipped like any other provider; the history replays elsewhere.
-  policy.setProviderEnabledForRole(owner, "subagent", false);
+  policy.setProviderAssignment(owner, "subagent", DISABLED_ASSIGNMENT);
   assert.equal(
     policy
       .roleCandidates("worker", seeded(7), owner)
@@ -217,7 +219,7 @@ test("provider role administration is independent", () => {
     process.env
   );
 
-  policy.setProviderEnabledForRole("claude", "orchestrator", false);
+  policy.setProviderAssignment("claude", "orchestrator", DISABLED_ASSIGNMENT);
   assert.equal(
     policy.isProviderEnabledForRole("claude", "orchestrator"),
     false
@@ -234,15 +236,23 @@ test("provider role administration is independent", () => {
       .some((candidate) => candidate.provider === "claude")
   );
 
-  policy.setProviderEnabledForRole("claude", "subagent", false);
+  policy.setProviderAssignment("claude", "subagent", DISABLED_ASSIGNMENT);
   assert.deepEqual(policy.runtimeState(), {
-    disabledOrchestratorProviders: ["claude"],
-    disabledSubagentProviders: ["claude"],
-    disabledModels: []
+    roleAssignments: {
+      claude: {
+        orchestrator: DISABLED_ASSIGNMENT,
+        subagent: DISABLED_ASSIGNMENT
+      }
+    },
+    disabledProviders: [],
+    disabledModels: [],
+    providerLimits: {}
   });
   policy.restoreRuntimeState({
-    disabledOrchestratorProviders: [],
-    disabledSubagentProviders: ["claude"]
+    roleAssignments: { claude: { subagent: DISABLED_ASSIGNMENT } },
+    disabledProviders: [],
+    disabledModels: [],
+    providerLimits: {}
   });
   assert.equal(policy.isProviderEnabledForRole("claude", "orchestrator"), true);
   assert.equal(policy.isProviderEnabledForRole("claude", "subagent"), false);
@@ -318,7 +328,7 @@ test("model enablement removes a model from every tier it serves and survives re
     ),
     null
   );
-  policy.setProviderEnabledForRole("claude", "orchestrator", false);
+  policy.setProviderAssignment("claude", "orchestrator", DISABLED_ASSIGNMENT);
   assert.equal(
     policy.routeDisabledReason(
       { provider: "claude", model: "claude-opus-5-5" },
@@ -333,14 +343,16 @@ test("model enablement removes a model from every tier it serves and survives re
   assert.equal(policy.isModelEnabled("gpt-unconfigured"), true);
   assert.deepEqual(policy.runtimeState().disabledModels, ["claude-opus-5-5"]);
   policy.restoreRuntimeState({
-    disabledOrchestratorProviders: [],
-    disabledSubagentProviders: [],
-    disabledModels: ["sonnet", "gpt-unconfigured", 7]
+    roleAssignments: {},
+    disabledProviders: [],
+    disabledModels: ["sonnet", "gpt-unconfigured", 7],
+    providerLimits: {}
   });
   assert.deepEqual(policy.runtimeState(), {
-    disabledOrchestratorProviders: [],
-    disabledSubagentProviders: [],
-    disabledModels: ["sonnet"]
+    roleAssignments: {},
+    disabledProviders: [],
+    disabledModels: ["sonnet"],
+    providerLimits: {}
   });
   assert.equal(policy.isModelEnabled("claude-opus-5-5"), true);
 });

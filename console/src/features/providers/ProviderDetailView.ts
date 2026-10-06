@@ -17,7 +17,7 @@ import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { ConvergenceBadge } from "../../components/status/ConvergenceBadge.ts";
-import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
+import { NOT_OBSERVED_LABEL, StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
   type ColumnDef,
   DataTable,
@@ -29,7 +29,7 @@ import {
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
-import { ModelToggle, ProviderRoleToggle } from "./EnablementToggle.ts";
+import { ModelToggle } from "./EnablementToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
 
@@ -68,11 +68,11 @@ function RolesPanel({
           React.createElement(
             DetailValue,
             { label: role === "orchestrator" ? "Orchestrator" : "Subagent" },
-            React.createElement(ProviderRoleToggle, {
-              provider: provider.id,
-              role,
-              enablement: entry,
-              returnTo
+            React.createElement(StatusBadge, {
+              status:
+                entry.priority === "disabled" ? "unavailable" : "valid",
+              label:
+                entry.priority === "disabled" ? "Disabled" : `P${entry.priority}`
             })
           ),
           // Desired-vs-actual state for the toggle above. This is the

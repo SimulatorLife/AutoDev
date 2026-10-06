@@ -4506,6 +4506,8 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
   providers: [
     {
       id: "claude",
+      disabled: false,
+      agentLimits: { perSession: 3, acrossSessions: 8 },
       route: {
         pattern: "^(sonnet|claude-[a-z0-9-]*[a-z0-9])$",
         baseUrl: "http://127.0.0.1:4000/v1",
@@ -4513,13 +4515,42 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
       },
       credential: { envKey: "LITELLM_API_KEY", configured: false },
       roles: {
-        orchestrator: {
-          enabled: true,
+        default: {
+          priority: 1,
+          model: "sonnet",
           mutable: true,
           convergence: {
             convergence: "converged",
-            desiredGeneration: "orchestrator:enabled=true",
-            observedGeneration: "orchestrator:enabled=true",
+            desiredGeneration: "default:1/sonnet",
+            observedGeneration: "default:1/sonnet",
+            lastApplyAt: "2026-10-05T15:00:00.000Z",
+            lastObservationAt: "2026-10-05T15:00:00.000Z",
+            lastError: null,
+            explanation: "Converged."
+          }
+        },
+        smart: {
+          priority: 2,
+          model: "claude-opus-5-5",
+          mutable: true,
+          convergence: {
+            convergence: "converged",
+            desiredGeneration: "smart:2/claude-opus-5-5",
+            observedGeneration: "smart:2/claude-opus-5-5",
+            lastApplyAt: "2026-10-05T15:00:00.000Z",
+            lastObservationAt: "2026-10-05T15:00:00.000Z",
+            lastError: null,
+            explanation: "Converged."
+          }
+        },
+        orchestrator: {
+          priority: 1,
+          model: "claude-opus-5-5",
+          mutable: true,
+          convergence: {
+            convergence: "converged",
+            desiredGeneration: "orchestrator:1/claude-opus-5-5",
+            observedGeneration: "orchestrator:1/claude-opus-5-5",
             lastApplyAt: "2026-10-05T15:00:00.000Z",
             lastObservationAt: "2026-10-05T15:00:00.000Z",
             lastError: null,
@@ -4527,12 +4558,13 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
           }
         },
         subagent: {
-          enabled: true,
+          priority: 2,
+          model: "sonnet",
           mutable: true,
           convergence: {
             convergence: "converged",
-            desiredGeneration: "subagent:enabled=true",
-            observedGeneration: "subagent:enabled=true",
+            desiredGeneration: "subagent:2/sonnet",
+            observedGeneration: "subagent:2/sonnet",
             lastApplyAt: "2026-10-05T15:00:00.000Z",
             lastObservationAt: "2026-10-05T15:00:00.000Z",
             lastError: null,
@@ -4574,6 +4606,8 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
     },
     {
       id: "codex",
+      disabled: true,
+      agentLimits: { perSession: null, acrossSessions: null },
       route: {
         pattern: "^gpt-.*$",
         baseUrl: "https://chatgpt.com/backend-api/codex",
@@ -4581,12 +4615,13 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
       },
       credential: { envKey: null, configured: true },
       roles: {
-        orchestrator: {
-          enabled: false,
+        default: {
+          priority: 2,
+          model: "gpt-6-luna",
           mutable: true,
           convergence: {
             convergence: "pending",
-            desiredGeneration: "orchestrator:enabled=false",
+            desiredGeneration: "default:2/gpt-6-luna",
             observedGeneration: null,
             lastApplyAt: "2026-10-05T15:30:00.000Z",
             lastObservationAt: null,
@@ -4594,8 +4629,37 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
             explanation: "Pending observation."
           }
         },
+        smart: {
+          priority: 2,
+          model: "gpt-6-luna",
+          mutable: true,
+          convergence: {
+            convergence: "pending",
+            desiredGeneration: "smart:2/gpt-6-luna",
+            observedGeneration: null,
+            lastApplyAt: "2026-10-05T15:30:00.000Z",
+            lastObservationAt: null,
+            lastError: null,
+            explanation: "Pending observation."
+          }
+        },
+        orchestrator: {
+          priority: "disabled",
+          model: null,
+          mutable: true,
+          convergence: {
+            convergence: "converged",
+            desiredGeneration: "orchestrator:disabled/none",
+            observedGeneration: "orchestrator:disabled/none",
+            lastApplyAt: "2026-10-05T15:30:00.000Z",
+            lastObservationAt: "2026-10-05T15:30:00.000Z",
+            lastError: null,
+            explanation: "Converged."
+          }
+        },
         subagent: {
-          enabled: false,
+          priority: 3,
+          model: "gpt-6-luna",
           mutable: false,
           convergence: {
             convergence: "not-observed",

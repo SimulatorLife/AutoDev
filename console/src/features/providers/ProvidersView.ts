@@ -16,7 +16,10 @@ import {
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
-import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
@@ -32,7 +35,7 @@ import {
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
-import { ModelToggle, ProviderRoleToggle } from "./EnablementToggle.ts";
+import { ModelToggle } from "./EnablementToggle.ts";
 import {
   modelPath,
   providerPath,
@@ -133,11 +136,15 @@ function providerColumns(
                 { className: "w-20 shrink-0 text-xs text-fg-muted" },
                 label
               ),
-              React.createElement(ProviderRoleToggle, {
-                provider: provider.id,
-                role,
-                enablement: provider.roles[role],
-                returnTo
+              React.createElement(StatusBadge, {
+                status:
+                  provider.roles[role].priority === "disabled"
+                    ? "unavailable"
+                    : "valid",
+                label:
+                  provider.roles[role].priority === "disabled"
+                    ? "Disabled"
+                    : `P${provider.roles[role].priority}`
               })
             )
           )
@@ -391,11 +398,13 @@ function ProvidersTab({
       { columns: 3 },
       React.createElement(StatCard, {
         title: "Orchestrator enabled",
-        value: records.filter((p) => p.roles.orchestrator.enabled).length
+        value: records.filter((p) => p.roles.orchestrator.priority !== "disabled")
+          .length
       }),
       React.createElement(StatCard, {
         title: "Subagent enabled",
-        value: records.filter((p) => p.roles.subagent.enabled).length
+        value: records.filter((p) => p.roles.subagent.priority !== "disabled")
+          .length
       }),
       React.createElement(StatCard, {
         title: "Cooling down",

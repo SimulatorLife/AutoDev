@@ -14,7 +14,9 @@ import {
   type GithubWorkflowState,
   LOCAL_CONTROL_API_ACTOR,
   type OperationHistoryEntry,
+  PROVIDER_ROLES,
   type ProviderRole,
+  type ProviderRoleAssignment,
   type ReconciliationDiff,
   type ReconciliationEvidence,
   type ReconciliationStatus,
@@ -81,8 +83,10 @@ export const CONTROL_API_PATHS = {
   github: "/control/github"
 } as const;
 
-const PROVIDER_ROLE_PATH =
-  /^\/control\/providers\/([a-zA-Z0-9._-]+)\/roles\/(orchestrator|subagent)$/u;
+const PROVIDER_ROLE_PATH = new RegExp(
+  `^/control/providers/([a-zA-Z0-9._-]+)/roles/(${PROVIDER_ROLES.join("|")})$`,
+  "u"
+);
 const MODEL_PATH = /^\/control\/models\/([a-zA-Z0-9._-]+)$/u;
 const AGENT_DETAIL_PATH = /^\/control\/agents\/([a-zA-Z0-9._-]+)$/u;
 const PROMPT_DETAIL_PATH = /^\/control\/prompts\/([a-zA-Z0-9._-]+)$/u;
@@ -437,6 +441,14 @@ function providersView(now: number): Record<string, unknown> {
   const health = providerHealthSource?.(now) ?? null;
   const providers = names.map((provider) => {
     const route = ROUTES.find((entry) => entry.provider === provider) ?? null;
+    const disabled = !ROUTING_POLICY.isProviderEnabled(provider);
+    const agentLimits = ROUTING_POLICY.limitsFor(provider) ?? null;
+    const assignments = Object.fromEntries(
+      PROVIDER_ROLES.map((role) => [
+        role,
+        ROUTING_POLICY.assignmentFor(provider, role)
+      ])
+    );
     return {
       id: provider,
       route: route
@@ -450,24 +462,26 @@ function providersView(now: number): Record<string, unknown> {
         envKey: route?.envKey ?? null,
         configured: ROUTING_POLICY.routeCredentialAvailable(route)
       },
-      roles: {
-        orchestrator: {
-          enabled: ROUTING_POLICY.isProviderEnabledForRole(
-            provider,
-            "orchestrator"
-          ),
-          mutable: true,
-          convergence: providerRoleConvergence(provider, "orchestrator")
-        },
-        subagent: {
-          enabled: ROUTING_POLICY.isProviderEnabledForRole(
-            provider,
-            "subagent"
-          ),
-          mutable: true,
-          convergence: providerRoleConvergence(provider, "subagent")
-        }
-      },
+      disabled,
+      // Derived from PROVIDER_ROLES so a role added to Core cannot be missing
+      // from this response.
+      roles: Object.fromEntries(
+        PROVIDER_ROLES.map((role) => [
+          role,
+          {
+            // An unobserved assignment is reported as enabled rather than as
+            // a disabled role: a provider nobody has touched must keep routing,
+            // and "disabled" is a decision the operator makes.
+            priority: disabled ? "disabled" : (assignments[role]?.priority ?? 1),
+            model: assignments[role]?.model ?? null,
+            // A globally disabled provider's roles cannot be edited until it
+            // is enabled again, but their values are preserved.
+            mutable: !disabled,
+            convergence: providerRoleConvergence(provider, role)
+          }
+        ])
+      ),
+      agentLimits,
       models: Object.entries(
         ROUTING_POLICY.config.providers[provider]?.models ?? {}
       ).map(([tier, model]) => ({ tier, model: model.trim() })),
@@ -1924,7 +1938,7 @@ async function patchEnablement(
   );
 }
 
-function patchProviderRole(
+async function patchProviderRole(
   request: IncomingMessage,
   response: ServerResponse,
   actor: ControlApiActor,
@@ -1933,47 +1947,150 @@ function patchProviderRole(
 ): Promise<void> {
   const provider = providerInput.toLowerCase();
   const resource = `${CONTROL_API_PATHS.providers}/${providerInput}/roles/${role}`;
-  return patchEnablement(request, response, actor, {
-    action: "patch_provider_role",
-    resource,
-    subject: "provider role",
-    known:
-      Object.hasOwn(ROUTING_POLICY.config.providers ?? {}, provider) ||
-      ROUTES.some((route) => route.provider === provider),
-    unknownReason: "unknown_provider",
-    unknownCode: "autodev_control_api_unknown_provider",
-    unknownMessage: "Unknown provider.",
-    current: () => ROUTING_POLICY.isProviderEnabledForRole(provider, role),
-    apply: (enabled) =>
-      ROUTING_POLICY.setProviderEnabledForRole(provider, role, enabled),
-    result: (enabled, previous) => {
-      const observed = ROUTING_POLICY.isProviderEnabledForRole(provider, role);
-      const desiredGeneration = `${role}:enabled=${enabled ? "true" : "false"}`;
-      const observedGeneration =
-        observed === enabled ? desiredGeneration : null;
-      return {
-        schema: "autodev-control-provider-role-v2",
-        provider,
-        role,
-        enabled,
-        previous,
-        reconciliation: buildReconciliationView({
-          evidence: {
-            desiredGeneration,
-            observedGeneration,
-            lastApplyAt: new Date().toISOString(),
-            lastObservationAt:
-              observedGeneration === null ? null : new Date().toISOString(),
-            lastError: null
-          },
-          history: historyForResource(resource),
-          hasObservation: observed === enabled
-        })
-      };
-    }
-  });
-}
+  const audit = (
+    outcome: "ok" | "denied" | "error",
+    changes: Record<string, unknown> | null,
+    reason?: string,
+    reconciliation: EnablementReconciliation | null = null
+  ): void =>
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "patch_provider_role",
+      resource,
+      outcome,
+      changes,
+      ...(reason ? { reason } : {}),
+      ...auditReconciliationFields(reconciliation)
+    });
 
+  if (actor.role !== "operator") {
+    audit("denied", null, "viewer_cannot_mutate");
+    sendControlError(
+      response,
+      403,
+      "autodev_control_api_viewer_forbidden",
+      "Operator access is required to change provider role state."
+    );
+    return;
+  }
+
+  const known =
+    Object.hasOwn(ROUTING_POLICY.config.providers ?? {}, provider) ||
+    ROUTES.some((route) => route.provider === provider);
+
+  const parsed = await readControlApiJsonObject(request);
+  if (!parsed.ok) {
+    audit("error", null, "invalid_body");
+    sendControlError(response, parsed.status, parsed.code, parsed.message);
+    return;
+  }
+  const body = parsed.body;
+  const priority = body.priority;
+  const model = body.model ?? null;
+  const priorityIsValid =
+    priority === 1 || priority === 2 || priority === 3 || priority === "disabled";
+  const modelIsValid =
+    model === null ||
+    (typeof model === "string" && ROUTING_POLICY.isConfiguredModel(model));
+  if (
+    Object.keys(body).some((key) => key !== "priority" && key !== "model") ||
+    !priorityIsValid ||
+    !modelIsValid
+  ) {
+    audit("error", null, "invalid_body");
+    sendControlError(
+      response,
+      400,
+      "autodev_control_api_bad_body",
+      "Provider role body must carry a priority of 1, 2, 3 or \"disabled\", and a model that is either null or a model this provider is configured for."
+    );
+    return;
+  }
+  if (!known) {
+    audit("error", { priority, model }, "unknown_provider");
+    sendControlError(
+      response,
+      404,
+      "autodev_control_api_unknown_provider",
+      "Unknown provider."
+    );
+    return;
+  }
+
+  const next: ProviderRoleAssignment = { priority, model };
+  // An unobserved assignment is reported as null on the wire: JSON carries no
+  // undefined, and "there was no assignment" must not be reported as an empty
+  // object, which would read as a role whose model was cleared.
+  const previous = ROUTING_POLICY.assignmentFor(provider, role) ?? null;
+  try {
+    ROUTING_POLICY.setProviderAssignment(provider, role, next);
+    await persistRoutingPolicy();
+  } catch {
+    try {
+      // Restoring the prior state means clearing the assignment when there was
+      // none, not only writing back the one this change replaced. A rejected
+      // change must never keep steering routing just because it had nothing to
+      // overwrite.
+      if (previous) ROUTING_POLICY.setProviderAssignment(provider, role, previous);
+      else ROUTING_POLICY.clearProviderAssignment(provider, role);
+    } catch {
+      // Preserve the original failure; the audit record captures it.
+    }
+    audit("error", { priority, model, previous }, "persistence_failed");
+    sendControlError(
+      response,
+      500,
+      "autodev_control_api_persistence_failed",
+      "Provider role change could not be persisted."
+    );
+    return;
+  }
+
+  const observed = ROUTING_POLICY.assignmentFor(provider, role) ?? null;
+  const desiredGeneration = `${role}:${priority}/${model ?? "none"}`;
+  const observedGeneration =
+    observed?.priority === priority && observed?.model === model
+      ? desiredGeneration
+      : null;
+  const appliedAt = new Date().toISOString();
+  // The audit record and the response body must carry the same generations the
+  // operator sees, so both are derived from these two values rather than
+  // computed twice.
+  const auditReconciliation: EnablementReconciliation = {
+    desiredGeneration,
+    observedGeneration,
+    restartRequired: false
+  };
+  const reconciliation = buildReconciliationView({
+    evidence: {
+      desiredGeneration,
+      observedGeneration,
+      lastApplyAt: appliedAt,
+      lastObservationAt: observedGeneration === null ? null : appliedAt,
+      lastError: null
+    },
+    history: historyForResource(resource),
+    hasObservation: observedGeneration !== null
+  });
+  audit("ok", { priority, model, previous }, undefined, auditReconciliation);
+  sendJson(
+    response,
+    200,
+    {
+      schema: "autodev-control-provider-role-v3",
+      provider,
+      role,
+      priority,
+      model,
+      previous,
+      actor: actor.actor,
+      reconciliation
+    },
+    { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
+  );
+}
 function patchModel(
   request: IncomingMessage,
   response: ServerResponse,

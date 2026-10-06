@@ -2,6 +2,7 @@ import type {
   ControlApiModelRecord,
   ControlApiProviderRecord
 } from "@simulatorlife/autodev-core";
+import { PROVIDER_ROLES } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import {
@@ -44,13 +45,15 @@ function ProviderRoleState({
   return React.createElement(
     "span",
     { className: "flex flex-wrap gap-2" },
-    ...(["orchestrator", "subagent"] as const).map((role) =>
-      React.createElement(StatusBadge, {
+    ...PROVIDER_ROLES.map((role) => {
+      const assignment = provider.roles[role];
+      const disabled = assignment.priority === "disabled";
+      return React.createElement(StatusBadge, {
         key: role,
-        status: provider.roles[role].enabled ? "valid" : "unavailable",
-        label: `${role}: ${provider.roles[role].enabled ? "enabled" : "disabled"}`
-      })
-    )
+        status: disabled ? "unavailable" : "valid",
+        label: `${role}: ${disabled ? "Disabled" : `P${assignment.priority}`}`
+      });
+    })
   );
 }
 

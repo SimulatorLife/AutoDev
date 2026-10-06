@@ -22,7 +22,11 @@ import type {
   ReconciliationStatus,
   ReconciliationView
 } from "../reconciliation/types.ts";
-import type { ProviderRole, RoutingPolicyState } from "../routing/types.ts";
+import type {
+  ProviderRole,
+  ProviderRolePriority,
+  RoutingPolicyState
+} from "../routing/types.ts";
 import type {
   ToolCatalogCoverage,
   ToolCatalogItem,
@@ -110,6 +114,30 @@ export interface ControlApiProviderHealth {
   } | null;
 }
 
+/**
+ * One provider's assignment for one of the four fixed roles.
+ *
+ * `priority` carries participation: `disabled` is a member of the enum rather
+ * than a separate enablement flag, so a role cannot hold a priority and be
+ * disabled at once. `model` is preserved even while disabled so re-enabling
+ * restores the previous choice. `mutable` is false when the provider is
+ * globally disabled, because a disabled provider's roles cannot be edited until
+ * it is enabled again.
+ */
+export interface ControlApiProviderRoleAssignment {
+  readonly priority: ProviderRolePriority;
+  readonly model: string | null;
+  readonly mutable: boolean;
+  /** Convergence for this single role; `not-observed` until a write occurs. */
+  readonly convergence: ReconciliationStatus;
+}
+
+/** Provider-wide concurrent-agent limits; `null` is the explicit Unlimited choice. */
+export interface ControlApiProviderAgentLimits {
+  readonly perSession: number | null;
+  readonly acrossSessions: number | null;
+}
+
 export interface ControlApiProviderRecord {
   readonly id: string;
   readonly route: {
@@ -122,15 +150,17 @@ export interface ControlApiProviderRecord {
     readonly envKey: string | null;
     readonly configured: boolean;
   };
+  /**
+   * Provider-level disable, independent of the per-role assignments below:
+   * disabling suppresses the provider for every role while preserving its
+   * priorities, models and limits.
+   */
+  readonly disabled: boolean;
   readonly roles: Readonly<
-    Record<
-      ProviderRole,
-      ControlApiEnablement & {
-        /** Convergence for this single role; `not-observed` until a write occurs. */
-        readonly convergence: ReconciliationStatus;
-      }
-    >
+    Record<ProviderRole, ControlApiProviderRoleAssignment>
   >;
+  /** Concurrent-agent limits for this provider, across every role. */
+  readonly agentLimits: ControlApiProviderAgentLimits | null;
   /** Configured model per capability tier. */
   readonly models: readonly {
     readonly tier: string;

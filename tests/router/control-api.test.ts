@@ -14,7 +14,10 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
-import { LOCAL_CONTROL_API_ACTOR } from "@simulatorlife/autodev-core";
+import {
+  LOCAL_CONTROL_API_ACTOR,
+  type ProviderRoleAssignment
+} from "@simulatorlife/autodev-core";
 import {
   GithubActionsAdapter,
   RuleSyncRepository
@@ -43,6 +46,10 @@ import {
   setTelemetryExporter
 } from "@simulatorlife/autodev-runtime/router/telemetry";
 import type { ExecutionContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+
+// Disabling a role is a priority, not a boolean: `disabled` is a member of
+// the priority enum so a role cannot hold a priority and be disabled at once.
+const DISABLE_SUBAGENT_BODY = { priority: "disabled", model: null } as const;
 
 const ENV_KEYS = [
   "AUTODEV_CONTROL_API_TOKEN",
@@ -363,14 +370,14 @@ test("role headers cannot grant access and viewers cannot mutate", async () => {
     const noActor = await call(
       "PATCH",
       CONTROL_API_PATHS.providers + "/claude/roles/subagent",
-      { roleHeader: "operator", body: { enabled: false } }
+      { roleHeader: "operator", body: DISABLE_SUBAGENT_BODY }
     );
     assert.equal(noActor.response.statusCode, 401);
 
     const captured = await captureAudit(() =>
       call("PATCH", CONTROL_API_PATHS.providers + "/claude/roles/subagent", {
         actor: "viewer-a",
-        body: { enabled: false }
+        body: DISABLE_SUBAGENT_BODY
       })
     );
     assert.equal(captured.result.response.statusCode, 403);
@@ -390,11 +397,8 @@ test("role headers cannot grant access and viewers cannot mutate", async () => {
 test("operator PATCH validates fields, persists provider state, and audits the action", async () => {
   const saved = saveEnv();
   const originalPersistence = getDefaultPersistenceManager();
-  const previous = ROUTING_POLICY.isProviderEnabledForRole(
-    "claude",
-    "subagent"
-  );
   let persistCalls = 0;
+  let previous: ProviderRoleAssignment | null = null;
   setDefaultPersistenceManager({
     async persistNow() {
       persistCalls += 1;
@@ -403,6 +407,10 @@ test("operator PATCH validates fields, persists provider state, and audits the a
   } as unknown as RouterPersistence);
   try {
     configure();
+    // Captured after configure() because that is the state the PATCH actually
+    // replaces, and reported as null because an unobserved assignment has no
+    // JSON representation other than null.
+    previous = ROUTING_POLICY.assignmentFor("claude", "subagent") ?? null;
     const path = CONTROL_API_PATHS.providers + "/claude/roles/subagent";
 
     const malformed = await call("PATCH", path, {
@@ -413,14 +421,14 @@ test("operator PATCH validates fields, persists provider state, and audits the a
 
     const extraField = await call("PATCH", path, {
       actor: "operator-a",
-      body: { enabled: false, role: "subagent" }
+      body: { ...DISABLE_SUBAGENT_BODY, role: "subagent" }
     });
     assert.equal(extraField.response.statusCode, 400);
 
     const unknownProvider = await call(
       "PATCH",
       CONTROL_API_PATHS.providers + "/unknown/roles/subagent",
-      { actor: "operator-a", body: { enabled: false } }
+      { actor: "operator-a", body: DISABLE_SUBAGENT_BODY }
     );
     assert.equal(unknownProvider.response.statusCode, 404);
     assert.equal(
@@ -432,23 +440,23 @@ test("operator PATCH validates fields, persists provider state, and audits the a
     const captured = await captureAudit(() =>
       call("PATCH", path, {
         actor: "operator-a",
-        body: { enabled: false }
+        body: DISABLE_SUBAGENT_BODY
       })
     );
     assert.equal(captured.result.response.statusCode, 200);
     assert.equal(captured.result.body.previous, previous);
-    assert.equal(captured.result.body.enabled, false);
+    assert.equal(captured.result.body.priority, "disabled");
     assert.equal(
       captured.result.body.schema,
-      "autodev-control-provider-role-v2"
+      "autodev-control-provider-role-v3"
     );
     assert.equal(
       captured.result.body.reconciliation.status.convergence,
       "converged"
     );
     assert.equal(
-      ROUTING_POLICY.isProviderEnabledForRole("claude", "subagent"),
-      false
+      ROUTING_POLICY.assignmentFor("claude", "subagent")?.priority,
+      "disabled"
     );
     assert.equal(persistCalls, 1);
 
@@ -458,8 +466,8 @@ test("operator PATCH validates fields, persists provider state, and audits the a
     assert.equal(audit.actor, "operator-a");
     assert.equal(audit.actorRole, "operator");
     assert.equal(audit.outcome, "ok");
-    assert.deepEqual(audit.changes, { enabled: false, previous });
-    assert.equal(audit.desiredGeneration, "subagent:enabled=false");
+    assert.deepEqual(audit.changes, { priority: "disabled", model: null, previous });
+    assert.equal(audit.desiredGeneration, "subagent:disabled/none");
     assert.equal(audit.observedGeneration, audit.desiredGeneration);
     assert.equal(audit.restartRequired, false);
     assert.equal(JSON.stringify(audit).includes(SERVICE_TOKEN), false);
@@ -488,7 +496,8 @@ test("operator PATCH validates fields, persists provider state, and audits the a
     );
   } finally {
     resetTelemetryExporter();
-    ROUTING_POLICY.setProviderEnabledForRole("claude", "subagent", previous);
+    if (previous) ROUTING_POLICY.setProviderAssignment("claude", "subagent", previous);
+    else ROUTING_POLICY.clearProviderAssignment("claude", "subagent");
     setDefaultPersistenceManager(originalPersistence);
     restoreEnv(saved);
   }
@@ -497,10 +506,7 @@ test("operator PATCH validates fields, persists provider state, and audits the a
 test("failed persistence rolls back the in-memory provider policy", async () => {
   const saved = saveEnv();
   const originalPersistence = getDefaultPersistenceManager();
-  const previous = ROUTING_POLICY.isProviderEnabledForRole(
-    "claude",
-    "subagent"
-  );
+  const previous = ROUTING_POLICY.assignmentFor("claude", "subagent");
   setDefaultPersistenceManager({
     async persistNow() {
       throw new Error("disk failure");
@@ -511,15 +517,61 @@ test("failed persistence rolls back the in-memory provider policy", async () => 
     const result = await call(
       "PATCH",
       CONTROL_API_PATHS.providers + "/claude/roles/subagent",
-      { actor: "operator-a", body: { enabled: !previous } }
+      {
+        actor: "operator-a",
+        body: {
+          priority: previous?.priority === "disabled" ? 1 : ("disabled" as const),
+          model: null
+        }
+      }
     );
     assert.equal(result.response.statusCode, 500);
-    assert.equal(
-      ROUTING_POLICY.isProviderEnabledForRole("claude", "subagent"),
-      previous
+    assert.deepEqual(
+      ROUTING_POLICY.assignmentFor("claude", "subagent") ?? null,
+      previous ?? null
     );
   } finally {
-    ROUTING_POLICY.setProviderEnabledForRole("claude", "subagent", previous);
+    if (previous) ROUTING_POLICY.setProviderAssignment("claude", "subagent", previous);
+    else ROUTING_POLICY.clearProviderAssignment("claude", "subagent");
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
+test("a failed persist cannot leave behind an assignment that had none before", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  setDefaultPersistenceManager({
+    async persistNow() {
+      throw new Error("disk failure");
+    }
+  } as unknown as RouterPersistence);
+  try {
+    configure();
+    ROUTING_POLICY.clearProviderAssignment("claude", "subagent");
+    assert.equal(
+      ROUTING_POLICY.assignmentFor("claude", "subagent"),
+      undefined,
+      "the rollback-under-test requires an unobserved starting assignment"
+    );
+
+    const result = await call(
+      "PATCH",
+      CONTROL_API_PATHS.providers + "/claude/roles/subagent",
+      { actor: "operator-a", body: { priority: "disabled", model: null } }
+    );
+    assert.equal(result.response.statusCode, 500);
+    // Restoring the prior state here means forgetting the assignment, not
+    // leaving the rejected change in memory where it would keep steering
+    // routing despite never having been persisted.
+    assert.equal(ROUTING_POLICY.assignmentFor("claude", "subagent"), undefined);
+    assert.equal(
+      ROUTING_POLICY.isProviderEnabledForRole("claude", "subagent"),
+      true,
+      "an unobserved assignment serves the role again after a rejected change"
+    );
+  } finally {
+    ROUTING_POLICY.clearProviderAssignment("claude", "subagent");
     setDefaultPersistenceManager(originalPersistence);
     restoreEnv(saved);
   }
@@ -564,10 +616,13 @@ test("providers v2 reports routes, credential presence, tier models, priorities,
       );
     }
     assert.deepEqual(claude.roles.orchestrator, {
-      enabled: ROUTING_POLICY.isProviderEnabledForRole(
+      priority: ROUTING_POLICY.isProviderEnabledForRole(
         "claude",
         "orchestrator"
-      ),
+      )
+        ? 1
+        : ("disabled" as const),
+      model: null,
       mutable: true,
       // The GET surface reports desired/observed generations but has no
       // runtime observation for this resource, so convergence stays
