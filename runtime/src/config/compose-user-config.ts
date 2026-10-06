@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 
+import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
   writeErrorLine,
   writeLine
@@ -263,9 +264,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
       values["otel-ingress"] ?? "direct"
     );
   } catch (error) {
-    writeErrorLine(
-      `compose-user-config: ${error instanceof Error ? error.message : error}`
-    );
+    writeErrorLine(`compose-user-config: ${errorMessage(error)}`);
     process.exitCode = 2;
   }
 }

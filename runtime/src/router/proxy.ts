@@ -31,6 +31,7 @@ import {
   SANDBOX_MODE_HEADER,
   SKILL_CONTEXT_HEADER
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
+import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { resolveSandboxMode } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import {
   INCOMPLETE_REASON_INTERRUPTED,
@@ -1043,7 +1044,7 @@ function upstreamErrorMessage(
     }
     return `Upstream provider exceeded response timeout.`;
   }
-  return error instanceof Error ? error.message : String(error);
+  return errorMessage(error);
 }
 
 async function drainSseBody(args: {
@@ -2443,10 +2444,7 @@ async function handleConcreteTransportError(
     return;
   }
   if (attempts < UPSTREAM_TRANSPORT_MAX_ATTEMPTS - 1 && !response.headersSent) {
-    const failureClass = classifyProviderFailure(
-      502,
-      error instanceof Error ? error.message : String(error)
-    );
+    const failureClass = classifyProviderFailure(502, errorMessage(error));
     recordConcreteRetry(ctx, 502, failureClass);
     await jitteredBackoff();
     if (clientSignal?.aborted) {
@@ -2457,10 +2455,7 @@ async function handleConcreteTransportError(
     await runConcreteAttempts(ctx, attempts + 1);
     return;
   }
-  const failureClass = classifyProviderFailure(
-    502,
-    error instanceof Error ? error.message : String(error)
-  );
+  const failureClass = classifyProviderFailure(502, errorMessage(error));
   recordConcreteResult(ctx, "failure", 502, failureClass);
   endConcreteRequest(activitySubject, requestId, "failure");
   COOLDOWNS.cooldownProvider(
@@ -2482,10 +2477,7 @@ function handleConcreteOuterFailure(
   error: unknown
 ): void {
   const { response, route, activitySubject, requestId, modelName } = ctx;
-  const failureClass = classifyProviderFailure(
-    502,
-    error instanceof Error ? error.message : String(error)
-  );
+  const failureClass = classifyProviderFailure(502, errorMessage(error));
   recordConcreteResult(ctx, "failure", 502, failureClass);
   endConcreteRequest(activitySubject, requestId, "failure");
   if (response.writableEnded) return;
@@ -3355,10 +3347,7 @@ async function fetchCandidate(
       model: route.model,
       workspace: ctx.workspace,
       status: 502,
-      failureClass: classifyProviderFailure(
-        502,
-        error instanceof Error ? error.message : String(error)
-      ),
+      failureClass: classifyProviderFailure(502, errorMessage(error)),
       elapsedMs: Date.now() - ctx.startedAt
     });
     await jitteredBackoff();
@@ -3565,10 +3554,7 @@ function handleCandidateTransportError(
     "router_auth_unavailable";
   const failureClass = isAuthFailure
     ? "authentication"
-    : classifyProviderFailure(
-        502,
-        error instanceof Error ? error.message : String(error)
-      );
+    : classifyProviderFailure(502, errorMessage(error));
   if (!isAuthFailure)
     logTransportError({
       requestId: ctx.requestId,

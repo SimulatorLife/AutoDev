@@ -263,8 +263,15 @@ export function runStdio(): void {
       ...(isRecord(parsed.params) ? { params: parsed.params } : {})
     };
     void handleMessage(message).catch((error: unknown) => {
+      // Inlined rather than using `shared/error-message.ts`: this shim is
+      // materialized into `CODEX_HOME/src/mcp/` and run from there, where the
+      // Runtime package does not resolve. It is the module's only site.
       if (message.id !== undefined)
-        fail(message.id, -32_603, errorMessage(error));
+        fail(
+          message.id,
+          -32_603,
+          error instanceof Error ? error.message : String(error)
+        );
     });
   });
 }
@@ -283,10 +290,6 @@ function asJsonRpcId(value: unknown): JsonRpcId {
 
 function isAbortError(error: unknown): boolean {
   return isRecord(error) && error.name === "AbortError";
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 if (

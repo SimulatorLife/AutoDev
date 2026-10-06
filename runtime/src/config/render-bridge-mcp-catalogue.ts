@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 
+import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
   writeErrorLine,
   writeLine
@@ -78,9 +79,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
       flags.has("check")
     );
   } catch (error) {
-    writeErrorLine(
-      `render-bridge-mcp-catalogue: ${error instanceof Error ? error.message : error}`
-    );
+    writeErrorLine(`render-bridge-mcp-catalogue: ${errorMessage(error)}`);
     process.exitCode = 2;
   }
 }

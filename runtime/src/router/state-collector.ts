@@ -10,6 +10,8 @@ import { createHash } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 
+import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
+
 import { safeMetricLabel } from "./metric-label.ts";
 
 export type SqliteRow = Record<string, unknown>;
@@ -1066,8 +1068,4 @@ export async function createCodexStateCollector(
   const collector = new CodexStateCollector({ ...config, ...overrides });
   await collector.collectSnapshot();
   return collector;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

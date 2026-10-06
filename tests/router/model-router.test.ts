@@ -32,6 +32,7 @@ import * as responses from "@simulatorlife/autodev-runtime/router/responses";
 import {
   CONFIGURED_ORCHESTRATOR_MODEL,
   CONFIGURED_SMART_MODEL,
+  ORCHESTRATOR_ALIAS,
   ROUTING_POLICY as routing,
   validateRoutingConfig
 } from "@simulatorlife/autodev-runtime/router/routing";
@@ -68,7 +69,6 @@ import {
   noteBridgeSession,
   noteOrchestratorSession,
   ORCHESTRATOR_AGENT_ROLE,
-  ORCHESTRATOR_ALIAS,
   orchestratorProviderForSession,
   parseConcurrencyConfig,
   payloadForCandidate,

@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createAgentActivityTracker } from "@simulatorlife/autodev-runtime/agents";
+import { PROCESS_FALLBACK_SESSION_KEY } from "@simulatorlife/autodev-runtime/router/concurrency";
 import type { RecordRouterEventInput } from "@simulatorlife/autodev-runtime/router/events";
 import {
   bridgeTelemetryHeaders,
   mcpContractForRole,
-  PROCESS_FALLBACK_SESSION_KEY,
   providerCapabilities,
   reportedChildren,
   roleCapabilityRequirements,

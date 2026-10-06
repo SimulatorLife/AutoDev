@@ -36,6 +36,7 @@ import {
   resolveAgentRole,
   SpawnSessionRegistry
 } from "@simulatorlife/autodev-runtime/agents";
+import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
   type RoleContract,
   roleContract
@@ -2752,10 +2753,6 @@ function resolveSandboxMode(
   return readOnlySystemPromptInjection(headers) === ""
     ? headerSandboxMode(headers)
     : "read-only";
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function reportTurnHeartbeat(agentEvents: AgentReporter | null): void {

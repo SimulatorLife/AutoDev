@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
   writeErrorLine,
   writeLine
@@ -219,9 +220,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
       `rendered ${rendered.length} native role configs into ${requiredArg(values, "output-dir")}`
     );
   } catch (error) {
-    writeErrorLine(
-      `render-agent-configs: ${error instanceof Error ? error.message : error}`
-    );
+    writeErrorLine(`render-agent-configs: ${errorMessage(error)}`);
     process.exitCode = 2;
   }
 }

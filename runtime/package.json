@@ -73,6 +73,7 @@
     "./router/usage": "./src/router/usage.ts",
     "./shared/agent-context-headers": "./src/shared/agent-context-headers.ts",
     "./shared/env": "./src/shared/env.ts",
+    "./shared/error-message": "./src/shared/error-message.ts",
     "./shared/executables": "./src/shared/executables.ts",
     "./shared/execution-contract": "./src/shared/execution-contract.ts",
     "./shared/output": "./src/shared/output.ts",

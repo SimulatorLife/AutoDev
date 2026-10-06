@@ -343,4 +343,3 @@ export {
   persistRouterStateNow,
   serializeRouterState
 } from "@simulatorlife/autodev-runtime/router/persistence";
-export { ORCHESTRATOR_ALIAS } from "@simulatorlife/autodev-runtime/router/routing";

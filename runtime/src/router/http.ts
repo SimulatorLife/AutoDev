@@ -177,8 +177,6 @@ const GIT_EXTENSION_PATTERN = /\.git$/i;
 const REPO_ID_SANITIZE_PATTERN = /[^A-Za-z0-9._-]/g;
 const URL_QUERY_FRAGMENT_SPLIT_PATTERN = /[?#]/;
 
-export { errorBody, sendJson } from "./proxy.ts";
-
 export const HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
 export const PORT = Number.parseInt(
   process.env.CODEX_MODEL_ROUTER_PORT ?? "4100"
