@@ -9,6 +9,23 @@ function source(relativePath: string): string {
   return readFileSync(path.join(repositoryRoot, relativePath), "utf8");
 }
 
+/**
+ * A file's code with its comments removed.
+ *
+ * Comments are stripped before asking whether a file *uses* the symbol, so a
+ * module that merely documents the convention is not reported as a consumer
+ * that bypassed the owner. `tests/console-internal-links.test.ts` is exactly
+ * that: it explains what `canonicalNavPath` builds without importing it.
+ * A guard that reports its own documentation is a guard people turn off.
+ * `//` is only treated as a comment when it is not preceded by `:` so a URL in
+ * a string literal does not truncate the line.
+ */
+function code(relativePath: string): string {
+  return source(relativePath)
+    .replaceAll(/\/\*[\s\S]*?\*\//g, "")
+    .replaceAll(/(^|[^:])\/\/[^\n]*/g, "$1");
+}
+
 // Walk the tree rather than reading `git ls-files`, so a module that has been
 // added but not yet committed is still policed.
 function sourceFiles(directory: string): string[] {
@@ -103,18 +120,20 @@ test("every canonicalNavPath consumer imports it from the owning module", () => 
     ...sourceFiles(path.join(repositoryRoot, "tests"))
   ]
     .filter((file) => !file.endsWith(owner))
-    // This file names the symbol in its own match patterns, so it would
-    // otherwise report itself as a consumer that skipped the owner.
+    // This file matches the symbol in its own regex patterns, which is
+    // executable code rather than documentation, so stripping comments does not
+    // remove it and it would otherwise report itself as a consumer that
+    // skipped the owner.
     .filter(
       (file) =>
         !file.endsWith(path.join("tests", "console", "nav-ownership.test.ts"))
     )
-    .filter((file) => source(file).includes("canonicalNavPath"));
+    .filter((file) => code(file).includes("canonicalNavPath"));
 
   assert.ok(consumers.length > 0, "expected at least one real consumer");
   for (const file of consumers) {
     assert.match(
-      source(file),
+      code(file),
       fromOwner,
       `${file} must import it from lib/routes.ts`
     );
