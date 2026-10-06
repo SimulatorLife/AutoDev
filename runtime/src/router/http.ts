@@ -154,7 +154,6 @@ import {
 } from "./subagents.ts";
 import { withExtractedTraceContext } from "./telemetry.ts";
 import {
-  attributionDiagnostics,
   attributionDiagnosticsStatus,
   countLiveAgentActivity,
   getDefaultUsageTracker,
@@ -362,10 +361,10 @@ const subagentRegistry = new SubagentRegistry({
   onRecordUsageEvent: (event) => recordUsageEvent(event),
   onSchedulePersist: () => scheduleRouterStatePersist(),
   onMissingProviderDiagnostic: (count) => {
-    attributionDiagnostics.byReason.missing_provider += count;
+    getDefaultUsageTracker().recordMissingProviderDiagnostic(count);
   },
   onMissingModelDiagnostic: (count) => {
-    attributionDiagnostics.byReason.missing_model += count;
+    getDefaultUsageTracker().recordMissingModelDiagnostic(count);
   },
   getCodexNativeSpawns: () => otelTelemetry.threads.spawns.total,
   getSpawnCapableProviders: () =>

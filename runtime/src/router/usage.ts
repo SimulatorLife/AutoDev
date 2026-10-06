@@ -1085,13 +1085,29 @@ export class UsageTracker {
         this.attributionDiagnostics.byReason[reason] += 1;
       }
       if (unknownWorkspaceId) {
-        rememberRecentId(
-          this.attributionDiagnostics.unknownWorkspaceIds,
-          unknownWorkspaceId,
-          MAX_UNKNOWN_WORKSPACE_IDS
-        );
+        this.rememberUnknownWorkspaceId(unknownWorkspaceId);
       }
     }
+  }
+
+  /**
+   * Adds an unresolvable workspace id to the bounded diagnostic ring.
+   *
+   * The ring is a sample of what could not be attributed, kept here rather than
+   * exposed as `attributionDiagnostics.unknownWorkspaceIds` so that the bound
+   * and the insertion policy have one owner. A caller observing the id must not
+   * have to know how many are retained to add one correctly.
+   *
+   * It is deliberately *not* folded into {@link recordAttributionDiagnostic}:
+   * the ring follows every observation, including ones that are not counted,
+   * and a duplicate identity still tells us which id was unknown.
+   */
+  rememberUnknownWorkspaceId(id: string): void {
+    rememberRecentId(
+      this.attributionDiagnostics.unknownWorkspaceIds,
+      id,
+      MAX_UNKNOWN_WORKSPACE_IDS
+    );
   }
 
   recordMissingProviderDiagnostic(count: number = 1): void {

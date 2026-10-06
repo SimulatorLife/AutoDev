@@ -23,9 +23,7 @@ import { recordSkillObservation } from "./telemetry.ts";
 import {
   extractWorkspaceIdWithAmbiguity,
   getDefaultUsageTracker,
-  MAX_UNKNOWN_WORKSPACE_IDS,
   readNamedAttribute,
-  rememberRecentId,
   safeAgentIdentity,
   safePrivacyWorkspace,
   safeWorkspaceId,
@@ -2563,14 +2561,16 @@ export class OtelTracker {
       resourceAttributes
     );
     if (!thread && context.workspace === UNATTRIBUTED_DIMENSION) {
-      this.usageTracker.attributionDiagnostics.total += 1;
-      this.usageTracker.attributionDiagnostics.unattributed += 1;
-      this.usageTracker.attributionDiagnostics.byReason.missing_workspace += 1;
+      this.usageTracker.recordAttributionDiagnostic({
+        attributed: false,
+        reason: "missing_workspace"
+      });
       return;
     }
-    this.usageTracker.attributionDiagnostics.total += 1;
-    this.usageTracker.attributionDiagnostics.attributed += 1;
-    this.usageTracker.attributionDiagnostics.bySource.datapoint += 1;
+    this.usageTracker.recordAttributionDiagnostic({
+      attributed: true,
+      source: "datapoint"
+    });
     const wsKey =
       (thread?.projectKey ?? thread?.workspaceKey) ||
       (context.workspace === UNATTRIBUTED_DIMENSION ? null : context.workspace);
@@ -2787,25 +2787,23 @@ export class OtelTracker {
     recordDiagnostic: boolean
   ): void {
     if (recordDiagnostic) {
-      const diagnostics = this.usageTracker.attributionDiagnostics;
-      diagnostics.total += 1;
-      if (verdict.reason) {
-        diagnostics.unattributed += 1;
-        diagnostics.byReason[verdict.reason] += 1;
-      } else {
-        diagnostics.attributed += 1;
-        if (verdict.source) diagnostics.bySource[verdict.source] += 1;
-      }
+      // Counted through the tracker rather than by mutating its diagnostics
+      // directly: the transition (total, attributed/unattributed, bySource or
+      // byReason) is the tracker's own, and it already owns it. The verdict's
+      // `null` source and absent reason are omitted rather than passed as
+      // `undefined`, which `exactOptionalPropertyTypes` distinguishes.
+      const { reason } = verdict;
+      this.usageTracker.recordAttributionDiagnostic({
+        attributed: reason === undefined,
+        ...(verdict.source === null ? {} : { source: verdict.source }),
+        ...(reason === undefined ? {} : { reason })
+      });
     }
     // The unknown-id ring is a bounded sample of what the router could not
     // attribute, so it follows every observation rather than only the counted
     // ones; duplicates of an identity still tell us which ids are unknown.
     if (verdict.reason === "unknown_workspace_id" && verdict.workspaceId)
-      rememberRecentId(
-        this.usageTracker.attributionDiagnostics.unknownWorkspaceIds,
-        verdict.workspaceId,
-        MAX_UNKNOWN_WORKSPACE_IDS
-      );
+      this.usageTracker.rememberUnknownWorkspaceId(verdict.workspaceId);
   }
 
   /**
