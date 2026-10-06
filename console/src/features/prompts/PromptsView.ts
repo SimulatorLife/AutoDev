@@ -4,6 +4,7 @@ import React from "react";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
+import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { Chip } from "../../components/tables/Chips.ts";
 import {
@@ -151,8 +152,8 @@ export function PromptsView({
           : String(commandSourceValidity)
     },
     React.createElement(
-      "div",
-      { className: "grid grid-cols-1 gap-4 md:grid-cols-4" },
+      StatGrid,
+      { columns: 4 },
       React.createElement(StatCard, {
         title: "Canonical Prompts",
         value: canonicalPromptCount

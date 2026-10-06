@@ -10,7 +10,9 @@ import { StatCard } from "../../components/cards/StatCard.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
+import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
+import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
@@ -37,7 +39,6 @@ import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
 
 const LINK_CLASS =
   "font-mono font-semibold text-fg underline-offset-4 hover:underline";
-const NOT_OBSERVED_LABEL = "Not observed";
 
 export const PROVIDERS_VIEW_TABS: readonly TabDefinition[] = [
   { id: "providers", label: "Providers" },
@@ -368,8 +369,8 @@ function ProvidersTab({
     "div",
     { className: "flex flex-col gap-6", "data-tab-panel": "providers" },
     React.createElement(
-      "div",
-      { className: "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4" },
+      StatGrid,
+      { columns: 4 },
       React.createElement(StatCard, {
         title: "Providers",
         value: records.length

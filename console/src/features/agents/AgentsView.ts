@@ -8,19 +8,23 @@ import React from "react";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
-import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import {
+  DetailGrid,
+  DetailValue,
+  StatGrid
+} from "../../components/panels/DetailGrid.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import {
   type ColumnDef,
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
-import {
-  MUTED_META_CLASS,
-  SECTION_LABEL_CLASS
-} from "../../components/ui/text-classes.ts";
+import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 import { AgentProviderSummary } from "./AgentProviderSummary.ts";
 
-const NOT_OBSERVED_LABEL = "Not observed";
 const NOT_OBSERVED_STATUS = "not-observed";
 
 export interface AgentsViewProps {
@@ -134,8 +138,8 @@ export function AgentsView({
     "div",
     { className: "flex flex-col gap-6", "data-feature": "agents" },
     React.createElement(
-      "div",
-      { className: "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4" },
+      StatGrid,
+      { columns: 4 },
       React.createElement(StatCard, {
         title: "Configured Agents",
         value: agents.length
@@ -203,21 +207,27 @@ export function AgentsView({
             NOT_OBSERVED_LABEL
           )
         : React.createElement(
-            "dl",
-            {
-              className: "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
-            },
-            React.createElement(RuntimeMetric, {
-              label: "Router Instance ID",
-              value: runtime.routerInstanceId,
-              // `break-all` would split the UUID mid-segment (`…0b1` / `3`).
-              // A router instance id is a discrete identifier, so it wraps
-              // between its own hyphen groups rather than inside one.
-              valueClassName: "font-mono text-xs text-fg-secondary break-words"
-            }),
-            React.createElement(RuntimeMetric, {
-              label: "Lifecycle State",
-              value: React.createElement(StatusBadge, {
+            DetailGrid,
+            { columns: 4, label: "Router runtime" },
+            React.createElement(
+              DetailValue,
+              {
+                label: "Router Instance ID",
+                // `break-all` would split the UUID mid-segment (`…0b1` / `3`).
+                // A router instance id is a discrete identifier, so it wraps
+                // between its own hyphen groups rather than inside one.
+                valueClassName:
+                  "font-mono text-xs text-fg-secondary break-words"
+              },
+              runtime.routerInstanceId
+            ),
+            React.createElement(
+              DetailValue,
+              {
+                label: "Lifecycle State",
+                valueClassName: null
+              },
+              React.createElement(StatusBadge, {
                 status:
                   runtime.lifecycle.state === "ready"
                     ? "ready"
@@ -225,51 +235,56 @@ export function AgentsView({
                       ? "unavailable"
                       : NOT_OBSERVED_STATUS,
                 label: runtime.lifecycle.state ?? NOT_OBSERVED_LABEL
-              }),
-              valueClassName: null
-            }),
+              })
+            ),
             // Draining is an operational state of its own: the router stops
             // accepting new work while it finishes what is in flight, and
             // hiding that behind a plain "ready" would read as healthy.
-            React.createElement(RuntimeMetric, {
-              label: "Draining",
-              value: React.createElement(StatusBadge, {
+            React.createElement(
+              DetailValue,
+              { label: "Draining", valueClassName: null },
+              React.createElement(StatusBadge, {
                 status: runtime.lifecycle.draining ? "pending" : "ready",
                 label: runtime.lifecycle.draining ? "Draining" : "Not draining"
-              }),
-              valueClassName: null
-            }),
-            React.createElement(RuntimeMetric, {
-              label: "In-Flight Requests",
-              value: String(runtime.inFlightRequestCount)
-            }),
-            React.createElement(RuntimeMetric, {
-              label: "Session Concurrency Limit",
-              value: observed(runtime.concurrency.effectivePerSessionLimit)
-            }),
-            React.createElement(RuntimeMetric, {
-              label: "Active Subagent Threads",
-              value: observed(runtime.concurrency.activeSubagentThreads)
-            }),
-            React.createElement(RuntimeMetric, {
-              label: "Active Sessions",
-              value: observed(runtime.concurrency.activeSessions)
-            }),
-            React.createElement(RuntimeMetric, {
-              label: "Total Denials",
-              value: observed(runtime.concurrency.denials)
-            }),
-            React.createElement(RuntimeMetric, {
-              label: "Last Denial Reason",
-              value:
-                runtime.concurrency.lastDenial === undefined ||
+              })
+            ),
+            React.createElement(
+              DetailValue,
+              { label: "In-Flight Requests" },
+              String(runtime.inFlightRequestCount)
+            ),
+            React.createElement(
+              DetailValue,
+              { label: "Session Concurrency Limit" },
+              observed(runtime.concurrency.effectivePerSessionLimit)
+            ),
+            React.createElement(
+              DetailValue,
+              { label: "Active Subagent Threads" },
+              observed(runtime.concurrency.activeSubagentThreads)
+            ),
+            React.createElement(
+              DetailValue,
+              { label: "Active Sessions" },
+              observed(runtime.concurrency.activeSessions)
+            ),
+            React.createElement(
+              DetailValue,
+              { label: "Total Denials" },
+              observed(runtime.concurrency.denials)
+            ),
+            React.createElement(
+              DetailValue,
+              {
+                label: "Last Denial Reason",
+                valueClassName: "font-mono text-xs text-fg-secondary",
+                rowClassName: "sm:col-span-2"
+              },
+              runtime.concurrency.lastDenial === undefined ||
                 runtime.concurrency.lastDenial === null
-                  ? "None observed"
-                  : (runtime.concurrency.lastDenial.reason ??
-                    NOT_OBSERVED_LABEL),
-              valueClassName: "font-mono text-xs text-fg-secondary",
-              rowClassName: "flex flex-col gap-1 sm:col-span-2"
-            })
+                ? "None observed"
+                : (runtime.concurrency.lastDenial.reason ?? NOT_OBSERVED_LABEL)
+            )
           )
     )
   );
@@ -282,27 +297,4 @@ export function AgentsView({
  */
 function observed(value: number | undefined): string {
   return value === undefined ? NOT_OBSERVED_LABEL : String(value);
-}
-
-function RuntimeMetric({
-  label,
-  value,
-  valueClassName = "font-mono text-sm text-fg",
-  rowClassName = "flex flex-col gap-1"
-}: {
-  readonly label: string;
-  readonly value: React.ReactNode;
-  readonly valueClassName?: string | null;
-  readonly rowClassName?: string;
-}): React.JSX.Element {
-  return React.createElement(
-    "div",
-    { className: rowClassName },
-    React.createElement("dt", { className: SECTION_LABEL_CLASS }, label),
-    React.createElement(
-      "dd",
-      valueClassName === null ? null : { className: valueClassName },
-      value
-    )
-  );
 }

@@ -10,6 +10,7 @@ import {
   CALLOUT_WARNING_CLASS
 } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { chipList } from "../../components/tables/Chips.ts";
 import {
@@ -170,8 +171,8 @@ export function SkillsView({
           )
         : null,
     React.createElement(
-      "div",
-      { className: "grid grid-cols-1 md:grid-cols-4 gap-4" },
+      StatGrid,
+      { columns: 4 },
       React.createElement(StatCard, {
         title: "Configured",
         value: configuredCount

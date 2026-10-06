@@ -17,8 +17,12 @@ import {
 } from "../../components/layout/Heading.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { gridRowClass } from "../../components/panels/DetailGrid.ts";
 import { EmptyState } from "../../components/status/EmptyState.ts";
-import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 
@@ -48,7 +52,6 @@ export interface ToolDetailViewProps {
 const FIELD_LABEL_CLASS = "text-fg-muted block mb-1";
 const FIELD_VALUE_CLASS = "text-fg break-all font-mono";
 const NOT_OBSERVED_STATUS = "not-observed" as const;
-const NOT_OBSERVED_LABEL = "Not observed" as const;
 const UNCONFIGURED_LABEL = "Not configured";
 
 function field(
@@ -339,7 +342,7 @@ export function ToolDetailView({
     React.createElement(
       "div",
       {
-        className: "grid grid-cols-1 md:grid-cols-2 gap-4",
+        className: gridRowClass(2),
         "data-tools-detail-panels": "true"
       },
       React.createElement(

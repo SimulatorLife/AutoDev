@@ -12,6 +12,7 @@ import {
 } from "../../components/forms/SelectField.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { DetailDrawer } from "../../components/panels/DetailDrawer.ts";
+import { gridRowClass } from "../../components/panels/DetailGrid.ts";
 import {
   StatusBadge,
   type StatusBadgeVariant
@@ -252,7 +253,7 @@ function ExperienceDetailPanel({
     // Trajectory Provenance & Details
     React.createElement(
       "div",
-      { className: "grid grid-cols-1 md:grid-cols-2 gap-4" },
+      { className: gridRowClass(2) },
       // Trajectory
       React.createElement(
         "div",

@@ -17,6 +17,7 @@ export * from "./components/navigation/AppNav.ts";
 export * from "./components/navigation/Breadcrumbs.ts";
 export * from "./components/navigation/ClosePanelLink.ts";
 export * from "./components/panels/DetailDrawer.ts";
+export * from "./components/panels/DetailGrid.ts";
 export * from "./components/status/ControlFailureNotice.ts";
 export * from "./components/status/ConvergenceBadge.ts";
 export * from "./components/status/EmptyState.ts";

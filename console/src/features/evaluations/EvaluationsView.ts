@@ -10,7 +10,11 @@ import { StatCard } from "../../components/cards/StatCard.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
-import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import { StatGrid } from "../../components/panels/DetailGrid.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
@@ -26,8 +30,6 @@ import {
   NEUTRAL_TONE_CLASS,
   SUCCESS_TONE_CLASS
 } from "../../components/ui/tones.ts";
-
-const NOT_OBSERVED_LABEL = "Not observed";
 
 export type EvaluationTraceLookup =
   | { readonly kind: "invalid-span-id" }
@@ -412,8 +414,8 @@ export function EvaluationsView({
     filteredPromptNotice,
     traceLookup ? renderTraceLookup(traceLookup, promptFilter) : null,
     React.createElement(
-      "div",
-      { className: "grid grid-cols-1 gap-4 md:grid-cols-3" },
+      StatGrid,
+      { columns: 3 },
       React.createElement(StatCard, {
         title: "Total Evaluations",
         value: total

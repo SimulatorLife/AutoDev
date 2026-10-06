@@ -11,7 +11,9 @@ import { StatCard } from "../../components/cards/StatCard.ts";
 import { FilterBar } from "../../components/filters/FilterBar.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
+import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
+import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
 import { MemoryCohortsView } from "./MemoryCohortsView.ts";
 import { MemoryExperiencesView } from "./MemoryExperiencesView.ts";
@@ -21,8 +23,6 @@ import {
 } from "./MemoryRecordsView.ts";
 
 export type MemoryTab = "records" | "experiences" | "cohorts";
-
-const NOT_OBSERVED_LABEL = "Not observed";
 
 export interface MemoryViewProps {
   readonly activeTab: MemoryTab;
@@ -145,8 +145,8 @@ export function MemoryView({
 
     // Top stat cards
     React.createElement(
-      "div",
-      { className: "grid grid-cols-2 sm:grid-cols-4 gap-4" },
+      StatGrid,
+      { columns: 4 },
       React.createElement(StatCard, {
         title: "Durable Records",
         value: totalRecords,

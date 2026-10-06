@@ -9,6 +9,7 @@ import React from "react";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
@@ -199,8 +200,8 @@ export function MemoryCohortsView({
     // Stat cards summary
     sessionCohorts
       ? React.createElement(
-          "div",
-          { className: "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4" },
+          StatGrid,
+          { columns: 5 },
           React.createElement(StatCard, {
             title: "Observed Sessions",
             value: sessionCohorts.sessionCount
@@ -301,8 +302,8 @@ export function MemoryCohortsView({
             React.Fragment,
             null,
             React.createElement(
-              "div",
-              { className: "grid grid-cols-2 sm:grid-cols-3 gap-4" },
+              StatGrid,
+              { columns: 3 },
               React.createElement(StatCard, {
                 title: "Eligible Exposures",
                 value: useCohorts.exposureCount

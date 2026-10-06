@@ -54,6 +54,24 @@ const BADGE_STYLES: Record<StatusBadgeVariant, string> = {
 const DEFAULT_STYLE = NEUTRAL_TONE_CLASS;
 
 /**
+ * The Console's word for missing evidence.
+ *
+ * "Not observed" is the product's load-bearing string: it is the answer the
+ * Console gives when configuration exists but nothing has reported back, and
+ * the target state requires exactly this vocabulary rather than any friendly
+ * synonym. It was declared as a local `const NOT_OBSERVED_LABEL` in eight
+ * feature files, which means the one word that must never drift is the word
+ * most likely to: a view can say "Unknown" or "Unavailable" beside a badge
+ * that says "Not observed", and the page then appears to contradict itself
+ * about whether evidence is missing or actively wrong.
+ *
+ * It lives beside `StatusBadge` rather than in a text-treatment module because
+ * it is a state, not a style: it is what `StatusBadge` renders for
+ * `not-observed`, and the label and the variant are two spellings of one fact.
+ */
+export const NOT_OBSERVED_LABEL = "Not observed";
+
+/**
  * Foreground token per status variant, for places that carry the status as a
  * mark rather than a word (a dot beside a compact chip). Keeps one vocabulary:
  * a status never renders green in one component and success-green in another.

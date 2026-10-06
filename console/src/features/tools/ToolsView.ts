@@ -13,7 +13,11 @@ import {
   CALLOUT_ERROR_CLASS,
   CALLOUT_WARNING_CLASS
 } from "../../components/layout/Callout.ts";
-import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import { StatGrid } from "../../components/panels/DetailGrid.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
@@ -50,7 +54,6 @@ const SOURCE_FILTERS: readonly (ToolSource | "all")[] = [
 ];
 const COLLATOR = new Intl.Collator();
 const NOT_OBSERVED_STATUS = "not-observed" as const;
-const NOT_OBSERVED_LABEL = "Not observed" as const;
 
 export interface ToolsViewFilters {
   readonly source: string;
@@ -371,8 +374,8 @@ export function ToolsView({
       "data-tools-observed": validity === "valid" ? "true" : "false"
     },
     React.createElement(
-      "div",
-      { className: "grid grid-cols-1 md:grid-cols-4 gap-4" },
+      StatGrid,
+      { columns: 4 },
       React.createElement(StatCard, {
         title: "Composite catalog",
         value:

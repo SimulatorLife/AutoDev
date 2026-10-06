@@ -11,10 +11,10 @@ import {
 } from "../../components/layout/Heading.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { ConvergenceBadge } from "../../components/status/ConvergenceBadge.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
-import { SECTION_LABEL_CLASS } from "../../components/ui/text-classes.ts";
 import { ModelToggle } from "./EnablementToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 
@@ -23,25 +23,6 @@ export interface ModelDetailViewProps {
   /** The owning provider's record, or `null` when Providers is unavailable. */
   readonly provider: ControlApiProviderRecord | null;
   readonly controlFailed?: boolean | undefined;
-}
-
-function DetailValue({
-  label,
-  children
-}: {
-  readonly label: string;
-  readonly children?: React.ReactNode;
-}): React.JSX.Element {
-  return React.createElement(
-    "div",
-    { className: "flex flex-col gap-1" },
-    React.createElement("dt", { className: SECTION_LABEL_CLASS }, label),
-    React.createElement(
-      "dd",
-      { className: "font-mono text-sm text-fg break-all" },
-      children
-    )
-  );
 }
 
 /** Read-only provider role state; the provider's own toggles live on its pages. */
@@ -137,8 +118,8 @@ export function ModelDetailView({
       // toggle itself so "the model is enabled" and "we have observed that
       // enablement converge" stay two independently evidenced statements.
       React.createElement(
-        "dl",
-        { className: "mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2" },
+        DetailGrid,
+        { columns: 2, label: "Enablement convergence", className: "mt-4" },
         React.createElement(
           DetailValue,
           { label: "Convergence" },
@@ -166,8 +147,8 @@ export function ModelDetailView({
         "Routing"
       ),
       React.createElement(
-        "dl",
-        { className: "grid grid-cols-1 gap-4 sm:grid-cols-2" },
+        DetailGrid,
+        { columns: 2, label: "Model routing" },
         React.createElement(
           DetailValue,
           { label: "Provider" },

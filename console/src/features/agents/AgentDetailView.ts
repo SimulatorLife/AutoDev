@@ -13,7 +13,11 @@ import {
 } from "../../components/layout/Heading.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
-import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import { chipList } from "../../components/tables/Chips.ts";
 import { SECTION_LABEL_CLASS } from "../../components/ui/text-classes.ts";
 import { AgentProviderSummary } from "./AgentProviderSummary.ts";
@@ -72,20 +76,19 @@ export function AgentDetailView({
         })
       ),
       React.createElement(
-        "dl",
-        { className: "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4" },
-        React.createElement(DetailValue, {
-          label: "Kind",
-          value: agent.kind
-        }),
-        React.createElement(DetailValue, {
-          label: "Read-only",
-          value: agent.readOnly ? "Yes" : "No"
-        }),
-        React.createElement(DetailValue, {
-          label: "Primary model",
-          value: agent.primaryModel
-        }),
+        DetailGrid,
+        { columns: 4, label: "Agent configuration" },
+        React.createElement(DetailValue, { label: "Kind" }, agent.kind),
+        React.createElement(
+          DetailValue,
+          { label: "Read-only" },
+          agent.readOnly ? "Yes" : "No"
+        ),
+        React.createElement(
+          DetailValue,
+          { label: "Primary model" },
+          agent.primaryModel
+        ),
         React.createElement(
           "div",
           { className: "flex flex-col gap-2" },
@@ -179,26 +182,32 @@ export function AgentDetailView({
         "Concurrency & Routing Limits"
       ),
       React.createElement(
-        "dl",
-        { className: "grid grid-cols-1 gap-4 sm:grid-cols-3" },
-        React.createElement(DetailValue, {
-          label: "Role execution kind",
-          value: agent.kind
-        }),
-        React.createElement(DetailValue, {
-          label: "Session concurrency limit",
-          value:
-            routing?.concurrency?.effectivePerSessionLimit === undefined
-              ? "Not observed"
-              : String(routing.concurrency.effectivePerSessionLimit)
-        }),
-        React.createElement(DetailValue, {
-          label: "Active subagent threads",
-          value:
-            routing?.concurrency?.activeSubagentThreads === undefined
-              ? "0"
-              : String(routing.concurrency.activeSubagentThreads)
-        })
+        DetailGrid,
+        { columns: 3, label: "Runtime routing limits" },
+        React.createElement(
+          DetailValue,
+          { label: "Role execution kind" },
+          agent.kind
+        ),
+        React.createElement(
+          DetailValue,
+          { label: "Session concurrency limit" },
+          // Unobserved is not zero. The fact directly above already renders
+          // "Not observed" for the same missing block, so a reader saw two
+          // adjacent routing facts where one said "not known" and the other
+          // said "none are running" -- and the second claim is the one an
+          // operator acts on. No observation is not an observation of zero.
+          routing?.concurrency?.effectivePerSessionLimit === undefined
+            ? NOT_OBSERVED_LABEL
+            : String(routing.concurrency.effectivePerSessionLimit)
+        ),
+        React.createElement(
+          DetailValue,
+          { label: "Active subagent threads" },
+          routing?.concurrency?.activeSubagentThreads === undefined
+            ? NOT_OBSERVED_LABEL
+            : String(routing.concurrency.activeSubagentThreads)
+        )
       )
     ),
     agent.systemPrompt === undefined
@@ -229,21 +238,6 @@ export function AgentDetailView({
             ariaLabel: "Agent system prompt"
           })
         )
-  );
-}
-
-function DetailValue({
-  label,
-  value
-}: {
-  readonly label: string;
-  readonly value: string;
-}): React.JSX.Element {
-  return React.createElement(
-    "div",
-    { className: "flex flex-col gap-1" },
-    React.createElement("dt", { className: SECTION_LABEL_CLASS }, label),
-    React.createElement("dd", { className: "font-mono text-sm text-fg" }, value)
   );
 }
 

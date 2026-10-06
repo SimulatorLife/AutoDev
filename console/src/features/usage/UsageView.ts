@@ -14,6 +14,8 @@ import {
 } from "../../components/forms/SelectField.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
+import { gridRowClass, StatGrid } from "../../components/panels/DetailGrid.ts";
+import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 
 /**
  * Observability Usage view.
@@ -35,7 +37,6 @@ export interface UsageViewProps {
   readonly selection?: UsageFilterSelection | undefined;
 }
 
-const NOT_OBSERVED_LABEL = "Not observed";
 const COUNT_FORMATTER = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0
 });
@@ -270,10 +271,8 @@ export function UsageView({
         "Router & GenAI Observability"
       ),
       React.createElement(
-        "div",
-        {
-          className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
-        },
+        StatGrid,
+        { columns: 4 },
         React.createElement(StatCard, {
           title: "Logical Routed Requests",
           value: formatCount(safeMetrics?.logicalRequests ?? null),
@@ -298,7 +297,7 @@ export function UsageView({
     ),
     React.createElement(
       "div",
-      { className: "grid grid-cols-1 md:grid-cols-2 gap-6" },
+      { className: gridRowClass(2, "gap-6") },
       React.createElement(
         "div",
         {
@@ -368,8 +367,8 @@ export function UsageView({
         "Model Context Protocol Shim Metrics"
       ),
       React.createElement(
-        "div",
-        { className: "grid grid-cols-1 md:grid-cols-3 gap-4" },
+        StatGrid,
+        { columns: 3 },
         React.createElement(StatCard, {
           title: "MCP Tool Calls",
           value: formatCount(safeMetrics?.mcpCalls ?? null),

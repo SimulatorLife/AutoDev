@@ -6792,6 +6792,133 @@ test("no feature view hand-types an empty state", () => {
   );
 });
 
+test("one grid ladder: every card row and labelled-fact row resolves its columns through it", () => {
+  // The row was hand-written at thirty-two sites with five spellings, and the
+  // disagreement was visible rather than cosmetic: eleven took the two-column
+  // step at `sm` (640px) and four at `md` (768px), so an operator moving
+  // between Agents and Tools at a 700px window saw a two-column row on one page
+  // and a single-column stack on another. Three Memory grids started at
+  // `grid-cols-2` and never collapsed at all.
+  //
+  // A breakpoint only means something if it means the same thing everywhere, so
+  // the ladder lives in one table and this guard fails the moment a view writes
+  // its own `grid-cols-` steps again. The exemptions are deliberate and narrow:
+  // three sites whose columns hold unstyled text rather than cards, which is a
+  // different shape with a different budget.
+  const EXEMPT: ReadonlySet<string> = new Set([
+    "mcps/McpDetailView.ts",
+    "prompts/PromptDetailView.ts"
+  ]);
+
+  const featuresDir = join(import.meta.dirname, "..", "src", "features");
+  const offenders: string[] = [];
+  for (const relative of readdirSync(featuresDir, { recursive: true })) {
+    const name = relative.toString();
+    if (EXEMPT.has(name)) continue;
+    const file = join(featuresDir, name);
+    if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
+    const source = readFileSync(file, "utf8");
+    for (const m of source.matchAll(/className:\s*(["'`])([^"'`]*)\1/g)) {
+      // `gridRowClass` and the two shared grids are the ladder itself. Anything
+      // else carrying a `grid-cols-` step is a view choosing its own.
+      if (!/(^|\s)grid-cols-[\d]/.test(m[2] ?? "")) continue;
+      if (source.includes("components/panels/DetailGrid")) continue;
+      offenders.push(`${name}: ${m[2] ?? ""}`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `These views hand-write their own grid columns instead of using StatGrid, DetailGrid or gridRowClass:\n${offenders.join("\n")}`
+  );
+});
+
+test("every labelled fact has one implementation, and 'Not observed' has one spelling", () => {
+  // Two duplication problems that a typecheck and a passing suite both miss,
+  // because each copy is correct on its own.
+  //
+  // `DetailValue` existed four times -- in the agent detail, agents list,
+  // provider detail and model detail views -- and three were byte-identical. Two
+  // had drifted: the agent detail copy had dropped the wrapping rule on its
+  // value, and the agents list copy had grown a `valueClassName: null` hatch.
+  //
+  // The guard is on the copied shape rather than on the element: a `<dt>` alone
+  // is not a copy. `ProvidersView` builds a `<dl>` of routing tiers whose `dd`
+  // holds a chip list laid out on a baseline, which is a different component
+  // with a different budget, so the signal is a `<dd>` carrying the copied
+  // `text-sm` value treatment.
+  //
+  // `NOT_OBSERVED_LABEL` was declared as a local const in eight feature files.
+  // It is the one string the product must never reword: it is how the Console
+  // says evidence is missing, and a view that says "Unknown" beside a badge
+  // that says "Not observed" makes the page contradict itself about whether
+  // evidence is absent or actively wrong.
+  const featuresDir = join(import.meta.dirname, "..", "src", "features");
+  const detailCopies: string[] = [];
+  const labelCopies: string[] = [];
+  for (const relative of readdirSync(featuresDir, { recursive: true })) {
+    const name = relative.toString();
+    const file = join(featuresDir, name);
+    if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
+    const source = readFileSync(file, "utf8");
+    const buildsOwnFact =
+      /createElement\(\s*"dt"/.test(source) &&
+      /createElement\(\s*"dd",\s*\{\s*className:\s*(["'`])[^"'`]*\btext-sm\b/.test(
+        source
+      );
+    if (buildsOwnFact && !source.includes("DetailValue")) {
+      detailCopies.push(name);
+    }
+    if (/const NOT_OBSERVED_LABEL\s*=/.test(source)) {
+      labelCopies.push(name);
+    }
+  }
+  assert.deepEqual(
+    detailCopies,
+    [],
+    `These views build their own labelled fact instead of using DetailValue:\n${detailCopies.join("\n")}`
+  );
+  assert.deepEqual(
+    labelCopies,
+    [],
+    `These views declare their own "Not observed" string instead of importing NOT_OBSERVED_LABEL:\n${labelCopies.join("\n")}`
+  );
+});
+
+test("an unobserved routing counter is never rendered as a zero", () => {
+  // The Runtime omits a concurrency field it has no evidence for. Printing `0`
+  // there claims an observed idle state that was never measured -- and it is
+  // the claim an operator acts on, because "0 active subagent threads" reads as
+  // a healthy router. The sibling field on the same panel already said "Not
+  // observed" for the same missing block, so the page contradicted itself
+  // between two adjacent facts.
+  const withoutRouting = renderToStaticMarkup(
+    React.createElement(AgentDetailView, { agent: CONFIGURED_AGENT })
+  );
+  // `CONFIGURED_AGENT` carries no routing block at all.
+  assert.ok(
+    withoutRouting.includes("Active subagent threads"),
+    `the panel must still render the fact, got: ${withoutRouting}`
+  );
+  assert.ok(
+    withoutRouting.includes("Not observed"),
+    `an absent routing block must read as not observed, got: ${withoutRouting}`
+  );
+  // The specific defect: the value cell said zero.
+  const threadRow = withoutRouting.match(
+    /Active subagent threads[\s\S]{0,400}?<\/dd>/
+  );
+  assert.ok(
+    threadRow !== null,
+    `expected a thread row, got: ${withoutRouting}`
+  );
+  assert.doesNotMatch(
+    threadRow[0],
+    />0</,
+    `an unobserved thread count must not render as 0, got: ${threadRow[0]}`
+  );
+});
+
 test("nothing truncates text it cannot give back", () => {
   // Truncation is not a display choice, it is a deletion: after `truncate`,
   // the first twenty pixels are the only copy of the value on the page unless
