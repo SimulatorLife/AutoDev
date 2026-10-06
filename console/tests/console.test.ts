@@ -1722,7 +1722,14 @@ test("DataTable keeps a truncated cell's full value reachable, whatever it is bu
         "a",
         { href: "/mcps/codegraphcontext", className: "font-mono" },
         r.v
-      )
+      ),
+    // A component whose visible text arrives as a `label` prop rather than as
+    // children, which is how `StatusBadge` is written. Reading children alone
+    // found nothing here, so the cell got no title -- the same hole the rule
+    // exists to close, one level deeper. This is the shape the /mcps "Not
+    // observed" pills take.
+    (r: { v: string }) =>
+      React.createElement(StatusBadge, { status: "not-observed", label: r.v })
   ]) {
     const cut = renderToStaticMarkup(
       React.createElement<DataTableProps<{ v: string }>>(DataTable, {

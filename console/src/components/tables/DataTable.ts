@@ -210,13 +210,29 @@ function truncatingCellTitle(
  * Elements contribute their children and nothing else, so a cell's title says
  * what the cell shows rather than describing it. Whitespace runs collapse so a
  * chip row does not become a tooltip full of line breaks.
+ *
+ * The one exception is an element whose visible text arrives as a `label` prop
+ * rather than as children. `StatusBadge` is written that way -- `label` is both
+ * the word it renders and the accessible name -- so reading children alone found
+ * nothing in a badge cell and the cell got no title at all, which is the same
+ * hole this function exists to close, one level deeper. `label` is read
+ * specifically rather than scanning every prop: it is the Console's one
+ * convention for "this is the text I show", it is the only prop `StatusBadge`
+ * and `Chip` use for it, and a general prop scan would eventually pick up a
+ * `title` or a `href` and describe a cell with something other than its value.
  */
 function nodeText(node: React.ReactNode): string {
   if (typeof node === "string") return node;
   if (typeof node === "number") return String(node);
   if (Array.isArray(node)) return node.map(nodeText).join(" ");
   if (React.isValidElement(node)) {
-    return nodeText((node.props as { children?: React.ReactNode }).children);
+    const props = node.props as {
+      children?: React.ReactNode;
+      label?: unknown;
+    };
+    const children = nodeText(props.children);
+    if (children !== "") return children;
+    return typeof props.label === "string" ? props.label : "";
   }
   return "";
 }

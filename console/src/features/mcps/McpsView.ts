@@ -79,7 +79,14 @@ export function McpsView({
     {
       id: "default-state",
       header: "Default State",
-      weight: 152,
+      // Sized for the badge, not for the header. "Default State" is the
+      // longest header in the table and it still fitted at 152, but the column
+      // holds a `StatusBadge` and the longest label that badge ever carries is
+      // "Not observed" -- status dot, rounded padding and all, 117px. At 152 the
+      // cell granted 109, so every not-observed server's pill was clipped 8px
+      // at its right edge on every viewport up to 768. A header-width check
+      // cannot see this: the header was never the problem.
+      weight: 176,
       cell: (server) =>
         React.createElement(StatusBadge, {
           status: server.enabled === null ? NOT_OBSERVED_STATUS : "configured",
