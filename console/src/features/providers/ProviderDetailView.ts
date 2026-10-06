@@ -59,7 +59,7 @@ function RolesPanel({
     ),
     React.createElement(
       DetailGrid,
-      { columns: 2, label: "Role enablement" },
+      { columns: 2 },
       ...(["orchestrator", "subagent"] as const).map((role) => {
         const entry = provider.roles[role];
         return React.createElement(
@@ -283,7 +283,7 @@ function RoutePanel({
     ),
     React.createElement(
       DetailGrid,
-      { columns: 2, label: "Route and credential" },
+      { columns: 2 },
       React.createElement(
         DetailValue,
         { label: "Base URL" },
@@ -347,7 +347,7 @@ function HealthPanel({
     heading,
     React.createElement(
       DetailGrid,
-      { columns: 4, label: "Provider summary" },
+      { columns: 4 },
       React.createElement(
         DetailValue,
         { label: "State" },

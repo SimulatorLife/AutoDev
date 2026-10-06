@@ -7005,6 +7005,47 @@ test("the monospace family has one spelling per role", () => {
   );
 });
 
+test("a labelled-fact list is named only when its section does not already name it", () => {
+  // `DetailGrid` carried a required `label`, and every site supplied one -- so
+  // a `<dl>` inside a section whose `<h3>` already read "Role enablement" also
+  // announced "Role enablement", and one under "Concurrency & Routing Limits"
+  // announced "Runtime routing limits". Two problems in one: the region speaks
+  // twice on the way in, and where the two wordings differed the page gives one
+  // region two names, so a reader has to work out which is the heading.
+  //
+  // `label` is now optional, and the rule is that a grid inside a headed
+  // section has none. The agent detail's configuration grid is the one place it
+  // stands alone, directly under the page header with no section of its own, and
+  // keeps its name.
+  const detail = renderToStaticMarkup(
+    React.createElement(AgentDetailView, { agent: CONFIGURED_AGENT })
+  );
+  const grids = Array.from(detail.matchAll(/<dl[^>]*>/g), (m) => m[0]);
+  assert.ok(grids.length > 0, `expected labelled-fact lists, got: ${detail}`);
+
+  const labelled = grids.filter((tag) => tag.includes("aria-label"));
+  // Exactly one: the configuration grid, which stands alone under the page
+  // header with no section of its own. Every other list sits inside a section
+  // already named by its heading, so naming it again is the double announcement.
+  assert.deepEqual(
+    labelled.map((tag) => /aria-label="([^"]*)"/.exec(tag)?.[1]),
+    ["Agent configuration"],
+    `only the grid with no section heading of its own may be named, got: ${labelled.join(" | ")}`
+  );
+
+  // The routing grid sits under a heading that already names it, so the two
+  // must not disagree: it is unnamed rather than renamed.
+  const routing = detail.slice(
+    detail.indexOf("Concurrency"),
+    detail.indexOf("Concurrency") + 1200
+  );
+  assert.doesNotMatch(
+    routing,
+    /<dl[^>]*aria-label=/,
+    `the routing grid repeats its section heading as a label, got: ${routing}`
+  );
+});
+
 test("nothing truncates text it cannot give back", () => {
   // Truncation is not a display choice, it is a deletion: after `truncate`,
   // the first twenty pixels are the only copy of the value on the page unless

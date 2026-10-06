@@ -76,11 +76,19 @@ export function StatGrid({
 
 export interface DetailGridProps extends GridRowProps {
   /**
-   * Accessible name for the list. A `<dl>` of related facts is a group, and
-   * without a name several of them on one page are indistinguishable to anyone
-   * navigating by landmark.
+   * Accessible name, for the rare grid that is not already inside a named
+   * section.
+   *
+   * A `<dl>` does not need a name to be usable, and giving it one when its
+   * section already carries a heading makes the region announce itself twice:
+   * the heading names it on the way in, then the list announces the same thing
+   * again. It is worse than redundant when the two wordings differ, because the
+   * page then gives one region two names and a reader has to work out which is
+   * the heading. So this is optional by design -- omit it wherever the
+   * enclosing `<section>` has an `<h2>`/`<h3>` naming the same facts, and supply
+   * it only when the grid stands alone.
    */
-  readonly label: string;
+  readonly label?: string | undefined;
   /**
    * Spacing relative to whatever precedes the grid. The column ladder is
    * shared and not overridable -- that is the whole point -- but how far a
@@ -106,7 +114,7 @@ export function DetailGrid({
     "dl",
     {
       className: `${gridRowClass(columns)}${className === undefined ? "" : ` ${className}`}`,
-      "aria-label": label,
+      ...(label === undefined ? {} : { "aria-label": label }),
       "data-detail-grid": String(columns)
     },
     children

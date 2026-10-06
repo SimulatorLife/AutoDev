@@ -184,7 +184,7 @@ export function AgentDetailView({
       ),
       React.createElement(
         DetailGrid,
-        { columns: 3, label: "Runtime routing limits" },
+        { columns: 3 },
         React.createElement(
           DetailValue,
           { label: "Role execution kind" },

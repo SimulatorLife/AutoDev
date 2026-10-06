@@ -212,7 +212,7 @@ export function AgentsView({
           )
         : React.createElement(
             DetailGrid,
-            { columns: 4, label: "Router runtime" },
+            { columns: 4 },
             React.createElement(
               DetailValue,
               {

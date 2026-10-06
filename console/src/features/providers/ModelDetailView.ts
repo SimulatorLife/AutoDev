@@ -120,7 +120,7 @@ export function ModelDetailView({
       // enablement converge" stay two independently evidenced statements.
       React.createElement(
         DetailGrid,
-        { columns: 2, label: "Enablement convergence", className: "mt-4" },
+        { columns: 2, className: "mt-4" },
         React.createElement(
           DetailValue,
           { label: "Convergence" },
@@ -149,7 +149,7 @@ export function ModelDetailView({
       ),
       React.createElement(
         DetailGrid,
-        { columns: 2, label: "Model routing" },
+        { columns: 2 },
         React.createElement(
           DetailValue,
           { label: "Provider" },
