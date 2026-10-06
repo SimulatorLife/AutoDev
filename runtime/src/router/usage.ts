@@ -13,6 +13,22 @@ type LiveAgentActivity = ReturnType<AgentActivityTracker["listLive"]>[number];
 
 export const UNATTRIBUTED_DIMENSION = "unattributed";
 export const MAX_UNKNOWN_WORKSPACE_IDS = 100;
+
+/**
+ * Records `id` as the most recent entry, dropping the oldest beyond `limit`.
+ *
+ * This is the retention policy for the bounded sample of ids the router could
+ * not attribute, which is an operator-visible diagnostic: the newest ids are
+ * the useful ones, and the ring must not grow with the number of unknown
+ * workspaces. Re-recording an id moves it to the newest position rather than
+ * duplicating it.
+ */
+export function rememberRecentId<T>(ids: Set<T>, id: T, limit: number): void {
+  ids.delete(id);
+  ids.add(id);
+  for (const oldest of [...ids].slice(0, Math.max(0, ids.size - limit)))
+    ids.delete(oldest);
+}
 const MAX_ACTIVE_USAGE_SUBJECTS = 4096;
 const STRING_COLLATOR = new Intl.Collator();
 
@@ -1069,21 +1085,11 @@ export class UsageTracker {
         this.attributionDiagnostics.byReason[reason] += 1;
       }
       if (unknownWorkspaceId) {
-        this.attributionDiagnostics.unknownWorkspaceIds.delete(
-          unknownWorkspaceId
-        );
-        this.attributionDiagnostics.unknownWorkspaceIds.add(unknownWorkspaceId);
-        while (
-          this.attributionDiagnostics.unknownWorkspaceIds.size >
+        rememberRecentId(
+          this.attributionDiagnostics.unknownWorkspaceIds,
+          unknownWorkspaceId,
           MAX_UNKNOWN_WORKSPACE_IDS
-        ) {
-          const oldest = this.attributionDiagnostics.unknownWorkspaceIds
-            .values()
-            .next().value;
-          if (oldest !== undefined) {
-            this.attributionDiagnostics.unknownWorkspaceIds.delete(oldest);
-          }
-        }
+        );
       }
     }
   }

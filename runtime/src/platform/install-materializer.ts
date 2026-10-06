@@ -61,6 +61,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/router/subagents.ts",
   "runtime/src/router/metric-label.ts",
   "runtime/src/router/usage.ts",
+  "runtime/src/router/workspace-attribution.ts",
   "runtime/src/router/otel.ts",
   "runtime/src/router/proxy.ts",
   "runtime/src/router/http.ts",

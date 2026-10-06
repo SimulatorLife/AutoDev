@@ -7,6 +7,7 @@ import {
   getDefaultUsageTracker,
   MAX_UNKNOWN_WORKSPACE_IDS,
   readNamedAttribute,
+  rememberRecentId,
   safeAgentIdentity,
   safePrivacyWorkspace,
   safeWorkspaceId,
@@ -16,6 +17,10 @@ import {
   UNATTRIBUTED_DIMENSION,
   type UsageTracker
 } from "./usage.ts";
+import {
+  evaluateWorkspaceAttribution,
+  type WorkspaceAttributionVerdict
+} from "./workspace-attribution.ts";
 
 export const OTEL_HEALTH_TTL_MS_DEFAULT = 120_000;
 export const OTEL_HEALTH_TTL_MS = Number.parseInt(
@@ -3167,105 +3172,64 @@ export class OtelTracker {
     }
   }
 
-  private isWorkspaceAmbiguous(
-    dp: { id: string | null; ambiguous: boolean },
-    resource: { id: string | null; ambiguous: boolean },
-    dpId: string | null,
-    resourceId: string | null
-  ): boolean {
-    return (
-      dp.ambiguous ||
-      resource.ambiguous ||
-      (dpId !== null && resourceId !== null && dpId !== resourceId)
-    );
-  }
-
-  private recordUnattributedReason(
-    record: boolean,
-    reason: "ambiguous_resource" | "missing_workspace" | "unknown_workspace_id"
+  /**
+   * Applies a verdict from `evaluateWorkspaceAttribution`.
+   *
+   * This is the whole mechanism half of attribution: the evaluator has already
+   * decided, and the only remaining questions are whether this observation is
+   * the one that counts, and which counters that maps to.
+   */
+  private recordWorkspaceAttribution(
+    verdict: WorkspaceAttributionVerdict,
+    recordDiagnostic: boolean
   ): void {
-    if (!record) return;
-    this.usageTracker.attributionDiagnostics.total += 1;
-    this.usageTracker.attributionDiagnostics.unattributed += 1;
-    this.usageTracker.attributionDiagnostics.byReason[reason] += 1;
-  }
-
-  private rememberUnknownWorkspaceId(workspaceId: string): void {
-    const ids = this.usageTracker.attributionDiagnostics.unknownWorkspaceIds;
-    ids.delete(workspaceId);
-    ids.add(workspaceId);
-    while (ids.size > MAX_UNKNOWN_WORKSPACE_IDS) {
-      const oldest = ids.values().next().value;
-      if (oldest === undefined) break;
-      ids.delete(oldest);
+    if (recordDiagnostic) {
+      const diagnostics = this.usageTracker.attributionDiagnostics;
+      diagnostics.total += 1;
+      if (verdict.reason) {
+        diagnostics.unattributed += 1;
+        diagnostics.byReason[verdict.reason] += 1;
+      } else {
+        diagnostics.attributed += 1;
+        if (verdict.source) diagnostics.bySource[verdict.source] += 1;
+      }
     }
+    // The unknown-id ring is a bounded sample of what the router could not
+    // attribute, so it follows every observation rather than only the counted
+    // ones; duplicates of an identity still tell us which ids are unknown.
+    if (verdict.reason === "unknown_workspace_id" && verdict.workspaceId)
+      rememberRecentId(
+        this.usageTracker.attributionDiagnostics.unknownWorkspaceIds,
+        verdict.workspaceId,
+        MAX_UNKNOWN_WORKSPACE_IDS
+      );
   }
 
+  /**
+   * Which workspace a datapoint belongs to, and -- for the caller -- what that
+   * verdict should record.
+   *
+   * The rule lives in `evaluateWorkspaceAttribution` and reads the registry as
+   * read-only snapshots of this tracker's own state. Only the side effects are
+   * here.
+   */
   resolveDatapointWorkspace(
     dataPointAttributes: OtelAttributeMap,
     resourceAttributes: OtelAttributeMap = {},
     diagnosticIdentity: string | null = null
-  ): {
-    status: "attributed" | "unattributed";
-    workspaceKey: string | null;
-    workspaceId: string | null;
-    source: "datapoint" | "resource" | null;
-    reason?: string;
-  } {
-    const record = this.firstOtelRecordObservation(
+  ): WorkspaceAttributionVerdict {
+    const recordDiagnostic = this.firstOtelRecordObservation(
       this.telemetry.recordIdentities.datapoints,
       diagnosticIdentity
     );
-    const dp = extractWorkspaceIdWithAmbiguity(dataPointAttributes);
-    const resource = extractWorkspaceIdWithAmbiguity(resourceAttributes);
-    const dpId = dp.id ? safeWorkspaceId(dp.id) : null;
-    const resourceId = resource.id ? safeWorkspaceId(resource.id) : null;
-    if (this.isWorkspaceAmbiguous(dp, resource, dpId, resourceId)) {
-      this.recordUnattributedReason(record, "ambiguous_resource");
-      return {
-        status: "unattributed",
-        workspaceKey: null,
-        workspaceId: null,
-        reason: "ambiguous_resource",
-        source: dp.id ? "datapoint" : "resource"
-      };
-    }
-
-    const workspaceId = dpId ?? resourceId;
-    const source = dpId ? "datapoint" : resourceId ? "resource" : null;
-    if (!workspaceId) {
-      this.recordUnattributedReason(record, "missing_workspace");
-      return {
-        status: "unattributed",
-        workspaceKey: null,
-        workspaceId: null,
-        reason: "missing_workspace",
-        source: null
-      };
-    }
-
-    const workspaceKey = this.usageTracker.workspaceIdConflicts.has(workspaceId)
-      ? null
-      : this.usageTracker.workspaceIdRegistry.get(workspaceId);
-    if (workspaceKey) {
-      if (record) {
-        this.usageTracker.attributionDiagnostics.total += 1;
-        this.usageTracker.attributionDiagnostics.attributed += 1;
-        if (source)
-          this.usageTracker.attributionDiagnostics.bySource[source] += 1;
-      }
-      return { status: "attributed", workspaceKey, workspaceId, source };
-    }
-
-    this.recordUnattributedReason(record, "unknown_workspace_id");
-    this.rememberUnknownWorkspaceId(workspaceId);
-    return {
-      status: "unattributed",
-      workspaceKey: null,
-      workspaceId,
-      reason: "unknown_workspace_id",
-      source
-    };
+    const verdict = evaluateWorkspaceAttribution({
+      dataPointAttributes,
+      resourceAttributes,
+      registeredKeys: this.usageTracker.workspaceIdRegistry,
+      conflictedIds: this.usageTracker.workspaceIdConflicts
+    });
+    this.recordWorkspaceAttribution(verdict, recordDiagnostic);
+    return verdict;
   }
 
   skillBucket(name: string): SkillInjectedSkillBucket {

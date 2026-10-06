@@ -71,6 +71,7 @@
     "./router/telemetry": "./src/router/telemetry.ts",
     "./router/tool-call-ownership": "./src/router/tool-call-ownership/index.ts",
     "./router/usage": "./src/router/usage.ts",
+    "./router/workspace-attribution": "./src/router/workspace-attribution.ts",
     "./shared/agent-context-headers": "./src/shared/agent-context-headers.ts",
     "./shared/env": "./src/shared/env.ts",
     "./shared/error-message": "./src/shared/error-message.ts",
