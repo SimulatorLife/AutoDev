@@ -140,6 +140,39 @@ function scrub(value: any): any {
   return value;
 }
 
+/**
+ * Wait until this request's telemetry has been reported, and return it.
+ *
+ * The bridge reports from its own process, so the events only become visible
+ * after that POST completes a localhost round trip. Sleeping a fixed interval
+ * and then asserting made the result depend on how busy the machine was: with
+ * a receiver that took longer than the sleep, the assertion ran against a
+ * half-empty array and reported a telemetry type as missing. Polling for the
+ * condition instead waits exactly as long as the report needs and no longer,
+ * while the bound still returns rather than hanging if the report never comes.
+ */
+async function waitForTelemetry(
+  telemetry: { events: JsonRecord[] },
+  requestId: string,
+  expectedTypes: readonly string[],
+  timeoutMs = 5000
+): Promise<JsonRecord[]> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const reported = telemetry.events.filter(
+      (event) => event.requestId === requestId
+    );
+    if (
+      expectedTypes.every((type) =>
+        reported.some((event) => event.type === type)
+      )
+    )
+      return reported;
+    if (Date.now() >= deadline) return reported;
+    await delay(5);
+  }
+}
+
 async function startTelemetryServer(): Promise<{
   events: JsonRecord[];
   server: any;
@@ -362,9 +395,10 @@ async function runStreamingCase(
       const created = createdEvent.data.response;
       assert.equal(created.id, completed.id, `${name}: response id continuity`);
     }
-    await delay(150);
-    const reported = telemetry.events.filter(
-      (event) => event.requestId === requestId
+    const reported = await waitForTelemetry(
+      telemetry,
+      requestId,
+      item.expected.telemetryTypes ?? []
     );
     for (const type of item.expected.telemetryTypes ?? [])
       assert.ok(
@@ -586,43 +620,49 @@ async function runRejectedModelCase(
   }
 }
 
-test("Claude Responses contract fixture is exercised through the offline proxy boundary", async () => {
-  assert.equal(contract.schema, "autodev-claude-responses-contract-v1");
-  const before = await readFile(CONTRACT_PATH);
-  const telemetry = await startTelemetryServer();
-  try {
-    const streamingCases = [
-      "normal_stream",
-      "thinking_before_answer",
-      "web_research_progress",
-      "rejected_tool_attempt",
-      "provider_limit_incomplete",
-      "rate_limit_warning_allowed"
-    ];
-    for (const name of streamingCases) {
-      const entry = contract.cases[name];
-      assert.ok(entry, `${name}: contract case must exist`);
-      await runStreamingCase(name, entry, telemetry);
+test(
+  "Claude Responses contract fixture is exercised through the offline proxy boundary",
+  // Every case starts a bridge process and waits on it. Without a bound, one
+  // that never reports would hang the suite instead of failing it.
+  { timeout: 120_000 },
+  async () => {
+    assert.equal(contract.schema, "autodev-claude-responses-contract-v1");
+    const before = await readFile(CONTRACT_PATH);
+    const telemetry = await startTelemetryServer();
+    try {
+      const streamingCases = [
+        "normal_stream",
+        "thinking_before_answer",
+        "web_research_progress",
+        "rejected_tool_attempt",
+        "provider_limit_incomplete",
+        "rate_limit_warning_allowed"
+      ];
+      for (const name of streamingCases) {
+        const entry = contract.cases[name];
+        assert.ok(entry, `${name}: contract case must exist`);
+        await runStreamingCase(name, entry, telemetry);
+      }
+      const authFailureCase = contract.cases.auth_token_failure;
+      const oauthMissingCase = contract.cases.oauth_token_missing;
+      assert.ok(
+        authFailureCase && oauthMissingCase,
+        "authentication contract cases must exist"
+      );
+      await runAuthFailureCase("auth_token_failure", authFailureCase);
+      for (const name of ["model_not_found_by_cli", "model_needs_newer_cli"]) {
+        const entry = contract.cases[name];
+        assert.ok(entry, `${name}: contract case must exist`);
+        await runRejectedModelCase(name, entry);
+      }
+      await runOauthMissingCase("oauth_token_missing", oauthMissingCase);
+    } finally {
+      await new Promise((resolve) => telemetry.server.close(resolve));
     }
-    const authFailureCase = contract.cases.auth_token_failure;
-    const oauthMissingCase = contract.cases.oauth_token_missing;
-    assert.ok(
-      authFailureCase && oauthMissingCase,
-      "authentication contract cases must exist"
+    assert.deepEqual(
+      await readFile(CONTRACT_PATH),
+      before,
+      "contract fixture must not be mutated"
     );
-    await runAuthFailureCase("auth_token_failure", authFailureCase);
-    for (const name of ["model_not_found_by_cli", "model_needs_newer_cli"]) {
-      const entry = contract.cases[name];
-      assert.ok(entry, `${name}: contract case must exist`);
-      await runRejectedModelCase(name, entry);
-    }
-    await runOauthMissingCase("oauth_token_missing", oauthMissingCase);
-  } finally {
-    await new Promise((resolve) => telemetry.server.close(resolve));
   }
-  assert.deepEqual(
-    await readFile(CONTRACT_PATH),
-    before,
-    "contract fixture must not be mutated"
-  );
-});
+);
