@@ -12,6 +12,7 @@ import path from "node:path";
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
+import { httpHealthProbe } from "./health-probe.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 import { waitForProbe } from "./wait-for-probe.ts";
 
@@ -102,16 +103,7 @@ function defaultDeps(options: ClaudeEnsureOptions): ClaudeEnsureDeps {
   const endpoint = `http://${options.host}:${options.port}/health/liveliness`;
   return {
     launchd: new LaunchdClient(),
-    probe: async () => {
-      try {
-        const response = await fetch(endpoint, {
-          signal: AbortSignal.timeout(1000)
-        });
-        return response.ok;
-      } catch {
-        return false;
-      }
-    },
+    probe: httpHealthProbe(endpoint),
     sleep: (ms) =>
       new Promise((resolve) => {
         setTimeout(resolve, ms);

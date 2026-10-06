@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
+import { httpHealthProbe } from "./health-probe.ts";
 import { resolveServiceNode } from "./host-arch.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 import { waitForProbe } from "./wait-for-probe.ts";
@@ -80,17 +81,7 @@ function defaultDeps(options: ConsoleEnsureOptions): ConsoleEnsureDeps {
     launchd: new LaunchdClient(),
     launchdAvailable: () =>
       existsSync("/bin/launchctl") || existsSync("/usr/bin/launchctl"),
-    probe: async () => {
-      try {
-        const response = await fetch(endpoint, {
-          signal: AbortSignal.timeout(1000),
-          cache: "no-store"
-        });
-        return response.ok;
-      } catch {
-        return false;
-      }
-    },
+    probe: httpHealthProbe(endpoint, { cache: "no-store" }),
     sleep: (ms) =>
       new Promise((resolve) => {
         setTimeout(resolve, ms);

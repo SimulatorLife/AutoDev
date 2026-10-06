@@ -4,6 +4,7 @@ export * from "./claude-ensure.ts";
 export * from "./code-graph-ensure.ts";
 export * from "./copilot-ensure.ts";
 export * from "./dependencies.ts";
+export * from "./health-probe.ts";
 export * from "./host-arch.ts";
 export * from "./install-check.ts";
 export * from "./install-command.ts";

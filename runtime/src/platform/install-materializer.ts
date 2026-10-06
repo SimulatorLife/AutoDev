@@ -102,6 +102,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/wait-for-probe.ts",
   "runtime/src/platform/install-state.ts",
   "runtime/src/platform/dependencies.ts",
+  "runtime/src/platform/health-probe.ts",
   "runtime/src/platform/install-materializer.ts",
   "runtime/src/platform/install-command.ts",
   "runtime/src/platform/install-check.ts",

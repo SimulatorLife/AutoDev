@@ -13,6 +13,7 @@ import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/e
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { MINIMAX_MODEL_PATTERN } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
+import { httpHealthProbe } from "./health-probe.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 import { waitForProbe } from "./wait-for-probe.ts";
 
@@ -102,16 +103,7 @@ function defaultDeps(options: MiniMaxEnsureOptions): MiniMaxEnsureDeps {
   const endpoint = `http://${options.host}:${options.port}/health`;
   return {
     launchd: new LaunchdClient(),
-    probe: async () => {
-      try {
-        const response = await fetch(endpoint, {
-          signal: AbortSignal.timeout(1000)
-        });
-        return response.ok;
-      } catch {
-        return false;
-      }
-    },
+    probe: httpHealthProbe(endpoint),
     sleep: (ms) =>
       new Promise((resolve) => {
         setTimeout(resolve, ms);

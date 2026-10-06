@@ -17,6 +17,7 @@ import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/e
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { ensureCopilotProxy } from "./copilot-ensure.ts";
+import { httpHealthProbe } from "./health-probe.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 
 export interface RouterEnsurePaths {
@@ -234,16 +235,7 @@ export function createDefaultRouterEnsureDeps(
   const probeUrl = `http://${options.routerHost}:${options.routerPort}/health/liveliness`;
   return {
     launchd: new LaunchdClient(),
-    probe: async () => {
-      try {
-        const res = await fetch(probeUrl, {
-          signal: AbortSignal.timeout(1000)
-        });
-        return res.ok;
-      } catch {
-        return false;
-      }
-    },
+    probe: httpHealthProbe(probeUrl),
     pidExists: pidAlive,
     pidCommandLine: readPsCommandLine,
     listenerPid: readListenerPid,

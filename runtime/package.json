@@ -25,6 +25,7 @@
     "./platform/code-graph-ensure": "./src/platform/code-graph-ensure.ts",
     "./platform/copilot-ensure": "./src/platform/copilot-ensure.ts",
     "./platform/dependencies": "./src/platform/dependencies.ts",
+    "./platform/health-probe": "./src/platform/health-probe.ts",
     "./platform/host-arch": "./src/platform/host-arch.ts",
     "./platform/install-check": "./src/platform/install-check.ts",
     "./platform/install-command": "./src/platform/install-command.ts",
