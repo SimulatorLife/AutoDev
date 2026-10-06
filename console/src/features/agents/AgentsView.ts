@@ -7,6 +7,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { PageBody } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import {
   DetailGrid,
@@ -135,8 +136,8 @@ export function AgentsView({
   ];
 
   return React.createElement(
-    "div",
-    { className: "flex flex-col gap-6", "data-feature": "agents" },
+    PageBody,
+    { feature: "agents" },
     React.createElement(
       StatGrid,
       { columns: 4 },

@@ -13,6 +13,7 @@ import {
   CALLOUT_ERROR_CLASS,
   CALLOUT_WARNING_CLASS
 } from "../../components/layout/Callout.ts";
+import { PageBody } from "../../components/layout/PageBody.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import {
   NOT_OBSERVED_LABEL,
@@ -365,13 +366,14 @@ export function ToolsView({
   ];
 
   return React.createElement(
-    "div",
+    PageBody,
     {
-      className: "flex flex-col gap-6",
-      "data-feature": "tools",
-      "data-tools-coverage": coverage,
-      "data-tools-validity": validity,
-      "data-tools-observed": validity === "valid" ? "true" : "false"
+      feature: "tools",
+      attributes: {
+        "data-tools-coverage": coverage,
+        "data-tools-validity": validity,
+        "data-tools-observed": validity === "valid" ? "true" : "false"
+      }
     },
     React.createElement(
       StatGrid,

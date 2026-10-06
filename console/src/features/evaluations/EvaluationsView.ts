@@ -9,6 +9,7 @@ import React from "react";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { PageBody } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import {
@@ -404,12 +405,13 @@ export function EvaluationsView({
     : null;
 
   return React.createElement(
-    "div",
+    PageBody,
     {
-      className: "flex flex-col gap-6",
-      "data-feature": "evaluations",
-      "data-evaluation-pass-rate-observed":
-        observedOutcomes > 0 ? "true" : "false"
+      feature: "evaluations",
+      attributes: {
+        "data-evaluation-pass-rate-observed":
+          observedOutcomes > 0 ? "true" : "false"
+      }
     },
     filteredPromptNotice,
     traceLookup ? renderTraceLookup(traceLookup, promptFilter) : null,

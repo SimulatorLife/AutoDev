@@ -13,6 +13,7 @@ import {
   SelectField
 } from "../../components/forms/SelectField.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { PageBody } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { gridRowClass, StatGrid } from "../../components/panels/DetailGrid.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
@@ -156,11 +157,10 @@ export function UsageView({
     Object.values(safeMetrics).some((value) => value !== null);
 
   return React.createElement(
-    "div",
+    PageBody,
     {
-      className: "flex flex-col gap-6",
-      "data-feature": "usage",
-      "data-usage-observed": observed ? "true" : "false"
+      feature: "usage",
+      attributes: { "data-usage-observed": observed ? "true" : "false" }
     },
     React.createElement(
       FilterBar,

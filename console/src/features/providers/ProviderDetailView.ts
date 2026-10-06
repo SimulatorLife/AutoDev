@@ -11,6 +11,7 @@ import {
   EntityTitle,
   SECTION_HEADING_CLASS
 } from "../../components/layout/Heading.ts";
+import { PageBody } from "../../components/layout/PageBody.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
@@ -434,8 +435,8 @@ export function ProviderDetailView({
 }: ProviderDetailViewProps): React.JSX.Element {
   const returnTo = providerPath(provider.id);
   return React.createElement(
-    "div",
-    { className: "flex flex-col gap-6", "data-feature": "provider-detail" },
+    PageBody,
+    { feature: "provider-detail" },
     React.createElement(
       "section",
       { className: DETAIL_PANEL_CLASS },

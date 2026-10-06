@@ -11,6 +11,7 @@ import {
   type SelectOption
 } from "../../components/forms/SelectField.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { PageBody } from "../../components/layout/PageBody.ts";
 import { DetailDrawer } from "../../components/panels/DetailDrawer.ts";
 import { gridRowClass } from "../../components/panels/DetailGrid.ts";
 import {
@@ -172,8 +173,8 @@ export function MemoryExperiencesView({
   ];
 
   return React.createElement(
-    "div",
-    { className: "flex flex-col gap-6", "data-feature": "memory-experiences" },
+    PageBody,
+    { feature: "memory-experiences" },
     // Filter controls
     React.createElement(
       FilterBar,

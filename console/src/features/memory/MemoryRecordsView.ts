@@ -15,6 +15,7 @@ import {
 import { Button } from "../../components/forms/Button.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { PageBody } from "../../components/layout/PageBody.ts";
 import { DetailDrawer } from "../../components/panels/DetailDrawer.ts";
 import { gridRowClass } from "../../components/panels/DetailGrid.ts";
 import {
@@ -199,8 +200,8 @@ export function MemoryRecordsView({
   ];
 
   return React.createElement(
-    "div",
-    { className: "flex flex-col gap-6", "data-feature": "memory-records" },
+    PageBody,
+    { feature: "memory-records" },
     // Filter controls
     React.createElement(
       FilterBar,

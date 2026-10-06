@@ -3,6 +3,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { PageBody } from "../../components/layout/PageBody.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
@@ -101,11 +102,10 @@ export function WorkspacesView({
   ];
 
   return React.createElement(
-    "div",
+    PageBody,
     {
-      className: "flex flex-col gap-6",
-      "data-feature": "workspaces",
-      "data-workspace-availability-observed": "false"
+      feature: "workspaces",
+      attributes: { "data-workspace-availability-observed": "false" }
     },
     React.createElement(
       StatGrid,

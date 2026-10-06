@@ -6919,6 +6919,39 @@ test("an unobserved routing counter is never rendered as a zero", () => {
   );
 });
 
+test("one page rhythm: every view body stacks its sections through the shared class", () => {
+  // The target state asks for "a small number of consistent page templates",
+  // and this is the page template: a column of bordered panels at one spacing.
+  // It was written out by hand twenty-one times, which made the one spacing
+  // decision most likely to be adjusted across the product also the one with
+  // twenty-one chances to miss a site -- and a page whose sections sit closer
+  // together than its neighbour's reads as a different product rather than as
+  // a bug.
+  //
+  // The guard is scoped to `features/`, because `DetailDrawer` legitimately
+  // stacks at the same gap inside its own box and is not a page body.
+  const featuresDir = join(import.meta.dirname, "..", "src", "features");
+  const offenders: string[] = [];
+  for (const relative of readdirSync(featuresDir, { recursive: true })) {
+    const name = relative.toString();
+    const file = join(featuresDir, name);
+    if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
+    const source = readFileSync(file, "utf8");
+    // Only a literal `flex flex-col gap-6`; the shared constant and any other
+    // gap value are fine.
+    for (const m of source.matchAll(/"([^"]*flex flex-col gap-6[^"]*)"/g)) {
+      if (m[1] === "flex flex-col gap-6") {
+        offenders.push(`${name}: ${m[1]}`);
+      }
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `These views hand-write the page rhythm instead of using PageBody or PAGE_SECTION_STACK_CLASS:\n${offenders.join("\n")}`
+  );
+});
+
 test("nothing truncates text it cannot give back", () => {
   // Truncation is not a display choice, it is a deletion: after `truncate`,
   // the first twenty pixels are the only copy of the value on the page unless

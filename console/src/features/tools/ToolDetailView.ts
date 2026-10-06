@@ -15,6 +15,7 @@ import {
   EntityTitle,
   SECTION_HEADING_CLASS
 } from "../../components/layout/Heading.ts";
+import { PageBody } from "../../components/layout/PageBody.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { gridRowClass } from "../../components/panels/DetailGrid.ts";
@@ -315,13 +316,14 @@ export function ToolDetailView({
     ? `mcp__${tool.server}__${tool.name}`
     : tool.name;
   return React.createElement(
-    "div",
+    PageBody,
     {
-      className: "flex flex-col gap-6",
-      "data-feature": "tools-detail",
-      "data-tool-name": canonicalName,
-      "data-tools-coverage": coverage,
-      "data-tools-validity": validity
+      feature: "tools-detail",
+      attributes: {
+        "data-tool-name": canonicalName,
+        "data-tools-coverage": coverage,
+        "data-tools-validity": validity
+      }
     },
     React.createElement(Breadcrumbs, {
       items: [{ href: "/tools", label: "Tools" }, { label: canonicalName }]

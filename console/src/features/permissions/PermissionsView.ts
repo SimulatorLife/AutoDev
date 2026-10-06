@@ -6,6 +6,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { PageBody } from "../../components/layout/PageBody.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import { chipList } from "../../components/tables/Chips.ts";
@@ -83,8 +84,8 @@ export function PermissionsView({
   ];
 
   return React.createElement(
-    "div",
-    { className: "flex flex-col gap-6", "data-feature": "permissions" },
+    PageBody,
+    { feature: "permissions" },
     React.createElement(
       StatGrid,
       { columns: 4 },

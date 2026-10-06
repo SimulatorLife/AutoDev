@@ -9,6 +9,10 @@ import React from "react";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import {
+  PAGE_SECTION_STACK_CLASS,
+  PageBody
+} from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
@@ -367,7 +371,10 @@ function ProvidersTab({
   const healthObserved = records.every((provider) => provider.health !== null);
   return React.createElement(
     "div",
-    { className: "flex flex-col gap-6", "data-tab-panel": "providers" },
+    {
+      className: PAGE_SECTION_STACK_CLASS,
+      "data-tab-panel": "providers"
+    },
     React.createElement(
       StatGrid,
       { columns: 4 },
@@ -462,8 +469,8 @@ export function ProvidersView({
 }: ProvidersViewProps): React.JSX.Element {
   const tab = resolveActiveTabId(PROVIDERS_VIEW_TABS, activeTab, "providers");
   return React.createElement(
-    "div",
-    { className: "flex flex-col gap-6", "data-feature": "providers" },
+    PageBody,
+    { feature: "providers" },
     React.createElement(TabNav, {
       navLabel: "Providers views",
       basePath: PROVIDERS_PATH,

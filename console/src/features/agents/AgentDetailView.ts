@@ -11,6 +11,7 @@ import {
   EntityTitle,
   SECTION_HEADING_CLASS
 } from "../../components/layout/Heading.ts";
+import { PageBody } from "../../components/layout/PageBody.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
@@ -43,8 +44,8 @@ export function AgentDetailView({
   const isOrchestrator = agent.kind === "orchestrator";
 
   return React.createElement(
-    "div",
-    { className: "flex flex-col gap-6", "data-feature": "agent-detail" },
+    PageBody,
+    { feature: "agent-detail" },
     React.createElement(
       "section",
       {

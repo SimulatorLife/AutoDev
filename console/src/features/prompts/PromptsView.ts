@@ -3,6 +3,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { PageBody } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
@@ -142,14 +143,15 @@ export function PromptsView({
   ];
 
   return React.createElement(
-    "div",
+    PageBody,
     {
-      className: "flex flex-col gap-6",
-      "data-feature": "prompts",
-      "data-prompt-command-source":
-        commandSourceValidity === null
-          ? "not-observed"
-          : String(commandSourceValidity)
+      feature: "prompts",
+      attributes: {
+        "data-prompt-command-source":
+          commandSourceValidity === null
+            ? "not-observed"
+            : String(commandSourceValidity)
+      }
     },
     React.createElement(
       StatGrid,

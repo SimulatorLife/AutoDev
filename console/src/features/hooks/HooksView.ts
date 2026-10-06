@@ -3,6 +3,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { PageBody } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import {
@@ -28,8 +29,8 @@ export function HooksView({
         : "Invalid";
 
   return React.createElement(
-    "div",
-    { className: "flex flex-col gap-6", "data-feature": "hooks" },
+    PageBody,
+    { feature: "hooks" },
     React.createElement(
       StatGrid,
       { columns: 3 },
