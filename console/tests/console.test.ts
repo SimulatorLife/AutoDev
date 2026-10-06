@@ -92,7 +92,9 @@ import {
   fetchGithubWorkflows,
   fetchMemoryCohorts,
   fetchMemoryExperiences,
+  fetchMemoryRecord,
   fetchMemoryRecords,
+  fetchMemoryHistory,
   fetchModels,
   fetchPromptDetail,
   fetchPrompts,
@@ -102,6 +104,7 @@ import {
   fetchRuntime,
   fetchSkills,
   fetchTools,
+  fetchWorkspaces,
   readControlApiConfig
 } from "../src/lib/server/control-api.ts";
 import {
@@ -4168,6 +4171,91 @@ test("Agents responses fail closed rather than render an empty Configure surface
       JSON.stringify(broken)
     );
   }
+});
+
+test("Memory detail and the workspace catalog fail closed on unreadable responses", async () => {
+  const config = { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" };
+  const serve = (body: unknown) => ({
+    fetchImpl: async () => Response.json(body)
+  });
+  const workspaceId = "SimulatorLife/AutoDev";
+
+  const record = { schema: "autodev-memory-record-v1", memory: { id: "r1" } };
+  assert.equal(
+    (await fetchMemoryRecord("r1", workspaceId, config, serve(record))).kind,
+    "ok"
+  );
+  for (const broken of [
+    { schema: "autodev-memory-record-v0", memory: { id: "r1" } },
+    { schema: "autodev-memory-record-v1" },
+    { schema: "autodev-memory-record-v1", memory: "r1" }
+  ]) {
+    assert.equal(
+      (await fetchMemoryRecord("r1", workspaceId, config, serve(broken))).kind,
+      "invalid-response",
+      JSON.stringify(broken)
+    );
+  }
+
+  // A missing `transitions` list is not an empty history; it is an unreadable
+  // response, and rendering it as "no history" would be a false claim about a
+  // governed durable record.
+  const history = {
+    schema: "autodev-memory-history-v1",
+    memory: { id: "r1" },
+    transitions: []
+  };
+  assert.equal(
+    (await fetchMemoryHistory("r1", workspaceId, config, serve(history))).kind,
+    "ok"
+  );
+  for (const broken of [
+    { schema: "autodev-memory-history-v1", memory: { id: "r1" } },
+    { ...history, transitions: {} },
+    { ...history, memory: null }
+  ]) {
+    assert.equal(
+      (await fetchMemoryHistory("r1", workspaceId, config, serve(broken))).kind,
+      "invalid-response",
+      JSON.stringify(broken)
+    );
+  }
+
+  // The catalog scopes every Memory read, so an unreadable catalog must not
+  // reach the selector as "no workspaces are configured".
+  const catalog = {
+    schema: "autodev-control-workspaces-v1",
+    source: "config/workspaces.json",
+    readOnly: true,
+    catalogStatus: "valid",
+    totalWorkspaces: 1,
+    workspaces: [
+      { id: workspaceId, baseBranch: "main", enabled: true, agentRoles: null }
+    ]
+  };
+  assert.equal((await fetchWorkspaces(config, serve(catalog))).kind, "ok");
+  for (const broken of [
+    { ...catalog, schema: "autodev-control-workspaces-v0" },
+    { ...catalog, catalogStatus: "unknown" },
+    { ...catalog, workspaces: {} },
+    { ...catalog, workspaces: [{ id: workspaceId }] },
+    { ...catalog, workspaces: [{ ...catalog.workspaces[0], enabled: "yes" }] },
+    { ...catalog, workspaces: [{ ...catalog.workspaces[0], agentRoles: [1] }] }
+  ]) {
+    assert.equal(
+      (await fetchWorkspaces(config, serve(broken))).kind,
+      "invalid-response",
+      JSON.stringify(broken)
+    );
+  }
+
+  // An unavailable catalog is a legitimate observed state and must keep its
+  // own status rather than being flattened into an invalid response.
+  const unavailable = await fetchWorkspaces(
+    config,
+    serve({ ...catalog, catalogStatus: "unavailable", totalWorkspaces: null })
+  );
+  assert.equal(unavailable.kind, "ok");
 });
 
 test("ProvidersView puts each provider's role toggles in its own row", () => {
