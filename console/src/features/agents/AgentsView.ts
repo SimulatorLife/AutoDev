@@ -11,7 +11,8 @@ import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
   type ColumnDef,
-  DataTable
+  DataTable,
+  type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { AgentProviderSummary } from "./AgentProviderSummary.ts";
 
@@ -169,7 +170,7 @@ export function AgentsView({
         },
         "Configured Agents"
       ),
-      DataTable({
+      React.createElement<DataTableProps<AgentDefinition>>(DataTable, {
         data: agents,
         columns,
         keyExtractor: (agent: AgentDefinition) => agent.id

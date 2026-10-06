@@ -7,7 +7,8 @@ import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
-  DataTable
+  DataTable,
+  type DataTableProps
 } from "../../components/tables/DataTable.ts";
 
 /**
@@ -133,7 +134,7 @@ export function WorkspacesView({
         },
         "Configured Workspaces"
       ),
-      DataTable({
+      React.createElement<DataTableProps<WorkspaceEntry>>(DataTable, {
         data: workspaces,
         columns,
         keyExtractor: (w: WorkspaceEntry) => w.id,

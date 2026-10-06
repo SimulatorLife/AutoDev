@@ -13,7 +13,8 @@ import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
-  DataTable
+  DataTable,
+  type DataTableProps
 } from "../../components/tables/DataTable.ts";
 
 const NOT_OBSERVED_STATUS = "not-observed";
@@ -433,7 +434,7 @@ export function GithubView({
         },
         "Workflow Definitions"
       ),
-      DataTable({
+      React.createElement<DataTableProps<GithubWorkflowDefinition>>(DataTable, {
         data: workflows,
         columns,
         keyExtractor: (workflow: GithubWorkflowDefinition) => workflow.id,
@@ -451,7 +452,7 @@ export function GithubView({
             },
             "Recent Workflow Runs"
           ),
-          DataTable({
+          React.createElement<DataTableProps<GithubWorkflowRun>>(DataTable, {
             data: recentRuns,
             columns: runColumns,
             keyExtractor: (run: GithubWorkflowRun) => String(run.id),

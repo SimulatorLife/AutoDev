@@ -14,7 +14,8 @@ import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
-  DataTable
+  DataTable,
+  type DataTableProps
 } from "../../components/tables/DataTable.ts";
 
 const NOT_OBSERVED_LABEL = "Not observed";
@@ -253,7 +254,7 @@ function renderTraceLookup(
           )
         : null
     ),
-    DataTable({
+    React.createElement<DataTableProps<UsageTraceSpan>>(DataTable, {
       data: detail.spans,
       columns: traceColumns(promptFilter),
       keyExtractor: (span) => span.spanId,
@@ -425,7 +426,7 @@ export function EvaluationsView({
         },
         "Evaluation History"
       ),
-      DataTable({
+      React.createElement<DataTableProps<EvaluationResult>>(DataTable, {
         data: evaluations,
         columns,
         keyExtractor: (e: EvaluationResult) => e.id,

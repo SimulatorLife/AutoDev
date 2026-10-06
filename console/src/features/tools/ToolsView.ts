@@ -18,7 +18,8 @@ import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
-  DataTable
+  DataTable,
+  type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { toolId } from "./tool-identity.ts";
 
@@ -485,7 +486,7 @@ export function ToolsView({
         "View tool-call usage →"
       )
     ),
-    DataTable({
+    React.createElement<DataTableProps<ToolCatalogItem>>(DataTable, {
       data: filtered,
       columns,
       keyExtractor: (tool) => toolId(tool),

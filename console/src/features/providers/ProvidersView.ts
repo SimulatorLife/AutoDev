@@ -14,7 +14,8 @@ import { ControlFailureNotice } from "../../components/status/ControlFailureNoti
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
-  DataTable
+  DataTable,
+  type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import {
   resolveActiveTabId,
@@ -390,7 +391,7 @@ function ProvidersTab({
         { className: `mb-3 ${SECTION_HEADING_CLASS}` },
         "Providers"
       ),
-      DataTable({
+      React.createElement<DataTableProps<ControlApiProviderRecord>>(DataTable, {
         data: records,
         columns: providerColumns(providersPath("providers")),
         keyExtractor: (provider: ControlApiProviderRecord) => provider.id,
@@ -435,7 +436,7 @@ function ModelsTab({
         `Every model the routing configuration (${models.data.source}) maps a provider tier to. A disabled model is skipped for every tier it serves.`
       )
     ),
-    DataTable({
+    React.createElement<DataTableProps<ControlApiModelRecord>>(DataTable, {
       data: models.data.models,
       columns: modelColumns(providersPath("models")),
       keyExtractor: (model: ControlApiModelRecord) => model.id,

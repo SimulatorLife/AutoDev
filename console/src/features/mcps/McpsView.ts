@@ -7,7 +7,8 @@ import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
-  DataTable
+  DataTable,
+  type DataTableProps
 } from "../../components/tables/DataTable.ts";
 
 const NOT_OBSERVED_STATUS = "not-observed" as const;
@@ -193,7 +194,7 @@ export function McpsView({
             "RuleSync `.rulesync/mcp.jsonc` is invalid; no MCP configuration was projected."
           )
         : null,
-      DataTable({
+      React.createElement<DataTableProps<McpServerResource>>(DataTable, {
         data: servers,
         columns,
         keyExtractor: (server: McpServerResource) => server.name,

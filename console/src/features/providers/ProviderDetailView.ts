@@ -17,7 +17,8 @@ import { ControlFailureNotice } from "../../components/status/ControlFailureNoti
 import { ConvergenceBadge } from "../../components/status/ConvergenceBadge.ts";
 import {
   type ColumnDef,
-  DataTable
+  DataTable,
+  type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { ModelToggle, ProviderRoleToggle } from "./EnablementToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
@@ -189,7 +190,7 @@ function ModelsPanel({
     "section",
     { className: DETAIL_PANEL_CLASS, "data-section": "provider-models" },
     heading,
-    DataTable({
+    React.createElement<DataTableProps<ControlApiModelRecord>>(DataTable, {
       data: models,
       columns,
       keyExtractor: (model: ControlApiModelRecord) => model.id,

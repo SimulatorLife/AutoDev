@@ -6505,3 +6505,105 @@ test("no feature view hand-types an empty state", () => {
     `These views style an absent-state by hand instead of using EmptyState:\n${offenders.join("\n")}`
   );
 });
+
+/** Index of the `}` matching the `{` at `from`, or -1 within the bound. */
+function matchingBrace(source: string, from: number): number {
+  let depth = 0;
+  for (let i = from; i < source.length && i < from + 4000; i++) {
+    const ch = source[i];
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Every `Name({` or `Name<T>({` call where `Name` is capitalised and not
+ * preceded by a dot, member access, or another identifier character.
+ *
+ * Scanned rather than matched: a regex over this shape is either ambiguous or
+ * flagged as unsafe, and the intent is simple enough to read directly.
+ */
+function findCapitalisedObjectCalls(
+  source: string
+): { name: string; braceAt: number }[] {
+  const found: { name: string; braceAt: number }[] = [];
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i] ?? "";
+    if (!/[A-Z]/.test(ch)) continue;
+    if (i > 0 && /[A-Za-z0-9_.$]/.test(source[i - 1] ?? "")) continue;
+    let end = i;
+    while (end < source.length && /[A-Za-z0-9]/.test(source[end] ?? "")) end++;
+    const name = source.slice(i, end);
+    let cursor = end;
+    if (source[cursor] === "<") {
+      cursor++;
+      while (cursor < source.length && source[cursor] !== ">") cursor++;
+      cursor++;
+    }
+    if (source[cursor] !== "(" || source[cursor + 1] !== "{") continue;
+    found.push({ name, braceAt: cursor + 1 });
+    i = end;
+  }
+  return found;
+}
+
+/**
+ * Names this source imports. Read from the whole file rather than line by
+ * line: most views import DataTable across several lines, and a line-based
+ * scan silently missed exactly the case the caller below exists to catch.
+ */
+function importedNames(source: string): Set<string> {
+  const names = new Set<string>();
+  for (let i = 0; i < source.length; i++) {
+    if (!source.startsWith("import", i)) continue;
+    if (i > 0 && /[A-Za-z0-9_$]/.test(source[i - 1] ?? "")) continue;
+    const open = source.indexOf("{", i);
+    if (open === -1) continue;
+    const close = matchingBrace(source, open);
+    if (close === -1) continue;
+    for (const part of source.slice(open + 1, close).split(",")) {
+      const name = part.trim().replace(/^type\s+/u, "");
+      if (name.length > 0) names.add(name);
+    }
+    i = close;
+  }
+  return names;
+}
+
+test("no feature view calls a shared component as a plain function", () => {
+  // Fourteen call sites rendered DataTable as `DataTable({...})` rather than as
+  // an element. That returns the component's *output* rather than an element of
+  // the component, so React never sees DataTable as a component at all: it
+  // loses its identity in the tree, it cannot be targeted by an error boundary
+  // or found in devtools, and the moment DataTable uses a hook the call
+  // registers that hook against the *parent*, corrupting the parent's hook
+  // order. It only worked because DataTable happens to be hook-free today.
+  //
+  // Only names the file actually imports are considered, so a capitalised
+  // platform global such as URLSearchParams is not mistaken for a component.
+  const featuresDir = join(import.meta.dirname, "..", "src", "features");
+  const offenders: string[] = [];
+  for (const relative of readdirSync(featuresDir, { recursive: true })) {
+    const file = join(featuresDir, relative.toString());
+    if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
+    const source = readFileSync(file, "utf8");
+    const imported = importedNames(source);
+    for (const call of findCapitalisedObjectCalls(source)) {
+      if (!imported.has(call.name)) continue;
+      const close = matchingBrace(source, call.braceAt);
+      if (close === -1 || !source.slice(call.braceAt, close).includes("\n")) {
+        continue;
+      }
+      offenders.push(`${relative.toString()}: ${call.name}({ ... })`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `These views call a component as a plain function instead of rendering it:\n${offenders.join("\n")}`
+  );
+});

@@ -10,7 +10,8 @@ import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import { chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
-  DataTable
+  DataTable,
+  type DataTableProps
 } from "../../components/tables/DataTable.ts";
 
 export interface PermissionsViewProps {
@@ -113,7 +114,7 @@ export function PermissionsView({
         },
         "Effective Role Capability Matrix"
       ),
-      DataTable({
+      React.createElement<DataTableProps<RoleCapabilityMatrix>>(DataTable, {
         data: roleMatrices,
         columns,
         keyExtractor: (r: RoleCapabilityMatrix) => r.role

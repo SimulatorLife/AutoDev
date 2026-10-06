@@ -8,7 +8,8 @@ import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { Chip } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
-  DataTable
+  DataTable,
+  type DataTableProps
 } from "../../components/tables/DataTable.ts";
 
 export interface PromptsViewProps {
@@ -198,7 +199,7 @@ export function PromptsView({
             commandSourceNotice
           )
         : null,
-      DataTable({
+      React.createElement<DataTableProps<PromptAsset>>(DataTable, {
         data: commands,
         columns,
         keyExtractor: (prompt: PromptAsset) => prompt.path,

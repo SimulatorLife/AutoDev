@@ -14,7 +14,8 @@ import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
-  DataTable
+  DataTable,
+  type DataTableProps
 } from "../../components/tables/DataTable.ts";
 
 /**
@@ -236,7 +237,7 @@ export function SkillsView({
         },
         "Agent Skills"
       ),
-      DataTable({
+      React.createElement<DataTableProps<SkillDefinition>>(DataTable, {
         data: skills,
         columns,
         keyExtractor: (s: SkillDefinition) => s.name,
