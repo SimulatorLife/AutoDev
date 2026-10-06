@@ -1,0 +1,3735 @@
+diff --git a/src/client/src/__tests__/components/agent-scope-provider.test.tsx b/src/client/src/__tests__/components/agent-scope-provider.test.tsx
+index 9fe49a02..e533dd20 100644
+--- a/src/client/src/__tests__/components/agent-scope-provider.test.tsx
++++ b/src/client/src/__tests__/components/agent-scope-provider.test.tsx
+@@ -1,7 +1,7 @@
+ import { render } from "@testing-library/react";
+ import AgentScopeProvider, {
+ 	useIsAgentScoped,
+-} from "@/components/(playground)/agents/agent-scope-provider";
++} from "@/components/(playground)/observability/agent-scope-provider";
+ import { useRootStore } from "@/store";
+ 
+ function ScopeProbe() {
+diff --git a/src/client/src/__tests__/middleware/middleware.test.ts b/src/client/src/__tests__/middleware/middleware.test.ts
+index fd70d462..c1c4fb12 100644
+--- a/src/client/src/__tests__/middleware/middleware.test.ts
++++ b/src/client/src/__tests__/middleware/middleware.test.ts
+@@ -49,9 +49,12 @@ describe('middleware', () => {
+     expect(config.matcher).not.toContain('/audit-logs/:path*');
+   });
+ 
+-  it('matches the agents routes', () => {
+-    expect(config.matcher).toContain('/agents');
+-    expect(config.matcher).toContain('/agents/:path*');
++  it('does not match the removed agents UI routes', () => {
++    // The fork's agents workspace duplicated the AutoDev Console's Agents
++    // surface. Its API stays (the materialize cron still refreshes the agent
++    // summary tables AutoDev syncs); only the duplicate page is gone.
++    expect(config.matcher).not.toContain('/agents');
++    expect(config.matcher).not.toContain('/agents/:path*');
+   });
+ 
+   // Regression: pages omitted from the matcher skip auth entirely and
+diff --git a/src/client/src/app/(playground)/agents/[agentKey]/page.tsx b/src/client/src/app/(playground)/agents/[agentKey]/page.tsx
+deleted file mode 100644
+index 30650f81..00000000
+--- a/src/client/src/app/(playground)/agents/[agentKey]/page.tsx
++++ /dev/null
+@@ -1,528 +0,0 @@
+-"use client";
+-
+-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+-import dynamic from "next/dynamic";
+-import { useParams, useRouter, useSearchParams } from "next/navigation";
+-import { ArrowLeft, Loader2 } from "lucide-react";
+-import { Tabs, TabsContent } from "@/components/ui/tabs";
+-import { useDynamicBreadcrumbs } from "@/utils/hooks/useBreadcrumbs";
+-import getMessage from "@/constants/messages";
+-import type { AgentVersion, UnifiedAgent } from "@/types/agents";
+-import type { VersionFilter } from "@/types/store/filter";
+-import AgentHeader, {
+-	AgentPillTab,
+-} from "@/components/(playground)/agents/agent-header";
+-import AgentScopeProvider from "@/components/(playground)/agents/agent-scope-provider";
+-import AgentOverviewTab from "@/components/(playground)/agents/agent-overview-tab";
+-import { VersionChooser } from "@/components/(playground)/agents/version-timeline";
+-
+-// Heavy tabs are dynamically imported so the initial detail-page payload
+-// only loads what the Overview tab needs. LLMDashboard pulls echarts +
+-// most platform aggregators, RequestsPage pulls the entire traces + json
+-// viewer stack — both are wasted bytes for a user who lands on Overview
+-// and never switches tabs. Configuration and the Definition tab also
+-// carry editor/viewer code we only need on demand.
+-const LLMDashboard = dynamic(
+-	() => import("@/app/(playground)/dashboard/llm"),
+-	{
+-		loading: () => <TabLoading label={getMessage().AGENTS_LOADING_DASHBOARD} />,
+-		ssr: false,
+-	}
+-);
+-const RequestsPage = dynamic(
+-	() => import("@/components/(playground)/agents/agent-monitoring-tab"),
+-	{
+-		loading: () => <TabLoading label={getMessage().AGENTS_LOADING_REQUESTS} />,
+-		ssr: false,
+-	}
+-);
+-const Filter = dynamic(() => import("@/components/(playground)/filter"), {
+-	loading: () => null,
+-	ssr: false,
+-});
+-const ToolsCard = dynamic(
+-	() => import("@/components/(playground)/agents/tools-card"),
+-	{ loading: () => null, ssr: false }
+-);
+-const SystemPromptCard = dynamic(
+-	() => import("@/components/(playground)/agents/system-prompt-card"),
+-	{ loading: () => null, ssr: false }
+-);
+-const VersionDrawer = dynamic(
+-	() => import("@/components/(playground)/agents/version-drawer"),
+-	{ loading: () => null, ssr: false }
+-);
+-const CodingAgentDetail = dynamic(
+-	() =>
+-		import(
+-			"@/components/(playground)/coding-agents/coding-agent-detail"
+-		),
+-	{
+-		loading: () => <TabLoading label={getMessage().AGENTS_LOADING_SERVICE_DETAILS} />,
+-		ssr: false,
+-	}
+-);
+-
+-type AgentDetailTab =
+-	| "overview"
+-	| "dashboard"
+-	| "monitoring"
+-	| "definition"
+-	| "sessions"
+-	// Coding-agent-only tab (`UnifiedAgent.source === "coding"`). Was
+-	// missing from VALID_TABS, so clicks on the Users tab fell back to
+-	// "overview" via `coerceTab`.
+-	| "users";
+-
+-const VALID_TABS: AgentDetailTab[] = [
+-	"overview",
+-	"dashboard",
+-	"monitoring",
+-	"definition",
+-	"sessions",
+-	"users",
+-];
+-
+-function coerceTab(value: string | null): AgentDetailTab {
+-	if (value && (VALID_TABS as string[]).includes(value)) {
+-		return value as AgentDetailTab;
+-	}
+-	return "overview";
+-}
+-
+-export default function AgentDetailPage() {
+-	const params = useParams<{ agentKey: string }>();
+-	const router = useRouter();
+-	const searchParams = useSearchParams();
+-	const agentKey = params.agentKey;
+-
+-	const requestedTab = coerceTab(searchParams.get("tab"));
+-	const urlVersionHash = searchParams.get("versionHash");
+-
+-	const [agent, setAgent] = useState<UnifiedAgent | null>(null);
+-	const [latestVersion, setLatestVersion] = useState<AgentVersion | null>(null);
+-	const [versions, setVersions] = useState<AgentVersion[]>([]);
+-	const [selectedVersion, setSelectedVersion] = useState<AgentVersion | null>(
+-		null
+-	);
+-	const [versionFilter, setVersionFilter] = useState<VersionFilter | null>(
+-		null
+-	);
+-	const [loading, setLoading] = useState(true);
+-	const [error, setError] = useState<string | null>(null);
+-	const [versionsOpen, setVersionsOpen] = useState(false);
+-
+-	const fetchAgent = useCallback(async () => {
+-		try {
+-			const res = await fetch(`/api/agents/${agentKey}/snapshot`);
+-			if (res.status === 404) {
+-				setError("Agent not found");
+-				setAgent(null);
+-				return;
+-			}
+-			if (!res.ok) {
+-				throw new Error(`HTTP ${res.status}`);
+-			}
+-			const body = await res.json();
+-			setAgent((body.data?.agent as UnifiedAgent) || null);
+-			setLatestVersion((body.data?.version as AgentVersion) || null);
+-			setError(null);
+-		} catch (e) {
+-			setError(String(e));
+-		}
+-	}, [agentKey]);
+-
+-	// A coding agent has no `overview` tab — it was the seeded dashboard, which
+-	// the generic dashboard product owned. Falling back to `sessions` keeps the
+-	// page on a tab that exists instead of rendering an empty panel.
+-	const urlTab: AgentDetailTab =
+-		requestedTab === "overview" && agent?.source === "coding"
+-			? "sessions"
+-			: requestedTab;
+-
+-	// Initial detail-page load: snapshot and versions are independent reads,
+-	// so we fire them in parallel and only block the spinner on snapshot.
+-	// Versions populates the timeline + chooser without blocking the shell.
+-	useEffect(() => {
+-		let cancelled = false;
+-		setLoading(true);
+-
+-		const snapshotPromise = fetchAgent();
+-		const versionsPromise = (async () => {
+-			try {
+-				const res = await fetch(`/api/agents/${agentKey}/versions`);
+-				if (!res.ok) return;
+-				const body = await res.json();
+-				if (cancelled) return;
+-				setVersions((body.data as AgentVersion[]) || []);
+-			} catch {
+-				/* swallow — UI still works without the full list */
+-			}
+-		})();
+-
+-		(async () => {
+-			await snapshotPromise;
+-			if (!cancelled) setLoading(false);
+-		})();
+-
+-		return () => {
+-			cancelled = true;
+-			// Don't actually abort the in-flight versions request — its
+-			// resolution still safely no-ops via the `cancelled` guard, and
+-			// abort cleanup is unnecessary for these short reads.
+-			void versionsPromise;
+-		};
+-	}, [agentKey, fetchAgent]);
+-
+-	const effectiveVersionHash = useMemo(() => {
+-		if (urlVersionHash) return urlVersionHash;
+-		return latestVersion?.version_hash || null;
+-	}, [urlVersionHash, latestVersion]);
+-
+-	// Mirror the list page's pendingKeys-driven polling. While either feature
+-	// is transitioning for this agent (optimistic intent in flight or server
+-	// shows desired_mismatch / pending action), refetch the snapshot at
+-	// 2.5s → 5s → 10s → 30s backoff. When steady, drop to the 30s baseline
+-	// so the page still picks up async materialization without manual
+-	// refresh. Without this, the detail page would freeze on its initial
+-	const detailTransitioning = false;
+-
+-	const detailPollInFlightRef = useRef(false);
+-
+-	useEffect(() => {
+-		let cancelled = false;
+-		let timer: number | null = null;
+-		const baseDelay = 2500;
+-		const maxDelay = 30_000;
+-		let nextDelay = detailTransitioning ? baseDelay : maxDelay;
+-
+-		const tick = async () => {
+-			if (cancelled) return;
+-			if (!detailPollInFlightRef.current) {
+-				detailPollInFlightRef.current = true;
+-				try {
+-					await fetchAgent();
+-				} finally {
+-					detailPollInFlightRef.current = false;
+-				}
+-			}
+-			if (cancelled) return;
+-			if (detailTransitioning) {
+-				nextDelay = Math.min(nextDelay * 2, maxDelay);
+-			} else {
+-				nextDelay = maxDelay;
+-			}
+-			timer = window.setTimeout(tick, nextDelay);
+-		};
+-
+-		timer = window.setTimeout(tick, nextDelay);
+-
+-		return () => {
+-			cancelled = true;
+-			if (timer !== null) window.clearTimeout(timer);
+-		};
+-	}, [agentKey, detailTransitioning, fetchAgent]);
+-
+-	useEffect(() => {
+-		let cancelled = false;
+-		if (!effectiveVersionHash) {
+-			setSelectedVersion(null);
+-			setVersionFilter(null);
+-			return;
+-		}
+-		(async () => {
+-			try {
+-				const [vRes, fRes] = await Promise.all([
+-					fetch(`/api/agents/${agentKey}/versions/${effectiveVersionHash}`),
+-					fetch(
+-						`/api/agents/${agentKey}/versions/${effectiveVersionHash}/window`
+-					),
+-				]);
+-				if (!cancelled && vRes.ok) {
+-					const body = await vRes.json();
+-					setSelectedVersion((body.data as AgentVersion) || null);
+-				}
+-				if (!cancelled && fRes.ok) {
+-					const body = await fRes.json();
+-					setVersionFilter((body.data as VersionFilter) || null);
+-				}
+-			} catch {
+-				/* keep last value */
+-			}
+-		})();
+-		return () => {
+-			cancelled = true;
+-		};
+-	}, [agentKey, effectiveVersionHash]);
+-
+-	const updateQuery = useCallback(
+-		(updates: Record<string, string | null>) => {
+-			const next = new URLSearchParams(searchParams?.toString() ?? "");
+-			for (const [key, value] of Object.entries(updates)) {
+-				if (value === null || value === "") next.delete(key);
+-				else next.set(key, value);
+-			}
+-			const qs = next.toString();
+-			router.replace(qs ? `?${qs}` : "?", { scroll: false });
+-		},
+-		[router, searchParams]
+-	);
+-
+-	const handleTabChange = useCallback(
+-		(value: string) => {
+-			updateQuery({ tab: value === "overview" ? null : value });
+-		},
+-		[updateQuery]
+-	);
+-
+-	const handleSelectVersion = useCallback(
+-		(hash: string | null) => {
+-			updateQuery({ versionHash: hash });
+-		},
+-		[updateQuery]
+-	);
+-
+-	useDynamicBreadcrumbs(
+-		{
+-			title:
+-				agent?.service_name ||
+-				getMessage().AGENTS_SERVICE_DETAIL_DEFAULT_TITLE,
+-		},
+-		[agent?.service_name]
+-	);
+-
+-	if (loading && !agent) {
+-		return (
+-			<div className="flex h-full w-full flex-col overflow-hidden">
+-				<div className="border-b border-stone-200 px-4 py-3 dark:border-stone-800">
+-					<div className="h-8 w-48 animate-pulse rounded bg-stone-100 dark:bg-stone-800" />
+-				</div>
+-				<div className="flex flex-1 items-center justify-center gap-2 p-4 text-sm text-stone-500 dark:text-stone-400">
+-					<Loader2 className="h-4 w-4 animate-spin" />
+-					{getMessage().AGENTS_LOADING_SERVICE_DETAILS}
+-				</div>
+-			</div>
+-		);
+-	}
+-
+-	if (error || !agent) {
+-		// Even on a 404 we honor `?from=<tab>` so a failed deep-link
+-		// from the Coding Agents tab still routes back to Coding
+-		// Agents rather than tossing the user back to Applications.
+-		const fromParam = searchParams.get("from");
+-		const backHref =
+-			fromParam === "coding"
+-				? "/agents?tab=coding"
+-				: fromParam === "controllers"
+-					? "/agents?tab=controllers"
+-					: "/agents";
+-		return (
+-			<div className="flex h-full w-full flex-col overflow-hidden">
+-				<div className="border-b border-stone-200 px-4 py-3 dark:border-stone-800">
+-					<button
+-						onClick={() => router.push(backHref)}
+-						className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-stone-200 bg-stone-50 text-stone-600 transition hover:bg-stone-100 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-300 dark:hover:bg-stone-800"
+-						title={getMessage().AGENTS_BACK_TO_HUB}
+-						aria-label={getMessage().AGENTS_BACK_TO_HUB}
+-					>
+-						<ArrowLeft className="h-3.5 w-3.5" />
+-					</button>
+-				</div>
+-				<div className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-sm text-stone-500 dark:text-stone-400">
+-					<div>{error || "Agent not found"}</div>
+-				</div>
+-			</div>
+-		);
+-	}
+-
+-	const activeVersion = selectedVersion || latestVersion;
+-	const scopedVersionFilter = urlVersionHash ? versionFilter : null;
+-	const isCodingAgent = agent.source === "coding";
+-
+-	// Pulses an attention dot on the Configuration tab when a
+-	// controller-discovered agent has no telemetry yet. Two guards prevent
+-	// false positives: (a) only controller-only rows (SDK agents always
+-	// have data by definition); (b) both 24h request count AND known
+-	// versions are zero so we don't blink for agents that simply went
+-	// quiet recently. We only blink when no telemetry has ever materialized.
+-	const traditionalTabs = (
+-		<div className="flex flex-wrap items-center gap-2">
+-			{(
+-				[
+-					{ id: "overview", label: getMessage().AGENTS_TAB_OVERVIEW },
+-					{ id: "dashboard", label: getMessage().AGENTS_TAB_DASHBOARD },
+-					{ id: "monitoring", label: getMessage().AGENTS_TAB_MONITORING },
+-					{ id: "definition", label: getMessage().AGENTS_TAB_DEFINITION },
+-				] as const
+-			).map((tab) => (
+-				<AgentPillTab
+-					key={tab.id}
+-					active={urlTab === tab.id}
+-					label={tab.label}
+-					onClick={() => handleTabChange(tab.id)}
+-				/>
+-			))}
+-		</div>
+-	);
+-
+-	const codingTabs = (
+-		<div className="flex flex-wrap items-center gap-2">
+-			{(
+-				[
+-					{ id: "sessions", label: getMessage().AGENTS_CODING_TAB_SESSIONS },
+-					{ id: "users", label: getMessage().AGENTS_CODING_USERS_SHORT_LABEL },
+-				] as const
+-			).map((tab) => (
+-				<AgentPillTab
+-					key={tab.id}
+-					active={urlTab === tab.id}
+-					label={tab.label}
+-					onClick={() => handleTabChange(tab.id)}
+-				/>
+-			))}
+-		</div>
+-	);
+-
+-	return (
+-		<AgentScopeProvider
+-			serviceName={agent.service_name}
+-			environment={agent.environment}
+-			versionFilter={scopedVersionFilter}
+-		>
+-			{/* Match the agents hub chrome: FeaturePageHeader (full-bleed
+-			    top bar with pill tabs) + p-4 padded content below. */}
+-			<div className="flex h-full w-full flex-col overflow-hidden">
+-				<AgentHeader
+-					agent={agent}
+-					onRefresh={fetchAgent}
+-					tabs={isCodingAgent ? codingTabs : traditionalTabs}
+-					rightSlot={
+-						isCodingAgent ? null : (
+-							<div className="flex items-center gap-2">
+-								<VersionChooser
+-									versions={versions}
+-									selectedHash={urlVersionHash}
+-									onSelectVersion={handleSelectVersion}
+-									onOpenAllVersions={() => setVersionsOpen(true)}
+-								/>
+-							</div>
+-						)
+-					}
+-				/>
+-
+-				<section className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+-					{isCodingAgent ? (
+-						<CodingAgentDetail
+-							agent={agent}
+-							tab={urlTab}
+-							onTabChange={handleTabChange}
+-						/>
+-					) : (
+-						<TraditionalAgentTabs
+-							agent={agent}
+-							versions={versions}
+-							urlTab={urlTab}
+-							urlVersionHash={urlVersionHash}
+-							handleTabChange={handleTabChange}
+-							effectiveVersionHash={effectiveVersionHash}
+-							activeVersion={activeVersion}
+-							fetchAgent={fetchAgent}
+-							versionsOpen={versionsOpen}
+-							setVersionsOpen={setVersionsOpen}
+-						/>
+-					)}
+-				</section>
+-			</div>
+-		</AgentScopeProvider>
+-	);
+-}
+-
+-interface TraditionalAgentTabsProps {
+-	agent: UnifiedAgent;
+-	versions: AgentVersion[];
+-	urlTab: AgentDetailTab;
+-	urlVersionHash: string | null;
+-	handleTabChange: (value: string) => void;
+-	effectiveVersionHash: string | null;
+-	activeVersion: AgentVersion | null;
+-	fetchAgent: () => Promise<void>;
+-	versionsOpen: boolean;
+-	setVersionsOpen: (open: boolean) => void;
+-}
+-
+-function TraditionalAgentTabs({
+-	agent,
+-	versions,
+-	urlTab,
+-	handleTabChange,
+-	effectiveVersionHash,
+-	activeVersion,
+-	fetchAgent,
+-	versionsOpen,
+-	setVersionsOpen,
+-}: TraditionalAgentTabsProps) {
+-	// Tab pills live in FeaturePageHeader (same surface as the agents
+-	// hub). This component only owns the tab panels.
+-	return (
+-		<>
+-			<Tabs
+-				value={urlTab}
+-				onValueChange={handleTabChange}
+-				className="w-full"
+-			>
+-				<TabsContent value="overview" className="mt-0">
+-					<AgentOverviewTab
+-						agent={agent}
+-						versionHash={effectiveVersionHash}
+-					/>
+-				</TabsContent>
+-
+-				<TabsContent value="dashboard" className="mt-0">
+-					<div className="space-y-3">
+-						<Filter />
+-						<LLMDashboard />
+-					</div>
+-				</TabsContent>
+-
+-				<TabsContent value="monitoring" className="mt-0">
+-					<RequestsPage />
+-				</TabsContent>
+-
+-				<TabsContent value="definition" className="mt-0">
+-					{activeVersion ? (
+-						<div className="space-y-4">
+-							<SystemPromptCard prompt={activeVersion.system_prompt} />
+-							<ToolsCard tools={activeVersion.tools} />
+-						</div>
+-					) : (
+-						<EmptyVersion />
+-					)}
+-				</TabsContent>
+-			</Tabs>
+-
+-			<VersionDrawer
+-				agentKey={agent.agent_key}
+-				open={versionsOpen}
+-				onClose={() => setVersionsOpen(false)}
+-				initialVersions={versions}
+-			/>
+-		</>
+-	);
+-}
+-
+-function EmptyVersion() {
+-	return (
+-		<div className="border dark:border-stone-800 rounded-lg p-6 text-sm text-stone-500 dark:text-stone-400">
+-			No version selected.
+-		</div>
+-	);
+-}
+-
+-function TabLoading({ label }: { label: string }) {
+-	return (
+-		<div className="flex items-center justify-center py-12 text-sm text-stone-500 dark:text-stone-400 gap-2">
+-			<Loader2 className="w-4 h-4 animate-spin" />
+-			{label}
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/app/(playground)/agents/coding-agents-table.tsx b/src/client/src/app/(playground)/agents/coding-agents-table.tsx
+deleted file mode 100644
+index 2516bef7..00000000
+--- a/src/client/src/app/(playground)/agents/coding-agents-table.tsx
++++ /dev/null
+@@ -1,198 +0,0 @@
+-"use client";
+-
+-import { useMemo } from "react";
+-import Link from "next/link";
+-import { useRouter } from "next/navigation";
+-import { Bot } from "lucide-react";
+-import type { UnifiedAgent } from "@/types/agents";
+-import { Columns } from "@/components/data-table/columns";
+-import DataTable from "@/components/data-table/table";
+-import {
+-	CodingAgentVendorIcon,
+-	codingAgentVendorLabel,
+-	hasCodingAgentVendorIcon,
+-} from "@/components/svg/coding-agents";
+-import getMessage from "@/constants/messages";
+-
+-interface CodingAgentsTableProps {
+-	services: UnifiedAgent[];
+-	isFetched: boolean;
+-	isLoading: boolean;
+-}
+-
+-type CodingColumnKey =
+-	| "vendor"
+-	| "sessions"
+-	| "users"
+-	| "cost"
+-	| "lines"
+-	| "acceptance"
+-	| "commits"
+-	| "prs";
+-
+-// Compute acceptance % the same way listSessions / listCodingUsers do:
+-// the denominator is total edit decisions (accept + reject), not lines.
+-// Mirroring that keeps the hub stats consistent with the per-session
+-// list a click away.
+-function acceptancePct(row: UnifiedAgent): number {
+-	const accepts = row.coding_edit_accept_24h ?? 0;
+-	const rejects = row.coding_edit_reject_24h ?? 0;
+-	const total = accepts + rejects;
+-	if (!total) return 0;
+-	return Math.round((accepts * 100) / total);
+-}
+-
+-const columns: Columns<CodingColumnKey, UnifiedAgent> = {
+-	vendor: {
+-		header: () => getMessage().AGENTS_CODING_COLUMN_VENDOR,
+-		cell: ({ row }) => {
+-			const vendor = row.coding_agent_vendor;
+-			const hasIcon = hasCodingAgentVendorIcon(vendor);
+-			return (
+-				<Link
+-					href={`/agents/${row.agent_key}?from=coding`}
+-					className="font-medium text-stone-900 dark:text-stone-100 hover:underline truncate flex items-center gap-2"
+-					onClick={(e) => e.stopPropagation()}
+-				>
+-					{hasIcon ? (
+-						<CodingAgentVendorIcon
+-							vendor={vendor}
+-							className="h-4 w-4 shrink-0"
+-						/>
+-					) : (
+-						<Bot className="h-4 w-4 shrink-0 text-stone-500" />
+-					)}
+-					<span className="truncate">{codingAgentVendorLabel(vendor)}</span>
+-				</Link>
+-			);
+-		},
+-		enableHiding: false,
+-	},
+-	sessions: {
+-		header: () => getMessage().AGENTS_CODING_COLUMN_SESSIONS,
+-		cell: ({ row }) => (
+-			<span className="text-sm text-stone-700 dark:text-stone-200 tabular-nums">
+-				{(row.coding_session_count_24h ?? 0).toLocaleString()}
+-			</span>
+-		),
+-	},
+-	users: {
+-		header: () => getMessage().AGENTS_CODING_COLUMN_USERS,
+-		cell: ({ row }) => (
+-			<span className="text-sm text-stone-700 dark:text-stone-200 tabular-nums">
+-				{(row.coding_active_users_24h ?? 0).toLocaleString()}
+-			</span>
+-		),
+-	},
+-	cost: {
+-		header: () => getMessage().AGENTS_CODING_COLUMN_COST,
+-		cell: ({ row }) => (
+-			<span className="text-sm text-stone-700 dark:text-stone-200 tabular-nums">
+-				${(row.coding_cost_usd_24h ?? 0).toFixed(2)}
+-			</span>
+-		),
+-	},
+-	lines: {
+-		header: () => getMessage().AGENTS_CODING_COLUMN_LINES,
+-		cell: ({ row }) => (
+-			<span className="text-sm text-stone-700 dark:text-stone-200 tabular-nums">
+-				+{(row.coding_lines_added_24h ?? 0).toLocaleString()}
+-				<span className="ml-1 text-stone-400">/</span>
+-				<span className="ml-1 text-rose-600 dark:text-rose-400">
+-					-{(row.coding_lines_removed_24h ?? 0).toLocaleString()}
+-				</span>
+-			</span>
+-		),
+-	},
+-	acceptance: {
+-		header: () => getMessage().AGENTS_CODING_COLUMN_ACCEPTANCE,
+-		cell: ({ row }) => {
+-			const accepts = row.coding_edit_accept_24h ?? 0;
+-			const rejects = row.coding_edit_reject_24h ?? 0;
+-			const total = accepts + rejects;
+-			return (
+-				<span className="text-sm text-stone-700 dark:text-stone-200 tabular-nums">
+-					{total ? `${acceptancePct(row)}%` : "—"}
+-				</span>
+-			);
+-		},
+-	},
+-	commits: {
+-		header: () => getMessage().AGENTS_CODING_COLUMN_COMMITS,
+-		cell: ({ row }) => (
+-			<span className="text-sm text-stone-700 dark:text-stone-200 tabular-nums">
+-				{(row.coding_commit_count_24h ?? 0).toLocaleString()}
+-			</span>
+-		),
+-	},
+-	prs: {
+-		header: () => getMessage().AGENTS_CODING_COLUMN_PRS,
+-		cell: ({ row }) => (
+-			<span className="text-sm text-stone-700 dark:text-stone-200 tabular-nums">
+-				{(row.coding_pr_count_24h ?? 0).toLocaleString()}
+-			</span>
+-		),
+-	},
+-};
+-
+-// Lines / Acceptance / Commits / PRs default ON. They're the new
+-// signal columns the user explicitly asked for; if an installation
+-// doesn't have data yet the cells render "0" / "—" which is the
+-// signal we want (zero is meaningful for "agents that haven't yet
+-// committed anything"). Users can hide them via the column toggle
+-// menu the DataTable already ships.
+-const VISIBILITY_COLUMNS: Record<CodingColumnKey, boolean> = {
+-	vendor: true,
+-	sessions: true,
+-	users: true,
+-	cost: true,
+-	lines: true,
+-	acceptance: true,
+-	commits: true,
+-	prs: true,
+-};
+-
+-export default function CodingAgentsTable({
+-	services,
+-	isFetched,
+-	isLoading,
+-}: CodingAgentsTableProps) {
+-	const router = useRouter();
+-
+-	// Stable order: most-active first (sessions desc), then by last_seen.
+-	const sorted = useMemo(() => {
+-		return [...services].sort((a, b) => {
+-			const sa = a.coding_session_count_24h ?? 0;
+-			const sb = b.coding_session_count_24h ?? 0;
+-			if (sb !== sa) return sb - sa;
+-			return (b.last_seen || "").localeCompare(a.last_seen || "");
+-		});
+-	}, [services]);
+-
+-	if (isFetched && !isLoading && sorted.length === 0) {
+-		return (
+-			<div className="rounded-lg border border-dashed border-stone-300 dark:border-stone-700 px-6 py-10 text-center">
+-				<div className="text-sm font-medium text-stone-900 dark:text-stone-100">
+-					{getMessage().AGENTS_CODING_EMPTY_TITLE}
+-				</div>
+-				<div className="mt-1.5 text-xs text-stone-500 dark:text-stone-400 max-w-md mx-auto">
+-					{getMessage().AGENTS_CODING_EMPTY_BODY}
+-				</div>
+-			</div>
+-		);
+-	}
+-
+-	return (
+-		<DataTable
+-			columns={columns}
+-			data={sorted}
+-			isFetched={isFetched}
+-			isLoading={isLoading}
+-			visibilityColumns={VISIBILITY_COLUMNS}
+-			extraFunctions={{}}
+-			onClick={(row) =>
+-				router.push(`/agents/${row.agent_key}?from=coding`)
+-			}
+-		/>
+-	);
+-}
+diff --git a/src/client/src/app/(playground)/agents/no-coding-agents.tsx b/src/client/src/app/(playground)/agents/no-coding-agents.tsx
+deleted file mode 100644
+index 49105f09..00000000
+--- a/src/client/src/app/(playground)/agents/no-coding-agents.tsx
++++ /dev/null
+@@ -1,485 +0,0 @@
+-"use client";
+-
+-/**
+- * Empty-state for the "Coding Agents" tab on /agents. Shown when the
+- * org has no coding-agent telemetry yet.
+- *
+- * The snippet is auto-filled with two values pulled from the running
+- * dashboard:
+- *
+- *  - OPENLIT_OTLP_ENDPOINT: derived from `window.location.origin` with
+- *    the port replaced by 4318 (the collector's HTTP listener). Uses
+- *    the URL Web API rather than string concatenation per the
+- *    frontend-security rule.
+- *  - OPENLIT_API_KEY: pulled from the first existing API key in this
+- *    org; if none exists, an inline "Generate API key" button POSTs to
+- *    /api/api-key (same backend the Settings page uses) and the
+- *    returned key replaces the placeholder in the snippet.
+- *
+- * Per-vendor descriptions / hook lists are removed — the deep
+- * reference lives at the AutoDev control surface.
+- */
+-
+-import { ComponentType, useCallback, useEffect, useMemo, useState } from "react";
+-import {
+-	BotMessageSquare,
+-	Check,
+-	Copy,
+-	KeyRound,
+-	Loader2,
+-} from "lucide-react";
+-import copy from "copy-to-clipboard";
+-import { toast } from "sonner";
+-import {
+-	CodingAgentVendorIcon,
+-	hasCodingAgentVendorIcon,
+-} from "@/components/svg/coding-agents";
+-import LinuxSvg from "@/components/svg/linux";
+-import MacSvg from "@/components/svg/mac";
+-import WindowsSvg from "@/components/svg/windows";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import { getPingStatus } from "@/selectors/database-config";
+-import { useRootStore } from "@/store";
+-import { ApiKey } from "@/types/api-key";
+-
+-type OsIconComponent = ComponentType<{ className?: string }>;
+-
+-type VendorId = "claude-code" | "cursor" | "codex";
+-type OsId = "macos" | "linux" | "windows";
+-
+-interface VendorMeta {
+-	id: VendorId;
+-	label: string;
+-	// Argument passed to `openlit coding install --vendor=<v>`. The
+-	// full command is composed at render time using the OS-specific
+-	// openlit invocation (see bootstrapForOs.openlitBin) — hardcoding
+-	// `openlit coding install …` here would break the Windows
+-	// PowerShell path which has to use the `&` call operator.
+-	cliFlag: string;
+-	// User-facing post-install steps shown under the snippet. The
+-	// install command writes hook files (and registers plugins where
+-	// the vendor's CLI is available), but the *agent process itself*
+-	// generally caches its hook table at process start, so the user
+-	// has to bounce the agent before telemetry starts flowing. Codex
+-	// additionally requires an in-TUI trust step.
+-	postInstall: {
+-		// One-line, imperative restart instruction. Renders as the
+-		// first step regardless of vendor.
+-		restart: string;
+-		// Optional follow-up steps. Currently only Codex needs them.
+-		extraSteps?: string[];
+-	};
+-}
+-
+-interface OsMeta {
+-	id: OsId;
+-	label: string;
+-	icon: OsIconComponent;
+-}
+-
+-const VENDORS: VendorMeta[] = [
+-	{
+-		id: "claude-code",
+-		label: "Claude Code",
+-		cliFlag: "claude-code",
+-		postInstall: {
+-			restart: "Quit and reopen Claude Code.",
+-		},
+-	},
+-	{
+-		id: "cursor",
+-		label: "Cursor",
+-		cliFlag: "cursor",
+-		postInstall: {
+-			restart: "Fully quit Cursor (⌘Q on macOS, File → Exit on Windows/Linux) and reopen it.",
+-		},
+-	},
+-	{
+-		id: "codex",
+-		label: "Codex",
+-		cliFlag: "codex",
+-		postInstall: {
+-			restart: "Restart Codex (or open a new `codex` session in a fresh shell).",
+-			// Codex's security model requires every plugin hook to
+-			// be explicitly trusted in the TUI before it fires —
+-			// without this step, the plugin is "installed" but
+-			// inert and no telemetry reaches OpenLit. The "send a
+-			// prompt" follow-up that used to live here was dropped
+-			// because the generic "Start a session in <vendor>"
+-			// step rendered below covers it.
+-			extraSteps: [
+-				"Inside Codex, run `/hooks` and trust each `openlit@openlit` entry.",
+-			],
+-		},
+-	},
+-];
+-
+-// Use the locally vendored brand SVGs (icons8) so the OS cards
+-// match the existing controllers page (which already uses
+-// LinuxSvg for the same purpose). All three use `currentColor`
+-// so the active-state highlight in dark mode picks them up.
+-const OS_OPTIONS: OsMeta[] = [
+-	{ id: "macos", label: "macOS", icon: MacSvg },
+-	{ id: "linux", label: "Linux", icon: LinuxSvg },
+-	{ id: "windows", label: "Windows", icon: WindowsSvg },
+-];
+-
+-const DEFAULT_OTLP_ENDPOINT = "http://localhost:4318";
+-const API_KEY_PLACEHOLDER = "$OPENLIT_API_KEY";
+-const GENERATED_API_KEY_NAME = "coding-agents";
+-
+-// OS-specific install bootstrap.
+-//
+-// Each branch resolves to:
+-//
+-//   install    The one-liner that lands the `openlit` binary on disk.
+-//   openlitBin How subsequent commands in the same chain should
+-//              invoke openlit. CRITICAL: we cannot rely on bare
+-//              `openlit` here, because the install step's PATH
+-//              update (rc-file edit on Unix, registry edit on
+-//              Windows) only takes effect in NEW shells, not the
+-//              one currently parsing the `&&` chain. Using an
+-//              explicit path makes the chain work on first paste
+-//              without requiring a terminal restart.
+-//   joiner     Shell command separator: bash `&&` short-circuits on
+-//              failure; PowerShell 5.1 doesn't support `&&` (only
+-//              PS7+ does), so Windows uses `;`.
+-//
+-// Per-OS choices:
+-//   macOS   → Homebrew tap (`openlit/openlit/openlit`). Bare
+-//             `openlit` works in the chain because brew's
+-//             `/opt/homebrew/bin` (or `/usr/local/bin` on Intel
+-//             Macs) is already on PATH at shell startup.
+-//   Linux   → cli/scripts/install.sh in this repo, hosted via raw
+-//             GitHub. Drops the binary at `~/.openlit/bin/openlit`;
+-//             the chain uses that absolute path because the install
+-//             dir isn't on PATH yet for the current shell. zsh /
+-//             bash / dash all tilde-expand on parse so `~/...`
+-//             works without `eval`.
+-//   Windows → cli/scripts/install.ps1, same channel. Drops the
+-//             binary at `$env:USERPROFILE\.openlit\bin\openlit.exe`.
+-//             The chain uses PowerShell's `&` call operator with
+-//             an explicit path so backslashes parse correctly.
+-//
+-// Pinning the install-script URLs to `main` (rather than a release
+-// tag) means the snippet auto-tracks whatever is on the default
+-// branch. Switch to a tag like `cli-1.2.0` once releases settle.
+-const INSTALL_SCRIPTS_BASE =
+-	"https://raw.githubusercontent.com/openlit/openlit/main/cli/scripts";
+-
+-interface OsBootstrap {
+-	install: string;
+-	// Optional, OS-specific command that makes `openlit` available in the
+-	// *current* shell session after install (i.e. before the user opens a
+-	// new terminal). Without this, `install.sh` / `install.ps1` can only
+-	// update PATH for future shells (rc-file edit / user PATH), and a
+-	// chained one-liner would fail at `openlit configure`.
+-	activate?: string;
+-	joiner: string;
+-}
+-
+-function bootstrapForOs(os: OsId): OsBootstrap {
+-	switch (os) {
+-		case "macos":
+-			return {
+-				install: "brew install openlit/openlit/openlit",
+-				// brew writes into a directory already on PATH for the
+-				// current shell, so no activation step needed.
+-				joiner: " && ",
+-			};
+-		case "windows":
+-			return {
+-				install: `iwr -useb ${INSTALL_SCRIPTS_BASE}/install.ps1 | iex`,
+-				// Update the current PowerShell session PATH (user PATH
+-				// updates only apply to new shells). This makes `openlit`
+-				// immediately runnable in a chained one-liner.
+-				activate: `$env:Path = "$env:USERPROFILE\\.openlit\\bin;$env:Path"`,
+-				joiner: "; ",
+-			};
+-		case "linux":
+-		default:
+-			return {
+-				install: `curl -fsSL ${INSTALL_SCRIPTS_BASE}/install.sh | sh`,
+-				// Ensure `openlit` is available in the current shell so the
+-				// chained snippet can run `openlit configure` without
+-				// requiring a terminal restart.
+-				activate: `export PATH="$HOME/.openlit/bin:$PATH"`,
+-				joiner: " && ",
+-			};
+-	}
+-}
+-
+-/**
+- * Replace the port on a URL with 4318 (OpenLit collector's HTTP/OTLP
+- * port). When the input has no explicit port (e.g.
+- * `https://openlit.example.com`), `URL.port = "..."` still appends it.
+- *
+- * Returns the input as-is if it doesn't parse as a URL so a freshly
+- * loaded SSR pass — where the value is the default — still renders
+- * sensibly.
+- */
+-function buildOtlpEndpoint(origin: string): string {
+-	try {
+-		const url = new URL(origin);
+-		url.port = "4318";
+-		return url.origin;
+-	} catch {
+-		return DEFAULT_OTLP_ENDPOINT;
+-	}
+-}
+-
+-interface NoCodingAgentsProps {
+-	/**
+-	 * If true, render in a compact mode (no large hero, less padding).
+-	 * Used when this empty state is shown inside the Coding Agents tab
+-	 * body — the tabs above already supply the page-level context.
+-	 */
+-	compact?: boolean;
+-}
+-
+-function detectOs(): OsId {
+-	if (typeof navigator === "undefined") return "macos";
+-	const platform =
+-		(navigator as Navigator & { userAgentData?: { platform?: string } })
+-			.userAgentData?.platform ||
+-		navigator.platform ||
+-		navigator.userAgent ||
+-		"";
+-	const p = platform.toLowerCase();
+-	if (p.includes("win")) return "windows";
+-	if (p.includes("linux") || p.includes("x11")) return "linux";
+-	return "macos";
+-}
+-
+-export default function NoCodingAgents({ compact = false }: NoCodingAgentsProps) {
+-	const [activeVendor, setActiveVendor] = useState<VendorId>("claude-code");
+-	// Initialize from the browser's reported platform so the snippet
+-	// matches the user's machine on first paint. They can flip it via
+-	// the OS cards if their dev box differs from the browser host.
+-	const [activeOs, setActiveOs] = useState<OsId>("macos");
+-	const [copied, setCopied] = useState(false);
+-	const [otlpEndpoint, setOtlpEndpoint] = useState(DEFAULT_OTLP_ENDPOINT);
+-
+-	useEffect(() => {
+-		setActiveOs(detectOs());
+-	}, []);
+-
+-	const pingStatus = useRootStore(getPingStatus);
+-	const { data: apiKeys, fireRequest: fetchKeys } = useFetchWrapper<ApiKey[]>();
+-	const { fireRequest: createKey, isLoading: isCreatingKey } =
+-		useFetchWrapper<{ apiKey: string }>();
+-
+-	// Derive the OTLP endpoint from the dashboard origin on mount. We
+-	// only run this on the client because window.location isn't defined
+-	// during SSR.
+-	useEffect(() => {
+-		if (typeof window !== "undefined") {
+-			setOtlpEndpoint(buildOtlpEndpoint(window.location.origin));
+-		}
+-	}, []);
+-
+-	const refreshKeys = useCallback(() => {
+-		fetchKeys({ requestType: "GET", url: "/api/api-key" });
+-	}, [fetchKeys]);
+-
+-	useEffect(() => {
+-		if (pingStatus !== "pending") refreshKeys();
+-	}, [pingStatus, refreshKeys]);
+-
+-	useEffect(() => {
+-		if (!copied) return;
+-		const id = window.setTimeout(() => setCopied(false), 1800);
+-		return () => window.clearTimeout(id);
+-	}, [copied]);
+-
+-	const firstKey =
+-		apiKeys && apiKeys.length > 0 ? apiKeys[0].apiKey : undefined;
+-
+-	const vendor = useMemo(
+-		() => VENDORS.find((v) => v.id === activeVendor) || VENDORS[0],
+-		[activeVendor]
+-	);
+-
+-	// Single-line, OS-appropriate-joiner command so the snippet
+-	// copy-pastes into one shell invocation — matches the
+-	// Lapdog-style brevity the team asked for. The three logical
+-	// steps (install the CLI, persist endpoint+API key to
+-	// ~/.config/openlit/config.env via `configure`, then wire the
+-	// vendor hooks) all still need to run; chaining them keeps the
+-	// failure semantics tight without forcing three separate pastes.
+-	//
+-	// We invoke openlit by its full path on Linux/Windows because
+-	// the install step's PATH update doesn't reach the current
+-	// shell — only NEW shells pick it up. See bootstrapForOs for
+-	// the per-OS reasoning.
+-	const snippet = useMemo(() => {
+-		const apiKeyValue = firstKey || API_KEY_PLACEHOLDER;
+-		const { install, activate, joiner } = bootstrapForOs(activeOs);
+-		return [
+-			install,
+-			activate,
+-			`openlit configure --endpoint "${otlpEndpoint}" --api-key "${apiKeyValue}"`,
+-			`openlit coding install --vendor=${vendor.cliFlag}`,
+-		]
+-			.filter(Boolean)
+-			.join(joiner);
+-	}, [firstKey, otlpEndpoint, vendor, activeOs]);
+-
+-	const handleCopy = () => {
+-		copy(snippet);
+-		setCopied(true);
+-	};
+-
+-	const handleGenerateKey = useCallback(() => {
+-		toast.loading("Generating API key…", { id: "coding-agents-api-key" });
+-		createKey({
+-			requestType: "POST",
+-			url: "/api/api-key",
+-			body: JSON.stringify({ name: GENERATED_API_KEY_NAME }),
+-			successCb: () => {
+-				toast.success("API key created — pre-filled into the snippet.", {
+-					id: "coding-agents-api-key",
+-				});
+-				refreshKeys();
+-			},
+-			failureCb: (err?: string) => {
+-				toast.error(err || "Could not generate API key", {
+-					id: "coding-agents-api-key",
+-				});
+-			},
+-		});
+-	}, [createKey, refreshKeys]);
+-
+-	return (
+-		<div
+-			className={`flex flex-col items-center w-full ${compact ? "py-6 px-1" : "justify-center py-12 px-4"}`}
+-		>
+-			<div className="max-w-2xl w-full">
+-				{!compact && (
+-					<div className="flex flex-col items-center mb-8">
+-						<div className="w-16 h-16 bg-stone-100 dark:bg-stone-800 rounded-full flex items-center justify-center mb-4">
+-							<BotMessageSquare className="w-8 h-8 text-stone-500 dark:text-stone-400" />
+-						</div>
+-						<h2 className="text-2xl font-semibold text-stone-700 dark:text-stone-200 mb-2">
+-							Track your coding agents
+-						</h2>
+-					</div>
+-				)}
+-
+-				{firstKey ? (
+-					<div className="flex items-start gap-3 mb-4 p-3 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30">
+-						<KeyRound className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
+-						<p className="text-sm text-emerald-700 dark:text-emerald-300">
+-							Snippet is pre-filled with your API key and this
+-							dashboard&apos;s OTLP endpoint. The CLI will
+-							authenticate automatically.
+-						</p>
+-					</div>
+-				) : (
+-					<div className="flex items-start justify-between gap-3 mb-4 p-3 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30">
+-						<div className="flex items-start gap-3">
+-							<KeyRound className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+-							<p className="text-sm text-amber-700 dark:text-amber-300">
+-								No API key found. Generate one to pre-fill the
+-								snippet — the CLI needs it to authenticate
+-								OTLP exports.
+-							</p>
+-						</div>
+-						<button
+-							onClick={handleGenerateKey}
+-							disabled={isCreatingKey}
+-							className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-amber-600 hover:bg-amber-700 disabled:opacity-60 disabled:cursor-not-allowed text-white transition-colors"
+-						>
+-							{isCreatingKey ? (
+-								<Loader2 className="w-3.5 h-3.5 animate-spin" />
+-							) : (
+-								<KeyRound className="w-3.5 h-3.5" />
+-							)}
+-							Generate API key
+-						</button>
+-					</div>
+-				)}
+-
+-				<div className="grid grid-cols-3 gap-2 mb-4">
+-					{OS_OPTIONS.map((os) => {
+-						const isActive = activeOs === os.id;
+-						const Icon = os.icon;
+-						return (
+-							<button
+-								key={os.id}
+-								onClick={() => setActiveOs(os.id)}
+-								className={`flex flex-col items-center justify-center gap-1.5 rounded-lg border px-3 py-3 transition-colors ${
+-									isActive
+-										? "border-stone-900 dark:border-stone-100 bg-stone-100 dark:bg-stone-800 text-stone-900 dark:text-stone-100"
+-										: "border-stone-200 dark:border-stone-700 text-stone-500 dark:text-stone-400 hover:border-stone-300 dark:hover:border-stone-600 hover:text-stone-700 dark:hover:text-stone-300"
+-								}`}
+-							>
+-								<Icon className="w-5 h-5" />
+-								<span className="text-xs font-medium">{os.label}</span>
+-							</button>
+-						);
+-					})}
+-				</div>
+-
+-				<div className="border dark:border-stone-800 rounded-lg overflow-hidden">
+-					<div className="flex flex-wrap border-b border-stone-200 dark:border-stone-700">
+-						{VENDORS.map((v) => {
+-							const isActive = activeVendor === v.id;
+-							const hasIcon = hasCodingAgentVendorIcon(v.id);
+-							return (
+-								<button
+-									key={v.id}
+-									onClick={() => setActiveVendor(v.id)}
+-									className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
+-										isActive
+-											? "bg-stone-100 dark:bg-stone-800 text-stone-900 dark:text-stone-100 border-b-2 border-stone-900 dark:border-stone-100"
+-											: "text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-300"
+-									}`}
+-								>
+-									{hasIcon && (
+-										<CodingAgentVendorIcon
+-											vendor={v.id}
+-											className="w-4 h-4"
+-										/>
+-									)}
+-									{v.label}
+-								</button>
+-							);
+-						})}
+-					</div>
+-					<div className="p-4 space-y-3 bg-stone-50 dark:bg-stone-900">
+-						<div className="relative rounded-md border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-950 p-4">
+-							<button
+-								onClick={handleCopy}
+-								className="absolute top-2.5 right-2.5 p-1.5 rounded-md text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-800 transition-colors"
+-								title="Copy commands"
+-							>
+-								{copied ? (
+-									<Check className="w-4 h-4 text-emerald-500" />
+-								) : (
+-									<Copy className="w-4 h-4" />
+-								)}
+-							</button>
+-							<pre className="text-xs font-mono text-stone-700 dark:text-stone-300 whitespace-pre-wrap break-all pr-8 leading-relaxed">
+-								{snippet}
+-							</pre>
+-						</div>
+-						<div className="rounded-md border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-950 p-3 text-xs text-stone-700 dark:text-stone-300">
+-							<p className="font-medium text-stone-900 dark:text-stone-100 mb-1.5">
+-								After running the snippet
+-							</p>
+-							<ol className="list-decimal pl-4 space-y-1">
+-								<li>{vendor.postInstall.restart}</li>
+-								{(vendor.postInstall.extraSteps || []).map((step, i) => (
+-									<li key={i}>{step}</li>
+-								))}
+-								<li>Send any prompt in {vendor.label}.</li>
+-							</ol>
+-						</div>
+-
+-						</div>
+-				</div>
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/app/(playground)/agents/page.tsx b/src/client/src/app/(playground)/agents/page.tsx
+deleted file mode 100644
+index fef9d5bb..00000000
+--- a/src/client/src/app/(playground)/agents/page.tsx
++++ /dev/null
+@@ -1,260 +0,0 @@
+-"use client";
+-
+-/**
+- * AutoDev Agents page.
+- *
+- * Patch 18 removes the OpenLIT Controller-driven application surface
+- * (`discovered` / `instrumented` SDK-or-controller jobs and the controller
+- * lifecycle / instrumentation UI). The Agents workspace now lists coding
+- * agents only; canonical SDK agent state lives in the AutoDev runtime/
+- * Control API and is rendered by the consolidated AutoDev Console.
+- */
+-
+-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+-import { useSearchParams, useRouter } from "next/navigation";
+-import { Bot, RefreshCw } from "lucide-react";
+-import { usePostHog } from "posthog-js/react";
+-import { CLIENT_EVENTS } from "@/constants/events";
+-import { getFilterDetails } from "@/selectors/filter";
+-import { useRootStore } from "@/store";
+-import { TIME_RANGE_TYPE } from "@/store/filter";
+-import type { UnifiedAgent } from "@/types/agents";
+-import { Button } from "@/components/ui/button";
+-import {
+-	Dialog,
+-	DialogContent,
+-	DialogHeader,
+-	DialogTitle,
+-	DialogDescription,
+-} from "@/components/ui/dialog";
+-import Filter from "@/components/(playground)/filter";
+-import FeaturePageHeader from "@/components/(playground)/feature-page-header";
+-import getMessage from "@/constants/messages";
+-import CodingAgentsTable from "./coding-agents-table";
+-
+-type Tab = "coding";
+-
+-function coerceTab(_value: string | null): Tab {
+-	// The previous build's "services" / "controllers" tabs are gone; any
+-	// older deep link is silently coerced to the only remaining tab.
+-	return "coding";
+-}
+-
+-export default function AgentsPage() {
+-	const searchParams = useSearchParams();
+-	const router = useRouter();
+-	const posthog = usePostHog();
+-	const initialTab = coerceTab(searchParams.get("tab"));
+-	const [activeTab, setActiveTabState] = useState<Tab>(initialTab);
+-	const [codingRows, setCodingRows] = useState<UnifiedAgent[]>([]);
+-	const [nextCursor, setNextCursor] = useState<string | null>(null);
+-	const [isLoadingMore, setIsLoadingMore] = useState(false);
+-
+-	const [refreshError, setRefreshError] = useState<string | null>(null);
+-	const [setupModal, setSetupModal] = useState<null | "coding">(null);
+-
+-	const setActiveTab = (tab: Tab) => {
+-		setActiveTabState(tab);
+-		const params = new URLSearchParams(window.location.search);
+-		params.delete("tab");
+-		const qs = params.toString();
+-		router.replace(`/agents${qs ? `?${qs}` : ""}`, { scroll: false });
+-	};
+-
+-	useEffect(() => {
+-		setActiveTabState(coerceTab(searchParams.get("tab")));
+-	}, [searchParams]);
+-
+-	const didAutoRouteRef = useRef(false);
+-	const inventoryFiredRef = useRef(false);
+-
+-	const filter = useRootStore(getFilterDetails);
+-
+-	const [codingLoading, setCodingLoading] = useState(false);
+-	const [codingFetched, setCodingFetched] = useState(false);
+-
+-	const fetchCodingAgents = useCallback(
+-		async (cursor: string | null) => {
+-			const params = new URLSearchParams();
+-			if (filter.timeLimit.start)
+-				params.set("start", new Date(filter.timeLimit.start).toISOString());
+-			if (filter.timeLimit.end)
+-				params.set("end", new Date(filter.timeLimit.end).toISOString());
+-			if (filter.timeLimit.type === TIME_RANGE_TYPE["24H"])
+-				params.set("range", "24h");
+-			if (cursor) params.set("cursor", cursor);
+-			params.set("source", "coding");
+-			params.set("limit", "50");
+-
+-			const url = `/api/agents?${params.toString()}`;
+-			setCodingLoading(true);
+-			try {
+-				const res = await fetch(url, { cache: "no-store" });
+-				if (!res.ok) throw new Error(`HTTP ${res.status}`);
+-				const payload = (await res.json()) as {
+-					data?: UnifiedAgent[];
+-					next_cursor?: string | null;
+-				};
+-				setCodingRows((prev) =>
+-					cursor
+-						? [...prev, ...((payload.data as UnifiedAgent[]) || [])]
+-						: (payload.data as UnifiedAgent[]) || []
+-				);
+-				setNextCursor(payload.next_cursor ?? null);
+-				setCodingFetched(true);
+-			} catch (err) {
+-				setRefreshError(
+-					err instanceof Error ? err.message : "Failed to load coding agents"
+-				);
+-			} finally {
+-				setCodingLoading(false);
+-				setIsLoadingMore(false);
+-			}
+-		},
+-		[filter.timeLimit]
+-	);
+-
+-	const refresh = useCallback(async () => {
+-		setRefreshError(null);
+-		await fetchCodingAgents(null);
+-	}, [fetchCodingAgents]);
+-
+-	useEffect(() => {
+-		void refresh();
+-		if (!inventoryFiredRef.current) {
+-			inventoryFiredRef.current = true;
+-			posthog?.capture(CLIENT_EVENTS.AGENTS_HUB_VIEWED, {
+-				source: "autodev-coding-only",
+-			});
+-		}
+-		if (!didAutoRouteRef.current) {
+-			didAutoRouteRef.current = true;
+-		}
+-	}, [refresh, posthog]);
+-
+-	const loadMore = useCallback(async () => {
+-		if (!nextCursor || isLoadingMore) return;
+-		setIsLoadingMore(true);
+-		await fetchCodingAgents(nextCursor);
+-	}, [fetchCodingAgents, isLoadingMore, nextCursor]);
+-
+-	const codingTotalCost = useMemo(
+-		() => codingRows.reduce((acc, r) => acc + (r.coding_cost_usd_24h ?? 0), 0),
+-		[codingRows]
+-	);
+-	const codingActiveUsers = useMemo(
+-		() =>
+-			codingRows.reduce((acc, r) => acc + (r.coding_active_users_24h ?? 0), 0),
+-		[codingRows]
+-	);
+-	const codingVendorsUsed = useMemo(
+-		() =>
+-			codingRows.filter(
+-				(r) =>
+-					(r.coding_session_count_24h ?? 0) > 0 ||
+-					(r.coding_active_users_24h ?? 0) > 0
+-			).length,
+-		[codingRows]
+-	);
+-
+-	const headlineSummary =
+-		"Coding agents that emit telemetry to the AutoDev dashboard.";
+-	const emptyHeadline = "No coding agents detected yet";
+-	const emptyDetail =
+-		"Install a coding-agent host plugin (or run the AutoDev CLI) to start shipping session telemetry to this dashboard.";
+-
+-	return (
+-		<>
+-			<FeaturePageHeader
+-				eyebrow={getMessage().SIDEBAR_MONITOR}
+-				title={getMessage().FEATURE_AGENTS}
+-				description={headlineSummary}
+-				icon={<Bot className="h-4 w-4" />}
+-				actions={
+-					<>
+-						<Button
+-							variant="outline"
+-							size="sm"
+-							onClick={refresh}
+-							disabled={codingLoading}
+-						>
+-							<RefreshCw
+-								className={`h-4 w-4 ${codingLoading ? "animate-spin" : ""}`}
+-							/>
+-							<span className="ml-2">Refresh</span>
+-						</Button>
+-						<Button size="sm" onClick={() => setSetupModal("coding")}>
+-							{getMessage().AGENTS_ADD_CODING_AGENT}
+-						</Button>
+-					</>
+-				}
+-			/>
+-			<div className="flex flex-col gap-4 p-4">
+-				<div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+-					<StatCard
+-						label={getMessage().AGENTS_STAT_CODING_VENDORS}
+-						value={codingVendorsUsed}
+-					/>
+-					<StatCard
+-						label={getMessage().AGENTS_STAT_CODING_USERS}
+-						value={codingActiveUsers}
+-					/>
+-					<StatCard
+-						label={getMessage().AGENTS_STAT_CODING_COST}
+-						value={`$${codingTotalCost.toFixed(2)}`}
+-					/>
+-				</div>
+-				<Filter />
+-				{refreshError ? (
+-					<div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+-						{refreshError}
+-					</div>
+-				) : null}
+-				<CodingAgentsTable
+-					services={codingRows}
+-					isFetched={codingFetched}
+-					isLoading={codingLoading}
+-				/>
+-				{nextCursor ? (
+-					<div className="flex justify-center">
+-						<Button
+-							variant="outline"
+-							disabled={isLoadingMore}
+-							onClick={loadMore}
+-						>
+-							{isLoadingMore ? "Loading…" : "Load more"}
+-						</Button>
+-					</div>
+-				) : null}
+-			</div>
+-			<Dialog
+-				open={setupModal !== null}
+-				onOpenChange={(open) => !open && setSetupModal(null)}
+-			>
+-				<DialogContent>
+-					<DialogHeader>
+-						<DialogTitle>{emptyHeadline}</DialogTitle>
+-						<DialogDescription>{emptyDetail}</DialogDescription>
+-					</DialogHeader>
+-				</DialogContent>
+-			</Dialog>
+-		</>
+-	);
+-}
+-
+-function StatCard({
+-	label,
+-	value,
+-}: {
+-	label: string;
+-	value: string | number;
+-}) {
+-	return (
+-		<div className="rounded border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-950">
+-			<div className="text-xs uppercase tracking-wide text-stone-500">
+-				{label}
+-			</div>
+-			<div className="mt-2 text-2xl font-semibold">{value}</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/agents/agent-dag.tsx b/src/client/src/components/(playground)/agents/agent-dag.tsx
+deleted file mode 100644
+index 8de12573..00000000
+--- a/src/client/src/components/(playground)/agents/agent-dag.tsx
++++ /dev/null
+@@ -1,132 +0,0 @@
+-"use client";
+-
+-import { useEffect, useState } from "react";
+-import getMessage from "@/constants/messages";
+-import { getData } from "@/utils/api";
+-import DagCanvas, {
+-	type DagEdgeInput,
+-	type DagNodeInput,
+-} from "./dag-canvas";
+-import type { AggregateGraph } from "@/lib/platform/agents/aggregate-graph";
+-
+-interface AgentDagProps {
+-	agentKey: string;
+-	versionHash: string | null;
+-}
+-
+-function formatLatency(ms: number): string {
+-	if (!Number.isFinite(ms) || ms <= 0) return "0ms";
+-	if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
+-	if (ms >= 1) return `${Math.round(ms)}ms`;
+-	return `${ms.toFixed(2)}ms`;
+-}
+-
+-function formatErrorRate(rate: number): string {
+-	if (!Number.isFinite(rate) || rate <= 0) return "";
+-	return ` · ${(rate * 100).toFixed(1)}% err`;
+-}
+-
+-export default function AgentDag({ agentKey, versionHash }: AgentDagProps) {
+-	const [graph, setGraph] = useState<AggregateGraph | null>(null);
+-	const [loading, setLoading] = useState(true);
+-	const [error, setError] = useState<string | null>(null);
+-
+-	useEffect(() => {
+-		let cancelled = false;
+-		setLoading(true);
+-		setError(null);
+-		(async () => {
+-			try {
+-				const params = versionHash
+-					? `?versionHash=${encodeURIComponent(versionHash)}`
+-					: "";
+-				const body = (await getData({
+-					url: `/api/agents/${agentKey}/graph${params}`,
+-					method: "GET",
+-				})) as {
+-					data?: { graph?: AggregateGraph };
+-					err?: string;
+-					error?: string;
+-				};
+-				if (cancelled) return;
+-				if (body?.err || body?.error) {
+-					throw new Error(String(body.err || body.error));
+-				}
+-				setGraph((body.data?.graph as AggregateGraph) || null);
+-			} catch (e) {
+-				if (!cancelled) setError(String(e));
+-			} finally {
+-				if (!cancelled) setLoading(false);
+-			}
+-		})();
+-		return () => {
+-			cancelled = true;
+-		};
+-	}, [agentKey, versionHash]);
+-
+-	const nodes: DagNodeInput[] =
+-		graph?.nodes.map((n) => {
+-			const isTool = n.kind === "tool";
+-			return {
+-				id: n.id,
+-				label: n.spanName,
+-				subLabel: isTool
+-					? `${n.spanCount.toLocaleString()} invocations`
+-					: `${n.spanCount.toLocaleString()} calls · p50 ${formatLatency(n.p50Ms)}`,
+-				tooltip: isTool
+-					? `Tool: ${n.spanName}\n${n.spanCount.toLocaleString()} invocations${formatErrorRate(
+-							n.errorRate
+-						)}`
+-					: `${n.spanName}\n${n.spanCount.toLocaleString()} calls\np50 ${formatLatency(
+-							n.p50Ms
+-						)}${formatErrorRate(n.errorRate)}`,
+-				depth: n.depth,
+-				kind: isTool ? ("tool" as const) : ("span" as const),
+-			};
+-		}) || [];
+-
+-	const edges: DagEdgeInput[] =
+-		graph?.edges.map((e) => ({
+-			from: e.from,
+-			to: e.to,
+-			label: `${e.count.toLocaleString()} · ${formatLatency(e.p50Ms)}`,
+-			tooltip: `${e.from} → ${e.to}\n${e.count.toLocaleString()} calls\np50 ${formatLatency(
+-				e.p50Ms
+-			)}${formatErrorRate(e.errorRate)}`,
+-			weight: e.count,
+-		})) || [];
+-
+-	return (
+-		<section className="space-y-2">
+-			{graph && graph.traceCount > 0 && (
+-				<div className="text-xs text-stone-500 dark:text-stone-400 text-right">
+-					{getMessage().AGENTS_DAG_SAMPLED_NOTE(
+-						Math.min(graph.traceCount, 500),
+-						graph.traceCount
+-					)}
+-				</div>
+-			)}
+-
+-			{loading && (
+-				<div
+-					className="flex items-center justify-center text-sm text-stone-500 dark:text-stone-400 border border-stone-200 dark:border-stone-800 rounded-md bg-white dark:bg-stone-950"
+-					style={{ minHeight: 520 }}
+-				>
+-					Loading…
+-				</div>
+-			)}
+-			{!loading && error && (
+-				<div className="border border-red-200 dark:border-red-900 rounded-md p-3 text-sm text-red-600 dark:text-red-400">
+-					{error}
+-				</div>
+-			)}
+-			{!loading && !error && (
+-				<DagCanvas
+-					nodes={nodes}
+-					edges={edges}
+-					emptyMessage={getMessage().AGENTS_DAG_EMPTY}
+-				/>
+-			)}
+-		</section>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/agents/agent-header.tsx b/src/client/src/components/(playground)/agents/agent-header.tsx
+deleted file mode 100644
+index 3bbfbbea..00000000
+--- a/src/client/src/components/(playground)/agents/agent-header.tsx
++++ /dev/null
+@@ -1,187 +0,0 @@
+-"use client";
+-
+-import { useCallback, useMemo, useState, type ReactNode } from "react";
+-import Link from "next/link";
+-import { useSearchParams } from "next/navigation";
+-import { ArrowLeft, Bot, RefreshCw } from "lucide-react";
+-import { toast } from "sonner";
+-import { Button } from "@/components/ui/button";
+-import FeaturePageHeader from "@/components/(playground)/feature-page-header";
+-import getMessage from "@/constants/messages";
+-import type { UnifiedAgent } from "@/types/agents";
+-import {
+-	CodingAgentVendorIcon,
+-	codingAgentVendorLabel,
+-	hasCodingAgentVendorIcon,
+-} from "@/components/svg/coding-agents";
+-
+-interface AgentHeaderProps {
+-	agent: UnifiedAgent;
+-	onRefresh: () => void;
+-	/** Pill tab switcher — same surface as the agents hub header actions. */
+-	tabs?: ReactNode;
+-	rightSlot?: ReactNode;
+-}
+-
+-// Map a `?from=<tab>` source the table click stamped on the
+-// drill-in URL back into the agents-hub tab query the user expects
+-// to land on. We default to `services` (Applications) for
+-// unrecognised values so legacy links don't break, and to `coding`
+-// for coding-sourced agents — that way a deep link to a Claude
+-// Code session detail still routes back to the right tab even if
+-// `from` is missing.
+-function buildBackHref(
+-	from: string | null,
+-	agentSource: UnifiedAgent["source"] | undefined
+-) {
+-	const ALLOWED = new Set(["services", "controllers", "coding"]);
+-	let tab = from && ALLOWED.has(from) ? from : null;
+-	if (!tab) {
+-		tab = agentSource === "coding" ? "coding" : "services";
+-	}
+-	return tab === "services" ? "/agents" : `/agents?tab=${tab}`;
+-}
+-
+-/** Soft sky chip — matches Telemetry Traces active tone, not solid teal. */
+-export const AGENTS_HEADER_TONE =
+-	"border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300";
+-
+-/** Active pill tab — same soft sky treatment as Telemetry signal toggles. */
+-export const AGENTS_PILL_TAB_ACTIVE =
+-	"border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-400";
+-
+-export default function AgentHeader({
+-	agent,
+-	onRefresh,
+-	tabs,
+-	rightSlot,
+-}: AgentHeaderProps) {
+-	const [isRefreshing, setIsRefreshing] = useState(false);
+-	const searchParams = useSearchParams();
+-	const backHref = useMemo(
+-		() => buildBackHref(searchParams?.get("from") || null, agent.source),
+-		[searchParams, agent.source]
+-	);
+-
+-	const handleRefresh = useCallback(async () => {
+-		setIsRefreshing(true);
+-		try {
+-			const res = await fetch(`/api/agents/${agent.agent_key}/refresh`, {
+-				method: "POST",
+-			});
+-			if (res.status === 429) {
+-				toast.message("Refresh cooling down — try again in a few seconds.");
+-			} else if (!res.ok) {
+-				toast.error(`Refresh failed: HTTP ${res.status}`);
+-			} else {
+-				onRefresh();
+-			}
+-		} catch (e) {
+-			toast.error(`Refresh failed: ${String(e)}`);
+-		} finally {
+-			setIsRefreshing(false);
+-		}
+-	}, [agent.agent_key, onRefresh]);
+-
+-	const isCoding = agent.source === "coding";
+-	const title =
+-		isCoding && hasCodingAgentVendorIcon(agent.coding_agent_vendor)
+-			? codingAgentVendorLabel(agent.coding_agent_vendor)
+-			: agent.service_name;
+-
+-	const icon =
+-		isCoding && hasCodingAgentVendorIcon(agent.coding_agent_vendor) ? (
+-			<CodingAgentVendorIcon
+-				vendor={agent.coding_agent_vendor}
+-				className="h-4 w-4"
+-			/>
+-		) : (
+-			<Bot className="h-4 w-4" />
+-		);
+-
+-	const backLabel = getMessage().AGENTS_BACK_TO_HUB;
+-
+-	return (
+-		<FeaturePageHeader
+-			eyebrow={getMessage().SIDEBAR_MONITOR}
+-			title={title}
+-			icon={icon}
+-			tone={AGENTS_HEADER_TONE}
+-			leading={
+-				<Button
+-					asChild
+-					variant="outline"
+-					size="sm"
+-					className="h-7 w-7 shrink-0 p-0"
+-				>
+-					<Link href={backHref} title={backLabel} aria-label={backLabel}>
+-						<ArrowLeft className="h-3.5 w-3.5" />
+-					</Link>
+-				</Button>
+-			}
+-			actions={
+-				<div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+-					{tabs}
+-					{rightSlot}
+-					<button
+-						onClick={handleRefresh}
+-						disabled={isRefreshing}
+-						title={
+-							isRefreshing
+-								? getMessage().AGENTS_REFRESHING
+-								: getMessage().AGENTS_REFRESH
+-						}
+-						aria-label={
+-							isRefreshing
+-								? getMessage().AGENTS_REFRESHING
+-								: getMessage().AGENTS_REFRESH
+-						}
+-						className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-stone-200 bg-stone-50 text-stone-600 transition hover:bg-stone-100 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-300 dark:hover:bg-stone-800 disabled:opacity-50"
+-					>
+-						<RefreshCw
+-							className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`}
+-						/>
+-					</button>
+-				</div>
+-			}
+-		/>
+-	);
+-}
+-
+-/** Shared pill-tab button used by the agents hub and detail pages. */
+-export function AgentPillTab({
+-	active,
+-	label,
+-	onClick,
+-	indicator,
+-	indicatorTooltip,
+-}: {
+-	active: boolean;
+-	label: string;
+-	onClick: () => void;
+-	indicator?: boolean;
+-	indicatorTooltip?: string;
+-}) {
+-	return (
+-		<button
+-			type="button"
+-			onClick={onClick}
+-			aria-pressed={active}
+-			className={`inline-flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs font-medium transition ${
+-				active
+-					? AGENTS_PILL_TAB_ACTIVE
+-					: "border-stone-200 bg-stone-50 text-stone-600 hover:bg-stone-100 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-300 dark:hover:bg-stone-800"
+-			}`}
+-		>
+-			<span>{label}</span>
+-			{indicator ? (
+-				<span
+-					role="status"
+-					aria-label={indicatorTooltip}
+-					title={indicatorTooltip}
+-					className="inline-flex h-2 w-2 rounded-full bg-orange-500 motion-safe:animate-pulse"
+-				/>
+-			) : null}
+-		</button>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/agents/agent-metadata-grid.tsx b/src/client/src/components/(playground)/agents/agent-metadata-grid.tsx
+deleted file mode 100644
+index 5f3662f8..00000000
+--- a/src/client/src/components/(playground)/agents/agent-metadata-grid.tsx
++++ /dev/null
+@@ -1,82 +0,0 @@
+-"use client";
+-
+-import { formatBrowserDateTime, parseDateString } from "@/utils/date";
+-import getMessage from "@/constants/messages";
+-import type { UnifiedAgent } from "@/types/agents";
+-
+-interface AgentMetadataGridProps {
+-	agent: UnifiedAgent;
+-}
+-
+-function humanizeAge(firstSeenIso: string): string {
+-	if (!firstSeenIso) return "—";
+-	// `parseDateString` treats naked ClickHouse "YYYY-MM-DD HH:MM:SS" strings
+-	// as UTC (matching how `formatBrowserDateTime` displays them); raw
+-	// `new Date()` parses the same string as local time, which made AGE
+-	// disagree with FIRST SEEN by hours.
+-	const parsed = parseDateString(firstSeenIso);
+-	if (!parsed) return "—";
+-	const ms = Date.now() - parsed.getTime();
+-	if (!Number.isFinite(ms) || ms < 0) return "—";
+-	const seconds = Math.floor(ms / 1000);
+-	if (seconds < 60) return `${seconds}s`;
+-	const minutes = Math.floor(seconds / 60);
+-	if (minutes < 60) return `${minutes}m`;
+-	const hours = Math.floor(minutes / 60);
+-	if (hours < 24) return `${hours}h`;
+-	const days = Math.floor(hours / 24);
+-	if (days < 365) return `${days}d`;
+-	const years = Math.floor(days / 365);
+-	const remDays = days % 365;
+-	return remDays > 0 ? `${years}y ${remDays}d` : `${years}y`;
+-}
+-
+-export default function AgentMetadataGrid({ agent }: AgentMetadataGridProps) {
+-	return (
+-		<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+-			<MetadataCard
+-				label={getMessage().AGENTS_METADATA_REQUESTS_24H}
+-				value={agent.request_count_24h.toLocaleString()}
+-			/>
+-			<MetadataCard
+-				label={getMessage().AGENTS_METADATA_PRIMARY_MODEL}
+-				value={agent.primary_model || "—"}
+-			/>
+-			<MetadataCard
+-				label={getMessage().AGENTS_METADATA_TOOLS}
+-				value={String(agent.tool_count)}
+-			/>
+-			<MetadataCard
+-				label={getMessage().AGENTS_METADATA_AGE}
+-				value={humanizeAge(agent.first_seen)}
+-			/>
+-			<MetadataCard
+-				label={getMessage().AGENTS_STAT_FIRST_SEEN}
+-				value={formatBrowserDateTime(agent.first_seen)}
+-			/>
+-			<MetadataCard
+-				label={getMessage().AGENTS_METADATA_LAST_SEEN}
+-				value={formatBrowserDateTime(agent.last_seen)}
+-			/>
+-		</div>
+-	);
+-}
+-
+-function MetadataCard({
+-	label,
+-	value,
+-}: {
+-	label: string;
+-	value: React.ReactNode;
+-}) {
+-	return (
+-		<div className="border dark:border-stone-800 rounded-lg p-3">
+-			<div className="text-[10px] font-medium text-stone-500 dark:text-stone-400 uppercase tracking-wide">
+-				{label}
+-			</div>
+-			<div className="mt-1 text-sm text-stone-900 dark:text-stone-100 break-words">
+-				{value}
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/agents/agent-monitoring-tab.tsx b/src/client/src/components/(playground)/agents/agent-monitoring-tab.tsx
+deleted file mode 100644
+index 8752d2dc..00000000
+--- a/src/client/src/components/(playground)/agents/agent-monitoring-tab.tsx
++++ /dev/null
+@@ -1,72 +0,0 @@
+-"use client";
+-
+-import { useState } from "react";
+-import ObservabilitySignalList from "@/components/(playground)/observability/signal-list";
+-import {
+-	OBSERVABILITY_SIGNALS,
+-	getSignalConfig,
+-} from "@/components/(playground)/observability/registry";
+-import { prepareObservabilitySignalChange } from "@/helpers/client/observability";
+-import { getFilterDetails, getUpdateConfig, getUpdateFilter } from "@/selectors/filter";
+-import { useRootStore } from "@/store";
+-
+-/**
+- * Agent Monitoring tab. Mirrors the Telemetry page's multi-signal browser
+- * (Traces / Exceptions / Metrics / Logs) but stays scoped to the current
+- * agent: the surrounding `AgentScopeProvider` locks `selectedConfig`
+- * (serviceNames / environments / versionFilter), so every signal list here is
+- * automatically filtered to this agent's service. Coding-only signals are
+- * hidden — they live under the coding-agent hub.
+- */
+-export default function AgentMonitoringTab() {
+-	const updateConfig = useRootStore(getUpdateConfig);
+-	const updateFilter = useRootStore(getUpdateFilter);
+-	const filter = useRootStore(getFilterDetails);
+-	const [activeKey, setActiveKey] = useState("traces");
+-	const activeConfig = getSignalConfig(activeKey);
+-
+-	const signals = OBSERVABILITY_SIGNALS.filter(
+-		(signal) => signal.key !== "sessions" && signal.key !== "coding_users"
+-	);
+-
+-	const onTabChange = (key: string) => {
+-		if (key === activeKey) return;
+-		// Reset sort / groupBy / pagination so a trace column can't leak into
+-		// the metrics or logs query. Preserve the agent scope lock — wiping
+-		// serviceNames unmounts the list via AgentScopeProvider and remounts
+-		// into an infinite update loop.
+-		prepareObservabilitySignalChange(updateConfig, updateFilter, undefined, {
+-			serviceNames: filter.selectedConfig?.serviceNames,
+-			services: filter.selectedConfig?.services,
+-			environments: filter.selectedConfig?.environments,
+-			versionFilter: filter.selectedConfig?.versionFilter,
+-		});
+-		setActiveKey(key);
+-	};
+-
+-	return (
+-		<div className="flex flex-col gap-3">
+-			<div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+-				{signals.map((signal) => {
+-					const Icon = signal.icon;
+-					const isActive = signal.key === activeConfig.key;
+-					return (
+-						<button
+-							key={signal.key}
+-							onClick={() => onTabChange(signal.key)}
+-							className={`inline-flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs transition ${
+-								isActive
+-									? signal.tone
+-									: "border-stone-200 bg-stone-50 text-stone-600 hover:bg-stone-100 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-300 dark:hover:bg-stone-800"
+-							}`}
+-						>
+-							<Icon className="h-4 w-4" />
+-							<span className="font-medium">{signal.label}</span>
+-						</button>
+-					);
+-				})}
+-			</div>
+-			<ObservabilitySignalList key={activeConfig.key} config={activeConfig} />
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/agents/agent-overview-tab.tsx b/src/client/src/components/(playground)/agents/agent-overview-tab.tsx
+deleted file mode 100644
+index ff4742e0..00000000
+--- a/src/client/src/components/(playground)/agents/agent-overview-tab.tsx
++++ /dev/null
+@@ -1,32 +0,0 @@
+-"use client";
+-
+-import type { UnifiedAgent } from "@/types/agents";
+-import AgentMetadataGrid from "./agent-metadata-grid";
+-import AgentDag from "./agent-dag";
+-
+-interface AgentOverviewTabProps {
+-	agent: UnifiedAgent;
+-	versionHash: string | null;
+-}
+-
+-/**
+- * Overview tab: top half is the lifted metadata grid (primary model,
+- * tools, age, first/last seen, requests 24h); bottom half is the
+- * aggregated per-version DAG.
+- *
+- * Both halves react to `versionHash` — the DAG re-fetches scoped to the
+- * version, and version-aware metadata (request counts, etc.) is sourced
+- * elsewhere; the lifted grid stays version-agnostic because it shows
+- * agent-wide stats from `openlit_agents_summary`.
+- */
+-export default function AgentOverviewTab({
+-	agent,
+-	versionHash,
+-}: AgentOverviewTabProps) {
+-	return (
+-		<div className="space-y-5">
+-			<AgentMetadataGrid agent={agent} />
+-			<AgentDag agentKey={agent.agent_key} versionHash={versionHash} />
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/agents/dag-canvas.tsx b/src/client/src/components/(playground)/agents/dag-canvas.tsx
+deleted file mode 100644
+index 0fa07699..00000000
+--- a/src/client/src/components/(playground)/agents/dag-canvas.tsx
++++ /dev/null
+@@ -1,449 +0,0 @@
+-"use client";
+-
+-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+-import { Maximize, Minus, Plus } from "lucide-react";
+-
+-/**
+- * Reusable SVG primitive that lays out and renders a directed acyclic graph
+- * (nodes positioned by their `depth`, edges drawn as cubic curves).
+- *
+- * Used by:
+- *  - The aggregated per-version DAG in the Overview tab (this file's
+- *    primary consumer — `<AgentDag/>`).
+- *
+- * Single-trace DAGs continue to use the existing `<NodeGraph/>` in
+- * components/(playground)/request/components/node-graph.tsx because that
+- * surface needs span-selection wiring and execution-order layout
+- * (parallel/sequential edge types) that the aggregate view does not.
+- */
+-
+-const NODE_W = 180;
+-const NODE_H = 56;
+-const COL_GAP = 240;
+-const ROW_GAP = 110;
+-const PAD = 48;
+-const ZOOM_STEP = 0.05;
+-const MIN_ZOOM = 0.05;
+-const MAX_ZOOM = 3;
+-
+-export type DagNodeKind = "span" | "tool";
+-
+-export interface DagNodeInput {
+-	id: string;
+-	label: string;
+-	subLabel?: string;
+-	tooltip?: string;
+-	depth: number;
+-	highlight?: boolean;
+-	/** Visual variant. `tool` renders with an amber/wrench style. */
+-	kind?: DagNodeKind;
+-}
+-
+-export interface DagEdgeInput {
+-	from: string;
+-	to: string;
+-	label?: string;
+-	tooltip?: string;
+-	weight?: number;
+-	highlight?: boolean;
+-}
+-
+-interface DagCanvasProps {
+-	nodes: DagNodeInput[];
+-	edges: DagEdgeInput[];
+-	minHeightPx?: number;
+-	emptyMessage?: string;
+-	onNodeClick?: (id: string) => void;
+-}
+-
+-interface LaidOutNode extends DagNodeInput {
+-	x: number;
+-	y: number;
+-}
+-
+-function layout(
+-	nodes: DagNodeInput[],
+-	edges: DagEdgeInput[]
+-): LaidOutNode[] {
+-	const byDepth = new Map<number, DagNodeInput[]>();
+-	for (const n of nodes) {
+-		const arr = byDepth.get(n.depth) || [];
+-		arr.push(n);
+-		byDepth.set(n.depth, arr);
+-	}
+-	const depths = Array.from(byDepth.keys()).sort((a, b) => a - b);
+-	const laid: LaidOutNode[] = [];
+-	const posById = new Map<string, LaidOutNode>();
+-
+-	// 1. Initial placement: stack nodes within a depth row.
+-	for (const depth of depths) {
+-		const cohort = byDepth.get(depth)!;
+-		// Sort stable by id so layout is deterministic between renders.
+-		cohort.sort((a, b) => a.id.localeCompare(b.id));
+-		cohort.forEach((n, i) => {
+-			const laidNode: LaidOutNode = {
+-				...n,
+-				x: depth * COL_GAP,
+-				y: i * ROW_GAP,
+-			};
+-			laid.push(laidNode);
+-			posById.set(laidNode.id, laidNode);
+-		});
+-	}
+-
+-	// 2. Barycenter pass: walk depths from right to left and pull each parent
+-	// toward the median y of its children. Keeps the arrow geometry sane when
+-	// a node has children at very different rows (e.g. chat -> POST sibling
+-	// at row 0 plus chat -> tool:lookup_weather sibling at row 1) — without
+-	// this, the cubic edge to the lower child takes a sharp diagonal and the
+-	// label lands between rows.
+-	const childrenOf = new Map<string, string[]>();
+-	for (const e of edges) {
+-		if (!posById.has(e.from) || !posById.has(e.to)) continue;
+-		const list = childrenOf.get(e.from) || [];
+-		list.push(e.to);
+-		childrenOf.set(e.from, list);
+-	}
+-	for (let i = depths.length - 2; i >= 0; i--) {
+-		const cohort = byDepth.get(depths[i])!;
+-		for (const n of cohort) {
+-			const node = posById.get(n.id);
+-			if (!node) continue;
+-			const kids = (childrenOf.get(n.id) || [])
+-				.map((id) => posById.get(id))
+-				.filter((p): p is LaidOutNode => Boolean(p));
+-			if (kids.length === 0) continue;
+-			const ys = kids.map((k) => k.y).sort((a, b) => a - b);
+-			const mid = Math.floor(ys.length / 2);
+-			const median =
+-				ys.length % 2 === 1 ? ys[mid] : (ys[mid - 1] + ys[mid]) / 2;
+-			// Don't let two siblings collide: clamp toward median but stay at
+-			// least one row apart from peers in the same depth.
+-			node.y = median;
+-		}
+-		// Re-sort the cohort by computed y and re-stack to remove overlaps.
+-		cohort.sort((a, b) => {
+-			const aY = posById.get(a.id)?.y ?? 0;
+-			const bY = posById.get(b.id)?.y ?? 0;
+-			return aY - bY || a.id.localeCompare(b.id);
+-		});
+-		// Resolve overlaps: walk top-down and ensure ROW_GAP minimum spacing
+-		// while keeping the cohort's "anchor" at the barycenter midpoint.
+-		let cursor = -Infinity;
+-		for (const n of cohort) {
+-			const node = posById.get(n.id);
+-			if (!node) continue;
+-			node.y = Math.max(node.y, cursor);
+-			cursor = node.y + ROW_GAP;
+-		}
+-	}
+-	return laid;
+-}
+-
+-function trunc(s: string, n: number): string {
+-	return s.length > n ? s.slice(0, n - 1) + "…" : s;
+-}
+-
+-export default function DagCanvas({
+-	nodes,
+-	edges,
+-	minHeightPx = 520,
+-	emptyMessage,
+-	onNodeClick,
+-}: DagCanvasProps) {
+-	const containerRef = useRef<HTMLDivElement>(null);
+-	const [zoom, setZoom] = useState(1);
+-	const [pan, setPan] = useState({ x: 0, y: 0 });
+-	const [panning, setPanning] = useState(false);
+-	const dragStart = useRef({ mx: 0, my: 0, px: 0, py: 0 });
+-
+-	const laidOut = useMemo(() => layout(nodes, edges), [nodes, edges]);
+-	const nodeById = useMemo(() => {
+-		const m = new Map<string, LaidOutNode>();
+-		for (const n of laidOut) m.set(n.id, n);
+-		return m;
+-	}, [laidOut]);
+-
+-	const { svgW, svgH, ox, oy } = useMemo(() => {
+-		if (laidOut.length === 0) {
+-			return { svgW: 1, svgH: 1, ox: 0, oy: 0 };
+-		}
+-		const xs = laidOut.map((n) => n.x);
+-		const ys = laidOut.map((n) => n.y);
+-		const minX = Math.min(...xs);
+-		const maxX = Math.max(...xs);
+-		const minY = Math.min(...ys);
+-		const maxY = Math.max(...ys);
+-		return {
+-			svgW: maxX - minX + NODE_W + PAD * 2,
+-			svgH: maxY - minY + NODE_H + PAD * 2,
+-			ox: -minX + PAD,
+-			oy: -minY + PAD,
+-		};
+-	}, [laidOut]);
+-
+-	const fitToView = useCallback(() => {
+-		const el = containerRef.current;
+-		if (!el) return;
+-		const { clientWidth: cw, clientHeight: ch } = el;
+-		if (!cw || !ch) return;
+-		const z = Math.max(
+-			MIN_ZOOM,
+-			Math.min(MAX_ZOOM, Math.min(cw / svgW, ch / svgH) * 0.92)
+-		);
+-		setPan({ x: (cw - svgW * z) / 2, y: (ch - svgH * z) / 2 });
+-		setZoom(z);
+-	}, [svgW, svgH]);
+-
+-	useEffect(() => {
+-		const t = setTimeout(fitToView, 60);
+-		return () => clearTimeout(t);
+-	}, [fitToView]);
+-
+-	useEffect(() => {
+-		const el = containerRef.current;
+-		if (!el) return;
+-		const ro = new ResizeObserver(fitToView);
+-		ro.observe(el);
+-		return () => ro.disconnect();
+-	}, [fitToView]);
+-
+-	const onWheel = useCallback(
+-		(e: React.WheelEvent) => {
+-			e.preventDefault();
+-			const el = containerRef.current;
+-			if (!el) return;
+-			const r = el.getBoundingClientRect();
+-			const mx = e.clientX - r.left;
+-			const my = e.clientY - r.top;
+-			const nz = Math.max(
+-				MIN_ZOOM,
+-				Math.min(MAX_ZOOM, zoom + (e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP))
+-			);
+-			const sc = nz / zoom;
+-			setPan((p) => ({ x: mx - sc * (mx - p.x), y: my - sc * (my - p.y) }));
+-			setZoom(nz);
+-		},
+-		[zoom]
+-	);
+-
+-	const onMouseDown = useCallback(
+-		(e: React.MouseEvent) => {
+-			if (e.button !== 0) return;
+-			setPanning(true);
+-			dragStart.current = {
+-				mx: e.clientX,
+-				my: e.clientY,
+-				px: pan.x,
+-				py: pan.y,
+-			};
+-		},
+-		[pan]
+-	);
+-
+-	const onMouseMove = useCallback(
+-		(e: React.MouseEvent) => {
+-			if (!panning) return;
+-			setPan({
+-				x: dragStart.current.px + e.clientX - dragStart.current.mx,
+-				y: dragStart.current.py + e.clientY - dragStart.current.my,
+-			});
+-		},
+-		[panning]
+-	);
+-
+-	const onMouseUp = useCallback(() => setPanning(false), []);
+-
+-	if (laidOut.length === 0) {
+-		return (
+-			<div
+-				className="flex items-center justify-center text-sm text-stone-500 dark:text-stone-400 border border-stone-200 dark:border-stone-800 rounded-md bg-white dark:bg-stone-950"
+-				style={{ minHeight: minHeightPx }}
+-			>
+-				{emptyMessage || "No graph data to display."}
+-			</div>
+-		);
+-	}
+-
+-	return (
+-		<div
+-			className="relative w-full border border-stone-200 dark:border-stone-800 rounded-md overflow-hidden bg-white dark:bg-stone-950"
+-			style={{ minHeight: minHeightPx }}
+-		>
+-			<div className="absolute top-2 right-2 z-20 flex items-center gap-1 bg-white/90 dark:bg-stone-900/90 rounded-md border border-stone-200 dark:border-stone-700 p-0.5 shadow-sm">
+-				<button
+-					onClick={() =>
+-						setZoom((z) => Math.min(MAX_ZOOM, z + ZOOM_STEP))
+-					}
+-					className="p-1 rounded hover:bg-stone-100 dark:hover:bg-stone-700"
+-					title="Zoom in"
+-				>
+-					<Plus className="h-3.5 w-3.5 text-stone-600 dark:text-stone-300" />
+-				</button>
+-				<span className="text-[10px] tabular-nums text-stone-500 dark:text-stone-400 min-w-[32px] text-center select-none">
+-					{Math.round(zoom * 100)}%
+-				</span>
+-				<button
+-					onClick={() =>
+-						setZoom((z) => Math.max(MIN_ZOOM, z - ZOOM_STEP))
+-					}
+-					className="p-1 rounded hover:bg-stone-100 dark:hover:bg-stone-700"
+-					title="Zoom out"
+-				>
+-					<Minus className="h-3.5 w-3.5 text-stone-600 dark:text-stone-300" />
+-				</button>
+-				<div className="w-px h-4 bg-stone-200 dark:bg-stone-700" />
+-				<button
+-					onClick={fitToView}
+-					className="p-1 rounded hover:bg-primary/10"
+-					title="Fit to view"
+-				>
+-					<Maximize className="h-3.5 w-3.5 text-primary" />
+-				</button>
+-			</div>
+-
+-			<div
+-				ref={containerRef}
+-				className="absolute inset-0"
+-				style={{ cursor: panning ? "grabbing" : "grab" }}
+-				onWheel={onWheel}
+-				onMouseDown={onMouseDown}
+-				onMouseMove={onMouseMove}
+-				onMouseUp={onMouseUp}
+-				onMouseLeave={onMouseUp}
+-			>
+-				<svg
+-					width={svgW}
+-					height={svgH}
+-					viewBox={`0 0 ${svgW} ${svgH}`}
+-					className="block"
+-					style={{
+-						transform: `translate(${pan.x}px,${pan.y}px) scale(${zoom})`,
+-						transformOrigin: "0 0",
+-					}}
+-				>
+-					<defs>
+-						<marker
+-							id="dag-arrow"
+-							markerWidth="8"
+-							markerHeight="8"
+-							refX="7"
+-							refY="4"
+-							orient="auto"
+-						>
+-							<path d="M 0 1 L 7 4 L 0 7 Z" fill="#3b82f6" />
+-						</marker>
+-					</defs>
+-
+-					{edges.map((edge, i) => {
+-						const fromNode = nodeById.get(edge.from);
+-						const toNode = nodeById.get(edge.to);
+-						if (!fromNode || !toNode) return null;
+-						const x1 = fromNode.x + ox + NODE_W;
+-						const y1 = fromNode.y + oy + NODE_H / 2;
+-						const x2 = toNode.x + ox;
+-						const y2 = toNode.y + oy + NODE_H / 2;
+-						// Directional control points: leave the parent horizontally
+-						// and enter the child horizontally. Eliminates the diagonal
+-						// "S" curve that shared-midX caused when |y2 - y1| > 0.
+-						const dx = Math.max(40, (x2 - x1) * 0.45);
+-						const cx1 = x1 + dx;
+-						const cx2 = x2 - dx;
+-						const weight = edge.weight ?? 1;
+-						const sw = Math.min(3, Math.max(0.8, 0.6 + Math.log10(weight + 1)));
+-						const stroke = edge.highlight ? "#6366f1" : "#3b82f6";
+-
+-						// Sample the cubic at t=0.5 for a true mid-curve label
+-						// position: B(0.5) = (P0 + 3·P1 + 3·P2 + P3) / 8.
+-						const labelX = (x1 + 3 * cx1 + 3 * cx2 + x2) / 8;
+-						const labelY = (y1 + 3 * y1 + 3 * y2 + y2) / 8 - 6;
+-
+-						return (
+-							<g key={`edge-${i}-${edge.from}-${edge.to}`}>
+-								<title>{edge.tooltip || edge.label || ""}</title>
+-								<path
+-									d={`M ${x1} ${y1} C ${cx1} ${y1}, ${cx2} ${y2}, ${x2} ${y2}`}
+-									fill="none"
+-									stroke={stroke}
+-									strokeWidth={sw}
+-									markerEnd="url(#dag-arrow)"
+-									opacity={0.85}
+-								/>
+-								{edge.label && (
+-									<text
+-										x={labelX}
+-										y={labelY}
+-										textAnchor="middle"
+-										fontSize={10}
+-										className="fill-stone-600 dark:fill-stone-300"
+-									>
+-										{edge.label}
+-									</text>
+-								)}
+-							</g>
+-						);
+-					})}
+-
+-					{laidOut.map((node) => {
+-						const nx = node.x + ox;
+-						const ny = node.y + oy;
+-						const isTool = node.kind === "tool";
+-						const stroke = node.highlight
+-							? "#6366f1"
+-							: isTool
+-								? "#c2410c"
+-								: "#0f766e";
+-						const fill = node.highlight
+-							? "rgba(99,102,241,0.10)"
+-							: isTool
+-								? "rgba(243,108,6,0.10)"
+-								: "rgba(15,118,110,0.06)";
+-						const labelPrefix = isTool ? "⚒ " : "";
+-						return (
+-							<g
+-								key={node.id}
+-								onClick={() => onNodeClick?.(node.id)}
+-								style={{ cursor: onNodeClick ? "pointer" : "default" }}
+-							>
+-								<title>{node.tooltip || node.label}</title>
+-								<rect
+-									x={nx}
+-									y={ny}
+-									width={NODE_W}
+-									height={NODE_H}
+-									rx={8}
+-									fill={fill}
+-									stroke={stroke}
+-									strokeWidth={1.6}
+-									strokeDasharray={isTool ? "5 3" : undefined}
+-								/>
+-								<text
+-									x={nx + NODE_W / 2}
+-									y={ny + 22}
+-									textAnchor="middle"
+-									fontSize={11}
+-									fontWeight={500}
+-									className="fill-stone-800 dark:fill-stone-200"
+-								>
+-									{labelPrefix}
+-									{trunc(node.label, isTool ? 24 : 26)}
+-								</text>
+-								{node.subLabel && (
+-									<text
+-										x={nx + NODE_W / 2}
+-										y={ny + 40}
+-										textAnchor="middle"
+-										fontSize={10}
+-										className="fill-stone-500 dark:fill-stone-400"
+-									>
+-										{trunc(node.subLabel, 32)}
+-									</text>
+-								)}
+-							</g>
+-						);
+-					})}
+-				</svg>
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/agents/system-prompt-card.tsx b/src/client/src/components/(playground)/agents/system-prompt-card.tsx
+deleted file mode 100644
+index ee41d6c2..00000000
+--- a/src/client/src/components/(playground)/agents/system-prompt-card.tsx
++++ /dev/null
+@@ -1,133 +0,0 @@
+-"use client";
+-
+-import { useEffect, useMemo, useRef, useState } from "react";
+-import { Check, Copy } from "lucide-react";
+-import getMessage from "@/constants/messages";
+-
+-interface SystemPromptCardProps {
+-	prompt: string;
+-}
+-
+-interface PromptPart {
+-	type?: string;
+-	content?: string;
+-	text?: string;
+-}
+-
+-/**
+- * The OTel `gen_ai.system_instructions` attribute is a JSON-stringified
+- * array of `{ type, content }` parts (see Python SDK
+- * `build_system_instructions_from_messages` and the equivalent TS helper).
+- * Surface human-readable text by default, with a toggle to inspect the raw
+- * JSON.
+- */
+-function extractPromptText(prompt: string): {
+-	text: string;
+-	isStructured: boolean;
+-} {
+-	if (!prompt) return { text: "", isStructured: false };
+-	const trimmed = prompt.trim();
+-	if (!(trimmed.startsWith("[") || trimmed.startsWith("{"))) {
+-		return { text: prompt, isStructured: false };
+-	}
+-	try {
+-		const parsed = JSON.parse(trimmed);
+-		const parts: PromptPart[] = Array.isArray(parsed) ? parsed : [parsed];
+-		const text = parts
+-			.map((part) => {
+-				if (!part) return "";
+-				if (typeof part === "string") return part;
+-				return part.content ?? part.text ?? "";
+-			})
+-			.filter((s) => typeof s === "string" && s.length > 0)
+-			.join("\n\n");
+-		if (!text) return { text: prompt, isStructured: false };
+-		return { text, isStructured: true };
+-	} catch {
+-		return { text: prompt, isStructured: false };
+-	}
+-}
+-
+-export default function SystemPromptCard({ prompt }: SystemPromptCardProps) {
+-	const [copied, setCopied] = useState(false);
+-	const [showRaw, setShowRaw] = useState(false);
+-	const { text, isStructured } = useMemo(
+-		() => extractPromptText(prompt),
+-		[prompt]
+-	);
+-	// Guard the "Copied!" reset timer so unmount or rapid re-clicks don't
+-	// leave a setTimeout running that would call setState on a stale tree.
+-	const copyResetTimerRef = useRef<number | null>(null);
+-	useEffect(() => {
+-		return () => {
+-			if (copyResetTimerRef.current !== null) {
+-				window.clearTimeout(copyResetTimerRef.current);
+-				copyResetTimerRef.current = null;
+-			}
+-		};
+-	}, []);
+-	const onCopy = async () => {
+-		try {
+-			await navigator.clipboard.writeText(text || prompt);
+-			setCopied(true);
+-			if (copyResetTimerRef.current !== null) {
+-				window.clearTimeout(copyResetTimerRef.current);
+-			}
+-			copyResetTimerRef.current = window.setTimeout(() => {
+-				setCopied(false);
+-				copyResetTimerRef.current = null;
+-			}, 1500);
+-		} catch {
+-			/* user can copy manually */
+-		}
+-	};
+-	return (
+-		<div className="border dark:border-stone-800 rounded-lg">
+-			<div className="flex items-center justify-between px-4 py-3 border-b dark:border-stone-800">
+-				<h3 className="text-sm font-medium text-stone-900 dark:text-stone-100">
+-					{getMessage().AGENTS_DEFINITION_SYSTEM_PROMPT}
+-				</h3>
+-				<div className="flex items-center gap-2">
+-					{isStructured && (
+-						<button
+-							onClick={() => setShowRaw((v) => !v)}
+-							className="text-xs text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 underline-offset-2 hover:underline"
+-						>
+-							{showRaw
+-								? getMessage().AGENTS_DEFINITION_VIEW_FORMATTED
+-								: getMessage().AGENTS_DEFINITION_VIEW_RAW}
+-						</button>
+-					)}
+-					{prompt && (
+-						<button
+-							onClick={onCopy}
+-							className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-800"
+-						>
+-							{copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+-							{copied
+-								? getMessage().AGENTS_DEFINITION_COPIED
+-								: getMessage().AGENTS_DEFINITION_COPY}
+-						</button>
+-					)}
+-				</div>
+-			</div>
+-			<div className="p-4">
+-				{prompt ? (
+-					showRaw ? (
+-						<pre className="whitespace-pre-wrap font-mono text-xs text-stone-700 dark:text-stone-300 max-h-[640px] overflow-y-auto">
+-							{prompt}
+-						</pre>
+-					) : (
+-						<p className="whitespace-pre-wrap text-sm text-stone-800 dark:text-stone-200 leading-relaxed max-h-[640px] overflow-y-auto">
+-							{text}
+-						</p>
+-					)
+-				) : (
+-					<div className="text-sm text-stone-500 dark:text-stone-400">
+-						{getMessage().AGENTS_DEFINITION_NO_SYSTEM_PROMPT}
+-					</div>
+-				)}
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/agents/tools-card.tsx b/src/client/src/components/(playground)/agents/tools-card.tsx
+deleted file mode 100644
+index 3cc7b997..00000000
+--- a/src/client/src/components/(playground)/agents/tools-card.tsx
++++ /dev/null
+@@ -1,95 +0,0 @@
+-"use client";
+-
+-import dynamic from "next/dynamic";
+-import {
+-	Accordion,
+-	AccordionContent,
+-	AccordionItem,
+-	AccordionTrigger,
+-} from "@/components/ui/accordion";
+-import getMessage from "@/constants/messages";
+-import type { AgentTool } from "@/types/agents";
+-
+-const JSONViewer = dynamic(() => import("@/components/common/json-viewer"), {
+-	ssr: false,
+-	loading: () => (
+-		<div className="text-[10px] text-stone-500 dark:text-stone-400">…</div>
+-	),
+-});
+-
+-interface ToolsCardProps {
+-	tools: AgentTool[];
+-}
+-
+-function hasSchema(schema: unknown): schema is Record<string, unknown> {
+-	if (!schema || typeof schema !== "object") return false;
+-	return Object.keys(schema as Record<string, unknown>).length > 0;
+-}
+-
+-export default function ToolsCard({ tools }: ToolsCardProps) {
+-	return (
+-		<div className="border dark:border-stone-800 rounded-lg">
+-			<div className="flex items-center justify-between px-4 py-3 border-b dark:border-stone-800">
+-				<h3 className="text-sm font-medium text-stone-900 dark:text-stone-100">
+-					{getMessage().AGENTS_DEFINITION_TOOLS}{" "}
+-					<span className="text-xs text-stone-500 dark:text-stone-400 font-normal">
+-						({tools.length})
+-					</span>
+-				</h3>
+-			</div>
+-			<div className="px-2 py-2">
+-				{tools.length === 0 ? (
+-					<div className="px-3 py-3 text-sm text-stone-500 dark:text-stone-400">
+-						{getMessage().AGENTS_DEFINITION_NO_TOOLS}
+-					</div>
+-				) : (
+-					<Accordion type="multiple" className="w-full">
+-						{tools.map((tool, idx) => (
+-							<AccordionItem
+-								key={`${tool.name}-${idx}`}
+-								value={`${tool.name}-${idx}`}
+-								className="px-2"
+-							>
+-								<AccordionTrigger className="text-left py-3">
+-									<div className="flex items-center gap-2 min-w-0 flex-1">
+-										<span className="font-mono text-sm text-stone-900 dark:text-stone-100 truncate">
+-											{tool.name}
+-										</span>
+-										{tool.description && (
+-											<span className="text-xs text-stone-500 dark:text-stone-400 truncate">
+-												{tool.description}
+-											</span>
+-										)}
+-									</div>
+-								</AccordionTrigger>
+-								<AccordionContent>
+-									<div className="space-y-3 px-2 pb-3">
+-										{tool.description && (
+-											<p className="text-xs text-stone-600 dark:text-stone-300 whitespace-pre-wrap">
+-												{tool.description}
+-											</p>
+-										)}
+-										<div>
+-											<div className="text-[10px] font-medium text-stone-500 dark:text-stone-400 uppercase tracking-wide mb-1">
+-												{getMessage().AGENTS_DEFINITION_SCHEMA}
+-											</div>
+-											{hasSchema(tool.schema) ? (
+-												<div className="rounded-md bg-stone-100 dark:bg-stone-900 p-3 text-xs overflow-x-auto">
+-													<JSONViewer value={tool.schema} />
+-												</div>
+-											) : (
+-												<div className="rounded-md border border-dashed border-stone-200 dark:border-stone-800 p-3 text-xs text-stone-500 dark:text-stone-400">
+-													{getMessage().AGENTS_DEFINITION_SCHEMA_NOT_CAPTURED}
+-												</div>
+-											)}
+-										</div>
+-									</div>
+-								</AccordionContent>
+-							</AccordionItem>
+-						))}
+-					</Accordion>
+-				)}
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/agents/version-drawer.tsx b/src/client/src/components/(playground)/agents/version-drawer.tsx
+deleted file mode 100644
+index ebd05054..00000000
+--- a/src/client/src/components/(playground)/agents/version-drawer.tsx
++++ /dev/null
+@@ -1,192 +0,0 @@
+-"use client";
+-
+-import { useCallback, useEffect, useState } from "react";
+-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+-import { formatBrowserDateTime } from "@/utils/date";
+-import getMessage from "@/constants/messages";
+-import type { AgentVersion } from "@/types/agents";
+-
+-interface VersionDrawerProps {
+-	agentKey: string;
+-	open: boolean;
+-	onClose: () => void;
+-	/**
+-	 * Pre-fetched versions list from the page shell. When provided, we skip
+-	 * the initial `/api/agents/[key]/versions` round-trip and only call the
+-	 * API if the user paginates past the initial slice or if the prop is
+-	 * empty (i.e. the parent doesn't have the data either).
+-	 */
+-	initialVersions?: AgentVersion[];
+-}
+-
+-/**
+- * Initial page size. Larger than the default 50 returned by the API; we
+- * still cap the underlying call at the API's hard limit (200). Operators
+- * very rarely scroll past the most recent versions, so a deep first page
+- * gives best perceived perf without paying for every historical revision.
+- */
+-const PAGE_SIZE = 25;
+-const HARD_LIMIT = 200;
+-
+-export default function VersionDrawer({
+-	agentKey,
+-	open,
+-	onClose,
+-	initialVersions,
+-}: VersionDrawerProps) {
+-	const [versions, setVersions] = useState<AgentVersion[]>(
+-		initialVersions || []
+-	);
+-	const [loading, setLoading] = useState(false);
+-	const [loadingMore, setLoadingMore] = useState(false);
+-	const [error, setError] = useState<string | null>(null);
+-	const [limit, setLimit] = useState(PAGE_SIZE);
+-	const [hasMore, setHasMore] = useState(true);
+-
+-	const fetchVersions = useCallback(
+-		async (size: number, signal: AbortSignal) => {
+-			const res = await fetch(`/api/agents/${agentKey}/versions?limit=${size}`, {
+-				signal,
+-			});
+-			if (!res.ok) {
+-				throw new Error(`HTTP ${res.status}`);
+-			}
+-			const body = await res.json();
+-			return (body.data as AgentVersion[]) || [];
+-		},
+-		[agentKey]
+-	);
+-
+-	// Keep our local copy in sync with parent-provided versions even when the
+-	// drawer is closed — that way the user sees the freshest list the moment
+-	// they open it without a refetch round-trip.
+-	useEffect(() => {
+-		if (initialVersions && initialVersions.length > 0) {
+-			setVersions(initialVersions);
+-			setHasMore(initialVersions.length >= PAGE_SIZE);
+-		}
+-	}, [initialVersions]);
+-
+-	useEffect(() => {
+-		if (!open) return;
+-		// If the parent already pre-fetched and handed us data, skip the
+-		// drawer-local initial fetch entirely. We'll still call the API on
+-		// "Load more" past the initial slice.
+-		if (initialVersions && initialVersions.length > 0) {
+-			setLimit(Math.max(PAGE_SIZE, initialVersions.length));
+-			setHasMore(initialVersions.length >= PAGE_SIZE);
+-			return;
+-		}
+-		const controller = new AbortController();
+-		setLoading(true);
+-		setError(null);
+-		setLimit(PAGE_SIZE);
+-		(async () => {
+-			try {
+-				const list = await fetchVersions(PAGE_SIZE, controller.signal);
+-				if (controller.signal.aborted) return;
+-				setVersions(list);
+-				setHasMore(list.length >= PAGE_SIZE);
+-			} catch (e) {
+-				if (!controller.signal.aborted) setError(String(e));
+-			} finally {
+-				if (!controller.signal.aborted) setLoading(false);
+-			}
+-		})();
+-		return () => controller.abort();
+-	}, [agentKey, open, fetchVersions, initialVersions]);
+-
+-	const handleLoadMore = useCallback(async () => {
+-		const next = Math.min(limit + PAGE_SIZE, HARD_LIMIT);
+-		setLoadingMore(true);
+-		try {
+-			const controller = new AbortController();
+-			const list = await fetchVersions(next, controller.signal);
+-			setVersions(list);
+-			setLimit(next);
+-			setHasMore(list.length >= next && next < HARD_LIMIT);
+-		} catch (e) {
+-			setError(String(e));
+-		} finally {
+-			setLoadingMore(false);
+-		}
+-	}, [fetchVersions, limit]);
+-
+-	return (
+-		<Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+-			<SheetContent side="right" className="w-full max-w-md sm:max-w-lg overflow-y-auto">
+-				<SheetHeader>
+-					<SheetTitle>{getMessage().AGENTS_VERSION_DRAWER_TITLE}</SheetTitle>
+-				</SheetHeader>
+-				<div className="mt-4 space-y-3">
+-					{loading && (
+-						<div className="text-sm text-stone-500 dark:text-stone-400">
+-							Loading…
+-						</div>
+-					)}
+-					{error && (
+-						<div className="text-sm text-red-600 dark:text-red-400">
+-							{error}
+-						</div>
+-					)}
+-					{!loading && !error && versions.length === 0 && (
+-						<div className="text-sm text-stone-500 dark:text-stone-400">
+-							{getMessage().AGENTS_VERSION_NO_HISTORY}
+-						</div>
+-					)}
+-					{versions.map((v, idx) => (
+-						<div
+-							key={v.version_hash}
+-							className="border dark:border-stone-800 rounded-md p-3"
+-						>
+-							<div className="flex items-center justify-between gap-2">
+-								<div className="text-sm font-medium text-stone-900 dark:text-stone-100">
+-									{getMessage().AGENTS_VERSION_NUMBER_PREFIX}
+-									{v.version_number}
+-									{idx === 0 && (
+-										<span className="ml-2 text-xs text-emerald-600 dark:text-emerald-400">
+-											{getMessage().AGENTS_VERSION_CURRENT}
+-										</span>
+-									)}
+-								</div>
+-								<span className="text-xs font-mono text-stone-400">
+-									{v.version_hash.slice(0, 12)}
+-								</span>
+-							</div>
+-							<dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
+-								<dt>{getMessage().AGENTS_VERSION_FIRST_SEEN}</dt>
+-								<dd className="text-stone-700 dark:text-stone-200 text-right">
+-									{formatBrowserDateTime(v.first_seen)}
+-								</dd>
+-								<dt>{getMessage().AGENTS_VERSION_LAST_SEEN}</dt>
+-								<dd className="text-stone-700 dark:text-stone-200 text-right">
+-									{formatBrowserDateTime(v.last_seen)}
+-								</dd>
+-								<dt>{getMessage().AGENTS_VERSION_REQUESTS}</dt>
+-								<dd className="text-stone-700 dark:text-stone-200 text-right">
+-									{v.request_count.toLocaleString()}
+-								</dd>
+-								<dt>{getMessage().AGENTS_METADATA_PRIMARY_MODEL}</dt>
+-								<dd className="text-stone-700 dark:text-stone-200 text-right truncate">
+-									{v.primary_model || "—"}
+-								</dd>
+-							</dl>
+-						</div>
+-					))}
+-					{!loading && hasMore && versions.length > 0 && (
+-						<button
+-							type="button"
+-							onClick={handleLoadMore}
+-							disabled={loadingMore}
+-							className="w-full text-xs text-stone-600 dark:text-stone-300 border border-dashed dark:border-stone-700 rounded-md py-2 hover:bg-stone-50 dark:hover:bg-stone-900 disabled:opacity-50"
+-						>
+-							{loadingMore
+-								? getMessage().AGENTS_LOADING_VERSIONS
+-								: getMessage().AGENTS_LOAD_MORE_VERSIONS}
+-						</button>
+-					)}
+-				</div>
+-			</SheetContent>
+-		</Sheet>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/agents/version-timeline.tsx b/src/client/src/components/(playground)/agents/version-timeline.tsx
+deleted file mode 100644
+index 3f05ed69..00000000
+--- a/src/client/src/components/(playground)/agents/version-timeline.tsx
++++ /dev/null
+@@ -1,282 +0,0 @@
+-"use client";
+-
+-import {
+-	useEffect,
+-	useMemo,
+-	useState,
+-	useCallback,
+-} from "react";
+-import {
+-	Select,
+-	SelectContent,
+-	SelectItem,
+-	SelectTrigger,
+-	SelectValue,
+-} from "@/components/ui/select";
+-import { formatBrowserDateTime } from "@/utils/date";
+-import getMessage from "@/constants/messages";
+-import type { AgentVersion } from "@/types/agents";
+-
+-/**
+- * Reads `/api/agents/[agentKey]/versions/timeline` once per agentKey + window
+- * and renders a thin stacked-bar chart colored per version (palette below).
+- * The version chooser dropdown is a separate `<VersionChooser />` export so
+- * the page can place it inline with the title while the bar chart spans the
+- * full content width.
+- */
+-
+-interface TimelineBucket {
+-	ts: string;
+-	versionHash: string;
+-	requests: number;
+-}
+-
+-interface TimelineResponse {
+-	bucketSeconds: number;
+-	start: string;
+-	end: string;
+-	buckets: TimelineBucket[];
+-}
+-
+-interface VersionTimelineProps {
+-	agentKey: string;
+-	versions: AgentVersion[];
+-	selectedHash: string | null;
+-	bucketPreset?: "15m" | "1h" | "6h" | "1d";
+-	windowHours?: number;
+-}
+-
+-interface VersionChooserProps {
+-	versions: AgentVersion[];
+-	selectedHash: string | null;
+-	onSelectVersion: (hash: string | null) => void;
+-	onOpenAllVersions: () => void;
+-}
+-
+-// On-brand orange palette — distinct shades within the OpenLit primary
+-// (#F36C06) family so multi-version bars stay readable while feeling
+-// consistent with the rest of the product.
+-const VERSION_PALETTE = [
+-	"#F36C06", // primary
+-	"#c2410c", // orange-700
+-	"#ea580c", // orange-600
+-	"#f59e0b", // amber-500
+-	"#9a3412", // orange-800
+-	"#fb923c", // orange-400
+-	"#d97706", // amber-600
+-	"#7c2d12", // orange-900
+-	"#fdba74", // orange-300
+-	"#b45309", // amber-700
+-	"#92400e", // amber-800
+-	"#fcd34d", // amber-300
+-];
+-
+-function colorForHash(hash: string, idx: number): string {
+-	if (!hash) return "#a8a29e"; // stone-400 for unattributed buckets
+-	return VERSION_PALETTE[idx % VERSION_PALETTE.length];
+-}
+-
+-export default function VersionTimeline({
+-	agentKey,
+-	versions,
+-	selectedHash,
+-	bucketPreset = "1h",
+-	windowHours = 24 * 7,
+-}: VersionTimelineProps) {
+-	const [data, setData] = useState<TimelineResponse | null>(null);
+-	const [loading, setLoading] = useState(false);
+-	const [error, setError] = useState<string | null>(null);
+-
+-	useEffect(() => {
+-		let cancelled = false;
+-		setLoading(true);
+-		setError(null);
+-		(async () => {
+-			try {
+-				const params = new URLSearchParams({
+-					bucket: bucketPreset,
+-					windowHours: String(windowHours),
+-				});
+-				const res = await fetch(
+-					`/api/agents/${agentKey}/versions/timeline?${params.toString()}`
+-				);
+-				if (!res.ok) throw new Error(`HTTP ${res.status}`);
+-				const body = await res.json();
+-				if (cancelled) return;
+-				setData(body.data as TimelineResponse);
+-			} catch (e) {
+-				if (!cancelled) setError(String(e));
+-			} finally {
+-				if (!cancelled) setLoading(false);
+-			}
+-		})();
+-		return () => {
+-			cancelled = true;
+-		};
+-	}, [agentKey, bucketPreset, windowHours]);
+-
+-	// Build a stable per-version index so palette assignment doesn't shift
+-	// when timeline buckets re-fetch.
+-	const versionIndex = useMemo(() => {
+-		const ordered = [...versions].sort(
+-			(a, b) => a.version_number - b.version_number
+-		);
+-		const map = new Map<string, number>();
+-		ordered.forEach((v, i) => map.set(v.version_hash, i));
+-		return map;
+-	}, [versions]);
+-
+-	const groupedByTs = useMemo(() => {
+-		if (!data) return [];
+-		const tsMap = new Map<string, Map<string, number>>();
+-		for (const b of data.buckets) {
+-			let inner = tsMap.get(b.ts);
+-			if (!inner) {
+-				inner = new Map();
+-				tsMap.set(b.ts, inner);
+-			}
+-			inner.set(b.versionHash, (inner.get(b.versionHash) || 0) + b.requests);
+-		}
+-		return Array.from(tsMap.entries())
+-			.map(([ts, vmap]) => ({
+-				ts,
+-				slices: Array.from(vmap.entries()).map(([versionHash, requests]) => ({
+-					versionHash,
+-					requests,
+-				})),
+-				total: Array.from(vmap.values()).reduce((a, b) => a + b, 0),
+-			}))
+-			.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+-	}, [data]);
+-
+-	const maxTotal = useMemo(
+-		() => groupedByTs.reduce((m, b) => Math.max(m, b.total), 0) || 1,
+-		[groupedByTs]
+-	);
+-
+-	return (
+-		<div className="h-[40px] w-full">
+-			{loading && (
+-				<div className="h-full flex items-center text-xs text-stone-500 dark:text-stone-400">
+-					Loading…
+-				</div>
+-			)}
+-			{!loading && error && (
+-				<div className="h-full flex items-center text-xs text-red-600 dark:text-red-400">
+-					{error}
+-				</div>
+-			)}
+-			{!loading && !error && groupedByTs.length === 0 && (
+-				<div className="h-full flex items-center text-xs text-stone-500 dark:text-stone-400">
+-					{getMessage().AGENTS_VERSION_TIMELINE_EMPTY}
+-				</div>
+-			)}
+-			{!loading && !error && groupedByTs.length > 0 && (
+-				<svg
+-					viewBox={`0 0 ${groupedByTs.length * 6} 40`}
+-					preserveAspectRatio="none"
+-					className="h-full w-full"
+-					aria-label={getMessage().AGENTS_VERSION_TIMELINE_TITLE}
+-				>
+-					{groupedByTs.map((bucket, bIdx) => {
+-						let yCursor = 40;
+-						return (
+-							<g key={bucket.ts} transform={`translate(${bIdx * 6}, 0)`}>
+-								{bucket.slices.map((slice) => {
+-									const idx = versionIndex.get(slice.versionHash) ?? -1;
+-									const fill = colorForHash(slice.versionHash, idx);
+-									const heightPx = (slice.requests / maxTotal) * 38;
+-									yCursor -= heightPx;
+-									const opacity =
+-										!selectedHash || selectedHash === slice.versionHash
+-											? 1
+-											: 0.18;
+-									return (
+-										<rect
+-											key={`${bucket.ts}-${slice.versionHash}`}
+-											x={0.5}
+-											y={yCursor}
+-											width={5}
+-											height={Math.max(0.5, heightPx)}
+-											fill={fill}
+-											opacity={opacity}
+-										>
+-											<title>
+-												{`${formatBrowserDateTime(bucket.ts)}\n${
+-													getMessage().AGENTS_VERSION_TIMELINE_REQ_COUNT(
+-														slice.requests
+-													)
+-												}\n${
+-													versions.find(
+-														(v) => v.version_hash === slice.versionHash
+-													)?.version_hash?.slice(0, 8) || "—"
+-												}`}
+-											</title>
+-										</rect>
+-									);
+-								})}
+-							</g>
+-						);
+-					})}
+-				</svg>
+-			)}
+-		</div>
+-	);
+-}
+-
+-/**
+- * Compact version chooser dropdown. Rendered inline with the agent title so
+- * the bar chart can take the full content width.
+- */
+-export function VersionChooser({
+-	versions,
+-	selectedHash,
+-	onSelectVersion,
+-	onOpenAllVersions,
+-}: VersionChooserProps) {
+-	const handleSelectChange = useCallback(
+-		(value: string) => {
+-			if (value === "__all__") {
+-				onSelectVersion(null);
+-				return;
+-			}
+-			if (value === "__more__") {
+-				onOpenAllVersions();
+-				return;
+-			}
+-			onSelectVersion(value);
+-		},
+-		[onSelectVersion, onOpenAllVersions]
+-	);
+-
+-	return (
+-		<Select value={selectedHash || "__all__"} onValueChange={handleSelectChange}>
+-			<SelectTrigger className="h-8 text-xs min-w-[200px]">
+-				<SelectValue
+-					placeholder={getMessage().AGENTS_VERSION_TIMELINE_ALL_VERSIONS}
+-				/>
+-			</SelectTrigger>
+-			<SelectContent className="max-h-[300px]">
+-				<SelectItem value="__all__">
+-					{getMessage().AGENTS_VERSION_TIMELINE_ALL_VERSIONS}
+-				</SelectItem>
+-				{versions.map((v) => (
+-					<SelectItem key={v.version_hash} value={v.version_hash}>
+-						<span className="font-medium">
+-							{getMessage().AGENTS_VERSION_NUMBER_PREFIX}
+-							{v.version_number}
+-						</span>
+-						<span className="ml-2 font-mono text-stone-500">
+-							{v.version_hash.slice(0, 8)}
+-						</span>
+-					</SelectItem>
+-				))}
+-				{versions.length > 0 && (
+-					<SelectItem value="__more__">View all versions…</SelectItem>
+-				)}
+-			</SelectContent>
+-		</Select>
+-	);
+-}
+-
+-export { VERSION_PALETTE, colorForHash };
+diff --git a/src/client/src/components/(playground)/coding-agents/coding-agent-detail.tsx b/src/client/src/components/(playground)/coding-agents/coding-agent-detail.tsx
+deleted file mode 100644
+index db7275d4..00000000
+--- a/src/client/src/components/(playground)/coding-agents/coding-agent-detail.tsx
++++ /dev/null
+@@ -1,74 +0,0 @@
+-"use client";
+-
+-/**
+- * Coding-agent detail view rendered when /agents/[agentKey] resolves to a
+- * row with `source === "coding"`. The outer chrome (FeaturePageHeader +
+- * pill tabs) lives on the parent detail page so it matches the agents
+- * hub. This component only owns the tab panels:
+- *
+- *   - Overview   — embedded seeded dashboard for this vendor.
+- *   - Sessions   — recent sessions with drill-in to per-session detail.
+- *   - Users      — per-user rollups.
+- */
+-
+-import { Loader2 } from "lucide-react";
+-import { Tabs, TabsContent } from "@/components/ui/tabs";
+-import getMessage from "@/constants/messages";
+-import type { UnifiedAgent } from "@/types/agents";
+-import dynamic from "next/dynamic";
+-
+-// The sessions list and embedded dashboard are heavier; lazy-load them
+-// so a user that just wants Overview doesn't pay for echarts + the
+-// session table on initial render.
+-const CodingSessionsTab = dynamic(
+-	() => import("./coding-sessions-tab"),
+-	{
+-		loading: () => <TabLoading label={getMessage().AGENTS_LOADING_REQUESTS} />,
+-		ssr: false,
+-	}
+-);
+-// A coding agent has no overview tab: it was the seeded "Coding Agents"
+-// dashboard, and with the generic dashboard product removed there is nothing
+-// to put there. The Sessions and Users tabs carry the detail surface.
+-const CodingUsersTab = dynamic(
+-	() => import("./coding-users-tab"),
+-	{
+-		loading: () => <TabLoading label={getMessage().AGENTS_LOADING_REQUESTS} />,
+-		ssr: false,
+-	}
+-);
+-
+-interface CodingAgentDetailProps {
+-	agent: UnifiedAgent;
+-	tab: string;
+-	onTabChange: (tab: string) => void;
+-}
+-
+-export default function CodingAgentDetail({
+-	agent,
+-	tab,
+-	onTabChange,
+-}: CodingAgentDetailProps) {
+-	// Pill tabs live in FeaturePageHeader on the parent page (same
+-	// surface as the agents hub). This component only owns the panels.
+-	return (
+-		<Tabs value={tab} onValueChange={onTabChange} className="w-full">
+-			<TabsContent value="sessions" className="mt-0">
+-				<CodingSessionsTab agent={agent} />
+-			</TabsContent>
+-
+-			<TabsContent value="users" className="mt-0">
+-				<CodingUsersTab agent={agent} />
+-			</TabsContent>
+-		</Tabs>
+-	);
+-}
+-
+-function TabLoading({ label }: { label: string }) {
+-	return (
+-		<div className="flex items-center justify-center py-12 text-sm text-stone-500 dark:text-stone-400 gap-2">
+-			<Loader2 className="w-4 h-4 animate-spin" />
+-			{label}
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/agents/agent-scope-provider.tsx b/src/client/src/components/(playground)/observability/agent-scope-provider.tsx
+similarity index 100%
+rename from src/client/src/components/(playground)/agents/agent-scope-provider.tsx
+rename to src/client/src/components/(playground)/observability/agent-scope-provider.tsx
+diff --git a/src/client/src/components/(playground)/observability/signal-list.tsx b/src/client/src/components/(playground)/observability/signal-list.tsx
+index 8ee54ff0..1c3624b6 100644
+--- a/src/client/src/components/(playground)/observability/signal-list.tsx
++++ b/src/client/src/components/(playground)/observability/signal-list.tsx
+@@ -32,7 +32,7 @@ import { Maximize2, X } from "lucide-react";
+ import getMessage from "@/constants/messages";
+ import { prepareObservabilitySignalChange } from "@/helpers/client/observability";
+ import { ResizeablePanel } from "@/components/ui/resizeable-panel";
+-import { useIsAgentScoped } from "@/components/(playground)/agents/agent-scope-provider";
++import { useIsAgentScoped } from "@/components/(playground)/observability/agent-scope-provider";
+ import { DEFAULT_ENVIRONMENT } from "@/constants/environment";
+ 
+ const DETAIL_SHEET_CONTENT_CLASS =
+diff --git a/src/client/src/components/common/json-viewer.tsx b/src/client/src/components/common/json-viewer.tsx
+deleted file mode 100644
+index f5371863..00000000
+--- a/src/client/src/components/common/json-viewer.tsx
++++ /dev/null
+@@ -1,55 +0,0 @@
+-import { jsonParse } from "@/utils/json";
+-import {
+-	JsonViewer,
+-	JsonViewerProps,
+-	defineEasyType,
+-} from "@textea/json-viewer";
+-import { isInteger } from "lodash";
+-
+-const integerType = defineEasyType<string>({
+-	is: (value) => {
+-		const changedValue = parseInt(value as string, 10);
+-		return isInteger(changedValue);
+-	},
+-	type: "number",
+-	colorKey: "base0C",
+-	Renderer: (props) => parseInt(props.value, 10),
+-});
+-
+-const objectType = defineEasyType<string>({
+-	is: (value) => {
+-		if (!/^\[|\{/.test(value as string)) {
+-			return false;
+-		}
+-		return jsonParse(value as string);
+-	},
+-	type: "object",
+-	colorKey: "base0E",
+-	Renderer: (props) => props.value,
+-});
+-
+-const booleanType = defineEasyType<string>({
+-	is: (value) => {
+-		return value === "true" || value === "false";
+-	},
+-	type: "bool",
+-	colorKey: "base0E",
+-	Renderer: (props) => {
+-		return `${!!(props.value === "true")}`;
+-	},
+-});
+-
+-export default function JSONViewer(props: JsonViewerProps) {
+-	return (
+-		<JsonViewer
+-			value={props.value}
+-			className={`bg-transparent dark:bg-transparent text-success dark:text-success ${props.className}`}
+-			enableClipboard={props.enableClipboard || true}
+-			displayDataTypes={props.displayDataTypes || false}
+-			displaySize={props.displaySize || false}
+-			rootName={props.rootName || false}
+-			valueTypes={[integerType, objectType, booleanType]}
+-			maxDisplayLength={20}
+-		/>
+-	);
+-}
+diff --git a/src/client/src/components/svg/linux.tsx b/src/client/src/components/svg/linux.tsx
+deleted file mode 100644
+index 3ad00c35..00000000
+--- a/src/client/src/components/svg/linux.tsx
++++ /dev/null
+@@ -1,7 +0,0 @@
+-export default function LinuxSvg({ className = "" }: { className?: string }) {
+-	return (
+-		<svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" height="24" width="24" className={`${className} external-icon-svg`}>
+-			<path d="M12.504 0c-0.155 0 -0.315 0.008 -0.48 0.021 -4.226 0.333 -3.105 4.807 -3.17 6.298 -0.076 1.092 -0.3 1.953 -1.05 3.02 -0.885 1.051 -2.127 2.75 -2.716 4.521 -0.278 0.832 -0.41 1.684 -0.287 2.489a0.424 0.424 0 0 0 -0.11 0.135c-0.26 0.268 -0.45 0.6 -0.663 0.839 -0.199 0.199 -0.485 0.267 -0.797 0.4 -0.313 0.136 -0.658 0.269 -0.864 0.68 -0.09 0.189 -0.136 0.394 -0.132 0.602 0 0.199 0.027 0.4 0.055 0.536 0.058 0.399 0.116 0.728 0.04 0.97 -0.249 0.68 -0.28 1.145 -0.106 1.484 0.174 0.334 0.535 0.47 0.94 0.601 0.81 0.2 1.91 0.135 2.774 0.6 0.926 0.466 1.866 0.67 2.616 0.47 0.526 -0.116 0.97 -0.464 1.208 -0.946 0.587 -0.003 1.23 -0.269 2.26 -0.334 0.699 -0.058 1.574 0.267 2.577 0.2 0.025 0.134 0.063 0.198 0.114 0.333l0.003 0.003c0.391 0.778 1.113 1.132 1.884 1.071 0.771 -0.06 1.592 -0.536 2.257 -1.306 0.631 -0.765 1.683 -1.084 2.378 -1.503 0.348 -0.199 0.629 -0.469 0.649 -0.853 0.023 -0.4 -0.2 -0.811 -0.714 -1.376v-0.097l-0.003 -0.003c-0.17 -0.2 -0.25 -0.535 -0.338 -0.926 -0.085 -0.401 -0.182 -0.786 -0.492 -1.046h-0.003c-0.059 -0.054 -0.123 -0.067 -0.188 -0.135a0.357 0.357 0 0 0 -0.19 -0.064c0.431 -1.278 0.264 -2.55 -0.173 -3.694 -0.533 -1.41 -1.465 -2.638 -2.175 -3.483 -0.796 -1.005 -1.576 -1.957 -1.56 -3.368 0.026 -2.152 0.236 -6.133 -3.544 -6.139zm0.529 3.405h0.013c0.213 0 0.396 0.062 0.584 0.198 0.19 0.135 0.33 0.332 0.438 0.533 0.105 0.259 0.158 0.459 0.166 0.724 0 -0.02 0.006 -0.04 0.006 -0.06v0.105a0.086 0.086 0 0 1 -0.004 -0.021l-0.004 -0.024a1.807 1.807 0 0 1 -0.15 0.706 0.953 0.953 0 0 1 -0.213 0.335 0.71 0.71 0 0 0 -0.088 -0.042c-0.104 -0.045 -0.198 -0.064 -0.284 -0.133a1.312 1.312 0 0 0 -0.22 -0.066c0.05 -0.06 0.146 -0.133 0.183 -0.198 0.053 -0.128 0.082 -0.264 0.088 -0.402v-0.02a1.21 1.21 0 0 0 -0.061 -0.4c-0.045 -0.134 -0.101 -0.2 -0.183 -0.333 -0.084 -0.066 -0.167 -0.132 -0.267 -0.132h-0.016c-0.093 0 -0.176 0.03 -0.262 0.132a0.8 0.8 0 0 0 -0.205 0.334 1.18 1.18 0 0 0 -0.09 0.4v0.019c0.002 0.089 0.008 0.179 0.02 0.267 -0.193 -0.067 -0.438 -0.135 -0.607 -0.202a1.635 1.635 0 0 1 -0.018 -0.2v-0.02a1.772 1.772 0 0 1 0.15 -0.768c0.082 -0.22 0.232 -0.406 0.43 -0.533a0.985 0.985 0 0 1 0.594 -0.2zm-2.962 0.059h0.036c0.142 0 0.27 0.048 0.399 0.135 0.146 0.129 0.264 0.288 0.344 0.465 0.09 0.199 0.14 0.4 0.153 0.667v0.004c0.007 0.134 0.006 0.2 -0.002 0.266v0.08c-0.03 0.007 -0.056 0.018 -0.083 0.024 -0.152 0.055 -0.274 0.135 -0.393 0.2 0.012 -0.09 0.013 -0.18 0.003 -0.267v-0.015c-0.012 -0.133 -0.04 -0.2 -0.082 -0.333a0.613 0.613 0 0 0 -0.166 -0.267 0.248 0.248 0 0 0 -0.183 -0.064h-0.021c-0.071 0.006 -0.13 0.04 -0.186 0.132a0.552 0.552 0 0 0 -0.12 0.27 0.944 0.944 0 0 0 -0.023 0.33v0.015c0.012 0.135 0.037 0.2 0.08 0.334 0.046 0.134 0.098 0.2 0.166 0.268 0.01 0.009 0.02 0.018 0.034 0.024 -0.07 0.057 -0.117 0.07 -0.176 0.136a0.304 0.304 0 0 1 -0.131 0.068 2.62 2.62 0 0 1 -0.275 -0.402 1.772 1.772 0 0 1 -0.155 -0.667 1.759 1.759 0 0 1 0.08 -0.668 1.43 1.43 0 0 1 0.283 -0.535c0.128 -0.133 0.26 -0.2 0.418 -0.2zm1.37 1.706c0.332 0 0.733 0.065 1.216 0.399 0.293 0.2 0.523 0.269 1.052 0.468h0.003c0.255 0.136 0.405 0.266 0.478 0.399v-0.131a0.571 0.571 0 0 1 0.016 0.47c-0.123 0.31 -0.516 0.643 -1.063 0.842v0.002c-0.268 0.135 -0.501 0.333 -0.775 0.465 -0.276 0.135 -0.588 0.292 -1.012 0.267a1.139 1.139 0 0 1 -0.448 -0.067 3.566 3.566 0 0 1 -0.322 -0.198c-0.195 -0.135 -0.363 -0.332 -0.612 -0.465v-0.005h-0.005c-0.4 -0.246 -0.616 -0.512 -0.686 -0.71 -0.07 -0.268 -0.005 -0.47 0.193 -0.6 0.224 -0.135 0.38 -0.271 0.483 -0.336 0.104 -0.074 0.143 -0.102 0.176 -0.131h0.002v-0.003c0.169 -0.202 0.436 -0.47 0.839 -0.601 0.139 -0.036 0.294 -0.065 0.466 -0.065zm2.8 2.142c0.358 1.417 1.196 3.475 1.735 4.473 0.286 0.534 0.855 1.659 1.102 3.024 0.156 -0.005 0.33 0.018 0.513 0.064 0.646 -1.671 -0.546 -3.467 -1.089 -3.966 -0.22 -0.2 -0.232 -0.335 -0.123 -0.335 0.59 0.534 1.365 1.572 1.646 2.757 0.13 0.535 0.16 1.104 0.021 1.67 0.067 0.028 0.135 0.06 0.205 0.067 1.032 0.534 1.413 0.938 1.23 1.537v-0.043c-0.06 -0.003 -0.12 0 -0.18 0h-0.016c0.151 -0.467 -0.182 -0.825 -1.065 -1.224 -0.915 -0.4 -1.646 -0.336 -1.77 0.465 -0.008 0.043 -0.013 0.066 -0.018 0.135 -0.068 0.023 -0.139 0.053 -0.209 0.064 -0.43 0.268 -0.662 0.669 -0.793 1.187 -0.13 0.533 -0.17 1.156 -0.205 1.869v0.003c-0.02 0.334 -0.17 0.838 -0.319 1.35 -1.5 1.072 -3.58 1.538 -5.348 0.334a2.645 2.645 0 0 0 -0.402 -0.533 1.45 1.45 0 0 0 -0.275 -0.333c0.182 0 0.338 -0.03 0.465 -0.067a0.615 0.615 0 0 0 0.314 -0.334c0.108 -0.267 0 -0.697 -0.345 -1.163 -0.345 -0.467 -0.931 -0.995 -1.788 -1.521 -0.63 -0.4 -0.986 -0.87 -1.15 -1.396 -0.165 -0.534 -0.143 -1.085 -0.015 -1.645 0.245 -1.07 0.873 -2.11 1.274 -2.763 0.107 -0.065 0.037 0.135 -0.408 0.974 -0.396 0.751 -1.14 2.497 -0.122 3.854a8.123 8.123 0 0 1 0.647 -2.876c0.564 -1.278 1.743 -3.504 1.836 -5.268 0.048 0.036 0.217 0.135 0.289 0.202 0.218 0.133 0.38 0.333 0.59 0.465 0.21 0.201 0.477 0.335 0.876 0.335 0.039 0.003 0.075 0.006 0.11 0.006 0.412 0 0.73 -0.134 0.997 -0.268 0.29 -0.134 0.52 -0.334 0.74 -0.4h0.005c0.467 -0.135 0.835 -0.402 1.044 -0.7zm2.185 8.958c0.037 0.6 0.343 1.245 0.882 1.377 0.588 0.134 1.434 -0.333 1.791 -0.765l0.211 -0.01c0.315 -0.007 0.577 0.01 0.847 0.268l0.003 0.003c0.208 0.199 0.305 0.53 0.391 0.876 0.085 0.4 0.154 0.78 0.409 1.066 0.486 0.527 0.645 0.906 0.636 1.14l0.003 -0.007v0.018l-0.003 -0.012c-0.015 0.262 -0.185 0.396 -0.498 0.595 -0.63 0.401 -1.746 0.712 -2.457 1.57 -0.618 0.737 -1.37 1.14 -2.036 1.191 -0.664 0.053 -1.237 -0.2 -1.574 -0.898l-0.005 -0.003c-0.21 -0.4 -0.12 -1.025 0.056 -1.69 0.176 -0.668 0.428 -1.344 0.463 -1.897 0.037 -0.714 0.076 -1.335 0.195 -1.814 0.12 -0.465 0.308 -0.797 0.641 -0.984l0.045 -0.022zm-10.814 0.049h0.01c0.053 0 0.105 0.005 0.157 0.014 0.376 0.055 0.706 0.333 1.023 0.752l0.91 1.664 0.003 0.003c0.243 0.533 0.754 1.064 1.189 1.637 0.434 0.598 0.77 1.131 0.729 1.57v0.006c-0.057 0.744 -0.48 1.148 -1.125 1.294 -0.645 0.135 -1.52 0.002 -2.395 -0.464 -0.968 -0.536 -2.118 -0.469 -2.857 -0.602 -0.369 -0.066 -0.61 -0.2 -0.723 -0.4 -0.11 -0.2 -0.113 -0.602 0.123 -1.23v-0.004l0.002 -0.003c0.117 -0.334 0.03 -0.752 -0.027 -1.118 -0.055 -0.401 -0.083 -0.71 0.043 -0.94 0.16 -0.334 0.396 -0.4 0.69 -0.533 0.294 -0.135 0.64 -0.202 0.915 -0.47h0.002v-0.002c0.256 -0.268 0.445 -0.601 0.668 -0.838 0.19 -0.201 0.38 -0.336 0.663 -0.336zm7.159 -9.074c-0.435 0.201 -0.945 0.535 -1.488 0.535 -0.542 0 -0.97 -0.267 -1.28 -0.466 -0.154 -0.134 -0.28 -0.268 -0.373 -0.335 -0.164 -0.134 -0.144 -0.333 -0.074 -0.333 0.109 0.016 0.129 0.134 0.199 0.2 0.096 0.066 0.215 0.2 0.36 0.333 0.292 0.2 0.68 0.467 1.167 0.467 0.485 0 1.053 -0.267 1.398 -0.466 0.195 -0.135 0.445 -0.334 0.648 -0.467 0.156 -0.136 0.149 -0.267 0.279 -0.267 0.128 0.016 0.034 0.134 -0.147 0.332a8.097 8.097 0 0 1 -0.69 0.468zm-1.082 -1.583V5.64c-0.006 -0.02 0.013 -0.042 0.029 -0.05 0.074 -0.043 0.18 -0.027 0.26 0.004 0.063 0 0.16 0.067 0.15 0.135 -0.006 0.049 -0.085 0.066 -0.135 0.066 -0.055 0 -0.092 -0.043 -0.141 -0.068 -0.052 -0.018 -0.146 -0.008 -0.163 -0.065zm-0.551 0c-0.02 0.058 -0.113 0.049 -0.166 0.066 -0.047 0.025 -0.086 0.068 -0.14 0.068 -0.05 0 -0.13 -0.02 -0.136 -0.068 -0.01 -0.066 0.088 -0.133 0.15 -0.133 0.08 -0.031 0.184 -0.047 0.259 -0.005 0.019 0.009 0.036 0.03 0.03 0.05v0.02h0.003z" fill="currentColor" strokeWidth="1"></path>
+-		</svg>
+-	);
+-}
+\ No newline at end of file
+diff --git a/src/client/src/components/svg/mac.tsx b/src/client/src/components/svg/mac.tsx
+deleted file mode 100644
+index 4294f1ca..00000000
+--- a/src/client/src/components/svg/mac.tsx
++++ /dev/null
+@@ -1,17 +0,0 @@
+-export default function MacSvg({ className = "" }: { className?: string }) {
+-	return (
+-		<svg
+-			role="img"
+-			viewBox="0 0 50 50"
+-			xmlns="http://www.w3.org/2000/svg"
+-			height="24"
+-			width="24"
+-			className={`${className} external-icon-svg`}
+-		>
+-			<path
+-				d="M 44.527344 34.75 C 43.449219 37.144531 42.929688 38.214844 41.542969 40.328125 C 39.601563 43.28125 36.863281 46.96875 33.480469 46.992188 C 30.46875 47.019531 29.691406 45.027344 25.601563 45.0625 C 21.515625 45.082031 20.664063 47.03125 17.648438 47 C 14.261719 46.96875 11.671875 43.648438 9.730469 40.699219 C 4.300781 32.429688 3.726563 22.734375 7.082031 17.578125 C 9.457031 13.921875 13.210938 11.773438 16.738281 11.773438 C 20.332031 11.773438 22.589844 13.746094 25.558594 13.746094 C 28.441406 13.746094 30.195313 11.769531 34.351563 11.769531 C 37.492188 11.769531 40.8125 13.480469 43.1875 16.433594 C 35.421875 20.691406 36.683594 31.78125 44.527344 34.75 Z M 31.195313 8.46875 C 32.707031 6.527344 33.855469 3.789063 33.4375 1 C 30.972656 1.167969 28.089844 2.742188 26.40625 4.78125 C 24.878906 6.640625 23.613281 9.398438 24.105469 12.066406 C 26.796875 12.152344 29.582031 10.546875 31.195313 8.46875 Z"
+-				fill="currentColor"
+-			/>
+-		</svg>
+-	);
+-}
+diff --git a/src/client/src/components/svg/windows.tsx b/src/client/src/components/svg/windows.tsx
+deleted file mode 100644
+index a41318f6..00000000
+--- a/src/client/src/components/svg/windows.tsx
++++ /dev/null
+@@ -1,17 +0,0 @@
+-export default function WindowsSvg({ className = "" }: { className?: string }) {
+-	return (
+-		<svg
+-			role="img"
+-			viewBox="0 0 48 48"
+-			xmlns="http://www.w3.org/2000/svg"
+-			height="24"
+-			width="24"
+-			className={`${className} external-icon-svg`}
+-		>
+-			<path
+-				d="M20 25.026L5.011 25 5.012 37.744 20 39.818zM22 25.03L22 40.095 42.995 43 43 25.066zM20 8.256L5 10.38 5.014 23 20 23zM22 7.973L22 23 42.995 23 42.995 5z"
+-				fill="currentColor"
+-			/>
+-		</svg>
+-	);
+-}
+diff --git a/src/client/src/components/ui/hover-card.tsx b/src/client/src/components/ui/hover-card.tsx
+deleted file mode 100644
+index 69c86b13..00000000
+--- a/src/client/src/components/ui/hover-card.tsx
++++ /dev/null
+@@ -1,31 +0,0 @@
+-"use client";
+-
+-import * as React from "react";
+-import * as HoverCardPrimitive from "@radix-ui/react-hover-card";
+-
+-import { cn } from "@/lib/utils";
+-
+-const HoverCard = HoverCardPrimitive.Root;
+-
+-const HoverArrow = HoverCardPrimitive.Arrow;
+-
+-const HoverCardTrigger = HoverCardPrimitive.Trigger;
+-
+-const HoverCardContent = React.forwardRef<
+-	React.ElementRef<typeof HoverCardPrimitive.Content>,
+-	React.ComponentPropsWithoutRef<typeof HoverCardPrimitive.Content>
+->(({ className, align = "center", sideOffset = 4, ...props }, ref) => (
+-	<HoverCardPrimitive.Content
+-		ref={ref}
+-		align={align}
+-		sideOffset={sideOffset}
+-		className={cn(
+-			"z-50 w-64 rounded-md border border-stone-200 bg-white p-4 text-stone-950 shadow-md outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-50",
+-			className
+-		)}
+-		{...props}
+-	/>
+-));
+-HoverCardContent.displayName = HoverCardPrimitive.Content.displayName;
+-
+-export { HoverArrow, HoverCard, HoverCardTrigger, HoverCardContent };
+diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
+index 11876ba2..f55330ef 100644
+--- a/src/client/src/constants/messages/en.ts
++++ b/src/client/src/constants/messages/en.ts
+@@ -988,8 +988,6 @@ export const FEATURE_PROMPTS = "Prompt Hub";
+ 
+ export const FEATURE_MEMORY = "Memory";
+ 
+-export const FEATURE_AGENTS = "Agents";
+-
+ export const FEATURE_EVALS = "Evaluations";
+ 
+ export const FEATURE_MANAGE_MODELS = "Manage models";
+@@ -1007,16 +1005,8 @@ export const AGENTS_CLEAR_FILTERS = "Clear Filters";
+ 
+ export const AGENTS_APPLY_FILTERS = "Apply Filters";
+ 
+-export const AGENTS_STAT_CODING_VENDORS = "Total Coding Agents";
+-
+-export const AGENTS_STAT_CODING_COST = "Total Cost";
+-
+-export const AGENTS_STAT_CODING_USERS = "Total Users";
+-
+ export const AGENTS_TAB_CODING = "Coding Agents";
+ 
+-export const AGENTS_ADD_CODING_AGENT = "Add Coding Agent";
+-
+ // Trace-detail content-capture banner. Surfaces a one-liner the user
+ // can run when prompts / responses are missing from a coding-agent
+ // Coding Agents — env-routed ClickHouse resolution errors
+@@ -1054,29 +1044,6 @@ export const AGENTS_CODING_USERS_WINDOW_LABEL = "Active users";
+ 
+ export const AGENTS_CODING_COST_WINDOW_LABEL = "Cost (USD)";
+ 
+-export const AGENTS_CODING_COLUMN_VENDOR = "Vendor";
+-
+-export const AGENTS_CODING_COLUMN_SESSIONS = "Sessions";
+-
+-export const AGENTS_CODING_COLUMN_USERS = "Users";
+-
+-export const AGENTS_CODING_COLUMN_COST = "Cost";
+-
+-export const AGENTS_CODING_COLUMN_LINES = "Lines";
+-
+-export const AGENTS_CODING_COLUMN_ACCEPTANCE = "Acceptance";
+-
+-export const AGENTS_CODING_COLUMN_COMMITS = "Commits";
+-
+-export const AGENTS_CODING_COLUMN_PRS = "PRs";
+-
+-export const AGENTS_CODING_EMPTY_TITLE = "No coding agents yet";
+-
+-export const AGENTS_CODING_EMPTY_BODY =
+-	"Install the openlit CLI on a teammate's machine and run a Claude Code, Cursor, or Codex session. The first hook event will surface the agent here within a minute.";
+-
+-export const AGENTS_CODING_TAB_SESSIONS = "Sessions";
+-
+ export const AGENTS_CODING_SESSIONS_EMPTY = "No sessions in the selected time range.";
+ 
+ export const AGENTS_CODING_SESSIONS_SESSION = "Session";
+@@ -1125,8 +1092,6 @@ export const AGENTS_CODING_USERS_PRS = "PRs";
+ 
+ export const AGENTS_CODING_DASHBOARD_OPEN = "Open full dashboard";
+ 
+-export const AGENTS_LOAD_MORE = "Load more";
+-
+ export const AGENTS_LIFECYCLE_STATUS_RUNNING = "Running";
+ 
+ export const AGENTS_LIFECYCLE_STATUS_STOPPED = "Stopped";
+@@ -1135,97 +1100,22 @@ export const AGENTS_LIFECYCLE_STATUS_RESTARTING = "Restarting";
+ 
+ export const AGENTS_LIFECYCLE_STATUS_UNKNOWN = "Unknown";
+ 
+-export const AGENTS_TAB_DEFINITION = "Definition";
+-
+-// Agents - Redesigned detail page tabs (6-tab shell)
+-export const AGENTS_TAB_OVERVIEW = "Overview";
+-
+-export const AGENTS_TAB_DASHBOARD = "Dashboard";
+-
+-export const AGENTS_TAB_MONITORING = "Monitoring";
+-
+ export const AGENTS_TAB_TOOLS = "Tools";
+ 
+ export const AGENTS_TAB_PROMPTS = "Prompts";
+ 
+-// Agents - Version Timeline (bar chart + chooser)
+-export const AGENTS_VERSION_TIMELINE_TITLE = "Version Timeline";
+-
+-export const AGENTS_VERSION_TIMELINE_EMPTY = "No traffic in the selected window yet.";
+-
+-export const AGENTS_VERSION_TIMELINE_ALL_VERSIONS = "All versions";
+-
+ export const AGENTS_VERSION_RECENT_LABEL = "Recent versions";
+ 
+-export const AGENTS_VERSION_TIMELINE_REQ_COUNT = (count: number) =>
+-	`${count.toLocaleString()} ${count === 1 ? "request" : "requests"}`;
+-
+ export const AGENTS_DAG_TITLE = "Call Graph";
+ 
+-export const AGENTS_DAG_EMPTY = "No spans captured yet for this version.";
+-
+-export const AGENTS_DAG_SAMPLED_NOTE = (sampled: number, total: number) =>
+-	`Aggregated from ${sampled.toLocaleString()} of ${total.toLocaleString()} traces.`;
+-
+-// Agents - Definition / Versions
+-export const AGENTS_DEFINITION_SYSTEM_PROMPT = "System Prompt";
+-
+-export const AGENTS_DEFINITION_TOOLS = "Tools";
+-
+-export const AGENTS_DEFINITION_NO_SYSTEM_PROMPT = "No system prompt captured yet. The agent has not emitted gen_ai.system_instructions.";
+-
+-export const AGENTS_DEFINITION_NO_TOOLS = "No tools captured yet. The agent has not emitted gen_ai.tool.definitions or gen_ai.tool.name.";
+-
+-export const AGENTS_DEFINITION_COPY = "Copy";
+-
+-export const AGENTS_DEFINITION_COPIED = "Copied";
+-
+ export const AGENTS_DEFINITION_SHOW_DIFF = "Show diff vs previous version";
+ 
+ export const AGENTS_DEFINITION_HIDE_DIFF = "Hide diff";
+ 
+-export const AGENTS_DEFINITION_SCHEMA = "Schema";
+-
+-export const AGENTS_DEFINITION_SCHEMA_NOT_CAPTURED =
+-	"This tool was reported by name only — its parameter schema was not captured by the instrumentation.";
+-
+-export const AGENTS_DEFINITION_VIEW_RAW = "View raw";
+-
+-export const AGENTS_DEFINITION_VIEW_FORMATTED = "View formatted";
+-
+-export const AGENTS_VERSION_CURRENT = "Current";
+-
+-export const AGENTS_VERSION_NUMBER_PREFIX = "v";
+-
+ export const AGENTS_VERSION_SELECTOR_LABEL = "Version";
+ 
+-export const AGENTS_VERSION_DRAWER_TITLE = "Version History";
+-
+-export const AGENTS_VERSION_FIRST_SEEN = "First seen";
+-
+-export const AGENTS_VERSION_LAST_SEEN = "Last seen";
+-
+-export const AGENTS_VERSION_REQUESTS = "Requests";
+-
+ export const AGENTS_VERSION_FINGERPRINT = "Fingerprint";
+ 
+-export const AGENTS_VERSION_NO_HISTORY = "No version history yet.";
+-
+-// Agents - Detail Metadata
+-export const AGENTS_METADATA_PRIMARY_MODEL = "Primary Model";
+-
+-export const AGENTS_METADATA_TOOLS = "Tools";
+-
+-export const AGENTS_METADATA_AGE = "Age";
+-
+-export const AGENTS_METADATA_LAST_SEEN = "Last Seen";
+-
+-export const AGENTS_METADATA_REQUESTS_24H = "Requests (24h)";
+-
+-export const AGENTS_REFRESH = "Refresh";
+-
+-export const AGENTS_REFRESHING = "Refreshing...";
+-
+ export const AGENTS_LAST_UPDATED = (seconds: number) => `Updated ${seconds}s ago`;
+ 
+ export const AGENTS_LAST_UPDATED_NEVER = "Not yet materialized";
+@@ -1234,21 +1124,6 @@ export const AGENTS_LAST_UPDATED_NEVER = "Not yet materialized";
+ export const AGENTS_SCOPED_TO_SERVICE = (serviceName: string) =>
+ 	`Scoped to service "${serviceName}"`;
+ 
+-// Agents - Service Detail
+-export const AGENTS_SERVICE_DETAIL_DEFAULT_TITLE = "Service Detail";
+-
+-export const AGENTS_BACK_TO_HUB = "Back to Hub";
+-
+-export const AGENTS_LOADING_SERVICE_DETAILS = "Loading service details...";
+-
+-export const AGENTS_LOADING_DASHBOARD = "Loading dashboard...";
+-
+-export const AGENTS_LOADING_REQUESTS = "Loading requests...";
+-
+-export const AGENTS_LOADING_VERSIONS = "Loading…";
+-
+-export const AGENTS_LOAD_MORE_VERSIONS = "Load more versions";
+-
+ export const AGENTS_STATUS_DISCOVERED = "Discovered";
+ 
+ export const AGENTS_STAT_PROVIDERS = "Providers";
+@@ -1257,8 +1132,6 @@ export const AGENTS_STAT_PID = "PID";
+ 
+ export const AGENTS_STAT_RUNTIME = "Runtime";
+ 
+-export const AGENTS_STAT_FIRST_SEEN = "First Seen";
+-
+ export const AGENTS_STAT_RUNTIME_UNKNOWN = "Unknown";
+ 
+ export const AGENTS_CONTROLS = "Controls";
+@@ -1633,24 +1506,16 @@ export const CONTEXT_DESCRIPTION_OPTIONAL = "(optional)";
+ 
+ export const CONTEXT_CONTENT = "Content";
+ 
+-
+-
+ export const CONTEXT_CONTENT_MARKDOWN_HINT = "Write your context content here. Markdown is supported.";
+ 
+ export const CONTEXT_TAGS = "Tags";
+ 
+-
+ export const CONTEXT_TAGS_ENTER_PLACEHOLDER = "Add a tag, press Enter";
+ 
+-
+-
+-
+-
+ export const CONTEXT_UPDATE = "Update context";
+ 
+ export const CONTEXT_CREATE_NEW = "Create a new context";
+ 
+-
+ export const CONTEXT_CREATING = "Creating context...";
+ 
+ export const CONTEXT_UPDATED_SUCCESS = "Updated context successfully!";
+diff --git a/src/client/src/middleware.ts b/src/client/src/middleware.ts
+index 6b2d719e..f149e278 100644
+--- a/src/client/src/middleware.ts
++++ b/src/client/src/middleware.ts
+@@ -33,8 +33,6 @@ export const config = {
+ 		"/prompt-hub",
+ 		"/prompt-hub/:path*",
+ 		"/settings/:path*",
+-		"/agents",
+-		"/agents/:path*",
+ 		"/connectors",
+ 		"/costs",
+ 		"/evaluations",
