@@ -1126,7 +1126,7 @@ test("DataTable renders table with columns and data", () => {
     { id: "2", name: "Beta" }
   ];
   const markup = renderToStaticMarkup(
-    DataTable<TestRow>({
+    React.createElement<DataTableProps<TestRow>>(DataTable, {
       data,
       columns: [
         { id: "id", header: "ID", cell: (r: TestRow) => r.id },
@@ -1165,10 +1165,15 @@ test("DataTable distributes column width by weight, not by absolute length", () 
     readonly id: string;
   }
   const markup = renderToStaticMarkup(
-    DataTable<TestRow>({
+    React.createElement<DataTableProps<TestRow>>(DataTable, {
       data: [{ id: "1" }],
       columns: [
-        { id: "wide", header: "Wide", cell: (r: TestRow) => r.id, weight: 300 },
+        {
+          id: "wide",
+          header: "Wide",
+          cell: (r: TestRow) => r.id,
+          weight: 300
+        },
         {
           id: "narrow",
           header: "Narrow",
@@ -1205,7 +1210,7 @@ test("DataTable wraps column headers instead of truncating them", () => {
     readonly id: string;
   }
   const markup = renderToStaticMarkup(
-    DataTable<TestRow>({
+    React.createElement<DataTableProps<TestRow>>(DataTable, {
       data: [{ id: "1" }],
       columns: [
         {
@@ -1233,7 +1238,7 @@ test("DataTable clamps prose cells on an inner box, not the table cell", () => {
     readonly description: string;
   }
   const markup = renderToStaticMarkup(
-    DataTable<TestRow>({
+    React.createElement<DataTableProps<TestRow>>(DataTable, {
       data: [{ id: "1", description: "A long description." }],
       columns: [
         { id: "id", header: "ID", cell: (r: TestRow) => r.id },
@@ -1254,6 +1259,82 @@ test("DataTable clamps prose cells on an inner box, not the table cell", () => {
     markup,
     /<td[^>]*class="[^"]*whitespace-normal break-words[^"]*"[^>]*><div class="line-clamp-2">/
   );
+});
+
+test("DataTable keeps a truncated cell's full value reachable, and titles nothing else", () => {
+  // The target state requires it directly: "single-value cells truncate with
+  // the full value reachable on hover". DataTable owns the `truncate` default,
+  // so it owns the recovery -- a view cannot be trusted to remember it per
+  // column, and fourteen views would each get it wrong differently.
+  const value = "workspace/SimulatorLife/AutoDev/scope/that/never/ends";
+  const cell = (
+    align?: "truncate" | "tokens" | "prose",
+    text: string = value
+  ) =>
+    React.createElement<DataTableProps<{ v: string }>>(DataTable, {
+      data: [{ v: text }],
+      columns: [
+        {
+          id: "c",
+          header: "Scope",
+          cell: (r: { v: string }) => r.v,
+          ...(align === undefined ? {} : { align })
+        }
+      ],
+      keyExtractor: (r: { v: string }) => r.v
+    });
+
+  // The default align truncates, so the cell carries the whole value.
+  const truncated = renderToStaticMarkup(cell());
+  assert.match(
+    truncated,
+    /<td[^>]*class="[^"]*truncate[^"]*"[^>]*title="[^"]*"[^>]*>/,
+    `a truncating cell must title itself with the whole value, got: ${truncated}`
+  );
+  assert.ok(truncated.includes(`title="${value}"`));
+
+  // A `tokens` or `prose` cell wraps rather than truncates, so a title would
+  // be claiming something false about a value that is fully visible.
+  for (const align of ["tokens", "prose"] as const) {
+    const wrapping = renderToStaticMarkup(cell(align));
+    assert.doesNotMatch(
+      wrapping,
+      /<td[^>]*title=/,
+      `a wrapping (${align}) cell must not claim to be truncated, got: ${wrapping}`
+    );
+  }
+
+  // An empty cell gets no title: `title=""` is a tooltip with nothing in it.
+  const empty = renderToStaticMarkup(cell("truncate", ""));
+  assert.doesNotMatch(empty, /<td[^>]*title=/);
+
+  // A cell built from elements owns its own recovery, so titling the cell as
+  // well would either duplicate the element's title or invent text that does
+  // not match what the cell shows.
+  const elementCell = renderToStaticMarkup(
+    React.createElement<DataTableProps<{ v: string }>>(DataTable, {
+      data: [{ v: value }],
+      columns: [
+        {
+          id: "c",
+          header: "Scope",
+          cell: (r: { v: string }) =>
+            React.createElement(
+              "span",
+              { className: "truncate", title: r.v },
+              r.v
+            )
+        }
+      ],
+      keyExtractor: (r: { v: string }) => r.v
+    })
+  );
+  assert.doesNotMatch(
+    elementCell,
+    /<td[^>]*title=/,
+    `an element cell must leave its recovery to the element, got: ${elementCell}`
+  );
+  assert.ok(elementCell.includes(`title="${value}"`));
 });
 
 test("StatCard renders value and title", () => {
