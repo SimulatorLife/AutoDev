@@ -2270,6 +2270,8 @@ export async function fetchMemoryCohorts(
     readonly occurredUntil: string;
     readonly memoryModes?: readonly string[];
     readonly injectionResults?: readonly string[];
+    readonly reportKinds?: readonly string[];
+    readonly outcomeKinds?: readonly string[];
   },
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
@@ -2284,6 +2286,10 @@ export async function fetchMemoryCohorts(
     params.memoryModes.forEach((m) => search.append("memoryMode", m));
   if (params.injectionResults)
     params.injectionResults.forEach((r) => search.append("injectionResult", r));
+  if (params.reportKinds)
+    params.reportKinds.forEach((k) => search.append("reportKind", k));
+  if (params.outcomeKinds)
+    params.outcomeKinds.forEach((k) => search.append("outcomeKind", k));
   const path = `${CONTROL_API_PATHS.memorySessionCohorts}?${search.toString()}`;
   const result = await fetchControlApi<unknown>(path, config, options);
   if (result.kind !== "ok") return result;
@@ -2301,6 +2307,14 @@ export async function fetchMemoryUseCohorts(
     readonly repositoryId: string;
     readonly occurredFrom: string;
     readonly occurredUntil: string;
+    /**
+     * The use-cohort reads accept a narrower vocabulary than the outcome
+     * cohorts do: only the modes a cohort can actually be assigned are
+     * eligible, so a mode the outcome cohorts allow (`invalid`, `unknown`) is
+     * refused here rather than silently ignored.
+     */
+    readonly memoryModes?: readonly string[];
+    readonly useKinds?: readonly string[];
   },
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
@@ -2311,6 +2325,10 @@ export async function fetchMemoryUseCohorts(
   search.set("includeTaskHistory", "true");
   search.set("occurredFrom", params.occurredFrom);
   search.set("occurredUntil", params.occurredUntil);
+  if (params.memoryModes)
+    params.memoryModes.forEach((m) => search.append("memoryMode", m));
+  if (params.useKinds)
+    params.useKinds.forEach((k) => search.append("useKind", k));
   const path = `${CONTROL_API_PATHS.memoryUseCohorts}?${search.toString()}`;
   const result = await fetchControlApi<unknown>(path, config, options);
   if (result.kind !== "ok") return result;

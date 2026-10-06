@@ -636,9 +636,9 @@ test("MemoryPage asks the Runtime for the page the URL names", async () => {
           hasMore: false
         });
       }
-      if (url.includes("/control/memory/cohorts")) {
+      if (url.includes("/control/memory/session-cohorts")) {
         return Response.json({
-          schema: "autodev-memory-cohorts-v1",
+          schema: "autodev-memory-session-cohorts-v1",
           cells: [],
           sessionCount: 0
         });
@@ -5597,6 +5597,7 @@ test("MemoryCohortsView renders session outcome cohorts preserving explicit unre
       sessionCohorts: sampleCohort,
       useCohorts: null,
       currentWorkspaceId: "SimulatorLife/AutoDev",
+      listScope: memoryListScope({ tab: "cohorts" }),
       repositoryId: "SimulatorLife/AutoDev",
       occurredFrom: "2026-09-01T00:00:00Z",
       occurredUntil: "2026-10-01T00:00:00Z"
@@ -5619,6 +5620,7 @@ test("MemoryCohortsView does not render unavailable session data as an empty coh
       sessionCohorts: null,
       useCohorts: null,
       currentWorkspaceId: "SimulatorLife/AutoDev",
+      listScope: memoryListScope({ tab: "cohorts" }),
       repositoryId: "SimulatorLife/AutoDev",
       occurredFrom: "2026-09-01T00:00:00Z",
       occurredUntil: "2026-10-01T00:00:00Z"
@@ -5650,6 +5652,7 @@ test("MemoryCohortsView distinguishes an observed empty cohort from unavailable 
       },
       useCohorts: null,
       currentWorkspaceId: "SimulatorLife/AutoDev",
+      listScope: memoryListScope({ tab: "cohorts" }),
       repositoryId: "SimulatorLife/AutoDev",
       occurredFrom: "2026-09-01T00:00:00Z",
       occurredUntil: "2026-10-01T00:00:00Z"
@@ -8869,6 +8872,204 @@ test("the experience evidence validators refuse a response that would read as 'u
           outcome: { outcomeKind: "success", reportKind: "task" },
           sessionInjectionCount: 1
         }
+test("cohort filters reach the Runtime and stay on the cohorts tab", async () => {
+  // The Runtime has accepted memoryMode, injectionResult, reportKind,
+  // outcomeKind, and useKind on these reads since they were written, and the
+  // tab rendered none of them. Every cohort view reachable from the Console was
+  // therefore the unfiltered one.
+  const previousFetch = globalThis.fetch;
+  const previousEnv = saveConsolePageEnvironment();
+  const isolatedHome = mkdtempSync(join(tmpdir(), "autodev-memory-cohorts-"));
+  const requested: string[] = [];
+  const renderPage = async (
+    searchParams: Record<string, string>
+  ): Promise<string> => {
+    requested.length = 0;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url.endsWith("/control/workspaces")) {
+        return Response.json({
+          schema: "autodev-control-workspaces-v1",
+          source: "config/workspaces.json",
+          readOnly: true,
+          catalogStatus: "valid",
+          totalWorkspaces: 1,
+          workspaces: [
+            {
+              id: "SimulatorLife/AutoDev",
+              baseBranch: "main",
+              enabled: true,
+              agentRoles: null
+            }
+          ]
+        });
+      }
+      if (url.includes("/control/memory/records")) {
+        return Response.json({
+          schema: "autodev-memory-records-v1",
+          items: [],
+          total: 0,
+          limit: 50,
+          offset: 0
+        });
+      }
+      if (url.includes("/control/memory/experiences")) {
+        return Response.json({
+          schema: "autodev-memory-experiences-v1",
+          items: [],
+          total: 0,
+          limit: 50,
+          offset: 0
+        });
+      }
+      if (url.includes("/control/memory/use-cohorts")) {
+        return Response.json({
+          schema: "autodev-memory-use-cohorts-v1",
+          cells: [],
+          sessionCount: 0
+        });
+      }
+      if (url.includes("/control/memory/session-cohorts")) {
+        return Response.json({
+          schema: "autodev-memory-session-cohorts-v1",
+          cells: [],
+          sessionCount: 0
+        });
+      }
+      throw new Error(`Unexpected Memory page request: ${url}`);
+    };
+    return renderToStaticMarkup(
+      await MemoryPage({ searchParams: Promise.resolve(searchParams) })
+    );
+  };
+
+  try {
+    process.env.HOME = isolatedHome;
+    process.env.CODEX_HOME = isolatedHome;
+    process.env.AUTODEV_OPENLIT_SECRET_FILE = join(isolatedHome, "missing.env");
+    process.env.AUTODEV_CONTROL_API_TOKEN = "memory-cohort-test-token";
+    process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+
+    const markup = await renderPage({
+      tab: "cohorts",
+      memoryMode: "jit",
+      injectionResult: "injected",
+      reportKind: "task",
+      outcomeKind: "success",
+      useKind: "partially_used"
+    });
+
+    const cohorts = requested.find((url) =>
+      url.includes("/control/memory/session-cohorts")
+    );
+    assert.ok(
+      cohorts,
+      `the outcome cohorts must be read; requested: ${requested.join(" ")}`
+    );
+    const cohortUrl = new URL(cohorts);
+    assert.equal(cohortUrl.searchParams.get("memoryMode"), "jit");
+    assert.equal(cohortUrl.searchParams.get("injectionResult"), "injected");
+    assert.equal(cohortUrl.searchParams.get("reportKind"), "task");
+    assert.equal(cohortUrl.searchParams.get("outcomeKind"), "success");
+
+    const useCohorts = requested.find((url) =>
+      url.includes("/control/memory/use-cohorts")
+    );
+    assert.ok(useCohorts, "the use cohorts must be read");
+    const useUrl = new URL(useCohorts);
+    assert.equal(useUrl.searchParams.get("memoryMode"), "jit");
+    assert.equal(useUrl.searchParams.get("useKind"), "partially_used");
+
+    // Each control renders, and the tab's own filter bar keeps the window.
+    assert.match(markup, /data-feature-filter="cohorts"/);
+    for (const testId of [
+      "memory-cohort-memory-mode",
+      "memory-cohort-injection-result",
+      "memory-cohort-report-kind",
+      "memory-cohort-outcome-kind",
+      "memory-cohort-use-kind"
+    ]) {
+      assert.match(markup, new RegExp(`data-select="${testId}"`, "u"));
+    }
+
+    // An unfiltered cohort read forwards nothing, rather than an empty array
+    // the Runtime would have to interpret.
+    await renderPage({ tab: "cohorts" });
+    const plain = requested.find((url) =>
+      url.includes("/control/memory/session-cohorts")
+    );
+    assert.ok(plain);
+    const plainUrl = new URL(plain);
+    for (const key of [
+      "memoryMode",
+      "injectionResult",
+      "reportKind",
+      "outcomeKind",
+      "useKind"
+    ]) {
+      assert.equal(
+        plainUrl.searchParams.has(key),
+        false,
+        `${key} must be absent`
+      );
+    }
+
+    // A mode the Runtime would refuse is named, not forwarded.
+    const refused = await renderPage({ tab: "cohorts", memoryMode: "bogus" });
+    assert.match(refused, /1 filter in this URL was not applied\./);
+    assert.match(refused, /memoryMode=&quot;bogus&quot;/);
+    const afterRefusal = requested.find((url) =>
+      url.includes("/control/memory/session-cohorts")
+    );
+    assert.ok(afterRefusal);
+    assert.equal(new URL(afterRefusal).searchParams.has("memoryMode"), false);
+
+    // Cohort filters do not follow the operator to another tab. Records has no
+    // memoryMode axis, so carrying it there would name a filter nothing applies.
+    await renderPage({
+      tab: "records",
+      memoryMode: "jit",
+      outcomeKind: "success"
+    });
+    const records = requested.find((url) =>
+      url.includes("/control/memory/records")
+    );
+    assert.ok(records);
+    const recordsUrl = new URL(records);
+    assert.equal(recordsUrl.searchParams.has("memoryMode"), false);
+    assert.equal(recordsUrl.searchParams.has("outcomeKind"), false);
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreConsolePageEnvironment(previousEnv);
+    rmSync(isolatedHome, { recursive: true, force: true });
+  }
+});
+
+test("ClosePanelLink renders the shared close mark and keeps its accessible name", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(ClosePanelLink, { href: "/memory?tab=records" })
+  );
+
+  // A real link: the panel must be dismissible without client JavaScript.
+  assert.match(markup, /^<a href="\/memory\?tab=records"/);
+  // The mark comes from the shared icon set, not a raw glyph typed into the
+  // view, so it shares the product's grid, stroke, and currentColor behaviour.
+  assert.match(markup, /<svg[^>]*viewBox="0 0 24 24"/);
+  assert.match(markup, /<svg[^>]*stroke="currentColor"/);
+  assert.equal(markup.includes("✕"), false, "must not re-type the close glyph");
+  // Decorative icon beside a real word: the word is the accessible name.
+  assert.match(markup, /aria-hidden="true"/);
+  assert.match(markup, />Close<\/a>$/);
+});
+
+test("DataTable caps its scroll floor so a table never scrolls at desktop width", () => {
+  interface TestRow {
+    readonly id: string;
+  }
+  // Weights authored at their measured pixel widths: this set sums to 1300,
+  // wider than the ~1060px content column at 1440. The floor must not become
+  // that natural width, or the table region scrolls 240px on a desktop window
       ]
     }),
     false

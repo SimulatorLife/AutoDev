@@ -1,8 +1,13 @@
 import {
   type CanonicalNavSection,
   type ControlApiMemoryRecordsResponse,
+  EXPERIENCE_OUTCOMES,
+  MEMORY_SESSION_COHORT_ASSIGNED_MODES,
+  MEMORY_INJECTION_RESULTS,
   MEMORY_KINDS,
+  MEMORY_OUTCOME_REPORT_KINDS,
   MEMORY_STATUSES,
+  MEMORY_USE_KINDS,
   type WorkspaceEntry
 } from "@simulatorlife/autodev-core";
 import React from "react";
@@ -66,6 +71,12 @@ interface ParsedMemoryParams {
   readonly limit: number;
   /** Rows skipped before this page. Always a multiple of `limit`. */
   readonly offset: number;
+  /** Cohort-tab filters, resolved against the Runtime's own value lists. */
+  readonly memoryMode: string;
+  readonly injectionResult: string;
+  readonly reportKind: string;
+  readonly outcomeKind: string;
+  readonly useKind: string;
   /** Bounded filters the URL named that this page could not honour. */
   readonly unapplied: readonly UnappliedFilter[];
 }
@@ -100,6 +111,7 @@ function parseMemoryQueryParams(
   // The page position is resolved with the same bounded-filter contract as the
   // kind and status selects, so `?limit=9999` is named rather than forwarded to
   // a Runtime that answers a `TypeError` for it.
+  const activeTabIsCohorts = (getParam("tab") || "records") === "cohorts";
   const pagePosition = resolveMemoryPage(getParam("limit"), getParam("offset"));
   unapplied.push(...pagePosition.unapplied);
 
@@ -116,6 +128,25 @@ function parseMemoryQueryParams(
     experienceId: getParam("experienceId"),
     occurredFrom: getParam("from") || thirtyDaysAgo.toISOString(),
     occurredUntil: getParam("until") || now.toISOString(),
+    // Cohort filters, resolved against the Runtime's own value lists so the
+    // select that renders and the read that runs cannot disagree. Each is
+    // read only on the cohorts tab; elsewhere they are not part of this list,
+    // so carrying them would name a filter nothing applies.
+    memoryMode: activeTabIsCohorts
+      ? resolve("memoryMode", ["all", ...MEMORY_SESSION_COHORT_ASSIGNED_MODES])
+      : "all",
+    injectionResult: activeTabIsCohorts
+      ? resolve("injectionResult", ["all", ...MEMORY_INJECTION_RESULTS])
+      : "all",
+    reportKind: activeTabIsCohorts
+      ? resolve("reportKind", ["all", ...MEMORY_OUTCOME_REPORT_KINDS])
+      : "all",
+    outcomeKind: activeTabIsCohorts
+      ? resolve("outcomeKind", ["all", ...EXPERIENCE_OUTCOMES])
+      : "all",
+    useKind: activeTabIsCohorts
+      ? resolve("useKind", ["all", ...MEMORY_USE_KINDS])
+      : "all",
     ...pagePosition.page,
     // Reported on whichever tab rendered. `tab` chooses the surface, and the
     // `kind`/`status` selects are preserved across tab links, so neither can be
@@ -407,7 +438,22 @@ async function fetchMemoryPageData(
         workspaceId,
         repositoryId: workspaceId,
         occurredFrom: params.occurredFrom,
-        occurredUntil: params.occurredUntil
+        occurredUntil: params.occurredUntil,
+        // Forwarded only when the URL actually named one, so an unfiltered
+        // cohort read stays unfiltered rather than carrying an empty array the
+        // Runtime would have to interpret.
+        ...(params.memoryMode !== "all"
+          ? { memoryModes: [params.memoryMode] }
+          : {}),
+        ...(params.injectionResult !== "all"
+          ? { injectionResults: [params.injectionResult] }
+          : {}),
+        ...(params.reportKind !== "all"
+          ? { reportKinds: [params.reportKind] }
+          : {}),
+        ...(params.outcomeKind !== "all"
+          ? { outcomeKinds: [params.outcomeKind] }
+          : {})
       },
       config
     ),
@@ -417,7 +463,12 @@ async function fetchMemoryPageData(
             workspaceId,
             repositoryId: workspaceId,
             occurredFrom: params.occurredFrom,
-            occurredUntil: params.occurredUntil
+            occurredUntil: params.occurredUntil,
+            // The same three assignable modes both cohort reads accept.
+            ...(params.memoryMode !== "all"
+              ? { memoryModes: [params.memoryMode] }
+              : {}),
+            ...(params.useKind !== "all" ? { useKinds: [params.useKind] } : {})
           },
           config
         )
@@ -549,7 +600,12 @@ export default async function MemoryPage(
     from: params.occurredFrom,
     until: params.occurredUntil,
     limit: params.limit,
-    offset: params.offset
+    offset: params.offset,
+    memoryMode: params.memoryMode,
+    injectionResult: params.injectionResult,
+    reportKind: params.reportKind,
+    outcomeKind: params.outcomeKind,
+    useKind: params.useKind
   };
 
   return React.createElement(

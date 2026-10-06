@@ -7,10 +7,13 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { FilterBar } from "../../components/filters/FilterBar.ts";
+import { SelectField } from "../../components/forms/SelectField.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
+import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
@@ -22,6 +25,7 @@ import {
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
 import { SUCCESS_TONE_CLASS } from "../../components/ui/tones.ts";
+import { memoryFilterHref,type MemoryListScope } from "./memory-list-url.ts";
 
 export interface MemoryCohortsViewProps {
   readonly sessionCohorts: MemorySessionOutcomeCohortPage | null;
@@ -30,6 +34,11 @@ export interface MemoryCohortsViewProps {
   readonly repositoryId: string;
   readonly occurredFrom: string;
   readonly occurredUntil: string;
+  /**
+   * The address of this tab's list, so its filter bar submits back to itself
+   * with the same window and workspace rather than resetting the page.
+   */
+  readonly listScope: MemoryListScope;
 }
 
 export function MemoryCohortsView({
@@ -38,7 +47,8 @@ export function MemoryCohortsView({
   currentWorkspaceId,
   repositoryId,
   occurredFrom,
-  occurredUntil
+  occurredUntil,
+  listScope
 }: MemoryCohortsViewProps): React.JSX.Element {
   const hasSessionCohorts = sessionCohorts !== null;
   const sessionCells = sessionCohorts?.cells ?? [];
@@ -170,6 +180,109 @@ export function MemoryCohortsView({
   return React.createElement(
     PageBody,
     { feature: "memory-cohorts" },
+    // Cohort filters. The Runtime has accepted `memoryMode`, `injectionResult`,
+    // `reportKind`, `outcomeKind`, and `useKind` on these reads from the start,
+    // and the tab rendered none of them -- so every cohort view an operator
+    // could reach was the unfiltered one, and the only way to narrow it was to
+    // leave the Console.
+    //
+    // `outcomeKind` and `useKind` describe two different evidence classes and
+    // are separate controls for that reason: selecting `success` is a claim
+    // about reported outcomes, not about assessed use, and one filter would
+    // make the other look like it had narrowed too.
+    React.createElement(
+      FilterBar,
+      {
+        label: "Cohort filters",
+        action: memoryFilterHref(listScope),
+        preserved: [
+          { name: "tab", value: "cohorts" },
+          { name: "workspaceId", value: listScope.workspaceId },
+          { name: "from", value: occurredFrom },
+          { name: "until", value: occurredUntil },
+          { name: "limit", value: String(listScope.limit) }
+        ],
+        submitTestId: "memory-cohort-filter",
+        summary: `${sessionCells.length + useCells.length} cohort cells`,
+        dataAttributes: { "data-feature-filter": "cohorts" }
+      },
+      React.createElement(SelectField, {
+        name: "memoryMode",
+        label: "Mode:",
+        hideLabel: true,
+        defaultValue: listScope.memoryMode ?? "all",
+        testId: "memory-cohort-memory-mode",
+        // Only the modes a cohort can actually be assigned. Both cohort
+        // matrices carry exactly these three, so offering invalid or unknown
+        // would filter to an empty matrix and imply the tab can explain a
+        // cell it has no axis for.
+        options: [
+          { value: "all", label: "All modes" },
+          { value: "jit", label: "JIT" },
+          { value: "retrieval-only", label: "Retrieval only" },
+          { value: "disabled", label: "Disabled" }
+        ]
+      }),
+      React.createElement(SelectField, {
+        name: "injectionResult",
+        label: "Injection result:",
+        hideLabel: true,
+        defaultValue: listScope.injectionResult ?? "all",
+        testId: "memory-cohort-injection-result",
+        options: [
+          { value: "all", label: "All results" },
+          { value: "injected", label: "Injected" },
+          { value: "empty", label: "Empty" },
+          { value: "skipped", label: "Skipped" }
+        ]
+      }),
+      React.createElement(SelectField, {
+        name: "reportKind",
+        label: "Report kind:",
+        hideLabel: true,
+        defaultValue: listScope.reportKind ?? "all",
+        testId: "memory-cohort-report-kind",
+        options: [
+          { value: "all", label: "All report kinds" },
+          { value: "task", label: "Task" },
+          { value: "pull_request", label: "Pull request" },
+          { value: "issue", label: "Issue" },
+          { value: "other", label: "Other" }
+        ]
+      }),
+      React.createElement(SelectField, {
+        name: "outcomeKind",
+        label: "Reported outcome:",
+        hideLabel: true,
+        defaultValue: listScope.outcomeKind ?? "all",
+        testId: "memory-cohort-outcome-kind",
+        options: [
+          { value: "all", label: "All outcomes" },
+          { value: "success", label: "Success" },
+          { value: "partial", label: "Partial" },
+          { value: "failure", label: "Failure" },
+          { value: "cancelled", label: "Cancelled" },
+          // `unknown` here means no reporter supplied an outcome, which is
+          // exactly the state the shared constant names. Spelling it
+          // "Unknown" would reintroduce the drift the constant exists to stop.
+          { value: "unknown", label: NOT_OBSERVED_LABEL }
+        ]
+      }),
+      React.createElement(SelectField, {
+        name: "useKind",
+        label: "Assessed use:",
+        hideLabel: true,
+        defaultValue: listScope.useKind ?? "all",
+        testId: "memory-cohort-use-kind",
+        options: [
+          { value: "all", label: "All use kinds" },
+          { value: "used", label: "Used" },
+          { value: "partially_used", label: "Partially used" },
+          { value: "not_used", label: "Not used" },
+          { value: "unobservable", label: "Unobservable" }
+        ]
+      })
+    ),
     // Time and scope banner
     React.createElement(
       "div",

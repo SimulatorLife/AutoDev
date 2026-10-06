@@ -44,6 +44,21 @@ export interface MemoryListScope {
   readonly until: string;
   readonly limit: number;
   readonly offset: number;
+  /**
+   * Cohort-tab filters.
+   *
+   * These belong to the Outcome Cohorts tab alone, and `listParams` writes them
+   * only while that tab is selected. Carrying them across to Records or
+   * Experiences would put a bounded filter in the URL of a list that cannot
+   * honour it — the page would report it as applied and nothing would narrow.
+   * Scoping them to the tab that understands them means switching tab drops
+   * them, which is also what the Runtime does with an unknown key.
+   */
+  readonly memoryMode?: string | undefined;
+  readonly injectionResult?: string | undefined;
+  readonly reportKind?: string | undefined;
+  readonly outcomeKind?: string | undefined;
+  readonly useKind?: string | undefined;
 }
 
 /** The page position of a bounded Memory collection. */
@@ -73,6 +88,20 @@ export const MAX_MEMORY_OFFSET = 100_000;
 const ROUTE = "/memory";
 
 /**
+ * The cohort-tab filter keys, in the order the URL writes them.
+ *
+ * One list so the scope type, the URL writer, and the page's parser cannot
+ * disagree about which keys exist.
+ */
+export const COHORT_FILTER_KEYS = [
+  "memoryMode",
+  "injectionResult",
+  "reportKind",
+  "outcomeKind",
+  "useKind"
+] as const;
+
+/**
  * Assemble the list's query string. `offset` is omitted at the first page so
  * that the common case is the short, readable URL an operator would type.
  */
@@ -88,6 +117,12 @@ function listParams(scope: MemoryListScope, offset: number): URLSearchParams {
   if (scope.kind && scope.kind !== "all") params.set("kind", scope.kind);
   if (scope.status && scope.status !== "all")
     params.set("status", scope.status);
+  if (scope.tab === "cohorts") {
+    for (const key of COHORT_FILTER_KEYS) {
+      const value = scope[key];
+      if (value && value !== "all") params.set(key, value);
+    }
+  }
   if (offset > 0) params.set("offset", String(offset));
   return params;
 }

@@ -281,7 +281,8 @@ export function MemoryView({
               currentWorkspaceId: listScope.workspaceId,
               repositoryId,
               occurredFrom: listScope.from,
-              occurredUntil: listScope.until
+              occurredUntil: listScope.until,
+              listScope
             })
           : null
   );
