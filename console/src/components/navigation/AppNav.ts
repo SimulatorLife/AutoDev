@@ -9,8 +9,6 @@ import React from "react";
 import { canonicalNavPath } from "../../lib/routes.ts";
 import { Icon, navIcon } from "../icons/Icon.ts";
 
-export { canonicalNavPath } from "../../lib/routes.ts";
-
 export interface AppNavProps {
   readonly activeSection: CanonicalNavSection;
   readonly counts?: Partial<Record<CanonicalNavSection, number>> | undefined;
