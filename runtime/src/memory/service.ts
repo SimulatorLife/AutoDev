@@ -526,7 +526,105 @@ export class MemoryValidationError extends Error {
   }
 }
 
-export class MemoryService {
+/**
+ * Resolve one stored experience the caller is allowed to see.
+ *
+ * `MemoryService` is a single class covering capture, injection bookkeeping,
+ * reporter assessments, cohorts, retrieval, research, verification and
+ * curation. Control API handlers were typed against all of it while using one
+ * to six members, which meant each handler declared a dependency on the whole
+ * surface and tests could only stand in for it with an `as unknown as` cast.
+ * These interfaces name the slices those handlers actually need; `MemoryService`
+ * implements all of them.
+ */
+export interface MemoryExperienceReader {
+  getExperience(
+    id: string,
+    context: MemoryReadContext
+  ): Promise<ExperienceEnvelope | null>;
+}
+
+/** List the experiences a caller is allowed to see. */
+export interface MemoryExperienceLister extends MemoryExperienceReader {
+  listExperiences(
+    request: ExperienceListRequest
+  ): Promise<MemoryPage<ExperienceEnvelope>>;
+}
+
+/**
+ * Read the reporter-supplied assessments recorded against experiences: the
+ * joins an experience accumulated and the session-level report a reporter can
+ * fetch directly. Read-only -- recording an assessment is a separate role.
+ */
+export interface MemoryAssessmentReader extends MemoryExperienceReader {
+  listInjectionOutcomeJoins(
+    request: MemoryInjectionOutcomeJoinRequest
+  ): Promise<MemoryInjectionOutcomeJoinPage>;
+  listInjectionUseJoins(
+    request: MemoryInjectionUseJoinRequest
+  ): Promise<MemoryInjectionUseJoinPage>;
+  getSessionOutcomeReport(
+    workspaceId: string,
+    repositoryId: string,
+    taskId: string,
+    context: MemoryReadContext
+  ): Promise<MemorySessionOutcomeReport | null>;
+}
+
+/** Record a reporter-supplied outcome, use assessment, or session report. */
+export interface MemoryAssessmentRecorder extends MemoryExperienceReader {
+  recordOutcomeReport(
+    input: MemoryRecordOutcomeReportInput
+  ): Promise<{ readonly appended: boolean; readonly id: string }>;
+  recordInjectionUseReport(input: {
+    readonly experienceId: string;
+    readonly injectionEventId: string;
+    readonly useKind: MemoryUseKind;
+    readonly usedMemoryIds: readonly string[];
+    readonly evidence: readonly EvidenceReference[];
+    readonly actor: MemoryActor;
+    readonly context: MemoryReadContext;
+  }): Promise<{ readonly appended: boolean; readonly id: string }>;
+  recordSessionOutcomeReport(
+    input: MemoryRecordSessionOutcomeReportInput
+  ): Promise<{ readonly appended: boolean; readonly id: string }>;
+}
+
+/**
+ * Aggregate recorded assessments into cohorts. Purely derived reads: it needs
+ * no experience lookup, which is what keeps it separate from the reader role.
+ */
+export interface MemoryAssessmentCohortReader {
+  aggregateInjectionOutcomeCohorts(
+    request: MemoryInjectionOutcomeCohortFilter
+  ): Promise<MemoryInjectionOutcomeCohortPage>;
+  aggregateSessionOutcomeCohorts(
+    request: MemorySessionOutcomeCohortFilter
+  ): Promise<MemorySessionOutcomeCohortPage>;
+  aggregateInjectionUseCohorts(
+    request: MemoryInjectionUseCohortFilter
+  ): Promise<MemoryInjectionUseCohortPage>;
+}
+
+/** Withdraw one experience. Separate from listing because it is the only
+ * handler that may destroy evidence, and it should stay narrow. */
+export interface MemoryExperiencePurger {
+  purgeExperience(
+    experienceId: string,
+    reason: MemoryExperiencePurgeReason,
+    actor: MemoryActor,
+    context: MemoryReadContext
+  ): Promise<MemoryExperiencePurgeResult>;
+}
+
+export class MemoryService
+  implements
+    MemoryExperienceLister,
+    MemoryAssessmentReader,
+    MemoryAssessmentRecorder,
+    MemoryAssessmentCohortReader,
+    MemoryExperiencePurger
+{
   private readonly repository: MemoryRepository;
   private readonly verifier: MemoryCurrentStateVerifier;
   private readonly reconstructor: MemoryReconstructor;

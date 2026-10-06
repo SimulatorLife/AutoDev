@@ -37,9 +37,13 @@ import {
   type MemoryUseKind
 } from "@simulatorlife/autodev-core";
 import {
+  type MemoryAssessmentCohortReader,
+  type MemoryAssessmentReader,
+  type MemoryAssessmentRecorder,
   MemoryAuthorizationError,
   MemoryConflictError,
   type MemoryExperienceCaptureInput,
+  type MemoryExperiencePurger,
   type MemoryProposalInput,
   type MemoryService,
   type MemorySkillPromotionArtifact,
@@ -738,7 +742,7 @@ async function serveExperience(
 }
 
 async function serveExperienceOutcomes(
-  service: MemoryService,
+  service: MemoryAssessmentReader,
   route: MemoryControlRoute,
   actor: MemoryControlActor,
   filters: ReturnType<typeof parseFilters>,
@@ -789,7 +793,7 @@ async function serveExperienceOutcomes(
 }
 
 async function serveExperienceInjectionUseAssessments(
-  service: MemoryService,
+  service: MemoryAssessmentReader,
   route: MemoryControlRoute,
   actor: MemoryControlActor,
   filters: ParsedMemoryUseAssessmentFilters,
@@ -871,7 +875,7 @@ async function serveExperienceInjectionUseAssessments(
 }
 
 async function reportExperienceOutcome(
-  service: MemoryService,
+  service: MemoryAssessmentRecorder,
   route: MemoryControlRoute,
   actor: MemoryControlActor,
   context: MemoryReadContext,
@@ -972,7 +976,7 @@ async function reportExperienceOutcome(
 }
 
 async function reportExperienceInjectionUse(
-  service: MemoryService,
+  service: MemoryAssessmentRecorder,
   route: MemoryControlRoute,
   actor: MemoryControlActor,
   context: MemoryReadContext,
@@ -1048,7 +1052,7 @@ async function reportExperienceInjectionUse(
 }
 
 async function reportExperienceSessionOutcome(
-  service: MemoryService,
+  service: MemoryAssessmentRecorder,
   route: MemoryControlRoute,
   actor: MemoryControlActor,
   context: MemoryReadContext,
@@ -1152,7 +1156,7 @@ async function reportExperienceSessionOutcome(
 }
 
 async function serveExperienceSessionOutcome(
-  service: MemoryService,
+  service: MemoryAssessmentReader,
   route: MemoryControlRoute,
   actor: MemoryControlActor,
   context: MemoryReadContext,
@@ -1285,7 +1289,7 @@ async function serveRecord(
 }
 
 async function purgeMemoryExperience(
-  service: MemoryService,
+  service: MemoryExperiencePurger,
   route: MemoryControlRoute,
   actor: MemoryControlActor,
   context: MemoryReadContext,
@@ -2557,7 +2561,7 @@ function parseInjectionOutcomeCohortFilter(
 }
 
 async function serveInjectionOutcomeCohorts(
-  service: MemoryService,
+  service: MemoryAssessmentCohortReader,
   filter: MemoryInjectionOutcomeCohortFilter,
   response: ServerResponse,
   audit: MemoryControlAudit
@@ -2738,7 +2742,7 @@ function parseInjectionUseCohortFilter(
 }
 
 async function serveSessionOutcomeCohorts(
-  service: MemoryService,
+  service: MemoryAssessmentCohortReader,
   filter: MemorySessionOutcomeCohortFilter,
   response: ServerResponse,
   audit: MemoryControlAudit
@@ -2754,7 +2758,7 @@ async function serveSessionOutcomeCohorts(
 }
 
 async function serveInjectionUseCohorts(
-  service: MemoryService,
+  service: MemoryAssessmentCohortReader,
   filter: MemoryInjectionUseCohortFilter,
   response: ServerResponse,
   audit: MemoryControlAudit
