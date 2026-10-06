@@ -9,6 +9,8 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { FilterBar } from "../../components/filters/FilterBar.ts";
+import { FilterNotice } from "../../components/filters/FilterNotice.ts";
+import type { UnappliedFilter } from "../../components/filters/resolve-filter.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
@@ -54,6 +56,13 @@ export interface MemoryViewProps {
   readonly controlRefusal?: React.ComponentProps<
     typeof ControlFailureNotice
   >["refusal"];
+  /**
+   * Bounded URL filters this page could not honour, reported on whichever tab
+   * rendered. `tab` chooses the surface and the `kind`/`status` selects are
+   * preserved across tab links, so no filter can be named from a place that may
+   * not render.
+   */
+  readonly unapplied?: readonly UnappliedFilter[] | undefined;
 }
 
 export function MemoryView({
@@ -76,7 +85,8 @@ export function MemoryView({
   occurredFrom,
   occurredUntil,
   controlFailed,
-  controlRefusal
+  controlRefusal,
+  unapplied
 }: MemoryViewProps): React.JSX.Element {
   const activeRecordsCount = records.filter(
     (r) => r.status === "active"
@@ -199,6 +209,11 @@ export function MemoryView({
           refusal: controlRefusal
         })
       : null,
+
+    // A bounded filter the URL named that this page does not accept is reported,
+    // never resolved to a default and drawn as the reader's own choice:
+    // `?tab=bogus` drew "Durable Records" as the current tab and said nothing.
+    React.createElement(FilterNotice, { filters: unapplied ?? [] }),
 
     // Active tab body
     activeTab === "records"

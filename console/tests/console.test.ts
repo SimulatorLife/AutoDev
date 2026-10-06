@@ -45,6 +45,11 @@ import * as promptMutationRoute from "../app/api/prompts/[name]/route.ts";
 import * as providerRoleRoute from "../app/api/providers/[provider]/roles/[role]/route.ts";
 import EvaluationsPage from "../app/evaluations/page.ts";
 import MemoryPage from "../app/memory/page.ts";
+import { FilterNotice } from "../src/components/filters/FilterNotice.ts";
+import {
+  type FilterSpec,
+  resolveFilter
+} from "../src/components/filters/resolve-filter.ts";
 import {
   ICON_PATHS,
   NAV_ICONS,
@@ -375,6 +380,185 @@ test("missing evidence is reported in one word, from one constant", () => {
     !unobserved.includes("Unknown"),
     `the mcps page must not drift to another word, got: ${unobserved}`
   );
+});
+
+/** The `/tools` source filter, which is the shape every bounded filter takes. */
+const SPEC: FilterSpec = {
+  name: "source",
+  allowed: ["all", "native", "mcp", "plugin"],
+  fallback: "all"
+};
+
+test("an unrecognised URL filter is named, never resolved into a default", async () => {
+  // Every list page read its filters out of the query string, and every one of
+  // those values is arbitrary text. Each page answered an unrecognised value the
+  // same way: substitute the default, then draw that default as the reader's own
+  // choice. Measured in a browser, `?source=bogus` on `/tools` answered with the
+  // whole 41-entry catalog and the "all" chip rendered as selected;
+  // `?kind=bogus` on `/memory` drew a select reading "All Kinds" while the
+  // request carried `kind=bogus` to the Runtime; `?tab=bogus` drew "Durable
+  // Records" as the current tab. Three surfaces, one behaviour: the page asserts
+  // a filter state it never observed.
+  //
+  // So a coercion is not a resolution. A bounded filter is silent, applied, or
+  // *named as not applied*, and `resolveFilter` is the only thing that decides
+  // which -- which is why the coupling assertion below matters more than any one
+  // of these cases.
+
+  // Silent: nothing to report, and the page's default applies.
+  assert.deepEqual(resolveFilter(undefined, SPEC), {
+    value: "all",
+    unapplied: null
+  });
+  assert.deepEqual(resolveFilter("   ", SPEC), {
+    value: "all",
+    unapplied: null
+  });
+  // Accepted, including the fallback spelled out -- `?source=all` asks for "all",
+  // it does not ask for an unknown source.
+  assert.deepEqual(resolveFilter("mcp", SPEC), {
+    value: "mcp",
+    unapplied: null
+  });
+  assert.deepEqual(resolveFilter("all", SPEC), {
+    value: "all",
+    unapplied: null
+  });
+  // Unrecognised: the fallback is applied *and* the request is named, so the
+  // page can say what it ignored instead of implying it was never asked.
+  assert.deepEqual(resolveFilter("bogus", SPEC), {
+    value: "all",
+    unapplied: { name: "source", value: "bogus" }
+  });
+  // A pasted query string cannot reflow the page, and the echo stays escaped by
+  // React rather than being sanitised into something it never was.
+  const long = resolveFilter("z".repeat(200), SPEC);
+  assert.equal(long.unapplied?.value.length, 40);
+  assert.ok(long.unapplied?.value.endsWith("…"));
+
+  // The notice is not decorative: one and several read differently, it claims no
+  // outcome, and an empty list renders nothing at all.
+  const one = renderToStaticMarkup(
+    React.createElement(FilterNotice, {
+      filters: [{ name: "source", value: "bogus" }]
+    })
+  );
+  assert.match(one, /1 filter in this URL was not applied\./);
+  assert.match(one, /source=&quot;bogus&quot;/);
+  const two = renderToStaticMarkup(
+    React.createElement(FilterNotice, {
+      filters: [
+        { name: "kind", value: "bogus" },
+        { name: "status", value: "nope" }
+      ]
+    })
+  );
+  assert.match(two, /2 filters in this URL were not applied\./);
+  assert.equal(
+    renderToStaticMarkup(React.createElement(FilterNotice, { filters: [] })),
+    ""
+  );
+
+  // The invariant that stops a page repeating the defect: a bounded filter the
+  // page could not honour has to reach the DOM. Asserted on rendered output
+  // rather than on imports, because `app/memory/page.ts` resolves the filters
+  // and hands the list to `MemoryView`, which is what renders it -- a source
+  // scan reading "does this file mention FilterNotice" fails that legitimate
+  // split, and an unused import would satisfy it anyway.
+  const toolRows = (source: string): string =>
+    renderToStaticMarkup(
+      React.createElement(ToolsView, {
+        tools: [],
+        coverage: { schema: "x", source: "y" } as never,
+        validity: "valid",
+        usageLink: "/usage",
+        filters: { source, role: "" }
+      })
+    );
+  assert.match(
+    toolRows("bogus"),
+    /1 filter in this URL was not applied\./,
+    "/tools must name a source it does not accept instead of drawing the " +
+      '"all" chip as if the reader had chosen it'
+  );
+  assert.doesNotMatch(toolRows("mcp"), /was not applied/);
+  assert.doesNotMatch(toolRows(""), /was not applied/);
+
+  const previousFetch = globalThis.fetch;
+  const previousEnv = saveConsolePageEnvironment();
+  const isolatedHome = mkdtempSync(join(tmpdir(), "autodev-filter-page-"));
+  const renderMemory = async (
+    searchParams: Record<string, string>
+  ): Promise<string> => {
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/control/workspaces")) {
+        return Response.json({
+          schema: "autodev-control-workspaces-v1",
+          source: "config/workspaces.json",
+          readOnly: true,
+          catalogStatus: "valid",
+          totalWorkspaces: 1,
+          workspaces: [
+            {
+              id: "SimulatorLife/AutoDev",
+              baseBranch: "main",
+              enabled: true,
+              agentRoles: null
+            }
+          ]
+        });
+      }
+      if (url.includes("/control/memory/records")) {
+        return Response.json({
+          schema: "autodev-memory-records-v1",
+          items: [],
+          total: 0,
+          limit: 50,
+          offset: 0,
+          hasMore: false
+        });
+      }
+      throw new Error(`Unexpected Memory page request: ${url}`);
+    };
+    return renderToStaticMarkup(
+      await MemoryPage({ searchParams: Promise.resolve(searchParams) })
+    );
+  };
+  try {
+    process.env.HOME = isolatedHome;
+    process.env.CODEX_HOME = isolatedHome;
+    process.env.AUTODEV_OPENLIT_SECRET_FILE = join(isolatedHome, "missing.env");
+    process.env.AUTODEV_CONTROL_API_TOKEN = "filter-page-test-token";
+    process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+
+    // Two refused filters on one URL are reported together, not one at a time.
+    assert.match(
+      await renderMemory({ tab: "records", kind: "bogus", status: "nope" }),
+      /2 filters in this URL were not applied\.[^]*kind=&quot;bogus&quot;[^]*status=&quot;nope&quot;/
+    );
+    // A refused `tab` is named on whichever tab did render.
+    assert.match(
+      await renderMemory({ tab: "bogus" }),
+      /1 filter in this URL was not applied\.[^]*tab=&quot;bogus&quot;/
+    );
+    // And a filter the page does accept produces no notice at all, on any tab.
+    for (const params of [
+      { tab: "records", kind: "procedural" },
+      { tab: "cohorts", status: "invalidated" },
+      { tab: "records" }
+    ]) {
+      assert.doesNotMatch(
+        await renderMemory(params),
+        /was not applied/,
+        `${JSON.stringify(params)} is a filter this page accepts`
+      );
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreConsolePageEnvironment(previousEnv);
+    rmSync(isolatedHome, { recursive: true, force: true });
+  }
 });
 
 test("a disabled control states why it is disabled", () => {

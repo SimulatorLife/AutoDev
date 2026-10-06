@@ -1,10 +1,16 @@
-import type {
-  CanonicalNavSection,
-  ControlApiMemoryRecordsResponse,
-  WorkspaceEntry
+import {
+  type CanonicalNavSection,
+  type ControlApiMemoryRecordsResponse,
+  MEMORY_KINDS,
+  MEMORY_STATUSES,
+  type WorkspaceEntry
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import {
+  resolveFilter,
+  type UnappliedFilter
+} from "../../src/components/filters/resolve-filter.ts";
 import {
   type MemoryTab,
   MemoryView
@@ -52,7 +58,11 @@ interface ParsedMemoryParams {
   readonly experienceId: string;
   readonly occurredFrom: string;
   readonly occurredUntil: string;
+  /** Bounded filters the URL named that this page could not honour. */
+  readonly unapplied: readonly UnappliedFilter[];
 }
+
+const MEMORY_TABS = ["records", "experiences", "cohorts"] as const;
 
 function parseMemoryQueryParams(
   raw: Record<string, string | string[] | undefined>
@@ -63,23 +73,40 @@ function parseMemoryQueryParams(
     return val ?? "";
   };
 
-  const tabParam = getParam("tab");
-  const activeTab: MemoryTab =
-    tabParam === "experiences" || tabParam === "cohorts" ? tabParam : "records";
+  const unapplied: UnappliedFilter[] = [];
+  const resolve = (key: string, allowed: readonly string[]): string => {
+    const resolved = resolveFilter(getParam(key), {
+      name: key,
+      allowed,
+      fallback: allowed[0] ?? ""
+    });
+    if (resolved.unapplied !== null) {
+      unapplied.push(resolved.unapplied);
+    }
+    return resolved.value;
+  };
 
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
   return {
-    activeTab,
+    activeTab: resolve("tab", MEMORY_TABS) as MemoryTab,
     workspaceIdParam: getParam("workspaceId"),
     query: getParam("query"),
-    kind: getParam("kind") || "all",
-    status: getParam("status") || "all",
+    // Resolved against Core's own value lists, so the filter the page applies and
+    // the options the select renders cannot drift apart: `?kind=bogus` used to
+    // reach the Runtime as `kind=bogus` while the control read "All Kinds".
+    kind: resolve("kind", ["all", ...MEMORY_KINDS]),
+    status: resolve("status", ["all", ...MEMORY_STATUSES]),
     recordId: getParam("recordId"),
     experienceId: getParam("experienceId"),
     occurredFrom: getParam("from") || thirtyDaysAgo.toISOString(),
-    occurredUntil: getParam("until") || now.toISOString()
+    occurredUntil: getParam("until") || now.toISOString(),
+    // Reported on whichever tab rendered. `tab` chooses the surface, and the
+    // `kind`/`status` selects are preserved across tab links, so neither can be
+    // reported from a place that may not render -- and a rule that holds on only
+    // one tab is a fourth thing to remember about how filters behave.
+    unapplied
   };
 }
 
@@ -483,6 +510,7 @@ export default async function MemoryPage(
       query: params.query,
       kind: params.kind,
       status: params.status,
+      unapplied: params.unapplied,
       occurredFrom: params.occurredFrom,
       occurredUntil: params.occurredUntil,
       controlFailed: isControlFailure(rawParams.control),

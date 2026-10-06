@@ -8,6 +8,8 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { FilterNotice } from "../../components/filters/FilterNotice.ts";
+import { resolveFilter } from "../../components/filters/resolve-filter.ts";
 import {
   CALLOUT_ACCENT_CLASS,
   CALLOUT_ERROR_CLASS,
@@ -226,8 +228,23 @@ export function ToolsView({
   usageLink,
   filters
 }: ToolsViewProps): React.JSX.Element {
-  const requestedSource = isToolSource(filters.source) ? filters.source : null;
+  // A `source` outside the set is a request the page cannot honour, so it is
+  // reported rather than quietly answered with the whole catalog: the "all"
+  // chip used to render as selected for `?source=bogus`, which claimed the
+  // reader had chosen a filter that was never applied.
+  const resolvedSource = resolveFilter(filters.source, {
+    name: "source",
+    allowed: SOURCE_FILTERS,
+    fallback: "all"
+  });
+  const requestedSource = isToolSource(resolvedSource.value)
+    ? resolvedSource.value
+    : null;
   const requestedRole = filters.role.trim();
+  // `role` is free text, so every value is one this page accepts; an unmatched
+  // role honestly matches nothing and says so in the table's empty message.
+  const unappliedFilters =
+    resolvedSource.unapplied === null ? [] : [resolvedSource.unapplied];
 
   const filtered = tools.filter((tool) => {
     if (requestedSource && tool.source !== requestedSource) return false;
@@ -481,6 +498,7 @@ export function ToolsView({
           )
         : null
     ),
+    React.createElement(FilterNotice, { filters: unappliedFilters }),
     React.createElement(
       "p",
       { className: coverageBannerClasses(variant) },
