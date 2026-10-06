@@ -119,6 +119,12 @@ export function SelectField({
   dataAttributes
 }: SelectFieldProps): React.JSX.Element {
   const controlId = id ?? `select-${name}`;
+  // The wrapper carries the control's box. `max-w-full` on the inner span is
+  // what lets a caller's width actually bind: a native select sizes to its
+  // widest option, so without it the control overflows the wrapper however
+  // narrow the wrapper is set, and a control repeated down a table takes a
+  // different width per row depending on that row's longest option. That is
+  // what makes row heights uneven on the Providers table.
   const reasonId = `${controlId}-reason`;
   // Only a disabled control needs to explain itself, so the description is
   // rendered for that case alone rather than left empty on every live control.
@@ -143,7 +149,7 @@ export function SelectField({
     ),
     React.createElement(
       "span",
-      { className: "relative inline-flex min-w-0 items-center" },
+      { className: "relative inline-flex min-w-0 max-w-full items-center" },
       React.createElement(
         "select",
         {

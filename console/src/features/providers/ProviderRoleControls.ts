@@ -119,7 +119,13 @@ function RoleModelSelect({
     name: "model",
     label: `${ROLE_LABELS[role]} model`,
     hideLabel: true,
-    className: "min-w-0 flex-1",
+    // A fixed width rather than `flex-1`: the model names the Runtime reports
+    // are short enough to fit, and letting this select grow pushed the Roles
+    // column out to roughly 450px so that Agent Limits was cramped against the
+    // right edge. The table's own floor then exceeded the widest layout the
+    // Console produces, which is what makes a table scroll at full desktop
+    // width. `min-w-0` still lets it shrink on a narrow viewport.
+    className: "min-w-0 w-52",
     testId: `role-model-${provider}-${role}`,
     dataAttributes: {
       "data-role-model": role,

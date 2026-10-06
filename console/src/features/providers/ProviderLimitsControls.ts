@@ -86,12 +86,20 @@ function LimitStepper({
   return React.createElement(
     "div",
     {
-      className: "flex min-w-0 items-center gap-2",
+      className: "flex min-w-0 items-center gap-1.5",
       "data-limit-stepper": `${provider}-${axis.name}`
     },
     React.createElement(
       "span",
-      { className: `w-24 shrink-0 text-xs ${MUTED_TEXT_CLASS}` },
+      {
+        // `w-24` rather than anything narrower: measured in Chromium at 1440 the axis
+        // label is the widest fixed part of the row and truncates at 5.5rem --
+        // "Across sessio…" is not a name an operator can act on. The stepper
+        // itself cannot shrink, so the label is what gives, and it carries a
+        // `title` so the full name stays reachable either way.
+        className: `w-24 shrink-0 truncate text-xs ${MUTED_TEXT_CLASS}`,
+        title: axis.label
+      },
       axis.label
     ),
     React.createElement(

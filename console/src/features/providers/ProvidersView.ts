@@ -136,7 +136,7 @@ function providerColumns(
       // The provider id is the row's primary identifier, so this column is
       // sized to never truncate it (longest observed id renders ~92px) and to
       // afford the grip beside it.
-      weight: 148,
+      weight: 130,
       cell: (provider) =>
         React.createElement(ProviderCell, { provider: provider.id })
     },
@@ -145,17 +145,21 @@ function providerColumns(
       header: "Status",
       // Sized against the widest pill the column can produce, which is a named
       // environment variable ("Missing LITELLM_API_KEY"), not the word Ready.
-      weight: 176,
+      weight: 210,
       cell: (provider) =>
         React.createElement(ProviderStatusBadge, { provider })
     },
     {
       id: "roles",
       header: "Roles",
-      // Four rows of icon + name + two selects + apply. The weight is the
-      // intrinsic width of that row and cannot be met by wrapping, so the cell
-      // wraps internally on narrow widths instead of overrunning the column.
-      weight: 420,
+      // Rebalanced in the browser against live Runtime data. Roles at 420 of 934
+      // took 45% of the table at 1440 and left the Roles cell visibly empty
+      // while Agent Limits was cramped against the right edge: the model select
+      // is an intrinsic-width native control, so extra column width is spent on
+      // padding rather than on anything readable. 300 keeps the four role rows
+      // side by side and hands the difference to Status, whose verdict names a
+      // long environment variable, and to Agent Limits.
+      weight: 460,
       align: "tokens",
       cell: (provider) =>
         React.createElement(ProviderRoleControls, {
@@ -166,7 +170,7 @@ function providerColumns(
     {
       id: "agentLimits",
       header: "Agent Limits",
-      weight: 190,
+      weight: 214,
       align: "tokens",
       cell: (provider) =>
         React.createElement(ProviderLimitsControls, { provider, returnTo })
