@@ -13,34 +13,50 @@ test("parseArgs captures --key value pairs into values", () => {
   assert.equal(flags.size, 0);
 });
 
-test("parseArgs treats a trailing --flag with no value as a boolean flag", () => {
-  const { values, flags } = parseArgs(["--output", "out.json", "--verbose"]);
-  assert.deepEqual(values, { output: "out.json" });
-  assert.deepEqual([...flags], ["verbose"]);
+/**
+ * Where a valueless `--flag` appears. Both rows reach the same branch in
+ * `parseArgs` -- the value is taken only when the next argument exists and
+ * does not itself start with `--` -- so these are two positions of one rule
+ * rather than two behaviours.
+ */
+const BOOLEAN_FLAG_POSITIONS = [
+  {
+    argv: ["--output", "out.json", "--verbose"],
+    values: { output: "out.json" },
+    flags: ["verbose"]
+  },
+  {
+    argv: ["--dry-run", "--output", "out.json"],
+    values: { output: "out.json" },
+    flags: ["dry-run"]
+  }
+] as const;
+
+test("parseArgs treats a --flag with no value as a boolean flag", () => {
+  for (const { argv, values, flags } of BOOLEAN_FLAG_POSITIONS) {
+    const where = JSON.stringify(argv);
+    const parsed = parseArgs([...argv]);
+    assert.deepEqual(parsed.values, values, `values for ${where}`);
+    assert.deepEqual([...parsed.flags], flags, `flags for ${where}`);
+  }
 });
 
-test("parseArgs treats a --flag immediately followed by another --flag as boolean", () => {
-  const { values, flags } = parseArgs(["--dry-run", "--output", "out.json"]);
-  assert.deepEqual(values, { output: "out.json" });
-  assert.deepEqual([...flags], ["dry-run"]);
-});
+/** Where an unflagged argument appears. Both rows raise from the same check. */
+const POSITIONAL_POSITIONS = [
+  ["positional", "--output", "out.json"],
+  ["--output", "out.json", "positional"]
+] as const;
 
-test("parseArgs rejects a positional argument that does not start with --", () => {
-  assert.throws(
-    () => parseArgs(["positional", "--output", "out.json"]),
-    (error: unknown) =>
-      error instanceof ConfigError &&
-      error.message === "unexpected argument: positional"
-  );
-});
-
-test("parseArgs rejects a positional argument following a recognized flag", () => {
-  assert.throws(
-    () => parseArgs(["--output", "out.json", "positional"]),
-    (error: unknown) =>
-      error instanceof ConfigError &&
-      error.message === "unexpected argument: positional"
-  );
+test("parseArgs rejects a positional argument wherever it appears", () => {
+  for (const argv of POSITIONAL_POSITIONS) {
+    assert.throws(
+      () => parseArgs([...argv]),
+      (error: unknown) =>
+        error instanceof ConfigError &&
+        error.message === "unexpected argument: positional",
+      `positional in ${JSON.stringify(argv)} must be rejected`
+    );
+  }
 });
 
 test("requiredArg returns the value when present", () => {
