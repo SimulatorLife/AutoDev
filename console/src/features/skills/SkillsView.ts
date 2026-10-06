@@ -5,6 +5,10 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import {
+  CALLOUT_ERROR_CLASS,
+  CALLOUT_WARNING_CLASS
+} from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { chipList } from "../../components/tables/Chips.ts";
@@ -143,8 +147,7 @@ export function SkillsView({
       ? React.createElement(
           "p",
           {
-            className:
-              "rounded border border-error/40 bg-error/10 p-3 text-sm text-error",
+            className: CALLOUT_ERROR_CLASS,
             role: "alert"
           },
           "RuleSync `.rulesync/skills/` is invalid; catalog contents are unavailable."
@@ -153,8 +156,7 @@ export function SkillsView({
         ? React.createElement(
             "p",
             {
-              className:
-                "rounded border border-warning/40 bg-warning/10 p-3 text-sm text-warning",
+              className: CALLOUT_WARNING_CLASS,
               role: "status"
             },
             "RuleSync `.rulesync/skills/` has not been observed."
@@ -189,8 +191,7 @@ export function SkillsView({
       ? React.createElement(
           "section",
           {
-            className:
-              "rounded border border-warning/40 bg-warning/10 p-4 text-sm text-warning",
+            className: CALLOUT_WARNING_CLASS,
             role: "alert",
             "data-unresolved-skill-assignments": unresolvedAssignments.length
           },

@@ -41,6 +41,7 @@ import {
   AgentsView,
   AppNav,
   Breadcrumbs,
+  CALLOUT_WARNING_CLASS,
   ClosePanelLink,
   DataTable,
   ENTITY_TITLE_CLASS,
@@ -2441,6 +2442,11 @@ test("ToolsView renders explicit availability per tool with the catalog coverage
     /Partial catalog: the execution-contract role projection is observed/
   );
   assert.doesNotMatch(markup, /Universal/);
+  // The banner must carry real utility classes. It selects them through a
+  // helper that returns a string, so it is exactly the shape of mistake that
+  // emits the constant's *name* as the class and silently drops every style.
+  assert.match(markup, new RegExp(`class="${CALLOUT_WARNING_CLASS}"`));
+  assert.doesNotMatch(markup, /CALLOUT_[A-Z_]+_CLASS/);
 });
 
 test("ToolsView keeps an unavailable capability source unknown instead of zero", () => {

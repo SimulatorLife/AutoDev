@@ -7,7 +7,9 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
@@ -28,8 +30,6 @@ import {
 } from "./paths.ts";
 import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
 
-const SECTION_PANEL_CLASS =
-  "rounded-lg border border-border bg-surface p-5 shadow";
 const LINK_CLASS =
   "font-mono font-semibold text-fg underline-offset-4 hover:underline";
 const NOT_OBSERVED_LABEL = "Not observed";
@@ -278,7 +278,7 @@ function RoutingPriorityPanel({
 }): React.JSX.Element {
   return React.createElement(
     "section",
-    { className: SECTION_PANEL_CLASS, "data-section": "routing-priority" },
+    { className: LIST_PANEL_CLASS, "data-section": "routing-priority" },
     React.createElement(
       "div",
       { className: "mb-3" },
@@ -384,7 +384,7 @@ function ProvidersTab({
     ),
     React.createElement(
       "section",
-      { className: SECTION_PANEL_CLASS, "data-section": "providers" },
+      { className: LIST_PANEL_CLASS, "data-section": "providers" },
       React.createElement(
         "h2",
         { className: `mb-3 ${SECTION_HEADING_CLASS}` },
@@ -413,8 +413,7 @@ function ModelsTab({
         role: "alert",
         "data-tab-panel": "models",
         "data-status": "unavailable",
-        className:
-          "rounded-lg border border-warning/40 bg-warning/10 p-5 text-sm text-fg-secondary"
+        className: CALLOUT_WARNING_CLASS
       },
       `Models could not be loaded: ${models.message}`
     );
@@ -422,7 +421,7 @@ function ModelsTab({
   return React.createElement(
     "section",
     {
-      className: SECTION_PANEL_CLASS,
+      className: LIST_PANEL_CLASS,
       "data-tab-panel": "models",
       "data-section": "models"
     },

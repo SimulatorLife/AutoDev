@@ -7,7 +7,9 @@
 
 export * from "./components/cards/StatCard.ts";
 export * from "./components/layout/AppShell.ts";
+export * from "./components/layout/Callout.ts";
 export * from "./components/layout/Heading.ts";
+export * from "./components/layout/Panel.ts";
 export * from "./components/navigation/AppNav.ts";
 export * from "./components/navigation/Breadcrumbs.ts";
 export * from "./components/navigation/ClosePanelLink.ts";

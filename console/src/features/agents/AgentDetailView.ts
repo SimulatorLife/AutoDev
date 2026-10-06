@@ -10,12 +10,10 @@ import {
   EntityTitle,
   SECTION_HEADING_CLASS
 } from "../../components/layout/Heading.ts";
+import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { AgentProviderSummary } from "./AgentProviderSummary.ts";
-
-const SECTION_PANEL_CLASS =
-  "rounded-lg border border-border bg-surface p-6 shadow";
 
 export interface AgentDetailViewProps {
   readonly agent: AgentDefinition;
@@ -43,7 +41,7 @@ export function AgentDetailView({
     React.createElement(
       "section",
       {
-        className: SECTION_PANEL_CLASS
+        className: DETAIL_PANEL_CLASS
       },
       React.createElement(
         "div",
@@ -98,7 +96,7 @@ export function AgentDetailView({
     React.createElement(
       "section",
       {
-        className: SECTION_PANEL_CLASS,
+        className: DETAIL_PANEL_CLASS,
         "aria-labelledby": "agent-runtime-heading"
       },
       React.createElement(
@@ -125,7 +123,7 @@ export function AgentDetailView({
     React.createElement(
       "section",
       {
-        className: `grid grid-cols-1 gap-6 ${SECTION_PANEL_CLASS} lg:grid-cols-2`
+        className: `grid grid-cols-1 gap-6 ${DETAIL_PANEL_CLASS} lg:grid-cols-2`
       },
       React.createElement(NameList, {
         heading: "Assigned skills",
@@ -143,7 +141,7 @@ export function AgentDetailView({
     React.createElement(
       "section",
       {
-        className: SECTION_PANEL_CLASS,
+        className: DETAIL_PANEL_CLASS,
         "data-section": "agent-providers"
       },
       React.createElement(
@@ -165,7 +163,7 @@ export function AgentDetailView({
     React.createElement(
       "section",
       {
-        className: SECTION_PANEL_CLASS,
+        className: DETAIL_PANEL_CLASS,
         "data-section": "agent-concurrency"
       },
       React.createElement(
@@ -202,8 +200,7 @@ export function AgentDetailView({
       ? React.createElement(
           "section",
           {
-            className:
-              "rounded-lg border border-border bg-surface p-6 text-sm text-fg-muted",
+            className: `${DETAIL_PANEL_CLASS} text-sm text-fg-muted`,
             "data-prompt-state": "unavailable"
           },
           "Role prompt content is unavailable."
@@ -211,7 +208,7 @@ export function AgentDetailView({
       : React.createElement(
           "section",
           {
-            className: SECTION_PANEL_CLASS,
+            className: DETAIL_PANEL_CLASS,
             "aria-labelledby": "agent-prompt-heading"
           },
           React.createElement(

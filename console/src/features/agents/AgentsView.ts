@@ -7,6 +7,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
   type ColumnDef,
@@ -158,7 +159,7 @@ export function AgentsView({
     React.createElement(
       "section",
       {
-        className: "rounded-lg border border-border bg-surface p-5 shadow",
+        className: LIST_PANEL_CLASS,
         "data-section": "configured-agents"
       },
       React.createElement(
@@ -177,7 +178,7 @@ export function AgentsView({
     React.createElement(
       "section",
       {
-        className: "rounded-lg border border-border bg-surface p-5 shadow",
+        className: LIST_PANEL_CLASS,
         "data-section": "runtime-health"
       },
       React.createElement(

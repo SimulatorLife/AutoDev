@@ -7,9 +7,15 @@ import type {
 import React from "react";
 
 import {
+  CALLOUT_ACCENT_CLASS,
+  CALLOUT_ERROR_CLASS,
+  CALLOUT_WARNING_CLASS
+} from "../../components/layout/Callout.ts";
+import {
   EntityTitle,
   SECTION_HEADING_CLASS
 } from "../../components/layout/Heading.ts";
+import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 
@@ -36,8 +42,6 @@ export interface ToolDetailViewProps {
   readonly usageUnavailable: boolean;
 }
 
-const SECTION_PANEL_CLASS =
-  "rounded-lg border border-border bg-surface p-6 shadow";
 const FIELD_LABEL_CLASS = "text-fg-muted block mb-1";
 const FIELD_VALUE_CLASS = "text-fg break-all font-mono";
 const NOT_OBSERVED_STATUS = "not-observed" as const;
@@ -240,10 +244,10 @@ function coverageBanner(
         : "warning";
   const classes =
     variant === "error"
-      ? "rounded border border-error/70 bg-error/20 p-3 text-xs text-error"
+      ? CALLOUT_ERROR_CLASS
       : variant === "warning"
-        ? "rounded border border-warning/70 bg-warning/20 p-3 text-xs text-warning"
-        : "rounded border border-accent/40 bg-accent/10 p-3 text-xs text-accent";
+        ? CALLOUT_WARNING_CLASS
+        : CALLOUT_ACCENT_CLASS;
   return React.createElement(
     "p",
     {
@@ -339,7 +343,7 @@ export function ToolDetailView({
       },
       React.createElement(
         "section",
-        { className: SECTION_PANEL_CLASS },
+        { className: DETAIL_PANEL_CLASS },
         React.createElement(
           "h2",
           { className: SECTION_HEADING_CLASS },
@@ -362,7 +366,7 @@ export function ToolDetailView({
       ),
       React.createElement(
         "section",
-        { className: SECTION_PANEL_CLASS },
+        { className: DETAIL_PANEL_CLASS },
         React.createElement(
           "h2",
           { className: SECTION_HEADING_CLASS },
@@ -373,7 +377,7 @@ export function ToolDetailView({
     ),
     React.createElement(
       "section",
-      { className: SECTION_PANEL_CLASS },
+      { className: DETAIL_PANEL_CLASS },
       React.createElement(
         "h2",
         { className: SECTION_HEADING_CLASS },
@@ -393,7 +397,7 @@ export function ToolDetailView({
     ),
     React.createElement(
       "section",
-      { className: SECTION_PANEL_CLASS },
+      { className: DETAIL_PANEL_CLASS },
       React.createElement(
         "h2",
         { className: SECTION_HEADING_CLASS },

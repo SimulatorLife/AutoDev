@@ -3,6 +3,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { Chip } from "../../components/tables/Chips.ts";
 import {
@@ -173,7 +174,7 @@ export function PromptsView({
     React.createElement(
       "section",
       {
-        className: "rounded-lg border border-border bg-surface p-5 shadow"
+        className: LIST_PANEL_CLASS
       },
       React.createElement(
         "h2",
@@ -188,8 +189,8 @@ export function PromptsView({
             {
               className:
                 commandSourceValidity === false
-                  ? "mb-3 rounded border border-error/40 bg-error/10 p-3 text-sm text-error"
-                  : "mb-3 rounded border border-warning/40 bg-warning/10 p-3 text-sm text-warning",
+                  ? "`${CALLOUT_ERROR_CLASS} mb-3`"
+                  : "`${CALLOUT_WARNING_CLASS} mb-3`",
               role: commandSourceValidity === false ? "alert" : "status",
               "data-prompt-source-validity":
                 commandSourceValidity === false ? "invalid" : "not-observed"

@@ -9,6 +9,7 @@ import {
   EntityTitle,
   SECTION_HEADING_CLASS
 } from "../../components/layout/Heading.ts";
+import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { ConvergenceBadge } from "../../components/status/ConvergenceBadge.ts";
@@ -16,8 +17,6 @@ import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { ModelToggle } from "./EnablementToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 
-const SECTION_PANEL_CLASS =
-  "rounded-lg border border-border bg-surface p-6 shadow";
 export interface ModelDetailViewProps {
   readonly model: ControlApiModelRecord;
   /** The owning provider's record, or `null` when Providers is unavailable. */
@@ -83,7 +82,7 @@ export function ModelDetailView({
     { className: "flex flex-col gap-6", "data-feature": "model-detail" },
     React.createElement(
       "section",
-      { className: SECTION_PANEL_CLASS },
+      { className: DETAIL_PANEL_CLASS },
       React.createElement(
         "div",
         { className: "flex flex-wrap items-start justify-between gap-4" },
@@ -126,7 +125,7 @@ export function ModelDetailView({
     controlFailed ? React.createElement(ControlFailureNotice) : null,
     React.createElement(
       "section",
-      { className: SECTION_PANEL_CLASS, "data-section": "model-enablement" },
+      { className: DETAIL_PANEL_CLASS, "data-section": "model-enablement" },
       React.createElement(
         "h3",
         { className: SECTION_HEADING_CLASS },
@@ -163,7 +162,7 @@ export function ModelDetailView({
     ),
     React.createElement(
       "section",
-      { className: SECTION_PANEL_CLASS, "data-section": "model-routing" },
+      { className: DETAIL_PANEL_CLASS, "data-section": "model-routing" },
       React.createElement(
         "h3",
         { className: SECTION_HEADING_CLASS },

@@ -10,6 +10,7 @@ import React from "react";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { Button } from "../../components/forms/Button.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
+import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
 import { MemoryCohortsView } from "./MemoryCohortsView.ts";
@@ -217,8 +218,7 @@ export function MemoryView({
               "div",
               {
                 role: "alert",
-                className:
-                  "rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm text-warning",
+                className: CALLOUT_WARNING_CLASS,
                 "data-status": "unavailable"
               },
               "Memory experiences are unavailable; no list or count is inferred."

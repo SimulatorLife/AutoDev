@@ -7,6 +7,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import {
   type ColumnDef,
@@ -271,8 +272,7 @@ export function MemoryCohortsView({
             "div",
             {
               role: "alert",
-              className:
-                "rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm text-warning",
+              className: CALLOUT_WARNING_CLASS,
               "data-status": "unavailable"
             },
             "Session outcome cohort data is unavailable; no session count is inferred."
@@ -332,8 +332,7 @@ export function MemoryCohortsView({
             "p",
             {
               role: "alert",
-              className:
-                "rounded-lg border border-warning/40 bg-warning/10 p-4 text-xs text-warning",
+              className: CALLOUT_WARNING_CLASS,
               "data-status": "unavailable",
               "data-memory-use-cohorts-empty": true
             },

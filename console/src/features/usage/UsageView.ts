@@ -12,6 +12,7 @@ import {
   SelectField
 } from "../../components/forms/SelectField.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 
 /**
  * Observability Usage view.
@@ -324,7 +325,7 @@ export function UsageView({
       React.createElement(
         "div",
         {
-          className: "bg-surface border border-border rounded-lg p-5 shadow"
+          className: LIST_PANEL_CLASS
         },
         React.createElement(
           "h4",
@@ -372,7 +373,7 @@ export function UsageView({
       React.createElement(
         "div",
         {
-          className: "bg-surface border border-border rounded-lg p-5 shadow"
+          className: LIST_PANEL_CLASS
         },
         React.createElement(
           "h4",
@@ -451,7 +452,7 @@ export function UsageView({
     React.createElement(
       "div",
       {
-        className: "bg-surface border border-border rounded-lg p-5 shadow"
+        className: LIST_PANEL_CLASS
       },
       React.createElement(
         "h4",

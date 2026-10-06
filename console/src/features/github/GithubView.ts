@@ -7,6 +7,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
@@ -412,8 +413,7 @@ export function GithubView({
       : React.createElement(
           "div",
           {
-            className:
-              "rounded-lg border border-warning/40 bg-warning/10 p-4 text-xs text-warning leading-relaxed",
+            className: CALLOUT_WARNING_CLASS,
             role: "note",
             "data-status": runtimeStatus ?? "unavailable"
           },

@@ -9,6 +9,10 @@ import {
   EntityTitle,
   SECTION_HEADING_CLASS
 } from "../../components/layout/Heading.ts";
+import {
+  DETAIL_PANEL_CLASS,
+  NESTED_PANEL_CLASS
+} from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
@@ -17,8 +21,6 @@ import {
   TabNav
 } from "../../components/tabs/Tabs.ts";
 
-const SECTION_PANEL_CLASS =
-  "rounded-lg border border-border bg-surface p-6 shadow";
 const CONFIGURED_STATUS = "configured" as const;
 const NOT_OBSERVED_STATUS = "not-observed" as const;
 const FLEX_COLUMN_DETAILS_CLASS = "flex flex-col gap-2";
@@ -265,7 +267,7 @@ export function McpDetailView({
       },
       React.createElement(
         "div",
-        { className: "rounded-lg border border-border bg-surface p-5" },
+        { className: NESTED_PANEL_CLASS },
         React.createElement(
           "h3",
           { className: SECTION_HEADING_CLASS },
@@ -280,7 +282,7 @@ export function McpDetailView({
       ),
       React.createElement(
         "div",
-        { className: "rounded-lg border border-border bg-surface p-5" },
+        { className: NESTED_PANEL_CLASS },
         React.createElement(
           "h3",
           { className: SECTION_HEADING_CLASS },
@@ -298,7 +300,7 @@ export function McpDetailView({
       ),
       React.createElement(
         "div",
-        { className: "rounded-lg border border-border bg-surface p-5" },
+        { className: NESTED_PANEL_CLASS },
         React.createElement(
           "h3",
           { className: SECTION_HEADING_CLASS },
@@ -315,7 +317,7 @@ export function McpDetailView({
     configuration: React.createElement(
       "section",
       {
-        className: SECTION_PANEL_CLASS,
+        className: DETAIL_PANEL_CLASS,
         "aria-label": "Server configuration",
         "data-section": "mcp-configuration"
       },
@@ -464,7 +466,7 @@ export function McpDetailView({
     "connection-health": React.createElement(
       "section",
       {
-        className: SECTION_PANEL_CLASS,
+        className: DETAIL_PANEL_CLASS,
         "aria-label": "Connection and health",
         "data-section": "mcp-connection-health"
       },
@@ -490,7 +492,7 @@ export function McpDetailView({
     tools: React.createElement(
       "section",
       {
-        className: SECTION_PANEL_CLASS,
+        className: DETAIL_PANEL_CLASS,
         "aria-label": "Configured tool allowlist",
         "data-mcp-configured-tools-section": "true",
         "data-section": "mcp-tools"
@@ -510,7 +512,7 @@ export function McpDetailView({
     resources: React.createElement(
       "section",
       {
-        className: SECTION_PANEL_CLASS,
+        className: DETAIL_PANEL_CLASS,
         "aria-label": "MCP resources",
         "data-section": "mcp-resources"
       },
@@ -536,7 +538,7 @@ export function McpDetailView({
     prompts: React.createElement(
       "section",
       {
-        className: SECTION_PANEL_CLASS,
+        className: DETAIL_PANEL_CLASS,
         "aria-label": "MCP prompts",
         "data-section": "mcp-prompts"
       },
@@ -562,7 +564,7 @@ export function McpDetailView({
     "role-access": React.createElement(
       "section",
       {
-        className: SECTION_PANEL_CLASS,
+        className: DETAIL_PANEL_CLASS,
         "aria-label": "Role access",
         "data-section": "mcp-role-access"
       },
@@ -595,7 +597,7 @@ export function McpDetailView({
     activity: React.createElement(
       "section",
       {
-        className: SECTION_PANEL_CLASS,
+        className: DETAIL_PANEL_CLASS,
         "aria-label": "Activity and telemetry",
         "data-section": "mcp-activity"
       },
@@ -621,7 +623,7 @@ export function McpDetailView({
     "errors-logs": React.createElement(
       "section",
       {
-        className: SECTION_PANEL_CLASS,
+        className: DETAIL_PANEL_CLASS,
         "aria-label": "Errors and logs",
         "data-section": "mcp-errors-logs"
       },
@@ -652,8 +654,7 @@ export function McpDetailView({
     React.createElement(
       "header",
       {
-        className:
-          "flex flex-wrap items-start justify-between gap-4 rounded-lg border border-border bg-surface p-6 shadow"
+        className: `flex flex-wrap items-start justify-between gap-4 ${DETAIL_PANEL_CLASS}`
       },
       React.createElement(
         "div",

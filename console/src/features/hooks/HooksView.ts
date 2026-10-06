@@ -3,6 +3,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 
 export interface HooksViewProps {
   readonly hooks: readonly HookDefinition[];
@@ -55,8 +56,7 @@ export function HooksView({
         ? React.createElement(
             "p",
             {
-              className:
-                "rounded-lg border border-border bg-surface p-5 text-sm text-fg-muted",
+              className: `${LIST_PANEL_CLASS} text-sm text-fg-muted`,
               "data-hook-state":
                 sourceValidity === null
                   ? "not-observed"

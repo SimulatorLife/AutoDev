@@ -11,6 +11,7 @@ import {
   EntityTitle,
   SECTION_HEADING_CLASS
 } from "../../components/layout/Heading.ts";
+import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { ConvergenceBadge } from "../../components/status/ConvergenceBadge.ts";
@@ -22,8 +23,6 @@ import { ModelToggle, ProviderRoleToggle } from "./EnablementToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
 
-const SECTION_PANEL_CLASS =
-  "rounded-lg border border-border bg-surface p-6 shadow";
 const NOT_OBSERVED_LABEL = "Not observed";
 
 export interface ProviderDetailViewProps {
@@ -67,7 +66,7 @@ function RolesPanel({
 }): React.JSX.Element {
   return React.createElement(
     "section",
-    { className: SECTION_PANEL_CLASS, "data-section": "provider-roles" },
+    { className: DETAIL_PANEL_CLASS, "data-section": "provider-roles" },
     React.createElement(
       "h3",
       { className: SECTION_HEADING_CLASS },
@@ -128,7 +127,7 @@ function ModelsPanel({
   if (models === null) {
     return React.createElement(
       "section",
-      { className: SECTION_PANEL_CLASS, "data-section": "provider-models" },
+      { className: DETAIL_PANEL_CLASS, "data-section": "provider-models" },
       heading,
       React.createElement(
         "p",
@@ -188,7 +187,7 @@ function ModelsPanel({
   ];
   return React.createElement(
     "section",
-    { className: SECTION_PANEL_CLASS, "data-section": "provider-models" },
+    { className: DETAIL_PANEL_CLASS, "data-section": "provider-models" },
     heading,
     DataTable({
       data: models,
@@ -215,7 +214,7 @@ function RoutingPanel({
   });
   return React.createElement(
     "section",
-    { className: SECTION_PANEL_CLASS, "data-section": "provider-routing" },
+    { className: DETAIL_PANEL_CLASS, "data-section": "provider-routing" },
     React.createElement("h3", { className: SECTION_HEADING_CLASS }, "Routing"),
     served.length === 0
       ? React.createElement(
@@ -291,7 +290,7 @@ function RoutePanel({
 }): React.JSX.Element {
   return React.createElement(
     "section",
-    { className: SECTION_PANEL_CLASS, "data-section": "provider-route" },
+    { className: DETAIL_PANEL_CLASS, "data-section": "provider-route" },
     React.createElement(
       "h3",
       { className: SECTION_HEADING_CLASS },
@@ -347,7 +346,7 @@ function HealthPanel({
   if (health === null) {
     return React.createElement(
       "section",
-      { className: SECTION_PANEL_CLASS, "data-section": "provider-health" },
+      { className: DETAIL_PANEL_CLASS, "data-section": "provider-health" },
       heading,
       React.createElement(
         "p",
@@ -359,7 +358,7 @@ function HealthPanel({
   const cooldown = health.cooldown;
   return React.createElement(
     "section",
-    { className: SECTION_PANEL_CLASS, "data-section": "provider-health" },
+    { className: DETAIL_PANEL_CLASS, "data-section": "provider-health" },
     heading,
     React.createElement(
       "dl",
@@ -456,7 +455,7 @@ export function ProviderDetailView({
     { className: "flex flex-col gap-6", "data-feature": "provider-detail" },
     React.createElement(
       "section",
-      { className: SECTION_PANEL_CLASS },
+      { className: DETAIL_PANEL_CLASS },
       React.createElement(
         "div",
         { className: "flex flex-wrap items-start justify-between gap-4" },

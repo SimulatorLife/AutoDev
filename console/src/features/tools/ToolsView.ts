@@ -8,6 +8,11 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import {
+  CALLOUT_ACCENT_CLASS,
+  CALLOUT_ERROR_CLASS,
+  CALLOUT_WARNING_CLASS
+} from "../../components/layout/Callout.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
@@ -140,12 +145,12 @@ function coverageBannerVariant(
 
 function coverageBannerClasses(variant: "info" | "warning" | "error"): string {
   if (variant === "error") {
-    return "rounded border border-error/70 bg-error/20 p-3 text-xs text-error";
+    return CALLOUT_ERROR_CLASS;
   }
   if (variant === "warning") {
-    return "rounded border border-warning/70 bg-warning/20 p-3 text-xs text-warning";
+    return CALLOUT_WARNING_CLASS;
   }
-  return "rounded border border-accent/40 bg-accent/10 p-3 text-xs text-accent";
+  return CALLOUT_ACCENT_CLASS;
 }
 
 function EditSurfaceLink({

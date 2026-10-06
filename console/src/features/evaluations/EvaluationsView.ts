@@ -7,7 +7,9 @@ import {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
   type ColumnDef,
@@ -187,8 +189,7 @@ function renderTraceLookup(
       "div",
       {
         role: "alert",
-        className:
-          "rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm text-warning",
+        className: CALLOUT_WARNING_CLASS,
         "data-feature": "evaluation-trace-detail",
         "data-trace-state": traceLookup.kind,
         "data-status": status
@@ -201,8 +202,7 @@ function renderTraceLookup(
   return React.createElement(
     "section",
     {
-      className:
-        "flex flex-col gap-4 rounded-lg border border-border bg-surface p-5",
+      className: `flex flex-col gap-4 ${LIST_PANEL_CLASS}`,
       "aria-labelledby": "evaluation-trace-heading",
       "data-feature": "evaluation-trace-detail",
       "data-trace-state": "observed",

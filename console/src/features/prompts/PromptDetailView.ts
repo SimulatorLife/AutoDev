@@ -8,10 +8,15 @@ import React from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 
 import {
+  CALLOUT_ERROR_CLASS,
+  CALLOUT_WARNING_CLASS
+} from "../../components/layout/Callout.ts";
+import {
   ENTITY_EYEBROW_CLASS,
   EntityTitle,
   SECTION_HEADING_CLASS
 } from "../../components/layout/Heading.ts";
+import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
@@ -68,8 +73,8 @@ function renderSaveOutcome(
   if (!outcome) return null;
   const className =
     outcome === "conflict" || outcome === "validation"
-      ? "rounded border border-warning/40 bg-warning/10 p-3 text-sm text-warning"
-      : "rounded border border-error/40 bg-error/10 p-3 text-sm text-error";
+      ? CALLOUT_WARNING_CLASS
+      : CALLOUT_ERROR_CLASS;
   return React.createElement(
     "p",
     { className, role: "alert", "data-prompt-save-outcome": outcome },
@@ -290,7 +295,7 @@ function renderPromptHistory(
   return React.createElement(
     "section",
     {
-      className: "rounded-lg border border-border bg-surface p-6 shadow",
+      className: DETAIL_PANEL_CLASS,
       "aria-label": "Prompt version history",
       "data-prompt-history": history.status
     },
@@ -397,8 +402,7 @@ function renderPromptHistory(
       ? React.createElement(
           "p",
           {
-            className:
-              "mb-4 rounded border border-warning/40 bg-warning/10 p-3 text-sm text-warning",
+            className: "`${CALLOUT_WARNING_CLASS} mb-4`",
             role: "status",
             "data-prompt-version-error": "true"
           },
@@ -493,8 +497,7 @@ export function PromptDetailView({
     React.createElement(
       "header",
       {
-        className:
-          "flex flex-wrap items-start justify-between gap-4 rounded-lg border border-border bg-surface p-6 shadow"
+        className: `flex flex-wrap items-start justify-between gap-4 ${DETAIL_PANEL_CLASS}`
       },
       React.createElement(
         "div",
@@ -623,7 +626,7 @@ export function PromptDetailView({
     React.createElement(
       "section",
       {
-        className: "rounded-lg border border-border bg-surface p-6 shadow",
+        className: DETAIL_PANEL_CLASS,
         "aria-label": "Reconciliation state",
         "data-section": "prompt-reconciliation"
       },
@@ -640,7 +643,7 @@ export function PromptDetailView({
     React.createElement(
       "section",
       {
-        className: "rounded-lg border border-border bg-surface p-6 shadow",
+        className: DETAIL_PANEL_CLASS,
         "aria-label":
           prompt.kind === "command"
             ? "Prompt source editor"
