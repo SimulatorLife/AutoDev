@@ -22,6 +22,31 @@
  *   - a process the registry cannot identify never gets a kill: callers that
  *     lose their session key pass it explicitly so we know which children
  *     belong to them.
+ *
+ * Two invariants hold every entry together:
+ *
+ *   1. A handle is either a process this registry may signal (positive) or a
+ *      *logical* handle for a server whose process lives outside AutoDev's
+ *      tree (negative -- see {@link registerLogical}). A negative handle is
+ *      timed out and counted like any other entry but is never signalled,
+ *      because `process.kill(-n)` targets process *group* n.
+ *   2. Dropping an entry disposes of what it tracked. Eviction, reaping and
+ *      session cleanup all signal before they forget, because the registry
+ *      holds the only record: once a handle leaves the map nothing can reach
+ *      it again, so a silent drop is an orphan that outlives the registry.
+ *
+ * Two gaps remain, deliberately left for follow-up rather than half-fixed here:
+ *
+ *   - `bindProcessRegistryShutdownHooks` has no production caller, so the
+ *     SIGTERM/SIGINT path never runs a sweep. It could not work as written
+ *     either: it calls `cleanupSession("*")`, which matches by session-key
+ *     equality, so the wildcard would select nothing. A cleanup-all needs its
+ *     own entry point rather than a sentinel session key.
+ *   - `registerLogical` mints a handle as `-Math.abs(hash(...))`, which folds
+ *     `+n` and `-n` onto one value, so two exposures can collide and silently
+ *     overwrite one another. Losing a logical entry is bookkeeping loss rather
+ *     than an orphan (a logical entry owns no process to strand), but it makes
+ *     the registry's counts under-report.
  */
 
 /** What signal cleanup forwards by default. SIGTERM is what the router itself receives. */
@@ -40,7 +65,8 @@ export const DEFAULT_MAX_ENTRIES = 512;
 export const DEFAULT_KILL_TIMEOUT_MS = 5000;
 
 export interface McpProcessEntry {
-  pid: number;
+  /** Positive for a process this registry may signal; negative for a logical handle. */
+  handle: number;
   sessionKey: string;
   serverName: string;
   registeredAt: number;
@@ -65,6 +91,20 @@ export interface McpRegistryOptions {
 interface InternalKillResult {
   stopped: boolean;
   escalated: boolean;
+}
+
+/**
+ * Whether this handle names a process the registry may signal.
+ *
+ * A negative handle is a logical entry ({@link registerLogical}): the server's
+ * process was started outside AutoDev's process tree, so the registry bounds
+ * and times it out but has no business signalling it. Skipping the kill here
+ * is load-bearing rather than cosmetic -- `process.kill(-n, signal)` delivers
+ * to process *group* `n`, so an unguarded logical handle would take down an
+ * unrelated process group, potentially the router's own.
+ */
+function isSignalable(handle: number): boolean {
+  return handle > 0;
 }
 
 const INT32_MODULUS = 2 ** 32;
@@ -109,18 +149,20 @@ export class McpProcessRegistry {
     this.log = options.log ?? (() => undefined);
   }
 
-  /** Record a fresh MCP server PID against the session that opened it. */
-  register(pid: number, sessionKey: string, serverName: string): void {
-    if (!Number.isInteger(pid) || pid <= 0)
-      throw new Error(`register() requires a positive integer pid; got ${pid}`);
+  /** Record a fresh MCP server against the session that opened it. */
+  register(handle: number, sessionKey: string, serverName: string): void {
+    if (!Number.isInteger(handle) || handle === 0)
+      throw new Error(
+        `register() requires a non-zero integer handle (positive pid or negative logical handle); got ${handle}`
+      );
     if (typeof sessionKey !== "string" || !sessionKey.trim())
       throw new Error("register() requires a non-empty sessionKey");
     if (typeof serverName !== "string" || !serverName.trim())
       throw new Error("register() requires a non-empty serverName");
     const now = this.now();
     this.evictOldestUntil(this.maxEntries - 1, now);
-    this.entries.set(pid, {
-      pid,
+    this.entries.set(handle, {
+      handle,
       sessionKey,
       serverName,
       registeredAt: now,
@@ -129,16 +171,16 @@ export class McpProcessRegistry {
     this.startSweeperWhenNeeded();
   }
 
-  /** Update the last-activity timestamp. No-op when the PID is unknown. */
-  touch(pid: number): void {
-    const entry = this.entries.get(pid);
+  /** Update the last-activity timestamp. No-op when the handle is unknown. */
+  touch(handle: number): void {
+    const entry = this.entries.get(handle);
     if (!entry) return;
     entry.lastActivity = this.now();
   }
 
-  /** Remove a PID from the registry without signalling it. */
-  unregister(pid: number): void {
-    this.entries.delete(pid);
+  /** Remove a handle from the registry without signalling it. */
+  unregister(handle: number): void {
+    this.entries.delete(handle);
     this.stopSweeperWhenIdle();
   }
 
@@ -149,10 +191,10 @@ export class McpProcessRegistry {
   } {
     const deadline = this.now() - Math.max(1000, maxIdleMs);
     let killed = 0;
-    for (const [pid, entry] of this.entries.entries()) {
+    for (const [handle, entry] of this.entries.entries()) {
       if (entry.lastActivity >= deadline) continue;
-      if (this.killProcess(pid, entry, "stale")) killed += 1;
-      this.entries.delete(pid);
+      if (this.killProcess(handle, entry, "stale")) killed += 1;
+      this.entries.delete(handle);
     }
     this.stopSweeperWhenIdle();
     return { killed, remaining: this.entries.size };
@@ -170,10 +212,10 @@ export class McpProcessRegistry {
     const signal = options.signal ?? DEFAULT_CLEANUP_SIGNAL;
     const timeoutMs = Math.max(100, options.timeoutMs ?? this.killTimeoutMs);
     const owned: McpProcessEntry[] = [];
-    for (const [pid, entry] of this.entries.entries()) {
+    for (const [handle, entry] of this.entries.entries()) {
       if (entry.sessionKey !== sessionKey) continue;
       owned.push(entry);
-      this.entries.delete(pid);
+      this.entries.delete(handle);
     }
     this.stopSweeperWhenIdle();
     if (owned.length === 0) return;
@@ -213,19 +255,25 @@ export class McpProcessRegistry {
   }
 
   private killProcess(
-    pid: number,
+    handle: number,
     entry: McpProcessEntry,
     reason: string
   ): boolean {
-    try {
-      this.kill(pid, "SIGTERM");
+    if (!isSignalable(handle)) {
       this.log(
-        `mcp registry: signaled pid=${pid} server=${entry.serverName} session=${entry.sessionKey} reason=${reason}`
+        `mcp registry: timed out logical handle=${handle} server=${entry.serverName} session=${entry.sessionKey} reason=${reason} (its process is not ours to signal)`
+      );
+      return false;
+    }
+    try {
+      this.kill(handle, "SIGTERM");
+      this.log(
+        `mcp registry: signaled pid=${handle} server=${entry.serverName} session=${entry.sessionKey} reason=${reason}`
       );
       return true;
     } catch (error) {
       this.log(
-        `mcp registry: failed to signal pid=${pid} server=${entry.serverName}: ${
+        `mcp registry: failed to signal pid=${handle} server=${entry.serverName}: ${
           error instanceof Error ? error.message : String(error)
         }`
       );
@@ -238,19 +286,19 @@ export class McpProcessRegistry {
     signal: NodeJS.Signals,
     timeoutMs: number
   ): Promise<InternalKillResult> {
-    const initial = this.killProcess(entry.pid, entry, signal);
+    const initial = this.killProcess(entry.handle, entry, signal);
     if (!initial) return { stopped: false, escalated: false };
-    const exited = await this.waitForExit(entry.pid, timeoutMs);
+    const exited = await this.waitForExit(entry.handle, timeoutMs);
     if (exited) return { stopped: true, escalated: false };
     try {
-      this.kill(entry.pid, "SIGKILL");
+      this.kill(entry.handle, "SIGKILL");
       this.log(
-        `mcp registry: escalated pid=${entry.pid} server=${entry.serverName} to SIGKILL`
+        `mcp registry: escalated pid=${entry.handle} server=${entry.serverName} to SIGKILL`
       );
       return { stopped: true, escalated: true };
     } catch (error) {
       this.log(
-        `mcp registry: failed to escalate pid=${entry.pid}: ${
+        `mcp registry: failed to escalate pid=${entry.handle} server=${entry.serverName}: ${
           error instanceof Error ? error.message : String(error)
         }`
       );
@@ -258,7 +306,7 @@ export class McpProcessRegistry {
     }
   }
 
-  private waitForExit(pid: number, timeoutMs: number): Promise<boolean> {
+  private waitForExit(handle: number, timeoutMs: number): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       let settled = false;
       let probeTimer: NodeJS.Timeout | null = null;
@@ -274,7 +322,7 @@ export class McpProcessRegistry {
       const probe = () => {
         if (settled) return;
         try {
-          this.kill(pid, 0 as unknown as NodeJS.Signals);
+          this.kill(handle, 0 as unknown as NodeJS.Signals);
         } catch (error) {
           const code = (error as { code?: string } | null)?.code;
           if (code === "ESRCH") {
@@ -299,8 +347,13 @@ export class McpProcessRegistry {
       const pair = sorted[index];
       if (!pair) break;
       this.entries.delete(pair[0]);
+      // Dispose of what the entry tracked before forgetting it. This map is the
+      // only record of the handle, so a silent drop would strand the process:
+      // no sweeper, no session cleanup and no shutdown hook could ever reach
+      // it again, which defeats the cap the eviction exists to enforce.
+      this.killProcess(pair[0], pair[1], "evicted");
       this.log(
-        `mcp registry: evicted pid=${pair[0]} server=${pair[1].serverName} session=${pair[1].sessionKey} now=${now}`
+        `mcp registry: evicted handle=${pair[0]} server=${pair[1].serverName} session=${pair[1].sessionKey} now=${now}`
       );
     }
   }
@@ -333,11 +386,11 @@ export function setDefaultMcpProcessRegistry(
 /**
  * Track that `sessionKey` owns an MCP server named `serverName` without
  * claiming a process id. Used by callers that own the lifecycle but do
- * not have a PID to record (Codex Desktop's MCP launcher runs out of
- * AutoDev's process tree). The registry still kills / times out / evicts
- * the entry; the only difference from a real PID is that the kill is a
- * no-op (a missing process is logged and swallowed). The negative id
- * can be passed back to {@link McpProcessRegistry.touch} or
+ * not have a pid to record (Codex Desktop's MCP launcher runs out of
+ * AutoDev's process tree). The registry still times out / counts / evicts
+ * the entry; the only difference from a real pid is that signalling is a
+ * no-op, because the process is not ours to kill. The returned handle can
+ * be passed back to {@link McpProcessRegistry.touch} or
  * {@link McpProcessRegistry.unregister}.
  */
 export function registerLogical(
@@ -345,14 +398,17 @@ export function registerLogical(
   serverName: string,
   registry: McpProcessRegistry = getDefaultMcpProcessRegistry()
 ): number {
-  // Negative ids never collide with real OS pids and are easy to filter out.
-  const id = -Math.abs(
+  // Negative handles never collide with real OS pids, are easy to filter out,
+  // and are what keeps them out of `process.kill`. The registry size is folded
+  // in so repeated exposures of the same server mint a distinct handle rather
+  // than refreshing one entry in place.
+  const handle = -Math.abs(
     hashStringToInt(
       `${sessionKey}\u0000${serverName}\u0000${registry.status().total}`
     )
   );
-  registry.register(id, sessionKey, serverName);
-  return id;
+  registry.register(handle, sessionKey, serverName);
+  return handle;
 }
 
 function signedInt32(value: number): number {

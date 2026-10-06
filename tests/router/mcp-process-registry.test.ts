@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   getDefaultMcpProcessRegistry,
   McpProcessRegistry,
+  registerLogical,
   setDefaultMcpProcessRegistry
 } from "@simulatorlife/autodev-runtime/mcp/process-registry";
 
@@ -109,10 +110,10 @@ void test("default registry is a singleton and replaceable for tests", () => {
 });
 
 void test("eviction keeps the registry at most maxEntries entries", () => {
-  const killed: number[] = [];
+  const killed: Array<[number, string]> = [];
   const registry = new McpProcessRegistry({
-    kill: (pid) => {
-      killed.push(pid);
+    kill: (pid, signal) => {
+      killed.push([pid, signal]);
     },
     maxEntries: 2,
     now: () => 1000
@@ -121,9 +122,11 @@ void test("eviction keeps the registry at most maxEntries entries", () => {
   registry.register(502, "s", "lsp");
   registry.register(503, "s", "lsp"); // evicts 501
   assert.equal(registry.status().total, 2);
-  // Eviction does NOT call kill -- it is a memory-management step, not a
-  // process-management step. Cleanup is the caller's responsibility.
-  assert.deepEqual(killed, []);
+  // The cap exists to bound *processes*, so the entry it drops has to be
+  // disposed of. Once 501 leaves the map nothing -- sweeper, session cleanup,
+  // shutdown hooks -- can ever signal it again, so a silent drop is an
+  // orphan that outlives the registry.
+  assert.deepEqual(killed, [[501, "SIGTERM"]]);
 });
 
 void test("registry owns the idle sweeper for exactly the lifetime of registered processes", () => {
@@ -157,4 +160,74 @@ void test("registry owns the idle sweeper for exactly the lifetime of registered
     globalThis.setInterval = originalSetInterval;
     globalThis.clearInterval = originalClearInterval;
   }
+});
+
+void test("registerLogical tracks the server instead of throwing", () => {
+  const registry = new McpProcessRegistry({ kill: () => undefined });
+  // The router calls this for every `mcp_exposed` agent event. If it throws,
+  // `applyAgentEvent` swallows the failure and the server is never tracked --
+  // so no sweeper ever reaps it and no session cleanup ever kills it.
+  const handle = registerLogical("session-a", "lsp", registry);
+  assert.equal(registry.status().total, 1);
+  assert.equal(registry.status().byServer.lsp, 1);
+  assert.equal(registry.status().bySession["session-a"], 1);
+  assert.ok(handle < 0, "a logical handle is distinguishable from a real pid");
+});
+
+void test("a logical handle is never handed to kill", () => {
+  const killed: Array<[number, string]> = [];
+  let nowMs = 1000;
+  const registry = new McpProcessRegistry({
+    kill: (pid, signal) => {
+      killed.push([pid, signal]);
+    },
+    maxIdleMs: 1000,
+    now: () => nowMs
+  });
+  const handle = registerLogical("session-a", "lsp", registry);
+  nowMs += 5000; // idle past maxIdleMs
+  // `process.kill(-n)` signals process *group* n. A logical entry names a server
+  // whose process lives outside AutoDev's tree, so the registry may time it out
+  // but must never signal it -- and it must never reach the kill seam at all.
+  const result = registry.reapStale();
+  assert.deepEqual(
+    killed,
+    [],
+    "reaping a logical entry must not signal anything"
+  );
+  assert.equal(result.killed, 0, "a logical handle is not a killed process");
+  assert.equal(result.remaining, 0, "but it is still timed out and dropped");
+  assert.ok(handle < 0);
+});
+
+void test("repeated mcp_exposed events evict a real server process without orphaning it", () => {
+  const killed: Array<[number, string]> = [];
+  const registry = new McpProcessRegistry({
+    kill: (pid, signal) => {
+      killed.push([pid, signal]);
+    },
+    maxEntries: 4
+  });
+  // One real MCP server the router spawned, tracked by pid.
+  registry.register(4242, "session-real", "lsp");
+  // A steady stream of `mcp_exposed` events for a *different* logical server.
+  // Each call mints a fresh handle, so the cap is reachable without any
+  // particular number of distinct servers.
+  for (let index = 0; index < 64; index += 1) {
+    registerLogical("session-a", "cocoindex-code", registry);
+  }
+  assert.ok(
+    registry.status().total <= 4,
+    `the cap holds under a stream of exposures (got ${registry.status().total})`
+  );
+  assert.ok(
+    !("lsp" in registry.status().byServer),
+    "the real pid is no longer tracked"
+  );
+  // Evicted is not the same as disposed: nothing can reach 4242 any more.
+  assert.deepEqual(
+    killed,
+    [[4242, "SIGTERM"]],
+    "the evicted process is signalled exactly once, then forgotten"
+  );
 });
