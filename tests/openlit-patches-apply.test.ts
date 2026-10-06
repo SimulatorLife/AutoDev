@@ -1801,14 +1801,27 @@ test("OpenLIT patches do not add a producer-facing Collector sidecar", () => {
 });
 
 test("27-remove-otter-chat-docs-onboarding-chrome removes Otter/chat/docs/onboarding surfaces", () => {
-  const patchPath = join(
-    PATCHES_DIR,
-    "27-remove-otter-chat-docs-onboarding-chrome"
-  );
+  // Resolve the patch out of the directory rather than hand-typing its path.
+  // The name used to be written without the `.patch` suffix, so `existsSync`
+  // probed a path that never existed and this test failed on its first
+  // assertion every run. That failure is what hid the rest: the hunk-count
+  // check, the scan for reintroduced chat imports, `git apply --check`, and the
+  // banned-surface assertions below all sat unreachable after it, leaving this
+  // large product-removal patch effectively unverified. Deriving the name the
+  // way the sibling tests do means a rename now fails loudly with a message
+  // that names what is actually on disk.
+  const ls = run("ls", ["-1"], PATCHES_DIR);
+  assert.equal(ls.status, 0, ls.stderr);
+  const patch = ls.stdout
+    .trim()
+    .split("\n")
+    .filter((file) => file.endsWith(".patch"))
+    .find((file) => file.startsWith("27-"));
   assert.ok(
-    existsSync(patchPath),
-    "patch 27-remove-otter-chat-docs-onboarding-chrome.patch must exist"
+    patch,
+    "patches/openlit must contain the 27-remove-otter-chat-docs-onboarding-chrome patch"
   );
+  const patchPath = join(PATCHES_DIR, patch);
   const content = readFileSync(patchPath, "utf8");
   assertPatchHunkCounts(patchPath);
   for (const banned of [
