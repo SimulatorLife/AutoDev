@@ -1172,6 +1172,40 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     /COSTS_CRON_TABLE_EMPTY_CTA/u,
     "a failed read must not present the Enable-Auto-Pricing call to action"
   );
+
+  // ── Chart time axes ────────────────────────────────────────────────────────
+  // The telemetry reads return `request_time` as the full stored value
+  // ("2026-10-05 20:18:07.020"). Drawn verbatim, six ticks collide into
+  // "20:18:07.0202026-10-05 23:18:07.020" across a card's width. One shared
+  // formatter owns the tick text so four charts cannot drift apart.
+  const axisHelper = join(clientSrc, "helpers/client/chart-axis.ts");
+  assert.ok(
+    existsSync(axisHelper),
+    "the chart tick formatter must exist; four time-series axes depend on it"
+  );
+  assert.match(
+    readFileSync(axisHelper, "utf8"),
+    /export function formatTimeTick/u,
+    "the shared tick formatter is the owner of the axis tick text"
+  );
+  for (const site of [
+    "app/(playground)/dashboard/llm/requests-per-time.tsx",
+    "app/(playground)/dashboard/llm/token-charts.tsx",
+    "app/(playground)/dashboard/evaluations/metrics-per-time.tsx"
+  ]) {
+    const source = readFileSync(join(clientSrc, site), "utf8");
+    const axes = source.match(/<XAxis\s*\n\s*dataKey="request_time"/gu) ?? [];
+    assert.ok(
+      axes.length > 0,
+      `${site} is expected to draw a request_time axis; if it no longer does, this assertion is guarding nothing`
+    );
+    const formatted = source.match(/tickFormatter=\{formatTimeTick\}/gu) ?? [];
+    assert.equal(
+      formatted.length,
+      axes.length,
+      `${site} draws ${axes.length} request_time axis/axes but formats ${formatted.length} of them, so at least one still prints the raw stored timestamp`
+    );
+  }
 }
 
 test(
