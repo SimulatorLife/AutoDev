@@ -27,18 +27,23 @@ export interface ProbeWaitDeps {
   readonly sleep: (ms: number) => Promise<void>;
 }
 
+async function pollProbeUntilDeadline(
+  deps: ProbeWaitDeps,
+  deadline: number
+): Promise<boolean> {
+  if (Date.now() >= deadline) return deps.probe();
+  if (await deps.probe()) return true;
+  await deps.sleep(PROBE_POLL_INTERVAL_MS);
+  return pollProbeUntilDeadline(deps, deadline);
+}
+
 /**
  * Resolve true once `deps.probe` reports healthy, polling until `timeoutMs`
  * elapses and then returning the outcome of one last probe.
  */
-export async function waitForProbe(
+export function waitForProbe(
   deps: ProbeWaitDeps,
   timeoutMs: number
 ): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    if (Date.now() >= deadline) return deps.probe();
-    if (await deps.probe()) return true;
-    await deps.sleep(PROBE_POLL_INTERVAL_MS);
-  }
+  return pollProbeUntilDeadline(deps, Date.now() + timeoutMs);
 }

@@ -55,9 +55,15 @@ test("resolver derives the Console LaunchAgent and runtime paths", () => {
     AUTODEV_CONSOLE_PORT: "4400"
   });
   assert.equal(result.port, 4400);
-  assert.equal(result.plist, "/home/test/Library/LaunchAgents/com.codex.autodev-console.plist");
+  assert.equal(
+    result.plist,
+    "/home/test/Library/LaunchAgents/com.codex.autodev-console.plist"
+  );
   assert.equal(result.launcher, "/home/test/.codex/hooks/run-codex-console.sh");
-  assert.equal(result.logPath, "/home/test/.codex/run/autodev-console.fallback.log");
+  assert.equal(
+    result.logPath,
+    "/home/test/.codex/run/autodev-console.fallback.log"
+  );
 });
 
 test("a healthy Console is left untouched", async () => {
