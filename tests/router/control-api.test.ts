@@ -647,9 +647,23 @@ test("models v2 lists each routed model once with its provider, tiers, and enabl
         model.provider
       );
       assert.ok(model.tiers.length > 0);
+      // Model enablement carries the same desired-vs-actual contract as a
+      // provider role. The GET surface reports generations but has no runtime
+      // observation for this resource, so convergence stays not-observed rather
+      // than inferring convergence from equal strings.
       assert.deepEqual(model.enablement, {
         enabled: ROUTING_POLICY.isModelEnabled(model.id),
-        mutable: true
+        mutable: true,
+        convergence: {
+          convergence: "not-observed",
+          desiredGeneration: `enabled=${ROUTING_POLICY.isModelEnabled(model.id)}`,
+          observedGeneration: `enabled=${ROUTING_POLICY.isModelEnabled(model.id)}`,
+          lastApplyAt: null,
+          lastObservationAt: null,
+          lastError: null,
+          explanation:
+            "The runtime has not yet reported observed state for this resource; convergence is unknown."
+        }
       });
     }
     const sonnet = result.body.models.find(
@@ -707,13 +721,32 @@ test("operator model PATCH validates, persists, audits, and rolls back on persis
       call("PATCH", path, { actor: "operator-a", body: { enabled: false } })
     );
     assert.equal(captured.result.response.statusCode, 200);
-    assert.deepEqual(captured.result.body, {
-      schema: "autodev-control-model-v1",
-      model,
-      enabled: false,
-      previous: true,
-      actor: "operator-a"
-    });
+    assert.equal(captured.result.body.schema, "autodev-control-model-v1");
+    assert.equal(captured.result.body.model, model);
+    assert.equal(captured.result.body.enabled, false);
+    assert.equal(captured.result.body.previous, true);
+    assert.equal(captured.result.body.actor, "operator-a");
+    // A model apply publishes the same desired-vs-actual evidence a provider
+    // role does, so "did my toggle land?" is answerable for every mutable
+    // routing resource rather than only for the provider ones.
+    assert.equal(
+      captured.result.body.reconciliation.status.convergence,
+      "converged"
+    );
+    assert.equal(
+      captured.result.body.reconciliation.status.desiredGeneration,
+      "enabled=false"
+    );
+    assert.equal(
+      captured.result.body.reconciliation.status.observedGeneration,
+      "enabled=false"
+    );
+    assert.equal(captured.result.body.reconciliation.status.lastError, null);
+    assert.ok(
+      captured.result.body.reconciliation.history.some(
+        (entry: { action: string }) => entry.action === "patch_model"
+      )
+    );
     assert.equal(ROUTING_POLICY.isModelEnabled(model), false);
     assert.deepEqual(ROUTING_POLICY.runtimeState().disabledModels, [model]);
     assert.equal(persistCalls, 1);
@@ -723,6 +756,9 @@ test("operator model PATCH validates, persists, audits, and rolls back on persis
     assert.equal(audit.action, "patch_model");
     assert.equal(audit.resource, model);
     assert.deepEqual(audit.changes, { enabled: false, previous: true });
+    assert.equal(audit.desiredGeneration, "enabled=false");
+    assert.equal(audit.observedGeneration, audit.desiredGeneration);
+    assert.equal(audit.restartRequired, false);
     assert.equal(
       getFinishedSpans().find(
         (span) =>

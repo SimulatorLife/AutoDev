@@ -397,6 +397,35 @@ function providerRoleConvergence(
   }).status;
 }
 
+/**
+ * Desired-vs-actual verdict for one model's enablement.
+ *
+ * Model enablement is the same kind of mutable resource as a provider role: the
+ * live routing policy *is* the applied state, so the two generations cannot drift
+ * apart on their own. What is genuinely unknown is whether anything has been
+ * applied yet, so convergence stays `not-observed` until a write is recorded for
+ * this model. Deriving the verdict here rather than from the toggle's on/off
+ * keeps "the model is enabled" and "we have observed that enablement converge"
+ * as two separate, separately-evidenced statements.
+ */
+function modelConvergence(model: string): ReconciliationStatus {
+  const latest = findLatestAuditFor(model);
+  const live = ROUTING_POLICY.isModelEnabled(model) === true;
+  const desiredGeneration = `enabled=${live ? "true" : "false"}`;
+  const observedGeneration = desiredGeneration;
+  return buildReconciliationView({
+    evidence: {
+      desiredGeneration,
+      observedGeneration,
+      lastApplyAt: latest?.timestamp ?? null,
+      lastObservationAt: latest?.timestamp ?? null,
+      lastError: boundReconciliationError(latest?.reason ?? null)
+    },
+    history: historyForResource(model),
+    hasObservation: latest !== null
+  }).status;
+}
+
 function providersView(now: number): Record<string, unknown> {
   const names = Array.from(
     new Set([
@@ -1321,7 +1350,8 @@ function modelsView(
       displayName: displayNames.get(entry.model) ?? null,
       enablement: {
         enabled: ROUTING_POLICY.isModelEnabled(entry.model),
-        mutable: true
+        mutable: true,
+        convergence: modelConvergence(entry.model)
       }
     }))
     .sort(
@@ -1743,8 +1773,9 @@ function auditReconciliationFields(
 
 /**
  * Read the reconciliation evidence out of a mutation response body. Returns
- * `null` for mutations that do not publish reconciliation (model enablement),
- * which leaves the audit generations null rather than inventing them.
+ * `null` for a mutation that publishes no reconciliation, which leaves the audit
+ * generations null rather than inventing them. Every enablement mutation
+ * (provider role and model alike) publishes it.
  */
 function reconciliationOf(
   body: Record<string, unknown>
@@ -1959,12 +1990,30 @@ function patchModel(
     unknownMessage: "Unknown model.",
     current: () => ROUTING_POLICY.isModelEnabled(model),
     apply: (enabled) => ROUTING_POLICY.setModelEnabled(model, enabled),
-    result: (enabled, previous) => ({
-      schema: "autodev-control-model-v1",
-      model,
-      enabled,
-      previous
-    })
+    result: (enabled, previous) => {
+      const observed = ROUTING_POLICY.isModelEnabled(model);
+      const desiredGeneration = `enabled=${enabled ? "true" : "false"}`;
+      const observedGeneration =
+        observed === enabled ? desiredGeneration : null;
+      return {
+        schema: "autodev-control-model-v1",
+        model,
+        enabled,
+        previous,
+        reconciliation: buildReconciliationView({
+          evidence: {
+            desiredGeneration,
+            observedGeneration,
+            lastApplyAt: new Date().toISOString(),
+            lastObservationAt:
+              observedGeneration === null ? null : new Date().toISOString(),
+            lastError: null
+          },
+          history: historyForResource(model),
+          hasObservation: observed === enabled
+        })
+      };
+    }
   });
 }
 

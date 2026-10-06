@@ -18,7 +18,8 @@ import type {
 import type {
   OperationHistoryEntry,
   ReconciliationDiff,
-  ReconciliationStatus
+  ReconciliationStatus,
+  ReconciliationView
 } from "../reconciliation/types.ts";
 import type { ProviderRole, RoutingPolicyState } from "../routing/types.ts";
 import type {
@@ -174,7 +175,15 @@ export interface ControlApiModelRecord {
   /** Capability tiers this provider serves with the model. */
   readonly tiers: readonly string[];
   readonly displayName: string | null;
-  readonly enablement: ControlApiEnablement;
+  /**
+   * Model enablement carries the same desired-vs-actual contract as a provider
+   * role: both are mutable routing-policy toggles, so an operator asking "did my
+   * change land?" gets the same evidence for both. `not-observed` until a write
+   * has been recorded.
+   */
+  readonly enablement: ControlApiEnablement & {
+    readonly convergence: ReconciliationStatus;
+  };
 }
 
 export interface ControlApiModelsResponse {
@@ -189,6 +198,8 @@ export interface ControlApiModelPatchResponse {
   readonly enabled: boolean;
   readonly previous: boolean;
   readonly actor: string;
+  /** Desired-vs-actual evidence and bounded history for the applied change. */
+  readonly reconciliation: ReconciliationView;
 }
 
 export interface ControlApiMcpsResponse {
