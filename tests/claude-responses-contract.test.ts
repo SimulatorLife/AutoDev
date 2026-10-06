@@ -176,22 +176,26 @@ async function stop(child: any): Promise<void> {
     await once(child, "exit");
 }
 
+/**
+ * The fake Claude CLI's script, in Node.
+ *
+ * The interpreter, not the router, was what this file spent its time on.
+ * `python3` costs ~665ms to start on this machine against ~49ms for Node, and
+ * the bridge runs the CLI once per contract case, so that difference was paid
+ * ten times before a single assertion ran. The contract fixture only ever uses
+ * three fields -- `events`, `stderr`, `exitCode` -- so the script stays this
+ * small, and the router parses each stdout line as JSON, so `JSON.stringify`'s
+ * tighter separators are equivalent to `json.dumps` here.
+ *
+ * `exitCode` is assigned rather than passed to `process.exit`, which would cut
+ * the process off before a piped stdout finished flushing.
+ */
 function buildFakeCliSource(): string {
-  return String.raw`#!/usr/bin/env python3
-import json
-import os
-import sys
-
-fixture = json.loads(os.environ.get("CLAUDE_CONTRACT_CASE") or "{}")
-events = fixture.get("events") or []
-for event in events:
-    sys.stdout.write(json.dumps(event) + "\n")
-    sys.stdout.flush()
-stderr_text = fixture.get("stderr") or ""
-if stderr_text:
-    sys.stderr.write(stderr_text)
-    sys.stderr.flush()
-sys.exit(fixture.get("exitCode") or 0)
+  return String.raw`#!/usr/bin/env node
+const fixture = JSON.parse(process.env.CLAUDE_CONTRACT_CASE || "{}");
+for (const event of fixture.events || []) process.stdout.write(JSON.stringify(event) + "\n");
+if (fixture.stderr) process.stderr.write(fixture.stderr);
+process.exitCode = fixture.exitCode || 0;
 `;
 }
 
