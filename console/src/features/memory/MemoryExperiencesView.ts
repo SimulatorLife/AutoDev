@@ -12,6 +12,7 @@ import {
 } from "../../components/forms/SelectField.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
+import { Pagination } from "../../components/navigation/Pagination.ts";
 import { DetailDrawer } from "../../components/panels/DetailDrawer.ts";
 import { gridRowClass } from "../../components/panels/DetailGrid.ts";
 import {
@@ -29,6 +30,13 @@ import {
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
+import {
+  memoryDetailHref,
+  memoryFilterHref,
+  memoryListHref,
+  type MemoryListScope,
+  memoryPageHref
+} from "./memory-list-url.ts";
 
 /**
  * The only reasons the Runtime's purge endpoint accepts. Offering anything else
@@ -46,8 +54,8 @@ export interface MemoryExperiencesViewProps {
   readonly experiences: readonly ExperienceEnvelope[];
   readonly total: number;
   readonly selectedExperience?: ExperienceEnvelope | null | undefined;
-  readonly currentWorkspaceId: string;
-  readonly currentQuery?: string | undefined;
+  /** The address of the list these rows came from. See MemoryRecordsView. */
+  readonly listScope: MemoryListScope;
 }
 
 const VALIDATION_STATUS_MAP: Record<string, StatusBadgeVariant> = {
@@ -62,8 +70,7 @@ export function MemoryExperiencesView({
   experiences,
   total,
   selectedExperience,
-  currentWorkspaceId,
-  currentQuery = ""
+  listScope
 }: MemoryExperiencesViewProps): React.JSX.Element {
   const columns: ColumnDef<ExperienceEnvelope>[] = [
     {
@@ -74,7 +81,7 @@ export function MemoryExperiencesView({
         React.createElement(
           "a",
           {
-            href: `?tab=experiences&workspaceId=${encodeURIComponent(currentWorkspaceId)}&experienceId=${encodeURIComponent(exp.id)}`,
+            href: memoryDetailHref(listScope, "experienceId", exp.id),
             className:
               "font-mono text-xs font-semibold text-accent hover:brightness-110 hover:underline",
             "data-memory-experience-id": exp.id
@@ -178,9 +185,13 @@ export function MemoryExperiencesView({
       FilterBar,
       {
         label: "Experience filters",
+        action: memoryFilterHref(listScope),
         preserved: [
           { name: "tab", value: "experiences" },
-          { name: "workspaceId", value: currentWorkspaceId }
+          { name: "workspaceId", value: listScope.workspaceId },
+          { name: "from", value: listScope.from },
+          { name: "until", value: listScope.until },
+          { name: "limit", value: String(listScope.limit) }
         ],
         submitTestId: "memory-experience-filter",
         summary: `${experiences.length} of ${total} experiences`,
@@ -188,7 +199,7 @@ export function MemoryExperiencesView({
       },
       React.createElement(FilterSearchField, {
         name: "query",
-        defaultValue: currentQuery,
+        defaultValue: listScope.query ?? "",
         label: "Search experiences by task, run, role, or trajectory",
         placeholder: "Search experiences by task, run, role, or trajectory...",
         testId: "memory-experience-query"
@@ -204,11 +215,21 @@ export function MemoryExperiencesView({
         "No captured memory experiences found in this workspace scope."
     }),
 
+    // The Runtime returns a bounded page and the total behind it.
+    React.createElement(Pagination, {
+      label: "Experiences",
+      offset: listScope.offset,
+      limit: listScope.limit,
+      total,
+      hrefForOffset: (offset: number) => memoryPageHref(listScope, offset),
+      testId: "memory-experiences-pagination"
+    }),
+
     // Selected experience detail panel
     selectedExperience
       ? React.createElement(ExperienceDetailPanel, {
           experience: selectedExperience,
-          workspaceId: currentWorkspaceId
+          listScope
         })
       : null
   );
@@ -216,18 +237,20 @@ export function MemoryExperiencesView({
 
 interface ExperienceDetailPanelProps {
   readonly experience: ExperienceEnvelope;
-  readonly workspaceId: string;
+  readonly listScope: MemoryListScope;
 }
 
 function ExperienceDetailPanel({
   experience,
-  workspaceId
+  listScope
 }: ExperienceDetailPanelProps): React.JSX.Element {
   return React.createElement(
     DetailDrawer,
     {
       title: experience.id,
-      closeHref: `?tab=experiences&workspaceId=${encodeURIComponent(workspaceId)}`,
+      // Back to the list the experience was opened from, filters and position
+      // intact.
+      closeHref: memoryListHref(listScope),
       subtitle: `Task: ${experience.taskId} | Run: ${experience.runId}`,
       dataAttributes: { "data-selected-experience-panel": experience.id },
       badges: [
@@ -409,7 +432,7 @@ function ExperienceDetailPanel({
         React.createElement("input", {
           type: "hidden",
           name: "workspaceId",
-          value: workspaceId
+          value: listScope.workspaceId
         }),
         // Purge erases the raw envelope irreversibly, so the operator states a
         // reason the Runtime accepts and confirms explicitly. Both are enforced

@@ -16,6 +16,7 @@ import { Button } from "../../components/forms/Button.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
+import { Pagination } from "../../components/navigation/Pagination.ts";
 import { DetailDrawer } from "../../components/panels/DetailDrawer.ts";
 import { gridRowClass } from "../../components/panels/DetailGrid.ts";
 import {
@@ -34,6 +35,13 @@ import {
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
+import {
+  memoryDetailHref,
+  memoryFilterHref,
+  memoryListHref,
+  type MemoryListScope,
+  memoryPageHref
+} from "./memory-list-url.ts";
 
 export interface MemoryRecordTransition {
   readonly fromStatus?: MemoryStatus;
@@ -54,10 +62,13 @@ export interface MemoryRecordsViewProps {
   readonly total: number;
   readonly selectedRecord?: MemoryRecord | null | undefined;
   readonly history?: MemoryRecordHistory | null | undefined;
-  readonly currentWorkspaceId: string;
-  readonly currentQuery?: string | undefined;
-  readonly currentKind?: string | undefined;
-  readonly currentStatus?: string | undefined;
+  /**
+   * The address of the list these rows came from. Every link in this view —
+   * opening a record, closing the drawer, reading a source experience,
+   * paging — is built from it, so navigating within the list keeps the filters
+   * and position that produced it.
+   */
+  readonly listScope: MemoryListScope;
 }
 
 const NOT_OBSERVED_STATUS = "not-observed" as const;
@@ -109,10 +120,7 @@ export function MemoryRecordsView({
   total,
   selectedRecord,
   history,
-  currentWorkspaceId,
-  currentQuery = "",
-  currentKind = "all",
-  currentStatus = "all"
+  listScope
 }: MemoryRecordsViewProps): React.JSX.Element {
   const columns: ColumnDef<MemoryRecord>[] = [
     {
@@ -123,7 +131,7 @@ export function MemoryRecordsView({
         React.createElement(
           "a",
           {
-            href: `?tab=records&workspaceId=${encodeURIComponent(currentWorkspaceId)}&recordId=${encodeURIComponent(record.id)}`,
+            href: memoryDetailHref(listScope, "recordId", record.id),
             className:
               "font-mono text-xs font-semibold text-accent hover:brightness-110 hover:underline",
             "data-memory-record-id": record.id
@@ -209,9 +217,17 @@ export function MemoryRecordsView({
       FilterBar,
       {
         label: "Record filters",
+        // Submitting these controls changes *which* rows match, so the form
+        // submits to the first page of the new list. The time window and page
+        // size describe the list being narrowed and are carried through;
+        // `memoryFilterHref` is the same rule for the links that follow.
+        action: memoryFilterHref(listScope),
         preserved: [
           { name: "tab", value: "records" },
-          { name: "workspaceId", value: currentWorkspaceId }
+          { name: "workspaceId", value: listScope.workspaceId },
+          { name: "from", value: listScope.from },
+          { name: "until", value: listScope.until },
+          { name: "limit", value: String(listScope.limit) }
         ],
         submitTestId: "memory-filter",
         summary: `${records.length} of ${total} records`,
@@ -219,7 +235,7 @@ export function MemoryRecordsView({
       },
       React.createElement(FilterSearchField, {
         name: "query",
-        defaultValue: currentQuery,
+        defaultValue: listScope.query ?? "",
         label: "Search memory claims",
         placeholder: "Search memory claims...",
         testId: "memory-record-query"
@@ -227,7 +243,7 @@ export function MemoryRecordsView({
       React.createElement(SelectField, {
         name: "kind",
         label: "Kind:",
-        defaultValue: currentKind,
+        defaultValue: listScope.kind ?? "all",
         testId: "memory-kind",
         options: [
           { value: "all", label: "All Kinds" },
@@ -239,7 +255,7 @@ export function MemoryRecordsView({
       React.createElement(SelectField, {
         name: "status",
         label: "Status:",
-        defaultValue: currentStatus,
+        defaultValue: listScope.status ?? "all",
         testId: "memory-status",
         options: [
           { value: "all", label: "All Statuses" },
@@ -260,12 +276,23 @@ export function MemoryRecordsView({
       emptyMessage: "No memory records found matching the current criteria."
     }),
 
+    // The Runtime returns a bounded page and the total behind it, so a
+    // collection larger than one page needs a way to reach the rest.
+    React.createElement(Pagination, {
+      label: "Records",
+      offset: listScope.offset,
+      limit: listScope.limit,
+      total,
+      hrefForOffset: (offset: number) => memoryPageHref(listScope, offset),
+      testId: "memory-records-pagination"
+    }),
+
     // Selected record inspection drawer/panel
     selectedRecord
       ? React.createElement(RecordDetailPanel, {
           record: selectedRecord,
           history,
-          workspaceId: currentWorkspaceId
+          listScope
         })
       : null
   );
@@ -274,19 +301,23 @@ export function MemoryRecordsView({
 interface RecordDetailPanelProps {
   readonly record: MemoryRecord;
   readonly history?: MemoryRecordHistory | null | undefined;
-  readonly workspaceId: string;
+  readonly listScope: MemoryListScope;
 }
 
 function RecordDetailPanel({
   record,
   history,
-  workspaceId
+  listScope
 }: RecordDetailPanelProps): React.JSX.Element {
   return React.createElement(
     DetailDrawer,
     {
       title: record.id,
-      closeHref: `?tab=records&workspaceId=${encodeURIComponent(workspaceId)}`,
+      // Back to the list the record was opened from, filters and position
+      // intact. It used to link `?tab=records&workspaceId=…`, which dropped
+      // the query, kind, status, and time window on the way out of the panel
+      // the operator had just narrowed the list with.
+      closeHref: memoryListHref(listScope),
       subtitle: `Scope: ${formatScopeString(record.scope)}`,
       dataAttributes: { "data-selected-record-panel": record.id },
       badges: [
@@ -455,7 +486,7 @@ function RecordDetailPanel({
                     "a",
                     {
                       key: id,
-                      href: `?tab=records&workspaceId=${encodeURIComponent(workspaceId)}&recordId=${encodeURIComponent(id)}`,
+                      href: memoryDetailHref(listScope, "recordId", id),
                       className: "font-mono text-accent hover:underline"
                     },
                     id
@@ -477,7 +508,7 @@ function RecordDetailPanel({
                     "a",
                     {
                       key: id,
-                      href: `?tab=records&workspaceId=${encodeURIComponent(workspaceId)}&recordId=${encodeURIComponent(id)}`,
+                      href: memoryDetailHref(listScope, "recordId", id),
                       className: "font-mono text-accent hover:underline"
                     },
                     id
@@ -590,7 +621,7 @@ function RecordDetailPanel({
             React.createElement("input", {
               type: "hidden",
               name: "workspaceId",
-              value: workspaceId
+              value: listScope.workspaceId
             }),
             React.createElement(
               Button,
@@ -622,7 +653,7 @@ function RecordDetailPanel({
             React.createElement("input", {
               type: "hidden",
               name: "workspaceId",
-              value: workspaceId
+              value: listScope.workspaceId
             }),
             React.createElement(
               Button,
@@ -654,7 +685,7 @@ function RecordDetailPanel({
             React.createElement("input", {
               type: "hidden",
               name: "workspaceId",
-              value: workspaceId
+              value: listScope.workspaceId
             }),
             React.createElement(
               Button,

@@ -61,6 +61,10 @@ import {
 } from "../src/components/icons/Icon.ts";
 import { AppShell } from "../src/components/layout/AppShell.ts";
 import { PAGE_SECTION_STACK_CLASS } from "../src/components/layout/PageBody.ts";
+import {
+  pageRangeLabel,
+  Pagination
+} from "../src/components/navigation/Pagination.ts";
 import { ControlFailureNotice } from "../src/components/status/ControlFailureNotice.ts";
 import {
   MONO_ID_CLASS,
@@ -108,8 +112,14 @@ import {
   McpsView,
   MemoryCohortsView,
   MemoryExperiencesView,
+  type MemoryListScope,
   MemoryRecordsView,
   MemoryView,
+  MAX_MEMORY_OFFSET,
+  memoryDetailHref,
+  memoryFilterHref,
+  memoryListHref,
+  memoryPageHref,
   ModelDetailView,
   NOT_OBSERVED_LABEL,
   PermissionsView,
@@ -117,7 +127,9 @@ import {
   PromptsView,
   ProviderDetailView,
   ProvidersView,
+  DEFAULT_MEMORY_PAGE_SIZE,
   resolveActiveTabId,
+  resolveMemoryPage,
   SECTION_HEADING_CLASS,
   SkillsView,
   StatCard,
@@ -561,6 +573,151 @@ test("an unrecognised URL filter is named, never resolved into a default", async
         `${JSON.stringify(params)} is a filter this page accepts`
       );
     }
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreConsolePageEnvironment(previousEnv);
+    rmSync(isolatedHome, { recursive: true, force: true });
+  }
+});
+
+test("MemoryPage asks the Runtime for the page the URL names", async () => {
+  // The two halves of browsing have to agree: the views render links that carry
+  // a `limit`/`offset`, and the read has to request them. Asserting on the links
+  // alone would pass with a page that ignored its own query string and always
+  // re-fetched the first 50 rows — which is what it used to do, because the
+  // Console sent no page parameters and let the Runtime apply its default.
+  const previousFetch = globalThis.fetch;
+  const previousEnv = saveConsolePageEnvironment();
+  const isolatedHome = mkdtempSync(join(tmpdir(), "autodev-memory-page-"));
+  const requested: string[] = [];
+  const renderPage = async (
+    searchParams: Record<string, string>
+  ): Promise<string> => {
+    requested.length = 0;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url.endsWith("/control/workspaces")) {
+        return Response.json({
+          schema: "autodev-control-workspaces-v1",
+          source: "config/workspaces.json",
+          readOnly: true,
+          catalogStatus: "valid",
+          totalWorkspaces: 1,
+          workspaces: [
+            {
+              id: "SimulatorLife/AutoDev",
+              baseBranch: "main",
+              enabled: true,
+              agentRoles: null
+            }
+          ]
+        });
+      }
+      if (url.includes("/control/memory/records")) {
+        return Response.json({
+          schema: "autodev-memory-records-v1",
+          items: [],
+          total: 1204,
+          limit: 25,
+          offset: 100,
+          hasMore: true
+        });
+      }
+      if (url.includes("/control/memory/experiences")) {
+        return Response.json({
+          schema: "autodev-memory-experiences-v1",
+          items: [],
+          total: 0,
+          limit: 25,
+          offset: 100,
+          hasMore: false
+        });
+      }
+      if (url.includes("/control/memory/cohorts")) {
+        return Response.json({
+          schema: "autodev-memory-cohorts-v1",
+          cells: [],
+          sessionCount: 0
+        });
+      }
+      throw new Error(`Unexpected Memory page request: ${url}`);
+    };
+    return renderToStaticMarkup(
+      await MemoryPage({ searchParams: Promise.resolve(searchParams) })
+    );
+  };
+
+  try {
+    process.env.HOME = isolatedHome;
+    process.env.CODEX_HOME = isolatedHome;
+    process.env.AUTODEV_OPENLIT_SECRET_FILE = join(isolatedHome, "missing.env");
+    process.env.AUTODEV_CONTROL_API_TOKEN = "memory-page-test-token";
+    process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+
+    // A silent URL still asks for a page, so the first page is the Runtime's
+    // default rather than an unbounded read.
+    await renderPage({ tab: "records" });
+    const records = requested.find((url) =>
+      url.includes("/control/memory/records")
+    );
+    assert.ok(records);
+    const firstUrl = new URL(records);
+    assert.equal(firstUrl.searchParams.get("limit"), "50");
+    assert.equal(firstUrl.searchParams.get("offset"), "0");
+
+    const markup = await renderPage({
+      tab: "records",
+      limit: "25",
+      offset: "100",
+      kind: "procedural"
+    });
+    const paged = requested.find((url) =>
+      url.includes("/control/memory/records")
+    );
+    assert.ok(paged);
+    const pagedUrl = new URL(paged);
+    assert.equal(pagedUrl.searchParams.get("limit"), "25");
+    assert.equal(pagedUrl.searchParams.get("offset"), "100");
+    assert.equal(pagedUrl.searchParams.get("kind"), "procedural");
+
+    // Experiences are paged from the same URL state as records.
+    await renderPage({ tab: "experiences", limit: "25", offset: "100" });
+    const experiences = requested.find((url) =>
+      url.includes("/control/memory/experiences")
+    );
+    assert.ok(experiences);
+    const experiencesUrl = new URL(experiences);
+    assert.equal(experiencesUrl.searchParams.get("limit"), "25");
+    assert.equal(experiencesUrl.searchParams.get("offset"), "100");
+
+    // A `total` larger than the page renders navigation, and the Next link is
+    // the next page of the same filtered list.
+    assert.match(markup, /data-pagination="memory-records-pagination"/);
+    const nextAnchor = (markup.split("<a") ?? []).find((anchor) =>
+      anchor.includes('rel="next"')
+    );
+    assert.ok(nextAnchor);
+    const nextHref = nextAnchor.match(/href="([^"]+)"/u)?.[1];
+    assert.ok(nextHref);
+    const nextUrl = new URL(
+      nextHref.replaceAll("&amp;", "&"),
+      "http://console.test"
+    );
+    assert.equal(nextUrl.pathname, "/memory");
+    assert.equal(nextUrl.searchParams.get("offset"), "125");
+    assert.equal(nextUrl.searchParams.get("limit"), "25");
+    assert.equal(nextUrl.searchParams.get("kind"), "procedural");
+
+    // A page size the Runtime would reject is reported, not forwarded.
+    const rejected = await renderPage({ tab: "records", limit: "9999" });
+    assert.match(rejected, /1 filter in this URL was not applied\./);
+    assert.match(rejected, /limit=&quot;9999&quot;/);
+    const applied = requested.find((url) =>
+      url.includes("/control/memory/records")
+    );
+    assert.ok(applied);
+    assert.equal(new URL(applied).searchParams.get("limit"), "50");
   } finally {
     globalThis.fetch = previousFetch;
     restoreConsolePageEnvironment(previousEnv);
@@ -5187,6 +5344,27 @@ test("Canonical nav order matches Configure/Observe/Operate grouping", () => {
   assert.deepEqual([...CANONICAL_NAVIGATION], [...expected]);
 });
 
+/**
+ * A Memory list's address, for tests that render a Memory view directly.
+ *
+ * The views no longer assemble their own links from `workspaceId`/`query`
+ * fragments, so a test has to state the list it is rendering. Defaults match
+ * what `/memory` resolves to when the URL says nothing.
+ */
+function memoryListScope(
+  overrides: Partial<MemoryListScope> = {}
+): MemoryListScope {
+  return {
+    tab: "records",
+    workspaceId: "SimulatorLife/AutoDev",
+    from: "2026-09-01T00:00:00.000Z",
+    until: "2026-10-01T00:00:00.000Z",
+    limit: 50,
+    offset: 0,
+    ...overrides
+  };
+}
+
 test("MemoryRecordsView renders records, lifecycle status badges, and claim text", () => {
   const sampleRecord: MemoryRecord = {
     id: "mem-001",
@@ -5209,7 +5387,7 @@ test("MemoryRecordsView renders records, lifecycle status badges, and claim text
     React.createElement(MemoryRecordsView, {
       records: [sampleRecord],
       total: 1,
-      currentWorkspaceId: "SimulatorLife/AutoDev"
+      listScope: memoryListScope()
     })
   );
 
@@ -5266,7 +5444,7 @@ test("MemoryRecordsView renders record detail panel with validity and transition
       total: 1,
       selectedRecord: sampleRecord,
       history: sampleHistory,
-      currentWorkspaceId: "SimulatorLife/AutoDev"
+      listScope: memoryListScope()
     })
   );
 
@@ -5302,7 +5480,7 @@ test("MemoryExperiencesView renders experiences with task, role, and validation 
     React.createElement(MemoryExperiencesView, {
       experiences: [sampleExp],
       total: 1,
-      currentWorkspaceId: "SimulatorLife/AutoDev"
+      listScope: memoryListScope({ tab: "experiences" })
     })
   );
 
@@ -5339,7 +5517,7 @@ test("MemoryExperiencesView requires a Runtime-accepted reason and explicit conf
       experiences: [sampleExp],
       total: 1,
       selectedExperience: sampleExp,
-      currentWorkspaceId: "SimulatorLife/AutoDev"
+      listScope: memoryListScope({ tab: "experiences" })
     })
   );
 
@@ -5451,18 +5629,16 @@ test("MemoryCohortsView distinguishes an observed empty cohort from unavailable 
 test("MemoryView keeps an unavailable experience tab out of its successful-empty state", () => {
   const markup = renderToStaticMarkup(
     React.createElement(MemoryView, {
-      activeTab: "experiences",
+      listScope: memoryListScope({ tab: "experiences" }),
       records: [],
       totalRecords: 0,
       experiences: [],
       totalExperiences: null,
       sessionCohorts: null,
       useCohorts: null,
-      currentWorkspaceId: "SimulatorLife/AutoDev",
       repositoryId: "SimulatorLife/AutoDev",
       workspaces: [],
-      occurredFrom: "2026-09-01T00:00:00Z",
-      occurredUntil: "2026-10-01T00:00:00Z"
+      unapplied: []
     })
   );
   assert.match(markup, /data-memory-experiences-observed="false"/);
@@ -5475,14 +5651,19 @@ test("MemoryView keeps an unavailable experience tab out of its successful-empty
 test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace filter", () => {
   const markup = renderToStaticMarkup(
     React.createElement(MemoryView, {
-      activeTab: "records",
+      listScope: memoryListScope({
+        query: "fallback",
+        kind: "procedure",
+        status: "active",
+        from: "2026-09-01T00:00:00Z",
+        until: "2026-10-01T00:00:00Z"
+      }),
       records: [],
       totalRecords: 0,
       experiences: [],
       totalExperiences: null,
       sessionCohorts: null,
       useCohorts: null,
-      currentWorkspaceId: "SimulatorLife/AutoDev",
       repositoryId: "SimulatorLife/AutoDev",
       workspaces: [
         {
@@ -5497,12 +5678,7 @@ test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace
           enabled: true,
           agentRoles: null
         }
-      ],
-      query: "fallback",
-      kind: "procedure",
-      status: "active",
-      occurredFrom: "2026-09-01T00:00:00Z",
-      occurredUntil: "2026-10-01T00:00:00Z"
+      ]
     })
   );
 
@@ -5546,10 +5722,16 @@ test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace
     ["workspaceId", "SimulatorLife/AutoDev"],
     ["from", "2026-09-01T00:00:00Z"],
     ["until", "2026-10-01T00:00:00Z"],
+    // The page size travels with the tab so an operator who chose 25 rows does
+    // not get 50 on the tab they switch to.
+    ["limit", "50"],
     ["query", "fallback"],
     ["kind", "procedure"],
     ["status", "active"]
   ]);
+  // Switching tab is a new list, so it returns to the first page rather than
+  // carrying the previous tab's position into a differently-sized collection.
+  assert.equal(tabUrl.searchParams.has("offset"), false);
   assert.match(markup, /Durable Records/);
   assert.match(markup, /Active Claims/);
 
@@ -5569,8 +5751,311 @@ test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace
   assert.match(workspaceForm, /name="status" value="active"/);
   assert.match(workspaceForm, /name="from" value="2026-09-01T00:00:00Z"/);
   assert.match(workspaceForm, /name="until" value="2026-10-01T00:00:00Z"/);
+  assert.match(workspaceForm, /name="limit" value="50"/);
+  // Changing the scope selects a different collection, so it starts at that
+  // collection's first page.
+  assert.doesNotMatch(workspaceForm, /name="offset"/);
   assert.match(workspaceForm, /SimulatorLife\/Other/);
   assert.doesNotMatch(workspaceForm, /name="recordId"|name="experienceId"/);
+});
+
+// The Memory target names browse/search/pagination over the indexed records,
+// and the Runtime already pages both collections and returns the total behind
+// the page. These cover the two halves that were missing: asking the Runtime
+// for the page the URL names, and offering a way to reach the next one.
+
+test("resolveMemoryPage applies the Runtime's accepted page sizes and bounds the offset", () => {
+  assert.deepEqual(resolveMemoryPage(undefined, undefined), {
+    page: { limit: DEFAULT_MEMORY_PAGE_SIZE, offset: 0 },
+    unapplied: []
+  });
+  assert.deepEqual(resolveMemoryPage("25", "75"), {
+    page: { limit: 25, offset: 75 },
+    unapplied: []
+  });
+  assert.deepEqual(resolveMemoryPage("100", String(MAX_MEMORY_OFFSET)), {
+    page: { limit: 100, offset: MAX_MEMORY_OFFSET },
+    unapplied: []
+  });
+
+  // A page size the Runtime would reject with a TypeError is named, not
+  // forwarded. `?limit=9999` must not become a 500.
+  const tooLarge = resolveMemoryPage("9999", "");
+  assert.equal(tooLarge.page.limit, DEFAULT_MEMORY_PAGE_SIZE);
+  assert.deepEqual(tooLarge.unapplied, [{ name: "limit", value: "9999" }]);
+
+  for (const bad of ["-1", "100001", "abc", "1.5"]) {
+    const rejected = resolveMemoryPage("50", bad);
+    assert.deepEqual(rejected.page, { limit: 50, offset: 0 });
+    assert.deepEqual(
+      rejected.unapplied.map((f) => f.name),
+      ["offset"],
+      `offset=${bad} should be reported as unapplied`
+    );
+  }
+
+  // A blank parameter is silence, not a bad request — the same contract every
+  // other bounded filter follows.
+  assert.deepEqual(resolveMemoryPage("50", "   "), {
+    page: { limit: 50, offset: 0 },
+    unapplied: []
+  });
+
+  // Previous and Next build exact multiples of the page size, so an offset that
+  // is not one can only be hand-edited. Reading it as written would report a
+  // range that Previous cannot navigate back from.
+  const offGrid = resolveMemoryPage("50", "77");
+  assert.deepEqual(offGrid.page, { limit: 50, offset: 50 });
+  assert.deepEqual(offGrid.unapplied, [{ name: "offset", value: "77" }]);
+  // Snapping is against the *resolved* page size, not the requested one.
+  assert.deepEqual(resolveMemoryPage("100", "77").page, {
+    limit: 100,
+    offset: 0
+  });
+});
+
+test("a Memory list's links keep the filters and position that produced the list", () => {
+  const scope = memoryListScope({
+    query: "guard",
+    kind: "procedural",
+    status: "active",
+    from: "2026-09-01T00:00:00Z",
+    until: "2026-10-01T00:00:00Z",
+    limit: 25,
+    offset: 50
+  });
+
+  // The detail link used to carry only tab/workspace/recordId, so opening a
+  // record and closing it again returned an unfiltered, 30-day list.
+  const detail = new URL(
+    memoryDetailHref(scope, "recordId", "mem 1"),
+    "http://console.test"
+  );
+  assert.equal(detail.pathname, "/memory");
+  assert.equal(detail.searchParams.get("recordId"), "mem 1");
+  for (const [key, value] of [
+    ["query", "guard"],
+    ["kind", "procedural"],
+    ["status", "active"],
+    ["from", "2026-09-01T00:00:00Z"],
+    ["until", "2026-10-01T00:00:00Z"],
+    ["limit", "25"],
+    ["offset", "50"]
+  ] as const) {
+    assert.equal(detail.searchParams.get(key), value, `${key} must survive`);
+  }
+
+  const list = new URL(memoryListHref(scope), "http://console.test");
+  assert.equal(list.searchParams.has("recordId"), false);
+  assert.equal(list.searchParams.get("offset"), "50");
+
+  // Paging moves position and keeps everything else.
+  const next = new URL(memoryPageHref(scope, 75), "http://console.test");
+  assert.equal(next.searchParams.get("offset"), "75");
+  assert.equal(next.searchParams.get("query"), "guard");
+
+  // Submitting the filters is a different list, so it starts at page one.
+  const refiltered = new URL(memoryFilterHref(scope), "http://console.test");
+  assert.equal(refiltered.searchParams.has("offset"), false);
+  assert.equal(refiltered.searchParams.get("query"), "guard");
+  assert.equal(refiltered.searchParams.get("until"), "2026-10-01T00:00:00Z");
+
+  // `all` is a real answer to `?kind=all`, so it is not written back out.
+  const unfiltered = memoryListHref(
+    memoryListScope({ kind: "all", status: "all", offset: 0 })
+  );
+  assert.equal(unfiltered.includes("kind="), false);
+  assert.equal(unfiltered.includes("status="), false);
+  assert.equal(unfiltered.includes("offset="), false);
+});
+
+test("Pagination reports the rows on the page and offers only the directions that exist", () => {
+  const at = (
+    offset: number,
+    limit: number,
+    total: number
+  ): React.JSX.Element | null =>
+    Pagination({
+      label: "Records",
+      offset,
+      limit,
+      total,
+      hrefForOffset: (next: number) => `/memory?offset=${next}`
+    }) as React.JSX.Element | null;
+
+  assert.equal(pageRangeLabel({ offset: 0, limit: 50, total: 0 }), "No rows");
+  assert.equal(
+    pageRangeLabel({ offset: 0, limit: 50, total: 120 }),
+    "1–50 of 120"
+  );
+  // A short final page stops at the total rather than reading past it.
+  assert.equal(
+    pageRangeLabel({ offset: 100, limit: 50, total: 120 }),
+    "101–120 of 120"
+  );
+  // A stale bookmark past the end says so instead of claiming a range that
+  // starts beyond the collection.
+  assert.equal(
+    pageRangeLabel({ offset: 500, limit: 50, total: 120 }),
+    "No rows on this page"
+  );
+
+  // A collection that fits in one page needs no bar at all.
+  assert.equal(at(0, 50, 12), null);
+  assert.equal(at(0, 50, 50), null);
+
+  const middle = renderToStaticMarkup(at(50, 50, 120)) ?? "";
+  assert.match(middle, /aria-label="Records pagination"/);
+  assert.match(middle, /51–100 of 120/);
+  assert.match(middle, /href="\/memory\?offset=0"[^>]*rel="prev"/);
+  assert.match(middle, /href="\/memory\?offset=100"[^>]*rel="next"/);
+
+  // The unavailable direction is inert text, not a dead link a keyboard
+  // operator could focus and find did nothing.
+  const first = renderToStaticMarkup(at(0, 50, 120)) ?? "";
+  assert.match(first, /<span aria-disabled="true"[^>]*>Previous<\/span>/);
+  assert.match(first, /href="\/memory\?offset=50"[^>]*rel="next"/);
+
+  const last = renderToStaticMarkup(at(100, 50, 120)) ?? "";
+  assert.match(last, /<span aria-disabled="true"[^>]*>Next<\/span>/);
+  assert.match(last, /href="\/memory\?offset=50"[^>]*rel="prev"/);
+
+  // Past the end of a collection too small to paginate, the bar survives to
+  // carry the way back.
+  const pastEnd = renderToStaticMarkup(at(100, 50, 12)) ?? "";
+  assert.match(pastEnd, /No rows on this page/);
+  assert.match(pastEnd, /href="\/memory\?offset=50"[^>]*rel="prev"/);
+});
+
+test("MemoryRecordsView and MemoryExperiencesView page a collection larger than one page", () => {
+  const record: MemoryRecord = {
+    id: "mem-paged",
+    kind: "semantic",
+    status: "active",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    claim: "A claim.",
+    validity: { state: "verified", evidence: [] },
+    provenance: {
+      experienceIds: [],
+      evidence: [],
+      createdBy: "operator",
+      createdAt: "2026-10-01T00:00:00Z"
+    },
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-02T00:00:00Z"
+  };
+
+  const recordsMarkup = renderToStaticMarkup(
+    React.createElement(MemoryRecordsView, {
+      records: [record],
+      // 50 of 1,204 is the state the view used to render with nothing to act
+      // on.
+      total: 1204,
+      listScope: memoryListScope({ limit: 50, offset: 50, kind: "semantic" })
+    })
+  );
+  assert.match(recordsMarkup, /data-pagination="memory-records-pagination"/);
+  const nextLink = recordsMarkup
+    .split("<a")
+    .find((anchor) => anchor.includes('rel="next"'));
+  assert.ok(nextLink);
+  const href = nextLink.match(/href="([^"]+)"/u)?.[1];
+  assert.ok(href);
+  const nextUrl = new URL(href.replaceAll("&amp;", "&"), "http://console.test");
+  assert.equal(nextUrl.searchParams.get("offset"), "100");
+  assert.equal(nextUrl.searchParams.get("kind"), "semantic");
+
+  const experience: ExperienceEnvelope = {
+    id: "exp-paged",
+    taskId: "task-1",
+    runId: "run-1",
+    capturedAt: "2026-10-01T00:00:00Z",
+    workspaceId: "SimulatorLife/AutoDev",
+    role: "orchestrator",
+    agentRole: "orchestrator",
+    summary: "Did the thing.",
+    trajectoryRef: "traj/1",
+    validation: { state: "passed", evidence: [] }
+  } as unknown as ExperienceEnvelope;
+
+  const experiencesMarkup = renderToStaticMarkup(
+    React.createElement(MemoryExperiencesView, {
+      experiences: [experience],
+      total: 120,
+      listScope: memoryListScope({
+        tab: "experiences",
+        limit: 50,
+        offset: 0,
+        query: "task-1"
+      })
+    })
+  );
+  assert.match(
+    experiencesMarkup,
+    /data-pagination="memory-experiences-pagination"/
+  );
+  const experiencesNext = experiencesMarkup
+    .split("<a")
+    .find((anchor) => anchor.includes('rel="next"'));
+  assert.ok(experiencesNext);
+  const experiencesHref = experiencesNext.match(/href="([^"]+)"/u)?.[1];
+  assert.ok(experiencesHref);
+  const experiencesUrl = new URL(
+    experiencesHref.replaceAll("&amp;", "&"),
+    "http://console.test"
+  );
+  assert.equal(experiencesUrl.searchParams.get("offset"), "50");
+  assert.equal(experiencesUrl.searchParams.get("query"), "task-1");
+});
+
+test("a Memory detail panel closes back to the list it was opened from", () => {
+  const record: MemoryRecord = {
+    id: "mem-return",
+    kind: "semantic",
+    status: "active",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    claim: "A claim.",
+    validity: { state: "verified", evidence: [] },
+    provenance: {
+      experienceIds: [],
+      evidence: [],
+      createdBy: "operator",
+      createdAt: "2026-10-01T00:00:00Z"
+    },
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-02T00:00:00Z"
+  };
+
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryRecordsView, {
+      records: [record],
+      total: 1204,
+      selectedRecord: record,
+      listScope: memoryListScope({
+        query: "guard",
+        status: "active",
+        limit: 25,
+        offset: 50
+      })
+    })
+  );
+
+  const closeAnchor = markup
+    .split("<a")
+    .find((anchor) => anchor.includes("Close</a>"));
+  assert.ok(closeAnchor, "the drawer must render a close link");
+  const closeHref = closeAnchor.match(/href="([^"]+)"/u)?.[1];
+  assert.ok(closeHref);
+  const url = new URL(
+    closeHref.replaceAll("&amp;", "&"),
+    "http://console.test"
+  );
+  assert.equal(url.pathname, "/memory");
+  assert.equal(url.searchParams.get("query"), "guard");
+  assert.equal(url.searchParams.get("status"), "active");
+  assert.equal(url.searchParams.get("limit"), "25");
+  assert.equal(url.searchParams.get("offset"), "50");
+  assert.equal(url.searchParams.has("recordId"), false);
 });
 
 test("fetchMemoryRecords issues authenticated GET to /control/memory/records with workspace scope", async () => {
@@ -6126,7 +6611,10 @@ test("ProvidersView renders the four configuration columns with per-role control
   assert.match(markup, /data-tab-panel="providers"/);
 
   // Exactly the four columns the contract names, in its order.
-  const headers = Array.from(markup.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gu), (match) => (match[1] ?? "").replaceAll(/<[^>]*>/g, "").trim());
+  const headers = Array.from(
+    markup.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gu),
+    (match) => (match[1] ?? "").replaceAll(/<[^>]*>/g, "").trim()
+  );
   assert.deepEqual(headers, ["Provider", "Status", "Roles", "Agent Limits"]);
   for (const removed of [
     "Role enablement",
@@ -6162,7 +6650,10 @@ test("ProvidersView renders the four configuration columns with per-role control
     markup,
     /data-role-form="codex-subagent"[\s\S]*?data-role-priority="subagent"/
   );
-  assert.match(markup, /This provider is disabled\. Enable it to change its roles\./);
+  assert.match(
+    markup,
+    /This provider is disabled\. Enable it to change its roles\./
+  );
   // A disabled role's model control stays visible so the chosen model remains
   // recoverable, and is disabled so it cannot become an active selection. The
   // fixture's disabled role is codex's orchestrator.
@@ -6199,7 +6690,10 @@ test("ProvidersView renders the four configuration columns with per-role control
     );
     assert.ok(form, `${provider} agent limits must be in its row`);
     assert.equal(hiddenValue(markup, form, "provider"), provider);
-    assert.match(markup, new RegExp(`data-limit-value="${provider}-perSession"`));
+    assert.match(
+      markup,
+      new RegExp(`data-limit-value="${provider}-perSession"`)
+    );
     assert.match(
       markup,
       new RegExp(`data-limit-value="${provider}-acrossSessions"`)
@@ -8931,7 +9425,7 @@ test("governed record actions read as one primary, one destructive, one secondar
       React.createElement(MemoryRecordsView, {
         records: [selected],
         total: 1,
-        currentWorkspaceId: "SimulatorLife/AutoDev",
+        listScope: memoryListScope(),
         // The governed actions live in the record detail panel, which renders
         // for the record selected in the URL.
         selectedRecord: selected
@@ -9933,7 +10427,7 @@ test("transition history is an ordered, named list rather than a stack of divs",
     React.createElement(MemoryRecordsView, {
       records: [],
       total: 0,
-      currentWorkspaceId: "SimulatorLife/AutoDev",
+      listScope: memoryListScope(),
       selectedRecord: {
         id: "mem-history",
         kind: "procedural",

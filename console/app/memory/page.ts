@@ -12,9 +12,11 @@ import {
   type UnappliedFilter
 } from "../../src/components/filters/resolve-filter.ts";
 import {
+  type MemoryListScope,
   type MemoryTab,
-  MemoryView
-} from "../../src/features/memory/MemoryView.ts";
+  resolveMemoryPage
+} from "../../src/features/memory/memory-list-url.ts";
+import { MemoryView } from "../../src/features/memory/MemoryView.ts";
 import {
   isControlFailure,
   readControlRefusal
@@ -58,6 +60,10 @@ interface ParsedMemoryParams {
   readonly experienceId: string;
   readonly occurredFrom: string;
   readonly occurredUntil: string;
+  /** Rows requested per page, resolved against the Runtime's accepted sizes. */
+  readonly limit: number;
+  /** Rows skipped before this page. Always a multiple of `limit`. */
+  readonly offset: number;
   /** Bounded filters the URL named that this page could not honour. */
   readonly unapplied: readonly UnappliedFilter[];
 }
@@ -89,6 +95,12 @@ function parseMemoryQueryParams(
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
+  // The page position is resolved with the same bounded-filter contract as the
+  // kind and status selects, so `?limit=9999` is named rather than forwarded to
+  // a Runtime that answers a `TypeError` for it.
+  const pagePosition = resolveMemoryPage(getParam("limit"), getParam("offset"));
+  unapplied.push(...pagePosition.unapplied);
+
   return {
     activeTab: resolve("tab", MEMORY_TABS) as MemoryTab,
     workspaceIdParam: getParam("workspaceId"),
@@ -102,6 +114,7 @@ function parseMemoryQueryParams(
     experienceId: getParam("experienceId"),
     occurredFrom: getParam("from") || thirtyDaysAgo.toISOString(),
     occurredUntil: getParam("until") || now.toISOString(),
+    ...pagePosition.page,
     // Reported on whichever tab rendered. `tab` chooses the surface, and the
     // `kind`/`status` selects are preserved across tab links, so neither can be
     // reported from a place that may not render -- and a rule that holds on only
@@ -323,7 +336,12 @@ async function fetchMemoryPageData(
       workspaceId,
       ...(params.query ? { query: params.query } : {}),
       ...(params.kind === "all" ? {} : { kind: params.kind }),
-      ...(params.status === "all" ? {} : { status: params.status })
+      ...(params.status === "all" ? {} : { status: params.status }),
+      // The paged reads ask for the page the URL names. Without these the
+      // Runtime applied its own default of 50 and the Console reported a
+      // `total` it had no way to walk past.
+      limit: params.limit,
+      offset: params.offset
     },
     config
   );
@@ -349,7 +367,9 @@ async function fetchMemoryPageData(
       {
         workspaceId,
         ...(params.query ? { query: params.query } : {}),
-        includeTaskHistory: true
+        includeTaskHistory: true,
+        limit: params.limit,
+        offset: params.offset
       },
       config
     ),
@@ -477,6 +497,20 @@ export default async function MemoryPage(
   const useCohorts =
     data.useCohorts?.kind === "ok" ? data.useCohorts.data : null;
 
+  // One description of the list this page is showing, handed to the views so
+  // every link beneath it is built from the same facts the read used.
+  const listScope: MemoryListScope = {
+    tab: params.activeTab,
+    workspaceId: currentWorkspaceId,
+    ...(params.query ? { query: params.query } : {}),
+    ...(params.kind === "all" ? {} : { kind: params.kind }),
+    ...(params.status === "all" ? {} : { status: params.status }),
+    from: params.occurredFrom,
+    until: params.occurredUntil,
+    limit: params.limit,
+    offset: params.offset
+  };
+
   return React.createElement(
     ConsolePageShell,
     {
@@ -488,7 +522,7 @@ export default async function MemoryPage(
       }
     },
     React.createElement(MemoryView, {
-      activeTab: params.activeTab,
+      listScope,
       records: data.records.items,
       totalRecords,
       experiences,
@@ -504,15 +538,9 @@ export default async function MemoryPage(
         data.selectedExperience?.kind === "ok"
           ? data.selectedExperience.data.experience
           : null,
-      currentWorkspaceId,
       repositoryId: currentWorkspaceId,
       workspaces,
-      query: params.query,
-      kind: params.kind,
-      status: params.status,
       unapplied: params.unapplied,
-      occurredFrom: params.occurredFrom,
-      occurredUntil: params.occurredUntil,
       controlFailed: isControlFailure(rawParams.control),
       controlRefusal: readControlRefusal(rawParams.refusal)
     })

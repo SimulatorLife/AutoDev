@@ -18,6 +18,11 @@ import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
+import {
+  type MemoryListScope,
+  memoryPageHref,
+  type MemoryTab
+} from "./memory-list-url.ts";
 import { MemoryCohortsView } from "./MemoryCohortsView.ts";
 import { MemoryExperiencesView } from "./MemoryExperiencesView.ts";
 import {
@@ -25,10 +30,19 @@ import {
   MemoryRecordsView
 } from "./MemoryRecordsView.ts";
 
-export type MemoryTab = "records" | "experiences" | "cohorts";
-
 export interface MemoryViewProps {
-  readonly activeTab: MemoryTab;
+  /**
+   * The address of the list this page is showing, and the single source for
+   * every filter the page renders and every link it offers.
+   *
+   * This view used to take the tab, workspace, query, kind, status, and time
+   * window as props of their own, beside the list the same call site had just
+   * fetched with. Two descriptions of one list is one more thing to keep
+   * agreeing: a caller could pass a `kind` the read never applied and the select
+   * would have drawn it as the operator's choice. The scope replaced all of
+   * them, so there is now exactly one.
+   */
+  readonly listScope: MemoryListScope;
   readonly records: readonly MemoryRecord[];
   readonly totalRecords: number;
   readonly experiences: readonly ExperienceEnvelope[];
@@ -38,14 +52,9 @@ export interface MemoryViewProps {
   readonly selectedRecord?: MemoryRecord | null | undefined;
   readonly selectedHistory?: MemoryRecordHistory | null | undefined;
   readonly selectedExperience?: ExperienceEnvelope | null | undefined;
-  readonly currentWorkspaceId: string;
+  /** The cohort reads are scoped by repository as well as workspace. */
   readonly repositoryId: string;
   readonly workspaces: readonly WorkspaceEntry[];
-  readonly query?: string | undefined;
-  readonly kind?: string | undefined;
-  readonly status?: string | undefined;
-  readonly occurredFrom: string;
-  readonly occurredUntil: string;
   /** A mutation was redirected back with the shared could-not-confirm notice. */
   readonly controlFailed?: boolean | undefined;
   /**
@@ -66,7 +75,7 @@ export interface MemoryViewProps {
 }
 
 export function MemoryView({
-  activeTab,
+  listScope,
   records,
   totalRecords,
   experiences,
@@ -76,18 +85,13 @@ export function MemoryView({
   selectedRecord,
   selectedHistory,
   selectedExperience,
-  currentWorkspaceId,
   repositoryId,
   workspaces,
-  query,
-  kind,
-  status,
-  occurredFrom,
-  occurredUntil,
   controlFailed,
   controlRefusal,
   unapplied
 }: MemoryViewProps): React.JSX.Element {
+  const activeTab = listScope.tab;
   const activeRecordsCount = records.filter(
     (r) => r.status === "active"
   ).length;
@@ -99,18 +103,11 @@ export function MemoryView({
     { id: "cohorts", label: "Outcome Cohorts" }
   ];
 
-  const hrefForTab = (tabId: string): string => {
-    const params = new URLSearchParams({
-      tab: tabId,
-      workspaceId: currentWorkspaceId,
-      from: occurredFrom,
-      until: occurredUntil
-    });
-    if (query) params.set("query", query);
-    if (kind && kind !== "all") params.set("kind", kind);
-    if (status && status !== "all") params.set("status", status);
-    return "/memory?" + params.toString();
-  };
+  // Switching tab is a different list, so it returns to the first page rather
+  // than carrying the previous tab's position -- the same rule the filter
+  // controls follow, and for the same reason.
+  const hrefForTab = (tabId: string): string =>
+    memoryPageHref({ ...listScope, tab: tabId as MemoryTab }, 0);
 
   return React.createElement(
     PageBody,
@@ -138,13 +135,18 @@ export function MemoryView({
             {
               label: "Memory scope filters",
               action: "/memory",
+              // `offset` is deliberately absent. Changing the workspace scope
+              // selects a different collection, so it starts at that
+              // collection's first page; carrying the old position forward is
+              // how a scope change lands on an empty table.
               preserved: [
                 { name: "tab", value: activeTab },
-                { name: "query", value: query ?? "" },
-                { name: "kind", value: kind ?? "all" },
-                { name: "status", value: status ?? "all" },
-                { name: "from", value: occurredFrom },
-                { name: "until", value: occurredUntil }
+                { name: "query", value: listScope.query ?? "" },
+                { name: "kind", value: listScope.kind ?? "all" },
+                { name: "status", value: listScope.status ?? "all" },
+                { name: "from", value: listScope.from },
+                { name: "until", value: listScope.until },
+                { name: "limit", value: String(listScope.limit) }
               ],
               submitLabel: "Apply scope",
               submitTestId: "memory-workspace-apply",
@@ -153,7 +155,7 @@ export function MemoryView({
             React.createElement(SelectField, {
               name: "workspaceId",
               label: "Workspace:",
-              defaultValue: currentWorkspaceId,
+              defaultValue: listScope.workspaceId,
               testId: "memory-workspace",
               options: workspaces.map((ws) => ({
                 value: ws.id,
@@ -222,10 +224,7 @@ export function MemoryView({
           total: totalRecords,
           selectedRecord,
           history: selectedHistory,
-          currentWorkspaceId,
-          currentQuery: query,
-          currentKind: kind,
-          currentStatus: status
+          listScope
         })
       : activeTab === "experiences"
         ? totalExperiences === null
@@ -242,17 +241,16 @@ export function MemoryView({
               experiences,
               total: totalExperiences,
               selectedExperience,
-              currentWorkspaceId,
-              currentQuery: query
+              listScope
             })
         : activeTab === "cohorts"
           ? React.createElement(MemoryCohortsView, {
               sessionCohorts,
               useCohorts,
-              currentWorkspaceId,
+              currentWorkspaceId: listScope.workspaceId,
               repositoryId,
-              occurredFrom,
-              occurredUntil
+              occurredFrom: listScope.from,
+              occurredUntil: listScope.until
             })
           : null
   );
