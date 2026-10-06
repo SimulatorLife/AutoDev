@@ -171,6 +171,126 @@ export interface OtelPayload {
   resourceMetrics?: OtelResourceMetrics[];
 }
 
+/**
+ * The three fields each signal's ingestion walks, outermost first.
+ *
+ * `ingestOtelLogs` iterates `resourceLogs` -> `scopeLogs` -> `logRecords`, and
+ * the traces and metrics readers walk the same three levels under their own
+ * names. Those nine `for...of` loops are the whole reason a payload needs
+ * checking: each reads its field as `field ?? []`, which tolerates a missing
+ * field and nothing else. `resourceLogs: {}` throws `is not iterable`,
+ * `resourceLogs: "oops"` iterates per character, and `scopeLogs: [null]`
+ * throws one level in.
+ */
+const OTEL_SIGNAL_FIELDS = {
+  logs: { batch: "resourceLogs", scopes: "scopeLogs", records: "logRecords" },
+  traces: {
+    batch: "resourceSpans",
+    scopes: "scopeSpans",
+    records: "spans"
+  },
+  metrics: {
+    batch: "resourceMetrics",
+    scopes: "scopeMetrics",
+    records: "metrics"
+  }
+} as const;
+
+function isOtelRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * `holder[field]` as an array of records, or the reason it is not one.
+ *
+ * An absent or null field is an empty array, which OTLP/HTTP permits and which
+ * is exactly what the `?? []` at every one of those call sites assumed.
+ */
+function otelRecordArray(
+  holder: Record<string, unknown>,
+  field: string,
+  path: string
+): readonly Record<string, unknown>[] | string {
+  const nested = holder[field];
+  if (nested === undefined || nested === null) return [];
+  if (!Array.isArray(nested))
+    return `OTLP body field "${path}" must be an array.`;
+  for (const element of nested)
+    if (!isOtelRecord(element))
+      return `OTLP body field "${path}" must contain objects.`;
+  // Every element was just checked, so the cast states a proven fact rather
+  // than replacing a check.
+  return nested as readonly Record<string, unknown>[];
+}
+
+/**
+ * Why `value` is not an OTLP payload for `signal`, or `null` when it is one.
+ *
+ * `OtelPayload` is an optional-everything shape and every field it names is
+ * read as `field ?? []` downstream, so the compiler's guarantee was worthless:
+ * the HTTP route hands this function `JSON.parse` output, and a signature
+ * asserting `OtelPayload` checked nothing. A body that was perfectly valid JSON
+ * could therefore be reported as "must be valid JSON" -- sending an operator to
+ * debug bytes that were always well-formed -- while the same body was counted
+ * as both received and invalid, because the receiver counter moved before
+ * anything looked at it. A string where a batch array belongs was worse still:
+ * it ingested nothing, answered 200, and incremented the received count, so the
+ * receiver reported telemetry arriving that carried no telemetry at all.
+ *
+ * The check is deliberately bounded to the three iterated levels rather than the
+ * OTLP schema. Records are read with optional chaining and never indexed, so
+ * below that point a partial record is harmless; a full schema check would
+ * reject payloads the receiver reads perfectly well.
+ */
+function otelPayloadShapeError(
+  signal: OtelSignal,
+  value: unknown
+): string | null {
+  if (!isOtelRecord(value))
+    return `OTLP ${signal} body must be a JSON object.`;
+  const { batch: batchField, scopes: scopeField, records: recordField } =
+    OTEL_SIGNAL_FIELDS[signal];
+
+  const batches = otelRecordArray(value, batchField, batchField);
+  if (typeof batches === "string") return `OTLP ${signal} ${batches}`;
+  for (const batch of batches) {
+    const scopePath = `${batchField}[].${scopeField}`;
+    const scopes = otelRecordArray(batch, scopeField, scopePath);
+    if (typeof scopes === "string") return `OTLP ${signal} ${scopes}`;
+    for (const scope of scopes) {
+      const recordPath = `${scopePath}[]`;
+      const records = otelRecordArray(scope, recordField, recordPath);
+      if (typeof records === "string") return `OTLP ${signal} ${records}`;
+    }
+  }
+  return null;
+}
+
+export type OtelPayloadCheck =
+  | {
+      readonly ok: true;
+      /** Narrowed to both shapes, because it provably is both. */
+      readonly payload: OtelPayload & Record<string, unknown>;
+    }
+  | { readonly ok: false; readonly message: string };
+
+/**
+ * Validates an untrusted OTLP body once, for a caller that must both reject a
+ * bad shape and keep a good one typed.
+ *
+ * One call rather than a predicate plus a message accessor, so a caller cannot
+ * check the shape and then report a different rule's wording, and so the
+ * success path narrows without a cast.
+ */
+export function checkOtelPayload(
+  signal: OtelSignal,
+  value: unknown
+): OtelPayloadCheck {
+  const message = otelPayloadShapeError(signal, value);
+  if (message !== null) return { ok: false, message };
+  return { ok: true, payload: value as OtelPayload & Record<string, unknown> };
+}
+
 export function otelAttributeValue(
   value: OtelAttributeValueRaw | string | number | boolean | null | undefined
 ): unknown {

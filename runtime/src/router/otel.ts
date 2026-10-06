@@ -9,6 +9,7 @@ import {
   otelAttributes,
   type OtelAttributesInput,
   type OtelDataPoint,
+  checkOtelPayload,
   otelDurationMs,
   type OtelLogRecord,
   type OtelMetric,
@@ -4189,7 +4190,17 @@ export class OtelTracker {
     }
   }
 
-  ingestOtelSignal(signal: OtelSignal, payload: OtelPayload): void {
+  ingestOtelSignal(signal: OtelSignal, payload: unknown): void {
+    // The body is checked before the receiver is credited, not after. Counting
+    // first is what let a malformed payload be recorded as both received and
+    // invalid; `payload` is `unknown` rather than `OtelPayload` because the HTTP
+    // route hands it `JSON.parse` output, and a signature asserting a shape the
+    // compiler never checked is the reason the gap was invisible.
+    const checked = checkOtelPayload(signal, payload);
+    if (!checked.ok) {
+      this.recordInvalidOtelSignal();
+      return;
+    }
     if (this.telemetry.receiver[signal] !== undefined) {
       this.telemetry.receiver[signal] += 1;
     }
@@ -4203,9 +4214,9 @@ export class OtelTracker {
       countDelta: 1,
       context: null
     });
-    let ingestPayload = payload;
+    let ingestPayload: OtelPayload = checked.payload;
     if (isAutodevAttributesEnabled()) {
-      const enriched = autodevEnrichOtlpPayload(signal, payload);
+      const enriched = autodevEnrichOtlpPayload(signal, checked.payload);
       if (enriched) ingestPayload = enriched;
     }
     if (signal === "logs") this.ingestOtelLogs(ingestPayload);
@@ -6024,7 +6035,7 @@ export function ingestOtelMetrics(payload: OtelPayload): void {
 
 export function ingestOtelSignal(
   signal: OtelSignal,
-  payload: OtelPayload
+  payload: unknown
 ): void {
   defaultOtelTracker.ingestOtelSignal(signal, payload);
 }
