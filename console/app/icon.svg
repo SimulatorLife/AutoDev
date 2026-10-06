@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="AutoDev Console">
+  <!--
+    Favicon for the Console, drawn from the same tokens as the UI in
+    app/globals.css: --color-surface for the tile, --color-border-strong for
+    its edge, --color-accent for the mark.
+
+    The mark is a terminal prompt — a chevron and a cursor block — because that
+    is what this product is: a control surface for a terminal-driven agent. It
+    is drawn as strokes and a solid block rather than outlined paths so it
+    stays legible at the 16px a browser tab actually renders.
+  -->
+  <rect width="32" height="32" rx="7" fill="#0f172a" />
+  <rect x="0.75" y="0.75" width="30.5" height="30.5" rx="6.25" fill="none" stroke="#334155" stroke-width="1.5" />
+  <path
+    d="M9 11.5 L14 16 L9 20.5"
+    fill="none"
+    stroke="#22d3ee"
+    stroke-width="3"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <rect x="16.5" y="18.4" width="7" height="3" rx="1.5" fill="#22d3ee" />
+</svg>

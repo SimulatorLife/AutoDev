@@ -89,7 +89,7 @@ export function MemoryExperiencesView({
           ),
           React.createElement(
             "span",
-            { className: "text-[11px] text-fg-muted truncate max-w-[180px]" },
+            { className: "text-meta text-fg-muted truncate max-w-[180px]" },
             exp.runId
           )
         )
@@ -366,7 +366,7 @@ function ExperienceDetailPanel({
           : null,
         React.createElement(
           "div",
-          { className: "break-all text-[11px] font-mono text-fg-muted" },
+          { className: "break-all text-meta font-mono text-fg-muted" },
           experience.trajectory.uri
         )
       ),
@@ -409,7 +409,7 @@ function ExperienceDetailPanel({
                   {
                     key: code,
                     className:
-                      "px-2 py-0.5 rounded text-[10px] font-mono bg-surface-raised text-fg-secondary"
+                      "px-2 py-0.5 rounded text-micro font-mono bg-surface-raised text-fg-secondary"
                   },
                   code
                 )

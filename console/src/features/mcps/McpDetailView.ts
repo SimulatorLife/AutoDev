@@ -174,7 +174,7 @@ function ConfiguredToolAllowlist({
           React.createElement(
             "span",
             {
-              className: "text-[10px] uppercase tracking-wider text-fg-muted"
+              className: "text-micro uppercase tracking-wider text-fg-muted"
             },
             `source: ${tool.source}`
           )
@@ -186,8 +186,7 @@ function ConfiguredToolAllowlist({
             ? React.createElement(
                 "span",
                 {
-                  className:
-                    "text-[10px] uppercase tracking-wider text-fg-muted"
+                  className: "text-micro uppercase tracking-wider text-fg-muted"
                 },
                 "No configured role exposure"
               )
@@ -197,7 +196,7 @@ function ConfiguredToolAllowlist({
                   {
                     key: role,
                     className:
-                      "text-[10px] bg-surface-raised text-fg-secondary px-1.5 py-0.5 rounded border border-border-strong"
+                      "text-micro bg-surface-raised text-fg-secondary px-1.5 py-0.5 rounded border border-border-strong"
                   },
                   role
                 )

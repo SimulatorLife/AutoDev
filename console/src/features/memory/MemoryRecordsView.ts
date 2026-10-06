@@ -432,7 +432,7 @@ function RecordDetailPanel({
                     {
                       key: i,
                       className:
-                        "font-mono text-[11px] text-accent bg-accent/15 px-2 py-0.5 rounded border border-accent/40 truncate"
+                        "font-mono text-meta text-accent bg-accent/15 px-2 py-0.5 rounded border border-accent/40 truncate"
                     },
                     `${ev.kind}: ${ev.uri}`
                   )
@@ -546,7 +546,7 @@ function RecordDetailPanel({
                   "div",
                   {
                     className:
-                      "flex items-center gap-3 text-fg-muted font-mono text-[11px]"
+                      "flex items-center gap-3 text-fg-muted font-mono text-meta"
                   },
                   React.createElement("span", null, t.actor.id),
                   React.createElement(

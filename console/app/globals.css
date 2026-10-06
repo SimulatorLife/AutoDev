@@ -48,6 +48,22 @@
   --color-chart-3: #c084fc;
   --color-chart-4: #60a5fa;
   --color-chart-5: #38bdf8;
+
+  /*
+   * Micro type scale.
+   *
+   * The densest surfaces in the Console — the sidebar's group labels, MCP
+   * connection detail, and the Memory record and experience panels — need a
+   * label step smaller than Tailwind's `text-xs`. Those two sizes were being
+   * written as arbitrary `text-[10px]` / `text-[11px]` values at each call
+   * site, which is the same raw-value problem the color tokens above exist to
+   * solve: the step has a name and a reason instead of a typo at each use.
+   *
+   * These sit deliberately below `text-xs`. They are label sizes for dense
+   * surfaces, not body copy, and no paragraph text in the Console uses them.
+   */
+  --text-micro: 10px;
+  --text-meta: 11px;
 }
 
 html {
