@@ -564,7 +564,9 @@ test("a truncating chip keeps its full text reachable instead of only its ellips
   // no way to read what it had cut off.
   const name = "s".repeat(70);
 
-  const chips = renderToStaticMarkup(chipList({ items: [name], emptyLabel: "" }));
+  const chips = renderToStaticMarkup(
+    chipList({ items: [name], emptyLabel: "" })
+  );
   assert.match(chips, /truncate/, `chip must truncate a long identifier`);
   assert.ok(
     chips.includes(`title="${name}"`),
@@ -6682,15 +6684,20 @@ test("nothing truncates text it cannot give back", () => {
   // Scanned by brace-matching rather than by a shape regex: the props object
   // is arbitrary JavaScript, and a pattern that tries to describe it is either
   // ambiguous or rejected as unsafe.
-  const roots = ["app", "src"].map((root) => join(import.meta.dirname, "..", root));
+  const roots = ["app", "src"].map((root) =>
+    join(import.meta.dirname, "..", root)
+  );
   const offenders: string[] = [];
   for (const root of roots) {
     for (const relative of readdirSync(root, { recursive: true })) {
       const file = join(root, relative.toString());
       if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
       const source = readFileSync(file, "utf8");
-      for (let at = source.indexOf("React.createElement("); at !== -1; ) {
-        const propsStart = source.indexOf("{", at + "React.createElement(".length);
+      for (let at = source.indexOf("React.createElement("); at !== -1;) {
+        const propsStart = source.indexOf(
+          "{",
+          at + "React.createElement(".length
+        );
         const propsEnd = matchingBrace(source, propsStart);
         if (propsStart === -1 || propsEnd === -1) break;
         const props = source.slice(propsStart, propsEnd + 1);

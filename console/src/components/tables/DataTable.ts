@@ -161,10 +161,10 @@ function truncatingCellTitle(
   column: ColumnDef<never>,
   content: React.ReactNode
 ): string | undefined {
-  if ((column.align ?? "truncate") !== "truncate") return undefined;
-  if (typeof content !== "string") return undefined;
+  const truncates = (column.align ?? "truncate") === "truncate";
   // An empty cell needs no title; `title=""` is a tooltip with nothing in it.
-  return content.length === 0 ? undefined : content;
+  const text = typeof content === "string" && content.length > 0 ? content : "";
+  return truncates ? text || undefined : undefined;
 }
 
 /**
