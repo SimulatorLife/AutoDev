@@ -357,7 +357,7 @@ export function ToolDetailView({
         "section",
         { className: DETAIL_PANEL_CLASS },
         React.createElement(
-          "h2",
+          "h3",
           { className: SECTION_HEADING_CLASS },
           "Source authority"
         ),
@@ -380,7 +380,7 @@ export function ToolDetailView({
         "section",
         { className: DETAIL_PANEL_CLASS },
         React.createElement(
-          "h2",
+          "h3",
           { className: SECTION_HEADING_CLASS },
           "Role exposure"
         ),
@@ -391,7 +391,7 @@ export function ToolDetailView({
       "section",
       { className: DETAIL_PANEL_CLASS },
       React.createElement(
-        "h2",
+        "h3",
         { className: SECTION_HEADING_CLASS },
         "Description"
       ),
@@ -411,7 +411,7 @@ export function ToolDetailView({
       "section",
       { className: DETAIL_PANEL_CLASS },
       React.createElement(
-        "h2",
+        "h3",
         { className: SECTION_HEADING_CLASS },
         "Historical use"
       ),

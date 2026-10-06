@@ -114,6 +114,7 @@ import {
   ProviderDetailView,
   ProvidersView,
   resolveActiveTabId,
+  SECTION_HEADING_CLASS,
   SkillsView,
   StatCard,
   StatusBadge,
@@ -6897,6 +6898,42 @@ test("every detail view titles its resource with the one canonical entity title"
       /text-2xl font-bold text-fg[^"]*"[^>]*><\/(?!h2)/,
       `${name} must not hand-roll an entity title`
     );
+
+    // A title at the right level is only half the outline. `ToolDetailView`
+    // emitted its title as the canonical `h2` and its four section headings as
+    // `h2` as well, so they were siblings of the thing they belonged to -- the
+    // outline read flat there and nested on every sibling surface, where
+    // `/mcps`, `/providers` and `/prompts` all demote their sections to `h3`.
+    // Nothing caught it because "no heading skips" is the opposite condition:
+    // `h2` followed by `h2` skips nothing.
+    //
+    // Sections are identified by the shared class they render, not by the name
+    // of the constant supplying it -- markup carries the value, so matching
+    // "SECTION_HEADING" against the output finds nothing at all.
+    const sectionLevels = Array.from(
+      markup.matchAll(
+        new RegExp(
+          String.raw`<h([1-6])\b[^>]*class="${SECTION_HEADING_CLASS}"`,
+          "gu"
+        )
+      ),
+      (m) => Number(m[1])
+    );
+    assert.ok(
+      sectionLevels.length > 0,
+      `${name} renders no SECTION_HEADING_CLASS heading, so the level check ` +
+        `below proves nothing -- the shared class is what identifies a section`
+    );
+    for (const level of sectionLevels) {
+      assert.equal(
+        level,
+        3,
+        `${name} nests a section at h${level} (levels present: ` +
+          `${[...new Set(sectionLevels)].join(", ")}); the entity title is the ` +
+          `h2, so its sections must be h3 or they read as siblings of their ` +
+          `own title`
+      );
+    }
   }
 });
 
