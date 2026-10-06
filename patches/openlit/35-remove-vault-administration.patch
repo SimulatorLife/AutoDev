@@ -1,0 +1,984 @@
+diff --git a/src/client/src/__tests__/constants/route.test.ts b/src/client/src/__tests__/constants/route.test.ts
+index 9f8a3106..506eecf6 100644
+--- a/src/client/src/__tests__/constants/route.test.ts
++++ b/src/client/src/__tests__/constants/route.test.ts
+@@ -88,8 +88,10 @@ describe('RESTRICTED_DEMO_ACCOUNT_ROUTES', () => {
+     expect(RESTRICTED_DEMO_ACCOUNT_ROUTES.POST).toContain('/api/user/profile');
+   });
+ 
+-  it('DELETE restricts /api/vault and /api/prompt-hub', () => {
+-    expect(RESTRICTED_DEMO_ACCOUNT_ROUTES.DELETE).toContain('/api/vault');
++  it('DELETE restricts /api/prompt-hub', () => {
+     expect(RESTRICTED_DEMO_ACCOUNT_ROUTES.DELETE).toContain('/api/prompt-hub');
++    // The Vault administration routes are gone; only the SDK read endpoint
++    // remains, and it is read-only, so there is nothing to restrict.
++    expect(RESTRICTED_DEMO_ACCOUNT_ROUTES.DELETE).not.toContain('/api/vault');
+   });
+ });
+diff --git a/src/client/src/__tests__/lib/platform/vault/vault.test.ts b/src/client/src/__tests__/lib/platform/vault/vault.test.ts
+index 6a2f62da..3867e6bb 100644
+--- a/src/client/src/__tests__/lib/platform/vault/vault.test.ts
++++ b/src/client/src/__tests__/lib/platform/vault/vault.test.ts
+@@ -70,7 +70,7 @@ jest.mock('@/lib/prisma', () => ({
+   },
+ }));
+ 
+-import { getSecretByName, checkNameValidity, deleteSecret, getSecrets, getSecretById, upsertSecret, getSecretsFromDatabaseId } from '@/lib/platform/vault/index';
++import { getSecretByName, checkNameValidity, getSecrets, getSecretById, upsertSecret, getSecretsFromDatabaseId } from '@/lib/platform/vault/index';
+ import { dataCollector } from '@/lib/platform/common';
+ import { getCurrentUser } from '@/lib/session';
+ import { getAPIKeyInfo } from '@/lib/platform/api-keys';
+@@ -114,30 +114,6 @@ describe('checkNameValidity', () => {
+   });
+ });
+ 
+-describe('deleteSecret', () => {
+-  it('returns success message when delete succeeds', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-    const result = await deleteSecret('secret-id-1');
+-    expect(dataCollector).toHaveBeenCalledTimes(1);
+-	    const [{ query }] = (dataCollector as jest.Mock).mock.calls[0];
+-	    expect(query).toContain('DELETE FROM');
+-	    expect(query).toContain('secret-id-1');
+-	    expect(query).toContain("created_by = 'user@example.com'");
+-	    expect(result[0]).toBeUndefined(); // no error
+-	  });
+-
+-  it('throws when user is not authenticated', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue(null);
+-    await expect(deleteSecret('secret-id-1')).rejects.toThrow('Unauthorized');
+-  });
+-
+-  it('returns error message when delete fails', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: 'DB error' });
+-    const result = await deleteSecret('secret-id-1');
+-    expect(result[0]).toBeDefined(); // error message
+-  });
+-});
+-
+ describe('getSecrets', () => {
+   it('calls dataCollector with SELECT query', async () => {
+     await getSecrets({});
+diff --git a/src/client/src/__tests__/middleware/check-demo-account.test.ts b/src/client/src/__tests__/middleware/check-demo-account.test.ts
+index 15d94c19..0c56ffb9 100644
+--- a/src/client/src/__tests__/middleware/check-demo-account.test.ts
++++ b/src/client/src/__tests__/middleware/check-demo-account.test.ts
+@@ -74,7 +74,7 @@ describe('checkDemoAccount', () => {
+   it('is case-insensitive for email comparison', async () => {
+     process.env.DEMO_ACCOUNT_EMAIL = 'DEMO@EXAMPLE.COM';
+     (getToken as jest.Mock).mockResolvedValue({ email: 'demo@example.com' });
+-    const req = makeRequest('DELETE', '/api/vault');
++    const req = makeRequest('DELETE', '/api/prompt-hub');
+     const result = await middleware(req as any, makeFetchEvent());
+     expect(NextResponse.json).toHaveBeenCalledWith(
+       expect.any(String),
+diff --git a/src/client/src/__tests__/utils/breadcrumbs.test.ts b/src/client/src/__tests__/utils/breadcrumbs.test.ts
+index 8da85837..2268b68a 100644
+--- a/src/client/src/__tests__/utils/breadcrumbs.test.ts
++++ b/src/client/src/__tests__/utils/breadcrumbs.test.ts
+@@ -18,11 +18,6 @@ describe('extractRouteParams', () => {
+     expect(result.id).toBe('my-prompt-id');
+   });
+ 
+-  it('extracts id from vault pathname', () => {
+-    const result = extractRouteParams('/vault/my-secret', /^\/vault\/[^/]+$/);
+-    expect(result.id).toBe('my-secret');
+-  });
+-
+   it('extracts uuid when regex source contains escaped brackets (\\[0-9a-f\\])', () => {
+     // Use a regex whose .source includes \[0-9a-f\] to trigger the UUID extraction branch
+     const regex = new RegExp('.+\\[0-9a-f\\].+');
+@@ -84,18 +79,6 @@ describe('generatePageHeader', () => {
+     expect(header.breadcrumbs).toEqual([]);
+   });
+ 
+-  it('generates correct header for /vault', () => {
+-    const header = generatePageHeader('/vault');
+-    expect(header.title).toBe('Vault');
+-    expect(header.breadcrumbs).toEqual([]);
+-  });
+-
+-  it('generates empty title for /vault/:id until data loads', () => {
+-    const header = generatePageHeader('/vault/my-secret');
+-    expect(header.title).toBe('');
+-    expect(header.breadcrumbs).toEqual([]);
+-  });
+-
+   it('generates correct header for /settings/profile', () => {
+     const header = generatePageHeader('/settings/profile');
+     expect(header.title).toBe('User Profile');
+diff --git a/src/client/src/app/(playground)/vault/page.tsx b/src/client/src/app/(playground)/vault/page.tsx
+deleted file mode 100644
+index 8223948b..00000000
+--- a/src/client/src/app/(playground)/vault/page.tsx
++++ /dev/null
+@@ -1,142 +0,0 @@
+-"use client";
+-import { usePostHog } from "posthog-js/react";
+-import { CLIENT_EVENTS } from "@/constants/events";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import { useCallback, useEffect } from "react";
+-import { toast } from "sonner";
+-import { format } from "date-fns";
+-import { useRootStore } from "@/store";
+-import getMessage from "@/constants/messages";
+-import { getPingStatus } from "@/selectors/database-config";
+-import { EditIcon, TrashIcon } from "lucide-react";
+-import ConfirmationModal from "@/components/common/confirmation-modal";
+-import VaultHeader from "@/components/(playground)/vault/header";
+-import SecretForm from "@/components/(playground)/vault/form";
+-import { Secret } from "@/types/vault";
+-import { Columns } from "@/components/data-table/columns";
+-import DataTable from "@/components/data-table/table";
+-
+-const columns: Columns<string, Secret> = {
+-	key: {
+-		header: () => "Key",
+-		cell: ({ row }) => row.key,
+-	},
+-	createdBy: {
+-		header: () => "Created By",
+-		cell: ({ row }) => row.created_by,
+-	},
+-	updatedAt: {
+-		header: () => "Last Updated On",
+-		cell: ({ row }) => {
+-			return row.updated_at ? format(row.updated_at, "MMM do, y") : "-";
+-		},
+-	},
+-	actions: {
+-		header: () => "Actions",
+-		cell: ({ row, extraFunctions }) => {
+-			return (
+-				<div className="flex justify-start items-center gap-4">
+-					<SecretForm
+-						secretData={row}
+-						successCallback={extraFunctions.successCallback}
+-					>
+-						<EditIcon className="w-4 cursor-pointer" />
+-					</SecretForm>
+-					<ConfirmationModal
+-						handleYes={extraFunctions?.handleDelete}
+-						title="Are you sure you want to delete this secret?"
+-						subtitle="Deleting secrets might result in breaking application if they are getting used. Please confirm before deleting it."
+-						params={{
+-							id: row.id,
+-						}}
+-					>
+-						<TrashIcon className="w-4 cursor-pointer" />
+-					</ConfirmationModal>
+-				</div>
+-			);
+-		},
+-	},
+-}
+-
+-export default function Vault() {
+-	const posthog = usePostHog();
+-	const { data, fireRequest, isFetched, isLoading } = useFetchWrapper<Secret[]>();
+-	const { fireRequest: fireDeleteRequest, isLoading: isDeleting } =
+-		useFetchWrapper();
+-	const pingStatus = useRootStore(getPingStatus);
+-	const fetchData = useCallback(async () => {
+-		fireRequest({
+-			requestType: "POST",
+-			url: `/api/vault/get`,
+-			body: JSON.stringify(""),
+-			failureCb: (err?: string) => {
+-				toast.error(err || `Cannot connect to server!`, {
+-					id: "vault",
+-				});
+-			},
+-		});
+-	}, []);
+-
+-	const deleteSecret = useCallback(
+-		async ({ id }: { id: string }) => {
+-			fireDeleteRequest({
+-				requestType: "DELETE",
+-				url: `/api/vault/${id}`,
+-				successCb: (data: any) => {
+-					toast.success(data, {
+-						id: "vault",
+-					});
+-					fetchData();
+-				},
+-				failureCb: (err?: string) => {
+-					toast.error(err || `Cannot connect to server!`, {
+-						id: "vault",
+-					});
+-				},
+-			});
+-		},
+-		[fetchData]
+-	);
+-
+-	useEffect(() => {
+-		posthog?.capture(CLIENT_EVENTS.VAULT_PAGE_VISITED);
+-	}, []);
+-
+-	useEffect(() => {
+-		if (pingStatus !== "pending") {
+-			fetchData();
+-		}
+-	}, [pingStatus]);
+-
+-	if (!data?.length && !isLoading && isFetched) {
+-		return (
+-			<div className="flex flex-col items-center mx-auto p-8 overflow-auto">
+-				<p className="text-sm text-stone-500">{getMessage().NO_DATA_FOUND}</p>
+-			</div>
+-		);
+-	}
+-
+-	return (
+-		<div className="flex flex-col w-full h-full">
+-			<VaultHeader successCallback={fetchData} />
+-			<div className="flex flex-col w-full h-full p-4 overflow-hidden">
+-				<DataTable
+-					columns={columns}
+-					data={data || []}
+-					isFetched={isFetched || pingStatus === "failure"}
+-					isLoading={isLoading || isDeleting}
+-					visibilityColumns={{
+-						key: true,
+-						createdBy: true,
+-						updatedAt: true,
+-						actions: true
+-					}}
+-					extraFunctions={{
+-						handleDelete: deleteSecret,
+-						successCallback: fetchData,
+-					}}
+-				/>
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/app/api/vault/[id]/route.ts b/src/client/src/app/api/vault/[id]/route.ts
+deleted file mode 100644
+index ee534919..00000000
+--- a/src/client/src/app/api/vault/[id]/route.ts
++++ /dev/null
+@@ -1,17 +0,0 @@
+-import { withAudit } from "@/lib/audit/route";
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+-import { deleteSecret } from "@/lib/platform/vault";
+-
+-async function DELETEHandler(_: Request, context: any) {
+-	const { id } = context.params;
+-	const [err, res] = await deleteSecret(id);
+-	if (err) {
+-		return Response.json(err, {
+-			status: 400,
+-		});
+-	}
+-
+-	return Response.json(res);
+-}
+-
+-export const DELETE = withAudit(withCurrentOrganisationPermission("vault:delete", DELETEHandler));
+diff --git a/src/client/src/app/api/vault/get/route.ts b/src/client/src/app/api/vault/get/route.ts
+deleted file mode 100644
+index bd34827a..00000000
+--- a/src/client/src/app/api/vault/get/route.ts
++++ /dev/null
+@@ -1,26 +0,0 @@
+-import { SecretGetFilters } from "@/types/vault";
+-import { getSecrets } from "@/lib/platform/vault";
+-import { errorResponse } from "@/helpers/server/response";
+-import { resolveDbConfigId } from "@/helpers/server/auth";
+-
+-export async function POST(request: Request) {
+-	const [authErr, databaseConfigId] = await resolveDbConfigId(request);
+-	if (authErr) {
+-		return Response.json({ err: authErr }, { status: 401 });
+-	}
+-
+-	const formData = await request.json();
+-
+-	const filters: SecretGetFilters = {
+-		key: formData.key,
+-		tags: formData.tags,
+-		databaseConfigId,
+-	};
+-
+-	const { err, data }: any = await getSecrets(filters);
+-	if (err) {
+-		return errorResponse(err);
+-	}
+-
+-	return Response.json(data);
+-}
+diff --git a/src/client/src/app/api/vault/route.ts b/src/client/src/app/api/vault/route.ts
+deleted file mode 100644
+index df4fad26..00000000
+--- a/src/client/src/app/api/vault/route.ts
++++ /dev/null
+@@ -1,49 +0,0 @@
+-import { withAudit } from "@/lib/audit/route";
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+-import { SecretInput } from "@/types/vault";
+-import { upsertSecret } from "@/lib/platform/vault";
+-import asaw from "@/utils/asaw";
+-
+-async function POSTHandler(request: Request) {
+-	const formData = await request.json();
+-
+-	const promptInput: Partial<SecretInput> = {
+-		key: formData.key as string,
+-		value: formData.value as string,
+-		tags: formData.tags as string[],
+-	};
+-
+-	const [err, res]: any = await asaw(upsertSecret(promptInput));
+-
+-	if (err) {
+-		return Response.json(err, {
+-			status: 400,
+-		});
+-	}
+-
+-	return Response.json(res);
+-}
+-
+-async function PUTHandler(request: Request) {
+-	const formData = await request.json();
+-
+-	const secretInput: Partial<SecretInput> = {
+-		id: formData.id,
+-		key: formData.key as string,
+-		value: formData.value as string,
+-		tags: formData.tags as string[],
+-	};
+-
+-	const [err, res]: any = await asaw(upsertSecret(secretInput));
+-
+-	if (err) {
+-		return Response.json(err, {
+-			status: 400,
+-		});
+-	}
+-
+-	return Response.json(res);
+-}
+-
+-export const POST = withAudit(withCurrentOrganisationPermission("vault:write", POSTHandler));
+-export const PUT = withAudit(withCurrentOrganisationPermission("vault:write", PUTHandler));
+diff --git a/src/client/src/components/(playground)/evaluations/evaluation-configuration.tsx b/src/client/src/components/(playground)/evaluations/evaluation-configuration.tsx
+index ee954c16..8d4c22d2 100644
+--- a/src/client/src/components/(playground)/evaluations/evaluation-configuration.tsx
++++ b/src/client/src/components/(playground)/evaluations/evaluation-configuration.tsx
+@@ -1,6 +1,5 @@
+ "use client";
+ 
+-import SecretForm from "@/components/(playground)/vault/form";
+ import { Button } from "@/components/ui/button";
+ import { EVALUATION_ENGINES } from "@/constants/evaluation-engines";
+ import { CLIENT_EVENTS } from "@/constants/events";
+@@ -26,23 +25,6 @@ import { Zap, Settings2, Clock, Play, Info, SettingsIcon } from "lucide-react";
+ import { ProviderMetadata } from "@/types/providers";
+ import { Badge } from "@/components/ui/badge";
+ import { evalSampleRateToPercent } from "@/constants/evaluation-sampling";
+-const EvaluationVaultCreate = ({
+-	successCallback,
+-}: {
+-	successCallback: () => void;
+-}) => (
+-	<div className="flex flex-wrap items-center gap-1 w-full text-stone-600 dark:text-stone-400 text-sm mt-1">
+-		{getMessage().EVALUATION_VAULT_KEY_NOT_FOUND}
+-		<SecretForm successCallback={successCallback}>
+-			<Button
+-				variant="ghost"
+-				className="py-0 h-auto px-0 text-xs text-primary hover:bg-transparent"
+-			>
+-				{getMessage().EVALUATION_CREATE_NEW}
+-			</Button>
+-		</SecretForm>
+-	</div>
+-);
+ 
+ const EVALUATION_TOAST_ID = "evaluation-config";
+ 
+@@ -56,18 +38,16 @@ export default function EvaluationConfiguration() {
+ 	const [sampleRatePercent, setSampleRatePercent] = useState(
+ 		evalSampleRateToPercent(undefined)
+ 	);
+-	const [vaultId, setVaultId] = useState("");
+-	const [vaultKeys, setVaultKeys] = useState<{ label: string; value: string }[]>(
+-		[]
+-	);
+ 
+ 	const {
+ 		fireRequest: getConfig,
+ 		data: config,
+ 		isLoading: isLoadingConfig,
+ 	} = useFetchWrapper<EvaluationConfig>();
++	// Read-only: the Vault administration surface is gone, so a judge credential
++	// can no longer be chosen here. An existing reference still round-trips on save.
++	const vaultId = config?.vaultId || "";
+ 	const { fireRequest: saveConfig, isLoading: isSaving } = useFetchWrapper();
+-	const { fireRequest: getVaultKeys } = useFetchWrapper();
+ 	const { data: providers, fireRequest: fetchProviders } =
+ 		useFetchWrapper<ProviderMetadata[]>();
+ 	const posthog = usePostHog();
+@@ -78,17 +58,6 @@ export default function EvaluationConfiguration() {
+ 			url: "/api/evaluation/config",
+ 			responseDataKey: "data",
+ 		});
+-		getVaultKeys({
+-			requestType: "POST",
+-			url: "/api/vault/get",
+-			responseDataKey: "data",
+-			body: JSON.stringify({}),
+-			successCb: (res: any) => {
+-				setVaultKeys(
+-					res?.length ? res.map((k: any) => ({ label: k.key, value: k.id })) : []
+-				);
+-			},
+-		});
+ 		fetchProviders({
+ 			requestType: "GET",
+ 			url: "/api/providers/providers",
+@@ -101,7 +70,6 @@ export default function EvaluationConfiguration() {
+ 			setModel(config.model || "");
+ 			setAutoEvaluation(config.auto || false);
+ 			setRecurringTime(config.recurringTime || "");
+-			setVaultId(config.vaultId || "");
+ 			const meta = JSON.parse(config.meta || "{}");
+ 			setSampleRatePercent(evalSampleRateToPercent(meta.evalSampleRate));
+ 		}
+@@ -117,7 +85,7 @@ export default function EvaluationConfiguration() {
+ 	);
+ 
+ 	const handleSave = () => {
+-		if (!provider || !model || !vaultId) {
++		if (!provider || !model) {
+ 			toast.error(m.EVALUATION_CONFIG_INVALID, {
+ 				id: EVALUATION_TOAST_ID,
+ 			});
+@@ -304,38 +272,20 @@ export default function EvaluationConfiguration() {
+ 
+ 							<div className="grid gap-3">
+ 								<Label>{m.EVALUATION_API_KEY_VAULT}</Label>
+-								<Select value={vaultId} onValueChange={setVaultId}>
+-									<SelectTrigger>
+-										<SelectValue placeholder={m.EVALUATION_SELECT_VAULT_KEY} />
+-									</SelectTrigger>
+-									<SelectContent>
+-										{vaultKeys.map((o) => (
+-											<SelectItem key={o.value} value={o.value}>
+-												{o.label}
+-											</SelectItem>
+-										))}
+-									</SelectContent>
+-								</Select>
+-								<EvaluationVaultCreate
+-									successCallback={() =>
+-										getVaultKeys({
+-											requestType: "POST",
+-											url: "/api/vault/get",
+-											responseDataKey: "data",
+-											body: JSON.stringify({}),
+-											successCb: (res: any) => {
+-												setVaultKeys(
+-													res?.length
+-														? res.map((k: any) => ({
+-																label: k.key,
+-																value: k.id,
+-															}))
+-														: []
+-												);
+-											},
+-										})
+-									}
+-								/>
++								{/* The Vault administration surface is gone: a judge
++								    credential can no longer be listed, created or
++								    changed from this screen. An already-configured
++								    credential still round-trips on save; say so
++								    plainly rather than showing an empty picker. */}
++								{vaultId ? (
++									<p className="text-xs text-stone-500 dark:text-stone-400">
++										{m.EVALUATION_VAULT_KEY_CONFIGURED}
++									</p>
++								) : (
++									<p className="text-xs text-stone-500 dark:text-stone-400">
++										{m.EVALUATION_VAULT_KEY_NOT_CONFIGURABLE}
++									</p>
++								)}
+ 							</div>
+ 						</CardContent>
+ 					</Card>
+diff --git a/src/client/src/components/(playground)/vault/form.tsx b/src/client/src/components/(playground)/vault/form.tsx
+deleted file mode 100644
+index 28c98909..00000000
+--- a/src/client/src/components/(playground)/vault/form.tsx
++++ /dev/null
+@@ -1,157 +0,0 @@
+-import FormBuilder from "@/components/common/form-builder";
+-import { FieldProps, FormBuilderEvent } from "@/types/form";
+-import {
+-	Dialog,
+-	DialogContent,
+-	DialogHeader,
+-	DialogTitle,
+-	DialogTrigger,
+-} from "@/components/ui/dialog";
+-import { CLIENT_EVENTS } from "@/constants/events";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import { jsonParse } from "@/utils/json";
+-import { isEmpty } from "lodash";
+-import { usePostHog } from "posthog-js/react";
+-import { KeyboardEvent, useCallback, useState } from "react";
+-import { toast } from "sonner";
+-
+-export default function SecretForm({
+-	secretData,
+-	children,
+-	successCallback,
+-}: {
+-	secretData?: any;
+-	children: JSX.Element;
+-	successCallback?: () => void;
+-}) {
+-	const posthog = usePostHog();
+-	const [isOpen, setIsOpen] = useState(false);
+-	const { fireRequest, isLoading } = useFetchWrapper();
+-	const upsertSecret: FormBuilderEvent = useCallback((event, formdata) => {
+-		event.preventDefault();
+-		toast.loading("Creating secret...", {
+-			id: "vault",
+-		});
+-
+-		const payload: any = formdata;
+-		if (isEmpty(payload.value)) {
+-			delete payload.value;
+-		}
+-		payload.id = secretData?.id;
+-
+-		fireRequest({
+-			body: JSON.stringify(payload),
+-			requestType: payload.id ? "PUT" : "POST",
+-			url: "/api/vault",
+-			successCb: () => {
+-				toast.success(
+-					`${payload.id ? "Updated" : "Created"} secret successfully!`,
+-					{
+-						id: "vault",
+-					}
+-				);
+-				setIsOpen(false);
+-				posthog?.capture(
+-					payload.id
+-						? CLIENT_EVENTS.VAULT_SECRET_UPDATE_SUCCESS
+-						: CLIENT_EVENTS.VAULT_SECRET_ADD_SUCCESS
+-				);
+-				if (typeof successCallback === "function") {
+-					successCallback();
+-				}
+-			},
+-			failureCb: (err?: string) => {
+-				toast.error(
+-					err || `${payload.id ? "Updation" : "Creation"} of secret failed!`,
+-					{
+-						id: "vault",
+-					}
+-				);
+-				posthog?.capture(
+-					payload.id
+-						? CLIENT_EVENTS.VAULT_SECRET_UPDATE_FAILURE
+-						: CLIENT_EVENTS.VAULT_SECRET_ADD_FAILURE
+-				);
+-			},
+-		});
+-	}, []);
+-
+-	const defaultTags = secretData?.tags ? jsonParse(secretData?.tags) : [];
+-	const formFields: FieldProps[] = [
+-		{
+-			label: "Key",
+-			description: `Only capital alphabets, digits and _ are allowed. ${
+-				secretData?.id ? "Cannot update the key" : ""
+-			}`,
+-			inputKey: `${secretData?.id || "new"}-key`,
+-			fieldType: "INPUT",
+-			fieldTypeProps: {
+-				type: "text",
+-				name: "key",
+-				placeholder: "YOUR_SECRET_KEY",
+-				defaultValue: secretData?.key || "",
+-				readOnly: !!secretData?.key,
+-				disabled: !!secretData?.key,
+-				onKeyUp: (event: KeyboardEvent) => {
+-					const target = event.target as HTMLInputElement;
+-					let input = target.value;
+-
+-					// Replace spaces with underscores
+-					input = input.toUpperCase().replace(/ /g, "_");
+-
+-					// Allow only uppercase alphabet letters and underscores
+-					input = input.replace(/[^A-Z0-9_]/g, "");
+-
+-					// Update the input field value
+-					target.value = input;
+-				},
+-			},
+-		},
+-		{
+-			label: "Value",
+-			description: "Add your secret values",
+-			inputKey: `${secretData?.id || "new"}-value`,
+-			fieldType: "INPUT",
+-			fieldTypeProps: {
+-				type: "password",
+-				name: "value",
+-				placeholder: "*****",
+-				defaultValue: secretData?.value,
+-			},
+-		},
+-		{
+-			label: "Tags",
+-			inputKey: `${secretData?.versionId || "new"}-tags`,
+-			fieldType: "TAGSINPUT",
+-			fieldTypeProps: {
+-				name: "tags",
+-				placeholder: "Add tags",
+-				defaultValue: defaultTags,
+-			},
+-		},
+-	];
+-
+-	return (
+-		<Dialog onOpenChange={setIsOpen} open={isOpen}>
+-			<DialogTrigger asChild>{children}</DialogTrigger>
+-			<DialogContent className="max-w-xl">
+-				<DialogHeader>
+-					<DialogTitle className="dark:text-stone-200 text-stone-800">
+-						{secretData?.id ? "Update a secret" : "Create a new secret"}
+-					</DialogTitle>
+-				</DialogHeader>
+-				<div className="flex items-center overflow-y-auto">
+-					<FormBuilder
+-						alignment="vertical"
+-						fields={formFields}
+-						isLoading={isLoading}
+-						onSubmit={upsertSecret}
+-						submitButtonText={`${
+-							secretData?.id ? "Update secret" : "Create secret"
+-						}`}
+-					/>
+-				</div>
+-			</DialogContent>
+-		</Dialog>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/vault/header.tsx b/src/client/src/components/(playground)/vault/header.tsx
+deleted file mode 100644
+index 684e7799..00000000
+--- a/src/client/src/components/(playground)/vault/header.tsx
++++ /dev/null
+@@ -1,35 +0,0 @@
+-import { Button } from "@/components/ui/button";
+-import SecretForm from "./form";
+-import { useRootStore } from "@/store";
+-import { getPingStatus } from "@/selectors/database-config";
+-import FeaturePageHeader from "@/components/(playground)/feature-page-header";
+-import getMessage from "@/constants/messages";
+-import { BookKey } from "lucide-react";
+-
+-export default function VaultHeader({
+-	className = "flex w-full items-center justify-end gap-4",
+-	successCallback,
+-}: {
+-	className?: string;
+-	successCallback?: () => void;
+-}) {
+-	const pingStatus = useRootStore(getPingStatus);
+-	const messages = getMessage();
+-
+-	const actions = (
+-		<div className={className}>
+-						{pingStatus === "success" && (
+-				<SecretForm successCallback={successCallback}>
+-					<Button
+-						variant="secondary"
+-						className="bg-primary hover:bg-primary dark:bg-primary dark:hover:bg-primary text-stone-100 dark:text-stone-100 px-8 h-8"
+-					>
+-						Create new
+-					</Button>
+-				</SecretForm>
+-			)}
+-		</div>
+-	);
+-
+-	return <FeaturePageHeader eyebrow={getMessage().SIDEBAR_DEVELOP} title={messages.FEATURE_VAULT} icon={<BookKey className="h-4 w-4" />} tone="border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300" actions={actions} />;
+-}
+diff --git a/src/client/src/constants/api-reference.ts b/src/client/src/constants/api-reference.ts
+index 87ff8285..390019e1 100644
+--- a/src/client/src/constants/api-reference.ts
++++ b/src/client/src/constants/api-reference.ts
+@@ -299,31 +299,6 @@ ${bearerAuthHeaders(apiKey)} \\
+ 		responseBody: `[]`,
+ 		curlExample: (apiKey) => `curl -X POST http://localhost:3000/api/prompt/get \\
+ ${bearerAuthHeaders(apiKey)}`,
+-	},
+-	{
+-		id: "upsert-secret",
+-		method: "POST",
+-		path: "/api/vault",
+-		summary: "Upsert Vault secret",
+-		description: "Add or update secrets inside the Vault store.",
+-		requestBody: `{
+-  "key": "OPENAI_API_KEY",
+-  "value": "sk-proj-...",
+-  "tags": ["production"]
+-}`,
+-		responseBody: `{
+-  "id": "secret-id-123",
+-  "key": "OPENAI_API_KEY",
+-  "tags": ["production"]
+-}`,
+-		curlExample: (apiKey) => `curl -X POST http://localhost:3000/api/vault \\
+-${bearerAuthHeaders(apiKey)} \\
+-  -H "Content-Type: application/json" \\
+-  -d '{
+-    "key": "OPENAI_API_KEY",
+-    "value": "sk-proj-...",
+-    "tags": ["production"]
+-  }'`,
+ 	},
+ 	{
+ 		id: "query-traces",
+diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
+index 3538b083..0a83125f 100644
+--- a/src/client/src/constants/messages/en.ts
++++ b/src/client/src/constants/messages/en.ts
+@@ -149,9 +149,11 @@ export const EVALUATION_CONTEXT_APPLIED = "Applied from context entities";
+ export const EVALUATION_NO_RESULTS = "No evaluations";
+ 
+ // Evaluation Settings page
+-export const EVALUATION_VAULT_KEY_NOT_FOUND = "Unable to find the vault key.";
++export const EVALUATION_VAULT_KEY_CONFIGURED =
++	"A judge credential is configured. It is not editable here — AutoDev provider configuration owns credentials.";
+ 
+-export const EVALUATION_CREATE_NEW = "Create new";
++export const EVALUATION_VAULT_KEY_NOT_CONFIGURABLE =
++	"No judge credential configured, and none can be set from this screen. AutoDev provider configuration owns credentials.";
+ 
+ export const EVALUATION_ENGINE_TITLE = "Evaluations";
+ 
+@@ -173,9 +175,7 @@ export const EVALUATION_MODEL_CUSTOM_HINT =
+ 
+ export const EVALUATION_SELECT_PROVIDER_FIRST = "Select provider first";
+ 
+-export const EVALUATION_API_KEY_VAULT = "API Key (Vault)";
+-
+-export const EVALUATION_SELECT_VAULT_KEY = "Select vault key";
++export const EVALUATION_API_KEY_VAULT = "Judge credential";
+ 
+ export const EVALUATION_AUTO_TITLE = "Auto Evaluation";
+ 
+@@ -986,8 +986,6 @@ export const RECALCULATE_COST_REQUEST_FAILED = "Failed to recalculate cost";
+ 
+ export const FEATURE_PROMPTS = "Prompt Hub";
+ 
+-export const FEATURE_VAULT = "Vault";
+-
+ export const FEATURE_MEMORY = "Memory";
+ 
+ export const FEATURE_AGENTS = "Agents";
+diff --git a/src/client/src/constants/route.ts b/src/client/src/constants/route.ts
+index 75e9013e..038b955c 100644
+--- a/src/client/src/constants/route.ts
++++ b/src/client/src/constants/route.ts
+@@ -24,7 +24,6 @@ export const ALLOWED_OPENLIT_ROUTE_PREFIXES_WITH_TOKEN = [
+ 	"/api/telemetry/",
+ 	"/api/evaluation/",
+ 	"/api/prompt/",
+-	"/api/vault/",
+ 	"/api/metrics/",
+ 	"/api/api-key/",
+ ];
+@@ -65,6 +64,6 @@ export const ONBOARDING_WHITELIST_API_ROUTES = {
+ // Route format is methodtype: routepathregex[]
+ export const RESTRICTED_DEMO_ACCOUNT_ROUTES: Record<string, string[]> = {
+ 	POST: ["/api/db-config", "/api/user/profile"],
+-	PUT: ["/api/db-config", "/api/vault"],
+-	DELETE: ["/api/db-config", "/api/api-key", "/api/vault", "/api/prompt-hub"],
++	PUT: ["/api/db-config"],
++	DELETE: ["/api/db-config", "/api/api-key", "/api/prompt-hub"],
+ };
+diff --git a/src/client/src/constants/sidebar.tsx b/src/client/src/constants/sidebar.tsx
+index f1cb63e7..4f9eb6e9 100644
+--- a/src/client/src/constants/sidebar.tsx
++++ b/src/client/src/constants/sidebar.tsx
+@@ -4,7 +4,6 @@ import { SidebarItemProps } from "@/types/sidebar";
+ import {
+ 	Activity,
+ 	Cable,
+-	BookKey,
+ 	BookOpen,
+ 	Bot,
+ 	Boxes,
+@@ -77,17 +76,11 @@ export const SIDEBAR_ITEMS: SidebarItemProps[] = [
+ 						type: "action",
+ 					},
+ 					{
+-						icon: <BookKey className={ICON_CLASSES} />,
+-						text: "Vault",
+-						link: "/vault",
+-						type: "action",
+-					},
+-					{
+-						icon: <BookOpen className={ICON_CLASSES} />,
+-						text: "Contexts",
+-						link: "/context",
+-						type: "action",
+-					},
++					icon: <BookOpen className={ICON_CLASSES} />,
++					text: "Contexts",
++					link: "/context",
++					type: "action",
++				},
+ 					{
+ 						icon: <BrainCircuit className={ICON_CLASSES} />,
+ 						text: m.FEATURE_MEMORY,
+diff --git a/src/client/src/lib/platform/vault/index.ts b/src/client/src/lib/platform/vault/index.ts
+index df157571..a1d730db 100644
+--- a/src/client/src/lib/platform/vault/index.ts
++++ b/src/client/src/lib/platform/vault/index.ts
+@@ -18,6 +18,28 @@ import { emitManagementAlertSignalSafe } from "@/lib/platform/alerts/signals";
+ import prisma from "@/lib/prisma";
+ import { invalidateSourceSecretCache } from "@/lib/platform/connectors/datasource/http/secret";
+ 
++/**
++ * The Vault is no longer an administrator-facing credential store.
++ *
++ * The administration product — the `/vault` page and its list/upsert/delete
++ * API — is gone: AutoDev's provider and runtime configuration owns credential
++ * authority, and a page that could mint arbitrary credentials was a second
++ * one. What survives is narrower:
++ *
++ * - `getSecretsFromDatabaseId` backs `GET /api/vault/get-secrets`, which both
++ *   bundled OpenLIT SDKs call to resolve a secret by key.
++ * - `getSecretById` resolves the datasource HTTP secret and the evaluation
++ *   configuration's judge credential, both of which reference a vault id.
++ * - `upsertSecret` has no API route of its own any more. Its only caller is
++ *   telemetry-source provisioning, which stores the credentials for a source
++ *   it is creating; it cannot be used to name an arbitrary secret.
++ *
++ * Known remaining second-authority path: `POST /api/telemetry-source` still
++ * accepts inline `credentials` and persists them here. Making datasource
++ * credentials come from AutoDev runtime configuration instead is a separate
++ * change, because provisioning and source deletion both depend on this write.
++ */
++
+ function escapeClickHouseString(value: string) {
+ 	return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+ }
+@@ -130,7 +152,7 @@ export async function upsertSecret(secretInputParams: Partial<SecretInput>) {
+ 		];
+ 		const updateQuery = `
+ 	      ALTER TABLE ${OPENLIT_VAULT_TABLE_NAME}
+-	      UPDATE 
++	      UPDATE
+ 	        ${updateValues.filter((e) => e).join(" , ")}
+ 	      WHERE id = '${secretId}' AND ${ownerCondition}`;
+ 		const { err, data } = await dataCollector(
+@@ -211,42 +233,6 @@ export async function upsertSecret(secretInputParams: Partial<SecretInput>) {
+ 	};
+ }
+ 
+-export async function deleteSecret(secretIdParam: string) {
+-	const user = await getCurrentUser();
+-
+-	throwIfError(!user, getMessage().UNAUTHORIZED_USER);
+-	const secretId = Sanitizer.sanitizeValue(secretIdParam);
+-	const ownerCondition = getOwnerEmailCondition(user!);
+-
+-	const { err } = await dataCollector(
+-		{
+-			query: `DELETE FROM ${OPENLIT_VAULT_TABLE_NAME} WHERE id = '${escapeClickHouseString(secretId)}' AND ${ownerCondition};`,
+-		},
+-		"exec"
+-	);
+-
+-	if (err) {
+-		return [getMessage().SECRET_NOT_DELETED];
+-	}
+-
+-	invalidateSourceSecretCache(secretId);
+-
+-	emitManagementAlertSignalSafe({
+-		triggerType: "vault_secret_change",
+-		event: "vault_secret_deleted",
+-		message: `Vault key ${secretId} was deleted.`,
+-		sourceId: secretId,
+-		fields: {
+-			secret_id: secretId,
+-		},
+-		payloadSummary: {
+-			secretId,
+-		},
+-	});
+-
+-	return [undefined, getMessage().SECRET_DELETED];
+-}
+-
+ export async function getSecrets(
+ 	filters: SecretGetFilters,
+ 	{ selectValue }: { selectValue?: boolean } = {}
+diff --git a/src/client/src/middleware.ts b/src/client/src/middleware.ts
+index c1e5a1a6..34f43a98 100644
+--- a/src/client/src/middleware.ts
++++ b/src/client/src/middleware.ts
+@@ -34,8 +34,6 @@ export const config = {
+ 		"/exceptions",
+ 		"/prompt-hub",
+ 		"/prompt-hub/:path*",
+-		"/vault",
+-		"/vault/:path*",
+ 		"/settings/:path*",
+ 		"/telemetry-enabled",
+ 		"/d/:path*",
+diff --git a/src/client/src/utils/breadcrumbs.ts b/src/client/src/utils/breadcrumbs.ts
+index b1e7d2b8..0be1de73 100644
+--- a/src/client/src/utils/breadcrumbs.ts
++++ b/src/client/src/utils/breadcrumbs.ts
+@@ -36,15 +36,6 @@ export function extractRouteParams(pathname: string, regex: RegExp): Record<stri
+ 		}
+ 	}
+ 	
+-	// Extract vault ID
+-	if (pathname.includes('/vault/') && !pathname.endsWith('/vault')) {
+-		const parts = pathname.split('/');
+-		const idIndex = parts.indexOf('vault') + 1;
+-		if (idIndex < parts.length) {
+-			params.id = parts[idIndex];
+-		}
+-	}
+-	
+ 	// Coding-agents per-user detail: /coding-agents/users/<userId>.
+ 	// `userId` is URL-encoded (emails contain `@` etc.) so we leave
+ 	// decoding to the caller (the route config calls
+@@ -217,19 +208,6 @@ export const ROUTE_CONFIGS: RouteConfig[] = [
+ 		getTitle: () => "",
+ 		getBreadcrumbs: () => [],
+ 	},
+-	
+-	// Vault
+-	{
+-		regex: /^\/vault$/,
+-		getTitle: () => "Vault",
+-		getBreadcrumbs: () => [],
+-	},
+-	
+-	{
+-		regex: /^\/vault\/[^/]+$/,
+-		getTitle: () => "",
+-		getBreadcrumbs: () => [],
+-	},
+ 
+ 	// Memory
+ 	{

@@ -139,6 +139,264 @@ function freshClone(): string {
   return dir;
 }
 
+/**
+ * The OpenLIT board-authoring and Vault administration products are gone;
+ * their surviving read paths are not. Kept out of the apply test body so the
+ * per-patch removals stay readable and the callback stays under the
+ * complexity ceiling.
+ */
+function assertRemovedOpenlitAdminSurfaces(dir: string) {
+  // The board-authoring product is gone: there is no board,
+  // folder, widget or board-widget module, and no ClickHouse table
+  // behind them. The AutoDev Usage board survives as a read-only seed
+  // that runWidgetQuery reads directly.
+  for (const removed of [
+    "src/client/src/lib/platform/manage-dashboard/board.ts",
+    "src/client/src/lib/platform/manage-dashboard/board-format.ts",
+    "src/client/src/lib/platform/manage-dashboard/folder.ts",
+    "src/client/src/lib/platform/manage-dashboard/heirarchy.ts",
+    "src/client/src/lib/platform/manage-dashboard/derived-value.ts",
+    "src/client/src/lib/platform/manage-dashboard/table-details.ts",
+    "src/client/src/helpers/server/widget.ts",
+    "src/client/src/clickhouse/migrations/create-custom-dashboards-migration.ts",
+    "src/client/src/clickhouse/migrations/add-board-variables-column-migration.ts",
+    "src/client/src/clickhouse/seed/dashboards.ts",
+    "src/client/src/clickhouse/seed-data/openlit-dashboard-LLM-dashboard-layout.json",
+    "src/client/src/clickhouse/seed-data/openlit-dashboard-Vector-DB-layout.json",
+    "src/client/src/clickhouse/seed-data/openlit-dashboard-coding-agents-layout.json"
+  ]) {
+    assert.equal(
+      existsSync(join(dir, removed)),
+      false,
+      `${removed} must not survive the board-authoring removal`
+    );
+  }
+
+  // The surviving reader takes the seeded definition, not a stored id:
+  // nothing writes widget rows any more, so an id lookup would fail
+  // every panel at run time.
+  const widgetRunner = readFileSync(
+    join(dir, "src/client/src/lib/platform/manage-dashboard/widget.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    widgetRunner,
+    /getWidgetById|createWidget|updateWidget|deleteWidget/u,
+    "runWidgetQuery must not depend on a widget catalog"
+  );
+  // `usageRoute` was read above for the filter-options assertion; the
+  // seeded-definition contract is the same file.
+  assert.match(
+    usageRoute,
+    /runWidgetQuery\(seedWidget, \{/u,
+    "the Usage endpoint must hand the runner the seeded widget definition"
+  );
+
+  // Dropped tables must be dropped on existing installs, not left behind.
+  const dropAuthoring = readFileSync(
+    join(
+      dir,
+      "src/client/src/clickhouse/migrations/drop-dashboard-authoring-migration.ts"
+    ),
+    "utf8"
+  );
+  for (const table of [
+    "openlit_board",
+    "openlit_folder",
+    "openlit_widget",
+    "openlit_board_widget"
+  ]) {
+    assert.match(
+      dropAuthoring,
+      new RegExp(`DROP TABLE IF EXISTS ${table}`),
+      `${table} must be dropped from existing installs`
+    );
+  }
+
+  const boardMigrations = readFileSync(
+    join(dir, "src/client/src/clickhouse/migrations/index.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    boardMigrations,
+    /CreateCustomDashboardsMigration|AddBoardVariablesColumnMigration/u,
+    "no migration may create the removed board-authoring tables"
+  );
+  assert.match(
+    boardMigrations,
+    /await DropDashboardAuthoringMigration\(databaseConfigId\);/u,
+    "the drop migration must run with the other product-removal drops"
+  );
+
+  // The Vault administration product is gone; its read paths are not.
+  for (const gone of [
+    "src/client/src/app/(playground)/vault/page.tsx",
+    "src/client/src/components/(playground)/vault/form.tsx",
+    "src/client/src/components/(playground)/vault/header.tsx",
+    "src/client/src/app/api/vault/route.ts",
+    "src/client/src/app/api/vault/get/route.ts",
+    "src/client/src/app/api/vault/[id]/route.ts"
+  ]) {
+    assert.equal(
+      existsSync(join(dir, gone)),
+      false,
+      `${gone} must not survive the Vault administration removal`
+    );
+  }
+  assert.equal(
+    existsSync(join(dir, "src/client/src/app/api/vault/get-secrets/route.ts")),
+    true,
+    "the SDK read endpoint backs both bundled OpenLIT SDKs and must survive"
+  );
+
+  const vaultModule = readFileSync(
+    join(dir, "src/client/src/lib/platform/vault/index.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    vaultModule,
+    /export async function deleteSecret/u,
+    "nothing may delete a secret once the admin API is gone"
+  );
+  for (const reader of [
+    "getSecrets",
+    "getSecretsFromDatabaseId",
+    "getSecretById",
+    "upsertSecret"
+  ]) {
+    assert.match(
+      vaultModule,
+      new RegExp(String.raw`export async function ${reader}\b`),
+      `${reader} is load-bearing and must be kept`
+    );
+  }
+
+  const vaultSidebar = readFileSync(
+    join(dir, "src/client/src/constants/sidebar.tsx"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    vaultSidebar,
+    /"\/vault"/u,
+    "no sidebar entry may link to a page that no longer exists"
+  );
+
+  const vaultRoutes = readFileSync(
+    join(dir, "src/client/src/constants/route.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    vaultRoutes,
+    /"\/api\/vault",|"\/api\/vault\/",/u,
+    "the Vault write routes must leave the demo-account restriction lists"
+  );
+  assert.match(
+    vaultRoutes,
+    /"\/api\/vault\/get-secrets"/u,
+    "the SDK read endpoint must stay reachable without a session token"
+  );
+
+  const vaultMiddleware = readFileSync(
+    join(dir, "src/client/src/middleware.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    vaultMiddleware,
+    /"\/vault/u,
+    "the removed page must leave the middleware matcher list"
+  );
+
+  // Removing the list API removes the evaluation screen's ability to pick or
+  // create a judge credential. It must say so rather than render an empty
+  // picker, and it must keep round-tripping a credential that already exists.
+  const evaluationConfig = readFileSync(
+    join(
+      dir,
+      "src/client/src/components/(playground)/evaluations/evaluation-configuration.tsx"
+    ),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    evaluationConfig,
+    /\/api\/vault\/get/u,
+    "the evaluation screen must not call the deleted Vault list route"
+  );
+  assert.match(
+    evaluationConfig,
+    /vaultId,/u,
+    "an already-configured judge credential must still round-trip on save"
+  );
+  // `dashboards_total` counted a table nothing writes; reporting it would
+  // have sent a frozen number to PostHog forever.
+  const snapshot = readFileSync(
+    join(dir, "src/client/src/lib/platform/telemetry-snapshot/index.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    snapshot,
+    /dashboards_total/u,
+    "the telemetry snapshot must not count the removed board table"
+  );
+
+  // The typed source binding and its SQL-safety rule survive: only the
+  // board editor went away.
+  const distinctValues = readFileSync(
+    join(
+      dir,
+      "src/client/src/lib/platform/dashboard-variables/distinct-values.ts"
+    ),
+    "utf8"
+  );
+  assert.match(
+    distinctValues,
+    /planAndDistinctValues|adapter\.distinctValues/u,
+    "distinct-values binding must use the typed adapter method"
+  );
+  assert.doesNotMatch(
+    distinctValues,
+    /\$\{req\.key\}|\$\{.*\.key\}.*SELECT/u,
+    "distinct-values binding must never compose SQL with user-controlled keys"
+  );
+}
+
+/** Every patch in the maintained OpenLIT series, in apply order. */
+const EXPECTED_OPENLIT_PATCH_NAMES = [
+  "01-generic-dashboard-variables",
+  "02-autodev-pages",
+  "03-otlp-receiver-auth",
+  "04-autodev-usage-dashboard",
+  "05-remove-login-signup",
+  "06-autodev-branding",
+  "07-autodev-usage-api",
+  "08-autodev-memory-connector",
+  "09-autodev-memory-lifecycle-actions",
+  "10-autodev-memory-action-hardening",
+  "11-autodev-memory-lifecycle-ui",
+  "12-autodev-memory-outcomes",
+  "13-autodev-memory-outcome-cohorts",
+  "14-autodev-memory-outcome-reporting",
+  "15-remove-gpu-product",
+  "16-autodev-memory-session-outcome-cohorts",
+  "17-remove-openlit-memory-session-authorization",
+  "18-remove-openlit-controller-discovery",
+  "19-remove-controller-image-runtime",
+  "20-remove-stale-controller-messages",
+  "21-remove-controller-clickhouse-schema",
+  "22-autodev-memory-injection-use",
+  "23-autodev-memory-visible-connector",
+  "24-autodev-pricing-empty-history",
+  "25-autodev-usage-filter-options",
+  "26-autodev-usage-trace-detail",
+  "27-remove-otter-chat-docs-onboarding-chrome",
+  "28-remove-autodev-pages",
+  "29-remove-openground",
+  "30-remove-rule-engine",
+  "31-remove-theme-switching-and-marketing-404",
+  "32-remove-organisations-projects-environments",
+  "33-remove-dashboard-authoring",
+  "34-remove-board-authoring-tables",
+  "35-remove-vault-administration"
+] as const;
 test(
   "openlit patch set applies cleanly to pinned commit",
   { timeout: 180_000 },
@@ -697,120 +955,7 @@ test(
       "the bootstrap must not persist removed Controller resources"
     );
 
-    // The board-authoring product is gone: there is no board,
-    // folder, widget or board-widget module, and no ClickHouse table
-    // behind them. The AutoDev Usage board survives as a read-only seed
-    // that runWidgetQuery reads directly.
-    for (const removed of [
-      "src/client/src/lib/platform/manage-dashboard/board.ts",
-      "src/client/src/lib/platform/manage-dashboard/board-format.ts",
-      "src/client/src/lib/platform/manage-dashboard/folder.ts",
-      "src/client/src/lib/platform/manage-dashboard/heirarchy.ts",
-      "src/client/src/lib/platform/manage-dashboard/derived-value.ts",
-      "src/client/src/lib/platform/manage-dashboard/table-details.ts",
-      "src/client/src/helpers/server/widget.ts",
-      "src/client/src/clickhouse/migrations/create-custom-dashboards-migration.ts",
-      "src/client/src/clickhouse/migrations/add-board-variables-column-migration.ts",
-      "src/client/src/clickhouse/seed/dashboards.ts",
-      "src/client/src/clickhouse/seed-data/openlit-dashboard-LLM-dashboard-layout.json",
-      "src/client/src/clickhouse/seed-data/openlit-dashboard-Vector-DB-layout.json",
-      "src/client/src/clickhouse/seed-data/openlit-dashboard-coding-agents-layout.json"
-    ]) {
-      assert.equal(
-        existsSync(join(dir, removed)),
-        false,
-        `${removed} must not survive the board-authoring removal`
-      );
-    }
-
-    // The surviving reader takes the seeded definition, not a stored id:
-    // nothing writes widget rows any more, so an id lookup would fail
-    // every panel at run time.
-    const widgetRunner = readFileSync(
-      join(dir, "src/client/src/lib/platform/manage-dashboard/widget.ts"),
-      "utf8"
-    );
-    assert.doesNotMatch(
-      widgetRunner,
-      /getWidgetById|createWidget|updateWidget|deleteWidget/u,
-      "runWidgetQuery must not depend on a widget catalog"
-    );
-    // `usageRoute` was read above for the filter-options assertion; the
-    // seeded-definition contract is the same file.
-    assert.match(
-      usageRoute,
-      /runWidgetQuery\(seedWidget, \{/u,
-      "the Usage endpoint must hand the runner the seeded widget definition"
-    );
-
-    // Dropped tables must be dropped on existing installs, not left behind.
-    const dropAuthoring = readFileSync(
-      join(
-        dir,
-        "src/client/src/clickhouse/migrations/drop-dashboard-authoring-migration.ts"
-      ),
-      "utf8"
-    );
-    for (const table of [
-      "openlit_board",
-      "openlit_folder",
-      "openlit_widget",
-      "openlit_board_widget"
-    ]) {
-      assert.match(
-        dropAuthoring,
-        new RegExp(`DROP TABLE IF EXISTS ${table}`),
-        `${table} must be dropped from existing installs`
-      );
-    }
-
-    const boardMigrations = readFileSync(
-      join(dir, "src/client/src/clickhouse/migrations/index.ts"),
-      "utf8"
-    );
-    assert.doesNotMatch(
-      boardMigrations,
-      /CreateCustomDashboardsMigration|AddBoardVariablesColumnMigration/u,
-      "no migration may create the removed board-authoring tables"
-    );
-    assert.match(
-      boardMigrations,
-      /await DropDashboardAuthoringMigration\(databaseConfigId\);/u,
-      "the drop migration must run with the other product-removal drops"
-    );
-
-    // `dashboards_total` counted a table nothing writes; reporting it would
-    // have sent a frozen number to PostHog forever.
-    const snapshot = readFileSync(
-      join(dir, "src/client/src/lib/platform/telemetry-snapshot/index.ts"),
-      "utf8"
-    );
-    assert.doesNotMatch(
-      snapshot,
-      /dashboards_total/u,
-      "the telemetry snapshot must not count the removed board table"
-    );
-
-    // The typed source binding and its SQL-safety rule survive: only the
-    // board editor went away.
-    const distinctValues = readFileSync(
-      join(
-        dir,
-        "src/client/src/lib/platform/dashboard-variables/distinct-values.ts"
-      ),
-      "utf8"
-    );
-    assert.match(
-      distinctValues,
-      /planAndDistinctValues|adapter\.distinctValues/u,
-      "distinct-values binding must use the typed adapter method"
-    );
-    assert.doesNotMatch(
-      distinctValues,
-      /\$\{req\.key\}|\$\{.*\.key\}.*SELECT/u,
-      "distinct-values binding must never compose SQL with user-controlled keys"
-    );
-
+    assertRemovedOpenlitAdminSurfaces(dir);
     // Verify the autodev sidebar entry is discoverable. A nested
     // /autodev layout without a top-level entry would not be reachable
     // from the OpenLIT left nav.
@@ -1445,73 +1590,20 @@ test(
         .trim()
         .split("\n")
         .filter((f) => f.endsWith(".patch"));
-      const expectedPatchNames = [
-        "01-generic-dashboard-variables",
-        "02-autodev-pages",
-        "03-otlp-receiver-auth",
-        "04-autodev-usage-dashboard",
-        "05-remove-login-signup",
-        "06-autodev-branding",
-        "07-autodev-usage-api",
-        "08-autodev-memory-connector",
-        "09-autodev-memory-lifecycle-actions",
-        "10-autodev-memory-action-hardening",
-        "11-autodev-memory-lifecycle-ui",
-        "12-autodev-memory-outcomes",
-        "13-autodev-memory-outcome-cohorts",
-        "14-autodev-memory-outcome-reporting",
-        "15-remove-gpu-product",
-        "16-autodev-memory-session-outcome-cohorts",
-        "17-remove-openlit-memory-session-authorization"
-      ];
-      if (patches.some((p) => p.startsWith("18-"))) {
-        expectedPatchNames.push("18-remove-openlit-controller-discovery");
-      }
-      if (patches.some((p) => p.startsWith("19-"))) {
-        expectedPatchNames.push("19-remove-controller-image-runtime");
-      }
-      if (patches.some((p) => p.startsWith("20-"))) {
-        expectedPatchNames.push("20-remove-stale-controller-messages");
-      }
-      if (patches.some((p) => p.startsWith("21-"))) {
-        expectedPatchNames.push("21-remove-controller-clickhouse-schema");
-      }
-      expectedPatchNames.push(
-        "22-autodev-memory-injection-use",
-        "23-autodev-memory-visible-connector",
-        "24-autodev-pricing-empty-history",
-        "25-autodev-usage-filter-options",
-        "26-autodev-usage-trace-detail"
+      // Data-driven rather than one `if` per patch: the ladder this
+      // replaced grew the callback past the cognitive-complexity ceiling,
+      // and asserting the series equals the known names in order is a
+      // stronger check than a prefix walk — an unexpected patch now fails.
+      const appliedPatchNames = patches.map((file) =>
+        file.replace(/\.patch$/u, "")
       );
-      if (patches.some((p) => p.startsWith("27-"))) {
-        expectedPatchNames.push("27-remove-otter-chat-docs-onboarding-chrome");
-      }
-      if (patches.some((p) => p.startsWith("28-"))) {
-        expectedPatchNames.push("28-remove-autodev-pages");
-      }
-      if (patches.some((p) => p.startsWith("29-"))) {
-        expectedPatchNames.push("29-remove-openground");
-      }
-      if (patches.some((p) => p.startsWith("30-"))) {
-        expectedPatchNames.push("30-remove-rule-engine");
-      }
-      if (patches.some((p) => p.startsWith("31-"))) {
-        expectedPatchNames.push("31-remove-theme-switching-and-marketing-404");
-      }
-      if (patches.some((p) => p.startsWith("32-"))) {
-        expectedPatchNames.push(
-          "32-remove-organisations-projects-environments"
-        );
-      }
-      if (patches.some((p) => p.startsWith("33-"))) {
-        expectedPatchNames.push("33-remove-dashboard-authoring");
-      }
-      if (patches.some((p) => p.startsWith("34-"))) {
-        expectedPatchNames.push("34-remove-board-authoring-tables");
-      }
-      assert.ok(
-        patches.length >= expectedPatchNames.length,
-        `expected at least ${expectedPatchNames.length} maintained OpenLIT patches`
+      const expectedPatchNames = EXPECTED_OPENLIT_PATCH_NAMES.filter((name) =>
+        appliedPatchNames.includes(name)
+      );
+      assert.deepEqual(
+        appliedPatchNames,
+        expectedPatchNames,
+        "the OpenLIT patch series must be exactly the known patches, in order"
       );
 
       for (const [index, expectedName] of expectedPatchNames.entries()) {
