@@ -17,8 +17,7 @@ import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import {
-  NOT_OBSERVED_LABEL,
-  StatusBadge
+  NOT_OBSERVED_LABEL
 } from "../../components/status/StatusBadge.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
@@ -42,10 +41,24 @@ import {
   PROVIDERS_PATH,
   providersPath
 } from "./paths.ts";
-import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
+import {
+  ProviderStatusBadge,
+  resolveProviderStatus
+} from "./provider-status.ts";
+import { ProviderLimitsControls } from "./ProviderLimitsControls.ts";
+import { ProviderRoleControls } from "./ProviderRoleControls.ts";
 
 const LINK_CLASS =
   "font-mono font-semibold text-fg underline-offset-4 hover:underline";
+
+/**
+ * Why the row grip does nothing today.
+ *
+ * Stated once and rendered on every row so the affordance explains itself
+ * instead of looking like a control that failed to respond.
+ */
+const PROVIDER_ORDER_UNAVAILABLE =
+  "Reordering providers is not settable yet: the routing configuration owns provider order.";
 
 export const PROVIDERS_VIEW_TABS: readonly TabDefinition[] = [
   { id: "providers", label: "Providers" },
@@ -81,6 +94,38 @@ function ProviderLink({
   );
 }
 
+/** A Providers row's provider cell: the grip, then the id. */
+function ProviderCell({ provider }: {
+  readonly provider: string;
+}): React.JSX.Element {
+  return React.createElement(
+    "div",
+    { className: "flex min-w-0 items-center gap-2" },
+    // The grip is the target state's row-drag affordance. Provider ordering has
+    // no mutation to call yet, so it is rendered disabled with that reason
+    // rather than as a handle that silently does nothing -- a draggable-looking
+    // control that cannot drag is worse than no affordance at all.
+    React.createElement(
+      "span",
+      {
+        className: "shrink-0 select-none text-fg-muted",
+        "aria-hidden": "true",
+        title: PROVIDER_ORDER_UNAVAILABLE
+      },
+      "⠿"
+    ),
+    React.createElement(ProviderLink, { provider })
+  );
+}
+
+/**
+ * The four columns of the Providers configuration table.
+ *
+ * Role Enablement, Health, Credential, Available Models and Tier Priority are
+ * gone: their facts are either folded into the single Status verdict or
+ * reachable from the row's own controls. The column order is the contract's,
+ * not a layout preference.
+ */
 function providerColumns(
   returnTo: string
 ): ColumnDef<ControlApiProviderRecord>[] {
@@ -89,160 +134,52 @@ function providerColumns(
       id: "provider",
       header: "Provider",
       // The provider id is the row's primary identifier, so this column is
-      // sized to never truncate it (longest observed id renders ~92px).
-      weight: 124,
+      // sized to never truncate it (longest observed id renders ~92px) and to
+      // afford the grip beside it.
+      weight: 148,
       cell: (provider) =>
-        React.createElement(ProviderLink, { provider: provider.id })
+        React.createElement(ProviderCell, { provider: provider.id })
     },
     {
-      // One column for both roles rather than two near-identical columns: the
-      // enablement control is the same for each, and a single column keeps
-      // room for the model and tier chips that actually need width.
+      id: "status",
+      header: "Status",
+      // Sized against the widest pill the column can produce, which is a named
+      // environment variable ("Missing LITELLM_API_KEY"), not the word Ready.
+      weight: 176,
+      cell: (provider) =>
+        React.createElement(ProviderStatusBadge, { provider })
+    },
+    {
       id: "roles",
-      header: "Role enablement",
-      weight: 165,
+      header: "Roles",
+      // Four rows of icon + name + two selects + apply. The weight is the
+      // intrinsic width of that row and cannot be met by wrapping, so the cell
+      // wraps internally on narrow widths instead of overrunning the column.
+      weight: 420,
       align: "tokens",
-      // Each row is a flex line holding a fixed 80px role label and a
-      // `whitespace-nowrap` toggle badge, so it has a minimum intrinsic width
-      // that no amount of wrapping inside the cell can reduce. `flex-wrap` on
-      // the line itself is what keeps that minimum honest: when the column
-      // cannot afford it, the badge drops to a second line instead of
-      // painting over the Health column beside it.
       cell: (provider) =>
-        React.createElement(
-          "ul",
-          {
-            className: "flex flex-col list-none gap-1.5 p-0 m-0",
-            "data-provider-roles": provider.id
-          },
-          ...(
-            [
-              ["orchestrator", "Orchestrator"],
-              ["subagent", "Subagent"]
-            ] as const
-          ).map(([role, label]) =>
-            React.createElement(
-              "li",
-              {
-                key: role,
-                className: "flex min-w-0 flex-wrap items-center gap-2"
-              },
-              React.createElement(
-                "span",
-                // A fixed literal in a `w-20` box. `truncate` here was
-                // inherited from the row layout it no longer belongs to and
-                // could never fire; keeping it invited the reader to assume
-                // the label had a recovery path it did not need.
-                { className: "w-20 shrink-0 text-xs text-fg-muted" },
-                label
-              ),
-              React.createElement(StatusBadge, {
-                status:
-                  provider.roles[role].priority === "disabled"
-                    ? "unavailable"
-                    : "valid",
-                label:
-                  provider.roles[role].priority === "disabled"
-                    ? "Disabled"
-                    : `P${provider.roles[role].priority}`
-              })
-            )
-          )
-        )
-    },
-    {
-      id: "health",
-      header: "Health",
-      // Sized against the pill, not the word. An earlier note here read the
-      // widest badge as 68px and banked the difference as slack; measured in
-      // the browser the pill is 70px with its dot and padding and needs 102px
-      // of column, so "Ready" was cut on every row at 1280 while the column
-      // still had room for the header twice over.
-      weight: 122,
-      cell: (provider) =>
-        React.createElement(ProviderHealthBadge, { health: provider.health })
-    },
-    {
-      id: "credential",
-      header: "Credential",
-      // A missing-credential badge names a long environment variable and is
-      // expected to truncate; the untruncated name stays on its hover title.
-      weight: 162,
-      cell: (provider) =>
-        React.createElement(CredentialBadge, {
-          credential: provider.credential
+        React.createElement(ProviderRoleControls, {
+          provider,
+          returnTo
         })
     },
     {
-      id: "models",
-      header: "Models",
+      id: "agentLimits",
+      header: "Agent Limits",
+      weight: 190,
       align: "tokens",
-      // Longest observed model chip is 184px, so this column cannot go below
-      // ~216px of cell width without truncating a model name.
-      weight: 203,
       cell: (provider) =>
-        chipList({
-          items: uniqueModels(provider),
-          emptyLabel: "None configured",
-          testId: "provider-models",
-          renderItem: (model) =>
-            React.createElement(
-              Chip,
-              {
-                href: modelPath(provider.id, model),
-                label: `Open model ${model} on ${provider.id}`,
-                className: "font-mono"
-              },
-              model
-            )
-        })
-    },
-    {
-      id: "priority",
-      header: "Tier priority",
-      align: "tokens",
-      // Load-bearing width. Chips wrap correctly, but the column was too narrow
-      // for any adjacent pair to fit (widest pair `browser-tester P1` +
-      // `default P1` needs ~200px of content width against 149px available), so
-      // four tiers stacked one per line and forced 125px rows. At ~201px the
-      // same chips pack two per line. Re-check this weight after editing any
-      // tier-name width or the table's own padding.
-      weight: 223,
-      cell: (provider) => TierPriorityList({ provider })
+        React.createElement(ProviderLimitsControls, { provider, returnTo })
     }
   ];
 }
 
 /**
- * One chip per capability tier, labelled with its fallback group. A provider
- * can sit in several tiers at different depths, so the chip carries both facts
- * rather than a single run-on string. The list reuses `chipList` so the wrapping
- * behaviour that keeps these chips inline is the shared one, not a second copy.
+ * The Models tab's columns. This tab keeps its own model catalog, per-tier
+ * mapping, and enable/disable control: the Providers table folded those facts
+ * into Status and the row's own controls, but a model is still an item with its
+ * own lifecycle, so it keeps a list of its own.
  */
-function TierPriorityList({
-  provider
-}: {
-  readonly provider: ControlApiProviderRecord;
-}): React.JSX.Element {
-  return chipList({
-    items: provider.priorities,
-    renderKey: ({ tier }) => tier,
-    emptyLabel: "Not in any tier",
-    testId: `provider-tier-${provider.id}`,
-    renderItem: ({ tier, group }) =>
-      React.createElement(
-        Chip,
-        { className: "gap-1", label: `${tier}: priority group ${group}` },
-        React.createElement("span", { className: MUTED_TEXT_CLASS }, tier),
-        React.createElement("span", { className: "font-mono" }, `P${group}`)
-      )
-  });
-}
-
-function uniqueModels(provider: ControlApiProviderRecord): string[] {
-  return [...new Set(provider.models.map(({ model }) => model))];
-}
-
 function modelColumns(returnTo: string): ColumnDef<ControlApiModelRecord>[] {
   return [
     {
@@ -387,6 +324,12 @@ function ProvidersTab({
 }): React.JSX.Element {
   const records = providers.providers;
   const healthObserved = records.every((provider) => provider.health !== null);
+  // Ready is the one count worth leading with, and it is computed from the same
+  // `resolveProviderStatus` the column uses, so the summary can never disagree
+  // with the rows beneath it.
+  const readyCount = records.filter(
+    (provider) => resolveProviderStatus(provider).label === "Ready"
+  ).length;
   return React.createElement(
     "div",
     {
@@ -397,14 +340,14 @@ function ProvidersTab({
       StatGrid,
       { columns: 3 },
       React.createElement(StatCard, {
-        title: "Orchestrator enabled",
-        value: records.filter((p) => p.roles.orchestrator.priority !== "disabled")
-          .length
+        title: "Ready",
+        value: readyCount,
+        subtitle: `of ${records.length} providers`
       }),
       React.createElement(StatCard, {
-        title: "Subagent enabled",
-        value: records.filter((p) => p.roles.subagent.priority !== "disabled")
-          .length
+        title: "Disabled",
+        value: records.filter((provider) => provider.disabled).length,
+        subtitle: "Configuration preserved"
       }),
       React.createElement(StatCard, {
         title: "Cooling down",

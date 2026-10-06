@@ -50,7 +50,22 @@ type SubmittedLimit =
   | { readonly ok: true; readonly value: number | null }
   | { readonly ok: false };
 
+/**
+ * The single change a submission makes, as a partial limits pair. A malformed
+ * change fails the route closed.
+ */
+type SubmittedChange =
+  | {
+      readonly ok: true;
+      readonly next: {
+        readonly perSession?: number | null;
+        readonly acrossSessions?: number | null;
+      };
+    }
+  | { readonly ok: false };
+
 const MALFORMED_LIMIT: SubmittedLimit = { ok: false };
+const MALFORMED_CHANGE: SubmittedChange = { ok: false };
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -60,17 +75,45 @@ function redirectTo(location: string): NextResponse {
 }
 
 /**
- * Read one limit axis. "unlimited" is an explicit decision; anything else must
- * be a positive integer within the bound the steppers can produce. A missing or
- * malformed value fails the route rather than inventing a limit.
+ * Read the current value of one axis. "unlimited" is an explicit decision;
+ * anything else must be a positive integer within the bound the steppers can
+ * produce. A missing or malformed value fails the route rather than inventing a
+ * limit.
  */
-function parseLimit(raw: string | null): SubmittedLimit {
+function parseAxis(raw: string | null): SubmittedLimit {
   if (raw === "unlimited") return { ok: true, value: null };
   if (raw === null || !AGENT_LIMIT_PATTERN.test(raw)) return MALFORMED_LIMIT;
   const value = Number(raw);
   return value >= 1 && value <= MAX_AGENT_LIMIT
     ? { ok: true, value }
     : MALFORMED_LIMIT;
+}
+
+/**
+ * The single change this submission makes.
+ *
+ * The steppers and the Unlimited control are submit buttons carrying the value
+ * they would set, under names distinct from the hidden fields holding the state
+ * they would change. Exactly one of them must be present: without an override
+ * the submission describes no change, and with two it is ambiguous which one the
+ * operator meant.
+ */
+function readOverride(form: URLSearchParams): SubmittedChange {
+  const unlimited = form.get("setUnlimited");
+  if (unlimited !== null) {
+    return unlimited === "true"
+      ? { ok: true, next: { perSession: null, acrossSessions: null } }
+      : MALFORMED_CHANGE;
+  }
+  const perSession = form.get("setPerSession");
+  const acrossSessions = form.get("setAcrossSessions");
+  const named = [perSession, acrossSessions].filter((value) => value !== null);
+  if (named.length !== 1) return MALFORMED_CHANGE;
+  const axis = perSession !== null ? "perSession" : "acrossSessions";
+  const parsed = parseAxis(named[0] ?? null);
+  return parsed.ok
+    ? { ok: true, next: { [axis]: parsed.value } }
+    : MALFORMED_CHANGE;
 }
 
 export async function POST(
@@ -89,13 +132,14 @@ export async function POST(
 
   const returnTo = form.get("returnTo");
   if (!isProvidersReturnPath(returnTo)) return failed();
-  const perSession = parseLimit(form.get("perSession"));
-  const acrossSessions = parseLimit(form.get("acrossSessions"));
+  const perSession = parseAxis(form.get("perSession"));
+  const acrossSessions = parseAxis(form.get("acrossSessions"));
+  const override = readOverride(form);
   if (
     !perSession.ok ||
     !acrossSessions.ok ||
-    form.get("provider") !== provider ||
-    form.size !== 4
+    !override.ok ||
+    form.get("provider") !== provider
   ) {
     return failed(returnTo);
   }
@@ -103,9 +147,21 @@ export async function POST(
   const config = readControlApiConfig();
   if (!config) return failed(returnTo);
 
+  // The unchanged axis travels with the submission so both are always sent, but
+  // the operator's change is the one that moves: an axis they did not touch
+  // keeps exactly the value the form carried.
   const result = await patchProviderLimits(
     provider,
-    { perSession: perSession.value, acrossSessions: acrossSessions.value },
+    {
+      perSession:
+        override.next.perSession === undefined
+          ? perSession.value
+          : override.next.perSession,
+      acrossSessions:
+        override.next.acrossSessions === undefined
+          ? acrossSessions.value
+          : override.next.acrossSessions
+    },
     config
   );
   return result.kind === "ok" ? redirectTo(returnTo) : failed(returnTo);

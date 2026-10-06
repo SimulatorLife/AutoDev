@@ -16,8 +16,7 @@ import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
-import { ConvergenceBadge } from "../../components/status/ConvergenceBadge.ts";
-import { NOT_OBSERVED_LABEL, StatusBadge } from "../../components/status/StatusBadge.ts";
+import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import {
   type ColumnDef,
   DataTable,
@@ -32,6 +31,7 @@ import {
 import { ModelToggle } from "./EnablementToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
+import { ProviderRoleControls } from "./ProviderRoleControls.ts";
 
 export interface ProviderDetailViewProps {
   readonly provider: ControlApiProviderRecord;
@@ -42,6 +42,15 @@ export interface ProviderDetailViewProps {
   readonly controlFailed?: boolean | undefined;
 }
 
+/**
+ * The provider detail page's role panel.
+ *
+ * It shows the same four-role controls as the Providers row, because the
+ * target state's contextual-controls rule requires an item's controls on its
+ * row *and* in its detail view. Reusing `ProviderRoleControls` rather than
+ * re-describing the roles here is what keeps the two surfaces from drifting
+ * apart -- they used to, when each listed its own set of roles.
+ */
 function RolesPanel({
   provider,
   returnTo
@@ -55,43 +64,9 @@ function RolesPanel({
     React.createElement(
       "h3",
       { className: SECTION_HEADING_CLASS },
-      "Role enablement"
+      "Roles"
     ),
-    React.createElement(
-      DetailGrid,
-      { columns: 2 },
-      ...(["orchestrator", "subagent"] as const).map((role) => {
-        const entry = provider.roles[role];
-        return React.createElement(
-          "div",
-          { key: role, className: "flex flex-col gap-2" },
-          React.createElement(
-            DetailValue,
-            { label: role === "orchestrator" ? "Orchestrator" : "Subagent" },
-            React.createElement(StatusBadge, {
-              status:
-                entry.priority === "disabled" ? "unavailable" : "valid",
-              label:
-                entry.priority === "disabled" ? "Disabled" : `P${entry.priority}`
-            })
-          ),
-          // Desired-vs-actual state for the toggle above. This is the
-          // reconcile loop's own verdict, so it is shown rather than inferred
-          // from whether the toggle is on.
-          React.createElement(
-            DetailValue,
-            { label: "Convergence" },
-            React.createElement(ConvergenceBadge, {
-              convergence: entry.convergence.convergence,
-              explanation: entry.convergence.explanation,
-              desiredGeneration: entry.convergence.desiredGeneration,
-              observedGeneration: entry.convergence.observedGeneration,
-              lastError: entry.convergence.lastError
-            })
-          )
-        );
-      })
-    )
+    React.createElement(ProviderRoleControls, { provider, returnTo })
   );
 }
 

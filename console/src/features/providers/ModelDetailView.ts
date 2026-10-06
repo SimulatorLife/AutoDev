@@ -1,8 +1,8 @@
-import type {
-  ControlApiModelRecord,
-  ControlApiProviderRecord
+import {
+  type ControlApiModelRecord,
+  type ControlApiProviderRecord,
+  PROVIDER_ROLES
 } from "@simulatorlife/autodev-core";
-import { PROVIDER_ROLES } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import {

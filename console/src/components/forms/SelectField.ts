@@ -43,8 +43,32 @@ export interface SelectOption {
 
 export interface SelectFieldProps {
   readonly name: string;
+  /**
+   * DOM id for the control, when one control repeats on a page.
+   *
+   * The id is what a `<label for>` points at, so two controls sharing an id
+   * leave every label ambiguous: the screen reader announces whichever one the
+   * DOM happens to resolve, and clicking either label focuses the first. `name`
+   * cannot be used for this, because the name is the wire contract with the
+   * route and several role controls legitimately submit `priority` from
+   * different forms on the same page.
+   */
+  readonly id?: string | undefined;
   /** Accessible label rendered before the control. */
   readonly label: string;
+  /**
+   * Render `label` for assistive technology only.
+   *
+   * A dense grid row already names its control in visible text beside it -- the
+   * role name next to that role's priority and model selects, for instance --
+   * so repeating the label in front of every control doubles the words without
+   * adding any. The label still reaches a screen reader, which is the point: it
+   * is removed from the *visual* layout, not from the accessible name.
+   * `aria-label` would be wrong here because it would replace the name rather
+   * than reuse the same string the reader can see on the row, which is what
+   * lets the two be checked against each other.
+   */
+  readonly hideLabel?: boolean | undefined;
   readonly options: readonly SelectOption[];
   /** One value, or several when the control is a `multiple` select. */
   readonly defaultValue?: string | readonly string[] | undefined;
@@ -82,7 +106,9 @@ export interface SelectFieldProps {
 
 export function SelectField({
   name,
+  id,
   label,
+  hideLabel,
   options,
   defaultValue,
   disabled,
@@ -92,8 +118,8 @@ export function SelectField({
   testId,
   dataAttributes
 }: SelectFieldProps): React.JSX.Element {
-  const id = `select-${name}`;
-  const reasonId = `${id}-reason`;
+  const controlId = id ?? `select-${name}`;
+  const reasonId = `${controlId}-reason`;
   // Only a disabled control needs to explain itself, so the description is
   // rendered for that case alone rather than left empty on every live control.
   const describedBy =
@@ -109,7 +135,10 @@ export function SelectField({
     },
     React.createElement(
       "label",
-      { htmlFor: id, className: MUTED_META_CLASS },
+      {
+        htmlFor: controlId,
+        className: hideLabel === true ? "sr-only" : MUTED_META_CLASS
+      },
       label
     ),
     React.createElement(
@@ -118,7 +147,7 @@ export function SelectField({
       React.createElement(
         "select",
         {
-          id,
+          id: controlId,
           name,
           ...(defaultValue === undefined ? {} : { defaultValue }),
           ...(disabled === undefined ? {} : { disabled }),

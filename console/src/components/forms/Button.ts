@@ -35,6 +35,23 @@ export interface ButtonProps {
   readonly onClick?: (() => void) | undefined;
   /** Marks the control for tests and stable browser assertions. */
   readonly testId?: string | undefined;
+  /**
+   * The field name and value a submit button contributes to its form.
+   *
+   * A server-rendered control that expresses a choice cannot hold that choice in
+   * component state, because there is no component state on the server. It
+   * submits it: the button carries the value it would set under its own field
+   * name, which is what lets a row offer several choices from one form without
+   * a client-side handler to remember which was picked. The name is deliberately
+   * the caller's to choose -- it is the wire contract between the control and
+   * the route, not a detail of the button's appearance.
+   */
+  readonly name?: string | undefined;
+  readonly value?: string | undefined;
+  /** Extra attributes, for state flags and ARIA the vocabulary does not model. */
+  readonly dataAttributes?: Readonly<Record<string, string>> | undefined;
+  /** Accessible name, when the visible label alone does not describe the action. */
+  readonly ariaLabel?: string | undefined;
 }
 
 const BUTTON_VARIANT_CLASS = {
@@ -51,7 +68,11 @@ export function Button({
   className,
   title,
   onClick,
-  testId
+  testId,
+  name,
+  value,
+  dataAttributes,
+  ariaLabel
 }: ButtonProps): React.JSX.Element {
   return React.createElement(
     "button",
@@ -60,10 +81,14 @@ export function Button({
       onClick,
       ...(disabled === undefined ? {} : { disabled }),
       ...(title === undefined ? {} : { title }),
+      ...(name === undefined ? {} : { name }),
+      ...(value === undefined ? {} : { value }),
+      ...(ariaLabel === undefined ? {} : { "aria-label": ariaLabel }),
       className: `${BUTTON_VARIANT_CLASS[variant]}${
         className === undefined ? "" : ` ${className}`
       }`,
-      ...(testId === undefined ? {} : { "data-button": testId })
+      ...(testId === undefined ? {} : { "data-button": testId }),
+      ...dataAttributes
     },
     children
   );

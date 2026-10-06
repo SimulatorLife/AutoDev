@@ -2052,7 +2052,16 @@ test("no column is narrower than its own header", () => {
     "Role enablement": 122,
     Description: 123,
     Availability: 124,
-    Convergence: 133
+    Convergence: 133,
+    // Measured in Chromium against the Providers table rendered with the longest
+    // names the product shows ("gemini-3.8-flash-high"), as the width of each
+    // header's own text. These are header widths, which is what this guard asks:
+    // the Roles and Agent Limits columns are far wider than their headers
+    // because their content is four dense rows of controls, and a column that is
+    // merely wider than its header is the requirement -- content that cannot
+    // fit is a different failure, caught by the browser sweep rather than here.
+    Roles: 44,
+    "Agent Limits": 95
   };
 
   // Rendered header text -> column pixels at the table's own floor.
@@ -6101,7 +6110,7 @@ test("Memory detail and the workspace catalog fail closed on unreadable response
   assert.equal(unavailable.kind, "ok");
 });
 
-test("ProvidersView puts each provider's role toggles in its own row", () => {
+test("ProvidersView renders the four configuration columns with per-role controls", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProvidersView, {
       providers: PROVIDERS_FIXTURE,
@@ -6116,50 +6125,91 @@ test("ProvidersView puts each provider's role toggles in its own row", () => {
   );
   assert.match(markup, /data-tab-panel="providers"/);
 
+  // Exactly the four columns the contract names, in its order.
+  const headers = Array.from(markup.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gu), (match) => (match[1] ?? "").replaceAll(/<[^>]*>/g, "").trim());
+  assert.deepEqual(headers, ["Provider", "Status", "Roles", "Agent Limits"]);
+  for (const removed of [
+    "Role enablement",
+    "Health",
+    "Credential",
+    "Models",
+    "Tier priority"
+  ]) {
+    assert.ok(
+      !headers.includes(removed),
+      `the ${removed} column must not come back`
+    );
+  }
+
+  // Every one of the four roles gets its own form on every provider row,
+  // carrying both the priority and the model it would set.
   const forms = formTags(markup);
-  assert.equal(forms.length, 4);
-  assert.ok(
-    forms.every((form) => form.includes('data-enablement-form="provider-role"'))
-  );
   for (const provider of ["claude", "codex"]) {
-    for (const role of ["orchestrator", "subagent"]) {
+    for (const role of ["default", "smart", "orchestrator", "subagent"]) {
       const form = forms.find((tag) =>
         tag.includes(`action="/api/providers/${provider}/roles/${role}"`)
       );
-      assert.ok(form, `${provider} ${role} toggle must be in its row`);
+      assert.ok(form, `${provider} ${role} controls must be in its row`);
       assert.equal(hiddenValue(markup, form, "returnTo"), "/providers");
       assert.equal(hiddenValue(markup, form, "provider"), provider);
+      assert.equal(hiddenValue(markup, form, "role"), role);
     }
   }
-  // The read-only codex subagent control stays in place, disabled, with why.
-  // The control's state, target, and unavailable reason all live on the one
-  // button, so the owning tag is the button's own opening tag.
-  const codexSubagentIndex = markup.indexOf(
-    'data-enablement-target="codex/subagent"'
-  );
-  assert.ok(codexSubagentIndex > 0, "codex subagent control must render");
-  const codexSubagentMarkup = markup.slice(
-    markup.lastIndexOf("<button", codexSubagentIndex)
-  );
-  const codexSubagentTagEnd = codexSubagentMarkup.indexOf(">");
-  const codexSubagentTag =
-    codexSubagentTagEnd === -1
-      ? ""
-      : codexSubagentMarkup.slice(0, codexSubagentTagEnd);
-  assert.ok(codexSubagentTag.length > 0);
-  assert.ok(codexSubagentTag.includes('type="submit"'));
-  assert.match(codexSubagentTag, /disabled=""/);
-  assert.match(codexSubagentTag, /data-enablement-unavailable="true"/);
+
+  // The read-only codex provider keeps all four roles' controls in place,
+  // disabled, with the reason. Its configuration is preserved, not hidden.
   assert.match(
-    codexSubagentTag,
-    /title="Runtime reports this setting as read-only\."/
+    markup,
+    /data-role-form="codex-subagent"[\s\S]*?data-role-priority="subagent"/
+  );
+  assert.match(markup, /This provider is disabled\. Enable it to change its roles\./);
+  // A disabled role's model control stays visible so the chosen model remains
+  // recoverable, and is disabled so it cannot become an active selection. The
+  // fixture's disabled role is codex's orchestrator.
+  assert.match(markup, /data-role-model="orchestrator"[^>]*data-dimmed="true"/);
+  assert.match(
+    markup,
+    /class="[^"]*warning[^"]*"[^>]*data-role-priority="orchestrator"/
   );
 
-  assert.match(markup, /Cooling down \(session_limit\)/);
+  // Each role control carries a distinct id: four role forms submit `priority`
+  // from one page, so a shared id would leave every label ambiguous.
+  const ids = Array.from(markup.matchAll(/id="(select-[^"]+)"/gu), (m) => m[1]);
+  assert.equal(
+    new Set(ids).size,
+    ids.length,
+    `duplicate select ids make labels ambiguous: ${ids.join(", ")}`
+  );
+
+  // Status is one verdict per provider, not a summary of parts. claude is both
+  // cooling down and missing its credential, and the verdict names the
+  // credential: that is the blocker the operator has to fix first, and a
+  // verdict that also mentioned the cooldown would be two answers to one
+  // question. Exactly one status badge per row.
   assert.match(markup, /Missing LITELLM_API_KEY/);
-  assert.match(markup, />Not required</);
-  assert.match(markup, />Not observed</);
-  assert.match(markup, /href="\/providers\/claude\/models\/sonnet"/);
+  assert.match(markup, />Disabled</);
+  const badges = markup.match(/data-status="/gu) ?? [];
+  // Two providers, two verdicts: the StatCards do not render badges.
+  assert.equal(badges.length, 2);
+
+  // Agent Limits: both axes per provider, plus the provider-wide disable.
+  for (const provider of ["claude", "codex"]) {
+    const form = forms.find((tag) =>
+      tag.includes(`action="/api/providers/${provider}/limits"`)
+    );
+    assert.ok(form, `${provider} agent limits must be in its row`);
+    assert.equal(hiddenValue(markup, form, "provider"), provider);
+    assert.match(markup, new RegExp(`data-limit-value="${provider}-perSession"`));
+    assert.match(
+      markup,
+      new RegExp(`data-limit-value="${provider}-acrossSessions"`)
+    );
+  }
+  assert.match(
+    markup,
+    /action="\/api\/providers\/claude"[\s\S]*?data-provider-disabled="claude"/
+  );
+
   assert.match(markup, /data-section="routing-priority"/);
   assert.match(markup, /orchestrator \(root\)/);
   assert.equal(markup.includes('data-enablement-form="model"'), false);
@@ -6224,13 +6274,22 @@ test("ProviderDetailView keeps the provider's role and model toggles on its page
   assert.match(markup, /aria-current="page"[^>]*>claude</);
 
   const forms = formTags(markup);
-  const roleForms = forms.filter((form) =>
-    form.includes('data-enablement-form="provider-role"')
-  );
+  // All four roles get the same controls the Providers row offers, because the
+  // contextual-controls rule puts an item's controls on its row *and* in its
+  // detail view. They used to drift: this panel used to list two roles.
+  const roleForms = forms.filter((form) => form.includes("data-role-form="));
   const modelForms = forms.filter((form) =>
     form.includes('data-enablement-form="model"')
   );
-  assert.equal(roleForms.length, 2);
+  assert.equal(roleForms.length, 4);
+  for (const role of ["default", "smart", "orchestrator", "subagent"]) {
+    assert.ok(
+      roleForms.some((form) =>
+        form.includes(`action="/api/providers/claude/roles/${role}"`)
+      ),
+      `${role} controls must be on the provider detail page`
+    );
+  }
   assert.equal(modelForms.length, 2);
   for (const form of forms) {
     assert.equal(hiddenValue(markup, form, "returnTo"), "/providers/claude");
@@ -6344,7 +6403,11 @@ test("ModelDetailView renders the model toggle under its provider's breadcrumbs"
     "/providers/claude/models/sonnet"
   );
   assert.equal(hiddenValue(markup, forms[0]!, "enabled"), "true");
-  assert.match(markup, /orchestrator: enabled/);
+  // Every fixed role is listed read-only, with its priority rather than the
+  // removed enabled boolean.
+  for (const role of ["default", "smart", "orchestrator", "subagent"]) {
+    assert.match(markup, new RegExp(`${role}: (P[123]|Disabled)`));
+  }
   assert.match(markup, /href="\/usage\?model=sonnet"/);
 });
 
