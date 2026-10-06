@@ -697,125 +697,102 @@ test(
       "the bootstrap must not persist removed Controller resources"
     );
 
-    // Verify the dashboard persistence round-trips variables. The
-    // board table now has a `variables` column, the layout reader
-    // decodes the JSON-encoded string into typed specs, and the
-    // editor surfaces the list on the DashboardConfig.
-    const boardTs = readFileSync(
-      join(dir, "src/client/src/lib/platform/manage-dashboard/board.ts"),
+    // The board-authoring product is gone: there is no board,
+    // folder, widget or board-widget module, and no ClickHouse table
+    // behind them. The AutoDev Usage board survives as a read-only seed
+    // that runWidgetQuery reads directly.
+    for (const removed of [
+      "src/client/src/lib/platform/manage-dashboard/board.ts",
+      "src/client/src/lib/platform/manage-dashboard/board-format.ts",
+      "src/client/src/lib/platform/manage-dashboard/folder.ts",
+      "src/client/src/lib/platform/manage-dashboard/heirarchy.ts",
+      "src/client/src/lib/platform/manage-dashboard/derived-value.ts",
+      "src/client/src/lib/platform/manage-dashboard/table-details.ts",
+      "src/client/src/helpers/server/widget.ts",
+      "src/client/src/clickhouse/migrations/create-custom-dashboards-migration.ts",
+      "src/client/src/clickhouse/migrations/add-board-variables-column-migration.ts",
+      "src/client/src/clickhouse/seed/dashboards.ts",
+      "src/client/src/clickhouse/seed-data/openlit-dashboard-LLM-dashboard-layout.json",
+      "src/client/src/clickhouse/seed-data/openlit-dashboard-Vector-DB-layout.json",
+      "src/client/src/clickhouse/seed-data/openlit-dashboard-coding-agents-layout.json"
+    ]) {
+      assert.equal(
+        existsSync(join(dir, removed)),
+        false,
+        `${removed} must not survive the board-authoring removal`
+      );
+    }
+
+    // The surviving reader takes the seeded definition, not a stored id:
+    // nothing writes widget rows any more, so an id lookup would fail
+    // every panel at run time.
+    const widgetRunner = readFileSync(
+      join(dir, "src/client/src/lib/platform/manage-dashboard/widget.ts"),
       "utf8"
     );
-    assert.match(
-      boardTs,
-      /variables AS variables/u,
-      "getBoardLayout must read the new variables column"
+    assert.doesNotMatch(
+      widgetRunner,
+      /getWidgetById|createWidget|updateWidget|deleteWidget/u,
+      "runWidgetQuery must not depend on a widget catalog"
     );
+    // `usageRoute` was read above for the filter-options assertion; the
+    // seeded-definition contract is the same file.
     assert.match(
-      boardTs,
-      /normalizeDashboardVariables\(\s*jsonParse\(boardResult\.variables/u,
-      "getBoardLayout must decode the variables JSON string"
+      usageRoute,
+      /runWidgetQuery\(seedWidget, \{/u,
+      "the Usage endpoint must hand the runner the seeded widget definition"
     );
-    const boardFormatTs = readFileSync(
-      join(dir, "src/client/src/lib/platform/manage-dashboard/board-format.ts"),
+
+    // Dropped tables must be dropped on existing installs, not left behind.
+    const dropAuthoring = readFileSync(
+      join(
+        dir,
+        "src/client/src/clickhouse/migrations/drop-dashboard-authoring-migration.ts"
+      ),
       "utf8"
     );
-    assert.match(
-      boardFormatTs,
-      /normalizeDashboardVariables/,
-      "board-format.ts must normalize variables on import/export"
-    );
+    for (const table of [
+      "openlit_board",
+      "openlit_folder",
+      "openlit_widget",
+      "openlit_board_widget"
+    ]) {
+      assert.match(
+        dropAuthoring,
+        new RegExp(`DROP TABLE IF EXISTS ${table}`),
+        `${table} must be dropped from existing installs`
+      );
+    }
+
     const boardMigrations = readFileSync(
       join(dir, "src/client/src/clickhouse/migrations/index.ts"),
       "utf8"
     );
+    assert.doesNotMatch(
+      boardMigrations,
+      /CreateCustomDashboardsMigration|AddBoardVariablesColumnMigration/u,
+      "no migration may create the removed board-authoring tables"
+    );
     assert.match(
       boardMigrations,
-      /await AddBoardVariablesColumnMigration\(databaseConfigId\);\s*\/\/ Seed after the board-variable migration:[\s\S]*?await CreateCustomDashboardsSeed\(databaseConfigId\);/u,
-      "built-in dashboards must seed only after their variable column exists"
-    );
-    const dashboardMigration = readFileSync(
-      join(
-        dir,
-        "src/client/src/clickhouse/migrations/create-custom-dashboards-migration.ts"
-      ),
-      "utf8"
-    );
-    assert.doesNotMatch(
-      dashboardMigration,
-      /CreateCustomDashboardsSeed/u,
-      "board-table creation must not seed before the variable migration"
-    );
-    assert.match(
-      boardTs,
-      /tags AS tags,\s*variables AS variables\s*FROM \$\{OPENLIT_BOARD_TABLE_NAME\}/u,
-      "board layout reads must select both tags and variables with valid SQL"
-    );
-    const clickHouseQueryMap = readFileSync(
-      join(
-        dir,
-        "src/client/src/lib/platform/connectors/datasource/clickhouse/query-map.ts"
-      ),
-      "utf8"
-    );
-    assert.match(
-      clickHouseQueryMap,
-      /add\(query\.signal === "traces" \? "serviceNames" : "services", filter\.value\)/u,
-      "standard service.name filters must use the ClickHouse ServiceName projection"
+      /await DropDashboardAuthoringMigration\(databaseConfigId\);/u,
+      "the drop migration must run with the other product-removal drops"
     );
 
-    // Verify the variable UI components exist and the typed source
-    // binding is wired up.
-    const selector = readFileSync(
-      join(
-        dir,
-        "src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/selector.tsx"
-      ),
+    // `dashboards_total` counted a table nothing writes; reporting it would
+    // have sent a frozen number to PostHog forever.
+    const snapshot = readFileSync(
+      join(dir, "src/client/src/lib/platform/telemetry-snapshot/index.ts"),
       "utf8"
-    );
-    assert.match(
-      selector,
-      /data-dashboard-variables/u,
-      "top-bar selector must expose a discoverable hook"
-    );
-    assert.match(
-      selector,
-      /multiselect|multi-select|spec\.multi/u,
-      "top-bar selector must support multi-select variables"
-    );
-    const editor = readFileSync(
-      join(
-        dir,
-        "src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/editor.tsx"
-      ),
-      "utf8"
-    );
-    assert.match(
-      editor,
-      /data-dashboard-variable-editor/u,
-      "variable editor must expose a discoverable hook"
     );
     assert.doesNotMatch(
-      editor,
-      /spec\.allowedValues\s*\+\s*[`'"]/u,
-      "variable editor must not concatenate allowedValues into SQL"
+      snapshot,
+      /dashboards_total/u,
+      "the telemetry snapshot must not count the removed board table"
     );
-    const optIn = readFileSync(
-      join(
-        dir,
-        "src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/widget-opt-in-editor.tsx"
-      ),
-      "utf8"
-    );
-    assert.match(
-      optIn,
-      /data-dashboard-widget-opt-in/u,
-      "widget opt-in editor must expose a discoverable hook"
-    );
-    assert.match(
-      optIn,
-      /optIn\.includes|spec\.id/u,
-      "widget opt-in editor must honor the declared variable list"
-    );
+
+    // The typed source binding and its SQL-safety rule survive: only the
+    // board editor went away.
     const distinctValues = readFileSync(
       join(
         dir,
@@ -1508,6 +1485,29 @@ test(
       );
       if (patches.some((p) => p.startsWith("27-"))) {
         expectedPatchNames.push("27-remove-otter-chat-docs-onboarding-chrome");
+      }
+      if (patches.some((p) => p.startsWith("28-"))) {
+        expectedPatchNames.push("28-remove-autodev-pages");
+      }
+      if (patches.some((p) => p.startsWith("29-"))) {
+        expectedPatchNames.push("29-remove-openground");
+      }
+      if (patches.some((p) => p.startsWith("30-"))) {
+        expectedPatchNames.push("30-remove-rule-engine");
+      }
+      if (patches.some((p) => p.startsWith("31-"))) {
+        expectedPatchNames.push("31-remove-theme-switching-and-marketing-404");
+      }
+      if (patches.some((p) => p.startsWith("32-"))) {
+        expectedPatchNames.push(
+          "32-remove-organisations-projects-environments"
+        );
+      }
+      if (patches.some((p) => p.startsWith("33-"))) {
+        expectedPatchNames.push("33-remove-dashboard-authoring");
+      }
+      if (patches.some((p) => p.startsWith("34-"))) {
+        expectedPatchNames.push("34-remove-board-authoring-tables");
       }
       assert.ok(
         patches.length >= expectedPatchNames.length,
