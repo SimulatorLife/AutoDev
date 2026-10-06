@@ -18,7 +18,7 @@
  * emphasis, which is why the family is expressed here instead of as five more
  * theme variables that could be combined incorrectly. An element that needs a
  * different emphasis -- a hover state, or the warning background at 10% that
- * `EnablementToggle` uses -- keeps its own class, because that difference is
+ * `ModelToggle` uses -- keeps its own class, because that difference is
  * carrying meaning rather than repeating a convention.
  */
 export const ACCENT_TONE_CLASS = "bg-accent/15 text-accent border-accent/40";
