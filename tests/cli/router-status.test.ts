@@ -145,6 +145,64 @@ test("router status text reports operational state but not history", async () =>
   assert.doesNotMatch(stdout, /20 attempts|18 successes/);
 });
 
+test("router status explains a provider's cooldown, streaks, and live limits", async () => {
+  const base = statusPayload.providers.openai;
+  const { stdout } = await runStatusCli({
+    ...statusPayload,
+    providers: {
+      // The live `limits` view must win over the provider's own snapshot.
+      live: {
+        ...base,
+        subagentStatus: "cooling",
+        limits: {
+          cooldownKind: "rate_limit",
+          cooldownFailureClass: "upstream_429",
+          cooldownRemainingMs: 4500,
+          cooldownUntil: "2026-09-30T00:05:00.000Z",
+          cooldownResetsAt: "2026-09-30T00:05:00.000Z",
+          lastResortEligible: false,
+          customBudget: 7
+        },
+        cooldownKind: "transient",
+        cooldownRemainingMs: 1,
+        lastResortEligible: true,
+        failureStreak: 3,
+        probeFailureStreak: 2
+      },
+      // No live cooldown keys, so every field falls back to the snapshot.
+      snapshot: {
+        ...base,
+        limits: {},
+        cooldownKind: "hard",
+        cooldownRemainingMs: 2000,
+        lastResortEligible: false
+      },
+      // A published effective-limit block is reported verbatim, minus blanks.
+      budget: {
+        ...base,
+        effectiveLimits: { tokensPerMinute: 5000, burst: null }
+      }
+    }
+  });
+
+  assert.match(
+    stdout,
+    /cooling \(rate_limit, resets 2026-09-30T00:05:00\.000Z\)/
+  );
+  assert.match(
+    stdout,
+    /↳ cooldown: rate_limit\/upstream_429 · remaining: 5s · until: 2026-09-30T00:05:00\.000Z · resets: 2026-09-30T00:05:00\.000Z · last resort: ineligible · failure streak: 3 · probe streak: 2 · live limits: \[customBudget: 7\]/
+  );
+  assert.match(stdout, /ready \(hard 2s\)/);
+  assert.match(
+    stdout,
+    /↳ cooldown: hard · remaining: 2s · last resort: ineligible/
+  );
+  assert.match(stdout, /↳ live limits: \[tokensPerMinute: 5000\]/);
+  // A healthy provider with nothing to report prints no detail line at all.
+  assert.equal(stdout.split("↳").length - 1, 3);
+});
+
 test("router status JSON exposes only the operational runtime contract", async () => {
   const { stdout } = await runStatusCli(statusPayload, ["--json"]);
   const result = JSON.parse(stdout);

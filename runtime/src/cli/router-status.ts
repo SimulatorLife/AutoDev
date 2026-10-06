@@ -151,6 +151,129 @@ const getProviderLiveActivity = (state: RouterProviderRuntimeStatus): number =>
 const getProviderInFlight = (state: RouterProviderRuntimeStatus): number =>
   Number(state.inFlightRequests ?? 0);
 
+// Limit keys the router itself owns. Anything else under `limits` is a
+// caller-supplied live limit and is reported verbatim, so the two sets cannot
+// overlap without one silently hiding the other.
+const COOLDOWN_LIMIT_KEYS = new Set([
+  "cooldownKind",
+  "cooldownFailureClass",
+  "cooldownResetsAt",
+  "cooldownUntil",
+  "cooldownRemainingMs",
+  "lastResortEligible"
+]);
+
+/**
+ * A provider's cooldown as the status report needs it: every field the router
+ * may publish under `limits` (the live view) or directly on the provider
+ * status (the last observed snapshot), resolved to one value per field. The
+ * two surfaces drift in lockstep, so each field prefers `limits` and falls back
+ * to the provider snapshot, and the caller never has to repeat that choice.
+ */
+type ProviderCooldown = {
+  readonly remainingMs: number;
+  readonly resetsAt: unknown;
+  readonly kind: unknown;
+  readonly failureClass: unknown;
+  readonly until: unknown;
+  readonly lastResortEligible: unknown;
+};
+
+const resolveCooldown = (
+  state: RouterProviderRuntimeStatus
+): ProviderCooldown => {
+  const limits = asRecord(state.limits);
+  return {
+    remainingMs: Number(
+      limits.cooldownRemainingMs ?? state.cooldownRemainingMs ?? 0
+    ),
+    resetsAt: limits.cooldownResetsAt ?? state.cooldownResetsAt ?? null,
+    kind: limits.cooldownKind ?? state.cooldownKind ?? null,
+    failureClass:
+      limits.cooldownFailureClass ?? state.cooldownFailureClass ?? null,
+    until: limits.cooldownUntil ?? state.cooldownUntil ?? null,
+    lastResortEligible:
+      limits.lastResortEligible ?? state.lastResortEligible ?? true
+  };
+};
+
+/** The cooldown annotation appended to the provider's status column. */
+const formatCooldownSuffix = (cooldown: ProviderCooldown): string =>
+  cooldown.remainingMs > 0 || cooldown.resetsAt
+    ? cooldown.resetsAt
+      ? ` (${cooldown.kind ?? "cooldown"}, resets ${cooldown.resetsAt})`
+      : ` (${cooldown.kind ?? "cooldown"} ${Math.ceil(cooldown.remainingMs / 1000)}s)`
+    : "";
+
+/** Why a provider is unavailable right now, when it is cooling down at all. */
+const cooldownDetailLines = (cooldown: ProviderCooldown): string[] => {
+  if (!cooldown.remainingMs && !cooldown.resetsAt && !cooldown.kind) return [];
+  const kind = cooldown.kind ?? "transient";
+  const fClass = cooldown.failureClass ? `/${cooldown.failureClass}` : "";
+  const lines = [`cooldown: ${kind}${fClass}`];
+  if (cooldown.remainingMs > 0)
+    lines.push(`remaining: ${Math.ceil(cooldown.remainingMs / 1000)}s`);
+  if (cooldown.until) lines.push(`until: ${cooldown.until}`);
+  if (cooldown.resetsAt) lines.push(`resets: ${cooldown.resetsAt}`);
+  lines.push(
+    `last resort: ${cooldown.lastResortEligible ? "eligible" : "ineligible"}`
+  );
+  return lines;
+};
+
+/**
+ * The live limits in force for a provider, or null when there are none. A
+ * published effective-limit block is reported verbatim; failing that, the
+ * caller's own `limits` table contributes anything the router did not claim.
+ */
+const formatLiveLimits = (
+  state: RouterProviderRuntimeStatus
+): string | null => {
+  const published =
+    state.effectiveLimits ??
+    state.effectiveLimit ??
+    state.liveLimits ??
+    state.liveLimit ??
+    state.rateLimit;
+  if (published != null) {
+    const rendered =
+      typeof published === "object" && !Array.isArray(published)
+        ? Object.entries(published)
+            .filter(([, value]) => value != null && value !== "")
+            .map(([key, value]) => `${key}: ${value}`)
+            .join(", ")
+        : String(published);
+    return rendered ? `live limits: [${rendered}]` : null;
+  }
+  if (!state.limits || typeof state.limits !== "object") return null;
+  const custom = Object.entries(state.limits).filter(
+    ([key, value]) =>
+      !COOLDOWN_LIMIT_KEYS.has(key) && value != null && value !== ""
+  );
+  if (custom.length === 0) return null;
+  return `live limits: [${custom.map(([key, value]) => `${key}: ${value}`).join(", ")}]`;
+};
+
+/**
+ * The indented explanation printed under a provider row: what it is cooling
+ * down from, how its failure streaks stand, and any live limits in force. These
+ * only appear when there is something to say, so the caller prints nothing for
+ * an empty list.
+ */
+const providerDetailLines = (
+  state: RouterProviderRuntimeStatus,
+  cooldown: ProviderCooldown
+): string[] => {
+  const details = cooldownDetailLines(cooldown);
+  if ((state.failureStreak ?? 0) > 0)
+    details.push(`failure streak: ${state.failureStreak}`);
+  if ((state.probeFailureStreak ?? 0) > 0)
+    details.push(`probe streak: ${state.probeFailureStreak}`);
+  const liveLimits = formatLiveLimits(state);
+  if (liveLimits) details.push(liveLimits);
+  return details;
+};
+
 writeLine("");
 writeLine(
   "Provider     State     Priority                                Status                                   Active  In-Flight  Last failure"
@@ -167,25 +290,7 @@ for (const [provider, state] of Object.entries(providers)) {
     ? `${state.lastFailure.class}${state.lastFailure.status ? ` (HTTP ${state.lastFailure.status})` : ""}`
     : "-";
 
-  const pLimits = asRecord(state.limits);
-  const cooldownRemainingMs = Number(
-    pLimits.cooldownRemainingMs ?? state.cooldownRemainingMs ?? 0
-  );
-  const cooldownResetsAt =
-    pLimits.cooldownResetsAt ?? state.cooldownResetsAt ?? null;
-  const cooldownKind = pLimits.cooldownKind ?? state.cooldownKind ?? null;
-  const cooldownFailureClass =
-    pLimits.cooldownFailureClass ?? state.cooldownFailureClass ?? null;
-  const cooldownUntil = pLimits.cooldownUntil ?? state.cooldownUntil ?? null;
-  const lastResortEligible =
-    pLimits.lastResortEligible ?? state.lastResortEligible ?? true;
-
-  const cooldown =
-    cooldownRemainingMs > 0 || cooldownResetsAt
-      ? cooldownResetsAt
-        ? ` (${cooldownKind ?? "cooldown"}, resets ${cooldownResetsAt})`
-        : ` (${cooldownKind ?? "cooldown"} ${Math.ceil(cooldownRemainingMs / 1000)}s)`
-      : "";
+  const cooldown = resolveCooldown(state);
   const displayStatus = String(
     isSubagentEnabled
       ? (state.subagentStatus ?? state.status ?? "ready")
@@ -194,60 +299,10 @@ for (const [provider, state] of Object.entries(providers)) {
   const activeCount = getProviderLiveActivity(state);
   const inFlightCount = getProviderInFlight(state);
   writeLine(
-    `${provider.padEnd(11)}  ${`${stateLabel}/${isOrchestratorEnabled ? "enabled" : "disabled"}`.padEnd(18)}  ${priority.padEnd(38)}  ${(displayStatus + cooldown).padEnd(39)}  ${String(activeCount).padStart(6)}  ${String(inFlightCount).padStart(9)}  ${lastFailure}`
+    `${provider.padEnd(11)}  ${`${stateLabel}/${isOrchestratorEnabled ? "enabled" : "disabled"}`.padEnd(18)}  ${priority.padEnd(38)}  ${(displayStatus + formatCooldownSuffix(cooldown)).padEnd(39)}  ${String(activeCount).padStart(6)}  ${String(inFlightCount).padStart(9)}  ${lastFailure}`
   );
 
-  const details: string[] = [];
-  if (cooldownRemainingMs > 0 || cooldownResetsAt || cooldownKind) {
-    const kind = cooldownKind ?? "transient";
-    const fClass = cooldownFailureClass ? `/${cooldownFailureClass}` : "";
-    details.push(`cooldown: ${kind}${fClass}`);
-    if (cooldownRemainingMs > 0)
-      details.push(`remaining: ${Math.ceil(cooldownRemainingMs / 1000)}s`);
-    if (cooldownUntil) details.push(`until: ${cooldownUntil}`);
-    if (cooldownResetsAt) details.push(`resets: ${cooldownResetsAt}`);
-    details.push(
-      `last resort: ${lastResortEligible ? "eligible" : "ineligible"}`
-    );
-  }
-  if ((state.failureStreak ?? 0) > 0)
-    details.push(`failure streak: ${state.failureStreak}`);
-  if ((state.probeFailureStreak ?? 0) > 0)
-    details.push(`probe streak: ${state.probeFailureStreak}`);
-
-  const rawLimits =
-    state.effectiveLimits ??
-    state.effectiveLimit ??
-    state.liveLimits ??
-    state.liveLimit ??
-    state.rateLimit;
-  if (rawLimits != null) {
-    const limStr =
-      typeof rawLimits === "object" && !Array.isArray(rawLimits)
-        ? Object.entries(rawLimits)
-            .filter(([, v]) => v != null && v !== "")
-            .map(([k, v]) => `${k}: ${v}`)
-            .join(", ")
-        : String(rawLimits);
-    if (limStr) details.push(`live limits: [${limStr}]`);
-  } else if (state.limits && typeof state.limits === "object") {
-    const knownKeys = new Set([
-      "cooldownKind",
-      "cooldownFailureClass",
-      "cooldownResetsAt",
-      "cooldownUntil",
-      "cooldownRemainingMs",
-      "lastResortEligible"
-    ]);
-    const customEntries = Object.entries(state.limits).filter(
-      ([k, v]) => !knownKeys.has(k) && v != null && v !== ""
-    );
-    if (customEntries.length > 0) {
-      details.push(
-        `live limits: [${customEntries.map(([k, v]) => `${k}: ${v}`).join(", ")}]`
-      );
-    }
-  }
+  const details = providerDetailLines(state, cooldown);
   if (details.length > 0) {
     writeLine(`  ↳ ${details.join(" · ")}`);
   }
