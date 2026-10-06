@@ -1,0 +1,242 @@
+diff --git a/src/client/src/__tests__/constants/route.test.ts b/src/client/src/__tests__/constants/route.test.ts
+index 506eecf6..64268b82 100644
+--- a/src/client/src/__tests__/constants/route.test.ts
++++ b/src/client/src/__tests__/constants/route.test.ts
+@@ -88,8 +88,13 @@ describe('RESTRICTED_DEMO_ACCOUNT_ROUTES', () => {
+     expect(RESTRICTED_DEMO_ACCOUNT_ROUTES.POST).toContain('/api/user/profile');
+   });
+ 
+-  it('DELETE restricts /api/prompt-hub', () => {
+-    expect(RESTRICTED_DEMO_ACCOUNT_ROUTES.DELETE).toContain('/api/prompt-hub');
++  it('DELETE restricts the routes that still exist', () => {
++    expect(RESTRICTED_DEMO_ACCOUNT_ROUTES.DELETE).toContain('/api/db-config');
++    expect(RESTRICTED_DEMO_ACCOUNT_ROUTES.DELETE).toContain('/api/api-key');
++    // The prompt routes live at /api/prompt; /api/prompt-hub has no route
++    // file and no rewrite, so restricting it was a no-op on a path that could
++    // never be reached.
++    expect(RESTRICTED_DEMO_ACCOUNT_ROUTES.DELETE).not.toContain('/api/prompt-hub');
+     // The Vault administration routes are gone; only the SDK read endpoint
+     // remains, and it is read-only, so there is nothing to restrict.
+     expect(RESTRICTED_DEMO_ACCOUNT_ROUTES.DELETE).not.toContain('/api/vault');
+diff --git a/src/client/src/__tests__/middleware/check-demo-account.test.ts b/src/client/src/__tests__/middleware/check-demo-account.test.ts
+index 0c56ffb9..6aa022f6 100644
+--- a/src/client/src/__tests__/middleware/check-demo-account.test.ts
++++ b/src/client/src/__tests__/middleware/check-demo-account.test.ts
+@@ -74,7 +74,7 @@ describe('checkDemoAccount', () => {
+   it('is case-insensitive for email comparison', async () => {
+     process.env.DEMO_ACCOUNT_EMAIL = 'DEMO@EXAMPLE.COM';
+     (getToken as jest.Mock).mockResolvedValue({ email: 'demo@example.com' });
+-    const req = makeRequest('DELETE', '/api/prompt-hub');
++    const req = makeRequest('DELETE', '/api/api-key');
+     const result = await middleware(req as any, makeFetchEvent());
+     expect(NextResponse.json).toHaveBeenCalledWith(
+       expect.any(String),
+diff --git a/src/client/src/components/(playground)/database-config/database-config-page.tsx b/src/client/src/components/(playground)/database-config/database-config-page.tsx
+index 7316d0bd..820f7a4f 100644
+--- a/src/client/src/components/(playground)/database-config/database-config-page.tsx
++++ b/src/client/src/components/(playground)/database-config/database-config-page.tsx
+@@ -41,17 +41,14 @@ function ModifyDatabaseConfig({
+ 	const selectedEnvironment = DEFAULT_ENVIRONMENT;
+ 	const { fireRequest, isLoading } = useFetchWrapper();
+ 	const messages = getMessage();
+-	const [environments, setEnvironments] = useState<string[]>([
++	// Environments are not a product dimension; the single scope names one.
++	// This used to fetch `/api/project/environment`, a route patch 32 deleted,
++	// so the request 404'd on every mount and the catch turned the failure into
++	// an empty list that merged back to the same single entry.
++	const environments = [
+ 		"production",
+ 		dbConfig?.environment || selectedEnvironment,
+-	].filter((value, index, values) => values.indexOf(value) === index));
+-
+-	useEffect(() => {
+-		fetch("/api/project/environment")
+-			.then((response) => response.ok ? response.json() : { environments: [] })
+-			.then((body) => setEnvironments(Array.from(new Set(["production", ...(body.environments || []).map((item: { name: string }) => item.name)]))))
+-			.catch(() => undefined);
+-	}, []);
++	].filter((value, index, values) => values.indexOf(value) === index);
+ 
+ 	const modifyDetails: FormBuilderEvent = useCallback(
+ 		(event) => {
+diff --git a/src/client/src/components/(playground)/telemetry-source/data-sources-page.tsx b/src/client/src/components/(playground)/telemetry-source/data-sources-page.tsx
+index 2c277371..d1d9e735 100644
+--- a/src/client/src/components/(playground)/telemetry-source/data-sources-page.tsx
++++ b/src/client/src/components/(playground)/telemetry-source/data-sources-page.tsx
+@@ -243,12 +243,10 @@ function reportConnectorHealth(
+ }
+ 
+ export default function DataSourcesPage({
+-	projectId,
+ 	showRouting = true,
+ 	openType,
+ 	onOpenTypeHandled,
+ }: {
+-	projectId?: string;
+ 	showRouting?: boolean;
+ 	openType?: string | null;
+ 	onOpenTypeHandled?: () => void;
+@@ -334,7 +332,7 @@ export default function DataSourcesPage({
+ 
+ 	useEffect(() => {
+ 		load();
+-		}, [load, projectId]);
++		}, [load]);
+ 
+ 	const bindingForSignal = useCallback(
+ 		(signal: Signal) => bindings.find(
+@@ -526,21 +524,6 @@ export default function DataSourcesPage({
+ 
+ 	return (
+ 		<div className="flex h-full w-full flex-col gap-4 overflow-auto text-stone-700 dark:text-stone-300">
+-			{showRouting && (
+-				<SignalRoutingSection
+-					projectId={projectId}
+-					environment={environment}
+-					databaseConfigs={databaseConfigs}
+-					sources={routingSources}
+-					descriptors={descriptors}
+-					bindingForSignal={bindingForSignal}
+-					onSetBinding={setBinding}
+-					onAddConnector={() => {
+-						setNewType(undefined);
+-						setEditing("new");
+-					}}
+-				/>
+-			)}
+ 			<section className="flex flex-col gap-3 border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-950">
+ 				<div className="-mx-4 -mt-4 flex flex-col gap-3 border-b border-stone-200 p-4 dark:border-stone-800">
+ 					<div className="flex flex-wrap items-start justify-between gap-3">
+@@ -889,87 +872,6 @@ function FieldInput({
+ 	);
+ }
+ 
+-function SignalRoutingSection({
+-	projectId,
+-	environment,
+-	databaseConfigs,
+-	sources,
+-	descriptors,
+-	bindingForSignal,
+-	onSetBinding,
+-	onAddConnector,
+-}: {
+-	projectId?: string;
+-	environment: string;
+-	databaseConfigs: any[];
+-	sources: SourceRow[];
+-	descriptors: TypeDescriptor[];
+-	bindingForSignal: (signal: Signal) => BindingRow | undefined;
+-	onSetBinding: (signal: Signal, sourceId: string) => Promise<void>;
+-	onAddConnector?: () => void;
+-}) {
+-	const messages = getMessage();
+-	const environmentDatabases = databaseConfigs.filter(
+-		(db) => (db.environment || "production").toLowerCase() === environment
+-	);
+-	return (
+-		<section className="border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-950">
+-			<div className="mb-1 flex items-center gap-2">
+-				<Database className="h-4 w-4 text-primary" />
+-				<h2 className="text-sm font-semibold text-stone-950 dark:text-stone-50">{messages.DATA_SOURCE_SIGNAL_ROUTING_TITLE}</h2>
+-			</div>
+-			<p className="mb-3 text-xs text-muted-foreground">{messages.DATA_SOURCE_SIGNAL_ROUTING_DESCRIPTION}</p>
+-			<div className="grid gap-3 sm:grid-cols-3">
+-				{SIGNALS.map((signal) => {
+-					const binding = bindingForSignal(signal);
+-					const value = signalRoutingSelectValue(binding?.sourceId);
+-					const options = sources.filter((source) => parseSignals(source.signals).includes(signal));
+-					const hasOptions = environmentDatabases.length > 0 || options.length > 0;
+-					const label = signal === "traces" ? messages.DATA_SOURCE_SIGNAL_TRACES : signal === "logs" ? messages.DATA_SOURCE_SIGNAL_LOGS : signal === "metrics" ? messages.DATA_SOURCE_SIGNAL_METRICS : messages.DATA_SOURCE_SIGNAL_INTELLIGENCE;
+-					return (
+-						<div key={signal} className="space-y-1.5">
+-							<Label className="text-xs uppercase text-muted-foreground">{label}</Label>
+-							{hasOptions ? (
+-								<FeatureAccess access="connectors.bind" hideWhenDenied>
+-									<Select value={value} onValueChange={(next) => onSetBinding(signal, next)}>
+-										<SelectTrigger className="h-auto min-h-12 items-center gap-2 overflow-hidden border-stone-300 bg-white py-2 text-left text-stone-950 [&>span]:min-w-0 [&>span]:flex-1 [&>span]:line-clamp-none dark:border-stone-700 dark:bg-stone-900 dark:text-stone-50"><SelectValue placeholder="Select a connector" /></SelectTrigger>
+-										<SelectContent className="w-[var(--radix-select-trigger-width)] min-w-[var(--radix-select-trigger-width)] max-w-[var(--radix-select-trigger-width)]">
+-											{environmentDatabases.map((db) => <ConnectorOption key={db.id} value={`builtin:${db.id}`} name={db.name} type="ClickHouse" detail={environment} icon="/images/connectors/clickhouse.svg" />)}
+-											{options.map((source) => <ConnectorOption key={source.id} value={signalRoutingSelectValue(source.id)!} name={source.name} type={source.type} detail={environment} icon={descriptors.find((descriptor) => descriptor.type === source.type)?.icon} />)}
+-										</SelectContent>
+-									</Select>
+-								</FeatureAccess>
+-							) : (
+-								<div className="flex min-h-12 items-center justify-between rounded-md border border-dashed border-stone-300 bg-stone-50 px-3 text-xs text-muted-foreground dark:border-stone-700 dark:bg-stone-900/60">
+-									<span>No connector configured</span>
+-									{onAddConnector ? (
+-										<FeatureAccess access="connectors.create" hideWhenDenied>
+-											<button
+-												type="button"
+-												className="font-medium text-primary hover:underline"
+-												onClick={onAddConnector}
+-											>
+-												{messages.ADD_CONNECTOR}
+-											</button>
+-										</FeatureAccess>
+-									) : (
+-										<Link
+-											className="font-medium text-primary hover:underline"
+-											href={projectId ? `/organisation/project/${projectId}/connectors` : "/connectors"}
+-										>
+-											{messages.ADD_CONNECTOR}
+-										</Link>
+-									)}
+-								</div>
+-							)}
+-						</div>
+-					);
+-				})}
+-			</div>
+-		</section>
+-	);
+-}
+-
+ function SignalRoutingEditor({
+ 	sources,
+ 	databaseConfigs,
+@@ -1040,7 +942,18 @@ export function SourceFormDialog({
+ 	const isEdit = !!source;
+ 	const [name, setName] = useState(source?.name || "");
+ 	const [environment, setEnvironment] = useState(source?.environment || initialEnvironment || "production");
+-	const [environments, setEnvironments] = useState<string[]>(Array.from(new Set(["production", source?.environment, initialEnvironment].filter(Boolean) as string[])));
++	// Environments are not a product dimension; the single scope names one.
++	// This used to fetch `/api/project/environment`, a route patch 32 deleted,
++	// so the request 404'd on every mount and the catch turned the failure into
++	// an empty list that merged back to the same single entry.
++	const environments = [
++		"production",
++		source?.environment,
++		initialEnvironment,
++	].filter(
++		(value, index, values): value is string =>
++			!!value && values.indexOf(value) === index
++	);
+ 	const [type, setType] = useState(source?.type || initialType || "");
+ 	const pickerGroups = useMemo(() => {
+ 		const groups = new Map<string, TypeDescriptor[]>();
+@@ -1075,13 +988,6 @@ export function SourceFormDialog({
+ 	const [saving, setSaving] = useState(false);
+ 	const [testing, setTesting] = useState(false);
+ 
+-	useEffect(() => {
+-		fetch("/api/project/environment")
+-			.then((response) => response.ok ? response.json() : { environments: [] })
+-			.then((body) => setEnvironments(Array.from(new Set(["production", ...(body.environments || []).map((item: { name: string }) => item.name), environment]))))
+-			.catch(() => undefined);
+-	}, [environment]);
+-
+ 	const fields = useMemo(
+ 		() => type === "clickhouse" ? clickHouseFields : fieldsForType(descriptors, type),
+ 		[clickHouseFields, descriptors, type]
+diff --git a/src/client/src/constants/route.ts b/src/client/src/constants/route.ts
+index 038b955c..721b9e99 100644
+--- a/src/client/src/constants/route.ts
++++ b/src/client/src/constants/route.ts
+@@ -65,5 +65,5 @@ export const ONBOARDING_WHITELIST_API_ROUTES = {
+ export const RESTRICTED_DEMO_ACCOUNT_ROUTES: Record<string, string[]> = {
+ 	POST: ["/api/db-config", "/api/user/profile"],
+ 	PUT: ["/api/db-config"],
+-	DELETE: ["/api/db-config", "/api/api-key", "/api/prompt-hub"],
++	DELETE: ["/api/db-config", "/api/api-key"],
+ };

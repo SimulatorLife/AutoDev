@@ -56,7 +56,9 @@ export const OPENLIT_PATCH_NAMES = [
   "39-remove-database-config-sharing",
   "40-single-user-model-auth-and-honest-empty-state",
   "41-remove-rule-engine-ui-trace",
-  "42-remove-dead-agents-navigation"
+  "42-remove-dead-agents-navigation",
+  "43-remove-tenancy-route-residue",
+  "44-remove-removed-product-route-residue"
 ] as const;
 
 /** Strips the `.patch` suffix a directory listing carries. */

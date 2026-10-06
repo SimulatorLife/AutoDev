@@ -1,0 +1,698 @@
+diff --git a/.gitignore b/.gitignore
+index c4a88537..8d1dfa68 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -14,6 +14,11 @@ logs/
+ !src/client/src/lib/platform/logs/**
+ !src/client/src/app/api/telemetry/logs/
+ !src/client/src/app/api/telemetry/logs/**
++# The logs signal's detail page is a real route (`/telemetry/logs/<id>`), and
++# `logs/` above silently ignored its directory, so the page could not be added
++# without `git add -f`.
++!src/client/src/app/**/logs/
++!src/client/src/app/**/logs/**
+ # Secrets / local env (never commit)
+ .env
+ **/.env
+diff --git a/src/client/src/__tests__/constants/route.test.ts b/src/client/src/__tests__/constants/route.test.ts
+index 64268b82..59f25a67 100644
+--- a/src/client/src/__tests__/constants/route.test.ts
++++ b/src/client/src/__tests__/constants/route.test.ts
+@@ -4,7 +4,6 @@ import {
+   ALLOWED_OPENLIT_ROUTES_WITH_TOKEN,
+   ALLOWED_OPENLIT_ROUTE_PREFIXES_WITH_TOKEN,
+   CRON_JOB_ROUTES,
+-  ONBOARDING_WHITELIST_API_ROUTES,
+   RESTRICTED_DEMO_ACCOUNT_ROUTES,
+ } from '@/constants/route';
+ 
+@@ -55,23 +54,6 @@ describe('CRON_JOB_ROUTES', () => {
+   });
+ });
+ 
+-describe('ONBOARDING_WHITELIST_API_ROUTES', () => {
+-  it('has exact and prefix keys', () => {
+-    expect(ONBOARDING_WHITELIST_API_ROUTES).toHaveProperty('exact');
+-    expect(ONBOARDING_WHITELIST_API_ROUTES).toHaveProperty('prefix');
+-  });
+-
+-  it('allows database config setup APIs before onboarding is complete', () => {
+-    expect(ONBOARDING_WHITELIST_API_ROUTES.exact.GET).toContain('/api/db-config');
+-    expect(ONBOARDING_WHITELIST_API_ROUTES.exact.POST).toContain('/api/db-config');
+-    expect(ONBOARDING_WHITELIST_API_ROUTES.exact.POST).toContain('/api/clickhouse');
+-  });
+-
+-  it('prefix.POST includes /api/db-config/ for setting the active config', () => {
+-    expect(ONBOARDING_WHITELIST_API_ROUTES.prefix.POST).toContain('/api/db-config/');
+-  });
+-});
+-
+ describe('RESTRICTED_DEMO_ACCOUNT_ROUTES', () => {
+   it('is an object', () => {
+     expect(typeof RESTRICTED_DEMO_ACCOUNT_ROUTES).toBe('object');
+diff --git a/src/client/src/__tests__/middleware/middleware.test.ts b/src/client/src/__tests__/middleware/middleware.test.ts
+index a69ecef1..9127f548 100644
+--- a/src/client/src/__tests__/middleware/middleware.test.ts
++++ b/src/client/src/__tests__/middleware/middleware.test.ts
+@@ -66,6 +66,12 @@ describe('middleware', () => {
+     expect(config.matcher).toContain('/evaluations/:path*');
+   });
+ 
++  it('matches the memory page', () => {
++    // /memory is the fork's own page. It shipped without a matcher entry, so
++    // the whole middleware chain (CSRF, auth, demo-account) skipped it.
++    expect(config.matcher).toContain('/memory');
++  });
++
+   it('matches nested playground routes that previously bypassed auth', () => {
+     expect(config.matcher).toContain('/prompt-hub/:path*');
+     expect(config.matcher).not.toContain('/fleet-hub/:path*');
+diff --git a/src/client/src/__tests__/utils/breadcrumbs.test.ts b/src/client/src/__tests__/utils/breadcrumbs.test.ts
+index 2dc46189..12e20628 100644
+--- a/src/client/src/__tests__/utils/breadcrumbs.test.ts
++++ b/src/client/src/__tests__/utils/breadcrumbs.test.ts
+@@ -1,7 +1,8 @@
+ import {
+   generatePageHeader,
+-  updatePageHeaderWithData,
+   extractRouteParams,
++  updatePageHeaderWithData,
++  ROUTE_CONFIGS,
+ } from '@/utils/breadcrumbs';
+ 
+ describe('extractRouteParams', () => {
+@@ -10,51 +11,27 @@ describe('extractRouteParams', () => {
+     expect(result).toEqual({});
+   });
+ 
+-  it('extracts id from prompt-hub pathname', () => {
++  it('extracts prompt hub id', () => {
++    const result = extractRouteParams('/prompt-hub/abc-123', /^\/prompt-hub\/[^/]+$/);
++    expect(result.id).toBe('abc-123');
++  });
++
++  it('extracts prompt-hub id from a real detail path', () => {
+     const result = extractRouteParams(
+       '/prompt-hub/my-prompt-id',
+       /^\/prompt-hub\/[^/]+$/
+     );
+     expect(result.id).toBe('my-prompt-id');
+   });
+-
+-  it('extracts uuid when regex source contains escaped brackets (\\[0-9a-f\\])', () => {
+-    // Use a regex whose .source includes \[0-9a-f\] to trigger the UUID extraction branch
+-    const regex = new RegExp('.+\\[0-9a-f\\].+');
+-    const pathname = '/d/[0-9a-f]/123e4567-e89b-12d3-a456-426614174000';
+-    const result = extractRouteParams(pathname, regex);
+-    expect(result.id).toBe('123e4567-e89b-12d3-a456-426614174000');
+-  });
+-
+-  it('returns empty id when regex source has escaped brackets but pathname has no UUID', () => {
+-    const regex = new RegExp('.+\\[0-9a-f\\].+');
+-    const pathname = '/d/[0-9a-f]/no-uuid-here';
+-    const result = extractRouteParams(pathname, regex);
+-    expect(result.id).toBeUndefined();
+-  });
+ });
+ 
+ describe('generatePageHeader', () => {
+-  it('generates correct header for /home', () => {
+-    const header = generatePageHeader('/home');
+-    expect(header.title).toBe('Home');
+-    expect(header.breadcrumbs).toEqual([]);
+-  });
+-
+   it('generates correct header for /dashboard', () => {
+     const header = generatePageHeader('/dashboard');
+     expect(header.title).toBe('Dashboard');
+     expect(header.breadcrumbs).toEqual([]);
+   });
+ 
+-  it('generates header with empty title for individual dashboard view', () => {
+-    const header = generatePageHeader(
+-      '/d/123e4567-e89b-12d3-a456-426614174000'
+-    );
+-    expect(header.title).toBe('');
+-    expect(header.breadcrumbs).toEqual([]);
+-  });
+-
+   it('generates correct header for /requests', () => {
+     const header = generatePageHeader('/requests');
+     expect(header.title).toBe('Requests');
+@@ -79,9 +56,9 @@ describe('generatePageHeader', () => {
+     expect(header.breadcrumbs).toEqual([]);
+   });
+ 
+-  it('generates correct header for /settings/profile', () => {
+-    const header = generatePageHeader('/settings/profile');
+-    expect(header.title).toBe('User Profile');
++  it('generates correct header for /settings', () => {
++    const header = generatePageHeader('/settings');
++    expect(header.title).toBe('Settings');
+     expect(header.breadcrumbs).toEqual([]);
+   });
+ 
+@@ -91,28 +68,15 @@ describe('generatePageHeader', () => {
+     expect(header.breadcrumbs).toEqual([]);
+   });
+ 
+-  it('generates breadcrumbs for /dashboards/board', () => {
+-    const header = generatePageHeader('/dashboards/board');
+-    expect(header.title).toBe('Board');
+-    expect(header.breadcrumbs).toContainEqual({ title: 'Dashboards', href: '/dashboards' });
+-  });
+-
+-  it('generates breadcrumbs for /dashboards/explorer', () => {
+-    const header = generatePageHeader('/dashboards/explorer');
+-    expect(header.title).toBe('Explorer');
+-    expect(header.breadcrumbs).toContainEqual({ title: 'Dashboards', href: '/dashboards' });
+-  });
+-
+-  it('generates breadcrumbs for /dashboards/widget', () => {
+-    const header = generatePageHeader('/dashboards/widget');
+-    expect(header.title).toBe('Widget');
+-    expect(header.breadcrumbs).toContainEqual({ title: 'Dashboards', href: '/dashboards' });
++  it('generates correct header for /costs', () => {
++    const header = generatePageHeader('/costs');
++    expect(header.title).toBe('Costs');
++    expect(header.breadcrumbs).toEqual([]);
+   });
+ 
+-  it('generates correct header for /settings', () => {
+-    const header = generatePageHeader('/settings');
+-    expect(header.title).toBe('Settings');
+-    expect(header.breadcrumbs).toEqual([]);
++  it('generates breadcrumbs for /pricing', () => {
++    const header = generatePageHeader('/pricing');
++    expect(header.breadcrumbs).toContainEqual({ title: 'Costs', href: '/costs' });
+   });
+ 
+   it('generates breadcrumbs for /evaluations/settings', () => {
+@@ -160,6 +124,51 @@ describe('generatePageHeader', () => {
+     const header = generatePageHeader('/prompt-hub/abc');
+     expect(header.title).toBe('');
+   });
++
++  it('titles a log detail page', () => {
++    // /telemetry/logs/<id> is a real route: the logs signal pushes
++    // getDetailHref() on row select and from the sheet's full-screen button.
++    expect(ROUTE_CONFIGS.some(({ regex }) => regex.test('/telemetry/logs/abc'))).toBe(true);
++  });
++});
++
++describe('routes removed from the product', () => {
++  // Every one of these had a route config, which meant a live title and
++  // breadcrumbs that linked to pages that no longer exist. The configs are
++  // gone; these assertions keep them from being re-added.
++  const REMOVED = [
++    '/home',
++    '/dashboards',
++    '/dashboards/board',
++    '/dashboards/explorer',
++    '/dashboards/widget',
++    '/d/123e4567-e89b-12d3-a456-426614174000',
++    '/settings/profile',
++    '/evaluations/manual',
++    '/agents',
++    '/agents/cursor',
++    '/coding-agents/users/alice%40example.com',
++  ];
++
++  it('has no ROUTE_CONFIGS entry matching a removed page', () => {
++    for (const path of REMOVED) {
++      const matched = ROUTE_CONFIGS.filter(({ regex }) => regex.test(path)).map(String);
++      expect({ path, matched }).toEqual({ path, matched: [] });
++    }
++  });
++
++  it('never renders a breadcrumb href pointing at a removed page', () => {
++    for (const path of REMOVED) {
++      for (const crumb of generatePageHeader(path).breadcrumbs) {
++        const href = crumb.href ?? '';
++        expect({ path, href, dead: REMOVED.some((gone) => href.startsWith(gone)) }).toEqual({
++          path,
++          href,
++          dead: false,
++        });
++      }
++    }
++  });
+ });
+ 
+ describe('updatePageHeaderWithData', () => {
+@@ -199,8 +208,7 @@ describe('updatePageHeaderWithData', () => {
+ 
+ describe('ROUTE_CONFIGS handlers', () => {
+   it('invokes every route title/breadcrumb/description handler', () => {
+-    const { ROUTE_CONFIGS } = require('@/utils/breadcrumbs') as typeof import('@/utils/breadcrumbs');
+-    const params = { id: 'abc', userId: encodeURIComponent('a@b.com') };
++    const params = { id: 'abc' };
+ 
+     expect(ROUTE_CONFIGS.length).toBeGreaterThan(10);
+ 
+@@ -214,17 +222,14 @@ describe('ROUTE_CONFIGS handlers', () => {
+     }
+   });
+ 
+-  it('extracts coding-agents user id params', () => {
+-    const result = extractRouteParams(
+-      '/coding-agents/users/alice%40example.com',
+-      /^\/coding-agents\/users\/[^/]+$/
+-    );
+-    expect(result.userId).toBe('alice%40example.com');
+-  });
+-
+-  it('falls back for unknown routes', () => {
+-    const header = generatePageHeader('/totally-unknown-page');
+-    expect(header.title).toBe('Totally unknown page');
+-    expect(header.breadcrumbs).toEqual([]);
++  it('every breadcrumb href points at a route config that still exists', () => {
++    for (const config of ROUTE_CONFIGS) {
++      for (const crumb of config.getBreadcrumbs('/sample', { id: 'abc' })) {
++        const href = (crumb.href ?? '').split('?')[0];
++        expect({ href, matched: ROUTE_CONFIGS.filter(({ regex }) => regex.test(href)).length > 0 }).toEqual(
++          { href, matched: true }
++        );
++      }
++    }
+   });
+ });
+diff --git a/src/client/src/app/(playground)/telemetry/logs/[id]/page.tsx b/src/client/src/app/(playground)/telemetry/logs/[id]/page.tsx
+new file mode 100644
+index 00000000..8bff701d
+--- /dev/null
++++ b/src/client/src/app/(playground)/telemetry/logs/[id]/page.tsx
+@@ -0,0 +1,5 @@
++import LogDetailPage from "@/components/(playground)/observability/log-detail-page";
++
++export default function Page({ params }: { params: { id: string } }) {
++	return <LogDetailPage id={params.id} />;
++}
+diff --git a/src/client/src/app/api/user/complete-onboarding/route.ts b/src/client/src/app/api/user/complete-onboarding/route.ts
+deleted file mode 100644
+index e5199db8..00000000
+--- a/src/client/src/app/api/user/complete-onboarding/route.ts
++++ /dev/null
+@@ -1,31 +0,0 @@
+-import prisma from "@/lib/prisma";
+-import { getCurrentUser } from "@/lib/session";
+-import { SERVER_EVENTS } from "@/constants/events";
+-import PostHogServer from "@/lib/posthog";
+-import asaw from "@/utils/asaw";
+-
+-export async function POST() {
+-	const startTimestamp = Date.now();
+-	const [err, user] = await asaw(getCurrentUser());
+-
+-	if (err || !user) {
+-		PostHogServer.fireEvent({
+-			event: SERVER_EVENTS.USER_ONBOARDING_COMPLETE_FAILURE,
+-			startTimestamp,
+-		});
+-		return Response.json("Unauthorized", {
+-			status: 401,
+-		});
+-	}
+-
+-	await prisma.user.update({
+-		where: { id: user.id },
+-		data: { hasCompletedOnboarding: true },
+-	});
+-
+-	PostHogServer.fireEvent({
+-		event: SERVER_EVENTS.USER_ONBOARDING_COMPLETE_SUCCESS,
+-		startTimestamp,
+-	});
+-	return Response.json({ success: true });
+-}
+diff --git a/src/client/src/components/(playground)/clickhouse-connectivity-wrapper.tsx b/src/client/src/components/(playground)/clickhouse-connectivity-wrapper.tsx
+index ba96c8bd..89d57223 100644
+--- a/src/client/src/components/(playground)/clickhouse-connectivity-wrapper.tsx
++++ b/src/client/src/components/(playground)/clickhouse-connectivity-wrapper.tsx
+@@ -3,22 +3,25 @@ import { pingActiveDatabaseConfig } from "@/helpers/client/database-config";
+ import { getPingDetails } from "@/selectors/database-config";
+ import { useRootStore } from "@/store";
+ import Link from "next/link";
+-import { usePathname } from "next/navigation";
+ import { useEffect } from "react";
+ import { DatabaseZap, ExternalLink, RefreshCw } from "lucide-react";
+ 
+-const ALLOWED_CONNECTIVITY_ALERT = /^\/home$|^\/dashboard$|^\/telemetry(?:\/.*)?$|^\/observability(?:\/.*)?$|^\/requests$|^\/exceptions$|^\/d\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|^\/prompt-hub$|^\/vault$|^\/dashboards/;
+-
++// This wrapper only mounts from the `(playground)` layout, i.e. only on
++// authenticated pages. It used to carry a hand-maintained allowlist of pages
++// that could show the alert, and that list outlived the products it named:
++// `/home`, `/exceptions`, `/d/<uuid>`, `/vault`, `/dashboards*` and
++// `/observability*` were all removed while they stayed on it, and the pages
++// that actually consume ClickHouse — `/evaluations`, `/costs`, `/memory` — were
++// not on it. The banner therefore stayed silent on exactly the surfaces its
++// own text describes as unavailable. A dead connector is a global condition,
++// so the alert renders wherever the shell renders.
+ export default function ClickhouseConnectivityWrapper({ children }: { children: React.ReactNode }) {
+ 	const pingDetails = useRootStore(getPingDetails);
+-	const pathname = usePathname();
+ 
+ 	useEffect(() => {
+ 		if (pingDetails.status === "pending") pingActiveDatabaseConfig();
+ 	}, []);
+ 
+-	if (!ALLOWED_CONNECTIVITY_ALERT.test(pathname)) return children;
+-
+ 	return (
+ 		<div className="flex min-h-0 w-full flex-1 flex-col">
+ 			{pingDetails.error ? (
+diff --git a/src/client/src/components/(playground)/observability/log-detail-page.tsx b/src/client/src/components/(playground)/observability/log-detail-page.tsx
+index 3f42daa7..99fd7766 100644
+--- a/src/client/src/components/(playground)/observability/log-detail-page.tsx
++++ b/src/client/src/components/(playground)/observability/log-detail-page.tsx
+@@ -96,7 +96,7 @@ export function LogDetailView({
+ 	const m = getMessage();
+ 	const router = useRouter();
+ 	const searchParams = useSearchParams();
+-	const { data, fireRequest, isFetched } = useFetchWrapper();
++	const { data, fireRequest, isFetched, error } = useFetchWrapper();
+ 	const tsHint = aroundTimestamp || searchParams.get("ts") || undefined;
+ 
+ 	const fetchData = useCallback(() => {
+@@ -112,7 +112,14 @@ export function LogDetailView({
+ 	}, [fetchData]);
+ 
+ 	const record = (data as any)?.record;
+-	const fetchError = (data as any)?.err;
++	// Two distinct failure shapes, and reading only one of them rendered a
++	// blank page: a 200 response carries `{ err }` in its body, while a failed
++	// request (503 TELEMETRY_SOURCE_UNAVAILABLE, 500 with no database config)
++	// never reaches `data` at all — `useFetchWrapper` clears it and puts the
++	// message in `error`. "Unreadable" is not "no attributes", so both have to
++	// surface.
++	const fetchError = error ?? (data as any)?.err;
++	const notFound = isFetched && !record && !fetchError;
+ 	const logAttributes = record?.LogAttributes || {};
+ 	const eventName = compactValue(logAttributes["event.name"]);
+ 	const logTitle =
+@@ -180,16 +187,25 @@ export function LogDetailView({
+ 						<MetaTile icon={<BadgeDollarSign className="h-3.5 w-3.5" />} label="Cost" value={logAttributes.cost_usd ? `$${formatNumber(logAttributes.cost_usd)}` : undefined} />
+ 						<MetaTile icon={<Zap className="h-3.5 w-3.5" />} label="Tokens" value={tokenSummary} />
+ 					</div>
+-				) : isFetched && fetchError ? (
++				) : fetchError ? (
+ 					<div
+ 						role="alert"
+ 						className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200"
+ 					>
+ 						{String(fetchError)}
+ 					</div>
++				) : notFound ? (
++					<div className="rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-600 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-400">
++						No log entry with this id in the selected source and time range.
++					</div>
+ 				) : undefined
+ 			}
+ 		>
++			{!record && !fetchError ? (
++				<p className="text-sm text-stone-500 dark:text-stone-400">
++					{notFound ? "Nothing to show." : "Loading log entry…"}
++				</p>
++			) : null}
+ 			{record && (
+ 				<>
+ 					<section className="rounded-md border border-stone-200 bg-stone-50 p-3 dark:border-stone-800 dark:bg-stone-900">
+diff --git a/src/client/src/constants/route.ts b/src/client/src/constants/route.ts
+index 721b9e99..d38fc536 100644
+--- a/src/client/src/constants/route.ts
++++ b/src/client/src/constants/route.ts
+@@ -35,32 +35,6 @@ export const CRON_JOB_ROUTES = [
+ 	"/api/telemetry-snapshot",
+ ];
+ 
+-export const ONBOARDING_WHITELIST_ROUTE_PREFIXES: string[] = [];
+-
+-// API routes that are accessible without completing onboarding.
+-// Prefix entries must include a trailing slash to avoid overmatching sibling routes.
+-export const ONBOARDING_WHITELIST_API_ROUTES = {
+-	exact: {
+-		GET: [
+-			"/api/user/profile",
+-			"/api/auth/session",
+-			"/api/db-config",
+-		],
+-		POST: [
+-			"/api/user/complete-onboarding",
+-			"/api/auth/session",
+-			"/api/db-config",
+-			"/api/clickhouse",
+-		],
+-	},
+-	prefix: {
+-		GET: ["/api/db-config/"],
+-		POST: ["/api/db-config/"],
+-		PUT: ["/api/db-config/"],
+-		DELETE: ["/api/db-config/"],
+-	},
+-} as const;
+-
+ // Route format is methodtype: routepathregex[]
+ export const RESTRICTED_DEMO_ACCOUNT_ROUTES: Record<string, string[]> = {
+ 	POST: ["/api/db-config", "/api/user/profile"],
+diff --git a/src/client/src/middleware.ts b/src/client/src/middleware.ts
+index ece89b62..866417ab 100644
+--- a/src/client/src/middleware.ts
++++ b/src/client/src/middleware.ts
+@@ -40,5 +40,6 @@ export const config = {
+ 		"/pricing",
+ 		"/context",
+ 		"/context/:path*",
++		"/memory",
+ 	],
+ };
+diff --git a/src/client/src/middleware/check-auth.ts b/src/client/src/middleware/check-auth.ts
+index 73344d1b..3f3aa32d 100644
+--- a/src/client/src/middleware/check-auth.ts
++++ b/src/client/src/middleware/check-auth.ts
+@@ -13,8 +13,6 @@ import {
+ 	ALLOWED_OPENLIT_ROUTES_WITH_TOKEN,
+ 	ALLOWED_OPENLIT_ROUTE_PREFIXES_WITH_TOKEN,
+ 	CRON_JOB_ROUTES,
+-	ONBOARDING_WHITELIST_ROUTE_PREFIXES,
+-	ONBOARDING_WHITELIST_API_ROUTES,
+ } from "@/constants/route";
+ import { isValidCronJobRequest } from "@/helpers/server/cron-auth";
+ 
+@@ -183,31 +181,6 @@ export default function checkAuth(next: NextMiddleware) {
+ 					pathname.startsWith("/login") || pathname.startsWith("/register");
+ 				const isApiPage = pathname.startsWith("/api");
+ 				const isRateLimitedApi = shouldRateLimitApi(pathname);
+-				const method = request.method.toUpperCase();
+-				const isOnboardingWhitelistedPage =
+-					ONBOARDING_WHITELIST_ROUTE_PREFIXES.some(
+-						(prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+-					);
+-				const exactApiRoutes: readonly string[] =
+-					method in ONBOARDING_WHITELIST_API_ROUTES.exact
+-						? ONBOARDING_WHITELIST_API_ROUTES.exact[
+-								method as keyof typeof ONBOARDING_WHITELIST_API_ROUTES.exact
+-							]
+-						: [];
+-				const prefixApiRoutes: readonly string[] =
+-					method in ONBOARDING_WHITELIST_API_ROUTES.prefix
+-						? ONBOARDING_WHITELIST_API_ROUTES.prefix[
+-								method as keyof typeof ONBOARDING_WHITELIST_API_ROUTES.prefix
+-							]
+-						: [];
+-				const isOnboardingWhitelistedApi =
+-					isApiPage &&
+-					(exactApiRoutes.includes(pathname) ||
+-						prefixApiRoutes.some((route: string) =>
+-							pathname.startsWith(route)
+-						));
+-				const isOnboardingWhitelisted =
+-					isOnboardingWhitelistedPage || isOnboardingWhitelistedApi;
+ 				if (isAuthPage) {
+ 					return NextResponse.redirect(
+ 						new URL(DEFAULT_LOGGED_IN_ROUTE, request.url)
+diff --git a/src/client/src/utils/active-app.ts b/src/client/src/utils/active-app.ts
+index e731717f..7dcaa512 100644
+--- a/src/client/src/utils/active-app.ts
++++ b/src/client/src/utils/active-app.ts
+@@ -22,10 +22,6 @@ function flattenSidebarActions(items: SidebarItemProps[]): SidebarActionItem[] {
+ }
+ 
+ function matchesAppPath(pathname: string, link: string): boolean {
+-	if (link === "/dashboards") {
+-		return pathname.startsWith("/dashboards") || pathname.startsWith("/d/");
+-	}
+-
+ 	return pathname === link || pathname.startsWith(`${link}/`);
+ }
+ 
+@@ -46,10 +42,6 @@ function resolveApp(link: string, sidebarText: string): ActiveApp {
+ }
+ 
+ export function getActiveApp(pathname: string): ActiveApp | null {
+-	if (pathname.startsWith("/onboarding")) {
+-		return null;
+-	}
+-
+ 	const actions = flattenSidebarActions(SIDEBAR_ITEMS)
+ 		.filter((item) => item.link && !item.target)
+ 		.sort((a, b) => (b.link?.length || 0) - (a.link?.length || 0));
+diff --git a/src/client/src/utils/breadcrumbs.ts b/src/client/src/utils/breadcrumbs.ts
+index c8fecfbf..fd6b80b0 100644
+--- a/src/client/src/utils/breadcrumbs.ts
++++ b/src/client/src/utils/breadcrumbs.ts
+@@ -19,13 +19,6 @@ export function extractRouteParams(pathname: string, regex: RegExp): Record<stri
+ 	if (!match) return {};
+ 	
+ 	const params: Record<string, string> = {};
+-	// Extract UUID from dashboard routes
+-	if (regex.source.includes('\\[0-9a-f\\]')) {
+-		const uuidMatch = pathname.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
+-		if (uuidMatch) {
+-			params.id = uuidMatch[0];
+-		}
+-	}
+ 	
+ 	// Extract prompt hub ID
+ 	if (pathname.includes('/prompt-hub/') && !pathname.endsWith('/prompt-hub')) {
+@@ -36,16 +29,6 @@ export function extractRouteParams(pathname: string, regex: RegExp): Record<stri
+ 		}
+ 	}
+ 	
+-	// Coding-agents per-user detail: /coding-agents/users/<userId>.
+-	// `userId` is URL-encoded (emails contain `@` etc.) so we leave
+-	// decoding to the caller (the route config calls
+-	// decodeURIComponent before rendering the breadcrumb title).
+-	if (pathname.startsWith('/coding-agents/users/')) {
+-		const parts = pathname.split('/').filter(Boolean);
+-		if (parts.length >= 3) {
+-			params.userId = parts[2];
+-		}
+-	}
+ 
+ 	return params;
+ }
+@@ -53,12 +36,6 @@ export function extractRouteParams(pathname: string, regex: RegExp): Record<stri
+ // Route configurations for all pages
+ export const ROUTE_CONFIGS: RouteConfig[] = [
+ 	// Home page
+-	{
+-		regex: /^\/home$/,
+-		getTitle: () => "Home",
+-		getBreadcrumbs: () => [],
+-	},
+-
+ 	// Costs
+ 	{
+ 		regex: /^\/costs$/,
+@@ -80,44 +57,6 @@ export const ROUTE_CONFIGS: RouteConfig[] = [
+ 		getBreadcrumbs: () => [],
+ 	},
+ 	
+-	// Individual dashboard view
+-	{
+-		regex: /^\/d\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+-		getTitle: () => "",
+-		getBreadcrumbs: () => [],
+-	},
+-	
+-	// Dashboard management
+-	{
+-		regex: /^\/dashboards$/,
+-		getTitle: () => "Dashboards",
+-		getBreadcrumbs: () => [],
+-	},
+-	
+-	{
+-		regex: /^\/dashboards\/board$/,
+-		getTitle: () => "Board",
+-		getBreadcrumbs: () => [
+-			{ title: "Dashboards", href: "/dashboards" }
+-		],
+-	},
+-	
+-	{
+-		regex: /^\/dashboards\/explorer$/,
+-		getTitle: () => "Explorer",
+-		getBreadcrumbs: () => [
+-			{ title: "Dashboards", href: "/dashboards" }
+-		],
+-	},
+-	
+-	{
+-		regex: /^\/dashboards\/widget$/,
+-		getTitle: () => "Widget",
+-		getBreadcrumbs: () => [
+-			{ title: "Dashboards", href: "/dashboards" }
+-		],
+-	},
+-	
+ 	// Requests
+ 	{
+ 		regex: /^\/requests$/,
+@@ -212,12 +151,6 @@ export const ROUTE_CONFIGS: RouteConfig[] = [
+ 		getBreadcrumbs: () => [],
+ 	},
+ 	
+-	{
+-		regex: /^\/settings\/profile$/,
+-		getTitle: () => "User Profile",
+-		getBreadcrumbs: () => [],
+-	},
+-	
+ 	{
+ 		regex: /^\/evaluations\/evaluators\/[^/]+$/,
+ 		getTitle: () => "Evaluator",
+@@ -260,14 +193,6 @@ export const ROUTE_CONFIGS: RouteConfig[] = [
+ 			{ title: "Evaluation Types", href: "/evaluations/types" }
+ 		],
+ 	},
+-	{
+-		regex: /^\/evaluations\/manual$/,
+-		getTitle: () => "Manual Marking",
+-		getBreadcrumbs: () => [
+-			{ title: getMessage().FEATURE_EVALS, href: "/evaluations" },
+-			{ title: "Manual Marking", href: "/evaluations/manual" }
+-		],
+-	},
+ 	{
+ 		regex: /^\/evaluations\/?$/,
+ 		getTitle: () => getMessage().FEATURE_EVALS,
+@@ -282,38 +207,6 @@ export const ROUTE_CONFIGS: RouteConfig[] = [
+ 		getBreadcrumbs: () => [],
+ 	},
+ 	
+-	// Agents
+-	{
+-		regex: /^\/agents$/,
+-		getTitle: () => "Agents",
+-		getBreadcrumbs: () => [],
+-	},
+-
+-	{
+-		regex: /^\/agents\/[^/]+$/,
+-		getTitle: () => "",
+-		getBreadcrumbs: () => [],
+-	},
+-
+-	// Coding Agents — per-user drilldown.
+-	//
+-	// The per-user page lives under `/coding-agents/users/[userId]` (not
+-	// under `/agents/<key>` like the per-vendor detail page) because it
+-	// rolls up across vendors. Without an explicit route config the
+-	// breadcrumb generator falls through to the path-tail fallback,
+-	// which yields "Home › username — useless context for
+-	// the operator. We thread back through the Coding Agents tab on
+-	// the unified Agents hub so the user can backtrack out.
+-	{
+-		regex: /^\/coding-agents\/users\/[^/]+$/,
+-		getTitle: (_pathname, params) =>
+-			params?.userId ? decodeURIComponent(params.userId) : "User",
+-		getBreadcrumbs: () => [
+-			{ title: "Agents", href: "/agents" },
+-			{ title: getMessage().AGENTS_TAB_CODING, href: "/agents?tab=coding" },
+-			{ title: "Users", href: "/agents?tab=coding&codingTab=users" },
+-		],
+-	},
+ ];
+ 
+ // Main function to generate page header based on pathname

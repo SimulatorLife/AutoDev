@@ -26,6 +26,10 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { assertOpenlitPatchSeries } from "./openlit-patch-series.ts";
+import {
+  deadPathLiterals,
+  pagesOutsideMiddleware
+} from "./openlit-path-literal-scan.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 
@@ -778,6 +782,149 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     activeApp,
     /\/coding-agents|href: "\/agents"/u,
     "the header app resolver must not map a deleted route onto a deleted href"
+  );
+
+  // Patch 43: the tenancy removal (32) left three request paths and one
+  // allowlist entry pointing at routes it deleted. Each one either 404'd on
+  // every mount or, worse, turned the failure into an empty list.
+  const dataSources = readFileSync(
+    join(
+      dir,
+      "src/client/src/components/(playground)/telemetry-source/data-sources-page.tsx"
+    ),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    dataSources,
+    /\/organisation\/project\//u,
+    "the datasource page must not branch a link onto the deleted project route"
+  );
+  // Matched as a call, not a bare substring: the comment explaining the
+  // removal names the route it removed.
+  assert.doesNotMatch(
+    dataSources,
+    /fetch\(\s*["'`]\/api\/project\/environment/u,
+    "the datasource dialog must not fetch the environment list patch 32 deleted"
+  );
+  assert.doesNotMatch(
+    dataSources,
+    /SignalRoutingSection/u,
+    "the never-rendered signal routing section must go with its callers"
+  );
+  const databaseConfigPage = readFileSync(
+    join(
+      dir,
+      "src/client/src/components/(playground)/database-config/database-config-page.tsx"
+    ),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    databaseConfigPage,
+    /fetch\(\s*["'`]\/api\/project\/environment/u,
+    "the database-config page must not fetch the environment list patch 32 deleted"
+  );
+  assert.match(
+    readFileSync(join(dir, "src/client/src/constants/route.ts"), "utf8"),
+    /DELETE:\s*\["\/api\/db-config", "\/api\/api-key"\]/u,
+    "the demo-account DELETE restriction must not name /api/prompt-hub, which has no route"
+  );
+
+  // Patch 44: the removed products' route configs outlived the products, and
+  // the logs signal linked to a detail page nobody ever created.
+  assert.ok(
+    existsSync(
+      join(dir, "src/client/src/app/(playground)/telemetry/logs/[id]/page.tsx")
+    ),
+    "the logs signal pushes getDetailHref() on row select and from the sheet's full-screen button; /telemetry/logs/<id> 404'd"
+  );
+  assert.doesNotMatch(
+    readFileSync(join(dir, "src/client/src/utils/breadcrumbs.ts"), "utf8"),
+    /\/dashboards|\/d\\\/|\\\/agents|\\\/coding-agents|\/settings\/profile|\/evaluations\/manual|\/home\$/u,
+    "breadcrumb configs for pages that no longer exist must not outlive them"
+  );
+  assert.doesNotMatch(
+    readFileSync(join(dir, "src/client/src/utils/active-app.ts"), "utf8"),
+    /\/dashboards|\/onboarding/u,
+    "the header app resolver must not special-case removed products"
+  );
+  assert.doesNotMatch(
+    readFileSync(join(dir, "src/client/src/constants/route.ts"), "utf8"),
+    /ONBOARDING_WHITELIST/u,
+    "the onboarding whitelist gated nothing: check-auth computed it and never read the result"
+  );
+  assert.equal(
+    existsSync(
+      join(dir, "src/client/src/app/api/user/complete-onboarding/route.ts")
+    ),
+    false,
+    "the onboarding endpoint had no caller left"
+  );
+  assert.doesNotMatch(
+    readFileSync(join(dir, "src/client/src/middleware/check-auth.ts"), "utf8"),
+    /isOnboardingWhitelisted/u,
+    "a computed-and-discarded onboarding branch is dead weight in the auth chain"
+  );
+  assert.match(
+    readFileSync(join(dir, "src/client/src/middleware.ts"), "utf8"),
+    /"\/memory"/u,
+    "/memory shipped outside config.matcher, so the whole middleware chain skipped it"
+  );
+  assert.doesNotMatch(
+    readFileSync(
+      join(
+        dir,
+        "src/client/src/components/(playground)/clickhouse-connectivity-wrapper.tsx"
+      ),
+      "utf8"
+    ),
+    /ALLOWED_CONNECTIVITY_ALERT/u,
+    "the connectivity banner's page allowlist outlived the pages it named and hid the alert on the pages it described"
+  );
+  // The banner text claims ClickHouse-backed evaluations and platform features
+  // are unavailable; the page that reports it has to be able to say so.
+  const logDetail = readFileSync(
+    join(
+      dir,
+      "src/client/src/components/(playground)/observability/log-detail-page.tsx"
+    ),
+    "utf8"
+  );
+  assert.match(
+    logDetail,
+    /const \{ data, fireRequest, isFetched, error \} = useFetchWrapper\(\)/u,
+    "a failed request never reaches `data`; useFetchWrapper puts the message in `error`"
+  );
+  assert.match(
+    logDetail,
+    /const fetchError = error \?\? \(data as any\)\?\.err/u,
+    "reading only data.err renders a blank page on a 503/500"
+  );
+  assert.match(
+    logDetail,
+    /No log entry with this id/u,
+    "a readable request that returns no record is not the same as an unreadable one"
+  );
+  // `logs/` in the fork's .gitignore silently hid the new route directory.
+  assert.match(
+    readFileSync(join(dir, ".gitignore"), "utf8"),
+    /!src\/client\/src\/app\/\*\*\/logs\//u,
+    "the logs detail route directory must be un-ignored like its API siblings"
+  );
+
+  // The general link rules, run against the tree this patch set produced. A
+  // path literal that outlived the product it pointed at is how the tenancy,
+  // dashboard and agents residue survived review three times over.
+  const deadLiterals = deadPathLiterals(join(dir, "src/client"));
+  assert.deepEqual(
+    deadLiterals,
+    [],
+    `these path literals resolve to no route in the applied tree:\n${deadLiterals.join("\n")}`
+  );
+  const ungated = pagesOutsideMiddleware(join(dir, "src/client"));
+  assert.deepEqual(
+    ungated,
+    [],
+    `these pages are outside src/middleware.ts config.matcher:\n${ungated.join("\n")}`
   );
 }
 
