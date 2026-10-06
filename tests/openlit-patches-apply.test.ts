@@ -331,7 +331,58 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   const snapshot = readFileSync(
     join(dir, "src/client/src/lib/platform/telemetry-snapshot/index.ts"),
     "utf8"
-  );
+// The fork's agents workspace duplicated the AutoDev Console's Agents
+    // surface and is gone; the data plane it fed is not.
+    for (const gone of [
+      "src/client/src/app/(playground)/agents/page.tsx",
+      "src/client/src/app/(playground)/agents/[agentKey]/page.tsx",
+      "src/client/src/components/(playground)/agents/agent-scope-provider.tsx",
+      "src/client/src/components/(playground)/coding-agents/coding-agent-detail.tsx",
+    ]) {
+      assert.equal(
+        existsSync(join(dir, gone)),
+        false,
+        `${gone} must not survive the duplicate-agents-shell removal`,
+      );
+    }
+    assert.equal(
+      existsSync(
+        join(
+          dir,
+          "src/client/src/components/(playground)/observability/agent-scope-provider.tsx"
+        )
+      ),
+      true,
+      "the agent scope provider moved to its only surviving consumer"
+    );
+    assert.equal(
+      existsSync(join(dir, "src/client/src/app/api/agents/materialize/route.ts")),
+      true,
+      "the materialize cron refreshes the agent summary tables AutoDev syncs"
+    );
+
+    const agentsMiddleware = readFileSync(
+      join(dir, "src/client/src/middleware.ts"),
+      "utf8"
+    );
+    assert.doesNotMatch(
+      agentsMiddleware,
+      /"\/agents/u,
+      "the removed agents page must leave the middleware matcher list"
+    );
+
+    const scopeConsumer = readFileSync(
+      join(
+        dir,
+        "src/client/src/components/(playground)/observability/signal-list.tsx"
+      ),
+      "utf8"
+    );
+    assert.match(
+      scopeConsumer,
+      /observability\/agent-scope-provider/u,
+      "signal-list must import the provider from its owning namespace"
+    );
   assert.doesNotMatch(
     snapshot,
     /dashboards_total/u,
@@ -395,7 +446,9 @@ const EXPECTED_OPENLIT_PATCH_NAMES = [
   "32-remove-organisations-projects-environments",
   "33-remove-dashboard-authoring",
   "34-remove-board-authoring-tables",
-  "35-remove-vault-administration"
+  "35-remove-vault-administration",
+  "36-dead-surfaces-and-broken-sidebar-nav",
+  "37-remove-duplicate-agents-shell"
 ] as const;
 test(
   "openlit patch set applies cleanly to pinned commit",
