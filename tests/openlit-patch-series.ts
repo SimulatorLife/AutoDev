@@ -63,7 +63,8 @@ export const OPENLIT_PATCH_NAMES = [
   "46-metric-detail-honest-empty-state",
   "47-currency-rounding-formatting",
   "48-stat-card-honest-empty-state",
-  "49-analytics-ungate-ping-gate"
+  "49-analytics-ungate-ping-gate",
+  "50-ungate-the-remaining-telemetry-reads"
 ] as const;
 
 /** Strips the `.patch` suffix a directory listing carries. */

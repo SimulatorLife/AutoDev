@@ -28,7 +28,7 @@
  *     message text
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 
 export function isDir(p: string): boolean {
   try {
@@ -222,6 +222,25 @@ export function deadPathLiterals(client: string): string[] {
     }
   }
   return dead;
+}
+
+/**
+ * Every client source module under `src/` (tests excluded), as paths relative
+ * to `src/`.
+ *
+ * Callers must derive their scope from this rather than transcribe a file list:
+ * a hand-written list is green for the files it names and blind to everything
+ * added after it, which is exactly how a guard ends up passing forever without
+ * ever examining the code it governs.
+ */
+export function clientSourceModules(client: string): string[] {
+  const src = join(client, "src");
+  if (!isDir(src)) throw new Error(`no client source tree at ${src}`);
+  return walk(src)
+    .filter((file) => /\.tsx?$/u.test(file))
+    .filter((file) => !file.includes(`${sep}__tests__${sep}`))
+    .map((file) => relative(src, file))
+    .sort();
 }
 
 /**

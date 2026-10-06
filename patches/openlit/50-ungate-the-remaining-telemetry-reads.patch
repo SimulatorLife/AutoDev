@@ -1,0 +1,731 @@
+diff --git a/src/client/src/app/(playground)/dashboard/costs/auto-pricing-runs.tsx b/src/client/src/app/(playground)/dashboard/costs/auto-pricing-runs.tsx
+index 41d0f6a7..782fb8b4 100644
+--- a/src/client/src/app/(playground)/dashboard/costs/auto-pricing-runs.tsx
++++ b/src/client/src/app/(playground)/dashboard/costs/auto-pricing-runs.tsx
+@@ -57,7 +57,7 @@ export default function AutoPricingRuns({
+ 	const m = getMessage();
+ 	const filter = useRootStore(getFilterDetails);
+ 	const pingStatus = useRootStore(getPingStatus);
+-	const { data, fireRequest, isFetched, isLoading } =
++	const { data, fireRequest, isFetched, isLoading, error } =
+ 		useFetchWrapper<PricingCronAnalyticsResponse>();
+ 
+ 	const fetchData = useCallback(() => {
+@@ -72,16 +72,15 @@ export default function AutoPricingRuns({
+ 	}, [filter, fireRequest]);
+ 
+ 	useEffect(() => {
+-		if (
+-			filter.timeLimit.start &&
+-			filter.timeLimit.end &&
+-			pingStatus === "success"
+-		) {
++		if (filter.timeLimit.start && filter.timeLimit.end) {
+ 			fetchData();
+ 		}
+ 	}, [filter, fetchData, pingStatus]);
+ 
+-	const loading = isLoading || !isFetched || pingStatus === "pending";
++	// A failed read settles as zero runs. Offering the Enable-Auto-Pricing CTA
++	// for that would point the operator at a setting that is not the cause.
++	const unreadable = pingStatus === "failure" || !!error || (isFetched && !data);
++	const loading = !unreadable && (isLoading || !isFetched || pingStatus === "pending");
+ 	const runs = data?.runs || [];
+ 	const summary = data?.data?.[0];
+ 	const totalRuns = Number(summary?.total_runs) || 0;
+@@ -126,6 +125,12 @@ export default function AutoPricingRuns({
+ 						<div className="p-4">
+ 							<Skeleton className="h-24 w-full" />
+ 						</div>
++					) : unreadable ? (
++						<div className="flex flex-col items-center justify-center gap-3 px-4 py-8 text-center">
++							<p className="text-sm text-stone-500 dark:text-stone-400">
++								{m.COSTS_CRON_TABLE_UNAVAILABLE}
++							</p>
++						</div>
+ 					) : runs.length === 0 ? (
+ 						<div className="flex flex-col items-center justify-center gap-3 px-4 py-8 text-center">
+ 							<p className="text-sm text-stone-500 dark:text-stone-400">
+diff --git a/src/client/src/app/(playground)/dashboard/evaluations/metrics-per-time.tsx b/src/client/src/app/(playground)/dashboard/evaluations/metrics-per-time.tsx
+index 8908dad3..b2c5ad1f 100644
+--- a/src/client/src/app/(playground)/dashboard/evaluations/metrics-per-time.tsx
++++ b/src/client/src/app/(playground)/dashboard/evaluations/metrics-per-time.tsx
+@@ -32,7 +32,7 @@ export default function EvaluationMetricsPerTime() {
+ 	const filter = useRootStore(getFilterDetails);
+ 	const pingStatus = useRootStore(getPingStatus);
+ 	const [chartMode, setChartMode] = useState<ChartMode>("passRate");
+-	const { data, fireRequest, isFetched, isLoading } =
++	const { data, fireRequest, isFetched, isLoading, error } =
+ 		useFetchWrapper<EvaluationAnalyticsResponse>();
+ 
+ 	const fetchData = useCallback(async () => {
+@@ -44,11 +44,7 @@ export default function EvaluationMetricsPerTime() {
+ 	}, [filter, fireRequest]);
+ 
+ 	useEffect(() => {
+-		if (
+-			filter.timeLimit.start &&
+-			filter.timeLimit.end &&
+-			pingStatus === "success"
+-		) {
++		if (filter.timeLimit.start && filter.timeLimit.end) {
+ 			fetchData();
+ 		}
+ 	}, [filter, fetchData, pingStatus]);
+@@ -59,7 +55,13 @@ export default function EvaluationMetricsPerTime() {
+ 		executions: Number(row.executions) || 0,
+ 	}));
+ 
+-	const isLoadingData = isLoading || !isFetched || pingStatus === "pending";
++	// An unreachable connector settles as an empty series. That is not the same
++	// answer as "no evaluations ran", so it must not be reported as one.
++	const unreadable =
++		pingStatus === "failure" || !!error || (isFetched && !isLoading && !data);
++
++	const isLoadingData =
++		!unreadable && (isLoading || !isFetched || pingStatus === "pending");
+ 
+ 	return (
+ 		<Card>
+@@ -96,7 +98,11 @@ export default function EvaluationMetricsPerTime() {
+ 			</CardHeader>
+ 			<CardContent>
+ 				<ResponsiveContainer className="h-40" width="100%" height={160}>
+-					{isLoadingData ? (
++					{unreadable ? (
++						<IntermediateState type="nodata" classNames="h-40">
++							Unavailable
++						</IntermediateState>
++					) : isLoadingData ? (
+ 						<IntermediateState type="loading" classNames="h-40" />
+ 					) : chartData.length === 0 ? (
+ 						<IntermediateState type="nodata" classNames="h-40" />
+diff --git a/src/client/src/app/(playground)/dashboard/llm/requests-per-time.tsx b/src/client/src/app/(playground)/dashboard/llm/requests-per-time.tsx
+index 717f9486..75ac9d15 100644
+--- a/src/client/src/app/(playground)/dashboard/llm/requests-per-time.tsx
++++ b/src/client/src/app/(playground)/dashboard/llm/requests-per-time.tsx
+@@ -21,7 +21,7 @@ import { getFilterParamsForDashboard } from "@/helpers/client/filter";
+ export default function RequestsPerTime() {
+ 	const filter = useRootStore(getFilterDetails);
+ 	const pingStatus = useRootStore(getPingStatus);
+-	const { data, fireRequest, isFetched, isLoading } = useFetchWrapper();
++	const { data, fireRequest, isFetched, isLoading, error } = useFetchWrapper();
+ 	const fetchData = useCallback(async () => {
+ 		fireRequest({
+ 			body: JSON.stringify(getFilterParamsForDashboard(filter)),
+@@ -37,16 +37,15 @@ export default function RequestsPerTime() {
+ 	}, [filter]);
+ 
+ 	useEffect(() => {
+-		if (
+-			filter.timeLimit.start &&
+-			filter.timeLimit.end &&
+-			pingStatus === "success"
+-		)
+-			fetchData();
++		if (filter.timeLimit.start && filter.timeLimit.end) fetchData();
+ 	}, [filter, fetchData, pingStatus]);
+ 
+ 	const updatedData = (data as any[]) || [];
+ 
++	// See metrics-per-time: an unanswered series must not read as a quiet one.
++	const unreadable =
++		pingStatus === "failure" || !!error || (isFetched && !isLoading && !data);
++
+ 	return (
+ 		<Card>
+ 			<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+@@ -56,7 +55,11 @@ export default function RequestsPerTime() {
+ 			</CardHeader>
+ 			<CardContent>
+ 				<ResponsiveContainer className="h-40" width="100%" height="100%">
+-					{isLoading || !isFetched || pingStatus === "pending" ? (
++					{unreadable ? (
++						<IntermediateState type="nodata" classNames="h-40">
++							Unavailable
++						</IntermediateState>
++					) : isLoading || !isFetched || pingStatus === "pending" ? (
+ 						<IntermediateState type="loading" classNames="h-40" />
+ 					) : updatedData.length === 0 ? (
+ 						<IntermediateState type="nodata" classNames="h-40" />
+diff --git a/src/client/src/app/(playground)/dashboard/llm/token-charts.tsx b/src/client/src/app/(playground)/dashboard/llm/token-charts.tsx
+index fe5943e0..42115c57 100644
+--- a/src/client/src/app/(playground)/dashboard/llm/token-charts.tsx
++++ b/src/client/src/app/(playground)/dashboard/llm/token-charts.tsx
+@@ -27,7 +27,7 @@ import { getFilterParamsForDashboard } from "@/helpers/client/filter";
+ function TopModels() {
+ 	const filter = useRootStore(getFilterDetails);
+ 	const pingStatus = useRootStore(getPingStatus);
+-	const { data, fireRequest, isFetched, isLoading } = useFetchWrapper();
++	const { data, fireRequest, isFetched, isLoading, error } = useFetchWrapper();
+ 
+ 	const fetchData = useCallback(async () => {
+ 		fireRequest({
+@@ -39,14 +39,13 @@ function TopModels() {
+ 	}, [filter]);
+ 
+ 	useEffect(() => {
+-		if (
+-			filter.timeLimit.start &&
+-			filter.timeLimit.end &&
+-			pingStatus === "success"
+-		)
+-			fetchData();
++		if (filter.timeLimit.start && filter.timeLimit.end) fetchData();
+ 	}, [filter, fetchData, pingStatus]);
+ 
++	// See metrics-per-time: an unanswered series must not read as a quiet one.
++	const unreadable =
++		pingStatus === "failure" || !!error || (isFetched && !data);
++
+ 	const updatedData = ((data as any[]) || []).map((item, index) => ({
+ 		name: item.model,
+ 		value: item.model_count,
+@@ -62,7 +61,11 @@ function TopModels() {
+ 			</CardHeader>
+ 			<CardContent>
+ 				<ResponsiveContainer width="100%" height="100%">
+-					{isLoading || !isFetched || pingStatus === "pending" ? (
++					{unreadable ? (
++						<IntermediateState type="nodata" classNames="h-40">
++							Unavailable
++						</IntermediateState>
++					) : isLoading || !isFetched || pingStatus === "pending" ? (
+ 						<IntermediateState type="loading" classNames="h-40" />
+ 					) : updatedData.length === 0 ? (
+ 						<IntermediateState type="nodata" classNames="h-40" />
+@@ -113,7 +116,7 @@ function ModelsPerTime() {
+ 	const [activeIndex, setActiveIndex] = useState<number>(0);
+ 	const filter = useRootStore(getFilterDetails);
+ 	const pingStatus = useRootStore(getPingStatus);
+-	const { data, fireRequest, isFetched, isLoading } = useFetchWrapper();
++	const { data, fireRequest, isFetched, isLoading, error } = useFetchWrapper();
+ 	const handleClick = (_: any, index: number) => {
+ 		setActiveIndex(index);
+ 	};
+@@ -127,14 +130,13 @@ function ModelsPerTime() {
+ 	}, [filter]);
+ 
+ 	useEffect(() => {
+-		if (
+-			filter.timeLimit.start &&
+-			filter.timeLimit.end &&
+-			pingStatus === "success"
+-		)
+-			fetchData();
++		if (filter.timeLimit.start && filter.timeLimit.end) fetchData();
+ 	}, [filter, fetchData, pingStatus]);
+ 
++	// See metrics-per-time: an unanswered series must not read as a quiet one.
++	const unreadable =
++		pingStatus === "failure" || !!error || (isFetched && !data);
++
+ 	const updatedData = (data as any[]) || [];
+ 
+ 	const activeItem = updatedData?.[activeIndex];
+@@ -148,7 +150,11 @@ function ModelsPerTime() {
+ 			</CardHeader>
+ 			<CardContent>
+ 				<ResponsiveContainer className="h-40" width="100%" height="100%">
+-					{isLoading || !isFetched || pingStatus === "pending" ? (
++					{unreadable ? (
++						<IntermediateState type="nodata" classNames="h-40">
++							Unavailable
++						</IntermediateState>
++					) : isLoading || !isFetched || pingStatus === "pending" ? (
+ 						<IntermediateState type="loading" classNames="h-40" />
+ 					) : updatedData.length === 0 ? (
+ 						<IntermediateState type="nodata" classNames="h-40" />
+@@ -212,7 +218,7 @@ function ModelsPerTime() {
+ function TokensPerTime() {
+ 	const filter = useRootStore(getFilterDetails);
+ 	const pingStatus = useRootStore(getPingStatus);
+-	const { data, fireRequest, isFetched, isLoading } = useFetchWrapper();
++	const { data, fireRequest, isFetched, isLoading, error } = useFetchWrapper();
+ 	const fetchData = useCallback(async () => {
+ 		fireRequest({
+ 			body: JSON.stringify(getFilterParamsForDashboard(filter)),
+@@ -223,14 +229,13 @@ function TokensPerTime() {
+ 	}, [filter]);
+ 
+ 	useEffect(() => {
+-		if (
+-			filter.timeLimit.start &&
+-			filter.timeLimit.end &&
+-			pingStatus === "success"
+-		)
+-			fetchData();
++		if (filter.timeLimit.start && filter.timeLimit.end) fetchData();
+ 	}, [filter, fetchData, pingStatus]);
+ 
++	// See metrics-per-time: an unanswered series must not read as a quiet one.
++	const unreadable =
++		pingStatus === "failure" || !!error || (isFetched && !data);
++
+ 	const updatedDataWithType = ((data || []) as any[]) || [];
+ 
+ 	const COLORS = {
+@@ -246,7 +251,9 @@ function TokensPerTime() {
+ 				</CardTitle>
+ 			</CardHeader>
+ 			<CardContent className="grow">
+-				{isLoading || !isFetched || pingStatus === "pending" ? (
++				{unreadable ? (
++					<IntermediateState type="nodata">Unavailable</IntermediateState>
++				) : isLoading || !isFetched || pingStatus === "pending" ? (
+ 					<IntermediateState type="loading" />
+ 				) : updatedDataWithType.length === 0 ? (
+ 					<IntermediateState type="nodata" />
+diff --git a/src/client/src/app/(playground)/dashboard/vector/operations.tsx b/src/client/src/app/(playground)/dashboard/vector/operations.tsx
+index 3f2c425a..32961929 100644
+--- a/src/client/src/app/(playground)/dashboard/vector/operations.tsx
++++ b/src/client/src/app/(playground)/dashboard/vector/operations.tsx
+@@ -19,7 +19,7 @@ import {
+ export default function Operations() {
+ 	const filter = useRootStore(getFilterDetails);
+ 	const pingStatus = useRootStore(getPingStatus);
+-	const { data, fireRequest, isFetched, isLoading } = useFetchWrapper();
++	const { data, fireRequest, isFetched, isLoading, error } = useFetchWrapper();
+ 
+ 	const fetchData = useCallback(async () => {
+ 		fireRequest({
+@@ -31,14 +31,13 @@ export default function Operations() {
+ 	}, [filter]);
+ 
+ 	useEffect(() => {
+-		if (
+-			filter.timeLimit.start &&
+-			filter.timeLimit.end &&
+-			pingStatus === "success"
+-		)
+-			fetchData();
++		if (filter.timeLimit.start && filter.timeLimit.end) fetchData();
+ 	}, [filter, fetchData, pingStatus]);
+ 
++	// See metrics-per-time: an unanswered series must not read as a quiet one.
++	const unreadable =
++		pingStatus === "failure" || !!error || (isFetched && !isLoading && !data);
++
+ 	const colors = getChartColors((data as any[])?.length || 0);
+ 
+ 	const updatedData = ((data as any[]) || []).map((item, index) => ({
+@@ -56,7 +55,11 @@ export default function Operations() {
+ 			</CardHeader>
+ 			<CardContent>
+ 				<ResponsiveContainer className="!h-60" width="100%" height="100%">
+-					{isLoading || !isFetched || pingStatus === "pending" ? (
++					{unreadable ? (
++						<IntermediateState type="nodata" classNames="h-40">
++							Unavailable
++						</IntermediateState>
++					) : isLoading || !isFetched || pingStatus === "pending" ? (
+ 						<IntermediateState type="loading" classNames="h-40" />
+ 					) : updatedData.length === 0 ? (
+ 						<IntermediateState type="nodata" classNames="h-40" />
+diff --git a/src/client/src/app/(playground)/evaluations/evaluators/[id]/page.tsx b/src/client/src/app/(playground)/evaluations/evaluators/[id]/page.tsx
+index a5f52598..a59ed840 100644
+--- a/src/client/src/app/(playground)/evaluations/evaluators/[id]/page.tsx
++++ b/src/client/src/app/(playground)/evaluations/evaluators/[id]/page.tsx
+@@ -76,8 +76,7 @@ export default function EvaluationEvaluatorDetailPage() {
+ 	useEffect(() => {
+ 		if (
+ 			filter.timeLimit.start &&
+-			filter.timeLimit.end &&
+-			pingStatus === "success"
++			filter.timeLimit.end
+ 		) {
+ 			fetchData();
+ 		}
+diff --git a/src/client/src/app/(playground)/prompt-hub/[id]/page.tsx b/src/client/src/app/(playground)/prompt-hub/[id]/page.tsx
+index b2471853..40e521e2 100644
+--- a/src/client/src/app/(playground)/prompt-hub/[id]/page.tsx
++++ b/src/client/src/app/(playground)/prompt-hub/[id]/page.tsx
+@@ -52,7 +52,7 @@ export default function PromptHub() {
+ 	const params = useParams();
+ 	const searchParams = useSearchParams();
+ 	const version = searchParams.get("version") || undefined;
+-	const { data, fireRequest, isFetched, isLoading } = useFetchWrapper<Prompt>();
++	const { data, fireRequest, isFetched, isLoading, error } = useFetchWrapper<Prompt>();
+ 
+ 	useDynamicBreadcrumbs(
+ 		{ title: (data as Prompt | undefined)?.name || (isLoading ? m.LOADING : "") },
+@@ -77,12 +77,18 @@ export default function PromptHub() {
+ 	}, []);
+ 
+ 	useEffect(() => {
+-		if (pingStatus === "success") fetchData();
++		fetchData();
+ 	}, [version, pingStatus]);
+ 
+ 	const promptHeaderTone = "border-pink-200 bg-pink-50 text-pink-700 dark:border-pink-900/70 dark:bg-pink-950/40 dark:text-pink-300";
+ 
+-	if (!isFetched || (!(data as any)?.promptId && isLoading)) {
++	// "This prompt does not exist" and "we could not ask" are different
++	// answers. A failed read lands here with the same missing promptId a real
++	// miss produces, so the failure has to be read from the request, not from
++	// the payload's shape.
++	const unreadable = pingStatus === "failure" || !!error;
++
++	if (!isFetched || (!unreadable && !(data as any)?.promptId && isLoading)) {
+ 		return (
+ 			<div className="flex h-full w-full flex-col overflow-hidden">
+ 				<FeaturePageHeader eyebrow={getMessage().SIDEBAR_DEVELOP} title={m.LOADING} icon={<Component className="h-4 w-4" />} tone={promptHeaderTone} />
+@@ -99,9 +105,14 @@ export default function PromptHub() {
+ 	if (!data || !(data as any)?.promptId) {
+ 		return (
+ 			<div className="flex h-full w-full flex-col overflow-hidden">
+-				<FeaturePageHeader eyebrow={getMessage().SIDEBAR_DEVELOP} title={m.FEATURE_PROMPTS} icon={<Component className="h-4 w-4" />} tone={promptHeaderTone} />
+-				<div className="flex w-full h-full overflow-hidden items-center justify-center text-stone-600 dark:text-stone-400">
+-					{m.PROMPT_HUB_NO_PROMPT_EXISTS}
++				<FeaturePageHeader
++					eyebrow={getMessage().SIDEBAR_DEVELOP}
++					title={unreadable ? m.PROMPT_HUB_UNAVAILABLE_TITLE : m.FEATURE_PROMPTS}
++					icon={<Component className="h-4 w-4" />}
++					tone={promptHeaderTone}
++				/>
++				<div className="flex w-full h-full overflow-hidden items-center justify-center px-6 text-center text-stone-600 dark:text-stone-400">
++					{unreadable ? m.PROMPT_HUB_UNAVAILABLE : m.PROMPT_HUB_NO_PROMPT_EXISTS}
+ 				</div>
+ 			</div>
+ 		);
+diff --git a/src/client/src/components/(playground)/costs/costs-auto-pricing-banner.tsx b/src/client/src/components/(playground)/costs/costs-auto-pricing-banner.tsx
+index b5c7e50a..0ec921df 100644
+--- a/src/client/src/components/(playground)/costs/costs-auto-pricing-banner.tsx
++++ b/src/client/src/components/(playground)/costs/costs-auto-pricing-banner.tsx
+@@ -34,8 +34,7 @@ export default function CostsAutoPricingBanner({
+ 	useEffect(() => {
+ 		if (
+ 			filter.timeLimit.start &&
+-			filter.timeLimit.end &&
+-			pingStatus === "success"
++			filter.timeLimit.end
+ 		) {
+ 			fetchData();
+ 		}
+diff --git a/src/client/src/components/(playground)/filter/traces-filter.tsx b/src/client/src/components/(playground)/filter/traces-filter.tsx
+index 497d88f4..a9896fff 100644
+--- a/src/client/src/components/(playground)/filter/traces-filter.tsx
++++ b/src/client/src/components/(playground)/filter/traces-filter.tsx
+@@ -388,7 +388,6 @@ const DynamicFilters = ({
+ 		if (
+ 			filter.timeLimit.start &&
+ 			filter.timeLimit.end &&
+-			pingStatus === "success" &&
+ 			!filterConfig
+ 		) {
+ 			fetchConfig(filter.timeLimit);
+@@ -430,8 +429,7 @@ const DynamicFilters = ({
+ 	useEffect(() => {
+ 		if (
+ 			filter.timeLimit.start &&
+-			filter.timeLimit.end &&
+-			pingStatus === "success"
++			filter.timeLimit.end
+ 		) {
+ 			fetchAttributeKeys(filter.timeLimit);
+ 		}
+diff --git a/src/client/src/components/(playground)/intermediate-state.tsx b/src/client/src/components/(playground)/intermediate-state.tsx
+index 2f730705..89fef1f4 100644
+--- a/src/client/src/components/(playground)/intermediate-state.tsx
++++ b/src/client/src/components/(playground)/intermediate-state.tsx
+@@ -27,7 +27,9 @@ export default function IntermediateState(props: IntermediateState) {
+ 					props.classNames || ""
+ 				}`}
+ 			>
+-				No data to display
++				{/* Children override the wording, as they already do for
++				    "loading": an unreadable read must not claim "No data". */}
++				{props.children ?? "No data to display"}
+ 			</div>
+ 		);
+ 
+diff --git a/src/client/src/components/(playground)/observability/agent-loop-bar.tsx b/src/client/src/components/(playground)/observability/agent-loop-bar.tsx
+index aff5ce22..3785a46b 100644
+--- a/src/client/src/components/(playground)/observability/agent-loop-bar.tsx
++++ b/src/client/src/components/(playground)/observability/agent-loop-bar.tsx
+@@ -28,7 +28,7 @@ export default function AgentLoopBar() {
+ 	const pingStatus = useRootStore(getPingStatus);
+ 	const environment = DEFAULT_ENVIRONMENT;
+ 	const updateFilter = useRootStore(getUpdateFilter);
+-	const { data, isFetched, isLoading, fireRequest, reset } = useFetchWrapper();
++	const { data, isFetched, isLoading, error, fireRequest, reset } = useFetchWrapper();
+ 	const selected = Boolean(filter.selectedConfig.agentLoop);
+ 
+ 	const fetchData = useCallback(async () => {
+@@ -50,11 +50,7 @@ export default function AgentLoopBar() {
+ 	}, [environment, reset]);
+ 
+ 	useEffect(() => {
+-		if (
+-			filter.timeLimit.start &&
+-			filter.timeLimit.end &&
+-			pingStatus === "success"
+-		) {
++		if (filter.timeLimit.start && filter.timeLimit.end) {
+ 			fetchData();
+ 		}
+ 	}, [filter, fetchData, pingStatus, environment]);
+@@ -62,13 +58,16 @@ export default function AgentLoopBar() {
+ 	const row = (data || {}) as AgentLoopRow;
+ 	if (row.unsupported) return null;
+ 
+-	const isLoadingData = isLoading || !isFetched || pingStatus === "pending";
++	const unreadable = pingStatus === "failure" || !!error || (isFetched && !data);
++	const isLoadingData = !unreadable && (isLoading || !isFetched);
+ 	const count = asFiniteNumber(row.loops);
+ 	const eligible = asFiniteNumber(row.tool_traces);
+-	const hasHits = !isLoadingData && count > 0;
++	const hasHits = !isLoadingData && !unreadable && count > 0;
++	// An unreadable count has no value to render, so it renders the same
++	// placeholder a pending read uses — but the tooltip says why.
+ 	const ratio = fillTemplate(m.GENERATION_HEALTH_STAT_OF_ELIGIBLE, {
+-		count: isLoadingData ? "—" : count,
+-		eligible: isLoadingData ? "—" : eligible,
++		count: isLoadingData || unreadable ? "—" : count,
++		eligible: isLoadingData || unreadable ? "—" : eligible,
+ 	});
+ 	const meaning = agentLoopTipMeaning();
+ 	const clickHint = selected
+@@ -95,7 +94,7 @@ export default function AgentLoopBar() {
+ 						<button
+ 							type="button"
+ 							aria-pressed={selected}
+-							aria-label={`${m.AGENT_LOOP_CHIP}. ${meaning} ${ratio}. ${clickHint}`}
++							aria-label={`${m.AGENT_LOOP_CHIP}. ${unreadable ? m.AGENT_LOOP_UNREADABLE : `${meaning} ${ratio}.`} ${clickHint}`}
+ 							onClick={toggle}
+ 							className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] tabular-nums transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/70 ${
+ 								selected
+@@ -113,7 +112,9 @@ export default function AgentLoopBar() {
+ 						side="bottom"
+ 						className="max-w-[260px] px-3 py-2 text-xs leading-relaxed"
+ 					>
+-						{isLoadingData ? (
++						{unreadable ? (
++							m.AGENT_LOOP_UNREADABLE
++						) : isLoadingData ? (
+ 							m.LOADING
+ 						) : (
+ 							<div className="flex flex-col gap-1.5">
+diff --git a/src/client/src/components/(playground)/observability/generation-health-bar.tsx b/src/client/src/components/(playground)/observability/generation-health-bar.tsx
+index a494a07d..da25d425 100644
+--- a/src/client/src/components/(playground)/observability/generation-health-bar.tsx
++++ b/src/client/src/components/(playground)/observability/generation-health-bar.tsx
+@@ -42,7 +42,7 @@ export default function GenerationHealthBar() {
+ 	const pingStatus = useRootStore(getPingStatus);
+ 	const environment = DEFAULT_ENVIRONMENT;
+ 	const updateFilter = useRootStore(getUpdateFilter);
+-	const { data, isFetched, isLoading, fireRequest, reset } = useFetchWrapper();
++	const { data, isFetched, isLoading, error, fireRequest, reset } = useFetchWrapper();
+ 	const selected = filter.selectedConfig.generationHealth || [];
+ 
+ 	const fetchData = useCallback(async () => {
+@@ -64,11 +64,7 @@ export default function GenerationHealthBar() {
+ 	}, [environment, reset]);
+ 
+ 	useEffect(() => {
+-		if (
+-			filter.timeLimit.start &&
+-			filter.timeLimit.end &&
+-			pingStatus === "success"
+-		) {
++		if (filter.timeLimit.start && filter.timeLimit.end) {
+ 			fetchData();
+ 		}
+ 	}, [filter, fetchData, pingStatus, environment]);
+@@ -76,7 +72,8 @@ export default function GenerationHealthBar() {
+ 	const row = (data || {}) as GenerationHealthRow;
+ 	if (row.unsupported) return null;
+ 
+-	const isLoadingData = isLoading || !isFetched || pingStatus === "pending";
++	const unreadable = pingStatus === "failure" || !!error || (isFetched && !data);
++	const isLoadingData = !unreadable && (isLoading || !isFetched);
+ 
+ 	const toggle = (chip: GenerationHealthChip) => {
+ 		const isOn = selected.length === 1 && selected[0] === chip;
+@@ -100,10 +97,10 @@ export default function GenerationHealthBar() {
+ 						const eligible = asFiniteNumber(row[metric.eligibleKey]);
+ 						const isActive = selected.includes(metric.chip);
+ 						const ratio = fillTemplate(m.GENERATION_HEALTH_STAT_OF_ELIGIBLE, {
+-							count: isLoadingData ? "—" : count,
+-							eligible: isLoadingData ? "—" : eligible,
++							count: isLoadingData || unreadable ? "—" : count,
++							eligible: isLoadingData || unreadable ? "—" : eligible,
+ 						});
+-						const hasHits = !isLoadingData && count > 0;
++						const hasHits = !isLoadingData && !unreadable && count > 0;
+ 						const skippedLine = generationHealthSkippedLine(
+ 							Math.max(asFiniteNumber(row.llm_spans) - eligible, 0),
+ 							asFiniteNumber(row.llm_spans)
+@@ -119,7 +116,7 @@ export default function GenerationHealthBar() {
+ 									<button
+ 										type="button"
+ 										aria-pressed={isActive}
+-										aria-label={`${label}. ${meaning} ${ratio}. ${clickHint}`}
++										aria-label={`${label}. ${unreadable ? m.GENERATION_HEALTH_UNREADABLE : `${meaning} ${ratio}.`} ${clickHint}`}
+ 										onClick={() => toggle(metric.chip)}
+ 										className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] tabular-nums transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/70 ${
+ 											isActive
+@@ -137,7 +134,9 @@ export default function GenerationHealthBar() {
+ 									side="bottom"
+ 									className="max-w-[260px] px-3 py-2 text-xs leading-relaxed"
+ 								>
+-									{isLoadingData ? (
++									{unreadable ? (
++										m.GENERATION_HEALTH_UNREADABLE
++									) : isLoadingData ? (
+ 										m.LOADING
+ 									) : (
+ 										<div className="flex flex-col gap-1.5">
+diff --git a/src/client/src/components/(playground)/observability/signal-list.tsx b/src/client/src/components/(playground)/observability/signal-list.tsx
+index 1c3624b6..0a5ca0cd 100644
+--- a/src/client/src/components/(playground)/observability/signal-list.tsx
++++ b/src/client/src/components/(playground)/observability/signal-list.tsx
+@@ -224,8 +224,7 @@ export default function ObservabilitySignalList({
+ 		if (
+ 			effectiveFilter.filterReady &&
+ 			effectiveFilter.timeLimit.start &&
+-			effectiveFilter.timeLimit.end &&
+-			pingStatus === "success"
++			effectiveFilter.timeLimit.end
+ 		) {
+ 			fetchSummary();
+ 			if (showFlatList) fetchData();
+@@ -511,6 +510,7 @@ export default function ObservabilitySignalList({
+ 						visibilityColumns={visibilityColumns}
+ 						isFetched={isFetched || pingStatus !== "pending"}
+ 						isLoading={isLoading || pingStatus === "pending"}
++						unreadable={pingStatus === "failure" || !!listError}
+ 						onOpen={openDetail}
+ 						// For sessions, the row highlight tracks the OPEN session
+ 						// (its root span id, held in `previewSpanId`), not the
+diff --git a/src/client/src/components/(playground)/observability/signal-records.tsx b/src/client/src/components/(playground)/observability/signal-records.tsx
+index cec10c7a..49703765 100644
+--- a/src/client/src/components/(playground)/observability/signal-records.tsx
++++ b/src/client/src/components/(playground)/observability/signal-records.tsx
+@@ -757,6 +757,7 @@ export default function SignalRecords({
+ 	visibilityColumns,
+ 	isFetched,
+ 	isLoading,
++	unreadable = false,
+ 	onOpen,
+ 	selectedId,
+ }: {
+@@ -765,6 +766,12 @@ export default function SignalRecords({
+ 	visibilityColumns: Record<string, boolean>;
+ 	isFetched: boolean;
+ 	isLoading: boolean;
++	/**
++	 * The read failed, so `rows.length === 0` means "not asked", not "none".
++	 * The caller already renders its own error banner; this stops the list
++	 * from contradicting it with a claim that nothing matched the filters.
++	 */
++	unreadable?: boolean;
+ 	onOpen: (row: any) => void;
+ 	selectedId?: string | null;
+ }) {
+@@ -784,7 +791,7 @@ export default function SignalRecords({
+ 	if (isFetched && rows.length === 0) {
+ 		return (
+ 			<div className="rounded-md border border-dashed border-stone-300 p-8 text-center text-sm text-stone-500 dark:border-stone-700 dark:text-stone-400">
+-				No {config.label.toLowerCase()} found for the selected filters.
++				{unreadable ? "Unavailable" : `No ${config.label.toLowerCase()} found for the selected filters.`}
+ 			</div>
+ 		);
+ 	}
+diff --git a/src/client/src/components/(playground)/request/grouped-table.tsx b/src/client/src/components/(playground)/request/grouped-table.tsx
+index 743e3d54..bb35c064 100644
+--- a/src/client/src/components/(playground)/request/grouped-table.tsx
++++ b/src/client/src/components/(playground)/request/grouped-table.tsx
+@@ -136,7 +136,7 @@ export default function GroupedTable({
+ 	const filter = useRootStore(getFilterDetails);
+ 	const updateFilter = useRootStore(getUpdateFilter);
+ 	const pingStatus = useRootStore(getPingStatus);
+-	const { data, fireRequest, isFetched, isLoading } = useFetchWrapper();
++	const { data, fireRequest, isFetched, isLoading, error } = useFetchWrapper();
+ 
+ 	const fetchGroups = useCallback(() => {
+ 		fireRequest({
+@@ -154,8 +154,7 @@ export default function GroupedTable({
+ 			filter.filterReady &&
+ 			!filter.groupValue &&
+ 			filter.timeLimit.start &&
+-			filter.timeLimit.end &&
+-			pingStatus === "success"
++			filter.timeLimit.end
+ 		) {
+ 			fetchGroups();
+ 		}
+@@ -170,6 +169,11 @@ export default function GroupedTable({
+ 
+ 	const groups: GroupSummary[] = (data as any)?.data ?? [];
+ 	const groupLabel = getGroupByLabel(groupBy);
++	// An unreachable connector settles as a zero-length group list. That is not
++	// the same answer as "these filters matched nothing", so it must not be
++	// reported as one.
++	const unreadable =
++		pingStatus === "failure" || !!error || (isFetched && !isLoading && !data);
+ 
+ 	return (
+ 		<div className={`flex flex-col w-full overflow-auto scrollbar-hidden border dark:border-stone-800 rounded-md grow ${PRIMARY_BACKGROUND}`}>
+@@ -200,7 +204,7 @@ export default function GroupedTable({
+ 			{/* Empty state */}
+ 			{isFetched && !isLoading && groups.length === 0 && (
+ 				<div className="flex items-center justify-center py-16 text-sm text-stone-500 dark:text-stone-400">
+-					No data found for the selected filters.
++					{unreadable ? "Unavailable" : "No data found for the selected filters."}
+ 				</div>
+ 			)}
+ 		</div>
+diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
+index 941cb05a..fc58b8bc 100644
+--- a/src/client/src/constants/messages/en.ts
++++ b/src/client/src/constants/messages/en.ts
+@@ -479,6 +479,10 @@ export const GENERATION_HEALTH_CLICK_TO_FILTER =
+ export const GENERATION_HEALTH_CLICK_TO_CLEAR =
+ 	"Showing these traces — click to show all";
+ 
++// See AGENT_LOOP_UNREADABLE: an unanswered count is not a zero count.
++export const GENERATION_HEALTH_UNREADABLE =
++	"These issue counts could not be read from the configured connector.";
++
+ export const GENERATION_HEALTH_STAT_OF_ELIGIBLE = "{count}/{eligible}";
+ 
+ export const GENERATION_HEALTH_TIP_TRUNCATED =
+@@ -529,6 +533,11 @@ export const AGENT_LOOP_CLICK_TO_FILTER = "Click to show only looping traces";
+ export const AGENT_LOOP_CLICK_TO_CLEAR =
+ 	"Showing looping traces — click to show all";
+ 
++// An unanswered aggregation has no zero. Rendering "0 of 0" here claims the
++// connector reported no loops, which is a finding, not a failure to read.
++export const AGENT_LOOP_UNREADABLE =
++	"Loop counts could not be read from the configured connector.";
++
+ export const AGENT_LOOP_TIP =
+ 	"The same tool was called with the same arguments at least {threshold} times in one conversation or session.";
+ 
+@@ -861,6 +870,12 @@ export const COSTS_CRON_TABLE_EMPTY_CTA = "Enable Auto Pricing";
+ export const COSTS_CRON_TABLE_EMPTY_HINT =
+ 	"Turn on Auto Pricing to backfill missing LLM costs on a schedule.";
+ 
++// A read that never landed is not "no runs happened". Offering the
++// Enable-Auto-Pricing CTA here would send the operator after a setting that
++// is not the cause.
++export const COSTS_CRON_TABLE_UNAVAILABLE =
++	"Auto Pricing runs could not be read from the configured connector.";
++
+ export const COSTS_BACKFILL_BANNER_TITLE = "Some LLM traces are missing cost";
+ 
+ export const COSTS_BACKFILL_BANNER_DESCRIPTION =
+@@ -1604,6 +1619,12 @@ export const PROMPT_HUB_BACK_TO = "Back to";
+ 
+ export const PROMPT_HUB_NO_PROMPT_EXISTS = "No such prompt exists!";
+ 
++// A prompt read that never landed must not be reported as a missing prompt.
++export const PROMPT_HUB_UNAVAILABLE_TITLE = "Unavailable";
++
++export const PROMPT_HUB_UNAVAILABLE =
++	"This prompt could not be read from the configured connector.";
++
+ export const PROMPT_HUB_NO_VERSION_EXISTS = "No such version of the prompt";
+ 
+ export const PROMPT_HUB_EXISTS = "exists!";

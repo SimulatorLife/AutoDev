@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 
 import { assertOpenlitPatchSeries } from "./openlit-patch-series.ts";
 import {
+  clientSourceModules,
   deadPathLiterals,
   pagesOutsideMiddleware
 } from "./openlit-path-literal-scan.ts";
@@ -1047,6 +1048,129 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     ungated,
     [],
     `these pages are outside src/middleware.ts config.matcher:\n${ungated.join("\n")}`
+  );
+
+  // ── The ping gate ─────────────────────────────────────────────────────────
+  // `pingStatus === "success"` is a precondition on a pre-flight. With no
+  // connector configured `/api/clickhouse` never settles, so every read gated
+  // on it was never attempted and its surface waited forever.
+  //
+  // The scope is derived from the client tree, not transcribed: a literal list
+  // would be green for the files it names and blind to any module added later,
+  // which is how this gate survived across four patches.
+  const clientSrc = join(dir, "src/client/src");
+  const modules = clientSourceModules(join(dir, "src/client"));
+  assert.ok(
+    modules.length > 200,
+    `clientSourceModules must return the whole client tree, not a handful of files (got ${modules.length})`
+  );
+
+  const AFFORDANCE_GATES = new Set([
+    // These decide whether to OFFER a write action. Hiding "New prompt" while
+    // the connector is unreachable is correct; hiding the evidence that nothing
+    // can be read is not.
+    "components/(playground)/context/header.tsx",
+    "components/(playground)/prompt-hub/header.tsx",
+  ]);
+  const gatedReads = modules.filter((rel) => {
+    const body = readFileSync(join(clientSrc, rel), "utf8");
+    return (
+      body.includes('pingStatus === "success"') &&
+      !AFFORDANCE_GATES.has(rel.replace(/\\/gu, "/"))
+    );
+  });
+  assert.deepEqual(
+    gatedReads,
+    [],
+    `these modules gate a read on a ping that can never settle:\n${gatedReads.join("\n")}`
+  );
+
+  // Ungating is only half the change. A read that fails settles as zero rows,
+  // so each surface that renders a count or an empty state must carry a third
+  // state that says "unreadable" — distinct from loading and from zero.
+  for (const site of [
+    "components/(playground)/stat-card.tsx",
+    "components/(playground)/pie-chart-card.tsx",
+    "components/(playground)/request/grouped-table.tsx",
+    "components/(playground)/observability/signal-records.tsx",
+    "components/(playground)/observability/agent-loop-bar.tsx",
+    "components/(playground)/observability/generation-health-bar.tsx",
+    "components/(playground)/evaluations/evaluation-analytics.tsx",
+    "app/(playground)/dashboard/costs/auto-pricing-runs.tsx",
+    "app/(playground)/dashboard/costs/cost-per-time.tsx",
+    "app/(playground)/dashboard/evaluations/metrics-per-time.tsx",
+    "app/(playground)/dashboard/llm/requests-per-time.tsx",
+    "app/(playground)/dashboard/llm/token-charts.tsx",
+    "app/(playground)/dashboard/vector/operations.tsx",
+    "app/(playground)/prompt-hub/[id]/page.tsx"
+  ]) {
+    const source = readFileSync(join(clientSrc, site), "utf8");
+    // The surface must BRANCH on the state, not merely name it. A bare
+    // identifier matches a renamed or unused declaration too, which is how a
+    // guard ends up passing on code that reports an unreadable read as empty.
+    assert.match(
+      source,
+      /unreadable\s*\?/u,
+      `${site} computes an 'unreadable' state but never renders one`
+    );
+    assert.match(
+      source,
+      /\berror\b/u,
+      `${site} computes an unreadable state without reading the hook's error`
+    );
+  }
+
+  // The list and its own error banner are rendered by different components, so
+  // "unavailable" and "nothing matched these filters" both rendered — the page
+  // contradicted itself. The empty arm must defer to the failed read.
+  const signalRecords = readFileSync(
+    join(clientSrc, "components/(playground)/observability/signal-records.tsx"),
+    "utf8"
+  );
+  assert.match(
+    signalRecords,
+    /unreadable \? "Unavailable"/u,
+    "an empty record list from a failed read must not claim no records matched"
+  );
+  assert.match(
+    readFileSync(
+      join(clientSrc, "components/(playground)/observability/signal-list.tsx"),
+      "utf8"
+    ),
+    /unreadable=\{[^}]*\b(listError|error)\b/u,
+    "signal-list must tell its record list when the read failed, not pass a constant"
+  );
+
+  // Every honest state needs the shared component to be able to say it, or each
+  // surface grows its own second empty-state component.
+  assert.match(
+    readFileSync(
+      join(clientSrc, "components/(playground)/intermediate-state.tsx"),
+      "utf8"
+    ),
+    /props\.children \?\? "No data to display"/u,
+    'the nodata arm must accept an override, as the loading arm already does, or "No data" is the only word it can say'
+  );
+
+  // An unreadable run list must not offer the Enable-Auto-Pricing CTA: the
+  // operator would go change a setting that is not the cause.
+  const cronRuns = readFileSync(
+    join(clientSrc, "app/(playground)/dashboard/costs/auto-pricing-runs.tsx"),
+    "utf8"
+  );
+  assert.match(
+    cronRuns,
+    /unreadable \? \([\s\S]*?COSTS_CRON_TABLE_UNAVAILABLE/u,
+    "the unreadable run list must say the runs could not be read"
+  );
+  const unreachableArm = cronRuns.slice(
+    cronRuns.indexOf("unreadable ? ("),
+    cronRuns.indexOf("runs.length === 0 ?")
+  );
+  assert.doesNotMatch(
+    unreachableArm,
+    /COSTS_CRON_TABLE_EMPTY_CTA/u,
+    "a failed read must not present the Enable-Auto-Pricing call to action"
   );
 }
 
