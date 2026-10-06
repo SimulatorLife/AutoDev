@@ -234,13 +234,45 @@ function RoleRow({
       models,
       disabledReason: modelReason
     }),
+    // A natively `disabled` control is not submitted by the browser, and the
+    // role route requires exactly the five fields `provider`, `role`,
+    // `priority`, `model` and `returnTo`. Without this, re-enabling a Disabled
+    // role posted four fields, the route refused it, and the operator could
+    // never turn the role back on: the one action the control existed to allow.
+    // The hidden field carries the preserved model across that submission, and
+    // there is no duplicate name to disambiguate because the disabled `<select>`
+    // contributes nothing. This is the same shape the Agent Limits steppers use
+    // for their current state.
+    ...(modelReason === undefined
+      ? []
+      : [
+          React.createElement("input", {
+            key: "preserved-model",
+            type: "hidden",
+            name: "model",
+            value: assignment.model ?? ""
+          })
+        ]),
     React.createElement(
       Button,
       {
         type: "submit",
         className: "shrink-0 px-2 py-1 text-xs",
+        // A globally disabled provider disables this select too, so the
+        // submission would carry neither `priority` nor `model` and the route
+        // would refuse it. A button that can only ever fail is not an
+        // affordance; it renders disabled with the reason instead, the same
+        // rule the row grip follows.
+        ...(blockedReason === undefined
+          ? {}
+          : { disabled: true }),
         ariaLabel: `Apply ${ROLE_LABELS[role]} settings for ${provider}`,
-        title: `Apply ${ROLE_LABELS[role]} settings for ${provider}`,
+        // `Button` has no `disabledReason` prop, so a disabled Apply carries
+        // its reason the way the provider Disable control does: on the title,
+        // which is also the accessible name a screen reader announces.
+        title:
+          blockedReason ??
+          `Apply ${ROLE_LABELS[role]} settings for ${provider}`,
         dataAttributes: { "data-apply-role": `${provider}-${role}` }
       },
       "Apply"

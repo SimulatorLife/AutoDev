@@ -611,6 +611,27 @@ test("provider enablement disables globally while preserving its roles and limit
       model: "sonnet"
     });
 
+    // "Preserved" has to mean preserved rather than unreachable: a role write
+    // against a disabled provider is refused with a named reason, so the
+    // Console's `mutable: false` and its "enable the provider first" message
+    // describe the API rather than a convention. Without this the endpoint
+    // would accept the change silently, and the operator's configuration would
+    // be edited by a control the UI shows as inert.
+    const roleWhileDisabled = await call(
+      "PATCH",
+      CONTROL_API_PATHS.providers + "/claude/roles/orchestrator",
+      { actor: "operator-a", body: { priority: 1, model: "claude-opus-5-5" } }
+    );
+    assert.equal(roleWhileDisabled.response.statusCode, 409);
+    assert.equal(
+      roleWhileDisabled.body.error.code,
+      "autodev_control_api_provider_disabled"
+    );
+    assert.deepEqual(ROUTING_POLICY.assignmentFor("claude", "orchestrator"), {
+      priority: 2,
+      model: "claude-opus-5-5"
+    });
+
     const enabled = await call("PATCH", path, {
       actor: "operator-a",
       body: { disabled: false }

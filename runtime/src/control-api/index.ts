@@ -1528,6 +1528,13 @@ function hashString(value: string | null | undefined): string | null {
  * extract its bounded fields. Returns `null` when no audit entry exists
  * yet, so callers can render `not-observed` rather than fabricating a
  * last-apply timestamp.
+ *
+ * A `denied` envelope is skipped. A refusal is not an apply: nothing was
+ * attempted and nothing changed, so treating it as the latest evidence would
+ * stamp the resource with a last-apply time and a `lastError` describing a
+ * request that was correctly rejected — reporting a failed apply for a resource
+ * that is still perfectly converged. Validation and persistence failures are
+ * `error`, not `denied`, and remain evidence.
  */
 function findLatestAuditFor(resourceFilter: string): {
   readonly timestamp: string;
@@ -1540,7 +1547,8 @@ function findLatestAuditFor(resourceFilter: string): {
   for (const envelope of envelopes) {
     if (
       typeof envelope.timestamp === "string" &&
-      typeof envelope.outcome === "string"
+      typeof envelope.outcome === "string" &&
+      envelope.outcome !== "denied"
     ) {
       return {
         timestamp: envelope.timestamp,
@@ -2033,6 +2041,24 @@ async function patchProviderRole(
       404,
       "autodev_control_api_unknown_provider",
       "Unknown provider."
+    );
+    return;
+  }
+
+  // A globally disabled provider is meant to be off entirely, with its roles,
+  // models and limits preserved for re-enabling. Editing a role while it is
+  // disabled is therefore not a valid change: the Console renders these rows
+  // with `mutable: false` and tells the operator to enable the provider first,
+  // so accepting the write here would leave that message a claim the API does
+  // not honour. `isProviderEnabledForRole` is not the right test — it folds in
+  // the per-role `disabled` priority, which this endpoint is what sets.
+  if (ROUTING_POLICY.isProviderDisabled(provider)) {
+    audit("denied", { priority, model }, "provider_disabled");
+    sendControlError(
+      response,
+      409,
+      "autodev_control_api_provider_disabled",
+      "This provider is disabled. Enable it before changing its roles."
     );
     return;
   }

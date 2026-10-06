@@ -6741,6 +6741,91 @@ test("ProvidersView renders the four configuration columns with per-role control
   assert.equal(markup.includes('data-enablement-form="model"'), false);
 });
 
+test("a Disabled role's rendered form still submits the five fields its route requires", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(ProvidersView, {
+      providers: PROVIDERS_FIXTURE,
+      models: { status: "available", data: MODELS_FIXTURE }
+    })
+  );
+  const formTag = formTags(markup).find((tag) =>
+    /data-role-form="codex-orchestrator"/u.test(tag)
+  );
+  assert.ok(formTag, "the Disabled role's form must be present");
+  // `formTags` yields the opening tag only, so slice the element body out of
+  // the markup to inspect what the form actually contains.
+  const start = markup.indexOf(formTag);
+  const body = markup.slice(start, markup.indexOf("</form>", start));
+
+  // Reproduce what a browser actually submits rather than what the markup
+  // contains: a `disabled` control contributes nothing, and a control with no
+  // name contributes nothing. The role route rejects anything that is not
+  // exactly these five fields, so this is the list that decides whether
+  // re-enabling the role works at all.
+  //
+  // The attribute test must not match Tailwind's `disabled:` variant, which
+  // sits in every SelectField's class list: `\bdisabled\b` matches that text
+  // and reports every select on the page as disabled.
+  const DISABLED_ATTRIBUTE = /(?:^|\s)disabled(?=[\s/>=]|$)/u;
+  const submitted: string[] = [];
+  for (const control of body.matchAll(/<(input|select)\b([^>]*)>/gu)) {
+    const attrs = control[2] ?? "";
+    if (DISABLED_ATTRIBUTE.test(attrs)) continue;
+    const name = /\bname="([^"]*)"/u.exec(attrs)?.[1];
+    if (!name) continue;
+    submitted.push(name);
+  }
+  assert.deepEqual(
+    [...submitted].sort(),
+    ["model", "priority", "provider", "returnTo", "role"],
+    "the Disabled role's form must submit every field the route demands"
+  );
+
+  // The model is dimmed and non-interactive, so the value has to arrive from
+  // the hidden carry. Drop that carry and this assertion is what fails.
+  const selectIsDisabled = /<select[^>]*(?:^|\s)disabled(?:[\s/>=]|>)/u.test(
+    body
+  );
+  assert.ok(
+    selectIsDisabled,
+    "the role's model select must be disabled while the role is Disabled"
+  );
+  assert.equal(hiddenValue(markup, formTag, "model"), "");
+
+  // A globally disabled provider disables the priority select as well, so its
+  // Apply button could only ever produce a submission the route refuses. It
+  // renders disabled with the reason rather than looking actionable.
+  const immutableTag = formTags(markup).find((tag) =>
+    /data-role-form="codex-subagent"/u.test(tag)
+  );
+  assert.ok(immutableTag, "the immutable role's form must be present");
+  const immutableStart = markup.indexOf(immutableTag);
+  const immutableBody = markup.slice(
+    immutableStart,
+    markup.indexOf("</form>", immutableStart)
+  );
+  assert.match(immutableBody, /data-apply-role="codex-subagent"/u);
+  // Inspect the button's own tag, with the class attribute removed first:
+  // Tailwind's `disabled:` variant sits in every Button's class list, so a
+  // `disabled` search over the raw tag matches the stylesheet rather than the
+  // attribute and would pass with the control left enabled.
+  const applyTag = /<button\b[^>]*data-apply-role="codex-subagent"[^>]*>/u.exec(
+    immutableBody
+  )?.[0];
+  assert.ok(applyTag, "the Apply control must still be present");
+  const applyAttributes = applyTag.replace(/\sclass="[^"]*"/gu, "");
+  assert.match(
+    applyAttributes,
+    /(?:^|\s)disabled(?=[\s/>=]|>)/u,
+    "Apply must render disabled for a globally disabled provider"
+  );
+  assert.match(
+    applyTag,
+    /title="This provider is disabled\. Enable it to change its roles\."/u,
+    "the disabled Apply must carry its own reason, not borrow the select's"
+  );
+});
+
 test("ProvidersView Models tab puts each model's toggle next to the model", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProvidersView, {
