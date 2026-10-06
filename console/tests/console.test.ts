@@ -1969,6 +1969,129 @@ test("DataTable wraps column headers instead of truncating them", () => {
   assert.doesNotMatch(markup, /<th [^>]*class="[^"]*break-words[^"]*"/);
 });
 
+test("no column is narrower than its own header", () => {
+  // A column header is a label. The target state is explicit that "a column's
+  // weight must be large enough for its own header: a header that renders as an
+  // ellipsis is a layout defect, not acceptable truncation", and that a
+  // single-word header which cannot fit "breaks rather than hiding which column
+  // it labels".
+  //
+  // Two columns were measured breaking that rule and neither was caught here:
+  // `/mcps` Transport and Overrides rendered as `TRANSPORTOVERRIDES` with no
+  // gap, because the Transport weight had been cut to 95 while its header needs
+  // 114. Their comments claimed the column fitted its header, which is how a
+  // hand-tuned width becomes fiction.
+  //
+  // The minimums are measured, not computed, and that is the whole design of
+  // this guard. The obvious alternative — estimate the header from its character
+  // count — is wrong in both directions at once: uppercase 12px with
+  // `tracking-wider` is 8.6px per character for `METRICS` and 9.1px for
+  // `TRANSPORT`, and the figure that produced the original defect (8.1) was low
+  // enough to certify a column that did not fit. Font metrics are not available
+  // here, so the browser measures once and the numbers are asserted from then
+  // on. Changing a weight without re-measuring fails this.
+  //
+  // Coverage is asserted rather than assumed: a header rendered by these views
+  // but absent from the table below is a failure, not a skip. That is what keeps
+  // the guard from going quietly vacuous as columns are added.
+  // Measured in Chromium at each table's own floor, 2026-10. Keyed by the
+  // header as authored: `uppercase` is a stylesheet concern and the markup
+  // carries the source casing.
+  const MEASURED_MINIMUM_PX: Record<string, number> = {
+    "Server Name": 84,
+    "Configured roles": 120,
+    RuleSync: 104,
+    "Default State": 91,
+    Transport: 114,
+    Overrides: 108,
+    Connection: 122,
+    "Target Role": 85,
+    Model: 79,
+    Metrics: 92,
+    Outcome: 100,
+    Trace: 77,
+    "Run Time": 65
+  };
+
+  // Rendered header text -> column pixels at the table's own floor.
+  function columnWidthsAtFloor(markup: string): readonly [string, number][] {
+    const minWidth = /style="[^"]*min-width:\s*(\d+)px/.exec(markup);
+    assert.ok(minWidth, "the table declares its own floor as a pixel width");
+    const floor = Number(minWidth[1]);
+    const out: [string, number][] = [];
+    for (const th of markup.matchAll(
+      /<th [^>]*style="[^"]*width:\s*([\d.]+)%[^"]*"[^>]*>([\s\S]*?)<\/th>/g
+    )) {
+      const header = (th[2] ?? "").replaceAll(/<[^>]*>/g, "").trim();
+      out.push([header, (Number(th[1]) / 100) * floor]);
+    }
+    return out;
+  }
+
+  // Non-empty fixtures on purpose: both views render an empty state rather
+  // than a table when they have no rows, so an empty fixture would leave this
+  // guard matching nothing and passing for the wrong reason.
+  const markup = [
+    renderToStaticMarkup(
+      React.createElement(McpsView, {
+        servers: [
+          {
+            name: "context7",
+            enabled: true,
+            transport: "http",
+            targetOverrides: [{ target: "codexcli", enabled: false }],
+            declared: true,
+            roles: ["docs-researcher"]
+          }
+        ],
+        sourceValidity: true
+      })
+    ),
+    renderToStaticMarkup(
+      React.createElement(EvaluationsView, {
+        evaluations: [
+          {
+            id: "eval-1",
+            agentRole: "orchestrator",
+            model: "autodev/orchestrator",
+            passed: null,
+            timestamp: "2026-10-01T00:00:00.000Z",
+            metrics: [{ name: "latency", value: 12, pass: null }]
+          }
+        ]
+      })
+    )
+  ].join("");
+
+  const offenders: string[] = [];
+  const seen: string[] = [];
+  for (const [header, px] of columnWidthsAtFloor(markup)) {
+    seen.push(header);
+    const minimum = MEASURED_MINIMUM_PX[header];
+    if (minimum === undefined) {
+      offenders.push(
+        `${header}: no measured minimum recorded — measure it in the browser and add it here`
+      );
+      continue;
+    }
+    if (px + 0.5 < minimum) {
+      offenders.push(
+        `${header}: ${px.toFixed(1)}px at the floor, measured minimum ${minimum}px`
+      );
+    }
+  }
+
+  assert.ok(
+    seen.length >= 13,
+    `the guard must cover every column it is about, got ${seen.length}: ${seen.join(" | ")}`
+  );
+  assert.deepEqual(
+    offenders,
+    [],
+    `These columns are narrower than their own header at the table floor:\n${offenders.join("\n")}`
+  );
+});
+
 test("DataTable clamps prose cells on an inner box, not the table cell", () => {
   interface TestRow {
     readonly id: string;

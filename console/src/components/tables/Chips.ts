@@ -1,5 +1,6 @@
 import React from "react";
 
+import { type StatusBadgeVariant, StatusDot } from "../status/StatusBadge.ts";
 import { TAG_SHAPE } from "../status/Tag.ts";
 import { MUTED_META_CLASS } from "../ui/text-classes.ts";
 /**
@@ -61,6 +62,52 @@ export function Chip({
     "span",
     { className: classes, ...(title === undefined ? {} : { title }) },
     children
+  );
+}
+
+export interface StatusChipProps {
+  readonly status: StatusBadgeVariant;
+  /** What the dot means, e.g. "Enabled". Read by assistive tech and on hover. */
+  readonly stateLabel: string;
+  /** The name being chipped, e.g. `codexcli`. */
+  readonly label: string;
+  /**
+   * The full hover text. A chip carrying two facts truncates, and its children
+   * are no longer a plain string, so `Chip` cannot title it from its own text —
+   * `codexcli: enabled` is what the reader needs back, not `codexcli`.
+   */
+  readonly title?: string | undefined;
+  readonly href?: string | undefined;
+  readonly className?: string | undefined;
+}
+
+/**
+ * A chip carrying a status dot instead of a spelled-out state.
+ *
+ * The suffix costs the column more than the name does: `antigravity-cli:
+ * enabled` is a 175px chip where `antigravity-cli` with a dot is 112px, and on
+ * `/mcps`'s Overrides column that difference was the whole reason every
+ * override read `codex…`. The same shape was already hand-written on
+ * `/agents`'s provider summary, which is why this is one component rather than
+ * the third copy of the same `<Chip><StatusDot/>name</Chip>`.
+ */
+export function StatusChip({
+  status,
+  stateLabel,
+  label,
+  title,
+  href,
+  className
+}: StatusChipProps): React.JSX.Element {
+  return React.createElement(
+    Chip,
+    {
+      ...(href === undefined ? {} : { href }),
+      label: title ?? label,
+      className: className ?? "gap-1.5 font-mono"
+    },
+    React.createElement(StatusDot, { status, label: stateLabel }),
+    label
   );
 }
 

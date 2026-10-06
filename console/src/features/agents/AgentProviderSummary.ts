@@ -7,10 +7,9 @@ import React from "react";
 
 import {
   NOT_OBSERVED_LABEL,
-  type StatusBadgeVariant,
-  StatusDot
+  type StatusBadgeVariant
 } from "../../components/status/StatusBadge.ts";
-import { Chip } from "../../components/tables/Chips.ts";
+import { StatusChip } from "../../components/tables/Chips.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 import { providerPath } from "../providers/paths.ts";
 
@@ -65,15 +64,13 @@ export function AgentProviderSummary({
       return React.createElement(
         "li",
         { key: provider, className: "flex min-w-0 items-center" },
-        React.createElement(
-          Chip,
-          {
-            href: providerPath(provider),
-            className: "gap-1.5 font-mono"
-          },
-          React.createElement(StatusDot, { status, label: state }),
-          provider
-        )
+        React.createElement(StatusChip, {
+          status,
+          stateLabel: state,
+          label: provider,
+          href: providerPath(provider),
+          title: `${provider}: ${state.toLowerCase()}`
+        })
       );
     })
   );

@@ -9,13 +9,12 @@ import {
   NOT_OBSERVED_LABEL,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
-import { Chip, chipList } from "../../components/tables/Chips.ts";
+import { chipList, StatusChip } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
-import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 
 const NOT_OBSERVED_STATUS = "not-observed" as const;
 
@@ -46,10 +45,18 @@ export function McpsView({
       // so at the table's 864px floor -- what every viewport under 864 sees --
       // it resolved to 105px against roles' 135. Measured at 390px, every server
       // name rendered as eight characters plus an ellipsis: `cocoind…`,
-      // `codegra…`, `openaiD…`. Weight is only a share of the floor, so the way
-      // to widen the key is to take the width from the columns an operator reads
-      // second.
-      weight: 230,
+      // `codegra…`, `openaiD…`.
+      //
+      // 163 is not 230 any more, and the reason is arithmetic rather than taste.
+      // Measured in the browser, each of the seven columns needs this much of the
+      // 864px floor: 84 for this one's own header, 120 for the longest role chip,
+      // 123 for the "Canonical" pill, 144 for each "Not observed" pill, 114 for
+      // "TRANSPORT" -- which is wider than the cell it labels -- and 108 for
+      // "OVERRIDES". That is 793px before this column gets a pixel, so it takes
+      // the 111px that is left. A header that does not fit its column is the one
+      // defect the target state names outright; a name that truncates gives
+      // itself back on hover and a title.
+      weight: 163,
       cell: (server) =>
         React.createElement(
           "a",
@@ -112,32 +119,44 @@ export function McpsView({
     {
       id: "transport",
       header: "Transport",
-      // Gives the share the three pill columns need. "STDIO" is the only content
-      // this column ever holds, so it is the cheapest width on the page.
-      weight: 120,
+      // Sized for its own header, which is wider than the cell it labels: nine
+      // characters of 12px uppercase with tracking measure 82px, and the cell
+      // adds its own 32px of padding, so 114. At 95 the header ran into
+      // "OVERRIDES" with no gap between the two and "STDIO" cut to "STD…".
+      weight: 168,
       cell: (server) => server.transport.toUpperCase()
     },
     {
       id: "targets",
       header: "Overrides",
-      // The widest column on the page at the floor, for what is usually a count
-      // or one chip. Part of what the Server Name column now has, and part of
-      // what the three pill columns now have.
-      weight: 140,
+      // Sized for its own header, which needs 108px: 76px of text plus the
+      // cell's padding. The content would like 162 -- a 130px `antigravity-cli`
+      // chip plus padding -- and does not get it, which is the point of the
+      // arithmetic on Server Name: this table's seven columns ask for 793px of
+      // the 864px floor between them before the primary key takes any, so
+      // something has to truncate and this is the column whose loss is cheapest.
+      // The status dot is what makes that survivable. The spelled-out state made
+      // an `antigravity-cli: enabled` chip 175px wide where `antigravity-cli`
+      // with a dot is 130px, and the full `target: enabled` is on the chip's
+      // title either way.
+      weight: 159,
       align: "tokens",
       cell: (server) =>
-        server.targetOverrides.length === 0
-          ? React.createElement("span", { className: MUTED_META_CLASS }, "None")
-          : chipList({
-              items: server.targetOverrides.map(
-                ({ target, enabled }) =>
-                  `${target}: ${enabled ? "enabled" : "disabled"}`
-              ),
-              emptyLabel: "None",
-              testId: "mcp-target-overrides",
-              renderItem: (override) =>
-                React.createElement(Chip, { className: "font-mono" }, override)
+        chipList({
+          items: server.targetOverrides,
+          renderKey: (override) => override.target,
+          emptyLabel: "None",
+          testId: "mcp-target-overrides",
+          renderItem: ({ target, enabled }) =>
+            React.createElement(StatusChip, {
+              status: enabled ? "valid" : "unavailable",
+              stateLabel: enabled ? "Enabled" : "Disabled",
+              label: target,
+              // The dot carries the state for sighted readers; this is what puts
+              // it back for everyone else once the chip truncates.
+              title: `${target}: ${enabled ? "enabled" : "disabled"}`
             })
+        })
     },
     {
       id: "status",

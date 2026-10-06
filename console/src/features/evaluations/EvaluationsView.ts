@@ -300,6 +300,7 @@ export function EvaluationsView({
     {
       id: "agentRole",
       header: "Target Role",
+      weight: 95,
       cell: (ev) =>
         React.createElement("span", { className: MONO_ID_CLASS }, ev.agentRole)
     },
@@ -316,7 +317,7 @@ export function EvaluationsView({
       // table was left at the 100-unit default, which is wide enough for a
       // header and too narrow for the content — and a `Tag` here is 130px of
       // content, so it is the cheapest column to narrow.
-      weight: 87,
+      weight: 92,
       cell: (ev) =>
         React.createElement(
           "div",
