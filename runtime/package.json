@@ -60,6 +60,7 @@
     "./router/memory-injection": "./src/router/memory-injection.ts",
     "./router/memory-reconstruction": "./src/router/memory-reconstruction.ts",
     "./router/otel": "./src/router/otel.ts",
+    "./router/otel-attributes": "./src/router/otel-attributes.ts",
     "./router/persistence": "./src/router/persistence/index.ts",
     "./router/proxy": "./src/router/proxy.ts",
     "./router/responses": "./src/router/responses.ts",
