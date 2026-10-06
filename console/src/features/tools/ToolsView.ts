@@ -9,7 +9,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
-import { Chip, ChipList } from "../../components/tables/Chips.ts";
+import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable
@@ -309,7 +309,7 @@ export function ToolsView({
         React.createElement(
           "div",
           { "data-roles-observed": String(tool.exposedRoles.length > 0) },
-          React.createElement(ChipList, {
+          chipList({
             items: tool.exposedRoles,
             emptyLabel: "No roles assigned",
             testId: "tool-roles",

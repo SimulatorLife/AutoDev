@@ -719,7 +719,7 @@ Control API base defaults to `http://127.0.0.1:4101` and can be configured with
 `AUTODEV_CONTROL_API_BASE_URL`. To query Usage, set
 `AUTODEV_OPENLIT_USAGE_TOKEN` in the Console server environment to the
 separately generated value in `$CODEX_HOME/openlit-secrets.env`;
-`AUTODEV_OPENLIT_USAGE_URL` defaults to `http://127.0.0.1:3000`. **During migration only**, the Console Memory portal links to the retained OpenLIT Memory page using the separately configured, browser-reachable `AUTODEV_OPENLIT_UI_URL` (same local default); it is not used as a service API credential or forwarded to the Control API. `AUTODEV_OPENLIT_UI_URL` is a transitional compatibility variable, not a target dependency: delete it and the portal-link path once the unified Console Memory feature reaches verified browse/detail/action/analytics parity. Do not add new consumers of this variable. Do not source or expose the full secret file to browser code.
+`AUTODEV_OPENLIT_USAGE_URL` defaults to `http://127.0.0.1:3000`. The Console is the only Memory operator surface: durable records, experiences, and outcome cohorts are read through the Control API in `console/app/memory`. The transitional external Memory portal is gone, so `AUTODEV_OPENLIT_UI_URL` no longer has a consumer — delete it from `$CODEX_HOME/.env` and do not reintroduce it. The Console launcher forwards only the two URL variables the server actually reads (`AUTODEV_CONTROL_API_BASE_URL`, `AUTODEV_OPENLIT_USAGE_URL`). Do not source or expose the full secret file to browser code.
 
 The two Console server-only tokens are seeded into the server environment by
 exactly one writer: `scripts/openlit/bootstrap-secrets.sh`, which is the same

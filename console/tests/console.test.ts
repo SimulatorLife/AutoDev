@@ -52,7 +52,6 @@ import {
   McpsView,
   MemoryCohortsView,
   MemoryExperiencesView,
-  MemoryPortalCard,
   MemoryRecordsView,
   MemoryView,
   ModelDetailView,
@@ -98,7 +97,6 @@ import {
   fetchTools,
   readControlApiConfig
 } from "../src/lib/server/control-api.ts";
-import { readMemoryPortalConfig } from "../src/lib/server/memory-portal.ts";
 import {
   readOpenLITUsageConfig,
   usageSelectionFromSearchParams
@@ -125,7 +123,6 @@ const MEMORY_PAGE_ENV_KEYS = [
   "AUTODEV_CONTROL_API_TOKEN",
   "AUTODEV_CONTROL_API_BASE_URL",
   "AUTODEV_OPENLIT_SECRET_FILE",
-  "AUTODEV_OPENLIT_UI_URL",
   "AUTODEV_OPENLIT_USAGE_TOKEN",
   "AUTODEV_OPENLIT_USAGE_URL"
 ] as const;
@@ -2303,95 +2300,6 @@ test("ToolsView surfaces availability through the StatusBadge vocabulary and nev
   assert.match(unavailableMarkup, /data-status="invalid"/);
 });
 
-test("readMemoryPortalConfig defaults to the local OpenLIT UI base URL", () => {
-  assert.deepEqual(readMemoryPortalConfig({}), {
-    href: "http://127.0.0.1:3000/memory"
-  });
-});
-
-test("readMemoryPortalConfig normalizes a configured URL to the fixed /memory path", () => {
-  assert.deepEqual(
-    readMemoryPortalConfig({
-      AUTODEV_OPENLIT_UI_URL:
-        "https://openlit.example.com:8443/some/other/path?x=1"
-    }),
-    { href: "https://openlit.example.com:8443/memory" }
-  );
-  assert.deepEqual(
-    readMemoryPortalConfig({
-      AUTODEV_OPENLIT_UI_URL: "  http://openlit:3000/  "
-    }),
-    { href: "http://openlit:3000/memory" }
-  );
-});
-
-test("readMemoryPortalConfig rejects unsafe configured URLs", () => {
-  assert.equal(
-    readMemoryPortalConfig({ AUTODEV_OPENLIT_UI_URL: "not a url" }),
-    null
-  );
-  assert.equal(
-    readMemoryPortalConfig({ AUTODEV_OPENLIT_UI_URL: "javascript:alert(1)" }),
-    null
-  );
-  assert.equal(
-    readMemoryPortalConfig({ AUTODEV_OPENLIT_UI_URL: "ftp://openlit:3000" }),
-    null
-  );
-  assert.equal(
-    readMemoryPortalConfig({
-      AUTODEV_OPENLIT_UI_URL: "https://admin:s3cret@openlit.example.com"
-    }),
-    null
-  );
-});
-
-test("MemoryPortalCard links to the resolved Memory destination and never exposes a token", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(MemoryPortalCard, {
-      href: "http://127.0.0.1:3000/memory"
-    })
-  );
-  assert.match(markup, /data-feature="memory-portal"/);
-  assert.match(
-    markup,
-    /href="http:\/\/127\.0\.0\.1:3000\/memory"[^>]*data-memory-portal-link="true"/
-  );
-  assert.match(markup, /target="_blank"/);
-  assert.match(markup, /rel="noopener noreferrer"/);
-  assert.match(markup, /Open external Memory UI/);
-  assert.equal(/openlit/i.test(markup), false);
-  assert.equal(markup.toLowerCase().includes("token"), false);
-  assert.equal(markup.toLowerCase().includes("secret"), false);
-  assert.equal(markup.toLowerCase().includes("bearer"), false);
-});
-
-test("MemoryPortalCard links to its default local destination", () => {
-  const portal = readMemoryPortalConfig({
-    AUTODEV_OPENLIT_UI_URL: undefined
-  });
-  assert.ok(portal, "default portal config must resolve");
-  const markup = renderToStaticMarkup(
-    React.createElement(MemoryPortalCard, { href: portal.href })
-  );
-  assert.match(markup, /data-feature="memory-portal"/);
-  assert.match(
-    markup,
-    /href="http:\/\/127\.0\.0\.1:3000\/memory"[^>]*data-memory-portal-link="true"/
-  );
-  assert.match(markup, /target="_blank"/);
-  assert.match(markup, /rel="noopener noreferrer"/);
-  assert.match(markup, /Open external Memory UI/);
-});
-
-test("readMemoryPortalConfig rejects credentialed destinations", () => {
-  const portal = readMemoryPortalConfig({
-    AUTODEV_OPENLIT_UI_URL: "https://admin:s3cret@openlit.example.com"
-  });
-  assert.equal(portal, null);
-  assert.doesNotMatch(JSON.stringify(portal), /s3cret|openlit\.example\.com/u);
-});
-
 test("MemoryPage requires a valid canonical workspace catalog before querying memory", async () => {
   const previousFetch = globalThis.fetch;
   const previousEnv = saveConsolePageEnvironment();
@@ -2559,23 +2467,6 @@ test("MemoryPage reports failed experience history instead of rendering an empty
     restoreConsolePageEnvironment(previousEnv);
     rmSync(isolatedHome, { recursive: true, force: true });
   }
-});
-
-test("MemoryPortalCard uses the normalized safe Memory destination", () => {
-  const env = {
-    AUTODEV_CONTROL_API_TOKEN: undefined,
-    AUTODEV_OPENLIT_UI_URL: "https://memory.example.com/some/other/path?x=1"
-  };
-  const portal = readMemoryPortalConfig(env);
-  assert.deepEqual(portal, { href: "https://memory.example.com/memory" });
-  const markup = renderToStaticMarkup(
-    React.createElement(MemoryPortalCard, { href: portal.href })
-  );
-  assert.match(
-    markup,
-    /href="https:\/\/memory.example.com\/memory"[^>]*data-memory-portal-link="true"/
-  );
-  assert.equal(markup.includes('data-status="unavailable"'), false);
 });
 
 test("EvaluationsPage loads the linked trace through the Usage token and keeps prompt scope", async () => {
@@ -3779,8 +3670,10 @@ test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace
   assert.match(markup, /data-tab-item="records"/);
   assert.match(markup, /data-tab-item="experiences"/);
   assert.match(markup, /data-tab-item="cohorts"/);
-  assert.match(markup, /data-tab-item="portal"/);
-  assert.match(markup, />External Memory UI</);
+  // The Console is the sole Memory operator surface: the transitional external
+  // Memory portal is gone, so no tab or link may lead out of it.
+  assert.doesNotMatch(markup, /data-tab-item="portal"/);
+  assert.doesNotMatch(markup, /External Memory UI/);
   assert.equal(markup.includes("OpenLIT Portal"), false);
   assert.match(markup, /aria-label="Memory sections"/);
   assert.match(markup, /aria-current="page"[^>]*data-tab-item="records"/);

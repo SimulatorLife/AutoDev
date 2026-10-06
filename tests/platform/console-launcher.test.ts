@@ -208,6 +208,8 @@ test("console launcher adheres to loopback binding contract, exact-key tokens, a
       [
         "AUTODEV_CONTROL_API_BASE_URL=http://127.0.0.1:4101",
         "AUTODEV_OPENLIT_USAGE_URL=http://127.0.0.1:3000",
+        // Retired with the external Memory bridge: the Console no longer reads
+        // this variable, so the launcher must not forward it either.
         "AUTODEV_OPENLIT_UI_URL=http://127.0.0.1:3000",
         "AUTODEV_CONTROL_API_TOKEN=rogue-token-from-env-must-be-ignored",
         "SECRET_ENV_VAR=should-not-be-exported"
@@ -292,7 +294,11 @@ test("console launcher adheres to loopback binding contract, exact-key tokens, a
     // Verify URL overrides from .env were exported
     assert.equal(lines.URL_CONTROL, "http://127.0.0.1:4101");
     assert.equal(lines.URL_USAGE, "http://127.0.0.1:3000");
-    assert.equal(lines.URL_UI, "http://127.0.0.1:3000");
+    assert.equal(
+      lines.URL_UI,
+      "",
+      "the retired external Memory bridge URL must not be forwarded"
+    );
 
     // Verify non-URL variables from .env were NOT exported
     assert.equal(

@@ -23,10 +23,6 @@ import {
   fetchWorkspaces
 } from "../../src/lib/server/control-api.ts";
 import {
-  type MemoryPortalConfig,
-  readMemoryPortalConfig
-} from "../../src/lib/server/memory-portal.ts";
-import {
   ConsolePageShell,
   readNodeContext,
   ResourceUnavailable
@@ -65,11 +61,7 @@ function parseMemoryQueryParams(
 
   const tabParam = getParam("tab");
   const activeTab: MemoryTab =
-    tabParam === "experiences" ||
-    tabParam === "cohorts" ||
-    tabParam === "portal"
-      ? tabParam
-      : "records";
+    tabParam === "experiences" || tabParam === "cohorts" ? tabParam : "records";
 
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -87,9 +79,7 @@ function parseMemoryQueryParams(
   };
 }
 
-function renderNoControlApiShell(
-  portal: MemoryPortalConfig | null
-): React.JSX.Element {
+function renderNoControlApiShell(): React.JSX.Element {
   return React.createElement(
     ConsolePageShell,
     { section: SECTION },
@@ -97,12 +87,7 @@ function renderNoControlApiShell(
       title: "Control API credential is not configured",
       code: "autodev_control_api_disabled",
       message:
-        "Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read governed memory.",
-      ...(portal
-        ? {
-            hint: "You can still access the temporary external Memory UI."
-          }
-        : {})
+        "Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read governed memory."
     })
   );
 }
@@ -411,12 +396,11 @@ export default async function MemoryPage(
   props: PageProps
 ): Promise<React.JSX.Element> {
   const { config } = readNodeContext("/memory");
-  const portal = readMemoryPortalConfig();
 
   const rawParams = props.searchParams ? await props.searchParams : {};
   const params = parseMemoryQueryParams(rawParams);
 
-  if (!config) return renderNoControlApiShell(portal);
+  if (!config) return renderNoControlApiShell();
 
   // Resolve the URL scope exclusively against the canonical workspace source.
   const workspaceScope = await resolveMemoryWorkspaceScope(
@@ -466,6 +450,8 @@ export default async function MemoryPage(
     ConsolePageShell,
     {
       section: SECTION,
+      description:
+        "Governed durable claims, raw experiences, lifecycle governance, and bounded outcome cohorts.",
       counts: {
         Memory: data.records.items.length
       }
@@ -494,8 +480,7 @@ export default async function MemoryPage(
       kind: params.kind,
       status: params.status,
       occurredFrom: params.occurredFrom,
-      occurredUntil: params.occurredUntil,
-      portalHref: portal?.href ?? null
+      occurredUntil: params.occurredUntil
     })
   );
 }

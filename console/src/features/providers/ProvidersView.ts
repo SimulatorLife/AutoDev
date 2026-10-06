@@ -7,7 +7,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
-import { Chip, ChipList } from "../../components/tables/Chips.ts";
+import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable
@@ -79,7 +79,9 @@ function providerColumns(
     {
       id: "provider",
       header: "Provider",
-      weight: 120,
+      // The provider id is the row's primary identifier, so this column is
+      // sized to never truncate it (longest observed id renders ~92px).
+      weight: 124,
       cell: (provider) =>
         React.createElement(ProviderLink, { provider: provider.id })
     },
@@ -89,7 +91,7 @@ function providerColumns(
       // room for the model and tier chips that actually need width.
       id: "roles",
       header: "Role enablement",
-      weight: 175,
+      weight: 183,
       align: "tokens",
       cell: (provider) =>
         React.createElement(
@@ -125,14 +127,19 @@ function providerColumns(
     {
       id: "health",
       header: "Health",
-      weight: 120,
+      // The widest health badge ("Configured", plus its status dot) measures
+      // 68px, so this column carried ~28px of dead width. That slack is what
+      // lets Tier priority pack two chips per line below.
+      weight: 100,
       cell: (provider) =>
         React.createElement(ProviderHealthBadge, { health: provider.health })
     },
     {
       id: "credential",
       header: "Credential",
-      weight: 185,
+      // A missing-credential badge names a long environment variable and is
+      // expected to truncate; the untruncated name stays on its hover title.
+      weight: 156,
       cell: (provider) =>
         React.createElement(CredentialBadge, {
           credential: provider.credential
@@ -142,9 +149,11 @@ function providerColumns(
       id: "models",
       header: "Models",
       align: "tokens",
-      weight: 226,
+      // Longest observed model chip is 184px, so this column cannot go below
+      // ~216px of cell width without truncating a model name.
+      weight: 213,
       cell: (provider) =>
-        React.createElement(ChipList, {
+        chipList({
           items: uniqueModels(provider),
           emptyLabel: "None configured",
           testId: "provider-models",
@@ -164,7 +173,13 @@ function providerColumns(
       id: "priority",
       header: "Tier priority",
       align: "tokens",
-      weight: 170,
+      // Load-bearing width. Chips wrap correctly, but the column was too narrow
+      // for any adjacent pair to fit (widest pair `browser-tester P1` +
+      // `default P1` needs ~200px of content width against 149px available), so
+      // four tiers stacked one per line and forced 125px rows. At ~201px the
+      // same chips pack two per line. Re-check this weight after editing any
+      // tier-name width or the table's own padding.
+      weight: 223,
       cell: (provider) => TierPriorityList({ provider })
     }
   ];
@@ -172,44 +187,28 @@ function providerColumns(
 
 /**
  * One chip per capability tier, labelled with its fallback group. A provider
- * can sit in several tiers at different depths, so the chip carries both
- * facts rather than a single run-on string.
+ * can sit in several tiers at different depths, so the chip carries both facts
+ * rather than a single run-on string. The list reuses `chipList` so the wrapping
+ * behaviour that keeps these chips inline is the shared one, not a second copy.
  */
 function TierPriorityList({
   provider
 }: {
   readonly provider: ControlApiProviderRecord;
 }): React.JSX.Element {
-  if (provider.priorities.length === 0) {
-    return React.createElement(
-      "span",
-      { className: "text-xs text-fg-muted" },
-      "Not in any tier"
-    );
-  }
-  return React.createElement(
-    "ul",
-    {
-      className: "m-0 flex list-none flex-wrap items-center gap-1 p-0",
-      "data-tier-priority": provider.id
-    },
-    ...provider.priorities.map(({ tier, group }) =>
+  return chipList({
+    items: provider.priorities,
+    renderKey: ({ tier }) => tier,
+    emptyLabel: "Not in any tier",
+    testId: `provider-tier-${provider.id}`,
+    renderItem: ({ tier, group }) =>
       React.createElement(
-        "li",
-        { key: tier, className: "flex min-w-0 items-center" },
-        React.createElement(
-          "span",
-          {
-            className:
-              "inline-flex max-w-full items-center gap-1 truncate rounded border border-border-strong bg-surface-raised px-2 py-0.5 text-xs text-fg-secondary",
-            title: `${tier}: priority group ${group}`
-          },
-          React.createElement("span", { className: "text-fg-muted" }, tier),
-          React.createElement("span", { className: "font-mono" }, `P${group}`)
-        )
+        Chip,
+        { className: "gap-1", label: `${tier}: priority group ${group}` },
+        React.createElement("span", { className: "text-fg-muted" }, tier),
+        React.createElement("span", { className: "font-mono" }, `P${group}`)
       )
-    )
-  );
+  });
 }
 
 function uniqueModels(provider: ControlApiProviderRecord): string[] {
@@ -255,7 +254,7 @@ function modelColumns(returnTo: string): ColumnDef<ControlApiModelRecord>[] {
       header: "Tiers",
       align: "tokens",
       cell: (model) =>
-        React.createElement(ChipList, {
+        chipList({
           items: model.tiers,
           emptyLabel: "Not mapped to a tier",
           testId: "model-tiers",

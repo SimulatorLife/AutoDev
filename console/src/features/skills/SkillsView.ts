@@ -6,7 +6,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
-import { ChipList } from "../../components/tables/Chips.ts";
+import { chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable
@@ -111,7 +111,7 @@ export function SkillsView({
       align: "tokens",
       cell: (skill) => {
         const item = eligibility.find((e) => e.skill === skill.name);
-        return React.createElement(ChipList, {
+        return chipList({
           items: item?.roles ?? [],
           emptyLabel: item === undefined ? "Not observed" : "No roles assigned",
           testId: "skill-roles"

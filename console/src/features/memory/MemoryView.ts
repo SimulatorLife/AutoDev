@@ -13,13 +13,12 @@ import { SelectField } from "../../components/forms/SelectField.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
 import { MemoryCohortsView } from "./MemoryCohortsView.ts";
 import { MemoryExperiencesView } from "./MemoryExperiencesView.ts";
-import { MemoryPortalCard } from "./MemoryPortalCard.ts";
 import {
   type MemoryRecordHistory,
   MemoryRecordsView
 } from "./MemoryRecordsView.ts";
 
-export type MemoryTab = "records" | "experiences" | "cohorts" | "portal";
+export type MemoryTab = "records" | "experiences" | "cohorts";
 
 const NOT_OBSERVED_LABEL = "Not observed";
 
@@ -42,7 +41,6 @@ export interface MemoryViewProps {
   readonly status?: string | undefined;
   readonly occurredFrom: string;
   readonly occurredUntil: string;
-  readonly portalHref?: string | null | undefined;
 }
 
 export function MemoryView({
@@ -63,8 +61,7 @@ export function MemoryView({
   kind,
   status,
   occurredFrom,
-  occurredUntil,
-  portalHref
+  occurredUntil
 }: MemoryViewProps): React.JSX.Element {
   const activeRecordsCount = records.filter(
     (r) => r.status === "active"
@@ -74,8 +71,7 @@ export function MemoryView({
   const tabButtons: { readonly id: MemoryTab; readonly label: string }[] = [
     { id: "records", label: "Durable Records" },
     { id: "experiences", label: "Experiences" },
-    { id: "cohorts", label: "Outcome Cohorts" },
-    { id: "portal", label: "External Memory UI" }
+    { id: "cohorts", label: "Outcome Cohorts" }
   ];
 
   const hrefForTab = (tabId: string): string => {
@@ -237,19 +233,6 @@ export function MemoryView({
               occurredFrom,
               occurredUntil
             })
-          : React.createElement(
-              "div",
-              { className: "flex flex-col gap-4 max-w-xl" },
-              portalHref
-                ? React.createElement(MemoryPortalCard, { href: portalHref })
-                : React.createElement(
-                    "div",
-                    {
-                      className:
-                        "p-4 rounded bg-surface border border-border text-sm text-fg-muted"
-                    },
-                    "External Memory UI URL is not configured."
-                  )
-            )
+          : null
   );
 }

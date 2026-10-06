@@ -15,9 +15,9 @@
 #   3. Reads only the two Console-required tokens from
 #      CODEX_HOME/openlit-secrets.env via an exact-key awk parser; the file
 #      is NEVER sourced, and token values are NEVER printed.
-#   4. Reads only the optional nonsecret URL overrides from
-#      CODEX_HOME/.env if present (the .env file holds only URLs and the
-#      generated ports, never tokens).
+#   4. Reads only the two optional nonsecret URL overrides the Console server
+#      consumes (AUTODEV_CONTROL_API_BASE_URL, AUTODEV_OPENLIT_USAGE_URL) from
+#      CODEX_HOME/.env if present; anything else in that file is ignored.
 #   5. exec()s next start bound to 127.0.0.1 on AUTODEV_CONSOLE_PORT (default
 #      3300).
 
@@ -39,8 +39,11 @@ unset AUTODEV_CONTROL_API_TOKEN AUTODEV_OPENLIT_USAGE_TOKEN
 # ---------------------------------------------------------------------------
 # Optional nonsecret URL overrides from CODEX_HOME/.env
 #
-# Reads optional nonsecret URL overrides only from CODEX_HOME/.env if present.
-# Secret tokens are never read from .env; only URL overrides are parsed.
+# Reads optional nonsecret URL overrides only from CODEX_HOME/.env if present,
+# and only the two the Console server actually consumes. The allowlist is
+# explicit rather than a `*_URL` glob so a variable with no Console consumer
+# (for example the retired AUTODEV_OPENLIT_UI_URL bridge) never reaches the
+# server. Secret tokens are never read from .env.
 # ---------------------------------------------------------------------------
 if [[ -f "$codex_home/.env" ]]; then
   while IFS='=' read -r key val || [[ -n "$key" ]]; do
@@ -51,10 +54,7 @@ if [[ -f "$codex_home/.env" ]]; then
       continue
     fi
     case "$key" in
-      *TOKEN*|*SECRET*|*PASSWORD*|*KEY*)
-        # Never read secrets or tokens from .env
-        ;;
-      *_URL)
+      AUTODEV_CONTROL_API_BASE_URL|AUTODEV_OPENLIT_USAGE_URL)
         val="${val%$'\r'}"
         val="$(printf '%s' "$val" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
         val="${val%\"}"

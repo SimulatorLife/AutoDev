@@ -60,11 +60,16 @@ export function ResourceUnavailable({
     },
     React.createElement(
       "div",
-      { className: "flex items-center justify-between gap-3" },
+      // An error code is an unbroken machine token that is routinely longer than
+      // a narrow card. The row wraps and the code may break anywhere, so a long
+      // code never pushes the card (or the document) sideways.
+      {
+        className: "flex flex-wrap items-center justify-between gap-x-3 gap-y-1"
+      },
       React.createElement(
         "h2",
         {
-          className: "text-base font-semibold text-error tracking-tight"
+          className: "min-w-0 text-base font-semibold text-error tracking-tight"
         },
         title
       ),
@@ -72,7 +77,7 @@ export function ResourceUnavailable({
         "span",
         {
           className:
-            "text-xs font-mono text-error bg-error/15 border border-error/40 px-2 py-0.5 rounded"
+            "max-w-full break-all text-xs font-mono text-error bg-error/15 border border-error/40 px-2 py-0.5 rounded"
         },
         code
       )
@@ -99,15 +104,17 @@ export function ResourceUnavailable({
 export function ConsolePageShell({
   section,
   counts,
+  description,
   children
 }: {
   readonly section: CanonicalNavSection;
   readonly counts?: Partial<Record<CanonicalNavSection, number>> | undefined;
+  readonly description?: string | undefined;
   readonly children?: React.ReactNode;
 }): React.JSX.Element {
   return React.createElement(
     AppShell,
-    { activeSection: section, counts },
+    { activeSection: section, counts, description },
     children
   );
 }

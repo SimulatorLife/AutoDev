@@ -5,7 +5,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
-import { ChipList } from "../../components/tables/Chips.ts";
+import { chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable
@@ -59,7 +59,7 @@ export function PermissionsView({
       header: "Allowed MCP Servers",
       align: "tokens",
       cell: (r) =>
-        React.createElement(ChipList, {
+        chipList({
           items: r.allowedMcpServers,
           emptyLabel: "No MCP servers",
           testId: "role-mcps",
@@ -71,7 +71,7 @@ export function PermissionsView({
       header: "Allowed Skills",
       align: "tokens",
       cell: (r) =>
-        React.createElement(ChipList, {
+        chipList({
           items: r.allowedSkills,
           emptyLabel: "No skills",
           testId: "role-skills"

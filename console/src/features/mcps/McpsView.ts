@@ -3,7 +3,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
-import { Chip, ChipList } from "../../components/tables/Chips.ts";
+import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable
@@ -52,7 +52,7 @@ export function McpsView({
       align: "tokens",
       weight: 192,
       cell: (server) =>
-        React.createElement(ChipList, {
+        chipList({
           items: server.roles,
           emptyLabel: "No roles assigned",
           testId: "mcp-roles"
@@ -101,7 +101,7 @@ export function McpsView({
               { className: "text-xs text-fg-muted" },
               "None"
             )
-          : React.createElement(ChipList, {
+          : chipList({
               items: server.targetOverrides.map(
                 ({ target, enabled }) =>
                   `${target}: ${enabled ? "enabled" : "disabled"}`

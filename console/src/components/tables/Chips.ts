@@ -50,15 +50,20 @@ export function Chip({
   );
 }
 
-export interface ChipListProps {
-  readonly items: readonly string[];
+export interface ChipListProps<TItem = string> {
+  readonly items: readonly TItem[];
   /**
-   * How each item is rendered; defaults to a plain label chip. Use this only
-   * when an item needs to be something other than a chip (for example a link).
-   * To restyle every chip, use `className` instead so the shared chip
+   * How each item is rendered; defaults to a plain label chip. Use this when an
+   * item needs to be something other than a chip (a link, or a chip carrying two
+   * facts). To restyle every chip, use `className` instead so the shared chip
    * presentation is preserved.
    */
-  readonly renderItem?: ((item: string) => React.ReactNode) | undefined;
+  readonly renderItem?: ((item: TItem) => React.ReactNode) | undefined;
+  /**
+   * React key for each item. Defaults to the item itself, which is only correct
+   * when the items are already unique strings; pass this for any other shape.
+   */
+  readonly renderKey?: ((item: TItem) => React.Key) | undefined;
   /** Extra classes applied to every chip in the list. */
   readonly className?: string | undefined;
   /** Copy for the empty case, so absence never reads as a blank cell. */
@@ -67,13 +72,24 @@ export interface ChipListProps {
   readonly testId?: string | undefined;
 }
 
-export function ChipList({
+/**
+ * Render a wrapping list of chips.
+ *
+ * This is a function rather than a component on purpose. Every Console view
+ * builds elements with `React.createElement`, and TypeScript resolves a generic
+ * component's type parameter to its constraint there — every `renderItem`
+ * parameter arrived as `unknown`, so passing a list of anything but plain
+ * strings could not type-check. Calling a generic function directly keeps the
+ * item type inferred from `items`.
+ */
+export function chipList<TItem = string>({
   items,
   renderItem,
+  renderKey,
   className,
   emptyLabel,
   testId
-}: ChipListProps): React.JSX.Element {
+}: ChipListProps<TItem>): React.ReactElement {
   if (items.length === 0) {
     return React.createElement(
       "span",
@@ -87,15 +103,25 @@ export function ChipList({
       className: "m-0 flex list-none flex-wrap items-center gap-1 p-0",
       ...(testId === undefined ? {} : { "data-chips": testId })
     },
-    ...items.map((item) =>
+    ...items.map((item, index) =>
       React.createElement(
         "li",
-        { key: item, className: "flex min-w-0 items-center" },
+        {
+          // The default key is the item itself, which only works for string
+          // items; any other shape supplies `renderKey`, and the fallback keeps
+          // React from warning if it does not.
+          key:
+            renderKey === undefined
+              ? ((item as React.Key) ?? `chip-${index}`)
+              : renderKey(item),
+          className: "flex min-w-0 items-center"
+        },
         renderItem === undefined
           ? React.createElement(
               Chip,
               className === undefined ? null : { className },
-              item
+              // The default chip renders the item as its own label.
+              item as string
             )
           : renderItem(item)
       )
