@@ -1,4 +1,5 @@
 import type {
+  ControlApiPromptDetailResponse,
   ControlApiPromptVersionReference,
   ControlApiPromptVersionResponse,
   PromptDocument
@@ -7,6 +8,7 @@ import React from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 
 const PROMPT_CARD_CLASS_NAME = "rounded-lg border border-border bg-surface p-4";
@@ -24,6 +26,13 @@ export type PromptHistoryState =
 
 export interface PromptDetailViewProps {
   readonly prompt: PromptDocument;
+  /**
+   * Desired-vs-actual state the Runtime derived for this resource. The detail
+   * payload always carries it (the v4 contract requires it); it is surfaced here
+   * because an operator editing canonical source needs to see whether the
+   * projection has actually caught up, not just whether the save returned.
+   */
+  readonly reconciliation: ControlApiPromptDetailResponse["reconciliation"];
   readonly history: PromptHistoryState;
   readonly selectedVersion?: ControlApiPromptVersionResponse | undefined;
   readonly versionSelectionError?: string | undefined;
@@ -454,6 +463,7 @@ function renderPromptFooter(prompt: PromptDocument): React.JSX.Element {
 
 export function PromptDetailView({
   prompt,
+  reconciliation,
   history,
   selectedVersion,
   versionSelectionError,
@@ -601,6 +611,23 @@ export function PromptDetailView({
       )
     ),
     renderSaveOutcome(saveOutcome),
+    React.createElement(
+      "section",
+      {
+        className: "rounded-lg border border-border bg-surface p-6 shadow",
+        "aria-label": "Reconciliation state",
+        "data-section": "prompt-reconciliation"
+      },
+      React.createElement(
+        "h3",
+        { className: "mb-2 text-xs uppercase tracking-wider text-fg-muted" },
+        "Reconciliation"
+      ),
+      React.createElement(ReconciliationPanel, {
+        status: reconciliation.status,
+        history: reconciliation.history
+      })
+    ),
     React.createElement(
       "section",
       {

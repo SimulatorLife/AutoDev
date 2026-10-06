@@ -171,6 +171,7 @@ export default async function PromptDetailPage({
     { section },
     React.createElement(PromptDetailView, {
       prompt,
+      reconciliation: result.data.reconciliation,
       history,
       ...(selection.selectedVersion
         ? { selectedVersion: selection.selectedVersion }

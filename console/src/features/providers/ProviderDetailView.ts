@@ -7,6 +7,7 @@ import type {
 import React from "react";
 
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { ConvergenceBadge } from "../../components/status/ConvergenceBadge.ts";
 import {
   type ColumnDef,
   DataTable
@@ -75,26 +76,37 @@ function RolesPanel({
     React.createElement(
       "dl",
       { className: "grid grid-cols-1 gap-4 sm:grid-cols-2" },
-      React.createElement(
-        DetailValue,
-        { label: "Orchestrator" },
-        React.createElement(ProviderRoleToggle, {
-          provider: provider.id,
-          role: "orchestrator",
-          enablement: provider.roles.orchestrator,
-          returnTo
-        })
-      ),
-      React.createElement(
-        DetailValue,
-        { label: "Subagent" },
-        React.createElement(ProviderRoleToggle, {
-          provider: provider.id,
-          role: "subagent",
-          enablement: provider.roles.subagent,
-          returnTo
-        })
-      )
+      ...(["orchestrator", "subagent"] as const).map((role) => {
+        const entry = provider.roles[role];
+        return React.createElement(
+          "div",
+          { key: role, className: "flex flex-col gap-2" },
+          React.createElement(
+            DetailValue,
+            { label: role === "orchestrator" ? "Orchestrator" : "Subagent" },
+            React.createElement(ProviderRoleToggle, {
+              provider: provider.id,
+              role,
+              enablement: entry,
+              returnTo
+            })
+          ),
+          // Desired-vs-actual state for the toggle above. This is the
+          // reconcile loop's own verdict, so it is shown rather than inferred
+          // from whether the toggle is on.
+          React.createElement(
+            DetailValue,
+            { label: "Convergence" },
+            React.createElement(ConvergenceBadge, {
+              convergence: entry.convergence.convergence,
+              explanation: entry.convergence.explanation,
+              desiredGeneration: entry.convergence.desiredGeneration,
+              observedGeneration: entry.convergence.observedGeneration,
+              lastError: entry.convergence.lastError
+            })
+          )
+        );
+      })
     )
   );
 }

@@ -10,6 +10,7 @@ import {
   CANONICAL_NAVIGATION,
   type CanonicalNavSection,
   type ControlApiModelsResponse,
+  type ControlApiPromptDetailResponse,
   type ControlApiProvidersResponse,
   type ExperienceEnvelope,
   type GithubWorkflowDefinition,
@@ -518,6 +519,132 @@ test("PromptsView distinguishes an unavailable command source from a valid empty
   assert.match(missing, /Not observed/);
 });
 
+/** Shared "nothing observed yet" reconciliation fixture for detail renders. */
+const unobservedPromptReconciliation: ControlApiPromptDetailResponse["reconciliation"] =
+  {
+    status: {
+      convergence: "not-observed",
+      desiredGeneration: null,
+      observedGeneration: null,
+      lastApplyAt: null,
+      lastObservationAt: null,
+      lastError: null,
+      explanation: "No applied generation has been observed."
+    },
+    history: []
+  };
+
+test("Prompt detail surfaces the Runtime-derived reconciliation for the resource", () => {
+  const prompt = promptDocumentFromControlApi({
+    schema: "autodev-control-prompt-detail-v4",
+    name: "dry",
+    type: "command",
+    source: ".rulesync/commands/dry.md",
+    content: "# /dry\n\nUse a dry run.",
+    preview: "## Rendered Prompt\n\n**Use a dry run.**",
+    revision: "c".repeat(64),
+    diff: {
+      summary: "Canonical RuleSync command.",
+      identifier: "c".repeat(64)
+    },
+    reconciliation: {
+      status: {
+        convergence: "pending",
+        desiredGeneration: "gen-2",
+        observedGeneration: null,
+        lastApplyAt: "2026-02-03T04:05:06Z",
+        lastObservationAt: null,
+        lastError: null,
+        explanation: "Applied generation gen-2 is not observed yet."
+      },
+      history: [
+        {
+          action: "patch_prompt_command",
+          resource: "/control/prompts/dry",
+          timestamp: "2026-02-03T04:05:06Z",
+          actor: "autodev-local",
+          outcome: "ok",
+          reason: null,
+          changes: {
+            desiredGeneration: "gen-2",
+            observedGeneration: null,
+            restartRequired: false
+          }
+        }
+      ]
+    }
+  });
+  const markup = renderToStaticMarkup(
+    React.createElement(PromptDetailView, {
+      prompt,
+      reconciliation: {
+        status: {
+          convergence: "pending",
+          desiredGeneration: "gen-2",
+          observedGeneration: null,
+          lastApplyAt: "2026-02-03T04:05:06Z",
+          lastObservationAt: null,
+          lastError: null,
+          explanation: "Applied generation gen-2 is not observed yet."
+        },
+        history: [
+          {
+            action: "patch_prompt_command",
+            resource: "/control/prompts/dry",
+            timestamp: "2026-02-03T04:05:06Z",
+            actor: "autodev-local",
+            outcome: "ok",
+            reason: null,
+            changes: {
+              desiredGeneration: "gen-2",
+              observedGeneration: null,
+              restartRequired: false
+            }
+          }
+        ]
+      },
+      history: unavailablePromptHistory
+    })
+  );
+  assert.match(markup, /data-section="prompt-reconciliation"/);
+  assert.match(markup, /data-feature="reconciliation"/);
+  // The verdict, the generations behind it, and the operation that produced
+  // them all come from Runtime evidence, not from the page's own state.
+  assert.match(markup, /data-status="pending"/);
+  assert.match(markup, /Applied generation gen-2 is not observed yet\./);
+  assert.match(markup, /data-field="desired-generation"[^>]*>gen-2</);
+  // An unobserved generation must never render as an empty value.
+  assert.match(markup, /data-field="observed-generation"[^>]*>Not observed</);
+  assert.match(markup, /patch_prompt_command/);
+  assert.match(markup, /data-history-outcome="ok"/);
+});
+
+test("Prompt detail reports an empty operation history instead of implying one", () => {
+  const prompt = promptDocumentFromControlApi({
+    schema: "autodev-control-prompt-detail-v4",
+    name: "dry",
+    type: "command",
+    source: ".rulesync/commands/dry.md",
+    content: "# /dry",
+    preview: "",
+    revision: "d".repeat(64),
+    diff: {
+      summary: "Canonical RuleSync command.",
+      identifier: "d".repeat(64)
+    },
+    reconciliation: unobservedPromptReconciliation
+  });
+  const markup = renderToStaticMarkup(
+    React.createElement(PromptDetailView, {
+      prompt,
+      reconciliation: unobservedPromptReconciliation,
+      history: unavailablePromptHistory
+    })
+  );
+  assert.match(markup, /data-status="not-observed"/);
+  assert.match(markup, /No recorded operations for this resource\./);
+});
+
 test("Prompt detail renders canonical text and reports an actually empty source", () => {
   const source = "# /dry\n\nUse a dry run.";
   const prompt = promptDocumentFromControlApi({
@@ -547,6 +674,7 @@ test("Prompt detail renders canonical text and reports an actually empty source"
   });
   const markup = renderToStaticMarkup(
     React.createElement(PromptDetailView, {
+      reconciliation: unobservedPromptReconciliation,
       prompt,
       history: unavailablePromptHistory
     })
@@ -567,6 +695,7 @@ test("Prompt detail renders canonical text and reports an actually empty source"
 
   const hostilePreview = renderToStaticMarkup(
     React.createElement(PromptDetailView, {
+      reconciliation: unobservedPromptReconciliation,
       prompt: {
         ...prompt,
         preview: "<script>alert(1)</script>\n\n[unsafe](javascript:alert(1))"
@@ -580,6 +709,7 @@ test("Prompt detail renders canonical text and reports an actually empty source"
   const versionHash = "b".repeat(40);
   const comparisonMarkup = renderToStaticMarkup(
     React.createElement(PromptDetailView, {
+      reconciliation: unobservedPromptReconciliation,
       prompt,
       history: {
         status: "available",
@@ -604,6 +734,7 @@ test("Prompt detail renders canonical text and reports an actually empty source"
 
   const applyFailedMarkup = renderToStaticMarkup(
     React.createElement(PromptDetailView, {
+      reconciliation: unobservedPromptReconciliation,
       prompt,
       history: unavailablePromptHistory,
       saveOutcome: "apply-failed"
@@ -614,6 +745,7 @@ test("Prompt detail renders canonical text and reports an actually empty source"
 
   const roleMarkup = renderToStaticMarkup(
     React.createElement(PromptDetailView, {
+      reconciliation: unobservedPromptReconciliation,
       prompt: {
         name: "orchestrator",
         kind: "role",
@@ -630,6 +762,7 @@ test("Prompt detail renders canonical text and reports an actually empty source"
 
   const emptyMarkup = renderToStaticMarkup(
     React.createElement(PromptDetailView, {
+      reconciliation: unobservedPromptReconciliation,
       prompt: { ...prompt, content: "" },
       history: unavailablePromptHistory
     })
@@ -666,6 +799,7 @@ test("PromptsView and PromptDetailView render prompt types, linkage, and Git aut
 
   const detailMarkup = renderToStaticMarkup(
     React.createElement(PromptDetailView, {
+      reconciliation: unobservedPromptReconciliation,
       prompt: {
         name: "orchestrator",
         kind: "role",
