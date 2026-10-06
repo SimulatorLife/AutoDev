@@ -706,6 +706,52 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     /"\/manage-models"/u,
     "the matcher must not list a page that no longer exists"
   );
+
+  // The Rule Engine's last UI trace linked to /rule-engine/<id>, a route patch
+  // 30 deleted, and was fed a `ruleContext` field nothing produces since. The
+  // panel around it is genuine evaluation metadata, so the trace went, not the
+  // panel.
+  const requestEvaluations = readFileSync(
+    join(
+      dir,
+      "src/client/src/components/(playground)/request/components/evaluations.tsx"
+    ),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    requestEvaluations,
+    /rule-engine|RuleEngineInfo|ruleContext/u,
+    "no link, component or prop may reference the removed Rule Engine"
+  );
+  assert.match(
+    requestEvaluations,
+    /EVALUATION_RUN_DETAILS/u,
+    "the heading must name a run rather than the product that no longer exists"
+  );
+  // ...and the panel must keep what is still real.
+  for (const [what, pattern] of [
+    ["the engine model", /meta\?\.model/u],
+    ["manual/auto provenance", /meta\?\.source/u],
+    [
+      "context links, which point at a live route",
+      /href=\{`\/context\/\$\{cid\}`\}/u
+    ]
+  ] as const) {
+    assert.match(
+      requestEvaluations,
+      pattern,
+      `${what} must survive the removal of the rule trace`
+    );
+  }
+  const messages = readFileSync(
+    join(dir, "src/client/src/constants/messages/en.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    messages,
+    /EVALUATION_RULE_ENGINE_DETAILS|EVALUATION_RULES_APPLIED/u,
+    "the orphaned Rule Engine strings must not survive in the message catalog"
+  );
 }
 
 test(

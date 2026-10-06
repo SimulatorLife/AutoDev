@@ -1,0 +1,131 @@
+diff --git a/src/client/src/components/(playground)/request/components/evaluations.tsx b/src/client/src/components/(playground)/request/components/evaluations.tsx
+index 7f3e8f9f..5fd34181 100644
+--- a/src/client/src/components/(playground)/request/components/evaluations.tsx
++++ b/src/client/src/components/(playground)/request/components/evaluations.tsx
+@@ -245,38 +245,22 @@ function FeedbackList({ feedbacks }: { feedbacks: ManualFeedback[] }) {
+ 	);
+ }
+ 
+-function RuleEngineInfo({
+-	meta,
+-	ruleContext,
+-}: {
+-	meta?: Record<string, any>;
+-	ruleContext?: {
+-		matchingRuleIds: string[];
+-		contextApplied: boolean;
+-		contextEntityIds?: string[];
+-	};
+-}) {
++function EvaluationRunDetails({ meta }: { meta?: Record<string, any> }) {
+ 	const model = meta?.model;
+-	const ruleIds = meta?.ruleIds
+-		? String(meta.ruleIds).split(",").filter(Boolean)
+-		: [];
+-	const contextIds = meta?.contextIds
++	const contextEntityIds = meta?.contextIds
+ 		? String(meta.contextIds).split(",").filter(Boolean)
+ 		: [];
+-	const contextApplied = meta?.contextApplied === "yes" || ruleContext?.contextApplied;
+-	const matchingRuleIds = ruleContext?.matchingRuleIds || ruleIds;
+-	const contextEntityIds = ruleContext?.contextEntityIds || contextIds;
++	const contextApplied = meta?.contextApplied === "yes";
+ 	const source = meta?.source; // 'manual' | 'auto'
+ 
+-	if (!model && !matchingRuleIds.length && !source && !contextEntityIds.length)
+-		return null;
++	if (!model && !source && !contextEntityIds.length) return null;
+ 
+ 	return (
+ 		<div className="rounded-lg border border-stone-200 dark:border-stone-700 overflow-hidden">
+ 			<div className="px-3 py-2.5 border-b border-stone-200 dark:border-stone-700 flex items-center gap-1.5">
+ 				<Zap className="size-3.5 text-stone-500" />
+ 				<span className="text-xs font-medium text-stone-500 dark:text-stone-400">
+-					{getMessage().EVALUATION_RULE_ENGINE_DETAILS}
++					{getMessage().EVALUATION_RUN_DETAILS}
+ 				</span>
+ 			</div>
+ 			<div className="px-3 py-2.5 text-xs space-y-2 text-stone-600 dark:text-stone-400">
+@@ -298,22 +282,6 @@ function RuleEngineInfo({
+ 						{model}
+ 					</p>
+ 				)}
+-				{matchingRuleIds.length > 0 && (
+-					<div className="flex flex-wrap items-center gap-1">
+-						<span className="font-medium shrink-0">
+-							{getMessage().EVALUATION_RULES_APPLIED}:
+-						</span>
+-						{matchingRuleIds.map((rid) => (
+-							<Link
+-								key={rid}
+-								href={`/rule-engine/${rid}`}
+-								className="text-primary hover:underline"
+-							>
+-								{rid.slice(0, 8)}…
+-							</Link>
+-						))}
+-					</div>
+-				)}
+ 				{contextApplied && contextEntityIds.length > 0 && (
+ 					<div className="flex flex-wrap items-center gap-1">
+ 						<span className="font-medium shrink-0">
+@@ -345,11 +313,9 @@ function RuleEngineInfo({
+ 
+ function EvaluationRunCard({
+ 	run,
+-	ruleContext,
+ 	surface = "default",
+ }: {
+ 	run: EvaluationRun;
+-	ruleContext?: { matchingRuleIds: string[]; contextApplied: boolean };
+ 	surface?: "default" | "observability";
+ }) {
+ 	const isObservabilitySurface = surface === "observability";
+@@ -437,7 +403,6 @@ export default function Evaluations({
+ 
+ 	const evaluationData = responseData?.data;
+ 	const runs = responseData?.runs || [];
+-	const ruleContext = responseData?.ruleContext;
+ 	const feedbacks = responseData?.feedbacks || [];
+ 
+ 	const {
+@@ -586,8 +551,8 @@ export default function Evaluations({
+ 				</div>
+ 			)}
+ 
+-			{/* Rule engine info */}
+-			<RuleEngineInfo meta={evaluationData?.meta} ruleContext={ruleContext} />
++			{/* Run details */}
++			<EvaluationRunDetails meta={evaluationData?.meta} />
+ 
+ 			{/* Evaluation runs or legacy single run */}
+ 			{hasRuns ? (
+@@ -600,7 +565,6 @@ export default function Evaluations({
+ 							<EvaluationRunCard
+ 								key={run.id}
+ 								run={run}
+-								ruleContext={ruleContext}
+ 								surface={surface}
+ 							/>
+ 						))}
+diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
+index 0fa9a927..941cb05a 100644
+--- a/src/client/src/constants/messages/en.ts
++++ b/src/client/src/constants/messages/en.ts
+@@ -111,7 +111,7 @@ export const EVALUATION_EXPLANATION = "Explanation";
+ 
+ export const EVALUATION_VERDICT = "Verdict";
+ 
+-export const EVALUATION_RULE_ENGINE_DETAILS = "Rule Engine & Run Details";
++export const EVALUATION_RUN_DETAILS = "Run Details";
+ 
+ export const EVALUATION_SOURCE = "Source";
+ 
+@@ -121,7 +121,6 @@ export const EVALUATION_SOURCE_AUTO = "Auto";
+ 
+ export const EVALUATION_ENGINE = "Engine";
+ 
+-export const EVALUATION_RULES_APPLIED = "Rules applied";
+ 
+ export const EVALUATION_CONTEXT = "Context";
+ 
