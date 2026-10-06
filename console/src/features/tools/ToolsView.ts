@@ -21,7 +21,7 @@ import {
   NOT_OBSERVED_LABEL,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
-import { TAG_SHAPE } from "../../components/status/Tag.ts";
+import { Tag } from "../../components/status/Tag.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
@@ -310,27 +310,22 @@ export function ToolsView({
         React.createElement(
           "div",
           { className: "flex flex-col gap-1" },
-          React.createElement(
-            "span",
-            {
-              className: `${TAG_SHAPE} font-mono ${
-                tool.source === "mcp"
-                  ? ACCENT_TONE_CLASS
-                  : tool.source === "native"
-                    ? SUCCESS_TONE_CLASS
-                    : "bg-chart-3/15 text-chart-3 border-chart-3/40"
-              }`,
-              "data-source": tool.source,
-              // This pill names the MCP server, which has no length limit, and
-              // the column truncates. A `truncate` cell is only titled when its
-              // content is a plain string, so a pill that will be cut has to
-              // carry its own recovery the way `Chip` does.
-              title: tool.server
-                ? `${tool.source} (${tool.server})`
-                : tool.source
-            },
-            tool.server ? `${tool.source} (${tool.server})` : tool.source
-          ),
+          React.createElement(Tag, {
+            className: `font-mono ${
+              tool.source === "mcp"
+                ? ACCENT_TONE_CLASS
+                : tool.source === "native"
+                  ? SUCCESS_TONE_CLASS
+                  : "bg-chart-3/15 text-chart-3 border-chart-3/40"
+            }`,
+            dataAttributes: { "data-source": tool.source },
+            // This pill names the MCP server, which has no length limit, and the
+            // column truncates. `Tag` titles itself from its own content, so the
+            // whole value is recoverable however narrow the cell gets.
+            children: tool.server
+              ? `${tool.source} (${tool.server})`
+              : tool.source
+          }),
           React.createElement(
             "span",
             { className: MUTED_META_CLASS },

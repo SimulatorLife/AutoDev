@@ -9,7 +9,7 @@ import {
   NOT_OBSERVED_LABEL,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
-import { TAG_SHAPE } from "../../components/status/Tag.ts";
+import { Tag } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
   DataTable,
@@ -59,13 +59,11 @@ export function WorkspacesView({
       header: "Base Branch",
       weight: 180,
       cell: (ws) =>
-        React.createElement(
-          "span",
-          {
-            className: `${TAG_SHAPE} border-border-strong bg-surface-raised font-mono text-fg-muted`
-          },
-          ws.baseBranch
-        )
+        React.createElement(Tag, {
+          className:
+            "border-border-strong bg-surface-raised font-mono text-fg-muted",
+          children: ws.baseBranch
+        })
     },
     {
       id: "enablement",

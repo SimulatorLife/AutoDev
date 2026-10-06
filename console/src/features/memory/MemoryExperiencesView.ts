@@ -18,7 +18,7 @@ import {
   StatusBadge,
   type StatusBadgeVariant
 } from "../../components/status/StatusBadge.ts";
-import { TAG_SHAPE } from "../../components/status/Tag.ts";
+import { Tag } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
   DataTable,
@@ -110,13 +110,10 @@ export function MemoryExperiencesView({
       header: "Agent Role",
       weight: 130,
       cell: (exp) =>
-        React.createElement(
-          "span",
-          {
-            className: `${TAG_SHAPE} border-chart-1/40 bg-chart-1/15 font-mono text-chart-1`
-          },
-          exp.agentRole ?? "unknown"
-        )
+        React.createElement(Tag, {
+          className: "border-chart-1/40 bg-chart-1/15 font-mono text-chart-1",
+          children: exp.agentRole ?? "unknown"
+        })
     },
     {
       id: "outcome",
@@ -234,14 +231,11 @@ function ExperienceDetailPanel({
       subtitle: `Task: ${experience.taskId} | Run: ${experience.runId}`,
       dataAttributes: { "data-selected-experience-panel": experience.id },
       badges: [
-        React.createElement(
-          "span",
-          {
-            key: "role",
-            className: `${TAG_SHAPE} border-chart-1/40 bg-chart-1/15 font-mono text-chart-1`
-          },
-          `Role: ${experience.agentRole ?? "unknown"}`
-        ),
+        React.createElement(Tag, {
+          key: "role",
+          className: "border-chart-1/40 bg-chart-1/15 font-mono text-chart-1",
+          children: `Role: ${experience.agentRole ?? "unknown"}`
+        }),
         React.createElement(StatusBadge, {
           key: "status",
           status:
@@ -372,14 +366,12 @@ function ExperienceDetailPanel({
               "div",
               { className: "flex flex-wrap gap-1 mt-1" },
               experience.trajectory.diagnosticCodes.map((code) =>
-                React.createElement(
-                  "span",
-                  {
-                    key: code,
-                    className: `${TAG_SHAPE} border-border-strong bg-surface-raised font-mono text-fg-secondary`
-                  },
-                  code
-                )
+                React.createElement(Tag, {
+                  key: code,
+                  className:
+                    "border-border-strong bg-surface-raised font-mono text-fg-secondary",
+                  children: code
+                })
               )
             )
           : React.createElement(

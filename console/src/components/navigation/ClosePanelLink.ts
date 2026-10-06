@@ -22,8 +22,12 @@ export function ClosePanelLink({
     "a",
     {
       href,
+      // `py-1` reaches the 24px minimum target height, and `-my-1` gives the
+      // padding straight back so the drawer's title row does not grow. Measured:
+      // this link was 58x20 with zero padding on every width, four pixels under
+      // the floor, on the control that dismisses the whole panel.
       className:
-        "inline-flex items-center gap-1.5 text-sm text-fg-muted hover:text-fg"
+        "inline-flex items-center gap-1.5 -my-1 py-1 text-sm text-fg-muted hover:text-fg"
     },
     // Decorative: the adjacent word is the accessible name.
     React.createElement(Icon, { name: "close" }),

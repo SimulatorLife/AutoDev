@@ -22,7 +22,7 @@ import {
   StatusBadge,
   type StatusBadgeVariant
 } from "../../components/status/StatusBadge.ts";
-import { TAG_SHAPE } from "../../components/status/Tag.ts";
+import { Tag } from "../../components/status/Tag.ts";
 import { Chip } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
@@ -135,14 +135,11 @@ export function MemoryRecordsView({
       header: "Kind",
       weight: 120,
       cell: (record) =>
-        React.createElement(
-          "span",
-          {
-            className: `${TAG_SHAPE} font-mono font-medium ${KIND_COLORS[record.kind] ?? "bg-surface-raised text-fg-secondary border-border-strong"}`,
-            "data-memory-kind": record.kind
-          },
-          record.kind
-        )
+        React.createElement(Tag, {
+          className: `font-mono font-medium ${KIND_COLORS[record.kind] ?? "bg-surface-raised text-fg-secondary border-border-strong"}`,
+          dataAttributes: { "data-memory-kind": record.kind },
+          children: record.kind
+        })
     },
     {
       id: "status",
@@ -292,14 +289,11 @@ function RecordDetailPanel({
       subtitle: `Scope: ${formatScopeString(record.scope)}`,
       dataAttributes: { "data-selected-record-panel": record.id },
       badges: [
-        React.createElement(
-          "span",
-          {
-            key: "kind",
-            className: `${TAG_SHAPE} font-mono font-medium ${KIND_COLORS[record.kind] ?? "bg-surface-raised text-fg-secondary border-border-strong"}`
-          },
-          record.kind
-        ),
+        React.createElement(Tag, {
+          key: "kind",
+          className: `font-mono font-medium ${KIND_COLORS[record.kind] ?? "bg-surface-raised text-fg-secondary border-border-strong"}`,
+          children: record.kind
+        }),
         React.createElement(StatusBadge, {
           key: "status",
           status: STATUS_VARIANT_MAP[record.status] ?? NOT_OBSERVED_STATUS,

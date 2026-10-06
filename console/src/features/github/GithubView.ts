@@ -15,7 +15,7 @@ import {
   NOT_OBSERVED_LABEL,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
-import { TAG_SHAPE } from "../../components/status/Tag.ts";
+import { Tag } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
   DataTable,
@@ -117,14 +117,12 @@ export function GithubView({
               "div",
               { className: "flex flex-wrap gap-1" },
               ...workflow.events.map((event) =>
-                React.createElement(
-                  "span",
-                  {
-                    key: event,
-                    className: `${TAG_SHAPE} border-border-strong bg-surface-raised font-mono text-fg-secondary`
-                  },
-                  event
-                )
+                React.createElement(Tag, {
+                  key: event,
+                  className:
+                    "border-border-strong bg-surface-raised font-mono text-fg-secondary",
+                  children: event
+                })
               )
             )
     },
@@ -300,13 +298,11 @@ export function GithubView({
       id: "event",
       header: "Event",
       cell: (run) =>
-        React.createElement(
-          "span",
-          {
-            className: `${TAG_SHAPE} border-border-strong bg-surface-raised font-mono text-fg-secondary`
-          },
-          run.event
-        )
+        React.createElement(Tag, {
+          className:
+            "border-border-strong bg-surface-raised font-mono text-fg-secondary",
+          children: run.event
+        })
     },
     {
       id: "commit",

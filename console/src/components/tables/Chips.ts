@@ -11,7 +11,7 @@ import { MUTED_META_CLASS } from "../ui/text-classes.ts";
  * triples row height and destroys the density an operator table depends on.
  */
 
-export const CHIP_CLASS = `${TAG_SHAPE} truncate border-border-strong bg-surface-raised text-fg-secondary`;
+export const CHIP_CLASS = `${TAG_SHAPE} border-border-strong bg-surface-raised text-fg-secondary`;
 
 export interface ChipProps {
   /**

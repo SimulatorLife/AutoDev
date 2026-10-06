@@ -19,7 +19,7 @@ import {
   NOT_OBSERVED_LABEL,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
-import { TAG_SHAPE } from "../../components/status/Tag.ts";
+import { Tag } from "../../components/status/Tag.ts";
 import {
   resolveActiveTabId,
   type TabDefinition,
@@ -199,14 +199,12 @@ function ConfiguredToolAllowlist({
                 "No configured role exposure"
               )
             : tool.exposedRoles.map((role) =>
-                React.createElement(
-                  "span",
-                  {
-                    key: role,
-                    className: `${TAG_SHAPE} border-border-strong bg-surface-raised text-fg-secondary`
-                  },
-                  role
-                )
+                React.createElement(Tag, {
+                  key: role,
+                  className:
+                    "border-border-strong bg-surface-raised text-fg-secondary",
+                  children: role
+                })
               )
         )
       )

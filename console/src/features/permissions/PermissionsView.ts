@@ -8,7 +8,7 @@ import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
-import { TAG_SHAPE } from "../../components/status/Tag.ts";
+import { Tag } from "../../components/status/Tag.ts";
 import { chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
@@ -46,14 +46,13 @@ export function PermissionsView({
       header: "Sandbox Mode",
       weight: 160,
       cell: (r) =>
-        React.createElement(
-          "span",
-          {
-            className: `${TAG_SHAPE} border-border-strong bg-surface-raised text-fg-secondary`,
+        React.createElement(Tag, {
+          className: "border-border-strong bg-surface-raised text-fg-secondary",
+          dataAttributes: {
             "data-permission-mode": r.readOnly ? "read-only" : "workspace-write"
           },
-          sandboxLabel(r.sandboxMode)
-        )
+          children: sandboxLabel(r.sandboxMode)
+        })
     },
     {
       id: "mcps",

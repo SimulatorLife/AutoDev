@@ -294,11 +294,14 @@ function roleExposure(tool: ToolCatalogItem): React.JSX.Element {
     "div",
     { className: "flex flex-wrap gap-1" },
     tool.exposedRoles.map((role) =>
+      // An anchor, so it cannot be a Tag. Titles itself for the same reason:
+      // a role name is unbounded and the column truncates.
       React.createElement(
         "a",
         {
           key: role,
           href: `/tools?role=${encodeURIComponent(role)}`,
+          title: role,
           className: `${TAG_SHAPE} border-border-strong bg-surface-raised text-fg-secondary hover:text-accent`
         },
         role

@@ -601,11 +601,14 @@ test("the shell lets a keyboard user reach the page body without walking the nav
 
   // Hidden until focused, then revealed, and revealed with a visible ring.
   const link = markup.slice(
-    markup.indexOf("<a href=\"#"),
-    markup.indexOf(">", markup.indexOf("<a href=\"#"))
+    markup.indexOf('<a href="#'),
+    markup.indexOf(">", markup.indexOf('<a href="#'))
   );
   assert.ok(link.includes("sr-only"), `must be visually hidden: ${link}`);
-  assert.ok(link.includes("focus:not-sr-only"), `must reveal itself on focus: ${link}`);
+  assert.ok(
+    link.includes("focus:not-sr-only"),
+    `must reveal itself on focus: ${link}`
+  );
 
   // The ring is not a class on the link: it comes from the one shared
   // `:where(a, button, …):focus-visible` rule in `globals.css`, so the thing
@@ -613,7 +616,10 @@ test("the shell lets a keyboard user reach the page body without walking the nav
   // and that the rule still covers anchors. Asserting a `focus:ring-*` utility
   // here would be asserting a mechanism this product does not use.
   assert.match(link, /^<a href="#/, `must be an anchor: ${link}`);
-  const globals = readFileSync(join(import.meta.dirname, "..", "app", "globals.css"), "utf8");
+  const globals = readFileSync(
+    join(import.meta.dirname, "..", "app", "globals.css"),
+    "utf8"
+  );
   assert.match(
     globals,
     /:where\([^)]*\ba\b[^)]*\):focus-visible\s*\{[^}]*outline:/,
@@ -8844,36 +8850,50 @@ test("nothing truncates text it cannot give back", () => {
   // Scanned by brace-matching rather than by a shape regex: the props object
   // is arbitrary JavaScript, and a pattern that tries to describe it is either
   // ambiguous or rejected as unsafe.
+  //
+  // Two ways an element can cut its own text, and only the first used to be
+  // caught. An explicit `truncate` is the obvious one. The other is a chip that
+  // refuses to wrap (`whitespace-nowrap`) and caps its own width
+  // (`max-w-full`): capped by its cell, it is cut by whatever contains it, and
+  // because `inline-flex` blockifies to `flex` as a flex item, `text-overflow`
+  // does not apply -- so the cut carries no ellipsis and no marker. That is how
+  // `/github` shipped `workflow_dispatch` cut mid-identifier at 390px with
+  // nothing on hover.
+  //
+  // And the second form is invisible to a scan of the element's own `className`,
+  // because the utilities arrive through a shared shape constant: the chip's
+  // className was `` `${TAG_SHAPE} border-border-strong …` ``, so reading the
+  // literal found neither `max-w-full` nor `whitespace-nowrap`. That is the same
+  // shape as the `NOT_OBSERVED_LABEL` defect, where composing the constant left
+  // it decorative. So the shared shapes are resolved before matching.
   const roots = ["app", "src"].map((root) =>
     join(import.meta.dirname, "..", root)
   );
+  // These own a shape and title it themselves in a form this scan cannot read:
+  // `StatusBadge`'s title is spread conditionally (`{ title }`, not `title:`) and
+  // `Chips` titles from its own child, so both are held by the assertions on
+  // those components directly. `Tag` is deliberately *not* exempt -- it owns the
+  // shape and the title in the ordinary way, so it has to keep passing this rule.
+  const SHAPE_OWNERS = new Set([
+    join("components", "status", "StatusBadge.ts"),
+    join("components", "tables", "Chips.ts")
+  ]);
   const offenders: string[] = [];
+  // Every exported shape class list in the product, resolved before any call
+  // site is read. Resolving them per module does not work: a call site writes
+  // `${TAG_SHAPE}`, which is *imported* from another module, so the constant's
+  // own file is the only place those utilities appear at all.
+  const shapes = allSharedShapeClasses(roots);
   for (const root of roots) {
     for (const relative of readdirSync(root, { recursive: true })) {
       const file = join(root, relative.toString());
       if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
-      const source = readFileSync(file, "utf8");
-      for (let at = source.indexOf("React.createElement("); at !== -1;) {
-        const propsStart = source.indexOf(
-          "{",
-          at + "React.createElement(".length
-        );
-        const propsEnd = matchingBrace(source, propsStart);
-        if (propsStart === -1 || propsEnd === -1) break;
-        const props = source.slice(propsStart, propsEnd + 1);
-        const line = source.slice(0, at).split("\n").length;
-        // Only a bare `truncate` counts. `truncate` inside an arbitrary-length
-        // bracket value, or as part of another utility name, is not the
-        // single-line ellipsis this rule is about.
-        const className = props.match(/className:\s*(["'`])([\s\S]*?)\1/);
-        if (
-          className !== null &&
-          /(^|\s)truncate(\s|$)/u.test(className[2] ?? "") &&
-          !/\btitle:/u.test(props)
-        ) {
-          offenders.push(`${relative}:${line}`);
-        }
-        at = propsEnd + 1;
+      if (SHAPE_OWNERS.has(relative.toString())) continue;
+      for (const line of unrecoverableTruncations(
+        readFileSync(file, "utf8"),
+        shapes
+      )) {
+        offenders.push(`${relative}:${line}`);
       }
     }
   }
@@ -8883,6 +8903,122 @@ test("nothing truncates text it cannot give back", () => {
     `These elements truncate their text with nothing to give it back. Add a title, or use Chip/DataTable, which do it for you:\n${offenders.join("\n")}`
   );
 });
+
+/**
+ * Line numbers of every `createElement` in one module that can cut its own text
+ * and carries no `title`.
+ *
+ * The element's own utilities are checked first, then whatever it composes in: a
+ * `className` of `` `${TAG_SHAPE} …` `` writes none of the truncation itself, and
+ * reading only the literal is how this defect shipped.
+ */
+function unrecoverableTruncations(
+  source: string,
+  shapes: ReadonlyMap<string, readonly string[]>
+): readonly number[] {
+  const found: number[] = [];
+  for (let at = source.indexOf("React.createElement("); at !== -1;) {
+    const propsStart = source.indexOf("{", at + "React.createElement(".length);
+    const propsEnd = matchingBrace(source, propsStart);
+    if (propsStart === -1 || propsEnd === -1) break;
+    const props = source.slice(propsStart, propsEnd + 1);
+    const line = source.slice(0, at).split("\n").length;
+    const written = writtenClassName(props);
+    const composed = [...shapes]
+      .filter(([name]) => written.includes(`\${${name}}`))
+      .flatMap(([, values]) => values);
+    const cuts =
+      cutsItsOwnText(written) || composed.some((v) => cutsItsOwnText(v));
+    if (cuts && !/\btitle:/u.test(props)) {
+      found.push(line);
+    }
+    // Resume at the *next* call, not one character past this props object.
+    // Advancing by `propsEnd + 1` treats that position as if it were a
+    // `createElement(` offset, so every following props object was read from
+    // the wrong origin and attributed to the wrong line -- which is how a real
+    // unrecoverable truncation passed a guard that was scanning all along.
+    at = source.indexOf("React.createElement(", propsEnd);
+  }
+  return found;
+}
+
+/**
+ * Every exported `UPPER_SNAKE` shape constant across the product, mapped to the
+ * class lists it can stand for.
+ *
+ * Resolution has to happen across modules: a call site writes `${TAG_SHAPE}`,
+ * which is imported from another file, so the constant's own module is the only
+ * place those utilities appear. Every declaration of a name is kept, because
+ * quietly preferring one of them is how a composed shape slips through again.
+ */
+function allSharedShapeClasses(
+  roots: readonly string[]
+): ReadonlyMap<string, readonly string[]> {
+  const shapes = new Map<string, string[]>();
+  for (const root of roots) {
+    for (const relative of readdirSync(root, { recursive: true })) {
+      const file = join(root, relative.toString());
+      if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
+      // Comments are stripped first, because a shape constant is allowed to
+      // explain itself between the `=` and the string -- and `TAG_SHAPE` does
+      // exactly that, to say why `whitespace-nowrap` is spelled out beside a
+      // shorthand that already implies it. Without this, the one constant whose
+      // rationale most needs reading is the one the scan cannot resolve, and a
+      // guard quietly stops covering every element that composes it in.
+      const source = readFileSync(file, "utf8")
+        .replaceAll(/\/\*[\s\S]*?\*\//gu, " ")
+        .replaceAll(/\/\/[^\n]*/gu, " ");
+      for (const [name, value] of sharedShapeClasses(source)) {
+        const existing = shapes.get(name);
+        if (existing === undefined) shapes.set(name, [value]);
+        else existing.push(value);
+      }
+    }
+  }
+  return shapes;
+}
+
+/**
+ * Whether a class list can cut its own text without a marker.
+ *
+ * `truncate` is the obvious form. The other is a chip that refuses to wrap and
+ * caps its own width: capped by its cell, it is cut by whatever contains it, and
+ * because `inline-flex` blockifies to `flex` as a flex item, `text-overflow`
+ * does not apply to it. Either utility inside a longer utility name is not the
+ * utility this is about, so both are matched on word boundaries.
+ */
+function cutsItsOwnText(classList: string): boolean {
+  const bare = (utility: string): RegExp =>
+    new RegExp(String.raw`(^|\s)${utility}(\s|$)`, "u");
+  if (bare("truncate").test(classList)) return true;
+  return (
+    bare("whitespace-nowrap").test(classList) &&
+    (bare("max-w-full").test(classList) ||
+      bare("overflow-hidden").test(classList))
+  );
+}
+
+/** The literal `className` value on one `createElement` props object. */
+function writtenClassName(props: string): string {
+  return props.match(/className:\s*(["'`])([\s\S]*?)\1/u)?.[2] ?? "";
+}
+
+/**
+ * The class list of every exported `UPPER_SNAKE` shape constant in one module,
+ * so a guard reading a call site's `className` can see utilities that the site
+ * composes in from a shared shape rather than writes itself.
+ */
+function sharedShapeClasses(
+  source: string
+): readonly (readonly [string, string])[] {
+  const out: [string, string][] = [];
+  for (const m of source.matchAll(
+    /export const ([A-Z][A-Z0-9_]*)\s*=\s*["'`]([^"'`]*)["'`]/gu
+  )) {
+    out.push([m[1] ?? "", m[2] ?? ""]);
+  }
+  return out;
+}
 
 /** Index of the `}` matching the `{` at `from`, or -1 within the bound. */
 function matchingBrace(source: string, from: number): number {

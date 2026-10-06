@@ -16,7 +16,7 @@ import {
   NOT_OBSERVED_LABEL,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
-import { TAG_SHAPE } from "../../components/status/Tag.ts";
+import { Tag } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
   DataTable,
@@ -323,20 +323,17 @@ export function EvaluationsView({
                 : m.pass
                   ? "Passed"
                   : "Failed";
-            return React.createElement(
-              "span",
-              {
-                key: m.name,
-                className: `${TAG_SHAPE} font-mono ${
-                  m.pass === true
-                    ? SUCCESS_TONE_CLASS
-                    : m.pass === false
-                      ? ERROR_TONE_CLASS
-                      : NEUTRAL_TONE_CLASS
-                }`
-              },
-              `${m.name}: ${m.value} · ${verdict}`
-            );
+            return React.createElement(Tag, {
+              key: m.name,
+              className: `font-mono ${
+                m.pass === true
+                  ? SUCCESS_TONE_CLASS
+                  : m.pass === false
+                    ? ERROR_TONE_CLASS
+                    : NEUTRAL_TONE_CLASS
+              }`,
+              children: `${m.name}: ${m.value} · ${verdict}`
+            });
           })
         )
     },

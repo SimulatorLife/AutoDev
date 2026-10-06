@@ -11,7 +11,7 @@ import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
-import { TAG_SHAPE } from "../../components/status/Tag.ts";
+import { Tag } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
   DataTable
@@ -69,17 +69,18 @@ export function MemoryCohortsView({
       weight: 160,
       cell: (cell) => {
         const isReported = cell.outcomeKind !== null;
-        return React.createElement(
-          "span",
-          {
-            className: `${TAG_SHAPE} font-medium ${
-              isReported
-                ? SUCCESS_TONE_CLASS
-                : "bg-surface-raised text-fg-muted border-border-strong"
-            }`
-          },
-          isReported ? "Reported" : "Unreported"
-        );
+        return React.createElement(Tag, {
+          className: `font-medium ${
+            isReported
+              ? SUCCESS_TONE_CLASS
+              : "bg-surface-raised text-fg-muted border-border-strong"
+          }`,
+          // A fixed pair of short words, so there is nothing for a tooltip to
+          // add. Passed rather than defaulted, because "every tag has a title"
+          // is the rule and this is the one place it is deliberately waived.
+          title: null,
+          children: isReported ? "Reported" : "Unreported"
+        });
       }
     },
     {

@@ -230,9 +230,13 @@ const PROMPT_MARKDOWN_COMPONENTS: Components = {
       children
     ),
   code: ({ children }) =>
+    // Markdown inline code, so the content is whatever the prompt author wrote
+    // and can be any length. An inline element, so it cannot be a Tag; it
+    // titles itself instead.
     React.createElement(
       "code",
       {
+        title: children,
         className: `${TAG_SHAPE} border-transparent bg-input font-mono text-fg-secondary`
       },
       children
