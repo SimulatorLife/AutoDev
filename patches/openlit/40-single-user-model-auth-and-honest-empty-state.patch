@@ -1,0 +1,462 @@
+diff --git a/src/client/src/__tests__/middleware/middleware.test.ts b/src/client/src/__tests__/middleware/middleware.test.ts
+index c1c4fb12..a69ecef1 100644
+--- a/src/client/src/__tests__/middleware/middleware.test.ts
++++ b/src/client/src/__tests__/middleware/middleware.test.ts
+@@ -73,7 +73,6 @@ describe('middleware', () => {
+     expect(config.matcher).toContain('/context');
+     expect(config.matcher).toContain('/context/:path*');
+     expect(config.matcher).toContain('/pricing');
+-    expect(config.matcher).toContain('/manage-models');
+   });
+ 
+   it('does not match routes whose pages no longer exist', () => {
+@@ -86,6 +85,7 @@ describe('middleware', () => {
+       '/coding-agents/:path*',
+       '/telemetry-enabled',
+       '/d/:path*',
++      '/manage-models',
+     ]) {
+       expect(config.matcher).not.toContain(gone);
+     }
+diff --git a/src/client/src/app/(playground)/manage-models/page.tsx b/src/client/src/app/(playground)/manage-models/page.tsx
+deleted file mode 100644
+index 07136b4f..00000000
+--- a/src/client/src/app/(playground)/manage-models/page.tsx
++++ /dev/null
+@@ -1,14 +0,0 @@
+-"use client";
+-
+-import { useEffect } from "react";
+-import { useRouter } from "next/navigation";
+-
+-export default function ManageModelsRedirectPage() {
+-	const router = useRouter();
+-
+-	useEffect(() => {
+-		router.replace("/costs?tab=models");
+-	}, [router]);
+-
+-	return null;
+-}
+diff --git a/src/client/src/app/api/providers/models/cleanup/route.ts b/src/client/src/app/api/providers/models/cleanup/route.ts
+index d5df4d28..3e95eb8b 100644
+--- a/src/client/src/app/api/providers/models/cleanup/route.ts
++++ b/src/client/src/app/api/providers/models/cleanup/route.ts
+@@ -1,7 +1,6 @@
+ import { withAudit } from "@/lib/audit/route";
++import { getCurrentUser } from "@/lib/session";
+ import { NextRequest, NextResponse } from "next/server";
+-import { getServerSession } from "next-auth";
+-import { authOptions } from "@/app/auth";
+ import { dataCollector } from "@/lib/platform/common";
+ import { getDBConfigByUser } from "@/lib/db-config";
+ import getMessage from "@/constants/messages";
+@@ -9,21 +8,11 @@ import { OPENLIT_PROVIDER_MODELS_TABLE_NAME } from "@/lib/platform/providers/tab
+ import asaw from "@/utils/asaw";
+ import Sanitizer from "@/utils/sanitizer";
+ 
+-// Extend the session type to include id
+-interface SessionWithId {
+-	user?: {
+-		id?: string;
+-		name?: string | null;
+-		email?: string | null;
+-		image?: string | null;
+-	};
+-}
+-
+ // POST: Clean up models with invalid UUIDs
+ async function POSTHandler(request: NextRequest) {
+-	const session = (await getServerSession(authOptions)) as SessionWithId;
++	const user = await getCurrentUser();
+ 
+-	if (!session?.user?.id) {
++	if (!user?.id) {
+ 		return NextResponse.json(
+ 			{ error: getMessage().UNAUTHORIZED_USER },
+ 			{ status: 401 }
+diff --git a/src/client/src/app/api/providers/models/debug/route.ts b/src/client/src/app/api/providers/models/debug/route.ts
+index 85975da0..d4b87c19 100644
+--- a/src/client/src/app/api/providers/models/debug/route.ts
++++ b/src/client/src/app/api/providers/models/debug/route.ts
+@@ -1,27 +1,16 @@
+ import { NextRequest, NextResponse } from "next/server";
+-import { getServerSession } from "next-auth";
+-import { authOptions } from "@/app/auth";
++import { getCurrentUser } from "@/lib/session";
+ import { dataCollector } from "@/lib/platform/common";
+ import { getDBConfigByUser } from "@/lib/db-config";
+ import getMessage from "@/constants/messages";
+ import { OPENLIT_PROVIDER_MODELS_TABLE_NAME } from "@/lib/platform/providers/table-details";
+ import asaw from "@/utils/asaw";
+ 
+-// Extend the session type to include id
+-interface SessionWithId {
+-	user?: {
+-		id?: string;
+-		name?: string | null;
+-		email?: string | null;
+-		image?: string | null;
+-	};
+-}
+-
+ // GET: Debug endpoint to check table status
+ export async function GET(request: NextRequest) {
+-	const session = (await getServerSession(authOptions)) as SessionWithId;
++	const user = await getCurrentUser();
+ 
+-	if (!session?.user?.id) {
++	if (!user?.id) {
+ 		return NextResponse.json(
+ 			{ error: getMessage().UNAUTHORIZED_USER },
+ 			{ status: 401 }
+@@ -91,7 +80,7 @@ export async function GET(request: NextRequest) {
+ 	return NextResponse.json({
+ 		tableName: OPENLIT_PROVIDER_MODELS_TABLE_NAME,
+ 		databaseConfigId: dbConfig.id,
+-		userId: session.user.id,
++		userId: user.id,
+ 		checks: {
+ 			tableExists: {
+ 				result: tableData,
+diff --git a/src/client/src/app/api/providers/models/export/route.ts b/src/client/src/app/api/providers/models/export/route.ts
+index d65a67f5..a2e9c116 100644
+--- a/src/client/src/app/api/providers/models/export/route.ts
++++ b/src/client/src/app/api/providers/models/export/route.ts
+@@ -1,6 +1,5 @@
+ import { NextRequest, NextResponse } from "next/server";
+-import { getServerSession } from "next-auth";
+-import { authOptions } from "@/app/auth";
++import { getCurrentUser } from "@/lib/session";
+ import { dataCollector } from "@/lib/platform/common";
+ import { getDBConfigByUser } from "@/lib/db-config";
+ import getMessage from "@/constants/messages";
+@@ -8,18 +7,14 @@ import Sanitizer from "@/utils/sanitizer";
+ import { OPENLIT_PROVIDER_MODELS_TABLE_NAME } from "@/lib/platform/providers/table-details";
+ import asaw from "@/utils/asaw";
+ 
+-interface SessionWithId {
+-	user?: { id?: string };
+-}
+-
+ /**
+  * GET /api/providers/models/export
+  * Export custom models in pricing.json format compatible with OpenLIT SDK pricing
+  */
+ export async function GET(request: NextRequest) {
+-	const session = (await getServerSession(authOptions)) as SessionWithId;
++	const user = await getCurrentUser();
+ 
+-	if (!session?.user?.id) {
++	if (!user?.id) {
+ 		return NextResponse.json(
+ 			{ error: getMessage().UNAUTHORIZED_USER },
+ 			{ status: 401 }
+diff --git a/src/client/src/app/api/providers/models/import/route.ts b/src/client/src/app/api/providers/models/import/route.ts
+index c0e4aa94..1ae90191 100644
+--- a/src/client/src/app/api/providers/models/import/route.ts
++++ b/src/client/src/app/api/providers/models/import/route.ts
+@@ -1,7 +1,6 @@
+ import { withAudit } from "@/lib/audit/route";
++import { getCurrentUser } from "@/lib/session";
+ import { NextRequest, NextResponse } from "next/server";
+-import { getServerSession } from "next-auth";
+-import { authOptions } from "@/app/auth";
+ import { dataCollector } from "@/lib/platform/common";
+ import { getDBConfigByUser } from "@/lib/db-config";
+ import getMessage from "@/constants/messages";
+@@ -11,10 +10,6 @@ import {
+ } from "@/lib/platform/providers/table-details";
+ import asaw from "@/utils/asaw";
+ 
+-interface SessionWithId {
+-	user?: { id?: string };
+-}
+-
+ /**
+  * POST /api/providers/models/import
+  *
+@@ -43,9 +38,9 @@ interface SessionWithId {
+  * }
+  */
+ async function POSTHandler(request: NextRequest) {
+-	const session = (await getServerSession(authOptions)) as SessionWithId;
++	const user = await getCurrentUser();
+ 
+-	if (!session?.user?.id) {
++	if (!user?.id) {
+ 		return NextResponse.json(
+ 			{ error: getMessage().UNAUTHORIZED_USER },
+ 			{ status: 401 }
+@@ -96,7 +91,7 @@ async function POSTHandler(request: NextRequest) {
+ 				0,
+ 			capabilities: m.capabilities || [],
+ 			is_default: false,
+-			created_by_user_id: session.user!.id!,
++			created_by_user_id: user.id,
+ 		}));
+ 	} else {
+ 		// SDK pricing_json format: { chat: { "model-id": { promptPrice, completionPrice } }, ... }
+@@ -138,7 +133,7 @@ async function POSTHandler(request: NextRequest) {
+ 					cache_creation_price_per_m_token: cacheCreationPrice,
+ 					capabilities: [],
+ 					is_default: false,
+-					created_by_user_id: session.user!.id!,
++					created_by_user_id: user.id,
+ 				});
+ 			}
+ 		}
+diff --git a/src/client/src/app/api/providers/models/route.ts b/src/client/src/app/api/providers/models/route.ts
+index 1e7f3c43..75351f73 100644
+--- a/src/client/src/app/api/providers/models/route.ts
++++ b/src/client/src/app/api/providers/models/route.ts
+@@ -1,8 +1,7 @@
+ import { withAudit } from "@/lib/audit/route";
++import { getCurrentUser } from "@/lib/session";
+ import { NextRequest, NextResponse } from "next/server";
+-import { getServerSession } from "next-auth";
+ import { SERVER_EVENTS } from "@/constants/events";
+-import { authOptions } from "@/app/auth";
+ import { dataCollector } from "@/lib/platform/common";
+ import { getDBConfigByUser } from "@/lib/db-config";
+ import getMessage from "@/constants/messages";
+@@ -11,21 +10,11 @@ import Sanitizer from "@/utils/sanitizer";
+ import { OPENLIT_PROVIDER_MODELS_TABLE_NAME } from "@/lib/platform/providers/table-details";
+ import asaw from "@/utils/asaw";
+ 
+-// Extend the session type to include id
+-interface SessionWithId {
+-	user?: {
+-		id?: string;
+-		name?: string | null;
+-		email?: string | null;
+-		image?: string | null;
+-	};
+-}
+-
+ // GET: List all custom models for a provider (or all providers if no provider specified)
+ async function GETHandler(request: NextRequest) {
+-	const session = (await getServerSession(authOptions)) as SessionWithId;
++	const user = await getCurrentUser();
+ 
+-	if (!session?.user?.id) {
++	if (!user?.id) {
+ 		return NextResponse.json(
+ 			{ error: getMessage().UNAUTHORIZED_USER },
+ 			{ status: 401 }
+@@ -129,9 +118,9 @@ async function GETHandler(request: NextRequest) {
+ // POST: Create or update a custom model
+ async function POSTHandler(request: NextRequest) {
+ 	const startTimestamp = Date.now();
+-	const session = (await getServerSession(authOptions)) as SessionWithId;
++	const user = await getCurrentUser();
+ 
+-	if (!session?.user?.id) {
++	if (!user?.id) {
+ 		return NextResponse.json(
+ 			{ error: getMessage().UNAUTHORIZED_USER },
+ 			{ status: 401 }
+@@ -225,7 +214,7 @@ async function POSTHandler(request: NextRequest) {
+ 						model.cacheCreationPricePerMToken || 0,
+ 					capabilities: model.capabilities || [],
+ 					is_default: false,
+-					created_by_user_id: session.user.id,
++					created_by_user_id: user.id,
+ 				},
+ 			],
+ 		},
+@@ -286,9 +275,9 @@ async function POSTHandler(request: NextRequest) {
+ // DELETE: Remove a custom model
+ async function DELETEHandler(request: NextRequest) {
+ 	const startTimestamp = Date.now();
+-	const session = (await getServerSession(authOptions)) as SessionWithId;
++	const user = await getCurrentUser();
+ 
+-	if (!session?.user?.id) {
++	if (!user?.id) {
+ 		return NextResponse.json(
+ 			{ error: getMessage().UNAUTHORIZED_USER },
+ 			{ status: 401 }
+diff --git a/src/client/src/app/api/providers/route.ts b/src/client/src/app/api/providers/route.ts
+index 85da2e75..be45ca01 100644
+--- a/src/client/src/app/api/providers/route.ts
++++ b/src/client/src/app/api/providers/route.ts
+@@ -17,7 +17,7 @@ import {
+ } from "@/lib/platform/providers/table-details";
+ 
+ /**
+- * GET /api/providers/providers
++ * GET /api/providers
+  * Get all available LLM providers with custom models merged in
+  */
+ async function GETHandler(request: NextRequest) {
+diff --git a/src/client/src/components/(playground)/costs/manage-models-section.tsx b/src/client/src/components/(playground)/costs/manage-models-section.tsx
+index deddc13e..cbf22fd2 100644
+--- a/src/client/src/components/(playground)/costs/manage-models-section.tsx
++++ b/src/client/src/components/(playground)/costs/manage-models-section.tsx
+@@ -73,11 +73,13 @@ export default function ManageModelsSection() {
+ 		data: providers,
+ 		fireRequest: fetchProviders,
+ 		isLoading: loadingProviders,
++		error: providersError,
+ 	} = useFetchWrapper<ProviderMetadata[]>();
+ 	const {
+ 		data: customModels,
+ 		fireRequest: fetchCustomModels,
+ 		isLoading: loadingCustom,
++		error: customModelsError,
+ 	} = useFetchWrapper<Record<string, CustomModel[]>>();
+ 	const { fireRequest: fireImport, isLoading: importing } = useFetchWrapper();
+ 
+@@ -91,7 +93,7 @@ export default function ManageModelsSection() {
+ 	}, []);
+ 
+ 	const loadProviders = () => {
+-		fetchProviders({ requestType: "GET", url: "/api/providers/providers" });
++		fetchProviders({ requestType: "GET", url: "/api/providers" });
+ 	};
+ 
+ 	const loadAllCustomModels = () => {
+@@ -291,6 +293,11 @@ export default function ManageModelsSection() {
+ 						providers={providers || []}
+ 						customModels={customModels || {}}
+ 						loading={loadingProviders || loadingCustom}
++						loadError={
++							providersError || customModelsError
++								? String(providersError || customModelsError)
++								: null
++						}
+ 						selectedModel={selectedModel}
+ 						selectedProvider={selectedProvider}
+ 						selectedIsCustom={isCustomModel}
+diff --git a/src/client/src/components/(playground)/evaluations/evaluation-configuration.tsx b/src/client/src/components/(playground)/evaluations/evaluation-configuration.tsx
+index 8d4c22d2..246991b8 100644
+--- a/src/client/src/components/(playground)/evaluations/evaluation-configuration.tsx
++++ b/src/client/src/components/(playground)/evaluations/evaluation-configuration.tsx
+@@ -60,7 +60,7 @@ export default function EvaluationConfiguration() {
+ 		});
+ 		fetchProviders({
+ 			requestType: "GET",
+-			url: "/api/providers/providers",
++			url: "/api/providers",
+ 		});
+ 	}, []);
+ 
+diff --git a/src/client/src/components/(playground)/models/model-list-sidebar.tsx b/src/client/src/components/(playground)/models/model-list-sidebar.tsx
+index 1bd90541..474da2d3 100644
+--- a/src/client/src/components/(playground)/models/model-list-sidebar.tsx
++++ b/src/client/src/components/(playground)/models/model-list-sidebar.tsx
+@@ -22,6 +22,8 @@ interface ModelListSidebarProps {
+ 	providers: ProviderMetadata[];
+ 	customModels: Record<string, CustomModel[]>;
+ 	loading: boolean;
++	/** Set when the catalog could not be read. Empty is not the same as unreadable. */
++	loadError?: string | null;
+ 	selectedModel: ModelMetadata | null;
+ 	selectedProvider: string | null;
+ 	selectedIsCustom: boolean;
+@@ -34,6 +36,7 @@ export default function ModelListSidebar({
+ 	providers,
+ 	customModels,
+ 	loading,
++	loadError,
+ 	selectedModel,
+ 	selectedProvider,
+ 	selectedIsCustom,
+@@ -102,6 +105,16 @@ export default function ModelListSidebar({
+ 					<div className="p-4 text-center text-sm text-stone-500">
+ 						{getMessage().LOADING}...
+ 					</div>
++				) : loadError ? (
++					// An unreadable catalog is not an empty one. Saying "no models
++					// found" here would claim the operator has configured nothing
++					// when the truth is that nothing could be read.
++					<div className="p-4 text-center text-sm text-stone-500">
++						<div className="font-medium text-stone-900 dark:text-stone-100">
++							{getMessage().MANAGE_MODELS_CATALOG_UNREADABLE}
++						</div>
++						<div className="mt-1 break-words text-xs text-error">{loadError}</div>
++					</div>
+ 				) : filteredProviders.length === 0 ? (
+ 					<div className="p-4 text-center text-sm text-stone-500">
+ 						{getMessage().MANAGE_MODELS_NO_MODELS_FOUND}
+diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
+index c4b78a63..0fa9a927 100644
+--- a/src/client/src/constants/messages/en.ts
++++ b/src/client/src/constants/messages/en.ts
+@@ -737,6 +737,7 @@ export const MANAGE_MODELS_ADD_CUSTOM_MODEL = "Add Custom Model";
+ export const MANAGE_MODELS_SEARCH_MODELS = "Search models...";
+ 
+ export const MANAGE_MODELS_NO_MODELS_FOUND = "No models found";
++export const MANAGE_MODELS_CATALOG_UNREADABLE = "Model catalog unavailable";
+ 
+ export const MANAGE_MODELS_EXPORT_PRICING = "Export Pricing";
+ 
+diff --git a/src/client/src/middleware.ts b/src/client/src/middleware.ts
+index f149e278..ece89b62 100644
+--- a/src/client/src/middleware.ts
++++ b/src/client/src/middleware.ts
+@@ -38,7 +38,6 @@ export const config = {
+ 		"/evaluations",
+ 		"/evaluations/:path*",
+ 		"/pricing",
+-		"/manage-models",
+ 		"/context",
+ 		"/context/:path*",
+ 	],
+diff --git a/src/client/src/utils/api.ts b/src/client/src/utils/api.ts
+index 17145cff..982858c3 100644
+--- a/src/client/src/utils/api.ts
++++ b/src/client/src/utils/api.ts
+@@ -27,6 +27,12 @@ function parseFetchBody(raw: string, ok: boolean) {
+ 		if (ok) {
+ 			throw new Error("Unexpected non-JSON response from server.");
+ 		}
++		// A framework error page — Next.js serves a whole HTML document for an
++		// unknown route or a crashed handler — is a document, not a message.
++		// Passing it through puts a literal "<!DOCTYPE html>..." into every
++		// toast and error panel that renders the failure. Fall through to the
++		// status instead so the operator sees "Request failed (404)".
++		if (/^\s*</.test(raw)) return null;
+ 		return raw;
+ 	}
+ }
+diff --git a/src/client/src/utils/breadcrumbs.ts b/src/client/src/utils/breadcrumbs.ts
+index 8e153c9a..c8fecfbf 100644
+--- a/src/client/src/utils/breadcrumbs.ts
++++ b/src/client/src/utils/breadcrumbs.ts
+@@ -72,34 +72,6 @@ export const ROUTE_CONFIGS: RouteConfig[] = [
+ 			{ title: getMessage().COSTS_TITLE, href: "/costs" },
+ 		],
+ 	},
+-	{
+-		regex: /^\/manage-models$/,
+-		getTitle: () => getMessage().MANAGE_MODELS_TITLE,
+-		getBreadcrumbs: () => [
+-			{ title: getMessage().COSTS_TITLE, href: "/costs" },
+-		],
+-	},
+-	
+-	// Costs
+-	{
+-		regex: /^\/costs$/,
+-		getTitle: () => getMessage().COSTS_TITLE,
+-		getBreadcrumbs: () => [],
+-	},
+-	{
+-		regex: /^\/pricing$/,
+-		getTitle: () => getMessage().COSTS_TAB_CONFIGURATION,
+-		getBreadcrumbs: () => [
+-			{ title: getMessage().COSTS_TITLE, href: "/costs" },
+-		],
+-	},
+-	{
+-		regex: /^\/manage-models$/,
+-		getTitle: () => getMessage().MANAGE_MODELS_TITLE,
+-		getBreadcrumbs: () => [
+-			{ title: getMessage().COSTS_TITLE, href: "/costs" },
+-		],
+-	},
+ 
+ 	// Dashboard routes
+ 	{

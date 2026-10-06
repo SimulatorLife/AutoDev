@@ -592,6 +592,120 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     /async function requireOwnedDBConfig\(/u,
     "mutating a config must be gated on ownership"
   );
+
+  // AutoDev is single-operator: there is no login, so a route that resolves
+  // identity from a NextAuth session can never pass. The provider/model
+  // routes did exactly that while their sibling `/api/providers` used the
+  // canonical single-user accessor, and the Manage models tab answered 401.
+  for (const route of [
+    "src/client/src/app/api/providers/models/route.ts",
+    "src/client/src/app/api/providers/models/import/route.ts",
+    "src/client/src/app/api/providers/models/export/route.ts",
+    "src/client/src/app/api/providers/models/cleanup/route.ts",
+    "src/client/src/app/api/providers/models/debug/route.ts"
+  ]) {
+    const source = readFileSync(join(dir, route), "utf8");
+    assert.doesNotMatch(
+      source,
+      /getServerSession/u,
+      `${route} must not require a session cookie in a no-login product`
+    );
+    assert.match(
+      source,
+      /getCurrentUser\(/u,
+      `${route} must resolve identity the way every other route does`
+    );
+  }
+  assert.doesNotMatch(
+    readFileSync(
+      join(dir, "src/client/src/app/api/providers/route.ts"),
+      "utf8"
+    ),
+    /GET \/api\/providers\/providers/u,
+    "the doc comment naming the wrong path is what misled both callers"
+  );
+  for (const component of [
+    "src/client/src/components/(playground)/costs/manage-models-section.tsx",
+    "src/client/src/components/(playground)/evaluations/evaluation-configuration.tsx"
+  ]) {
+    assert.doesNotMatch(
+      readFileSync(join(dir, component), "utf8"),
+      /"\/api\/providers\/providers"/u,
+      `${component} must not request a route that does not exist`
+    );
+  }
+
+  // A failed read is not an empty catalog. "No models found" claimed the
+  // operator had configured nothing when nothing could be read at all.
+  const modelSidebar = readFileSync(
+    join(
+      dir,
+      "src/client/src/components/(playground)/models/model-list-sidebar.tsx"
+    ),
+    "utf8"
+  );
+  assert.match(
+    modelSidebar,
+    /loadError\??:\s*string \| null/u,
+    "the model list must be able to say a read failed"
+  );
+  assert.match(
+    modelSidebar,
+    /loadError\s*\?\s*\(/u,
+    "a failed read must not fall through to the empty-state branch"
+  );
+  assert.match(
+    readFileSync(
+      join(
+        dir,
+        "src/client/src/components/(playground)/costs/manage-models-section.tsx"
+      ),
+      "utf8"
+    ),
+    /loadError=/u,
+    "the section must forward the fetch error to the list"
+  );
+
+  // A framework error page is a document, not a message. Passing the body
+  // through put a literal "<!DOCTYPE html>..." into every error toast.
+  const apiUtils = readFileSync(
+    join(dir, "src/client/src/utils/api.ts"),
+    "utf8"
+  );
+  assert.match(
+    apiUtils,
+    /\/\^\\s\*<\/\.test\(raw\)/u,
+    "an HTML error body must not become the error message"
+  );
+
+  // The /manage-models alias redirected to /costs?tab=models and nothing
+  // linked to it; its breadcrumb entry was duplicated twice over.
+  assert.equal(
+    existsSync(
+      join(dir, "src/client/src/app/(playground)/manage-models/page.tsx")
+    ),
+    false,
+    "the vestigial /manage-models alias must be deleted"
+  );
+  const breadcrumbs = readFileSync(
+    join(dir, "src/client/src/utils/breadcrumbs.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    breadcrumbs,
+    /manage-models/u,
+    "a breadcrumb entry for a deleted route is dead data"
+  );
+  assert.equal(
+    breadcrumbs.split("regex: /^\\/costs$/").length - 1,
+    1,
+    "the /costs breadcrumb block was duplicated verbatim; keep exactly one"
+  );
+  assert.doesNotMatch(
+    readFileSync(join(dir, "src/client/src/middleware.ts"), "utf8"),
+    /"\/manage-models"/u,
+    "the matcher must not list a page that no longer exists"
+  );
 }
 
 test(
