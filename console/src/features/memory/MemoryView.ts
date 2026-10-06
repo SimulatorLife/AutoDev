@@ -1,4 +1,6 @@
 import type {
+  ControlApiMemoryInjectionOutcomeJoin,
+  ControlApiMemoryInjectionUseAssessment,
   ExperienceEnvelope,
   MemoryInjectionUseCohortPage,
   MemoryRecord,
@@ -52,6 +54,21 @@ export interface MemoryViewProps {
   readonly selectedRecord?: MemoryRecord | null | undefined;
   readonly selectedHistory?: MemoryRecordHistory | null | undefined;
   readonly selectedExperience?: ExperienceEnvelope | null | undefined;
+  /**
+   * What the runtime observed attaching packets, what a reporter separately
+   * claimed about the task, and what a curator separately assessed of the
+   * packets' use.
+   *
+   * Three lists, never one. Each is nullable for a different reason: null means
+   * the read was not asked for or did not succeed, which the panel reports as
+   * unavailable rather than as an absence of evidence.
+   */
+  readonly selectedOutcomes?:
+    readonly ControlApiMemoryInjectionOutcomeJoin[] | null;
+  readonly selectedOutcomeTotal?: number | null | undefined;
+  readonly selectedUseAssessments?:
+    readonly ControlApiMemoryInjectionUseAssessment[] | null;
+  readonly selectedUseAssessmentTotal?: number | null | undefined;
   /** The cohort reads are scoped by repository as well as workspace. */
   readonly repositoryId: string;
   readonly workspaces: readonly WorkspaceEntry[];
@@ -85,6 +102,10 @@ export function MemoryView({
   selectedRecord,
   selectedHistory,
   selectedExperience,
+  selectedOutcomes,
+  selectedOutcomeTotal,
+  selectedUseAssessments,
+  selectedUseAssessmentTotal,
   repositoryId,
   workspaces,
   controlFailed,
@@ -247,6 +268,10 @@ export function MemoryView({
               experiences,
               total: totalExperiences,
               selectedExperience,
+              outcomes: selectedOutcomes,
+              outcomeTotal: selectedOutcomeTotal,
+              useAssessments: selectedUseAssessments,
+              useAssessmentTotal: selectedUseAssessmentTotal,
               listScope
             })
         : activeTab === "cohorts"

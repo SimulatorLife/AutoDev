@@ -115,6 +115,7 @@ import {
   MemoryCohortsView,
   memoryDetailHref,
   MemoryExperiencesView,
+  type MemoryExperiencesViewProps,
   memoryFilterHref,
   memoryListHref,
   type MemoryListScope,
@@ -167,6 +168,7 @@ import {
   fetchMcps,
   fetchMemoryCohorts,
   fetchMemoryExperiences,
+  fetchMemoryExperienceOutcomes,
   fetchMemoryHistory,
   fetchMemoryRecord,
   fetchMemoryRecords,
@@ -8623,6 +8625,233 @@ test("DataTable caps its scroll floor so a table never scrolls at desktop width"
   // Weights authored at their measured pixel widths: this set sums to 1300,
   // wider than the ~1060px content column at 1440. The floor must not become
   // that natural width, or the table region scrolls 240px on a desktop window
+test("an experience shows observed packets and reported outcomes as separate claims", () => {
+  // The Runtime has stored and read back injections, reporter outcomes, and
+  // curator use assessments the whole time, and the Console could show none of
+  // them. The point of the panel is that it does not merge what it shows: the
+  // risk is not "no evidence view" but "one verdict standing in for three
+  // different claims".
+  const experience: ExperienceEnvelope = {
+    id: "exp-evidence",
+    workspaceId: "SimulatorLife/AutoDev",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    taskId: "task-1",
+    runId: "run-1",
+    agentId: "agent-orch",
+    agentRole: "orchestrator",
+    startedAt: "2026-10-01T00:00:00Z",
+    outcome: "success",
+    memoryMode: "jit",
+    trajectory: {
+      format: "codex-v1",
+      uri: "file:///tmp/transcripts/run-1.jsonl",
+      sourceAdapter: "codex"
+    },
+    evidence: []
+  };
+
+  const renderPanel = (
+    overrides: Partial<MemoryExperiencesViewProps>
+  ): string =>
+    renderToStaticMarkup(
+      React.createElement(MemoryExperiencesView, {
+        experiences: [experience],
+        total: 1,
+        selectedExperience: experience,
+        listScope: memoryListScope({ tab: "experiences" }),
+        ...overrides
+      })
+    );
+
+  // One observed injection, one reported outcome, one assessed use.
+  const reported = renderPanel({
+    outcomes: [
+      {
+        injection: {
+          id: "inj-1",
+          memoryMode: "jit",
+          injectionResult: "injected",
+          packetCharacterCount: 900,
+          memoryIds: ["mem-1", "mem-2"],
+          occurredAt: "2026-10-01T00:00:00Z"
+        },
+        outcome: {
+          outcomeKind: "success",
+          reportKind: "task",
+          reportedAt: "2026-10-01T01:00:00Z",
+          reporterId: "operator-1",
+          reporterAuthority: "root",
+          reasonCode: "reporter_supplied"
+        },
+        sessionInjectionCount: 1
+      }
+    ],
+    outcomeTotal: 1,
+    useAssessments: [
+      {
+        injection: {
+          id: "inj-1",
+          memoryMode: "jit",
+          injectionResult: "injected",
+          packetCharacterCount: 900,
+          memoryIds: ["mem-1", "mem-2"],
+          occurredAt: "2026-10-01T00:00:00Z"
+        },
+        use: {
+          useKind: "partially_used",
+          usedMemoryIds: ["mem-1"],
+          reportedAt: "2026-10-01T02:00:00Z"
+        },
+        sessionInjectionCount: 1
+      }
+    ],
+    useAssessmentTotal: 1
+  });
+
+  assert.match(reported, /data-experience-evidence="true"/);
+  assert.match(reported, /Observed by the runtime/);
+  assert.match(reported, /Reported outcome: success/);
+  assert.match(reported, /partially_used \(1\/2 memories cited\)/);
+  // The session count is labelled as the session's, not this row's.
+  assert.match(reported, /1 injection in this session/);
+
+  // An injection nobody reported on says so, and says it is not a failure.
+  const unreported = renderPanel({
+    outcomes: [
+      {
+        injection: {
+          id: "inj-2",
+          memoryMode: "retrieval-only",
+          injectionResult: "injected",
+          packetCharacterCount: 400,
+          memoryIds: ["mem-3"],
+          occurredAt: "2026-10-01T00:00:00Z"
+        },
+        outcome: null,
+        sessionInjectionCount: 3
+      }
+    ],
+    outcomeTotal: 1,
+    useAssessments: [],
+    useAssessmentTotal: 0
+  });
+  assert.match(unreported, /data-evidence-report="unreported"/);
+  assert.match(unreported, /This is not a failed outcome\./);
+  // A session that injected three times must not read as this row injecting
+  // three times.
+  assert.match(unreported, /3 injections in this session/);
+  assert.doesNotMatch(unreported, /Reported outcome:/);
+
+  // `unobservable` is a distinct verdict and is not folded into "not used".
+  const unobservable = renderPanel({
+    outcomes: [],
+    outcomeTotal: 0,
+    useAssessments: [
+      {
+        injection: {
+          id: "inj-3",
+          memoryMode: "jit",
+          injectionResult: "injected",
+          packetCharacterCount: 10,
+          memoryIds: [],
+          occurredAt: "2026-10-01T00:00:00Z"
+        },
+        use: { useKind: "unobservable", usedMemoryIds: [], reportedAt: "x" },
+        sessionInjectionCount: 1
+      }
+    ],
+    useAssessmentTotal: 1
+  });
+  assert.match(unobservable, /unobservable/);
+  assert.doesNotMatch(unobservable, /not_used/);
+
+  // A read that did not succeed is reported as unavailable. It must never
+  // render as an empty list, because "we could not look" and "there is nothing
+  // there" are the two answers an operator must not confuse.
+  const unavailable = renderPanel({ outcomes: null, useAssessments: null });
+  assert.match(unavailable, /data-status="unavailable"/);
+  assert.match(unavailable, /nothing is inferred about them/);
+  assert.doesNotMatch(unavailable, /No packet was attached/);
+  assert.doesNotMatch(unavailable, /No curator has assessed/);
+});
+
+test("the experience evidence validators refuse a response that would read as 'unreported'", async () => {
+  const config = { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" };
+  const injection = {
+    id: "inj-1",
+    memoryMode: "jit",
+    injectionResult: "injected",
+    packetCharacterCount: 10,
+    memoryIds: ["mem-1"],
+    occurredAt: "2026-10-01T00:00:00Z"
+  };
+  const read = async (body: unknown): Promise<boolean> => {
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (async () => Response.json(body)) as typeof fetch;
+    try {
+      const result = await fetchMemoryExperienceOutcomes(
+        "exp-1",
+        "SimulatorLife/AutoDev",
+        config
+      );
+      return result.kind === "ok";
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  };
+
+  const page = {
+    schema: "autodev-memory-injection-outcomes-v1",
+    experienceId: "exp-1",
+    items: [{ injection, outcome: null, sessionInjectionCount: 1 }],
+    total: 1,
+    limit: 50,
+    offset: 0
+  };
+  // A genuine unreported outcome is a legitimate, accepted response.
+  assert.equal(await read(page), true);
+
+  // A row that simply omits `outcome` is not "unreported" -- it is unreadable,
+  // and accepting it would render a dropped field as a negative finding.
+  assert.equal(
+    await read({
+      ...page,
+      items: [{ injection, sessionInjectionCount: 1 }]
+    }),
+    false
+  );
+  // A page naming a different experience is the wrong answer, not an empty one.
+  assert.equal(await read({ ...page, experienceId: "exp-other" }), false);
+  // And a half-formed report is refused rather than partially believed.
+  assert.equal(
+    await read({
+      ...page,
+      items: [
+        {
+          injection,
+          outcome: { outcomeKind: "success", reportKind: "task" },
+          sessionInjectionCount: 1
+        }
+      ]
+    }),
+    false
+  );
+  assert.equal(
+    await read({
+      ...page,
+      items: [
+        {
+          injection: { ...injection, memoryIds: [null] },
+          outcome: null,
+          sessionInjectionCount: 1
+        }
+      ]
+    }),
+    false
+  );
+  assert.equal(await read({ ...page, schema: "something-else" }), false);
+});
+
   // for no small-screen reason.
   const wide = renderToStaticMarkup(
     DataTable<TestRow>({

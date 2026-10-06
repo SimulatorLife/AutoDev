@@ -550,3 +550,74 @@ export interface ControlApiMemoryExperienceDetailResponse {
 
 export type ControlApiMemoryCohortsResponse = MemorySessionOutcomeCohortPage;
 export type ControlApiMemoryUseCohortsResponse = MemoryInjectionUseCohortPage;
+
+/**
+ * What the Runtime observed, and what a reporter separately claimed, for one
+ * stored injection.
+ *
+ * These are three different kinds of claim and the wire keeps them apart on
+ * purpose. `injection` is observed by the runtime that attached the packet.
+ * `outcome` is a reporter's statement about the task, and is null until one
+ * exists — null means *unreported*, never *failed*. `sessionInjectionCount`
+ * says how many injections the session produced and is not evidence that any of
+ * them were read.
+ *
+ * Collapsing an unreported outcome into a failed one, or presenting the three
+ * as one verdict, is what turns absent evidence into a false conclusion, so the
+ * Console renders them as separate classes rather than a single status.
+ */
+export interface ControlApiMemoryInjectionOutcomeJoin {
+  readonly injection: {
+    readonly id: string;
+    readonly memoryMode: string;
+    readonly injectionResult: string;
+    readonly packetCharacterCount: number;
+    readonly memoryIds: readonly string[];
+    readonly occurredAt: string;
+  };
+  readonly outcome: {
+    readonly outcomeKind: string;
+    readonly reportKind: string;
+    readonly reportedAt: string;
+    readonly reporterId: string;
+    readonly reporterAuthority: string;
+    readonly reasonCode: string;
+  } | null;
+  readonly sessionInjectionCount: number;
+}
+
+export type ControlApiMemoryInjectionOutcomesResponse =
+  ControlApiMemoryPage<ControlApiMemoryInjectionOutcomeJoin> & {
+    readonly schema: "autodev-memory-injection-outcomes-v1";
+    readonly experienceId: string;
+  };
+
+/**
+ * A curator's assessment of whether an actually-injected packet was used.
+ *
+ * Same discipline as the outcome join: `use` is null until a curator has
+ * assessed, and `unobservable` is a distinct verdict from `not_used` — one says
+ * nobody could tell, the other says nobody saw it used.
+ */
+export interface ControlApiMemoryInjectionUseAssessment {
+  readonly injection: {
+    readonly id: string;
+    readonly memoryMode: string;
+    readonly injectionResult: string;
+    readonly packetCharacterCount: number;
+    readonly memoryIds: readonly string[];
+    readonly occurredAt: string;
+  };
+  readonly use: {
+    readonly useKind: string;
+    readonly usedMemoryIds: readonly string[];
+    readonly reportedAt: string;
+  } | null;
+  readonly sessionInjectionCount: number;
+}
+
+export type ControlApiMemoryInjectionUseAssessmentsResponse =
+  ControlApiMemoryPage<ControlApiMemoryInjectionUseAssessment> & {
+    readonly schema: "autodev-memory-injection-use-assessments-v1";
+    readonly experienceId: string;
+  };

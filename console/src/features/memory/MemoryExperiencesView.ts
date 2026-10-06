@@ -1,4 +1,8 @@
-import type { ExperienceEnvelope } from "@simulatorlife/autodev-core";
+import type {
+  ControlApiMemoryInjectionOutcomeJoin,
+  ControlApiMemoryInjectionUseAssessment,
+  ExperienceEnvelope
+} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import {
@@ -55,6 +59,16 @@ export interface MemoryExperiencesViewProps {
   readonly experiences: readonly ExperienceEnvelope[];
   readonly total: number;
   readonly selectedExperience?: ExperienceEnvelope | null | undefined;
+  /**
+   * The selected experience's evidence classes. Null is "not observed here",
+   * which the panel states -- it never renders as "no evidence exists".
+   */
+  readonly outcomes?:
+    readonly ControlApiMemoryInjectionOutcomeJoin[] | null | undefined;
+  readonly outcomeTotal?: number | null | undefined;
+  readonly useAssessments?:
+    readonly ControlApiMemoryInjectionUseAssessment[] | null | undefined;
+  readonly useAssessmentTotal?: number | null | undefined;
   /** The address of the list these rows came from. See MemoryRecordsView. */
   readonly listScope: MemoryListScope;
 }
@@ -71,6 +85,10 @@ export function MemoryExperiencesView({
   experiences,
   total,
   selectedExperience,
+  outcomes,
+  outcomeTotal,
+  useAssessments,
+  useAssessmentTotal,
   listScope
 }: MemoryExperiencesViewProps): React.JSX.Element {
   const columns: ColumnDef<ExperienceEnvelope>[] = [
@@ -230,6 +248,10 @@ export function MemoryExperiencesView({
     selectedExperience
       ? React.createElement(ExperienceDetailPanel, {
           experience: selectedExperience,
+          outcomes,
+          outcomeTotal,
+          useAssessments,
+          useAssessmentTotal,
           listScope
         })
       : null
@@ -238,11 +260,21 @@ export function MemoryExperiencesView({
 
 interface ExperienceDetailPanelProps {
   readonly experience: ExperienceEnvelope;
+  readonly outcomes?:
+    readonly ControlApiMemoryInjectionOutcomeJoin[] | null | undefined;
+  readonly outcomeTotal?: number | null | undefined;
+  readonly useAssessments?:
+    readonly ControlApiMemoryInjectionUseAssessment[] | null | undefined;
+  readonly useAssessmentTotal?: number | null | undefined;
   readonly listScope: MemoryListScope;
 }
 
 function ExperienceDetailPanel({
   experience,
+  outcomes,
+  outcomeTotal,
+  useAssessments,
+  useAssessmentTotal,
   listScope
 }: ExperienceDetailPanelProps): React.JSX.Element {
   return React.createElement(
@@ -485,7 +517,233 @@ function ExperienceDetailPanel({
             "Irreversible. Refused while durable memory cites this experience."
           )
         )
-      )
+      ),
+
+      // Observed evidence, and the claims made about it, as separate classes.
+      React.createElement(ExperienceEvidence, {
+        outcomes,
+        outcomeTotal,
+        useAssessments,
+        useAssessmentTotal
+      })
     )
+  );
+}
+
+/**
+ * The three evidence classes behind one experience.
+ *
+ * The Console previously showed none of them: the Runtime stored injections,
+ * reporter outcomes, and curator use assessments, and read them all back, and
+ * the operator surface could only show the envelope. So the one thing an
+ * operator most needs from a memory system -- whether attaching memory
+ * actually did anything -- had no view at all.
+ *
+ * What it renders here are three different claims, kept apart because merging
+ * them is how memory evaluation goes wrong:
+ *
+ * - **Observed**: what the runtime attached, and when. Measured.
+ * - **Reported**: what a reporter separately stated about the task. Absent
+ *   means *nobody reported*, which is not *it failed* -- an unreported outcome
+ *   renders as unreported, never as a negative result.
+ * - **Assessed**: a curator's judgement about whether the packet was used.
+ *   `unobservable` is deliberately not folded into `not_used`; one says nobody
+ *   could tell, the other says nobody saw it used.
+ *
+ * A read that did not succeed renders as unavailable, never as an empty list,
+ * because "we could not look" and "there is nothing there" are the two answers
+ * an operator must never confuse.
+ */
+function ExperienceEvidence({
+  outcomes,
+  outcomeTotal,
+  useAssessments,
+  useAssessmentTotal
+}: {
+  readonly outcomes?:
+    readonly ControlApiMemoryInjectionOutcomeJoin[] | null | undefined;
+  readonly outcomeTotal?: number | null | undefined;
+  readonly useAssessments?:
+    readonly ControlApiMemoryInjectionUseAssessment[] | null | undefined;
+  readonly useAssessmentTotal?: number | null | undefined;
+}): React.JSX.Element {
+  const unavailable = (what: string, testId: string): React.JSX.Element =>
+    React.createElement(
+      "p",
+      {
+        className: MUTED_TEXT_CLASS,
+        "data-status": "unavailable",
+        "data-evidence": testId
+      },
+      `${what} were not observed; nothing is inferred about them.`
+    );
+
+  return React.createElement(
+    "section",
+    {
+      className: "flex flex-col gap-3 pt-4 border-t border-border",
+      "data-experience-evidence": "true"
+    },
+    React.createElement(
+      "h3",
+      { className: SECTION_HEADING_CLASS },
+      "Packet evidence"
+    ),
+    outcomes === null || outcomes === undefined
+      ? unavailable("Injection events and reported outcomes", "outcomes")
+      : outcomes.length === 0
+        ? React.createElement(
+            "p",
+            { className: MUTED_TEXT_CLASS, "data-evidence": "outcomes" },
+            "No packet was attached to this experience, so there is nothing observed and nothing reported."
+          )
+        : React.createElement(
+            "ol",
+            {
+              className: "flex flex-col gap-2",
+              "data-evidence": "outcomes"
+            },
+            outcomes.map((row) =>
+              React.createElement(EvidenceRow, {
+                key: row.injection.id,
+                injection: row.injection,
+                sessionInjectionCount: row.sessionInjectionCount,
+                // The reported half renders separately, and says "unreported"
+                // rather than borrowing the injection's own verdict.
+                report:
+                  row.outcome === null
+                    ? null
+                    : {
+                        label: "Reported outcome",
+                        value: row.outcome.outcomeKind,
+                        detail: `${row.outcome.reportKind} by ${row.outcome.reporterId} (${row.outcome.reporterAuthority}) at ${row.outcome.reportedAt} — ${row.outcome.reasonCode}`
+                      }
+              })
+            )
+          ),
+
+    useAssessments === null || useAssessments === undefined
+      ? unavailable("Curator use assessments", "use-assessments")
+      : useAssessments.length === 0
+        ? React.createElement(
+            "p",
+            { className: MUTED_TEXT_CLASS, "data-evidence": "use-assessments" },
+            "No curator has assessed whether any injected packet was used."
+          )
+        : React.createElement(
+            "ul",
+            {
+              className: "flex flex-col gap-1",
+              "data-evidence": "use-assessments"
+            },
+            useAssessments.map((row) =>
+              React.createElement(
+                "li",
+                { key: row.injection.id, className: "text-xs" },
+                React.createElement(
+                  "span",
+                  { className: MUTED_TEXT_CLASS },
+                  `${row.injection.memoryMode} · ${row.injection.injectionResult} · `
+                ),
+                React.createElement(
+                  "span",
+                  null,
+                  row.use === null
+                    ? "not assessed"
+                    : `${row.use.useKind} (${row.use.usedMemoryIds.length}/${row.injection.memoryIds.length} memories cited)`
+                )
+              )
+            )
+          ),
+
+    (outcomeTotal !== null && outcomeTotal !== undefined) ||
+      (useAssessmentTotal !== null && useAssessmentTotal !== undefined)
+      ? React.createElement(
+          "p",
+          { className: MUTED_TEXT_CLASS, "data-evidence": "totals" },
+          [
+            `${outcomeTotal ?? 0} observed injection${
+              outcomeTotal === 1 ? "" : "s"
+            }`,
+            `${useAssessmentTotal ?? 0} assessed`
+          ].join(" · ")
+        )
+      : null
+  );
+}
+
+/**
+ * One observed injection and, beside it, the claim made about it.
+ *
+ * The count is session-wide and is labelled as such where it is shown, because
+ * `sessionInjectionCount` is derived from every injection the session
+ * produced; presenting it as this row's own count would overstate it for
+ * exactly the sessions that injected repeatedly.
+ */
+function EvidenceRow({
+  injection,
+  sessionInjectionCount,
+  report
+}: {
+  readonly injection: ControlApiMemoryInjectionOutcomeJoin["injection"];
+  readonly sessionInjectionCount: number;
+  readonly report: {
+    readonly label: string;
+    readonly value: string;
+    readonly detail: string;
+  } | null;
+}): React.JSX.Element {
+  return React.createElement(
+    "li",
+    {
+      className: "flex flex-col gap-0.5 text-xs",
+      "data-evidence-row": injection.id
+    },
+    React.createElement(
+      "div",
+      { className: "flex flex-wrap items-center gap-2" },
+      React.createElement(
+        "span",
+        { className: "font-mono text-fg" },
+        injection.injectionResult
+      ),
+      React.createElement(
+        "span",
+        { className: MUTED_TEXT_CLASS },
+        injection.memoryMode
+      ),
+      React.createElement(
+        "span",
+        { className: MUTED_TEXT_CLASS },
+        `${injection.memoryIds.length} memories · ${injection.packetCharacterCount} chars · ${injection.occurredAt}`
+      )
+    ),
+    React.createElement(
+      "div",
+      { className: MUTED_TEXT_CLASS },
+      `Observed by the runtime · ${sessionInjectionCount} injection${
+        sessionInjectionCount === 1 ? "" : "s"
+      } in this session`
+    ),
+    report === null
+      ? React.createElement(
+          "div",
+          { className: MUTED_TEXT_CLASS, "data-evidence-report": "unreported" },
+          "No outcome reported. This is not a failed outcome."
+        )
+      : React.createElement(
+          "div",
+          { "data-evidence-report": "reported" },
+          React.createElement(
+            "span",
+            { className: "font-semibold" },
+            `${report.label}: ${report.value} `
+          ),
+          React.createElement(
+            "span",
+            { className: MUTED_TEXT_CLASS },
+            report.detail
+          )
+        )
   );
 }

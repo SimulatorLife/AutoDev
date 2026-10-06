@@ -27,7 +27,9 @@ import {
   type ControlApiResult,
   fetchMemoryCohorts,
   fetchMemoryExperienceDetail,
+  fetchMemoryExperienceOutcomes,
   fetchMemoryExperiences,
+  fetchMemoryExperienceUseAssessments,
   fetchMemoryHistory,
   fetchMemoryRecord,
   fetchMemoryRecords,
@@ -247,6 +249,12 @@ type MemoryHistoryResult = Awaited<ReturnType<typeof fetchMemoryHistory>>;
 type MemoryRecordsResult = Awaited<ReturnType<typeof fetchMemoryRecords>>;
 type MemoryCohortsResult = Awaited<ReturnType<typeof fetchMemoryCohorts>>;
 type MemoryUseCohortsResult = Awaited<ReturnType<typeof fetchMemoryUseCohorts>>;
+type MemoryOutcomesResult = Awaited<
+  ReturnType<typeof fetchMemoryExperienceOutcomes>
+>;
+type MemoryUseAssessmentsResult = Awaited<
+  ReturnType<typeof fetchMemoryExperienceUseAssessments>
+>;
 type MemoryRecordsFailure = Exclude<
   MemoryRecordsResult,
   { readonly kind: "ok" }
@@ -257,6 +265,13 @@ interface MemoryReadResults {
   readonly selectedExperience: MemoryExperienceDetailResult | null;
   readonly selectedRecord: MemoryRecordDetailResult | null;
   readonly history: MemoryHistoryResult | null;
+  /**
+   * The selected experience's evidence classes, each nullable because an
+   * absent read is "not asked for" and a failed one is "not observed" -- two
+   * different states the view must not merge.
+   */
+  readonly outcomes: MemoryOutcomesResult | null;
+  readonly useAssessments: MemoryUseAssessmentsResult | null;
 }
 
 interface MemoryPageReadData extends MemoryReadResults {
@@ -362,7 +377,9 @@ async function fetchMemoryPageData(
     experiences,
     selectedExperience,
     cohorts,
-    useCohorts
+    useCohorts,
+    outcomes,
+    useAssessments
   ] = await Promise.all([
     params.activeTab === "records" && params.recordId
       ? fetchMemoryRecord(params.recordId, workspaceId, config)
@@ -404,6 +421,19 @@ async function fetchMemoryPageData(
           },
           config
         )
+      : Promise.resolve(null),
+    // The evidence classes for the selected experience. Read together with the
+    // detail, and deliberately never merged into it: one is what the runtime
+    // observed, the others are what a reporter or curator separately claimed.
+    params.activeTab === "experiences" && params.experienceId
+      ? fetchMemoryExperienceOutcomes(params.experienceId, workspaceId, config)
+      : Promise.resolve(null),
+    params.activeTab === "experiences" && params.experienceId
+      ? fetchMemoryExperienceUseAssessments(
+          params.experienceId,
+          workspaceId,
+          config
+        )
       : Promise.resolve(null)
   ]);
 
@@ -416,7 +446,9 @@ async function fetchMemoryPageData(
       experiences,
       selectedExperience,
       cohorts,
-      useCohorts
+      useCohorts,
+      outcomes,
+      useAssessments
     }
   };
 }
@@ -546,6 +578,18 @@ export default async function MemoryPage(
       selectedExperience:
         data.selectedExperience?.kind === "ok"
           ? data.selectedExperience.data.experience
+          : null,
+      selectedOutcomes:
+        data.outcomes?.kind === "ok" ? data.outcomes.data.items : null,
+      selectedOutcomeTotal:
+        data.outcomes?.kind === "ok" ? data.outcomes.data.total : null,
+      selectedUseAssessments:
+        data.useAssessments?.kind === "ok"
+          ? data.useAssessments.data.items
+          : null,
+      selectedUseAssessmentTotal:
+        data.useAssessments?.kind === "ok"
+          ? data.useAssessments.data.total
           : null,
       repositoryId: currentWorkspaceId,
       workspaces,

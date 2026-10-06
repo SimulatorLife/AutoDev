@@ -32,6 +32,10 @@ import {
   type ControlApiMemoryExperienceDetailResponse,
   type ControlApiMemoryExperiencesResponse,
   type ControlApiMemoryHistoryResponse,
+  type ControlApiMemoryInjectionOutcomeJoin,
+  type ControlApiMemoryInjectionOutcomesResponse,
+  type ControlApiMemoryInjectionUseAssessment,
+  type ControlApiMemoryInjectionUseAssessmentsResponse,
   type ControlApiMemoryRecordDetailResponse,
   type ControlApiMemoryRecordsResponse,
   type ControlApiMemoryUseCohortsResponse,
@@ -1088,6 +1092,118 @@ function isSessionOutcomeCohortPage(
 }
 
 /**
+ * Narrows one observed-injection summary.
+ *
+ * `outcome`/`use` are the nullable half of the join, so their absence is a
+ * legitimate state with a distinct meaning: not reported. The guard therefore
+ * requires the key to be *either* null or a well-formed report, and refuses a
+ * response that is missing it entirely -- because a dropped field would render
+ * as "unreported", turning an unreadable response into a claim that nobody
+ * reported anything.
+ */
+function isObservedInjection(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.memoryMode === "string" &&
+    typeof value.injectionResult === "string" &&
+    typeof value.packetCharacterCount === "number" &&
+    Array.isArray(value.memoryIds) &&
+    value.memoryIds.every((id) => typeof id === "string") &&
+    typeof value.occurredAt === "string"
+  );
+}
+
+function isInjectionOutcomeJoin(
+  value: unknown
+): value is ControlApiMemoryInjectionOutcomeJoin {
+  return (
+    isRecord(value) &&
+    isObservedInjection(value.injection) &&
+    (value.outcome === null ||
+      (isRecord(value.outcome) &&
+        typeof value.outcome.outcomeKind === "string" &&
+        typeof value.outcome.reportKind === "string" &&
+        typeof value.outcome.reportedAt === "string" &&
+        typeof value.outcome.reporterId === "string" &&
+        typeof value.outcome.reporterAuthority === "string" &&
+        typeof value.outcome.reasonCode === "string")) &&
+    typeof value.sessionInjectionCount === "number"
+  );
+}
+
+function isInjectionUseAssessment(
+  value: unknown
+): value is ControlApiMemoryInjectionUseAssessment {
+  return (
+    isRecord(value) &&
+    isObservedInjection(value.injection) &&
+    (value.use === null ||
+      (isRecord(value.use) &&
+        typeof value.use.useKind === "string" &&
+        Array.isArray(value.use.usedMemoryIds) &&
+        value.use.usedMemoryIds.every((id) => typeof id === "string") &&
+        typeof value.use.reportedAt === "string")) &&
+    typeof value.sessionInjectionCount === "number"
+  );
+}
+
+/**
+ * The shared shape of both evidence pages.
+ *
+ * `experienceId` is compared, not merely type-checked: the Console renders
+ * these under a selected experience, so a response naming a *different*
+ * experience is not an empty list for this one, it is the wrong answer -- and
+ * it would otherwise be drawn as evidence for the experience the operator has
+ * open.
+ */
+function isExperienceEvidencePage(
+  value: unknown,
+  schema: string,
+  experienceId: string,
+  row: (row: unknown) => boolean
+): boolean {
+  return (
+    isRecord(value) &&
+    value.schema === schema &&
+    value.experienceId === experienceId &&
+    Array.isArray(value.items) &&
+    value.items.every(row) &&
+    typeof value.total === "number" &&
+    typeof value.limit === "number" &&
+    typeof value.offset === "number"
+  );
+}
+
+function isInjectionOutcomesResponse(
+  value: unknown,
+  experienceId: string
+): value is ControlApiMemoryInjectionOutcomesResponse {
+  return (
+    isExperienceEvidencePage(
+      value,
+      "autodev-memory-injection-outcomes-v1",
+      experienceId,
+      isInjectionOutcomeJoin
+    ) && isRecord(value)
+  );
+}
+
+function isInjectionUseAssessmentsResponse(
+  value: unknown,
+  experienceId: string
+): value is ControlApiMemoryInjectionUseAssessmentsResponse {
+  return (
+    isExperienceEvidencePage(
+      value,
+      "autodev-memory-injection-use-assessments-v1",
+      experienceId,
+      isInjectionUseAssessment
+    ) && isRecord(value)
+  );
+}
+
+/**
  * One failure shape for every unreadable catalog, so the Console reports a
  * drifted Runtime the same way whichever collection it was reading.
  */
@@ -2092,6 +2208,57 @@ export async function fetchMemoryExperienceDetail(
   return invalidMemoryPageResponse(
     "experience detail",
     "autodev-memory-experience-v1"
+  );
+}
+
+/**
+ * The packets actually attached to one experience, and the outcomes separately
+ * reported for them.
+ *
+ * Read-only here on purpose. The Runtime accepts reporter-supplied outcome
+ * writes, but an operator interface that let anyone assert a task succeeded is
+ * a claim with no evidence behind it; the reporting path stays on the reporter
+ * side until the Console can present the injection evidence and the reported
+ * outcome as visibly separate things.
+ */
+export async function fetchMemoryExperienceOutcomes(
+  id: string,
+  workspaceId: string,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiMemoryInjectionOutcomesResponse>> {
+  const search = new URLSearchParams({ workspaceId });
+  const path = `${CONTROL_API_PATHS.memoryExperiences}/${encodeURIComponent(id)}/outcomes?${search.toString()}`;
+  const result = await fetchControlApi<unknown>(path, config, options);
+  if (result.kind !== "ok") return result;
+  const outcomes: unknown = result.data;
+  if (isInjectionOutcomesResponse(outcomes, id)) {
+    return { kind: "ok", data: outcomes };
+  }
+  return invalidMemoryPageResponse(
+    "injection outcomes",
+    "autodev-memory-injection-outcomes-v1"
+  );
+}
+
+/** A curator's assessment of whether an injected packet was used. */
+export async function fetchMemoryExperienceUseAssessments(
+  id: string,
+  workspaceId: string,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiMemoryInjectionUseAssessmentsResponse>> {
+  const search = new URLSearchParams({ workspaceId });
+  const path = `${CONTROL_API_PATHS.memoryExperiences}/${encodeURIComponent(id)}/use-assessments?${search.toString()}`;
+  const result = await fetchControlApi<unknown>(path, config, options);
+  if (result.kind !== "ok") return result;
+  const assessments: unknown = result.data;
+  if (isInjectionUseAssessmentsResponse(assessments, id)) {
+    return { kind: "ok", data: assessments };
+  }
+  return invalidMemoryPageResponse(
+    "injection use assessments",
+    "autodev-memory-injection-use-assessments-v1"
   );
 }
 
