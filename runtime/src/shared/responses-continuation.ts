@@ -35,44 +35,59 @@ function isRecord(value: unknown): value is ResponsesItem {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function classifyTailItem(
-  item: unknown
-): { item: ResponsesItem; output: boolean } | null {
-  if (!isRecord(item)) return null;
-  if (TOOL_OUTPUT_TYPES.has(String(item.type))) {
-    return { item, output: true };
-  }
-  if (
+/** True when `item` may sit in the trailing run of a Responses request. */
+function isTailItem(item: unknown): boolean {
+  if (!isRecord(item)) return false;
+  if (TOOL_OUTPUT_TYPES.has(String(item.type))) return true;
+  return (
     (item.type === undefined || item.type === "message") &&
     INJECTED_ROLES.has(String(item.role))
-  ) {
-    return { item, output: false };
-  }
-  return null;
+  );
 }
 
-function collectTail(
-  input: unknown[]
-): Array<{ item: ResponsesItem; output: boolean }> {
-  const tail: Array<{ item: ResponsesItem; output: boolean }> = [];
-  for (let index = input.length - 1; index >= 0; index -= 1) {
-    const classified = classifyTailItem(input[index]);
-    if (!classified) break;
-    tail.unshift(classified);
-  }
-  return tail;
+function isTailOutput(item: unknown): boolean {
+  return isRecord(item) && TOOL_OUTPUT_TYPES.has(String(item.type));
+}
+
+/**
+ * Index of the first item in the trailing run, or `input.length` when there is
+ * no tail. Scanning back for a bound is cheaper than materialising the run.
+ */
+function tailStart(input: readonly unknown[]): number {
+  let start = input.length;
+  while (start > 0 && isTailItem(input[start - 1])) start -= 1;
+  return start;
 }
 
 export function awaitedToolResults(input: unknown): AwaitedToolResults {
   const outputs = new Map<string, unknown>();
-  const tail = Array.isArray(input) ? collectTail(input) : [];
-  const firstOutput = tail.findIndex((entry) => entry.output);
-  if (firstOutput === -1) return { outputs, messages: [] };
+  if (!Array.isArray(input)) return { outputs, messages: [] };
+
+  // Walk the tail by index over `input` itself. Collecting it into an array of
+  // `{ item, output }` wrappers meant unshifting every entry into the front --
+  // quadratic in the tail length -- and then copying the remainder a second
+  // time with `slice`. This runs for every routed request, and the tail is as
+  // long as the run of tool results a turn with many parallel calls produces.
+  const start = tailStart(input);
+
+  // Injected messages ahead of the first output answer no call, so they are
+  // dropped rather than returned.
+  let firstOutput = start;
+  while (firstOutput < input.length && !isTailOutput(input[firstOutput])) {
+    firstOutput += 1;
+  }
+  if (firstOutput === input.length) return { outputs, messages: [] };
+
   const messages: ResponsesItem[] = [];
-  for (const { item, output } of tail.slice(firstOutput)) {
-    if (!output) messages.push(item);
-    else if (typeof item.call_id === "string" && item.call_id)
-      outputs.set(item.call_id, item.output);
+  for (let index = firstOutput; index < input.length; index += 1) {
+    const item = input[index] as ResponsesItem;
+    if (isTailOutput(item)) {
+      if (typeof item.call_id === "string" && item.call_id) {
+        outputs.set(item.call_id, item.output);
+      }
+    } else {
+      messages.push(item);
+    }
   }
   return { outputs, messages };
 }

@@ -80,3 +80,51 @@ test("an output before the model's latest call answered an earlier step", () => 
   const { outputs } = awaitedToolResults([call("a"), output("a"), call("b")]);
   assert.equal(outputs.size, 0);
 });
+
+test("injected messages ahead of the first output answer no call and are dropped", () => {
+  // The tail is scanned for its first *output*, so anything the user or Codex
+  // appended before it is not something this turn was waiting on. A message
+  // carrying no `type` is still an injected message.
+  const leading = {
+    role: "user",
+    content: [{ type: "input_text", text: "go" }]
+  };
+  const steers = [{ type: "message", role: "developer", content: [] }, leading];
+  const { outputs, messages } = awaitedToolResults([
+    call("a"),
+    ...steers,
+    output("a", "x")
+  ]);
+  assert.deepEqual([...outputs], [["a", "x"]]);
+  assert.deepEqual(
+    messages,
+    [],
+    "leading injected messages must not be returned"
+  );
+});
+
+test("an output with no usable call_id is skipped without ending the run", () => {
+  const unusable = [
+    { type: "custom_tool_call_output", call_id: "", output: "no id" },
+    { type: "custom_tool_call_output", output: "missing id" },
+    { type: "custom_tool_call_output", call_id: 7, output: "wrong type" }
+  ];
+  const { outputs, messages } = awaitedToolResults([
+    ...unusable,
+    output("a", "x"),
+    output("b", "y")
+  ]);
+  assert.deepEqual([...outputs.keys()], ["a", "b"]);
+  assert.deepEqual(messages, []);
+});
+
+test("a tail of only injected messages awaits nothing", () => {
+  const { outputs, messages } = awaitedToolResults([
+    user("hello"),
+    { type: "message", role: "developer", content: [] }
+  ]);
+  assert.equal(outputs.size, 0);
+  assert.deepEqual(messages, []);
+  assert.equal(awaitedToolResults([]).outputs.size, 0);
+  assert.equal(awaitedToolResults(undefined).outputs.size, 0);
+});
