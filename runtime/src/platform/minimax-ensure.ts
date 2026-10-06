@@ -11,13 +11,13 @@ import path from "node:path";
 
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import { MINIMAX_MODEL_PATTERN } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
 import { LaunchdClient } from "./macos/launchd.ts";
 
 export interface MiniMaxEnsureOptions {
   readonly host: string;
   readonly port: number;
-  readonly model: string;
   readonly label: string;
   readonly plist: string;
   readonly launcher: string;
@@ -53,17 +53,14 @@ function resolveNode(env: NodeJS.ProcessEnv): string {
   }
 }
 
-export function isMiniMaxModel(
-  input: string,
-  expectedModel = "MiniMax-M3"
-): boolean {
+export function isMiniMaxModel(input: string): boolean {
   try {
     const value: unknown = JSON.parse(input);
     const model =
       value && typeof value === "object" && !Array.isArray(value)
         ? (value as Record<string, unknown>).model
         : null;
-    return typeof model === "string" && model === expectedModel;
+    return typeof model === "string" && MINIMAX_MODEL_PATTERN.test(model);
   } catch {
     return false;
   }
@@ -78,7 +75,6 @@ export function resolveMiniMaxEnsureOptions(
   return {
     host: env.CODEX_MINIMAX_PROXY_HOST?.trim() || "127.0.0.1",
     port,
-    model: env.CODEX_MINIMAX_MODEL?.trim() || "MiniMax-M3",
     label: "com.codex.minimax-proxy",
     plist: path.join(
       home,
@@ -165,7 +161,7 @@ export async function ensureMiniMaxProxy(
   options: MiniMaxEnsureOptions = resolveMiniMaxEnsureOptions(),
   deps: MiniMaxEnsureDeps = defaultDeps(options)
 ): Promise<number> {
-  if (!isMiniMaxModel(input, options.model)) return 0;
+  if (!isMiniMaxModel(input)) return 0;
   if (await deps.probe()) return 0;
   if (!deps.nodeAvailable()) {
     writeErrorLine("MiniMax compatibility proxy requires Node.js.");

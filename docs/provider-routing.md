@@ -1569,10 +1569,23 @@ therefore has effect only through the model the orchestrator tier selects.
 
 ### Reasoning effort on MiniMax
 
-MiniMax-M3 supports only `none` or `high` reasoning effort, as declared in its
-model catalog entries (`config/catalogs/minimax-model-catalog.json` and
-`config/catalogs/codex-model-catalog.json`). It does not support `medium`
-or `low` reasoning levels.
+Each MiniMax model declares its own reasoning levels in its model catalog
+entries (`config/catalogs/minimax-model-catalog.json` and
+`config/catalogs/codex-model-catalog.json`), and the proxy forwards the
+requested effort unchanged:
+
+- MiniMax-M3 supports only `none` or `high`. It does not support `medium` or
+  `low`.
+- MiniMax-M3.1-Flash-Preview supports `low`, `medium`, `high`, `xhigh`, and
+  `max` (default `max`). Its thinking cannot be disabled, so MiniMax rejects
+  `none` with HTTP 400. MiniMax currently serves this preview only to M Plan
+  (and MiniMax Code) keys.
+
+Every `MiniMax-*` model id routes to the MiniMax provider through
+`MINIMAX_MODEL_PATTERN` in `runtime/src/shared/provider-model-ids.ts`, which
+both the router's built-in route and the proxy lifecycle gate
+(`runtime/src/platform/minimax-ensure.ts`) use, so selecting any MiniMax model
+starts the compatibility proxy.
 
 Agent config TOML files under `agents/roles/` omit role-level
 `model_reasoning_effort` declarations so each child agent inherits
@@ -1679,13 +1692,13 @@ intended repository, and inspect the app task/log event for those failures.
 
 ## Provider paths and constraints
 
-| Provider       | Local path                                                           | Important constraint                                                                                                                                                                                                                                                                                                       |
-| -------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude         | Codex -> Claude Responses bridge on `127.0.0.1:4000` -> Claude CLI   | Uses `CLAUDE_CODE_OAUTH_TOKEN`; the selected role model and reasoning effort are forwarded.                                                                                                                                                                                                                                |
-| MiniMax        | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                | Pass-through to the remote API, not a CLI gateway; only `accept`, `authorization`, and `content-type` headers are forwarded, and `client_metadata` is dropped. MiniMax-M3 supports only `none` or `high` reasoning effort. Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them. |
-| Antigravity    | Codex -> Antigravity adapter `:4002` -> `agy` CLI                    | `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode.                                                                                                                                                                       |
-| GitHub Copilot | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI    | Requires an authenticated local Copilot CLI; unavailable adapters are skipped by fallback.                                                                                                                                                                                                                                 |
-| Local router   | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges.                                                                                                                                                                                                                          |
+| Provider       | Local path                                                           | Important constraint                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude         | Codex -> Claude Responses bridge on `127.0.0.1:4000` -> Claude CLI   | Uses `CLAUDE_CODE_OAUTH_TOKEN`; the selected role model and reasoning effort are forwarded.                                                                                                                                                                                                                                                                                                          |
+| MiniMax        | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                | Pass-through to the remote API, not a CLI gateway; only `accept`, `authorization`, and `content-type` headers are forwarded, and `client_metadata` is dropped. MiniMax-M3 supports only `none` or `high` reasoning effort; MiniMax-M3.1-Flash-Preview supports `low` through `max` but never `none`. Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them. |
+| Antigravity    | Codex -> Antigravity adapter `:4002` -> `agy` CLI                    | `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode.                                                                                                                                                                                                                                                 |
+| GitHub Copilot | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI    | Requires an authenticated local Copilot CLI; unavailable adapters are skipped by fallback.                                                                                                                                                                                                                                                                                                           |
+| Local router   | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges.                                                                                                                                                                                                                                                                                                    |
 
 The Claude Responses adapter is not the GPT passthrough: it launches the
 OAuth-authenticated Claude CLI. The `LITELLM_API_KEY` used between the local

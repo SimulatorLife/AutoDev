@@ -224,6 +224,19 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
     },
     {
       provider: "minimax",
+      modelId: "MiniMax-M3.1-Flash-Preview",
+      displayName: "MiniMax-M3.1-Flash-Preview",
+      modelType: "chat",
+      contextWindow: 1_000_000,
+      inputPricePerMToken: 0.3,
+      outputPricePerMToken: 1.2,
+      cacheReadPricePerMToken: 0,
+      cacheCreationPricePerMToken: 0,
+      capabilities: ["chat", "tools", "reasoning"],
+      isDefault: false
+    },
+    {
+      provider: "minimax",
       modelId: "MiniMax-M2.7",
       displayName: "MiniMax-M2.7",
       modelType: "chat",

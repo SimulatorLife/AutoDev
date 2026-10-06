@@ -524,13 +524,26 @@ test("PromptsView distinguishes an unavailable command source from a valid empty
 test("Prompt detail renders canonical text and reports an actually empty source", () => {
   const source = "# /dry\n\nUse a dry run.";
   const prompt = promptDocumentFromControlApi({
-    schema: "autodev-control-prompt-detail-v3",
+    schema: "autodev-control-prompt-detail-v4",
     name: "dry",
     type: "command",
     source: ".rulesync/commands/dry.md",
     content: source,
     preview: "## Rendered Prompt\n\n**Use a dry run.**",
-    revision: "a".repeat(64)
+    revision: "a".repeat(64),
+    diff: { summary: "Canonical RuleSync command.", identifier: "a".repeat(64) },
+    reconciliation: {
+      status: {
+        convergence: "not-observed",
+        desiredGeneration: null,
+        observedGeneration: null,
+        lastApplyAt: null,
+        lastObservationAt: null,
+        lastError: null,
+        explanation: "Not observed."
+      },
+      history: []
+    }
   });
   const markup = renderToStaticMarkup(
     React.createElement(PromptDetailView, {
@@ -2935,8 +2948,32 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
       },
       credential: { envKey: "LITELLM_API_KEY", configured: false },
       roles: {
-        orchestrator: { enabled: true, mutable: true },
-        subagent: { enabled: true, mutable: true }
+        orchestrator: {
+          enabled: true,
+          mutable: true,
+          convergence: {
+            convergence: "converged",
+            desiredGeneration: "orchestrator:enabled=true",
+            observedGeneration: "orchestrator:enabled=true",
+            lastApplyAt: "2026-10-05T15:00:00.000Z",
+            lastObservationAt: "2026-10-05T15:00:00.000Z",
+            lastError: null,
+            explanation: "Converged."
+          }
+        },
+        subagent: {
+          enabled: true,
+          mutable: true,
+          convergence: {
+            convergence: "converged",
+            desiredGeneration: "subagent:enabled=true",
+            observedGeneration: "subagent:enabled=true",
+            lastApplyAt: "2026-10-05T15:00:00.000Z",
+            lastObservationAt: "2026-10-05T15:00:00.000Z",
+            lastError: null,
+            explanation: "Converged."
+          }
+        }
       },
       models: [
         { tier: "default", model: "sonnet" },
@@ -2979,8 +3016,32 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
       },
       credential: { envKey: null, configured: true },
       roles: {
-        orchestrator: { enabled: false, mutable: true },
-        subagent: { enabled: false, mutable: false }
+        orchestrator: {
+          enabled: false,
+          mutable: true,
+          convergence: {
+            convergence: "pending",
+            desiredGeneration: "orchestrator:enabled=false",
+            observedGeneration: null,
+            lastApplyAt: "2026-10-05T15:30:00.000Z",
+            lastObservationAt: null,
+            lastError: null,
+            explanation: "Pending observation."
+          }
+        },
+        subagent: {
+          enabled: false,
+          mutable: false,
+          convergence: {
+            convergence: "not-observed",
+            desiredGeneration: null,
+            observedGeneration: null,
+            lastApplyAt: null,
+            lastObservationAt: null,
+            lastError: null,
+            explanation: "Not observed."
+          }
+        }
       },
       models: [
         { tier: "default", model: "gpt-6-luna" },
@@ -3222,13 +3283,26 @@ test("View adapters translate Control API responses without inventing data", () 
   assert.equal(prompts[1]?.name, "orchestrator");
 
   const promptDocument = promptDocumentFromControlApi({
-    schema: "autodev-control-prompt-detail-v3",
+    schema: "autodev-control-prompt-detail-v4",
     name: "dry",
     type: "command",
     source: ".rulesync/commands/dry.md",
     content: "Exact source",
     preview: "Parsed prompt body",
-    revision: "b".repeat(64)
+    revision: "b".repeat(64),
+    diff: { summary: "Canonical RuleSync command.", identifier: "b".repeat(64) },
+    reconciliation: {
+      status: {
+        convergence: "converged",
+        desiredGeneration: "b".repeat(64),
+        observedGeneration: "b".repeat(64),
+        lastApplyAt: "2026-01-01T00:00:00.000Z",
+        lastObservationAt: "2026-01-01T00:00:00.000Z",
+        lastError: null,
+        explanation: "Converged."
+      },
+      history: []
+    }
   });
   assert.deepEqual(promptDocument, {
     name: "dry",
@@ -3929,12 +4003,23 @@ test("Prompt edit form submits only source content and its revision through the 
       body: String(init?.body ?? "")
     });
     return Response.json({
-      schema: "autodev-control-prompt-command-patch-v1",
+      schema: "autodev-control-prompt-command-patch-v2",
       name: "dry",
       revision: "b".repeat(64),
       changed: true,
-      projectionUpdated: true,
-      restartRequired: true
+      diff: { summary: "Canonical source updated.", identifier: "c".repeat(64) },
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: "c".repeat(64),
+          observedGeneration: "c".repeat(64),
+          lastApplyAt: "2026-01-01T00:00:00.000Z",
+          lastObservationAt: "2026-01-01T00:00:00.000Z",
+          lastError: null,
+          explanation: "Converged."
+        },
+        history: []
+      }
     });
   };
 
@@ -4180,7 +4265,7 @@ test("provider-role Console route sends only a same-origin typed PATCH and retur
         body: String(init?.body ?? "")
       });
       return Response.json({
-        schema: "autodev-control-provider-role-v1",
+        schema: "autodev-control-provider-role-v2",
         provider: "codex",
         role: "orchestrator",
         enabled: false,

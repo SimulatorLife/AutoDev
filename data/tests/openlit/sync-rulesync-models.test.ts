@@ -54,6 +54,7 @@ test("getAutoDevModels returns valid catalog models with non-negative pricing an
   assert.ok(modelKeys.has("claude::sonnet"));
   assert.ok(modelKeys.has("antigravity::gemini-3.8-flash-medium"));
   assert.ok(modelKeys.has("minimax::MiniMax-M3"));
+  assert.ok(modelKeys.has("minimax::MiniMax-M3.1-Flash-Preview"));
   assert.ok(modelKeys.has("codex::gpt-6-luna"));
   assert.ok(modelKeys.has("codex::gpt-5.6-terra"));
   assert.ok(modelKeys.has("codex::gpt-6-sol"));

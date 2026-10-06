@@ -27,8 +27,6 @@ import {
   type GithubActionsRuntimeSnapshot,
   type GithubApiWorkflow,
   GithubWorkflowRepository,
-  type OperationHistoryEntry,
-  type ReconciliationDiff,
   reconcileDiffSummary,
   reconcileDiffWithIdentifier,
   RuleSyncCommandConflictError,
@@ -39,6 +37,8 @@ import {
 } from "@simulatorlife/autodev-data";
 import {
   buildReconciliationView,
+  type OperationHistoryEntry,
+  type ReconciliationDiff,
   type ReconciliationEvidence,
   type ReconciliationStatus
 } from "@simulatorlife/autodev-core";
@@ -1250,7 +1250,7 @@ function agentDetailView(
   );
 
   return {
-    schema: "autodev-control-agent-detail-v1",
+    schema: "autodev-control-agent-detail-v2",
     id: role,
     role,
     kind,
@@ -1266,7 +1266,14 @@ function agentDetailView(
     promptPath: existsSync(promptPath)
       ? `agents/prompts/roles/${role}.md`
       : null,
-    systemPrompt
+    systemPrompt,
+    reconciliation: promptReconciliationView({
+      name: role,
+      codexHome: defaultCodexHomeForReconciliation(),
+      expectedRevision: createHash("sha256")
+        .update(systemPrompt, "utf8")
+        .digest("hex")
+    })
   };
 }
 
@@ -1819,9 +1826,10 @@ function patchProviderRole(
   role: ProviderRole
 ): Promise<void> {
   const provider = providerInput.toLowerCase();
+  const resource = `${CONTROL_API_PATHS.providers}/${providerInput}/roles/${role}`;
   return patchEnablement(request, response, actor, {
     action: "patch_provider_role",
-    resource: providerInput + "/roles/" + role,
+    resource,
     subject: "provider role",
     known:
       Object.hasOwn(ROUTING_POLICY.config.providers ?? {}, provider) ||
@@ -1832,13 +1840,32 @@ function patchProviderRole(
     current: () => ROUTING_POLICY.isProviderEnabledForRole(provider, role),
     apply: (enabled) =>
       ROUTING_POLICY.setProviderEnabledForRole(provider, role, enabled),
-    result: (enabled, previous) => ({
-      schema: "autodev-control-provider-role-v1",
-      provider,
-      role,
-      enabled,
-      previous
-    })
+    result: (enabled, previous) => {
+      const observed = ROUTING_POLICY.isProviderEnabledForRole(provider, role);
+      const desiredGeneration = `${role}:enabled=${enabled ? "true" : "false"}`;
+      const observedGeneration = observed === enabled
+        ? desiredGeneration
+        : null;
+      return {
+        schema: "autodev-control-provider-role-v2",
+        provider,
+        role,
+        enabled,
+        previous,
+        reconciliation: buildReconciliationView({
+          evidence: {
+            desiredGeneration,
+            observedGeneration,
+            lastApplyAt: new Date().toISOString(),
+            lastObservationAt:
+              observedGeneration !== null ? new Date().toISOString() : null,
+            lastError: null
+          },
+          history: historyForResource(resource),
+          hasObservation: observed === enabled
+        })
+      };
+    }
   });
 }
 

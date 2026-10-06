@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import type { ProviderRole } from "@simulatorlife/autodev-core";
+import { MINIMAX_MODEL_PATTERN } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
 export const ROLE_NAMES = [
@@ -101,7 +102,7 @@ const DEFAULT_ROUTES: readonly ProviderRoute[] = [
   },
   {
     provider: "minimax",
-    pattern: /^MiniMax-[A-Za-z0-9][A-Za-z0-9.-]*$/,
+    pattern: MINIMAX_MODEL_PATTERN,
     baseUrl: "http://127.0.0.1:18765/v1",
     healthUrl: "http://127.0.0.1:18765/health",
     envKey: "MINIMAX_API_KEY"

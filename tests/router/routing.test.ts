@@ -27,6 +27,10 @@ test("typed routing policy resolves aliases, concrete models, credentials, and c
     null
   );
   assert.equal(ROUTING_POLICY.routeForModel("MiniMax-M3")?.provider, "minimax");
+  assert.equal(
+    ROUTING_POLICY.routeForModel("MiniMax-M3.1-Flash-Preview")?.provider,
+    "minimax"
+  );
   assert.equal(ROUTING_POLICY.routeForModel("unknown-model"), null);
   assert.equal(
     ROUTING_POLICY.routeCredentialAvailable(

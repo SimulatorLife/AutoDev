@@ -15,7 +15,6 @@ function options(
   return {
     host: "127.0.0.1",
     port: 18_765,
-    model: "MiniMax-M3",
     label: "com.codex.minimax-proxy",
     plist: "/tmp/minimax.plist",
     launcher: "/tmp/minimax.sh",
@@ -44,8 +43,9 @@ function deps(overrides: Partial<MiniMaxEnsureDeps> = {}): MiniMaxEnsureDeps {
   };
 }
 
-test("MiniMax model gate does not claim other providers", () => {
+test("MiniMax model gate claims every MiniMax model and no other provider", () => {
   assert.equal(isMiniMaxModel('{"model":"MiniMax-M3"}'), true);
+  assert.equal(isMiniMaxModel('{"model":"MiniMax-M3.1-Flash-Preview"}'), true);
   assert.equal(isMiniMaxModel('{"model":"minimax-m3"}'), false);
   assert.equal(isMiniMaxModel('{"model":"sonnet"}'), false);
 });
@@ -101,6 +101,25 @@ test("MiniMax proxy is started through the typed fallback boundary", async () =>
   );
   assert.equal(result, 0);
   assert.equal(seen?.proxyScript, "/tmp/minimax.ts");
+});
+
+test("every MiniMax model starts the compatibility proxy", async () => {
+  let starts = 0;
+  const result = await ensureMiniMaxProxy(
+    '{"model":"MiniMax-M3.1-Flash-Preview"}',
+    options(),
+    deps({
+      startFallback: () => {
+        starts += 1;
+      },
+      probe: (() => {
+        let calls = 0;
+        return async () => ++calls > 1;
+      })()
+    })
+  );
+  assert.equal(result, 0);
+  assert.equal(starts, 1);
 });
 
 test("MiniMax does not use a fallback when launchd owns a configured plist", async () => {

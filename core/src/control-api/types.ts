@@ -25,6 +25,11 @@ import type {
   WorkspaceCatalogStatus,
   WorkspaceEntry
 } from "../workspaces/types.ts";
+import type {
+  OperationHistoryEntry,
+  ReconciliationDiff,
+  ReconciliationStatus
+} from "../reconciliation/types.ts";
 
 /** Typed response contracts exposed by the AutoDev Control API. */
 export interface ControlApiError {

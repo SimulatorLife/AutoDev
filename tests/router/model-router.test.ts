@@ -10671,7 +10671,7 @@ test("authenticated Control API provider role mutation validates, persists, and 
     });
     assert.equal(disable.status, 200);
     const disabled = await disable.json();
-    assert.equal(disabled.schema, "autodev-control-provider-role-v1");
+    assert.equal(disabled.schema, "autodev-control-provider-role-v2");
     assert.equal(disabled.provider, "claude");
     assert.equal(disabled.role, "subagent");
     assert.equal(disabled.enabled, false);

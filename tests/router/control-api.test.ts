@@ -438,6 +438,11 @@ test("operator PATCH validates fields, persists provider state, and audits the a
     assert.equal(captured.result.response.statusCode, 200);
     assert.equal(captured.result.body.previous, previous);
     assert.equal(captured.result.body.enabled, false);
+    assert.equal(captured.result.body.schema, "autodev-control-provider-role-v2");
+    assert.equal(
+      captured.result.body.reconciliation.status.convergence,
+      "converged"
+    );
     assert.equal(
       ROUTING_POLICY.isProviderEnabledForRole("claude", "subagent"),
       false
@@ -451,6 +456,9 @@ test("operator PATCH validates fields, persists provider state, and audits the a
     assert.equal(audit.actorRole, "operator");
     assert.equal(audit.outcome, "ok");
     assert.deepEqual(audit.changes, { enabled: false, previous });
+    assert.equal(audit.desiredGeneration, "subagent:enabled=false");
+    assert.equal(audit.observedGeneration, audit.desiredGeneration);
+    assert.equal(audit.restartRequired, false);
     assert.equal(JSON.stringify(audit).includes(SERVICE_TOKEN), false);
     const mutationSpan = getFinishedSpans().find(
       (span) =>
@@ -807,7 +815,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
       { actor: "viewer-a" }
     );
     assert.equal(agentDetail.response.statusCode, 200);
-    assert.equal(agentDetail.body.schema, "autodev-control-agent-detail-v1");
+    assert.equal(agentDetail.body.schema, "autodev-control-agent-detail-v2");
     assert.equal(agentDetail.body.role, "orchestrator");
     assert.equal(agentDetail.body.kind, "orchestrator");
     assert.equal(agentDetail.body.status, "configured");
@@ -1007,7 +1015,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
       actor: "viewer-a"
     });
     assert.equal(promptDetail.response.statusCode, 200);
-    assert.equal(promptDetail.body.schema, "autodev-control-prompt-detail-v3");
+    assert.equal(promptDetail.body.schema, "autodev-control-prompt-detail-v4");
     assert.equal(promptDetail.body.name, "dry");
 
     const unknownPrompt = await call(
@@ -1236,7 +1244,7 @@ test("Control API prompt detail serves the canonical command content from RuleSy
       { actor: "viewer-a" }
     );
     assert.equal(detail.response.statusCode, 200);
-    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v3");
+    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v4");
     assert.equal(detail.body.name, target.name);
     assert.equal(detail.body.type, "command");
     assert.equal(detail.body.source, target.path);
@@ -1244,11 +1252,14 @@ test("Control API prompt detail serves the canonical command content from RuleSy
     assert.equal(detail.body.preview, target.prompt);
     assert.equal(detail.body.revision, target.revision);
 
-    // The detail surface contains only canonical content and its revision.
+    // The detail surface contains only canonical content, its revision,
+    // the bounded diff summary, and the reconciliation view.
     assert.deepEqual(Object.keys(detail.body).sort(), [
       "content",
+      "diff",
       "name",
       "preview",
+      "reconciliation",
       "revision",
       "schema",
       "source",
@@ -1314,12 +1325,28 @@ test("operator Prompt PATCH validates source, applies the Rulesync projection, a
       )
     );
     assert.equal(result.response.statusCode, 200);
-    assert.equal(result.body.schema, "autodev-control-prompt-command-patch-v1");
+    assert.equal(result.body.schema, "autodev-control-prompt-command-patch-v2");
     assert.equal(result.body.name, "dry");
     assert.match(result.body.revision, /^[a-f0-9]{64}$/u);
     assert.equal(result.body.changed, true);
-    assert.equal(result.body.projectionUpdated, true);
-    assert.equal(result.body.restartRequired, true);
+    assert.equal(result.body.diff.summary.length > 0, true);
+    assert.equal(result.body.diff.identifier.length, 64);
+    assert.equal(
+      result.body.reconciliation.status.convergence,
+      "converged"
+    );
+    assert.equal(
+      result.body.reconciliation.status.desiredGeneration,
+      result.body.reconciliation.status.observedGeneration
+    );
+    assert.equal(
+      result.body.reconciliation.status.lastError,
+      null
+    );
+    assert.equal(
+      result.body.reconciliation.history.length > 0,
+      true
+    );
     assert.doesNotMatch(lines.join(""), /A canonical edit reaches/u);
     assert.equal(
       new RuleSyncRepository(repositoryRoot)
@@ -1339,7 +1366,7 @@ test("operator Prompt PATCH validates source, applies the Rulesync projection, a
       runtimeOptions
     );
     assert.equal(detail.response.statusCode, 200);
-    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v3");
+    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v4");
     assert.equal(detail.body.revision, result.body.revision);
     assert.equal(detail.body.content, content);
     assert.equal(
@@ -1428,7 +1455,7 @@ test("Control API prompt detail serves an unshadowed role prompt from its canoni
       { actor: "viewer-a" }
     );
     assert.equal(detail.response.statusCode, 200);
-    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v3");
+    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v4");
     assert.equal(detail.body.type, "role");
     assert.equal(detail.body.name, rolePrompt.role);
     assert.match(detail.body.revision, /^[a-f0-9]{64}$/u);

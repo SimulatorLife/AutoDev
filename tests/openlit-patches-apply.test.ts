@@ -1503,8 +1503,12 @@ test(
         "22-autodev-memory-injection-use",
         "23-autodev-memory-visible-connector",
         "24-autodev-pricing-empty-history",
-        "25-autodev-usage-filter-options"
+        "25-autodev-usage-filter-options",
+        "26-autodev-usage-trace-detail"
       );
+      if (patches.some((p) => p.startsWith("27-"))) {
+        expectedPatchNames.push("27-remove-otter-chat-docs-onboarding-chrome");
+      }
       assert.ok(
         patches.length >= expectedPatchNames.length,
         `expected at least ${expectedPatchNames.length} maintained OpenLIT patches`
@@ -1796,6 +1800,81 @@ test("OpenLIT patches do not add a producer-facing Collector sidecar", () => {
   }
 });
 
+
+test("27-remove-otter-chat-docs-onboarding-chrome removes Otter/chat/docs/onboarding surfaces", () => {
+  const patchPath = join(PATCHES_DIR, "27-remove-otter-chat-docs-onboarding-chrome");
+  assert.ok({
+    existsSync(patchPath),
+    "patch 27-remove-otter-chat-docs-onboarding-chrome.patch must exist"
+  );
+  const content = readFileSync(patchPath, "utf8");
+  assertPatchHunkCounts(patchPath);
+  for (const banned of [
+    "from "@" + /components/(playground)/chat",
+    "from "@" + /lib/platform/chat",
+    "from "@" + /lib/chat",
+    "from "@" + /store/chat",
+    "from "@" + /selectors/chat",
+    "from "@" + /types/store/chat",
+  ]) {
+    assert.doesNotMatch(content, new RegExp("^\+\s*" + banned), "patch 27 must not reintroduce chat imports" + banned);
+  }
+  const dir = freshClone();
+  try {
+    const check = run("git", ["apply","--check",patchPath], dir);
+    assert.equal(check.status, 0, "git apply --check failed: " + check.stderr);
+    const apply = run("git", ["apply",patchPath], dir);
+    assert.equal(apply.status, 0, "git apply failed: " + apply.stderr);
+    const client = join(dir, "src/client");
+    const bannedFiles = [
+      "src/app/(playground)/chat/page.tsx",
+      "src/app/(playground)/chat/settings/page.tsx",
+      "src/app/(playground)/chat/usage/page.tsx",
+      "src/app/(playground)/getting-started/page.tsx",
+      "src/app/(playground)/onboarding/page.tsx",
+      "src/app/api/chat",
+      "src/components/(playground)/chat",
+      "src/components/(playground)/memory/ask-otter.tsx",
+      "src/components/(playground)/sidebar/otter-sidebar.tsx",
+      "src/components/svg/otter.tsx",
+      "src/components/rbac/otter-page-access.tsx",
+      "src/components/(playground)/getting-started",
+      "src/components/(playground)/prompt-hub/prompt-otter-inline-assistant.tsx",
+      "src/components/(playground)/request/components/trace-improvement-view.tsx",
+      "src/components/(playground)/request/components/trace-ai-analysis-panel.tsx",
+      "src/lib/platform/chat",
+      "src/lib/platform/connectors/memory/ask.ts",
+      "src/lib/platform/governance/otter-findings.ts",
+      "src/lib/platform/kubernetes/index.ts",
+      "src/lib/chat"
+    ];
+    for (const rel of bannedFiles) {
+      assert.equal(existsSync(join(client, rel)), false, "27-remove-otter-chat-docs-onboarding-chrome must remove " + rel);
+    }
+    const docsGrep = run("grep", ["-rln","docs.openlit.io",join(client, "src")], dir);
+    const docsOffenders = [];
+    for (const line of docsGrep.stdout.split("")) {
+      if (!line) continue;
+      const rel = line.slice(dir.length + 1);
+      if (rel.includes("__tests__")) continue;
+      if (rel.endsWith("openground/sdk-usage-dialog.tsx")) continue;
+      if (rel.endsWith("agents/no-coding-agents.tsx")) continue;
+      docsOffenders.push(rel);
+    }
+    assert.deepEqual(docsOffenders, [], "27-remove-otter-chat-docs-onboarding-chrome must leave no docs.openlit.io references in the patched client (excluded: openground SDK usage and OpenLIT CLI install snippet)");
+    const otterGrep = run("grep", ["-rln","--include=*.ts","--include=*.tsx","-e","ask-otter-panel","-e","OtterSidebar",join(client, "src")], dir);
+    const otterOffenders = [];
+    for (const line of otterGrep.stdout.split("")) {
+      if (!line) continue;
+      const rel = line.slice(dir.length + 1);
+      if (rel.includes("__tests__")) continue;
+      otterOffenders.push(rel);
+    }
+    assert.deepEqual(otterOffenders, [], "27-remove-otter-chat-docs-onboarding-chrome must leave no Otter/chat surface references in the patched client");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 test("openlit pin metadata matches the published digest and image tag", () => {
   const env = readFileSync(
     join(repositoryRoot, "config/openlit/openlit.env"),

@@ -64,3 +64,27 @@ test("MiniMax-M3 catalog entries support only none or high reasoning effort", as
     assert.ok(["none", "high"].includes(model.default_reasoning_level));
   }
 });
+
+test("MiniMax-M3.1-Flash-Preview catalog entries support low through max reasoning, never none", async () => {
+  const minimaxCatalog = JSON.parse(
+    await readFile(
+      new URL("../config/catalogs/minimax-model-catalog.json", import.meta.url),
+      "utf8"
+    )
+  ) as Catalog;
+  for (const [name, cat] of [
+    ["codex-model-catalog", catalog],
+    ["minimax-model-catalog", minimaxCatalog]
+  ] as Array<[string, Catalog]>) {
+    const model = cat.models.find(
+      (m) => m.slug === "MiniMax-M3.1-Flash-Preview"
+    );
+    assert.ok(model, `MiniMax-M3.1-Flash-Preview must exist in ${name}`);
+    assert.deepEqual(
+      model.supported_reasoning_levels.map((l) => l.effort),
+      ["low", "medium", "high", "xhigh", "max"],
+      `MiniMax-M3.1-Flash-Preview in ${name} cannot disable thinking`
+    );
+    assert.equal(model.default_reasoning_level, "max");
+  }
+});

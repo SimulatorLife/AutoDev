@@ -323,7 +323,7 @@ test("proxy forwards operator actor without role claims", async () => {
     capturedRole = h["X-AutoDev-Role"];
     return Response.json(
       {
-        schema: "autodev-control-provider-role-v1",
+        schema: "autodev-control-provider-role-v2",
         provider: "openai",
         role: "orchestrator",
         enabled: true,
