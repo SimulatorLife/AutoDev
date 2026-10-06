@@ -386,11 +386,7 @@ function ProvidersTab({
     },
     React.createElement(
       StatGrid,
-      { columns: 4 },
-      React.createElement(StatCard, {
-        title: "Providers",
-        value: records.length
-      }),
+      { columns: 3 },
       React.createElement(StatCard, {
         title: "Orchestrator enabled",
         value: records.filter((p) => p.roles.orchestrator.enabled).length

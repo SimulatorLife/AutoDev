@@ -369,12 +369,7 @@ export function GithubView({
     },
     React.createElement(
       StatGrid,
-      { columns: 4 },
-      React.createElement(StatCard, {
-        title: "Workflow Definitions",
-        value: workflows.length,
-        subtitle: "Parsed from .github/workflows/*.yml"
-      }),
+      { columns: 2 },
       React.createElement(StatCard, {
         title: "Scheduled Workflows",
         value: scheduledCount,

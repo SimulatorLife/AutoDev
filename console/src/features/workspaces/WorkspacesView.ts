@@ -118,11 +118,7 @@ export function WorkspacesView({
     },
     React.createElement(
       StatGrid,
-      { columns: 3 },
-      React.createElement(StatCard, {
-        title: "Configured Workspaces",
-        value: workspaces.length
-      }),
+      { columns: 2 },
       React.createElement(StatCard, {
         title: "Enabled Workspaces",
         value: enabledCount,

@@ -147,11 +147,7 @@ export function AgentsView({
     { feature: "agents" },
     React.createElement(
       StatGrid,
-      { columns: 4 },
-      React.createElement(StatCard, {
-        title: "Configured Agents",
-        value: agents.length
-      }),
+      { columns: 3 },
       React.createElement(StatCard, {
         title: "Ready Agents",
         value: readinessObserved ? readyAgents : NOT_OBSERVED_LABEL,

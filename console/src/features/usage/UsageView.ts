@@ -171,8 +171,7 @@ export function UsageView({
       {
         label: "Usage filters",
         action: "/usage",
-        submitTestId: "usage-apply",
-        summary: "Filters are stored in the URL"
+        submitTestId: "usage-apply"
       },
       React.createElement(
         "div",
