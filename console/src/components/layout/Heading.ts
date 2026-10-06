@@ -49,8 +49,16 @@ export const ENTITY_EYEBROW_CLASS =
  * down below `sm` because a 24px identifier needs three lines in a phone-width
  * column and dominates the page it is supposed to be titling.
  */
+/**
+ * `min-w-0` is load-bearing beside `break-words`. The title is a flex item in
+ * the drawer's title row, and a flex item's automatic minimum size is its
+ * min-content width; `overflow-wrap: break-word` breaks a long token only
+ * *after* the box has been narrowed, and it does not lower that minimum. So
+ * without `min-w-0` a 90-character unbreakable id keeps the box at its full
+ * min-content width, overflows the panel, and `break-words` does nothing.
+ */
 export const ENTITY_TITLE_CLASS =
-  "text-xl sm:text-2xl font-bold text-fg break-words";
+  "min-w-0 text-xl sm:text-2xl font-bold text-fg break-words";
 
 export interface EntityTitleProps {
   readonly children?: React.ReactNode | undefined;

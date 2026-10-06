@@ -31,11 +31,19 @@ export const DETAIL_DRAWER_CLASS =
   "rounded-lg border border-accent/60 bg-selected p-6 flex flex-col gap-6 shadow-xl";
 
 /** The drawer's header row: identity on the left, dismissal on the right. */
+/**
+ * The drawer header carries `min-w-0` on the identity column below it rather
+ * than only on the title. Every level between the panel and the title is a
+ * flex item whose automatic minimum size is its min-content width, and an
+ * unbreakable id sets that minimum high; `overflow-wrap: break-word` breaks a
+ * long token only *after* the box is narrowed and does not lower the minimum
+ * itself, so the wrap never happens unless the whole chain can shrink.
+ */
 export const DETAIL_DRAWER_HEADER_CLASS =
-  "flex items-start justify-between border-b border-border pb-4";
+  "flex min-w-0 items-start justify-between border-b border-border pb-4";
 
 /** Title and badges share a baseline; the subtitle sits under them. */
-export const DETAIL_DRAWER_TITLE_ROW_CLASS = "flex items-center gap-3";
+export const DETAIL_DRAWER_TITLE_ROW_CLASS = "flex min-w-0 items-center gap-3";
 
 /** A machine-readable fact about the selected item, such as its scope. */
 export const DETAIL_DRAWER_SUBTITLE_CLASS = "text-xs text-fg-muted font-mono";
@@ -76,7 +84,7 @@ export function DetailDrawer({
       { className: DETAIL_DRAWER_HEADER_CLASS },
       React.createElement(
         "div",
-        { className: "flex flex-col gap-1" },
+        { className: "flex min-w-0 flex-col gap-1" },
         React.createElement(
           "div",
           { className: DETAIL_DRAWER_TITLE_ROW_CLASS },

@@ -29,9 +29,15 @@ export interface BreadcrumbsProps {
   readonly ariaLabel?: string | undefined;
 }
 
+/**
+ * Both item shapes truncate. A breadcrumb label is a canonical identifier and
+ * can be one long unbreakable token, so the trail has to ellipsize inside its
+ * container rather than push the page sideways; `title` keeps the full label
+ * reachable on hover and the text stays selectable for copy.
+ */
 const ITEM_LINK_CLASS =
-  "rounded-sm text-accent hover:brightness-110 hover:underline ";
-const ITEM_PLAIN_CLASS = "rounded-sm text-fg font-medium";
+  "min-w-0 truncate rounded-sm text-accent hover:brightness-110 hover:underline";
+const ITEM_PLAIN_CLASS = "min-w-0 truncate rounded-sm text-fg font-medium";
 const SEPARATOR_CLASS = "mx-2 select-none text-fg-muted";
 
 /**
@@ -57,12 +63,16 @@ export function Breadcrumbs({
     "nav",
     {
       "aria-label": navLabel,
-      className: "text-xs"
+      // `min-w-0` so the trail can shrink inside a flex column, and
+      // `max-w-full` so it is bounded by its container rather than by its
+      // longest label.
+      className: "min-w-0 max-w-full text-xs"
     },
     React.createElement(
       "ol",
       {
-        className: "flex flex-wrap items-center list-none p-0 m-0"
+        className:
+          "flex min-w-0 max-w-full flex-wrap items-center list-none p-0 m-0"
       },
       ...items.map((item, index) => {
         const isCurrent = index === lastIndex;
@@ -70,7 +80,7 @@ export function Breadcrumbs({
           "li",
           {
             key: `${item.label}-${index}`,
-            className: "flex items-center"
+            className: "flex min-w-0 max-w-full items-center"
           },
           renderItem(item, isCurrent),
           isCurrent
@@ -98,7 +108,8 @@ function renderItem(
       "span",
       {
         "aria-current": "page",
-        className: ITEM_PLAIN_CLASS
+        className: ITEM_PLAIN_CLASS,
+        title: item.label
       },
       item.label
     );
@@ -108,14 +119,15 @@ function renderItem(
       "a",
       {
         href: item.href,
-        className: ITEM_LINK_CLASS
+        className: ITEM_LINK_CLASS,
+        title: item.label
       },
       item.label
     );
   }
   return React.createElement(
     "span",
-    { className: ITEM_PLAIN_CLASS },
+    { className: ITEM_PLAIN_CLASS, title: item.label },
     item.label
   );
 }

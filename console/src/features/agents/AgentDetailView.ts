@@ -14,6 +14,7 @@ import {
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import { chipList } from "../../components/tables/Chips.ts";
 import { AgentProviderSummary } from "./AgentProviderSummary.ts";
 
 export interface AgentDetailViewProps {
@@ -49,7 +50,9 @@ export function AgentDetailView({
         { className: "mb-5 flex flex-wrap items-start justify-between gap-4" },
         React.createElement(
           "div",
-          null,
+          // Shrinkable so the breadcrumb trail and the entity title below it
+          // can ellipsize and wrap inside the panel instead of widening it.
+          { className: "min-w-0 flex-1" },
           React.createElement(Breadcrumbs, {
             items: [{ label: "Agents", href: "/agents" }, { label: agent.role }]
           }),
@@ -264,27 +267,17 @@ function NameList({
       },
       heading
     ),
-    names.length === 0
-      ? React.createElement(
-          "p",
-          { className: "text-sm text-fg-muted" },
-          "None configured"
-        )
-      : React.createElement(
-          "ul",
-          { className: "flex flex-wrap gap-2" },
-          ...names.map((name) =>
-            React.createElement(
-              "li",
-              {
-                key: name,
-                className:
-                  "rounded border border-border-strong bg-surface-raised px-2 py-1 font-mono text-xs text-fg"
-              },
-              name
-            )
-          )
-        )
+    // The shared chip list rather than a second hand-typed one: this copy
+    // carried its own geometry and, with it, no `max-w-full` and no
+    // `truncate`, so a long skill or MCP identifier ran out of the panel
+    // instead of ellipsing inside it. `className` restyles every chip while
+    // keeping the shared chip presentation -- radius, padding, truncation.
+    chipList({
+      items: names,
+      className: "font-mono",
+      emptyLabel: "None configured",
+      testId: "agent-names"
+    })
   );
 }
 

@@ -114,7 +114,14 @@ export function chipList<TItem = string>({
             renderKey === undefined
               ? ((item as React.Key) ?? `chip-${index}`)
               : renderKey(item),
-          className: "flex min-w-0 items-center"
+          // `max-w-full` as well as `min-w-0`: the chip's own `max-w-full`
+          // resolves against this element, so without a cap here the li sizes
+          // to its content and the chip's limit is measured against a
+          // container that was never smaller. A single long identifier then
+          // runs out of the panel and the region has to be scrolled sideways
+          // to read. With the cap, `truncate` on the chip has a real width to
+          // truncate to.
+          className: "flex min-w-0 max-w-full items-center"
         },
         renderItem === undefined
           ? React.createElement(

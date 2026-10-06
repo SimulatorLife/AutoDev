@@ -51,6 +51,7 @@ import {
   BarChart,
   Breadcrumbs,
   CALLOUT_WARNING_CLASS,
+  chipList,
   ClosePanelLink,
   CODE_BLOCK_CLASS,
   CODE_BLOCK_HEIGHT_CLASS,
@@ -63,6 +64,7 @@ import {
   DETAIL_DRAWER_CLASS,
   DETAIL_DRAWER_HEADER_CLASS,
   DETAIL_DRAWER_SUBTITLE_CLASS,
+  DETAIL_DRAWER_TITLE_ROW_CLASS,
   DetailDrawer,
   EMPTY_BOX_CLASS,
   EMPTY_INLINE_CLASS,
@@ -420,11 +422,22 @@ test('Breadcrumbs renders ancestor items without an href as non-link elements an
   const navMarkup = markup.slice(navStart, navEnd + "</nav>".length);
 
   // The href-less ancestor renders as a plain span (no anchor wrapping it,
-  // no aria-current, no placeholder href).
-  assert.match(navMarkup, /<span class="[^"]*">Workspace hub<\/span>/);
+  // no aria-current, no placeholder href). Containment rather than a shape
+  // regex: the span also carries `title` for the truncated full label, and an
+  // optional group nested inside another quantifier is a pattern lint is right
+  // to refuse.
+  assert.ok(
+    navMarkup.includes(
+      'class="min-w-0 truncate rounded-sm text-fg font-medium" title="Workspace hub">Workspace hub</span>'
+    ),
+    `href-less ancestor should be a truncating plain span, got: ${navMarkup}`
+  );
   assert.equal(navMarkup.includes("Workspace hub</a>"), false);
   assert.doesNotMatch(navMarkup, /<span[^>]*Workspace hub[^>]*aria-current/);
-  assert.match(navMarkup, /<span class="[^"]*">Unlinked group<\/span>/);
+  assert.ok(
+    navMarkup.includes('title="Unlinked group">Unlinked group</span>'),
+    `empty-href ancestor should be a plain span, got: ${navMarkup}`
+  );
   assert.equal(navMarkup.includes("Unlinked group</a>"), false);
   assert.equal(navMarkup.includes('href=""'), false);
 
@@ -466,6 +479,81 @@ test("Breadcrumbs renders a single ancestor link with current-page aria state wh
   assert.equal(separatorMatches.length, 1);
 });
 
+test("the shrink chain holds: a long unbreakable identifier cannot widen its container", () => {
+  // Every Console identifier the operator reads is a canonical name, not
+  // prose: an agent role, a skill, an MCP server, a model id. Those can be one
+  // token with nowhere legal to break, so on a phone-width panel they are the
+  // one input guaranteed to overflow if the layout is wrong.
+  //
+  // The mechanism is easy to get wrong and invisible in review. A flex item's
+  // automatic minimum size is its *min-content* width, and `break-words` does
+  // not lower it -- `overflow-wrap: break-word` only breaks a token after the
+  // box has already been narrowed below it, and narrowing requires `min-w-0`.
+  // So `min-w-0` is required at every level between the container and the text,
+  // and the assertion below names each of those levels: remove one and the
+  // whole chain stops shrinking, no matter how many others remain.
+  const UNBREAKABLE = "a".repeat(90);
+
+  // The drawer header: header row, identity column, title row, then the title.
+  const drawer = renderToStaticMarkup(
+    React.createElement(DetailDrawer, {
+      title: UNBREAKABLE,
+      subtitle: "solver",
+      closeHref: "/agents"
+    })
+  );
+  for (const [what, className] of [
+    ["drawer header row", DETAIL_DRAWER_HEADER_CLASS],
+    ["drawer title row", DETAIL_DRAWER_TITLE_ROW_CLASS],
+    ["entity title", ENTITY_TITLE_CLASS]
+  ] as const) {
+    assert.ok(
+      className.includes("min-w-0"),
+      `${what} must carry min-w-0 to shrink inside the panel, got: ${className}`
+    );
+  }
+  // Both shared class constants have to reach the rendered header, or the
+  // guard above would pass on a constant nothing uses.
+  assert.ok(
+    drawer.includes(DETAIL_DRAWER_HEADER_CLASS),
+    `drawer must render the shared header class, got: ${drawer}`
+  );
+  assert.ok(
+    drawer.includes(ENTITY_TITLE_CLASS),
+    `drawer title must render the shared entity title class, got: ${drawer}`
+  );
+
+  // The chip list: the chip's `max-w-full` resolves against its `li`, so the
+  // `li` needs a cap of its own. Without it the `li` sizes to content, the
+  // chip is handed a container that was never narrower than itself, and
+  // `truncate` silently does nothing.
+  const chips = renderToStaticMarkup(
+    chipList({ items: [UNBREAKABLE], emptyLabel: "None" })
+  );
+  assert.match(
+    chips,
+    /<li class="flex min-w-0 max-w-full items-center">/,
+    `chip list item must be capped so the chip has a width to truncate to, got: ${chips}`
+  );
+
+  // The breadcrumb trail: same rule, and `title` keeps the full label
+  // reachable once the visible one is ellipsized.
+  const trail = renderToStaticMarkup(
+    React.createElement(Breadcrumbs, {
+      items: [{ label: UNBREAKABLE, href: "/agents" }]
+    })
+  );
+  assert.match(
+    trail,
+    /class="min-w-0 max-w-full text-xs"/,
+    `breadcrumb nav must be bounded by its container, got: ${trail}`
+  );
+  assert.ok(
+    trail.includes(`title="${UNBREAKABLE}"`),
+    `an ellipsized breadcrumb must keep the full label reachable, got: ${trail}`
+  );
+});
+
 test("StatusBadge renders valid variants", () => {
   for (const status of [
     "configured",
@@ -498,8 +586,28 @@ test("AgentsView keeps readiness and convergence unknown without observations", 
 });
 
 test("Agent detail separates configuration from unobserved runtime state", () => {
+  // Rendered with 70-character unbreakable skill and MCP identifiers rather
+  // than the tidy fixture. A detail page whose real inputs are canonical
+  // names -- not prose -- has to survive the name being longer than the panel,
+  // and this is the one view where that combination is guaranteed: the title,
+  // the breadcrumb trail and both name lists all render from the same agent.
+  //
+  // Spread the fixture rather than re-listing it: hand-rolling a second
+  // `AgentDefinition` drifts from the type the moment a field is added, and
+  // the drift surfaces as an undefined read deep in a child component rather
+  // than as a type error here.
+  const longName = (type: "skill" | "mcp", name: string) =>
+    type === "skill" ? { type, name } : { type, name, server: name };
   const markup = renderToStaticMarkup(
-    React.createElement(AgentDetailView, { agent: CONFIGURED_AGENT })
+    React.createElement(AgentDetailView, {
+      agent: {
+        ...CONFIGURED_AGENT,
+        tools: [
+          longName("skill", "s".repeat(70)),
+          longName("mcp", "m".repeat(70))
+        ]
+      }
+    })
   );
 
   assert.match(markup, /data-feature="agent-detail"/);
@@ -507,6 +615,15 @@ test("Agent detail separates configuration from unobserved runtime state", () =>
   assert.match(markup, /data-status="not-observed"/);
   assert.equal(markup.includes("Runtime healthy"), false);
   assert.equal(markup.includes("Converged"), false);
+
+  // The name lists are the shared chip list, so the hand-typed copy that
+  // carried its own geometry -- and with it neither `truncate` nor a cap the
+  // chip could truncate against -- must not come back.
+  assert.match(markup, /data-chips="agent-names"/);
+  assert.doesNotMatch(
+    markup,
+    /rounded border border-border-strong bg-surface-raised px-2 py-1 font-mono/
+  );
 });
 
 test("Agent detail exposes the shared breadcrumbs landmark with /agents parent and current-page aria state", () => {
