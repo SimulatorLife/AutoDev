@@ -13,7 +13,8 @@ import type {
   MemoryInjectionUseCohortPage,
   MemoryRecord,
   MemorySessionOutcomeCohortPage,
-  MemoryStatus
+  MemoryStatus,
+  MemoryStatusCounts
 } from "../memory/types.ts";
 import type { SandboxMode } from "../permissions/types.ts";
 import type {
@@ -519,6 +520,15 @@ export interface ControlApiMemoryPage<T> {
 export type ControlApiMemoryRecordsResponse =
   ControlApiMemoryPage<MemoryRecord> & {
     readonly schema: "autodev-memory-records-v1";
+    /**
+     * The lifecycle breakdown of the filtered collection, not of this page.
+     *
+     * Published because the Console cannot derive it: the page is a window the
+     * reader chose, so counting active claims off the rows on it reports at most
+     * `limit` of them beside a `total` of 1,204 and reads as a share. Every
+     * status is present, zeros included.
+     */
+    readonly statusCounts: MemoryStatusCounts;
   };
 
 export type ControlApiMemoryExperiencesResponse =

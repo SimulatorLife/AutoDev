@@ -2,10 +2,10 @@ import {
   type CanonicalNavSection,
   type ControlApiMemoryRecordsResponse,
   EXPERIENCE_OUTCOMES,
-  MEMORY_SESSION_COHORT_ASSIGNED_MODES,
   MEMORY_INJECTION_RESULTS,
   MEMORY_KINDS,
   MEMORY_OUTCOME_REPORT_KINDS,
+  MEMORY_SESSION_COHORT_ASSIGNED_MODES,
   MEMORY_STATUSES,
   MEMORY_USE_KINDS,
   type WorkspaceEntry
@@ -16,6 +16,7 @@ import {
   resolveFilter,
   type UnappliedFilter
 } from "../../src/components/filters/resolve-filter.ts";
+import { CALLOUT_WARNING_CLASS } from "../../src/components/layout/Callout.ts";
 import {
   type MemoryListScope,
   type MemoryTab,
@@ -48,7 +49,6 @@ import {
   readNodeContext,
   ResourceUnavailable
 } from "../_console.ts";
-import { CALLOUT_WARNING_CLASS } from "../../src/components/layout/Callout.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -468,18 +468,18 @@ async function fetchMemoryPageData(
         // Forwarded only when the URL actually named one, so an unfiltered
         // cohort read stays unfiltered rather than carrying an empty array the
         // Runtime would have to interpret.
-        ...(params.memoryMode !== "all"
-          ? { memoryModes: [params.memoryMode] }
-          : {}),
-        ...(params.injectionResult !== "all"
-          ? { injectionResults: [params.injectionResult] }
-          : {}),
-        ...(params.reportKind !== "all"
-          ? { reportKinds: [params.reportKind] }
-          : {}),
-        ...(params.outcomeKind !== "all"
-          ? { outcomeKinds: [params.outcomeKind] }
-          : {})
+        ...(params.memoryMode === "all"
+          ? {}
+          : { memoryModes: [params.memoryMode] }),
+        ...(params.injectionResult === "all"
+          ? {}
+          : { injectionResults: [params.injectionResult] }),
+        ...(params.reportKind === "all"
+          ? {}
+          : { reportKinds: [params.reportKind] }),
+        ...(params.outcomeKind === "all"
+          ? {}
+          : { outcomeKinds: [params.outcomeKind] })
       },
       config
     ),
@@ -491,10 +491,10 @@ async function fetchMemoryPageData(
             occurredFrom: params.occurredFrom,
             occurredUntil: params.occurredUntil,
             // The same three assignable modes both cohort reads accept.
-            ...(params.memoryMode !== "all"
-              ? { memoryModes: [params.memoryMode] }
-              : {}),
-            ...(params.useKind !== "all" ? { useKinds: [params.useKind] } : {})
+            ...(params.memoryMode === "all"
+              ? {}
+              : { memoryModes: [params.memoryMode] }),
+            ...(params.useKind === "all" ? {} : { useKinds: [params.useKind] })
           },
           config
         )
@@ -719,6 +719,7 @@ export default async function MemoryPage(
       listScope,
       records: data.records.items,
       totalRecords,
+      recordsStatusCounts: data.records.statusCounts,
       experiences,
       totalExperiences,
       sessionCohorts,

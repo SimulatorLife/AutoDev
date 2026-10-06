@@ -63,6 +63,7 @@ import {
   type ConvergenceStatus,
   isSandboxMode,
   LOCAL_CONTROL_API_ACTOR,
+  MEMORY_STATUSES,
   PROVIDER_ROLES,
   type ProviderRole,
   type ProviderRolePriority,
@@ -1020,6 +1021,24 @@ function isInjectionUseCohortPage(
     Array.isArray(value.cells) &&
     value.cells.every(isInjectionUseCohortCell) &&
     typeof value.exposureCount === "number"
+  );
+}
+
+/**
+ * Narrows the lifecycle breakdown a records page is published with.
+ *
+ * Required, not optional. Every status must be present, because the Console
+ * reads this to replace a count it used to take from the rows on the page — and
+ * a Runtime that omitted the breakdown, or left a status out, would have the
+ * Console render zeros for claims it never observed, which is the one number on
+ * this page nobody can check.
+ */
+function isMemoryStatusCounts(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    MEMORY_STATUSES.every(
+      (status) => typeof (value as Record<string, unknown>)[status] === "number"
+    )
   );
 }
 
@@ -2199,7 +2218,7 @@ export async function fetchMemoryRecords(
     result.data,
     "autodev-memory-records-v1",
     isMemoryRecordRow
-  )
+  ) && isMemoryStatusCounts((result.data as { statusCounts?: unknown }).statusCounts)
     ? { kind: "ok", data: result.data }
     : invalidMemoryPageResponse("Records", "autodev-memory-records-v1");
 }

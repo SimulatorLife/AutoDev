@@ -201,7 +201,14 @@ test("injectMemoryContext performs JIT research and attaches the advisory packet
       items: [memory],
       total: 1,
       limit: 50,
-      offset: 0
+      offset: 0,
+      statusCounts: {
+        proposed: 0,
+        active: 1,
+        superseded: 0,
+        invalidated: 0,
+        uncertain: 0
+      }
     }),
     getMemoryHistory: async () => null,
     transitionMemories: async (_changes: readonly MemoryVersionedUpdate[]) =>

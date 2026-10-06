@@ -28,6 +28,7 @@ import {
   type MemoryInjectionUseCohortCell,
   type MemoryRecord,
   type MemorySessionOutcomeCohortPage,
+  type MemoryStatusCounts,
   PROVIDER_ROLES,
   SANDBOX_MODES,
   type ToolCatalogItem,
@@ -539,6 +540,13 @@ test("an unrecognised URL filter is named, never resolved into a default", async
           items: [],
           total: 0,
           limit: 50,
+          statusCounts: {
+            proposed: 0,
+            active: 0,
+            superseded: 0,
+            invalidated: 0,
+            uncertain: 0
+          },
           offset: 0,
           hasMore: false
         });
@@ -625,6 +633,13 @@ test("MemoryPage asks the Runtime for the page the URL names", async () => {
           items: [],
           total: 1204,
           limit: 25,
+          statusCounts: {
+            proposed: 0,
+            active: 0,
+            superseded: 0,
+            invalidated: 0,
+            uncertain: 0
+          },
           offset: 100,
           hasMore: true
         });
@@ -4205,6 +4220,13 @@ test("MemoryPage reports failed experience history instead of rendering an empty
           items: [],
           total: 0,
           limit: 50,
+          statusCounts: {
+            proposed: 0,
+            active: 0,
+            superseded: 0,
+            invalidated: 0,
+            uncertain: 0
+          },
           offset: 0,
           hasMore: false
         });
@@ -5815,6 +5837,123 @@ test("MemoryCohortsView reports no coverage for a mode with no eligible exposure
   assert.doesNotMatch(markup, /NaN/);
 });
 
+test("MemoryView reports lifecycle counts for the whole collection, not for the page", () => {
+  // The defect this closes: Active Claims was counted off the rows on the page,
+  // because the response carried no total for it. On a 25-row page it reported
+  // at most 25 beside a collection total of 1,204, which reads as a share and is
+  // not one — and it was not even a live wrong number, since a page can hold
+  // zero active records while the collection holds hundreds.
+  const records: MemoryRecord[] = [
+    {
+      id: "mem-001",
+      kind: "procedural",
+      status: "active",
+      scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+      claim: "Always execute test suites before pushing code to main.",
+      validity: { state: "verified", evidence: [] },
+      provenance: {
+        experienceIds: ["exp-1"],
+        evidence: [],
+        createdBy: "operator",
+        createdAt: "2026-10-01T00:00:00Z"
+      },
+      createdAt: "2026-10-01T00:00:00Z",
+      updatedAt: "2026-10-02T00:00:00Z"
+    }
+  ];
+  const render = (
+    statusCounts: MemoryStatusCounts | null
+  ): string =>
+    renderToStaticMarkup(
+      React.createElement(MemoryView, {
+        listScope: memoryListScope({ tab: "records" }),
+        records,
+        totalRecords: 1204,
+        recordsStatusCounts: statusCounts,
+        experiences: [],
+        totalExperiences: 1,
+        sessionCohorts: null,
+        useCohorts: null,
+        repositoryId: "SimulatorLife/AutoDev",
+        workspaces: [],
+        unapplied: []
+      })
+    );
+
+  const measured = render({
+    proposed: 40,
+    active: 900,
+    superseded: 120,
+    invalidated: 130,
+    uncertain: 14
+  });
+  // 900 active records behind a one-row page. The old implementation could not
+  // have printed this number at any page size.
+  assert.match(measured, /Verified &amp; in service, all pages/);
+  assert.match(measured, />900</);
+  assert.match(measured, /Durable records by lifecycle status/);
+  // Every lifecycle state is shown, not just the one the card counts.
+  for (const label of ["Proposed", "Active", "Uncertain", "Superseded", "Invalidated"]) {
+    assert.match(measured, new RegExp(`>${label}<`));
+  }
+
+  // An absent rollup is not a collection with no active claims, and must never
+  // render as a zero beside the total.
+  const unobserved = render(null);
+  assert.match(unobserved, /Not observed/);
+  assert.doesNotMatch(unobserved, /Durable records by lifecycle status/);
+});
+
+test("a records page without a lifecycle rollup is refused, not rendered as zero", async () => {
+  const config = { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" };
+  const read = async (body: unknown): Promise<boolean> => {
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (async () => Response.json(body)) as typeof fetch;
+    try {
+      return (
+        (
+          await fetchMemoryRecords({ workspaceId: "SimulatorLife/AutoDev" }, config)
+        ).kind === "ok"
+      );
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  };
+
+  const page = {
+    schema: "autodev-memory-records-v1",
+    items: [],
+    total: 0,
+    limit: 50,
+    offset: 0
+  };
+  // A Runtime that publishes no rollup leaves the Console with nothing to say
+  // about the lifecycle. Accepting it would render zeros for claims it never
+  // observed — on the one number no reader can check.
+  assert.equal(await read(page), false);
+  assert.equal(
+    await read({
+      ...page,
+      statusCounts: { proposed: 0, active: 0, superseded: 0, invalidated: 0 }
+    }),
+    false,
+    "a partial rollup is refused too: an absent status is ambiguous between zero and not observed"
+  );
+  assert.equal(
+    await read({
+      ...page,
+      statusCounts: {
+        proposed: 0,
+        active: 2,
+        superseded: 0,
+        invalidated: 0,
+        uncertain: 0
+      }
+    }),
+    true
+  );
+});
+
 test("MemoryView keeps an unavailable experience tab out of its successful-empty state", () => {
   const markup = renderToStaticMarkup(
     React.createElement(MemoryView, {
@@ -5923,10 +6062,11 @@ test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace
   assert.equal(tabUrl.searchParams.has("offset"), false);
   assert.match(markup, /Durable Records/);
   assert.match(markup, /Active Claims/);
-  // The active count is taken over the rows on this page, because the response
-  // carries no active total. The card says which one it is rather than reading
-  // beside a collection total as a share of it.
-  assert.match(markup, /Verified &amp; in service on this page/);
+  // The active count comes from the Runtime's lifecycle rollup over the filtered
+  // collection, so it is about every record rather than the rows on this page.
+  // While it was counted off the page, a 25-row page reported at most 25 beside
+  // a total of 1,204 and read as a share of it.
+  assert.match(markup, /Verified &amp; in service, all pages/);
 
   const selectorStart = markup.indexOf('data-memory-workspace-form="true"');
   const formStart = markup.lastIndexOf("<form", selectorStart);
@@ -6269,6 +6409,13 @@ test("fetchMemoryRecords issues authenticated GET to /control/memory/records wit
       items: [],
       total: 0,
       limit: 50,
+      statusCounts: {
+        proposed: 0,
+        active: 0,
+        superseded: 0,
+        invalidated: 0,
+        uncertain: 0
+      },
       offset: 0,
       hasMore: false
     });
@@ -6348,6 +6495,13 @@ test("Memory collection tabs fail closed on an unreadable response", async () =>
       items: [],
       total: 0,
       limit: 50,
+      statusCounts: {
+        proposed: 0,
+        active: 0,
+        superseded: 0,
+        invalidated: 0,
+        uncertain: 0
+      },
       offset: 0
     })
   );
@@ -6602,6 +6756,13 @@ test("a paged Memory collection fails closed on an unreadable row", async () => 
     items,
     total: items.length,
     limit: 25,
+    statusCounts: {
+      proposed: 0,
+      active: 0,
+      superseded: 0,
+      invalidated: 0,
+      uncertain: 0
+    },
     offset: 0
   });
   const list = (body: unknown) =>
@@ -9333,7 +9494,14 @@ test("cohort filters reach the Runtime and stay on the cohorts tab", async () =>
           items: [],
           total: 0,
           limit: 50,
-          offset: 0
+          offset: 0,
+          statusCounts: {
+            proposed: 0,
+            active: 0,
+            superseded: 0,
+            invalidated: 0,
+            uncertain: 0
+          }
         });
       }
       if (url.includes("/control/memory/experiences")) {
@@ -10102,7 +10270,17 @@ test("a memory row missing a member its view dereferences fails closed instead o
     items,
     total: items.length,
     limit: 50,
-    offset: 0
+    offset: 0,
+    // The lifecycle rollup is part of the records contract, so a records page
+    // without one is refused — which is why this fixture carries it for every
+    // schema, including the experience ones that do not require it.
+    statusCounts: {
+      proposed: 0,
+      active: 0,
+      superseded: 0,
+      invalidated: 0,
+      uncertain: 0
+    }
   });
 
   // The complete rows must still be accepted. A guard that is too strict is

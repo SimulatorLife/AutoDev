@@ -53,6 +53,7 @@ import {
   type MemoryRecord,
   type MemoryRecordInjectionEventInput,
   type MemoryRecordOutcomeReportInput,
+  type MemoryRecordPage,
   type MemoryRecordSessionOutcomeReportInput,
   type MemoryRepository,
   type MemoryResearchRequest,
@@ -1711,7 +1712,7 @@ export class MemoryService
 
   async listMemories(
     request: MemoryListRequest
-  ): Promise<MemoryPage<MemoryRecord>> {
+  ): Promise<MemoryRecordPage> {
     this.assertOptionalQuery(request.query);
     const pagination = this.pageRequest(request.limit, request.offset);
     const page = await this.repository.listMemories({

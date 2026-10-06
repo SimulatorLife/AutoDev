@@ -1080,6 +1080,45 @@ export interface MemoryPage<T> {
   readonly offset: number;
 }
 
+/**
+ * How many records sit at each lifecycle status, over the whole filtered
+ * collection.
+ *
+ * Every status is present, including the ones with no rows. A partial map would
+ * force every reader to ask whether a missing key means zero or means not
+ * observed, and this codebase has a rule about never confusing those two -- so
+ * the ambiguity is removed here rather than left to each consumer.
+ */
+export type MemoryStatusCounts = Readonly<Record<MemoryStatus, number>>;
+
+/**
+ * A page of records, plus the lifecycle breakdown of everything they were drawn
+ * from.
+ *
+ * The breakdown is over the filtered collection, not over the rows on the page,
+ * because the page is a window the reader chose and the collection is the thing
+ * the number is about. Deriving it client-side from the rows was the defect this
+ * type exists to end: on a 25-row page it reported at most 25 active claims
+ * beside a total of 1,204, which reads as a share and is not one.
+ */
+export interface MemoryRecordPage extends MemoryPage<MemoryRecord> {
+  readonly statusCounts: MemoryStatusCounts;
+}
+
+/** A status rollup with every status present, so no consumer has to infer zero. */
+export function emptyMemoryStatusCounts(): MemoryStatusCounts {
+  return Object.fromEntries(
+    MEMORY_STATUSES.map((status) => [status, 0])
+  ) as MemoryStatusCounts;
+}
+
+export function isMemoryStatus(value: unknown): value is MemoryStatus {
+  return (
+    typeof value === "string" &&
+    (MEMORY_STATUSES as readonly string[]).includes(value)
+  );
+}
+
 export type MemoryExperiencePurgeReason =
   "privacy_request" | "retention_expired";
 
@@ -1175,7 +1214,9 @@ export interface MemoryRepository {
   searchMemories(
     request: MemorySearchRequest
   ): Promise<readonly MemorySearchHit[]>;
-  listMemories(request: MemoryListRequest): Promise<MemoryPage<MemoryRecord>>;
+  listMemories(
+    request: MemoryListRequest
+  ): Promise<MemoryRecordPage>;
   getMemoryHistory(
     id: string,
     context: MemoryReadContext

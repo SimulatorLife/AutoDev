@@ -11,6 +11,7 @@ import {
   PeriodicExportingMetricReader
 } from "@opentelemetry/sdk-metrics";
 import {
+  emptyMemoryStatusCounts,
   type EvidenceReference,
   type ExperienceEnvelope,
   isMemoryExperienceVisibleTo,
@@ -44,6 +45,7 @@ import {
   type MemorySessionOutcomeCohortFilter,
   type MemorySessionOutcomeCohortPage,
   type MemorySessionOutcomeReport,
+  type MemoryStatusCounts,
   type MemoryUseReport,
   type MemoryVersionedUpdate,
   sessionOutcomeReportBodyMatches,
@@ -219,9 +221,20 @@ class FakeMemoryRepository implements MemoryRepository {
     total: number;
     limit: number;
     offset: number;
+    statusCounts: MemoryStatusCounts;
   }> {
     const items = [...this.memories.values()];
-    return { items, total: items.length, limit: 50, offset: 0 };
+    const measured: Record<string, number> = { ...emptyMemoryStatusCounts() };
+    for (const memory of items) {
+      measured[memory.status] = (measured[memory.status] ?? 0) + 1;
+    }
+    return {
+      items,
+      total: items.length,
+      limit: 50,
+      offset: 0,
+      statusCounts: measured as MemoryStatusCounts
+    };
   }
 
   async getMemoryHistory(id: string): Promise<MemoryHistory | null> {

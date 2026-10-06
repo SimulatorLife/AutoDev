@@ -215,6 +215,15 @@ LIMIT ${limitParam}
 }
 
 export interface BuiltListQuery {
+  /**
+   * Rows of `(status, count)` over the filtered collection.
+   *
+   * This replaces a bare `COUNT(*)`, and that is deliberate. The rollup reads
+   * the same rows under the same predicate as the count did, so it costs no
+   * more and no extra round trip, and `total` is now the sum of parts that were
+   * measured together rather than a second scan that could disagree with the
+   * rows under it.
+   */
   readonly countText: string;
   readonly countParams: readonly unknown[];
   readonly text: string;
@@ -304,7 +313,7 @@ export function buildMemoryListQuery(
     ? `ts_rank(claim_search, plainto_tsquery('english', ${row.queryParam})) DESC, created_at DESC`
     : "created_at DESC";
   return {
-    countText: `SELECT COUNT(*)::bigint AS total FROM memory_records WHERE ${count.filters.join(" AND ")}`,
+    countText: `SELECT status, COUNT(*)::bigint AS status_total FROM memory_records WHERE ${count.filters.join(" AND ")} GROUP BY status`,
     countParams: params.all,
     text: `SELECT * FROM memory_records WHERE ${row.filters.join(" AND ")} ORDER BY ${order}, id DESC LIMIT ${limitParam} OFFSET ${offsetParam}`,
     params: rowParams.all

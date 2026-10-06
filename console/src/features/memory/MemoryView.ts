@@ -6,11 +6,14 @@ import type {
   MemoryInjectionUseCohortPage,
   MemoryRecord,
   MemorySessionOutcomeCohortPage,
+  MemoryStatus,
+  MemoryStatusCounts,
   WorkspaceEntry
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { BarChart } from "../../components/charts/BarChart.ts";
 import { FilterBar } from "../../components/filters/FilterBar.ts";
 import { FilterNotice } from "../../components/filters/FilterNotice.ts";
 import type { UnappliedFilter } from "../../components/filters/resolve-filter.ts";
@@ -32,6 +35,49 @@ import {
   type MemoryRecordHistory,
   MemoryRecordsView
 } from "./MemoryRecordsView.ts";
+
+/**
+ * Lifecycle statuses in an order a reader can act on, with the one-word labels
+ * the status vocabulary is filtered by elsewhere on this page.
+ *
+ * The order is the argument rather than the vocabulary's: proposed is what a
+ * curator still has work to do, active is the healthy middle, and the three
+ * terminal states are what a reader is looking for when they ask whether memory
+ * is any good. An alphabetical list would put `invalidated` between them.
+ */
+const MEMORY_STATUS_LABEL: Record<MemoryStatus, string> = {
+  proposed: "Proposed",
+  active: "Active",
+  uncertain: "Uncertain",
+  superseded: "Superseded",
+  invalidated: "Invalidated"
+};
+
+const MEMORY_STATUS_ORDER: readonly MemoryStatus[] = [
+  "proposed",
+  "active",
+  "uncertain",
+  "superseded",
+  "invalidated"
+];
+
+/**
+ * A zero for every lifecycle status, for when the Runtime published no rollup.
+ *
+ * Never rendered as zero: the card above reads "Not observed" in that case. This
+ * exists so the breakdown below can render without a null check in every cell,
+ * and its zeros are the reason the card checks the rollup's presence separately
+ * rather than reading a zero out of this object.
+ */
+function emptyRecordStatusCounts(): MemoryStatusCounts {
+  return {
+    proposed: 0,
+    active: 0,
+    superseded: 0,
+    invalidated: 0,
+    uncertain: 0
+  };
+}
 
 export interface MemoryViewProps {
   /**
@@ -95,6 +141,14 @@ export interface MemoryViewProps {
    * not render.
    */
   readonly unapplied?: readonly UnappliedFilter[] | undefined;
+  /**
+   * Lifecycle counts for the whole filtered collection.
+   *
+   * Null when the Runtime published none, which is a state the view renders
+   * rather than resolves -- an absent rollup is not a collection with no active
+   * claims.
+   */
+  readonly recordsStatusCounts?: MemoryStatusCounts | null | undefined;
 }
 
 export function MemoryView({
@@ -117,12 +171,17 @@ export function MemoryView({
   workspaces,
   controlFailed,
   controlRefusal,
-  unapplied
+  unapplied,
+  recordsStatusCounts
 }: MemoryViewProps): React.JSX.Element {
   const activeTab = listScope.tab;
-  const activeRecordsCount = records.filter(
-    (r) => r.status === "active"
-  ).length;
+  // Counted over the collection the Runtime rolled up, not over the rows on this
+  // page. `records` is the page the reader asked for; counting lifecycle states
+  // off it reported at most `limit` claims beside a total of 1,204, which reads
+  // as a share of it and is not one.
+  const statusCounts = recordsStatusCounts ?? emptyRecordStatusCounts();
+  const hasLifecycleRollup = recordsStatusCounts !== null;
+  const activeRecordsCount = statusCounts.active;
   const totalObservedSessions = sessionCohorts?.sessionCount ?? null;
 
   const tabButtons: { readonly id: MemoryTab; readonly label: string }[] = [
@@ -204,15 +263,18 @@ export function MemoryView({
         subtitle: `${records.length} in scope`
       }),
       React.createElement(StatCard, {
-        // Counted over the rows on this page, not over the collection, because
-        // the Runtime returns an active-status total nowhere in this response.
-        // The neighbouring cards publish a total in the headline and qualify
-        // the page count in the subtitle; this one has only a page count, so it
-        // says so rather than reading beside "1,204" as a share of it. With a
-        // 25-row page it would otherwise report at most 25.
+        // A collection-scoped count, published by the Runtime's own rollup.
+        // While there was no such rollup this card counted the rows on the
+        // page and said so in its subtitle; it now carries a number about the
+        // whole filtered collection, and "not observed" is a state it can still
+        // reach rather than a zero it has to invent.
         title: "Active Claims",
-        value: activeRecordsCount,
-        subtitle: "Verified & in service on this page"
+        value: hasLifecycleRollup
+          ? activeRecordsCount.toLocaleString()
+          : NOT_OBSERVED_LABEL,
+        subtitle: hasLifecycleRollup
+          ? "Verified & in service, all pages"
+          : NOT_OBSERVED_LABEL
       }),
       React.createElement(StatCard, {
         title: "Experiences",
@@ -239,6 +301,26 @@ export function MemoryView({
       activeTabId: activeTab,
       hrefFor: hrefForTab
     }),
+
+    // Where everything we have written ended up. The stat card above answers
+    // "how many are in service now"; this answers "and what happened to the rest",
+    // which is the only durability signal that exists — governance is what
+    // turns a pile of captured text into claims someone verified or rejected.
+    hasLifecycleRollup && activeTab === "records"
+      ? React.createElement(BarChart, {
+          data: MEMORY_STATUS_ORDER.map((status) => ({
+            label: MEMORY_STATUS_LABEL[status],
+            value: statusCounts[status],
+            valueText: statusCounts[status].toLocaleString()
+          })),
+          label: "Durable records by lifecycle status",
+          notObservedMessage: NOT_OBSERVED_LABEL,
+          emptyMessage:
+            "No durable records were observed for this scope and time window.",
+          barClass: "bg-chart-3",
+          valueClass: "text-chart-3"
+        })
+      : null,
 
     controlFailed
       ? React.createElement(ControlFailureNotice, {

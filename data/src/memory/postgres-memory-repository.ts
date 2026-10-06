@@ -5,11 +5,13 @@ import {
   assertMemoryInjectionUseCohortFilter,
   assertMemorySessionOutcomeCohortFilter,
   assertMemoryUseReportInvariants,
+  emptyMemoryStatusCounts,
   type ExperienceEnvelope,
   type ExperienceListRequest,
   type ExperienceOutcome,
   type ExperienceSearchRequest,
   isMemoryInjectionSessionCardinality,
+  isMemoryStatus,
   isMemoryUseCohortEligibleMode,
   type MemoryAuthority,
   type MemoryExecutionMode,
@@ -41,6 +43,7 @@ import {
   type MemoryRecord,
   type MemoryRecordInjectionEventInput,
   type MemoryRecordOutcomeReportInput,
+  type MemoryRecordPage,
   type MemoryRecordSessionOutcomeReportInput,
   type MemoryRecordUseReportInput,
   type MemoryRepository,
@@ -52,6 +55,7 @@ import {
   type MemorySessionOutcomeCohortFilter,
   type MemorySessionOutcomeCohortPage,
   type MemorySessionOutcomeReport,
+  type MemoryStatusCounts,
   type MemoryUseCohortEligibleMode,
   type MemoryUseKind,
   type MemoryUseReport,
@@ -565,18 +569,32 @@ export class PostgresMemoryRepository implements MemoryRepository {
 
   async listMemories(
     request: MemoryListRequest
-  ): Promise<MemoryPage<MemoryRecord>> {
+  ): Promise<MemoryRecordPage> {
     const query = buildMemoryListQuery(request);
-    const [count, rows] = await Promise.all([
-      this.pool.query<{ total: string | number }>(
+    const [rollup, rows] = await Promise.all([
+      this.pool.query<{ status: string; status_total: string | number }>(
         query.countText,
         query.countParams
       ),
       this.pool.query(query.text, query.params)
     ]);
+    // Every status is present whether or not the database returned a row for
+    // it. A status with no records is a real zero, and it has to arrive as one
+    // rather than as a missing key each consumer would have to interpret.
+    // Accumulated into a mutable copy because the published type is readonly;
+    // the rollup cannot be built without writing into it.
+    const measured: Record<string, number> = { ...emptyMemoryStatusCounts() };
+    let total = 0;
+    for (const row of rollup.rows) {
+      if (!isMemoryStatus(row.status)) continue;
+      const count = Number(row.status_total ?? 0);
+      measured[row.status] = count;
+      total += count;
+    }
     return {
       items: rows.rows.map((row) => hydrateMemoryRecordRow(row)),
-      total: Number(count.rows[0]?.total ?? 0),
+      total,
+      statusCounts: measured as MemoryStatusCounts,
       limit: request.limit ?? 50,
       offset: request.offset ?? 0
     };

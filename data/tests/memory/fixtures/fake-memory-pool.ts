@@ -837,6 +837,7 @@ export class FakeMemoryPool implements MemoryConnectionPool {
       this.readRelatedMemories(sql, params) ??
       this.readHistoryEvents(sql, params) ??
       this.readExpiredExperiences(sql, params) ??
+      this.readRecordStatusRollup(sql, params) ??
       this.readListCount(sql, params) ??
       this.readListPage(sql, params)
     );
@@ -1439,14 +1440,43 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     params: readonly unknown[]
   ): MemoryQueryResult | null {
     const match =
-      /^SELECT COUNT\(\*\)::bigint AS total FROM (memory_records|memory_experiences) WHERE (.+)$/.exec(
+      /^SELECT COUNT\(\*\)::bigint AS total FROM (memory_experiences) WHERE (.+)$/.exec(
         sql
       );
     if (!match) return null;
-    const table = match[1] as "memory_records" | "memory_experiences";
+    const table = match[1] as "memory_experiences";
     const predicate = compileCondition(match[2] as string, params);
     const total = [...this.tables[table].values()].filter(predicate).length;
     return { rows: [{ total }], rowCount: 1 };
+  }
+
+  /**
+   * The records list counts by status rather than with a bare `COUNT(*)`, so the
+   * lifecycle breakdown and the total are read in one pass over one predicate.
+   * Grouping here rather than totalling a flat count is the point: a fake that
+   * collapsed the two would not notice a repository that computed one from the
+   * other incorrectly.
+   */
+  private readRecordStatusRollup(
+    sql: string,
+    params: readonly unknown[]
+  ): MemoryQueryResult | null {
+    const match =
+      /^SELECT status, COUNT\(\*\)::bigint AS status_total FROM memory_records WHERE (.+) GROUP BY status$/.exec(
+        sql
+      );
+    if (!match) return null;
+    const predicate = compileCondition(match[1] as string, params);
+    const counts = new Map<string, number>();
+    for (const row of [...this.tables.memory_records.values()].filter(predicate)) {
+      const status = String(row.status ?? "");
+      counts.set(status, (counts.get(status) ?? 0) + 1);
+    }
+    const rows = Array.from(counts.entries(), ([status, status_total]) => ({
+      status,
+      status_total
+    }));
+    return { rows, rowCount: rows.length };
   }
 
   private readListPage(
