@@ -25,6 +25,7 @@ import {
   type GithubWorkflowDefinition,
   LOCAL_CONTROL_API_ACTOR,
   type McpServerResource,
+  type MemoryInjectionUseCohortCell,
   type MemoryRecord,
   type MemorySessionOutcomeCohortPage,
   PROVIDER_ROLES,
@@ -5700,6 +5701,118 @@ test("MemoryCohortsView distinguishes an observed empty cohort from unavailable 
   assert.match(markup, /Observed Sessions/);
   assert.match(markup, /No session outcome cohort data found/);
   assert.doesNotMatch(markup, /Session outcome cohort data is unavailable/);
+});
+
+test("MemoryCohortsView answers how much of what was injected was ever judged", () => {
+  // The cohort cells are a matrix -- mode x session cardinality x judgement --
+  // and neither question an operator actually opens this tab to ask is answered
+  // by a single cell. Both are sums, and the summing is where this can go wrong:
+  // a total that quietly drops the unassessed exposures, or files `unobservable`
+  // under `not_used`, reports a confidence no curator expressed.
+  const useCell = (
+    memoryMode: string,
+    useKind: string | null,
+    exposureCount: number
+  ): MemoryInjectionUseCohortCell => ({
+    memoryMode: memoryMode as MemoryInjectionUseCohortCell["memoryMode"],
+    sessionCardinality: "single",
+    useKind: useKind as MemoryInjectionUseCohortCell["useKind"],
+    exposureCount
+  });
+
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryCohortsView, {
+      sessionCohorts: null,
+      useCohorts: {
+        schema: "autodev-memory-injection-use-cohorts-v1",
+        workspaceId: "SimulatorLife/AutoDev",
+        repositoryId: "SimulatorLife/AutoDev",
+        occurredFrom: "2026-09-01T00:00:00Z",
+        occurredUntil: "2026-10-01T00:00:00Z",
+        exposureCount: 40,
+        cells: [
+          useCell("jit", "used", 10),
+          useCell("jit", "not_used", 5),
+          // Nobody could tell. Filing this under "not used" would say memory was
+          // ignored when the truth is that nobody watched.
+          useCell("jit", "unobservable", 5),
+          useCell("jit", null, 10),
+          useCell("retrieval-only", "partially_used", 5),
+          useCell("retrieval-only", null, 5)
+        ]
+      },
+      listScope: memoryListScope({ tab: "cohorts" }),
+      currentWorkspaceId: "SimulatorLife/AutoDev",
+      repositoryId: "SimulatorLife/AutoDev",
+      occurredFrom: "2026-09-01T00:00:00Z",
+      occurredUntil: "2026-10-01T00:00:00Z"
+    })
+  );
+
+  // Every judgement category is its own bar, with the absence of a judgement as
+  // a fifth rather than folded into any of the four.
+  for (const label of ["Used", "Partially used", "Not used", "Unobservable"]) {
+    assert.match(markup, new RegExp(`>${label}<`), `${label} keeps its own bar`);
+  }
+  assert.match(markup, />Not assessed</);
+
+  // The weights are exposure counts, so the judgement bars sum to the eligible
+  // total: 10 used, 5 partially used, 5 not used, 5 unobservable, 15 not
+  // assessed. Asserted as a multiset because the point is that nothing was
+  // merged or dropped, which a per-label assertion would not catch.
+  const judgementValues = Array.from(
+    markup.matchAll(/text-chart-2[^"]*">(\d[\d,]*)<\/span>/g),
+    (match) => match[1]
+  );
+  assert.deepEqual(
+    judgementValues,
+    ["10", "5", "5", "5", "15"],
+    "every judgement keeps its own weight, and the unassessed remainder is one of them"
+  );
+
+  // Coverage is stated as assessed-of-eligible against the mode's own
+  // denominator: jit judged 20 of 30, retrieval-only 5 of 10.
+  assert.match(markup, /67% assessed \(20 of 30\)/);
+  assert.match(markup, /50% assessed \(5 of 10\)/);
+  // Never as a use rate. An unassessed exposure is missing data, so a share
+  // "used" over the eligible denominator would read missing as negative.
+  assert.doesNotMatch(markup, /% used/);
+});
+
+test("MemoryCohortsView reports no coverage for a mode with no eligible exposures", () => {
+  // A mode observed with zero eligible exposures has no denominator, so there
+  // is no rate. Reporting 0% would read as "every exposure we injected was
+  // ignored", which is the opposite of what was observed.
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryCohortsView, {
+      sessionCohorts: null,
+      useCohorts: {
+        schema: "autodev-memory-injection-use-cohorts-v1",
+        workspaceId: "SimulatorLife/AutoDev",
+        repositoryId: "SimulatorLife/AutoDev",
+        occurredFrom: "2026-09-01T00:00:00Z",
+        occurredUntil: "2026-10-01T00:00:00Z",
+        exposureCount: 0,
+        cells: [
+          {
+            memoryMode: "jit",
+            sessionCardinality: "single",
+            useKind: "used",
+            exposureCount: 0
+          }
+        ]
+      },
+      listScope: memoryListScope({ tab: "cohorts" }),
+      currentWorkspaceId: "SimulatorLife/AutoDev",
+      repositoryId: "SimulatorLife/AutoDev",
+      occurredFrom: "2026-09-01T00:00:00Z",
+      occurredUntil: "2026-10-01T00:00:00Z"
+    })
+  );
+
+  assert.match(markup, /No eligible exposures/);
+  assert.doesNotMatch(markup, /0% assessed/);
+  assert.doesNotMatch(markup, /NaN/);
 });
 
 test("MemoryView keeps an unavailable experience tab out of its successful-empty state", () => {

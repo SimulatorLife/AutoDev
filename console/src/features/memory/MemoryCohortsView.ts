@@ -7,6 +7,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { BarChart, type BarChartDatum } from "../../components/charts/BarChart.ts";
 import { FilterBar } from "../../components/filters/FilterBar.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
@@ -26,6 +27,112 @@ import {
 } from "../../components/ui/text-classes.ts";
 import { SUCCESS_TONE_CLASS } from "../../components/ui/tones.ts";
 import { memoryFilterHref,type MemoryListScope } from "./memory-list-url.ts";
+
+/**
+ * Every exposure's assessment outcome, weighted, with nothing merged.
+ *
+ * The cohort cells are a matrix -- mode x session cardinality x judgement -- and
+ * the counts an operator needs are not in any single cell. So they are folded
+ * here, and the folding is where this could go wrong: a sum that quietly drops
+ * the unassessed exposures, or that files `unobservable` under `not_used`, would
+ * report a confidence the curator never expressed. `not_used` says nobody saw
+ * it used; `unobservable` says nobody could tell. Those are different answers
+ * and the chart keeps them as separate bars, with the unassessed remainder
+ * alongside so the judged share is never read as the whole.
+ *
+ * The order is deliberate rather than alphabetical: the judgements first, then
+ * the one bar that is not a judgement, so the eye lands on the caveat last.
+ */
+const USE_OUTCOME_ORDER = [
+  "used",
+  "partially_used",
+  "not_used",
+  "unobservable"
+] as const;
+
+const USE_OUTCOME_LABEL: Record<(typeof USE_OUTCOME_ORDER)[number], string> = {
+  used: "Used",
+  partially_used: "Partially used",
+  not_used: "Not used",
+  unobservable: "Unobservable"
+};
+
+interface UseOutcomeTotals {
+  readonly judged: Map<string, number>;
+  readonly unassessed: number;
+}
+
+function useOutcomeTotals(
+  cells: readonly MemoryInjectionUseCohortCell[]
+): UseOutcomeTotals {
+  const judged = new Map<string, number>();
+  let unassessed = 0;
+  for (const cell of cells) {
+    if (cell.useKind === null) {
+      unassessed += cell.exposureCount;
+      continue;
+    }
+    judged.set(cell.useKind, (judged.get(cell.useKind) ?? 0) + cell.exposureCount);
+  }
+  return { judged, unassessed };
+}
+
+/**
+ * Per assigned mode: how much of what was injected was ever judged.
+ *
+ * This is a coverage measure, not an effectiveness one, and the label says so.
+ * The tempting number -- a share of "used" -- is not offered, because the
+ * denominator would be the eligible exposures while the numerator would come
+ * only from the ones somebody chose to assess, and an unassessed exposure is
+ * missing data rather than a negative finding. What this answers is the
+ * question that has to be answered before any of the others: how much of this
+ * population has an answer at all.
+ */
+function useCoverageByMode(
+  cells: readonly MemoryInjectionUseCohortCell[]
+): BarChartDatum[] {
+  const byMode = new Map<
+    string,
+    { eligible: number; assessed: number }
+  >();
+  for (const cell of cells) {
+    const current = byMode.get(cell.memoryMode) ?? { eligible: 0, assessed: 0 };
+    current.eligible += cell.exposureCount;
+    if (cell.useKind !== null) current.assessed += cell.exposureCount;
+    byMode.set(cell.memoryMode, current);
+  }
+  // Hoisted because a comparator that builds an Intl.Collator per comparison
+  // allocates on every one of them, and this sort runs on every cohort render.
+  const byModeLabel = new Intl.Collator("en");
+  return [...byMode.entries()]
+    .sort(([left], [right]) => byModeLabel.compare(left, right))
+    .map(([mode, counts]) => ({
+      label: mode,
+      value: counts.assessed,
+      valueText:
+        counts.eligible === 0
+          ? "No eligible exposures"
+          : `${Math.round((counts.assessed / counts.eligible) * 100)}% assessed (${counts.assessed.toLocaleString()} of ${counts.eligible.toLocaleString()})`
+    }));
+}
+
+function useJudgementChartData(
+  totals: UseOutcomeTotals
+): BarChartDatum[] {
+  const bars = USE_OUTCOME_ORDER.map((kind) => ({
+    label: USE_OUTCOME_LABEL[kind],
+    value: totals.judged.get(kind) ?? 0,
+    valueText: (totals.judged.get(kind) ?? 0).toLocaleString()
+  }));
+  // Its own bar, last. Rendering it inside one of the judgement rows would make
+  // an absence of evidence look like a finding about the memories.
+  bars.push({
+    label: "Not assessed",
+    value: totals.unassessed,
+    valueText: totals.unassessed.toLocaleString()
+  });
+  return bars;
+}
 
 export interface MemoryCohortsViewProps {
   readonly sessionCohorts: MemorySessionOutcomeCohortPage | null;
@@ -61,6 +168,10 @@ export function MemoryCohortsView({
     (count, cell) => count + (cell.useKind === null ? cell.exposureCount : 0),
     0
   );
+  // Folded once here because both charts and the stat grid read the same sum,
+  // and three independent reductions over the same cells is three places for a
+  // judgement category to be dropped or folded into another.
+  const useTotals = useOutcomeTotals(useCells);
 
   const cellColumns: ColumnDef<MemorySessionOutcomeCohortCell>[] = [
     {
@@ -437,6 +548,28 @@ export function MemoryCohortsView({
                 subtitle: "Absence is not a not-used assessment"
               })
             ),
+            // The two questions the matrix below makes the reader answer by
+            // hand: how much of what was injected was ever judged, and how it
+            // was judged. Both are sums over cells, so both are computed once
+            // here rather than separately by everyone who reads the table.
+            React.createElement(BarChart, {
+              data: useCoverageByMode(useCells),
+              label: "Eligible exposures assessed, by assigned mode",
+              notObservedMessage: "Use cohort assessment coverage not observed.",
+              emptyMessage:
+                "No eligible injected memory exposures were observed for this scope and time window.",
+              barClass: "bg-chart-1",
+              valueClass: "text-chart-1"
+            }),
+            React.createElement(BarChart, {
+              data: useJudgementChartData(useTotals),
+              label: "Injected memory exposures by assessment outcome",
+              notObservedMessage: "Use cohort judgements not observed.",
+              emptyMessage:
+                "No eligible injected memory exposures were observed for this scope and time window.",
+              barClass: "bg-chart-2",
+              valueClass: "text-chart-2"
+            }),
             React.createElement<DataTableProps<MemoryInjectionUseCohortCell>>(
               DataTable,
               {
