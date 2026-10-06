@@ -144,6 +144,36 @@ test("SessionEnd capture fails open when secrets or the control API are unavaila
   assert.equal(calls, 1);
 });
 
+test("a SessionEnd capture that fails open still says so on stderr", async () => {
+  // This hook's whole contract is to succeed quietly, so a capture that
+  // silently does nothing is indistinguishable from one that correctly
+  // declined. It used to report through an optional injected sink that no
+  // caller supplied, so the message was dropped in the field.
+  const lines: string[] = [];
+  const originalWrite = process.stderr.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    lines.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+
+  try {
+    const unavailable = createMemorySessionEndHandler({
+      env: { CODEX_HOME: "/tmp/codex" },
+      readToken: () => "token",
+      fetchImpl: async () => {
+        throw new Error("unreachable");
+      }
+    });
+    assert.equal(await unavailable(JSON.stringify(validEvent)), 0);
+  } finally {
+    process.stderr.write = originalWrite;
+  }
+
+  assert.deepEqual(lines, [
+    "memory-session-end: capture unavailable; continuing\n"
+  ]);
+});
+
 test("materialized Codex hook reads its installed secret and posts to the loopback API", async () => {
   const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
   const codexHome = mkdtempSync(path.join(tmpdir(), "autodev-codex-hook-"));

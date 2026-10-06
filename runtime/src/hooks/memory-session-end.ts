@@ -32,7 +32,6 @@ export interface MemorySessionEndDependencies {
   readonly env?: NodeJS.ProcessEnv;
   readonly readToken?: () => string | null;
   readonly fetchImpl?: typeof fetch;
-  readonly stderr?: (message: string) => void;
 }
 
 /** Extract only the identifiers and local references required by the capture API. */
@@ -67,6 +66,19 @@ export function sessionEndCapture(
 /**
  * Best-effort SessionEnd callback. Memory storage is advisory; inability to
  * capture a historical transcript must never fail or delay the ended session.
+ *
+ * Failing open still has to be visible: this hook's entire contract is to
+ * succeed quietly, so a capture that silently does nothing is
+ * indistinguishable from one that correctly declined. The diagnostic is
+ * written straight to stderr rather than through an injected sink. An
+ * injectable sink here had zero implementations and was optional-chained, so
+ * in the field the message was dropped outright.
+ *
+ * The write is deliberately inline rather than routed through
+ * `shared/output.ts`: this file is materialized on its own into `CODEX_HOME`
+ * and executed there, where the Runtime package does not resolve. That is the
+ * same reason it carries its own copy of the Control API actor constant, and
+ * it matches how `session-start.ts` reports.
  */
 export function createMemorySessionEndHandler(
   dependencies: MemorySessionEndDependencies = {}
@@ -77,7 +89,7 @@ export function createMemorySessionEndHandler(
     try {
       await postSessionEndCapture(input, dependencies);
     } catch {
-      dependencies.stderr?.(
+      process.stderr.write(
         "memory-session-end: capture unavailable; continuing\n"
       );
     }
