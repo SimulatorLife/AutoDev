@@ -564,6 +564,16 @@ export class RoutingPolicy {
     }
   }
 
+  /**
+   * Forget a provider's agent limits, returning it to "no limits configured"
+   * rather than to Unlimited. This is the counterpart a rollback needs: a
+   * rejected change must not leave limits behind that the operator never set.
+   */
+  clearProviderLimits(provider: unknown): void {
+    if (typeof provider !== "string" || !provider.trim()) return;
+    this.providerLimits.delete(this.providerKey(provider));
+  }
+
   limitsFor(provider: unknown): ProviderAgentLimits | undefined {
     return typeof provider === "string" && provider.trim().length > 0
       ? this.providerLimits.get(this.providerKey(provider))

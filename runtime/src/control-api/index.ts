@@ -87,6 +87,24 @@ const PROVIDER_ROLE_PATH = new RegExp(
   `^/control/providers/([a-zA-Z0-9._-]+)/roles/(${PROVIDER_ROLES.join("|")})$`,
   "u"
 );
+const PROVIDER_LIMITS_PATH =
+  /^\/control\/providers\/([a-zA-Z0-9._-]+)\/limits$/u;
+const PROVIDER_PATH = /^\/control\/providers\/([a-zA-Z0-9._-]+)$/u;
+
+/**
+ * Whether a submitted agent limit is usable. `null` is Unlimited; any other
+ * value must be an integer of at least one, so a zero, a fraction, a string or
+ * a non-finite number cannot become an active limit.
+ */
+function isAgentLimitBody(value: unknown): boolean {
+  return (
+    value === null ||
+    (typeof value === "number" &&
+      Number.isFinite(value) &&
+      Number.isInteger(value) &&
+      value >= 1)
+  );
+}
 const MODEL_PATH = /^\/control\/models\/([a-zA-Z0-9._-]+)$/u;
 const AGENT_DETAIL_PATH = /^\/control\/agents\/([a-zA-Z0-9._-]+)$/u;
 const PROMPT_DETAIL_PATH = /^\/control\/prompts\/([a-zA-Z0-9._-]+)$/u;
@@ -2091,6 +2109,299 @@ async function patchProviderRole(
     { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
   );
 }
+/**
+ * Whether the runtime currently serves this provider at all. Used by both
+ * provider-wide mutations to decide whether an applied change really landed.
+ */
+function providerIsKnown(provider: string): boolean {
+  return (
+    Object.hasOwn(ROUTING_POLICY.config.providers ?? {}, provider) ||
+    ROUTES.some((route) => route.provider === provider)
+  );
+}
+
+/**
+ * Build the reconciliation block and audit/response envelope shared by the
+ * provider-wide mutations. The audit record and the response body are derived
+ * from the same two generations so they cannot drift apart.
+ */
+function providerMutationReconciliation(
+  resource: string,
+  desiredGeneration: string,
+  observed: boolean
+): { audit: EnablementReconciliation; view: ReturnType<typeof buildReconciliationView> } {
+  const evidence = {
+    desiredGeneration,
+    observedGeneration: observed ? desiredGeneration : null,
+    lastApplyAt: new Date().toISOString(),
+    lastObservationAt: observed ? new Date().toISOString() : null,
+    lastError: null
+  };
+  return {
+    audit: {
+      desiredGeneration,
+      observedGeneration: evidence.observedGeneration,
+      restartRequired: false
+    },
+    view: buildReconciliationView({
+      evidence,
+      history: historyForResource(resource),
+      hasObservation: observed
+    })
+  };
+}
+
+/**
+ * `PATCH /control/providers/:provider` -- enable or disable a provider globally.
+ *
+ * Disabling preserves every role assignment and agent limit, so re-enabling
+ * restores the configuration the operator had rather than requiring it to be
+ * re-entered. `disabled` is the only accepted key.
+ */
+async function patchProviderEnabled(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  providerInput: string
+): Promise<void> {
+  const provider = providerInput.toLowerCase();
+  const resource = `${CONTROL_API_PATHS.providers}/${providerInput}`;
+  const audit = (
+    outcome: "ok" | "denied" | "error",
+    changes: Record<string, unknown> | null,
+    reason?: string,
+    reconciliation: EnablementReconciliation | null = null
+  ): void =>
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "patch_provider_enabled",
+      resource,
+      outcome,
+      changes,
+      ...(reason ? { reason } : {}),
+      ...auditReconciliationFields(reconciliation)
+    });
+
+  if (actor.role !== "operator") {
+    audit("denied", null, "viewer_cannot_mutate");
+    sendControlError(
+      response,
+      403,
+      "autodev_control_api_viewer_forbidden",
+      "Operator access is required to enable or disable a provider."
+    );
+    return;
+  }
+  if (!providerIsKnown(provider)) {
+    audit("error", null, "unknown_provider");
+    sendControlError(
+      response,
+      404,
+      "autodev_control_api_unknown_provider",
+      "Unknown provider."
+    );
+    return;
+  }
+
+  const parsed = await readControlApiJsonObject(request);
+  if (!parsed.ok) {
+    audit("error", null, "invalid_body");
+    sendControlError(response, parsed.status, parsed.code, parsed.message);
+    return;
+  }
+  const body = parsed.body;
+  if (
+    Object.keys(body).length !== 1 ||
+    typeof body.disabled !== "boolean"
+  ) {
+    audit("error", null, "invalid_body");
+    sendControlError(
+      response,
+      400,
+      "autodev_control_api_bad_body",
+      "Provider enablement body must contain only a boolean disabled field."
+    );
+    return;
+  }
+  const disabled = body.disabled;
+
+  const previous = ROUTING_POLICY.isProviderDisabled(provider);
+  try {
+    ROUTING_POLICY.setProviderEnabled(provider, !disabled);
+    await persistRoutingPolicy();
+  } catch {
+    try {
+      ROUTING_POLICY.setProviderEnabled(provider, !previous);
+    } catch {
+      // Preserve the original failure; the audit record captures it.
+    }
+    audit("error", { disabled, previous }, "persistence_failed");
+    sendControlError(
+      response,
+      500,
+      "autodev_control_api_persistence_failed",
+      "Provider enablement change could not be persisted."
+    );
+    return;
+  }
+
+  const observed = ROUTING_POLICY.isProviderDisabled(provider) === disabled;
+  const reconciliation = providerMutationReconciliation(
+    resource,
+    `disabled=${disabled ? "true" : "false"}`,
+    observed
+  );
+  audit(
+    "ok",
+    { disabled, previous },
+    undefined,
+    reconciliation.audit
+  );
+  sendJson(
+    response,
+    200,
+    {
+      schema: "autodev-control-provider-enabled-v1",
+      provider,
+      disabled,
+      previous,
+      actor: actor.actor,
+      reconciliation: reconciliation.view
+    },
+    { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
+  );
+}
+
+/**
+ * `PATCH /control/providers/:provider/limits` -- the provider-wide concurrent
+ * agent limits. `null` means Unlimited. Values are normalised rather than
+ * trusted: a non-integer, negative or non-finite number becomes Unlimited, so
+ * an unrecognised value can never become an active limit.
+ */
+async function patchProviderLimits(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  providerInput: string
+): Promise<void> {
+  const provider = providerInput.toLowerCase();
+  const resource = `${CONTROL_API_PATHS.providers}/${providerInput}/limits`;
+  const audit = (
+    outcome: "ok" | "denied" | "error",
+    changes: Record<string, unknown> | null,
+    reason?: string,
+    reconciliation: EnablementReconciliation | null = null
+  ): void =>
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "patch_provider_limits",
+      resource,
+      outcome,
+      changes,
+      ...(reason ? { reason } : {}),
+      ...auditReconciliationFields(reconciliation)
+    });
+
+  if (actor.role !== "operator") {
+    audit("denied", null, "viewer_cannot_mutate");
+    sendControlError(
+      response,
+      403,
+      "autodev_control_api_viewer_forbidden",
+      "Operator access is required to change provider agent limits."
+    );
+    return;
+  }
+  if (!providerIsKnown(provider)) {
+    audit("error", null, "unknown_provider");
+    sendControlError(
+      response,
+      404,
+      "autodev_control_api_unknown_provider",
+      "Unknown provider."
+    );
+    return;
+  }
+
+  const parsed = await readControlApiJsonObject(request);
+  if (!parsed.ok) {
+    audit("error", null, "invalid_body");
+    sendControlError(response, parsed.status, parsed.code, parsed.message);
+    return;
+  }
+  const body = parsed.body;
+  const keys = Object.keys(body).sort();
+  if (
+    keys.length !== 2 ||
+    keys[0] !== "acrossSessions" ||
+    keys[1] !== "perSession" ||
+    !isAgentLimitBody(body.perSession) ||
+    !isAgentLimitBody(body.acrossSessions)
+  ) {
+    audit("error", null, "invalid_body");
+    sendControlError(
+      response,
+      400,
+      "autodev_control_api_bad_body",
+      "Provider limits body must carry perSession and acrossSessions, each either null for Unlimited or an integer of at least 1."
+    );
+    return;
+  }
+
+  const previous = ROUTING_POLICY.limitsFor(provider) ?? null;
+  const next = {
+    perSession: body.perSession as number | null,
+    acrossSessions: body.acrossSessions as number | null
+  };
+  try {
+    ROUTING_POLICY.setProviderLimits(provider, next);
+    await persistRoutingPolicy();
+  } catch {
+    try {
+      if (previous) ROUTING_POLICY.setProviderLimits(provider, previous);
+      else ROUTING_POLICY.clearProviderLimits(provider);
+    } catch {
+      // Preserve the original failure; the audit record captures it.
+    }
+    audit("error", { ...next, previous }, "persistence_failed");
+    sendControlError(
+      response,
+      500,
+      "autodev_control_api_persistence_failed",
+      "Provider agent limits change could not be persisted."
+    );
+    return;
+  }
+
+  const applied = ROUTING_POLICY.limitsFor(provider) ?? null;
+  const observed =
+    applied?.perSession === next.perSession &&
+    applied?.acrossSessions === next.acrossSessions;
+  const reconciliation = providerMutationReconciliation(
+    resource,
+    `limits=${JSON.stringify(next)}`,
+    observed
+  );
+  audit("ok", { ...next, previous }, undefined, reconciliation.audit);
+  sendJson(
+    response,
+    200,
+    {
+      schema: "autodev-control-provider-limits-v1",
+      provider,
+      agentLimits: applied,
+      previous,
+      actor: actor.actor,
+      reconciliation: reconciliation.view
+    },
+    { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
+  );
+}
+
 function patchModel(
   request: IncomingMessage,
   response: ServerResponse,
@@ -2737,6 +3048,36 @@ export async function handleControlApiRequest(
       pathname,
       providerMatch
     );
+    return true;
+  }
+  const providerLimitsMatch = pathname.match(PROVIDER_LIMITS_PATH);
+  if (providerLimitsMatch) {
+    if (method !== "PATCH") {
+      auditRejectedRequest(
+        request,
+        method,
+        pathname,
+        "method_not_allowed",
+        actor
+      );
+      return true;
+    }
+    await patchProviderLimits(request, response, actor, providerLimitsMatch[1]!);
+    return true;
+  }
+  const providerOnlyMatch = pathname.match(PROVIDER_PATH);
+  if (providerOnlyMatch) {
+    if (method !== "PATCH") {
+      auditRejectedRequest(
+        request,
+        method,
+        pathname,
+        "method_not_allowed",
+        actor
+      );
+      return true;
+    }
+    await patchProviderEnabled(request, response, actor, providerOnlyMatch[1]!);
     return true;
   }
   const modelMatch = pathname.match(MODEL_PATH);

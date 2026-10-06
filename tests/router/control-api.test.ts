@@ -16,6 +16,7 @@ import test from "node:test";
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import {
   LOCAL_CONTROL_API_ACTOR,
+  PROVIDER_ROLES,
   type ProviderRoleAssignment
 } from "@simulatorlife/autodev-core";
 import {
@@ -533,6 +534,205 @@ test("failed persistence rolls back the in-memory provider policy", async () => 
   } finally {
     if (previous) ROUTING_POLICY.setProviderAssignment("claude", "subagent", previous);
     else ROUTING_POLICY.clearProviderAssignment("claude", "subagent");
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
+test("provider enablement disables globally while preserving its roles and limits", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  setDefaultPersistenceManager({
+    async persistNow() {
+      return true;
+    }
+  } as unknown as RouterPersistence);
+  try {
+    configure();
+    const path = CONTROL_API_PATHS.providers + "/claude";
+    ROUTING_POLICY.setProviderLimits("claude", { perSession: 4, acrossSessions: 9 });
+    ROUTING_POLICY.setProviderAssignment("claude", "orchestrator", {
+      priority: 2,
+      model: "claude-opus-5-5"
+    });
+    ROUTING_POLICY.setProviderAssignment("claude", "subagent", {
+      priority: 3,
+      model: "sonnet"
+    });
+
+    const malformed = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { disabled: "yes" }
+    });
+    assert.equal(malformed.response.statusCode, 400);
+
+    const extraField = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { disabled: true, priority: 1 }
+    });
+    assert.equal(extraField.response.statusCode, 400);
+
+    const unknown = await call("PATCH", CONTROL_API_PATHS.providers + "/nope_xyz", {
+      actor: "operator-a",
+      body: { disabled: true }
+    });
+    assert.equal(unknown.response.statusCode, 404);
+
+    const viewer = await call("PATCH", path, {
+      actor: "viewer-a",
+      body: { disabled: true }
+    });
+    assert.equal(viewer.response.statusCode, 403);
+
+    const disabled = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { disabled: true }
+    });
+    assert.equal(disabled.response.statusCode, 200);
+    assert.equal(disabled.body.schema, "autodev-control-provider-enabled-v1");
+    assert.equal(disabled.body.disabled, true);
+    assert.equal(disabled.body.previous, false);
+    assert.equal(ROUTING_POLICY.isProviderDisabled("claude"), true);
+    // Disabling is provider-wide, so no role may serve a request -- but the
+    // configuration the operator set must survive so re-enabling restores it.
+    for (const role of PROVIDER_ROLES) {
+      assert.equal(ROUTING_POLICY.isProviderEnabledForRole("claude", role), false);
+    }
+    assert.deepEqual(ROUTING_POLICY.limitsFor("claude"), {
+      perSession: 4,
+      acrossSessions: 9
+    });
+    assert.deepEqual(ROUTING_POLICY.assignmentFor("claude", "orchestrator"), {
+      priority: 2,
+      model: "claude-opus-5-5"
+    });
+    assert.deepEqual(ROUTING_POLICY.assignmentFor("claude", "subagent"), {
+      priority: 3,
+      model: "sonnet"
+    });
+
+    const enabled = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { disabled: false }
+    });
+    assert.equal(enabled.response.statusCode, 200);
+    assert.equal(enabled.body.previous, true);
+    assert.equal(ROUTING_POLICY.isProviderDisabled("claude"), false);
+    // The preserved configuration is what makes re-enabling safe.
+    assert.deepEqual(ROUTING_POLICY.limitsFor("claude"), {
+      perSession: 4,
+      acrossSessions: 9
+    });
+    assert.deepEqual(ROUTING_POLICY.assignmentFor("claude", "orchestrator"), {
+      priority: 2,
+      model: "claude-opus-5-5"
+    });
+    assert.equal(
+      ROUTING_POLICY.isProviderEnabledForRole("claude", "orchestrator"),
+      true
+    );
+  } finally {
+    ROUTING_POLICY.setProviderEnabled("claude", true);
+    ROUTING_POLICY.clearProviderLimits("claude");
+    ROUTING_POLICY.clearProviderAssignment("claude", "orchestrator");
+    ROUTING_POLICY.clearProviderAssignment("claude", "subagent");
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
+test("provider agent limits accept Unlimited and reject values that are not limits", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  setDefaultPersistenceManager({
+    async persistNow() {
+      return true;
+    }
+  } as unknown as RouterPersistence);
+  try {
+    configure();
+    const path = CONTROL_API_PATHS.providers + "/claude/limits";
+
+    for (const body of [
+      { perSession: 0, acrossSessions: 1 },
+      { perSession: -2, acrossSessions: 1 },
+      { perSession: 1.5, acrossSessions: 1 },
+      { perSession: "3", acrossSessions: 1 },
+      { perSession: 1 },
+      { perSession: 1, acrossSessions: 1, extra: 2 }
+    ]) {
+      const rejected = await call("PATCH", path, {
+        actor: "operator-a",
+        body
+      });
+      assert.equal(
+        rejected.response.statusCode,
+        400,
+        `limits body ${JSON.stringify(body)} is not a limit`
+      );
+    }
+
+    const unlimited = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { perSession: null, acrossSessions: null }
+    });
+    assert.equal(unlimited.response.statusCode, 200);
+    assert.equal(unlimited.body.schema, "autodev-control-provider-limits-v1");
+    assert.deepEqual(unlimited.body.agentLimits, {
+      perSession: null,
+      acrossSessions: null
+    });
+    assert.deepEqual(ROUTING_POLICY.limitsFor("claude"), {
+      perSession: null,
+      acrossSessions: null
+    });
+
+    const bounded = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { perSession: 3, acrossSessions: 12 }
+    });
+    assert.equal(bounded.response.statusCode, 200);
+    assert.deepEqual(ROUTING_POLICY.limitsFor("claude"), {
+      perSession: 3,
+      acrossSessions: 12
+    });
+    assert.deepEqual(bounded.body.previous, {
+      perSession: null,
+      acrossSessions: null
+    });
+  } finally {
+    ROUTING_POLICY.clearProviderLimits("claude");
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
+test("a failed provider limits persist leaves no limits behind", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  setDefaultPersistenceManager({
+    async persistNow() {
+      throw new Error("disk failure");
+    }
+  } as unknown as RouterPersistence);
+  try {
+    configure();
+    ROUTING_POLICY.clearProviderLimits("claude");
+    assert.equal(ROUTING_POLICY.limitsFor("claude"), undefined);
+
+    const result = await call(
+      "PATCH",
+      CONTROL_API_PATHS.providers + "/claude/limits",
+      { actor: "operator-a", body: { perSession: 7, acrossSessions: 7 } }
+    );
+    assert.equal(result.response.statusCode, 500);
+    assert.equal(
+      ROUTING_POLICY.limitsFor("claude"),
+      undefined,
+      "a rejected limit change must not become an active limit"
+    );
+  } finally {
+    ROUTING_POLICY.clearProviderLimits("claude");
     setDefaultPersistenceManager(originalPersistence);
     restoreEnv(saved);
   }
