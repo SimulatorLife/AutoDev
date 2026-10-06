@@ -1,5 +1,7 @@
 import React from "react";
 
+import { EmptyState } from "../status/EmptyState.ts";
+
 /**
  * How a cell lays out its content inside the column.
  *
@@ -175,14 +177,10 @@ export function DataTable<T>({
   onRowClick
 }: DataTableProps<T>): React.JSX.Element {
   if (data.length === 0) {
-    return React.createElement(
-      "div",
-      {
-        className:
-          "p-8 text-center text-fg-muted bg-surface/40 rounded-lg border border-border"
-      },
-      React.createElement("p", { className: "text-sm" }, emptyMessage)
-    );
+    return React.createElement(EmptyState, {
+      message: emptyMessage,
+      testId: "table"
+    });
   }
 
   const widths = columnWidths(columns as readonly ColumnDef<never>[]);

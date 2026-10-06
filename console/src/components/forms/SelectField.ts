@@ -1,5 +1,7 @@
 import React from "react";
 
+import { Icon } from "../icons/Icon.ts";
+
 /**
  * The Console's single select control.
  *
@@ -123,27 +125,13 @@ export function SelectField({
             "pointer-events-none absolute right-2 flex items-center text-fg-muted",
           "aria-hidden": true
         },
-        React.createElement(ChevronIcon)
+        // 12px rather than the set's 16px default: the chevron is part of the
+        // control's chrome, sized to the 34px control rather than to a
+        // product icon. Stroke weight stays at the set's 2 -- it used to be
+        // hand-set to 2.5 here, which made this the one visibly heavier mark
+        // in the product.
+        React.createElement(Icon, { name: "chevronDown", size: 12 })
       )
     )
-  );
-}
-
-/** Inline 12px chevron; part of the control's chrome, not a product icon. */
-function ChevronIcon(): React.JSX.Element {
-  return React.createElement(
-    "svg",
-    {
-      xmlns: "http://www.w3.org/2000/svg",
-      viewBox: "0 0 24 24",
-      width: 12,
-      height: 12,
-      fill: "none",
-      stroke: "currentColor",
-      strokeWidth: 2.5,
-      strokeLinecap: "round",
-      strokeLinejoin: "round"
-    },
-    React.createElement("path", { d: "M6 9l6 6 6-6" })
   );
 }

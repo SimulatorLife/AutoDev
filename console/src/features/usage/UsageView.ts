@@ -49,7 +49,6 @@ const DURATION_FORMATTER = new Intl.NumberFormat("en-US", {
 
 const FILTER_GROUP_CLASS =
   "flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-fg-muted";
-const EMPTY_STATE_CLASS = "text-xs text-fg-muted italic py-2";
 
 export function formatTokenCount(value: number | null): string {
   if (value === null) return NOT_OBSERVED_LABEL;
@@ -325,8 +324,7 @@ export function UsageView({
           notObservedMessage: "Role telemetry not observed.",
           emptyMessage: "No logical requests were observed in this time range.",
           barClass: "bg-chart-1",
-          valueClass: "text-chart-1",
-          emptyClass: EMPTY_STATE_CLASS
+          valueClass: "text-chart-1"
         })
       ),
       React.createElement(
@@ -355,8 +353,7 @@ export function UsageView({
           emptyMessage:
             "No provider attempts were observed in this time range.",
           barClass: "bg-chart-2",
-          valueClass: "text-chart-2",
-          emptyClass: EMPTY_STATE_CLASS
+          valueClass: "text-chart-2"
         })
       )
     ),
@@ -415,8 +412,7 @@ export function UsageView({
         notObservedMessage: "Tool-call telemetry not observed.",
         emptyMessage: "No MCP tool calls were observed in this time range.",
         barClass: "bg-chart-3",
-        valueClass: "text-chart-3",
-        emptyClass: EMPTY_STATE_CLASS
+        valueClass: "text-chart-3"
       })
     )
   );

@@ -17,6 +17,7 @@ import {
 } from "../../components/layout/Heading.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { EmptyState } from "../../components/status/EmptyState.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
 
@@ -389,11 +390,11 @@ export function ToolDetailView({
             { className: "text-sm text-fg leading-relaxed" },
             tool.description
           )
-        : React.createElement(
-            "p",
-            { className: "text-xs text-fg-muted italic" },
-            "No description is shipped with this tool; the canonical authority did not surface one."
-          )
+        : React.createElement(EmptyState, {
+            variant: "inline",
+            message:
+              "No description is shipped with this tool; the canonical authority did not surface one."
+          })
     ),
     React.createElement(
       "section",

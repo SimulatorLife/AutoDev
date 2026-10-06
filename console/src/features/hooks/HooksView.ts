@@ -122,7 +122,12 @@ export function HooksView({
                       act.statusMessage
                         ? React.createElement(
                             "span",
-                            { className: "text-fg-muted italic" },
+                            // Not an empty state: this is an observed status
+                            // message. Italic is the shared signal for
+                            // "nothing here", so it is dropped, and the line
+                            // had silently lost the `text-xs` that every other
+                            // muted note on the page carries.
+                            { className: "text-xs text-fg-muted" },
                             act.statusMessage
                           )
                         : null

@@ -63,6 +63,9 @@ import {
   DETAIL_DRAWER_HEADER_CLASS,
   DETAIL_DRAWER_SUBTITLE_CLASS,
   DetailDrawer,
+  EMPTY_BOX_CLASS,
+  EMPTY_INLINE_CLASS,
+  EmptyState,
   ENTITY_TITLE_CLASS,
   EvaluationsView,
   FilterBar,
@@ -6439,5 +6442,66 @@ test("no feature view hand-types a code or config surface", () => {
     offenders,
     [],
     `These views hand-type a code surface instead of using CodeBlock/CodeEditor:\n${offenders.join("\n")}`
+  );
+});
+
+test("EmptyState keeps box and inline distinct and never invents its message", () => {
+  // An empty table is a region with nothing in it; an empty series is a slot
+  // inside a region. They are not the same shape, so they are not the same
+  // treatment -- but they are one vocabulary, not three hand-typed ones.
+  const box = renderToStaticMarkup(
+    React.createElement(EmptyState, {
+      message: "No providers are configured.",
+      testId: "table"
+    })
+  );
+  assert.ok(box.includes(EMPTY_BOX_CLASS));
+  assert.match(box, /data-empty-state="table"/);
+  assert.match(box, /No providers are configured\./);
+  // The mark is decorative: it sits directly above the sentence it repeats.
+  assert.match(box, /aria-hidden="true"/);
+
+  const inline = renderToStaticMarkup(
+    React.createElement(EmptyState, {
+      message: "No logical requests were observed in this time range.",
+      variant: "inline"
+    })
+  );
+  assert.ok(inline.includes(EMPTY_INLINE_CLASS));
+  // The inline slot has no box and no icon: it fills a position inside a
+  // panel, and a 24px mark inside a chart would read as a data point.
+  assert.doesNotMatch(inline, /<svg/);
+});
+
+test("italic is the shared absent-state signal, not a style for real values", () => {
+  // Hooks rendered an observed status message in muted italic, which is the
+  // same idiom the Console uses for "nothing here", and had also lost the
+  // text-xs every other muted note carries. Italic now means absent, so a
+  // value that really was observed must not borrow it.
+  const markup = readFileSync(
+    join(import.meta.dirname, "..", "src", "features", "hooks", "HooksView.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(markup, /text-fg-muted italic/);
+  assert.doesNotMatch(markup, /italic/);
+});
+
+test("no feature view hand-types an empty state", () => {
+  // The Console's "nothing here" was written by hand in three places, one of
+  // which had drifted to a different font size.
+  const featuresDir = join(import.meta.dirname, "..", "src", "features");
+  const offenders: string[] = [];
+  for (const relative of readdirSync(featuresDir, { recursive: true })) {
+    const file = join(featuresDir, relative.toString());
+    if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
+    const source = readFileSync(file, "utf8");
+    if (/\bitalic\b/.test(source) && !source.includes("EmptyState")) {
+      offenders.push(relative.toString());
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `These views style an absent-state by hand instead of using EmptyState:\n${offenders.join("\n")}`
   );
 });

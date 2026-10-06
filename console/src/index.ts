@@ -19,6 +19,7 @@ export * from "./components/navigation/ClosePanelLink.ts";
 export * from "./components/panels/DetailDrawer.ts";
 export * from "./components/status/ControlFailureNotice.ts";
 export * from "./components/status/ConvergenceBadge.ts";
+export * from "./components/status/EmptyState.ts";
 export * from "./components/status/StatusBadge.ts";
 export * from "./components/status/Tag.ts";
 export * from "./components/tables/Chips.ts";

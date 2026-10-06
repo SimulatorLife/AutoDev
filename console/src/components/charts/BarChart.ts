@@ -1,5 +1,7 @@
 import React from "react";
 
+import { EMPTY_INLINE_CLASS, EmptyState } from "../status/EmptyState.ts";
+
 /**
  * Console horizontal bar chart.
  *
@@ -43,7 +45,6 @@ export interface BarChartProps {
   readonly barClass: string;
   /** Applied to the value text; defaults to the foreground token. */
   readonly valueClass?: string | undefined;
-  readonly emptyClass?: string | undefined;
 }
 
 /**
@@ -58,18 +59,25 @@ export function BarChart({
   notObservedMessage,
   emptyMessage,
   barClass,
-  valueClass = "text-fg",
-  emptyClass = "text-xs text-fg-muted italic py-2"
+  valueClass = "text-fg"
 }: BarChartProps): React.JSX.Element {
+  // Unobserved and empty are different facts, so they keep different
+  // components -- but they occupy the same slot in the same panel, so they
+  // share one treatment. A reader comparing two charts should not be able to
+  // tell from the typography alone that one source is missing and the other
+  // reported nothing; the words say which, and only the words do.
   if (data === null) {
     return React.createElement(
       "p",
-      { className: emptyClass },
+      { className: EMPTY_INLINE_CLASS },
       notObservedMessage
     );
   }
   if (data.length === 0) {
-    return React.createElement("p", { className: emptyClass }, emptyMessage);
+    return React.createElement(EmptyState, {
+      message: emptyMessage,
+      variant: "inline"
+    });
   }
 
   // The longest bar is the axis maximum, so the shape stays readable whatever
