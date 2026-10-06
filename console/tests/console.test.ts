@@ -43,6 +43,7 @@ import {
   Breadcrumbs,
   ClosePanelLink,
   DataTable,
+  ENTITY_TITLE_CLASS,
   EvaluationsView,
   formatCount,
   formatLatency,
@@ -90,11 +91,13 @@ import {
   fetchControlApi,
   fetchEvaluations,
   fetchGithubWorkflows,
+  fetchHooks,
+  fetchMcps,
   fetchMemoryCohorts,
   fetchMemoryExperiences,
+  fetchMemoryHistory,
   fetchMemoryRecord,
   fetchMemoryRecords,
-  fetchMemoryHistory,
   fetchModels,
   fetchPromptDetail,
   fetchPrompts,
@@ -103,8 +106,6 @@ import {
   fetchProviders,
   fetchRuntime,
   fetchSkills,
-  fetchHooks,
-  fetchMcps,
   fetchTools,
   fetchWorkspaces,
   readControlApiConfig
@@ -716,10 +717,14 @@ test("Prompt detail renders canonical text and reports an actually empty source"
     })
   );
   assert.match(markup, /Use a dry run\./);
+  // The prompt body is content inside this page, so its own Markdown headings
+  // are demoted past the Console's body sections. A `##` in the prompt must not
+  // surface as a page-level heading above them.
   assert.match(
     markup,
-    /<h2 class="mb-2 mt-4 text-lg font-semibold text-fg">Rendered Prompt<\/h2>/
+    /<h5 class="mb-2 mt-4 text-lg font-semibold text-fg">Rendered Prompt<\/h5>/
   );
+  assert.doesNotMatch(markup, /<h[123][^>]*>Rendered Prompt<\/h[123]>/);
   assert.match(markup, /<strong>Use a dry run\.<\/strong>/);
   assert.match(markup, /\.rulesync\/commands\/dry\.md/);
   assert.match(markup, /data-prompt-editor="canonical"/);
@@ -5554,6 +5559,109 @@ test("ToolDetailView renders source authority, edit surface, and unobserved hist
   assert.match(markup, /href="\/mcps\/lsp"/);
   // No raw usage values are rendered when unobserved.
   assert.doesNotMatch(markup, /0</);
+});
+
+test("every detail view titles its resource with the one canonical entity title", () => {
+  // A detail view used to invent its own title treatment: `/tools` emitted a
+  // second `h1` under the shell's, `/memory` skipped to `h3` at a third of the
+  // size, and each view spelled the class out separately. Every detail view now
+  // renders the shared title, so moving between them cannot change how the
+  // subject of the page looks or where it sits in the document outline.
+  const views: ReadonlyArray<readonly [string, string, React.ReactElement]> = [
+    [
+      "ToolDetailView",
+      "mcp__lsp__lsp_goto_definition",
+      React.createElement(ToolDetailView, {
+        tool: {
+          name: "lsp_goto_definition",
+          source: "mcp",
+          sourceAuthority: "execution-contract",
+          server: "lsp",
+          availability: "configured",
+          exposedRoles: ["default"],
+          canonicalEditSurface: {
+            section: "mcps",
+            identifier: "lsp",
+            label: "lsp"
+          }
+        },
+        coverage: "complete",
+        validity: "valid",
+        usage: { calls: null, errors: null, observed: false },
+        usageLink: "/usage",
+        usageUnavailable: false
+      })
+    ],
+    [
+      "McpDetailView",
+      "context7",
+      React.createElement(McpDetailView, {
+        sourceValidity: true,
+        configuredTools: null,
+        server: {
+          name: "context7",
+          enabled: true,
+          transport: "http",
+          declared: true,
+          targetOverrides: [{ target: "codexcli", enabled: false }],
+          roles: ["docs-researcher"]
+        },
+        activeTab: "overview"
+      })
+    ],
+    [
+      "PromptDetailView",
+      "dry",
+      React.createElement(PromptDetailView, {
+        prompt: promptDocumentFromControlApi({
+          schema: "autodev-control-prompt-detail-v4",
+          name: "dry",
+          type: "command",
+          source: ".rulesync/commands/dry.md",
+          content: "# /dry\n\nUse a dry run.",
+          preview: "## Rendered Prompt\n\n**Use a dry run.**",
+          revision: "a".repeat(64),
+          diff: {
+            summary: "Canonical RuleSync command.",
+            identifier: "a".repeat(64)
+          },
+          reconciliation: {
+            status: {
+              convergence: "not-observed",
+              desiredGeneration: null,
+              observedGeneration: null,
+              lastApplyAt: null,
+              lastObservationAt: null,
+              lastError: null,
+              explanation: "Not observed."
+            },
+            history: []
+          }
+        }),
+        reconciliation: unobservedPromptReconciliation,
+        history: unavailablePromptHistory
+      })
+    ]
+  ];
+
+  for (const [name, entityName, element] of views) {
+    const markup = renderToStaticMarkup(element);
+    // The title is the `h2` beneath the shell's `h1`, never another `h1`.
+    assert.doesNotMatch(markup, /<h1[\s>]/, `${name} must not emit an h1`);
+    assert.doesNotMatch(markup, /<h3[^>]*>\s*<\/h3>/);
+    assert.match(
+      markup,
+      new RegExp(
+        `<h2 class="${ENTITY_TITLE_CLASS}( font-mono)?">${entityName}</h2>`
+      ),
+      `${name} must title the resource with the canonical entity title`
+    );
+    assert.doesNotMatch(
+      markup,
+      /text-2xl font-bold text-fg[^"]*"[^>]*><\/(?!h2)/,
+      `${name} must not hand-roll an entity title`
+    );
+  }
 });
 
 test("ToolDetailView surfaces observed historical use and falls back to Unavailable when telemetry errors", () => {

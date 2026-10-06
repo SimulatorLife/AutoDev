@@ -2,6 +2,7 @@ import type { HookDefinition } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 
 export interface HooksViewProps {
   readonly hooks: readonly HookDefinition[];
@@ -46,8 +47,7 @@ export function HooksView({
       React.createElement(
         "h2",
         {
-          className:
-            "text-sm font-semibold uppercase tracking-wider text-fg-muted"
+          className: SECTION_HEADING_CLASS
         },
         "Configured Lifecycle Hooks"
       ),

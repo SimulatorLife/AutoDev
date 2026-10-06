@@ -7,6 +7,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import {
   type ColumnDef,
   DataTable
@@ -250,8 +251,7 @@ export function MemoryCohortsView({
       React.createElement(
         "h3",
         {
-          className:
-            "text-sm font-semibold uppercase tracking-wider text-fg-secondary"
+          className: SECTION_HEADING_CLASS
         },
         "Session Outcome Breakdown"
       ),
@@ -291,8 +291,7 @@ export function MemoryCohortsView({
       React.createElement(
         "h3",
         {
-          className:
-            "text-sm font-semibold uppercase tracking-wider text-fg-secondary"
+          className: SECTION_HEADING_CLASS
         },
         "Injection-Use Assessments"
       ),

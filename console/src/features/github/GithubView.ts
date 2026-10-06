@@ -7,6 +7,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
   type ColumnDef,
@@ -429,8 +430,7 @@ export function GithubView({
       React.createElement(
         "h2",
         {
-          className:
-            "text-sm font-semibold uppercase tracking-wider text-fg-muted mb-3"
+          className: SECTION_HEADING_CLASS
         },
         "Workflow Definitions"
       ),
@@ -448,8 +448,7 @@ export function GithubView({
           React.createElement(
             "h2",
             {
-              className:
-                "text-sm font-semibold uppercase tracking-wider text-fg-muted"
+              className: SECTION_HEADING_CLASS
             },
             "Recent Workflow Runs"
           ),

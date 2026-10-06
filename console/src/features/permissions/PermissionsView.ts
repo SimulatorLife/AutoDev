@@ -5,6 +5,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
@@ -108,8 +109,7 @@ export function PermissionsView({
       React.createElement(
         "h2",
         {
-          className:
-            "text-sm font-semibold uppercase tracking-wider text-fg-muted mb-3"
+          className: SECTION_HEADING_CLASS
         },
         "Effective Role Capability Matrix"
       ),

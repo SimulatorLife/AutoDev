@@ -11,6 +11,7 @@ import {
   FIELD_CONTROL_CLASS,
   SelectField
 } from "../../components/forms/SelectField.ts";
+import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 
 /**
  * Observability Usage view.
@@ -44,7 +45,8 @@ const DURATION_FORMATTER = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1
 });
 
-const FILTER_GROUP_CLASS = "flex items-center gap-1.5 text-xs text-fg-muted";
+const FILTER_GROUP_CLASS =
+  "flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-fg-muted";
 const EMPTY_STATE_CLASS = "text-xs text-fg-muted italic py-2";
 
 /**
@@ -181,7 +183,7 @@ export function UsageView({
       },
       React.createElement(
         "div",
-        { className: "flex flex-wrap gap-3 items-center" },
+        { className: "flex min-w-0 flex-wrap gap-3 items-center" },
         React.createElement(
           "div",
           { className: FILTER_GROUP_CLASS },
@@ -201,7 +203,8 @@ export function UsageView({
         React.createElement(
           "details",
           {
-            className: "flex items-center gap-2 text-xs text-fg-muted",
+            className:
+              "flex min-w-0 flex-wrap items-center gap-2 text-xs text-fg-muted",
             open: selection.range === "CUSTOM"
           },
           React.createElement(
@@ -284,8 +287,7 @@ export function UsageView({
       React.createElement(
         "h3",
         {
-          className:
-            "text-xs font-semibold uppercase tracking-wider text-fg-muted mb-3"
+          className: SECTION_HEADING_CLASS
         },
         "Router & GenAI Observability"
       ),
@@ -327,7 +329,7 @@ export function UsageView({
         React.createElement(
           "h4",
           {
-            className: "text-xs font-semibold uppercase text-fg-muted mb-3"
+            className: SECTION_HEADING_CLASS
           },
           "Requests by Agent Role"
         ),
@@ -375,7 +377,7 @@ export function UsageView({
         React.createElement(
           "h4",
           {
-            className: "text-xs font-semibold uppercase text-fg-muted mb-3"
+            className: SECTION_HEADING_CLASS
           },
           "Physical Attempts by Provider"
         ),
@@ -422,8 +424,7 @@ export function UsageView({
       React.createElement(
         "h3",
         {
-          className:
-            "text-xs font-semibold uppercase tracking-wider text-fg-muted mb-3"
+          className: SECTION_HEADING_CLASS
         },
         "Model Context Protocol Shim Metrics"
       ),
@@ -455,7 +456,7 @@ export function UsageView({
       React.createElement(
         "h4",
         {
-          className: "text-xs font-semibold uppercase text-fg-muted mb-3"
+          className: SECTION_HEADING_CLASS
         },
         "MCP Calls by Tool Name"
       ),

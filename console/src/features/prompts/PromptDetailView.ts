@@ -7,6 +7,11 @@ import type {
 import React from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 
+import {
+  ENTITY_EYEBROW_CLASS,
+  EntityTitle,
+  SECTION_HEADING_CLASS
+} from "../../components/layout/Heading.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
@@ -147,22 +152,32 @@ function renderPromptSource(prompt: PromptDocument): React.ReactNode {
   );
 }
 
+/**
+ * Renderer for the prompt author's own Markdown, shown as a preview inside the
+ * page.
+ *
+ * The prompt body is content *within* this page, not a page of its own, so its
+ * headings are demoted three levels past the Console's own body sections. A
+ * prompt that opens with an `# H1` used to inject a second page-level heading
+ * halfway down the outline — below Console sections and above the shell's
+ * `h1` — which is what a document outline is supposed to rule out.
+ */
 const PROMPT_MARKDOWN_COMPONENTS: Components = {
   h1: ({ children }) =>
     React.createElement(
-      "h1",
+      "h4",
       { className: "mb-3 text-xl font-semibold text-fg" },
       children
     ),
   h2: ({ children }) =>
     React.createElement(
-      "h2",
+      "h5",
       { className: "mb-2 mt-4 text-lg font-semibold text-fg" },
       children
     ),
   h3: ({ children }) =>
     React.createElement(
-      "h3",
+      "h6",
       { className: "mb-2 mt-3 text-base font-semibold text-fg" },
       children
     ),
@@ -287,7 +302,7 @@ function renderPromptHistory(
         null,
         React.createElement(
           "h3",
-          { className: "text-xs uppercase tracking-wider text-fg-muted" },
+          { className: SECTION_HEADING_CLASS },
           "Git Version History"
         ),
         React.createElement(
@@ -493,16 +508,11 @@ export function PromptDetailView({
         React.createElement(
           "p",
           {
-            className:
-              "mb-1 mt-3 text-xs uppercase tracking-wider text-fg-muted"
+            className: ENTITY_EYEBROW_CLASS
           },
           isRole ? "Agent role prompt" : "RuleSync command"
         ),
-        React.createElement(
-          "h2",
-          { className: "text-2xl font-bold text-fg font-mono" },
-          prompt.name
-        ),
+        React.createElement(EntityTitle, { mono: true }, prompt.name),
         React.createElement(
           "p",
           { className: "mt-2 font-mono text-xs text-fg-muted" },
@@ -535,7 +545,7 @@ export function PromptDetailView({
         { className: PROMPT_CARD_CLASS_NAME },
         React.createElement(
           "h3",
-          { className: "mb-1 text-xs uppercase tracking-wider text-fg-muted" },
+          { className: SECTION_HEADING_CLASS },
           "Authority & Versioning"
         ),
         React.createElement(StatusBadge, {
@@ -553,7 +563,7 @@ export function PromptDetailView({
         { className: PROMPT_CARD_CLASS_NAME },
         React.createElement(
           "h3",
-          { className: "mb-1 text-xs uppercase tracking-wider text-fg-muted" },
+          { className: SECTION_HEADING_CLASS },
           "Related Agent"
         ),
         isRole
@@ -584,7 +594,7 @@ export function PromptDetailView({
         { className: PROMPT_CARD_CLASS_NAME },
         React.createElement(
           "h3",
-          { className: "mb-1 text-xs uppercase tracking-wider text-fg-muted" },
+          { className: SECTION_HEADING_CLASS },
           "Observability Linkage"
         ),
         React.createElement(
@@ -619,7 +629,7 @@ export function PromptDetailView({
       },
       React.createElement(
         "h3",
-        { className: "mb-2 text-xs uppercase tracking-wider text-fg-muted" },
+        { className: SECTION_HEADING_CLASS },
         "Reconciliation"
       ),
       React.createElement(ReconciliationPanel, {
@@ -643,7 +653,7 @@ export function PromptDetailView({
         { className: "mb-3 flex items-center justify-between gap-3" },
         React.createElement(
           "h3",
-          { className: "text-xs uppercase tracking-wider text-fg-muted" },
+          { className: SECTION_HEADING_CLASS },
           prompt.kind === "command"
             ? "Edit Canonical Markdown Source"
             : "Canonical Markdown Source"

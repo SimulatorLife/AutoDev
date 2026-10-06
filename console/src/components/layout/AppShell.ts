@@ -28,7 +28,11 @@ export function AppShell({
     "div",
     {
       className:
-        "flex h-screen w-screen bg-background text-fg overflow-hidden font-sans"
+        // `w-full`, not `w-screen`: 100vw includes the classic vertical
+        // scrollbar gutter, so `w-screen` made the shell wider than the space
+        // the document actually had and gave every page a 15px horizontal
+        // scroll at widths where a scrollbar is shown.
+        "flex h-screen w-full bg-background text-fg overflow-hidden font-sans"
     },
     React.createElement(AppNav, {
       activeSection,

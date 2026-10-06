@@ -6,6 +6,11 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import {
+  ENTITY_EYEBROW_CLASS,
+  EntityTitle,
+  SECTION_HEADING_CLASS
+} from "../../components/layout/Heading.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { ConvergenceBadge } from "../../components/status/ConvergenceBadge.ts";
@@ -19,8 +24,6 @@ import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
 
 const SECTION_PANEL_CLASS =
   "rounded-lg border border-border bg-surface p-6 shadow";
-const SECTION_HEADING_CLASS =
-  "mb-3 text-sm font-semibold uppercase tracking-wider text-fg-secondary";
 const NOT_OBSERVED_LABEL = "Not observed";
 
 export interface ProviderDetailViewProps {
@@ -469,16 +472,11 @@ export function ProviderDetailView({
           React.createElement(
             "p",
             {
-              className:
-                "mb-1 mt-3 text-xs uppercase tracking-wider text-fg-muted"
+              className: ENTITY_EYEBROW_CLASS
             },
             "Model provider"
           ),
-          React.createElement(
-            "h2",
-            { className: "text-2xl font-bold text-fg" },
-            provider.id
-          )
+          React.createElement(EntityTitle, undefined, provider.id)
         ),
         React.createElement(
           "div",

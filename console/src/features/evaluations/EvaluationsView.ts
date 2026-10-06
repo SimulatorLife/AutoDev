@@ -7,6 +7,7 @@ import {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
   type ColumnDef,
@@ -214,8 +215,7 @@ function renderTraceLookup(
         "h2",
         {
           id: "evaluation-trace-heading",
-          className:
-            "text-sm font-semibold uppercase tracking-wider text-fg-secondary"
+          className: SECTION_HEADING_CLASS
         },
         "Trace detail"
       ),
@@ -420,8 +420,7 @@ export function EvaluationsView({
       React.createElement(
         "h2",
         {
-          className:
-            "text-sm font-semibold uppercase tracking-wider text-fg-muted mb-3"
+          className: SECTION_HEADING_CLASS
         },
         "Evaluation History"
       ),

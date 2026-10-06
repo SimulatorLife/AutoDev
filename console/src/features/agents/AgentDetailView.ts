@@ -5,6 +5,11 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import {
+  ENTITY_EYEBROW_CLASS,
+  EntityTitle,
+  SECTION_HEADING_CLASS
+} from "../../components/layout/Heading.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { AgentProviderSummary } from "./AgentProviderSummary.ts";
@@ -52,16 +57,11 @@ export function AgentDetailView({
           React.createElement(
             "p",
             {
-              className:
-                "mb-1 mt-3 text-xs uppercase tracking-wider text-fg-muted"
+              className: ENTITY_EYEBROW_CLASS
             },
             "Agent role"
           ),
-          React.createElement(
-            "h2",
-            { className: "text-2xl font-bold text-fg" },
-            agent.role
-          )
+          React.createElement(EntityTitle, undefined, agent.role)
         ),
         React.createElement(StatusBadge, {
           status: "configured",
@@ -105,8 +105,7 @@ export function AgentDetailView({
         "h3",
         {
           id: "agent-runtime-heading",
-          className:
-            "mb-4 text-sm font-semibold uppercase tracking-wider text-fg-secondary"
+          className: SECTION_HEADING_CLASS
         },
         "Runtime observation"
       ),
@@ -150,8 +149,7 @@ export function AgentDetailView({
       React.createElement(
         "h3",
         {
-          className:
-            "mb-1 text-sm font-semibold uppercase tracking-wider text-fg-secondary"
+          className: SECTION_HEADING_CLASS
         },
         "Eligible providers"
       ),
@@ -173,8 +171,7 @@ export function AgentDetailView({
       React.createElement(
         "h3",
         {
-          className:
-            "mb-3 text-sm font-semibold uppercase tracking-wider text-fg-secondary"
+          className: SECTION_HEADING_CLASS
         },
         "Concurrency & Routing Limits"
       ),
@@ -221,8 +218,7 @@ export function AgentDetailView({
             "h3",
             {
               id: "agent-prompt-heading",
-              className:
-                "mb-3 text-sm font-semibold uppercase tracking-wider text-fg-secondary"
+              className: SECTION_HEADING_CLASS
             },
             "System prompt"
           ),
@@ -270,8 +266,7 @@ function NameList({
     React.createElement(
       "h3",
       {
-        className:
-          "text-xs font-semibold uppercase tracking-wider text-fg-muted"
+        className: SECTION_HEADING_CLASS
       },
       heading
     ),

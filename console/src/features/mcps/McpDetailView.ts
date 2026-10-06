@@ -4,6 +4,11 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import {
+  ENTITY_EYEBROW_CLASS,
+  EntityTitle,
+  SECTION_HEADING_CLASS
+} from "../../components/layout/Heading.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
@@ -12,8 +17,6 @@ import {
   TabNav
 } from "../../components/tabs/Tabs.ts";
 
-const SECTION_HEADING_CLASS =
-  "mb-3 text-xs uppercase tracking-wider text-fg-muted";
 const SECTION_PANEL_CLASS =
   "rounded-lg border border-border bg-surface p-6 shadow";
 const CONFIGURED_STATUS = "configured" as const;
@@ -452,7 +455,7 @@ export function McpDetailView({
         { className: "mt-4" },
         React.createElement(
           "h4",
-          { className: "mb-2 text-xs font-semibold text-fg-muted" },
+          { className: SECTION_HEADING_CLASS },
           "Target overrides"
         ),
         targetOverrides
@@ -661,16 +664,11 @@ export function McpDetailView({
         React.createElement(
           "p",
           {
-            className:
-              "mb-1 mt-3 text-xs uppercase tracking-wider text-fg-muted"
+            className: ENTITY_EYEBROW_CLASS
           },
           "Model Context Protocol server"
         ),
-        React.createElement(
-          "h2",
-          { className: "text-2xl font-bold text-fg font-mono" },
-          server.name
-        ),
+        React.createElement(EntityTitle, { mono: true }, server.name),
         React.createElement(
           "p",
           { className: "mt-2 font-mono text-xs text-fg-muted" },

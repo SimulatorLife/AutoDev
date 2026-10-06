@@ -119,7 +119,7 @@ export function MemoryView({
               {
                 method: "GET",
                 action: "/memory",
-                className: "flex items-center gap-2 text-xs",
+                className: "flex min-w-0 flex-wrap items-center gap-2 text-xs",
                 "data-memory-workspace-form": "true"
               },
               ...[

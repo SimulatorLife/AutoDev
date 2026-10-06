@@ -7,6 +7,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
@@ -29,8 +30,6 @@ import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
 
 const SECTION_PANEL_CLASS =
   "rounded-lg border border-border bg-surface p-5 shadow";
-const SECTION_HEADING_CLASS =
-  "text-sm font-semibold uppercase tracking-wider text-fg-muted";
 const LINK_CLASS =
   "font-mono font-semibold text-fg underline-offset-4 hover:underline";
 const NOT_OBSERVED_LABEL = "Not observed";

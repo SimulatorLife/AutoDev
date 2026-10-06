@@ -6,6 +6,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
   type ColumnDef,
@@ -163,8 +164,7 @@ export function AgentsView({
       React.createElement(
         "h2",
         {
-          className:
-            "mb-3 text-sm font-semibold uppercase tracking-wider text-fg-muted"
+          className: SECTION_HEADING_CLASS
         },
         "Configured Agents"
       ),
@@ -183,8 +183,7 @@ export function AgentsView({
       React.createElement(
         "h2",
         {
-          className:
-            "mb-3 text-sm font-semibold uppercase tracking-wider text-fg-muted"
+          className: SECTION_HEADING_CLASS
         },
         "Runtime Concurrency & Circuit Health"
       ),

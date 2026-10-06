@@ -12,6 +12,10 @@ import {
   FIELD_CONTROL_CLASS,
   SelectField
 } from "../../components/forms/SelectField.ts";
+import {
+  EntityTitle,
+  SECTION_HEADING_CLASS
+} from "../../components/layout/Heading.ts";
 import { ClosePanelLink } from "../../components/navigation/ClosePanelLink.ts";
 import {
   StatusBadge,
@@ -62,9 +66,6 @@ const KIND_COLORS: Record<MemoryKind, string> = {
   semantic: "bg-chart-2/15 text-chart-2 border-chart-2/40",
   procedural: "bg-chart-3/15 text-chart-3 border-chart-3/40"
 };
-const DETAIL_SECTION_HEADING_CLASS =
-  "text-xs font-semibold uppercase tracking-wider text-fg-muted";
-
 function formatScopeString(scope: MemoryScope): string {
   switch (scope.kind) {
     case "global": {
@@ -298,11 +299,7 @@ function RecordDetailPanel({
         React.createElement(
           "div",
           { className: "flex items-center gap-3" },
-          React.createElement(
-            "h3",
-            { className: "font-mono text-lg font-bold text-fg" },
-            record.id
-          ),
+          React.createElement(EntityTitle, { mono: true }, record.id),
           React.createElement(
             "span",
             {
@@ -333,7 +330,7 @@ function RecordDetailPanel({
       React.createElement(
         "h4",
         {
-          className: DETAIL_SECTION_HEADING_CLASS
+          className: SECTION_HEADING_CLASS
         },
         "Durable Claim"
       ),
@@ -361,7 +358,7 @@ function RecordDetailPanel({
         React.createElement(
           "h4",
           {
-            className: DETAIL_SECTION_HEADING_CLASS
+            className: SECTION_HEADING_CLASS
           },
           "Validity State"
         ),
@@ -403,7 +400,7 @@ function RecordDetailPanel({
         React.createElement(
           "h4",
           {
-            className: DETAIL_SECTION_HEADING_CLASS
+            className: SECTION_HEADING_CLASS
           },
           "Provenance & Citations"
         ),
@@ -453,7 +450,7 @@ function RecordDetailPanel({
           React.createElement(
             "h4",
             {
-              className: "font-semibold uppercase tracking-wider text-fg-muted"
+              className: SECTION_HEADING_CLASS
             },
             "Lineage"
           ),
@@ -512,7 +509,7 @@ function RecordDetailPanel({
           React.createElement(
             "h4",
             {
-              className: DETAIL_SECTION_HEADING_CLASS
+              className: SECTION_HEADING_CLASS
             },
             "Transition History"
           ),

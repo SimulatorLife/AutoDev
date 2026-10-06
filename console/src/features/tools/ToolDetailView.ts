@@ -6,6 +6,10 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import {
+  EntityTitle,
+  SECTION_HEADING_CLASS
+} from "../../components/layout/Heading.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 
@@ -34,8 +38,6 @@ export interface ToolDetailViewProps {
 
 const SECTION_PANEL_CLASS =
   "rounded-lg border border-border bg-surface p-6 shadow";
-const SECTION_HEADING_CLASS =
-  "mb-3 text-xs uppercase tracking-wider text-fg-muted";
 const FIELD_LABEL_CLASS = "text-fg-muted block mb-1";
 const FIELD_VALUE_CLASS = "text-fg break-all font-mono";
 const NOT_OBSERVED_STATUS = "not-observed" as const;
@@ -319,11 +321,7 @@ export function ToolDetailView({
     React.createElement(
       "header",
       { className: "flex flex-col gap-1" },
-      React.createElement(
-        "h1",
-        { className: "text-2xl font-semibold text-fg" },
-        canonicalName
-      ),
+      React.createElement(EntityTitle, { mono: true }, canonicalName),
       React.createElement(
         "p",
         { className: "text-xs text-fg-muted font-mono" },

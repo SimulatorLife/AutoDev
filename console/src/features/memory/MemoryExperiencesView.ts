@@ -6,6 +6,10 @@ import {
   SelectField,
   type SelectOption
 } from "../../components/forms/SelectField.ts";
+import {
+  EntityTitle,
+  SECTION_HEADING_CLASS
+} from "../../components/layout/Heading.ts";
 import { ClosePanelLink } from "../../components/navigation/ClosePanelLink.ts";
 import {
   StatusBadge,
@@ -252,11 +256,7 @@ function ExperienceDetailPanel({
         React.createElement(
           "div",
           { className: "flex items-center gap-3" },
-          React.createElement(
-            "h3",
-            { className: "font-mono text-lg font-bold text-fg" },
-            experience.id
-          ),
+          React.createElement(EntityTitle, { mono: true }, experience.id),
           React.createElement(
             "span",
             {
@@ -298,7 +298,7 @@ function ExperienceDetailPanel({
         React.createElement(
           "h4",
           {
-            className: "font-semibold uppercase tracking-wider text-fg-muted"
+            className: SECTION_HEADING_CLASS
           },
           "Trajectory Provenance"
         ),
@@ -381,7 +381,7 @@ function ExperienceDetailPanel({
         React.createElement(
           "h4",
           {
-            className: "font-semibold uppercase tracking-wider text-fg-muted"
+            className: SECTION_HEADING_CLASS
           },
           "Evidence & Diagnostics"
         ),

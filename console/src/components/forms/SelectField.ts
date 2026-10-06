@@ -20,9 +20,15 @@ import React from "react";
  * Exported so a date or text input in the same filter bar matches a select
  * beside it; a filter row with two different control weights reads as two
  * different products.
+ *
+ * `max-w-full min-w-0` makes every control shrinkable. A native select's
+ * intrinsic width comes from its widest option, so a select labelled with a
+ * long workspace id or model name used to push its row past the viewport and
+ * take the Apply button with it. The constraints apply only when the control
+ * would otherwise be wider than the space it is given.
  */
 export const FIELD_CONTROL_CLASS =
-  "appearance-none rounded border border-border-strong bg-input pl-3 pr-8 py-1.5 text-sm text-fg-secondary transition-colors hover:border-fg-muted disabled:cursor-not-allowed disabled:opacity-60";
+  "appearance-none rounded border border-border-strong bg-input pl-3 pr-8 py-1.5 text-sm text-fg-secondary transition-colors hover:border-fg-muted disabled:cursor-not-allowed disabled:opacity-60 max-w-full min-w-0";
 
 const CONTROL_CLASS = FIELD_CONTROL_CLASS;
 
@@ -68,7 +74,7 @@ export function SelectField({
   return React.createElement(
     "div",
     {
-      className: `flex items-center gap-2${
+      className: `flex flex-wrap items-center gap-2 min-w-0${
         className === undefined ? "" : ` ${className}`
       }`
     },
@@ -79,7 +85,7 @@ export function SelectField({
     ),
     React.createElement(
       "span",
-      { className: "relative inline-flex items-center" },
+      { className: "relative inline-flex min-w-0 items-center" },
       React.createElement(
         "select",
         {

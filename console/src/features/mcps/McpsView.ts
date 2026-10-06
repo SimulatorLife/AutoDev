@@ -2,6 +2,7 @@ import type { McpServerResource } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
@@ -166,8 +167,7 @@ export function McpsView({
         React.createElement(
           "h2",
           {
-            className:
-              "text-sm font-semibold uppercase tracking-wider text-fg-muted"
+            className: SECTION_HEADING_CLASS
           },
           "Model Context Protocol Servers"
         ),
