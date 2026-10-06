@@ -68,8 +68,45 @@ export function defaultCodexConfigFile(): string {
 const AGENTS_TABLE_HEADER = /^[^\S\n\r\u2028\u2029]*\[agents\]/gm;
 const WHITESPACE_CHAR = /\s/;
 const INLINE_AGENTS_TABLE = /(?:^|\n)\s*agents\s*=\s*\{/;
+// Capture the whole value token rather than a run of digits. TOML integers are
+// not just run-of-digits -- `_` is a legal digit separator and `0x`/`0o`/`0b`
+// are legal bases -- so matching `\d+` read
+// `max_concurrent_threads_per_session = 1_000` as `1` and capped the operator
+// at a single thread without saying so. `tomlInteger` decides what the token
+// means; keeping the shape check out of the regex also keeps this pattern
+// linear, which a nested `(?:_?[0-9])*` is not.
 const MAX_CONCURRENT_THREADS_KEY =
-  /(?:^|[\s,])max_concurrent_threads_per_session\s*=\s*(\d+)/;
+  /(?:^|[\s,])max_concurrent_threads_per_session\s*=\s*([^\s,;#]+)/;
+
+const RADIX_DIGITS: Readonly<Record<number, string>> = {
+  2: "01",
+  8: "01234567",
+  10: "0123456789",
+  16: "0123456789abcdefABCDEF"
+};
+
+/**
+ * Read a TOML integer token, or null when it is not one. The whole token has
+ * to be valid, so `12abc` is unread rather than truncated to `12`.
+ */
+function tomlInteger(token: string): number | null {
+  const cleaned = token.replaceAll("_", "");
+  const radix = cleaned.startsWith("0x")
+    ? 16
+    : cleaned.startsWith("0o")
+      ? 8
+      : cleaned.startsWith("0b")
+        ? 2
+        : 10;
+  const body = radix === 10 ? cleaned : cleaned.slice(2);
+  if (!body) return null;
+  const digits = RADIX_DIGITS[radix] ?? "";
+  for (const character of body) {
+    if (!digits.includes(character)) return null;
+  }
+  const parsed = Number.parseInt(body, radix);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
 
 function skipWhitespace(source: string, from: number): number {
   let index = from;
@@ -162,8 +199,8 @@ export function parseConcurrencyConfig(
     const source = readFileSync(file, "utf8");
     const agentsContext = matchAgentsContext(source);
     const keyMatch = agentsContext.match(MAX_CONCURRENT_THREADS_KEY);
-    if (keyMatch && keyMatch[1] !== undefined) {
-      result.maxConcurrentThreadsPerSession = Number.parseInt(keyMatch[1]);
+    if (keyMatch?.[1] !== undefined) {
+      result.maxConcurrentThreadsPerSession = tomlInteger(keyMatch[1]);
     }
   } catch (error) {
     writeErrorLine(

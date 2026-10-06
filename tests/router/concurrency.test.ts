@@ -50,6 +50,50 @@ test("parseConcurrencyConfig parses multiline and inline tables and rejects lega
   }
 });
 
+test("parseConcurrencyConfig reads every valid TOML integer spelling", async () => {
+  // TOML integers are not just run-of-digits: `_` is a legal digit separator
+  // and `0x`/`0o`/`0b` are legal bases. Reading only `\d+` and stopping there
+  // silently capped `1_000` at a single thread, which reads as a plausible
+  // configuration rather than a parse failure.
+  const dir = await mkdtemp(join(tmpdir(), "concurrency-integer-test-"));
+  const file = join(dir, "config.toml");
+  try {
+    const cases: [string, number][] = [
+      ["1_000", 1000],
+      ["12_345", 12_345],
+      ["0x40", 64],
+      ["0o17", 15],
+      ["0b1010", 10],
+      ["8 # eight", 8],
+      ["1_000_000", 1_000_000]
+    ];
+    for (const [token, expected] of cases) {
+      await writeFile(
+        file,
+        `[agents]\nmax_concurrent_threads_per_session = ${token}\n`
+      );
+      assert.deepEqual(
+        parseConcurrencyConfig(file),
+        { file, maxConcurrentThreadsPerSession: expected },
+        `${token} should parse as ${expected}`
+      );
+    }
+
+    // A value that is not a complete TOML integer stays unread rather than
+    // being truncated into a smaller, wrong limit.
+    await writeFile(
+      file,
+      "[agents]\nmax_concurrent_threads_per_session = 12abc\n"
+    );
+    assert.deepEqual(parseConcurrencyConfig(file), {
+      file,
+      maxConcurrentThreadsPerSession: null
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("matchAgentsContext extracts context cleanly", () => {
   assert.equal(
     matchAgentsContext("[agents]\nfoo=1\n[other]\nbar=2"),
