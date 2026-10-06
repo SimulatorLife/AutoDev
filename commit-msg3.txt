@@ -1,0 +1,12 @@
+chore: stop tracking the Console stress-test scratch directory
+
+A throwaway stub server and captured HTML from an adversarial-content
+sweep were swept into the repository by a concurrent commit that staged
+the whole working tree. None of it belongs in history: the stub exists to
+make a failed-closed path fail closed, and the captured page was evidence
+for a change already landed.
+
+Removed from tracking rather than deleted in place, since the same
+mistake can recur on any throwaway directory created under a concurrent
+commit -- `.scratch-stress/` and the sibling `agent-long.html` were both
+added by `e34cb0ac` without review.
