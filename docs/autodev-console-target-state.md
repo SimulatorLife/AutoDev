@@ -64,7 +64,7 @@ There is no required generic Home/Dashboard page. The root route should redirect
 
 Use **Workspaces**, not OpenLIT Projects, for AutoDev repositories/workspaces. OpenLIT project/environment/organization/account tenancy must not reappear under different names.
 
-**Providers** is a top-level Configure resource in the Console navigation, listed directly after Agents. It is the canonical surface for model providers (for example Claude, Codex, Copilot, Antigravity, and MiniMax) and their models: provider orchestrator/subagent enablement, model enablement, priority/fallback groups, per-tier model mapping, routes, and live readiness, health, cooldown, and failure state. Models is a tab inside Providers, not another top-level resource. Agents shows each role's effective provider/model eligibility as a read-only summary that links to Providers. Historical provider/model observability remains in **Usage**.
+**Providers** is a top-level Configure resource in the Console navigation, listed directly after Agents. It is the canonical surface for model providers (for example Claude, Codex, Copilot, Antigravity, and MiniMax) and their models: per-role priority and model assignment across the four fixed roles (Default, Smart, Orchestrator, Subagent), provider-wide concurrent-agent limits with an Unlimited option, a provider-level disable that preserves its configuration, routes, and live readiness, health, cooldown, and failure state. Models is a tab inside Providers, not another top-level resource. Agents shows each role's effective provider/model eligibility as a read-only summary that links to Providers. Historical provider/model observability remains in **Usage**.
 
 Configuration, desired state, actual runtime state, health, activity, and historical telemetry should be composable on the same resource pages while remaining separate architectural data/control paths.
 
@@ -124,7 +124,7 @@ Every domain concept has one canonical editable surface. Other pages may show a 
 | Concern | Canonical edit surface | Other surfaces |
 | --- | --- | --- |
 | Agent definition | Agents | scoped effective summaries |
-| Provider orchestrator/subagent enablement, model enablement, priority/fallback groups, per-tier models, routing | Providers (Providers and Models tabs) | read-only effective provider/model summaries on Agents |
+| Per-role priority and model assignment for Default/Smart/Orchestrator/Subagent, provider-wide agent limits, provider enable/disable, model enablement, priority/fallback groups, per-tier models, routing | Providers (Providers and Models tabs) | read-only effective provider/model summaries on Agents |
 | MCP configuration | MCPs | read-only role/tool summaries |
 | Skill definition/enablement | Skills | read-only assignments/evidence |
 | Hook configuration | Hooks | read-only effective status |
@@ -436,7 +436,7 @@ The Console remains one application/package. A lightweight typed feature registr
 | Resource | Primary authority | Target surface |
 | --- | --- | --- |
 | **Agents** | RuleSync + Runtime | role definition, read-only effective provider/model eligibility, desired/actual state, health, activity |
-| **Providers** | typed AutoDev routing configuration + Runtime + OTel | provider and model catalogs, provider orchestrator/subagent enablement, model enablement, priority/fallback groups, per-tier models, credential presence (never values), readiness/health, cooldown/failure state, in-flight load, links to Usage |
+| **Providers** | typed AutoDev routing configuration + Runtime + OTel | provider and model catalogs; a single four-column configuration table (Provider, Status, Roles, Agent Limits); per-role priority/model assignment across Default, Smart, Orchestrator, Subagent; provider-wide agent limits with Unlimited; provider-level disable preserving configuration; model enablement, priority/fallback groups, per-tier models, credential presence (never values), readiness/health, cooldown/failure state, in-flight load, links to Usage |
 | **MCPs** | RuleSync + Runtime + OTel | server configuration, role exposure, Tools/Resources/Prompts, connection health, usage/errors |
 | **Skills** | RuleSync + OTel | canonical definitions, role/workspace eligibility, observed exposure/use/error |
 | **Hooks** | RuleSync + Runtime evidence | event/matcher/action, target projections, validation/effective status, observed executions/errors |
@@ -467,15 +467,31 @@ Agent detail may combine canonical role/prompt, assigned capabilities, a read-on
 
 ### Providers
 
-Providers is the one place an operator decides which model providers and models may serve the orchestrator and subagents, in what priority order, and with which model per capability tier. It has a **Providers** tab (one row per provider) and a **Models** tab (one row per model across providers); each row carries that item's enable/disable toggle per the contextual-controls rule.
+Providers is the one place an operator decides which model providers may serve the fixed agent roles, in what priority order, with which model, and under which concurrency limits. Its **Providers** tab is a single compact configuration table with exactly **four primary columns**:
+
+| Column | Contract |
+|---|---|
+| **Provider** | The provider id, linked to that provider's detail view. Never truncates. |
+| **Status** | Overall provider usability, see below. |
+| **Roles** | The four fixed roles — **Default, Smart, Orchestrator, Subagent** — each with a white-outline icon plus two controls: a priority dropdown containing exactly `P1`, `P2`, `P3`, `Disabled`, and a model dropdown populated from that provider's available models. |
+| **Agent Limits** | Provider-wide concurrent-agent limits for **Per session** and **Across sessions**, editable with compact numeric controls, plus an **Unlimited** option where applicable, and a provider-level **Disabled** toggle. |
+
+**Status is a single verdict, not a summary of parts.** It reads `Ready` only when the provider is healthy *and* all required configuration and credentials are present. Otherwise it names the specific blocking state rather than degrading to a generic warning — for example `Missing CODEX_ROUTE`, `Missing credential`, `Disabled`, or the live health state (`Cooling down`, `Unavailable`). A provider whose parts are individually fine but which cannot currently serve a request must not read `Ready`.
+
+**Roles are the four fixed roles, not a capability set.** Default, Smart, Orchestrator and Subagent are the canonical roles; a provider's participation in each is expressed by its priority rather than by a separate enablement flag. Selecting `Disabled` for a role disables and **dims that role's model selector** — the control stays present so the previously chosen model is visible and recoverable, but it can no longer be changed into an active selection.
+
+**All dropdowns use consistent neutral styling.** No role-specific and no priority-specific colours, and **no crown icon for Default** — Default is not privileged over the other three in the presentation, only in what it means. Role identity is carried by a consistent **white-outline icon** on every role, so the reader distinguishes roles by shape and label rather than by hue.
+
+**Agent Limits are provider-wide**, not per-role, and carry a **provider-level Disabled toggle beside the Unlimited control**. That toggle globally disables use of the provider regardless of individual role settings, **while preserving its configured priorities, models and limits** so re-enabling later restores the same configuration rather than requiring it to be re-entered.
+
+The Providers tab has exactly these four columns. The separate **Role Enablement**, **Health**, **Credential**, **Available Models** and **Tier Priority** columns are removed: their facts are either folded into Status or reachable from the row's controls. Its **Models** tab (one row per model across providers) remains, and each row carries that model's enable/disable toggle per the contextual-controls rule.
 
 Useful states include:
 
 ~~~text
-Enabled / Disabled (orchestrator, subagent)
-Ready / Cooling down / Unavailable
-Credential configured / Missing
-Last failure
+Status:   Ready / Disabled / Missing CODEX_ROUTE / Missing credential / Cooling down / Unavailable
+Priority: P1 / P2 / P3 / Disabled
+Limits:   Per session, Across sessions, Unlimited
 ~~~
 
 Provider detail may combine its enable/disable controls, configured routes, its models with their own toggles, per-tier models, the tier priority/fallback groups the provider appears in, live readiness/cooldown/failure evidence, and small scoped Usage summaries that link to Usage. Mutations go through typed Control API provider/routing operations. Credentials are shown only as configured/missing status, never as values, and Providers must not become a second credential or model-catalog authority.
@@ -713,7 +729,7 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 
 - console/ is the sole final user-facing application.
 - Canonical resource navigation contains exactly the intended 13 resources, grouped consistently; no duplicate generic Home/Analytics/Settings product is required.
-- Providers is a top-level Configure navigation item with Providers and Models tabs, and the only editable surface for provider role enablement, model enablement, priority/fallback groups, and per-tier models; Agents shows read-only provider summaries that link to it.
+- The Providers tab is a single compact configuration table with exactly four primary columns — Provider, Status, Roles, Agent Limits — and the separate Role Enablement, Health, Credential, Available Models and Tier Priority columns do not exist. Status reads Ready only when the provider is healthy and fully configured, and otherwise names the specific blocking state (for example Missing CODEX_ROUTE). Roles shows the four fixed roles (Default, Smart, Orchestrator, Subagent) with a consistent white-outline icon, a priority dropdown of exactly P1/P2/P3/Disabled, and a model dropdown populated from that provider's models, where Disabled dims that role's model selector. All dropdowns are neutrally styled with no role- or priority-specific colours and no crown icon for Default. Agent Limits exposes Per session and Across sessions numeric controls plus Unlimited, beside a provider-level Disabled toggle that disables the provider while preserving its configured priorities, models and limits.
 - Item-scoped controls are contextual: each appears on the item's list row and in its detail view inside the owning resource (provider toggles on Providers rows and provider detail; model toggles on Models rows, model detail, and the provider detail's model list), backed by one typed operation; other resources show read-only state with a link.
 - Dark-only operation is enforced; there is no light/system theme or theme selector.
 - Otter/chat is absent.
