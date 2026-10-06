@@ -144,7 +144,14 @@ export function ReconciliationPanel({
     React.createElement(
       "dl",
       {
-        className: "grid grid-cols-1 gap-1 text-xs text-fg-muted sm:grid-cols-2"
+        className:
+          // `max-content_1fr`, not `1fr 1fr`: the labels are short and the
+          // values are identifiers. A 50/50 split gave "Desired generation"
+          // half the row to render in about a third of it, and starved the
+          // 64-character generation hash of the width it needs -- so the
+          // longest, most-worth-comparing value on the panel was the one that
+          // wrapped, while the space beside every label went unused.
+          "grid grid-cols-1 gap-1 text-xs text-fg-muted sm:grid-cols-[max-content_1fr]"
       },
       ...(
         [

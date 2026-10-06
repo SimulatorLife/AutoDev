@@ -1055,6 +1055,17 @@ test("Prompt detail surfaces the Runtime-derived reconciliation for the resource
   assert.match(markup, /data-field="desired-generation"[^>]*>gen-2</);
   // An unobserved generation must never render as an empty value.
   assert.match(markup, /data-field="observed-generation"[^>]*>Not observed</);
+
+  // The labelled facts must give the value the room, not split the row evenly.
+  // At `1fr 1fr` the label "Desired generation" occupied half a wide panel to
+  // render in about a third of it, and the 64-character generation hash --
+  // the one value on this panel worth comparing -- wrapped onto two lines.
+  assert.match(markup, /sm:grid-cols-\[max-content_1fr\]/);
+  assert.doesNotMatch(
+    markup,
+    /class="grid grid-cols-1 gap-1 text-xs text-fg-muted sm:grid-cols-2"/,
+    "a label/value list must not split its row evenly"
+  );
   assert.match(markup, /patch_prompt_command/);
   assert.match(markup, /data-history-outcome="ok"/);
 });
