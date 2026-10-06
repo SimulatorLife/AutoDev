@@ -109,7 +109,11 @@ function readOverride(form: URLSearchParams): SubmittedChange {
   const acrossSessions = form.get("setAcrossSessions");
   const named = [perSession, acrossSessions].filter((value) => value !== null);
   if (named.length !== 1) return MALFORMED_CHANGE;
-  const axis = perSession !== null ? "perSession" : "acrossSessions";
+  // `named.length === 1` above means exactly one axis was submitted, so this
+  // names the other one by elimination. Stated in the positive form because
+  // `unicorn/no-negated-condition` treats a negated ternary as a smell, and
+  // "which axis is absent" is the question this line is actually answering.
+  const axis = perSession === null ? "acrossSessions" : "perSession";
   const parsed = parseAxis(named[0] ?? null);
   return parsed.ok
     ? { ok: true, next: { [axis]: parsed.value } }

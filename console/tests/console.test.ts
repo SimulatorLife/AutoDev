@@ -6813,7 +6813,7 @@ test("a Disabled role's rendered form still submits the five fields its route re
     immutableBody
   )?.[0];
   assert.ok(applyTag, "the Apply control must still be present");
-  const applyAttributes = applyTag.replace(/\sclass="[^"]*"/gu, "");
+  const applyAttributes = applyTag.replaceAll(/\sclass="[^"]*"/gu, "");
   assert.match(
     applyAttributes,
     /(?:^|\s)disabled(?=[\s/>=]|>)/u,
