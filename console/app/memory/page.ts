@@ -9,7 +9,10 @@ import {
   type MemoryTab,
   MemoryView
 } from "../../src/features/memory/MemoryView.ts";
-import { isControlFailure } from "../../src/lib/control-failure.ts";
+import {
+  isControlFailure,
+  readControlRefusal
+} from "../../src/lib/control-failure.ts";
 import {
   type ControlApiConfig,
   controlApiFailureCode,
@@ -482,7 +485,8 @@ export default async function MemoryPage(
       status: params.status,
       occurredFrom: params.occurredFrom,
       occurredUntil: params.occurredUntil,
-      controlFailed: isControlFailure(rawParams.control)
+      controlFailed: isControlFailure(rawParams.control),
+      controlRefusal: readControlRefusal(rawParams.refusal)
     })
   );
 }

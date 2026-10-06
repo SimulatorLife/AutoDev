@@ -46,6 +46,14 @@ export interface MemoryViewProps {
   readonly occurredUntil: string;
   /** A mutation was redirected back with the shared could-not-confirm notice. */
   readonly controlFailed?: boolean | undefined;
+  /**
+   * Why the submission was refused, when the route observed a reason. Absent for
+   * every mutation whose outcome the Console genuinely cannot know, which is
+   * why the notice renders unchanged there.
+   */
+  readonly controlRefusal?: React.ComponentProps<
+    typeof ControlFailureNotice
+  >["refusal"];
 }
 
 export function MemoryView({
@@ -67,7 +75,8 @@ export function MemoryView({
   status,
   occurredFrom,
   occurredUntil,
-  controlFailed
+  controlFailed,
+  controlRefusal
 }: MemoryViewProps): React.JSX.Element {
   const activeRecordsCount = records.filter(
     (r) => r.status === "active"
@@ -185,7 +194,11 @@ export function MemoryView({
       hrefFor: hrefForTab
     }),
 
-    controlFailed ? React.createElement(ControlFailureNotice) : null,
+    controlFailed
+      ? React.createElement(ControlFailureNotice, {
+          refusal: controlRefusal
+        })
+      : null,
 
     // Active tab body
     activeTab === "records"

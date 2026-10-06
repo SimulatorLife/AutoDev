@@ -1,6 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server.js";
 
-import { withControlFailure } from "../../../src/lib/control-failure.ts";
+import {
+  type ControlRefusalReason,
+  withControlFailure,
+  withControlRefusal
+} from "../../../src/lib/control-failure.ts";
 import {
   type ControlApiConfig,
   type ControlApiResult,
@@ -100,10 +104,21 @@ async function parsePayload(
   }
 }
 
+/**
+ * Run one action, or report why this route would not send it.
+ *
+ * The refusal reason is returned rather than a bare `null` because the three
+ * reasons a purge can be turned down here need different operator responses, and
+ * two of them are indistinguishable from the action alone: a purge with the
+ * confirmation ticked but a reason the Runtime does not accept is *not* a
+ * missing confirmation. Keying the reason off the action -- which is what a
+ * single `null` invites -- would state a false cause on a form the operator had
+ * filled in correctly.
+ */
 function executeAction(
   payload: MemoryActionPayload,
   config: ControlApiConfig
-): Promise<ControlApiResult<unknown>> | null {
+): Promise<ControlApiResult<unknown>> | ControlRefusalReason | null {
   const {
     action,
     recordId,
@@ -119,9 +134,10 @@ function executeAction(
       // Purge erases an experience envelope irreversibly, so it is validated
       // separately from the record lifecycle: it targets `experienceId`, it
       // needs a Runtime-accepted reason, and it needs explicit confirmation.
-      if (!experienceId) return null;
-      if (confirm !== "purge") return null;
-      if (!(PURGE_REASONS as readonly string[]).includes(reason)) return null;
+      if (!experienceId) return "confirmation_missing";
+      if (confirm !== "purge") return "confirmation_missing";
+      if (!(PURGE_REASONS as readonly string[]).includes(reason))
+        return "reason_not_accepted";
       return purgeMemoryExperience(
         experienceId,
         reason as (typeof PURGE_REASONS)[number],
@@ -186,7 +202,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const respond = (
     status: number,
     error: unknown,
-    identifier?: string
+    identifier?: string,
+    refusal?: ControlRefusalReason
   ): NextResponse => {
     if (payload?.isForm === true) {
       // Re-select the subject whenever it is known. A refusal that lands on the
@@ -200,7 +217,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       if (payload.workspaceId !== "") {
         query.set("workspaceId", payload.workspaceId);
       }
-      return redirectTo(withControlFailure(`/memory?${query.toString()}`));
+      return redirectTo(
+        refusal === undefined
+          ? withControlFailure(`/memory?${query.toString()}`)
+          : withControlRefusal(`/memory?${query.toString()}`, refusal)
+      );
     }
     return NextResponse.json({ error }, { status });
   };
@@ -222,7 +243,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return respond(
       400,
       `Unsupported or incomplete action: ${payload.action}`,
-      identifier
+      identifier,
+      "reason_not_accepted"
+    );
+  }
+  // The route refused to send it, and says which of its own checks stopped it.
+  if (typeof result === "string") {
+    return respond(
+      400,
+      `Unsupported or incomplete action: ${payload.action}`,
+      identifier,
+      result
     );
   }
 
@@ -230,7 +261,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return respond(
       "status" in result ? result.status : 500,
       result,
-      identifier
+      identifier,
+      "runtime_refused"
     );
   }
 

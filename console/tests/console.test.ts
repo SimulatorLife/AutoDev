@@ -51,6 +51,7 @@ import {
   navIcon
 } from "../src/components/icons/Icon.ts";
 import { PAGE_SECTION_STACK_CLASS } from "../src/components/layout/PageBody.ts";
+import { ControlFailureNotice } from "../src/components/status/ControlFailureNotice.ts";
 import {
   MONO_ID_CLASS,
   MONO_META_CLASS,
@@ -123,6 +124,10 @@ import {
   CONSOLE_DEV_DIST_DIR,
   consoleDistDir
 } from "../src/lib/build-output.ts";
+import {
+  CONTROL_REFUSAL_REASONS,
+  readControlRefusal
+} from "../src/lib/control-failure.ts";
 import {
   canonicalNavPath,
   canonicalSectionFromPath
@@ -6796,10 +6801,12 @@ test("Memory purge refuses without explicit confirmation and never reaches the R
     // The refusal re-selects the experience. It used to redirect without any
     // identifier at all, and this exact string asserted that: the operator who
     // tried to erase one envelope was returned to the bare table with nothing
-    // on the page saying which row had been refused.
+    // on the page saying which row had been refused. It now also carries
+    // `refusal=confirmation_missing`, because this route -- not the Runtime --
+    // decided the request, and "tick the box" is the whole next step.
     assert.equal(
       response.headers.get("location"),
-      "/memory?tab=experiences&experienceId=exp-1&workspaceId=SimulatorLife%2FAutoDev&control=failed"
+      "/memory?tab=experiences&experienceId=exp-1&workspaceId=SimulatorLife%2FAutoDev&control=failed&refusal=confirmation_missing"
     );
     assert.equal(requests.length, 0);
   });
@@ -6818,9 +6825,13 @@ test("Memory purge refuses a reason the Runtime does not accept", async () => {
     );
 
     assert.equal(response.status, 303);
+    // The confirmation was ticked and the form was otherwise complete, so the
+    // refusal must not blame the confirmation. This is the case that stops a
+    // fix keying the reason off the action: "purge" here means the box was
+    // ticked, and the only thing wrong with the submission is the reason code.
     assert.equal(
       response.headers.get("location"),
-      "/memory?tab=experiences&experienceId=exp-1&workspaceId=SimulatorLife%2FAutoDev&control=failed"
+      "/memory?tab=experiences&experienceId=exp-1&workspaceId=SimulatorLife%2FAutoDev&control=failed&refusal=reason_not_accepted"
     );
     assert.equal(requests.length, 0);
   });
@@ -8266,6 +8277,81 @@ test("an unobserved routing counter is never rendered as a zero", () => {
   );
 });
 
+test("the failure notice adds a reason only when the route observed one", () => {
+  // The notice's primary sentence is deliberately outcome-free -- the refreshed
+  // value the redirect lands on is the authoritative answer, so it must not
+  // invent an outcome. But "must not invent" is not "must withhold a known
+  // fact": a purge refused because the box was unticked, and one the Runtime
+  // turned down because durable memory still cites the envelope, are different
+  // situations with different next moves. Told only "could not be confirmed",
+  // the first operator retries the identical request.
+  //
+  // So the notice grows one line *when a reason is carried*, and the reason
+  // travels as a code in the redirect rather than as a message the Console
+  // chose -- a code cannot reflect text into the page and cannot drift from
+  // what the route meant by it.
+
+  // The shared default is unchanged: every other mutation surface renders
+  // exactly the notice it always did.
+  const plain = renderToStaticMarkup(React.createElement(ControlFailureNotice));
+  assert.match(
+    plain,
+    /could not be confirmed/u,
+    "the shared sentence must still be there"
+  );
+  assert.doesNotMatch(
+    plain,
+    /data-control-refusal/u,
+    "a mutation whose outcome is unknown must not name a cause"
+  );
+  assert.doesNotMatch(
+    plain,
+    /<span/u,
+    "the shared notice must not grow a detail line it has no reason for"
+  );
+
+  for (const refusal of CONTROL_REFUSAL_REASONS) {
+    const markup = renderToStaticMarkup(
+      React.createElement(ControlFailureNotice, { refusal })
+    );
+    assert.match(
+      markup,
+      /could not be confirmed/u,
+      `the shared sentence must survive for ${refusal}`
+    );
+    assert.match(
+      markup,
+      new RegExp(`data-control-refusal="${refusal}"`, "u"),
+      `${refusal} must be recorded for assertions`
+    );
+    // The detail must say something, or the line is decoration.
+    const detail = /<span class="[^"]*">([^<]+)</u.exec(markup)?.[1] ?? "";
+    assert.ok(
+      detail.length > 30,
+      `${refusal} must render a real explanation, got: ${JSON.stringify(detail)}`
+    );
+  }
+
+  // The two purge refusals must not read alike: the whole point is that
+  // "tick the box" and "this cannot be done" are different instructions.
+  const missing = renderToStaticMarkup(
+    React.createElement(ControlFailureNotice, {
+      refusal: "confirmation_missing"
+    })
+  );
+  const refused = renderToStaticMarkup(
+    React.createElement(ControlFailureNotice, { refusal: "runtime_refused" })
+  );
+  assert.notEqual(missing, refused);
+
+  // An unrecognised code is treated as absent rather than rendered, so a link
+  // or bookmark carrying something this build does not know still gets the
+  // shared notice instead of an unexplained gap in it.
+  const unknown = readControlRefusal("something_invented");
+  assert.equal(unknown, undefined);
+  assert.equal(readControlRefusal(undefined), undefined);
+  assert.equal(readControlRefusal("runtime_refused"), "runtime_refused");
+});
 test("a purge redirect names the experience its tab reads, on success and on refusal", async () => {
   // Purge is the one irreversible action in the Console, and both of its
   // outcomes used to drop the operator onto a bare list.

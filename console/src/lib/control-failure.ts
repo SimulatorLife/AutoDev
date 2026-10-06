@@ -17,8 +17,56 @@
 export const CONTROL_FAILED_PARAM = "control";
 const CONTROL_FAILED_VALUE = "failed";
 
+/**
+ * Query flag carrying *why* a submission was refused, for the cases where the
+ * route knows.
+ *
+ * The flag above deliberately says only "could not be confirmed", and that is
+ * right for the ordinary mutation: the refreshed value the redirect lands on is
+ * the authoritative answer, so the notice must not invent an outcome. But
+ * "must not invent" is not "must withhold a known fact". A purge refused because
+ * the confirmation was not given is a different situation from one the Runtime
+ * turned down, and the operator's next move differs completely -- tick the box,
+ * versus do not retry because durable memory still cites this envelope. Told
+ * only "could not be confirmed", the first operator retries the identical
+ * request.
+ *
+ * So the route carries a code, never a message. A code cannot reflect attacker
+ * text into the page, cannot drift from what the route means by it, and cannot
+ * be used to claim an outcome the route did not observe.
+ */
+export const CONTROL_REFUSAL_PARAM = "refusal";
+export const CONTROL_REFUSAL_REASONS = [
+  "confirmation_missing",
+  "reason_not_accepted",
+  "runtime_refused"
+] as const;
+export type ControlRefusalReason = (typeof CONTROL_REFUSAL_REASONS)[number];
+
 export function withControlFailure(path: string): string {
   return `${path}${path.includes("?") ? "&" : "?"}${CONTROL_FAILED_PARAM}=${CONTROL_FAILED_VALUE}`;
+}
+
+/** Attach the refusal flag to a redirect, with the reason the route observed. */
+export function withControlRefusal(
+  path: string,
+  reason: ControlRefusalReason
+): string {
+  return `${withControlFailure(path)}&${CONTROL_REFUSAL_PARAM}=${reason}`;
+}
+
+/**
+ * The refusal reason a redirect carried, or `undefined` when it carried none or
+ * carried something this build does not recognise. An unrecognised value is
+ * treated as absent rather than rendered: the generic notice is still true.
+ */
+export function readControlRefusal(
+  raw: string | readonly string[] | undefined
+): ControlRefusalReason | undefined {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return (CONTROL_REFUSAL_REASONS as readonly string[]).includes(value ?? "")
+    ? (value as ControlRefusalReason)
+    : undefined;
 }
 
 /** Mark a redirect target being built with the flag. */
