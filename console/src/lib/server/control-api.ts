@@ -54,7 +54,8 @@ import {
   type ConvergenceStatus,
   LOCAL_CONTROL_API_ACTOR,
   type ProviderRole,
-  type ReconciliationStatus} from "@simulatorlife/autodev-core";
+  type ReconciliationStatus
+} from "@simulatorlife/autodev-core";
 
 export type ControlApiResult<T> =
   | { readonly kind: "ok"; readonly data: T }
@@ -678,6 +679,45 @@ function isMemoryPageResponse<TResponse extends { readonly schema: string }>(
 }
 
 /**
+ * Narrows the Memory detail responses. These are single-record reads whose
+ * payload *is* the page: an unreadable one has nothing to render, and letting
+ * it through produced a detail page with blank fields and an empty history
+ * that read as a real claim with none of either.
+ */
+function isMemoryRecordDetailResponse(
+  value: unknown
+): value is ControlApiMemoryRecordDetailResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-memory-record-v1" &&
+    isRecord(value.memory)
+  );
+}
+
+function isMemoryHistoryResponse(
+  value: unknown
+): value is ControlApiMemoryHistoryResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-memory-history-v1" &&
+    isRecord(value.memory) &&
+    // `transitions` is the evidence the history panel is entirely made of; a
+    // missing list is not an empty history.
+    Array.isArray(value.transitions)
+  );
+}
+
+function isMemoryExperienceDetailResponse(
+  value: unknown
+): value is ControlApiMemoryExperienceDetailResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-memory-experience-v1" &&
+    isRecord(value.experience)
+  );
+}
+
+/**
  * Narrows the session outcome cohort page. It is not a paged envelope: it
  * reports cells plus explicit reported/unreported counts, and an unreadable
  * response must not collapse into an empty cohort table that reads as
@@ -735,6 +775,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
+}
+
+/** A count the Runtime may legitimately not know, as opposed to counting zero. */
+function isNullableNumber(value: unknown): value is number | null {
+  return value === null || typeof value === "number";
 }
 
 /**
@@ -1158,15 +1203,54 @@ export function patchPromptCommand(
   );
 }
 
-export function fetchWorkspaces(
+/**
+ * Narrows the workspace catalog. The catalog scopes every Memory read, so an
+ * unreadable one must not reach the selector as an empty list: an operator
+ * would see "no workspaces" rather than "the catalog could not be read".
+ */
+function isControlApiWorkspacesResponse(
+  value: unknown
+): value is ControlApiWorkspacesResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-workspaces-v1" &&
+    typeof value.source === "string" &&
+    typeof value.readOnly === "boolean" &&
+    (value.catalogStatus === "valid" ||
+      value.catalogStatus === "invalid" ||
+      value.catalogStatus === "unavailable") &&
+    isNullableNumber(value.totalWorkspaces) &&
+    Array.isArray(value.workspaces) &&
+    value.workspaces.every(
+      (workspace) =>
+        isRecord(workspace) &&
+        typeof workspace.id === "string" &&
+        typeof workspace.baseBranch === "string" &&
+        typeof workspace.enabled === "boolean" &&
+        (workspace.agentRoles === null || isStringList(workspace.agentRoles))
+    )
+  );
+}
+
+export async function fetchWorkspaces(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiWorkspacesResponse>> {
-  return fetchControlApi<ControlApiWorkspacesResponse>(
+  const result = await fetchControlApi<unknown>(
     CONTROL_API_PATHS.workspaces,
     config,
     options
   );
+  if (result.kind !== "ok") return result;
+  if (isControlApiWorkspacesResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_workspaces_response",
+    message:
+      "AutoDev Control API returned an incompatible Workspaces response; the Console requires the v1 workspace catalog contract."
+  };
 }
 
 export function fetchGithubWorkflows(
@@ -1255,7 +1339,7 @@ export async function fetchMemoryRecords(
     : invalidMemoryPageResponse("Records", "autodev-memory-records-v1");
 }
 
-export function fetchMemoryRecord(
+export async function fetchMemoryRecord(
   id: string,
   workspaceId: string,
   config: ControlApiConfig,
@@ -1263,14 +1347,19 @@ export function fetchMemoryRecord(
 ): Promise<ControlApiResult<ControlApiMemoryRecordDetailResponse>> {
   const search = new URLSearchParams({ workspaceId });
   const path = `${CONTROL_API_PATHS.memoryRecords}/${encodeURIComponent(id)}?${search.toString()}`;
-  return fetchControlApi<ControlApiMemoryRecordDetailResponse>(
-    path,
-    config,
-    options
-  );
+  const result = await fetchControlApi<unknown>(path, config, options);
+  if (result.kind !== "ok") return result;
+  // A detail read that cannot be parsed must not reach the page as an empty
+  // record: the view would render blank fields and an empty history as though
+  // the durable claim had none of either.
+  const detail: unknown = result.data;
+  if (isMemoryRecordDetailResponse(detail)) {
+    return { kind: "ok", data: detail };
+  }
+  return invalidMemoryPageResponse("record detail", "autodev-memory-record-v1");
 }
 
-export function fetchMemoryHistory(
+export async function fetchMemoryHistory(
   id: string,
   workspaceId: string,
   config: ControlApiConfig,
@@ -1278,10 +1367,17 @@ export function fetchMemoryHistory(
 ): Promise<ControlApiResult<ControlApiMemoryHistoryResponse>> {
   const search = new URLSearchParams({ workspaceId });
   const path = `${CONTROL_API_PATHS.memoryRecords}/${encodeURIComponent(id)}/history?${search.toString()}`;
-  return fetchControlApi<ControlApiMemoryHistoryResponse>(
-    path,
-    config,
-    options
+  const result = await fetchControlApi<unknown>(path, config, options);
+  if (result.kind !== "ok") return result;
+  // `transitions` is the evidence the history panel is entirely made of. A
+  // missing list is not an empty history; it is an unreadable response.
+  const history: unknown = result.data;
+  if (isMemoryHistoryResponse(history)) {
+    return { kind: "ok", data: history };
+  }
+  return invalidMemoryPageResponse(
+    "record history",
+    "autodev-memory-history-v1"
   );
 }
 
@@ -1319,7 +1415,7 @@ export async function fetchMemoryExperiences(
     : invalidMemoryPageResponse("Experiences", "autodev-memory-experiences-v1");
 }
 
-export function fetchMemoryExperienceDetail(
+export async function fetchMemoryExperienceDetail(
   id: string,
   workspaceId: string,
   config: ControlApiConfig,
@@ -1330,10 +1426,15 @@ export function fetchMemoryExperienceDetail(
     includeTaskHistory: "true"
   });
   const path = `${CONTROL_API_PATHS.memoryExperiences}/${encodeURIComponent(id)}?${search.toString()}`;
-  return fetchControlApi<ControlApiMemoryExperienceDetailResponse>(
-    path,
-    config,
-    options
+  const result = await fetchControlApi<unknown>(path, config, options);
+  if (result.kind !== "ok") return result;
+  const detail: unknown = result.data;
+  if (isMemoryExperienceDetailResponse(detail)) {
+    return { kind: "ok", data: detail };
+  }
+  return invalidMemoryPageResponse(
+    "experience detail",
+    "autodev-memory-experience-v1"
   );
 }
 
