@@ -1,3 +1,4 @@
+export * from "./components/charts/BarChart.ts";
 /**
  * Public Console component/utility surface.
  *

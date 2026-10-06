@@ -6,6 +6,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { BarChart } from "../../components/charts/BarChart.ts";
 import { Button } from "../../components/forms/Button.ts";
 import {
   FIELD_CONTROL_CLASS,
@@ -49,18 +50,6 @@ const DURATION_FORMATTER = new Intl.NumberFormat("en-US", {
 const FILTER_GROUP_CLASS =
   "flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-fg-muted";
 const EMPTY_STATE_CLASS = "text-xs text-fg-muted italic py-2";
-
-/**
- * One row of a "label, value" breakdown list.
- *
- * Every Usage breakdown widget — requests by role, attempts by provider, calls
- * by tool — presents the same shape, so they share this row. The tool-name
- * widget used to render each entry as its own bordered card inside an already
- * bordered panel, which read as a nested box and left one small tile floating
- * in a wide empty panel.
- */
-const BREAKDOWN_ROW_CLASS =
-  "flex items-center justify-between gap-3 text-xs py-1 border-b border-border/60 last:border-none";
 
 export function formatTokenCount(value: number | null): string {
   if (value === null) return NOT_OBSERVED_LABEL;
@@ -334,41 +323,22 @@ export function UsageView({
           },
           "Requests by Agent Role"
         ),
-        React.createElement(
-          "div",
-          { className: "flex flex-col gap-2" },
-          requestsByRole === null || requestsByRole === undefined
-            ? React.createElement(
-                "p",
-                { className: EMPTY_STATE_CLASS },
-                "Role telemetry not observed."
-              )
-            : requestsByRole.length === 0
-              ? React.createElement(
-                  "p",
-                  { className: EMPTY_STATE_CLASS },
-                  "No logical requests were observed in this time range."
-                )
-              : requestsByRole.map((item) =>
-                  React.createElement(
-                    "div",
-                    {
-                      key: item.role,
-                      className: BREAKDOWN_ROW_CLASS
-                    },
-                    React.createElement(
-                      "span",
-                      { className: "font-mono text-fg" },
-                      formatDimension(item.role)
-                    ),
-                    React.createElement(
-                      "span",
-                      { className: "font-semibold text-chart-1" },
-                      formatCount(item.count)
-                    )
-                  )
-                )
-        )
+        React.createElement(BarChart, {
+          data:
+            requestsByRole === null || requestsByRole === undefined
+              ? null
+              : requestsByRole.map((item) => ({
+                  label: formatDimension(item.role),
+                  value: item.count,
+                  valueText: formatCount(item.count)
+                })),
+          label: "Logical routed requests by agent role",
+          notObservedMessage: "Role telemetry not observed.",
+          emptyMessage: "No logical requests were observed in this time range.",
+          barClass: "bg-chart-1",
+          valueClass: "text-chart-1",
+          emptyClass: EMPTY_STATE_CLASS
+        })
       ),
       React.createElement(
         "div",
@@ -382,41 +352,23 @@ export function UsageView({
           },
           "Physical Attempts by Provider"
         ),
-        React.createElement(
-          "div",
-          { className: "flex flex-col gap-2" },
-          attemptsByProvider === null || attemptsByProvider === undefined
-            ? React.createElement(
-                "p",
-                { className: EMPTY_STATE_CLASS },
-                "Provider attempt telemetry not observed."
-              )
-            : attemptsByProvider.length === 0
-              ? React.createElement(
-                  "p",
-                  { className: EMPTY_STATE_CLASS },
-                  "No provider attempts were observed in this time range."
-                )
-              : attemptsByProvider.map((item) =>
-                  React.createElement(
-                    "div",
-                    {
-                      key: item.provider,
-                      className: BREAKDOWN_ROW_CLASS
-                    },
-                    React.createElement(
-                      "span",
-                      { className: "font-mono text-fg" },
-                      formatDimension(item.provider)
-                    ),
-                    React.createElement(
-                      "span",
-                      { className: "font-semibold text-chart-2" },
-                      formatCount(item.count)
-                    )
-                  )
-                )
-        )
+        React.createElement(BarChart, {
+          data:
+            attemptsByProvider === null || attemptsByProvider === undefined
+              ? null
+              : attemptsByProvider.map((item) => ({
+                  label: formatDimension(item.provider),
+                  value: item.count,
+                  valueText: formatCount(item.count)
+                })),
+          label: "Physical attempts by provider",
+          notObservedMessage: "Provider attempt telemetry not observed.",
+          emptyMessage:
+            "No provider attempts were observed in this time range.",
+          barClass: "bg-chart-2",
+          valueClass: "text-chart-2",
+          emptyClass: EMPTY_STATE_CLASS
+        })
       )
     ),
     React.createElement(
@@ -461,40 +413,22 @@ export function UsageView({
         },
         "MCP Calls by Tool Name"
       ),
-      React.createElement(
-        "div",
-        null,
-        callsByTool === null || callsByTool === undefined
-          ? React.createElement(
-              "p",
-              { className: EMPTY_STATE_CLASS },
-              "Tool-call telemetry not observed."
-            )
-          : callsByTool.length === 0
-            ? React.createElement(
-                "p",
-                { className: EMPTY_STATE_CLASS },
-                "No MCP tool calls were observed in this time range."
-              )
-            : callsByTool.map((item) =>
-                React.createElement(
-                  "div",
-                  { key: item.tool, className: BREAKDOWN_ROW_CLASS },
-                  React.createElement(
-                    "span",
-                    {
-                      className: "font-mono text-fg truncate min-w-0"
-                    },
-                    formatDimension(item.tool)
-                  ),
-                  React.createElement(
-                    "span",
-                    { className: "shrink-0 tabular-nums" },
-                    formatCount(item.count)
-                  )
-                )
-              )
-      )
+      React.createElement(BarChart, {
+        data:
+          callsByTool === null || callsByTool === undefined
+            ? null
+            : callsByTool.map((item) => ({
+                label: formatDimension(item.tool),
+                value: item.count,
+                valueText: formatCount(item.count)
+              })),
+        label: "MCP calls by tool name",
+        notObservedMessage: "Tool-call telemetry not observed.",
+        emptyMessage: "No MCP tool calls were observed in this time range.",
+        barClass: "bg-chart-3",
+        valueClass: "text-chart-3",
+        emptyClass: EMPTY_STATE_CLASS
+      })
     )
   );
 }

@@ -41,6 +41,7 @@ import {
   AgentDetailView,
   AgentsView,
   AppNav,
+  BarChart,
   Breadcrumbs,
   CALLOUT_WARNING_CLASS,
   ClosePanelLink,
@@ -1365,8 +1366,31 @@ test("Usage role and provider breakdowns use distinct semantic chart series", ()
     React.createElement(UsageView, { metrics })
   );
 
-  assert.ok(markup.includes('class="font-semibold text-chart-1">3</span>'));
-  assert.ok(markup.includes('class="font-semibold text-chart-2">5</span>'));
+  // Each breakdown is its own series, so both the bar it draws and the value it
+  // prints carry that series colour and never the other's.
+  assert.ok(
+    markup.includes("bg-chart-1"),
+    "role breakdown draws a chart-1 bar"
+  );
+  assert.ok(markup.includes("text-chart-1"), "role breakdown value is chart-1");
+  assert.ok(
+    markup.includes("bg-chart-2"),
+    "provider breakdown draws a chart-2 bar"
+  );
+  assert.ok(
+    markup.includes("text-chart-2"),
+    "provider breakdown value is chart-2"
+  );
+  // The bar is the value encoding; it is an inline percentage because it comes
+  // from the data rather than from the class list.
+  assert.match(
+    markup,
+    /class="block h-full rounded-sm bg-chart-1" style="width:100%"/
+  );
+  // And the exact value is still readable as text, so the chart never becomes
+  // the only way to get a number.
+  assert.ok(markup.includes(">3</span>"));
+  assert.ok(markup.includes(">5</span>"));
 });
 
 test("UsageView with no metrics renders explicit 'Not observed' values", () => {
@@ -5971,4 +5995,56 @@ test("the resource failure shell keeps its error tint and lets a long error code
   assert.match(markup, /break-all/);
   assert.doesNotMatch(markup, /whitespace-nowrap/);
   assert.match(markup, /rounded-lg border shadow p-6/);
+});
+
+test("BarChart keeps unobserved, empty and observed data three distinct things", () => {
+  // The whole point of a chart on this surface is that it encodes a
+  // measurement. An unobserved source must therefore never render as a chart
+  // with no bars, because that reads as "measured, and the value is zero" —
+  // which is exactly the synthesis the target state forbids.
+  const base = {
+    label: "Requests by role",
+    barClass: "bg-chart-1",
+    notObservedMessage: "Role telemetry not observed.",
+    emptyMessage: "No requests in range."
+  };
+
+  const unobserved = renderToStaticMarkup(
+    React.createElement(BarChart, { ...base, data: null })
+  );
+  assert.match(unobserved, /Role telemetry not observed\./);
+  assert.doesNotMatch(unobserved, /<ul/);
+  assert.doesNotMatch(unobserved, /rounded-sm/);
+
+  const empty = renderToStaticMarkup(
+    React.createElement(BarChart, { ...base, data: [] })
+  );
+  assert.match(empty, /No requests in range\./);
+  assert.doesNotMatch(empty, /<ul/);
+
+  const observed = renderToStaticMarkup(
+    React.createElement(BarChart, {
+      ...base,
+      data: [
+        { label: "orchestrator", value: 8, valueText: "8" },
+        { label: "validator", value: 2, valueText: "2" }
+      ]
+    })
+  );
+  assert.match(observed, /aria-label="Requests by role"/);
+  // Bars are scaled to the largest value in the set, not to an absolute total.
+  assert.match(observed, /bg-chart-1" style="width:100%"/);
+  assert.match(observed, /bg-chart-1" style="width:25%"/);
+  // A value of zero is still a bar and still a number, never a missing row.
+  const withZero = renderToStaticMarkup(
+    React.createElement(BarChart, {
+      ...base,
+      data: [
+        { label: "a", value: 0, valueText: "0" },
+        { label: "b", value: 0, valueText: "0" }
+      ]
+    })
+  );
+  assert.match(withZero, /<li/);
+  assert.match(withZero, />0<\/span>/);
 });
