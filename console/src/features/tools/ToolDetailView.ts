@@ -25,7 +25,10 @@ import {
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
-import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
+import {
+  MONO_META_CLASS,
+  MUTED_META_CLASS
+} from "../../components/ui/text-classes.ts";
 
 /**
  * Tools catalog detail view.
@@ -334,7 +337,7 @@ export function ToolDetailView({
       React.createElement(EntityTitle, { mono: true }, canonicalName),
       React.createElement(
         "p",
-        { className: "text-xs text-fg-muted font-mono" },
+        { className: MONO_META_CLASS },
         `${tool.source}${tool.server ? ` · ${tool.server}` : ""} · ${sourceAuthorityLabel(
           tool.sourceAuthority
         )}`

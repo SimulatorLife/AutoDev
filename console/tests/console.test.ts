@@ -46,6 +46,11 @@ import EvaluationsPage from "../app/evaluations/page.ts";
 import MemoryPage from "../app/memory/page.ts";
 import { NAV_ICONS, navIcon } from "../src/components/icons/Icon.ts";
 import {
+  MONO_ID_CLASS,
+  MONO_META_CLASS,
+  MONO_VALUE_CLASS
+} from "../src/components/ui/text-classes.ts";
+import {
   AgentDetailView,
   AgentsView,
   AppNav,
@@ -6949,6 +6954,54 @@ test("one page rhythm: every view body stacks its sections through the shared cl
     offenders,
     [],
     `These views hand-write the page rhythm instead of using PageBody or PAGE_SECTION_STACK_CLASS:\n${offenders.join("\n")}`
+  );
+});
+
+test("the monospace family has one spelling per role", () => {
+  // Almost every value the Console shows is a canonical name rather than prose,
+  // and those want a different treatment from muted copy. The family was
+  // unowned while the non-monospace treatments were consolidated, so it
+  // accumulated its own drift: one caption existed as both
+  // `font-mono text-xs text-fg-muted` and `text-xs text-fg-muted font-mono`
+  // across three views each.
+  //
+  // Token order does not change which rule wins -- Tailwind resolves
+  // same-property utilities by stylesheet order, not attribute order -- so
+  // neither spelling was wrong. That is exactly why it was invisible: a diff
+  // between two pages should not turn on which token someone typed first.
+  // A string is a re-spelling when its tokens are *exactly* one of the three
+  // named treatments, in any order. Comparing sets rather than substrings is
+  // what keeps this honest: a genuinely different treatment -- a mono link that
+  // also hovers, an id at `text-sm` rather than the default -- is not a
+  // misspelling of one of the three and is left alone. A bare `font-mono` is
+  // likewise exempt, because it restyles a `Chip` or supplies only the family
+  // where the size comes from `TAG_SHAPE` or from the element itself.
+  const CANONICAL = new Set(
+    [MONO_ID_CLASS, MONO_VALUE_CLASS, MONO_META_CLASS].map((c) =>
+      [...new Set(c.split(/\s+/))].sort().join(" ")
+    )
+  );
+  const FEATURES = join(import.meta.dirname, "..", "src", "features");
+  const offenders: string[] = [];
+  for (const relative of readdirSync(FEATURES, { recursive: true })) {
+    const name = relative.toString();
+    const file = join(FEATURES, name);
+    if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
+    const source = readFileSync(file, "utf8");
+    for (const m of source.matchAll(
+      /className:\s*(["'`])((?:[^"'`\\]|\\.)*)\1/g
+    )) {
+      const value = (m[2] ?? "").trim();
+      if (value.includes("${")) continue; // composed at runtime
+      if (!CANONICAL.has([...new Set(value.split(/\s+/))].sort().join(" ")))
+        continue;
+      offenders.push(`${name}: ${value}`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `These views re-spell a monospace treatment instead of using MONO_ID_CLASS, MONO_VALUE_CLASS or MONO_META_CLASS:\n${offenders.join("\n")}`
   );
 });
 

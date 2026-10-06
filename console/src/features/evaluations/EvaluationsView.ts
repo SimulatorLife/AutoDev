@@ -23,6 +23,9 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import {
+  MONO_ID_CLASS,
+  MONO_META_CLASS,
+  MONO_VALUE_CLASS,
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
@@ -143,7 +146,7 @@ function traceColumns(
       cell: (span) =>
         React.createElement(
           "span",
-          { className: "font-mono text-xs text-fg-muted" },
+          { className: MONO_META_CLASS },
           span.timestamp
         )
     },
@@ -153,7 +156,7 @@ function traceColumns(
       cell: (span) =>
         React.createElement(
           "span",
-          { className: "font-mono text-xs text-fg-secondary" },
+          { className: MONO_VALUE_CLASS },
           `${(span.durationNs / 1_000_000).toFixed(1)} ms`
         )
     },
@@ -298,21 +301,13 @@ export function EvaluationsView({
       id: "agentRole",
       header: "Target Role",
       cell: (ev) =>
-        React.createElement(
-          "span",
-          { className: "font-semibold text-fg font-mono" },
-          ev.agentRole
-        )
+        React.createElement("span", { className: MONO_ID_CLASS }, ev.agentRole)
     },
     {
       id: "model",
       header: "Model",
       cell: (ev) =>
-        React.createElement(
-          "span",
-          { className: "font-mono text-xs text-fg-secondary" },
-          ev.model
-        )
+        React.createElement("span", { className: MONO_VALUE_CLASS }, ev.model)
     },
     {
       id: "metrics",

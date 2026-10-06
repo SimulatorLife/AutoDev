@@ -29,6 +29,7 @@ import {
   DataTable
 } from "../../components/tables/DataTable.ts";
 import {
+  MONO_META_CLASS,
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
@@ -369,7 +370,7 @@ function RecordDetailPanel({
         record.validity.verificationSource
           ? React.createElement(
               "div",
-              { className: "text-xs text-fg-muted font-mono" },
+              { className: MONO_META_CLASS },
               `Verification source: ${record.validity.verificationSource}`
             )
           : null
@@ -397,7 +398,7 @@ function RecordDetailPanel({
         record.provenance.lastVerifiedAt
           ? React.createElement(
               "div",
-              { className: "text-xs font-mono text-fg-muted" },
+              { className: MONO_META_CLASS },
               `Last verified: ${new Date(record.provenance.lastVerifiedAt).toLocaleString()}`
             )
           : null,

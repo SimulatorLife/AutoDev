@@ -24,6 +24,7 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import {
+  MONO_VALUE_CLASS,
   MUTED_BODY_CLASS,
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
@@ -154,7 +155,7 @@ function ModelsPanel({
       cell: (model) =>
         React.createElement(
           "span",
-          { className: "font-mono text-xs text-fg-secondary" },
+          { className: MONO_VALUE_CLASS },
           model.tiers.join(", ")
         )
     },

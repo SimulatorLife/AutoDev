@@ -15,6 +15,7 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import { MONO_ID_CLASS } from "../../components/ui/text-classes.ts";
 
 export interface PermissionsViewProps {
   readonly policy: PermissionPolicy;
@@ -38,11 +39,7 @@ export function PermissionsView({
       header: "Agent Role",
       weight: 176,
       cell: (r) =>
-        React.createElement(
-          "span",
-          { className: "font-semibold text-fg font-mono" },
-          r.role
-        )
+        React.createElement("span", { className: MONO_ID_CLASS }, r.role)
     },
     {
       id: "sandboxMode",

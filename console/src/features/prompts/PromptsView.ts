@@ -13,7 +13,10 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
-import { MUTED_TEXT_CLASS } from "../../components/ui/text-classes.ts";
+import {
+  MONO_META_CLASS,
+  MUTED_TEXT_CLASS
+} from "../../components/ui/text-classes.ts";
 
 export interface PromptsViewProps {
   readonly commands: readonly PromptAsset[];
@@ -87,7 +90,7 @@ export function PromptsView({
       cell: (prompt) =>
         React.createElement(
           "span",
-          { className: "font-mono text-xs text-fg-muted", title: prompt.path },
+          { className: MONO_META_CLASS, title: prompt.path },
           prompt.path
         )
     },

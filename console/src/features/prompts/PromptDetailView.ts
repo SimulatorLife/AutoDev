@@ -28,6 +28,7 @@ import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import {
+  MONO_META_CLASS,
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
@@ -519,7 +520,7 @@ export function PromptDetailView({
         }),
         React.createElement(
           "span",
-          { className: "font-mono text-xs text-fg-muted" },
+          { className: MONO_META_CLASS },
           `${lineCount} lines | ${characterCount} chars | rev ${prompt.revision.slice(0, 12)}`
         )
       )

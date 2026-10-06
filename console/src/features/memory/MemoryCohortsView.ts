@@ -16,7 +16,10 @@ import {
   type ColumnDef,
   DataTable
 } from "../../components/tables/DataTable.ts";
-import { MUTED_TEXT_CLASS } from "../../components/ui/text-classes.ts";
+import {
+  MONO_VALUE_CLASS,
+  MUTED_TEXT_CLASS
+} from "../../components/ui/text-classes.ts";
 import { SUCCESS_TONE_CLASS } from "../../components/ui/tones.ts";
 
 export interface MemoryCohortsViewProps {
@@ -130,7 +133,7 @@ export function MemoryCohortsView({
       cell: (cell) =>
         React.createElement(
           "span",
-          { className: "font-mono text-xs text-fg-secondary" },
+          { className: MONO_VALUE_CLASS },
           cell.sessionCardinality
         )
     },

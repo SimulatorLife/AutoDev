@@ -19,6 +19,8 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import {
+  MONO_META_CLASS,
+  MONO_VALUE_CLASS,
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
@@ -86,7 +88,7 @@ export function GithubView({
           ),
           React.createElement(
             "span",
-            { className: "text-xs font-mono text-fg-muted" },
+            { className: MONO_META_CLASS },
             workflow.path
           )
         )
@@ -134,7 +136,7 @@ export function GithubView({
                   "span",
                   {
                     key: cron,
-                    className: "text-xs font-mono text-fg-secondary"
+                    className: MONO_VALUE_CLASS
                   },
                   cron
                 )
@@ -265,7 +267,7 @@ export function GithubView({
               ),
           React.createElement(
             "span",
-            { className: "text-xs font-mono text-fg-muted" },
+            { className: MONO_META_CLASS },
             run.workflowPath
           )
         )
@@ -329,7 +331,7 @@ export function GithubView({
       cell: (run) =>
         React.createElement(
           "span",
-          { className: "text-xs text-fg-muted font-mono" },
+          { className: MONO_META_CLASS },
           run.createdAt
         )
     }

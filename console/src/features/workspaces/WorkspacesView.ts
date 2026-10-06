@@ -12,6 +12,10 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import {
+  MONO_ID_CLASS,
+  MONO_VALUE_CLASS
+} from "../../components/ui/text-classes.ts";
 
 /**
  * Workspaces resource view.
@@ -37,11 +41,7 @@ export function WorkspacesView({
       header: "Repository / Workspace",
       weight: 220,
       cell: (ws) =>
-        React.createElement(
-          "span",
-          { className: "font-semibold text-fg font-mono" },
-          ws.id
-        )
+        React.createElement("span", { className: MONO_ID_CLASS }, ws.id)
     },
     {
       id: "baseBranch",
@@ -74,7 +74,7 @@ export function WorkspacesView({
         React.createElement(
           "span",
           {
-            className: "text-xs font-mono text-fg-secondary",
+            className: MONO_VALUE_CLASS,
             "data-role-scope":
               ws.agentRoles === null
                 ? "not-configured"

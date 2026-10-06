@@ -23,7 +23,10 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
-import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
+import {
+  MONO_VALUE_CLASS,
+  MUTED_META_CLASS
+} from "../../components/ui/text-classes.ts";
 import { AgentProviderSummary } from "./AgentProviderSummary.ts";
 
 const NOT_OBSERVED_STATUS = "not-observed";
@@ -85,7 +88,7 @@ export function AgentsView({
       cell: (agent) =>
         React.createElement(
           "span",
-          { className: "font-mono text-xs text-fg-secondary" },
+          { className: MONO_VALUE_CLASS },
           agent.primaryModel
         )
     },
