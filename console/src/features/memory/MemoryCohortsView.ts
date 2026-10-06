@@ -14,7 +14,8 @@ import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
-  DataTable
+  DataTable,
+  type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import {
   MONO_VALUE_CLASS,
@@ -355,11 +356,4 @@ export function MemoryCohortsView({
       )
     )
   );
-}
-
-interface DataTableProps<T> {
-  readonly data: readonly T[];
-  readonly columns: readonly ColumnDef<T>[];
-  readonly keyExtractor: (row: T) => string;
-  readonly emptyMessage?: string | undefined;
 }

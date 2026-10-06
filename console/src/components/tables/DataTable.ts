@@ -43,7 +43,17 @@ export interface DataTableProps<T> {
   readonly data: readonly T[];
   readonly columns: readonly ColumnDef<T>[];
   readonly keyExtractor: (row: T) => string;
-  readonly emptyMessage?: string | undefined;
+  /**
+   * Required, and required for the same reason `EmptyState` never supplies a
+   * message of its own: an empty table has to say *which* resource was looked
+   * for and is absent, and only the caller knows. This prop used to default to
+   * `"No items to display."`, which every one of the seventeen list views
+   * overrode except the two that did not -- so `/agents` and `/permissions`
+   * inherited a sentence that named no resource, and a new list view would have
+   * inherited it silently. Making it required puts the choice back where the
+   * knowledge is, and the typecheck refuses a list view that skips it.
+   */
+  readonly emptyMessage: string;
   readonly onRowClick?: ((row: T) => void) | undefined;
 }
 
@@ -264,7 +274,7 @@ export function DataTable<T>({
   data,
   columns,
   keyExtractor,
-  emptyMessage = "No items to display.",
+  emptyMessage,
   onRowClick
 }: DataTableProps<T>): React.JSX.Element {
   if (data.length === 0) {

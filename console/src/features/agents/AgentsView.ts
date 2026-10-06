@@ -199,7 +199,11 @@ export function AgentsView({
       React.createElement<DataTableProps<AgentDefinition>>(DataTable, {
         data: agents,
         columns,
-        keyExtractor: (agent: AgentDefinition) => agent.id
+        keyExtractor: (agent: AgentDefinition) => agent.id,
+        // The Control API answered, and it answered with no rows. That is an
+        // observed empty catalog rather than an unreadable one -- a fetch that
+        // fails renders the failure shell above instead of reaching here.
+        emptyMessage: "No agents are configured."
       })
     ),
     React.createElement(

@@ -109,6 +109,7 @@ import {
   MemoryView,
   ModelDetailView,
   NOT_OBSERVED_LABEL,
+  PermissionsView,
   PromptDetailView,
   PromptsView,
   ProviderDetailView,
@@ -1865,7 +1866,8 @@ test("DataTable renders table with columns and data", () => {
           align: "tokens"
         }
       ],
-      keyExtractor: (r: TestRow) => r.id
+      keyExtractor: (r: TestRow) => r.id,
+      emptyMessage: "No rows."
     })
   );
   assert.ok(markup.includes("Alpha"));
@@ -1912,7 +1914,8 @@ test("DataTable distributes column width by weight, not by absolute length", () 
           weight: 100
         }
       ],
-      keyExtractor: (r: TestRow) => r.id
+      keyExtractor: (r: TestRow) => r.id,
+      emptyMessage: "No rows."
     })
   );
   // Header and body cells must agree, so a column cannot change width when the
@@ -1950,7 +1953,8 @@ test("DataTable wraps column headers instead of truncating them", () => {
           cell: (r: TestRow) => r.id
         }
       ],
-      keyExtractor: (r: TestRow) => r.id
+      keyExtractor: (r: TestRow) => r.id,
+      emptyMessage: "No rows."
     })
   );
   // Relative widths shrink proportionally on a narrower viewport, so a header
@@ -2223,7 +2227,8 @@ test("DataTable clamps prose cells on an inner box, not the table cell", () => {
           clampLines: 2
         }
       ],
-      keyExtractor: (r: TestRow) => r.id
+      keyExtractor: (r: TestRow) => r.id,
+      emptyMessage: "No rows."
     })
   );
   // `-webkit-line-clamp` needs a box display, so the clamp belongs on a wrapper
@@ -2254,7 +2259,8 @@ test("DataTable keeps a truncated cell's full value reachable, whatever it is bu
           ...(align === undefined ? {} : { align })
         }
       ],
-      keyExtractor: (r: { v: string }) => r.v
+      keyExtractor: (r: { v: string }) => r.v,
+      emptyMessage: "No rows."
     });
 
   // The default align truncates, so the cell carries the whole value.
@@ -2306,7 +2312,8 @@ test("DataTable keeps a truncated cell's full value reachable, whatever it is bu
             )
         }
       ],
-      keyExtractor: (r: { v: string }) => r.v
+      keyExtractor: (r: { v: string }) => r.v,
+      emptyMessage: "No rows."
     })
   );
   assert.match(
@@ -2352,7 +2359,8 @@ test("DataTable keeps a truncated cell's full value reachable, whatever it is bu
             cell: (r: { v: string }) => build(r)
           }
         ],
-        keyExtractor: (r: { v: string }) => r.v
+        keyExtractor: (r: { v: string }) => r.v,
+        emptyMessage: "No rows."
       })
     );
     // The title carries every part of the cell, not just the first: a chip row
@@ -4803,6 +4811,58 @@ test("HooksView distinguishes an invalid source from an absent one", () => {
   );
   assert.match(markup, /data-hook-state="invalid"/);
   assert.match(markup, /Hook source is invalid/);
+});
+
+test("an empty list names its resource instead of inheriting a generic sentence", () => {
+  // DataTable used to default `emptyMessage` to "No items to display.", and
+  // fifteen of the seventeen list views overrode it -- the two that did not
+  // rendered a sentence naming no resource at all, and the next list view added
+  // would have inherited it silently. `emptyMessage` is now required, so the
+  // typecheck is the guard; this pins the rendered outcome and keeps the
+  // retired default from coming back.
+  const agents = renderToStaticMarkup(
+    React.createElement(AgentsView, { agents: [] })
+  );
+  assert.match(agents, /No agents are configured\./u);
+
+  const permissions = renderToStaticMarkup(
+    React.createElement(PermissionsView, {
+      policy: {
+        approvalPolicy: "on-demand",
+        sandboxMode: "workspace-write",
+        approvalsReviewer: "user",
+        networkAccess: true,
+        webSearch: true,
+        defaultToolsApprovalMode: "approve"
+      },
+      roleMatrices: []
+    })
+  );
+  assert.match(permissions, /No role capability matrices were observed\./u);
+
+  for (const markup of [agents, permissions]) {
+    assert.match(markup, /data-empty-state="table"/u);
+    assert.doesNotMatch(markup, /No items to display\./u);
+  }
+
+  // Coverage is asserted rather than assumed: an unreadable directory would
+  // make the scan below pass without having looked at anything.
+  const featuresDir = join(import.meta.dirname, "..", "src", "features");
+  const scanned: string[] = [];
+  const offenders: string[] = [];
+  for (const relative of readdirSync(featuresDir, { recursive: true })) {
+    const file = join(featuresDir, relative.toString());
+    if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
+    scanned.push(file);
+    if (readFileSync(file, "utf8").includes("No items to display.")) {
+      offenders.push(relative.toString());
+    }
+  }
+  assert.ok(
+    scanned.length >= 20,
+    "the scan must actually read the feature views"
+  );
+  assert.deepEqual(offenders, []);
 });
 
 test("View adapters translate Control API responses without inventing data", () => {
@@ -7530,7 +7590,8 @@ test("DataTable caps its scroll floor so a table never scrolls at desktop width"
         { id: "b", header: "B", cell: (r: TestRow) => r.id, weight: 500 },
         { id: "c", header: "C", cell: (r: TestRow) => r.id, weight: 300 }
       ],
-      keyExtractor: (r: TestRow) => r.id
+      keyExtractor: (r: TestRow) => r.id,
+      emptyMessage: "No rows."
     })
   );
   const wideFloor = Number(
@@ -7552,7 +7613,8 @@ test("DataTable caps its scroll floor so a table never scrolls at desktop width"
         { id: "a", header: "A", cell: (r: TestRow) => r.id, weight: 120 },
         { id: "b", header: "B", cell: (r: TestRow) => r.id, weight: 120 }
       ],
-      keyExtractor: (r: TestRow) => r.id
+      keyExtractor: (r: TestRow) => r.id,
+      emptyMessage: "No rows."
     })
   );
   const narrowFloor = Number(
@@ -9737,7 +9799,8 @@ test("DataTable's row click is opt-in and off unless a caller asks for it", () =
           cell: (r) => r.id
         }
       ],
-      keyExtractor: (r) => r.id
+      keyExtractor: (r) => r.id,
+      emptyMessage: "No rows."
     })
   );
   assert.doesNotMatch(withoutClick, /onclick|onClick|cursor-pointer/);
@@ -9754,6 +9817,7 @@ test("DataTable's row click is opt-in and off unless a caller asks for it", () =
         }
       ],
       keyExtractor: (r) => r.id,
+      emptyMessage: "No rows.",
       onRowClick: () => undefined
     })
   );

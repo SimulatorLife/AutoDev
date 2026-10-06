@@ -26,7 +26,8 @@ import { Tag } from "../../components/status/Tag.ts";
 import { Chip } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
-  DataTable
+  DataTable,
+  type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import {
   MONO_META_CLASS,
@@ -668,11 +669,4 @@ function RecordDetailPanel({
         : null
     )
   );
-}
-
-interface DataTableProps<T> {
-  readonly data: readonly T[];
-  readonly columns: readonly ColumnDef<T>[];
-  readonly keyExtractor: (row: T) => string;
-  readonly emptyMessage?: string | undefined;
 }

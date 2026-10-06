@@ -115,7 +115,12 @@ export function PermissionsView({
       React.createElement<DataTableProps<RoleCapabilityMatrix>>(DataTable, {
         data: roleMatrices,
         columns,
-        keyExtractor: (r: RoleCapabilityMatrix) => r.role
+        keyExtractor: (r: RoleCapabilityMatrix) => r.role,
+        // Observed and genuinely empty: the page fails closed when the policy
+        // read fails, so reaching here means the Control API returned a policy
+        // with no roles behind it. Wording follows the matrix it replaces
+        // rather than a generic "nothing to show".
+        emptyMessage: "No role capability matrices were observed."
       })
     )
   );
