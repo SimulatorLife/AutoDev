@@ -50,6 +50,24 @@ export interface SelectFieldProps {
   readonly defaultValue?: string | readonly string[] | undefined;
   readonly disabled?: boolean | undefined;
   /**
+   * Why the control is disabled, in one sentence.
+   *
+   * The target state is explicit: an unobserved or immutable control stays in
+   * place, disabled, "with the reason available". Staying disabled without the
+   * reason is the failure -- a filter the reader cannot use, beside three they
+   * can, with nothing to say whether it is broken, not yet populated, or
+   * permanently fixed. It is a separate prop rather than a convention because a
+   * convention is exactly what let four `/usage` selects ship with no reason at
+   * all: the visible label already said "Not observed", so each site looked
+   * complete.
+   *
+   * Rendered twice on purpose, to the two audiences that need it: `title` for a
+   * pointer, and a visually hidden description referenced by `aria-describedby`
+   * for a screen reader. `aria-label` is deliberately not used -- it would
+   * replace the visible "Workspace:" label instead of adding to it.
+   */
+  readonly disabledReason?: string | undefined;
+  /**
    * Allow selecting several values while the control stays one row tall.
    * Callers that submit a plain GET form pair this with their own hidden
    * inputs, because a `multiple` select serializes as repeated names.
@@ -68,12 +86,20 @@ export function SelectField({
   options,
   defaultValue,
   disabled,
+  disabledReason,
   multiple,
   className,
   testId,
   dataAttributes
 }: SelectFieldProps): React.JSX.Element {
   const id = `select-${name}`;
+  const reasonId = `${id}-reason`;
+  // Only a disabled control needs to explain itself, so the description is
+  // rendered for that case alone rather than left empty on every live control.
+  const describedBy =
+    disabled === true && disabledReason !== undefined && disabledReason !== ""
+      ? reasonId
+      : undefined;
   return React.createElement(
     "div",
     {
@@ -96,6 +122,12 @@ export function SelectField({
           name,
           ...(defaultValue === undefined ? {} : { defaultValue }),
           ...(disabled === undefined ? {} : { disabled }),
+          ...(describedBy === undefined
+            ? {}
+            : { "aria-describedby": describedBy }),
+          ...(disabled === true && disabledReason !== undefined
+            ? { title: disabledReason }
+            : {}),
           // A multi-select collapses to a single row so it reads like a
           // dropdown while still accepting several values.
           ...(multiple === true ? { multiple: true, size: 1 } : {}),
@@ -133,6 +165,13 @@ export function SelectField({
         // in the product.
         React.createElement(Icon, { name: "chevronDown", size: 12 })
       )
-    )
+    ),
+    describedBy === undefined
+      ? null
+      : React.createElement(
+          "span",
+          { id: reasonId, className: "sr-only" },
+          disabledReason
+        )
   );
 }

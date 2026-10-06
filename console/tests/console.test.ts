@@ -370,6 +370,81 @@ test("missing evidence is reported in one word, from one constant", () => {
   );
 });
 
+test("a disabled control states why it is disabled", () => {
+  // The target state requires an unobserved or immutable control to stay in
+  // place, disabled, "with the reason available". Measured across all 20 routes,
+  // four controls were disabled and all four said nothing: the `/usage`
+  // dimension filters. Their visible label already read "Not observed", so each
+  // site looked finished -- the reason has to be a separate thing to be visible
+  // as a separate thing.
+  //
+  // Two channels, because there are two audiences: `title` for a pointer and an
+  // `aria-describedby` pointing at visually hidden text for a screen reader.
+  // `aria-label` is not usable here -- it would replace the visible
+  // "Workspace:" label rather than add to it.
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      metrics: undefined,
+      filterOptions: {
+        workspace: null,
+        provider: null,
+        model: null,
+        agent: null,
+        skill: null
+      },
+      selection: { range: "24H", values: {} }
+    })
+  );
+  // `disabled` must be followed by whitespace, `=`, `>` or `/`: the control's
+  // class list carries `disabled:cursor-not-allowed`, and a bare
+  // `[^>]*\sdisabled` matches that Tailwind variant on a control that is very
+  // much enabled.
+  const disabled = Array.from(
+    markup.matchAll(/<select\b[^>]*\sdisabled(?=[\s=/>])[^>]*>/gu),
+    (match) => match[0]
+  );
+  assert.ok(
+    disabled.length >= 4,
+    `expected the four unobserved dimension filters, got ${disabled.length} in: ${markup}`
+  );
+  for (const tag of disabled) {
+    assert.match(
+      tag,
+      /title="[^"]{10,}"/,
+      `a disabled select must carry its reason on a title, got: ${tag}`
+    );
+    const id = /aria-describedby="([^"]+)"/.exec(tag)?.[1];
+    assert.ok(
+      id !== undefined && markup.includes(`id="${id}"`),
+      `a disabled select must reference a description that exists, got: ${tag}`
+    );
+  }
+  // And the description is real text, not an empty element the reference points
+  // at -- which would satisfy the attribute check while saying nothing.
+  assert.match(
+    markup,
+    /<span id="select-workspace-unobserved-reason" class="sr-only">[^<]{20,}<\/span>/u
+  );
+
+  // A live control must not claim to be disabled, so the description is not
+  // rendered for it at all.
+  const observed = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      metrics: undefined,
+      filterOptions: {
+        workspace: ["AutoDev"],
+        provider: ["antigravity"],
+        model: ["gemini-3.8-flash-high"],
+        agent: ["orchestrator"],
+        skill: null
+      },
+      selection: { range: "24H", values: {} }
+    })
+  );
+  assert.doesNotMatch(observed, /-reason"\s+class="sr-only"/);
+  assert.doesNotMatch(observed, /aria-describedby="select-workspace-reason"/);
+});
+
 test("the Tools summary row counts one collection once, not twice", () => {
   // The row held two authorities for the same question. "Composite catalog"
   // read the envelope's `totalTools`; "Native / MCP / Plugin entries" counted
@@ -485,6 +560,36 @@ test("an unobserved stat reads as an absence, not as a large measurement", () =>
   assert.match(zero, /text-2xl/);
   assert.match(zero, /0 in scope/);
   assert.doesNotMatch(zero, /data-stat-unobserved/);
+
+  // A value built from two measurements is the case `value === LABEL` misses:
+  // `/usage` composes input and output tokens, and with neither reported the
+  // card said "Not observed / Not observed" at the value scale -- the row's one
+  // confident measurement, beside three correctly quiet ones.
+  const compositeUnobserved = renderToStaticMarkup(
+    React.createElement(StatCard, {
+      title: "Input / Output Tokens",
+      value: `${NOT_OBSERVED_LABEL} / ${NOT_OBSERVED_LABEL}`,
+      subtitle: "Physical attempt totals"
+    })
+  );
+  assert.match(compositeUnobserved, /data-stat-unobserved="true"/);
+  assert.doesNotMatch(
+    compositeUnobserved,
+    /text-2xl/,
+    "a value whose every part is unobserved must not wear a measurement's scale"
+  );
+
+  // Half-observed is still observed: one part is a measured 0, so the card
+  // carries a real number and keeps the value scale. Understating that would be
+  // the same error in the other direction.
+  const compositeHalf = renderToStaticMarkup(
+    React.createElement(StatCard, {
+      title: "Input / Output Tokens",
+      value: `${NOT_OBSERVED_LABEL} / 0`
+    })
+  );
+  assert.match(compositeHalf, /text-2xl/);
+  assert.doesNotMatch(compositeHalf, /data-stat-unobserved/);
 });
 
 test("AppNav renders Configure/Observe/Operate groups with canonical membership, order, and URL links", () => {

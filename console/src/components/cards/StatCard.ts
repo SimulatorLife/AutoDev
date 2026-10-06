@@ -13,6 +13,31 @@ export interface StatCardProps {
   readonly badge?: React.ReactNode;
 }
 
+/**
+ * Whether a card's value reports nothing at all.
+ *
+ * The obvious test is `value === NOT_OBSERVED_LABEL`, and it missed a real card.
+ * `/usage` builds one value from two measurements -- input and output tokens --
+ * so the card said "Not observed / Not observed": unobserved twice over, and
+ * rendered at `text-2xl` bold because neither half equals the label on its own.
+ * The card therefore read as the row's one confident measurement while its three
+ * neighbours were correctly quiet, which is the exact failure the meta treatment
+ * exists to prevent -- reintroduced through a string the card cannot compare.
+ *
+ * So the test asks the question the card is actually asking: is there a
+ * measurement anywhere in this value? A composite counts as observed when any
+ * part is observed, including a measured `0`, so a genuinely half-observed card
+ * keeps the value scale rather than being understated.
+ */
+function isUnobserved(value: string | number): boolean {
+  if (typeof value === "number") return false;
+  const parts = value
+    .split("/")
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
+  return parts.length > 0 && parts.every((part) => part === NOT_OBSERVED_LABEL);
+}
+
 export function StatCard({
   title,
   value,
@@ -35,7 +60,7 @@ export function StatCard({
   // stays the row's baseline, and a subtitle that only repeats it is dropped
   // rather than printed twice. A real value -- including a measured zero -- is
   // untouched.
-  const unobserved = value === NOT_OBSERVED_LABEL;
+  const unobserved = isUnobserved(value);
   const redundantSubtitle = unobserved && subtitle === NOT_OBSERVED_LABEL;
 
   return React.createElement(

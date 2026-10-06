@@ -108,6 +108,10 @@ function renderFilterSelect(
         label: `${label}:`,
         options: [{ value: "", label: NOT_OBSERVED_LABEL }],
         disabled: true,
+        // The control is not broken and never will be usable until a telemetry
+        // source reports on it, so it says which of the two it is: the filter
+        // has no options because the dimension was not observed.
+        disabledReason: `No ${label.toLowerCase()} options were observed, so this filter cannot narrow the results. The Control API has not reported this dimension.`,
         dataAttributes: { "data-filter-options-observed": "false" }
       }),
       ...selected.map((value) =>
