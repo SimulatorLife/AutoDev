@@ -1998,19 +1998,54 @@ test("no column is narrower than its own header", () => {
   // header as authored: `uppercase` is a stylesheet concern and the markup
   // carries the source casing.
   const MEASURED_MINIMUM_PX: Record<string, number> = {
-    "Server Name": 84,
-    "Configured roles": 120,
-    RuleSync: 104,
-    "Default State": 91,
-    Transport: 114,
-    Overrides: 108,
-    Connection: 122,
-    "Target Role": 85,
-    Model: 79,
-    Metrics: 92,
-    Outcome: 100,
+    Edit: 63,
+    "Run Time": 65,
+    Type: 67,
+    Path: 68,
+    Tool: 69,
+    MCPs: 71,
+    "Skill Name": 71,
+    State: 74,
+    "Role Scope": 77,
     Trace: 77,
-    "Run Time": 65
+    "Role / Agent": 78,
+    Model: 79,
+    Skills: 79,
+    "Server Name": 84,
+    Status: 84,
+    Health: 85,
+    "Target Role": 85,
+    Source: 87,
+    Models: 88,
+    "Base Branch": 89,
+    "Default State": 91,
+    "Trigger Events": 91,
+    "Eligible Roles": 92,
+    "GitHub Actions State": 92,
+    Metrics: 92,
+    Related: 92,
+    "Primary Model": 93,
+    "Exposed Roles": 95,
+    "Tier priority": 96,
+    Outcome: 100,
+    Provider: 100,
+    "Command / Prompt": 104,
+    "Cron Schedule": 104,
+    RuleSync: 104,
+    Overrides: 108,
+    Providers: 109,
+    Workflow: 111,
+    "Canonical Source": 112,
+    Transport: 114,
+    Credential: 117,
+    "Repository / Workspace": 117,
+    "Configured roles": 120,
+    Connection: 122,
+    Enablement: 122,
+    "Role enablement": 122,
+    Description: 123,
+    Availability: 124,
+    Convergence: 133
   };
 
   // Rendered header text -> column pixels at the table's own floor.
@@ -2028,10 +2063,88 @@ test("no column is narrower than its own header", () => {
     return out;
   }
 
-  // Non-empty fixtures on purpose: both views render an empty state rather
-  // than a table when they have no rows, so an empty fixture would leave this
-  // guard matching nothing and passing for the wrong reason.
+  // One row per view, on purpose: every one of these renders an empty state
+  // rather than a table when it has no rows, so an empty fixture would leave
+  // this guard matching nothing and passing for the wrong reason. This is every
+  // list surface that declares columns — `/hooks` is absent because it renders
+  // no table at all, and `/permissions` because it fails closed.
   const markup = [
+    renderToStaticMarkup(
+      React.createElement(AgentsView, { agents: [CONFIGURED_AGENT] })
+    ),
+    renderToStaticMarkup(
+      React.createElement(SkillsView, {
+        skills: [
+          {
+            name: "orchestration",
+            description: "Coordination",
+            path: ".rulesync/skills/orchestration"
+          }
+        ],
+        eligibility: [{ skill: "orchestration", roles: ["orchestrator"] }],
+        unresolvedAssignments: [],
+        sourceValidity: true
+      })
+    ),
+    renderToStaticMarkup(
+      React.createElement(PromptsView, {
+        commands: [
+          {
+            name: "dry",
+            path: ".rulesync/commands/dry.md",
+            description: "Dry-run command"
+          }
+        ],
+        commandSourceValidity: true
+      })
+    ),
+    renderToStaticMarkup(
+      React.createElement(ProvidersView, {
+        providers: PROVIDERS_FIXTURE,
+        models: { status: "available", data: MODELS_FIXTURE }
+      })
+    ),
+    renderToStaticMarkup(
+      React.createElement(ToolsView, {
+        tools: [
+          {
+            name: "find_code",
+            source: "rulesync",
+            exposedRoles: ["orchestrator"],
+            description: "Find code"
+          }
+        ] as never,
+        coverage: { schema: "x", source: "y" } as never,
+        validity: "valid",
+        usageLink: "/usage",
+        filters: { source: "", role: "" }
+      })
+    ),
+    renderToStaticMarkup(
+      React.createElement(GithubView, {
+        workflows: [
+          {
+            id: "_scheduler.yml",
+            name: "scheduler",
+            path: ".github/workflows/_scheduler.yml",
+            events: ["schedule"],
+            schedules: ["*/15 * * * *"]
+          }
+        ]
+      })
+    ),
+    renderToStaticMarkup(
+      React.createElement(WorkspacesView, {
+        workspaces: [
+          {
+            id: "SimulatorLife/AutoDev",
+            baseBranch: "main",
+            enabled: true,
+            agentRoles: null
+          }
+        ]
+      })
+    ),
     renderToStaticMarkup(
       React.createElement(McpsView, {
         servers: [
@@ -2082,7 +2195,7 @@ test("no column is narrower than its own header", () => {
   }
 
   assert.ok(
-    seen.length >= 13,
+    seen.length >= 47,
     `the guard must cover every column it is about, got ${seen.length}: ${seen.join(" | ")}`
   );
   assert.deepEqual(
