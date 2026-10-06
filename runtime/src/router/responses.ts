@@ -165,44 +165,118 @@ export function flattenOutboundTools(tools: unknown): unknown {
   return flattened;
 }
 
-export function rewriteToolNamespaces(value: unknown): unknown {
-  if (Array.isArray(value))
-    return value.map((item) => rewriteToolNamespaces(item));
-  if (value === null || !isRecord(value)) return value;
-  const result: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value))
-    result[key] = rewriteToolNamespaces(child)!;
-  if (
-    typeof result.name === "string" &&
-    (result.namespace === undefined || result.namespace === null)
-  ) {
-    const match = FLATTENED_NAMESPACES.find(
-      ([, prefix]) =>
-        typeof result.name === "string" && result.name.startsWith(prefix)
-    );
-    if (match && typeof result.name === "string") {
-      result.namespace = match[0];
-      result.name = result.name.slice(match[1].length);
-    }
+/**
+ * Copy-on-write rewriters.
+ *
+ * These return the value they were handed when nothing underneath them needed
+ * changing, and only allocate along a path that actually did. That is what
+ * makes "did this event need rewriting at all?" answerable as a reference
+ * comparison, which in turn lets the SSE drain skip re-serializing the frames
+ * that only carry deltas -- the overwhelming majority of them.
+ *
+ * They never mutate the input: a changed node is copied before it is written to,
+ * so a caller holding the original parse still sees the original values. That
+ * matters because the drain inspects and counts from the same parse it rewrites.
+ */
+interface RewriteTrace {
+  value: boolean;
+}
+
+/**
+ * The shared copy-on-write traversal. A child that comes back identical leaves
+ * the container untouched; the first child that differs copies the container
+ * once, before writing, so the input is never mutated.
+ */
+function rewriteListSharing<T>(
+  list: readonly T[],
+  rewriteChild: (child: T) => T
+): readonly T[] {
+  let out: T[] = list as T[];
+  for (const [index, child] of list.entries()) {
+    const next = rewriteChild(child);
+    if (next === child) continue;
+    if (out === list) out = list.slice() as T[];
+    out[index] = next;
   }
-  return result;
+  return out;
+}
+
+function rewriteRecordSharing(
+  record: Record<string, unknown>,
+  rewriteChild: (key: string, child: unknown) => unknown
+): Record<string, unknown> {
+  let out: Record<string, unknown> = record;
+  for (const [key, child] of Object.entries(record)) {
+    const next = rewriteChild(key, child);
+    if (next === child) continue;
+    if (out === record) out = { ...record };
+    out[key] = next;
+  }
+  return out;
+}
+
+/** Splits a flattened `namespace__name` into its two fields, once per record. */
+function splitFlattenedNamespace(
+  record: Record<string, unknown>,
+  trace: RewriteTrace
+): Record<string, unknown> {
+  const name = record.name;
+  if (typeof name !== "string") return record;
+  if (record.namespace !== undefined && record.namespace !== null)
+    return record;
+  const match = FLATTENED_NAMESPACES.find(([, prefix]) =>
+    name.startsWith(prefix)
+  );
+  if (!match) return record;
+  trace.value = true;
+  return { ...record, namespace: match[0], name: name.slice(match[1].length) };
+}
+
+function rewriteToolNamespacesSharing(
+  value: unknown,
+  trace: RewriteTrace
+): unknown {
+  if (Array.isArray(value))
+    return rewriteListSharing(value, (child) =>
+      rewriteToolNamespacesSharing(child, trace)
+    );
+  if (value === null || !isRecord(value)) return value;
+  return splitFlattenedNamespace(
+    rewriteRecordSharing(value, (_key, child) =>
+      rewriteToolNamespacesSharing(child, trace)
+    ),
+    trace
+  );
+}
+
+function replaceModelFieldsSharing(
+  value: unknown,
+  publicModel: string,
+  trace: RewriteTrace
+): unknown {
+  if (Array.isArray(value))
+    return rewriteListSharing(value, (child) =>
+      replaceModelFieldsSharing(child, publicModel, trace)
+    );
+  if (value === null || !isRecord(value)) return value;
+  return rewriteRecordSharing(value, (key, child) => {
+    if (key !== "model" || typeof child !== "string")
+      return replaceModelFieldsSharing(child, publicModel, trace);
+    if (child === publicModel) return child;
+    trace.value = true;
+    return publicModel;
+  });
+}
+
+export function rewriteToolNamespaces(value: unknown): unknown {
+  return rewriteToolNamespacesSharing(value, { value: false });
 }
 
 export function replaceModelFields(
   value: unknown,
   publicModel: string
 ): unknown {
-  if (Array.isArray(value))
-    return value.map((item) => replaceModelFields(item, publicModel));
-  if (value === null || !isRecord(value)) return value;
-  const result: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) {
-    result[key] =
-      key === "model" && typeof item === "string"
-        ? publicModel
-        : replaceModelFields(item, publicModel);
-  }
-  return result;
+  return replaceModelFieldsSharing(value, publicModel, { value: false });
 }
 
 export function rewriteResponseValue(
@@ -212,20 +286,29 @@ export function rewriteResponseValue(
   return rewriteToolNamespaces(replaceModelFields(value, publicModel));
 }
 
+export interface ResponseRewrite {
+  readonly value: unknown;
+  readonly changed: boolean;
+}
+
+/**
+ * `rewriteResponseValue`, plus whether anything actually changed.
+ *
+ * A `changed: false` result means the rewrite was a no-op and the caller can
+ * emit the bytes it already has instead of paying for a `JSON.stringify`.
+ */
+export function rewriteResponseValueTracking(
+  value: unknown,
+  publicModel: string
+): ResponseRewrite {
+  const trace: RewriteTrace = { value: false };
+  const replaced = replaceModelFieldsSharing(value, publicModel, trace);
+  const rewritten = rewriteToolNamespacesSharing(replaced, trace);
+  return { value: rewritten, changed: trace.value };
+}
+
 export function transformSseEvent(event: string, publicModel: string): string {
-  return event
-    .split(SSE_LINE_WITH_NEWLINE_PATTERN)
-    .map((line) => {
-      if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") return line;
-      try {
-        const parsed = JSON.parse(line.slice(6));
-        const rewritten = rewriteResponseValue(parsed, publicModel);
-        return `data: ${JSON.stringify(rewritten)}`;
-      } catch {
-        return line;
-      }
-    })
-    .join("");
+  return processSseEvent(event, { publicModel }).output;
 }
 
 /** Collect the call ids of the tool calls in a response, or in one output item. */
@@ -274,22 +357,7 @@ export function countToolCallsFromSse(
     if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") continue;
     try {
       const event = JSON.parse(line.slice(6));
-      if (
-        event.type === "response.output_item.added" &&
-        isRecord(event.item) &&
-        typeof event.item.type === "string" &&
-        TOOL_OUTPUT_TYPES.has(event.item.type) &&
-        typeof event.item.id === "string" &&
-        !seen.has(event.item.id)
-      ) {
-        seen.add(event.item.id);
-        count += 1;
-      } else if (
-        event.type === "response.completed" &&
-        isRecord(event.response)
-      ) {
-        count += countToolCallsInResponse(event.response, seen);
-      }
+      if (isRecord(event)) count += countToolCallInEvent(event, seen);
     } catch {
       // Ignore malformed/non-JSON SSE lines.
     }
@@ -297,24 +365,158 @@ export function countToolCallsFromSse(
   return count;
 }
 
-export function responseTextFromSse(body: string): RouterResponseEnvelope {
+/** The tool-call contribution of one already-parsed SSE event. */
+function countToolCallInEvent(
+  event: Record<string, unknown>,
+  seen: Set<string>
+): number {
+  if (
+    event.type === "response.output_item.added" &&
+    isRecord(event.item) &&
+    typeof event.item.type === "string" &&
+    TOOL_OUTPUT_TYPES.has(event.item.type) &&
+    typeof event.item.id === "string" &&
+    !seen.has(event.item.id)
+  ) {
+    seen.add(event.item.id);
+    return 1;
+  }
+  if (event.type === "response.completed" && isRecord(event.response))
+    return countToolCallsInResponse(event.response, seen);
+  return 0;
+}
+
+export interface ProcessedSseEvent {
+  readonly output: string;
+  readonly toolCalls: number;
+}
+
+export interface ProcessSseEventOptions {
+  readonly publicModel: string;
+  readonly seenToolCalls?: Set<string>;
+  /**
+   * Called once per successfully parsed `data:` payload, with the event exactly
+   * as it arrived. The rewriters are copy-on-write, so the object observed here
+   * is still the unmodified parse even when the rewrite changed something.
+   */
+  readonly onParsed?: (event: Record<string, unknown>) => void;
+}
+
+/**
+ * One pass over one SSE frame: inspect it, count its tool calls, and emit the
+ * rewritten bytes.
+ *
+ * The drain loop used to do this as three independent passes over the same
+ * frame -- inspect, count, transform -- which meant three splits and three
+ * `JSON.parse` calls of identical bytes, plus two full deep rebuilds and a
+ * `JSON.stringify` even for the frames that needed no rewrite at all. Since
+ * every chunk of every streaming response goes through here, that redundancy
+ * was the router's hottest avoidable cost.
+ *
+ * `changed` from the rewrite is what makes the output honest as well as cheap:
+ * an untouched frame is emitted byte-for-byte instead of being round-tripped
+ * through `JSON.stringify`, so the proxy stops normalizing whitespace in frames
+ * it was never modifying.
+ */
+export function processSseEvent(
+  frame: string,
+  options: ProcessSseEventOptions
+): ProcessedSseEvent {
+  const seen = options.seenToolCalls ?? new Set<string>();
+  let toolCalls = 0;
+  let output = "";
+  for (const line of frame.split(SSE_LINE_WITH_NEWLINE_PATTERN)) {
+    if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") {
+      output += line;
+      continue;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line.slice(6));
+    } catch {
+      output += line;
+      continue;
+    }
+    if (isRecord(parsed)) {
+      options.onParsed?.(parsed);
+      toolCalls += countToolCallInEvent(parsed, seen);
+    }
+    const { value, changed } = rewriteResponseValueTracking(
+      parsed,
+      options.publicModel
+    );
+    output += changed ? `data: ${JSON.stringify(value)}` : line;
+  }
+  return { output, toolCalls };
+}
+
+export interface BufferedSseSummary {
+  /** First `response.completed` that carried an object response, else null. */
+  readonly firstCompleted: Record<string, unknown> | null;
+  /** The last `response.completed` payload seen, verbatim. */
+  readonly lastCompleted: unknown;
+  readonly text: string;
+  readonly toolCalls: number;
+}
+
+/**
+ * Everything the buffered (non-streaming) path needs from an SSE body, in one
+ * pass.
+ *
+ * It used to call `completedResponseFromSse`, `countToolCallsFromSse` and
+ * `responseTextFromSse` back to back, each of which split and re-parsed the
+ * entire body. A buffered Codex response is the whole conversation output, so
+ * that was three full JSON parses of a large payload to answer three questions
+ * one answer could answer.
+ */
+export function summarizeBufferedSse(body: string): BufferedSseSummary {
   let text = "";
-  let completed: unknown = null;
+  let firstCompleted: Record<string, unknown> | null = null;
+  let lastCompleted: unknown = null;
+  let toolCalls = 0;
+  const seen = new Set<string>();
   for (const line of body.split(SSE_LINE_WITH_NEWLINE_PATTERN)) {
     if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") continue;
+    let event: unknown;
     try {
-      const event = JSON.parse(line.slice(6));
-      if (event.type === "response.output_text.delta")
-        text += String(event.delta ?? "");
-      if (event.type === "response.completed") completed = event.response;
+      event = JSON.parse(line.slice(6));
     } catch {
       // Ignore non-JSON SSE comments and provider keep-alives.
+      continue;
     }
+    if (!isRecord(event)) continue;
+    if (event.type === "response.output_text.delta")
+      text += String(event.delta ?? "");
+    if (event.type === "response.completed") {
+      lastCompleted = event.response;
+      const response = event.response;
+      if (
+        firstCompleted === null &&
+        response !== null &&
+        response !== undefined &&
+        typeof response === "object"
+      )
+        firstCompleted = response as Record<string, unknown>;
+    }
+    toolCalls += countToolCallInEvent(event, seen);
   }
+  return { firstCompleted, lastCompleted, text, toolCalls };
+}
+
+/** The response envelope the buffered path sends downstream. */
+export function bufferedEnvelope(
+  summary: BufferedSseSummary
+): RouterResponseEnvelope {
   return buildCompletedResponse(
-    text,
-    isRecord(completed) ? { completedResponse: completed } : {}
+    summary.text,
+    isRecord(summary.lastCompleted)
+      ? { completedResponse: summary.lastCompleted }
+      : {}
   );
+}
+
+export function responseTextFromSse(body: string): RouterResponseEnvelope {
+  return bufferedEnvelope(summarizeBufferedSse(body));
 }
 
 export function buildCompletedResponse(

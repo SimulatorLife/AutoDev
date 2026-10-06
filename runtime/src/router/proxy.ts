@@ -56,13 +56,13 @@ import {
 } from "./memory-injection.ts";
 import { recordMcpExposure } from "./otel.ts";
 import {
+  bufferedEnvelope,
   collectToolCallIds,
-  countToolCallsFromSse,
   countToolCallsInResponse,
-  responseTextFromSse,
+  processSseEvent,
   rewriteResponseValue,
   type RouterProviderRouteLike,
-  transformSseEvent,
+  summarizeBufferedSse,
   upstreamPayload
 } from "./responses.ts";
 import {
@@ -160,7 +160,6 @@ export const CLIENT_DISCONNECT_CODES = Object.freeze(
 const NOOP = () => {};
 const FALLBACKABLE_BODY_REGEX =
   /quota|rate.?limit|weekly.?limit|usage.?limit|usage exhausted|session|high.?demand|credit|timeout|timed.?out|overloaded|temporarily unavailable|unavailable/i;
-const SSE_LINE_BREAK = /\r?\n/;
 const SSE_EVENT_BOUNDARY = /\r?\n\r?\n/;
 
 function pickString(value: unknown): string | null {
@@ -744,27 +743,6 @@ function usageFromResponse(value: unknown): ProviderUsage | null {
     : result;
 }
 
-function completedResponseFromSse(
-  body: string
-): Record<string, unknown> | null {
-  for (const event of body.split(SSE_EVENT_BOUNDARY)) {
-    for (const line of event.split(SSE_LINE_BREAK)) {
-      if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") continue;
-      try {
-        const parsed = JSON.parse(line.slice(6)) as Record<string, unknown>;
-        if (parsed.type !== "response.completed") continue;
-        const response = parsed.response;
-        if (response && typeof response === "object") {
-          return response as Record<string, unknown>;
-        }
-      } catch {
-        /* ignore malformed events while extracting telemetry only */
-      }
-    }
-  }
-  return null;
-}
-
 function endStreamAttempt(
   span: Span | undefined,
   statusCode: number | undefined,
@@ -886,42 +864,6 @@ function applyParsedSseEvent(
   }
 }
 
-function inspectSseEvent(
-  event: string,
-  streamState: {
-    sawCreated: boolean;
-    responseId: string | null;
-    itemId: string | null;
-    reasoningId: string | null;
-    text: string;
-    reasoning: string;
-  },
-  toolCallIds: Set<string>,
-  setTerminal: (value: "completed" | "failed") => void,
-  setIncompleteReason: (value: string) => void,
-  setReportedLimit: (value: ProviderLimit) => void,
-  onResponseCompleted?: (response: Record<string, unknown>) => void
-): void {
-  for (const line of event.split(SSE_LINE_BREAK)) {
-    if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") continue;
-    let parsed: { type?: string; [key: string]: unknown };
-    try {
-      parsed = JSON.parse(line.slice(6));
-    } catch {
-      continue;
-    }
-    applyParsedSseEvent(
-      parsed,
-      streamState,
-      toolCallIds,
-      setTerminal,
-      setIncompleteReason,
-      setReportedLimit,
-      onResponseCompleted
-    );
-  }
-}
-
 function flushSseBuffer(args: {
   buffer: string;
   flush: boolean;
@@ -951,31 +893,44 @@ function flushSseBuffer(args: {
     if (!boundary) break;
     const end = boundary.index! + boundary[0]!.length;
     const event = working.slice(0, end);
-    inspectSseEvent(
-      event,
-      args.streamState,
-      args.toolCallIds,
-      args.setTerminal,
-      args.setIncompleteReason,
-      args.setReportedLimit,
-      args.onResponseCompleted
-    );
-    args.onConsumed(countToolCallsFromSse(event, args.seenToolCalls));
-    args.safeWrite(transformSseEvent(event, args.publicModel));
+    // One pass: the frame is split and parsed once, and that single parse feeds
+    // stream inspection, tool-call counting, and the rewrite. It used to be
+    // three passes over the same bytes -- see processSseEvent.
+    const processed = processSseEvent(event, {
+      publicModel: args.publicModel,
+      seenToolCalls: args.seenToolCalls,
+      onParsed: (parsed) =>
+        applyParsedSseEvent(
+          parsed,
+          args.streamState,
+          args.toolCallIds,
+          args.setTerminal,
+          args.setIncompleteReason,
+          args.setReportedLimit,
+          args.onResponseCompleted
+        )
+    });
+    args.onConsumed(processed.toolCalls);
+    args.safeWrite(processed.output);
     working = working.slice(end);
   }
   if (args.flush && working && args.isWritable()) {
-    inspectSseEvent(
-      working,
-      args.streamState,
-      args.toolCallIds,
-      args.setTerminal,
-      args.setIncompleteReason,
-      args.setReportedLimit,
-      args.onResponseCompleted
-    );
-    args.onConsumed(countToolCallsFromSse(working, args.seenToolCalls));
-    args.safeWrite(transformSseEvent(working, args.publicModel));
+    const processed = processSseEvent(working, {
+      publicModel: args.publicModel,
+      seenToolCalls: args.seenToolCalls,
+      onParsed: (parsed) =>
+        applyParsedSseEvent(
+          parsed,
+          args.streamState,
+          args.toolCallIds,
+          args.setTerminal,
+          args.setIncompleteReason,
+          args.setReportedLimit,
+          args.onResponseCompleted
+        )
+    });
+    args.onConsumed(processed.toolCalls);
+    args.safeWrite(processed.output);
     working = "";
   }
   args.onBufferUpdated(working);
@@ -1667,15 +1622,18 @@ function writeCodexBufferedResponse(
   body: string
 ): StreamWriteResult {
   const { response, result, publicModel, responseHeaders } = context;
-  const completed = completedResponseFromSse(body);
+  // One pass over the body answers all three questions the buffered path used to
+  // ask with three separate parses.
+  const summary = summarizeBufferedSse(body);
+  const completed = summary.firstCompleted;
   finishBufferedAttempt(
     result,
     completed,
     completed ? responseWasNotCompleted(completed) : false
   );
-  const toolCalls = countToolCallsFromSse(body);
+  const toolCalls = summary.toolCalls;
   const parsed = rewriteResponseValue(
-    responseTextFromSse(body),
+    bufferedEnvelope(summary),
     publicModel
   ) as Record<string, unknown>;
   sendJson(response, result.upstream.status, parsed, responseHeaders);
