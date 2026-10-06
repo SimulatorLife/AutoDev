@@ -23,6 +23,45 @@ bash scripts/install.sh
 
 Provider-specific `ensure-*` and `run-*` scripts are intentionally separate so a machine can enable only the providers it has credentials for. Use environment variables documented in each script to override local binary paths and project roots; do not add machine secrets or generated logs to this repository.
 
+### Typed CLI commands
+
+`pnpm autodev -- --help` lists every command family and the values each one
+accepts. The list is generated from the same declarations the dispatchers
+validate against, so a command cannot be advertised there and rejected by the
+CLI:
+
+```text
+Usage: pnpm autodev -- <command> [subcommand] [options]
+
+Commands:
+  check
+  render agents|contract|mcp|catalog
+  router run|ensure|status
+  provider claude|minimax|copilot|antigravity
+  hook session-start|subagent-start|root-delegation|skill-read
+  repo bootstrap
+  install
+```
+
+Every rejection names the values it would have accepted, so a typo does not
+require reading the source to recover. Omitting a subcommand says which one is
+missing rather than reporting the command itself as unknown:
+
+```console
+$ pnpm autodev -- render
+autodev: render target requires one of: agents, contract, mcp, or catalog
+$ pnpm autodev -- provider openai
+autodev: unsupported provider: openai (expected one of: claude, minimax, copilot, or antigravity)
+$ pnpm autodev -- repo
+autodev: repo subcommand requires one of: bootstrap
+$ pnpm autodev -- statuss
+autodev: unsupported command: statuss (expected one of: check, render, router, provider, hook, repo, or install)
+```
+
+Commands exit `0` on success and `2` on a rejected argument. Diagnostics go to
+stderr through `writeErrorLine`; command output goes to stdout, so a caller can
+separate them.
+
 ### Repo-specific git and tool exclusions bootstrap
 
 `scripts/bootstrap-repo-exclusions.sh` (also available via `autodev repo bootstrap`

@@ -1,8 +1,14 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 
-import { ConfigError } from "@simulatorlife/autodev-runtime/config";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+
+import { unsupportedChoice } from "./command-choice.ts";
+
+/** The repo vocabulary, owned here and consumed by validation and errors. */
+export const REPO_SUBCOMMANDS = ["bootstrap"] as const;
+
+export type RepoSubcommand = (typeof REPO_SUBCOMMANDS)[number];
 
 export interface RepoCommandBackend {
   bootstrap(args?: readonly string[]): number;
@@ -39,10 +45,9 @@ export function dispatchRepoCommand(
   args: readonly string[] = [],
   backend: RepoCommandBackend = defaultRepoBackend
 ): number {
-  if (subcommand === "bootstrap") {
-    return backend.bootstrap(args);
-  }
-  throw new ConfigError(
-    `unsupported repo subcommand: ${subcommand || "(missing)"}`
-  );
+  // One arm, so a `switch` would only trip `sonarjs/no-small-switch`; the
+  // rejection below is still the family's single place an unusable subcommand is
+  // reported.
+  if (subcommand === "bootstrap") return backend.bootstrap(args);
+  throw unsupportedChoice("repo subcommand", subcommand, REPO_SUBCOMMANDS);
 }

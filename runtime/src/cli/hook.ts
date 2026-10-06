@@ -1,9 +1,15 @@
-import { ConfigError } from "@simulatorlife/autodev-runtime/config";
-
+import { isChoice, unsupportedChoice } from "./command-choice.ts";
 import { UnmigratedRuntimeError } from "./runtime.ts";
 
-export type HookName =
-  "session-start" | "subagent-start" | "root-delegation" | "skill-read";
+/** The hook vocabulary, owned here and consumed by validation and errors. */
+export const HOOK_NAMES = [
+  "session-start",
+  "subagent-start",
+  "root-delegation",
+  "skill-read"
+] as const;
+
+export type HookName = (typeof HOOK_NAMES)[number];
 
 export interface HookCommandBackend {
   run(hook: HookName): number;
@@ -19,13 +25,8 @@ export function dispatchHookCommand(
   name: string,
   backend: HookCommandBackend = unmigratedHook
 ): number {
-  if (
-    name !== "session-start" &&
-    name !== "subagent-start" &&
-    name !== "root-delegation" &&
-    name !== "skill-read"
-  ) {
-    throw new ConfigError(`unsupported hook: ${name || "(missing)"}`);
+  if (!isChoice(name, HOOK_NAMES)) {
+    throw unsupportedChoice("hook", name, HOOK_NAMES);
   }
   return backend.run(name);
 }

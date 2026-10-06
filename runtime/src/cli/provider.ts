@@ -1,8 +1,15 @@
-import { ConfigError } from "@simulatorlife/autodev-runtime/config";
-
+import { isChoice, unsupportedChoice } from "./command-choice.ts";
 import { UnmigratedRuntimeError } from "./runtime.ts";
 
-export type ProviderName = "claude" | "minimax" | "copilot" | "antigravity";
+/** The provider vocabulary, owned here and consumed by validation and errors. */
+export const PROVIDER_NAMES = [
+  "claude",
+  "minimax",
+  "copilot",
+  "antigravity"
+] as const;
+
+export type ProviderName = (typeof PROVIDER_NAMES)[number];
 
 export interface ProviderCommandBackend {
   start(provider: ProviderName): number;
@@ -18,13 +25,8 @@ export function dispatchProviderCommand(
   name: string,
   backend: ProviderCommandBackend = unmigratedProvider
 ): number {
-  if (
-    name !== "claude" &&
-    name !== "minimax" &&
-    name !== "copilot" &&
-    name !== "antigravity"
-  ) {
-    throw new ConfigError(`unsupported provider: ${name || "(missing)"}`);
+  if (!isChoice(name, PROVIDER_NAMES)) {
+    throw unsupportedChoice("provider", name, PROVIDER_NAMES);
   }
   return backend.start(name);
 }

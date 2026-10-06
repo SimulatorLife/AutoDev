@@ -19,17 +19,38 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/output";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
-import { dispatchHookCommand, type HookCommandBackend } from "./hook.ts";
+import { unsupportedChoice } from "./command-choice.ts";
+import {
+  dispatchHookCommand,
+  HOOK_NAMES,
+  type HookCommandBackend
+} from "./hook.ts";
 import {
   dispatchInstallCommand,
   type InstallCommandBackend
 } from "./install.ts";
 import {
   dispatchProviderCommand,
+  PROVIDER_NAMES,
   type ProviderCommandBackend
 } from "./provider.ts";
-import { dispatchRepoCommand, type RepoCommandBackend } from "./repo.ts";
-import { dispatchRouterCommand, type RouterCommandBackend } from "./router.ts";
+import {
+  dispatchRepoCommand,
+  REPO_SUBCOMMANDS,
+  type RepoCommandBackend
+} from "./repo.ts";
+import {
+  dispatchRouterCommand,
+  ROUTER_COMMANDS,
+  type RouterCommandBackend
+} from "./router.ts";
+
+/**
+ * The render vocabulary, owned here and consumed by validation, help, and
+ * errors. The dispatch is a `switch` over these values rather than a narrowing
+ * guard, so this list is what `default` rejects against.
+ */
+export const RENDER_TARGETS = ["agents", "contract", "mcp", "catalog"] as const;
 
 const repoRoot = path.resolve(resolveRuntimeSourceRoot(import.meta.dirname));
 const defaults = {
@@ -114,50 +135,101 @@ function checkRenderedFiles(
   }
 }
 
+/**
+ * Runs one render target.
+ *
+ * Every target `RENDER_TARGETS` declares is handled here, and `default` is the
+ * single place an unusable one is rejected -- including the empty string from
+ * `autodev render` with no target, which is why the command no longer needs a
+ * guard above the switch. Keeping one rejection site means the accepted values
+ * cannot be listed in one message and validated in another.
+ *
+ * `tests/cli/command-usage.test.ts` is what holds the three lists together: it
+ * walks the `--help` output and drives every value advertised there through
+ * dispatch, so adding a target to `RENDER_TARGETS` without handling it here
+ * fails the suite instead of silently falling through to `default`.
+ */
 function renderCommand(kind: string, argv: string[]): number {
   const { values, flags } = parseArgs(argv);
-  if (kind === "agents") {
-    const sourceDir = values["source-dir"] ?? defaults.agents;
-    const promptDir = values["prompt-dir"] ?? defaults.prompts;
-    const mcpSource = requiredArg(values, "mcp-source");
-    const outputDir = requiredArg(values, "output-dir");
-    return flags.has("check")
-      ? checkRenderedFiles(sourceDir, promptDir, outputDir, mcpSource)
-      : (renderAgentDirectory(sourceDir, promptDir, outputDir, mcpSource), 0);
-  }
-  if (kind === "contract") {
-    const sourceDir = values["source-dir"] ?? defaults.agents;
-    const rootConfig = values["root-config"] ?? defaults.rootConfig;
-    const contract = values.contract ?? defaults.contract;
-    const output = requiredArg(values, "output");
-    if (flags.has("check")) {
-      const expected = `${JSON.stringify(renderExecutionContract(sourceDir, rootConfig, contract), null, 2)}\n`;
-      if (!existsSync(output) || readFileSync(output, "utf8") !== expected) {
-        writeErrorLine(`execution contract drift detected: ${output}`);
-        return 1;
-      }
-      writeLine(`execution contract check passed: ${output}`);
-      return 0;
+  switch (kind) {
+    case "agents": {
+      const sourceDir = values["source-dir"] ?? defaults.agents;
+      const promptDir = values["prompt-dir"] ?? defaults.prompts;
+      const mcpSource = requiredArg(values, "mcp-source");
+      const outputDir = requiredArg(values, "output-dir");
+      return flags.has("check")
+        ? checkRenderedFiles(sourceDir, promptDir, outputDir, mcpSource)
+        : (renderAgentDirectory(sourceDir, promptDir, outputDir, mcpSource), 0);
     }
-    return runExecutionContract(sourceDir, rootConfig, contract, output);
+    case "contract": {
+      const sourceDir = values["source-dir"] ?? defaults.agents;
+      const rootConfig = values["root-config"] ?? defaults.rootConfig;
+      const contract = values.contract ?? defaults.contract;
+      const output = requiredArg(values, "output");
+      if (flags.has("check")) {
+        const expected = `${JSON.stringify(renderExecutionContract(sourceDir, rootConfig, contract), null, 2)}\n`;
+        if (!existsSync(output) || readFileSync(output, "utf8") !== expected) {
+          writeErrorLine(`execution contract drift detected: ${output}`);
+          return 1;
+        }
+        writeLine(`execution contract check passed: ${output}`);
+        return 0;
+      }
+      return runExecutionContract(sourceDir, rootConfig, contract, output);
+    }
+    case "mcp": {
+      const source = requiredArg(values, "mcp-source");
+      const output = requiredArg(values, "output");
+      return runBridgeMcpCatalogue(source, output, flags.has("check"));
+    }
+    case "catalog": {
+      const routing = requiredArg(values, "routing-config");
+      const catalogsDir = requiredArg(values, "catalogs-dir");
+      const output = requiredArg(values, "output");
+      return runModelCatalog(routing, catalogsDir, output, flags.has("check"));
+    }
+    default: {
+      throw unsupportedChoice("render target", kind, RENDER_TARGETS);
+    }
   }
-  if (kind === "mcp") {
-    const source = requiredArg(values, "mcp-source");
-    const output = requiredArg(values, "output");
-    return runBridgeMcpCatalogue(source, output, flags.has("check"));
-  }
-  if (kind === "catalog") {
-    const routing = requiredArg(values, "routing-config");
-    const catalogsDir = requiredArg(values, "catalogs-dir");
-    const output = requiredArg(values, "output");
-    return runModelCatalog(routing, catalogsDir, output, flags.has("check"));
-  }
-  throw new ConfigError(`unsupported render target: ${kind}`);
 }
+
+/**
+ * The command families `--help` advertises, in the order it lists them, each
+ * paired with the values its subcommand accepts.
+ *
+ * Assembled from the same lists the dispatchers validate against. It used to
+ * be one string literal with the subcommands typed out a second time, so
+ * nothing connected the help to the validators: a command could be advertised
+ * here and rejected there, which is exactly how `render` ended up described as
+ * unimplemented while `--help` listed it. `render`, `router`, `provider`,
+ * `hook`, and `repo` now expand their alternatives automatically, so the two
+ * families whose values were previously undiscoverable -- `provider` and
+ * `hook` -- name what they accept instead of showing a bare `<name>`, and
+ * reading `--help` is enough rather than running a command to fail.
+ */
+const COMMAND_ROWS: readonly (readonly [string, string])[] = [
+  ["check", ""],
+  ["render", RENDER_TARGETS.join("|")],
+  ["router", ROUTER_COMMANDS.join("|")],
+  ["provider", PROVIDER_NAMES.join("|")],
+  ["hook", HOOK_NAMES.join("|")],
+  ["repo", REPO_SUBCOMMANDS.join("|")],
+  ["install", ""]
+];
 
 function usage(): void {
   writeLine(
-    `Usage: pnpm autodev -- <command> [subcommand] [options]\n\nCommands:\n  check\n  render agents|contract|mcp|catalog\n  router run|ensure|status\n  provider <name>\n  hook <name>\n  repo bootstrap\n  install\n`
+    [
+      "Usage: pnpm autodev -- <command> [subcommand] [options]",
+      "",
+      "Commands:",
+      ...COMMAND_ROWS.map(
+        ([name, choices]) =>
+          `  ${name}${choices.length > 0 ? ` ${choices}` : ""}`
+      ),
+      ""
+    ].join("\n")
   );
 }
 
@@ -181,8 +253,11 @@ export function runMain(
     return 0;
   }
   if (command === "check") return checkRepository();
-  if (command === "render" && subcommand)
-    return renderCommand(subcommand, rest);
+  // No `&& subcommand` guard: a family invoked bare must reach its own
+  // validation so it can name the values it accepts, rather than falling
+  // through to the unknown-command branch below and being reported as a command
+  // that does not exist.
+  if (command === "render") return renderCommand(subcommand ?? "", rest);
   if (command === "router") {
     if (rest.length > 0)
       throw new ConfigError(
@@ -211,8 +286,10 @@ export function runMain(
     );
     return dispatchInstallCommand(backends.install, args);
   }
-  throw new ConfigError(
-    `command '${[command, subcommand].filter(Boolean).join(" ")}' is not implemented in this migration slice; use a typed render/check command or complete the owning subsystem migration`
+  throw unsupportedChoice(
+    "command",
+    command,
+    COMMAND_ROWS.map(([name]) => name)
   );
 }
 
