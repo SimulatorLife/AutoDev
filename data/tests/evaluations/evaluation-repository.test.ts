@@ -159,6 +159,41 @@ test("EvaluationRepository does not infer verdicts from scores or missing metric
   assert.equal(results[1]?.passed, null);
 });
 
+test("EvaluationRepository reads the documented verdict vocabulary", () => {
+  const repo = new EvaluationRepository();
+  const rowWithVerdict = (verdict: string) =>
+    JSON.stringify({
+      id: "verdict-row",
+      created_at: "2026-10-04 11:00:00",
+      "evaluationData.evaluation": ["quality"],
+      "evaluationData.verdict": [verdict],
+      scores: { quality: 0.5 }
+    });
+
+  // The passing and failing labels now live in two named sets rather than a
+  // ternary written out inside a loop, so they are worth pinning one by one.
+  // An alias quietly dropped is the kind of change that otherwise surfaces as
+  // an unexplained "not observed" on a row an operator cannot explain.
+  for (const [verdict, expected] of [
+    ["pass", true],
+    ["passed", true],
+    ["yes", true],
+    ["PASS", true],
+    ["  pass  ", true],
+    ["fail", false],
+    ["failed", false],
+    ["no", false],
+    ["No", false],
+    ["maybe", null],
+    ["", null]
+  ] as const) {
+    const label = JSON.stringify(verdict);
+    const [result] = repo.parseEvaluationRows(rowWithVerdict(verdict));
+    assert.equal(result?.metrics[0]?.pass, expected, `verdict ${label}`);
+    assert.equal(result?.passed, expected, `row passed for ${label}`);
+  }
+});
+
 test("EvaluationRepository.listEvaluations returns parsed rows with custom fetchImpl", async () => {
   const sampleRow = JSON.stringify({
     id: "uuid-123",
