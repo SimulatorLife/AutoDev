@@ -1,0 +1,1321 @@
+diff --git a/src/client/package.json b/src/client/package.json
+index dd724c65..caaefc9c 100644
+--- a/src/client/package.json
++++ b/src/client/package.json
+@@ -74,7 +74,6 @@
+     "mustache": "^4.2.0",
+     "next": "^14.2.4",
+     "next-auth": "^4.24.7",
+-    "next-themes": "^0.3.0",
+     "openai": "^4.50.0",
+     "posthog-js": "^1.364.4",
+     "react": "^18.3.1",
+@@ -91,7 +90,6 @@
+     "sqlstring": "^2.3.3",
+     "tailwind-merge": "^2.2.2",
+     "tailwindcss-animate": "^1.0.7",
+-    "tiny-cookie": "^2.5.1",
+     "zustand": "^4.5.2"
+   },
+   "devDependencies": {
+diff --git a/src/client/src/__tests__/app/layout-theme.test.tsx b/src/client/src/__tests__/app/layout-theme.test.tsx
+new file mode 100644
+index 00000000..13dd9ab6
+--- /dev/null
++++ b/src/client/src/__tests__/app/layout-theme.test.tsx
+@@ -0,0 +1,30 @@
++import { renderToStaticMarkup } from "react-dom/server";
++
++// `next/font/local` resolves to a build-time asset loader; stub it so the
++// layout can be rendered outside a Next build.
++jest.mock("next/font/local", () => ({
++	__esModule: true,
++	default: () => ({ className: "font-inter", variable: "--font-inter" }),
++}));
++
++import RootLayout from "@/app/layout";
++
++describe("root layout theme", () => {
++	it("renders the product in dark unconditionally", () => {
++		const markup = renderToStaticMarkup(
++			RootLayout({ children: null }) as React.ReactElement
++		);
++
++		expect(markup).toContain('<html lang="en" class="scroll-smooth dark"');
++	});
++
++	it("does not read or depend on a persisted theme preference", () => {
++		const markup = renderToStaticMarkup(
++			RootLayout({ children: null }) as React.ReactElement
++		);
++
++		// Tailwind is configured with `darkMode: ["class"]`, so the absence of a
++		// theme-driven class would silently render the light palette.
++		expect(markup).not.toMatch(/<html(?![^>]*\bdark\b)[^>]*>/);
++	});
++});
+\ No newline at end of file
+diff --git a/src/client/src/__tests__/components/sidebar.test.tsx b/src/client/src/__tests__/components/sidebar.test.tsx
+index 9b6d2a22..6c7b63ee 100644
+--- a/src/client/src/__tests__/components/sidebar.test.tsx
++++ b/src/client/src/__tests__/components/sidebar.test.tsx
+@@ -50,11 +50,6 @@ jest.mock("@/components/(playground)/sidebar/user-actions", () => ({
+ 	default: () => <button>User menu</button>,
+ }));
+ 
+-jest.mock("@/components/(playground)/sidebar/theme-switch", () => ({
+-	__esModule: true,
+-	default: () => <button>Theme switch</button>,
+-}));
+-
+ jest.mock("@/components/ui/tooltip", () => ({
+ 	TooltipProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+ 	Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+diff --git a/src/client/src/__tests__/utils/hooks/hooks.test.ts b/src/client/src/__tests__/utils/hooks/hooks.test.ts
+index 098598bf..a420a468 100644
+--- a/src/client/src/__tests__/utils/hooks/hooks.test.ts
++++ b/src/client/src/__tests__/utils/hooks/hooks.test.ts
+@@ -30,7 +30,6 @@ import { toast } from 'sonner';
+ import { get as cookieGet, set as cookieSet } from 'tiny-cookie';
+ import { useBreadcrumbs, useDynamicBreadcrumbs, useCustomBreadcrumbs } from '@/utils/hooks/useBreadcrumbs';
+ import useClickhousePing from '@/utils/hooks/useClickhousePing';
+-import useTheme from '@/utils/hooks/useTheme';
+ 
+ // ----------------------------------------------------------------
+ // useBreadcrumbs
+@@ -179,99 +178,5 @@ describe('useClickhousePing', () => {
+ });
+ 
+ // ----------------------------------------------------------------
+-// useTheme
+ // ----------------------------------------------------------------
+-describe('useTheme', () => {
+-  beforeEach(() => {
+-    jest.clearAllMocks();
+-    (cookieGet as jest.Mock).mockReturnValue('light');
+-    document.documentElement.classList.remove('dark', 'light');
+-  });
+-
+-  it('initializes theme from cookie', async () => {
+-    (cookieGet as jest.Mock).mockReturnValue('dark');
+-    const { result } = renderHook(() => useTheme());
+-
+-    await act(async () => {
+-      await new Promise((r) => setTimeout(r, 0));
+-    });
+-
+-    expect(result.current.theme).toBe('dark');
+-  });
+-
+-  it('toggles from light to dark', async () => {
+-    (cookieGet as jest.Mock).mockReturnValue('light');
+-    const { result } = renderHook(() => useTheme());
+-
+-    await act(async () => {
+-      await new Promise((r) => setTimeout(r, 0));
+-    });
+-
+-    // Update cookie mock so effect re-read returns the toggled value
+-    (cookieGet as jest.Mock).mockReturnValue('dark');
+-    await act(async () => {
+-      result.current.toggleTheme();
+-      await new Promise((r) => setTimeout(r, 0));
+-    });
+-
+-    expect(cookieSet).toHaveBeenCalledWith('theme', 'dark');
+-    expect(result.current.theme).toBe('dark');
+-  });
+-
+-  it('toggles to specific theme when parameter provided', async () => {
+-    (cookieGet as jest.Mock).mockReturnValue('light');
+-    const { result } = renderHook(() => useTheme());
+-
+-    await act(async () => {
+-      await new Promise((r) => setTimeout(r, 0));
+-    });
+-
+-    // Update cookie mock so effect re-read returns the toggled value
+-    (cookieGet as jest.Mock).mockReturnValue('dark');
+-    await act(async () => {
+-      result.current.toggleTheme('dark');
+-      await new Promise((r) => setTimeout(r, 0));
+-    });
+-
+-    expect(cookieSet).toHaveBeenCalledWith('theme', 'dark');
+-    expect(result.current.theme).toBe('dark');
+-  });
+-
+-  it('updates document classList when toggling', async () => {
+-    (cookieGet as jest.Mock).mockReturnValue('light');
+-    const { result } = renderHook(() => useTheme());
+-
+-    await act(async () => {
+-      await new Promise((r) => setTimeout(r, 0));
+-    });
+-
+-    act(() => {
+-      result.current.toggleTheme();
+-    });
+-
+-    expect(document.documentElement.classList.contains('dark')).toBe(true);
+-  });
+ 
+-  it('returns toggleTheme function', () => {
+-    const { result } = renderHook(() => useTheme());
+-    expect(typeof result.current.toggleTheme).toBe('function');
+-  });
+-
+-  it('toggles from dark to light (covers dark branch)', async () => {
+-    (cookieGet as jest.Mock).mockReturnValue('dark');
+-    const { result } = renderHook(() => useTheme());
+-
+-    await act(async () => {
+-      await new Promise((r) => setTimeout(r, 0));
+-    });
+-
+-    (cookieGet as jest.Mock).mockReturnValue('light');
+-    await act(async () => {
+-      result.current.toggleTheme();
+-      await new Promise((r) => setTimeout(r, 0));
+-    });
+-
+-    expect(cookieSet).toHaveBeenCalledWith('theme', 'light');
+-    expect(result.current.theme).toBe('light');
+-  });
+-});
+diff --git a/src/client/src/app/layout.tsx b/src/client/src/app/layout.tsx
+index 7bf599fb..564b4ebb 100644
+--- a/src/client/src/app/layout.tsx
++++ b/src/client/src/app/layout.tsx
+@@ -1,5 +1,4 @@
+ import type { Metadata } from "next";
+-import { cookies } from "next/headers";
+ import localFont from "next/font/local";
+ import "./globals.css";
+ import { Toaster } from "@/components/ui/sonner";
+@@ -23,13 +22,14 @@ export default function RootLayout({
+ }: {
+ 	children: React.ReactNode;
+ }) {
+-	const cookieStore = cookies();
+-	const theme = cookieStore.get("theme");
+-
++	// Tailwind is configured with `darkMode: ["class"]`, so the `dark` class is
++	// what actually selects the product's one visual theme. It used to be read
++	// from a cookie that only the sidebar toggle ever wrote, which meant a
++	// first-time visitor with no cookie rendered the whole client in light
++	// mode. Dark is now unconditional; there is no light theme to fall back to.
+ 	return (
+-		<html lang="en" className={`scroll-smooth ${theme?.value || ""}`}>
+-			{/* bg-[linear-gradient(360deg,rgba(243,108,6,0.7)_0%,white_25%)] dark:bg-[linear-gradient(360deg,rgba(243,108,6,0.8)_0%,black_25%)] */}
+-			<body className={`${inter.className} bg-stone-50 dark:bg-stone-950`}>
++		<html lang="en" className="scroll-smooth dark">
++			<body className={`${inter.className} bg-stone-950`}>
+ 				<Providers>
+ 					{children}
+ 					<Toaster position="bottom-right" />
+diff --git a/src/client/src/app/not-found.tsx b/src/client/src/app/not-found.tsx
+index 64103930..825f0196 100644
+--- a/src/client/src/app/not-found.tsx
++++ b/src/client/src/app/not-found.tsx
+@@ -1,31 +1,39 @@
+-import Link from 'next/link'
+-import Confetti from '@/components/common/confetti'
+-import AuthDetailsCarousel from '@/components/(auth)/auth-details-carousel'
+-import { Button } from '@/components/ui/button'
+-import { GithubIcon, MoveRightIcon } from 'lucide-react'
++import Link from "next/link";
++import { DEFAULT_LOGGED_IN_ROUTE } from "@/constants/route";
+ 
++/**
++ * Operator-facing 404.
++ *
++ * This used to be a two-column marketing page: an "OpenLIT" wordmark, a grid
++ * advertising nine product features, and confetti. That chrome outlived the
++ * surfaces it advertised — it still pitched the Rule Engine after patch 30
++ * deleted it — and it rendered on a `bg-white dark:bg-white` container with a
++ * `bg-stone-50` content column that had no dark variant at all, so half the
++ * viewport stayed light in the one theme the product ships. A route that does
++ * not exist should say so and offer the way back, nothing else.
++ */
+ export default function NotFound() {
+-  return (
+-    <div className="min-h-screen grid lg:grid-cols-2 bg-white dark:bg-white">
+-      <AuthDetailsCarousel />
+-      <div className="flex flex-col justify-center p-8 lg:p-16 bg-stone-50 relative">
+-        <Confetti />
+-        <div className="flex flex-col w-full max-w-sm mx-auto gap-12 z-10">
+-          <div className="text-center">
+-            <h1 className="text-4xl font-bold tracking-tight text-primary">
+-              404 – Bug or Feature?
+-            </h1>
+-            <p className="text-stone-600">
+-              This page drifted outside our observability zone. Let&apos;s head back to reality.
+-            </p>
+-          </div>
+-          <div className="flex flex-col items-center justify-center space-y-4 text-center">
+-            <Link href="/" className="text-primary font-bold">
+-              Return to Dashboard
+-            </Link>
+-          </div>
+-        </div>
+-      </div>
+-    </div>
+-  )
++	return (
++		<div className="min-h-screen flex items-center justify-center bg-stone-950 px-6">
++			<div className="flex flex-col w-full max-w-md gap-6 text-center">
++				<div>
++					<p className="text-sm font-medium text-primary">404</p>
++					<h1 className="mt-2 text-2xl font-semibold tracking-tight text-stone-100">
++						Page not found
++					</h1>
++					<p className="mt-2 text-sm text-stone-400">
++						This address does not match anything in the console.
++					</p>
++				</div>
++				<div>
++					<Link
++						href={DEFAULT_LOGGED_IN_ROUTE}
++						className="font-medium text-primary hover:underline"
++					>
++						Return to the dashboard
++					</Link>
++				</div>
++			</div>
++		</div>
++	);
+ }
+\ No newline at end of file
+diff --git a/src/client/src/components/(auth)/auth-details-carousel.tsx b/src/client/src/components/(auth)/auth-details-carousel.tsx
+deleted file mode 100644
+index 748c66a1..00000000
+--- a/src/client/src/components/(auth)/auth-details-carousel.tsx
++++ /dev/null
+@@ -1,81 +0,0 @@
+-import Image from "next/image";
+-import getMessage from "@/constants/messages";
+-import {
+-	BarChart3,
+-	BrainCircuit,
+-	FlaskConical,
+-	GitCompare,
+-	Lock,
+-	MessageSquareText,
+-	Search,
+-	Shield,
+-	Sparkles,
+-	Zap,
+-} from "lucide-react";
+-
+-const featureIcons = [Search, BarChart3, Shield, BrainCircuit, GitCompare, MessageSquareText, FlaskConical, Lock, Zap, Sparkles];
+-
+-const featureKeys: Array<{ title: keyof ReturnType<typeof getMessage>; desc: keyof ReturnType<typeof getMessage> }> = [
+-	{ title: "AUTH_FEATURE_TRACING", desc: "AUTH_FEATURE_TRACING_DESC" },
+-	{ title: "AUTH_FEATURE_ANALYTICS", desc: "AUTH_FEATURE_ANALYTICS_DESC" },
+-	{ title: "AUTH_FEATURE_EVALS", desc: "AUTH_FEATURE_EVALS_DESC" },
+-	{ title: "AUTH_FEATURE_JUDGE", desc: "AUTH_FEATURE_JUDGE_DESC" },
+-	{ title: "AUTH_FEATURE_PROMPT_HUB", desc: "AUTH_FEATURE_PROMPT_HUB_DESC" },
+-	{ title: "AUTH_FEATURE_RULE_ENGINE", desc: "AUTH_FEATURE_RULE_ENGINE_DESC" },
+-	{ title: "AUTH_FEATURE_VAULT", desc: "AUTH_FEATURE_VAULT_DESC" },
+-	{ title: "AUTH_FEATURE_AGENTS", desc: "AUTH_FEATURE_AGENTS_DESC" },
+-	{ title: "AUTH_FEATURE_OTEL", desc: "AUTH_FEATURE_OTEL_DESC" },
+-];
+-
+-export default function AuthDetailsCarousel() {
+-	const messages = getMessage();
+-	return (
+-		<div className="relative hidden lg:flex flex-col justify-between bg-primary/[0.05] dark:bg-stone-950 p-10">
+-			{/* Logo */}
+-			<div className="flex items-center gap-3">
+-				<Image
+-					src="/images/logo.png"
+-					alt="OpenLIT"
+-					width="40"
+-					height="40"
+-					className="object-cover"
+-				/>
+-				<span className="text-lg font-bold text-stone-900 dark:text-stone-100">
+-					OpenLIT
+-				</span>
+-			</div>
+-
+-			{/* Feature Grid */}
+-			<div className="flex-1 flex items-center justify-center">
+-				<div className="grid grid-cols-2 gap-4 max-w-lg w-full">
+-					{featureKeys.map((feature, i) => {
+-						const Icon = featureIcons[i];
+-						return (
+-							<div
+-								key={feature.title}
+-								className="flex items-start gap-3 p-3 rounded-lg bg-white/60 dark:bg-stone-900/50 border border-stone-200/50 dark:border-stone-800/50"
+-							>
+-								<div className="shrink-0 mt-0.5 p-1.5 rounded-md bg-primary/10 dark:bg-primary/20">
+-									<Icon className="h-4 w-4 text-primary" />
+-								</div>
+-								<div className="min-w-0">
+-									<p className="text-sm font-medium text-stone-900 dark:text-stone-100 leading-tight">
+-										{messages[feature.title] as string}
+-									</p>
+-									<p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5 leading-snug">
+-										{messages[feature.desc] as string}
+-									</p>
+-								</div>
+-							</div>
+-						);
+-					})}
+-				</div>
+-			</div>
+-
+-			{/* Footer */}
+-			<p className="text-xs text-stone-500 dark:text-stone-400 text-center">
+-				{messages.AUTH_FOOTER}
+-			</p>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(auth)/auth-form-container.tsx b/src/client/src/components/(auth)/auth-form-container.tsx
+deleted file mode 100644
+index ab07744a..00000000
+--- a/src/client/src/components/(auth)/auth-form-container.tsx
++++ /dev/null
+@@ -1,31 +0,0 @@
+-"use client";
+-import { MoveRightIcon } from "lucide-react";
+-import { GithubIcon } from "lucide-react";
+-import { Button } from "../ui/button";
+-import Link from "next/link";
+-import Confetti from "../common/confetti";
+-import getMessage from "@/constants/messages";
+-
+-export default function AuthFormContainer({
+-	children,
+-}: {
+-	children: JSX.Element;
+-}) {
+-	const m = getMessage();
+-	return (
+-		<div className="flex flex-col justify-center p-8 lg:p-16 bg-stone-50 dark:bg-stone-900 relative">
+-			<Confetti />
+-			<div className="flex flex-col w-full max-w-sm mx-auto gap-12 z-10">
+-				<div className="text-center">
+-					<h1 className="text-4xl font-bold tracking-tight text-primary">
+-						{m.AUTH_WELCOME}
+-					</h1>
+-					<p className="text-stone-600 dark:text-stone-400">
+-						{m.AUTH_SUBTITLE}
+-					</p>
+-				</div>
+-				{children}
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(auth)/auth-form.tsx b/src/client/src/components/(auth)/auth-form.tsx
+deleted file mode 100644
+index b6858abb..00000000
+--- a/src/client/src/components/(auth)/auth-form.tsx
++++ /dev/null
+@@ -1,277 +0,0 @@
+-"use client";
+-import { DEFAULT_LOGGED_IN_ROUTE } from "@/constants/route";
+-import asaw from "@/utils/asaw";
+-import { getProviders, signIn } from "next-auth/react";
+-import Link from "next/link";
+-import { useSearchParams } from "next/navigation";
+-import { useEffect, useState } from "react";
+-
+-import { Button } from "@/components/ui/button";
+-import { Input } from "@/components/ui/input";
+-import { Label } from "@/components/ui/label";
+-import { usePostHog } from "posthog-js/react";
+-import { CLIENT_EVENTS } from "@/constants/events";
+-import getMessage from "@/constants/messages";
+-
+-const getErrors = () => {
+-	const m = getMessage();
+-	return {
+-		AccessDenied: m.AUTH_ERROR_ACCESS_DENIED,
+-		Signin: m.AUTH_ERROR_TRY_DIFFERENT,
+-		OAuthSignin: m.AUTH_ERROR_TRY_DIFFERENT,
+-		OAuthCallback: m.AUTH_ERROR_TRY_DIFFERENT,
+-		OAuthCreateAccount: m.AUTH_ERROR_TRY_DIFFERENT,
+-		EmailCreateAccount: m.AUTH_ERROR_TRY_DIFFERENT,
+-		Callback: m.AUTH_ERROR_TRY_DIFFERENT,
+-		OAuthAccountNotLinked: m.AUTH_ERROR_CONFIRM_IDENTITY,
+-		EmailSignin: m.AUTH_ERROR_CHECK_EMAIL,
+-		CredentialsSignin: m.AUTH_ERROR_CREDENTIALS,
+-		Configuration: m.AUTH_ERROR_CONFIGURATION,
+-		default: m.AUTH_ERROR_DEFAULT,
+-	};
+-};
+-
+-const SignInError = ({ error }: { error: string }) => {
+-	if (!error || error === "undefined") return null;
+-	const errors = getErrors();
+-	const errorMessage = errors[error as keyof typeof errors] ?? error ?? errors.default;
+-	return <div className="text-xs text-red-600 dark:text-red-400 text-center bg-red-50 dark:bg-red-950/30 p-3 rounded-md">{errorMessage}</div>;
+-};
+-
+-export function AuthForm({ type }: { type: "login" | "register" }) {
+-	const posthog = usePostHog();
+-	const searchParams = useSearchParams();
+-	const callbackUrl: string =
+-		(searchParams.get("callbackUrl") as string) || DEFAULT_LOGGED_IN_ROUTE;
+-	const errorType: string = (searchParams.get("error") as string);
+-	const [error, setError] = useState<string>(errorType || "");
+-	const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+-	const [isGithubLoading, setIsGithubLoading] = useState(false);
+-	const [providers, setProviders] = useState<string[]>([]);
+-	const m = getMessage();
+-
+-	useEffect(() => {
+-		const fetchProviders = async () => {
+-			const res = await getProviders();
+-			if (typeof res === "object" && res !== null) {
+-				setProviders(Object.keys(res).filter(e => !["login", "register"].includes(e)));
+-			}
+-		};
+-		fetchProviders();
+-	}, []);
+-
+-	async function authWrapper(fn: any) {
+-		const [err, response] = await asaw(fn());
+-
+-		if (err) {
+-			setError(err.toString());
+-			return;
+-		}
+-
+-		if (!response.ok) {
+-			setError(response.error);
+-			return;
+-		}
+-
+-		posthog?.capture(
+-			type === "login" ? CLIENT_EVENTS.LOGIN : CLIENT_EVENTS.REGISTER
+-		);
+-		window.location.replace(callbackUrl);
+-	}
+-
+-	async function handleGoogleSignIn() {
+-		setIsGoogleLoading(true);
+-		setError("");
+-
+-		try {
+-			const result = await signIn("google", {
+-				callbackUrl,
+-				redirect: false,
+-			});
+-
+-			if (result?.error) {
+-				console.error("Google sign-in error:", result.error);
+-				setError(result.error);
+-			}
+-		} catch (err) {
+-			console.error("Google sign-in exception:", err);
+-			setError(m.AUTH_ERROR_GOOGLE);
+-		} finally {
+-			setIsGoogleLoading(false);
+-		}
+-	}
+-
+-	async function handleGithubSignIn() {
+-		setIsGithubLoading(true);
+-		setError("");
+-
+-		try {
+-			const result = await signIn("github", {
+-				callbackUrl,
+-				redirect: false,
+-			});
+-
+-			if (result?.error) {
+-				console.error("Github sign-in error:", result.error);
+-				setError(result.error);
+-			}
+-		} catch (err) {
+-			console.error("Github sign-in exception:", err);
+-			setError(m.AUTH_ERROR_GITHUB);
+-		} finally {
+-			setIsGithubLoading(false);
+-		}
+-	}
+-
+-	async function login(formData: FormData) {
+-		authWrapper(() =>
+-			signIn("login", {
+-				callbackUrl,
+-				email: formData.get("email") as string,
+-				password: formData.get("password") as string,
+-				redirect: false,
+-			})
+-		);
+-	}
+-
+-	async function register(formData: FormData) {
+-		authWrapper(() =>
+-			signIn("register", {
+-				callbackUrl,
+-				email: formData.get("email") as string,
+-				password: formData.get("password") as string,
+-				redirect: false,
+-			})
+-		);
+-	}
+-
+-	return (
+-		<div className="mx-auto grid gap-6 w-[350px] text-stone-900 dark:text-stone-100">
+-			<div className="grid gap-2 text-center">
+-			</div>
+-			{error && <SignInError error={error} />}
+-
+-			{/* Google Sign-in Button */}
+-			{providers.includes("google") && (
+-				<Button
+-					type="button"
+-					variant="outline"
+-					onClick={handleGoogleSignIn}
+-					disabled={isGoogleLoading}
+-					className="w-full bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 border-stone-200 dark:border-stone-700 hover:bg-stone-50 dark:hover:bg-stone-800 rounded-full hover:text-stone-900 dark:hover:text-stone-100"
+-				>
+-					{isGoogleLoading ? (
+-						m.AUTH_SIGNING_IN
+-					) : (
+-						<div className="flex items-center justify-center gap-2">
+-							<svg
+-								className="w-4 h-4"
+-								viewBox="0 0 24 24"
+-								xmlns="http://www.w3.org/2000/svg"
+-							>
+-								<path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+-								<path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+-								<path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+-								<path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+-							</svg>
+-							{m.AUTH_CONTINUE_WITH_GOOGLE}
+-						</div>
+-					)}
+-				</Button>
+-			)}
+-
+-			{providers.includes("github") && (
+-				<Button
+-					type="button"
+-					variant="outline"
+-					onClick={handleGithubSignIn}
+-					disabled={isGithubLoading}
+-					className="w-full bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 border-stone-200 dark:border-stone-700 hover:bg-stone-50 dark:hover:bg-stone-800 rounded-full hover:text-stone-900 dark:hover:text-stone-100"
+-				>
+-					{isGithubLoading ? (
+-						m.AUTH_SIGNING_IN
+-					) : (
+-						<div className="flex items-center justify-center gap-2">
+-							<svg
+-								className="w-4 h-4"
+-								viewBox="0 0 24 24"
+-								xmlns="http://www.w3.org/2000/svg"
+-							>
+-								<path
+-									fill="currentColor"
+-									d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"
+-								/>
+-							</svg>
+-							{m.AUTH_CONTINUE_WITH_GITHUB}
+-						</div>
+-					)}
+-				</Button>
+-			)}
+-
+-			{/* Divider */}
+-			{
+-				providers.length > 0 && (
+-					<div className="relative">
+-						<div className="absolute inset-0 flex items-center">
+-							<span className="w-full border-t border-stone-300 dark:border-stone-700" />
+-						</div>
+-						<div className="relative flex justify-center text-xs uppercase">
+-							<span className="bg-stone-50 dark:bg-stone-900 px-2 text-stone-500 dark:text-stone-400">{m.AUTH_OR}</span>
+-						</div>
+-					</div>
+-				)
+-			}
+-
+-			<form
+-				action={type === "login" ? login : register}
+-				className="flex flex-col"
+-			>
+-				<div className="grid gap-4">
+-					<div className="grid gap-2">
+-						<Label htmlFor="email">{m.AUTH_EMAIL}</Label>
+-						<Input
+-							className="ph-no-capture"
+-							id="email"
+-							name="email"
+-							type="email"
+-							placeholder={m.AUTH_EMAIL_PLACEHOLDER}
+-							autoComplete="email"
+-							required
+-						/>
+-					</div>
+-					<div className="grid gap-2">
+-						<div className="flex items-center">
+-							<Label htmlFor="password">{m.AUTH_PASSWORD}</Label>
+-						</div>
+-						<Input
+-							className="ph-no-capture"
+-							autoComplete="current-password"
+-							id="password"
+-							name="password"
+-							type="password"
+-							placeholder={m.AUTH_PASSWORD_PLACEHOLDER}
+-							required
+-						/>
+-					</div>
+-					<Button
+-						type="submit"
+-						className="w-full bg-primary dark:bg-primary text-white dark:text-white hover:bg-primary/90 dark:hover:bg-primary/90 rounded-full"
+-					>
+-						{type === "login" ? m.AUTH_SIGN_IN : m.AUTH_SIGN_UP}
+-					</Button>
+-				</div>
+-			</form>
+-			<div className="text-center text-sm">
+-				{type === "login"
+-					? `${m.AUTH_NO_ACCOUNT} `
+-					: m.AUTH_HAVE_ACCOUNT}{" "}
+-				<Link
+-					href={type === "login" ? "/register" : "/login"}
+-					className="ml-auto inline-block text-sm underline text-primary"
+-				>
+-					{type === "login" ? ` ${m.AUTH_SIGN_UP}` : ` ${m.AUTH_SIGN_IN}`}
+-				</Link>
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(auth)/auto-signin-demo-instance.tsx b/src/client/src/components/(auth)/auto-signin-demo-instance.tsx
+deleted file mode 100644
+index c4ac2e3c..00000000
+--- a/src/client/src/components/(auth)/auto-signin-demo-instance.tsx
++++ /dev/null
+@@ -1,49 +0,0 @@
+-"use client";
+-import { signIn } from "next-auth/react";
+-import { useRouter } from "next/navigation";
+-import { Loader2 } from "lucide-react"
+-import { useEffect, useState } from "react";
+-
+-export default function AutoSignInDemoInstance({ children, demoCreds }: { children: JSX.Element, demoCreds: { email?: string, password?: string; } }) {
+-  const router = useRouter()
+-  const [err, setError] = useState<boolean>(false);
+-  const setErrorLoginDemoAccount = () => {
+-    setError(true);
+-    window.localStorage.setItem("failedDemoLogin", "true");
+-  };
+-
+-  useEffect(() => {
+-    const failedDemoLogin = window.localStorage.getItem("failedDemoLogin");
+-    if (failedDemoLogin !== "true") {
+-      if (demoCreds.email && demoCreds.password) {
+-        signIn("login", {
+-          email: demoCreds.email,
+-          password: demoCreds.password,
+-          redirect: false,
+-        }).then((obj) => {
+-          if (obj?.status !== 200) {
+-            setErrorLoginDemoAccount();
+-          } else {
+-            router.replace("/dashboard")
+-          }
+-        }).catch(() => {
+-          setErrorLoginDemoAccount();
+-        });
+-      }
+-    } else {
+-      setError(true);
+-    }
+-  }, []);
+-
+-  if (demoCreds.email && demoCreds.password && !err) return (
+-    <div className="flex flex-col items-center justify-center space-y-4 text-center">
+-      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+-      <h2 className="text-2xl font-semibold">Setting Up Demo Account</h2>
+-      <p className="text-muted-foreground">
+-        Please wait while we prepare a demo account for you. This may take a few moments.
+-      </p>
+-    </div>
+-  )
+-
+-  return children;
+-}
+\ No newline at end of file
+diff --git a/src/client/src/components/(playground)/sidebar/index.tsx b/src/client/src/components/(playground)/sidebar/index.tsx
+index cd21a633..00fb647e 100644
+--- a/src/client/src/components/(playground)/sidebar/index.tsx
++++ b/src/client/src/components/(playground)/sidebar/index.tsx
+@@ -33,7 +33,6 @@ import {
+ } from "@/types/sidebar";
+ import { useSidebarPreferences } from "@/utils/hooks/useSidebarPreferences";
+ import UserActions from "./user-actions";
+-import ThemeToggleSwitch from "./theme-switch";
+ import MyApps from "./my-apps";
+ import { useSidebarLayout } from "../sidebar-layout-context";
+ 
+@@ -185,7 +184,6 @@ function SectionPanel({ section, pathname, currentUrl, onClose }: { section: Sid
+ 					</div>
+ 				)}
+ 			</div>
+-			{section.title === "Settings" ? <div className="flex items-center justify-between border-t border-stone-200 px-3 py-2.5 dark:border-stone-800"><span className="text-[13px] font-medium text-stone-600 dark:text-stone-300">Appearance</span><ThemeToggleSwitch /></div> : null}
+ 		</div>
+ 	);
+ }
+diff --git a/src/client/src/components/(playground)/sidebar/theme-switch.tsx b/src/client/src/components/(playground)/sidebar/theme-switch.tsx
+deleted file mode 100644
+index af86b52b..00000000
+--- a/src/client/src/components/(playground)/sidebar/theme-switch.tsx
++++ /dev/null
+@@ -1,32 +0,0 @@
+-import useTheme from "@/utils/hooks/useTheme";
+-import { Button } from "@/components/ui/button";
+-import { Moon, Sun } from "lucide-react";
+-
+-
+-export default function ThemeToggleSwitch() {
+-	const { toggleTheme } = useTheme();
+-	const handleDark = () => toggleTheme("dark");
+-	const handleLight = () => toggleTheme("light");
+-
+-	return (
+-		<div className="flex items-center rounded-full relative bg-stone-200 dark:bg-stone-800">
+-			<div className="h-full aspect-square rounded-full bg-primary absolute top-0 left-0 z-0 dark:left-unset dark:right-0 dark:translate-x-full transition-all border-stone-200 dark:border-stone-800 border-[3px] box-border" />
+-			<Button
+-				variant="ghost"
+-				size={"icon"}
+-				className="rounded-full w-8 h-8 z-[1] p-2 hover:bg-transparent dark:hover:bg-transparent hover:text-stone-50 dark:hover:text-stone-300 text-stone-50 dark:text-stone-300"
+-				onClick={handleLight}
+-			>
+-				<Sun className="size-5" />
+-			</Button>
+-			<Button
+-				variant="ghost"
+-				size={"icon"}
+-				className="rounded-full w-8 h-8 z-[1] p-2 hover:bg-transparent dark:hover:bg-transparent text-stone-500 hover:text-stone-500 dark:text-stone-100"
+-				onClick={handleDark}
+-			>
+-				<Moon className="size-5" />
+-			</Button>
+-		</div>
+-	);
+-};
+\ No newline at end of file
+diff --git a/src/client/src/components/common/confetti.tsx b/src/client/src/components/common/confetti.tsx
+deleted file mode 100644
+index c8b61098..00000000
+--- a/src/client/src/components/common/confetti.tsx
++++ /dev/null
+@@ -1,186 +0,0 @@
+-export default function Confetti() {
+-	return (
+-		<>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.15]"
+-				style={{
+-					width: "97.6408px",
+-					height: "97.6408px",
+-					top: "2.70155%",
+-					left: "47.1158%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.1]"
+-				style={{
+-					width: "56.3488px",
+-					height: "56.3488px",
+-					top: "5.21457%",
+-					left: "26.7941%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.2]"
+-				style={{
+-					width: "83.3041px",
+-					height: "83.3041px",
+-					top: "78.102%",
+-					left: "85.553%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.2]"
+-				style={{
+-					width: "73.5714px",
+-					height: "73.5714px",
+-					top: "54.351%",
+-					left: "90.7616%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.05]"
+-				style={{
+-					width: "86.0302px",
+-					height: "86.0302px",
+-					top: "81.7666%",
+-					left: "24.0279%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.1]"
+-				style={{
+-					width: "38.3342px",
+-					height: "38.3342px",
+-					top: "28.2189%",
+-					left: "17.891%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.1]"
+-				style={{
+-					width: "101.238px",
+-					height: "101.238px",
+-					top: "49.6367%",
+-					left: "60.0206%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.15]"
+-				style={{
+-					width: "92.0699px",
+-					height: "92.0699px",
+-					top: "16.2664%",
+-					left: "13.4283%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.15]"
+-				style={{
+-					width: "28.6254px",
+-					height: "28.6254px",
+-					top: "47.9082%",
+-					left: "18.7969%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.1]"
+-				style={{
+-					width: "62.0424px",
+-					height: "62.0424px",
+-					top: "15.3172%",
+-					left: "68.8908%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.05]"
+-				style={{
+-					width: "37.4925px",
+-					height: "37.4925px",
+-					top: "32.3152%",
+-					left: "71.9833%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.1]"
+-				style={{
+-					width: "66.0742px",
+-					height: "66.0742px",
+-					top: "11.2482%",
+-					left: "3.57173%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.2]"
+-				style={{
+-					width: "78.706px",
+-					height: "78.706px",
+-					top: "11.0894%",
+-					left: "74.244%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.2]"
+-				style={{
+-					width: "49.0052px",
+-					height: "49.0052px",
+-					top: "25.1587%",
+-					left: "52.0703%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.01]"
+-				style={{
+-					width: "24.4747px",
+-					height: "24.4747px",
+-					top: "81.188%",
+-					left: "65.8224%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.01]"
+-				style={{
+-					width: "102.344px",
+-					height: "102.344px",
+-					top: "75.5579%",
+-					left: "92.4095%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.01]"
+-				style={{
+-					width: "29.7934px",
+-					height: "29.7934px",
+-					top: "92.546%",
+-					left: "61.1729%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.2]"
+-				style={{
+-					width: "92.9791px",
+-					height: "92.9791px",
+-					top: "88.4441%",
+-					left: "57.8831%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.05]"
+-				style={{
+-					width: "55.2333px",
+-					height: "55.2333px",
+-					top: "18.6437%",
+-					left: "32.9982%",
+-				}}
+-			/>
+-			<div
+-				className="absolute rounded-full bg-primary z-0 opacity-[0.15]"
+-				style={{
+-					width: "73.6121px",
+-					height: "73.6121px",
+-					top: "90.6981%",
+-					left: "12.1542%",
+-				}}
+-			/>
+-		</>
+-	);
+-}
+\ No newline at end of file
+diff --git a/src/client/src/components/ui/sonner.tsx b/src/client/src/components/ui/sonner.tsx
+index 9452c010..9ac1f19b 100644
+--- a/src/client/src/components/ui/sonner.tsx
++++ b/src/client/src/components/ui/sonner.tsx
+@@ -1,16 +1,13 @@
+ "use client"
+ 
+-import { useTheme } from "next-themes"
+ import { Toaster as Sonner } from "sonner"
+ 
+ type ToasterProps = React.ComponentProps<typeof Sonner>
+ 
+ const Toaster = ({ ...props }: ToasterProps) => {
+-  const { theme = "system" } = useTheme()
+-
+   return (
+     <Sonner
+-      theme={theme as ToasterProps["theme"]}
++      theme="dark"
+       className="toaster group"
+       toastOptions={{
+         classNames: {
+diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
+index cf1fff2d..274f6f41 100644
+--- a/src/client/src/constants/messages/en.ts
++++ b/src/client/src/constants/messages/en.ts
+@@ -293,8 +293,6 @@ export const EVALUATION_CHART_EXECUTIONS = "Executions";
+ 
+ export const EVALUATION_TABLE_EVALUATION = "Evaluation";
+ 
+-export const EVALUATION_TABLE_MATCHER = "Matcher";
+-
+ export const EVALUATION_TABLE_EXECUTIONS = "Executions";
+ 
+ export const EVALUATION_TABLE_PASS_RATE = "Pass rate";
+@@ -1201,8 +1199,6 @@ export const CODING_AGENT_SESSION_SUBAGENTS_HINT =
+ // Agents - Service Table
+ export const AGENTS_SERVICE_PID_PREFIX = "PID";
+ 
+-export const AGENTS_COLUMN_SERVICE = "Name";
+-
+ // Coding-agent stat / column labels intentionally omit a window
+ // suffix (no "24h"). The underlying data is always evaluated
+ // against the global filter picker's selected time range — fixed-24h
+@@ -1287,10 +1283,6 @@ export const AGENTS_CODING_DASHBOARD_OPEN = "Open full dashboard";
+ 
+ export const AGENTS_LOAD_MORE = "Load more";
+ 
+-export const AGENTS_LIFECYCLE_STOP = "Stop";
+-
+-export const AGENTS_LIFECYCLE_RESTART = "Restart";
+-
+ export const AGENTS_LIFECYCLE_STATUS_RUNNING = "Running";
+ 
+ export const AGENTS_LIFECYCLE_STATUS_STOPPED = "Stopped";
+@@ -1308,8 +1300,6 @@ export const AGENTS_TAB_DASHBOARD = "Dashboard";
+ 
+ export const AGENTS_TAB_MONITORING = "Monitoring";
+ 
+-export const AGENTS_TAB_CONFIGURATION = "Configuration";
+-
+ export const AGENTS_TAB_TOOLS = "Tools";
+ 
+ export const AGENTS_TAB_PROMPTS = "Prompts";
+@@ -1511,27 +1501,6 @@ export const AGENTS_WORKING_SUFFIX = (label: string) => `${label}...`;
+ 
+ // Agents - Controller Detail
+ 
+-export const AGENTS_LOADING_CONFIG = "Loading configuration...";
+-
+-export const AGENTS_CONFIG_ENVIRONMENT = "Environment";
+-
+-export const AGENTS_CONFIG_OTLP_ENDPOINT = "OTLP Endpoint";
+-
+-export const AGENTS_CONFIG_OTLP_PROTOCOL = "OTLP Protocol";
+-
+-export const AGENTS_CONFIG_CUSTOM_LLM_HOSTS = "Custom LLM Hosts";
+-
+-export const AGENTS_CONFIG_PAYLOAD_EXTRACTION = "Payload Extraction (AI Providers)";
+-
+-// Getting Started - PromptHub
+-export const GET_STARTED_WITH_PROMPT_HUB = "Get Started with Prompt Hub";
+-
+-// Getting Started - Vault
+-export const GET_STARTED_WITH_VAULT = "Get Started with Vault";
+-
+-// Getting Started - Tracing
+-export const GET_STARTED_WITH_TRACING = "Get Started with Observability";
+-
+ // Generic texts
+ export const LOADING = "Loading";
+ 
+@@ -1792,10 +1761,6 @@ export const MANAGE_ORGANISATIONS = "Manage Organisations";
+ 
+ export const SWITCH_ORGANISATION = "Switch Organisation";
+ 
+-export const ORGANISATION_SETTINGS = "Organisation";
+-
+-export const YOUR_ORGANISATIONS = "Your Organisations";
+-
+ export const ORGANISATION_CREATED = "Organisation created successfully";
+ 
+ export const ORGANISATION_UPDATED = "Organisation updated successfully";
+@@ -1831,8 +1796,6 @@ export const MEMBER_ROLE_UPDATED = "Member role updated successfully";
+ 
+ export const MEMBER_ROLE_UPDATE_FAILED = "Failed to update member role";
+ 
+-export const INVITE_MEMBERS = "Invite Members";
+-
+ export const INVITE_NEW_MEMBER = "Invite New Member";
+ 
+ export const INVITE = "Invite";
+@@ -1863,8 +1826,6 @@ export const DANGER_ZONE = "Danger Zone";
+ 
+ export const DANGER_ZONE_DESCRIPTION = "Irreversible actions for this organisation";
+ 
+-export const GENERAL = "General";
+-
+ export const DETAILS = "Details";
+ 
+ export const PENDING = "Pending";
+@@ -1945,8 +1906,6 @@ export const INVALID_MEMBER_ROLE = "Invalid role. Must be 'member' or 'admin'";
+ // Organisation Invitations
+ export const PENDING_INVITATIONS = "Pending Invitations";
+ 
+-export const PENDING_INVITES = "Pending Invites";
+-
+ export const INVITATION_ACCEPTED = "Joined organisation successfully";
+ 
+ export const INVITATION_DECLINED = "Invitation declined";
+@@ -1980,53 +1939,9 @@ export const RULE_CONDITION_VALUE_REQUIRED = "Condition value is required!";
+ 
+ export const RULE_ENTITY_TYPE_INVALID = "Invalid entity type!";
+ 
+-export const RULE_PREVIEW_RUN = "Run Preview";
+-
+-export const RULE_ASSOCIATE = "Associate";
+-
+ // Rule Engine – condition field labels & descriptions
+ export const RULE_FIELD_SERVICE_NAME = "Service Name";
+ 
+-export const RULE_FIELD_SPAN_NAME = "Span Name";
+-
+-export const RULE_FIELD_SPAN_KIND = "Span Kind";
+-
+-export const RULE_FIELD_DURATION = "Duration (ms)";
+-
+-export const RULE_FIELD_STATUS_CODE = "Status Code";
+-
+-export const RULE_FIELD_DEPLOYMENT_ENV = "Deployment Env";
+-
+-export const RULE_FIELD_SERVICE_NAME_OTEL = "Service Name (OTel)";
+-
+-export const RULE_FIELD_GEN_AI_SYSTEM = "Gen AI System";
+-
+-export const RULE_FIELD_MODEL = "Model";
+-
+-export const RULE_FIELD_INPUT_TOKENS = "Input Tokens";
+-
+-export const RULE_FIELD_OUTPUT_TOKENS = "Output Tokens";
+-
+-export const RULE_FIELD_TOTAL_COST = "Total Cost ($)";
+-
+-export const RULE_FIELD_TEMPERATURE = "Temperature";
+-
+-export const RULE_FIELD_TOOL_NAME = "Tool name";
+-
+-export const RULE_FIELD_TOOL_CALL_NAME = "Tool call name";
+-
+-export const RULE_FIELD_CODING_CLIENT = "Coding agent client";
+-
+-export const RULE_FIELD_CODING_PERMISSION_MODE = "Permission mode";
+-
+-export const RULE_FIELD_CODING_CAPTURE_MODE = "Content capture mode";
+-
+-export const RULE_FIELD_CODING_CLASSIFICATION = "User classification";
+-
+-export const RULE_FIELD_CODING_SESSION_OUTCOME = "Session outcome";
+-
+-export const RULE_FIELD_CODING_TOOL_NAME = "Coding agent tool";
+-
+ // Context
+ export const CONTEXT_CREATED = "Context created successfully!";
+ 
+@@ -2049,94 +1964,31 @@ export const CONTEXT_CONTENT_REQUIRED = "Context content is required!";
+ // Onboarding
+ export const ONBOARDING = "Onboarding";
+ 
+-// Auth
+-export const AUTH_WELCOME = "Welcome to AutoDev";
+-
+-export const AUTH_SUBTITLE = "Open Source Platform for AI Engineering";
+-
+-export const AUTH_SIGNING_IN = "Signing in...";
+-
+-export const AUTH_CONTINUE_WITH_GOOGLE = "Continue with Google";
+-
+-export const AUTH_CONTINUE_WITH_GITHUB = "Continue with Github";
+-
+-export const AUTH_OR = "Or";
+-
+ export const AUTH_EMAIL = "Email";
+ 
+-export const AUTH_EMAIL_PLACEHOLDER = "user@openlit.io";
+-
+ export const AUTH_PASSWORD = "Password";
+ 
+-export const AUTH_PASSWORD_PLACEHOLDER = "********";
+-
+-export const AUTH_SIGN_IN = "Sign in";
+-
+-export const AUTH_SIGN_UP = "Sign Up";
+-
+-export const AUTH_NO_ACCOUNT = "Don't have an account?";
+-
+-export const AUTH_HAVE_ACCOUNT = "Already have an account?";
+-
+ export const AUTH_DOCUMENTATION = "Documentation";
+ 
+-export const AUTH_FOOTER = "Open Source AI Observability Platform";
+-
+-export const AUTH_ERROR_ACCESS_DENIED = "Access denied for this account.";
+-
+-export const AUTH_ERROR_TRY_DIFFERENT = "Try signing with a different account.";
+-
+-export const AUTH_ERROR_CONFIRM_IDENTITY = "To confirm your identity, sign in with the same account you used originally.";
+-
+-export const AUTH_ERROR_CHECK_EMAIL = "Check your email address.";
+-
+-export const AUTH_ERROR_CREDENTIALS = "Sign in failed. Check the details you provided are correct.";
+-
+-export const AUTH_ERROR_CONFIGURATION = "There is a problem with the server configuration.";
+-
+-export const AUTH_ERROR_DEFAULT = "Unable to sign in.";
+-
+-export const AUTH_ERROR_GOOGLE = "Failed to sign in with Google";
+-
+-export const AUTH_ERROR_GITHUB = "Failed to sign in with Github";
+-
+ // Auth feature highlights
+ export const AUTH_FEATURE_TRACING = "End-to-End Tracing";
+ 
+-export const AUTH_FEATURE_TRACING_DESC = "Full request tracing across LLM providers";
+-
+ export const AUTH_FEATURE_ANALYTICS = "Cost & Token Analytics";
+ 
+-export const AUTH_FEATURE_ANALYTICS_DESC = "Real-time cost tracking and token usage";
+-
+ export const AUTH_FEATURE_EVALS = "11 Evaluation Types";
+ 
+-export const AUTH_FEATURE_EVALS_DESC = "Hallucination, bias, toxicity, safety & more";
+-
+ export const AUTH_FEATURE_JUDGE = "LLM-as-a-Judge";
+ 
+-export const AUTH_FEATURE_JUDGE_DESC = "Automated quality scoring with any LLM";
+-
+ export const AUTH_FEATURE_PROMPT_HUB = "Prompt Hub";
+ 
+-export const AUTH_FEATURE_PROMPT_HUB_DESC = "Version, manage, and deploy prompts";
+-
+ export const AUTH_FEATURE_RULE_ENGINE = "Rule Engine";
+ 
+-export const AUTH_FEATURE_RULE_ENGINE_DESC = "Conditional context and prompt retrieval";
+-
+ export const AUTH_FEATURE_VAULT = "Vault";
+ 
+-export const AUTH_FEATURE_VAULT_DESC = "Secure secrets and API key management";
+-
+ export const AUTH_FEATURE_AGENTS = "Agents";
+ 
+-export const AUTH_FEATURE_AGENTS_DESC = "Manage and operate AI agents from a single hub";
+-
+ export const AUTH_FEATURE_OTEL = "OpenTelemetry Native";
+ 
+-export const AUTH_FEATURE_OTEL_DESC = "Built on open standards, no vendor lock-in";
+-
+ // Context UI
+ export const CONTEXT_TITLE = "Context";
+ 
+@@ -2319,9 +2171,6 @@ export const PROMPT_HUB_NO_VERSION_CHANGE = "No version change";
+ 
+ export const PROMPT_HUB_KEEP_DRAFT = "Keep as draft — not published";
+ 
+-// Rule Engine UI
+-export const RULE_ENGINE_CREATE = "Create rule";
+-
+ // Common UI
+ export const CREATED_BY = "Created By";
+ 
+diff --git a/src/client/src/utils/hooks/useTheme.ts b/src/client/src/utils/hooks/useTheme.ts
+deleted file mode 100644
+index 6fe204ac..00000000
+--- a/src/client/src/utils/hooks/useTheme.ts
++++ /dev/null
+@@ -1,22 +0,0 @@
+-import { get, set } from "tiny-cookie";
+-import { useCallback, useEffect, useState } from "react";
+-
+-type THEME = "dark" | "light";
+-
+-export default function useTheme() {
+-	const [theme, setTheme] = useState<THEME>("light");
+-	const toggleTheme = useCallback((themeParam?: THEME) => {
+-		const value: THEME = themeParam || (theme === "dark" ? "light" : "dark");
+-		document.documentElement.classList.remove(theme);
+-		document.documentElement.classList.add(value);
+-		set("theme", value);
+-		setTheme(value);
+-	}, [theme]);
+-
+-	useEffect(() => {
+-		const currentTheme = get("theme") as unknown as THEME;
+-		setTheme(currentTheme);
+-	});
+-
+-	return { toggleTheme, theme };
+-}
