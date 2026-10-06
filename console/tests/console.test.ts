@@ -55,6 +55,7 @@ import {
   NAV_ICONS,
   navIcon
 } from "../src/components/icons/Icon.ts";
+import { AppShell } from "../src/components/layout/AppShell.ts";
 import { PAGE_SECTION_STACK_CLASS } from "../src/components/layout/PageBody.ts";
 import { ControlFailureNotice } from "../src/components/status/ControlFailureNotice.ts";
 import {
@@ -559,6 +560,66 @@ test("an unrecognised URL filter is named, never resolved into a default", async
     restoreConsolePageEnvironment(previousEnv);
     rmSync(isolatedHome, { recursive: true, force: true });
   }
+});
+
+test("the shell lets a keyboard user reach the page body without walking the nav", () => {
+  // The sidebar is a persistent fourteen-link nav that precedes `<main>`, so
+  // the same fourteen tab stops sat in front of every page. Measured in headless
+  // Chromium across eight routes: fourteen before `<main>` on all of them, and on
+  // the sparser pages most of the page -- `/mcps` has 22 focusable elements in
+  // total and 8 inside `<main>`, `/tools/find_code` 23 and 9, `/memory` 29 and 15.
+  //
+  // Four things have to hold together, and each is a separate way for a skip
+  // link to be useless: it must come first in the tab order rather than after the
+  // nav; its target must actually receive focus, which `main` cannot do without
+  // `tabIndex={-1}` -- the browser scrolls to a fragment target either way, and
+  // then the next Tab resumes from the nav, the fourteen stops this exists to
+  // avoid; it must be hidden until focused, since a permanently visible control is
+  // a different defect; and it must reveal with a focus ring, or it is invisible
+  // to the keyboard user it is for.
+  const markup = renderToStaticMarkup(
+    React.createElement(AppShell, { activeSection: "Tools" })
+  );
+
+  const href = /<a href="#([^"]+)"[^>]*data-skip-link/.exec(markup)?.[1];
+  assert.ok(href !== undefined, `AppShell must render a skip link: ${markup}`);
+  assert.ok(
+    markup.includes(`<main id="${href}"`),
+    `the skip link must target the main region it names (${href})`
+  );
+  assert.match(
+    markup,
+    /<main id="main-content" tabindex="-1"/,
+    "the skip link's target must be focusable, or focus returns to the nav"
+  );
+
+  // First in the tab order: before the nav, not after it.
+  assert.ok(
+    markup.indexOf("data-skip-link") < markup.indexOf("<nav"),
+    "the skip link must precede the nav so it is the first tab stop"
+  );
+
+  // Hidden until focused, then revealed, and revealed with a visible ring.
+  const link = markup.slice(
+    markup.indexOf("<a href=\"#"),
+    markup.indexOf(">", markup.indexOf("<a href=\"#"))
+  );
+  assert.ok(link.includes("sr-only"), `must be visually hidden: ${link}`);
+  assert.ok(link.includes("focus:not-sr-only"), `must reveal itself on focus: ${link}`);
+
+  // The ring is not a class on the link: it comes from the one shared
+  // `:where(a, button, …):focus-visible` rule in `globals.css`, so the thing
+  // worth asserting is that the skip link is an anchor (which that rule matches)
+  // and that the rule still covers anchors. Asserting a `focus:ring-*` utility
+  // here would be asserting a mechanism this product does not use.
+  assert.match(link, /^<a href="#/, `must be an anchor: ${link}`);
+  const globals = readFileSync(join(import.meta.dirname, "..", "app", "globals.css"), "utf8");
+  assert.match(
+    globals,
+    /:where\([^)]*\ba\b[^)]*\):focus-visible\s*\{[^}]*outline:/,
+    "the shared focus-visible rule must still cover anchors, or the revealed " +
+      "skip link has no focus ring"
+  );
 });
 
 test("a disabled control states why it is disabled", () => {

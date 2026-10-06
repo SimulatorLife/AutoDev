@@ -3,6 +3,7 @@ import React from "react";
 
 import { AppNav } from "../navigation/AppNav.ts";
 import { MUTED_TEXT_CLASS } from "../ui/text-classes.ts";
+import { SkipLink } from "./SkipLink.ts";
 
 export interface AppShellProps {
   readonly activeSection: CanonicalNavSection;
@@ -35,13 +36,24 @@ export function AppShell({
         // scroll at widths where a scrollbar is shown.
         "flex h-screen w-full bg-background text-fg overflow-hidden font-sans"
     },
+    // Before the nav, so it is the first stop in the tab order rather than the
+    // fifteenth.
+    React.createElement(SkipLink),
     React.createElement(AppNav, {
       activeSection,
       counts
     }),
     React.createElement(
       "main",
-      { className: "flex-1 flex flex-col min-w-0 overflow-y-auto" },
+      {
+        id: "main-content",
+        // Focusable so the skip link's target can actually receive focus. The
+        // browser scrolls to a fragment target either way, but without this the
+        // next Tab continues from the nav, which is the fourteen stops this link
+        // exists to avoid. `tabIndex={-1}` keeps it out of the tab order itself.
+        tabIndex: -1,
+        className: "flex-1 flex flex-col min-w-0 overflow-y-auto"
+      },
       React.createElement(
         "header",
         {
