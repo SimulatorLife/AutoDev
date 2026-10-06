@@ -18,6 +18,7 @@ import {
   type CanonicalNavSection,
   type ControlApiModelsResponse,
   type ControlApiPromptDetailResponse,
+  type ControlApiProviderRecord,
   type ControlApiProvidersResponse,
   type ExperienceEnvelope,
   type GithubWorkflowDefinition,
@@ -1453,7 +1454,7 @@ test("DataTable clamps prose cells on an inner box, not the table cell", () => {
   );
 });
 
-test("DataTable keeps a truncated cell's full value reachable, and titles nothing else", () => {
+test("DataTable keeps a truncated cell's full value reachable, whatever it is built from", () => {
   // The target state requires it directly: "single-value cells truncate with
   // the full value reachable on hover". DataTable owns the `truncate` default,
   // so it owns the recovery -- a view cannot be trusted to remember it per
@@ -1500,9 +1501,16 @@ test("DataTable keeps a truncated cell's full value reachable, and titles nothin
   const empty = renderToStaticMarkup(cell("truncate", ""));
   assert.doesNotMatch(empty, /<td[^>]*title=/);
 
-  // A cell built from elements owns its own recovery, so titling the cell as
-  // well would either duplicate the element's title or invent text that does
-  // not match what the cell shows.
+  // An element cell gets the same treatment, because the recovery is the
+  // cell's, not the element's. This assertion used to require the *absence* of
+  // a title here, on the reasoning that "a chip titles itself and a link holds
+  // the value in its destination". Swept against the live router, that
+  // reasoning was wrong for most of the cells it covered: a column of plain
+  // spans (GitHub cron schedule), a column of chip `<div>`s (GitHub trigger
+  // events) and a column of styled links (/tools EDIT) each had no title
+  // anywhere and no href carrying what was hidden, so the ellipsis was the only
+  // copy of the value. The title is derived from the node's own children, so it
+  // repeats exactly what the cell shows rather than describing it.
   const elementCell = renderToStaticMarkup(
     React.createElement<DataTableProps<{ v: string }>>(DataTable, {
       data: [{ v: value }],
@@ -1521,12 +1529,54 @@ test("DataTable keeps a truncated cell's full value reachable, and titles nothin
       keyExtractor: (r: { v: string }) => r.v
     })
   );
-  assert.doesNotMatch(
+  assert.match(
     elementCell,
-    /<td[^>]*title=/,
-    `an element cell must leave its recovery to the element, got: ${elementCell}`
+    /<td[^>]*title="/,
+    `a truncating cell must title itself whatever its content is built from, got: ${elementCell}`
   );
   assert.ok(elementCell.includes(`title="${value}"`));
+
+  // The three shapes that were actually cut in the browser, so the rule is
+  // proved against the markup that motivated it rather than against one shape.
+  for (const build of [
+    (r: { v: string }) =>
+      React.createElement("span", { className: "text-xs" }, r.v),
+    (r: { v: string }) =>
+      React.createElement(
+        "div",
+        { className: "flex flex-wrap gap-1" },
+        React.createElement("span", { key: "a" }, r.v),
+        React.createElement("span", { key: "b" }, "workflow_dispatch")
+      ),
+    (r: { v: string }) =>
+      React.createElement(
+        "a",
+        { href: "/mcps/codegraphcontext", className: "font-mono" },
+        r.v
+      )
+  ]) {
+    const cut = renderToStaticMarkup(
+      React.createElement<DataTableProps<{ v: string }>>(DataTable, {
+        data: [{ v: value }],
+        columns: [
+          {
+            id: "c",
+            header: "Scope",
+            cell: (r: { v: string }) => build(r)
+          }
+        ],
+        keyExtractor: (r: { v: string }) => r.v
+      })
+    );
+    // The title carries every part of the cell, not just the first: a chip row
+    // has more than one value to lose, and a title naming only the first would
+    // still drop the second.
+    const title = /<td[^>]*title="([^"]*)"/.exec(cut)?.[1];
+    assert.ok(
+      title !== undefined && title.includes(value),
+      `every truncating cell shape must keep its value, got: ${cut}`
+    );
+  }
 });
 
 test("StatCard renders value and title", () => {
@@ -5175,6 +5225,71 @@ test("ProviderDetailView keeps the provider's role and model toggles on its page
   assert.equal(withoutModels.includes('data-enablement-form="model"'), false);
   assert.match(withoutModels, /Model enablement could not be loaded/);
   assert.match(withoutModels, /has not reported live evidence/);
+});
+
+test("ProviderDetailView reads an absent provider route without throwing", async () => {
+  // `route` is nullable, but "nullable" means the Runtime sent an explicit
+  // `null`. A payload that omits the key arrives as `undefined`, which is not
+  // `null` -- so a `=== null` guard falls straight through to `.healthUrl` and
+  // throws `TypeError: Cannot read properties of undefined`. Nothing in the v2
+  // contract requires `route`, and the response guard does not check it, so an
+  // omitted route reaches this view rather than being rejected as incompatible.
+  const config = { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" };
+  const omittedRoute = {
+    ...PROVIDERS_FIXTURE,
+    providers: PROVIDERS_FIXTURE.providers.map((entry) => {
+      const clone: Record<string, unknown> = { ...entry };
+      delete clone.route;
+      return clone;
+    })
+  };
+
+  const accepted = await fetchProviders(config, {
+    fetchImpl: async () => Response.json(omittedRoute)
+  });
+  assert.equal(accepted.kind, "ok", "an omitted route is not a v2 violation");
+  assert.equal(
+    accepted.kind === "ok" && "route" in accepted.data.providers[0]!,
+    false,
+    "the accepted record really has no route key"
+  );
+
+  const render = (provider: ControlApiProviderRecord): string =>
+    renderToStaticMarkup(
+      React.createElement(ProviderDetailView, {
+        provider,
+        tiers: PROVIDERS_FIXTURE.tiers,
+        orchestratorTier: PROVIDERS_FIXTURE.orchestratorTier,
+        models: null
+      })
+    );
+
+  const omitted = render(
+    omittedRoute.providers[0]! as unknown as ControlApiProviderRecord
+  );
+  assert.match(omitted, /data-feature="provider-detail"/);
+  assert.match(omitted, new RegExp(NOT_OBSERVED_LABEL));
+
+  // An explicit null route keeps saying the same thing it always did: the two
+  // states stay distinguishable rather than collapsing into one label.
+  const explicitNull = render({
+    ...PROVIDERS_FIXTURE.providers[0]!,
+    route: null
+  });
+  assert.match(explicitNull, new RegExp(NOT_OBSERVED_LABEL));
+
+  // A present route with no health URL is still "None configured", not
+  // "not observed": the fix must not widen the observed case away.
+  const noHealthUrl = render({
+    ...PROVIDERS_FIXTURE.providers[0]!,
+    route: {
+      pattern: "^sonnet$",
+      baseUrl: "http://127.0.0.1:4000/v1",
+      healthUrl: null
+    }
+  });
+  assert.match(noHealthUrl, /None configured/);
+  assert.equal(noHealthUrl.includes(NOT_OBSERVED_LABEL), false);
 });
 
 test("ModelDetailView renders the model toggle under its provider's breadcrumbs", () => {

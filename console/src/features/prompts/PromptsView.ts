@@ -78,7 +78,10 @@ export function PromptsView({
       // thing in this column by a wide margin -- status dot, rounded padding
       // and all -- and at 96 the cell cut it to "Comman" on every one of the 63
       // command rows. A header-width check cannot see this: "Type" is short.
-      weight: 124,
+      // The width is a share of the whole table rather than a pixel count, so
+      // "Role prompt" -- the longest of the two labels -- needed 130 here to
+      // stop being cut to "Role promp" at a 390px viewport.
+      weight: 130,
       cell: (prompt) => {
         const isRole = prompt.kind === "role" || prompt.path.includes("roles");
         return React.createElement(StatusBadge, {

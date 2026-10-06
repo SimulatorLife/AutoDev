@@ -349,7 +349,13 @@ export function ToolsView({
     {
       id: "edit",
       header: "Edit",
-      weight: 110,
+      // A short label with a space in it -- "Provider role exposure", "MCP
+      // codegraphcontext" -- held to one line at 110 units it needed 191px for,
+      // so all 25 rows were cut at every width including 1280, and a four-letter
+      // header is invisible to a header-width check. Wrapping costs one extra
+      // line on the widest value and shows the rest whole.
+      align: "prose",
+      weight: 130,
       cell: (tool) =>
         tool.canonicalEditSurface
           ? React.createElement(EditSurfaceLink, {

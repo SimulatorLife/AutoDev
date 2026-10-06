@@ -96,6 +96,13 @@ export function GithubView({
     {
       id: "events",
       header: "Trigger Events",
+      // A list of chips, so it wraps between them rather than being held on one
+      // line. At the default share it kept `nowrap` and showed only the first
+      // chip: 17 of 30 rows lost every trigger after the first at a 390px
+      // viewport, and a GitHub workflow's trigger set is the thing an operator
+      // reads the row to find out.
+      align: "tokens",
+      weight: 150,
       cell: (workflow) =>
         workflow.events.length === 0
           ? React.createElement(
@@ -121,10 +128,16 @@ export function GithubView({
     {
       id: "schedules",
       header: "Cron Schedule",
-      // Wide enough for "Schedule" at the default share the header had 68px of
-      // content and the word needed 71, so it split mid-word on a 390px
-      // viewport.
-      weight: 116,
+      // Holds either a cron expression or the sentence "No schedule trigger",
+      // and `truncate` held both to one line: 13 of 30 rows cut the sentence to
+      // "No schedule trig…" at 390px. A cron expression is one unbreakable
+      // identifier and the sentence is ordinary words, so this wraps on either
+      // count.
+      //
+      // Wide enough for "Schedule" at the share the header had before: it had
+      // 68px of content and the word needed 71, so it split mid-word at 390px.
+      align: "tokens",
+      weight: 140,
       cell: (workflow) =>
         workflow.schedules.length === 0
           ? React.createElement(

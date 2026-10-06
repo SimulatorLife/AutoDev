@@ -5,11 +5,10 @@ import { EmptyState } from "../status/EmptyState.ts";
 /**
  * How a cell lays out its content inside the column.
  *
- * - `truncate` (default): one line, ellipsis when it does not fit. A cell
- *   whose content is a plain string gets a `title` carrying the whole value,
- *   so the ellipsis never becomes the only copy. A cell built from elements
- *   owns its own recovery -- a chip or badge titles itself, and a link's
- *   destination carries the value.
+ * - `truncate` (default): one line, ellipsis when it does not fit. A truncating
+ *   cell always keeps the whole value on its `title`, so the ellipsis never
+ *   becomes the only copy -- see `truncatingCellTitle` for why that has to be
+ *   derived from the node rather than assumed of the caller's markup.
  * - `tokens`: discrete items (chips, links, badges) that wrap onto new lines
  *   between items, and which claim a larger default width share so a list of
  *   chips does not degrade to one chip per line. A token with no break
@@ -169,21 +168,57 @@ function columnWeight(column: ColumnDef<never>): number {
 }
 
 /**
- * The hover text for a truncating cell that holds nothing but a string.
+ * The hover text for a truncating cell.
  *
- * Returns `undefined` for anything else. An element cell already carries its
- * own recovery -- `Chip` titles itself, a link holds the value in its
- * destination -- and titling the cell as well would either duplicate that or,
- * worse, invent text that does not match what the element shows.
+ * `truncate` is `white-space: nowrap` plus `overflow: hidden`, so a cell that
+ * cannot fit its value shows the first few characters and nothing else. Every
+ * such cell therefore has to keep the whole value somewhere, and for a long time
+ * this only happened when the cell's content was a plain string. Everything else
+ * was assumed to carry its own recovery -- on the reasoning that a chip titles
+ * itself and a link holds the value in its destination.
+ *
+ * Measured against the live router, that assumption was false for the majority of
+ * the cells it covered, because most cells are not a chip and not a link. A
+ * column of plain `<span>`s (the GitHub cron schedule, cut to "No schedule
+ * trig…"), a column of `<div>` chip rows (GitHub trigger events, cut after the
+ * first chip), and a column of styled `<a>`s (/tools EDIT, cut to "Provider rol…")
+ * all had no title anywhere and no href that carried what was hidden. The
+ * ellipsis was the only copy.
+ *
+ * So the text is read out of the node tree instead of requiring the caller to
+ * hand over a string. Flattening is what makes the rule true for every cell
+ * rather than for the cells that happened to be simple.
  */
 function truncatingCellTitle(
   column: ColumnDef<never>,
   content: React.ReactNode
 ): string | undefined {
+  // A wrapping cell is not truncated, so a title would be claiming something
+  // false about a value that is fully visible. An empty cell needs no title
+  // either: `title=""` is a tooltip with nothing in it. Both collapse to the
+  // same "no title" answer.
   const truncates = (column.align ?? "truncate") === "truncate";
-  // An empty cell needs no title; `title=""` is a tooltip with nothing in it.
-  const text = typeof content === "string" && content.length > 0 ? content : "";
-  return truncates ? text || undefined : undefined;
+  const text = truncates
+    ? nodeText(content).replaceAll(/\s+/g, " ").trim()
+    : "";
+  return text === "" ? undefined : text;
+}
+
+/**
+ * The text a node will render, without rendering it.
+ *
+ * Elements contribute their children and nothing else, so a cell's title says
+ * what the cell shows rather than describing it. Whitespace runs collapse so a
+ * chip row does not become a tooltip full of line breaks.
+ */
+function nodeText(node: React.ReactNode): string {
+  if (typeof node === "string") return node;
+  if (typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(nodeText).join(" ");
+  if (React.isValidElement(node)) {
+    return nodeText((node.props as { children?: React.ReactNode }).children);
+  }
+  return "";
 }
 
 /**
@@ -306,13 +341,12 @@ export function DataTable<T>({
                     col as ColumnDef<never>
                   )}`,
                   style: { width: widths[index] },
-                  // Truncation removes information, so a truncating cell that
-                  // holds nothing but text keeps the whole value on its hover
-                  // title. Without this the operator's only copy of a 60-
-                  // character scope is the first 20 pixels of it. Element
-                  // content is left alone: a chip or badge titles itself, and
-                  // a link already carries the value in its destination, so
-                  // titling here would either duplicate or invent text.
+                  // Truncation removes information, so a truncating cell keeps
+                  // the whole value on its hover title. Without this the
+                  // operator's only copy of a 60-character scope is the first
+                  // 20 pixels of it. The text is derived from the cell's own
+                  // nodes, so a cell built from spans, chips or links is covered
+                  // by the same rule as one holding a bare string.
                   ...(hover === undefined ? {} : { title: hover })
                 },
                 clamp === null
