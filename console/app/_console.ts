@@ -9,6 +9,7 @@ import { type CanonicalNavSection } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { AppShell } from "../src/components/layout/AppShell.ts";
+import { DETAIL_PANEL_SHAPE } from "../src/components/layout/Panel.ts";
 import { canonicalSectionFromPath } from "../src/lib/routes.ts";
 import {
   type ControlApiConfig,
@@ -52,8 +53,9 @@ export function ResourceUnavailable({
   return React.createElement(
     "div",
     {
-      className:
-        "rounded-lg border border-error/40 bg-error/10 p-6 shadow flex flex-col gap-3",
+      // The failure shell starts from the panel *shape*, not the finished panel, so
+      // the severity tint is not competing with the default `bg-surface`.
+      className: `${DETAIL_PANEL_SHAPE} flex flex-col gap-3 border-error/40 bg-error/10`,
       role: "alert",
       "data-status": "unavailable",
       "data-error-code": code
@@ -76,8 +78,16 @@ export function ResourceUnavailable({
       React.createElement(
         "span",
         {
+          // An error code is an unbroken machine token that is routinely longer
+          // than a narrow card, and it has nowhere to break but mid-word. This
+          // is deliberately not the shared tag shape: that shape sets
+          // `whitespace-nowrap`, and a later `whitespace-normal` in the class
+          // attribute does not override it — Tailwind resolves two utilities on
+          // the same property by stylesheet order. The surrounding row still
+          // wraps, so a long code never pushes the card or the document
+          // sideways.
           className:
-            "max-w-full break-all text-xs font-mono text-error bg-error/15 border border-error/40 px-2 py-0.5 rounded"
+            "max-w-full break-all rounded border border-error/40 bg-error/15 px-2 py-0.5 font-mono text-xs text-error"
         },
         code
       )

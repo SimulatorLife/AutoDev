@@ -30,6 +30,7 @@ import { NextRequest } from "next/server.js";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import { ResourceUnavailable } from "../app/_console.ts";
 import * as memoryRoute from "../app/api/memory/route.ts";
 import * as modelRoute from "../app/api/models/[model]/route.ts";
 import * as promptMutationRoute from "../app/api/prompts/[name]/route.ts";
@@ -5936,4 +5937,38 @@ test("DataTable caps its scroll floor so a table never scrolls at desktop width"
     "a narrow table keeps the floor its columns need"
   );
   assert.ok(narrowFloor < wideFloor, "narrow tables must floor below the cap");
+});
+
+test("the resource failure shell keeps its error tint and lets a long error code wrap", () => {
+  // The failure shell is what every route renders when a resource cannot be
+  // loaded, so it is the one place a page must never look healthy by accident.
+  //
+  // Two failure modes are guarded here, both invisible to the type checker:
+  // composing `${DETAIL_PANEL_CLASS} bg-error/10` silently keeps `bg-surface`,
+  // because Tailwind resolves two utilities on the same property by
+  // stylesheet order rather than by class-attribute order; and a shape
+  // constant that set `whitespace-nowrap` could not be relaxed to `normal`
+  // by appending another utility, which left the long unbroken error code
+  // unable to wrap on a narrow viewport.
+  const markup = renderToStaticMarkup(
+    React.createElement(ResourceUnavailable, {
+      title: "Permissions could not be loaded",
+      code: "autodev_control_api_invalid_permissions_response",
+      message: "The Control API returned an incompatible response."
+    })
+  );
+
+  assert.match(
+    markup,
+    /data-error-code="autodev_control_api_invalid_permissions_response"/
+  );
+  assert.match(markup, /bg-error\/10/);
+  assert.doesNotMatch(
+    markup,
+    /bg-surface/,
+    "the default panel surface must not win over the error tint"
+  );
+  assert.match(markup, /break-all/);
+  assert.doesNotMatch(markup, /whitespace-nowrap/);
+  assert.match(markup, /rounded-lg border shadow p-6/);
 });
