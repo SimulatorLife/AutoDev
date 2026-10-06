@@ -56,6 +56,7 @@ import {
   type MemoryUseKind,
   type MemoryUseReport,
   type MemoryVersionedUpdate,
+  outcomeReportBodyMatches,
   sessionOutcomeReportBodyMatches,
   useReportBodyMatches
 } from "@simulatorlife/autodev-core";
@@ -1941,21 +1942,4 @@ export class PostgresMemoryRepository implements MemoryRepository {
       mixedModeSessionCount
     };
   }
-}
-
-/**
- * True when two outcome reports for the same `(workspace_id,
- * correlation_token)` key carry an identical reporter-supplied body. Used
- * to distinguish a safe, idempotent same-body retry from a genuine
- * conflicting report for the same injection.
- */
-function outcomeReportBodyMatches(
-  existing: MemoryOutcomeReport,
-  incoming: MemoryOutcomeReport
-): boolean {
-  return (
-    existing.outcomeKind === incoming.outcomeKind &&
-    existing.reportKind === incoming.reportKind &&
-    JSON.stringify(existing.evidence) === JSON.stringify(incoming.evidence)
-  );
 }

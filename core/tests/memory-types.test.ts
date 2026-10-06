@@ -15,10 +15,12 @@ import {
   isMemoryUseKind,
   MAX_TRAJECTORY_DIAGNOSTIC_CODES,
   type MemoryInjectionEvent,
+  type MemoryOutcomeReport,
   type MemoryReadContext,
   type MemoryScope,
   type MemorySessionOutcomeReport,
   type MemoryUseReport,
+  outcomeReportBodyMatches,
   parseMemoryExecutionMode,
   sessionOutcomeReportBodyMatches,
   useReportBodyMatches
@@ -442,6 +444,143 @@ test("sessionOutcomeReportBodyMatches checks outcomeKind, reportKind, and eviden
       evidence: [{ kind: "trajectory", uri: "codex://session/2" }]
     }),
     false
+  );
+});
+
+function outcomeReport(
+  overrides: Partial<MemoryOutcomeReport> = {}
+): MemoryOutcomeReport {
+  return {
+    id: "out-1",
+    workspaceId: "ws-1",
+    repositoryId: "repo-1",
+    scope: {
+      kind: "task",
+      workspaceId: "ws-1",
+      taskId: "task-1",
+      runId: "run-1"
+    },
+    taskId: "task-1",
+    runId: "run-1",
+    agentId: "agent-1",
+    correlationToken: "token-1",
+    outcomeKind: "success",
+    reportKind: "task",
+    reportedAt: "2026-09-01T00:00:00.000Z",
+    reporterId: "curator-1",
+    reporterAuthority: "curator",
+    reasonCode: "reporter_supplied",
+    evidence: [{ kind: "trajectory", uri: "codex://session/1" }],
+    ...overrides
+  };
+}
+
+test("outcomeReportBodyMatches treats evidence as a set, not a serialised structure", () => {
+  const base = outcomeReport({
+    evidence: [
+      { kind: "trajectory", uri: "codex://session/1" },
+      { kind: "file", uri: "file://repo/a.ts" }
+    ]
+  });
+
+  assert.equal(outcomeReportBodyMatches(base, { ...base }), true);
+
+  // The same references submitted in a different array order are the same
+  // body. A `JSON.stringify` comparison called this a conflict.
+  assert.equal(
+    outcomeReportBodyMatches(base, {
+      ...base,
+      evidence: [
+        { kind: "file", uri: "file://repo/a.ts" },
+        { kind: "trajectory", uri: "codex://session/1" }
+      ]
+    }),
+    true
+  );
+
+  // So are the same references whose own keys were serialised in a different
+  // insertion order, which happens whenever the reporter's JSON parser or
+  // database round-trip rebuilds the object.
+  assert.equal(
+    outcomeReportBodyMatches(base, {
+      ...base,
+      evidence: [
+        { uri: "codex://session/1", kind: "trajectory" },
+        { uri: "file://repo/a.ts", kind: "file" }
+      ]
+    }),
+    true
+  );
+
+  // `revision` participates in the identity, so dropping it is a real change.
+  assert.equal(
+    outcomeReportBodyMatches(
+      outcomeReport({
+        evidence: [{ kind: "file", uri: "file://repo/a.ts", revision: "abc" }]
+      }),
+      outcomeReport({
+        evidence: [{ kind: "file", uri: "file://repo/a.ts", revision: "def" }]
+      })
+    ),
+    false
+  );
+});
+
+test("outcomeReportBodyMatches still separates idempotent retries from real conflicts", () => {
+  const base = outcomeReport();
+
+  assert.equal(
+    outcomeReportBodyMatches(base, { ...base, outcomeKind: "failure" }),
+    false
+  );
+  assert.equal(
+    outcomeReportBodyMatches(base, { ...base, reportKind: "issue" }),
+    false
+  );
+  assert.equal(
+    outcomeReportBodyMatches(base, {
+      ...base,
+      evidence: [{ kind: "trajectory", uri: "codex://session/2" }]
+    }),
+    false
+  );
+
+  // A different reference count is a conflict even when the shared prefix
+  // matches, so the length check cannot be skipped.
+  assert.equal(
+    outcomeReportBodyMatches(base, {
+      ...base,
+      evidence: [
+        { kind: "trajectory", uri: "codex://session/1" },
+        { kind: "file", uri: "file://repo/a.ts" }
+      ]
+    }),
+    false
+  );
+
+  // Two empty evidence sets match; `outcomeKind: "unknown"` is the only kind
+  // allowed to carry none.
+  assert.equal(
+    outcomeReportBodyMatches(
+      outcomeReport({ outcomeKind: "unknown", evidence: [] }),
+      outcomeReport({ outcomeKind: "unknown", evidence: [] })
+    ),
+    true
+  );
+
+  // Identity and timing fields are deliberately not part of the body.
+  assert.equal(
+    outcomeReportBodyMatches(
+      base,
+      outcomeReport({
+        id: "out-2",
+        reportedAt: "2026-10-06T00:00:00.000Z",
+        reporterId: "root-1",
+        reporterAuthority: "root",
+        evidence: base.evidence
+      })
+    ),
+    true
   );
 });
 

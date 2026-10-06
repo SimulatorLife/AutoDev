@@ -543,6 +543,31 @@ function normalizeEvidenceReferences(
 }
 
 /**
+ * True when two evidence arrays carry the same references as a *set*.
+ *
+ * Every report kind makes the same retry-versus-conflict decision from this,
+ * so the semantics live in one place: a reporter that resubmits the same
+ * references in a different array order, or with an individual reference's
+ * keys in a different insertion order, is retrying the same body and must not
+ * be reported as a conflict.
+ *
+ * Do not compare evidence with `JSON.stringify`. That is a structural
+ * comparison wearing a set comparison's clothes: it is sensitive to both key
+ * order and array order, and it treats `{ a: undefined }` and `{}` as the same
+ * value. `isDeepStrictEqual` is no better here, because it also compares the
+ * arrays positionally.
+ */
+function evidenceSetsMatch(
+  a: readonly EvidenceReference[],
+  b: readonly EvidenceReference[]
+): boolean {
+  if (a.length !== b.length) return false;
+  const normalizedA = normalizeEvidenceReferences(a);
+  const normalizedB = normalizeEvidenceReferences(b);
+  return normalizedA.every((value, index) => value === normalizedB[index]);
+}
+
+/**
  * True when two use reports for the same injection carry the same
  * `useKind`, `usedMemoryIds` set, and evidence set (ignoring identity/
  * timing fields); used to decide whether a retry is an idempotent no-op or
@@ -557,10 +582,7 @@ export function useReportBodyMatches(
   const aIds = [...a.usedMemoryIds].sort();
   const bIds = [...b.usedMemoryIds].sort();
   if (!aIds.every((id, index) => id === bIds[index])) return false;
-  if (a.evidence.length !== b.evidence.length) return false;
-  const aEvidence = normalizeEvidenceReferences(a.evidence);
-  const bEvidence = normalizeEvidenceReferences(b.evidence);
-  return aEvidence.every((value, index) => value === bEvidence[index]);
+  return evidenceSetsMatch(a.evidence, b.evidence);
 }
 
 export interface MemoryRecordUseReportInput {
@@ -696,6 +718,28 @@ export interface MemoryRecordSessionOutcomeReportResult {
 }
 
 /**
+ * The reporter-supplied fields an outcome-shaped report must agree on for a
+ * retry to count as the same body. `MemoryOutcomeReport` and
+ * `MemorySessionOutcomeReport` differ only in the identity and join fields,
+ * which are deliberately not part of the comparison.
+ */
+interface OutcomeReportBody {
+  readonly outcomeKind: ExperienceOutcome;
+  readonly reportKind: MemoryOutcomeReportKind;
+  readonly evidence: readonly EvidenceReference[];
+}
+
+function outcomeReportBodiesMatch(
+  a: OutcomeReportBody,
+  b: OutcomeReportBody
+): boolean {
+  if (a.outcomeKind !== b.outcomeKind || a.reportKind !== b.reportKind) {
+    return false;
+  }
+  return evidenceSetsMatch(a.evidence, b.evidence);
+}
+
+/**
  * True when two session outcome reports carry the same `reportKind`,
  * `outcomeKind`, and evidence set (ignoring identity/timing fields); used
  * to decide whether a retry is an idempotent no-op or a genuine conflict.
@@ -704,15 +748,22 @@ export function sessionOutcomeReportBodyMatches(
   a: MemorySessionOutcomeReport,
   b: MemorySessionOutcomeReport
 ): boolean {
-  if (a.outcomeKind !== b.outcomeKind || a.reportKind !== b.reportKind) {
-    return false;
-  }
-  if (a.evidence.length !== b.evidence.length) {
-    return false;
-  }
-  const aEvidence = normalizeEvidenceReferences(a.evidence);
-  const bEvidence = normalizeEvidenceReferences(b.evidence);
-  return aEvidence.every((value, index) => value === bEvidence[index]);
+  return outcomeReportBodiesMatch(a, b);
+}
+
+/**
+ * True when two outcome reports for the same `(workspace_id,
+ * correlation_token)` key carry an identical reporter-supplied body, used to
+ * distinguish a safe, idempotent same-body retry from a genuine conflicting
+ * report for the same injection. This is the third of the three report kinds
+ * that make that decision; all three share `evidenceSetsMatch`, so a retry is
+ * judged the same way whichever report kind it arrives as.
+ */
+export function outcomeReportBodyMatches(
+  a: MemoryOutcomeReport,
+  b: MemoryOutcomeReport
+): boolean {
+  return outcomeReportBodiesMatch(a, b);
 }
 
 /**
