@@ -691,6 +691,34 @@ test("MemoryPage asks the Runtime for the page the URL names", async () => {
     assert.equal(experiencesUrl.searchParams.get("limit"), "25");
     assert.equal(experiencesUrl.searchParams.get("offset"), "100");
 
+    // The window the URL named reaches both list reads. It was parsed, drawn
+    // on the cohorts tab, and preserved by three filter bars while records and
+    // experiences ignored it -- a bounded filter the page reported as applied
+    // on two of its three tabs.
+    await renderPage({
+      tab: "records",
+      from: "2026-09-01T00:00:00.000Z",
+      until: "2026-10-01T00:00:00.000Z"
+    });
+    for (const route of [
+      "/control/memory/records",
+      "/control/memory/experiences"
+    ]) {
+      const url = requested.find((request) => request.includes(route));
+      assert.ok(url, `${route} must be read`);
+      const parsed = new URL(url);
+      assert.equal(
+        parsed.searchParams.get("occurredFrom"),
+        "2026-09-01T00:00:00.000Z",
+        `${route} must apply the window's lower bound`
+      );
+      assert.equal(
+        parsed.searchParams.get("occurredUntil"),
+        "2026-10-01T00:00:00.000Z",
+        `${route} must apply the window's upper bound`
+      );
+    }
+
     // A `total` larger than the page renders navigation, and the Next link is
     // the next page of the same filtered list.
     assert.match(markup, /data-pagination="memory-records-pagination"/);
@@ -5734,6 +5762,10 @@ test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace
   assert.equal(tabUrl.searchParams.has("offset"), false);
   assert.match(markup, /Durable Records/);
   assert.match(markup, /Active Claims/);
+  // The active count is taken over the rows on this page, because the response
+  // carries no active total. The card says which one it is rather than reading
+  // beside a collection total as a share of it.
+  assert.match(markup, /Verified &amp; in service on this page/);
 
   const selectorStart = markup.indexOf('data-memory-workspace-form="true"');
   const formStart = markup.lastIndexOf("<form", selectorStart);

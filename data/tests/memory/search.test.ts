@@ -202,6 +202,49 @@ test("memory browser pagination scopes rows and includes non-active lifecycle re
   assert.ok(query.countParams.includes(false));
 });
 
+test("a browser time window reaches both the count and the rows it describes", () => {
+  // The count and the rows are the same predicate written twice. Before the
+  // filters were shared, each was hand-written, and a filter added to one and
+  // not the other produced a `total` describing a different collection from the
+  // rows under it -- a page claiming "1,204 records" above 25 that a different
+  // filter had chosen.
+  const records = buildMemoryListQuery({
+    context: makeContext({ workspaceId: "ws-1" }),
+    occurredFrom: "2026-09-01T00:00:00Z",
+    occurredUntil: "2026-10-01T00:00:00Z",
+    limit: 10
+  });
+  for (const sql of [records.countText, records.text]) {
+    assert.match(sql, /created_at >= \$\d+/);
+    assert.match(sql, /created_at <= \$\d+/);
+  }
+  assert.ok(records.countParams.includes("2026-09-01T00:00:00Z"));
+  assert.ok(records.params.includes("2026-10-01T00:00:00Z"));
+
+  // Experiences window on `started_at`, never `completed_at`: that column is
+  // NULL while a session runs, so a window on it would silently drop every
+  // in-flight session from the tab an operator reads for current work.
+  const experiences = buildExperienceListQuery({
+    context: makeContext({ workspaceId: "ws-1" }),
+    occurredFrom: "2026-09-01T00:00:00Z",
+    occurredUntil: "2026-10-01T00:00:00Z",
+    limit: 10
+  });
+  for (const sql of [experiences.countText, experiences.text]) {
+    assert.match(sql, /started_at >= \$\d+/);
+    assert.match(sql, /started_at <= \$\d+/);
+    assert.doesNotMatch(sql, /completed_at >=/);
+  }
+
+  // A list with no window is still a legitimate request, and must stay
+  // unbounded rather than gaining an invented default.
+  const unbounded = buildMemoryListQuery({
+    context: makeContext({ workspaceId: "ws-1" })
+  });
+  assert.doesNotMatch(unbounded.countText, /created_at >=/);
+  assert.doesNotMatch(unbounded.text, /created_at >=/);
+});
+
 test("experience browser can filter by recorded memory mode", () => {
   const query = buildExperienceListQuery({
     context: makeContext({ workspaceId: "ws-1" }),

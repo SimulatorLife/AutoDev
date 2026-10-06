@@ -176,9 +176,15 @@ export function MemoryView({
         subtitle: `${records.length} in scope`
       }),
       React.createElement(StatCard, {
+        // Counted over the rows on this page, not over the collection, because
+        // the Runtime returns an active-status total nowhere in this response.
+        // The neighbouring cards publish a total in the headline and qualify
+        // the page count in the subtitle; this one has only a page count, so it
+        // says so rather than reading beside "1,204" as a share of it. With a
+        // 25-row page it would otherwise report at most 25.
         title: "Active Claims",
         value: activeRecordsCount,
-        subtitle: "Verified & in service"
+        subtitle: "Verified & in service on this page"
       }),
       React.createElement(StatCard, {
         title: "Experiences",

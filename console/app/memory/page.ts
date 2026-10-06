@@ -337,6 +337,13 @@ async function fetchMemoryPageData(
       ...(params.query ? { query: params.query } : {}),
       ...(params.kind === "all" ? {} : { kind: params.kind }),
       ...(params.status === "all" ? {} : { status: params.status }),
+      // The window this page resolved and every filter bar has been carrying
+      // since it was added. Records and experiences read `occurred_at` bounds
+      // from the Runtime; before this they accepted the filter, preserved it
+      // across every navigation, and then ignored it -- the page reported a
+      // bounded filter as applied on two of its three tabs.
+      occurredFrom: params.occurredFrom,
+      occurredUntil: params.occurredUntil,
       // The paged reads ask for the page the URL names. Without these the
       // Runtime applied its own default of 50 and the Console reported a
       // `total` it had no way to walk past.
@@ -368,6 +375,8 @@ async function fetchMemoryPageData(
         workspaceId,
         ...(params.query ? { query: params.query } : {}),
         includeTaskHistory: true,
+        occurredFrom: params.occurredFrom,
+        occurredUntil: params.occurredUntil,
         limit: params.limit,
         offset: params.offset
       },

@@ -686,7 +686,10 @@ export function patchProviderLimits(
   return mutateControlApi<ControlApiProviderLimitsPatchResponse>(
     "PATCH",
     providerControlPath(provider, "limits"),
-    { perSession: agentLimits.perSession, acrossSessions: agentLimits.acrossSessions },
+    {
+      perSession: agentLimits.perSession,
+      acrossSessions: agentLimits.acrossSessions
+    },
     config,
     options
   );
@@ -716,10 +719,7 @@ export function patchProviderEnabled(
  * Builds the canonical provider-scoped PATCH path with an encoded provider
  * segment. This remains private to the typed server mutations below.
  */
-function providerControlPath(
-  provider: string,
-  suffix = ""
-): string {
+function providerControlPath(provider: string, suffix = ""): string {
   return `${CONTROL_API_PATHS.providers}/${encodeURIComponent(provider)}${suffix}`;
 }
 
@@ -1961,6 +1961,8 @@ export async function fetchMemoryRecords(
     readonly query?: string;
     readonly kind?: string;
     readonly status?: string;
+    readonly occurredFrom?: string;
+    readonly occurredUntil?: string;
     readonly limit?: number;
     readonly offset?: number;
   },
@@ -1973,6 +1975,8 @@ export async function fetchMemoryRecords(
   if (params.query) search.set("query", params.query);
   if (params.kind) search.set("kind", params.kind);
   if (params.status) search.set("status", params.status);
+  if (params.occurredFrom) search.set("occurredFrom", params.occurredFrom);
+  if (params.occurredUntil) search.set("occurredUntil", params.occurredUntil);
   if (params.limit !== undefined) search.set("limit", String(params.limit));
   if (params.offset !== undefined) search.set("offset", String(params.offset));
   const path = `${CONTROL_API_PATHS.memoryRecords}?${search.toString()}`;
@@ -2036,6 +2040,8 @@ export async function fetchMemoryExperiences(
     readonly query?: string;
     readonly memoryMode?: string;
     readonly outcome?: string;
+    readonly occurredFrom?: string;
+    readonly occurredUntil?: string;
     readonly limit?: number;
     readonly offset?: number;
     readonly includeTaskHistory?: boolean;
@@ -2049,6 +2055,8 @@ export async function fetchMemoryExperiences(
   if (params.query) search.set("query", params.query);
   if (params.memoryMode) search.set("memoryMode", params.memoryMode);
   if (params.outcome) search.set("outcome", params.outcome);
+  if (params.occurredFrom) search.set("occurredFrom", params.occurredFrom);
+  if (params.occurredUntil) search.set("occurredUntil", params.occurredUntil);
   if (params.limit !== undefined) search.set("limit", String(params.limit));
   if (params.offset !== undefined) search.set("offset", String(params.offset));
   if (params.includeTaskHistory) search.set("includeTaskHistory", "true");

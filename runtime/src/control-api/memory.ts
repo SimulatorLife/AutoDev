@@ -15,6 +15,7 @@ import {
   MEMORY_EXECUTION_MODES,
   MEMORY_INJECTION_RESULTS,
   MEMORY_KINDS,
+  MEMORY_MAX_TIME_WINDOW_MS,
   MEMORY_OUTCOME_REPORT_KINDS,
   MEMORY_REASON_CODES,
   MEMORY_SESSION_COHORT_ASSIGNED_MODES,
@@ -361,6 +362,45 @@ function queryText(params: URLSearchParams): string | undefined {
   return query;
 }
 
+/**
+ * The bounded time window a list request asked for.
+ *
+ * Optional on purpose, because a list with no window is a legitimate request --
+ * it is what every caller sent before the Console could express one. Supplied,
+ * it is all-or-nothing and bounded: half a window is a since-query written as a
+ * range, and the two are the same filter in two costumes, so an unambiguous
+ * form is required rather than inferred. The 365-day ceiling is the same bound
+ * the cohort reads carry, so one window rule governs every Memory time filter
+ * instead of a per-route pair of them.
+ */
+function occurredWindow(params: URLSearchParams): {
+  occurredFrom?: string;
+  occurredUntil?: string;
+} {
+  const from = oneFilter(params, "occurredFrom");
+  const until = oneFilter(params, "occurredUntil");
+  if (from === undefined && until === undefined) return {};
+  if (from === undefined || until === undefined) {
+    throw new TypeError(
+      "'occurredFrom' and 'occurredUntil' must be supplied together."
+    );
+  }
+  const fromMs = Date.parse(from);
+  const untilMs = Date.parse(until);
+  if (!Number.isFinite(fromMs) || !Number.isFinite(untilMs)) {
+    throw new TypeError("The memory time window must be valid timestamps.");
+  }
+  if (untilMs < fromMs) {
+    throw new TypeError(
+      "'occurredUntil' must be greater than or equal to 'occurredFrom'."
+    );
+  }
+  if (untilMs - fromMs > MEMORY_MAX_TIME_WINDOW_MS) {
+    throw new TypeError("The memory time window exceeds the 365-day maximum.");
+  }
+  return { occurredFrom: from, occurredUntil: until };
+}
+
 function parseFilters(
   params: URLSearchParams,
   actor: MemoryControlActor,
@@ -373,6 +413,8 @@ function parseFilters(
   readonly statuses?: readonly MemoryStatus[];
   readonly memoryModes?: readonly (typeof MEMORY_EXECUTION_MODES)[number][];
   readonly outcomes?: readonly (typeof EXPERIENCE_OUTCOMES)[number][];
+  readonly occurredFrom?: string;
+  readonly occurredUntil?: string;
 } {
   const context = readContext(params, actor);
   const page = pagination(params);
@@ -398,7 +440,8 @@ function parseFilters(
     ...(kinds.length > 0 ? { kinds } : {}),
     ...(statuses.length > 0 ? { statuses } : {}),
     ...(memoryModes.length > 0 ? { memoryModes } : {}),
-    ...(outcomes.length > 0 ? { outcomes } : {})
+    ...(outcomes.length > 0 ? { outcomes } : {}),
+    ...occurredWindow(params)
   };
 }
 
@@ -731,6 +774,8 @@ async function serveExperience(
     ...(filters.query ? { query: filters.query } : {}),
     ...(filters.memoryModes ? { memoryModes: filters.memoryModes } : {}),
     ...(filters.outcomes ? { outcomes: filters.outcomes } : {}),
+    ...(filters.occurredFrom ? { occurredFrom: filters.occurredFrom } : {}),
+    ...(filters.occurredUntil ? { occurredUntil: filters.occurredUntil } : {}),
     ...filters.page
   });
   sendJson(
@@ -1278,6 +1323,8 @@ async function serveRecord(
     ...(filters.query ? { query: filters.query } : {}),
     ...(filters.kinds ? { kinds: filters.kinds } : {}),
     ...(filters.statuses ? { statuses: filters.statuses } : {}),
+    ...(filters.occurredFrom ? { occurredFrom: filters.occurredFrom } : {}),
+    ...(filters.occurredUntil ? { occurredUntil: filters.occurredUntil } : {}),
     ...filters.page
   });
   sendJson(

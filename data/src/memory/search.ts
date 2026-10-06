@@ -221,62 +221,94 @@ export interface BuiltListQuery {
   readonly params: readonly unknown[];
 }
 
+/**
+ * The `WHERE` clauses a list shares, applied to one parameter set.
+ *
+ * The count query and the row query used to build their filters separately and
+ * by hand, which is what let them drift: each filter was written twice, and a
+ * filter added to one and not the other would produce a `total` describing a
+ * different collection from the rows beside it. Both are the same predicate over
+ * the same columns and the same parameters, so they are built once here and
+ * called twice with independent `SqlParams`.
+ *
+ * `queryParam` is returned so the caller can order the rows by the rank of the
+ * exact query text it bound, rather than binding the text a second time.
+ */
+function memoryListFilters(
+  request: MemoryListRequest,
+  params: SqlParams
+): { readonly filters: readonly string[]; readonly queryParam?: string } {
+  const filters = [
+    buildScopeFilterSql("memory_records", request.context, params)
+  ];
+  const query = request.query?.trim();
+  let queryParam: string | undefined;
+  if (query) {
+    queryParam = params.add(query);
+    filters.push(`claim_search @@ plainto_tsquery('english', ${queryParam})`);
+  }
+  if (request.kinds && request.kinds.length > 0) {
+    filters.push(`kind = ANY(${params.add(request.kinds)}::text[])`);
+  }
+  if (request.statuses && request.statuses.length > 0) {
+    filters.push(`status = ANY(${params.add(request.statuses)}::text[])`);
+  }
+  filters.push(...occurredWindowSql(request, "created_at", params));
+  return queryParam === undefined ? { filters } : { filters, queryParam };
+}
+
+/**
+ * The bounded time window a list request asked for, as `WHERE` clauses.
+ *
+ * A window is all-or-nothing on purpose. `from` without `until` reads as a
+ * since-query but behaves as a window open on one side, and the two are the
+ * same filter written two ways; the Runtime rejects the half-open form, so this
+ * never sees one.
+ *
+ * `column` is passed rather than assumed because the two lists anchor the window
+ * on different columns: records on when they entered the store, experiences on
+ * when they started. Experiences are filtered on `started_at` and never
+ * `completed_at` -- that column is NULL while a session runs, so a window on it
+ * would silently hide every in-flight session from an operator reading the tab
+ * for current work.
+ */
+function occurredWindowSql(
+  request: MemoryListRequest | ExperienceListRequest,
+  column: string,
+  params: SqlParams
+): readonly string[] {
+  if (
+    request.occurredFrom === undefined ||
+    request.occurredUntil === undefined
+  ) {
+    return [];
+  }
+  return [
+    `${column} >= ${params.add(request.occurredFrom)}`,
+    `${column} <= ${params.add(request.occurredUntil)}`
+  ];
+}
+
 /** Builds a scoped browser query; statuses remain inspectable, unlike JIT retrieval. */
 export function buildMemoryListQuery(
   request: MemoryListRequest
 ): BuiltListQuery {
   const params = new SqlParams();
-  const scopeFilter = buildScopeFilterSql(
-    "memory_records",
-    request.context,
-    params
-  );
-  const filters = [scopeFilter];
-  const query = request.query?.trim();
-  if (query) {
-    const queryParam = params.add(query);
-    filters.push(`claim_search @@ plainto_tsquery('english', ${queryParam})`);
-  }
-  if (request.kinds && request.kinds.length > 0) {
-    const kindsParam = params.add(request.kinds);
-    filters.push(`kind = ANY(${kindsParam}::text[])`);
-  }
-  if (request.statuses && request.statuses.length > 0) {
-    const statusesParam = params.add(request.statuses);
-    filters.push(`status = ANY(${statusesParam}::text[])`);
-  }
-  const where = filters.join(" AND ");
-  const countText = `SELECT COUNT(*)::bigint AS total FROM memory_records WHERE ${where}`;
+  const count = memoryListFilters(request, params);
+
   const rowParams = new SqlParams();
-  const rowScope = buildScopeFilterSql(
-    "memory_records",
-    request.context,
-    rowParams
-  );
-  const rowFilters = [rowScope];
-  const rowQuery = request.query?.trim();
-  let rowQueryParam: string | undefined;
-  if (rowQuery) {
-    rowQueryParam = rowParams.add(rowQuery);
-    rowFilters.push(
-      `claim_search @@ plainto_tsquery('english', ${rowQueryParam})`
-    );
-  }
-  if (request.kinds && request.kinds.length > 0) {
-    const kindsParam = rowParams.add(request.kinds);
-    rowFilters.push(`kind = ANY(${kindsParam}::text[])`);
-  }
-  if (request.statuses && request.statuses.length > 0) {
-    const statusesParam = rowParams.add(request.statuses);
-    rowFilters.push(`status = ANY(${statusesParam}::text[])`);
-  }
+  const row = memoryListFilters(request, rowParams);
   const limitParam = rowParams.add(request.limit ?? 50);
   const offsetParam = rowParams.add(request.offset ?? 0);
-  const order = rowQueryParam
-    ? `ts_rank(claim_search, plainto_tsquery('english', ${rowQueryParam})) DESC, created_at DESC`
+  const order = row.queryParam
+    ? `ts_rank(claim_search, plainto_tsquery('english', ${row.queryParam})) DESC, created_at DESC`
     : "created_at DESC";
-  const text = `SELECT * FROM memory_records WHERE ${rowFilters.join(" AND ")} ORDER BY ${order}, id DESC LIMIT ${limitParam} OFFSET ${offsetParam}`;
-  return { countText, countParams: params.all, text, params: rowParams.all };
+  return {
+    countText: `SELECT COUNT(*)::bigint AS total FROM memory_records WHERE ${count.filters.join(" AND ")}`,
+    countParams: params.all,
+    text: `SELECT * FROM memory_records WHERE ${row.filters.join(" AND ")} ORDER BY ${order}, id DESC LIMIT ${limitParam} OFFSET ${offsetParam}`,
+    params: rowParams.all
+  };
 }
 
 function experienceModeFilter(
@@ -294,61 +326,53 @@ function experienceModeFilter(
     : explicitMatch;
 }
 
+/**
+ * The `WHERE` clauses the experience list shares, applied to one parameter set.
+ *
+ * Built once and applied twice, for the reason `memoryListFilters` documents:
+ * the count and the rows are the same predicate, and writing it twice is how
+ * the two drift into describing different collections.
+ */
+function experienceListFilters(
+  request: ExperienceListRequest,
+  params: SqlParams
+): { readonly filters: readonly string[]; readonly queryParam?: string } {
+  const filters = [
+    buildExperienceScopeFilterSql("memory_experiences", request.context, params)
+  ];
+  const query = request.query?.trim();
+  let queryParam: string | undefined;
+  if (query) {
+    queryParam = params.add(query);
+    filters.push(`search_vector @@ plainto_tsquery('english', ${queryParam})`);
+  }
+  if (request.memoryModes && request.memoryModes.length > 0) {
+    filters.push(experienceModeFilter(request.memoryModes, params));
+  }
+  if (request.outcomes && request.outcomes.length > 0) {
+    filters.push(`outcome = ANY(${params.add(request.outcomes)}::text[])`);
+  }
+  filters.push(...occurredWindowSql(request, "started_at", params));
+  return queryParam === undefined ? { filters } : { filters, queryParam };
+}
+
 export function buildExperienceListQuery(
   request: ExperienceListRequest
 ): BuiltListQuery {
-  const query = request.query?.trim();
   const countParams = new SqlParams();
-  const countScope = buildExperienceScopeFilterSql(
-    "memory_experiences",
-    request.context,
-    countParams
-  );
-  const countFilters = [countScope];
-  if (query) {
-    const queryParam = countParams.add(query);
-    countFilters.push(
-      `search_vector @@ plainto_tsquery('english', ${queryParam})`
-    );
-  }
-  if (request.memoryModes && request.memoryModes.length > 0) {
-    countFilters.push(experienceModeFilter(request.memoryModes, countParams));
-  }
-  if (request.outcomes && request.outcomes.length > 0) {
-    const outcomesParam = countParams.add(request.outcomes);
-    countFilters.push(`outcome = ANY(${outcomesParam}::text[])`);
-  }
+  const count = experienceListFilters(request, countParams);
 
   const rowParams = new SqlParams();
-  const rowScope = buildExperienceScopeFilterSql(
-    "memory_experiences",
-    request.context,
-    rowParams
-  );
-  const rowFilters = [rowScope];
-  let rowQueryParam: string | undefined;
-  if (query) {
-    rowQueryParam = rowParams.add(query);
-    rowFilters.push(
-      `search_vector @@ plainto_tsquery('english', ${rowQueryParam})`
-    );
-  }
-  if (request.memoryModes && request.memoryModes.length > 0) {
-    rowFilters.push(experienceModeFilter(request.memoryModes, rowParams));
-  }
-  if (request.outcomes && request.outcomes.length > 0) {
-    const outcomesParam = rowParams.add(request.outcomes);
-    rowFilters.push(`outcome = ANY(${outcomesParam}::text[])`);
-  }
+  const row = experienceListFilters(request, rowParams);
   const limitParam = rowParams.add(request.limit ?? 50);
   const offsetParam = rowParams.add(request.offset ?? 0);
-  const order = rowQueryParam
-    ? `ts_rank(search_vector, plainto_tsquery('english', ${rowQueryParam})) DESC, completed_at DESC NULLS LAST`
+  const order = row.queryParam
+    ? `ts_rank(search_vector, plainto_tsquery('english', ${row.queryParam})) DESC, completed_at DESC NULLS LAST`
     : "completed_at DESC NULLS LAST";
   return {
-    countText: `SELECT COUNT(*)::bigint AS total FROM memory_experiences WHERE ${countFilters.join(" AND ")}`,
+    countText: `SELECT COUNT(*)::bigint AS total FROM memory_experiences WHERE ${count.filters.join(" AND ")}`,
     countParams: countParams.all,
-    text: `SELECT * FROM memory_experiences WHERE ${rowFilters.join(" AND ")} ORDER BY ${order}, id DESC LIMIT ${limitParam} OFFSET ${offsetParam}`,
+    text: `SELECT * FROM memory_experiences WHERE ${row.filters.join(" AND ")} ORDER BY ${order}, id DESC LIMIT ${limitParam} OFFSET ${offsetParam}`,
     params: rowParams.all
   };
 }

@@ -1953,6 +1953,52 @@ test("Memory Control API audits denied lifecycle writes and gates global reads",
         {
           actor: "viewer-a",
           body: { reason: "privacy_request" }
+test("Memory Control API bounds the records and experiences time window", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    delete process.env.AUTODEV_MEMORY_DATABASE_URL;
+    const rejects = async (query: string): Promise<number> => {
+      const result = await call(
+        "GET",
+        `/control/memory/records?workspaceId=workspace-a&${query}`,
+        { actor: "viewer-a" }
+      );
+      return result.response.statusCode;
+    };
+
+    // Half a window is the same filter written two ways, so the ambiguous form
+    // is refused rather than guessed at.
+    assert.equal(await rejects("occurredFrom=2026-09-01T00:00:00Z"), 400);
+    assert.equal(await rejects("occurredUntil=2026-10-01T00:00:00Z"), 400);
+    assert.equal(await rejects("occurredFrom=yesterday"), 400);
+    assert.equal(
+      await rejects(
+        "occurredUntil=2026-09-01T00:00:00Z&occurredFrom=2026-10-01T00:00:00Z"
+      ),
+      400
+    );
+    // The same 365-day ceiling the cohort reads carry, so an operator gets one
+    // answer for how far back they can look on every Memory surface.
+    assert.equal(
+      await rejects(
+        "occurredFrom=2020-01-01T00:00:00Z&occurredUntil=2026-10-01T00:00:00Z"
+      ),
+      400
+    );
+    // A well-formed window parses and proceeds to the memory host, which is
+    // absent here -- so it must fail as unavailable, never as a bad request.
+    const accepted = await call(
+      "GET",
+      "/control/memory/records?workspaceId=workspace-a&occurredFrom=2026-09-01T00:00:00Z&occurredUntil=2026-10-01T00:00:00Z",
+      { actor: "viewer-a" }
+    );
+    assert.notEqual(accepted.response.statusCode, 400);
+  } finally {
+    restoreEnv(saved);
+  }
+});
+
         }
       )
     );

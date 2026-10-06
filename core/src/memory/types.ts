@@ -1035,6 +1035,13 @@ export interface MemoryListRequest {
   readonly query?: string;
   readonly kinds?: readonly MemoryKind[];
   readonly statuses?: readonly MemoryStatus[];
+  /**
+   * Inclusive lower bound on when a record entered the store, matching the
+   * column its own listing is ordered by. Supplied together with
+   * `occurredUntil`, or not at all -- a half-open window is not a window.
+   */
+  readonly occurredFrom?: string;
+  readonly occurredUntil?: string;
   readonly limit?: number;
   readonly offset?: number;
 }
@@ -1044,6 +1051,17 @@ export interface ExperienceListRequest {
   readonly query?: string;
   readonly memoryModes?: readonly MemoryExecutionMode[];
   readonly outcomes?: readonly ExperienceOutcome[];
+  /**
+   * Inclusive bounds on when an experience *started*.
+   *
+   * Not on `completed_at`: that column is NULL while a session is still
+   * running, so filtering the experience list by it would silently hide every
+   * in-flight session from an operator reading the tab for current work. The
+   * Console's window describes when the work happened, and a started_at NULL
+   * cannot exist.
+   */
+  readonly occurredFrom?: string;
+  readonly occurredUntil?: string;
   readonly limit?: number;
   readonly offset?: number;
 }
@@ -1451,8 +1469,17 @@ export interface MemoryInjectionOutcomeCohortPage {
   readonly reportCount: number;
 }
 
-/** Maximum allowed injection-time window for a single cohort read. */
-export const MEMORY_OUTCOME_COHORT_MAX_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
+/**
+ * Maximum allowed injection-time window for a single Memory read.
+ *
+ * Named for what it bounds rather than for the route that first needed it: the
+ * cohort reads, the session-outcome cohorts, and the use cohorts all carry this
+ * ceiling, and the records and experiences listings now bound their time filter
+ * with it too. One ceiling means an operator gets the same answer for "how far
+ * back can I look" on every Memory surface instead of learning a different bound
+ * per tab.
+ */
+export const MEMORY_MAX_TIME_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
 
 /**
  * Validate a cohort filter at the MemoryService/Data boundary so unbounded
@@ -1493,7 +1520,7 @@ export function assertMemoryInjectionOutcomeCohortFilter(
       "Cohort filter 'until' must be greater than or equal to 'from'."
     );
   }
-  if (untilMs - fromMs > MEMORY_OUTCOME_COHORT_MAX_WINDOW_MS) {
+  if (untilMs - fromMs > MEMORY_MAX_TIME_WINDOW_MS) {
     throw new TypeError("Cohort filter window exceeds the 365-day maximum.");
   }
   if (
@@ -1622,7 +1649,7 @@ export function assertMemoryInjectionUseCohortFilter(
       "Use cohort filter 'until' must be greater than or equal to 'from'."
     );
   }
-  if (untilMs - fromMs > MEMORY_OUTCOME_COHORT_MAX_WINDOW_MS) {
+  if (untilMs - fromMs > MEMORY_MAX_TIME_WINDOW_MS) {
     throw new TypeError(
       "Use cohort filter window exceeds the 365-day maximum."
     );
@@ -1761,7 +1788,7 @@ export function assertMemorySessionOutcomeCohortFilter(
       "Session cohort filter 'until' must be greater than or equal to 'from'."
     );
   }
-  if (untilMs - fromMs > MEMORY_OUTCOME_COHORT_MAX_WINDOW_MS) {
+  if (untilMs - fromMs > MEMORY_MAX_TIME_WINDOW_MS) {
     throw new TypeError(
       "Session cohort filter window exceeds the 365-day maximum."
     );
