@@ -31,6 +31,7 @@ import {
   type MemoryStatusCounts,
   PROVIDER_ROLES,
   SANDBOX_MODES,
+  type SkillEligibility,
   type ToolCatalogItem,
   type UsageMetricsData
 } from "@simulatorlife/autodev-core";
@@ -6022,6 +6023,60 @@ test("an expired validity window is stated, because the Runtime will not inject 
     renderWith({ validTo: "not-a-date" }),
     /Out of validity window/
   );
+});
+
+test("a skill that reached the catalog but reached no agent says so", () => {
+  // The memory system's last mile. A procedural memory promoted to a skill lands
+  // in the RuleSync catalog with no role assignment; `/control/skills` is
+  // read-only and role assignment lives in the execution contract, so nothing in
+  // the Console can give it one. The promotion reports success. The State column
+  // used to badge every row "Configured" without reading the row, so this skill
+  // sat beside "No roles assigned" under a green badge claiming it was fine.
+  const renderWith = (
+    eligibility: SkillEligibility[]
+  ): string =>
+    renderToStaticMarkup(
+      React.createElement(SkillsView, {
+        skills: [
+          {
+            name: "release-checklist",
+            description: "Steps for cutting a release.",
+            path: ".rulesync/skills/release-checklist/SKILL.md"
+          }
+        ],
+        eligibility,
+        unresolvedAssignments: [],
+        sourceValidity: true
+      })
+    );
+
+  const unassigned = renderWith([
+    { skill: "release-checklist", roles: [] }
+  ]);
+  assert.match(unassigned, /Not assigned/);
+  assert.match(
+    unassigned,
+    /so nothing can invoke it/,
+    "the badge says what the state costs, not just what it is"
+  );
+  assert.doesNotMatch(
+    unassigned,
+    /data-status="configured"/,
+    "the row is not badged as though being in the catalog were enough"
+  );
+
+  assert.match(
+    renderWith([
+      { skill: "release-checklist", roles: ["orchestrator", "reviewer"] }
+    ]),
+    /Assigned/
+  );
+
+  // No eligibility entry at all is missing evidence, not an observed absence.
+  // Folding it into "Not assigned" would claim we looked and found nothing.
+  const unobserved = renderWith([]);
+  assert.match(unobserved, /Not observed/);
+  assert.doesNotMatch(unobserved, /Not assigned/);
 });
 
 test("MemoryView keeps an unavailable experience tab out of its successful-empty state", () => {

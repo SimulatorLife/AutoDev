@@ -154,11 +154,40 @@ export function SkillsView({
       // and one that reads "Configure…", not the difference between one that
       // reads "Configure…" and one that reads nothing at all.
       weight: 146,
-      cell: () =>
-        React.createElement(StatusBadge, {
-          status: "configured",
-          label: "Configured"
-        })
+      // Three states, because being in the catalog, being reachable, and our
+      // knowledge of whether it is reachable are three different facts. This cell
+      // used to ignore the row entirely and badge every skill "Configured", so a
+      // skill promoted from a procedural memory — which lands in the catalog with
+      // no role assignment, and which `/control/skills` is read-only so cannot be
+      // given one — sat beside "No roles assigned" under a green badge saying it
+      // was fine. It is not fine: no agent can reach it, and the promotion that
+      // created it reported success.
+      //
+      // An eligibility entry we never resolved stays "Not observed". Collapsing
+      // it into "Not assigned" would claim we checked and found nothing, which is
+      // the same confusion the roles column already refuses.
+      cell: (skill) => {
+        const item = eligibility.find((e) => e.skill === skill.name);
+        if (item === undefined) {
+          return React.createElement(StatusBadge, {
+            status: "not-observed",
+            label: NOT_OBSERVED_LABEL
+          });
+        }
+        if (item.roles.length === 0) {
+          return React.createElement(StatusBadge, {
+            status: "unavailable",
+            label: "Not assigned",
+            title:
+              "In the skill catalog, but assigned to no agent role, so nothing can invoke it."
+          });
+        }
+        return React.createElement(StatusBadge, {
+          status: "ready",
+          label: "Assigned",
+          title: `Assigned to ${item.roles.join(", ")}`
+        });
+      }
     }
   ];
 

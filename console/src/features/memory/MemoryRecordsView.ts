@@ -821,14 +821,31 @@ function RecordDetailPanel({
 
       // Promote Procedure to RuleSync Skill
       record.kind === "procedural" && record.status === "active"
-        ? React.createElement(RecordActionForm, {
-            record,
-            listScope,
-            action: "promote-skill",
-            label: "Promote to RuleSync Skill",
-            variant: "secondary",
-            testId: "memory-promote-skill"
-          })
+        ? React.createElement(
+            React.Fragment,
+            null,
+            React.createElement(RecordActionForm, {
+              record,
+              listScope,
+              action: "promote-skill",
+              label: "Promote to RuleSync Skill",
+              variant: "secondary",
+              testId: "memory-promote-skill"
+            }),
+            // What the button will produce, before it is pressed. The promotion
+            // succeeds and the skill lands in the catalog, but `/control/skills`
+            // is read-only and role assignment lives in the execution contract,
+            // so the skill arrives exposed to nothing. An operator who is not
+            // told that will read a successful promotion as a working skill.
+            React.createElement(
+              "p",
+              {
+                className: `${MUTED_META_CLASS} w-full basis-full`,
+                "data-testid": "memory-promote-skill-consequence"
+              },
+              "Creates the RuleSync skill. It is not assigned to an agent role, so nothing can invoke it until the execution contract assigns one."
+            )
+          )
         : null
     ),
 
