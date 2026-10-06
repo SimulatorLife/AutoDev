@@ -62,7 +62,7 @@ export function AgentsView({
     {
       id: "role",
       header: "Role / Agent",
-      weight: 215,
+      weight: 201,
       cell: (agent) =>
         React.createElement(
           "a",
@@ -110,14 +110,14 @@ export function AgentsView({
     {
       id: "convergence",
       header: "Convergence",
-      weight: 152,
+      weight: 180,
       cell: (agent) =>
         React.createElement(StatusBadge, { status: agent.convergence })
     },
     {
       id: "skillsCount",
       header: "Skills",
-      weight: 100,
+      weight: 108,
       cell: (agent) =>
         React.createElement(
           "span",
@@ -128,7 +128,7 @@ export function AgentsView({
     {
       id: "mcpsCount",
       header: "MCPs",
-      weight: 84,
+      weight: 100,
       cell: (agent) =>
         React.createElement(
           "span",

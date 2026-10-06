@@ -98,6 +98,7 @@ import {
   MemoryRecordsView,
   MemoryView,
   ModelDetailView,
+  NOT_OBSERVED_LABEL,
   PromptDetailView,
   PromptsView,
   ProviderDetailView,
@@ -301,6 +302,57 @@ test("the icon set holds no glyph that nothing renders", () => {
   // against `IconName`, so the compiler already rejects a glyph that is not
   // declared. That is why only the dead direction needs a test.
   assert.ok(Object.keys(ICON_PATHS).length > 0, "the icon set is not empty");
+});
+
+test("an unobserved stat reads as an absence, not as a large measurement", () => {
+  // Rendering "Not observed" in the value slot at `text-2xl` bold broke two
+  // things at once. It is two words where a number is three or four glyphs, so
+  // it wrapped inside a 200px card and dropped the value below its siblings'
+  // baseline; and the callers that pass both a value and a subtitle said the
+  // same thing twice, so the row read "Not observed" over "Not observed".
+  const repeated = renderToStaticMarkup(
+    React.createElement(StatCard, {
+      title: "Cohort sessions",
+      value: NOT_OBSERVED_LABEL,
+      subtitle: NOT_OBSERVED_LABEL
+    })
+  );
+  assert.equal(
+    repeated.split(NOT_OBSERVED_LABEL).length - 1,
+    1,
+    "the unobserved label must not be printed twice"
+  );
+  assert.match(repeated, /data-stat-unobserved="true"/);
+  assert.doesNotMatch(
+    repeated,
+    /text-2xl/,
+    "an absent measurement must not wear a measurement's type scale"
+  );
+
+  // A subtitle that says something the label does not is real information and
+  // stays.
+  const explained = renderToStaticMarkup(
+    React.createElement(StatCard, {
+      title: "Ready agents",
+      value: NOT_OBSERVED_LABEL,
+      subtitle: "No runtime health probe"
+    })
+  );
+  assert.match(explained, /No runtime health probe/);
+
+  // A measured zero is a measurement. It keeps the value scale, and it keeps
+  // its own subtitle -- the whole point of the "never synthesize" rule is that
+  // zero and unobserved stay two different things.
+  const zero = renderToStaticMarkup(
+    React.createElement(StatCard, {
+      title: "Durable records",
+      value: 0,
+      subtitle: "0 in scope"
+    })
+  );
+  assert.match(zero, /text-2xl/);
+  assert.match(zero, /0 in scope/);
+  assert.doesNotMatch(zero, /data-stat-unobserved/);
 });
 
 test("AppNav renders Configure/Observe/Operate groups with canonical membership, order, and URL links", () => {
@@ -1278,11 +1330,17 @@ test("DataTable wraps column headers instead of truncating them", () => {
   // Relative widths shrink proportionally on a narrower viewport, so a header
   // that runs out of room wraps. Truncating it would render "CONVERGEN…" and
   // hide which column it labels.
+  //
+  // It wraps at word boundaries only. `break-words` used to be here, which let a
+  // single-word header split mid-word -- "CONVERGENC E" -- and that reads as a
+  // rendering fault rather than as a label. A column too narrow for its own
+  // single word is a width to fix, not a word to break.
   assert.match(
     markup,
-    /<th [^>]*class="[^"]*break-words[^"]*"[^>]*>Convergence<\/th>/
+    /<th [^>]*class="[^"]*break-normal[^"]*"[^>]*>Convergence<\/th>/
   );
   assert.doesNotMatch(markup, /<th [^>]*class="[^"]*truncate[^"]*"/);
+  assert.doesNotMatch(markup, /<th [^>]*class="[^"]*break-words[^"]*"/);
 });
 
 test("DataTable clamps prose cells on an inner box, not the table cell", () => {

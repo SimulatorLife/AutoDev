@@ -66,7 +66,7 @@ export function McpsView({
     {
       id: "declaration",
       header: "RuleSync",
-      weight: 110,
+      weight: 150,
       cell: (server) =>
         React.createElement(StatusBadge, {
           status: server.declared ? "configured" : "invalid",
@@ -91,7 +91,7 @@ export function McpsView({
     {
       id: "transport",
       header: "Transport",
-      weight: 130,
+      weight: 164,
       cell: (server) => server.transport.toUpperCase()
     },
     {
@@ -116,7 +116,7 @@ export function McpsView({
     {
       id: "status",
       header: "Connection",
-      weight: 130,
+      weight: 176,
       cell: () =>
         React.createElement(StatusBadge, {
           status: NOT_OBSERVED_STATUS,

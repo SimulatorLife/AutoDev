@@ -244,8 +244,15 @@ export function DataTable<T>({
                 // viewport a single header can lose the few pixels it needs to
                 // fit on one line, and "CONVERGEN…" tells an operator less than
                 // two short lines do.
+                //
+                // It wraps at word boundaries only. `break-words` was letting a
+                // single-word header split mid-word -- "CONVERGENC E" -- which
+                // reads as a rendering fault rather than as a label. A label
+                // that genuinely cannot fit its column is a width problem, and
+                // the width is the column's `weight`; the header refuses to
+                // paper over it.
                 className:
-                  "px-4 py-2.5 text-xs uppercase leading-tight tracking-wider break-words",
+                  "px-4 py-2.5 text-xs uppercase leading-tight tracking-wider break-normal",
                 style: { width: widths[index] }
               },
               col.header
