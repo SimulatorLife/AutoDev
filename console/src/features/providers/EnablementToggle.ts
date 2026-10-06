@@ -4,6 +4,8 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
+
 /**
  * The one enable/disable control for Providers items. Provider-role and model
  * toggles render through it wherever their item appears (list row, detail
@@ -56,7 +58,7 @@ function EnablementToggle({
     enablement === undefined ? "unknown" : enablement.enabled ? "on" : "off";
   const stateLabel =
     state === "unknown"
-      ? "Not observed"
+      ? NOT_OBSERVED_LABEL
       : state === "on"
         ? "Enabled"
         : "Disabled";

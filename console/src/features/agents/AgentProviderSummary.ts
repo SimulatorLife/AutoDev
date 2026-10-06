@@ -6,6 +6,7 @@ import type {
 import React from "react";
 
 import {
+  NOT_OBSERVED_LABEL,
   type StatusBadgeVariant,
   StatusDot
 } from "../../components/status/StatusBadge.ts";
@@ -57,7 +58,7 @@ export function AgentProviderSummary({
             : "unavailable";
       const state =
         enabled === undefined
-          ? "Not observed"
+          ? NOT_OBSERVED_LABEL
           : enabled
             ? "Enabled"
             : "Disabled";

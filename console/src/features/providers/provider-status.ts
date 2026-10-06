@@ -4,7 +4,10 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 
 /** Live readiness from router evidence; never implies health without it. */
 export function ProviderHealthBadge({
@@ -15,7 +18,7 @@ export function ProviderHealthBadge({
   if (health === null) {
     return React.createElement(StatusBadge, {
       status: "not-observed",
-      label: "Not observed"
+      label: NOT_OBSERVED_LABEL
     });
   }
   if (health.cooldown !== null) {

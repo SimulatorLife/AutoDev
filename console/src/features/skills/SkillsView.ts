@@ -12,7 +12,10 @@ import {
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
-import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import { chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
@@ -26,7 +29,7 @@ import {
  * Configuration vs. runtime evidence are separate concerns. A configured
  * skill is only that: configured and possibly eligible. Whether it was
  * exposed, selected, or used must come from runtime telemetry; until the OTel
- * skill exposure/use adapter exists, those values remain `Unknown`.
+ * skill exposure/use adapter exists, those values remain `Not observed`.
  */
 
 export interface SkillsViewProps {
@@ -53,9 +56,9 @@ export function SkillsView({
       ? skills.length
       : sourceValidity === false
         ? "Invalid"
-        : "Not observed";
+        : NOT_OBSERVED_LABEL;
   const assignedCount =
-    sourceValidity === true ? eligibleSkills.size : "Not observed";
+    sourceValidity === true ? eligibleSkills.size : NOT_OBSERVED_LABEL;
   const emptyMessage =
     sourceValidity === false
       ? "RuleSync `.rulesync/skills/` is invalid; no catalog was projected."
@@ -127,7 +130,8 @@ export function SkillsView({
         const item = eligibility.find((e) => e.skill === skill.name);
         return chipList({
           items: item?.roles ?? [],
-          emptyLabel: item === undefined ? "Not observed" : "No roles assigned",
+          emptyLabel:
+            item === undefined ? NOT_OBSERVED_LABEL : "No roles assigned",
           testId: "skill-roles"
         });
       }
@@ -191,12 +195,12 @@ export function SkillsView({
       }),
       React.createElement(StatCard, {
         title: "Observed Exposure",
-        value: "Unknown",
+        value: NOT_OBSERVED_LABEL,
         subtitle: "Awaiting OTel evidence"
       }),
       React.createElement(StatCard, {
         title: "Usage Evidence",
-        value: "Unknown",
+        value: NOT_OBSERVED_LABEL,
         subtitle: "skill_used events not wired"
       })
     ),

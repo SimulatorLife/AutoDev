@@ -6,6 +6,7 @@ import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
+import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import {
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
@@ -23,7 +24,7 @@ export function HooksView({
   const totalActions = hooks.reduce((acc, h) => acc + h.actions.length, 0);
   const validityLabel =
     sourceValidity === null
-      ? "Not observed"
+      ? NOT_OBSERVED_LABEL
       : sourceValidity
         ? "Valid"
         : "Invalid";

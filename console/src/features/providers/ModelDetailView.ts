@@ -15,7 +15,10 @@ import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { ConvergenceBadge } from "../../components/status/ConvergenceBadge.ts";
-import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import { ModelToggle } from "./EnablementToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 
@@ -35,7 +38,7 @@ function ProviderRoleState({
   if (provider === null) {
     return React.createElement(StatusBadge, {
       status: "not-observed",
-      label: "Not observed"
+      label: NOT_OBSERVED_LABEL
     });
   }
   return React.createElement(

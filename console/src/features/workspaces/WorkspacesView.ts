@@ -5,7 +5,10 @@ import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
-import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
@@ -104,7 +107,7 @@ export function WorkspacesView({
       cell: () =>
         React.createElement(StatusBadge, {
           status: "not-observed",
-          label: "Not observed"
+          label: NOT_OBSERVED_LABEL
         })
     }
   ];

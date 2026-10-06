@@ -106,7 +106,7 @@ function renderFilterSelect(
       React.createElement(SelectField, {
         name: `${name}-unobserved`,
         label: `${label}:`,
-        options: [{ value: "", label: "Not observed" }],
+        options: [{ value: "", label: NOT_OBSERVED_LABEL }],
         disabled: true,
         dataAttributes: { "data-filter-options-observed": "false" }
       }),

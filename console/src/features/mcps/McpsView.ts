@@ -5,7 +5,10 @@ import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
-import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
@@ -82,7 +85,7 @@ export function McpsView({
           status: server.enabled === null ? NOT_OBSERVED_STATUS : "configured",
           label:
             server.enabled === null
-              ? "Unknown"
+              ? NOT_OBSERVED_LABEL
               : server.enabled
                 ? "Enabled"
                 : "Disabled"
@@ -120,7 +123,7 @@ export function McpsView({
       cell: () =>
         React.createElement(StatusBadge, {
           status: NOT_OBSERVED_STATUS,
-          label: "Not observed"
+          label: NOT_OBSERVED_LABEL
         })
     }
   ];
@@ -145,17 +148,17 @@ export function McpsView({
             ? servers.length
             : sourceValidity === false
               ? "Invalid"
-              : "Not observed",
+              : NOT_OBSERVED_LABEL,
         subtitle: "RuleSync declaration"
       }),
       React.createElement(StatCard, {
         title: "Active Shims",
-        value: "Not observed",
+        value: NOT_OBSERVED_LABEL,
         subtitle: "Awaiting runtime probe"
       }),
       React.createElement(StatCard, {
         title: "Health",
-        value: "Unknown",
+        value: NOT_OBSERVED_LABEL,
         subtitle: "No runtime probe yet"
       })
     ),

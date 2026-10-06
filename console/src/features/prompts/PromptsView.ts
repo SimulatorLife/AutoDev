@@ -6,7 +6,10 @@ import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
-import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import { Chip } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
@@ -38,13 +41,13 @@ export function PromptsView({
       ? commands.length
       : commandSourceValidity === false
         ? "Invalid"
-        : "Not observed";
+        : NOT_OBSERVED_LABEL;
   const commandCountValue =
     commandSourceValidity === true
       ? commandCount
       : commandSourceValidity === false
         ? "Invalid"
-        : "Not observed";
+        : NOT_OBSERVED_LABEL;
   const commandSourceNotice =
     commandSourceValidity === false
       ? "RuleSync `.rulesync/commands/` is invalid; slash-command results are unavailable."

@@ -11,7 +11,10 @@ import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
-import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
@@ -204,7 +207,7 @@ export function GithubView({
         }
         return React.createElement(StatusBadge, {
           status: NOT_OBSERVED_STATUS,
-          label: "Unknown"
+          label: NOT_OBSERVED_LABEL
         });
       }
     }
@@ -315,7 +318,7 @@ export function GithubView({
           React.createElement(
             "span",
             { className: "text-fg-secondary" },
-            run.headBranch ?? "—"
+            run.headBranch ?? NOT_OBSERVED_LABEL
           ),
           React.createElement(
             "span",
@@ -400,7 +403,7 @@ export function GithubView({
             title: "Recent Success Rate",
             value:
               stats.successRate === null
-                ? "N/A"
+                ? NOT_OBSERVED_LABEL
                 : `${Math.round(stats.successRate * 100)}%`,
             subtitle: `From the same ${statsSampleDescription}: ${stats.successfulRuns} succeeded, ${stats.failedRuns} failed, ${stats.inProgressRuns} running`
           }),

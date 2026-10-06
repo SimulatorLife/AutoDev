@@ -15,7 +15,10 @@ import {
   NESTED_PANEL_CLASS
 } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
-import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import {
   resolveActiveTabId,
@@ -87,7 +90,7 @@ function DesiredState({
     status: enabled === null ? NOT_OBSERVED_STATUS : CONFIGURED_STATUS,
     label:
       enabled === null
-        ? "Unknown"
+        ? NOT_OBSERVED_LABEL
         : enabled
           ? "Enabled by default"
           : "Disabled by default"
@@ -99,7 +102,7 @@ function DesiredState({
  *
  * Three explicit cases:
  * - `null` source: the Tools projection was unavailable (Control API
- *   unreachable or coverage not `partial`). Report "Unknown" and never
+ *   unreachable or coverage not `partial`). Report "Not observed" and never
  *   fabricate a connected/ready state.
  * - empty list: the partial projection had no enumerated tools for this
  *   server. This does not prove the server exposes no tools, so report that
@@ -122,7 +125,7 @@ function ConfiguredToolAllowlist({
       },
       React.createElement(StatusBadge, {
         status: NOT_OBSERVED_STATUS,
-        label: "Unknown"
+        label: NOT_OBSERVED_LABEL
       }),
       React.createElement(
         "p",
@@ -293,7 +296,7 @@ export function McpDetailView({
         ),
         React.createElement(StatusBadge, {
           status: NOT_OBSERVED_STATUS,
-          label: "Not observed"
+          label: NOT_OBSERVED_LABEL
         }),
         React.createElement(
           "p",

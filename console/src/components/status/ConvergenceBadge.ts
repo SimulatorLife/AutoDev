@@ -7,7 +7,11 @@ import type {
 import React from "react";
 
 import { MUTED_META_CLASS, MUTED_TEXT_CLASS } from "../ui/text-classes.ts";
-import { StatusBadge, type StatusBadgeVariant } from "./StatusBadge.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge,
+  type StatusBadgeVariant
+} from "./StatusBadge.ts";
 
 /**
  * Convergence verdict as the shared status vocabulary.
@@ -53,7 +57,7 @@ export function ConvergenceBadge({
   if (lastError !== null) lines.push(`Last error: ${lastError}`);
   return React.createElement(StatusBadge, {
     status: convergenceBadgeVariant(convergence),
-    label: convergence === "not-observed" ? "Not observed" : convergence,
+    label: convergence === "not-observed" ? NOT_OBSERVED_LABEL : convergence,
     ...(lines.length === 1 ? {} : { title: lines.join("\n") })
   });
 }
@@ -67,7 +71,7 @@ const HISTORY_ROW_CLASS =
  * which must never render as an empty value that could read as "none".
  */
 function fieldValue(value: string | null): string {
-  return value ?? "Not observed";
+  return value ?? NOT_OBSERVED_LABEL;
 }
 
 function historyRow(entry: OperationHistoryEntry): React.JSX.Element {

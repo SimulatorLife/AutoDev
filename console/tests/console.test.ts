@@ -306,6 +306,70 @@ test("the icon set holds no glyph that nothing renders", () => {
   assert.ok(Object.keys(ICON_PATHS).length > 0, "the icon set is not empty");
 });
 
+test("missing evidence is reported in one word, from one constant", () => {
+  // `NOT_OBSERVED_LABEL` exists so the one word that must never drift cannot.
+  // It did not: eight sites spelled the same state as "Unknown" and one as
+  // "N/A", and 18 more hard-coded the right word as a bare literal, which
+  // leaves the constant decorative -- changing it would have moved the 24
+  // constant sites and left the literals behind.
+  //
+  // The visible symptom was one page contradicting itself. `/mcps` renders two
+  // stat cards about the same missing runtime probe: "Active Shims" read
+  // "Not observed" and the card beside it, "Health", read "Unknown". An
+  // operator cannot tell from that whether the Console disagrees with itself or
+  // the probe answered two different questions, and a badge whose `status` is
+  // `not-observed` while its `label` is "Unknown" splits the same fact in two.
+  //
+  // Scoped to the three literals that had drifted, because a broader rule is
+  // where this class of guard dies: "a string that means missing" cannot be
+  // distinguished from data by reading the source. `StatusBadge.ts` is skipped
+  // because it declares the constant and documents the failure in prose.
+  const consoleRoot = join(import.meta.dirname, "..");
+  const offenders: string[] = [];
+  for (const dir of ["src", "app"]) {
+    for (const relative of readdirSync(join(consoleRoot, dir), {
+      recursive: true
+    })) {
+      const file = join(consoleRoot, dir, relative.toString());
+      if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
+      if (file.endsWith(join("status", "StatusBadge.ts"))) continue;
+      const source = readFileSync(file, "utf8");
+      source.split("\n").forEach((line, index) => {
+        const trimmed = line.trim();
+        // A comment quoting the word is documentation of the rule, not a
+        // violation of it, and the component's own doc is mostly that.
+        if (trimmed.startsWith("//") || trimmed.startsWith("*")) return;
+        for (const literal of ['"Unknown"', '"N/A"', '"—"']) {
+          if (line.includes(literal)) {
+            offenders.push(
+              `${relative.toString()}:${index + 1} ${line.trim()}`
+            );
+          }
+        }
+      });
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `Report missing evidence as NOT_OBSERVED_LABEL, not as a literal: ${offenders.join(" | ")}`
+  );
+
+  // And the constant is what the pages actually render, so the guard above
+  // cannot pass against a word that nothing ships.
+  const unobserved = renderToStaticMarkup(
+    React.createElement(McpsView, { servers: [], sourceValidity: true })
+  );
+  assert.ok(
+    unobserved.includes(NOT_OBSERVED_LABEL),
+    `the mcps page must render the canonical word, got: ${unobserved}`
+  );
+  assert.ok(
+    !unobserved.includes("Unknown"),
+    `the mcps page must not drift to another word, got: ${unobserved}`
+  );
+});
+
 test("the Tools summary row counts one collection once, not twice", () => {
   // The row held two authorities for the same question. "Composite catalog"
   // read the envelope's `totalTools`; "Native / MCP / Plugin entries" counted
@@ -1894,7 +1958,7 @@ test("readControlApiConfig and readOpenLITUsageConfig fall back to canonical sec
 /**
  * Regression suite: missing data must NOT render green/optimistic state.
  *
- * Each view must report `Not observed` / `Unknown` / `Unknown` rather than
+ * Each view must report `Not observed` -- and only that word -- rather than
  * fabricated `100%`, `Connected`, `Active`, `Recorded`, or `Available`.
  */
 
@@ -2202,7 +2266,7 @@ test("McpDetailView combines canonical desired state with unknown runtime health
   );
   assert.match(toolsMarkup, /Configured tool allowlist/);
   assert.match(toolsMarkup, /data-tool-allowlist-projection="unknown"/);
-  assert.match(toolsMarkup, />Unknown</);
+  assert.match(toolsMarkup, />Not observed</);
   assert.doesNotMatch(toolsMarkup, /Connected/);
 
   const activityMarkup = renderToStaticMarkup(
@@ -2330,7 +2394,7 @@ test("McpDetailView distinguishes an unavailable tool source from an empty allow
   assert.match(toolsMarkup, /Configured tool allowlist/);
   assert.match(toolsMarkup, /data-tool-allowlist-projection="unknown"/);
   assert.doesNotMatch(toolsMarkup, /data-enumerated-tool-count="0"/);
-  assert.match(toolsMarkup, />Unknown</);
+  assert.match(toolsMarkup, />Not observed</);
   assert.doesNotMatch(toolsMarkup, /None configured/);
   assert.doesNotMatch(toolsMarkup, /Connected/);
   assert.doesNotMatch(toolsMarkup, /data-status="ready"/);
