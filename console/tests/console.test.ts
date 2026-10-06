@@ -50,6 +50,7 @@ import {
   NAV_ICONS,
   navIcon
 } from "../src/components/icons/Icon.ts";
+import { PAGE_SECTION_STACK_CLASS } from "../src/components/layout/PageBody.ts";
 import {
   MONO_ID_CLASS,
   MONO_META_CLASS,
@@ -8270,8 +8271,19 @@ test("one page rhythm: every view body stacks its sections through the shared cl
   // together than its neighbour's reads as a different product rather than as
   // a bug.
   //
-  // The guard is scoped to `features/`, because `DetailDrawer` legitimately
-  // stacks at the same gap inside its own box and is not a page body.
+  // This guard previously matched only the exact literal `flex flex-col gap-6`,
+  // on the stated ground that "the shared constant and any other gap value are
+  // fine". That ground is the defect: the two pages that had bypassed the
+  // template were not on gap-6, they were on `gap-8` (Memory) and `gap-5` (the
+  // prompt detail page), so the guard passed them. "Any other gap value" is
+  // exactly the thing that must not be allowed.
+  //
+  // The reliable signal in source is not the gap but the *hook*: `data-feature`
+  // is the page body's stable identity and only `PageBody` renders it. So a view
+  // that writes `data-feature` beside its own className has hand-rolled a page
+  // body, whatever gap it chose. Inner stacks -- a panel's own `gap-1`, a filter
+  // group's `gap-2` -- carry no hook and are untouched, which is why this does
+  // not need to guess from the gap value.
   const featuresDir = join(import.meta.dirname, "..", "src", "features");
   const offenders: string[] = [];
   for (const relative of readdirSync(featuresDir, { recursive: true })) {
@@ -8279,18 +8291,22 @@ test("one page rhythm: every view body stacks its sections through the shared cl
     const file = join(featuresDir, name);
     if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
     const source = readFileSync(file, "utf8");
-    // Only a literal `flex flex-col gap-6`; the shared constant and any other
-    // gap value are fine.
-    for (const m of source.matchAll(/"([^"]*flex flex-col gap-6[^"]*)"/g)) {
-      if (m[1] === "flex flex-col gap-6") {
-        offenders.push(`${name}: ${m[1]}`);
-      }
-    }
+    if (!source.includes('"data-feature"')) continue;
+    if (source.includes("PageBody")) continue;
+    offenders.push(`${name}: writes data-feature without PageBody`);
   }
   assert.deepEqual(
     offenders,
     [],
-    `These views hand-write the page rhythm instead of using PageBody or PAGE_SECTION_STACK_CLASS:\n${offenders.join("\n")}`
+    `These views hand-roll a page body instead of using PageBody, so their sections do not share the product's page rhythm:\n${offenders.join("\n")}`
+  );
+
+  // And the rhythm itself, asserted on the constant every page resolves to, so
+  // the value is pinned as well as the routing.
+  assert.equal(
+    PAGE_SECTION_STACK_CLASS,
+    "flex flex-col gap-6",
+    "the shared page rhythm is the value every page is measured against"
   );
 });
 

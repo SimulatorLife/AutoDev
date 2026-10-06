@@ -22,6 +22,7 @@ import {
   EntityTitle,
   SECTION_HEADING_CLASS
 } from "../../components/layout/Heading.ts";
+import { PageBody } from "../../components/layout/PageBody.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
@@ -481,8 +482,8 @@ export function PromptDetailView({
   const isRole = prompt.kind === "role" || prompt.path.includes("roles");
 
   return React.createElement(
-    "article",
-    { className: "flex flex-col gap-5", "data-feature": "prompt-detail" },
+    PageBody,
+    { feature: "prompt-detail", as: "article" },
     React.createElement(
       "header",
       {

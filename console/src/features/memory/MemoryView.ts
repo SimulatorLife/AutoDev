@@ -11,6 +11,7 @@ import { StatCard } from "../../components/cards/StatCard.ts";
 import { FilterBar } from "../../components/filters/FilterBar.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
+import { PageBody } from "../../components/layout/PageBody.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
@@ -93,14 +94,15 @@ export function MemoryView({
   };
 
   return React.createElement(
-    "div",
+    PageBody,
     {
-      className: "flex flex-col gap-8",
-      "data-feature": "memory",
-      "data-memory-experiences-observed":
-        totalExperiences === null ? "false" : "true",
-      "data-memory-session-cohorts-observed":
-        sessionCohorts === null ? "false" : "true"
+      feature: "memory",
+      attributes: {
+        "data-memory-experiences-observed":
+          totalExperiences === null ? "false" : "true",
+        "data-memory-session-cohorts-observed":
+          sessionCohorts === null ? "false" : "true"
+      }
     },
     // Scope controls. The resource title and its summary live in the shared
     // shell header, so this row carries controls only.
