@@ -15,6 +15,7 @@ import type {
   MemorySessionOutcomeCohortPage,
   MemoryStatus
 } from "../memory/types.ts";
+import type { SandboxMode } from "../permissions/types.ts";
 import type {
   OperationHistoryEntry,
   ReconciliationDiff,
@@ -252,7 +253,7 @@ export interface ControlApiPermissionsResponse {
   readonly readOnly: boolean;
   readonly policy: {
     readonly approvalPolicy: "never" | "always" | "on-demand";
-    readonly sandboxMode: "read-only" | "workspace-write" | "unrestricted";
+    readonly sandboxMode: SandboxMode;
     readonly approvalsReviewer: string;
     readonly networkAccess: boolean;
     readonly webSearch: boolean;

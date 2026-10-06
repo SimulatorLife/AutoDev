@@ -9,8 +9,10 @@ import {
   isCanonicalNavSection,
   isOpenTelemetrySpanId,
   isOpenTelemetryTraceId,
+  isSandboxMode,
   isSkillEligibleForRole,
   navOrderOf,
+  SANDBOX_MODES,
   validateAgentDefinition
 } from "../src/index.ts";
 
@@ -127,4 +129,47 @@ test("OpenTelemetry trace and span identifiers require valid non-zero W3C ids", 
   assert.equal(isOpenTelemetrySpanId("0".repeat(16)), false);
   assert.equal(isOpenTelemetrySpanId("offline_012345"), false);
   assert.equal(isOpenTelemetrySpanId(null), false);
+});
+
+test("SANDBOX_MODES is the one place the sandbox vocabulary is written", () => {
+  // `SandboxMode` is derived from this list, so the guard accepts exactly what
+  // the type admits. A consumer that validates with `isSandboxMode` therefore
+  // cannot end up narrower than the type (rejecting a mode it should allow) or
+  // wider (accepting one it should not) -- which is what a hand-written
+  // `=== "read-only" || ...` chain in a consumer allowed to happen silently.
+  assert.ok(SANDBOX_MODES.length > 0, "the vocabulary must not be empty");
+  assert.equal(
+    new Set(SANDBOX_MODES).size,
+    SANDBOX_MODES.length,
+    "the vocabulary must not repeat a mode"
+  );
+  for (const mode of SANDBOX_MODES) {
+    assert.equal(isSandboxMode(mode), true, `${mode} must validate`);
+  }
+});
+
+test("isSandboxMode fails fast on anything outside the vocabulary", () => {
+  // Near-misses matter more than nonsense here: a drifted mode reaching the UI
+  // renders as a confident novel policy name rather than an error.
+  for (const invalid of [
+    "",
+    "Read-Only",
+    "READ-ONLY",
+    "workspace_write",
+    "workspaceWrite",
+    "workspace-write ",
+    "anything-goes",
+    null,
+    undefined,
+    0,
+    false,
+    {},
+    ["read-only"]
+  ]) {
+    assert.equal(
+      isSandboxMode(invalid),
+      false,
+      `${JSON.stringify(invalid) ?? String(invalid)} must be rejected`
+    );
+  }
 });

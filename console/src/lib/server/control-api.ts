@@ -52,6 +52,7 @@ import {
   type ControlApiToolsResponse,
   type ControlApiWorkspacesResponse,
   type ConvergenceStatus,
+  isSandboxMode,
   LOCAL_CONTROL_API_ACTOR,
   type ProviderRole,
   type ReconciliationStatus
@@ -1428,7 +1429,8 @@ export async function fetchHooks(
  *
  * Both closed vocabularies are checked exactly rather than as plain strings,
  * because a drifted value has to fail closed rather than render as a novel
- * policy name.
+ * policy name. `sandboxMode` is checked with Core's `isSandboxMode`, so the
+ * accepted set is the one the type is derived from and the two cannot drift.
  */
 function isPermissionsPolicy(value: unknown): boolean {
   return (
@@ -1436,9 +1438,7 @@ function isPermissionsPolicy(value: unknown): boolean {
     (value.approvalPolicy === "never" ||
       value.approvalPolicy === "always" ||
       value.approvalPolicy === "on-demand") &&
-    (value.sandboxMode === "read-only" ||
-      value.sandboxMode === "workspace-write" ||
-      value.sandboxMode === "unrestricted") &&
+    isSandboxMode(value.sandboxMode) &&
     typeof value.approvalsReviewer === "string" &&
     typeof value.networkAccess === "boolean" &&
     typeof value.webSearch === "boolean" &&

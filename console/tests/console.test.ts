@@ -26,6 +26,7 @@ import {
   type McpServerResource,
   type MemoryRecord,
   type MemorySessionOutcomeCohortPage,
+  SANDBOX_MODES,
   type ToolCatalogItem,
   type UsageMetricsData
 } from "@simulatorlife/autodev-core";
@@ -7695,6 +7696,36 @@ test("a catalog row missing the fields its view reads fails closed instead of th
       driftedResult.kind,
       "invalid-response",
       `a drifted policy vocabulary (${JSON.stringify(drifted)}) must fail closed`
+    );
+  }
+
+  // Every mode Core declares must reach the view, driven from the shared list
+  // rather than restated here. That is what stops the Console from silently
+  // narrowing: a mode added to `SANDBOX_MODES` is accepted on the day it lands,
+  // and one that the Console rejects shows up as this test failing rather than
+  // as a blank policy card in production.
+  for (const mode of SANDBOX_MODES) {
+    const accepted = await fetchPermissions(
+      config,
+      serve(permissionsEnvelope({ ...policyRow, sandboxMode: mode }))
+    );
+    assert.equal(
+      accepted.kind,
+      "ok",
+      `the supported sandbox mode "${mode}" must be accepted`
+    );
+  }
+  // A near-miss of a real mode is the case that used to render as a confident
+  // novel policy name: same letters, wrong case.
+  for (const nearMiss of ["Read-Only", "workspace_write", "workspace-write "]) {
+    const rejected = await fetchPermissions(
+      config,
+      serve(permissionsEnvelope({ ...policyRow, sandboxMode: nearMiss }))
+    );
+    assert.equal(
+      rejected.kind,
+      "invalid-response",
+      `the near-miss "${nearMiss}" must fail closed`
     );
   }
 
