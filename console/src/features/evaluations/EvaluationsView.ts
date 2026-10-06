@@ -300,28 +300,48 @@ export function EvaluationsView({
     {
       id: "agentRole",
       header: "Target Role",
-      weight: 95,
+      // Widths here are measured against live ClickHouse rows, not fixtures.
+      // Against real values the four longest roles need 130px of text each --
+      // `docs-researcher` and `browser-tester` both exceed the share they used
+      // to get. This one is the cheapest to leave short, because a cut role
+      // still reads as its prefix and the cell keeps its full value on hover,
+      // so it absorbs what the two columns below cannot.
+      weight: 100,
       cell: (ev) =>
         React.createElement("span", { className: MONO_ID_CLASS }, ev.agentRole)
     },
     {
       id: "model",
       header: "Model",
+      // `gemini-3.8-flash-high` is 182px of monospace plus 32px of cell padding.
+      // Cut mid-identifier it stops naming a model at all, which is worse than
+      // a role losing its last characters: a role's prefix still identifies it,
+      // `gemini-3.8-f` does not identify a model.
+      weight: 165,
       cell: (ev) =>
         React.createElement("span", { className: MONO_VALUE_CLASS }, ev.model)
     },
     {
       id: "metrics",
       header: "Metrics",
-      // Gives the share the Outcome and Trace pills need. Every column on this
-      // table was left at the 100-unit default, which is wide enough for a
-      // header and too narrow for the content — and a `Tag` here is 130px of
-      // content, so it is the cheapest column to narrow.
-      weight: 92,
+      // The column that has to be widest, and the reason is not taste. Every
+      // metric chip is `name: value · verdict` -- the verdict is the row's
+      // per-metric claim, which the Outcome column does *not* carry (that one
+      // is the evaluation's own result), and it is also the chip's accessible
+      // form of its colour, so it cannot be dropped for width.
+      //
+      // What was wrong was the container: `flex gap-2` cannot wrap, so two
+      // chips shared one line and each was clipped to its own box. A row
+      // rendered `to…` and `to…`, which are not two readings of anything --
+      // they are the same reading twice. Wrapping between items is what the
+      // target state requires of discrete content, and it is also what makes
+      // the column's width legible, since the budget now has to fit one chip
+      // rather than half of two.
+      weight: 195,
       cell: (ev) =>
         React.createElement(
           "div",
-          { className: "flex gap-2" },
+          { className: "flex flex-wrap gap-2" },
           ev.metrics.map((m) => {
             const verdict =
               m.pass === null
@@ -346,10 +366,11 @@ export function EvaluationsView({
     {
       id: "passed",
       header: "Outcome",
-      // This table's declared weights total 600, which is under the 864px cap, so
-      // the floor is the sum itself and a weight *is* the column's pixel width.
-      // "Not observed" is a 112px pill and needs 144px.
-      weight: 148,
+      // "Not observed" is a 112px pill, and this is the second-cheapest thing
+      // on the table to shorten: cut, it still reads `Not obser…`, which says
+      // the one thing an absent verdict must say. So it yields width to the
+      // columns whose cuts would cost an identity.
+      weight: 115,
       cell: (ev) =>
         React.createElement(StatusBadge, {
           status:
@@ -369,16 +390,21 @@ export function EvaluationsView({
     {
       id: "trace",
       header: "Trace",
-      // "Invalid reference" is the longest content on the table at a 131px pill,
-      // so it needs the largest width of the six. Raising these two takes the
-      // declared sum to 702, which is still under the cap, so the floor moves
-      // with them rather than squeezing every other column back down.
-      weight: 167,
+      // "Invalid reference" is a 131px pill. It is longer than this column now
+      // gets and cut, it still reads `Invalid refer…` -- a trace that cannot be
+      // resolved is the fact the column exists to report, and its first word
+      // survives the cut.
+      weight: 125,
       cell: (ev) => traceReference(ev, promptFilter)
     },
     {
       id: "timestamp",
       header: "Run Time",
+      // `2026-10-05T09:48:00.000Z` is 158px of 12px text. A run time that loses
+      // its clock time has lost most of what orders a history table, so this is
+      // the last column to give width, and it still carries its full value on
+      // hover where the viewport is too narrow to show it.
+      weight: 140,
       cell: (ev) =>
         React.createElement(
           "span",

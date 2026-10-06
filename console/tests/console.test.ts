@@ -4701,6 +4701,41 @@ test("EvaluationsView renders metrics, pass rate, and outcome badges when evalua
   assert.match(markup, /Passed/);
 });
 
+test("the metric chips wrap between items instead of clipping each to its prefix", () => {
+  // Live rows carry two metrics whose names share a prefix -- `tool_calls` and
+  // `tool_failures`. In a `flex` row that cannot wrap, both chips were clipped
+  // inside their own boxes and rendered as `to…` and `to…`: two readings that
+  // were the same reading twice, which is worse than either one being cut.
+  //
+  // Wrapping is the fix the target state asks for directly ("discrete cell
+  // content ... wraps between items, never mid-token"), and it is also what
+  // makes the column's width budget legible, since the budget now has to fit
+  // one chip rather than half of two.
+  const markup = renderToStaticMarkup(
+    React.createElement(EvaluationsView, {
+      evaluations: [
+        {
+          id: "eval-two-metrics",
+          agentRole: "orchestrator",
+          model: "gemini-3.8-flash-high",
+          metrics: [
+            { name: "tool_calls", value: 14, pass: true },
+            { name: "tool_failures", value: 4, pass: false }
+          ],
+          passed: false,
+          timestamp: "2026-10-05T09:48:00.000Z"
+        }
+      ]
+    })
+  );
+
+  assert.match(markup, /flex flex-wrap/, "metric chips must be able to wrap");
+  // Each metric keeps its own full text, so a clipped chip is still told apart
+  // from its neighbour by the name rather than by position.
+  assert.match(markup, /tool_calls: 14 · Passed/);
+  assert.match(markup, /tool_failures: 4 · Failed/);
+});
+
 const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
   schema: "autodev-control-providers-v2",
   orchestratorTier: "orchestrator",
