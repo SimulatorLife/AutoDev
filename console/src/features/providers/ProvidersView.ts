@@ -99,6 +99,12 @@ function providerColumns(
       header: "Role enablement",
       weight: 183,
       align: "tokens",
+      // Each row is a flex line holding a fixed 80px role label and a
+      // `whitespace-nowrap` toggle badge, so it has a minimum intrinsic width
+      // that no amount of wrapping inside the cell can reduce. `flex-wrap` on
+      // the line itself is what keeps that minimum honest: when the column
+      // cannot afford it, the badge drops to a second line instead of
+      // painting over the Health column beside it.
       cell: (provider) =>
         React.createElement(
           "ul",
@@ -114,7 +120,10 @@ function providerColumns(
           ).map(([role, label]) =>
             React.createElement(
               "li",
-              { key: role, className: "flex items-center gap-2" },
+              {
+                key: role,
+                className: "flex min-w-0 flex-wrap items-center gap-2"
+              },
               React.createElement(
                 "span",
                 // A fixed literal in a `w-20` box. `truncate` here was

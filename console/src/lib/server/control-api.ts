@@ -691,9 +691,103 @@ export function patchModel(
  * An empty list is a claim — "there is no memory" — so a response the Console
  * cannot read has to fail closed into an explicit unavailable state instead.
  */
+/**
+ * Narrows one memory scope.
+ *
+ * `MemoryScope` is a union discriminated on `kind`, and `formatScopeString`
+ * switches on it and then reads that variant's own field -- so checking only
+ * that `kind` is a string would let `kind: "workspace"` with no `workspaceId`
+ * reach the switch and render `undefined` as a scope. Each arm is checked
+ * against the members its own arm declares, and an unknown `kind` fails rather
+ * than falling through to the view's `default`.
+ */
+function isMemoryScope(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  switch (value.kind) {
+    case "global": {
+      return true;
+    }
+    case "workspace": {
+      return typeof value.workspaceId === "string";
+    }
+    case "repository": {
+      return (
+        typeof value.workspaceId === "string" &&
+        typeof value.repositoryId === "string"
+      );
+    }
+    case "role": {
+      return (
+        typeof value.workspaceId === "string" && typeof value.role === "string"
+      );
+    }
+    case "task": {
+      return (
+        typeof value.workspaceId === "string" &&
+        typeof value.taskId === "string" &&
+        typeof value.runId === "string"
+      );
+    }
+    case "agent": {
+      return (
+        typeof value.workspaceId === "string" &&
+        typeof value.taskId === "string" &&
+        typeof value.runId === "string" &&
+        typeof value.agentId === "string"
+      );
+    }
+    default: {
+      return false;
+    }
+  }
+}
+
+/**
+ * Narrows one durable record.
+ *
+ * The paged guard checked the envelope and never the items, so a record missing
+ * `scope` arrived as `ok` and `formatScopeString` threw on `scope.kind` --
+ * a 500 with no `<h1>`. `claim` and `validity.state` are checked for the same
+ * reason: both are rendered, and a missing `claim` would render as an empty
+ * durable claim, which is the synthesis the target state forbids.
+ */
+function isMemoryRecordRow(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.kind === "string" &&
+    isMemoryScope(value.scope) &&
+    typeof value.claim === "string" &&
+    typeof value.status === "string" &&
+    isRecord(value.provenance) &&
+    isRecord(value.validity) &&
+    typeof value.createdAt === "string" &&
+    typeof value.updatedAt === "string"
+  );
+}
+
+/**
+ * Narrows one raw experience envelope. Same reasoning as the record: the view
+ * reads `scope`, `agentRole` and the evidence lists off every row, and each is
+ * an object read rather than a scalar comparison.
+ */
+function isMemoryExperienceRow(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.workspaceId === "string" &&
+    isMemoryScope(value.scope) &&
+    typeof value.taskId === "string" &&
+    typeof value.runId === "string" &&
+    typeof value.agentId === "string" &&
+    Array.isArray(value.evidence)
+  );
+}
+
 function isMemoryPageResponse<TResponse extends { readonly schema: string }>(
   value: unknown,
-  schema: TResponse["schema"]
+  schema: TResponse["schema"],
+  isItem: (item: unknown) => boolean = () => true
 ): value is TResponse {
   return (
     isRecord(value) &&
@@ -701,7 +795,11 @@ function isMemoryPageResponse<TResponse extends { readonly schema: string }>(
     Array.isArray(value.items) &&
     typeof value.total === "number" &&
     typeof value.limit === "number" &&
-    typeof value.offset === "number"
+    typeof value.offset === "number" &&
+    // Every item is checked, not just the envelope. A paged collection whose
+    // rows are unreadable is not an empty collection; it is an unreadable
+    // response, and rendering it as "no records in scope" would be a claim.
+    value.items.every(isItem)
   );
 }
 
@@ -938,6 +1036,28 @@ function isControlApiEvaluationsResponse(
 }
 
 /**
+ * Narrows the bounded run statistics.
+ *
+ * `(stats === null || isRecord(stats))` let an *empty* record through, and an
+ * empty record is not a neutral reading -- the view does
+ * `Math.round(stats.successRate * 100)`, so a missing rate renders `NaN%`, and
+ * `stats.totalRuns` draws an empty stat card. Both closed-number members and
+ * the nullable rate are checked, so a drifted projection fails closed instead
+ * of publishing arithmetic on `undefined`.
+ */
+function isGithubRunStats(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.totalRuns === "number" &&
+    typeof value.successfulRuns === "number" &&
+    typeof value.failedRuns === "number" &&
+    typeof value.inProgressRuns === "number" &&
+    typeof value.cancelledRuns === "number" &&
+    (value.successRate === null || typeof value.successRate === "number")
+  );
+}
+
+/**
  * Narrows one workflow definition row. The catalog column and the scheduled
  * count are both derived from these lists, so a row without them is not a row
  * the view can render -- `workflows.filter((w) => w.schedules.length > 0)`
@@ -972,7 +1092,7 @@ function isControlApiGithubResponse(
       value.runtimeStatus === "invalid") &&
     isNullableString(value.runtimeMessage) &&
     isNullableString(value.repository) &&
-    (value.stats === null || isRecord(value.stats)) &&
+    (value.stats === null || isGithubRunStats(value.stats)) &&
     Array.isArray(value.workflows) &&
     value.workflows.every(isGithubWorkflowRow) &&
     Array.isArray(value.recentRuns)
@@ -1170,6 +1290,37 @@ export async function fetchHooks(
     : invalidCatalogResponse("Hooks", "autodev-control-hooks-v1");
 }
 
+/**
+ * Narrows the permissions policy.
+ *
+ * `isRecord(value.policy)` was the whole check, and a policy with no members at
+ * all passed it. That produced four wrong cards on one row: `approvalPolicy`
+ * rendered as an empty box -- React draws nothing for `undefined`, so the card
+ * was simply blank -- while `networkAccess ? "Allowed" : "Blocked"` and
+ * `webSearch ? "Enabled" : "Disabled"` read `undefined` as `false` and stated
+ * two confident claims, and `sandboxLabel(undefined)` produced a third. An
+ * unreadable policy must not be able to say "Blocked".
+ *
+ * Both closed vocabularies are checked exactly rather than as plain strings,
+ * because a drifted value has to fail closed rather than render as a novel
+ * policy name.
+ */
+function isPermissionsPolicy(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    (value.approvalPolicy === "never" ||
+      value.approvalPolicy === "always" ||
+      value.approvalPolicy === "on-demand") &&
+    (value.sandboxMode === "read-only" ||
+      value.sandboxMode === "workspace-write" ||
+      value.sandboxMode === "unrestricted") &&
+    typeof value.approvalsReviewer === "string" &&
+    typeof value.networkAccess === "boolean" &&
+    typeof value.webSearch === "boolean" &&
+    typeof value.defaultToolsApprovalMode === "string"
+  );
+}
+
 function isControlApiPermissionsResponse(
   value: unknown
 ): value is ControlApiPermissionsResponse {
@@ -1178,7 +1329,7 @@ function isControlApiPermissionsResponse(
     value.schema !== "autodev-control-permissions-v1" ||
     typeof value.source !== "string" ||
     value.readOnly !== true ||
-    !isRecord(value.policy) ||
+    !isPermissionsPolicy(value.policy) ||
     !isRecord(value.rolePermissions)
   ) {
     return false;
@@ -1604,7 +1755,8 @@ export async function fetchMemoryRecords(
   if (result.kind !== "ok") return result;
   return isMemoryPageResponse<ControlApiMemoryRecordsResponse>(
     result.data,
-    "autodev-memory-records-v1"
+    "autodev-memory-records-v1",
+    isMemoryRecordRow
   )
     ? { kind: "ok", data: result.data }
     : invalidMemoryPageResponse("Records", "autodev-memory-records-v1");
@@ -1680,7 +1832,8 @@ export async function fetchMemoryExperiences(
   if (result.kind !== "ok") return result;
   return isMemoryPageResponse<ControlApiMemoryExperiencesResponse>(
     result.data,
-    "autodev-memory-experiences-v1"
+    "autodev-memory-experiences-v1",
+    isMemoryExperienceRow
   )
     ? { kind: "ok", data: result.data }
     : invalidMemoryPageResponse("Experiences", "autodev-memory-experiences-v1");

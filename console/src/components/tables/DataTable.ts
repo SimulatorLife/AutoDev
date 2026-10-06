@@ -11,8 +11,11 @@ import { EmptyState } from "../status/EmptyState.ts";
  *   owns its own recovery -- a chip or badge titles itself, and a link's
  *   destination carries the value.
  * - `tokens`: discrete items (chips, links, badges) that wrap onto new lines
- *   between items. Individual tokens are never split mid-token, so a model id
- *   or environment variable stays readable.
+ *   between items, and which claim a larger default width share so a list of
+ *   chips does not degrade to one chip per line. A token with no break
+ *   opportunity of its own -- a model id, a repository path -- breaks onto a
+ *   second line rather than being cut short, because these columns exist to
+ *   keep identifiers readable.
  * - `prose`: flowing sentences that wrap on word boundaries.
  */
 export type ColumnAlign = "truncate" | "tokens" | "prose";
@@ -107,7 +110,23 @@ function tableMinWidthPx(columns: readonly ColumnDef<never>[]): number {
 
 function cellClassName(column: ColumnDef<never>): string {
   const align = column.align ?? "truncate";
-  if (align === "tokens") return "whitespace-normal break-normal";
+  // `tokens` and `prose` both wrap; they differ in what they are for, not in
+  // how they wrap.
+  //
+  // `tokens` was `break-normal` -- "wrap between items, never split a token" --
+  // which is right until a token has nowhere to break. These columns hold
+  // identifiers and repository paths, which have no spaces at all, so
+  // `break-normal` did not truncate them either: it let them paint straight
+  // out of the cell and across whatever column sat next to it. Measured at
+  // 390px, the GitHub workflow path overran its own column by 511px and ran
+  // underneath the trigger chips.
+  //
+  // `break-words` is the semantic that was actually wanted: a list of chips
+  // still wraps between chips, and only a token too wide for the cell on its
+  // own -- a path, a hash, a long identifier -- breaks mid-token onto a second
+  // line, which is legible and stays inside the column. A header does not get
+  // this: a header is a label, and splitting a label reads as a fault.
+  if (align === "tokens") return "whitespace-normal break-words";
   if (align === "prose") return "whitespace-normal break-words";
   return "truncate";
 }

@@ -140,6 +140,7 @@ import {
   fetchMemoryRecord,
   fetchMemoryRecords,
   fetchModels,
+  fetchPermissions,
   fetchPromptDetail,
   fetchPrompts,
   fetchPromptVersion,
@@ -1315,10 +1316,13 @@ test("DataTable renders table with columns and data", () => {
   assert.ok(markup.includes("Beta"));
   assert.ok(markup.includes("<table"));
   assert.match(markup, /<td[^>]*class="[^"]*truncate[^"]*"[^>]*>1<\/td>/);
-  // A `tokens` column wraps between items and never splits a token, and it
-  // claims a larger share of the width than a plain label so the browser
-  // cannot collapse it to one chip per line.
-  assert.match(markup, /class="[^"]*whitespace-normal break-normal[^"]*"/);
+  // A `tokens` column wraps between items, and claims a larger share of the
+  // width than a plain label so the browser cannot collapse it to one chip per
+  // line. It breaks a token only when the token cannot fit on a line at all:
+  // these columns hold identifiers and paths, which have no spaces, and
+  // `break-normal` did not truncate them either -- it let them paint out of the
+  // cell and across the next column.
+  assert.match(markup, /class="[^"]*whitespace-normal break-words[^"]*"/);
   // Column widths are relative shares resolved to percentages, so a table
   // fills its container and a too-wide column set shrinks proportionally
   // instead of forcing a horizontal scroll.
@@ -4824,6 +4828,100 @@ test("Catalog collections fail closed on unreadable responses", async () => {
   );
 });
 
+test("a paged Memory collection fails closed on an unreadable row", async () => {
+  // The paged guard checked the envelope and never the items, so a record with
+  // no `scope` arrived as `ok` and `formatScopeString` threw on `scope.kind` --
+  // a 500 with no `<h1>` on /memory. `MemoryScope` is a union discriminated on
+  // `kind`, so each arm has to carry the members its own arm declares;
+  // checking only that `kind` is a string lets `kind: "workspace"` with no
+  // `workspaceId` render `undefined` as a scope.
+  const config = { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" };
+  const serve = (body: unknown) => ({
+    fetchImpl: async () => Response.json(body)
+  });
+  const workspaceId = "SimulatorLife/AutoDev";
+
+  const record = {
+    id: "r1",
+    kind: "claim",
+    scope: { kind: "workspace", workspaceId },
+    claim: "A durable claim.",
+    status: "active",
+    provenance: {
+      experienceIds: [],
+      evidence: [],
+      createdBy: "x",
+      createdAt: "t"
+    },
+    validity: { state: "verified", evidence: [] },
+    createdAt: "t",
+    updatedAt: "t"
+  };
+  const page = (items: unknown[]) => ({
+    schema: "autodev-memory-records-v1",
+    items,
+    total: items.length,
+    limit: 25,
+    offset: 0
+  });
+  const list = (body: unknown) =>
+    fetchMemoryRecords({ workspaceId }, config, serve(body));
+
+  assert.equal((await list(page([record]))).kind, "ok");
+  for (const dropped of [
+    "kind",
+    "scope",
+    "claim",
+    "status",
+    "provenance",
+    "validity",
+    "createdAt",
+    "updatedAt"
+  ]) {
+    const incomplete = await list(page([{ ...record, [dropped]: undefined }]));
+    assert.equal(
+      incomplete.kind,
+      "invalid-response",
+      `a record without "${dropped}" must not reach the view`
+    );
+  }
+
+  // Each scope arm carries its own members.
+  for (const badScope of [
+    { kind: "workspace" },
+    { kind: "repository", workspaceId },
+    { kind: "role", workspaceId },
+    { kind: "task", workspaceId, taskId: "t1" },
+    { kind: "agent", workspaceId, taskId: "t1", runId: "r" },
+    { kind: "somewhere-new" }
+  ]) {
+    const result = await list(page([{ ...record, scope: badScope }]));
+    assert.equal(
+      result.kind,
+      "invalid-response",
+      `scope ${JSON.stringify(badScope)} must fail closed`
+    );
+  }
+  for (const goodScope of [
+    { kind: "global" },
+    { kind: "workspace", workspaceId },
+    { kind: "repository", workspaceId, repositoryId: "AutoDev" },
+    { kind: "role", workspaceId, role: "orchestrator" },
+    { kind: "task", workspaceId, taskId: "t1", runId: "r1" },
+    { kind: "agent", workspaceId, taskId: "t1", runId: "r1", agentId: "a1" }
+  ]) {
+    const result = await list(page([{ ...record, scope: goodScope }]));
+    assert.equal(
+      result.kind,
+      "ok",
+      `scope ${JSON.stringify(goodScope)} must be accepted`
+    );
+  }
+
+  // An empty page is still an observed empty state.
+  assert.equal((await list(page([]))).kind, "ok");
+});
+
 test("Memory detail and the workspace catalog fail closed on unreadable responses", async () => {
   const config = { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" };
   const serve = (body: unknown) => ({
@@ -6637,6 +6735,66 @@ test("a catalog row missing the fields its view reads fails closed instead of th
   );
   assert.equal(halfCooldown.kind, "invalid-response");
 
+  // --- Permissions: the whole policy was checked only as "a record", so one
+  // --- with no members passed. That produced four wrong cards in one row --
+  // --- a blank Approval Policy card (React draws nothing for `undefined`),
+  // --- and "Blocked"/"Disabled" read out of two falsy undefineds.
+  const policyRow = {
+    approvalPolicy: "on-demand",
+    sandboxMode: "workspace-write",
+    approvalsReviewer: "user",
+    networkAccess: true,
+    webSearch: true,
+    defaultToolsApprovalMode: "approve"
+  };
+  const permissionsEnvelope = (policy: unknown) => ({
+    schema: "autodev-control-permissions-v1",
+    source: ".rulesync/permissions",
+    readOnly: true,
+    policy,
+    rolePermissions: {}
+  });
+  assert.equal(
+    (await fetchPermissions(config, serve(permissionsEnvelope(policyRow))))
+      .kind,
+    "ok",
+    "a complete policy is accepted"
+  );
+  for (const dropped of [
+    "approvalPolicy",
+    "sandboxMode",
+    "approvalsReviewer",
+    "networkAccess",
+    "webSearch",
+    "defaultToolsApprovalMode"
+  ]) {
+    const incomplete = await fetchPermissions(
+      config,
+      serve(permissionsEnvelope({ ...policyRow, [dropped]: undefined }))
+    );
+    assert.equal(
+      incomplete.kind,
+      "invalid-response",
+      `a policy without "${dropped}" must not reach the view`
+    );
+  }
+  // Both vocabularies are closed, and a drifted value must fail closed rather
+  // than render as a novel policy name.
+  for (const drifted of [
+    { approvalPolicy: "sometimes" },
+    { sandboxMode: "anything-goes" }
+  ]) {
+    const driftedResult = await fetchPermissions(
+      config,
+      serve(permissionsEnvelope({ ...policyRow, ...drifted }))
+    );
+    assert.equal(
+      driftedResult.kind,
+      "invalid-response",
+      `a drifted policy vocabulary (${JSON.stringify(drifted)}) must fail closed`
+    );
+  }
+
   // --- Tools: role exposure drives both the role filter and the role chips,
   // --- and `availability` is what separates "Configured" from "Not observed".
   const toolRow = {
@@ -6703,6 +6861,62 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     serve(githubEnvelope([workflowRow]))
   );
   assert.equal(githubAccept.kind, "ok");
+  // Stats were checked only as "a record", so an *empty* one reached the view:
+  // `Math.round(stats.successRate * 100)` published `NaN%` and `totalRuns` drew
+  // an empty stat card. An unreadable projection must fail closed instead.
+  const statsRow = {
+    totalRuns: 12,
+    successfulRuns: 10,
+    failedRuns: 1,
+    inProgressRuns: 1,
+    cancelledRuns: 0,
+    successRate: 0.83
+  };
+  assert.equal(
+    (
+      await fetchGithubWorkflows(
+        config,
+        serve({ ...githubEnvelope([workflowRow]), stats: statsRow })
+      )
+    ).kind,
+    "ok",
+    "a complete stats projection is accepted"
+  );
+  for (const dropped of [
+    "totalRuns",
+    "successfulRuns",
+    "failedRuns",
+    "inProgressRuns",
+    "cancelledRuns",
+    "successRate"
+  ]) {
+    const incomplete = await fetchGithubWorkflows(
+      config,
+      serve({
+        ...githubEnvelope([workflowRow]),
+        stats: { ...statsRow, [dropped]: undefined }
+      })
+    );
+    assert.equal(
+      incomplete.kind,
+      "invalid-response",
+      `stats without "${dropped}" must not reach the view`
+    );
+  }
+  // A null rate is an observed absence, not a missing one.
+  assert.equal(
+    (
+      await fetchGithubWorkflows(
+        config,
+        serve({
+          ...githubEnvelope([workflowRow]),
+          stats: { ...statsRow, successRate: null }
+        })
+      )
+    ).kind,
+    "ok",
+    "a null success rate is a real reading"
+  );
   for (const dropped of ["name", "path", "events", "schedules"]) {
     const incomplete = await fetchGithubWorkflows(
       config,

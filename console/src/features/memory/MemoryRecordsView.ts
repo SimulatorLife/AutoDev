@@ -157,6 +157,9 @@ export function MemoryRecordsView({
     {
       id: "claim",
       header: "Claim Summary",
+      // Wide enough for "Summary", the longest word in the header. At 160 it
+      // had 68px of content against a 69px word and split mid-word.
+      weight: 172,
       cell: (record) =>
         React.createElement(
           "div",
