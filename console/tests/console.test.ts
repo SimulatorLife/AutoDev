@@ -89,6 +89,8 @@ import {
   fetchControlApi,
   fetchEvaluations,
   fetchGithubWorkflows,
+  fetchMemoryCohorts,
+  fetchMemoryExperiences,
   fetchMemoryRecords,
   fetchModels,
   fetchPromptDetail,
@@ -4006,6 +4008,70 @@ test("fetchMemoryRecords issues authenticated GET to /control/memory/records wit
     assert.equal(result.data.schema, "autodev-memory-records-v1");
     assert.deepEqual(result.data.items, []);
   }
+});
+
+test("Memory collection tabs fail closed on an unreadable response", async () => {
+  const config = { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" };
+  const scope = {
+    workspaceId: "SimulatorLife/AutoDev",
+    repositoryId: "SimulatorLife/AutoDev",
+    occurredFrom: "2026-10-01T00:00:00.000Z",
+    occurredUntil: "2026-10-06T00:00:00.000Z"
+  };
+  const serve = (body: unknown) => ({
+    fetchImpl: async () => Response.json(body)
+  });
+
+  // An unreadable page must not render as an empty list: "no records" is a
+  // claim about the store, and a shape the Console cannot read supports none.
+  for (const broken of [
+    { schema: "autodev-memory-records-v0", items: [], total: 0 },
+    { schema: "autodev-memory-records-v1", total: 0 },
+    { schema: "autodev-memory-records-v1", items: [], total: "0" },
+    { schema: "autodev-memory-records-v1", items: {} },
+    null
+  ]) {
+    const records = await fetchMemoryRecords(
+      { workspaceId: scope.workspaceId },
+      config,
+      serve(broken)
+    );
+    assert.equal(records.kind, "invalid-response", JSON.stringify(broken));
+    const experiences = await fetchMemoryExperiences(
+      { workspaceId: scope.workspaceId },
+      config,
+      serve(broken)
+    );
+    assert.equal(experiences.kind, "invalid-response", JSON.stringify(broken));
+  }
+
+  // The cohort page is not paged; missing cells or counts must fail closed
+  // rather than collapse into an empty outcome table.
+  for (const broken of [
+    { schema: "autodev-memory-session-outcome-cohorts-v1", cells: [] },
+    {
+      schema: "autodev-memory-session-outcome-cohorts-v1",
+      cells: [],
+      sessionCount: 0
+    }
+  ]) {
+    const cohorts = await fetchMemoryCohorts(scope, config, serve(broken));
+    assert.equal(cohorts.kind, "invalid-response", JSON.stringify(broken));
+  }
+
+  // A well-formed empty page is still a legitimate observed empty state.
+  const empty = await fetchMemoryRecords(
+    { workspaceId: scope.workspaceId },
+    config,
+    serve({
+      schema: "autodev-memory-records-v1",
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0
+    })
+  );
+  assert.equal(empty.kind, "ok");
 });
 
 test("ProvidersView puts each provider's role toggles in its own row", () => {

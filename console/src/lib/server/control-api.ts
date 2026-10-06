@@ -553,7 +553,59 @@ export function patchModel(
   );
 }
 
-export function fetchMcps(
+/**
+ * Narrows the paged Memory envelope every collection tab reads.
+ *
+ * These responses were returned unvalidated, so a Runtime whose page shape
+ * drifted produced `items: undefined`, and the tab rendered an empty list.
+ * An empty list is a claim — "there is no memory" — so a response the Console
+ * cannot read has to fail closed into an explicit unavailable state instead.
+ */
+function isMemoryPageResponse<TResponse extends { readonly schema: string }>(
+  value: unknown,
+  schema: TResponse["schema"]
+): value is TResponse {
+  return (
+    isRecord(value) &&
+    value.schema === schema &&
+    Array.isArray(value.items) &&
+    typeof value.total === "number" &&
+    typeof value.limit === "number" &&
+    typeof value.offset === "number"
+  );
+}
+
+/**
+ * Narrows the session outcome cohort page. It is not a paged envelope: it
+ * reports cells plus explicit reported/unreported counts, and an unreadable
+ * response must not collapse into an empty cohort table that reads as
+ * "no outcomes observed".
+ */
+function isSessionOutcomeCohortPage(
+  value: unknown
+): value is ControlApiMemoryCohortsResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-memory-session-outcome-cohorts-v1" &&
+    Array.isArray(value.cells) &&
+    typeof value.sessionCount === "number" &&
+    typeof value.reportedSessionCount === "number" &&
+    typeof value.unreportedSessionCount === "number"
+  );
+}
+
+function invalidMemoryPageResponse(
+  what: string,
+  schema: string
+): ControlApiResult<never> {
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_memory_response",
+    message: `AutoDev Control API returned an incompatible ${what} response; the Console requires the ${schema} contract.`
+  };
+}
+
+export async function fetchMcps(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiMcpsResponse>> {
@@ -1069,7 +1121,7 @@ export function fetchEvaluations(
   );
 }
 
-export function fetchMemoryRecords(
+export async function fetchMemoryRecords(
   params: {
     readonly workspaceId: string;
     readonly repositoryId?: string;
@@ -1091,11 +1143,14 @@ export function fetchMemoryRecords(
   if (params.limit !== undefined) search.set("limit", String(params.limit));
   if (params.offset !== undefined) search.set("offset", String(params.offset));
   const path = `${CONTROL_API_PATHS.memoryRecords}?${search.toString()}`;
-  return fetchControlApi<ControlApiMemoryRecordsResponse>(
-    path,
-    config,
-    options
-  );
+  const result = await fetchControlApi<unknown>(path, config, options);
+  if (result.kind !== "ok") return result;
+  return isMemoryPageResponse<ControlApiMemoryRecordsResponse>(
+    result.data,
+    "autodev-memory-records-v1"
+  )
+    ? { kind: "ok", data: result.data }
+    : invalidMemoryPageResponse("Records", "autodev-memory-records-v1");
 }
 
 export function fetchMemoryRecord(
@@ -1128,7 +1183,7 @@ export function fetchMemoryHistory(
   );
 }
 
-export function fetchMemoryExperiences(
+export async function fetchMemoryExperiences(
   params: {
     readonly workspaceId: string;
     readonly repositoryId?: string;
@@ -1152,11 +1207,14 @@ export function fetchMemoryExperiences(
   if (params.offset !== undefined) search.set("offset", String(params.offset));
   if (params.includeTaskHistory) search.set("includeTaskHistory", "true");
   const path = `${CONTROL_API_PATHS.memoryExperiences}?${search.toString()}`;
-  return fetchControlApi<ControlApiMemoryExperiencesResponse>(
-    path,
-    config,
-    options
-  );
+  const result = await fetchControlApi<unknown>(path, config, options);
+  if (result.kind !== "ok") return result;
+  return isMemoryPageResponse<ControlApiMemoryExperiencesResponse>(
+    result.data,
+    "autodev-memory-experiences-v1"
+  )
+    ? { kind: "ok", data: result.data }
+    : invalidMemoryPageResponse("Experiences", "autodev-memory-experiences-v1");
 }
 
 export function fetchMemoryExperienceDetail(
@@ -1177,7 +1235,7 @@ export function fetchMemoryExperienceDetail(
   );
 }
 
-export function fetchMemoryCohorts(
+export async function fetchMemoryCohorts(
   params: {
     readonly workspaceId: string;
     readonly repositoryId: string;
@@ -1200,11 +1258,14 @@ export function fetchMemoryCohorts(
   if (params.injectionResults)
     params.injectionResults.forEach((r) => search.append("injectionResult", r));
   const path = `${CONTROL_API_PATHS.memorySessionCohorts}?${search.toString()}`;
-  return fetchControlApi<ControlApiMemoryCohortsResponse>(
-    path,
-    config,
-    options
-  );
+  const result = await fetchControlApi<unknown>(path, config, options);
+  if (result.kind !== "ok") return result;
+  return isSessionOutcomeCohortPage(result.data)
+    ? { kind: "ok", data: result.data }
+    : invalidMemoryPageResponse(
+        "Outcome Cohorts",
+        "autodev-memory-session-outcome-cohorts-v1"
+      );
 }
 
 export function fetchMemoryUseCohorts(
