@@ -53,6 +53,9 @@ export interface MemoryRecordsViewProps {
 
 const NOT_OBSERVED_STATUS = "not-observed" as const;
 
+/** Names the transition-history list for assistive technology. */
+const TRANSITION_HISTORY_HEADING_ID = "memory-transition-history";
+
 const STATUS_VARIANT_MAP: Record<MemoryStatus, StatusBadgeVariant> = {
   active: "ready",
   proposed: "pending",
@@ -472,19 +475,28 @@ function RecordDetailPanel({
           React.createElement(
             "h4",
             {
-              className: SECTION_HEADING_CLASS
+              className: SECTION_HEADING_CLASS,
+              id: TRANSITION_HISTORY_HEADING_ID
             },
             "Transition History"
           ),
+          // An ordered list, not a stack of divs. Transitions are a sequence,
+          // so assistive technology should be able to say how many there are
+          // and that they are ordered; the box and the divider rules are
+          // decoration on top of that structure rather than the only structure
+          // it has. The heading names the list so it is not announced as an
+          // anonymous group.
           React.createElement(
-            "div",
+            "ol",
             {
               className:
-                "flex flex-col divide-y divide-border rounded border border-border bg-background/60"
+                "flex flex-col divide-y divide-border rounded border border-border bg-background/60 list-none p-0 m-0",
+              "aria-labelledby": TRANSITION_HISTORY_HEADING_ID,
+              "data-transition-history": "observed"
             },
             history.transitions.map((t, i) =>
               React.createElement(
-                "div",
+                "li",
                 {
                   key: i,
                   className: "flex items-center justify-between p-3 text-xs"

@@ -6607,3 +6607,66 @@ test("no feature view calls a shared component as a plain function", () => {
     `These views call a component as a plain function instead of rendering it:\n${offenders.join("\n")}`
   );
 });
+
+test("transition history is an ordered, named list rather than a stack of divs", () => {
+  // A record's transitions are a sequence, so the structure has to say so.
+  // Rendered as divs the list had no semantics at all: assistive technology
+  // could not announce how many transitions there were, that they were
+  // ordered, or what the group was called.
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryRecordsView, {
+      records: [],
+      total: 0,
+      currentWorkspaceId: "SimulatorLife/AutoDev",
+      selectedRecord: {
+        id: "mem-history",
+        kind: "procedural",
+        status: "active",
+        scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+        claim: "A claim.",
+        validity: { state: "verified", evidence: [] },
+        provenance: {
+          experienceIds: [],
+          evidence: [],
+          createdBy: "operator",
+          createdAt: "2026-10-01T00:00:00Z"
+        },
+        createdAt: "2026-10-01T00:00:00Z",
+        updatedAt: "2026-10-02T00:00:00Z"
+      },
+      history: {
+        transitions: [
+          {
+            fromStatus: "proposed",
+            toStatus: "active",
+            actor: { id: "operator" },
+            timestamp: "2026-10-02T00:00:00Z",
+            reason: "verified"
+          },
+          {
+            fromStatus: "active",
+            toStatus: "invalidated",
+            actor: { id: "operator" },
+            timestamp: "2026-10-03T00:00:00Z",
+            reason: null
+          }
+        ]
+      } as never
+    })
+  );
+
+  assert.match(markup, /<ol[^>]*data-transition-history="observed"/);
+  // The list is named by its own heading rather than announced anonymously.
+  assert.match(markup, /id="memory-transition-history"/);
+  assert.match(markup, /<ol[^>]*aria-labelledby="memory-transition-history"/);
+  assert.equal(markup.match(/<li/g)?.length, 2);
+  // Markers and indent are reset so the visual result is unchanged.
+  assert.match(markup, /list-none p-0 m-0/);
+  // The rows themselves were divs before; asserting their absence is the
+  // direct regression check, rather than trying to describe the whole tree
+  // with a lookahead.
+  assert.doesNotMatch(
+    markup,
+    /<div class="flex items-center justify-between p-3 text-xs">/
+  );
+});
