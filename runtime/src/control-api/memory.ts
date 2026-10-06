@@ -54,6 +54,7 @@ import {
 import {
   createOrchestratorMemoryService,
   currentRouterMemoryMode,
+  observeMemoryStorageStatus,
   trustedMemoryContextForSession
 } from "../router/memory-injection.ts";
 import { errorBody, sendJson } from "../router/proxy.ts";
@@ -92,6 +93,8 @@ const MEMORY_EXPERIENCES_ROUTE = "experiences" as const;
 const MEMORY_COHORTS_ROUTE = "cohorts" as const;
 const MEMORY_SESSION_COHORTS_ROUTE = "session-cohorts" as const;
 const MEMORY_USE_COHORTS_ROUTE = "use-cohorts" as const;
+const MEMORY_STATUS_ROUTE = "status" as const;
+const MEMORY_STATUS_PATH = `${MEMORY_PATH_PREFIX}${MEMORY_STATUS_ROUTE}`;
 const MEMORY_PURGE_ACTION = "purge" as const;
 const MEMORY_OUTCOMES_ACTION = "outcomes" as const;
 const MEMORY_SESSION_OUTCOME_ACTION = "session-outcome" as const;
@@ -122,7 +125,8 @@ type MemoryControlRoute = {
     | typeof MEMORY_EXPERIENCES_ROUTE
     | typeof MEMORY_COHORTS_ROUTE
     | typeof MEMORY_SESSION_COHORTS_ROUTE
-    | typeof MEMORY_USE_COHORTS_ROUTE;
+    | typeof MEMORY_USE_COHORTS_ROUTE
+    | typeof MEMORY_STATUS_ROUTE;
   readonly id?: string;
   readonly action?:
     | "history"
@@ -179,13 +183,15 @@ function parseRoute(pathname: string): MemoryControlRoute | null {
     resource !== MEMORY_EXPERIENCES_ROUTE &&
     resource !== MEMORY_COHORTS_ROUTE &&
     resource !== MEMORY_SESSION_COHORTS_ROUTE &&
-    resource !== MEMORY_USE_COHORTS_ROUTE
+    resource !== MEMORY_USE_COHORTS_ROUTE &&
+    resource !== MEMORY_STATUS_ROUTE
   )
     return null;
   if (
     (resource === MEMORY_COHORTS_ROUTE ||
       resource === MEMORY_SESSION_COHORTS_ROUTE ||
-      resource === MEMORY_USE_COHORTS_ROUTE) &&
+      resource === MEMORY_USE_COHORTS_ROUTE ||
+      resource === MEMORY_STATUS_ROUTE) &&
     parts.length !== 1
   )
     return null;
@@ -2989,8 +2995,105 @@ function serveMemoryRequestRead(
   );
 }
 
+/**
+ * Storage status is answered before anything that needs storage.
+ *
+ * Every other route on this API resolves a service first and answers the same
+ * `503 autodev_memory_unavailable` whether storage was never configured or is
+ * configured and down, so the one read whose whole job is to tell those apart
+ * cannot go through that path -- it would report the answer to a question it
+ * was built to answer. It also takes no `workspaceId`: it describes this
+ * Runtime's own storage rather than any workspace's memory, which is why it
+ * needs no task-history grant either. It is an administration read, so it is
+ * audited like one.
+ */
+async function serveMemoryStorageStatus(
+  response: ServerResponse,
+  audit: MemoryControlAudit
+): Promise<void> {
+  const status = await observeMemoryStorageStatus();
+  audit({
+    action: "read_storage_status",
+    resource: MEMORY_STATUS_ROUTE,
+    outcome: "ok",
+    changes: { state: status.state, embeddings: status.embeddings }
+  });
+  sendJson(
+    response,
+    200,
+    {
+      schema: "autodev-memory-status-v1",
+      storage: {
+        state: status.state,
+        backend: "postgresql",
+        embeddings: status.embeddings,
+        probeTimeoutMs: status.probeTimeoutMs
+      }
+    },
+    { "cache-control": "no-store" }
+  );
+}
+
 export interface MemoryControlApiDependencies {
   readonly createMemoryService?: () => MemoryService | null;
+}
+
+/**
+ * The memory routes that answer without a parsed route and without a service.
+ *
+ * Both capture endpoints are POST-only and identical apart from the adapter they
+ * hand the body to, and the storage-status read is a read rather than a capture.
+ * They are dispatched together because they share the one thing that made them
+ * separate branches in the first place: none of them can go through
+ * `parseRoute`, which requires a workspace-scoped collection route, and none of
+ * them may resolve the service first.
+ *
+ * Returns `true` when the path was one of these, so the caller stops. `false`
+ * means the path belongs to the routed API below.
+ */
+async function servePathWithoutStorage(
+  pathname: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: MemoryControlActor,
+  audit: MemoryControlAudit
+): Promise<boolean> {
+  const method = (request.method ?? "GET").toUpperCase();
+  const capture =
+    pathname === MEMORY_CAPTURE_PATH
+      ? captureCodexExperience
+      : pathname === MEMORY_CLAUDE_CAPTURE_PATH
+        ? captureClaudeCodeExperience
+        : null;
+  if (capture) {
+    if (method !== "POST") {
+      response.setHeader("allow", "POST");
+      sendMemoryError(
+        response,
+        405,
+        "autodev_memory_method_not_allowed",
+        "Native capture requires POST."
+      );
+      return true;
+    }
+    await capture(request, response, actor, audit);
+    return true;
+  }
+  if (pathname === MEMORY_STATUS_PATH) {
+    if (method !== "GET") {
+      response.setHeader("allow", "GET");
+      sendMemoryError(
+        response,
+        405,
+        "autodev_memory_method_not_allowed",
+        "Method is not supported for this memory route."
+      );
+      return true;
+    }
+    await serveMemoryStorageStatus(response, audit);
+    return true;
+  }
+  return false;
 }
 
 export async function handleMemoryControlApiRequest(
@@ -3002,32 +3105,9 @@ export async function handleMemoryControlApiRequest(
   dependencies: MemoryControlApiDependencies = {}
 ): Promise<boolean> {
   if (!pathname.startsWith(MEMORY_PATH_PREFIX)) return false;
-  if (pathname === MEMORY_CAPTURE_PATH) {
-    if ((request.method ?? "GET").toUpperCase() !== "POST") {
-      response.setHeader("allow", "POST");
-      sendMemoryError(
-        response,
-        405,
-        "autodev_memory_method_not_allowed",
-        "Native capture requires POST."
-      );
-      return true;
-    }
-    await captureCodexExperience(request, response, actor, audit);
-    return true;
-  }
-  if (pathname === MEMORY_CLAUDE_CAPTURE_PATH) {
-    if ((request.method ?? "GET").toUpperCase() !== "POST") {
-      response.setHeader("allow", "POST");
-      sendMemoryError(
-        response,
-        405,
-        "autodev_memory_method_not_allowed",
-        "Native capture requires POST."
-      );
-      return true;
-    }
-    await captureClaudeCodeExperience(request, response, actor, audit);
+  if (
+    await servePathWithoutStorage(pathname, request, response, actor, audit)
+  ) {
     return true;
   }
   const route = parseRoute(pathname);
@@ -3046,6 +3126,7 @@ export async function handleMemoryControlApiRequest(
   ) {
     return true;
   }
+
 
   let parsedFilters: ParsedMemoryControlFilters;
   try {

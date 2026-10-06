@@ -38,6 +38,7 @@ import {
   fetchMemoryHistory,
   fetchMemoryRecord,
   fetchMemoryRecords,
+  fetchMemoryStatus,
   fetchMemoryUseCohorts,
   fetchMemoryWhy,
   fetchWorkspaces
@@ -47,6 +48,7 @@ import {
   readNodeContext,
   ResourceUnavailable
 } from "../_console.ts";
+import { CALLOUT_WARNING_CLASS } from "../../src/components/layout/Callout.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -292,6 +294,7 @@ type MemoryRecordsFailure = Exclude<
   MemoryRecordsResult,
   { readonly kind: "ok" }
 >;
+type MemoryStatusResult = Awaited<ReturnType<typeof fetchMemoryStatus>>;
 
 interface MemoryReadResults {
   readonly experiences: MemoryExperiencesResult;
@@ -312,12 +315,21 @@ interface MemoryPageReadData extends MemoryReadResults {
   readonly records: ControlApiMemoryRecordsResponse;
   readonly cohorts: MemoryCohortsResult;
   readonly useCohorts: MemoryUseCohortsResult | null;
+  readonly status: MemoryStatusResult;
 }
 
 type MemoryPageReadResult =
   | {
       readonly kind: "records-unavailable";
       readonly result: MemoryRecordsFailure;
+      /**
+       * Carried onto the failure path, and read there for the reason the failure
+       * happened. Every memory read answers `autodev_memory_unavailable` when
+       * storage was never configured and `autodev_memory_operation_failed` when
+       * it is configured and not answering -- two different problems with two
+       * different fixes, and the page used to name only the first.
+       */
+      readonly status: MemoryStatusResult;
     }
   | { readonly kind: "ok"; readonly data: MemoryPageReadData };
 
@@ -380,6 +392,10 @@ async function fetchMemoryPageData(
   workspaceId: string,
   config: ControlApiConfig
 ): Promise<MemoryPageReadResult> {
+  // Read before the records, and independently of it. This is the read that has
+  // to work when the read below does not, so folding it in after would leave it
+  // unreachable in the one case it exists for.
+  const status = await fetchMemoryStatus(config);
   const recordsResult = await fetchMemoryRecords(
     {
       workspaceId,
@@ -402,7 +418,7 @@ async function fetchMemoryPageData(
     config
   );
   if (recordsResult.kind !== "ok") {
-    return { kind: "records-unavailable", result: recordsResult };
+    return { kind: "records-unavailable", result: recordsResult, status };
   }
 
   const [
@@ -510,20 +526,93 @@ async function fetchMemoryPageData(
       cohorts,
       useCohorts,
       outcomes,
-      useAssessments
+      useAssessments,
+      status
     }
   };
+}
+
+/**
+ * What the page can say about memory storage, given what it observed.
+ *
+ * The failed read is not evidence of *why* it failed. It answers `503` for both
+ * "nobody configured a database" and "the database is not answering", and those
+ * send the reader to two different places, so the reason is read from the status
+ * read rather than inferred from the failure. When that read itself did not
+ * succeed, the page says so instead of falling back to the guess it replaced --
+ * a guess that is right most of the time is exactly what makes a wrong one
+ * expensive.
+ */
+function memoryStorageNotice(
+  status: MemoryStatusResult
+): {
+  readonly title: string;
+  readonly hint?: string;
+} {
+  if (status.kind !== "ok") {
+    return {
+      title: "Memory records could not be loaded",
+      hint: "Storage status was not observed, so whether memory is configured could not be confirmed."
+    };
+  }
+  if (status.data.storage.state === "not_configured") {
+    return {
+      title: "Memory storage is not configured",
+      hint: "Configure AUTODEV_MEMORY_DATABASE_URL in the AutoDev runtime environment to enable PostgreSQL / pgvector memory persistence."
+    };
+  }
+  if (status.data.storage.state === "unreachable") {
+    return {
+      title: "Memory storage is unreachable",
+      hint: `Durable memory is configured but the database did not answer within ${status.data.storage.probeTimeoutMs}ms. The records read may be failing for this reason rather than on their own terms.`
+    };
+  }
+  return {
+    title: "Memory records could not be loaded",
+    hint: "Durable memory storage answered, so this read failed on its own terms rather than because the store is down."
+  };
+}
+
+/**
+ * The connection state, said only when it is something to act on.
+ *
+ * A storage banner on every healthy page load is chrome: it trains the operator
+ * to read past the place that matters. So this renders only for the two states
+ * that are wrong on their own -- a store that is not answering, and a store that
+ * is answering with no embedding provider configured. The second is the one no
+ * read failure ever names: records capture fine, and then cannot be retrieved
+ * with, which looks exactly like memory that does not work.
+ */
+function memoryStorageCallout(
+  status: MemoryStatusResult
+): React.JSX.Element | null {
+  if (status.kind !== "ok") return null;
+  const storage = status.data.storage;
+  if (storage.state === "unreachable") {
+    return React.createElement(
+      "div",
+      { role: "status", className: `${CALLOUT_WARNING_CLASS} mb-4` },
+      `Durable memory is configured but its database did not answer within ${storage.probeTimeoutMs}ms. Reads that succeed from here are not evidence that memory is working.`
+    );
+  }
+  if (storage.embeddings === "not_configured") {
+    return React.createElement(
+      "div",
+      { role: "status", className: `${CALLOUT_WARNING_CLASS} mb-4` },
+      "Durable memory is connected with no embedding provider configured, so stored memories cannot be retrieved by meaning. Configure an embedding provider to make retrieval work."
+    );
+  }
+  return null;
 }
 
 function renderRecordsUnavailableShell(
   recordsResult: Exclude<
     ControlApiResult<ControlApiMemoryRecordsResponse>,
     { readonly kind: "ok" }
-  >
+  >,
+  status: MemoryStatusResult
 ): React.JSX.Element {
-  const isUnavailable =
-    recordsResult.kind !== "unreachable" &&
-    recordsResult.code === "autodev_memory_unavailable";
+  const notice = memoryStorageNotice(status);
   return React.createElement(
     ConsolePageShell,
     { section: SECTION },
@@ -531,16 +620,10 @@ function renderRecordsUnavailableShell(
       "div",
       { className: "flex flex-col gap-6" },
       React.createElement(ResourceUnavailable, {
-        title: isUnavailable
-          ? "Memory storage is not configured"
-          : "Memory records could not be loaded",
+        title: notice.title,
         code: controlApiFailureCode(recordsResult),
         message: recordsResult.message,
-        ...(isUnavailable
-          ? {
-              hint: "Configure AUTODEV_MEMORY_DATABASE_URL in the AutoDev runtime environment to enable PostgreSQL / pgvector memory persistence."
-            }
-          : {})
+        ...(notice.hint ? { hint: notice.hint } : {})
       })
     )
   );
@@ -576,7 +659,7 @@ export default async function MemoryPage(
     config
   );
   if (pageResult.kind === "records-unavailable") {
-    return renderRecordsUnavailableShell(pageResult.result);
+    return renderRecordsUnavailableShell(pageResult.result, pageResult.status);
   }
 
   const data = pageResult.data;
@@ -619,6 +702,8 @@ export default async function MemoryPage(
     useKind: params.useKind
   };
 
+  const storageCallout = memoryStorageCallout(data.status);
+
   return React.createElement(
     ConsolePageShell,
     {
@@ -629,6 +714,7 @@ export default async function MemoryPage(
         Memory: data.records.items.length
       }
     },
+    storageCallout,
     React.createElement(MemoryView, {
       listScope,
       records: data.records.items,

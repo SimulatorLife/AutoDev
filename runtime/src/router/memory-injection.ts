@@ -15,6 +15,7 @@ import {
   injectMemoryContext,
   injectRetrievalOnlyMemoryContext,
   latestUserTask,
+  MEMORY_STORAGE_PROBE_TIMEOUT_MS,
   MemoryAuthorizationError,
   MemoryConflictError,
   type MemoryRepositoryRootResolver,
@@ -770,6 +771,46 @@ export function closeOrchestratorMemoryHost(): Promise<void> {
     memoryHostClose = null;
   });
   return memoryHostClose;
+}
+
+/**
+ * What the Runtime can say about its own memory storage right now.
+ *
+ * Answered by the module that owns the host's lifecycle, because nothing else
+ * can tell "not configured" apart from "configured but the host failed to
+ * construct" -- both are a null host to every caller.
+ *
+ * The embedding provider is read from configuration rather than inferred. A
+ * store that is reachable but has no embeddings accepts captures it cannot later
+ * retrieve with, and that is a configuration fact rather than a read failure, so
+ * nothing downstream would ever report it.
+ */
+export interface MemoryStorageStatus {
+  readonly state: "not_configured" | "unreachable" | "reachable";
+  readonly embeddings: "not_configured" | "configured";
+  readonly probeTimeoutMs: number;
+}
+
+/**
+ * Observe durable memory storage without requiring it to work.
+ *
+ * This is the read that has to succeed when every other memory read fails, so
+ * it never resolves the service and never throws: a caller asking "is memory
+ * connected" must get an answer even when the answer is that memory is not.
+ */
+export async function observeMemoryStorageStatus(
+  timeoutMs: number = MEMORY_STORAGE_PROBE_TIMEOUT_MS
+): Promise<MemoryStorageStatus> {
+  const embeddings = configuredMemoryEmbeddingProvider()
+    ? ("configured" as const)
+    : ("not_configured" as const);
+  const host = configuredMemoryHost();
+  if (!host) return { state: "not_configured", embeddings, probeTimeoutMs: timeoutMs };
+  return {
+    state: await host.probe(timeoutMs),
+    embeddings,
+    probeTimeoutMs: timeoutMs
+  };
 }
 
 function configuredMemoryHost(): PostgresMemoryHost | null {

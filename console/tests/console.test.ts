@@ -173,6 +173,7 @@ import {
   fetchMemoryHistory,
   fetchMemoryRecord,
   fetchMemoryRecords,
+  fetchMemoryStatus,
   fetchMemoryUseCohorts,
   fetchModels,
   fetchPermissions,
@@ -8582,6 +8583,152 @@ test("Memory purge refuses a reason the Runtime does not accept", async () => {
     );
     assert.equal(requests.length, 0);
   });
+});
+
+test("storage status is read for what it observed, not inferred from the failure", async () => {
+  const config = { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" };
+  const read = async (storage: Record<string, unknown>): Promise<boolean> => {
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      Response.json({ schema: "autodev-memory-status-v1", storage })) as
+      typeof fetch;
+    try {
+      return (await fetchMemoryStatus(config)).kind === "ok";
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  };
+
+  // The three states are the whole contract. A validator that accepted any
+  // string would let a Runtime that changed its vocabulary render as
+  // "unavailable" -- the one answer this read exists to avoid, arriving through
+  // the read meant to prevent it.
+  for (const state of ["not_configured", "unreachable", "reachable"]) {
+    assert.equal(
+      await read({
+        state,
+        backend: "postgresql",
+        embeddings: "configured",
+        probeTimeoutMs: 1500
+      }),
+      true,
+      `${state} is a state the contract defines`
+    );
+  }
+  assert.equal(
+    await read({
+      state: "degraded",
+      backend: "postgresql",
+      embeddings: "configured",
+      probeTimeoutMs: 1500
+    }),
+    false,
+    "an unrecognised state is refused rather than rendered"
+  );
+  assert.equal(
+    await read({
+      state: "reachable",
+      backend: "mysql",
+      embeddings: "configured",
+      probeTimeoutMs: 1500
+    }),
+    false,
+    "the backend is part of the contract, not decoration"
+  );
+});
+
+test("the Memory page names why storage failed, from the status read rather than the error", async () => {
+  // The records read answers the same 503 whether memory was never configured or
+  // is configured and not answering, and the two send the operator to different
+  // places. The page used to infer "not configured" from the failure code, which
+  // is right most of the time and wrong exactly when it costs most.
+  const renderWith = async (
+    status: Record<string, unknown>
+  ): Promise<string> => {
+    const isolatedHome = mkdtempSync(join(tmpdir(), "autodev-memory-status-"));
+    const previousFetch = globalThis.fetch;
+    const previousEnv = saveConsolePageEnvironment();
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/control/workspaces")) {
+        return Response.json({
+          schema: "autodev-control-workspaces-v1",
+          source: "config/workspaces.json",
+          readOnly: true,
+          catalogStatus: "valid",
+          totalWorkspaces: 1,
+          workspaces: [
+            {
+              id: "SimulatorLife/AutoDev",
+              baseBranch: "main",
+              enabled: true,
+              agentRoles: null
+            }
+          ]
+        });
+      }
+      if (url.includes("/control/memory/status")) {
+        return Response.json({
+          schema: "autodev-memory-status-v1",
+          storage: status
+        });
+      }
+      if (url.includes("/control/memory/records")) {
+        return Response.json(
+          {
+            error: {
+              message: "Memory operation could not be completed.",
+              type: "autodev_memory_control_error",
+              code: "autodev_memory_operation_failed"
+            }
+          },
+          { status: 503 }
+        );
+      }
+      throw new Error(`Unexpected Memory page request: ${url}`);
+    }) as typeof fetch;
+    try {
+      process.env.HOME = isolatedHome;
+      process.env.CODEX_HOME = isolatedHome;
+      process.env.AUTODEV_OPENLIT_SECRET_FILE = join(isolatedHome, "missing.env");
+      process.env.AUTODEV_CONTROL_API_TOKEN = "status-page-test-token";
+      process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+      return renderToStaticMarkup(
+        await MemoryPage({ searchParams: Promise.resolve({}) })
+      );
+    } finally {
+      globalThis.fetch = previousFetch;
+      restoreConsolePageEnvironment(previousEnv);
+    }
+  };
+
+  const storage = (state: string): Record<string, unknown> => ({
+    state,
+    backend: "postgresql",
+    embeddings: "configured",
+    probeTimeoutMs: 1500
+  });
+
+  assert.match(
+    await renderWith(storage("unreachable")),
+    /Memory storage is unreachable/,
+    "a down store is named as down, not as an unconfigured one"
+  );
+  assert.match(
+    await renderWith(storage("unreachable")),
+    /1500ms/,
+    "the probe's deadline is shown, so 'we did not reach it' is not read as 'it is down'"
+  );
+  assert.match(
+    await renderWith(storage("not_configured")),
+    /Memory storage is not configured/
+  );
+  // A store that answers is worth saying out loud on a failure page: it tells the
+  // reader this read failed on its own terms rather than because memory is down.
+  assert.match(
+    await renderWith(storage("reachable")),
+    /Durable memory storage answered/
+  );
 });
 
 test("Memory purge requires an experience id rather than a record id", async () => {

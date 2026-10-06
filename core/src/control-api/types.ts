@@ -526,6 +526,49 @@ export type ControlApiMemoryExperiencesResponse =
     readonly schema: "autodev-memory-experiences-v1";
   };
 
+/**
+ * Whether durable memory storage is connected on this Runtime.
+ *
+ * Three states, and the point of separating them is that they are three
+ * different operator problems. Every `/control/memory/*` read answers the same
+ * `503 autodev_memory_unavailable` when the store is not configured *and* when
+ * it is configured but unreachable, so a Console reading them in isolation
+ * cannot tell "nobody has set this up" from "this is down", and neither from
+ * "there is nothing stored yet". An operator diagnosing a memory surface has to
+ * be able to tell those apart without leaving the Console.
+ *
+ * `not_configured` and `unreachable` are deliberately not merged: the first is
+ * fixed by setting `AUTODEV_MEMORY_DATABASE_URL`, the second by whatever is
+ * wrong with the database behind it. One remedy each, and reporting the wrong one
+ * sends the reader to the wrong place.
+ */
+export type ControlApiMemoryStorageState =
+  | "not_configured"
+  | "unreachable"
+  | "reachable";
+
+export interface ControlApiMemoryStatusResponse {
+  readonly schema: "autodev-memory-status-v1";
+  readonly storage: {
+    readonly state: ControlApiMemoryStorageState;
+    readonly backend: "postgresql";
+    /**
+     * Whether an embedding provider is configured. Memory capture needs one, so
+     * a connected store with no embeddings stores records it cannot retrieve
+     * with -- a configuration the operator has to see, and one no read failure
+     * would ever name.
+     */
+    readonly embeddings: "not_configured" | "configured";
+    /**
+     * The bound probe's own deadline, in milliseconds. Reported so a reader can
+     * tell "answered in time and said unreachable" from "answered eventually",
+     * which is the difference between a database that is down and one that is
+     * merely slow.
+     */
+    readonly probeTimeoutMs: number;
+  };
+}
+
 export interface ControlApiMemoryRecordDetailResponse {
   readonly schema: "autodev-memory-record-v1";
   readonly memory: MemoryRecord;

@@ -35,9 +35,43 @@ export interface PostgresMemoryRuntimeOptions extends PostgresMemoryHostOptions 
   readonly repositories: MemoryRepositoryRootResolver;
 }
 
+/**
+ * How long a connect attempt may hold a connection open.
+ *
+ * Longer than the health probe's own deadline on purpose: the probe must be the
+ * thing that decides `unreachable`, not a connect error that arrives first and
+ * makes "we could not reach it" indistinguishable from "we never tried".
+ */
+const MEMORY_CONNECT_TIMEOUT_MS = 5000;
+
+/**
+ * How long a health read may take before it reports `unreachable`.
+ *
+ * Short enough that an operator opening `/memory` gets an answer rather than a
+ * spinner, and long enough that a loaded database is not misreported as down.
+ */
+export const MEMORY_STORAGE_PROBE_TIMEOUT_MS = 1500;
+
 export interface PostgresMemoryHost {
   /** Builds a request-scoped service over the host's shared repository/pool. */
   createService(repositories: MemoryRepositoryRootResolver): MemoryService;
+  /**
+   * Whether the database answers, within the caller's deadline.
+   *
+   * Bounded on purpose, and that is the whole design. The `pg` driver's default
+   * is to wait out the operating system's TCP timeout, so an unreachable database
+   * turns every memory read into a request that never settles -- the exact
+   * failure this product already records once in the OpenLIT fork, where
+   * `/api/clickhouse` hung with no connector configured and twenty surfaces sat
+   * behind a ping that never left `pending`. A health read that can hang is worse
+   * than no health read, because it takes the page down with it.
+   *
+   * So the probe settles either way: it races the query against its own deadline
+   * and reports `unreachable` on expiry. The losing query is left to finish or
+   * fail on its own, which is harmless -- the pool is sized for this, and the
+   * answer the caller needs is what the database had already done.
+   */
+  probe(timeoutMs: number): Promise<"reachable" | "unreachable">;
   close(): Promise<void>;
 }
 
@@ -62,7 +96,12 @@ export function createPostgresMemoryHost(
     connectionString: options.databaseUrl,
     max: 2,
     idleTimeoutMillis: 5000,
-    allowExitOnIdle: true
+    allowExitOnIdle: true,
+    // A database that is down must fail a connect rather than hold one open for
+    // the operating system's TCP timeout. Without this the health read below is
+    // bounded but every ordinary read still is not, and an operator sees the
+    // Console hang instead of seeing "unreachable".
+    connectionTimeoutMillis: MEMORY_CONNECT_TIMEOUT_MS
   });
   const repository = new PostgresMemoryRepository({
     pool,
@@ -92,6 +131,30 @@ export function createPostgresMemoryHost(
           ? { maxResearchCandidates: options.maxResearchCandidates }
           : {})
       }),
+    probe: async (timeoutMs) => {
+      // `SELECT 1` rather than a schema or row query: the question is whether
+      // the database answers, not what is in it. A status read that counted rows
+      // would make "connected" depend on how much memory has been written.
+      const query = pool
+        .query("SELECT 1")
+        .then(() => "reachable" as const)
+        .catch(() => "unreachable" as const);
+      if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return query;
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          query,
+          new Promise<"unreachable">((resolve) => {
+            deadline = setTimeout(() => resolve("unreachable"), timeoutMs);
+            // The probe answers one page load; the timer must not be what holds
+            // the Runtime's event loop open afterwards.
+            deadline.unref?.();
+          })
+        ]);
+      } finally {
+        if (deadline !== undefined) clearTimeout(deadline);
+      }
+    },
     close: () => pool.end()
   };
 }

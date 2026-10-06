@@ -38,6 +38,7 @@ import {
   type ControlApiMemoryInjectionUseAssessmentsResponse,
   type ControlApiMemoryRecordDetailResponse,
   type ControlApiMemoryRecordsResponse,
+  type ControlApiMemoryStatusResponse,
   type ControlApiMemoryUseCohortsResponse,
   type ControlApiMemoryWhyResponse,
   type ControlApiModelPatchResponse,
@@ -355,6 +356,7 @@ export const CONTROL_API_PATHS = {
   memoryCohorts: "/control/memory/cohorts",
   memorySessionCohorts: "/control/memory/session-cohorts",
   memoryUseCohorts: "/control/memory/use-cohorts",
+  memoryStatus: "/control/memory/status",
   memoryPromoteSkill: "/control/memory/promote-skill"
 } as const;
 
@@ -2110,6 +2112,59 @@ export async function fetchEvaluations(
   return isControlApiEvaluationsResponse(result.data)
     ? { kind: "ok", data: result.data }
     : invalidCatalogResponse("Evaluations", "autodev-control-evaluations-v1");
+}
+
+/**
+ * Narrows a storage-status response.
+ *
+ * The three states are checked against the contract's own list rather than
+ * treated as any string, because the whole point of this read is telling three
+ * apart. A validator that accepted an unrecognised state would let a Runtime
+ * that changed its vocabulary render as `unavailable` -- the one answer this
+ * read exists to avoid, arriving through the read meant to prevent it.
+ */
+function isMemoryStatusResponse(
+  value: unknown
+): value is ControlApiMemoryStatusResponse {
+  if (!isRecord(value) || value.schema !== "autodev-memory-status-v1") {
+    return false;
+  }
+  const storage = value.storage;
+  return (
+    isRecord(storage) &&
+    (storage.state === "not_configured" ||
+      storage.state === "unreachable" ||
+      storage.state === "reachable") &&
+    storage.backend === "postgresql" &&
+    (storage.embeddings === "not_configured" ||
+      storage.embeddings === "configured") &&
+    typeof storage.probeTimeoutMs === "number"
+  );
+}
+
+/**
+ * Whether durable memory storage is connected on the Runtime behind it.
+ *
+ * Deliberately unscoped: this describes the Runtime's own storage rather than
+ * any workspace's memory, so it carries no `workspaceId` and is the one memory
+ * read an operator can make without task-history access. Every other memory read
+ * answers `503` when storage is down, which is why an operator reading them
+ * alone cannot tell "not configured" from "unreachable" from "nothing stored
+ * yet" -- and why this one exists.
+ */
+export async function fetchMemoryStatus(
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiMemoryStatusResponse>> {
+  const result = await fetchControlApi<unknown>(
+    CONTROL_API_PATHS.memoryStatus,
+    config,
+    options
+  );
+  if (result.kind !== "ok") return result;
+  return isMemoryStatusResponse(result.data)
+    ? { kind: "ok", data: result.data }
+    : invalidMemoryPageResponse("Storage status", "autodev-memory-status-v1");
 }
 
 export async function fetchMemoryRecords(

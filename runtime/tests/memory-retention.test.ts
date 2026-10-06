@@ -94,6 +94,7 @@ test("retention runner delegates one bounded curator batch to MemoryService", as
   } as unknown as MemoryService;
   const host: PostgresMemoryHost = {
     createService: () => service,
+    probe: async () => "reachable",
     close: async () => undefined
   };
 
