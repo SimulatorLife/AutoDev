@@ -11,6 +11,7 @@ import {
   FilterBar,
   FilterSearchField
 } from "../../components/filters/FilterBar.ts";
+import { Button } from "../../components/forms/Button.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
 import {
   EntityTitle,
@@ -581,11 +582,11 @@ function RecordDetailPanel({
               value: workspaceId
             }),
             React.createElement(
-              "button",
+              Button,
               {
                 type: "submit",
-                className:
-                  "px-3 py-1.5 rounded bg-success hover:brightness-110 text-xs font-medium text-fg-inverse transition-colors"
+                variant: "primary",
+                testId: "memory-verify"
               },
               "Verify & Promote"
             )
@@ -613,11 +614,11 @@ function RecordDetailPanel({
               value: workspaceId
             }),
             React.createElement(
-              "button",
+              Button,
               {
                 type: "submit",
-                className:
-                  "px-3 py-1.5 rounded bg-error hover:brightness-110 text-xs font-medium text-fg-inverse transition-colors"
+                variant: "destructive",
+                testId: "memory-invalidate"
               },
               "Invalidate"
             )
@@ -645,11 +646,11 @@ function RecordDetailPanel({
               value: workspaceId
             }),
             React.createElement(
-              "button",
+              Button,
               {
                 type: "submit",
-                className:
-                  "px-3 py-1.5 rounded bg-chart-3 hover:brightness-110 text-xs font-medium text-fg-inverse transition-colors"
+                variant: "secondary",
+                testId: "memory-promote-skill"
               },
               "Promote to RuleSync Skill"
             )

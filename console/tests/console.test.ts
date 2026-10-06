@@ -6192,3 +6192,96 @@ test("no feature view hand-types a GET form: filter state belongs to FilterBar",
     `These views declare a GET form without the shared FilterBar primitive:\n${offenders.join("\n")}`
   );
 });
+
+test("no feature view hand-types a submit button: the Button vocabulary is shared", () => {
+  // The governed-actions row on a memory record carried three submit buttons
+  // with three arbitrary fills -- success, error, and a chart series colour
+  // used as a button background -- and the prompt editor had a fourth
+  // hand-typed "primary". One action per colour meant nothing was readable as
+  // primary, secondary, or destructive.
+  //
+  // A raw <button> is still legitimate where it is a control rather than a
+  // submission (the enablement toggle renders a status pill). This guard is
+  // specifically about submit buttons, which the shared Button owns.
+  const featuresDir = join(import.meta.dirname, "..", "src", "features");
+  const offenders: string[] = [];
+  for (const relative of readdirSync(featuresDir, { recursive: true })) {
+    const file = join(featuresDir, relative.toString());
+    if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
+    const source = readFileSync(file, "utf8");
+    // A hand-typed submit button always carries its own className, because a
+    // bare <button type="submit"> would have no styling at all.
+    const pattern =
+      /createElement\(\s*"button",\s*\{[^}]*type:\s*"submit"[^}]*className/gsu;
+    if (pattern.test(source)) offenders.push(relative.toString());
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `These views hand-type a submit button instead of using Button:\n${offenders.join("\n")}`
+  );
+});
+
+test("governed record actions read as one primary, one destructive, one secondary", () => {
+  // Three record mutations share one row, so they have to be distinguishable
+  // by role rather than by three unrelated background colours. No single
+  // record shows all three, so both relevant states are rendered.
+  const record = (
+    id: string,
+    status: MemoryRecord["status"]
+  ): MemoryRecord => ({
+    id,
+    kind: "procedural",
+    status,
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    claim: "Run the Console suite before pushing.",
+    validity: { state: "verified", evidence: [] },
+    provenance: {
+      experienceIds: [],
+      evidence: [],
+      createdBy: "operator",
+      createdAt: "2026-10-01T00:00:00Z"
+    },
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-02T00:00:00Z"
+  });
+
+  const renderActions = (selected: MemoryRecord): string =>
+    renderToStaticMarkup(
+      React.createElement(MemoryRecordsView, {
+        records: [selected],
+        total: 1,
+        currentWorkspaceId: "SimulatorLife/AutoDev",
+        // The governed actions live in the record detail panel, which renders
+        // for the record selected in the URL.
+        selectedRecord: selected
+      })
+    );
+
+  const buttonTag = (markup: string, id: string): string =>
+    markup.match(
+      new RegExp(`<button[^>]*data-button="${id}"[^>]*>`, "u")
+    )?.[0] ?? "";
+
+  const proposed = renderActions(record("mem-proposed", "proposed"));
+  const active = renderActions(record("mem-active", "active"));
+
+  // Verify is the affirmative action, so it carries the primary accent fill.
+  assert.match(buttonTag(proposed, "memory-verify"), /bg-accent/);
+  // Invalidate reads as destructive, matching the shared destructive variant
+  // every other irreversible control in the Console uses.
+  assert.match(buttonTag(proposed, "memory-invalidate"), /text-error/);
+  // Promote is an alternative action, so it is a secondary control rather
+  // than a third arbitrary fill. It used to be chart-3, a data-series token
+  // used as a button background.
+  assert.match(buttonTag(active, "memory-promote-skill"), /bg-surface-raised/);
+  assert.doesNotMatch(proposed + active, /bg-chart-3 hover:brightness-110/);
+
+  // Each action is a real submit button inside its own form, so every one of
+  // them posts without a client-side handler.
+  const combined = proposed + active;
+  assert.equal(
+    combined.match(/data-button="memory-/g)?.length,
+    combined.match(/type="submit"/g)?.length
+  );
+});

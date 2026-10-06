@@ -7,6 +7,7 @@ import type {
 import React from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 
+import { Button } from "../../components/forms/Button.ts";
 import {
   CALLOUT_ERROR_CLASS,
   CALLOUT_WARNING_CLASS
@@ -124,11 +125,11 @@ function renderPromptSource(prompt: PromptDocument): React.ReactNode {
           "Saving validates the canonical RuleSync command, regenerates and applies the Codex prompt projection, and may require restarting Codex to load changed prompt files."
         ),
         React.createElement(
-          "button",
+          Button,
           {
             type: "submit",
-            className:
-              "rounded border border-accent/60 bg-accent/15 px-3 py-2 text-sm font-medium text-accent hover:bg-hover "
+            variant: "primary",
+            testId: "prompt-save"
           },
           "Save & Apply"
         )
