@@ -39,6 +39,7 @@ import {
   type ControlApiMemoryRecordDetailResponse,
   type ControlApiMemoryRecordsResponse,
   type ControlApiMemoryUseCohortsResponse,
+  type ControlApiMemoryWhyResponse,
   type ControlApiModelPatchResponse,
   type ControlApiModelsResponse,
   type ControlApiPermissionsResponse,
@@ -722,9 +723,25 @@ export function patchProviderEnabled(
 /**
  * Builds the canonical provider-scoped PATCH path with an encoded provider
  * segment. This remains private to the typed server mutations below.
+ *
+ * Sub-segments are joined here rather than by the caller. Passing `"limits"`
+ * produced `/control/providers/claudelimits`, which still matched the
+ * single-provider route — `claudelimits` is a legal provider id — so the
+ * request came back as an unknown-provider 404 instead of a routing error, and
+ * every agent-limits mutation failed while the controls looked correct. The
+ * separator belongs to whoever assembles the path.
  */
-function providerControlPath(provider: string, suffix = ""): string {
-  return `${CONTROL_API_PATHS.providers}/${encodeURIComponent(provider)}${suffix}`;
+function providerControlPath(
+  provider: string,
+  ...segments: readonly string[]
+): string {
+  const base = `${CONTROL_API_PATHS.providers}/${encodeURIComponent(provider)}`;
+  const suffixes = segments
+    .filter((segment) => segment.length > 0)
+    .map((segment) => encodeURIComponent(segment));
+  return suffixes.length === 0
+    ? base
+    : `${base}/${suffixes.join("/")}`;
 }
 
 function isControlApiModelsResponse(
@@ -1055,6 +1072,28 @@ function isMemoryHistoryResponse(
     // missing list is not an empty history.
     Array.isArray(value.transitions) &&
     isMemoryRecordRow(value.memory)
+  );
+}
+
+/**
+ * The eligibility-bounded explanation of one record.
+ *
+ * Both lists are required to be arrays rather than merely tolerated: this
+ * panel exists to answer "why does this record exist, and what can I still see
+ * of it", and a response missing `sourceExperiences` would render as a record
+ * with no sources — the same false absence an unreadable catalog produces.
+ */
+function isMemoryWhyResponse(
+  value: unknown
+): value is ControlApiMemoryWhyResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-memory-why-v1" &&
+    isMemoryRecordRow(value.memory) &&
+    Array.isArray(value.relatedMemories) &&
+    value.relatedMemories.every(isMemoryRecordRow) &&
+    Array.isArray(value.sourceExperiences) &&
+    value.sourceExperiences.every(isMemoryExperienceRow)
   );
 }
 
@@ -2125,6 +2164,23 @@ export async function fetchMemoryRecord(
     return { kind: "ok", data: detail };
   }
   return invalidMemoryPageResponse("record detail", "autodev-memory-record-v1");
+}
+
+export async function fetchMemoryWhy(
+  id: string,
+  workspaceId: string,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiMemoryWhyResponse>> {
+  const search = new URLSearchParams({ workspaceId });
+  const path = `${CONTROL_API_PATHS.memoryRecords}/${encodeURIComponent(id)}/why?${search.toString()}`;
+  const result = await fetchControlApi<unknown>(path, config, options);
+  if (result.kind !== "ok") return result;
+  const why: unknown = result.data;
+  if (isMemoryWhyResponse(why)) {
+    return { kind: "ok", data: why };
+  }
+  return invalidMemoryPageResponse("record explanation", "autodev-memory-why-v1");
 }
 
 export async function fetchMemoryHistory(

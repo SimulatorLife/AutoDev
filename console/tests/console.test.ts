@@ -7425,6 +7425,62 @@ function sameOriginFormRequest(
   });
 }
 
+test("every provider mutation addresses its canonical Control API path", async () => {
+  // The limits path was built as `/control/providers/claudelimits` — the suffix
+  // carried no separator. `claudelimits` is a legal provider id, so the request
+  // matched the single-provider route instead and came back as an unknown
+  // provider: every agent-limits mutation failed while the controls rendered
+  // correctly and every test still passed, because each one stubbed the fetch
+  // and asserted the body without ever asserting the URL.
+  const token = "provider-path-route-server-token";
+  const requested: string[] = [];
+  await withControlRouteEnvironment(
+    token,
+    async (input) => {
+      requested.push(String(input));
+      return Response.json({
+        schema: "autodev-control-provider-limits-v1",
+        provider: "claude",
+        agentLimits: { perSession: 3, acrossSessions: null },
+        previous: null,
+        actor: LOCAL_CONTROL_API_ACTOR,
+        reconciliation: { status: {}, history: [] }
+      });
+    },
+    async () => {
+      const limits = await providerLimitsRoute.POST(
+        sameOriginFormRequest(
+          "/api/providers/claude/limits",
+          new URLSearchParams({
+            provider: "claude",
+            returnTo: "/providers",
+            perSession: "unlimited",
+            acrossSessions: "unlimited",
+            setPerSession: "3"
+          }).toString()
+        ),
+        { params: Promise.resolve({ provider: "claude" }) }
+      );
+      assert.equal(limits.status, 303);
+      assert.equal(limits.headers.get("location"), "/providers");
+    }
+  );
+
+  // Compare the path, not the origin: the harness allocates a port per
+  // environment, and the port is not what this test is about.
+  assert.deepEqual(
+    requested.map((url) => new URL(url).pathname),
+    ["/control/providers/claude/limits"]
+  );
+  // The same separator rule governs the single-provider mutation, which has no
+  // suffix at all and must not grow a trailing slash.
+  assert.equal(
+    requested.every((url) => !url.includes("claudelimits")),
+    true,
+    "a provider id and a path segment must never be concatenated"
+  );
+});
+
 test("provider-role Console route sends only a same-origin typed PATCH and returns to the toggle's page", async () => {
   const token = "provider-role-route-server-token";
   const requests: Array<{
