@@ -6,6 +6,11 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { Button } from "../../components/forms/Button.ts";
+import {
+  FIELD_CONTROL_CLASS,
+  SelectField
+} from "../../components/forms/SelectField.ts";
 
 /**
  * Observability Usage view.
@@ -39,8 +44,6 @@ const DURATION_FORMATTER = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1
 });
 
-const SELECT_CLASS =
-  "bg-input border border-border rounded px-2.5 py-1 text-fg";
 const FILTER_GROUP_CLASS = "flex items-center gap-1.5 text-xs text-fg-muted";
 const EMPTY_STATE_CLASS = "text-xs text-fg-muted italic py-2";
 
@@ -93,18 +96,15 @@ function renderFilterSelect(
 ): React.JSX.Element {
   if (options === null) {
     return React.createElement(
-      "label",
+      "div",
       { className: FILTER_GROUP_CLASS },
-      React.createElement("span", null, `${label}:`),
-      React.createElement(
-        "select",
-        {
-          disabled: true,
-          className: SELECT_CLASS,
-          "data-filter-options-observed": "false"
-        },
-        React.createElement("option", null, "Not observed")
-      ),
+      React.createElement(SelectField, {
+        name: `${name}-unobserved`,
+        label: `${label}:`,
+        options: [{ value: "", label: "Not observed" }],
+        disabled: true,
+        dataAttributes: { "data-filter-options-observed": "false" }
+      }),
       ...selected.map((value) =>
         React.createElement("input", {
           key: value,
@@ -119,25 +119,19 @@ function renderFilterSelect(
   const values = [...new Set([...options, ...selected])];
   const selectedValues = selected.length === 0 ? [""] : selected;
   return React.createElement(
-    "label",
+    "div",
     { className: FILTER_GROUP_CLASS },
-    React.createElement("span", null, `${label}:`),
-    React.createElement(
-      "select",
-      {
-        name,
-        multiple: true,
-        size: 1,
-        defaultValue: selectedValues,
-        className: SELECT_CLASS,
-        "aria-label": label,
-        "data-filter-options-observed": "true"
-      },
-      React.createElement("option", { value: "" }, "All"),
-      ...values.map((value) =>
-        React.createElement("option", { key: value, value }, value)
-      )
-    )
+    React.createElement(SelectField, {
+      name,
+      label: `${label}:`,
+      multiple: true,
+      defaultValue: selectedValues,
+      options: [
+        { value: "", label: "All" },
+        ...values.map((value) => ({ value, label: value }))
+      ],
+      dataAttributes: { "data-filter-options-observed": "true" }
+    })
   );
 }
 
@@ -177,29 +171,20 @@ export function UsageView({
         "div",
         { className: "flex flex-wrap gap-3 items-center" },
         React.createElement(
-          "label",
+          "div",
           { className: FILTER_GROUP_CLASS },
-          React.createElement("span", null, "Time range:"),
-          React.createElement(
-            "select",
-            {
-              name: "range",
-              defaultValue: selection.range,
-              className: SELECT_CLASS,
-              "aria-label": "Time range"
-            },
-            ...(
-              [
-                ["24H", "Last 24 hours"],
-                ["7D", "Last 7 days"],
-                ["1M", "Last 30 days"],
-                ["3M", "Last 90 days"],
-                ["CUSTOM", "Custom range"]
-              ] as const
-            ).map(([range, label]) =>
-              React.createElement("option", { key: range, value: range }, label)
-            )
-          )
+          React.createElement(SelectField, {
+            name: "range",
+            label: "Time range:",
+            defaultValue: selection.range,
+            options: [
+              { value: "24H", label: "Last 24 hours" },
+              { value: "7D", label: "Last 7 days" },
+              { value: "1M", label: "Last 30 days" },
+              { value: "3M", label: "Last 90 days" },
+              { value: "CUSTOM", label: "Custom range" }
+            ]
+          })
         ),
         React.createElement(
           "details",
@@ -222,7 +207,7 @@ export function UsageView({
               defaultValue: selection.customRange?.startDate ?? "",
               max: selection.customRange?.endDate ?? todayUtc,
               "aria-label": "Custom range start date",
-              className: SELECT_CLASS
+              className: FIELD_CONTROL_CLASS
             })
           ),
           React.createElement(
@@ -236,7 +221,7 @@ export function UsageView({
               min: selection.customRange?.startDate,
               max: todayUtc,
               "aria-label": "Custom range end date",
-              className: SELECT_CLASS
+              className: FIELD_CONTROL_CLASS
             })
           ),
           React.createElement(
@@ -270,12 +255,8 @@ export function UsageView({
           selectedValues.agent ?? []
         ),
         React.createElement(
-          "button",
-          {
-            type: "submit",
-            className:
-              "rounded border border-border-strong bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg hover:bg-hover"
-          },
+          Button,
+          { type: "submit", variant: "primary", testId: "usage-apply" },
           "Apply filters"
         )
       ),

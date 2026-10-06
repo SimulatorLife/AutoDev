@@ -51,10 +51,7 @@ export const ICON_PATHS = {
     "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
   ],
   Usage: ["M18 20V10", "M12 20V4", "M6 20v-6"],
-  Evaluations: [
-    "M22 11.08V12a10 10 0 1 1-5.93-9.14",
-    "M22 4 12 14.01l-3-3"
-  ],
+  Evaluations: ["M22 11.08V12a10 10 0 1 1-5.93-9.14", "M22 4 12 14.01l-3-3"],
   Memory: [
     "M12 2a9 3 0 1 0 0 6 9 3 0 0 0 0-6",
     "M21 12c0 1.66-4 3-9 3s-9-1.34-9-3",
@@ -63,7 +60,12 @@ export const ICON_PATHS = {
   Workspaces: [
     "M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
   ],
-  Github: ["M6 3v12", "M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6", "M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6", "M18 9a9 9 0 0 1-9 9"],
+  GitHub: [
+    "M6 3v12",
+    "M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6",
+    "M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6",
+    "M18 9a9 9 0 0 1-9 9"
+  ],
   externalLink: [
     "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
     "M15 3h6v6",
@@ -150,7 +152,7 @@ export type NavIconName = Extract<
   | "Evaluations"
   | "Memory"
   | "Workspaces"
-  | "Github"
+  | "GitHub"
 >;
 
 const NAV_ICON_NAMES: ReadonlySet<string> = new Set<string>([
@@ -166,7 +168,7 @@ const NAV_ICON_NAMES: ReadonlySet<string> = new Set<string>([
   "Evaluations",
   "Memory",
   "Workspaces",
-  "Github"
+  "GitHub"
 ]);
 
 /**
