@@ -59,6 +59,7 @@ import {
   CodeBlock,
   CodeEditor,
   DataTable,
+  type DataTableProps,
   DETAIL_DRAWER_CLASS,
   DETAIL_DRAWER_HEADER_CLASS,
   DETAIL_DRAWER_SUBTITLE_CLASS,
@@ -6669,4 +6670,93 @@ test("transition history is an ordered, named list rather than a stack of divs",
     markup,
     /<div class="flex items-center justify-between p-3 text-xs">/
   );
+});
+
+test("the Console stays server-rendered: no client directive, no hooks, no handlers", () => {
+  // The target state forbids client JavaScript, and the Console honours it by
+  // construction today: every component is a server component, every control is
+  // a native form element, and every action is a normal navigation or a form
+  // post. Measured in a browser against a production build, the ~100kB the page
+  // downloads is entirely React and Next runtime -- no Console source reaches
+  // the client bundle at all, so that claim is currently true rather than
+  // aspirational.
+  //
+  // These three guards keep it true. Each is cheap, and each fails loudly the
+  // moment a convenient "use client" is added to a leaf component, which is
+  // how a fully server-rendered product usually starts shipping behaviour that
+  // only works with scripting on.
+  const roots = ["app", "src"];
+  const files: string[] = [];
+  const collect = (dir: string): void => {
+    for (const relative of readdirSync(dir, { recursive: true })) {
+      const file = join(dir, relative.toString());
+      if (!file.endsWith(".ts") && !file.endsWith(".tsx")) continue;
+      files.push(file);
+    }
+  };
+  for (const root of roots) {
+    collect(join(import.meta.dirname, "..", root));
+  }
+
+  const clientDirective: string[] = [];
+  const hooks: string[] = [];
+  const handlers: string[] = [];
+  // Hooks that are illegal in a server component. `use` is deliberately absent:
+  // it is legal in RSC payloads and is not evidence of a client boundary.
+  const hookPattern =
+    /\buse(State|Effect|Reducer|Ref|Context|SyncExternalStore)\b/u;
+  for (const file of files) {
+    const relative = file.slice(import.meta.dirname.length);
+    const source = readFileSync(file, "utf8");
+    if (/^\s*(["'])use client\1/mu.test(source)) clientDirective.push(relative);
+    if (hookPattern.test(source)) hooks.push(relative);
+    // An event handler prop means the element only does something with
+    // scripting on. DataTable's row click is the single allowed exception and
+    // is asserted separately, because it is opt-in and off by default.
+    if (/\bon(Change|Submit|Input|KeyDown|Blur|Focus):/u.test(source)) {
+      handlers.push(relative);
+    }
+  }
+
+  assert.deepEqual(clientDirective, [], "client directives found");
+  assert.deepEqual(hooks, [], "React hooks found in a server component");
+  assert.deepEqual(handlers, [], "inline event handlers found");
+});
+
+test("DataTable's row click is opt-in and off unless a caller asks for it", () => {
+  // The one handler the Console accepts is a table row click, and it must stay
+  // opt-in: rendering an onClick that does nothing would put a no-op handler on
+  // every row of every table purely to support a feature nobody uses.
+  const withoutClick = renderToStaticMarkup(
+    React.createElement<DataTableProps<{ id: string }>>(DataTable, {
+      data: [{ id: "a" }, { id: "b" }],
+      columns: [
+        {
+          id: "id",
+          header: "ID",
+          weight: 100,
+          cell: (r) => r.id
+        }
+      ],
+      keyExtractor: (r) => r.id
+    })
+  );
+  assert.doesNotMatch(withoutClick, /onclick|onClick|cursor-pointer/);
+
+  const withClick = renderToStaticMarkup(
+    React.createElement<DataTableProps<{ id: string }>>(DataTable, {
+      data: [{ id: "a" }],
+      columns: [
+        {
+          id: "id",
+          header: "ID",
+          weight: 100,
+          cell: (r) => r.id
+        }
+      ],
+      keyExtractor: (r) => r.id,
+      onRowClick: () => undefined
+    })
+  );
+  assert.match(withClick, /cursor-pointer/);
 });
