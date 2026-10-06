@@ -17,6 +17,15 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import {
+  MUTED_META_CLASS,
+  MUTED_TEXT_CLASS
+} from "../../components/ui/text-classes.ts";
+import {
+  ERROR_TONE_CLASS,
+  NEUTRAL_TONE_CLASS,
+  SUCCESS_TONE_CLASS
+} from "../../components/ui/tones.ts";
 
 const NOT_OBSERVED_LABEL = "Not observed";
 
@@ -154,7 +163,7 @@ function traceColumns(
             ? "text-error"
             : span.statusCode === "OK"
               ? "text-success"
-              : "text-fg-muted";
+              : MUTED_TEXT_CLASS;
         return React.createElement(
           "span",
           { className: `font-mono text-xs ${style}` },
@@ -322,10 +331,10 @@ export function EvaluationsView({
                 key: m.name,
                 className: `${TAG_SHAPE} font-mono ${
                   m.pass === true
-                    ? "bg-success/15 text-success border-success/40"
+                    ? SUCCESS_TONE_CLASS
                     : m.pass === false
-                      ? "bg-error/15 text-error border-error/40"
-                      : "bg-neutral/15 text-neutral border-neutral/40"
+                      ? ERROR_TONE_CLASS
+                      : NEUTRAL_TONE_CLASS
                 }`
               },
               `${m.name}: ${m.value} · ${verdict}`
@@ -363,7 +372,7 @@ export function EvaluationsView({
       cell: (ev) =>
         React.createElement(
           "span",
-          { className: "text-xs text-fg-muted" },
+          { className: MUTED_META_CLASS },
           ev.timestamp
         )
     }

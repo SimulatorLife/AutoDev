@@ -21,6 +21,11 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
+import {
+  ACCENT_TONE_CLASS,
+  SUCCESS_TONE_CLASS
+} from "../../components/ui/tones.ts";
 import { toolId } from "./tool-identity.ts";
 
 /**
@@ -291,9 +296,9 @@ export function ToolsView({
             {
               className: `${TAG_SHAPE} font-mono ${
                 tool.source === "mcp"
-                  ? "bg-accent/15 text-accent border-accent/40"
+                  ? ACCENT_TONE_CLASS
                   : tool.source === "native"
-                    ? "bg-success/15 text-success border-success/40"
+                    ? SUCCESS_TONE_CLASS
                     : "bg-chart-3/15 text-chart-3 border-chart-3/40"
               }`,
               "data-source": tool.source
@@ -302,7 +307,7 @@ export function ToolsView({
           ),
           React.createElement(
             "span",
-            { className: "text-xs text-fg-muted" },
+            { className: MUTED_META_CLASS },
             sourceAuthorityLabel(tool.sourceAuthority)
           )
         )
@@ -344,7 +349,7 @@ export function ToolsView({
             })
           : React.createElement(
               "span",
-              { className: "text-xs text-fg-muted" },
+              { className: MUTED_META_CLASS },
               "Not cataloged"
             )
     },

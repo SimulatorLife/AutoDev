@@ -10,6 +10,7 @@ import React from "react";
 
 import { AppShell } from "../src/components/layout/AppShell.ts";
 import { DETAIL_PANEL_SHAPE } from "../src/components/layout/Panel.ts";
+import { MUTED_META_CLASS } from "../src/components/ui/text-classes.ts";
 import { canonicalSectionFromPath } from "../src/lib/routes.ts";
 import {
   type ControlApiConfig,
@@ -99,7 +100,7 @@ export function ResourceUnavailable({
     ),
     React.createElement(
       "p",
-      { className: "text-xs text-fg-muted" },
+      { className: MUTED_META_CLASS },
       hint ??
         "Configure the required server-side integration and restart the Console."
     )

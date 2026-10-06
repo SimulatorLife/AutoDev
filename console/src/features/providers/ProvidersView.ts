@@ -22,6 +22,10 @@ import {
   type TabDefinition,
   TabNav
 } from "../../components/tabs/Tabs.ts";
+import {
+  MUTED_META_CLASS,
+  MUTED_TEXT_CLASS
+} from "../../components/ui/text-classes.ts";
 import { ModelToggle, ProviderRoleToggle } from "./EnablementToggle.ts";
 import {
   modelPath,
@@ -206,7 +210,7 @@ function TierPriorityList({
       React.createElement(
         Chip,
         { className: "gap-1", label: `${tier}: priority group ${group}` },
-        React.createElement("span", { className: "text-fg-muted" }, tier),
+        React.createElement("span", { className: MUTED_TEXT_CLASS }, tier),
         React.createElement("span", { className: "font-mono" }, `P${group}`)
       )
   });
@@ -239,7 +243,7 @@ function modelColumns(returnTo: string): ColumnDef<ControlApiModelRecord>[] {
             ? null
             : React.createElement(
                 "span",
-                { className: "text-xs text-fg-muted" },
+                { className: MUTED_META_CLASS },
                 model.displayName
               )
         )
@@ -325,7 +329,7 @@ function RoutingPriorityPanel({
                     {
                       key: `arrow-${index}`,
                       "aria-hidden": "true",
-                      className: "text-fg-muted"
+                      className: MUTED_TEXT_CLASS
                     },
                     "→"
                   ),
@@ -338,7 +342,7 @@ function RoutingPriorityPanel({
                 },
                 React.createElement(
                   "span",
-                  { className: "text-fg-muted" },
+                  { className: MUTED_TEXT_CLASS },
                   `P${index + 1}`
                 ),
                 ...group.map((provider) =>

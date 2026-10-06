@@ -15,6 +15,7 @@ import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { chipList } from "../../components/tables/Chips.ts";
+import { SECTION_LABEL_CLASS } from "../../components/ui/text-classes.ts";
 import { AgentProviderSummary } from "./AgentProviderSummary.ts";
 
 export interface AgentDetailViewProps {
@@ -90,7 +91,7 @@ export function AgentDetailView({
           { className: "flex flex-col gap-2" },
           React.createElement(
             "dt",
-            { className: "text-xs uppercase tracking-wider text-fg-muted" },
+            { className: SECTION_LABEL_CLASS },
             "Validation"
           ),
           React.createElement(StatusBadge, { status: validation })
@@ -241,11 +242,7 @@ function DetailValue({
   return React.createElement(
     "div",
     { className: "flex flex-col gap-1" },
-    React.createElement(
-      "dt",
-      { className: "text-xs uppercase tracking-wider text-fg-muted" },
-      label
-    ),
+    React.createElement("dt", { className: SECTION_LABEL_CLASS }, label),
     React.createElement("dd", { className: "font-mono text-sm text-fg" }, value)
   );
 }
@@ -297,11 +294,7 @@ function StatusValue({
   return React.createElement(
     "div",
     { className: "flex flex-col gap-2" },
-    React.createElement(
-      "span",
-      { className: "text-xs uppercase tracking-wider text-fg-muted" },
-      label
-    ),
+    React.createElement("span", { className: SECTION_LABEL_CLASS }, label),
     React.createElement(StatusBadge, { status })
   );
 }

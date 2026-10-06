@@ -1,5 +1,13 @@
 import React from "react";
 
+import {
+  ACCENT_TONE_CLASS,
+  ERROR_TONE_CLASS,
+  NEUTRAL_TONE_CLASS,
+  SUCCESS_TONE_CLASS,
+  WARNING_TONE_CLASS
+} from "../ui/tones.ts";
+
 export type StatusBadgeVariant =
   | "configured"
   | "valid"
@@ -32,18 +40,18 @@ export interface StatusBadgeProps {
  * - not-observed: neutral (missing evidence; never implied as success).
  */
 const BADGE_STYLES: Record<StatusBadgeVariant, string> = {
-  configured: "bg-accent/15 text-accent border-accent/40",
-  valid: "bg-success/15 text-success border-success/40",
-  invalid: "bg-error/15 text-error border-error/40",
-  ready: "bg-success/15 text-success border-success/40",
-  unavailable: "bg-warning/15 text-warning border-warning/40",
-  converged: "bg-success/15 text-success border-success/40",
-  pending: "bg-accent/15 text-accent border-accent/40",
-  error: "bg-error/15 text-error border-error/40",
-  "not-observed": "bg-neutral/15 text-neutral border-neutral/40"
+  configured: ACCENT_TONE_CLASS,
+  valid: SUCCESS_TONE_CLASS,
+  invalid: ERROR_TONE_CLASS,
+  ready: SUCCESS_TONE_CLASS,
+  unavailable: WARNING_TONE_CLASS,
+  converged: SUCCESS_TONE_CLASS,
+  pending: ACCENT_TONE_CLASS,
+  error: ERROR_TONE_CLASS,
+  "not-observed": NEUTRAL_TONE_CLASS
 };
 
-const DEFAULT_STYLE = "bg-neutral/15 text-neutral border-neutral/40";
+const DEFAULT_STYLE = NEUTRAL_TONE_CLASS;
 
 /**
  * Foreground token per status variant, for places that carry the status as a

@@ -1,6 +1,7 @@
 import React from "react";
 
 import { Icon } from "../icons/Icon.ts";
+import { MUTED_META_CLASS } from "../ui/text-classes.ts";
 
 /**
  * The Console's single select control.
@@ -82,7 +83,7 @@ export function SelectField({
     },
     React.createElement(
       "label",
-      { htmlFor: id, className: "text-xs text-fg-muted" },
+      { htmlFor: id, className: MUTED_META_CLASS },
       label
     ),
     React.createElement(

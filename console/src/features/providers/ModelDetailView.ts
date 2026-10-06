@@ -14,6 +14,7 @@ import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { ConvergenceBadge } from "../../components/status/ConvergenceBadge.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import { SECTION_LABEL_CLASS } from "../../components/ui/text-classes.ts";
 import { ModelToggle } from "./EnablementToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 
@@ -34,11 +35,7 @@ function DetailValue({
   return React.createElement(
     "div",
     { className: "flex flex-col gap-1" },
-    React.createElement(
-      "dt",
-      { className: "text-xs uppercase tracking-wider text-fg-muted" },
-      label
-    ),
+    React.createElement("dt", { className: SECTION_LABEL_CLASS }, label),
     React.createElement(
       "dd",
       { className: "font-mono text-sm text-fg break-all" },

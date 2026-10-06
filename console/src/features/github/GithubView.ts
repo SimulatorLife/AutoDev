@@ -16,6 +16,10 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import {
+  MUTED_META_CLASS,
+  MUTED_TEXT_CLASS
+} from "../../components/ui/text-classes.ts";
 
 const NOT_OBSERVED_STATUS = "not-observed";
 
@@ -92,7 +96,7 @@ export function GithubView({
         workflow.events.length === 0
           ? React.createElement(
               "span",
-              { className: "text-xs text-fg-muted" },
+              { className: MUTED_META_CLASS },
               "None observed"
             )
           : React.createElement(
@@ -117,7 +121,7 @@ export function GithubView({
         workflow.schedules.length === 0
           ? React.createElement(
               "span",
-              { className: "text-xs text-fg-muted" },
+              { className: MUTED_META_CLASS },
               "No schedule trigger"
             )
           : React.createElement(
@@ -189,7 +193,7 @@ export function GithubView({
         if (!workflow.lastRunStatus && !workflow.lastRunConclusion) {
           return React.createElement(
             "span",
-            { className: "text-xs text-fg-muted" },
+            { className: MUTED_META_CLASS },
             "No runs observed"
           );
         }
@@ -290,7 +294,7 @@ export function GithubView({
           ),
           React.createElement(
             "span",
-            { className: "text-fg-muted" },
+            { className: MUTED_TEXT_CLASS },
             run.headSha ? run.headSha.slice(0, 7) : ""
           )
         )

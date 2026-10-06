@@ -2,6 +2,7 @@ import type { CanonicalNavSection } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { AppNav } from "../navigation/AppNav.ts";
+import { MUTED_TEXT_CLASS } from "../ui/text-classes.ts";
 
 export interface AppShellProps {
   readonly activeSection: CanonicalNavSection;
@@ -61,7 +62,7 @@ export function AppShell({
               },
               "AutoDev Console"
             ),
-            React.createElement("span", { className: "text-fg-muted" }, "/"),
+            React.createElement("span", { className: MUTED_TEXT_CLASS }, "/"),
             React.createElement(
               "h1",
               // The page title truncates on a narrow window, and it is the one

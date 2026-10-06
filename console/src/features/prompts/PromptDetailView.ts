@@ -27,6 +27,10 @@ import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
+import {
+  MUTED_BODY_CLASS,
+  MUTED_META_CLASS
+} from "../../components/ui/text-classes.ts";
 
 const PROMPT_CARD_CLASS_NAME = "rounded-lg border border-border bg-surface p-4";
 
@@ -144,7 +148,7 @@ function renderPromptSource(prompt: PromptDocument): React.ReactNode {
     return React.createElement(
       "p",
       {
-        className: "text-sm text-fg-muted",
+        className: MUTED_BODY_CLASS,
         "data-prompt-content": "empty"
       },
       "The canonical source file is empty."
@@ -337,7 +341,7 @@ function renderPromptHistory(
       : history.versions.length === 0
         ? React.createElement(
             "p",
-            { className: "text-sm text-fg-muted", role: "status" },
+            { className: MUTED_BODY_CLASS, role: "status" },
             "No committed versions are available; the current working tree remains the source of truth."
           )
         : React.createElement(
@@ -428,7 +432,7 @@ function renderPromptHistory(
             : React.createElement(
                 "p",
                 {
-                  className: "text-sm text-fg-muted",
+                  className: MUTED_BODY_CLASS,
                   "data-prompt-diff": "unchanged"
                 },
                 "The selected committed version matches the current working tree."
@@ -460,11 +464,7 @@ function renderPromptFooter(prompt: PromptDocument): React.JSX.Element {
     prompt.kind === "command"
       ? "Version history is tracked by Git; compare canonical commits in the repository."
       : "Role prompt edits remain read-only until their configuration owner has a lossless validated apply flow.";
-  return React.createElement(
-    "p",
-    { className: "text-xs text-fg-muted" },
-    message
-  );
+  return React.createElement("p", { className: MUTED_META_CLASS }, message);
 }
 
 export function PromptDetailView({
@@ -574,7 +574,7 @@ export function PromptDetailView({
             ),
         React.createElement(
           "p",
-          { className: "text-xs text-fg-muted" },
+          { className: MUTED_META_CLASS },
           isRole
             ? "Inspect execution contract, model routes, and tool permissions for this role."
             : "Commands are exposed across configured agent roles."

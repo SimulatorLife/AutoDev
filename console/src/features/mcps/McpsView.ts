@@ -10,6 +10,7 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 
 const NOT_OBSERVED_STATUS = "not-observed" as const;
 
@@ -98,11 +99,7 @@ export function McpsView({
       align: "tokens",
       cell: (server) =>
         server.targetOverrides.length === 0
-          ? React.createElement(
-              "span",
-              { className: "text-xs text-fg-muted" },
-              "None"
-            )
+          ? React.createElement("span", { className: MUTED_META_CLASS }, "None")
           : chipList({
               items: server.targetOverrides.map(
                 ({ target, enabled }) =>

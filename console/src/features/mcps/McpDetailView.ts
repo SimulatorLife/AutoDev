@@ -21,6 +21,10 @@ import {
   type TabDefinition,
   TabNav
 } from "../../components/tabs/Tabs.ts";
+import {
+  MUTED_BODY_CLASS,
+  MUTED_META_CLASS
+} from "../../components/ui/text-classes.ts";
 
 const CONFIGURED_STATUS = "configured" as const;
 const NOT_OBSERVED_STATUS = "not-observed" as const;
@@ -29,7 +33,6 @@ const CONFIGURATION_FIELD_CLASS =
   "rounded border border-border bg-background/40 p-3";
 const CONFIGURATION_LABEL_CLASS = "text-fg-muted block mb-1";
 const CONFIGURATION_VALUE_CLASS = "text-fg break-all";
-const STATUS_HELP_CLASS = "text-xs text-fg-muted";
 
 /**
  * MCP detail tabs in the target-state-mandated order. The id values are the
@@ -122,7 +125,7 @@ function ConfiguredToolAllowlist({
       }),
       React.createElement(
         "p",
-        { className: "text-xs text-fg-muted" },
+        { className: MUTED_META_CLASS },
         "The Tools capability projection was not observed; the configured tool allowlist cannot be read."
       )
     );
@@ -142,7 +145,7 @@ function ConfiguredToolAllowlist({
       }),
       React.createElement(
         "p",
-        { className: "text-xs text-fg-muted" },
+        { className: MUTED_META_CLASS },
         "No tool entries were enumerated for this MCP in the partial Tools projection. This does not establish that the server has no tools; its live inventory remains unknown."
       )
     );
@@ -224,7 +227,7 @@ export function McpDetailView({
     server.targetOverrides.length === 0
       ? React.createElement(
           "p",
-          { className: "text-sm text-fg-muted" },
+          { className: MUTED_BODY_CLASS },
           "No explicit target overrides."
         )
       : React.createElement(
@@ -483,7 +486,7 @@ export function McpDetailView({
         }),
         React.createElement(
           "p",
-          { className: STATUS_HELP_CLASS },
+          { className: MUTED_META_CLASS },
           "Ping round trip and process health are unprobed in the static configuration. Connection requires an active runtime session."
         )
       )
@@ -529,7 +532,7 @@ export function McpDetailView({
         }),
         React.createElement(
           "p",
-          { className: STATUS_HELP_CLASS },
+          { className: MUTED_META_CLASS },
           "Live server resource schemas, URIs, and read/preview capabilities require an active MCP session connection."
         )
       )
@@ -555,7 +558,7 @@ export function McpDetailView({
         }),
         React.createElement(
           "p",
-          { className: STATUS_HELP_CLASS },
+          { className: MUTED_META_CLASS },
           "Server prompt templates and arguments require an active MCP session connection."
         )
       )
@@ -575,7 +578,7 @@ export function McpDetailView({
       server.roles.length === 0
         ? React.createElement(
             "p",
-            { className: "text-sm text-fg-muted" },
+            { className: MUTED_BODY_CLASS },
             "No roles assigned to this server."
           )
         : React.createElement(
@@ -614,7 +617,7 @@ export function McpDetailView({
         }),
         React.createElement(
           "p",
-          { className: STATUS_HELP_CLASS },
+          { className: MUTED_META_CLASS },
           "Tools, resources, prompts, and activity round-trips are observed by the Codex-tools MCP shim span. No telemetry traces observed for this server."
         )
       )
@@ -640,7 +643,7 @@ export function McpDetailView({
         }),
         React.createElement(
           "p",
-          { className: STATUS_HELP_CLASS },
+          { className: MUTED_META_CLASS },
           "No errors observed. Failure states are reported when the MCP process exits non-zero or returns JSON-RPC protocol error envelopes."
         )
       )

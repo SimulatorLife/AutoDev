@@ -26,6 +26,10 @@ import {
   type ColumnDef,
   DataTable
 } from "../../components/tables/DataTable.ts";
+import {
+  MUTED_META_CLASS,
+  MUTED_TEXT_CLASS
+} from "../../components/ui/text-classes.ts";
 
 export interface MemoryRecordTransition {
   readonly fromStatus?: MemoryStatus;
@@ -185,7 +189,7 @@ export function MemoryRecordsView({
       cell: (record) =>
         React.createElement(
           "span",
-          { className: "text-xs text-fg-muted" },
+          { className: MUTED_META_CLASS },
           record.updatedAt
             ? new Date(record.updatedAt).toLocaleDateString()
             : "unknown"
@@ -340,7 +344,11 @@ function RecordDetailPanel({
         React.createElement(
           "div",
           { className: "flex items-center gap-2 text-xs" },
-          React.createElement("span", { className: "text-fg-muted" }, "State:"),
+          React.createElement(
+            "span",
+            { className: MUTED_TEXT_CLASS },
+            "State:"
+          ),
           React.createElement(
             "span",
             {
@@ -352,7 +360,7 @@ function RecordDetailPanel({
         record.validity.checkedAt
           ? React.createElement(
               "div",
-              { className: "text-xs text-fg-muted" },
+              { className: MUTED_META_CLASS },
               `Checked at: ${new Date(record.validity.checkedAt).toLocaleString()}`
             )
           : null,
@@ -438,7 +446,7 @@ function RecordDetailPanel({
                 { className: "flex items-center gap-2" },
                 React.createElement(
                   "span",
-                  { className: "text-fg-muted" },
+                  { className: MUTED_TEXT_CLASS },
                   "Supersedes:"
                 ),
                 record.supersedes.map((id) =>
@@ -460,7 +468,7 @@ function RecordDetailPanel({
                 { className: "flex items-center gap-2" },
                 React.createElement(
                   "span",
-                  { className: "text-fg-muted" },
+                  { className: MUTED_TEXT_CLASS },
                   "Superseded By:"
                 ),
                 record.supersededBy.map((id) =>

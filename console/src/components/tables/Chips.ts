@@ -1,6 +1,7 @@
 import React from "react";
 
 import { TAG_SHAPE } from "../status/Tag.ts";
+import { MUTED_META_CLASS } from "../ui/text-classes.ts";
 /**
  * Shared presentation primitives for the repeated "a cell holds a list of
  * short labels" pattern (role assignments, MCP servers, tier priorities).
@@ -106,7 +107,7 @@ export function chipList<TItem = string>({
   if (items.length === 0) {
     return React.createElement(
       "span",
-      { className: "text-xs text-fg-muted" },
+      { className: MUTED_META_CLASS },
       emptyLabel
     );
   }

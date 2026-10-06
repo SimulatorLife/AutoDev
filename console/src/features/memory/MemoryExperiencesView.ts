@@ -22,6 +22,10 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import {
+  MUTED_META_CLASS,
+  MUTED_TEXT_CLASS
+} from "../../components/ui/text-classes.ts";
 
 /**
  * The only reasons the Runtime's purge endpoint accepts. Offering anything else
@@ -34,7 +38,6 @@ const PURGE_REASON_OPTIONS: readonly SelectOption[] = [
 ];
 
 /** De-emphasised supporting copy, shared across this view's sub-panels. */
-const MUTED_TEXT_CLASS = "text-fg-muted";
 
 export interface MemoryExperiencesViewProps {
   readonly experiences: readonly ExperienceEnvelope[];
@@ -161,7 +164,7 @@ export function MemoryExperiencesView({
       cell: (exp) =>
         React.createElement(
           "span",
-          { className: "text-xs text-fg-muted" },
+          { className: MUTED_META_CLASS },
           exp.startedAt ? new Date(exp.startedAt).toLocaleString() : "unknown"
         )
     }

@@ -10,6 +10,7 @@ import {
   StatusDot
 } from "../../components/status/StatusBadge.ts";
 import { Chip } from "../../components/tables/Chips.ts";
+import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 import { providerPath } from "../providers/paths.ts";
 
 /**
@@ -31,7 +32,7 @@ export function AgentProviderSummary({
   if (agent.providers.length === 0) {
     return React.createElement(
       "span",
-      { className: "text-xs text-fg-muted" },
+      { className: MUTED_META_CLASS },
       "None configured"
     );
   }

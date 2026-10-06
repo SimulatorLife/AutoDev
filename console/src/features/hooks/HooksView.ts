@@ -4,6 +4,10 @@ import React from "react";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
+import {
+  MUTED_META_CLASS,
+  MUTED_TEXT_CLASS
+} from "../../components/ui/text-classes.ts";
 
 export interface HooksViewProps {
   readonly hooks: readonly HookDefinition[];
@@ -127,7 +131,7 @@ export function HooksView({
                             // "nothing here", so it is dropped, and the line
                             // had silently lost the `text-xs` that every other
                             // muted note on the page carries.
-                            { className: "text-xs text-fg-muted" },
+                            { className: MUTED_META_CLASS },
                             act.statusMessage
                           )
                         : null
@@ -137,7 +141,7 @@ export function HooksView({
                       { className: "text-fg" },
                       React.createElement(
                         "span",
-                        { className: "text-fg-muted" },
+                        { className: MUTED_TEXT_CLASS },
                         "$ "
                       ),
                       act.command

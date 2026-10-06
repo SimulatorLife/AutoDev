@@ -6,6 +6,7 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import { MUTED_META_CLASS, MUTED_TEXT_CLASS } from "../ui/text-classes.ts";
 import { StatusBadge, type StatusBadgeVariant } from "./StatusBadge.ts";
 
 /**
@@ -137,7 +138,7 @@ export function ReconciliationPanel({
     ),
     React.createElement(
       "p",
-      { className: "text-xs text-fg-muted" },
+      { className: MUTED_META_CLASS },
       status.explanation
     ),
     React.createElement(
@@ -156,7 +157,7 @@ export function ReconciliationPanel({
       ).flatMap(([label, value]) => [
         React.createElement(
           "dt",
-          { key: `${label}-label`, className: "text-fg-muted" },
+          { key: `${label}-label`, className: MUTED_TEXT_CLASS },
           label
         ),
         React.createElement(
@@ -177,7 +178,7 @@ export function ReconciliationPanel({
             "p",
             {
               key: "diff",
-              className: "text-xs text-fg-muted",
+              className: MUTED_META_CLASS,
               "data-field": "diff"
             },
             diff.summary
@@ -186,7 +187,7 @@ export function ReconciliationPanel({
     history.length === 0
       ? React.createElement(
           "p",
-          { className: "text-xs text-fg-muted" },
+          { className: MUTED_META_CLASS },
           "No recorded operations for this resource."
         )
       : React.createElement(

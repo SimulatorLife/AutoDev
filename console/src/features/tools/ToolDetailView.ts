@@ -20,6 +20,7 @@ import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { EmptyState } from "../../components/status/EmptyState.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
+import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 
 /**
  * Tools catalog detail view.
@@ -48,7 +49,6 @@ const FIELD_LABEL_CLASS = "text-fg-muted block mb-1";
 const FIELD_VALUE_CLASS = "text-fg break-all font-mono";
 const NOT_OBSERVED_STATUS = "not-observed" as const;
 const NOT_OBSERVED_LABEL = "Not observed" as const;
-const FG_MUTED_TEXT_CLASS = "text-xs text-fg-muted";
 const UNCONFIGURED_LABEL = "Not configured";
 
 function field(
@@ -121,7 +121,7 @@ function EditSurfaceLink({
   if (!surface) {
     return React.createElement(
       "span",
-      { className: FG_MUTED_TEXT_CLASS },
+      { className: MUTED_META_CLASS },
       "No canonical edit surface"
     );
   }
@@ -170,7 +170,7 @@ function usageSection(
       }),
       React.createElement(
         "p",
-        { className: FG_MUTED_TEXT_CLASS },
+        { className: MUTED_META_CLASS },
         "The dedicated read-only Usage telemetry path returned an error; per-tool use/error evidence stays unobserved."
       ),
       React.createElement(
@@ -193,7 +193,7 @@ function usageSection(
       }),
       React.createElement(
         "p",
-        { className: FG_MUTED_TEXT_CLASS },
+        { className: MUTED_META_CLASS },
         "No calls were observed for this tool through the dedicated read-only Usage path; the count is not rendered as zero."
       ),
       React.createElement(
@@ -220,7 +220,7 @@ function usageSection(
     ),
     React.createElement(
       "p",
-      { className: FG_MUTED_TEXT_CLASS },
+      { className: MUTED_META_CLASS },
       "Errors are reported only when the canonical Usage telemetry path exposes per-tool error counts. The Tools catalog never invents a value."
     ),
     React.createElement(
@@ -278,7 +278,7 @@ function roleExposure(tool: ToolCatalogItem): React.JSX.Element {
       }),
       React.createElement(
         "p",
-        { className: FG_MUTED_TEXT_CLASS },
+        { className: MUTED_META_CLASS },
         "No execution-contract role projection observed this tool; availability remains unobserved."
       )
     );

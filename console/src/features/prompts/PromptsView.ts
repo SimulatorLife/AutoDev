@@ -11,6 +11,7 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import { MUTED_TEXT_CLASS } from "../../components/ui/text-classes.ts";
 
 export interface PromptsViewProps {
   readonly commands: readonly PromptAsset[];
@@ -130,7 +131,7 @@ export function PromptsView({
             Chip,
             {
               href: `/evaluations?prompt=${encodeURIComponent(prompt.name)}`,
-              className: "text-fg-muted"
+              className: MUTED_TEXT_CLASS
             },
             "Evaluations"
           )

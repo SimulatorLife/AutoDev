@@ -14,8 +14,8 @@ import {
   type ColumnDef,
   DataTable
 } from "../../components/tables/DataTable.ts";
-
-const MUTED_TEXT_CLASS = "text-fg-muted";
+import { MUTED_TEXT_CLASS } from "../../components/ui/text-classes.ts";
+import { SUCCESS_TONE_CLASS } from "../../components/ui/tones.ts";
 
 export interface MemoryCohortsViewProps {
   readonly sessionCohorts: MemorySessionOutcomeCohortPage | null;
@@ -69,7 +69,7 @@ export function MemoryCohortsView({
           {
             className: `${TAG_SHAPE} font-medium ${
               isReported
-                ? "bg-success/15 text-success border-success/40"
+                ? SUCCESS_TONE_CLASS
                 : "bg-surface-raised text-fg-muted border-border-strong"
             }`
           },

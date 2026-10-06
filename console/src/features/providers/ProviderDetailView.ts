@@ -20,6 +20,12 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import {
+  MUTED_BODY_CLASS,
+  MUTED_META_CLASS,
+  MUTED_TEXT_CLASS,
+  SECTION_LABEL_CLASS
+} from "../../components/ui/text-classes.ts";
 import { ModelToggle, ProviderRoleToggle } from "./EnablementToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
@@ -45,11 +51,7 @@ function DetailValue({
   return React.createElement(
     "div",
     { className: "flex flex-col gap-1" },
-    React.createElement(
-      "dt",
-      { className: "text-xs uppercase tracking-wider text-fg-muted" },
-      label
-    ),
+    React.createElement("dt", { className: SECTION_LABEL_CLASS }, label),
     React.createElement(
       "dd",
       { className: "font-mono text-sm text-fg break-all" },
@@ -220,7 +222,7 @@ function RoutingPanel({
     served.length === 0
       ? React.createElement(
           "p",
-          { className: "text-sm text-fg-muted" },
+          { className: MUTED_BODY_CLASS },
           "This provider is not in any tier's priority groups."
         )
       : React.createElement(
@@ -247,7 +249,7 @@ function RoutingPanel({
               peers.length > 1
                 ? React.createElement(
                     "span",
-                    { className: "text-fg-muted" },
+                    { className: MUTED_TEXT_CLASS },
                     "shared with ",
                     ...peers
                       .filter((peer) => peer !== provider.id)
@@ -351,7 +353,7 @@ function HealthPanel({
       heading,
       React.createElement(
         "p",
-        { className: "text-sm text-fg-muted", "data-status": "not-observed" },
+        { className: MUTED_BODY_CLASS, "data-status": "not-observed" },
         "The router has not reported live evidence for this provider."
       )
     );
@@ -427,7 +429,7 @@ function HealthPanel({
               formatTimestamp(health.lastFailure.at),
               React.createElement(
                 "span",
-                { className: "text-xs text-fg-muted" },
+                { className: MUTED_META_CLASS },
                 [
                   health.lastFailure.failureClass ?? "unclassified",
                   health.lastFailure.status === null

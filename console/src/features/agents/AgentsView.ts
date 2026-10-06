@@ -14,6 +14,10 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import {
+  MUTED_META_CLASS,
+  SECTION_LABEL_CLASS
+} from "../../components/ui/text-classes.ts";
 import { AgentProviderSummary } from "./AgentProviderSummary.ts";
 
 const NOT_OBSERVED_LABEL = "Not observed";
@@ -193,7 +197,7 @@ export function AgentsView({
         ? React.createElement(
             "p",
             {
-              className: "text-xs text-fg-muted",
+              className: MUTED_META_CLASS,
               "data-status": "not-observed"
             },
             NOT_OBSERVED_LABEL
@@ -294,11 +298,7 @@ function RuntimeMetric({
   return React.createElement(
     "div",
     { className: rowClassName },
-    React.createElement(
-      "dt",
-      { className: "text-xs uppercase tracking-wider text-fg-muted" },
-      label
-    ),
+    React.createElement("dt", { className: SECTION_LABEL_CLASS }, label),
     React.createElement(
       "dd",
       valueClassName === null ? null : { className: valueClassName },
