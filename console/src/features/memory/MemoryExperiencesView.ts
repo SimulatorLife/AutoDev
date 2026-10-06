@@ -10,11 +10,8 @@ import {
   SelectField,
   type SelectOption
 } from "../../components/forms/SelectField.ts";
-import {
-  EntityTitle,
-  SECTION_HEADING_CLASS
-} from "../../components/layout/Heading.ts";
-import { ClosePanelLink } from "../../components/navigation/ClosePanelLink.ts";
+import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { DetailDrawer } from "../../components/panels/DetailDrawer.ts";
 import {
   StatusBadge,
   type StatusBadgeVariant
@@ -221,51 +218,30 @@ function ExperienceDetailPanel({
   workspaceId
 }: ExperienceDetailPanelProps): React.JSX.Element {
   return React.createElement(
-    "div",
+    DetailDrawer,
     {
-      className:
-        "rounded-lg border border-accent/60 bg-selected p-6 flex flex-col gap-6 shadow-xl",
-      "data-selected-experience-panel": experience.id
-    },
-    // Header
-    React.createElement(
-      "div",
-      {
-        className:
-          "flex items-start justify-between border-b border-border pb-4"
-      },
-      React.createElement(
-        "div",
-        { className: "flex flex-col gap-1" },
-        React.createElement(
-          "div",
-          { className: "flex items-center gap-3" },
-          React.createElement(EntityTitle, { mono: true }, experience.id),
-          React.createElement(
-            "span",
-            {
-              className: `${TAG_SHAPE} border-chart-1/40 bg-chart-1/15 font-mono text-chart-1`
-            },
-            `Role: ${experience.agentRole ?? "unknown"}`
-          ),
-          React.createElement(StatusBadge, {
-            status:
-              VALIDATION_STATUS_MAP[
-                experience.validation?.state ?? "not_run"
-              ] ?? "not-observed",
-            label: experience.validation?.state ?? "not_run"
-          })
-        ),
+      title: experience.id,
+      closeHref: `?tab=experiences&workspaceId=${encodeURIComponent(workspaceId)}`,
+      subtitle: `Task: ${experience.taskId} | Run: ${experience.runId}`,
+      dataAttributes: { "data-selected-experience-panel": experience.id },
+      badges: [
         React.createElement(
           "span",
-          { className: "text-xs text-fg-muted font-mono" },
-          `Task: ${experience.taskId} | Run: ${experience.runId}`
-        )
-      ),
-      React.createElement(ClosePanelLink, {
-        href: `?tab=experiences&workspaceId=${encodeURIComponent(workspaceId)}`
-      })
-    ),
+          {
+            key: "role",
+            className: `${TAG_SHAPE} border-chart-1/40 bg-chart-1/15 font-mono text-chart-1`
+          },
+          `Role: ${experience.agentRole ?? "unknown"}`
+        ),
+        React.createElement(StatusBadge, {
+          key: "status",
+          status:
+            VALIDATION_STATUS_MAP[experience.validation?.state ?? "not_run"] ??
+            "not-observed",
+          label: experience.validation?.state ?? "not_run"
+        })
+      ]
+    },
 
     // Trajectory Provenance & Details
     React.createElement(

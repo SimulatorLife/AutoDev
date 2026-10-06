@@ -53,6 +53,10 @@ import {
   CALLOUT_WARNING_CLASS,
   ClosePanelLink,
   DataTable,
+  DETAIL_DRAWER_CLASS,
+  DETAIL_DRAWER_HEADER_CLASS,
+  DETAIL_DRAWER_SUBTITLE_CLASS,
+  DetailDrawer,
   ENTITY_TITLE_CLASS,
   EvaluationsView,
   FilterBar,
@@ -81,6 +85,7 @@ import {
   StatusBadge,
   tabHref,
   TabNav,
+  TAG_SHAPE,
   ToolDetailView,
   ToolsView,
   UsageView,
@@ -6283,5 +6288,66 @@ test("governed record actions read as one primary, one destructive, one secondar
   assert.equal(
     combined.match(/data-button="memory-/g)?.length,
     combined.match(/type="submit"/g)?.length
+  );
+});
+
+test("DetailDrawer is the shared selected-item panel, not a per-feature copy", () => {
+  // The two Memory selection panels shared four hand-copied class strings
+  // between them, so the only thing keeping them identical was nobody editing
+  // one of them. Both must now render the primitive's surface and header.
+  const drawer = renderToStaticMarkup(
+    React.createElement(
+      DetailDrawer,
+      {
+        title: "mem-1",
+        subtitle: "Scope: SimulatorLife/AutoDev",
+        closeHref: "/memory?tab=records",
+        badges: React.createElement(
+          "span",
+          { className: TAG_SHAPE },
+          "procedural"
+        )
+      },
+      React.createElement("p", null, "Body")
+    )
+  );
+
+  assert.match(drawer, new RegExp(`class="${DETAIL_DRAWER_CLASS}"`, "u"));
+  assert.match(
+    drawer,
+    new RegExp(`class="${DETAIL_DRAWER_HEADER_CLASS}"`, "u")
+  );
+  assert.match(
+    drawer,
+    new RegExp(`class="${DETAIL_DRAWER_SUBTITLE_CLASS}"`, "u")
+  );
+  // The title is the entity's own heading, so the drawer keeps one h1/h2
+  // outline rather than inventing a heading level of its own.
+  assert.match(drawer, /<h2 class="[^"]*break-words[^"]*"[^>]*>mem-1<\/h2>/);
+  // Dismissal is a plain link to the list without the selection, so the drawer
+  // works with no JavaScript and the selection stays URL-addressable.
+  assert.match(drawer, /href="\/memory\?tab=records"/);
+  assert.match(drawer, />Close<\/a>/);
+  assert.doesNotMatch(drawer, /<dialog/);
+  assert.doesNotMatch(drawer, /onClick/);
+});
+
+test("no feature view re-copies the selected-item drawer surface", () => {
+  // bg-selected is the drawer's own surface. A feature that hand-writes it is
+  // rebuilding the drawer instead of using it.
+  const featuresDir = join(import.meta.dirname, "..", "src", "features");
+  const offenders: string[] = [];
+  for (const relative of readdirSync(featuresDir, { recursive: true })) {
+    const file = join(featuresDir, relative.toString());
+    if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
+    const source = readFileSync(file, "utf8");
+    if (source.includes("bg-selected") && !source.includes("DetailDrawer")) {
+      offenders.push(relative.toString());
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `These views hand-copy the drawer surface:\n${offenders.join("\n")}`
   );
 });

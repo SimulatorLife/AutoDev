@@ -13,11 +13,8 @@ import {
 } from "../../components/filters/FilterBar.ts";
 import { Button } from "../../components/forms/Button.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
-import {
-  EntityTitle,
-  SECTION_HEADING_CLASS
-} from "../../components/layout/Heading.ts";
-import { ClosePanelLink } from "../../components/navigation/ClosePanelLink.ts";
+import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { DetailDrawer } from "../../components/panels/DetailDrawer.ts";
 import {
   StatusBadge,
   type StatusBadgeVariant
@@ -266,49 +263,28 @@ function RecordDetailPanel({
   workspaceId
 }: RecordDetailPanelProps): React.JSX.Element {
   return React.createElement(
-    "div",
+    DetailDrawer,
     {
-      className:
-        "rounded-lg border border-accent/60 bg-selected p-6 flex flex-col gap-6 shadow-xl",
-      "data-selected-record-panel": record.id
-    },
-    // Header
-    React.createElement(
-      "div",
-      {
-        className:
-          "flex items-start justify-between border-b border-border pb-4"
-      },
-      React.createElement(
-        "div",
-        { className: "flex flex-col gap-1" },
-        React.createElement(
-          "div",
-          { className: "flex items-center gap-3" },
-          React.createElement(EntityTitle, { mono: true }, record.id),
-          React.createElement(
-            "span",
-            {
-              className: `${TAG_SHAPE} font-mono font-medium ${KIND_COLORS[record.kind] ?? "bg-surface-raised text-fg-secondary border-border-strong"}`
-            },
-            record.kind
-          ),
-          React.createElement(StatusBadge, {
-            status: STATUS_VARIANT_MAP[record.status] ?? NOT_OBSERVED_STATUS,
-            label: record.status.toUpperCase()
-          })
-        ),
+      title: record.id,
+      closeHref: `?tab=records&workspaceId=${encodeURIComponent(workspaceId)}`,
+      subtitle: `Scope: ${formatScopeString(record.scope)}`,
+      dataAttributes: { "data-selected-record-panel": record.id },
+      badges: [
         React.createElement(
           "span",
-          { className: "text-xs text-fg-muted font-mono" },
-          `Scope: ${formatScopeString(record.scope)}`
-        )
-      ),
-      React.createElement(ClosePanelLink, {
-        href: `?tab=records&workspaceId=${encodeURIComponent(workspaceId)}`
-      })
-    ),
-
+          {
+            key: "kind",
+            className: `${TAG_SHAPE} font-mono font-medium ${KIND_COLORS[record.kind] ?? "bg-surface-raised text-fg-secondary border-border-strong"}`
+          },
+          record.kind
+        ),
+        React.createElement(StatusBadge, {
+          key: "status",
+          status: STATUS_VARIANT_MAP[record.status] ?? NOT_OBSERVED_STATUS,
+          label: record.status.toUpperCase()
+        })
+      ]
+    },
     // Claim
     React.createElement(
       "div",
