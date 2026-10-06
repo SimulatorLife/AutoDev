@@ -2,17 +2,29 @@ import {
   dropUnresolvableReasoning,
   normalizeInputItemIds
 } from "@simulatorlife/autodev-runtime/shared/responses-item-ids";
+import { MULTI_AGENT_NAMESPACE } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
-export const FLATTENED_NAMESPACES = Object.freeze([
-  ["multi_agent_v1", "multi_agent_v1__"],
-  ["collaboration", "collaboration__"],
-  ["agents", "agents__"]
-] as const);
-
-export type FlattenedNamespace = {
-  readonly namespace: string;
-  readonly prefix: string;
-};
+/**
+ * Flat prefixes the router recognizes when un-flattening an inbound response.
+ *
+ * A model answers with a flat `namespace__name`, and the router splits it back
+ * into the `namespace`/`name` pair the provider expects. Only names carrying one
+ * of these prefixes are split: an unprefixed tool name that merely contains a
+ * double underscore must survive untouched.
+ *
+ * The table is module-private. Nothing outside here reads it, and keeping it
+ * exported made the router advertise a vocabulary it does not share -- while
+ * also duplicating the versioned `multi_agent_v1` namespace that
+ * `shared/tool-names.ts` owns. That one is now derived from
+ * `MULTI_AGENT_NAMESPACE` so bumping the versioned namespace cannot leave the
+ * router recognizing last version's prefix.
+ */
+const FLATTENED_NAMESPACES: readonly (readonly [string, string])[] =
+  Object.freeze([
+    [MULTI_AGENT_NAMESPACE, `${MULTI_AGENT_NAMESPACE}__`],
+    ["collaboration", "collaboration__"],
+    ["agents", "agents__"]
+  ]);
 
 export interface RouterResponseUsage {
   input_tokens: number;
