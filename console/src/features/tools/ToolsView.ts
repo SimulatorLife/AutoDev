@@ -303,7 +303,14 @@ export function ToolsView({
                     ? SUCCESS_TONE_CLASS
                     : "bg-chart-3/15 text-chart-3 border-chart-3/40"
               }`,
-              "data-source": tool.source
+              "data-source": tool.source,
+              // This pill names the MCP server, which has no length limit, and
+              // the column truncates. A `truncate` cell is only titled when its
+              // content is a plain string, so a pill that will be cut has to
+              // carry its own recovery the way `Chip` does.
+              title: tool.server
+                ? `${tool.source} (${tool.server})`
+                : tool.source
             },
             tool.server ? `${tool.source} (${tool.server})` : tool.source
           ),

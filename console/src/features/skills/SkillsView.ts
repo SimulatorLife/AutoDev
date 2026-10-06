@@ -135,6 +135,9 @@ export function SkillsView({
     {
       id: "status",
       header: "State",
+      // Sized for the badge. Declared no weight at all, so this column took the
+      // 100-unit default and clipped "Configured" at its last glyph.
+      weight: 116,
       cell: () =>
         React.createElement(StatusBadge, {
           status: "configured",

@@ -74,7 +74,11 @@ export function PromptsView({
     {
       id: "kind",
       header: "Type",
-      weight: 96,
+      // Sized for the badge, not for the header. A `StatusBadge` is the widest
+      // thing in this column by a wide margin -- status dot, rounded padding
+      // and all -- and at 96 the cell cut it to "Comman" on every one of the 63
+      // command rows. A header-width check cannot see this: "Type" is short.
+      weight: 124,
       cell: (prompt) => {
         const isRole = prompt.kind === "role" || prompt.path.includes("roles");
         return React.createElement(StatusBadge, {

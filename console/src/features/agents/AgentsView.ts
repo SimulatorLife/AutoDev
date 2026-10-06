@@ -88,7 +88,11 @@ export function AgentsView({
       cell: (agent) =>
         React.createElement(
           "span",
-          { className: MONO_VALUE_CLASS },
+          // The model id is the widest thing this column will ever hold, and a
+          // truncating cell is only titled when its content is a plain string
+          // -- a bare `<span>` recovers nothing on its own, so it titles
+          // itself the way `Chip` does.
+          { className: MONO_VALUE_CLASS, title: agent.primaryModel },
           agent.primaryModel
         )
     },
