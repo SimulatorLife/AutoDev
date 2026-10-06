@@ -5,6 +5,7 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import { CodeBlock } from "../../components/code/CodeBlock.ts";
 import {
   ENTITY_EYEBROW_CLASS,
   EntityTitle,
@@ -219,14 +220,10 @@ export function AgentDetailView({
             },
             "System prompt"
           ),
-          React.createElement(
-            "pre",
-            {
-              className:
-                "max-h-[32rem] overflow-auto whitespace-pre-wrap rounded border border-border bg-background p-4 font-mono text-xs text-fg-secondary"
-            },
-            agent.systemPrompt
-          )
+          React.createElement(CodeBlock, {
+            content: agent.systemPrompt,
+            ariaLabel: "Agent system prompt"
+          })
         )
   );
 }

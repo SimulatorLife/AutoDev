@@ -8,6 +8,7 @@ export * from "./components/filters/FilterBar.ts";
  */
 
 export * from "./components/cards/StatCard.ts";
+export * from "./components/code/CodeBlock.ts";
 export * from "./components/layout/AppShell.ts";
 export * from "./components/layout/Callout.ts";
 export * from "./components/layout/Heading.ts";

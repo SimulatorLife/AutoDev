@@ -52,6 +52,12 @@ import {
   Breadcrumbs,
   CALLOUT_WARNING_CLASS,
   ClosePanelLink,
+  CODE_BLOCK_CLASS,
+  CODE_BLOCK_HEIGHT_CLASS,
+  CODE_EDITOR_CLASS,
+  CODE_SNIPPET_CLASS,
+  CodeBlock,
+  CodeEditor,
   DataTable,
   DETAIL_DRAWER_CLASS,
   DETAIL_DRAWER_HEADER_CLASS,
@@ -6312,15 +6318,9 @@ test("DetailDrawer is the shared selected-item panel, not a per-feature copy", (
     )
   );
 
-  assert.match(drawer, new RegExp(`class="${DETAIL_DRAWER_CLASS}"`, "u"));
-  assert.match(
-    drawer,
-    new RegExp(`class="${DETAIL_DRAWER_HEADER_CLASS}"`, "u")
-  );
-  assert.match(
-    drawer,
-    new RegExp(`class="${DETAIL_DRAWER_SUBTITLE_CLASS}"`, "u")
-  );
+  assert.ok(drawer.includes(DETAIL_DRAWER_CLASS));
+  assert.ok(drawer.includes(DETAIL_DRAWER_HEADER_CLASS));
+  assert.ok(drawer.includes(DETAIL_DRAWER_SUBTITLE_CLASS));
   // The title is the entity's own heading, so the drawer keeps one h1/h2
   // outline rather than inventing a heading level of its own.
   assert.match(drawer, /<h2 class="[^"]*break-words[^"]*"[^>]*>mem-1<\/h2>/);
@@ -6349,5 +6349,95 @@ test("no feature view re-copies the selected-item drawer surface", () => {
     offenders,
     [],
     `These views hand-copy the drawer surface:\n${offenders.join("\n")}`
+  );
+});
+
+test("CodeBlock and CodeEditor share one chrome instead of seven spellings", () => {
+  const block = renderToStaticMarkup(
+    React.createElement(CodeBlock, {
+      content: "print('hi')",
+      ariaLabel: "Example source",
+      dataAttributes: { "data-example": "observed" }
+    })
+  );
+
+  // Asserted by containment rather than by RegExp: these class strings contain
+  // `[32rem]`-style arbitrary values, which a RegExp would read as a character
+  // class instead of a literal.
+  assert.ok(block.includes(CODE_BLOCK_CLASS));
+  // The default cap is a named value from the closed set, not a literal the
+  // caller appended -- Tailwind resolves same-property utilities by
+  // stylesheet order, so a composed max-h would silently lose.
+  assert.ok(
+    block.includes(`${CODE_BLOCK_CLASS} ${CODE_BLOCK_HEIGHT_CLASS.secondary}`),
+    `expected the secondary cap, got: ${block}`
+  );
+  assert.match(block, /aria-label="Example source"/);
+  assert.match(block, /data-example="observed"/);
+  // Source is shown verbatim, never reformatted or truncated. React escapes
+  // the apostrophe, so the entity form is what the markup carries.
+  assert.match(block, />print\(&#x27;hi&#x27;\)<\/pre>$/);
+
+  // The primary variant is a taller cap for the page's main document.
+  const primary = renderToStaticMarkup(
+    React.createElement(CodeBlock, { content: "x", height: "primary" })
+  );
+  assert.ok(primary.includes(CODE_BLOCK_HEIGHT_CLASS.primary));
+
+  const snippet = renderToStaticMarkup(
+    React.createElement(
+      "pre",
+      { className: `${CODE_SNIPPET_CLASS} mb-3` },
+      "inline"
+    )
+  );
+  assert.ok(snippet.includes(`${CODE_SNIPPET_CLASS} mb-3`));
+
+  const editor = renderToStaticMarkup(
+    React.createElement(CodeEditor, {
+      id: "prompt-content",
+      name: "content",
+      defaultValue: "# Command",
+      ariaLabel: "Canonical Markdown source"
+    })
+  );
+  assert.ok(editor.includes(CODE_EDITOR_CLASS));
+  // A real form control: submits on its own, works without scripting, and is
+  // announced with the name rather than a placeholder.
+  assert.match(editor, /<textarea/);
+  assert.match(editor, /aria-label="Canonical Markdown source"/);
+  assert.doesNotMatch(editor, /contenteditable/);
+  assert.doesNotMatch(editor, /onChange|onInput/);
+});
+
+test("no feature view hand-types a code or config surface", () => {
+  // A bordered monospace scrolling block is the primitive's job. This checks
+  // each rendered <pre>/<textarea> individually rather than per file, so a
+  // feature that uses CodeBlock in one place cannot hand-type another code
+  // surface in the same file.
+  //
+  // A surface qualifies as hand-typed when font-mono appears in a literal
+  // class string. Referencing CODE_BLOCK_CLASS or CODE_SNIPPET_CLASS carries
+  // font-mono through the constant instead, so the preview's markdown `pre`
+  // override stays legal.
+  const featuresDir = join(import.meta.dirname, "..", "src", "features");
+  const offenders: string[] = [];
+  const surface = /createElement\(\s*"(?:pre|textarea)"\s*,\s*\{([^}]*)\}/gsu;
+  for (const relative of readdirSync(featuresDir, { recursive: true })) {
+    const file = join(featuresDir, relative.toString());
+    if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
+    const source = readFileSync(file, "utf8");
+    for (const match of source.matchAll(surface)) {
+      const props = match[1] ?? "";
+      if (!/className:\s*[`'"][^`'"]*font-mono/u.test(props)) continue;
+      offenders.push(
+        `${relative.toString()}: ${props.trim().replaceAll(/\s+/gu, " ").slice(0, 70)}`
+      );
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `These views hand-type a code surface instead of using CodeBlock/CodeEditor:\n${offenders.join("\n")}`
   );
 });

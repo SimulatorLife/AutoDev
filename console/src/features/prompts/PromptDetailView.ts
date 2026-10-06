@@ -7,6 +7,11 @@ import type {
 import React from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 
+import {
+  CODE_SNIPPET_CLASS,
+  CodeBlock,
+  CodeEditor
+} from "../../components/code/CodeBlock.ts";
 import { Button } from "../../components/forms/Button.ts";
 import {
   CALLOUT_ERROR_CLASS,
@@ -104,17 +109,15 @@ function renderPromptSource(prompt: PromptDocument): React.ReactNode {
         { htmlFor: "prompt-content", className: "sr-only" },
         "Canonical Markdown source"
       ),
-      React.createElement("textarea", {
+      React.createElement(CodeEditor, {
         id: "prompt-content",
         name: "content",
-        required: true,
-        rows: 24,
-        spellCheck: false,
         defaultValue: prompt.content,
-        "data-prompt-content":
-          prompt.content.length === 0 ? "empty" : "observed",
-        className:
-          "min-h-[32rem] w-full resize-y overflow-auto rounded border border-border bg-background p-4 font-mono text-xs text-fg-secondary "
+        ariaLabel: "Canonical Markdown source",
+        dataAttributes: {
+          "data-prompt-content":
+            prompt.content.length === 0 ? "empty" : "observed"
+        }
       }),
       React.createElement(
         "div",
@@ -148,15 +151,11 @@ function renderPromptSource(prompt: PromptDocument): React.ReactNode {
     );
   }
 
-  return React.createElement(
-    "pre",
-    {
-      className:
-        "max-h-[40rem] overflow-auto whitespace-pre-wrap rounded border border-border bg-background p-4 font-mono text-xs text-fg-secondary",
-      "data-prompt-content": "observed"
-    },
-    prompt.content
-  );
+  return React.createElement(CodeBlock, {
+    content: prompt.content,
+    height: "primary",
+    dataAttributes: { "data-prompt-content": "observed" }
+  });
 }
 
 /**
@@ -221,10 +220,7 @@ const PROMPT_MARKDOWN_COMPONENTS: Components = {
   pre: ({ children }) =>
     React.createElement(
       "pre",
-      {
-        className:
-          "mb-3 overflow-auto rounded border border-border bg-background p-3 font-mono text-xs text-fg-secondary"
-      },
+      { className: `${CODE_SNIPPET_CLASS} mb-3` },
       children
     ),
   code: ({ children }) =>
@@ -423,17 +419,12 @@ function renderPromptHistory(
             `Changes since ${selectedVersion.versionHash.slice(0, 12)} (${selectedVersion.updatedAt})`
           ),
           selectedVersion.diff.length > 0
-            ? React.createElement(
-                "pre",
-                {
-                  className:
-                    "max-h-[32rem] overflow-auto whitespace-pre-wrap rounded border border-border bg-background p-4 font-mono text-xs text-fg-secondary",
-                  "aria-label":
-                    "Unified diff from committed version to working tree",
-                  "data-prompt-diff": "observed"
-                },
-                selectedVersion.diff
-              )
+            ? React.createElement(CodeBlock, {
+                content: selectedVersion.diff,
+                ariaLabel:
+                  "Unified diff from committed version to working tree",
+                dataAttributes: { "data-prompt-diff": "observed" }
+              })
             : React.createElement(
                 "p",
                 {
@@ -453,15 +444,11 @@ function renderPromptHistory(
               },
               "View committed source"
             ),
-            React.createElement(
-              "pre",
-              {
-                className:
-                  "mt-3 max-h-[32rem] overflow-auto whitespace-pre-wrap font-mono text-xs text-fg-secondary",
-                "data-prompt-version-content": "observed"
-              },
-              selectedVersion.content
-            )
+            React.createElement(CodeBlock, {
+              content: selectedVersion.content,
+              className: "mt-3",
+              dataAttributes: { "data-prompt-version-content": "observed" }
+            })
           )
         )
       : null

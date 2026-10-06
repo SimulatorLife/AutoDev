@@ -7,6 +7,7 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import { CodeBlock } from "../../components/code/CodeBlock.ts";
 import {
   FilterBar,
   FilterSearchField
@@ -296,14 +297,15 @@ function RecordDetailPanel({
         },
         "Durable Claim"
       ),
-      React.createElement(
-        "div",
-        {
-          className:
-            "rounded-md border border-border bg-background p-4 font-mono text-sm text-fg leading-relaxed whitespace-pre-wrap"
-        },
-        record.claim
-      )
+      React.createElement(CodeBlock, {
+        content: record.claim,
+        height: "auto",
+        ariaLabel: "Durable claim",
+        // A claim is monospace prose, not source, so it reads in the body text
+        // colour and size rather than the editor's. Its box is otherwise the
+        // same surface every other block of content on the page uses.
+        className: "rounded-md text-sm text-fg"
+      })
     ),
 
     // Validity & Provenance grid
