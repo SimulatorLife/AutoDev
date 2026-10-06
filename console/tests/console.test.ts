@@ -103,6 +103,8 @@ import {
   fetchProviders,
   fetchRuntime,
   fetchSkills,
+  fetchHooks,
+  fetchMcps,
   fetchTools,
   fetchWorkspaces,
   readControlApiConfig
@@ -3059,6 +3061,14 @@ test("fetchGithubWorkflows issues authenticated GET to /control/github", async (
       catalogStatus: "valid",
       totalWorkflows: 1,
       runtimeFactsAvailable: false,
+      // The Runtime emits the whole envelope on both the observed and the
+      // unavailable path, so the fixture carries every one of these: a partial
+      // fixture is what let a drifted payload pass unnoticed before the guard.
+      runtimeStatus: "unavailable",
+      runtimeMessage: "AUTODEV_GITHUB_TOKEN is not configured.",
+      repository: null,
+      stats: null,
+      recentRuns: [],
       workflows: [
         {
           id: "_scheduler.yml",
@@ -4171,6 +4181,103 @@ test("Agents responses fail closed rather than render an empty Configure surface
       JSON.stringify(broken)
     );
   }
+});
+
+test("Catalog collections fail closed on unreadable responses", async () => {
+  const config = { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" };
+  const serve = (body: unknown) => ({
+    fetchImpl: async () => Response.json(body)
+  });
+
+  // An unreadable catalog reaching a view is an empty collection, and an empty
+  // collection is a claim ("no MCP servers are configured") that a shape the
+  // Console cannot read does not support.
+  const mcps = {
+    schema: "autodev-control-mcps-v1",
+    source: ".rulesync/mcp.jsonc",
+    readOnly: true,
+    valid: true,
+    servers: [{ name: "lsp", enabled: true, declared: true, roles: [] }]
+  };
+  assert.equal((await fetchMcps(config, serve(mcps))).kind, "ok");
+  for (const broken of [
+    { ...mcps, schema: "autodev-control-mcps-v0" },
+    { ...mcps, servers: {} },
+    { ...mcps, servers: [{ enabled: true }] },
+    { ...mcps, valid: "yes" }
+  ]) {
+    assert.equal(
+      (await fetchMcps(config, serve(broken))).kind,
+      "invalid-response",
+      JSON.stringify(broken)
+    );
+  }
+
+  const tools = {
+    schema: "autodev-control-tools-v2",
+    source: "catalog",
+    readOnly: true,
+    coverage: "complete",
+    validity: "valid",
+    totalTools: 1,
+    usageLink: "/usage",
+    tools: [{ name: "web_search", source: "native", exposedRoles: [] }]
+  };
+  assert.equal((await fetchTools(config, serve(tools))).kind, "ok");
+  for (const broken of [
+    // Coverage and validity are the page's whole honesty budget; a drifted
+    // vocabulary must not silently become "unknown"/"not-observed".
+    { ...tools, coverage: "full" },
+    { ...tools, validity: "ok" },
+    { ...tools, tools: {} },
+    { ...tools, totalTools: "1" }
+  ]) {
+    assert.equal(
+      (await fetchTools(config, serve(broken))).kind,
+      "invalid-response",
+      JSON.stringify(broken)
+    );
+  }
+
+  const hooks = {
+    schema: "autodev-control-hooks-v1",
+    source: ".rulesync/hooks.jsonc",
+    readOnly: true,
+    valid: null,
+    hooks: { pre_tool_use: [] }
+  };
+  assert.equal((await fetchHooks(config, serve(hooks))).kind, "ok");
+  assert.equal(
+    (await fetchHooks(config, serve({ ...hooks, hooks: [] }))).kind,
+    "invalid-response"
+  );
+
+  const evaluations = {
+    schema: "autodev-control-evaluations-v1",
+    source: "evaluations",
+    readOnly: true,
+    totalEvaluations: 0,
+    evaluations: []
+  };
+  assert.equal((await fetchEvaluations(config, serve(evaluations))).kind, "ok");
+  for (const broken of [
+    { ...evaluations, schema: "autodev-control-evaluations-v0" },
+    { ...evaluations, evaluations: {} },
+    { ...evaluations, evaluations: [{ model: "x" }] }
+  ]) {
+    assert.equal(
+      (await fetchEvaluations(config, serve(broken))).kind,
+      "invalid-response",
+      JSON.stringify(broken)
+    );
+  }
+
+  // A well-formed but empty catalog is still an observed empty state and must
+  // keep rendering as empty rather than turning into an error.
+  assert.equal(
+    (await fetchMcps(config, serve({ ...mcps, servers: [] }))).kind,
+    "ok"
+  );
 });
 
 test("Memory detail and the workspace catalog fail closed on unreadable responses", async () => {

@@ -736,6 +736,21 @@ function isSessionOutcomeCohortPage(
   );
 }
 
+/**
+ * One failure shape for every unreadable catalog, so the Console reports a
+ * drifted Runtime the same way whichever collection it was reading.
+ */
+function invalidCatalogResponse(
+  what: string,
+  schema: string
+): ControlApiResult<never> {
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_catalog_response",
+    message: `AutoDev Control API returned an incompatible ${what} response; the Console requires the ${schema} contract.`
+  };
+}
+
 function invalidMemoryPageResponse(
   what: string,
   schema: string
@@ -747,26 +762,149 @@ function invalidMemoryPageResponse(
   };
 }
 
-export function fetchMcps(
+/**
+ * Narrows the remaining catalog collections.
+ *
+ * These all share one failure mode: an unreadable response reached the view as
+ * an empty collection, and an empty collection is a claim — "no MCP servers are
+ * configured", "no tools are exposed" — that a shape the Console cannot read
+ * does not support. Each predicate checks the envelope the view actually
+ * renders rather than restating every nested Core type.
+ */
+function isControlApiMcpsResponse(
+  value: unknown
+): value is ControlApiMcpsResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-mcps-v1" &&
+    typeof value.source === "string" &&
+    typeof value.readOnly === "boolean" &&
+    (value.valid === null || typeof value.valid === "boolean") &&
+    Array.isArray(value.servers) &&
+    value.servers.every(
+      (server) => isRecord(server) && typeof server.name === "string"
+    )
+  );
+}
+
+function isControlApiToolsResponse(
+  value: unknown
+): value is ControlApiToolsResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-tools-v2" &&
+    typeof value.source === "string" &&
+    typeof value.readOnly === "boolean" &&
+    (value.coverage === "complete" ||
+      value.coverage === "partial" ||
+      value.coverage === "unavailable" ||
+      value.coverage === "unknown") &&
+    (value.validity === "valid" ||
+      value.validity === "invalid" ||
+      value.validity === "not-observed") &&
+    isNullableNumber(value.totalTools) &&
+    typeof value.usageLink === "string" &&
+    Array.isArray(value.tools) &&
+    value.tools.every((tool) => isRecord(tool) && typeof tool.name === "string")
+  );
+}
+
+function isControlApiHooksResponse(
+  value: unknown
+): value is ControlApiHooksResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-hooks-v1" &&
+    typeof value.source === "string" &&
+    typeof value.readOnly === "boolean" &&
+    (value.valid === null || typeof value.valid === "boolean") &&
+    isRecord(value.hooks)
+  );
+}
+
+function isControlApiEvaluationsResponse(
+  value: unknown
+): value is ControlApiEvaluationsResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-evaluations-v1" &&
+    typeof value.source === "string" &&
+    typeof value.readOnly === "boolean" &&
+    typeof value.totalEvaluations === "number" &&
+    Array.isArray(value.evaluations) &&
+    value.evaluations.every(
+      (evaluation) => isRecord(evaluation) && typeof evaluation.id === "string"
+    )
+  );
+}
+
+function isControlApiGithubResponse(
+  value: unknown
+): value is ControlApiGithubResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-github-v1" &&
+    typeof value.source === "string" &&
+    typeof value.readOnly === "boolean" &&
+    (value.catalogStatus === "valid" ||
+      value.catalogStatus === "invalid" ||
+      value.catalogStatus === "unavailable") &&
+    isNullableNumber(value.totalWorkflows) &&
+    typeof value.runtimeFactsAvailable === "boolean" &&
+    (value.runtimeStatus === "available" ||
+      value.runtimeStatus === "unavailable" ||
+      value.runtimeStatus === "invalid") &&
+    isNullableString(value.runtimeMessage) &&
+    isNullableString(value.repository) &&
+    (value.stats === null || isRecord(value.stats)) &&
+    Array.isArray(value.workflows) &&
+    value.workflows.every(
+      (workflow) => isRecord(workflow) && typeof workflow.id === "string"
+    ) &&
+    Array.isArray(value.recentRuns)
+  );
+}
+
+function isControlApiRoutingResponse(
+  value: unknown
+): value is ControlApiRoutingResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-routing-v1" &&
+    isRecord(value.runtime) &&
+    Array.isArray(value.routes) &&
+    isRecord(value.cooldowns)
+  );
+}
+
+export async function fetchMcps(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiMcpsResponse>> {
-  return fetchControlApi<ControlApiMcpsResponse>(
+  const result = await fetchControlApi<unknown>(
     CONTROL_API_PATHS.mcps,
     config,
     options
   );
+  if (result.kind !== "ok") return result;
+  return isControlApiMcpsResponse(result.data)
+    ? { kind: "ok", data: result.data }
+    : invalidCatalogResponse("Mcps", "autodev-control-mcps-v1");
 }
 
-export function fetchTools(
+export async function fetchTools(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiToolsResponse>> {
-  return fetchControlApi<ControlApiToolsResponse>(
+  const result = await fetchControlApi<unknown>(
     CONTROL_API_PATHS.tools,
     config,
     options
   );
+  if (result.kind !== "ok") return result;
+  return isControlApiToolsResponse(result.data)
+    ? { kind: "ok", data: result.data }
+    : invalidCatalogResponse("Tools", "autodev-control-tools-v2");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -903,15 +1041,19 @@ export async function fetchSkills(
   };
 }
 
-export function fetchHooks(
+export async function fetchHooks(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiHooksResponse>> {
-  return fetchControlApi<ControlApiHooksResponse>(
+  const result = await fetchControlApi<unknown>(
     CONTROL_API_PATHS.hooks,
     config,
     options
   );
+  if (result.kind !== "ok") return result;
+  return isControlApiHooksResponse(result.data)
+    ? { kind: "ok", data: result.data }
+    : invalidCatalogResponse("Hooks", "autodev-control-hooks-v1");
 }
 
 function isControlApiPermissionsResponse(
@@ -1253,26 +1395,37 @@ export async function fetchWorkspaces(
   };
 }
 
-export function fetchGithubWorkflows(
+export async function fetchGithubWorkflows(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiGithubResponse>> {
-  return fetchControlApi<ControlApiGithubResponse>(
+  const result = await fetchControlApi<unknown>(
     CONTROL_API_PATHS.github,
     config,
     options
   );
+  if (result.kind !== "ok") return result;
+  // GitHub's page is explicitly about unobserved state: a catalog that cannot be
+  // read must report that rather than present an empty workflow list as "this
+  // repository has no workflows".
+  return isControlApiGithubResponse(result.data)
+    ? { kind: "ok", data: result.data }
+    : invalidCatalogResponse("GitHub", "autodev-control-github-v1");
 }
 
-export function fetchRouting(
+export async function fetchRouting(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiRoutingResponse>> {
-  return fetchControlApi<ControlApiRoutingResponse>(
+  const result = await fetchControlApi<unknown>(
     CONTROL_API_PATHS.routing,
     config,
     options
   );
+  if (result.kind !== "ok") return result;
+  return isControlApiRoutingResponse(result.data)
+    ? { kind: "ok", data: result.data }
+    : invalidCatalogResponse("Routing", "autodev-control-routing-v1");
 }
 
 export async function fetchRuntime(
@@ -1296,15 +1449,19 @@ export async function fetchRuntime(
   };
 }
 
-export function fetchEvaluations(
+export async function fetchEvaluations(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiEvaluationsResponse>> {
-  return fetchControlApi<ControlApiEvaluationsResponse>(
+  const result = await fetchControlApi<unknown>(
     CONTROL_API_PATHS.evaluations,
     config,
     options
   );
+  if (result.kind !== "ok") return result;
+  return isControlApiEvaluationsResponse(result.data)
+    ? { kind: "ok", data: result.data }
+    : invalidCatalogResponse("Evaluations", "autodev-control-evaluations-v1");
 }
 
 export async function fetchMemoryRecords(
