@@ -5,7 +5,6 @@ import {
   controlApiFailureCode,
   fetchAgents,
   fetchProviders,
-  fetchRouting,
   fetchRuntime
 } from "../../src/lib/server/control-api.ts";
 import { agentsFromControlApi } from "../../src/lib/server/views.ts";
@@ -31,13 +30,16 @@ export default async function AgentsPage(): Promise<React.JSX.Element> {
       })
     );
   }
-  const [agentsResult, providersResult, routingResult, runtimeResult] =
-    await Promise.all([
-      fetchAgents(config),
-      fetchProviders(config),
-      fetchRouting(config),
-      fetchRuntime(config)
-    ]);
+  // Runtime state is read from `/control/runtime`, which publishes the same
+  // concurrency projection as `/control/routing` alongside lifecycle and drain
+  // state. Routing is not fetched here any more: the page composes runtime
+  // evidence, so reading a second copy of the same counters would only add a
+  // way for the two to disagree.
+  const [agentsResult, providersResult, runtimeResult] = await Promise.all([
+    fetchAgents(config),
+    fetchProviders(config),
+    fetchRuntime(config)
+  ]);
   if (agentsResult.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
@@ -52,7 +54,6 @@ export default async function AgentsPage(): Promise<React.JSX.Element> {
   const agents = agentsFromControlApi(agentsResult.data);
   const providers =
     providersResult.kind === "ok" ? providersResult.data : undefined;
-  const routing = routingResult.kind === "ok" ? routingResult.data : undefined;
   const runtime = runtimeResult.kind === "ok" ? runtimeResult.data : undefined;
 
   return React.createElement(
@@ -61,7 +62,6 @@ export default async function AgentsPage(): Promise<React.JSX.Element> {
     React.createElement(AgentsView, {
       agents,
       providers,
-      routing,
       runtime
     })
   );

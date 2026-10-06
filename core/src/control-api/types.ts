@@ -411,16 +411,27 @@ export interface ControlApiRoutingResponse {
 export interface ControlApiRuntimeResponse {
   readonly schema: "autodev-control-runtime-v1";
   readonly routerInstanceId: string;
+  /**
+   * Every field here is emitted on every response by `getLifecycleStatus()`;
+   * none is conditional. Declaring the extras optional let the Console read a
+   * missing one as "no evidence" when the Runtime had in fact always reported
+   * it, which is how a required field quietly became a guess.
+   */
   readonly lifecycle: {
     readonly state: string;
-    readonly draining?: boolean;
-    readonly changedAt?: string;
-    readonly activeResponseRequests?: number;
+    readonly draining: boolean;
+    readonly changedAt: string;
+    readonly activeResponseRequests: number;
   };
-  readonly concurrency: {
-    readonly limit: number;
-    readonly active: number;
-  } & ControlApiConcurrencyStatus;
+  /**
+   * The same concurrency projection `/control/routing` carries. It was
+   * previously declared as `{ limit, active } & ControlApiConcurrencyStatus`,
+   * but the Runtime emits no such fields: the real names are
+   * `effectivePerSessionLimit` and `activeSubagentThreads`. That fiction made
+   * the Console read two always-undefined properties and fall through to a
+   * hardcoded zero while the evidence it wanted was in the response.
+   */
+  readonly concurrency: ControlApiConcurrencyStatus;
   readonly inFlightRequestCount: number;
 }
 

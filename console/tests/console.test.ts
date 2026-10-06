@@ -3290,29 +3290,6 @@ const MODELS_FIXTURE: ControlApiModelsResponse = {
   ]
 };
 
-const ROUTING_FIXTURE = {
-  schema: "autodev-control-routing-v1" as const,
-  runtime: {
-    disabledOrchestratorProviders: ["codex"],
-    disabledSubagentProviders: ["codex"],
-    disabledModels: ["sonnet"]
-  },
-  routes: [
-    {
-      provider: "codex",
-      pattern: "^gpt-.*$",
-      baseUrl: "https://chatgpt.com/backend-api/codex"
-    }
-  ],
-  cooldowns: {},
-  concurrency: {
-    effectivePerSessionLimit: 2,
-    activeSubagentThreads: 1,
-    activeSessions: 1,
-    denials: 0
-  }
-};
-
 function formTags(markup: string): string[] {
   return Array.from(markup.matchAll(/<form\b[^>]*>/gu), (match) => match[0]);
 }

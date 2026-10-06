@@ -1,7 +1,6 @@
 import type {
   AgentDefinition,
   ControlApiProvidersResponse,
-  ControlApiRoutingResponse,
   ControlApiRuntimeResponse
 } from "@simulatorlife/autodev-core";
 import React from "react";
@@ -20,14 +19,12 @@ const NOT_OBSERVED_STATUS = "not-observed";
 export interface AgentsViewProps {
   readonly agents: readonly AgentDefinition[];
   readonly providers?: ControlApiProvidersResponse | undefined;
-  readonly routing?: ControlApiRoutingResponse | undefined;
   readonly runtime?: ControlApiRuntimeResponse | undefined;
 }
 
 export function AgentsView({
   agents,
   providers,
-  routing,
   runtime
 }: AgentsViewProps): React.JSX.Element {
   const readinessObserved =
@@ -191,60 +188,95 @@ export function AgentsView({
         },
         "Runtime Concurrency & Circuit Health"
       ),
-      React.createElement(
-        "dl",
-        { className: "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4" },
-        React.createElement(RuntimeMetric, {
-          label: "Router Instance ID",
-          value: runtime?.routerInstanceId ?? NOT_OBSERVED_LABEL,
-          valueClassName: "font-mono text-xs text-fg-secondary break-all"
-        }),
-        React.createElement(RuntimeMetric, {
-          label: "Lifecycle State",
-          value: React.createElement(StatusBadge, {
-            status:
-              runtime?.lifecycle.state === "ready"
-                ? "ready"
-                : runtime?.lifecycle.state
-                  ? "unavailable"
-                  : NOT_OBSERVED_STATUS,
-            label: runtime?.lifecycle.state ?? NOT_OBSERVED_LABEL
-          }),
-          valueClassName: null
-        }),
-        React.createElement(RuntimeMetric, {
-          label: "Session Concurrency Limit",
-          value:
-            routing?.concurrency?.effectivePerSessionLimit ??
-            runtime?.concurrency.limit ??
+      runtime === undefined
+        ? React.createElement(
+            "p",
+            {
+              className: "text-xs text-fg-muted",
+              "data-status": "not-observed"
+            },
             NOT_OBSERVED_LABEL
-        }),
-        React.createElement(RuntimeMetric, {
-          label: "Active Subagent Threads",
-          value:
-            routing?.concurrency?.activeSubagentThreads ??
-            runtime?.concurrency.active ??
-            0
-        }),
-        React.createElement(RuntimeMetric, {
-          label: "Active Sessions",
-          value: routing?.concurrency?.activeSessions ?? 0
-        }),
-        React.createElement(RuntimeMetric, {
-          label: "Total Denials",
-          value: routing?.concurrency?.denials ?? 0
-        }),
-        React.createElement(RuntimeMetric, {
-          label: "Last Denial Reason",
-          value: routing?.concurrency?.lastDenial
-            ? `${routing.concurrency.lastDenial.role} - ${routing.concurrency.lastDenial.reason}`
-            : "None observed",
-          valueClassName: "font-mono text-xs text-fg-secondary",
-          rowClassName: "flex flex-col gap-1 sm:col-span-2"
-        })
-      )
+          )
+        : React.createElement(
+            "dl",
+            {
+              className: "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
+            },
+            React.createElement(RuntimeMetric, {
+              label: "Router Instance ID",
+              value: runtime.routerInstanceId,
+              // `break-all` would split the UUID mid-segment (`…0b1` / `3`).
+              // A router instance id is a discrete identifier, so it wraps
+              // between its own hyphen groups rather than inside one.
+              valueClassName: "font-mono text-xs text-fg-secondary break-words"
+            }),
+            React.createElement(RuntimeMetric, {
+              label: "Lifecycle State",
+              value: React.createElement(StatusBadge, {
+                status:
+                  runtime.lifecycle.state === "ready"
+                    ? "ready"
+                    : runtime.lifecycle.state
+                      ? "unavailable"
+                      : NOT_OBSERVED_STATUS,
+                label: runtime.lifecycle.state ?? NOT_OBSERVED_LABEL
+              }),
+              valueClassName: null
+            }),
+            // Draining is an operational state of its own: the router stops
+            // accepting new work while it finishes what is in flight, and
+            // hiding that behind a plain "ready" would read as healthy.
+            React.createElement(RuntimeMetric, {
+              label: "Draining",
+              value: React.createElement(StatusBadge, {
+                status: runtime.lifecycle.draining ? "pending" : "ready",
+                label: runtime.lifecycle.draining ? "Draining" : "Not draining"
+              }),
+              valueClassName: null
+            }),
+            React.createElement(RuntimeMetric, {
+              label: "In-Flight Requests",
+              value: String(runtime.inFlightRequestCount)
+            }),
+            React.createElement(RuntimeMetric, {
+              label: "Session Concurrency Limit",
+              value: observed(runtime.concurrency.effectivePerSessionLimit)
+            }),
+            React.createElement(RuntimeMetric, {
+              label: "Active Subagent Threads",
+              value: observed(runtime.concurrency.activeSubagentThreads)
+            }),
+            React.createElement(RuntimeMetric, {
+              label: "Active Sessions",
+              value: observed(runtime.concurrency.activeSessions)
+            }),
+            React.createElement(RuntimeMetric, {
+              label: "Total Denials",
+              value: observed(runtime.concurrency.denials)
+            }),
+            React.createElement(RuntimeMetric, {
+              label: "Last Denial Reason",
+              value:
+                runtime.concurrency.lastDenial === undefined ||
+                runtime.concurrency.lastDenial === null
+                  ? "None observed"
+                  : (runtime.concurrency.lastDenial.reason ??
+                    NOT_OBSERVED_LABEL),
+              valueClassName: "font-mono text-xs text-fg-secondary",
+              rowClassName: "flex flex-col gap-1 sm:col-span-2"
+            })
+          )
     )
   );
+}
+
+/**
+ * Render one observed counter. An absent counter is not a zero: the Runtime
+ * omits a field it has no evidence for, and printing `0` there would claim an
+ * observed idle state that was never measured.
+ */
+function observed(value: number | undefined): string {
+  return value === undefined ? NOT_OBSERVED_LABEL : String(value);
 }
 
 function RuntimeMetric({

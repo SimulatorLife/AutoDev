@@ -22,6 +22,7 @@ import nodePath from "node:path";
 import {
   type ControlApiAgentDetailResponse,
   type ControlApiAgentsResponse,
+  type ControlApiConcurrencyStatus,
   type ControlApiError,
   type ControlApiEvaluationsResponse,
   type ControlApiGithubResponse,
@@ -602,6 +603,58 @@ function isStringList(value: unknown): value is readonly string[] {
   );
 }
 
+/** Optional numeric counter the concurrency projection publishes. */
+function isOptionalNumber(value: unknown): value is number | undefined {
+  return value === undefined || typeof value === "number";
+}
+
+function isConcurrencyStatus(
+  value: unknown
+): value is ControlApiConcurrencyStatus {
+  if (!isRecord(value)) return false;
+  return (
+    (value.scope === undefined || typeof value.scope === "string") &&
+    isOptionalNumber(value.maxConcurrentThreadsPerSession) &&
+    isOptionalNumber(value.effectivePerSessionLimit) &&
+    isOptionalNumber(value.activeSubagentThreads) &&
+    isOptionalNumber(value.activeSessions) &&
+    isOptionalNumber(value.denials) &&
+    (value.denialsByReason === undefined ||
+      (isRecord(value.denialsByReason) &&
+        Object.values(value.denialsByReason).every(
+          (count) => typeof count === "number"
+        ))) &&
+    (value.lastDenial === undefined ||
+      value.lastDenial === null ||
+      isRecord(value.lastDenial))
+  );
+}
+
+/**
+ * Narrows the runtime response the Console composes onto the Agents page.
+ *
+ * Runtime state had no guard at all, so any shape the router happened to
+ * return was typed as a healthy runtime and rendered. Lifecycle and concurrency
+ * are validated here so a stale or incompatible Runtime fails closed into an
+ * explicit unavailable state instead of quietly reporting zeros.
+ */
+function isControlApiRuntimeResponse(
+  value: unknown
+): value is ControlApiRuntimeResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-runtime-v1" &&
+    typeof value.routerInstanceId === "string" &&
+    isRecord(value.lifecycle) &&
+    typeof value.lifecycle.state === "string" &&
+    typeof value.lifecycle.draining === "boolean" &&
+    typeof value.lifecycle.changedAt === "string" &&
+    typeof value.lifecycle.activeResponseRequests === "number" &&
+    isConcurrencyStatus(value.concurrency) &&
+    typeof value.inFlightRequestCount === "number"
+  );
+}
+
 function isControlApiSkillsResponse(
   value: unknown
 ): value is ControlApiSkillsResponse {
@@ -984,15 +1037,25 @@ export function fetchRouting(
   );
 }
 
-export function fetchRuntime(
+export async function fetchRuntime(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiRuntimeResponse>> {
-  return fetchControlApi<ControlApiRuntimeResponse>(
+  const result = await fetchControlApi<unknown>(
     CONTROL_API_PATHS.runtime,
     config,
     options
   );
+  if (result.kind !== "ok") return result;
+  if (isControlApiRuntimeResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_runtime_response",
+    message:
+      "AutoDev Control API returned an incompatible Runtime response; the Console requires the v1 runtime contract."
+  };
 }
 
 export function fetchEvaluations(
