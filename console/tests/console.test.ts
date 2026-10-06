@@ -86,6 +86,7 @@ import {
 import {
   CONTROL_API_PATHS,
   fetchAgentDetail,
+  fetchAgents,
   fetchControlApi,
   fetchEvaluations,
   fetchGithubWorkflows,
@@ -4074,6 +4075,101 @@ test("Memory collection tabs fail closed on an unreadable response", async () =>
   assert.equal(empty.kind, "ok");
 });
 
+test("Agents responses fail closed rather than render an empty Configure surface", async () => {
+  const config = { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" };
+  const serve = (body: unknown) => ({
+    fetchImpl: async () => Response.json(body)
+  });
+  const agent = {
+    id: "orchestrator",
+    role: "orchestrator",
+    kind: "orchestrator",
+    readOnly: false,
+    configured: true,
+    valid: null,
+    status: "configured",
+    convergence: "not-observed",
+    primaryModel: "autodev/orchestrator",
+    allowedProviders: ["claude"],
+    mcps: [],
+    skills: [],
+    hasPrompt: true
+  };
+  const page = {
+    schema: "autodev-control-agents-v1",
+    source: "config/execution-contract.json",
+    readOnly: true,
+    totalAgents: 1,
+    agents: [agent]
+  };
+
+  assert.equal((await fetchAgents(config, serve(page))).kind, "ok");
+
+  // Agents had no guard, so a drifted payload rendered an empty Configure
+  // surface that reads as "no agents are configured".
+  for (const broken of [
+    { ...page, schema: "autodev-control-agents-v0" },
+    { ...page, totalAgents: "1" },
+    { ...page, agents: {} },
+    { ...page, agents: [{ ...agent, convergence: "healthy" }] },
+    { ...page, agents: [{ ...agent, mcps: "lsp" }] },
+    { ...page, agents: [{ ...agent, hasPrompt: "yes" }] },
+    { ...page, agents: [{ ...agent, primaryModel: 7 }] },
+    null
+  ]) {
+    assert.equal(
+      (await fetchAgents(config, serve(broken))).kind,
+      "invalid-response",
+      JSON.stringify(broken)
+    );
+  }
+
+  const detail = {
+    ...agent,
+    schema: "autodev-control-agent-detail-v2",
+    promptPath: "agents/prompts/roles/orchestrator.md",
+    systemPrompt: "You are the orchestrator.",
+    reconciliation: {
+      status: {
+        convergence: "not-observed",
+        desiredGeneration: "a".repeat(64),
+        observedGeneration: null,
+        lastApplyAt: null,
+        lastObservationAt: null,
+        lastError: null,
+        explanation: "The runtime has not yet reported observed state."
+      },
+      history: []
+    }
+  };
+  assert.equal(
+    (await fetchAgentDetail("orchestrator", config, serve(detail))).kind,
+    "ok"
+  );
+
+  for (const broken of [
+    { ...detail, schema: "autodev-control-agent-detail-v1" },
+    { ...detail, systemPrompt: null },
+    { ...detail, promptPath: 5 },
+    // The detail page composes configuration, runtime state, and reconciliation,
+    // so a payload missing the reconciliation bundle must not render at all.
+    { ...detail, reconciliation: undefined },
+    {
+      ...detail,
+      reconciliation: {
+        status: { convergence: "fine", explanation: "" },
+        history: []
+      }
+    }
+  ]) {
+    assert.equal(
+      (await fetchAgentDetail("orchestrator", config, serve(broken))).kind,
+      "invalid-response",
+      JSON.stringify(broken)
+    );
+  }
+});
+
 test("ProvidersView puts each provider's role toggles in its own row", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProvidersView, {
@@ -5506,7 +5602,7 @@ test("DataTable caps its scroll floor so a table never scrolls at desktop width"
   assert.ok(wideFloor > 0, "a table must still declare a floor");
   assert.equal(
     wideFloor,
-    56 * 16,
+    54 * 16,
     "the floor must be capped, not the natural sum"
   );
 

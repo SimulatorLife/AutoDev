@@ -53,8 +53,8 @@ import {
   type ControlApiWorkspacesResponse,
   type ConvergenceStatus,
   LOCAL_CONTROL_API_ACTOR,
-  type ProviderRole
-} from "@simulatorlife/autodev-core";
+  type ProviderRole,
+  type ReconciliationStatus} from "@simulatorlife/autodev-core";
 
 export type ControlApiResult<T> =
   | { readonly kind: "ok"; readonly data: T }
@@ -352,24 +352,104 @@ export function controlApiFailureCode(
   return result.kind === "unreachable" ? "autodev_unreachable" : result.code;
 }
 
-export function fetchAgents(
+export async function fetchAgents(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiAgentsResponse>> {
-  return fetchControlApi<ControlApiAgentsResponse>(
+  const result = await fetchControlApi<unknown>(
     CONTROL_API_PATHS.agents,
     config,
     options
   );
+  if (result.kind !== "ok") return result;
+  // An unreadable agents payload would render an empty Configure surface, which
+  // reads as "no agents are configured" rather than "we could not read the list".
+  if (isControlApiAgentsResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_agents_response",
+    message:
+      "AutoDev Control API returned an incompatible Agents response; the Console requires the v1 agents contract."
+  };
 }
 
-export function fetchAgentDetail(
+export async function fetchAgentDetail(
   role: string,
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiAgentDetailResponse>> {
   const path = `${CONTROL_API_PATHS.agents}/${encodeURIComponent(role)}`;
-  return fetchControlApi<ControlApiAgentDetailResponse>(path, config, options);
+  const result = await fetchControlApi<unknown>(path, config, options);
+  if (result.kind !== "ok") return result;
+  if (isControlApiAgentDetailResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_agent_detail_response",
+    message:
+      "AutoDev Control API returned an incompatible Agent detail response; the Console requires the v2 agent detail contract."
+  };
+}
+
+/**
+ * Narrows one agent record. Agents drive the whole Configure surface, and an
+ * unreadable record used to reach the table as `undefined` fields rather than
+ * as an explicit failure, so the guard checks the fields the views actually
+ * read rather than only the identifier.
+ */
+function isAgentRecord(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.role === "string" &&
+    (value.kind === "orchestrator" || value.kind === "leaf") &&
+    typeof value.readOnly === "boolean" &&
+    typeof value.configured === "boolean" &&
+    (value.valid === null || typeof value.valid === "boolean") &&
+    typeof value.status === "string" &&
+    isConvergenceStatus(value.convergence) &&
+    typeof value.primaryModel === "string" &&
+    isStringList(value.allowedProviders) &&
+    isStringList(value.mcps) &&
+    isStringList(value.skills)
+  );
+}
+
+/** Narrows the agents collection, including every record it carries. */
+function isControlApiAgentsResponse(
+  value: unknown
+): value is ControlApiAgentsResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-agents-v1" &&
+    typeof value.source === "string" &&
+    Array.isArray(value.agents) &&
+    typeof value.totalAgents === "number" &&
+    value.agents.every(
+      (agent) => isAgentRecord(agent) && typeof agent.hasPrompt === "boolean"
+    )
+  );
+}
+
+/**
+ * Narrows one agent detail record. The detail view composes configuration,
+ * actual runtime state, and reconciliation onto one page, so all three have to
+ * be present and well-formed before any of them is rendered.
+ */
+function isControlApiAgentDetailResponse(
+  value: unknown
+): value is ControlApiAgentDetailResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-agent-detail-v2" &&
+    isAgentRecord(value) &&
+    (value.promptPath === null || typeof value.promptPath === "string") &&
+    typeof value.systemPrompt === "string" &&
+    isReconciliationBundle(value.reconciliation)
+  );
 }
 
 function isEnablement(value: unknown): boolean {
@@ -377,6 +457,34 @@ function isEnablement(value: unknown): boolean {
     isRecord(value) &&
     typeof value.enabled === "boolean" &&
     typeof value.mutable === "boolean"
+  );
+}
+
+/**
+ * Narrows one canonical reconciliation status: the verdict plus the generations,
+ * timestamps, last error, and operator-facing explanation. Every surface that
+ * claims convergence validates through this one check so the wording and the
+ * "never synthesize a verdict" rule stay identical across resources.
+ */
+function isReconciliationStatus(value: unknown): value is ReconciliationStatus {
+  return (
+    isRecord(value) &&
+    isConvergenceStatus(value.convergence) &&
+    isNullableString(value.desiredGeneration) &&
+    isNullableString(value.observedGeneration) &&
+    isNullableString(value.lastApplyAt) &&
+    isNullableString(value.lastObservationAt) &&
+    isNullableString(value.lastError) &&
+    typeof value.explanation === "string"
+  );
+}
+
+/** Narrows the `{ status, history }` bundle the mutation and detail routes carry. */
+function isReconciliationBundle(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isReconciliationStatus(value.status) &&
+    Array.isArray(value.history)
   );
 }
 
@@ -392,17 +500,11 @@ function isEnablement(value: unknown): boolean {
  * for the contract rather than for one resource that happens to use it.
  */
 function isEnablementWithConvergence(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  const convergence = value.convergence;
   return (
-    isRecord(convergence) &&
-    isConvergenceStatus(convergence.convergence) &&
-    isNullableString(convergence.desiredGeneration) &&
-    isNullableString(convergence.observedGeneration) &&
-    isNullableString(convergence.lastApplyAt) &&
-    isNullableString(convergence.lastObservationAt) &&
-    isNullableString(convergence.lastError) &&
-    typeof convergence.explanation === "string"
+    isRecord(value) &&
+    isReconciliationStatus(value.convergence) &&
+    typeof value.enabled === "boolean" &&
+    typeof value.mutable === "boolean"
   );
 }
 
@@ -605,7 +707,7 @@ function invalidMemoryPageResponse(
   };
 }
 
-export async function fetchMcps(
+export function fetchMcps(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiMcpsResponse>> {
