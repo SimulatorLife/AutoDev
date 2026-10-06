@@ -1,6 +1,11 @@
 import type { ExperienceEnvelope } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import { Button } from "../../components/forms/Button.ts";
+import {
+  SelectField,
+  type SelectOption
+} from "../../components/forms/SelectField.ts";
 import {
   StatusBadge,
   type StatusBadgeVariant
@@ -9,6 +14,19 @@ import {
   type ColumnDef,
   DataTable
 } from "../../components/tables/DataTable.ts";
+
+/**
+ * The only reasons the Runtime's purge endpoint accepts. Offering anything else
+ * would let an operator compose a request that is guaranteed to be rejected, so
+ * the choice is the Runtime's vocabulary rather than free text.
+ */
+const PURGE_REASON_OPTIONS: readonly SelectOption[] = [
+  { value: "privacy_request", label: "Privacy request" },
+  { value: "retention_expired", label: "Retention expired" }
+];
+
+/** De-emphasised supporting copy, shared across this view's sub-panels. */
+const MUTED_TEXT_CLASS = "text-fg-muted";
 
 export interface MemoryExperiencesViewProps {
   readonly experiences: readonly ExperienceEnvelope[];
@@ -97,7 +115,7 @@ export function MemoryExperiencesView({
                 ? "text-success"
                 : exp.outcome === "failure"
                   ? "text-error"
-                  : "text-fg-muted"
+                  : MUTED_TEXT_CLASS
             }`
           },
           exp.outcome
@@ -402,7 +420,7 @@ function ExperienceDetailPanel({
             )
           : React.createElement(
               "span",
-              { className: "text-fg-muted" },
+              { className: MUTED_TEXT_CLASS },
               "No diagnostic codes emitted."
             )
       )
@@ -412,12 +430,11 @@ function ExperienceDetailPanel({
     React.createElement(
       "div",
       {
-        className:
-          "flex items-center justify-between pt-4 border-t border-border text-xs"
+        className: "flex flex-col gap-2 pt-4 border-t border-border text-xs"
       },
       React.createElement(
         "span",
-        { className: "text-fg-muted" },
+        { className: MUTED_TEXT_CLASS },
         "Raw experiences cited by durable memory cannot be purged."
       ),
       React.createElement(
@@ -438,14 +455,48 @@ function ExperienceDetailPanel({
           name: "workspaceId",
           value: workspaceId
         }),
+        // Purge erases the raw envelope irreversibly, so the operator states a
+        // reason the Runtime accepts and confirms explicitly. Both are enforced
+        // server-side: the Console ships no client JavaScript, so an unchecked
+        // box is not a UI-only guard, it is a request the route refuses.
+        React.createElement(SelectField, {
+          name: "reason",
+          label: "Purge reason",
+          options: PURGE_REASON_OPTIONS,
+          defaultValue: "privacy_request"
+        }),
         React.createElement(
-          "button",
-          {
-            type: "submit",
-            className:
-              "px-3 py-1.5 rounded bg-error/15 border border-error/40 text-error hover:bg-error/25 text-xs font-medium transition-colors"
-          },
-          "Purge Experience"
+          "label",
+          { className: "flex items-center gap-2 text-fg-secondary" },
+          React.createElement("input", {
+            type: "checkbox",
+            name: "confirm",
+            value: "purge",
+            className: "accent-error"
+          }),
+          React.createElement(
+            "span",
+            null,
+            "I understand this permanently erases this raw experience envelope."
+          )
+        ),
+        React.createElement(
+          "div",
+          { className: "flex items-center gap-2" },
+          React.createElement(
+            Button,
+            {
+              type: "submit",
+              variant: "destructive",
+              testId: "purge-experience"
+            },
+            "Purge Experience"
+          ),
+          React.createElement(
+            "span",
+            { className: MUTED_TEXT_CLASS },
+            "Irreversible. Refused while durable memory cites this experience."
+          )
         )
       )
     )

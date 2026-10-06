@@ -59,17 +59,24 @@ const TOKENS_COLUMN_WEIGHT = 170;
 const DEFAULT_COLUMN_WEIGHT = 100;
 
 /**
- * Floor for the table itself. The table takes the full width of its wrapper,
- * but never squeezes below this, so a narrow window scrolls the table region
- * horizontally instead of shrinking every column under its declared budget.
+ * Floor for the table itself, derived from the weights this table declares.
  *
- * The number matters: views author weights on roughly a pixel-per-unit scale
- * (the widest table in the Console sums to about 1100), so below this width the
- * percentages start resolving narrower than the content each column was
- * measured for — badges truncate, chips wrap one per line, and headers break
- * mid-word. Scrolling keeps every cell legible; crushing it does not.
+ * The table takes the full width of its wrapper but never squeezes below the
+ * budget its own columns were measured for. Below it the table region scrolls
+ * horizontally instead of shrinking every column: badges truncate, chips wrap
+ * one per line, and headers break mid-word long before they are legible.
+ * Scrolling keeps every cell readable; crushing it does not.
+ *
+ * The floor is per table rather than one constant for the whole Console
+ * because the columns differ: a four-column table declares far less total
+ * weight than the eight-column MCP table, so a shared floor would give the
+ * narrow one a scrollbar at desktop widths for twelve pixels of nothing while
+ * the wide one still needed it. Weights are authored on roughly a pixel-per-unit
+ * scale, so their sum is the width the columns were measured at.
  */
-const TABLE_MIN_WIDTH_CLASS = "min-w-[68rem]";
+function tableMinWidthPx(columns: readonly ColumnDef<never>[]): number {
+  return columns.reduce((sum, column) => sum + columnWeight(column), 0);
+}
 
 function cellClassName(column: ColumnDef<never>): string {
   const align = column.align ?? "truncate";
@@ -171,8 +178,13 @@ export function DataTable<T>({
         // Fixed layout plus percentage widths keeps the table inside its
         // container at every viewport: columns hold their declared ratio and
         // shrink proportionally when the set needs more room than is
-        // available, so no single long cell forces a horizontal scroll.
-        className: `w-full ${TABLE_MIN_WIDTH_CLASS} table-fixed divide-y divide-border text-left text-sm`
+        // available. The inline floor is derived from this table's own weights
+        // rather than authored, so it stays correct when a view rebalances.
+        className:
+          "w-full table-fixed divide-y divide-border text-left text-sm",
+        style: {
+          minWidth: `${tableMinWidthPx(columns as readonly ColumnDef<never>[])}px`
+        }
       },
       React.createElement(
         "thead",

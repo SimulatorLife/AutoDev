@@ -30,6 +30,7 @@ import { NextRequest } from "next/server.js";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import * as memoryRoute from "../app/api/memory/route.ts";
 import * as modelRoute from "../app/api/models/[model]/route.ts";
 import * as promptMutationRoute from "../app/api/prompts/[name]/route.ts";
 import * as providerRoleRoute from "../app/api/providers/[provider]/roles/[role]/route.ts";
@@ -3230,21 +3231,59 @@ const MODELS_FIXTURE: ControlApiModelsResponse = {
       provider: "claude",
       tiers: ["orchestrator"],
       displayName: null,
-      enablement: { enabled: true, mutable: true }
+      enablement: {
+        enabled: true,
+        mutable: true,
+        convergence: {
+          convergence: "converged",
+          desiredGeneration: "enabled=true",
+          observedGeneration: "enabled=true",
+          lastApplyAt: "2026-10-05T15:00:00.000Z",
+          lastObservationAt: "2026-10-05T15:00:00.000Z",
+          lastError: null,
+          explanation: "Converged."
+        }
+      }
     },
     {
       id: "sonnet",
       provider: "claude",
       tiers: ["default"],
       displayName: "Claude Sonnet subscription",
-      enablement: { enabled: false, mutable: true }
+      // Never written through the Control API, so the Runtime reports no
+      // observation. The model being disabled is a separate, evidenced fact.
+      enablement: {
+        enabled: false,
+        mutable: true,
+        convergence: {
+          convergence: "not-observed",
+          desiredGeneration: "enabled=false",
+          observedGeneration: "enabled=false",
+          lastApplyAt: null,
+          lastObservationAt: null,
+          lastError: null,
+          explanation: "Not observed."
+        }
+      }
     },
     {
       id: "gpt-6-luna",
       provider: "codex",
       tiers: ["default", "orchestrator"],
       displayName: "GPT-6 Luna",
-      enablement: { enabled: true, mutable: true }
+      enablement: {
+        enabled: true,
+        mutable: true,
+        convergence: {
+          convergence: "pending",
+          desiredGeneration: "enabled=true",
+          observedGeneration: null,
+          lastApplyAt: "2026-10-06T09:30:00.000Z",
+          lastObservationAt: null,
+          lastError: null,
+          explanation: "Applied, awaiting observation."
+        }
+      }
     }
   ]
 };
@@ -3690,6 +3729,52 @@ test("MemoryExperiencesView renders experiences with task, role, and validation 
   assert.match(markup, /success/);
 });
 
+test("MemoryExperiencesView requires a Runtime-accepted reason and explicit confirmation before purging", () => {
+  const sampleExp: ExperienceEnvelope = {
+    id: "exp-002",
+    workspaceId: "SimulatorLife/AutoDev",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    taskId: "task-202",
+    runId: "run-606",
+    agentId: "agent-orch",
+    agentRole: "orchestrator",
+    startedAt: "2026-10-03T10:00:00Z",
+    outcome: "failure",
+    memoryMode: "jit",
+    trajectory: {
+      format: "codex-v1",
+      uri: "file:///tmp/transcripts/run-606.jsonl",
+      sourceAdapter: "codex"
+    },
+    evidence: []
+  };
+
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryExperiencesView, {
+      experiences: [sampleExp],
+      total: 1,
+      selectedExperience: sampleExp,
+      currentWorkspaceId: "SimulatorLife/AutoDev"
+    })
+  );
+
+  // Purge targets the experience envelope, not a durable record id.
+  assert.match(markup, /name="experienceId" value="exp-002"/);
+  assert.match(markup, /name="action" value="purge"/);
+
+  // The Console ships no client JavaScript, so the confirmation is a real form
+  // field the route refuses to act without rather than a click handler.
+  assert.match(markup, /type="checkbox"[^>]*name="confirm"[^>]*value="purge"/);
+  // Only reasons the Runtime accepts may be composed into a request.
+  assert.match(markup, /value="privacy_request"/);
+  assert.match(markup, /value="retention_expired"/);
+  // The checkbox must not start ticked: confirmation is the operator's action.
+  assert.doesNotMatch(markup, /type="checkbox"[^>]*name="confirm"[^>]*checked/);
+
+  // The destructive control renders through the shared button vocabulary.
+  assert.match(markup, /data-button="purge-experience"/);
+});
+
 test("MemoryCohortsView renders session outcome cohorts preserving explicit unreported cells", () => {
   const sampleCohort: MemorySessionOutcomeCohortPage = {
     schema: "autodev-memory-session-outcome-cohorts-v1",
@@ -4122,6 +4207,39 @@ test("ModelDetailView renders the model toggle under its provider's breadcrumbs"
   assert.equal(hiddenValue(markup, forms[0]!, "enabled"), "true");
   assert.match(markup, /orchestrator: enabled/);
   assert.match(markup, /href="\/usage\?model=sonnet"/);
+});
+
+test("ModelDetailView surfaces model convergence as its own verdict beside the toggle", () => {
+  const cases = [
+    { id: "claude-opus-5-5", status: "converged", generation: "enabled=true" },
+    { id: "sonnet", status: "not-observed", generation: "enabled=false" },
+    { id: "gpt-6-luna", status: "pending", generation: "enabled=true" }
+  ];
+  for (const { id, status, generation } of cases) {
+    const model = MODELS_FIXTURE.models.find((entry) => entry.id === id)!;
+    const markup = renderToStaticMarkup(
+      React.createElement(ModelDetailView, {
+        model,
+        provider: PROVIDERS_FIXTURE.providers[0]!
+      })
+    );
+    // The toggle states the desired change and the convergence verdict states
+    // whether the runtime has observed it. Collapsing them would report a
+    // model as settled purely because it is switched on.
+    assert.match(
+      markup,
+      new RegExp(
+        String.raw`data-section="model-enablement"[\s\S]*?data-status="${status}"`,
+        "u"
+      ),
+      `${id} must render its ${status} verdict`
+    );
+    assert.match(
+      markup,
+      new RegExp(`Desired: ${generation}`, "u"),
+      `${id} must keep its desired generation reachable`
+    );
+  }
 });
 
 test("Providers surfaces report unconfirmed changes without optimistic state", () => {
@@ -5047,4 +5165,134 @@ test("ToolDetailView surfaces observed historical use and falls back to Unavaila
     })
   );
   assert.match(unavailableMarkup, /Usage telemetry unavailable/);
+});
+
+/**
+ * Purge erases a raw experience envelope irreversibly. The Console ships no
+ * client JavaScript, so the confirmation cannot be a `window.confirm` or a
+ * disabled-until-checked button: it has to be a field the route refuses to act
+ * without. These tests pin that the route only forwards a purge that carries an
+ * experience id, a Runtime-accepted reason, and explicit confirmation.
+ */
+function memoryPurgeRequest(fields: Record<string, string>): NextRequest {
+  return new NextRequest("http://console.test/api/memory", {
+    method: "POST",
+    headers: {
+      origin: "http://console.test",
+      host: "console.test",
+      "sec-fetch-site": "same-origin",
+      "content-type": "application/x-www-form-urlencoded"
+    },
+    body: new URLSearchParams(fields).toString()
+  });
+}
+
+async function withMemoryRoute(
+  run: (
+    requests: { url: string; method: string; body: string }[]
+  ) => Promise<void>,
+  respond: () => Response = () =>
+    Response.json({ purged: true }, { status: 200 })
+): Promise<void> {
+  const previousFetch = globalThis.fetch;
+  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  const token = "p".repeat(64);
+  process.env.AUTODEV_CONTROL_API_TOKEN = token;
+  const requests: { url: string; method: string; body: string }[] = [];
+  globalThis.fetch = (async (
+    input: string | URL | Request,
+    init?: RequestInit
+  ) => {
+    const request = input as Request;
+    requests.push({
+      url: String(request.url ?? input),
+      method: init?.method ?? "GET",
+      body: String(init?.body ?? "")
+    });
+    return respond();
+  }) as typeof fetch;
+
+  try {
+    await run(requests);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined)
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    else process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
+  }
+}
+
+test("Memory purge forwards to the Runtime purge endpoint only with a valid reason and explicit confirmation", async () => {
+  await withMemoryRoute(async (requests) => {
+    const response = await memoryRoute.POST(
+      memoryPurgeRequest({
+        action: "purge",
+        experienceId: "exp-1",
+        workspaceId: "SimulatorLife/AutoDev",
+        reason: "privacy_request",
+        confirm: "purge"
+      })
+    );
+
+    assert.equal(response.status, 303);
+    assert.equal(requests.length, 1);
+    assert.equal(
+      requests[0]?.url,
+      "http://127.0.0.1:4101/control/memory/experiences/exp-1/purge?workspaceId=SimulatorLife%2FAutoDev"
+    );
+    assert.equal(requests[0]?.method, "POST");
+    // The Runtime accepts exactly `{ reason }` and rejects extra keys.
+    assert.deepEqual(JSON.parse(requests[0]?.body ?? "{}"), {
+      reason: "privacy_request"
+    });
+  });
+});
+
+test("Memory purge refuses without explicit confirmation and never reaches the Runtime", async () => {
+  await withMemoryRoute(async (requests) => {
+    const response = await memoryRoute.POST(
+      memoryPurgeRequest({
+        action: "purge",
+        experienceId: "exp-1",
+        workspaceId: "SimulatorLife/AutoDev",
+        reason: "privacy_request"
+      })
+    );
+
+    assert.equal(response.status, 400);
+    assert.equal(requests.length, 0);
+  });
+});
+
+test("Memory purge refuses a reason the Runtime does not accept", async () => {
+  await withMemoryRoute(async (requests) => {
+    const response = await memoryRoute.POST(
+      memoryPurgeRequest({
+        action: "purge",
+        experienceId: "exp-1",
+        workspaceId: "SimulatorLife/AutoDev",
+        reason: "because",
+        confirm: "purge"
+      })
+    );
+
+    assert.equal(response.status, 400);
+    assert.equal(requests.length, 0);
+  });
+});
+
+test("Memory purge requires an experience id rather than a record id", async () => {
+  await withMemoryRoute(async (requests) => {
+    const response = await memoryRoute.POST(
+      memoryPurgeRequest({
+        action: "purge",
+        workspaceId: "SimulatorLife/AutoDev",
+        reason: "privacy_request",
+        confirm: "purge"
+      })
+    );
+
+    assert.equal(response.status, 400);
+    assert.equal(requests.length, 0);
+  });
 });

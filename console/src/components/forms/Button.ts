@@ -16,11 +16,19 @@ export const PRIMARY_BUTTON_CLASS =
 export const SECONDARY_BUTTON_CLASS =
   "rounded border border-border-strong bg-surface-raised px-3 py-1.5 text-sm font-medium text-fg transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60";
 
+/**
+ * An irreversible action: erasing or purging. Separate from the error status
+ * colour so "this control is destructive" reads consistently with every other
+ * destructive control rather than being re-typed per feature.
+ */
+export const DESTRUCTIVE_BUTTON_CLASS =
+  "rounded border border-error/40 bg-error/15 px-3 py-1.5 text-sm font-medium text-error transition-colors hover:bg-error/25 disabled:cursor-not-allowed disabled:opacity-60";
+
 export interface ButtonProps {
   /** Optional here so callers can pass the label as `createElement`'s child. */
   readonly children?: React.ReactNode;
   readonly type?: "submit" | "button" | "reset" | undefined;
-  readonly variant?: "primary" | "secondary" | undefined;
+  readonly variant?: "primary" | "secondary" | "destructive" | undefined;
   readonly disabled?: boolean | undefined;
   readonly className?: string | undefined;
   readonly title?: string | undefined;
@@ -28,6 +36,12 @@ export interface ButtonProps {
   /** Marks the control for tests and stable browser assertions. */
   readonly testId?: string | undefined;
 }
+
+const BUTTON_VARIANT_CLASS = {
+  primary: PRIMARY_BUTTON_CLASS,
+  secondary: SECONDARY_BUTTON_CLASS,
+  destructive: DESTRUCTIVE_BUTTON_CLASS
+} as const;
 
 export function Button({
   children,
@@ -46,7 +60,7 @@ export function Button({
       onClick,
       ...(disabled === undefined ? {} : { disabled }),
       ...(title === undefined ? {} : { title }),
-      className: `${variant === "primary" ? PRIMARY_BUTTON_CLASS : SECONDARY_BUTTON_CLASS}${
+      className: `${BUTTON_VARIANT_CLASS[variant]}${
         className === undefined ? "" : ` ${className}`
       }`,
       ...(testId === undefined ? {} : { "data-button": testId })

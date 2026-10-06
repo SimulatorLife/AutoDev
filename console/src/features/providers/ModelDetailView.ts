@@ -5,6 +5,7 @@ import type {
 import React from "react";
 
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { ConvergenceBadge } from "../../components/status/ConvergenceBadge.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { ControlFailureNotice, ModelToggle } from "./EnablementToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
@@ -138,6 +139,24 @@ export function ModelDetailView({
         enablement: model.enablement,
         returnTo: modelPath(model.provider, model.id)
       }),
+      // Desired-vs-actual state for the toggle above, kept separate from the
+      // toggle itself so "the model is enabled" and "we have observed that
+      // enablement converge" stay two independently evidenced statements.
+      React.createElement(
+        "dl",
+        { className: "mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2" },
+        React.createElement(
+          DetailValue,
+          { label: "Convergence" },
+          React.createElement(ConvergenceBadge, {
+            convergence: model.enablement.convergence.convergence,
+            explanation: model.enablement.convergence.explanation,
+            desiredGeneration: model.enablement.convergence.desiredGeneration,
+            observedGeneration: model.enablement.convergence.observedGeneration,
+            lastError: model.enablement.convergence.lastError
+          })
+        )
+      ),
       React.createElement(
         "p",
         { className: "mt-3 text-xs text-fg-muted" },

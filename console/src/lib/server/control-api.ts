@@ -380,15 +380,17 @@ function isEnablement(value: unknown): boolean {
 }
 
 /**
- * Narrows one provider role entry to the canonical
+ * Narrows one enablement entry to the canonical
  * `ControlApiEnablement & { convergence: ReconciliationStatus }` shape.
  *
  * `convergence` is the nested reconciliation status the Control API derives
  * from desired/observed evidence, not a bare string: it carries the convergence
  * verdict plus the generations, timestamps, last error, and operator-facing
- * explanation that Console renders next to the toggle.
+ * explanation that Console renders next to the toggle. Every mutable routing
+ * toggle — provider role and model alike — carries it, so the check is named
+ * for the contract rather than for one resource that happens to use it.
  */
-function isRoleConvergence(value: unknown): boolean {
+function isEnablementWithConvergence(value: unknown): boolean {
   if (!isRecord(value)) return false;
   const convergence = value.convergence;
   return (
@@ -425,9 +427,9 @@ function isControlApiProvidersResponse(
         typeof provider.id === "string" &&
         isRecord(provider.roles) &&
         isEnablement(provider.roles.orchestrator) &&
-        isRoleConvergence(provider.roles.orchestrator) &&
+        isEnablementWithConvergence(provider.roles.orchestrator) &&
         isEnablement(provider.roles.subagent) &&
-        isRoleConvergence(provider.roles.subagent) &&
+        isEnablementWithConvergence(provider.roles.subagent) &&
         isRecord(provider.credential) &&
         typeof provider.credential.configured === "boolean" &&
         Array.isArray(provider.models) &&
@@ -504,7 +506,8 @@ function isControlApiModelsResponse(
         typeof model.provider === "string" &&
         isStringList(model.tiers) &&
         (model.displayName === null || typeof model.displayName === "string") &&
-        isEnablement(model.enablement)
+        isEnablement(model.enablement) &&
+        isEnablementWithConvergence(model.enablement)
     )
   );
 }
@@ -1210,6 +1213,31 @@ export function transitionMemoryRecord(
     config,
     options
   );
+}
+
+/**
+ * Erase a raw experience envelope.
+ *
+ * Purge is irreversible and narrow: the Runtime erases only the raw envelope
+ * and refuses while any durable memory cites it (conflict), so the caller must
+ * be ready to surface that refusal rather than retry. The reason is not free-form
+ * — the Runtime accepts exactly these two codes and rejects anything else.
+ */
+export type ControlApiMemoryPurgeReason =
+  "privacy_request" | "retention_expired";
+
+export function purgeMemoryExperience(
+  id: string,
+  reason: ControlApiMemoryPurgeReason,
+  payload: {
+    readonly workspaceId: string;
+  },
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<unknown>> {
+  const search = new URLSearchParams({ workspaceId: payload.workspaceId });
+  const path = `${CONTROL_API_PATHS.memoryExperiences}/${encodeURIComponent(id)}/purge?${search.toString()}`;
+  return postControlApi<unknown>(path, { reason }, config, options);
 }
 
 export function promoteMemoryProcedureToSkill(

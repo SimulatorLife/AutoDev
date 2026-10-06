@@ -4,6 +4,7 @@ import {
   type ControlApiConfig,
   type ControlApiResult,
   promoteMemoryProcedureToSkill,
+  purgeMemoryExperience,
   readControlApiConfig,
   transitionMemoryRecord
 } from "../../../src/lib/server/control-api.ts";
@@ -14,12 +15,21 @@ export const runtime = "nodejs";
 interface MemoryActionPayload {
   readonly action: string;
   readonly recordId: string;
+  readonly experienceId: string;
   readonly workspaceId: string;
   readonly reason: string;
   readonly claim: string;
   readonly skillName: string;
   readonly isForm: boolean;
+  /**
+   * Explicit operator confirmation for an irreversible action. Purge is
+   * destructive and cannot be undone, so the form must carry this rather than
+   * letting a single click erase a raw experience envelope.
+   */
+  readonly confirm: string;
 }
+
+const PURGE_REASONS = ["privacy_request", "retention_expired"] as const;
 
 async function parsePayload(
   request: NextRequest
@@ -34,12 +44,14 @@ async function parsePayload(
     return {
       action: String(formData.get("action") ?? "").trim(),
       recordId: String(formData.get("recordId") ?? "").trim(),
+      experienceId: String(formData.get("experienceId") ?? "").trim(),
       workspaceId:
         String(formData.get("workspaceId") ?? "").trim() ||
         "SimulatorLife/AutoDev",
       reason: String(formData.get("reason") ?? "").trim(),
       claim: String(formData.get("claim") ?? "").trim(),
       skillName: String(formData.get("skillName") ?? "").trim(),
+      confirm: String(formData.get("confirm") ?? "").trim(),
       isForm: true
     };
   }
@@ -49,11 +61,13 @@ async function parsePayload(
     return {
       action: String(json.action ?? "").trim(),
       recordId: String(json.recordId ?? "").trim(),
+      experienceId: String(json.experienceId ?? "").trim(),
       workspaceId:
         String(json.workspaceId ?? "").trim() || "SimulatorLife/AutoDev",
       reason: String(json.reason ?? "").trim(),
       claim: String(json.claim ?? "").trim(),
       skillName: String(json.skillName ?? "").trim(),
+      confirm: String(json.confirm ?? "").trim(),
       isForm: false
     };
   } catch {
@@ -65,8 +79,31 @@ function executeAction(
   payload: MemoryActionPayload,
   config: ControlApiConfig
 ): Promise<ControlApiResult<unknown>> | null {
-  const { action, recordId, workspaceId, reason, claim, skillName } = payload;
+  const {
+    action,
+    recordId,
+    experienceId,
+    workspaceId,
+    reason,
+    claim,
+    skillName,
+    confirm
+  } = payload;
   switch (action) {
+    case "purge": {
+      // Purge erases an experience envelope irreversibly, so it is validated
+      // separately from the record lifecycle: it targets `experienceId`, it
+      // needs a Runtime-accepted reason, and it needs explicit confirmation.
+      if (!experienceId) return null;
+      if (confirm !== "purge") return null;
+      if (!(PURGE_REASONS as readonly string[]).includes(reason)) return null;
+      return purgeMemoryExperience(
+        experienceId,
+        reason as (typeof PURGE_REASONS)[number],
+        { workspaceId },
+        config
+      );
+    }
     case "verify": {
       return transitionMemoryRecord(
         recordId,
@@ -120,9 +157,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const payload = await parsePayload(request);
-  if (!payload || !payload.recordId) {
+  // Purge targets an experience rather than a durable record, so each action
+  // names the identifier it needs instead of demanding `recordId` up front.
+  const identifier =
+    payload?.action === "purge" ? payload.experienceId : payload?.recordId;
+  if (!payload || !identifier) {
     return NextResponse.json(
-      { error: "Invalid request payload or missing recordId" },
+      { error: "Invalid request payload or missing identifier" },
       { status: 400 }
     );
   }
@@ -144,7 +185,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const redirectUrl = new URL("/memory", request.url);
     redirectUrl.searchParams.set("tab", "records");
     redirectUrl.searchParams.set("workspaceId", payload.workspaceId);
-    redirectUrl.searchParams.set("recordId", payload.recordId);
+    redirectUrl.searchParams.set("recordId", identifier);
     return NextResponse.redirect(redirectUrl, { status: 303 });
   }
 
