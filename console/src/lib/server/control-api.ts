@@ -509,6 +509,30 @@ function isEnablementWithConvergence(value: unknown): boolean {
   );
 }
 
+/**
+ * Narrows one provider health projection. Both nested records are nullable, but
+ * "nullable" means the Runtime sent `null` -- a payload that omits the key
+ * entirely arrives as `undefined`, which is not `null`, so `health.cooldown !==
+ * null` would be true and the badge would read `.failureClass` off undefined
+ * and throw. The check distinguishes absent from observed.
+ */
+function isProviderHealth(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    (value.cooldown === null ||
+      (isRecord(value.cooldown) &&
+        typeof value.cooldown.kind === "string" &&
+        (value.cooldown.failureClass === null ||
+          typeof value.cooldown.failureClass === "string") &&
+        typeof value.cooldown.until === "string")) &&
+    (value.lastFailure === null ||
+      (isRecord(value.lastFailure) &&
+        typeof value.lastFailure.at === "string" &&
+        (value.lastFailure.failureClass === null ||
+          typeof value.lastFailure.failureClass === "string")))
+  );
+}
+
 function isControlApiProvidersResponse(
   value: unknown
 ): value is ControlApiProvidersResponse {
@@ -537,7 +561,10 @@ function isControlApiProvidersResponse(
         isRecord(provider.credential) &&
         typeof provider.credential.configured === "boolean" &&
         Array.isArray(provider.models) &&
-        Array.isArray(provider.priorities)
+        Array.isArray(provider.priorities) &&
+        // Health drives the readiness badge, which reads `cooldown.failureClass`
+        // and `lastFailure.failureClass`.
+        (provider.health === null || isProviderHealth(provider.health))
     )
   );
 }
@@ -772,6 +799,20 @@ function invalidMemoryPageResponse(
  * renders rather than restating every nested Core type.
  */
 /**
+ * Narrows one target override. Overrides are a list of records, not a string
+ * list: each entry names a target and carries its own enablement. Checking them
+ * with `isStringList` rejects every well-formed catalog, which is how this
+ * route spent a while failing closed against correct data.
+ */
+function isMcpTargetOverride(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.target === "string" &&
+    typeof value.enabled === "boolean"
+  );
+}
+
+/**
  * Narrows one MCP server row. The catalog row is the join of the canonical
  * declaration and the generated role projection, and the view reads every
  * required member of that join: `transport.toUpperCase()` and
@@ -787,7 +828,8 @@ function isMcpServerRow(value: unknown): boolean {
     typeof value.name === "string" &&
     (value.enabled === null || typeof value.enabled === "boolean") &&
     typeof value.transport === "string" &&
-    isStringList(value.targetOverrides) &&
+    Array.isArray(value.targetOverrides) &&
+    value.targetOverrides.every(isMcpTargetOverride) &&
     typeof value.declared === "boolean" &&
     isStringList(value.roles)
   );

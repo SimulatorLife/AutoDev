@@ -6357,6 +6357,15 @@ test("a catalog row missing the fields its view reads fails closed instead of th
   const serve = (payload: unknown) => ({
     fetchImpl: async () => Response.json(payload)
   });
+  const reconciliation = {
+    convergence: "converged",
+    desiredGeneration: "1",
+    observedGeneration: "1",
+    lastApplyAt: "2026-01-01T00:00:00.000Z",
+    lastObservationAt: "2026-01-01T00:00:00.000Z",
+    lastError: null,
+    explanation: "Observed generation matches the desired generation."
+  };
 
   // --- MCP servers: the view reads transport.toUpperCase(), targetOverrides
   // --- .length, and the role chips, and renders `declared`/`enabled` claims.
@@ -6364,7 +6373,10 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     name: "github",
     enabled: true,
     transport: "stdio",
-    targetOverrides: [],
+    // Overrides are records, not strings. A string-list check on this field
+    // rejects every well-formed catalog, which reads as "the data is bad"
+    // rather than "the guard is wrong" -- so the fixture carries a real entry.
+    targetOverrides: [{ target: "codexcli", enabled: true }],
     declared: true,
     roles: ["orchestrator"]
   };
@@ -6378,7 +6390,13 @@ test("a catalog row missing the fields its view reads fails closed instead of th
   const mcpAccept = await fetchMcps(config, serve(mcpEnvelope([mcpRow])));
   assert.equal(mcpAccept.kind, "ok");
   // Dropping each required member in turn must fail closed.
-  for (const dropped of ["enabled", "transport", "targetOverrides", "roles"]) {
+  for (const dropped of [
+    "enabled",
+    "transport",
+    "targetOverrides",
+    "declared",
+    "roles"
+  ]) {
     const incomplete = await fetchMcps(
       config,
       serve(mcpEnvelope([{ ...mcpRow, [dropped]: undefined }]))
@@ -6389,6 +6407,70 @@ test("a catalog row missing the fields its view reads fails closed instead of th
       `an MCP row without "${dropped}" must not reach the view`
     );
   }
+
+  // --- Providers: the readiness badge reads `cooldown.failureClass`. The
+  // --- nested record is nullable, but omitting the key yields `undefined`,
+  // --- which is not `null`, so the badge's `!== null` test passes and the
+  // --- read throws. This one crashed /providers in the browser sweep.
+  const providerRow = {
+    id: "anthropic",
+    route: null,
+    credential: { envKey: "ANTHROPIC_API_KEY", configured: true },
+    roles: {
+      orchestrator: {
+        enabled: true,
+        mutable: false,
+        convergence: reconciliation
+      },
+      subagent: {
+        enabled: true,
+        mutable: false,
+        convergence: reconciliation
+      }
+    },
+    models: [{ tier: "orchestrator", model: "anthropic/claude" }],
+    priorities: [{ tier: "orchestrator", group: 1 }],
+    orchestratorReasoningEffort: null,
+    health: { cooldown: null, lastFailure: null }
+  };
+  const providersEnvelope = (providers: unknown[]) => ({
+    schema: "autodev-control-providers-v2",
+    orchestratorTier: "orchestrator",
+    tiers: [{ tier: "orchestrator", groups: [["anthropic"]] }],
+    providers
+  });
+  const providersAccept = await fetchProviders(
+    config,
+    serve(providersEnvelope([providerRow]))
+  );
+  assert.equal(providersAccept.kind, "ok");
+  for (const dropped of [
+    "health",
+    "credential",
+    "models",
+    "priorities",
+    "roles"
+  ]) {
+    const incomplete = await fetchProviders(
+      config,
+      serve(providersEnvelope([{ ...providerRow, [dropped]: undefined }]))
+    );
+    assert.equal(
+      incomplete.kind,
+      "invalid-response",
+      `a provider row without "${dropped}" must not reach the view`
+    );
+  }
+  // A half-present nested record is as unreadable as an absent one.
+  const halfCooldown = await fetchProviders(
+    config,
+    serve(
+      providersEnvelope([
+        { ...providerRow, health: { cooldown: { kind: "overloaded" } } }
+      ])
+    )
+  );
+  assert.equal(halfCooldown.kind, "invalid-response");
 
   // --- Tools: role exposure drives both the role filter and the role chips,
   // --- and `availability` is what separates "Configured" from "Not observed".
