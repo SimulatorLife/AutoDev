@@ -297,7 +297,12 @@ function RoutePanel({
       React.createElement(
         DetailValue,
         { label: "Health URL" },
-        provider.route === null
+        // `== null` on purpose, and deliberately not `=== null`: the v2 contract
+        // types `route` as nullable, but a payload that omits the key arrives as
+        // `undefined`, which is not `null`. A strict check falls through to
+        // `.healthUrl` and throws. Nothing in the contract requires `route`, so
+        // absent and explicitly-null have to render the same way here.
+        provider.route == null
           ? NOT_OBSERVED_LABEL
           : (provider.route.healthUrl ?? "None configured")
       ),
