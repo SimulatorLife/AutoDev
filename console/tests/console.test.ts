@@ -44,6 +44,7 @@ import * as promptMutationRoute from "../app/api/prompts/[name]/route.ts";
 import * as providerRoleRoute from "../app/api/providers/[provider]/roles/[role]/route.ts";
 import EvaluationsPage from "../app/evaluations/page.ts";
 import MemoryPage from "../app/memory/page.ts";
+import { NAV_ICONS, navIcon } from "../src/components/icons/Icon.ts";
 import {
   AgentDetailView,
   AgentsView,
@@ -204,6 +205,50 @@ const CONFIGURED_AGENT: AgentDefinition = {
   ],
   toolNames: ["orchestration", "playwright"]
 };
+
+test("every canonical navigation resource has its own icon, and no icon is orphaned", () => {
+  // The sidebar is the Console's primary wayfinding, and an icon is how an
+  // operator recognises a resource before reading its label. A missing one is
+  // invisible in a diff and to every other test: the link still renders, the
+  // text still reads, and the gap only shows as one blunter row than its
+  // neighbours.
+  //
+  // This matters more than a normal exhaustiveness check because the two lists
+  // involved used to be written out separately -- a type union and a `Set`
+  // literal of the same thirteen names -- so adding a resource to one left
+  // the other stale, and which one you had edited decided whether it typechecked.
+  const missing = CANONICAL_NAVIGATION.filter(
+    (section) => navIcon(section) === null
+  );
+  assert.deepEqual(
+    missing,
+    [],
+    `These navigation resources render with no icon: ${missing.join(", ")}`
+  );
+
+  // The other direction matters too: an icon declared as a nav icon that no
+  // section uses is a section that was renamed or removed while its glyph
+  // stayed behind, and it is exactly what would let a future section borrow a
+  // dead resource's icon by accident.
+  const orphaned = NAV_ICONS.filter(
+    (name) => !(CANONICAL_NAVIGATION as readonly string[]).includes(name)
+  );
+  assert.deepEqual(
+    orphaned,
+    [],
+    `These nav icons belong to no canonical section: ${orphaned.join(", ")}`
+  );
+  assert.deepEqual(
+    [...NAV_ICONS].sort(),
+    [...CANONICAL_NAVIGATION].sort(),
+    "The nav icon set and the canonical navigation must be the same thirteen resources"
+  );
+
+  // And the set must not borrow another resource's glyph. `navIcon` returns
+  // `null` rather than a fallback precisely so an unknown section cannot
+  // inherit some other section's icon.
+  assert.equal(navIcon("NotAResource"), null);
+});
 
 test("AppNav renders Configure/Observe/Operate groups with canonical membership, order, and URL links", () => {
   const markup = renderToStaticMarkup(

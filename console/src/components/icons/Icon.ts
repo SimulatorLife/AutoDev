@@ -139,25 +139,13 @@ export function Icon({
   );
 }
 
-/** Icon that represents each canonical navigation resource. */
-export type NavIconName = Extract<
-  IconName,
-  | "Agents"
-  | "Providers"
-  | "MCPs"
-  | "Skills"
-  | "Hooks"
-  | "Prompts"
-  | "Permissions"
-  | "Tools"
-  | "Usage"
-  | "Evaluations"
-  | "Memory"
-  | "Workspaces"
-  | "GitHub"
->;
-
-const NAV_ICON_NAMES: ReadonlySet<string> = new Set<string>([
+/**
+ * The canonical navigation resources, each paired with the icon that stands for
+ * it. One list, because the previous shape stated this twice -- as a type union
+ * and again as a `Set` literal -- and a resource added to one but not the other
+ * would typecheck while silently rendering no icon at all.
+ */
+const NAV_ICON_SOURCES = [
   "Agents",
   "Providers",
   "MCPs",
@@ -171,7 +159,24 @@ const NAV_ICON_NAMES: ReadonlySet<string> = new Set<string>([
   "Memory",
   "Workspaces",
   "GitHub"
-]);
+] as const satisfies readonly (Extract<IconName, string> & string)[];
+
+/**
+ * Every name in `NAV_ICON_SOURCES` must actually exist in `ICON_PATHS`, and
+ * every one must be a canonical navigation section. Either list drifting from
+ * its source is a missing glyph in the sidebar, which reads as a design
+ * choice rather than a bug -- so both directions are compile errors.
+ */
+export type NavIconName = (typeof NAV_ICON_SOURCES)[number];
+
+/**
+ * Exported so a test can assert the list is exactly the canonical navigation,
+ * in both directions. A name here that no section uses is a section that was
+ * renamed or removed while its icon stayed behind.
+ */
+export const NAV_ICONS: readonly NavIconName[] = NAV_ICON_SOURCES;
+
+const NAV_ICON_NAMES: ReadonlySet<string> = new Set<string>(NAV_ICON_SOURCES);
 
 /**
  * Icon for a canonical navigation section, or `null` for a section this set
