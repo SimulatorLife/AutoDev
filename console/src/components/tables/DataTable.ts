@@ -60,14 +60,16 @@ const DEFAULT_COLUMN_WEIGHT = 100;
 
 /**
  * Floor for the table itself. The table takes the full width of its wrapper,
- * but never squeezes below this, so a very narrow window scrolls horizontally
- * instead of crushing every column into an unreadable sliver.
+ * but never squeezes below this, so a narrow window scrolls the table region
+ * horizontally instead of shrinking every column under its declared budget.
  *
- * The floor is below the narrowest realistic content area (a card-padded
- * column inside a collapsed-sidebar layout) so it does not introduce a scroll
- * on a window that otherwise fits.
+ * The number matters: views author weights on roughly a pixel-per-unit scale
+ * (the widest table in the Console sums to about 1100), so below this width the
+ * percentages start resolving narrower than the content each column was
+ * measured for — badges truncate, chips wrap one per line, and headers break
+ * mid-word. Scrolling keeps every cell legible; crushing it does not.
  */
-const TABLE_MIN_WIDTH_CLASS = "min-w-[48rem]";
+const TABLE_MIN_WIDTH_CLASS = "min-w-[68rem]";
 
 function cellClassName(column: ColumnDef<never>): string {
   const align = column.align ?? "truncate";
@@ -184,8 +186,13 @@ export function DataTable<T>({
               {
                 key: col.id,
                 scope: "col",
+                // A header is a label, not a value: it wraps rather than
+                // truncating. Column widths are relative, so at a narrower
+                // viewport a single header can lose the few pixels it needs to
+                // fit on one line, and "CONVERGEN…" tells an operator less than
+                // two short lines do.
                 className:
-                  "px-4 py-3 text-xs uppercase tracking-wider truncate",
+                  "px-4 py-2.5 text-xs uppercase leading-tight tracking-wider break-words",
                 style: { width: widths[index] }
               },
               col.header

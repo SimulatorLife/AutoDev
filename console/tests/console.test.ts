@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -252,6 +252,23 @@ test("AppNav renders Configure/Observe/Operate groups with canonical membership,
   assert.equal(markup.includes("OpenGround"), false);
 });
 
+/**
+ * The Console's keyboard-focus contract is a single global rule rather than a
+ * per-component class: `:where(a, button, ...):focus-visible` draws an accent
+ * outline at zero specificity, so a component may omit the utility without
+ * losing the indicator. Tests assert the rule exists instead of demanding every
+ * anchor re-declare it.
+ */
+function globalFocusRingIsDeclared(): boolean {
+  const css = readFileSync(
+    join(import.meta.dirname, "..", "app", "globals.css"),
+    "utf8"
+  );
+  return /:where\([^)]*\):focus-visible\s*\{[^}]*outline:\s*2px solid var\(--color-accent\)/u.test(
+    css
+  );
+}
+
 test("AppNav brand link has visible keyboard focus and no unsupported status pulse", () => {
   const markup = renderToStaticMarkup(
     React.createElement(AppNav, {
@@ -274,9 +291,14 @@ test("AppNav brand link has visible keyboard focus and no unsupported status pul
     "AppNav brand link must not remove focus outline without a visible replacement"
   );
   assert.ok(
-    /focus-visible:outline(?!-none)/.test(brandTag),
-    "AppNav brand link must define a visible focus-visible outline"
+    globalFocusRingIsDeclared(),
+    "the shared :focus-visible outline rule must exist for keyboard focus"
   );
+  // A component may still opt into its own visible ring; if it does, that ring
+  // must be visible rather than `outline-none`.
+  if (brandTag.includes("focus-visible:outline")) {
+    assert.doesNotMatch(brandTag, /focus-visible:outline-none/u);
+  }
 
   // The brand must not render a pulsing/health-status indicator beside it;
   // there is no runtime health evidence backing such a dot.
@@ -307,11 +329,14 @@ test("Breadcrumbs renders a server-renderable landmark with native ancestor link
 
   // Ancestor item: a real <a href="/mcps"> anchor (no client-side router).
   assert.match(navMarkup, /<a href="\/mcps"[^>]*>MCPs<\/a>/);
-  // Ancestor link must expose a visible keyboard focus state.
-  assert.match(
-    navMarkup,
-    /<a href="\/mcps"[^>]*class="[^"]*focus-visible:outline/
+  // Ancestor link must expose a visible keyboard focus state, either through the
+  // shared rule or an explicit one it carries itself.
+  assert.ok(
+    globalFocusRingIsDeclared(),
+    "the shared :focus-visible outline rule must exist for keyboard focus"
   );
+  const ancestorTag = navMarkup.match(/<a href="\/mcps"[^>]*>/u)?.[0] ?? "";
+  assert.doesNotMatch(ancestorTag, /focus-visible:outline-none/u);
 
   // Current-page item: a non-link <span aria-current="page"> with the
   // final item's label, and no href attribute.
@@ -926,6 +951,33 @@ test("DataTable distributes column width by weight, not by absolute length", () 
     headerWidths.reduce((sum, value) => sum + value, 0),
     100
   );
+});
+
+test("DataTable wraps column headers instead of truncating them", () => {
+  interface TestRow {
+    readonly id: string;
+  }
+  const markup = renderToStaticMarkup(
+    DataTable<TestRow>({
+      data: [{ id: "1" }],
+      columns: [
+        {
+          id: "convergence",
+          header: "Convergence",
+          cell: (r: TestRow) => r.id
+        }
+      ],
+      keyExtractor: (r: TestRow) => r.id
+    })
+  );
+  // Relative widths shrink proportionally on a narrower viewport, so a header
+  // that runs out of room wraps. Truncating it would render "CONVERGEN…" and
+  // hide which column it labels.
+  assert.match(
+    markup,
+    /<th [^>]*class="[^"]*break-words[^"]*"[^>]*>Convergence<\/th>/
+  );
+  assert.doesNotMatch(markup, /<th [^>]*class="[^"]*truncate[^"]*"/);
 });
 
 test("DataTable clamps prose cells on an inner box, not the table cell", () => {
