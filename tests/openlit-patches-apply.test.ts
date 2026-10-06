@@ -184,8 +184,12 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     /getWidgetById|createWidget|updateWidget|deleteWidget/u,
     "runWidgetQuery must not depend on a widget catalog"
   );
-  // `usageRoute` was read above for the filter-options assertion; the
-  // seeded-definition contract is the same file.
+  // The Usage endpoint is the surviving caller of that reader, so it has to
+  // hand the runner the seeded definition rather than an id lookup.
+  const usageRoute = readFileSync(
+    join(dir, "src/client/src/app/api/autodev/usage/route.ts"),
+    "utf8"
+  );
   assert.match(
     usageRoute,
     /runWidgetQuery\(seedWidget, \{/u,
@@ -331,110 +335,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   const snapshot = readFileSync(
     join(dir, "src/client/src/lib/platform/telemetry-snapshot/index.ts"),
     "utf8"
-// The fork's agents workspace duplicated the AutoDev Console's Agents
-    // surface and is gone; the data plane it fed is not.
-    for (const gone of [
-      "src/client/src/app/(playground)/agents/page.tsx",
-      "src/client/src/app/(playground)/agents/[agentKey]/page.tsx",
-      "src/client/src/components/(playground)/agents/agent-scope-provider.tsx",
-      "src/client/src/components/(playground)/coding-agents/coding-agent-detail.tsx",
-    ]) {
-      assert.equal(
-        existsSync(join(dir, gone)),
-        false,
-        `${gone} must not survive the duplicate-agents-shell removal`,
-      );
-    }
-    assert.equal(
-      existsSync(
-        join(
-          dir,
-          "src/client/src/components/(playground)/observability/agent-scope-provider.tsx"
-        )
-      ),
-      true,
-      "the agent scope provider moved to its only surviving consumer"
-    );
-    assert.equal(
-      existsSync(join(dir, "src/client/src/app/api/agents/materialize/route.ts")),
-      true,
-      "the materialize cron refreshes the agent summary tables AutoDev syncs"
-    );
-
-    const agentsMiddleware = readFileSync(
-      join(dir, "src/client/src/middleware.ts"),
-      "utf8"
-    );
-    assert.doesNotMatch(
-      agentsMiddleware,
-      /"\/agents/u,
-      "the removed agents page must leave the middleware matcher list"
-    );
-
-    const scopeConsumer = readFileSync(
-      join(
-        dir,
-// Documentation chrome and account-scoped preferences are gone; the
-    // surfaces AutoDev still owns stay.
-    for (const gone of [
-      "src/client/src/app/(playground)/openapi-spec/page.tsx",
-      "src/client/src/app/(playground)/settings/profile/page.tsx",
-      "src/client/src/components/(playground)/api-keys/api-reference.tsx",
-      "src/client/src/components/(playground)/coding-agents/coding-sessions-tab.tsx",
-      "src/client/src/components/(playground)/coding-agents/coding-users-tab.tsx",
-    ]) {
-      assert.equal(
-        existsSync(join(dir, gone)),
-        false,
-        `${gone} must not survive the docs/account-surface removal`,
-      );
-    }
-
-    // /settings used to redirect to the profile page; it must land somewhere
-    // that still exists rather than on a 404.
-    const settingsIndex = readFileSync(
-      join(dir, "src/client/src/app/(playground)/settings/page.tsx"),
-      "utf8"
-    );
-    assert.match(
-      settingsIndex,
-      /router\.replace\("\/settings\/api-keys"\)/u,
-      "the settings index must redirect to a surviving page",
-    );
-    assert.doesNotMatch(
-      settingsIndex,
-      /\/settings\/profile/u,
-      "the settings index must not redirect to a deleted page"
-    );
-
-    const settingsTabs = readFileSync(
-      join(dir, "src/client/src/constants/settings.ts"),
-      "utf8"
-    );
-    assert.doesNotMatch(
-      settingsTabs,
-      /\/settings\/profile/u,
-      "the removed profile page must leave the settings tab list"
-    );
-
-    const apiKeyNav = readFileSync(
-      join(dir, "src/client/src/constants/sidebar.tsx"),
-      "utf8"
-    );
-    assert.doesNotMatch(
-      apiKeyNav,
-      /"\/openapi-spec"|"\/settings\/profile"/u,
-      "the sidebar must not link to surfaces that no longer exist"
-    );
-        "src/client/src/components/(playground)/observability/signal-list.tsx"
-      ),
-      "utf8"
-    );
-    assert.match(
-      scopeConsumer,
-      /observability\/agent-scope-provider/u,
-      "signal-list must import the provider from its owning namespace"
-    );
+  );
   assert.doesNotMatch(
     snapshot,
     /dashboards_total/u,
@@ -459,6 +360,112 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     distinctValues,
     /\$\{req\.key\}|\$\{.*\.key\}.*SELECT/u,
     "distinct-values binding must never compose SQL with user-controlled keys"
+  );
+
+  // The fork's agents workspace duplicated the AutoDev Console's Agents
+  // surface and is gone; the data plane it fed is not.
+  for (const gone of [
+    "src/client/src/app/(playground)/agents/page.tsx",
+    "src/client/src/app/(playground)/agents/[agentKey]/page.tsx",
+    "src/client/src/components/(playground)/agents/agent-scope-provider.tsx",
+    "src/client/src/components/(playground)/coding-agents/coding-agent-detail.tsx"
+  ]) {
+    assert.equal(
+      existsSync(join(dir, gone)),
+      false,
+      `${gone} must not survive the duplicate-agents-shell removal`
+    );
+  }
+  assert.equal(
+    existsSync(
+      join(
+        dir,
+        "src/client/src/components/(playground)/observability/agent-scope-provider.tsx"
+      )
+    ),
+    true,
+    "the agent scope provider moved to its only surviving consumer"
+  );
+  assert.equal(
+    existsSync(join(dir, "src/client/src/app/api/agents/materialize/route.ts")),
+    true,
+    "the materialize cron refreshes the agent summary tables AutoDev syncs"
+  );
+
+  const agentsMiddleware = readFileSync(
+    join(dir, "src/client/src/middleware.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    agentsMiddleware,
+    /"\/agents/u,
+    "the removed agents page must leave the middleware matcher list"
+  );
+
+  const scopeConsumer = readFileSync(
+    join(
+      dir,
+      "src/client/src/components/(playground)/observability/signal-list.tsx"
+    ),
+    "utf8"
+  );
+  assert.match(
+    scopeConsumer,
+    /observability\/agent-scope-provider/u,
+    "signal-list must import the provider from its owning namespace"
+  );
+
+  // Documentation chrome and account-scoped preferences are gone; the
+  // surfaces AutoDev still owns stay.
+  for (const gone of [
+    "src/client/src/app/(playground)/openapi-spec/page.tsx",
+    "src/client/src/app/(playground)/settings/profile/page.tsx",
+    "src/client/src/components/(playground)/api-keys/api-reference.tsx",
+    "src/client/src/components/(playground)/coding-agents/coding-sessions-tab.tsx",
+    "src/client/src/components/(playground)/coding-agents/coding-users-tab.tsx"
+  ]) {
+    assert.equal(
+      existsSync(join(dir, gone)),
+      false,
+      `${gone} must not survive the docs/account-surface removal`
+    );
+  }
+
+  // /settings used to redirect to the profile page; it must land somewhere
+  // that still exists rather than on a 404.
+  const settingsIndex = readFileSync(
+    join(dir, "src/client/src/app/(playground)/settings/page.tsx"),
+    "utf8"
+  );
+  assert.match(
+    settingsIndex,
+    /router\.replace\("\/settings\/api-keys"\)/u,
+    "the settings index must redirect to a surviving page"
+  );
+  assert.doesNotMatch(
+    settingsIndex,
+    /\/settings\/profile/u,
+    "the settings index must not redirect to a deleted page"
+  );
+
+  const settingsTabs = readFileSync(
+    join(dir, "src/client/src/constants/settings.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    settingsTabs,
+    /\/settings\/profile/u,
+    "the removed profile page must leave the settings tab list"
+  );
+
+  const apiKeyNav = readFileSync(
+    join(dir, "src/client/src/constants/sidebar.tsx"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    apiKeyNav,
+    /"\/openapi-spec"|"\/settings\/profile"/u,
+    "the sidebar must not link to surfaces that no longer exist"
   );
 }
 
