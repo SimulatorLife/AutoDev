@@ -4546,12 +4546,26 @@ test("Catalog collections fail closed on unreadable responses", async () => {
   // An unreadable catalog reaching a view is an empty collection, and an empty
   // collection is a claim ("no MCP servers are configured") that a shape the
   // Console cannot read does not support.
+  //
+  // Each accepted fixture below is a *complete* row. That is load-bearing: a row
+  // missing only the identifier used to pass here, which is how an incomplete
+  // payload reached the view and threw instead of failing closed. See "a catalog
+  // row missing the fields its view reads fails closed instead of throwing".
   const mcps = {
     schema: "autodev-control-mcps-v1",
     source: ".rulesync/mcp.jsonc",
     readOnly: true,
     valid: true,
-    servers: [{ name: "lsp", enabled: true, declared: true, roles: [] }]
+    servers: [
+      {
+        name: "lsp",
+        enabled: true,
+        transport: "stdio",
+        targetOverrides: [],
+        declared: true,
+        roles: []
+      }
+    ]
   };
   assert.equal((await fetchMcps(config, serve(mcps))).kind, "ok");
   for (const broken of [
@@ -4575,7 +4589,15 @@ test("Catalog collections fail closed on unreadable responses", async () => {
     validity: "valid",
     totalTools: 1,
     usageLink: "/usage",
-    tools: [{ name: "web_search", source: "native", exposedRoles: [] }]
+    tools: [
+      {
+        name: "web_search",
+        source: "native",
+        sourceAuthority: "codex-native",
+        exposedRoles: [],
+        availability: "configured"
+      }
+    ]
   };
   assert.equal((await fetchTools(config, serve(tools))).kind, "ok");
   for (const broken of [
@@ -6313,6 +6335,225 @@ test("the resource failure shell keeps its error tint and lets a long error code
   assert.match(markup, /break-all/);
   assert.doesNotMatch(markup, /whitespace-nowrap/);
   assert.match(markup, /rounded-lg border shadow p-6/);
+});
+
+test("a catalog row missing the fields its view reads fails closed instead of throwing", async () => {
+  // The failure shell is only reachable when a fetcher reports `ok`. A guard
+  // that narrows a payload to its catalog type but checks only the row's
+  // identifier lets an incomplete payload through as `ok`, and the view then
+  // dereferences the missing field during render -- an HTTP 500 with no <h1>
+  // at all, which is the one outcome worse than a visible failure shell.
+  //
+  // Both directions are asserted for every collection below, because only the
+  // first is easy: the identifier-only payload must be rejected, and the
+  // payload the guard *does* accept must render without throwing. The second
+  // assertion is what keeps a guard from drifting back toward identifier-only
+  // checking, and it is the assertion that fails if a guard starts rejecting
+  // rows the view can perfectly well render.
+  const config = {
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "server-only"
+  };
+  const serve = (payload: unknown) => ({
+    fetchImpl: async () => Response.json(payload)
+  });
+
+  // --- MCP servers: the view reads transport.toUpperCase(), targetOverrides
+  // --- .length, and the role chips, and renders `declared`/`enabled` claims.
+  const mcpRow = {
+    name: "github",
+    enabled: true,
+    transport: "stdio",
+    targetOverrides: [],
+    declared: true,
+    roles: ["orchestrator"]
+  };
+  const mcpEnvelope = (servers: unknown[]) => ({
+    schema: "autodev-control-mcps-v1",
+    source: ".rulesync/mcp.jsonc",
+    readOnly: true,
+    valid: true,
+    servers
+  });
+  const mcpAccept = await fetchMcps(config, serve(mcpEnvelope([mcpRow])));
+  assert.equal(mcpAccept.kind, "ok");
+  // Dropping each required member in turn must fail closed.
+  for (const dropped of ["enabled", "transport", "targetOverrides", "roles"]) {
+    const incomplete = await fetchMcps(
+      config,
+      serve(mcpEnvelope([{ ...mcpRow, [dropped]: undefined }]))
+    );
+    assert.equal(
+      incomplete.kind,
+      "invalid-response",
+      `an MCP row without "${dropped}" must not reach the view`
+    );
+  }
+
+  // --- Tools: role exposure drives both the role filter and the role chips,
+  // --- and `availability` is what separates "Configured" from "Not observed".
+  const toolRow = {
+    name: "mcp__github__create_issue",
+    source: "mcp",
+    sourceAuthority: "rulesync-mcp",
+    exposedRoles: ["orchestrator"],
+    availability: "configured"
+  };
+  const toolsEnvelope = (tools: unknown[]) => ({
+    schema: "autodev-control-tools-v2",
+    source: "rulesync-mcp+execution-contract",
+    readOnly: true,
+    coverage: "complete",
+    validity: "valid",
+    totalTools: 1,
+    usageLink: "/usage",
+    tools
+  });
+  const toolsAccept = await fetchTools(config, serve(toolsEnvelope([toolRow])));
+  assert.equal(toolsAccept.kind, "ok");
+  for (const dropped of [
+    "source",
+    "sourceAuthority",
+    "exposedRoles",
+    "availability"
+  ]) {
+    const incomplete = await fetchTools(
+      config,
+      serve(toolsEnvelope([{ ...toolRow, [dropped]: undefined }]))
+    );
+    assert.equal(
+      incomplete.kind,
+      "invalid-response",
+      `a tool row without "${dropped}" must not reach the view`
+    );
+  }
+
+  // --- GitHub workflows: the catalog column and the scheduled count are both
+  // --- derived from these lists, so a row without them cannot be rendered.
+  const workflowRow = {
+    id: "_scheduler.yml",
+    name: "Scheduler",
+    path: ".github/workflows/_scheduler.yml",
+    events: ["schedule"],
+    schedules: ["0 * * * *"]
+  };
+  const githubEnvelope = (workflows: unknown[]) => ({
+    schema: "autodev-control-github-v1",
+    source: ".github/workflows",
+    readOnly: true,
+    catalogStatus: "valid",
+    totalWorkflows: 1,
+    runtimeFactsAvailable: false,
+    runtimeStatus: "unavailable",
+    runtimeMessage: null,
+    repository: null,
+    stats: null,
+    workflows,
+    recentRuns: []
+  });
+  const githubAccept = await fetchGithubWorkflows(
+    config,
+    serve(githubEnvelope([workflowRow]))
+  );
+  assert.equal(githubAccept.kind, "ok");
+  for (const dropped of ["name", "path", "events", "schedules"]) {
+    const incomplete = await fetchGithubWorkflows(
+      config,
+      serve(githubEnvelope([{ ...workflowRow, [dropped]: undefined }]))
+    );
+    assert.equal(
+      incomplete.kind,
+      "invalid-response",
+      `a workflow row without "${dropped}" must not reach the view`
+    );
+  }
+
+  // --- Evaluations: `passed` is a three-state verdict (true/false/null). A
+  // --- missing one compares as a failure, so an unreadable verdict would be
+  // --- synthesized as "did not pass" rather than shown as unobserved.
+  const evaluationRow = {
+    id: "eval-1",
+    agentRole: "orchestrator",
+    model: "anthropic/claude",
+    metrics: [],
+    passed: null,
+    timestamp: "2026-01-01T00:00:00.000Z"
+  };
+  const evaluationsEnvelope = (evaluations: unknown[]) => ({
+    schema: "autodev-control-evaluations-v1",
+    source: "clickhouse",
+    readOnly: true,
+    totalEvaluations: 1,
+    evaluations
+  });
+  const evaluationsAccept = await fetchEvaluations(
+    config,
+    serve(evaluationsEnvelope([evaluationRow]))
+  );
+  assert.equal(evaluationsAccept.kind, "ok");
+  for (const dropped of [
+    "agentRole",
+    "model",
+    "metrics",
+    "passed",
+    "timestamp"
+  ]) {
+    const incomplete = await fetchEvaluations(
+      config,
+      serve(evaluationsEnvelope([{ ...evaluationRow, [dropped]: undefined }]))
+    );
+    assert.equal(
+      incomplete.kind,
+      "invalid-response",
+      `an evaluation row without "${dropped}" must not reach the view`
+    );
+  }
+
+  // Finally: what the guards accept must actually render. This is the
+  // assertion that would have caught the original crash.
+  assert.match(
+    renderToStaticMarkup(
+      React.createElement(McpsView, {
+        servers: [mcpRow as never],
+        sourceValidity: true
+      })
+    ),
+    /github/
+  );
+  assert.match(
+    renderToStaticMarkup(
+      React.createElement(ToolsView, {
+        tools: [toolRow as never],
+        coverage: "complete",
+        validity: "valid",
+        totalTools: 1,
+        usageLink: "/usage",
+        filters: { source: "", role: "" }
+      })
+    ),
+    /create_issue/
+  );
+  assert.match(
+    renderToStaticMarkup(
+      React.createElement(GithubView, { workflows: [workflowRow as never] })
+    ),
+    /_scheduler\.yml/
+  );
+  // `passed: null` is the unobserved verdict, and it must survive the whole
+  // round trip as "Not observed" rather than collapsing into a counted zero.
+  const evaluationsMarkup = renderToStaticMarkup(
+    React.createElement(EvaluationsView, {
+      evaluations: [evaluationRow as never]
+    })
+  );
+  assert.match(evaluationsMarkup, /orchestrator/);
+  assert.match(evaluationsMarkup, /data-evaluation-pass-rate-observed="false"/);
+  assert.match(evaluationsMarkup, /Not observed/);
+  assert.doesNotMatch(
+    evaluationsMarkup,
+    /Pass Rate<\/span>[\s\S]{0,200}?>100%/,
+    "an unobserved verdict must not be reported as a percentage"
+  );
 });
 
 test("BarChart keeps unobserved, empty and observed data three distinct things", () => {

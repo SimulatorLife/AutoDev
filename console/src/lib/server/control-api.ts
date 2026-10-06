@@ -771,6 +771,28 @@ function invalidMemoryPageResponse(
  * does not support. Each predicate checks the envelope the view actually
  * renders rather than restating every nested Core type.
  */
+/**
+ * Narrows one MCP server row. The catalog row is the join of the canonical
+ * declaration and the generated role projection, and the view reads every
+ * required member of that join: `transport.toUpperCase()` and
+ * `targetOverrides.length` throw outright when absent, while a missing
+ * `enabled` or `declared` compares unequal to `null`/`false` and so renders a
+ * confident "Canonical" / "Configured" claim out of unreadable evidence.
+ * Checking the identifier alone let an incomplete payload reach the view and
+ * throw instead of failing closed.
+ */
+function isMcpServerRow(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.name === "string" &&
+    (value.enabled === null || typeof value.enabled === "boolean") &&
+    typeof value.transport === "string" &&
+    isStringList(value.targetOverrides) &&
+    typeof value.declared === "boolean" &&
+    isStringList(value.roles)
+  );
+}
+
 function isControlApiMcpsResponse(
   value: unknown
 ): value is ControlApiMcpsResponse {
@@ -781,9 +803,27 @@ function isControlApiMcpsResponse(
     typeof value.readOnly === "boolean" &&
     (value.valid === null || typeof value.valid === "boolean") &&
     Array.isArray(value.servers) &&
-    value.servers.every(
-      (server) => isRecord(server) && typeof server.name === "string"
-    )
+    value.servers.every(isMcpServerRow)
+  );
+}
+
+/**
+ * Narrows one tool catalog row. Tools is the one catalog whose views read
+ * several fields off every row -- role exposure drives both the role filter
+ * (`exposedRoles.includes`) and the role chips (`exposedRoles.length`), and the
+ * availability verdict is what separates "configured" from "Not observed" --
+ * so the guard checks those fields rather than only the identifier. Checking
+ * the identifier alone let an incomplete payload through to the view, where it
+ * threw instead of failing closed.
+ */
+function isToolCatalogRow(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.name === "string" &&
+    typeof value.source === "string" &&
+    typeof value.sourceAuthority === "string" &&
+    isStringList(value.exposedRoles) &&
+    typeof value.availability === "string"
   );
 }
 
@@ -805,7 +845,7 @@ function isControlApiToolsResponse(
     isNullableNumber(value.totalTools) &&
     typeof value.usageLink === "string" &&
     Array.isArray(value.tools) &&
-    value.tools.every((tool) => isRecord(tool) && typeof tool.name === "string")
+    value.tools.every(isToolCatalogRow)
   );
 }
 
@@ -822,6 +862,25 @@ function isControlApiHooksResponse(
   );
 }
 
+/**
+ * Narrows one evaluation row. `passed` is the verdict the table renders, and
+ * `boolean | null` is three states: a missing `passed` reads as `undefined`,
+ * which every verdict comparison in the view treats as a failure. A row without
+ * it would therefore synthesize "did not pass" out of unreadable evidence, so
+ * the check requires it alongside the rest of the required record.
+ */
+function isEvaluationRow(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.agentRole === "string" &&
+    typeof value.model === "string" &&
+    Array.isArray(value.metrics) &&
+    (value.passed === null || typeof value.passed === "boolean") &&
+    typeof value.timestamp === "string"
+  );
+}
+
 function isControlApiEvaluationsResponse(
   value: unknown
 ): value is ControlApiEvaluationsResponse {
@@ -832,9 +891,24 @@ function isControlApiEvaluationsResponse(
     typeof value.readOnly === "boolean" &&
     typeof value.totalEvaluations === "number" &&
     Array.isArray(value.evaluations) &&
-    value.evaluations.every(
-      (evaluation) => isRecord(evaluation) && typeof evaluation.id === "string"
-    )
+    value.evaluations.every(isEvaluationRow)
+  );
+}
+
+/**
+ * Narrows one workflow definition row. The catalog column and the scheduled
+ * count are both derived from these lists, so a row without them is not a row
+ * the view can render -- `workflows.filter((w) => w.schedules.length > 0)`
+ * would throw rather than fail closed.
+ */
+function isGithubWorkflowRow(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    (value.name === null || typeof value.name === "string") &&
+    typeof value.path === "string" &&
+    isStringList(value.events) &&
+    isStringList(value.schedules)
   );
 }
 
@@ -858,9 +932,7 @@ function isControlApiGithubResponse(
     isNullableString(value.repository) &&
     (value.stats === null || isRecord(value.stats)) &&
     Array.isArray(value.workflows) &&
-    value.workflows.every(
-      (workflow) => isRecord(workflow) && typeof workflow.id === "string"
-    ) &&
+    value.workflows.every(isGithubWorkflowRow) &&
     Array.isArray(value.recentRuns)
   );
 }
