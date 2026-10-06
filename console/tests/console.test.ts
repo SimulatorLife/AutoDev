@@ -168,8 +168,8 @@ import {
   fetchHooks,
   fetchMcps,
   fetchMemoryCohorts,
-  fetchMemoryExperiences,
   fetchMemoryExperienceOutcomes,
+  fetchMemoryExperiences,
   fetchMemoryHistory,
   fetchMemoryRecord,
   fetchMemoryRecords,
@@ -2265,7 +2265,8 @@ test("no column is narrower than its own header", () => {
       // carry a help affordance beside its label, and that affordance is not
       // part of the label a width has to fit.
       const inner = th[2] ?? "";
-      const labelled = /<span data-column-label="[^"]*">([\s\S]*?)<\/span>/.exec(inner);
+      const labelled =
+        /<span data-column-label="[^"]*">([\s\S]*?)<\/span>/.exec(inner);
       const header = (labelled?.[1] ?? inner).replaceAll(/<[^>]*>/g, "").trim();
       out.push([header, (Number(th[1]) / 100) * floor]);
     }
@@ -5632,8 +5633,8 @@ test("MemoryCohortsView renders session outcome cohorts preserving explicit unre
     React.createElement(MemoryCohortsView, {
       sessionCohorts: sampleCohort,
       useCohorts: null,
-      currentWorkspaceId: "SimulatorLife/AutoDev",
       listScope: memoryListScope({ tab: "cohorts" }),
+      currentWorkspaceId: "SimulatorLife/AutoDev",
       repositoryId: "SimulatorLife/AutoDev",
       occurredFrom: "2026-09-01T00:00:00Z",
       occurredUntil: "2026-10-01T00:00:00Z"
@@ -5655,8 +5656,8 @@ test("MemoryCohortsView does not render unavailable session data as an empty coh
     React.createElement(MemoryCohortsView, {
       sessionCohorts: null,
       useCohorts: null,
-      currentWorkspaceId: "SimulatorLife/AutoDev",
       listScope: memoryListScope({ tab: "cohorts" }),
+      currentWorkspaceId: "SimulatorLife/AutoDev",
       repositoryId: "SimulatorLife/AutoDev",
       occurredFrom: "2026-09-01T00:00:00Z",
       occurredUntil: "2026-10-01T00:00:00Z"
@@ -5687,8 +5688,8 @@ test("MemoryCohortsView distinguishes an observed empty cohort from unavailable 
         conflictingOutcomeSessionCount: 0
       },
       useCohorts: null,
-      currentWorkspaceId: "SimulatorLife/AutoDev",
       listScope: memoryListScope({ tab: "cohorts" }),
+      currentWorkspaceId: "SimulatorLife/AutoDev",
       repositoryId: "SimulatorLife/AutoDev",
       occurredFrom: "2026-09-01T00:00:00Z",
       occurredUntil: "2026-10-01T00:00:00Z"
@@ -6722,7 +6723,10 @@ test("ProvidersView renders the four configuration columns with per-role control
     );
     assert.match(
       markup,
-      new RegExp(`aria-label="[^"]*${id === "roles" ? "Roles" : "Agent Limits"}:`, "u"),
+      new RegExp(
+        `aria-label="[^"]*${id === "roles" ? "Roles" : "Agent Limits"}:`,
+        "u"
+      ),
       `${id} must name itself to a screen reader, not announce a bare "?"`
     );
   }
@@ -8798,30 +8802,6 @@ test("a Memory mutation returns to the list it was made on, and only to it", asy
   });
 });
 
-test("ClosePanelLink renders the shared close mark and keeps its accessible name", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(ClosePanelLink, { href: "/memory?tab=records" })
-  );
-
-  // A real link: the panel must be dismissible without client JavaScript.
-  assert.match(markup, /^<a href="\/memory\?tab=records"/);
-  // The mark comes from the shared icon set, not a raw glyph typed into the
-  // view, so it shares the product's grid, stroke, and currentColor behaviour.
-  assert.match(markup, /<svg[^>]*viewBox="0 0 24 24"/);
-  assert.match(markup, /<svg[^>]*stroke="currentColor"/);
-  assert.equal(markup.includes("✕"), false, "must not re-type the close glyph");
-  // Decorative icon beside a real word: the word is the accessible name.
-  assert.match(markup, /aria-hidden="true"/);
-  assert.match(markup, />Close<\/a>$/);
-});
-
-test("DataTable caps its scroll floor so a table never scrolls at desktop width", () => {
-  interface TestRow {
-    readonly id: string;
-  }
-  // Weights authored at their measured pixel widths: this set sums to 1300,
-  // wider than the ~1060px content column at 1440. The floor must not become
-  // that natural width, or the table region scrolls 240px on a desktop window
 test("an experience shows observed packets and reported outcomes as separate claims", () => {
   // The Runtime has stored and read back injections, reporter outcomes, and
   // curator use assessments the whole time, and the Console could show none of
@@ -8846,7 +8826,6 @@ test("an experience shows observed packets and reported outcomes as separate cla
     },
     evidence: []
   };
-          correlationToken: "corr-1",
 
   const renderPanel = (
     overrides: Partial<MemoryExperiencesViewProps>
@@ -8867,9 +8846,9 @@ test("an experience shows observed packets and reported outcomes as separate cla
       {
         injection: {
           id: "inj-1",
+          correlationToken: "corr-1",
           memoryMode: "jit",
           injectionResult: "injected",
-          correlationToken: "corr-1",
           packetCharacterCount: 900,
           memoryIds: ["mem-1", "mem-2"],
           occurredAt: "2026-10-01T00:00:00Z"
@@ -8890,6 +8869,7 @@ test("an experience shows observed packets and reported outcomes as separate cla
       {
         injection: {
           id: "inj-1",
+          correlationToken: "corr-1",
           memoryMode: "jit",
           injectionResult: "injected",
           packetCharacterCount: 900,
@@ -8900,7 +8880,6 @@ test("an experience shows observed packets and reported outcomes as separate cla
           useKind: "partially_used",
           usedMemoryIds: ["mem-1"],
           reportedAt: "2026-10-01T02:00:00Z"
-          correlationToken: "corr-2",
         },
         sessionInjectionCount: 1
       }
@@ -8921,6 +8900,7 @@ test("an experience shows observed packets and reported outcomes as separate cla
       {
         injection: {
           id: "inj-2",
+          correlationToken: "corr-2",
           memoryMode: "retrieval-only",
           injectionResult: "injected",
           packetCharacterCount: 400,
@@ -8930,7 +8910,6 @@ test("an experience shows observed packets and reported outcomes as separate cla
         outcome: null,
         sessionInjectionCount: 3
       }
-          correlationToken: "corr-3",
     ],
     outcomeTotal: 1,
     useAssessments: [],
@@ -8951,6 +8930,7 @@ test("an experience shows observed packets and reported outcomes as separate cla
       {
         injection: {
           id: "inj-3",
+          correlationToken: "corr-3",
           memoryMode: "jit",
           injectionResult: "injected",
           packetCharacterCount: 10,
@@ -8960,7 +8940,6 @@ test("an experience shows observed packets and reported outcomes as separate cla
         use: { useKind: "unobservable", usedMemoryIds: [], reportedAt: "x" },
         sessionInjectionCount: 1
       }
-    correlationToken: "corr-1",
     ],
     useAssessmentTotal: 1
   });
@@ -8981,6 +8960,7 @@ test("the experience evidence validators refuse a response that would read as 'u
   const config = { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" };
   const injection = {
     id: "inj-1",
+    correlationToken: "corr-1",
     memoryMode: "jit",
     injectionResult: "injected",
     packetCharacterCount: 10,
@@ -9014,26 +8994,6 @@ test("the experience evidence validators refuse a response that would read as 'u
   assert.equal(await read(page), true);
 
   // A row that simply omits `outcome` is not "unreported" -- it is unreadable,
-      ]
-    }),
-    false
-  );
-  assert.equal(
-    await read({
-      ...page,
-      items: [
-        {
-          injection: { ...injection, memoryIds: [null] },
-          outcome: null,
-          sessionInjectionCount: 1
-        }
-      ]
-    }),
-    false
-  );
-  assert.equal(await read({ ...page, schema: "something-else" }), false);
-});
-
   // and accepting it would render a dropped field as a negative finding.
   assert.equal(
     await read({
@@ -9054,6 +9014,26 @@ test("the experience evidence validators refuse a response that would read as 'u
           outcome: { outcomeKind: "success", reportKind: "task" },
           sessionInjectionCount: 1
         }
+      ]
+    }),
+    false
+  );
+  assert.equal(
+    await read({
+      ...page,
+      items: [
+        {
+          injection: { ...injection, memoryIds: [null] },
+          outcome: null,
+          sessionInjectionCount: 1
+        }
+      ]
+    }),
+    false
+  );
+  assert.equal(await read({ ...page, schema: "something-else" }), false);
+});
+
 test("cohort filters reach the Runtime and stay on the cohorts tab", async () => {
   // The Runtime has accepted memoryMode, injectionResult, reportKind,
   // outcomeKind, and useKind on these reads since they were written, and the
@@ -9302,65 +9282,6 @@ test("a record's source experiences are reachable, not just counted", () => {
   assert.doesNotMatch(uncited, /data-provenance-experience=/);
 });
 
-test("ClosePanelLink renders the shared close mark and keeps its accessible name", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(ClosePanelLink, { href: "/memory?tab=records" })
-  );
-
-  // A real link: the panel must be dismissible without client JavaScript.
-  assert.match(markup, /^<a href="\/memory\?tab=records"/);
-  // The mark comes from the shared icon set, not a raw glyph typed into the
-  // view, so it shares the product's grid, stroke, and currentColor behaviour.
-  assert.match(markup, /<svg[^>]*viewBox="0 0 24 24"/);
-  assert.match(markup, /<svg[^>]*stroke="currentColor"/);
-  assert.equal(markup.includes("✕"), false, "must not re-type the close glyph");
-  // Decorative icon beside a real word: the word is the accessible name.
-  assert.match(markup, /aria-hidden="true"/);
-  assert.match(markup, />Close<\/a>$/);
-});
-
-test("DataTable caps its scroll floor so a table never scrolls at desktop width", () => {
-  interface TestRow {
-    readonly id: string;
-  }
-  // Weights authored at their measured pixel widths: this set sums to 1300,
-  // wider than the ~1060px content column at 1440. The floor must not become
-  // that natural width, or the table region scrolls 240px on a desktop window
-      ]
-    }),
-    false
-  );
-  assert.equal(
-    await read({
-      ...page,
-      items: [
-        {
-          injection: { ...injection, memoryIds: [null] },
-          outcome: null,
-          sessionInjectionCount: 1
-        }
-      ]
-    }),
-    false
-  );
-  assert.equal(await read({ ...page, schema: "something-else" }), false);
-});
-
-  // for no small-screen reason.
-  const wide = renderToStaticMarkup(
-    DataTable<TestRow>({
-      data: [{ id: "1" }],
-      columns: [
-        { id: "a", header: "A", cell: (r: TestRow) => r.id, weight: 500 },
-        { id: "b", header: "B", cell: (r: TestRow) => r.id, weight: 500 },
-        { id: "c", header: "C", cell: (r: TestRow) => r.id, weight: 300 }
-      ],
-      keyExtractor: (r: TestRow) => r.id,
-      emptyMessage: "No rows."
-    })
-  );
-  const wideFloor = Number(
-    wide.match(/style="min-width:([0-9]+)px"/)?.[1] ?? 0
 /** The why panel reads only the id, but the response type is the whole envelope. */
 function minimalExperience(id: string): ExperienceEnvelope {
   return {
@@ -9376,6 +9297,85 @@ function minimalExperience(id: string): ExperienceEnvelope {
     trajectory: {
       format: "codex-v1",
       uri: "file:///t.jsonl",
+      sourceAdapter: "codex"
+    },
+    evidence: []
+  };
+}
+
+test("a record says how much of its provenance this reader can resolve", () => {
+  // `why` is the Runtime's eligibility-bounded explanation: it reports the
+  // cited experiences this caller can still resolve, which may be fewer than the
+  // record cites. That difference is the whole reason the route exists, and
+  // presenting the shorter list as the whole truth would be the opposite of it.
+  const record: MemoryRecord = {
+    id: "mem-partial",
+    kind: "semantic",
+    status: "active",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    claim: "A claim citing three sources.",
+    validity: { state: "verified", evidence: [] },
+    provenance: {
+      experienceIds: ["exp-a", "exp-b", "exp-c"],
+      evidence: [],
+      createdBy: "operator",
+      createdAt: "2026-10-01T00:00:00Z"
+    },
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-02T00:00:00Z"
+  };
+
+  const render = (
+    why: ControlApiMemoryWhyResponse | null | undefined
+  ): string =>
+    renderToStaticMarkup(
+      React.createElement(MemoryRecordsView, {
+        records: [record],
+        total: 1,
+        selectedRecord: record,
+        listScope: memoryListScope(),
+        why
+      })
+    );
+
+  const partial = render({
+    schema: "autodev-memory-why-v1",
+    memory: record,
+    relatedMemories: [],
+    sourceExperiences: [minimalExperience("exp-a")]
+  });
+  assert.match(partial, /data-provenance-unresolved="true"/);
+  assert.match(partial, /1 of 3 resolvable to this reader/);
+  // All three ids stay listed and linked; the gap narrows what can be opened,
+  // it does not delete what was cited.
+  for (const id of ["exp-a", "exp-b", "exp-c"]) {
+    assert.match(
+      partial,
+      new RegExp(`data-provenance-experience="${id}"`, "u")
+    );
+  }
+  assert.match(partial, /Sources: 3 experiences/);
+
+  const complete = render({
+    schema: "autodev-memory-why-v1",
+    memory: record,
+    relatedMemories: [],
+    sourceExperiences: [
+      minimalExperience("exp-a"),
+      minimalExperience("exp-b"),
+      minimalExperience("exp-c")
+    ]
+  });
+  assert.match(complete, /data-provenance-unresolved="false"/);
+  assert.match(complete, /All cited sources are resolvable to this reader\./);
+
+  // Not read is not "all resolvable". Saying so would let a failed read look
+  // like a clean provenance check.
+  const unread = render(null);
+  assert.doesNotMatch(unread, /data-provenance-unresolved/);
+  assert.doesNotMatch(unread, /resolvable to this reader/);
+});
+
 test("an observed injection offers both reports, on the injection they describe", () => {
   // Both claims are per-injection: the Runtime binds an outcome to the
   // correlation token minted for one injection and a use assessment to an
@@ -9642,85 +9642,45 @@ test("Memory reports reach the Runtime bound to one injection, or not at all", a
   });
 });
 
-      sourceAdapter: "codex"
-    },
-    evidence: []
-  };
-}
+test("ClosePanelLink renders the shared close mark and keeps its accessible name", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(ClosePanelLink, { href: "/memory?tab=records" })
+  );
 
-test("a record says how much of its provenance this reader can resolve", () => {
-  // `why` is the Runtime's eligibility-bounded explanation: it reports the
-  // cited experiences this caller can still resolve, which may be fewer than the
-  // record cites. That difference is the whole reason the route exists, and
-  // presenting the shorter list as the whole truth would be the opposite of it.
-  const record: MemoryRecord = {
-    id: "mem-partial",
-    kind: "semantic",
-    status: "active",
-    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
-    claim: "A claim citing three sources.",
-    validity: { state: "verified", evidence: [] },
-    provenance: {
-      experienceIds: ["exp-a", "exp-b", "exp-c"],
-      evidence: [],
-      createdBy: "operator",
-      createdAt: "2026-10-01T00:00:00Z"
-    },
-    createdAt: "2026-10-01T00:00:00Z",
-    updatedAt: "2026-10-02T00:00:00Z"
-  };
-
-  const render = (
-    why: ControlApiMemoryWhyResponse | null | undefined
-  ): string =>
-    renderToStaticMarkup(
-      React.createElement(MemoryRecordsView, {
-        records: [record],
-        total: 1,
-        selectedRecord: record,
-        listScope: memoryListScope(),
-        why
-      })
-    );
-
-  const partial = render({
-    schema: "autodev-memory-why-v1",
-    memory: record,
-    relatedMemories: [],
-    sourceExperiences: [minimalExperience("exp-a")]
-  });
-  assert.match(partial, /data-provenance-unresolved="true"/);
-  assert.match(partial, /1 of 3 resolvable to this reader/);
-  // All three ids stay listed and linked; the gap narrows what can be opened,
-  // it does not delete what was cited.
-  for (const id of ["exp-a", "exp-b", "exp-c"]) {
-    assert.match(
-      partial,
-      new RegExp(`data-provenance-experience="${id}"`, "u")
-    );
-  }
-  assert.match(partial, /Sources: 3 experiences/);
-
-  const complete = render({
-    schema: "autodev-memory-why-v1",
-    memory: record,
-    relatedMemories: [],
-    sourceExperiences: [
-      minimalExperience("exp-a"),
-      minimalExperience("exp-b"),
-      minimalExperience("exp-c")
-    ]
-  });
-  assert.match(complete, /data-provenance-unresolved="false"/);
-  assert.match(complete, /All cited sources are resolvable to this reader\./);
-
-  // Not read is not "all resolvable". Saying so would let a failed read look
-  // like a clean provenance check.
-  const unread = render(null);
-  assert.doesNotMatch(unread, /data-provenance-unresolved/);
-  assert.doesNotMatch(unread, /resolvable to this reader/);
+  // A real link: the panel must be dismissible without client JavaScript.
+  assert.match(markup, /^<a href="\/memory\?tab=records"/);
+  // The mark comes from the shared icon set, not a raw glyph typed into the
+  // view, so it shares the product's grid, stroke, and currentColor behaviour.
+  assert.match(markup, /<svg[^>]*viewBox="0 0 24 24"/);
+  assert.match(markup, /<svg[^>]*stroke="currentColor"/);
+  assert.equal(markup.includes("✕"), false, "must not re-type the close glyph");
+  // Decorative icon beside a real word: the word is the accessible name.
+  assert.match(markup, /aria-hidden="true"/);
+  assert.match(markup, />Close<\/a>$/);
 });
 
+test("DataTable caps its scroll floor so a table never scrolls at desktop width", () => {
+  interface TestRow {
+    readonly id: string;
+  }
+  // Weights authored at their measured pixel widths: this set sums to 1300,
+  // wider than the ~1060px content column at 1440. The floor must not become
+  // that natural width, or the table region scrolls 240px on a desktop window
+  // for no small-screen reason.
+  const wide = renderToStaticMarkup(
+    DataTable<TestRow>({
+      data: [{ id: "1" }],
+      columns: [
+        { id: "a", header: "A", cell: (r: TestRow) => r.id, weight: 500 },
+        { id: "b", header: "B", cell: (r: TestRow) => r.id, weight: 500 },
+        { id: "c", header: "C", cell: (r: TestRow) => r.id, weight: 300 }
+      ],
+      keyExtractor: (r: TestRow) => r.id,
+      emptyMessage: "No rows."
+    })
+  );
+  const wideFloor = Number(
+    wide.match(/style="min-width:([0-9]+)px"/)?.[1] ?? 0
   );
   assert.ok(wideFloor > 0, "a table must still declare a floor");
   assert.equal(
