@@ -1,0 +1,116 @@
+diff --git a/src/client/src/components/(playground)/stat-card.tsx b/src/client/src/components/(playground)/stat-card.tsx
+index cf00ffd7..b3d9dc1b 100644
+--- a/src/client/src/components/(playground)/stat-card.tsx
++++ b/src/client/src/components/(playground)/stat-card.tsx
+@@ -5,7 +5,7 @@ import { getFilterDetails } from "@/selectors/filter";
+ import { useRootStore } from "@/store";
+ import { getPingStatus } from "@/selectors/database-config";
+ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+-import { LucideIcon, Loader2, TrendingDown, TrendingUp } from "lucide-react";
++import { AlertTriangle, LucideIcon, Loader2, TrendingDown, TrendingUp } from "lucide-react";
+ import IntermediateState from "./intermediate-state";
+ import { getFilterParamsForDashboard } from "@/helpers/client/filter";
+ import { formatCompactNumber } from "@/lib/format";
+@@ -41,7 +41,7 @@ const StatCard = memo(
+ 	}: StatCardProps) => {
+ 		const filter = useRootStore(getFilterDetails);
+ 		const pingStatus = useRootStore(getPingStatus);
+-		const { data, isFetched, isLoading, fireRequest } = useFetchWrapper();
++		const { data, isFetched, isLoading, error, fireRequest } = useFetchWrapper();
+ 
+ 		const fetchData = useCallback(async () => {
+ 			fireRequest({
+@@ -58,20 +58,34 @@ const StatCard = memo(
+ 		}, [filter, url]);
+ 
+ 		useEffect(() => {
++			// The ping is a connectivity pre-flight, not a precondition for the
++			// data: gating the read on `status === "success"` meant a failed or
++			// never-settling ping left every tile on "Loading..." for the life of
++			// the page, and the stat was never even attempted. Waiting only for the
++			// ping to settle lets the read report its own outcome, which is the
++			// honest one.
+ 			if (
+ 				filter.timeLimit.start &&
+ 				filter.timeLimit.end &&
+-				pingStatus === "success"
++				pingStatus !== "pending"
+ 			)
+ 				fetchData();
+ 		}, [filter, fetchData, pingStatus]);
+ 
+-		const isLoadingData = isLoading || !isFetched || pingStatus === "pending";
++		// Three states, not two. The read is gated on a successful ClickHouse ping, so
++		// a failed ping used to leave `isFetched` false forever and the tile sat on
++		// "Loading..." for the life of the page; and when the ping did succeed but
++		// the read failed, `data` was null and the `|| 0` defaults below rendered a
++		// confident 0 with a 0% trend. An unreadable count is not a zero count.
++		const unreadable =
++			pingStatus === "failure" || !!error || (isFetched && !data);
++		const isLoadingData =
++			!unreadable && (isLoading || !isFetched || pingStatus === "pending");
+ 
+ 		const currentData = (data as Record<any, any>)?.[dataKey] || 0;
+-		const doesPreviousDataKeyExist = !isNil(
+-			(data as Record<any, any>)?.[`previous_${dataKey}`]
+-		);
++		const doesPreviousDataKeyExist =
++			!unreadable &&
++			!isNil((data as Record<any, any>)?.[`previous_${dataKey}`]);
+ 		const previousData =
+ 			(data as Record<any, any>)?.[`previous_${dataKey}`] || 0;
+ 		const changePercent = doesPreviousDataKeyExist
+@@ -95,7 +109,17 @@ const StatCard = memo(
+ 					)}
+ 				</CardHeader>
+ 				<CardContent>
+-					{isLoadingData ? (
++					{unreadable ? (
++						// Not IntermediateState's "nodata": this is not an empty
++						// result, it is a read that did not complete.
++						<div
++							role="alert"
++							className="flex w-full items-center gap-2 p-3 text-sm text-stone-500 dark:text-stone-400"
++						>
++							<AlertTriangle className="h-4 w-4 shrink-0" />
++							Unavailable
++						</div>
++					) : isLoadingData ? (
+ 						<IntermediateState type="loading">
+ 							<div className="flex items-center gap-2">
+ 								<Loader2 className="h-4 w-4 animate-spin text-stone-500 dark:text-stone-400" />
+@@ -116,18 +140,22 @@ const StatCard = memo(
+ 							{`${textPrefix}${formatCompactNumber(roundedValue)}${textSuffix}`}
+ 						</div>
+ 					)}
+-					<span
+-						className={`flex items-center text-xs text-muted-foreground ${
+-							changePercent > 0 ? "text-success" : "text-error"
+-						} ${doesPreviousDataKeyExist ? "" : "opacity-0"}`}
+-					>
+-						{changePercent > 0 ? (
+-							<TrendingUp className="w-4 mr-2" />
+-						) : (
+-							<TrendingDown className="w-4 mr-2" />
+-						)}
+-						{changePercent}%
+-					</span>
++					{/* Not merely hidden: an unreadable stat has no trend, and opacity-0 would
++					    leave "0%" in the accessibility tree. */}
++					{doesPreviousDataKeyExist && (
++						<span
++							className={`flex items-center text-xs text-muted-foreground ${
++								changePercent > 0 ? "text-success" : "text-error"
++							}`}
++						>
++							{changePercent > 0 ? (
++								<TrendingUp className="w-4 mr-2" />
++							) : (
++								<TrendingDown className="w-4 mr-2" />
++							)}
++							{changePercent}%
++						</span>
++					)}
+ 				</CardContent>
+ 			</Card>
+ 		);

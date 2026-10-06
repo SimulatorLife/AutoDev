@@ -973,6 +973,37 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
       `${site} renders a currency with ten decimals while the rest of the client uses four`
     );
   }
+  // StatCard carries nine callers, so the landing page's synthesized zeros and
+  // its permanent Loading state were one component's fault, not nine.
+  const statCard = readFileSync(
+    join(dir, "src/client/src/components/(playground)/stat-card.tsx"),
+    "utf8"
+  );
+  assert.match(
+    statCard,
+    /const \{ data, isFetched, isLoading, error, fireRequest \} = useFetchWrapper\(\)/u,
+    "a stat tile that never reads the hook's error cannot tell a failed read from a zero count"
+  );
+  assert.doesNotMatch(
+    statCard,
+    /pingStatus === "success"\s*\)\s*\n\s*fetchData\(\)/u,
+    "gating the read on a successful ping leaves the tile loading forever when the ping fails or never settles"
+  );
+  assert.match(
+    statCard,
+    /unreadable =\s*\n?\s*pingStatus === "failure" \|\| !!error \|\| \(isFetched && !data\)/u,
+    "an unreadable count must be its own state, distinct from loading and from zero"
+  );
+  assert.match(
+    statCard,
+    />\s*Unavailable\s*</u,
+    "the unreadable state must say so on the tile"
+  );
+  assert.doesNotMatch(
+    statCard,
+    /doesPreviousDataKeyExist \? "" : "opacity-0"/u,
+    "a hidden trend is still in the accessibility tree, so it must not be rendered at all"
+  );
   // `logs/` in the fork's .gitignore silently hid the new route directory.
   assert.match(
     readFileSync(join(dir, ".gitignore"), "utf8"),
