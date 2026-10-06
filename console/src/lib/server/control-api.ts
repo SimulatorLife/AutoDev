@@ -44,6 +44,9 @@ import {
   type ControlApiPromptsResponse,
   type ControlApiPromptVersionResponse,
   type ControlApiPromptVersionsResponse,
+  type ControlApiProviderAgentLimits,
+  type ControlApiProviderEnabledPatchResponse,
+  type ControlApiProviderLimitsPatchResponse,
   type ControlApiProviderRolePatchResponse,
   type ControlApiProvidersResponse,
   type ControlApiRoutingResponse,
@@ -667,6 +670,57 @@ export function patchProviderRole(
     config,
     options
   );
+}
+
+/**
+ * Server-only typed PATCH for a provider's agent limits. `null` on either axis
+ * means Unlimited, which is a decision the operator made, so the Console sends
+ * both keys on every change rather than omitting an axis it is not touching.
+ */
+export function patchProviderLimits(
+  provider: string,
+  agentLimits: ControlApiProviderAgentLimits,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiProviderLimitsPatchResponse>> {
+  return mutateControlApi<ControlApiProviderLimitsPatchResponse>(
+    "PATCH",
+    providerControlPath(provider, "limits"),
+    { perSession: agentLimits.perSession, acrossSessions: agentLimits.acrossSessions },
+    config,
+    options
+  );
+}
+
+/**
+ * Server-only typed PATCH enabling or disabling a provider globally. Runtime
+ * preserves the provider's roles and limits across the change, so the Console
+ * sends only the flag.
+ */
+export function patchProviderEnabled(
+  provider: string,
+  disabled: boolean,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiProviderEnabledPatchResponse>> {
+  return mutateControlApi<ControlApiProviderEnabledPatchResponse>(
+    "PATCH",
+    providerControlPath(provider),
+    { disabled },
+    config,
+    options
+  );
+}
+
+/**
+ * Builds the canonical provider-scoped PATCH path with an encoded provider
+ * segment. This remains private to the typed server mutations below.
+ */
+function providerControlPath(
+  provider: string,
+  suffix = ""
+): string {
+  return `${CONTROL_API_PATHS.providers}/${encodeURIComponent(provider)}${suffix}`;
 }
 
 function isControlApiModelsResponse(

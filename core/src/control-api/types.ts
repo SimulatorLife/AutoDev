@@ -187,13 +187,41 @@ export interface ControlApiProvidersResponse {
 }
 
 export interface ControlApiProviderRolePatchResponse {
-  readonly schema: "autodev-control-provider-role-v2";
+  readonly schema: "autodev-control-provider-role-v3";
   readonly provider: string;
   readonly role: ProviderRole;
-  readonly enabled: boolean;
-  readonly previous: boolean;
+  readonly priority: ProviderRolePriority;
+  readonly model: string | null;
+  /** The assignment replaced, or null when the role had never been configured. */
+  readonly previous: ControlApiProviderRoleAssignment | null;
   readonly actor: string;
   /** Reusable reconciliation view shared with read paths. */
+  readonly reconciliation: {
+    readonly status: ReconciliationStatus;
+    readonly history: readonly OperationHistoryEntry[];
+  };
+}
+
+/** Response of `PATCH /control/providers/:provider`. */
+export interface ControlApiProviderEnabledPatchResponse {
+  readonly schema: "autodev-control-provider-enabled-v1";
+  readonly provider: string;
+  readonly disabled: boolean;
+  readonly previous: boolean;
+  readonly actor: string;
+  readonly reconciliation: {
+    readonly status: ReconciliationStatus;
+    readonly history: readonly OperationHistoryEntry[];
+  };
+}
+
+/** Response of `PATCH /control/providers/:provider/limits`. */
+export interface ControlApiProviderLimitsPatchResponse {
+  readonly schema: "autodev-control-provider-limits-v1";
+  readonly provider: string;
+  readonly agentLimits: ControlApiProviderAgentLimits;
+  readonly previous: ControlApiProviderAgentLimits | null;
+  readonly actor: string;
   readonly reconciliation: {
     readonly status: ReconciliationStatus;
     readonly history: readonly OperationHistoryEntry[];

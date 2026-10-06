@@ -44,7 +44,9 @@ import { ResourceUnavailable } from "../app/_console.ts";
 import * as memoryRoute from "../app/api/memory/route.ts";
 import * as modelRoute from "../app/api/models/[model]/route.ts";
 import * as promptMutationRoute from "../app/api/prompts/[name]/route.ts";
+import * as providerLimitsRoute from "../app/api/providers/[provider]/limits/route.ts";
 import * as providerRoleRoute from "../app/api/providers/[provider]/roles/[role]/route.ts";
+import * as providerRoute from "../app/api/providers/[provider]/route.ts";
 import EvaluationsPage from "../app/evaluations/page.ts";
 import MemoryPage from "../app/memory/page.ts";
 import { FilterNotice } from "../src/components/filters/FilterNotice.ts";
@@ -6892,7 +6894,12 @@ test("provider-role Console route fails closed for CSRF, foreign return paths, a
 });
 
 test("Providers mutation routes export only POST", () => {
-  for (const route of [providerRoleRoute, modelRoute]) {
+  for (const route of [
+    providerRoleRoute,
+    providerRoute,
+    providerLimitsRoute,
+    modelRoute
+  ]) {
     assert.equal(typeof route.POST, "function");
     assert.equal("GET" in route, false);
     assert.equal("PATCH" in route, false);
