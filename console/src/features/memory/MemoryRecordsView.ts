@@ -7,11 +7,11 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import { Button } from "../../components/forms/Button.ts";
 import {
-  FIELD_CONTROL_CLASS,
-  SelectField
-} from "../../components/forms/SelectField.ts";
+  FilterBar,
+  FilterSearchField
+} from "../../components/filters/FilterBar.ts";
+import { SelectField } from "../../components/forms/SelectField.ts";
 import {
   EntityTitle,
   SECTION_HEADING_CLASS
@@ -188,29 +188,23 @@ export function MemoryRecordsView({
     { className: "flex flex-col gap-6", "data-feature": "memory-records" },
     // Filter controls
     React.createElement(
-      "form",
+      FilterBar,
       {
-        method: "GET",
-        className:
-          "flex flex-wrap items-center gap-3 p-4 bg-surface/80 rounded-lg border border-border"
+        label: "Record filters",
+        preserved: [
+          { name: "tab", value: "records" },
+          { name: "workspaceId", value: currentWorkspaceId }
+        ],
+        submitTestId: "memory-filter",
+        summary: `${records.length} of ${total} records`,
+        dataAttributes: { "data-feature-filter": "records" }
       },
-      React.createElement("input", {
-        type: "hidden",
-        name: "tab",
-        value: "records"
-      }),
-      React.createElement("input", {
-        type: "hidden",
-        name: "workspaceId",
-        value: currentWorkspaceId
-      }),
-      React.createElement("input", {
-        type: "text",
+      React.createElement(FilterSearchField, {
         name: "query",
         defaultValue: currentQuery,
+        label: "Search memory claims",
         placeholder: "Search memory claims...",
-        "aria-label": "Search memory claims",
-        className: `${FIELD_CONTROL_CLASS} flex-1 min-w-[200px] placeholder-fg-muted`
+        testId: "memory-record-query"
       }),
       React.createElement(SelectField, {
         name: "kind",
@@ -237,17 +231,7 @@ export function MemoryRecordsView({
           { value: "superseded", label: "Superseded" },
           { value: "uncertain", label: "Uncertain" }
         ]
-      }),
-      React.createElement(
-        Button,
-        { type: "submit", variant: "primary", testId: "memory-filter" },
-        "Filter"
-      ),
-      React.createElement(
-        "span",
-        { className: "text-xs text-fg-muted ml-auto" },
-        `${records.length} of ${total} records`
-      )
+      })
     ),
 
     // Main records table

@@ -45,3 +45,11 @@ export const LIST_PANEL_CLASS = `${PANEL_SHAPE} p-5 border-border bg-surface`;
  */
 export const NESTED_PANEL_CLASS =
   "rounded-lg border border-border bg-surface p-5";
+
+/**
+ * The box a filter bar sits in. Denser than a list panel because it holds one
+ * row of controls rather than a table: the row needs to stay a row, and the
+ * padding around it should not push it toward wrapping earlier than its
+ * contents require.
+ */
+export const FILTER_PANEL_CLASS = `${PANEL_SHAPE} p-4 border-border bg-surface`;

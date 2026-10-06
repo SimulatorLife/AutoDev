@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -48,6 +55,8 @@ import {
   DataTable,
   ENTITY_TITLE_CLASS,
   EvaluationsView,
+  FilterBar,
+  FilterSearchField,
   formatCount,
   formatLatency,
   formatTokenCount,
@@ -1507,7 +1516,11 @@ test("UsageView persists selected filters in GET controls without defaults", () 
       }
     })
   );
-  assert.match(markup, /method="get"/);
+  // The form method is spelled by the shared FilterBar primitive now, so this
+  // asserts the behaviour (a GET filter submission) rather than the casing one
+  // call site happened to use.
+  assert.match(markup, /method="GET"/i);
+  assert.match(markup, /aria-label="Usage filters"/);
   assert.match(markup, /name="range"/);
   assert.match(markup, /value="7D" selected/);
   assert.match(markup, /name="startDate" value="2026-09-20"/);
@@ -6047,4 +6060,135 @@ test("BarChart keeps unobserved, empty and observed data three distinct things",
   );
   assert.match(withZero, /<li/);
   assert.match(withZero, />0<\/span>/);
+});
+
+test("FilterBar owns the form, the submit action and the state a filter must preserve", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      FilterBar,
+      {
+        label: "Record filters",
+        action: "/memory",
+        preserved: [
+          { name: "tab", value: "records" },
+          { name: "workspaceId", value: "SimulatorLife/AutoDev" }
+        ],
+        submitTestId: "memory-filter",
+        summary: "3 of 12 records"
+      },
+      React.createElement(FilterSearchField, {
+        name: "query",
+        defaultValue: "deployment",
+        label: "Search memory claims",
+        placeholder: "Search memory claims..."
+      })
+    )
+  );
+
+  // A form is a landmark, so it has to be named. The two Memory bars used to
+  // be anonymous, which left three filter regions indistinguishable.
+  assert.match(markup, /<form[^>]*method="GET"/);
+  assert.match(markup, /<form[^>]*action="\/memory"/);
+  assert.match(markup, /<form[^>]*aria-label="Record filters"/);
+
+  // The surface and the wrapping row come from the primitive, so four filter
+  // bars cannot drift into four spellings of the same box.
+  const formTag = markup.slice(
+    markup.indexOf("<form"),
+    markup.indexOf(">", markup.indexOf("<form")) + 1
+  );
+  for (const required of [
+    "rounded-lg",
+    "border",
+    "bg-surface",
+    "flex",
+    "flex-wrap"
+  ]) {
+    assert.ok(
+      formTag.includes(required),
+      `FilterBar form must carry ${required}, got: ${formTag}`
+    );
+  }
+
+  // State that has no control on the bar survives the submission, or applying
+  // a filter silently resets the tab and drops the list out of its workspace.
+  assert.match(markup, /<input type="hidden" name="tab" value="records"/);
+  assert.match(
+    markup,
+    /<input type="hidden" name="workspaceId" value="SimulatorLife\/AutoDev"/
+  );
+
+  // The submit control is the shared primary Button, not a hand-typed button:
+  // PRIMARY_BUTTON_CLASS markers are asserted so a re-typed submit fails here.
+  const submitTag = markup.slice(
+    markup.lastIndexOf("<button"),
+    markup.indexOf(">", markup.lastIndexOf("<button")) + 1
+  );
+  assert.match(submitTag, /type="submit"/);
+  assert.match(submitTag, /data-button="memory-filter"/);
+  for (const required of [
+    "bg-accent",
+    "border-transparent",
+    "text-fg-inverse"
+  ]) {
+    assert.ok(
+      submitTag.includes(required),
+      `FilterBar submit must use the shared primary chrome, got: ${submitTag}`
+    );
+  }
+  assert.match(markup, />Apply filters<\/button>/);
+
+  // The result count sits on the trailing edge.
+  assert.match(markup, /ml-auto text-xs text-fg-muted">3 of 12 records</);
+});
+
+test("FilterSearchField keeps its accessible name when the placeholder is gone", () => {
+  // A placeholder is not a label: it disappears the moment the field has a
+  // value, and the Experience bar shipped with no other name at all. The
+  // accessible name must come from a real <label>, so it survives typing.
+  const markup = renderToStaticMarkup(
+    React.createElement(FilterSearchField, {
+      name: "query",
+      defaultValue: "already typed",
+      label: "Search experiences by task, run, role, or trajectory",
+      placeholder: "Search experiences..."
+    })
+  );
+
+  const labelFor = markup.match(/<label[^>]*for="([^"]+)"/)?.[1];
+  assert.ok(labelFor, "FilterSearchField must render a real <label for>");
+  assert.match(
+    markup,
+    new RegExp(`<input id="${labelFor}"[^>]*type="search"`, "u")
+  );
+  assert.match(markup, /Search experiences by task, run, role, or trajectory/);
+  // The control matches the selects beside it instead of re-typing its chrome.
+  assert.match(markup, /bg-input/);
+  assert.match(markup, /border-border-strong/);
+  assert.match(markup, /max-w-full/);
+});
+
+test("no feature view hand-types a GET form: filter state belongs to FilterBar", () => {
+  // Every GET form in the Console is a filter bar, and every filter bar now
+  // goes through the primitive. A hand-typed one is how four identical-looking
+  // rows drifted into four different behaviours in the first place, so this
+  // fails at the source rather than leaving it to a reviewer's eye.
+  const featuresDir = join(import.meta.dirname, "..", "src", "features");
+  const offenders: string[] = [];
+  for (const relative of readdirSync(featuresDir, { recursive: true })) {
+    const file = join(featuresDir, relative.toString());
+    if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
+    const source = readFileSync(file, "utf8");
+    if (!/method:\s*"GET"/u.test(source) && !/method:\s*"get"/u.test(source)) {
+      continue;
+    }
+    if (!source.includes("FilterBar")) {
+      offenders.push(relative.toString());
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `These views declare a GET form without the shared FilterBar primitive:\n${offenders.join("\n")}`
+  );
 });

@@ -8,7 +8,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
-import { Button } from "../../components/forms/Button.ts";
+import { FilterBar } from "../../components/filters/FilterBar.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
@@ -107,55 +107,40 @@ export function MemoryView({
     React.createElement(
       "div",
       { className: "flex flex-col gap-2" },
-      React.createElement(
-        "div",
-        { className: "flex flex-wrap items-center gap-3" },
-        // Workspace selector submits a bounded scope change through the
-        // existing URL-driven Memory page. Retain filters and time range,
-        // but intentionally clear selected record/experience detail on scope
-        // change so a detail from another workspace is never reused.
-        workspaces.length > 0
-          ? React.createElement(
-              "form",
-              {
-                method: "GET",
-                action: "/memory",
-                className: "flex min-w-0 flex-wrap items-center gap-2 text-xs",
-                "data-memory-workspace-form": "true"
-              },
-              ...[
-                ["tab", activeTab],
-                ["query", query ?? ""],
-                ["kind", kind ?? "all"],
-                ["status", status ?? "all"],
-                ["from", occurredFrom],
-                ["until", occurredUntil]
-              ].map(([name, value]) =>
-                React.createElement("input", {
-                  key: name,
-                  type: "hidden",
-                  name,
-                  value
-                })
-              ),
-              React.createElement(SelectField, {
-                name: "workspaceId",
-                label: "Workspace:",
-                defaultValue: currentWorkspaceId,
-                testId: "memory-workspace",
-                options: workspaces.map((ws) => ({
-                  value: ws.id,
-                  label: ws.id
-                }))
-              }),
-              React.createElement(
-                Button,
-                { type: "submit", testId: "memory-workspace-apply" },
-                "Apply"
-              )
-            )
-          : null
-      )
+      // Workspace selector submits a bounded scope change through the
+      // existing URL-driven Memory page. Retain filters and time range,
+      // but intentionally clear selected record/experience detail on scope
+      // change so a detail from another workspace is never reused.
+      workspaces.length > 0
+        ? React.createElement(
+            FilterBar,
+            {
+              label: "Memory scope filters",
+              action: "/memory",
+              preserved: [
+                { name: "tab", value: activeTab },
+                { name: "query", value: query ?? "" },
+                { name: "kind", value: kind ?? "all" },
+                { name: "status", value: status ?? "all" },
+                { name: "from", value: occurredFrom },
+                { name: "until", value: occurredUntil }
+              ],
+              submitLabel: "Apply scope",
+              submitTestId: "memory-workspace-apply",
+              dataAttributes: { "data-memory-workspace-form": "true" }
+            },
+            React.createElement(SelectField, {
+              name: "workspaceId",
+              label: "Workspace:",
+              defaultValue: currentWorkspaceId,
+              testId: "memory-workspace",
+              options: workspaces.map((ws) => ({
+                value: ws.id,
+                label: ws.id
+              }))
+            })
+          )
+        : null
     ),
 
     // Top stat cards

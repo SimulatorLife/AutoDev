@@ -7,7 +7,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { BarChart } from "../../components/charts/BarChart.ts";
-import { Button } from "../../components/forms/Button.ts";
+import { FilterBar } from "../../components/filters/FilterBar.ts";
 import {
   FIELD_CONTROL_CLASS,
   SelectField
@@ -163,13 +163,12 @@ export function UsageView({
       "data-usage-observed": observed ? "true" : "false"
     },
     React.createElement(
-      "form",
+      FilterBar,
       {
-        className:
-          "bg-surface border border-border p-4 rounded-lg flex flex-wrap gap-4 items-center justify-between shadow",
+        label: "Usage filters",
         action: "/usage",
-        method: "get",
-        "aria-label": "Usage filters"
+        submitTestId: "usage-apply",
+        summary: "Filters are stored in the URL"
       },
       React.createElement(
         "div",
@@ -234,41 +233,31 @@ export function UsageView({
             null,
             "Custom range accepts up to 90 days; current telemetry retention is about 30 days."
           )
-        ),
-        renderFilterSelect(
-          "workspace",
-          "Workspace",
-          filterOptions.workspace,
-          selectedValues.workspace ?? []
-        ),
-        renderFilterSelect(
-          "provider",
-          "Provider",
-          filterOptions.provider,
-          selectedValues.provider ?? []
-        ),
-        renderFilterSelect(
-          "model",
-          "Requested model",
-          filterOptions.model,
-          selectedValues.model ?? []
-        ),
-        renderFilterSelect(
-          "agent",
-          "Agent / role",
-          filterOptions.agent,
-          selectedValues.agent ?? []
-        ),
-        React.createElement(
-          Button,
-          { type: "submit", variant: "primary", testId: "usage-apply" },
-          "Apply filters"
         )
       ),
-      React.createElement(
-        "span",
-        { className: "text-xs text-fg-muted font-mono" },
-        "Filters are stored in the URL"
+      renderFilterSelect(
+        "workspace",
+        "Workspace",
+        filterOptions.workspace,
+        selectedValues.workspace ?? []
+      ),
+      renderFilterSelect(
+        "provider",
+        "Provider",
+        filterOptions.provider,
+        selectedValues.provider ?? []
+      ),
+      renderFilterSelect(
+        "model",
+        "Requested model",
+        filterOptions.model,
+        selectedValues.model ?? []
+      ),
+      renderFilterSelect(
+        "agent",
+        "Agent / role",
+        filterOptions.agent,
+        selectedValues.agent ?? []
       )
     ),
     React.createElement(

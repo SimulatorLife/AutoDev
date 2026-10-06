@@ -1,4 +1,5 @@
 export * from "./components/charts/BarChart.ts";
+export * from "./components/filters/FilterBar.ts";
 /**
  * Public Console component/utility surface.
  *

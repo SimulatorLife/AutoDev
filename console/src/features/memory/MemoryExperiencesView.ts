@@ -1,6 +1,10 @@
 import type { ExperienceEnvelope } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import {
+  FilterBar,
+  FilterSearchField
+} from "../../components/filters/FilterBar.ts";
 import { Button } from "../../components/forms/Button.ts";
 import {
   SelectField,
@@ -168,44 +172,24 @@ export function MemoryExperiencesView({
     { className: "flex flex-col gap-6", "data-feature": "memory-experiences" },
     // Filter controls
     React.createElement(
-      "form",
+      FilterBar,
       {
-        method: "GET",
-        className:
-          "flex flex-wrap items-center gap-3 p-4 bg-surface/80 rounded-lg border border-border"
+        label: "Experience filters",
+        preserved: [
+          { name: "tab", value: "experiences" },
+          { name: "workspaceId", value: currentWorkspaceId }
+        ],
+        submitTestId: "memory-experience-filter",
+        summary: `${experiences.length} of ${total} experiences`,
+        dataAttributes: { "data-feature-filter": "experiences" }
       },
-      React.createElement("input", {
-        type: "hidden",
-        name: "tab",
-        value: "experiences"
-      }),
-      React.createElement("input", {
-        type: "hidden",
-        name: "workspaceId",
-        value: currentWorkspaceId
-      }),
-      React.createElement("input", {
-        type: "text",
+      React.createElement(FilterSearchField, {
         name: "query",
         defaultValue: currentQuery,
+        label: "Search experiences by task, run, role, or trajectory",
         placeholder: "Search experiences by task, run, role, or trajectory...",
-        className:
-          "flex-1 min-w-[200px] px-3 py-1.5 rounded bg-input border border-border-strong text-sm text-fg placeholder-fg-muted focus:outline-none focus:border-accent"
-      }),
-      React.createElement(
-        "button",
-        {
-          type: "submit",
-          className:
-            "px-4 py-1.5 rounded bg-accent text-sm font-medium text-fg-inverse hover:brightness-110 transition-colors"
-        },
-        "Filter"
-      ),
-      React.createElement(
-        "span",
-        { className: "text-xs text-fg-muted ml-auto" },
-        `${experiences.length} of ${total} experiences`
-      )
+        testId: "memory-experience-query"
+      })
     ),
 
     // Main experiences table
