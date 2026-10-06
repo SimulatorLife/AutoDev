@@ -2157,7 +2157,7 @@ test("DataTable wraps column headers instead of truncating them", () => {
   // single word is a width to fix, not a word to break.
   assert.match(
     markup,
-    /<th [^>]*class="[^"]*break-normal[^"]*"[^>]*>Convergence<\/th>/
+    /<th [^>]*class="[^"]*break-normal[^"]*"[^>]*><span data-column-label="[^"]*">Convergence<\/span><\/th>/
   );
   assert.doesNotMatch(markup, /<th [^>]*class="[^"]*truncate[^"]*"/);
   assert.doesNotMatch(markup, /<th [^>]*class="[^"]*break-words[^"]*"/);
@@ -2260,7 +2260,12 @@ test("no column is narrower than its own header", () => {
     for (const th of markup.matchAll(
       /<th [^>]*style="[^"]*width:\s*([\d.]+)%[^"]*"[^>]*>([\s\S]*?)<\/th>/g
     )) {
-      const header = (th[2] ?? "").replaceAll(/<[^>]*>/g, "").trim();
+      // Read the label element rather than the whole header: a column may
+      // carry a help affordance beside its label, and that affordance is not
+      // part of the label a width has to fit.
+      const inner = th[2] ?? "";
+      const labelled = /<span data-column-label="[^"]*">([\s\S]*?)<\/span>/.exec(inner);
+      const header = (labelled?.[1] ?? inner).replaceAll(/<[^>]*>/g, "").trim();
       out.push([header, (Number(th[1]) / 100) * floor]);
     }
     return out;
@@ -6644,12 +6649,44 @@ test("ProvidersView renders the four configuration columns with per-role control
   );
   assert.match(markup, /data-tab-panel="providers"/);
 
-  // Exactly the four columns the contract names, in its order.
+  // Exactly the four columns the contract names, in its order. Read the label
+  // element: two of them carry a help affordance beside the label, and that
+  // affordance is not part of the column's name.
   const headers = Array.from(
-    markup.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gu),
-    (match) => (match[1] ?? "").replaceAll(/<[^>]*>/g, "").trim()
+    markup.matchAll(
+      /<th[^>]*>(?:<span data-column-label="[^"]*">([\s\S]*?)<\/span>|([\s\S]*?)<\/th>)/gu
+    ),
+    (match) => (match[1] ?? match[2] ?? "").replaceAll(/<[^>]*>/g, "").trim()
   );
   assert.deepEqual(headers, ["Provider", "Status", "Roles", "Agent Limits"]);
+
+  // The contract asks for a help affordance on the Roles and Agent Limits
+  // headers, and on those two only.
+  const helped = Array.from(
+    markup.matchAll(/data-column-help="([^"]*)"/gu),
+    (match) => match[1]
+  );
+  assert.deepEqual(helped, ["roles", "agentLimits"]);
+  for (const id of helped) {
+    // The help text must be on the affordance itself, and long enough to
+    // explain something. Attribute order is React's, not ours, so match the
+    // element and inspect it rather than assuming a sequence.
+    const glyph = new RegExp(
+      `<span[^>]*data-column-help="${id}"[^>]*>|<span[^>]*title="([^"]*)"[^>]*data-column-help="${id}"[^>]*>`,
+      "u"
+    ).exec(markup);
+    assert.ok(glyph, `${id} must render a help affordance`);
+    const title = /title="([^"]*)"/u.exec(glyph[0])?.[1] ?? "";
+    assert.ok(
+      title.length >= 40,
+      `${id} must carry real help text, not a bare glyph: ${JSON.stringify(title)}`
+    );
+    assert.match(
+      markup,
+      new RegExp(`aria-label="[^"]*${id === "roles" ? "Roles" : "Agent Limits"}:`, "u"),
+      `${id} must name itself to a screen reader, not announce a bare "?"`
+    );
+  }
   for (const removed of [
     "Role enablement",
     "Health",

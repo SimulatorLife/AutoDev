@@ -22,6 +22,18 @@ export type ColumnAlign = "truncate" | "tokens" | "prose";
 export interface ColumnDef<T> {
   readonly id: string;
   readonly header: string;
+  /**
+   * Optional explanation of what this column is for, rendered as a `?`
+   * affordance beside the header label and carried on the `title` and
+   * `aria-describedby`.
+   *
+   * Opt-in rather than universal because a help affordance on every column
+   * would be decoration; it belongs where a label alone is ambiguous, which is
+   * a property of the column rather than of the table. The text lives here and
+   * in the markup rather than in a hover-only CSS trick so it is reachable by
+   * keyboard and by a screen reader, not only by a pointer.
+   */
+  readonly headerHelp?: string | undefined;
   readonly cell: (row: T) => React.ReactNode;
   /**
    * Relative share of the table's width. Weights are resolved to
@@ -335,7 +347,24 @@ export function DataTable<T>({
                   "px-4 py-2.5 text-xs uppercase leading-tight tracking-wider break-normal",
                 style: { width: widths[index] }
               },
-              col.header
+              React.createElement(
+                    "span",
+                    { "data-column-label": col.id },
+                    col.header
+                  ),
+              col.headerHelp === undefined
+                ? null
+                : React.createElement(
+                    "span",
+                    {
+                      className:
+                        "ml-1.5 inline-flex cursor-help align-middle justify-center rounded-full border border-border-strong px-1 text-[10px] normal-case leading-none text-fg-muted",
+                      title: col.headerHelp,
+                      "aria-label": `${col.header}: ${col.headerHelp}`,
+                      "data-column-help": col.id
+                    },
+                    "?"
+                  )
             )
           )
         )

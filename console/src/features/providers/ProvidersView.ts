@@ -152,6 +152,11 @@ function providerColumns(
     {
       id: "roles",
       header: "Roles",
+      // The label alone does not say what the two controls per role mean, and a
+      // `Disabled` priority that dims its model selector is not self-evident
+      // from the row. The contract asks for a help affordance on this header.
+      headerHelp:
+        "Each fixed role takes a priority (P1, P2, P3 or Disabled) and a model. Disabled dims its model selector but keeps the chosen model, so re-enabling restores it.",
       // Rebalanced in the browser against live Runtime data. Roles at 420 of 934
       // took 45% of the table at 1440 and left the Roles cell visibly empty
       // while Agent Limits was cramped against the right edge: the model select
@@ -170,6 +175,8 @@ function providerColumns(
     {
       id: "agentLimits",
       header: "Agent Limits",
+      headerHelp:
+        "Provider-wide concurrent-agent limits. Unlimited has no ceiling; disabling the provider turns it off entirely while preserving its priorities, models and limits.",
       weight: 214,
       align: "tokens",
       cell: (provider) =>
