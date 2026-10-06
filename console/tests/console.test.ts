@@ -6793,9 +6793,13 @@ test("Memory purge refuses without explicit confirmation and never reaches the R
     // A form submission is a browser navigation, so a refusal redirects back
     // into the Console carrying the shared notice rather than dumping JSON.
     assert.equal(response.status, 303);
+    // The refusal re-selects the experience. It used to redirect without any
+    // identifier at all, and this exact string asserted that: the operator who
+    // tried to erase one envelope was returned to the bare table with nothing
+    // on the page saying which row had been refused.
     assert.equal(
       response.headers.get("location"),
-      "/memory?tab=experiences&workspaceId=SimulatorLife%2FAutoDev&control=failed"
+      "/memory?tab=experiences&experienceId=exp-1&workspaceId=SimulatorLife%2FAutoDev&control=failed"
     );
     assert.equal(requests.length, 0);
   });
@@ -6816,7 +6820,7 @@ test("Memory purge refuses a reason the Runtime does not accept", async () => {
     assert.equal(response.status, 303);
     assert.equal(
       response.headers.get("location"),
-      "/memory?tab=experiences&workspaceId=SimulatorLife%2FAutoDev&control=failed"
+      "/memory?tab=experiences&experienceId=exp-1&workspaceId=SimulatorLife%2FAutoDev&control=failed"
     );
     assert.equal(requests.length, 0);
   });
@@ -8262,6 +8266,98 @@ test("an unobserved routing counter is never rendered as a zero", () => {
   );
 });
 
+test("a purge redirect names the experience its tab reads, on success and on refusal", async () => {
+  // Purge is the one irreversible action in the Console, and both of its
+  // outcomes used to drop the operator onto a bare list.
+  //
+  // The redirect re-selects what was acted on by putting the identifier in the
+  // query, and the key that carries it is chosen by which tab is being returned
+  // to: the experiences tab reads `experienceId`, the records tab reads
+  // `recordId`. Both outcomes spelled it `recordId` regardless -- and a purge's
+  // identifier is an *experience* id, so the redirect landed on the right tab
+  // carrying the right id under a key that tab ignores, and the drawer simply
+  // did not open. Verified in the browser: `?tab=experiences&experienceId=`
+  // opens the drawer and `?tab=experiences&recordId=` does not. On the refusal
+  // path no identifier was sent at all, so nothing on the page said which row
+  // had been refused.
+  //
+  // Driven through the rendered route with a stubbed fetch so both the success
+  // and the refusal outcome are reachable without a Memory backend.
+  await withMemoryRoute(async (requests) => {
+    const form = (fields: Record<string, string>) => memoryPurgeRequest(fields);
+
+    // Success: the Runtime accepted the purge, and the operator must come back
+    // to the experience they just erased -- not to a list with no selection.
+    requests.push({
+      url: "http://127.0.0.1:4101/control/memory/experiences/exp-1/purge",
+      method: "POST",
+      body: ""
+    } as never);
+    globalThis.fetch = (async () =>
+      Response.json({ erased: true })) as typeof fetch;
+
+    const purged = await memoryRoute.POST(
+      form({
+        action: "purge",
+        experienceId: "exp-1",
+        workspaceId: "SimulatorLife/AutoDev",
+        reason: "privacy_request",
+        confirm: "purge"
+      })
+    );
+    assert.equal(purged.status, 303);
+    assert.equal(
+      purged.headers.get("location"),
+      "/memory?tab=experiences&experienceId=exp-1&workspaceId=SimulatorLife%2FAutoDev",
+      "a completed purge must land back on the experience it erased"
+    );
+
+    // Refusal: no confirm. Must still name the experience.
+    const refused = await memoryRoute.POST(
+      form({
+        action: "purge",
+        experienceId: "exp-1",
+        workspaceId: "SimulatorLife/AutoDev",
+        reason: "privacy_request"
+      })
+    );
+    assert.equal(refused.status, 303);
+    const refusedLocation = refused.headers.get("location") ?? "";
+    assert.match(
+      refusedLocation,
+      /[?&]experienceId=exp-1/,
+      `a refused purge must re-select the experience, got: ${refusedLocation}`
+    );
+    assert.doesNotMatch(
+      refusedLocation,
+      /[?&]recordId=/,
+      `a purge must never name its subject as a record, got: ${refusedLocation}`
+    );
+
+    // The control: a record action must keep using its own key, or "fix the
+    // purge" could have been satisfied by always sending experienceId.
+    const recordAction = await memoryRoute.POST(
+      form({
+        action: "supersede",
+        recordId: "rec-1",
+        workspaceId: "SimulatorLife/AutoDev",
+        reason: "superseded"
+      })
+    );
+    const recordLocation = recordAction.headers.get("location") ?? "";
+    assert.match(
+      recordLocation,
+      /[?&]recordId=rec-1/,
+      `a record action must re-select its record, got: ${recordLocation}`
+    );
+    assert.match(
+      recordLocation,
+      /[?&]tab=records/,
+      `a record action must return to the records tab, got: ${recordLocation}`
+    );
+    assert.doesNotMatch(recordLocation, /experienceId=/);
+  });
+});
 test("one page rhythm: every view body stacks its sections through the shared class", () => {
   // The target state asks for "a small number of consistent page templates",
   // and this is the page template: a column of bordered panels at one spacing.

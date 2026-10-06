@@ -36,6 +36,26 @@ function redirectTo(location: string): NextResponse {
   return new NextResponse(null, { status: 303, headers: { location } });
 }
 
+/**
+ * The query a redirect back to Memory needs to re-select what was acted on.
+ *
+ * Purge acts on an experience and the experiences tab reads its selection from
+ * `experienceId`; every other action acts on a durable record, which the records
+ * tab reads from `recordId`. One key, because getting it wrong is silent rather
+ * than loud: the redirect still lands on the right tab, still carries the right
+ * identifier, and simply spells it under a key that tab ignores -- so the drawer
+ * does not open and the operator is dropped onto a bare list. After an
+ * irreversible purge that is the worst possible outcome: the subject of the
+ * action disappears from the page, and on the failure path nothing identified it
+ * in the first place.
+ */
+function selectionQuery(isPurge: boolean, identifier: string): URLSearchParams {
+  return new URLSearchParams({
+    tab: isPurge ? "experiences" : "records",
+    [isPurge ? "experienceId" : "recordId"]: identifier
+  });
+}
+
 async function parsePayload(
   request: NextRequest
 ): Promise<MemoryActionPayload | null> {
@@ -169,14 +189,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     identifier?: string
   ): NextResponse => {
     if (payload?.isForm === true) {
-      const query = new URLSearchParams({
-        tab: isPurge ? "experiences" : "records"
-      });
+      // Re-select the subject whenever it is known. A refusal that lands on the
+      // tab without the item the operator acted on leaves them to work out
+      // which of the rows in the table failed, which is not something the notice
+      // can tell them.
+      const query =
+        identifier === undefined || identifier === ""
+          ? new URLSearchParams({ tab: isPurge ? "experiences" : "records" })
+          : selectionQuery(isPurge, identifier);
       if (payload.workspaceId !== "") {
         query.set("workspaceId", payload.workspaceId);
-      }
-      if (identifier !== undefined) {
-        query.set("recordId", identifier);
       }
       return redirectTo(withControlFailure(`/memory?${query.toString()}`));
     }
@@ -197,25 +219,33 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const result = await executeAction(payload, config);
   if (!result) {
-    return respond(400, `Unsupported or incomplete action: ${payload.action}`);
+    return respond(
+      400,
+      `Unsupported or incomplete action: ${payload.action}`,
+      identifier
+    );
   }
 
   if (result.kind !== "ok") {
-    return respond("status" in result ? result.status : 500, result);
+    return respond(
+      "status" in result ? result.status : 500,
+      result,
+      identifier
+    );
   }
 
   if (payload.isForm) {
-    const query = new URLSearchParams({
-      tab: isPurge ? "experiences" : "records"
-    });
+    const query = selectionQuery(isPurge, identifier);
     query.set("workspaceId", payload.workspaceId);
-    query.set("recordId", identifier);
     return redirectTo(`/memory?${query.toString()}`);
   }
 
   return NextResponse.json({
     success: true,
     action: payload.action,
-    recordId: payload.recordId
+    // The acted-on identifier, under the name that matches what was acted on.
+    // Reporting `recordId` for a purge answered "" -- the JSON caller that
+    // just erased an envelope was told which record it was, which is none.
+    id: identifier
   });
 }
