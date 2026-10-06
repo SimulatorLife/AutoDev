@@ -133,6 +133,82 @@ export interface RuleSyncCommandVersion extends PromptVersion {
   readonly diff: string;
 }
 
+/**
+ * The one "this repository's command history cannot be read" answer.
+ *
+ * `loadCommandHistory` used to spell this object out at five separate exits --
+ * one per `catch` in a nest of them -- so a reader comparing the branches had
+ * to diff the five literals to learn they were the same. Every field is
+ * `readonly`, and `versions` is typed `readonly []`, so one shared instance is
+ * as safe as five copies.
+ */
+const UNAVAILABLE_COMMAND_HISTORY: RuleSyncCommandHistory = {
+  status: "unavailable",
+  versions: [],
+  hasMore: false
+};
+
+/** Runs `git`, or reports that it could not answer. */
+function tryGit(
+  git: (args: readonly string[], maxBuffer: number) => string,
+  args: readonly string[],
+  maxBuffer: number
+): string | null {
+  try {
+    return git(args, maxBuffer).trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Why there is no command history to report, when `git log` could not produce
+ * any.
+ *
+ * `git log` fails for reasons a caller must not conflate, and the previous
+ * three nested `catch` blocks -- one retyped "unavailable" object in each --
+ * made the distinction something you had to reconstruct from control flow:
+ *
+ * - **not a repository.** Git answers `--is-inside-work-tree` with anything but
+ *   `true`. There is no history and no repository to have it in.
+ * - **a repository, but this command file has no history.** `--verify HEAD`
+ *   succeeds, so the repository is real and simply has nothing for this path.
+ * - **a real repository with no commits yet.** `--verify HEAD` fails, but
+ *   `--porcelain` still answers, so this is a healthy repository with an empty
+ *   history: reported *available* with no versions, which is what a freshly
+ *   initialised repository genuinely is.
+ * - **git cannot answer at all.** Everything above fails. Nothing is known, so
+ *   this is unavailable.
+ */
+function commandHistoryFallback(
+  git: (args: readonly string[], maxBuffer: number) => string
+): RuleSyncCommandHistory {
+  const insideWorkTree = tryGit(
+    git,
+    ["rev-parse", "--is-inside-work-tree"],
+    1024
+  );
+  if (insideWorkTree !== null && insideWorkTree !== "true")
+    return UNAVAILABLE_COMMAND_HISTORY;
+  // Only worth asking whether the repository has commits if it is one. When
+  // `--is-inside-work-tree` could not answer, git is unusable here and the
+  // `--porcelain` probe below is the only remaining way to tell an empty
+  // repository from a broken one.
+  if (
+    insideWorkTree === "true" &&
+    tryGit(git, ["rev-parse", "--verify", "HEAD"], 1024) !== null
+  )
+    return UNAVAILABLE_COMMAND_HISTORY;
+  // Either git could not answer about the tree, or this is a repository with no
+  // commits yet. `--porcelain` is what tells those apart: it answers in the
+  // second case and fails in the first.
+  const workingTreeAnswers =
+    tryGit(git, ["status", "--porcelain"], 8192) !== null;
+  return workingTreeAnswers
+    ? { status: "available", versions: [], hasMore: false }
+    : UNAVAILABLE_COMMAND_HISTORY;
+}
+
 export class RuleSyncCommandHistoryUnavailableError extends Error {
   constructor(message = "Canonical command history is unavailable.") {
     super(message);
@@ -575,7 +651,7 @@ export class RuleSyncRepository {
     try {
       repositoryRoot = realpathSync(this.repositoryRoot);
     } catch {
-      return { status: "unavailable", versions: [], hasMore: false };
+      return UNAVAILABLE_COMMAND_HISTORY;
     }
     const git = (args: readonly string[], maxBuffer: number): string =>
       execFileSync("git", ["-C", repositoryRoot, ...args], {
@@ -598,22 +674,7 @@ export class RuleSyncRepository {
         8192
       );
     } catch {
-      try {
-        if (
-          git(["rev-parse", "--is-inside-work-tree"], 1024).trim() !== "true"
-        ) {
-          return { status: "unavailable", versions: [], hasMore: false };
-        }
-        git(["rev-parse", "--verify", "HEAD"], 1024);
-        return { status: "unavailable", versions: [], hasMore: false };
-      } catch {
-        try {
-          git(["status", "--porcelain"], 8192);
-          return { status: "available", versions: [], hasMore: false };
-        } catch {
-          return { status: "unavailable", versions: [], hasMore: false };
-        }
-      }
+      return commandHistoryFallback(git);
     }
 
     try {
@@ -640,7 +701,7 @@ export class RuleSyncRepository {
         hasMore: entries.length > COMMAND_HISTORY_LIMIT
       };
     } catch {
-      return { status: "unavailable", versions: [], hasMore: false };
+      return UNAVAILABLE_COMMAND_HISTORY;
     }
   }
 

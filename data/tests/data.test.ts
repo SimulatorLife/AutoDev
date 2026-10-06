@@ -201,6 +201,48 @@ test("RuleSyncRepository distinguishes unavailable Git history from an empty com
   }
 });
 
+test("RuleSyncRepository reports a committed repository whose command file has no history yet as available and empty", async () => {
+  // The third "no history" shape, and the one that does not go through the
+  // unavailable probe at all: `git log -- <path>` succeeds with no output
+  // because the repository has commits but never had this file. It must not be
+  // reported as unavailable -- nothing is broken -- and it must not be
+  // reported as a version either. Pinned because it shares its outcome
+  // ("available", no versions) with the empty-repository case while arriving by
+  // a different path, so a refactor that collapsed the two would still pass the
+  // other two tests.
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-rulesync-command-untracked-")
+  );
+  try {
+    const commandsDir = path.join(repositoryRoot, ".rulesync", "commands");
+    await mkdir(commandsDir, { recursive: true });
+    await writeFile(
+      path.join(commandsDir, "audit.md"),
+      "---\ndescription: Audit source.\n---\n\n# Audit\n"
+    );
+    git(repositoryRoot, ["init", "-q"]);
+    git(repositoryRoot, ["config", "user.name", "AutoDev Tests"]);
+    git(repositoryRoot, [
+      "config",
+      "user.email",
+      "autodev-tests@example.invalid"
+    ]);
+    // One commit, but it does not include the command file.
+    await writeFile(path.join(repositoryRoot, "README.md"), "# Repo\n");
+    git(repositoryRoot, ["add", "README.md"]);
+    git(repositoryRoot, ["commit", "-q", "-m", "Initial commit"]);
+
+    const repo = new RuleSyncRepository(repositoryRoot);
+    assert.deepEqual(repo.loadCommandHistory("audit"), {
+      status: "available",
+      versions: [],
+      hasMore: false
+    });
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
 test("RuleSyncRepository updates an existing command with revision checks", async () => {
   const repositoryRoot = await mkdtemp(
     path.join(tmpdir(), "autodev-rulesync-command-update-")
