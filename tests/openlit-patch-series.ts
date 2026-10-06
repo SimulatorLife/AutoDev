@@ -59,7 +59,9 @@ export const OPENLIT_PATCH_NAMES = [
   "42-remove-dead-agents-navigation",
   "43-remove-tenancy-route-residue",
   "44-remove-removed-product-route-residue",
-  "45-honest-signal-detail-states"
+  "45-honest-signal-detail-states",
+  "46-metric-detail-honest-empty-state",
+  "47-currency-rounding-formatting"
 ] as const;
 
 /** Strips the `.patch` suffix a directory listing carries. */

@@ -933,6 +933,46 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     /No trace with this id in the selected source and time range/u,
     "a readable request that returns no span is not the same as an unreadable one"
   );
+  // The metric detail page never read `error` at all, so a failed read left
+  // `points` empty and the summary reported "Loaded Points 0".
+  const metricDetail = readFileSync(
+    join(
+      dir,
+      "src/client/src/components/(playground)/observability/metric-detail-page.tsx"
+    ),
+    "utf8"
+  );
+  assert.match(
+    metricDetail,
+    /const \{ data, fireRequest, isFetched, error \} = useFetchWrapper\(\)/u,
+    "the metric detail page cannot distinguish an unreadable metric from one with no points without the hook's error and isFetched"
+  );
+  assert.match(
+    metricDetail,
+    /No points for this metric in the selected source and time range/u,
+    "an empty result and an unreadable one must say different things"
+  );
+  // `cost` is the only `type: "round"` mapping, and both of its consumers read
+  // the value as-is, so the formatting belongs at the mapping.
+  const traceMapping = readFileSync(
+    join(dir, "src/client/src/helpers/client/trace.ts"),
+    "utf8"
+  );
+  assert.match(
+    traceMapping,
+    /type === "round"\) \{\s*(?:\/\/[^\n]*\n\s*)*return String\(round\(/u,
+    "round() must not be followed by a fixed precision that re-adds the trailing zeros"
+  );
+  for (const site of [
+    "src/client/src/components/(playground)/observability/trace-detail-page.tsx",
+    "src/client/src/components/(playground)/observability/span-hierarchy-explorer.tsx"
+  ]) {
+    assert.doesNotMatch(
+      readFileSync(join(dir, site), "utf8"),
+      /\$\{[^}]*\.toFixed\(10\)\}/u,
+      `${site} renders a currency with ten decimals while the rest of the client uses four`
+    );
+  }
   // `logs/` in the fork's .gitignore silently hid the new route directory.
   assert.match(
     readFileSync(join(dir, ".gitignore"), "utf8"),

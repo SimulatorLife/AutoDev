@@ -1,0 +1,75 @@
+diff --git a/src/client/src/__tests__/helpers/client/trace.test.ts b/src/client/src/__tests__/helpers/client/trace.test.ts
+index 3859bf07..af53c280 100644
+--- a/src/client/src/__tests__/helpers/client/trace.test.ts
++++ b/src/client/src/__tests__/helpers/client/trace.test.ts
+@@ -267,6 +267,25 @@ describe('normalizeTrace', () => {
+     expect((result as any).SpanAttributes['gen_ai.request.model']).toBe('gpt-4');
+   });
+ 
++  it('renders a currency without the trailing zeros the rounding removed', () => {
++    // `cost` is the only `type: "round"` mapping and both consumers — the trace
++    // detail tile and the requests table's cost column — read the value as-is.
++    // Forcing `.toFixed(10)` after lodash's `round` put it back, so the UI
++    // showed `$0.0041000000`.
++    const withCost = (cost: string) =>
++      normalizeTrace({
++        SpanId: 'span-cost',
++        Timestamp: '2024-01-15T10:30:00.000Z',
++        SpanAttributes: { 'gen_ai.usage.cost': cost },
++      } as any);
++
++    expect(withCost('0.0041').cost).toBe('0.0041');
++    expect(withCost('0').cost).toBe('0');
++    expect(withCost('12').cost).toBe('12');
++    // The mapping's precision still applies.
++    expect(withCost('0.004123456789123').cost).toBe('0.0041234568');
++  });
++
+   it('fills in defaultValues for missing attributes', () => {
+     const trace = {
+       SpanId: 'span-2',
+diff --git a/src/client/src/components/(playground)/observability/span-hierarchy-explorer.tsx b/src/client/src/components/(playground)/observability/span-hierarchy-explorer.tsx
+index fef86351..12ad9ae1 100644
+--- a/src/client/src/components/(playground)/observability/span-hierarchy-explorer.tsx
++++ b/src/client/src/components/(playground)/observability/span-hierarchy-explorer.tsx
+@@ -355,7 +355,7 @@ function SpanHierarchyExplorerInner({
+ 							{m.EVALUATION_STAT_TOTAL_COST}
+ 						</span>
+ 						<span className="font-mono text-xs font-semibold text-stone-900 dark:text-stone-100">
+-							${aggregateCost.toFixed(10)}
++							${aggregateCost.toFixed(4)}
+ 						</span>
+ 					</div>
+ 				)}
+diff --git a/src/client/src/components/(playground)/observability/trace-detail-page.tsx b/src/client/src/components/(playground)/observability/trace-detail-page.tsx
+index 6025e513..e41b3c81 100644
+--- a/src/client/src/components/(playground)/observability/trace-detail-page.tsx
++++ b/src/client/src/components/(playground)/observability/trace-detail-page.tsx
+@@ -194,7 +194,7 @@ function CostStat({
+ 			successCb: (response) => {
+ 				if (response?.success) {
+ 					toast.success(
+-						`${m.RECALCULATE_COST_SUCCESS}: $${(response.data?.cost ?? 0).toFixed(10)}`,
++						`${m.RECALCULATE_COST_SUCCESS}: ${(response.data?.cost ?? 0).toFixed(4)}`,
+ 						{ id: "pricing-update" }
+ 					);
+ 					onRecalculated();
+diff --git a/src/client/src/helpers/client/trace.ts b/src/client/src/helpers/client/trace.ts
+index 77d85fcd..3b31d7c7 100644
+--- a/src/client/src/helpers/client/trace.ts
++++ b/src/client/src/helpers/client/trace.ts
+@@ -78,9 +78,11 @@ export const getNormalizedTraceAttribute = (
+ 				TraceMapping[traceKey].offset
+ 			).toFixed(10);
+ 		} else if (TraceMapping[traceKey].type === "round") {
+-			return round(traceValue as number, TraceMapping[traceKey].offset).toFixed(
+-				10
+-			);
++			// `round` already applied the mapping's precision; forcing `.toFixed(10)`
++			// after it re-added the trailing zeros it just removed, so the currency
++			// rendered as `$0.0041000000` on the trace detail tile and in the
++			// requests table. Both consumers read the value as-is.
++			return String(round(traceValue as number, TraceMapping[traceKey].offset));
+ 		} else if (TraceMapping[traceKey].type === "date") {
+ 			const date = new Date(
+ 				`${traceValue}${(traceValue as string).endsWith("Z") ? "" : "Z"}`

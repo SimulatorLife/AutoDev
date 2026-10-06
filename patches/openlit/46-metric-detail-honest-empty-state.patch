@@ -1,0 +1,104 @@
+diff --git a/src/client/src/components/(playground)/observability/metric-detail-page.tsx b/src/client/src/components/(playground)/observability/metric-detail-page.tsx
+index a474e05f..739b2fd8 100644
+--- a/src/client/src/components/(playground)/observability/metric-detail-page.tsx
++++ b/src/client/src/components/(playground)/observability/metric-detail-page.tsx
+@@ -90,7 +90,7 @@ export function MetricDetailView({
+ 	const m = getMessage();
+ 	const router = useRouter();
+ 	const filter = useRootStore(getFilterDetails);
+-	const { data, fireRequest } = useFetchWrapper();
++	const { data, fireRequest, isFetched, error } = useFetchWrapper();
+ 
+ 	const fetchData = useCallback(() => {
+ 		fireRequest({
+@@ -111,6 +111,11 @@ export function MetricDetailView({
+ 
+ 	const points = ((data as any)?.points || []) as any[];
+ 	const series = ((data as any)?.series || []) as any[];
++	// A failed request never reaches `data` — useFetchWrapper clears it and puts
++	// the message in `error` — so without this an unreadable metric reported a
++	// confident "Loaded Points 0" over a read that never happened.
++	const fetchError = error ?? (data as any)?.err;
++	const noPoints = isFetched && !fetchError && ((data as any)?.points || []).length === 0;
+ 	const latest = points[0];
+ 	const latestValue = latest?.metric_value;
+ 	const unit = latest?.MetricUnit || m.OBSERVABILITY_VALUE;
+@@ -172,35 +177,51 @@ export function MetricDetailView({
+ 			}
+ 			actions={extraActions}
+ 			headerMeta={
+-				<div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
+-					<SummaryItem
+-						icon={<Activity className="h-3.5 w-3.5" />}
+-						label={m.OBSERVABILITY_LATEST}
+-						value={formatMetricValue(latestValue)}
+-					/>
+-					<SummaryItem
+-						icon={<Sigma className="h-3.5 w-3.5" />}
+-						label="Total"
+-						value={pointValues.length ? formatMetricValue(totalValue) : "-"}
+-					/>
+-					<SummaryItem
+-						icon={<TrendingUp className="h-3.5 w-3.5" />}
+-						label="Average"
+-						value={averageValue !== undefined ? formatMetricValue(averageValue) : "-"}
+-					/>
+-					<SummaryItem
+-						icon={<Database className="h-3.5 w-3.5" />}
+-						label={`${m.OBSERVABILITY_LOADED_POINTS} (${unit})`}
+-						value={pointCount.toLocaleString()}
+-					/>
+-					<SummaryItem
+-						icon={<Clock className="h-3.5 w-3.5" />}
+-						label={m.OBSERVABILITY_LAST_SEEN}
+-						value={lastSeen}
+-					/>
+-				</div>
++				fetchError ? (
++					<div
++						role="alert"
++						className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200"
++					>
++						{String(fetchError)}
++					</div>
++				) : noPoints ? (
++					<div className="rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-600 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-400">
++						No points for this metric in the selected source and time range.
++					</div>
++				) : (
++					<div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
++						<SummaryItem
++							icon={<Activity className="h-3.5 w-3.5" />}
++							label={m.OBSERVABILITY_LATEST}
++							value={formatMetricValue(latestValue)}
++						/>
++						<SummaryItem
++							icon={<Sigma className="h-3.5 w-3.5" />}
++							label="Total"
++							value={pointValues.length ? formatMetricValue(totalValue) : "-"}
++						/>
++						<SummaryItem
++							icon={<TrendingUp className="h-3.5 w-3.5" />}
++							label="Average"
++							value={averageValue !== undefined ? formatMetricValue(averageValue) : "-"}
++						/>
++						<SummaryItem
++							icon={<Database className="h-3.5 w-3.5" />}
++							label={`${m.OBSERVABILITY_LOADED_POINTS} (${unit})`}
++							value={pointCount.toLocaleString()}
++						/>
++						<SummaryItem
++							icon={<Clock className="h-3.5 w-3.5" />}
++							label={m.OBSERVABILITY_LAST_SEEN}
++							value={lastSeen}
++						/>
++					</div>
++				)
+ 			}
+ 		>
++			{!fetchError && !noPoints && !isFetched ? (
++				<p className="text-sm text-stone-500 dark:text-stone-400">Loading metric…</p>
++			) : null}
+ 			{chartData.length > 0 && (
+ 				<section className="rounded-md border border-stone-200 bg-white p-3 dark:border-stone-800 dark:bg-stone-950">
+ 					<div className="mb-2 flex flex-wrap items-center justify-between gap-2">
