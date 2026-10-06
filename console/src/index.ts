@@ -9,6 +9,7 @@ export * from "./components/cards/StatCard.ts";
 export * from "./components/layout/AppShell.ts";
 export * from "./components/navigation/AppNav.ts";
 export * from "./components/navigation/Breadcrumbs.ts";
+export * from "./components/navigation/ClosePanelLink.ts";
 export * from "./components/status/ControlFailureNotice.ts";
 export * from "./components/status/ConvergenceBadge.ts";
 export * from "./components/status/StatusBadge.ts";

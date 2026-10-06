@@ -6,13 +6,15 @@ import {
   SelectField,
   type SelectOption
 } from "../../components/forms/SelectField.ts";
+import { ClosePanelLink } from "../../components/navigation/ClosePanelLink.ts";
 import {
   StatusBadge,
   type StatusBadgeVariant
 } from "../../components/status/StatusBadge.ts";
 import {
   type ColumnDef,
-  DataTable
+  DataTable,
+  type DataTableProps
 } from "../../components/tables/DataTable.ts";
 
 /**
@@ -277,14 +279,9 @@ function ExperienceDetailPanel({
           `Task: ${experience.taskId} | Run: ${experience.runId}`
         )
       ),
-      React.createElement(
-        "a",
-        {
-          href: `?tab=experiences&workspaceId=${encodeURIComponent(workspaceId)}`,
-          className: "text-sm text-fg-muted hover:text-fg"
-        },
-        "✕ Close"
-      )
+      React.createElement(ClosePanelLink, {
+        href: `?tab=experiences&workspaceId=${encodeURIComponent(workspaceId)}`
+      })
     ),
 
     // Trajectory Provenance & Details
@@ -501,11 +498,4 @@ function ExperienceDetailPanel({
       )
     )
   );
-}
-
-interface DataTableProps<T> {
-  readonly data: readonly T[];
-  readonly columns: readonly ColumnDef<T>[];
-  readonly keyExtractor: (row: T) => string;
-  readonly emptyMessage?: string | undefined;
 }

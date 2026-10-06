@@ -41,6 +41,7 @@ import {
   AgentsView,
   AppNav,
   Breadcrumbs,
+  ClosePanelLink,
   DataTable,
   EvaluationsView,
   formatCount,
@@ -3334,11 +3335,15 @@ test("AgentsView shows read-only provider summaries that link to Providers", () 
     React.createElement(AgentsView, {
       agents: [CONFIGURED_AGENT],
       providers: PROVIDERS_FIXTURE,
-      routing: ROUTING_FIXTURE,
       runtime: {
         schema: "autodev-control-runtime-v1",
         routerInstanceId: "router-uuid-test",
-        lifecycle: { state: "ready", activeResponseRequests: 1 },
+        lifecycle: {
+          state: "ready",
+          draining: false,
+          changedAt: "2026-10-05T15:00:00.000Z",
+          activeResponseRequests: 1
+        },
         concurrency: { effectivePerSessionLimit: 2, activeSubagentThreads: 1 },
         inFlightRequestCount: 1
       }
@@ -3365,7 +3370,6 @@ test("AgentDetailView renders a read-only provider summary and concurrency detai
   const markup = renderToStaticMarkup(
     React.createElement(AgentDetailView, {
       agent: CONFIGURED_AGENT,
-      routing: ROUTING_FIXTURE,
       providers: PROVIDERS_FIXTURE
     })
   );
@@ -3380,8 +3384,7 @@ test("AgentDetailView renders a read-only provider summary and concurrency detai
 test("Agents provider summaries stay not observed without provider configuration", () => {
   const agentsMarkup = renderToStaticMarkup(
     React.createElement(AgentsView, {
-      agents: [CONFIGURED_AGENT],
-      routing: ROUTING_FIXTURE
+      agents: [CONFIGURED_AGENT]
     })
   );
   const summaryStart = agentsMarkup.indexOf("data-agent-providers=");
@@ -4975,7 +4978,12 @@ test("Console rejects a runtime response that does not match the v1 contract", a
   const valid = {
     schema: "autodev-control-runtime-v1",
     routerInstanceId: "router-uuid-test",
-    lifecycle: { state: "ready", draining: false },
+    lifecycle: {
+      state: "ready",
+      draining: false,
+      changedAt: "2026-10-05T15:00:00.000Z",
+      activeResponseRequests: 1
+    },
     concurrency: { effectivePerSessionLimit: 2, activeSubagentThreads: 1 },
     inFlightRequestCount: 1
   };
@@ -4987,6 +4995,24 @@ test("Console rejects a runtime response that does not match the v1 contract", a
     ).kind,
     "ok"
   );
+  const withDenial = await fetchRuntime(config, {
+    fetchImpl: async () =>
+      Response.json({
+        ...valid,
+        concurrency: {
+          effectivePerSessionLimit: 8,
+          denials: 17,
+          denialsByReason: { per_session_limit: 12 },
+          lastDenial: {
+            requestId: "req-1",
+            role: "orchestrator",
+            reason: "per_session_limit",
+            timestamp: "2026-10-06T09:38:02.000Z"
+          }
+        }
+      })
+  });
+  assert.equal(withDenial.kind, "ok");
 
   // Runtime had no response guard at all, so every one of these rendered as a
   // healthy runtime. Each must fail closed into an explicit unavailable state
@@ -4998,6 +5024,9 @@ test("Console rejects a runtime response that does not match the v1 contract", a
     { ...valid, lifecycle: { state: "ready", draining: "yes" } },
     { ...valid, concurrency: { effectivePerSessionLimit: "two" } },
     { ...valid, concurrency: { denialsByReason: { cap: "many" } } },
+    // A recorded denial is a real object; only its absence or nullness counts
+    // as "no denial observed". Rejecting the object would discard evidence.
+    { ...valid, concurrency: { lastDenial: "per_session_limit" } },
     { ...valid, inFlightRequestCount: null }
   ]) {
     assert.equal(
@@ -5016,7 +5045,12 @@ test("AgentsView reports runtime counters as unobserved instead of zero", () => 
   const runtime = {
     schema: "autodev-control-runtime-v1",
     routerInstanceId: "router-uuid-test",
-    lifecycle: { state: "ready", draining: true },
+    lifecycle: {
+      state: "ready",
+      draining: true,
+      changedAt: "2026-10-06T09:00:00.000Z",
+      activeResponseRequests: 0
+    },
     // A Runtime that has no concurrency evidence omits the fields rather than
     // reporting zero, so the Console must not turn their absence into a zero.
     concurrency: {},
@@ -5026,7 +5060,6 @@ test("AgentsView reports runtime counters as unobserved instead of zero", () => 
     React.createElement(AgentsView, {
       agents: [CONFIGURED_AGENT],
       providers: PROVIDERS_FIXTURE,
-      routing: ROUTING_FIXTURE,
       runtime
     })
   );
@@ -5386,4 +5419,21 @@ test("Memory purge requires an experience id rather than a record id", async () 
     );
     assert.equal(requests.length, 0);
   });
+});
+
+test("ClosePanelLink renders the shared close mark and keeps its accessible name", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(ClosePanelLink, { href: "/memory?tab=records" })
+  );
+
+  // A real link: the panel must be dismissible without client JavaScript.
+  assert.match(markup, /^<a href="\/memory\?tab=records"/);
+  // The mark comes from the shared icon set, not a raw glyph typed into the
+  // view, so it shares the product's grid, stroke, and currentColor behaviour.
+  assert.match(markup, /<svg[^>]*viewBox="0 0 24 24"/);
+  assert.match(markup, /<svg[^>]*stroke="currentColor"/);
+  assert.equal(markup.includes("✕"), false, "must not re-type the close glyph");
+  // Decorative icon beside a real word: the word is the accessible name.
+  assert.match(markup, /aria-hidden="true"/);
+  assert.match(markup, />Close<\/a>$/);
 });

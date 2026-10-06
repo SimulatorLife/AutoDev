@@ -12,6 +12,7 @@ import {
   FIELD_CONTROL_CLASS,
   SelectField
 } from "../../components/forms/SelectField.ts";
+import { ClosePanelLink } from "../../components/navigation/ClosePanelLink.ts";
 import {
   StatusBadge,
   type StatusBadgeVariant
@@ -320,14 +321,9 @@ function RecordDetailPanel({
           `Scope: ${formatScopeString(record.scope)}`
         )
       ),
-      React.createElement(
-        "a",
-        {
-          href: `?tab=records&workspaceId=${encodeURIComponent(workspaceId)}`,
-          className: "text-sm text-fg-muted hover:text-fg"
-        },
-        "✕ Close"
-      )
+      React.createElement(ClosePanelLink, {
+        href: `?tab=records&workspaceId=${encodeURIComponent(workspaceId)}`
+      })
     ),
 
     // Claim
