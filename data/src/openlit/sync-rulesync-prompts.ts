@@ -2,6 +2,14 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  groupRowsBy,
+  indexRowsBy,
+  insertRows,
+  removeStaleRows,
+  selectRows,
+  type StaleRowProjection
+} from "../clickhouse/clickhouse-client.ts";
 import { RuleSyncRepository } from "../rulesync/rulesync-repository.ts";
 import {
   type OpenLitClickHouseOptions,
@@ -47,6 +55,18 @@ interface PromptMutationPlan {
   readonly metaProperties: string;
 }
 
+const PROMPTS_TABLE = "openlit_prompts";
+const PROMPT_VERSIONS_TABLE = "openlit_prompt_versions";
+
+const STALE_PROMPT_ROWS: StaleRowProjection<ExistingPromptRow> = {
+  versionsTable: PROMPT_VERSIONS_TABLE,
+  versionsKeyColumn: "prompt_id",
+  summaryTable: PROMPTS_TABLE,
+  summaryKeyColumn: "id",
+  keyOf: (row) => row.id,
+  labelOf: (row) => row.name
+};
+
 const NUMERIC_COLLATOR = new Intl.Collator(undefined, { numeric: true });
 
 /**
@@ -66,53 +86,6 @@ export function deterministicUuid(input: string): string {
   ].join("-");
 }
 
-async function fetchExistingPrompts(
-  endpoint: string,
-  clickhouseUrl: string
-): Promise<Map<string, ExistingPromptRow>> {
-  const res = await fetch(
-    `${endpoint}&query=${encodeURIComponent("SELECT id, name, created_by FROM openlit_prompts FORMAT JSON")}`,
-    { method: "GET" }
-  );
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(
-      `Failed to connect to ClickHouse at ${clickhouseUrl} (${res.status}): ${errText}`
-    );
-  }
-  const json = (await res.json()) as { data?: ExistingPromptRow[] };
-  const map = new Map<string, ExistingPromptRow>();
-  for (const row of json.data || []) {
-    map.set(row.name, row);
-  }
-  return map;
-}
-
-async function fetchExistingVersions(
-  endpoint: string
-): Promise<Map<string, ExistingVersionRow[]>> {
-  const res = await fetch(
-    `${endpoint}&query=${encodeURIComponent(
-      "SELECT version_id, prompt_id, version, status, prompt, tags, meta_properties FROM openlit_prompt_versions FORMAT JSON"
-    )}`,
-    { method: "GET" }
-  );
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(
-      `Failed to query openlit_prompt_versions (${res.status}): ${errText}`
-    );
-  }
-  const json = (await res.json()) as { data?: ExistingVersionRow[] };
-  const map = new Map<string, ExistingVersionRow[]>();
-  for (const row of json.data || []) {
-    const list = map.get(row.prompt_id) || [];
-    list.push(row);
-    map.set(row.prompt_id, list);
-  }
-  return map;
-}
-
 function computeNextVersion(currentVersion: string | undefined): string {
   if (!currentVersion) return "1.0.0";
   const parts = currentVersion.split(".").map((p) => Number.parseInt(p));
@@ -124,81 +97,6 @@ function computeNextVersion(currentVersion: string | undefined): string {
   return `${currentVersion}.1`;
 }
 
-async function removeStalePrompts(
-  endpoint: string,
-  staleRows: ExistingPromptRow[]
-): Promise<string[]> {
-  if (staleRows.length === 0) return [];
-  const ids = staleRows.map((r) => `'${r.id}'`).join(", ");
-  await fetch(
-    `${endpoint}&query=${encodeURIComponent(
-      `ALTER TABLE openlit_prompt_versions DELETE WHERE prompt_id IN (${ids})`
-    )}`,
-    { method: "POST" }
-  );
-  await fetch(
-    `${endpoint}&query=${encodeURIComponent(
-      `ALTER TABLE openlit_prompts DELETE WHERE id IN (${ids})`
-    )}`,
-    { method: "POST" }
-  );
-  return staleRows.map((r) => r.name);
-}
-
-async function bulkInsertPrompts(
-  endpoint: string,
-  prompts: Array<{ id: string; name: string; created_by: string }>
-): Promise<void> {
-  if (prompts.length === 0) return;
-  const body = prompts.map((p) => JSON.stringify(p)).join("\n") + "\n";
-  const res = await fetch(
-    `${endpoint}&query=${encodeURIComponent("INSERT INTO openlit_prompts FORMAT JSONEachRow")}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body
-    }
-  );
-  if (!res.ok) {
-    throw new Error(
-      `Failed to bulk insert into openlit_prompts: ${await res.text()}`
-    );
-  }
-}
-
-async function bulkInsertVersions(
-  endpoint: string,
-  plans: PromptMutationPlan[]
-): Promise<void> {
-  if (plans.length === 0) return;
-  const rows = plans.map((p) => ({
-    version_id: p.versionId,
-    prompt_id: p.promptId,
-    updated_by: "rulesync",
-    version: p.version,
-    status: "PUBLISHED",
-    prompt: p.prompt,
-    tags: p.tags,
-    meta_properties: p.metaProperties
-  }));
-  const body = rows.map((r) => JSON.stringify(r)).join("\n") + "\n";
-  const res = await fetch(
-    `${endpoint}&query=${encodeURIComponent(
-      "INSERT INTO openlit_prompt_versions FORMAT JSONEachRow"
-    )}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body
-    }
-  );
-  if (!res.ok) {
-    throw new Error(
-      `Failed to bulk insert into openlit_prompt_versions: ${await res.text()}`
-    );
-  }
-}
-
 /**
  * Synchronize rulesync-defined prompts from `.rulesync/commands/` into OpenLIT's ClickHouse tables.
  */
@@ -207,8 +105,7 @@ export async function syncRulesyncPrompts(
 ): Promise<SyncPromptsResult> {
   const repositoryRoot =
     options.repositoryRoot || path.resolve(import.meta.dirname, "../../..");
-  const { clickhouseUrl, endpoint } =
-    resolveOpenLitClickHouseConnection(options);
+  const { endpoint } = resolveOpenLitClickHouseConnection(options);
 
   const source = new RuleSyncRepository(repositoryRoot).loadCommands();
   if (source.valid !== true) {
@@ -230,8 +127,26 @@ export async function syncRulesyncPrompts(
     ])
   );
 
-  const existingPrompts = await fetchExistingPrompts(endpoint, clickhouseUrl);
-  const existingVersions = await fetchExistingVersions(endpoint);
+  const existingPrompts = indexRowsBy(
+    await selectRows<ExistingPromptRow>(endpoint, PROMPTS_TABLE, [
+      "id",
+      "name",
+      "created_by"
+    ]),
+    (row) => row.name
+  );
+  const existingVersions = groupRowsBy(
+    await selectRows<ExistingVersionRow>(endpoint, PROMPT_VERSIONS_TABLE, [
+      "version_id",
+      "prompt_id",
+      "version",
+      "status",
+      "prompt",
+      "tags",
+      "meta_properties"
+    ]),
+    (row) => row.prompt_id
+  );
 
   const inserted: string[] = [];
   const updated: string[] = [];
@@ -303,10 +218,27 @@ export async function syncRulesyncPrompts(
   const stalePrompts = [...existingPrompts.values()].filter(
     (row) => row.created_by === "rulesync" && !catalog.has(row.name)
   );
-  const removed = await removeStalePrompts(endpoint, stalePrompts);
+  const removed = await removeStaleRows(
+    endpoint,
+    stalePrompts,
+    STALE_PROMPT_ROWS
+  );
 
-  await bulkInsertPrompts(endpoint, promptsToInsert);
-  await bulkInsertVersions(endpoint, versionsToInsert);
+  await insertRows(endpoint, PROMPTS_TABLE, promptsToInsert);
+  await insertRows(
+    endpoint,
+    PROMPT_VERSIONS_TABLE,
+    versionsToInsert.map((plan) => ({
+      version_id: plan.versionId,
+      prompt_id: plan.promptId,
+      updated_by: "rulesync",
+      version: plan.version,
+      status: "PUBLISHED",
+      prompt: plan.prompt,
+      tags: plan.tags,
+      meta_properties: plan.metaProperties
+    }))
+  );
 
   return {
     totalCatalogPrompts: catalog.size,

@@ -11,6 +11,8 @@ import {
   syncRulesyncAgents
 } from "@simulatorlife/autodev-data/openlit";
 
+import { isClickHouseUnavailable } from "./clickhouse-availability.ts";
+
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
 test("computeAgentKey produces deterministic 16-character hex string matching OpenLIT key algorithm", () => {
@@ -144,7 +146,7 @@ test("syncRulesyncAgents synchronizes agent roles idempotently against ClickHous
       "All catalog agents must be unchanged on second run"
     );
   } catch (error) {
-    if ((error as Error).message.includes("ECONNREFUSED")) {
+    if (isClickHouseUnavailable(error)) {
       // ClickHouse container not running in this environment — skip gracefully
       return;
     }

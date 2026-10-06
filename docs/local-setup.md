@@ -815,4 +815,14 @@ pnpm --filter @simulatorlife/autodev-data openlit:sync-workspaces
 
 The Data-owned agents, prompts, and models adapters populate transitional OpenLIT read models; they do not supersede canonical RuleSync/AutoDev configuration ownership. **Do not add new product consumers, mutation authority, or canonical state to these sync paths.** Delete each sync command/adapter after its retained feature is served directly through the unified Console/Data integration and no verified consumer still requires the OpenLIT projection. The remaining workspace bootstrap is only an internal singleton migration, not a per-workspace OpenLIT tenancy adapter, and should be removed when the retained OpenLIT internals no longer require that singleton compatibility row.
 
+The agents and prompts adapters reach ClickHouse only through
+`data/src/clickhouse/clickhouse-client.ts`, which owns reading, indexing,
+grouping, inserting, and stale-row deletion — including the newline-terminated
+`JSONEachRow` body. An adapter supplies table names, columns, and rows; it must
+not assemble a URL, choose a content type, or format its own read error. The
+models adapter is the deliberate exception: it writes `application/x-ndjson`
+without a trailing newline and reports insert failures in its own wording, so
+it still builds its requests itself. `data/src/openlit/clickhouse-config.ts`
+owns credentials only, and the default endpoint now lives with the client.
+
 The asynchronous GitHub issue metrics workflow remains a separate GitHub-development reporting surface (`.github/workflows/metrics-dashboard.yml`, issue #2). It is not a replacement observability backend for AutoDev runtime telemetry.

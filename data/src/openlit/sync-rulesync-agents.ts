@@ -4,6 +4,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  groupRowsBy,
+  indexRowsBy,
+  insertRows,
+  removeStaleRows,
+  selectRows,
+  type StaleRowProjection
+} from "../clickhouse/clickhouse-client.ts";
+import {
   type OpenLitClickHouseOptions,
   resolveOpenLitClickHouseConnection
 } from "./clickhouse-config.ts";
@@ -70,6 +78,18 @@ interface ExecutionContractJson {
   readonly roles?: Record<string, ExecutionContractRole>;
   readonly providers?: Record<string, unknown>;
 }
+
+const AGENTS_SUMMARY_TABLE = "openlit_agents_summary";
+const AGENT_VERSIONS_TABLE = "openlit_agent_versions";
+
+const STALE_AGENT_ROWS: StaleRowProjection<ExistingAgentRow> = {
+  versionsTable: AGENT_VERSIONS_TABLE,
+  versionsKeyColumn: "agent_key",
+  summaryTable: AGENTS_SUMMARY_TABLE,
+  summaryKeyColumn: "agent_key",
+  keyOf: (row) => row.agent_key,
+  labelOf: (row) => row.service_name
+};
 
 const NUMERIC_COLLATOR = new Intl.Collator(undefined, { numeric: true });
 
@@ -211,121 +231,6 @@ export function loadRulesyncAgents(
   return map;
 }
 
-async function fetchExistingAgents(
-  endpoint: string
-): Promise<Map<string, ExistingAgentRow>> {
-  const res = await fetch(
-    `${endpoint}&query=${encodeURIComponent(
-      "SELECT agent_key, service_name, source FROM openlit_agents_summary FORMAT JSON"
-    )}`,
-    { method: "GET" }
-  );
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(
-      `Failed to query openlit_agents_summary from ClickHouse (${res.status}): ${errText}`
-    );
-  }
-  const json = (await res.json()) as { data?: ExistingAgentRow[] };
-  const map = new Map<string, ExistingAgentRow>();
-  for (const row of json.data || []) {
-    map.set(row.service_name, row);
-  }
-  return map;
-}
-
-async function fetchExistingVersions(
-  endpoint: string
-): Promise<Map<string, ExistingVersionRow[]>> {
-  const res = await fetch(
-    `${endpoint}&query=${encodeURIComponent(
-      "SELECT agent_key, version_hash, version_number, system_prompt, tools, runtime_config FROM openlit_agent_versions FORMAT JSON"
-    )}`,
-    { method: "GET" }
-  );
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(
-      `Failed to query openlit_agent_versions from ClickHouse (${res.status}): ${errText}`
-    );
-  }
-  const json = (await res.json()) as { data?: ExistingVersionRow[] };
-  const map = new Map<string, ExistingVersionRow[]>();
-  for (const row of json.data || []) {
-    const list = map.get(row.agent_key) || [];
-    list.push(row);
-    map.set(row.agent_key, list);
-  }
-  return map;
-}
-
-async function removeStaleAgents(
-  endpoint: string,
-  staleRows: ExistingAgentRow[]
-): Promise<string[]> {
-  if (staleRows.length === 0) return [];
-  const keys = staleRows.map((r) => `'${r.agent_key}'`).join(", ");
-  await fetch(
-    `${endpoint}&query=${encodeURIComponent(
-      `ALTER TABLE openlit_agent_versions DELETE WHERE agent_key IN (${keys})`
-    )}`,
-    { method: "POST" }
-  );
-  await fetch(
-    `${endpoint}&query=${encodeURIComponent(
-      `ALTER TABLE openlit_agents_summary DELETE WHERE agent_key IN (${keys})`
-    )}`,
-    { method: "POST" }
-  );
-  return staleRows.map((r) => r.service_name);
-}
-
-async function bulkInsertSummaries(
-  endpoint: string,
-  rows: Record<string, unknown>[]
-): Promise<void> {
-  if (rows.length === 0) return;
-  const body = rows.map((r) => JSON.stringify(r)).join("\n") + "\n";
-  const res = await fetch(
-    `${endpoint}&query=${encodeURIComponent(
-      "INSERT INTO openlit_agents_summary FORMAT JSONEachRow"
-    )}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body
-    }
-  );
-  if (!res.ok) {
-    throw new Error(
-      `Failed to bulk insert into openlit_agents_summary: ${await res.text()}`
-    );
-  }
-}
-
-async function bulkInsertVersions(
-  endpoint: string,
-  rows: Record<string, unknown>[]
-): Promise<void> {
-  if (rows.length === 0) return;
-  const body = rows.map((r) => JSON.stringify(r)).join("\n") + "\n";
-  const res = await fetch(
-    `${endpoint}&query=${encodeURIComponent(
-      "INSERT INTO openlit_agent_versions FORMAT JSONEachRow"
-    )}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body
-    }
-  );
-  if (!res.ok) {
-    throw new Error(
-      `Failed to bulk insert into openlit_agent_versions: ${await res.text()}`
-    );
-  }
-}
-
 /**
  * Synchronize rulesync agent roles into OpenLIT's ClickHouse tables.
  */
@@ -338,8 +243,25 @@ export async function syncRulesyncAgents(
 
   const catalog = loadRulesyncAgents(repositoryRoot);
 
-  const existingAgents = await fetchExistingAgents(endpoint);
-  const existingVersions = await fetchExistingVersions(endpoint);
+  const existingAgents = indexRowsBy(
+    await selectRows<ExistingAgentRow>(endpoint, AGENTS_SUMMARY_TABLE, [
+      "agent_key",
+      "service_name",
+      "source"
+    ]),
+    (row) => row.service_name
+  );
+  const existingVersions = groupRowsBy(
+    await selectRows<ExistingVersionRow>(endpoint, AGENT_VERSIONS_TABLE, [
+      "agent_key",
+      "version_hash",
+      "version_number",
+      "system_prompt",
+      "tools",
+      "runtime_config"
+    ]),
+    (row) => row.agent_key
+  );
 
   const inserted: string[] = [];
   const updated: string[] = [];
@@ -474,10 +396,14 @@ export async function syncRulesyncAgents(
   const staleAgents = [...existingAgents.values()].filter(
     (row) => row.source === "sdk" && !catalog.has(row.service_name)
   );
-  const removed = await removeStaleAgents(endpoint, staleAgents);
+  const removed = await removeStaleRows(
+    endpoint,
+    staleAgents,
+    STALE_AGENT_ROWS
+  );
 
-  await bulkInsertSummaries(endpoint, summariesToInsert);
-  await bulkInsertVersions(endpoint, versionsToInsert);
+  await insertRows(endpoint, AGENTS_SUMMARY_TABLE, summariesToInsert);
+  await insertRows(endpoint, AGENT_VERSIONS_TABLE, versionsToInsert);
 
   return {
     totalCatalogAgents: catalog.size,

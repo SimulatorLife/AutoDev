@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { DEFAULT_CLICKHOUSE_URL } from "../clickhouse/clickhouse-client.ts";
+
 const DATABASE_PASSWORD_LINE = /^OPENLIT_DB_PASSWORD=(.*)$/mu;
 
 export interface OpenLitClickHouseOptions {
@@ -36,7 +38,7 @@ export function resolveOpenLitClickHouseConnection(
   const clickhouseUrl =
     options.clickhouseUrl ||
     environment.CLICKHOUSE_URL ||
-    "http://127.0.0.1:8123";
+    DEFAULT_CLICKHOUSE_URL;
   const dbUser = options.dbUser || environment.OPENLIT_DB_USER || "default";
   const dbPassword =
     options.dbPassword ||
