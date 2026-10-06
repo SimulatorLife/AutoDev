@@ -243,6 +243,14 @@ function RoleRow({
     // there is no duplicate name to disambiguate because the disabled `<select>`
     // contributes nothing. This is the same shape the Agent Limits steppers use
     // for their current state.
+    //
+    // The carry holds the preserved model only while this provider still offers
+    // it. A model that has since been removed from the configuration has no
+    // `<option>` to render into, so the operator can neither see nor change it,
+    // and the Runtime rejects the whole body when a role names a model it is not
+    // configured for -- which would leave the role permanently un-re-enableable,
+    // trading one unreachable control for another. Carrying nothing instead
+    // clears the model, which the operator can then choose again.
     ...(modelReason === undefined
       ? []
       : [
@@ -250,7 +258,10 @@ function RoleRow({
             key: "preserved-model",
             type: "hidden",
             name: "model",
-            value: assignment.model ?? ""
+            value:
+              assignment.model && models.includes(assignment.model)
+                ? assignment.model
+                : ""
           })
         ]),
     React.createElement(

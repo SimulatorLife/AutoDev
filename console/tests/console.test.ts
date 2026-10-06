@@ -6869,6 +6869,71 @@ test("a Disabled role's rendered form still submits the five fields its route re
   );
 });
 
+test("a Disabled role whose model is no longer configured still submits a re-enable the Runtime accepts", () => {
+  // The Runtime rejects a role body that names a model its provider is not
+  // configured for, and it rejects the whole body rather than the model. A carry
+  // that forwarded such a model would make the role permanently un-re-enableable:
+  // the one control the row exists for would fail every time. The model also has
+  // no <option> to render into, so the operator can neither see nor change it.
+  const base = PROVIDERS_FIXTURE.providers[0]!;
+  const markup = renderToStaticMarkup(
+    React.createElement(ProvidersView, {
+      providers: {
+        ...PROVIDERS_FIXTURE,
+        providers: [
+          {
+            ...base,
+            id: "antigravity",
+            disabled: false,
+            // Keep the fixture shapes and change only what this case needs:
+            // the provider offers exactly one model, and Default is Disabled
+            // while holding a model that is not among them.
+            models: [
+              {
+                model: "gemini-3.8-flash-high",
+                tier: base.models[0]?.tier ?? "default"
+              }
+            ],
+            roles: {
+              ...base.roles,
+              default: {
+                ...base.roles.default,
+                priority: "disabled",
+                model: "a-removed-model"
+              }
+            }
+          }
+        ]
+      },
+      models: { status: "available", data: MODELS_FIXTURE }
+    })
+  );
+  const formTag = formTags(markup).find((tag) =>
+    /data-role-form="antigravity-default"/u.test(tag)
+  );
+  assert.ok(formTag, "the Disabled role form must be present");
+  assert.equal(
+    hiddenValue(markup, formTag, "model"),
+    "",
+    "a model this provider no longer offers must not be carried forward"
+  );
+  const start = markup.indexOf(formTag);
+  const body = markup.slice(start, markup.indexOf("</form>", start));
+  const submitted = [];
+  for (const control of body.matchAll(/<(input|select)\b([^>]*)>/gu)) {
+    const attrs = control[2] ?? "";
+    if (/(?:^|\s)disabled(?=[\s/>=]|$)/u.test(attrs)) continue;
+    const name = /\bname="([^"]*)"/u.exec(attrs)?.[1];
+    if (!name) continue;
+    submitted.push(name);
+  }
+  assert.deepEqual(
+    [...submitted].sort(),
+    ["model", "priority", "provider", "returnTo", "role"],
+    "the role must still submit every field the route demands"
+  );
+});
+
 test("ProvidersView Models tab puts each model's toggle next to the model", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProvidersView, {
