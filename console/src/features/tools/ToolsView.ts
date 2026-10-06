@@ -244,22 +244,28 @@ export function ToolsView({
       id: "name",
       header: "Tool",
       align: "tokens",
+      weight: 300,
       cell: (tool) =>
         React.createElement(
           "div",
-          null,
+          { className: "min-w-0" },
           React.createElement(
             "a",
             {
               href: `/tools/${toolId(tool)}`,
-              className: "font-semibold text-fg font-mono hover:text-accent"
+              className:
+                "block truncate font-semibold text-fg font-mono hover:text-accent",
+              title: toolId(tool)
             },
             tool.server ? `mcp__${tool.server}__${tool.name}` : tool.name
           ),
           tool.description
             ? React.createElement(
                 "p",
-                { className: "text-xs text-fg-muted mt-0.5" },
+                {
+                  className:
+                    "mt-0.5 line-clamp-2 break-words text-xs text-fg-muted"
+                },
                 tool.description
               )
             : null
@@ -268,6 +274,7 @@ export function ToolsView({
     {
       id: "source",
       header: "Source",
+      weight: 170,
       cell: (tool) =>
         React.createElement(
           "div",
@@ -297,6 +304,7 @@ export function ToolsView({
       id: "roles",
       header: "Exposed Roles",
       align: "tokens",
+      weight: 170,
       cell: (tool) =>
         React.createElement(
           "div",
@@ -319,7 +327,8 @@ export function ToolsView({
     },
     {
       id: "edit",
-      header: "Edit Surface",
+      header: "Edit",
+      weight: 110,
       cell: (tool) =>
         tool.canonicalEditSurface
           ? React.createElement(EditSurfaceLink, {
@@ -335,6 +344,7 @@ export function ToolsView({
     {
       id: "availability",
       header: "Availability",
+      weight: 190,
       cell: (tool) => availabilityBadge(tool.availability)
     }
   ];

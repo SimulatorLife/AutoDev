@@ -7,6 +7,11 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import { Button } from "../../components/forms/Button.ts";
+import {
+  FIELD_CONTROL_CLASS,
+  SelectField
+} from "../../components/forms/SelectField.ts";
 import {
   StatusBadge,
   type StatusBadgeVariant
@@ -99,7 +104,7 @@ export function MemoryRecordsView({
     {
       id: "id",
       header: "Record ID",
-      width: "180px",
+      weight: 180,
       cell: (record) =>
         React.createElement(
           "a",
@@ -115,7 +120,7 @@ export function MemoryRecordsView({
     {
       id: "kind",
       header: "Kind",
-      width: "120px",
+      weight: 120,
       cell: (record) =>
         React.createElement(
           "span",
@@ -129,7 +134,7 @@ export function MemoryRecordsView({
     {
       id: "status",
       header: "Lifecycle Status",
-      width: "140px",
+      weight: 140,
       cell: (record) =>
         React.createElement(StatusBadge, {
           status: STATUS_VARIANT_MAP[record.status] ?? NOT_OBSERVED_STATUS,
@@ -149,7 +154,7 @@ export function MemoryRecordsView({
     {
       id: "scope",
       header: "Scope",
-      width: "160px",
+      weight: 160,
       cell: (record) =>
         React.createElement(
           "span",
@@ -163,7 +168,7 @@ export function MemoryRecordsView({
     {
       id: "updatedAt",
       header: "Updated",
-      width: "140px",
+      weight: 140,
       cell: (record) =>
         React.createElement(
           "span",
@@ -201,44 +206,38 @@ export function MemoryRecordsView({
         name: "query",
         defaultValue: currentQuery,
         placeholder: "Search memory claims...",
-        className:
-          "flex-1 min-w-[200px] px-3 py-1.5 rounded bg-input border border-border-strong text-sm text-fg placeholder-fg-muted focus:outline-none focus:border-accent"
+        "aria-label": "Search memory claims",
+        className: `${FIELD_CONTROL_CLASS} flex-1 min-w-[200px] placeholder-fg-muted`
+      }),
+      React.createElement(SelectField, {
+        name: "kind",
+        label: "Kind:",
+        defaultValue: currentKind,
+        testId: "memory-kind",
+        options: [
+          { value: "all", label: "All Kinds" },
+          { value: "procedural", label: "Procedural" },
+          { value: "semantic", label: "Semantic" },
+          { value: "episodic", label: "Episodic" }
+        ]
+      }),
+      React.createElement(SelectField, {
+        name: "status",
+        label: "Status:",
+        defaultValue: currentStatus,
+        testId: "memory-status",
+        options: [
+          { value: "all", label: "All Statuses" },
+          { value: "active", label: "Active" },
+          { value: "proposed", label: "Proposed" },
+          { value: "invalidated", label: "Invalidated" },
+          { value: "superseded", label: "Superseded" },
+          { value: "uncertain", label: "Uncertain" }
+        ]
       }),
       React.createElement(
-        "select",
-        {
-          name: "kind",
-          defaultValue: currentKind,
-          className:
-            "px-3 py-1.5 rounded bg-input border border-border-strong text-sm text-fg-secondary focus:outline-none focus:border-accent"
-        },
-        React.createElement("option", { value: "all" }, "All Kinds"),
-        React.createElement("option", { value: "procedural" }, "Procedural"),
-        React.createElement("option", { value: "semantic" }, "Semantic"),
-        React.createElement("option", { value: "episodic" }, "Episodic")
-      ),
-      React.createElement(
-        "select",
-        {
-          name: "status",
-          defaultValue: currentStatus,
-          className:
-            "px-3 py-1.5 rounded bg-input border border-border-strong text-sm text-fg-secondary focus:outline-none focus:border-accent"
-        },
-        React.createElement("option", { value: "all" }, "All Statuses"),
-        React.createElement("option", { value: "active" }, "Active"),
-        React.createElement("option", { value: "proposed" }, "Proposed"),
-        React.createElement("option", { value: "invalidated" }, "Invalidated"),
-        React.createElement("option", { value: "superseded" }, "Superseded"),
-        React.createElement("option", { value: "uncertain" }, "Uncertain")
-      ),
-      React.createElement(
-        "button",
-        {
-          type: "submit",
-          className:
-            "px-4 py-1.5 rounded bg-accent text-sm font-medium text-fg-inverse hover:brightness-110 transition-colors"
-        },
+        Button,
+        { type: "submit", variant: "primary", testId: "memory-filter" },
         "Filter"
       ),
       React.createElement(

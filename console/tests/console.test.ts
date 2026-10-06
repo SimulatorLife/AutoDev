@@ -740,14 +740,61 @@ test("DataTable renders table with columns and data", () => {
   assert.ok(markup.includes("Alpha"));
   assert.ok(markup.includes("Beta"));
   assert.ok(markup.includes("<table"));
-  assert.match(markup, /<td class="[^"]*truncate[^"]*">1<\/td>/);
+  assert.match(markup, /<td[^>]*class="[^"]*truncate[^"]*"[^>]*>1<\/td>/);
   // A `tokens` column wraps between items and never splits a token, and it
-  // claims real width so the browser cannot collapse it to one chip per line.
+  // claims a larger share of the width than a plain label so the browser
+  // cannot collapse it to one chip per line.
   assert.match(markup, /class="[^"]*whitespace-normal break-normal[^"]*"/);
-  assert.match(markup, /style="width:14rem"/);
-  // Fixed layout is what keeps a long cell from pushing the table past the
-  // page and forcing a horizontal scroll at ordinary desktop widths.
+  // Column widths are relative shares resolved to percentages, so a table
+  // fills its container and a too-wide column set shrinks proportionally
+  // instead of forcing a horizontal scroll.
+  assert.ok(
+    Array.from(markup.matchAll(/style="width:([0-9.]+)%"/g)).length > 0,
+    "every column must resolve to a percentage of the table width"
+  );
+  // Fixed layout is what makes those percentages authoritative: without it a
+  // long cell would grow its column past the declared share.
   assert.match(markup, /<table class="[^"]*table-fixed[^"]*"/);
+});
+
+test("DataTable distributes column width by weight, not by absolute length", () => {
+  interface TestRow {
+    readonly id: string;
+  }
+  const markup = renderToStaticMarkup(
+    DataTable<TestRow>({
+      data: [{ id: "1" }],
+      columns: [
+        { id: "wide", header: "Wide", cell: (r: TestRow) => r.id, weight: 300 },
+        {
+          id: "narrow",
+          header: "Narrow",
+          cell: (r: TestRow) => r.id,
+          weight: 100
+        }
+      ],
+      keyExtractor: (r: TestRow) => r.id
+    })
+  );
+  // Header and body cells must agree, so a column cannot change width when the
+  // table switches between a header-only and a populated render.
+  const headerWidths = Array.from(
+    markup.matchAll(/<th [^>]*style="width:([0-9.]+)%"/g),
+    (match) => Number(match[1])
+  );
+  const cellWidths = Array.from(
+    markup.matchAll(/<td [^>]*style="width:([0-9.]+)%"/g),
+    (match) => Number(match[1])
+  );
+  assert.equal(headerWidths.length, 2);
+  assert.deepEqual(cellWidths, headerWidths);
+  assert.equal(headerWidths[0], 75);
+  assert.equal(headerWidths[1], 25);
+  // The sums must total 100% so the table never overflows its container.
+  assert.equal(
+    headerWidths.reduce((sum, value) => sum + value, 0),
+    100
+  );
 });
 
 test("DataTable clamps prose cells on an inner box, not the table cell", () => {
@@ -775,7 +822,7 @@ test("DataTable clamps prose cells on an inner box, not the table cell", () => {
   // inside the cell; clamping the `<td>` itself breaks its table-cell layout.
   assert.match(
     markup,
-    /<td[^>]*class="[^"]*whitespace-normal break-words[^"]*"><div class="line-clamp-2">/
+    /<td[^>]*class="[^"]*whitespace-normal break-words[^"]*"[^>]*><div class="line-clamp-2">/
   );
 });
 
@@ -3185,8 +3232,12 @@ test("AgentsView shows read-only provider summaries that link to Providers", () 
   assert.match(markup, /router-uuid-test/);
   assert.match(markup, /data-agent-providers="orchestrator"/);
   assert.match(markup, /href="\/providers\/codex"/);
-  // codex is disabled for the orchestrator role the agent runs as.
-  assert.match(markup, />Disabled</);
+  // codex is disabled for the orchestrator role the agent runs as. The summary
+  // carries that as a status mark rather than a spelled-out badge, so density
+  // does not cost the state: it must stay available to assistive technology
+  // and as a hover title.
+  assert.match(markup, /aria-label="Disabled"/);
+  assert.match(markup, /data-status="unavailable"/);
   // Provider controls and routing live in Providers, not Agents.
   assert.equal(markup.includes("<form"), false);
   assert.equal(markup.includes('data-section="providers-routing"'), false);
@@ -3843,11 +3894,28 @@ test("ProvidersView puts each provider's role toggles in its own row", () => {
     }
   }
   // The read-only codex subagent control stays in place, disabled, with why.
-  const codexSubagent = markup.slice(
-    markup.indexOf('data-enablement-target="codex/subagent"')
+  // The control's state, target, and unavailable reason all live on the one
+  // button, so the owning tag is the button's own opening tag.
+  const codexSubagentIndex = markup.indexOf(
+    'data-enablement-target="codex/subagent"'
   );
-  assert.match(codexSubagent, /<button type="submit" disabled=""/);
-  assert.match(codexSubagent, /Runtime reports this setting as read-only/);
+  assert.ok(codexSubagentIndex > 0, "codex subagent control must render");
+  const codexSubagentMarkup = markup.slice(
+    markup.lastIndexOf("<button", codexSubagentIndex)
+  );
+  const codexSubagentTagEnd = codexSubagentMarkup.indexOf(">");
+  const codexSubagentTag =
+    codexSubagentTagEnd === -1
+      ? ""
+      : codexSubagentMarkup.slice(0, codexSubagentTagEnd);
+  assert.ok(codexSubagentTag.length > 0);
+  assert.ok(codexSubagentTag.includes('type="submit"'));
+  assert.match(codexSubagentTag, /disabled=""/);
+  assert.match(codexSubagentTag, /data-enablement-unavailable="true"/);
+  assert.match(
+    codexSubagentTag,
+    /title="Runtime reports this setting as read-only\."/
+  );
 
   assert.match(markup, /Cooling down \(session_limit\)/);
   assert.match(markup, /Missing LITELLM_API_KEY/);

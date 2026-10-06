@@ -47,7 +47,7 @@ export function PromptsView({
     {
       id: "name",
       header: "Command / Prompt",
-      width: "13rem",
+      weight: 208,
       cell: (prompt) =>
         React.createElement(
           "a",
@@ -65,7 +65,7 @@ export function PromptsView({
     {
       id: "kind",
       header: "Type",
-      width: "6rem",
+      weight: 96,
       cell: (prompt) => {
         const isRole = prompt.kind === "role" || prompt.path.includes("roles");
         return React.createElement(StatusBadge, {
@@ -77,7 +77,7 @@ export function PromptsView({
     {
       id: "path",
       header: "Canonical Source",
-      width: "13rem",
+      weight: 208,
       cell: (prompt) =>
         React.createElement(
           "span",
@@ -90,7 +90,7 @@ export function PromptsView({
       header: "Description",
       align: "prose",
       clampLines: 2,
-      width: "20rem",
+      weight: 320,
       cell: (prompt) => {
         const description = prompt.description;
         return React.createElement(
@@ -107,7 +107,7 @@ export function PromptsView({
       id: "related",
       header: "Related",
       align: "tokens",
-      width: "10rem",
+      weight: 160,
       cell: (prompt) => {
         const isRole = prompt.kind === "role" || prompt.path.includes("roles");
         return React.createElement(

@@ -31,7 +31,7 @@ export function PermissionsView({
     {
       id: "role",
       header: "Agent Role",
-      width: "11rem",
+      weight: 176,
       cell: (r) =>
         React.createElement(
           "span",
@@ -42,7 +42,7 @@ export function PermissionsView({
     {
       id: "sandboxMode",
       header: "Sandbox Mode",
-      width: "10rem",
+      weight: 160,
       cell: (r) =>
         React.createElement(
           "span",

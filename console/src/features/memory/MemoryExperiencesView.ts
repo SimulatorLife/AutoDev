@@ -37,7 +37,7 @@ export function MemoryExperiencesView({
     {
       id: "id",
       header: "Experience ID",
-      width: "180px",
+      weight: 180,
       cell: (exp) =>
         React.createElement(
           "a",
@@ -53,7 +53,7 @@ export function MemoryExperiencesView({
     {
       id: "task",
       header: "Task / Run",
-      width: "200px",
+      weight: 200,
       cell: (exp) =>
         React.createElement(
           "div",
@@ -73,7 +73,7 @@ export function MemoryExperiencesView({
     {
       id: "role",
       header: "Agent Role",
-      width: "130px",
+      weight: 130,
       cell: (exp) =>
         React.createElement(
           "span",
@@ -87,7 +87,7 @@ export function MemoryExperiencesView({
     {
       id: "outcome",
       header: "Outcome",
-      width: "120px",
+      weight: 120,
       cell: (exp) =>
         React.createElement(
           "span",
@@ -106,7 +106,7 @@ export function MemoryExperiencesView({
     {
       id: "mode",
       header: "Memory Mode",
-      width: "130px",
+      weight: 130,
       cell: (exp) =>
         React.createElement(
           "span",
@@ -117,7 +117,7 @@ export function MemoryExperiencesView({
     {
       id: "validation",
       header: "Validation",
-      width: "120px",
+      weight: 120,
       cell: (exp) => {
         const state = exp.validation?.state ?? "not_run";
         return React.createElement(StatusBadge, {
@@ -129,7 +129,7 @@ export function MemoryExperiencesView({
     {
       id: "startedAt",
       header: "Started At",
-      width: "150px",
+      weight: 150,
       cell: (exp) =>
         React.createElement(
           "span",

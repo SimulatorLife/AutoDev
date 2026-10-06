@@ -79,45 +79,60 @@ function providerColumns(
     {
       id: "provider",
       header: "Provider",
-      width: "9rem",
+      weight: 120,
       cell: (provider) =>
         React.createElement(ProviderLink, { provider: provider.id })
     },
     {
-      id: "orchestrator",
-      header: "Orchestrator",
-      width: "9rem",
+      // One column for both roles rather than two near-identical columns: the
+      // enablement control is the same for each, and a single column keeps
+      // room for the model and tier chips that actually need width.
+      id: "roles",
+      header: "Role enablement",
+      weight: 175,
+      align: "tokens",
       cell: (provider) =>
-        React.createElement(ProviderRoleToggle, {
-          provider: provider.id,
-          role: "orchestrator",
-          enablement: provider.roles.orchestrator,
-          returnTo
-        })
-    },
-    {
-      id: "subagent",
-      header: "Subagent",
-      width: "8rem",
-      cell: (provider) =>
-        React.createElement(ProviderRoleToggle, {
-          provider: provider.id,
-          role: "subagent",
-          enablement: provider.roles.subagent,
-          returnTo
-        })
+        React.createElement(
+          "ul",
+          {
+            className: "flex flex-col list-none gap-1.5 p-0 m-0",
+            "data-provider-roles": provider.id
+          },
+          ...(
+            [
+              ["orchestrator", "Orchestrator"],
+              ["subagent", "Subagent"]
+            ] as const
+          ).map(([role, label]) =>
+            React.createElement(
+              "li",
+              { key: role, className: "flex items-center gap-2" },
+              React.createElement(
+                "span",
+                { className: "w-20 shrink-0 truncate text-xs text-fg-muted" },
+                label
+              ),
+              React.createElement(ProviderRoleToggle, {
+                provider: provider.id,
+                role,
+                enablement: provider.roles[role],
+                returnTo
+              })
+            )
+          )
+        )
     },
     {
       id: "health",
       header: "Health",
-      width: "8rem",
+      weight: 120,
       cell: (provider) =>
         React.createElement(ProviderHealthBadge, { health: provider.health })
     },
     {
       id: "credential",
       header: "Credential",
-      width: "13rem",
+      weight: 185,
       cell: (provider) =>
         React.createElement(CredentialBadge, {
           credential: provider.credential
@@ -127,6 +142,7 @@ function providerColumns(
       id: "models",
       header: "Models",
       align: "tokens",
+      weight: 226,
       cell: (provider) =>
         React.createElement(ChipList, {
           items: uniqueModels(provider),
@@ -148,6 +164,7 @@ function providerColumns(
       id: "priority",
       header: "Tier priority",
       align: "tokens",
+      weight: 170,
       cell: (provider) => TierPriorityList({ provider })
     }
   ];
@@ -204,7 +221,7 @@ function modelColumns(returnTo: string): ColumnDef<ControlApiModelRecord>[] {
     {
       id: "model",
       header: "Model",
-      width: "18rem",
+      weight: 288,
       cell: (model) =>
         React.createElement(
           "div",

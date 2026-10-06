@@ -50,6 +50,7 @@ export function AgentsView({
     {
       id: "role",
       header: "Role / Agent",
+      weight: 215,
       cell: (agent) =>
         React.createElement(
           "a",
@@ -57,7 +58,8 @@ export function AgentsView({
             href: `/agents/${encodeURIComponent(agent.id)}`,
             className:
               "font-semibold text-fg underline-offset-4 hover:underline",
-            "aria-label": `Open agent ${agent.role}`
+            "aria-label": `Open agent ${agent.role}`,
+            title: `${agent.role} (${agent.kind})`
           },
           React.createElement("span", null, agent.role),
           React.createElement(
@@ -70,6 +72,7 @@ export function AgentsView({
     {
       id: "primaryModel",
       header: "Primary Model",
+      weight: 210,
       cell: (agent) =>
         React.createElement(
           "span",
@@ -80,39 +83,44 @@ export function AgentsView({
     {
       id: "providers",
       header: "Providers",
-      width: "16rem",
+      align: "tokens",
+      weight: 190,
       cell: (agent) =>
         React.createElement(AgentProviderSummary, { agent, providers })
     },
     {
       id: "status",
       header: "Status",
+      weight: 136,
       cell: (agent) =>
         React.createElement(StatusBadge, { status: agent.status })
     },
     {
       id: "convergence",
       header: "Convergence",
+      weight: 152,
       cell: (agent) =>
         React.createElement(StatusBadge, { status: agent.convergence })
     },
     {
       id: "skillsCount",
       header: "Skills",
+      weight: 100,
       cell: (agent) =>
         React.createElement(
           "span",
-          { className: "text-xs text-fg-secondary" },
+          { className: "text-xs text-fg-secondary tabular-nums" },
           agent.tools.filter((tool) => tool.type === "skill").length
         )
     },
     {
       id: "mcpsCount",
       header: "MCPs",
+      weight: 84,
       cell: (agent) =>
         React.createElement(
           "span",
-          { className: "text-xs text-fg-secondary" },
+          { className: "text-xs text-fg-secondary tabular-nums" },
           agent.tools.filter((tool) => tool.type === "mcp").length
         )
     }

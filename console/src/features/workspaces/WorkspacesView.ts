@@ -30,6 +30,7 @@ export function WorkspacesView({
     {
       id: "id",
       header: "Repository / Workspace",
+      weight: 220,
       cell: (ws) =>
         React.createElement(
           "span",
@@ -40,6 +41,7 @@ export function WorkspacesView({
     {
       id: "baseBranch",
       header: "Base Branch",
+      weight: 180,
       cell: (ws) =>
         React.createElement(
           "span",
@@ -53,6 +55,7 @@ export function WorkspacesView({
     {
       id: "enablement",
       header: "Enablement",
+      weight: 140,
       cell: (ws) =>
         React.createElement(StatusBadge, {
           status: "configured",
@@ -62,6 +65,7 @@ export function WorkspacesView({
     {
       id: "agentRoles",
       header: "Role Scope",
+      weight: 200,
       cell: (ws) =>
         React.createElement(
           "span",
@@ -84,6 +88,7 @@ export function WorkspacesView({
     {
       id: "availability",
       header: "Availability",
+      weight: 160,
       cell: () =>
         React.createElement(StatusBadge, {
           status: "not-observed",

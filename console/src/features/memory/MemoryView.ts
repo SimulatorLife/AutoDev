@@ -8,6 +8,8 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { Button } from "../../components/forms/Button.ts";
+import { SelectField } from "../../components/forms/SelectField.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
 import { MemoryCohortsView } from "./MemoryCohortsView.ts";
 import { MemoryExperiencesView } from "./MemoryExperiencesView.ts";
@@ -99,27 +101,14 @@ export function MemoryView({
       "data-memory-session-cohorts-observed":
         sessionCohorts === null ? "false" : "true"
     },
-    // Header
+    // Scope controls. The resource title and its summary live in the shared
+    // shell header, so this row carries controls only.
     React.createElement(
       "div",
       { className: "flex flex-col gap-2" },
       React.createElement(
         "div",
-        { className: "flex flex-wrap items-center justify-between gap-4" },
-        React.createElement(
-          "div",
-          null,
-          React.createElement(
-            "h1",
-            { className: "text-2xl font-bold tracking-tight text-fg" },
-            "Memory"
-          ),
-          React.createElement(
-            "p",
-            { className: "text-sm text-fg-muted mt-1" },
-            "Governed AutoDev memory operator surface: durable claims, raw experiences, lifecycle governance, and bounded outcome cohorts."
-          )
-        ),
+        { className: "flex flex-wrap items-center gap-3" },
         // Workspace selector submits a bounded scope change through the
         // existing URL-driven Memory page. Retain filters and time range,
         // but intentionally clear selected record/experience detail on scope
@@ -148,35 +137,19 @@ export function MemoryView({
                   value
                 })
               ),
+              React.createElement(SelectField, {
+                name: "workspaceId",
+                label: "Workspace:",
+                defaultValue: currentWorkspaceId,
+                testId: "memory-workspace",
+                options: workspaces.map((ws) => ({
+                  value: ws.id,
+                  label: ws.id
+                }))
+              }),
               React.createElement(
-                "label",
-                { htmlFor: "memory-workspace", className: "text-fg-muted" },
-                "Workspace:"
-              ),
-              React.createElement(
-                "select",
-                {
-                  id: "memory-workspace",
-                  name: "workspaceId",
-                  defaultValue: currentWorkspaceId,
-                  className:
-                    "px-3 py-1.5 rounded bg-input border border-border-strong text-xs font-mono text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                },
-                workspaces.map((ws) =>
-                  React.createElement(
-                    "option",
-                    { key: ws.id, value: ws.id },
-                    ws.id
-                  )
-                )
-              ),
-              React.createElement(
-                "button",
-                {
-                  type: "submit",
-                  className:
-                    "rounded border border-border-strong bg-surface-raised px-2 py-1.5 text-xs font-medium text-fg hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                },
+                Button,
+                { type: "submit", testId: "memory-workspace-apply" },
                 "Apply"
               )
             )

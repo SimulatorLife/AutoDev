@@ -59,7 +59,7 @@ export function SkillsView({
     {
       id: "name",
       header: "Skill Name",
-      width: "24rem",
+      weight: 384,
       // The description below is prose that must wrap inside the column, so
       // this cell opts out of the default single-line truncation.
       align: "prose",
@@ -85,16 +85,25 @@ export function SkillsView({
     {
       id: "path",
       header: "Path",
-      width: "14rem",
-      cell: (skill) =>
-        React.createElement(
+      weight: 288,
+      cell: (skill) => {
+        // A truncated head (".rulesync/skills/autodev-code…") hides the part
+        // that distinguishes one skill from another, so the column keeps the
+        // leading root for context and always renders the trailing segments.
+        const segments = skill.path.split("/");
+        const root = segments[0] ?? "";
+        const tail = segments.slice(-2).join("/");
+        const shorthand =
+          segments.length > 2 ? `${root}/…/${tail}` : skill.path;
+        return React.createElement(
           "span",
           {
-            className: "block font-mono text-xs text-fg-muted",
+            className: "block truncate font-mono text-xs text-fg-muted",
             title: skill.path
           },
-          skill.path
-        )
+          shorthand
+        );
+      }
     },
     {
       id: "eligibleRoles",
@@ -111,7 +120,7 @@ export function SkillsView({
     },
     {
       id: "status",
-      header: "Configured",
+      header: "State",
       cell: () =>
         React.createElement(StatusBadge, {
           status: "configured",

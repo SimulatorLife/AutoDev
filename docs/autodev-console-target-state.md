@@ -115,6 +115,8 @@ Advanced diagnostics belong in secondary tabs/drawers unless they are the page's
 
 Shared primitives must cover at least navigation, page headers, breadcrumbs/context where needed, filters, tables, tabs, stat summaries, charts, status badges, forms, dialogs/drawers, empty/loading/error/unavailable states, permission matrices, activity/history, and code/config editors.
 
+Table columns declare a relative width weight, never an absolute CSS length. The shared table resolves weights to percentages of its own width, so a table fills its container and shrinks proportionally instead of pushing the page into horizontal scroll. A column's weight must be large enough for its own header: a header that renders as an ellipsis is a layout defect, not acceptable truncation. Discrete cell content (chips, badges, model ids, environment variable names) stays atomic and wraps between items, never mid-token; flowing prose wraps on word boundaries and is clamped; single-value cells truncate with the full value reachable on hover.
+
 ### One canonical edit surface
 
 Every domain concept has one canonical editable surface. Other pages may show a compact read-only summary and link to that surface.

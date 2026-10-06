@@ -17,15 +17,16 @@ export interface ColumnDef<T> {
   readonly header: string;
   readonly cell: (row: T) => React.ReactNode;
   /**
-   * Column width as a CSS length, applied to the header and every body cell.
+   * Relative share of the table's width. Weights are resolved to
+   * percentages of the table's own width, so a table always fills its
+   * container and a column set that is too wide shrinks proportionally
+   * instead of pushing the table into a horizontal scroll.
    *
-   * The table uses `table-layout: fixed`, so a declared width is the column's
-   * real width and content is laid out inside it instead of expanding the
-   * column. Columns without a declared width share whatever horizontal space
-   * is left over. This is what keeps a dense operator table inside the page
-   * instead of forcing a horizontal scroll at ordinary desktop widths.
+   * Absolute lengths cannot work here: with `table-layout: fixed` the browser
+   * treats a declared `width` as a hard minimum and grows the table past its
+   * container rather than scaling it down.
    */
-  readonly width?: string | undefined;
+  readonly weight?: number | undefined;
   readonly align?: ColumnAlign | undefined;
   /** Clamp `prose` cells to this many lines. Requires `align: "prose"`. */
   readonly clampLines?: number | undefined;
@@ -40,18 +41,33 @@ export interface DataTableProps<T> {
 }
 
 /**
- * Width granted to a `tokens` column when the view does not declare one.
- * Below roughly this width a list of chips degrades into one chip per line,
+ * Width share granted to a `tokens` column when the view does not declare one.
+ * Below roughly this share a list of chips degrades into one chip per line,
  * which turns a dense operator table into a wall of vertical stacks.
+ *
+ * These defaults are expressed on the same scale the views author weights on
+ * (a declared weight is roughly the column's share in pixels). A default that
+ * was much smaller would leave every undeclared column as a sliver next to a
+ * column that declared a few hundred units.
  */
-const TOKENS_COLUMN_WIDTH = "14rem";
+const TOKENS_COLUMN_WEIGHT = 170;
+
+/**
+ * Weight granted to a column that declares nothing: enough for a short label
+ * plus its cell padding.
+ */
+const DEFAULT_COLUMN_WEIGHT = 100;
 
 /**
  * Floor for the table itself. The table takes the full width of its wrapper,
- * but never squeezes below this, so a narrow window scrolls horizontally
+ * but never squeezes below this, so a very narrow window scrolls horizontally
  * instead of crushing every column into an unreadable sliver.
+ *
+ * The floor is below the narrowest realistic content area (a card-padded
+ * column inside a collapsed-sidebar layout) so it does not introduce a scroll
+ * on a window that otherwise fits.
  */
-const TABLE_MIN_WIDTH_CLASS = "min-w-[56rem]";
+const TABLE_MIN_WIDTH_CLASS = "min-w-[48rem]";
 
 function cellClassName(column: ColumnDef<never>): string {
   const align = column.align ?? "truncate";
@@ -61,24 +77,63 @@ function cellClassName(column: ColumnDef<never>): string {
 }
 
 /**
+ * Clamp classes written out in full rather than interpolated into a class
+ * name: Tailwind only emits rules for class strings it can see in the source,
+ * so a dynamically built `line-clamp-${n}` would ship without any CSS.
+ */
+const LINE_CLAMP_CLASSES: Readonly<Record<number, string>> = {
+  1: "line-clamp-1",
+  2: "line-clamp-2",
+  3: "line-clamp-3",
+  4: "line-clamp-4",
+  5: "line-clamp-5",
+  6: "line-clamp-6"
+};
+
+/**
  * Line clamp for a `prose` cell.
  *
  * `-webkit-line-clamp` only takes effect on a box display, so the clamp is
  * applied to a wrapper *inside* the cell rather than to the `<td>` itself: a
  * clamped table cell stops laying out as a table cell and the row height stops
- * tracking the content. Returns `null` when the column is not clamped.
+ * tracking the content. Returns `null` when the column is not clamped, or when
+ * it asks for a line count this component has no class for.
  */
 function proseClampClass(column: ColumnDef<never>): string | null {
   if ((column.align ?? "truncate") !== "prose") return null;
   if (column.clampLines === undefined) return null;
-  return `line-clamp-${Math.max(1, Math.trunc(column.clampLines))}`;
+  return LINE_CLAMP_CLASSES[Math.trunc(column.clampLines)] ?? null;
 }
 
-function columnWidth(column: ColumnDef<never>): string | undefined {
-  if (column.width !== undefined) return column.width;
+/** Effective width share for a column. */
+function columnWeight(column: ColumnDef<never>): number {
+  if (column.weight !== undefined && column.weight > 0) return column.weight;
   return (column.align ?? "truncate") === "tokens"
-    ? TOKENS_COLUMN_WIDTH
-    : undefined;
+    ? TOKENS_COLUMN_WEIGHT
+    : DEFAULT_COLUMN_WEIGHT;
+}
+
+/**
+ * Resolve every column to a percentage of the table width. Percentages are
+ * relative, so the table keeps filling its container at any viewport size and
+ * a column set that needs more room than is available shrinks proportionally
+ * rather than overflowing.
+ */
+function columnWidths(columns: readonly ColumnDef<never>[]): string[] {
+  const weights = columns.map((column) => columnWeight(column));
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  // Rounded so the emitted markup stays readable and stable; the last column
+  // absorbs the rounding remainder so the shares still total 100%.
+  const rounded = weights.map(
+    (weight) => Math.round((weight / total) * 10_000) / 100
+  );
+  const last = rounded.length - 1;
+  rounded[last] =
+    Math.round(
+      (100 - rounded.slice(0, last).reduce((sum, value) => sum + value, 0)) *
+        100
+    ) / 100;
+  return rounded.map((value) => `${value}%`);
 }
 
 export function DataTable<T>({
@@ -99,7 +154,7 @@ export function DataTable<T>({
     );
   }
 
-  const widths = columns.map((col) => columnWidth(col as ColumnDef<never>));
+  const widths = columnWidths(columns as readonly ColumnDef<never>[]);
   const clamps = columns.map((col) => proseClampClass(col as ColumnDef<never>));
 
   return React.createElement(
@@ -111,9 +166,10 @@ export function DataTable<T>({
     React.createElement(
       "table",
       {
-        // Fixed layout keeps the table inside the page: a declared width is a
-        // real width, and undeclared columns share the remaining space, so no
-        // single long cell can push the table past the viewport.
+        // Fixed layout plus percentage widths keeps the table inside its
+        // container at every viewport: columns hold their declared ratio and
+        // shrink proportionally when the set needs more room than is
+        // available, so no single long cell forces a horizontal scroll.
         className: `w-full ${TABLE_MIN_WIDTH_CLASS} table-fixed divide-y divide-border text-left text-sm`
       },
       React.createElement(
@@ -130,10 +186,7 @@ export function DataTable<T>({
                 scope: "col",
                 className:
                   "px-4 py-3 text-xs uppercase tracking-wider truncate",
-                style: (() => {
-                  const width = widths[index];
-                  return width === undefined ? undefined : { width };
-                })()
+                style: { width: widths[index] }
               },
               col.header
             )
@@ -162,13 +215,10 @@ export function DataTable<T>({
                 "td",
                 {
                   key: col.id,
-                  style: (() => {
-                    const width = widths[index];
-                    return width === undefined ? undefined : { width };
-                  })(),
                   className: `px-4 py-3 align-top ${cellClassName(
                     col as ColumnDef<never>
-                  )}`
+                  )}`,
+                  style: { width: widths[index] }
                 },
                 clamp === null
                   ? content

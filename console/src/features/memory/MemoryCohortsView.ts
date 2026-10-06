@@ -47,7 +47,7 @@ export function MemoryCohortsView({
     {
       id: "mode",
       header: "Assigned Mode",
-      width: "160px",
+      weight: 160,
       cell: (cell) =>
         React.createElement(
           "span",
@@ -58,7 +58,7 @@ export function MemoryCohortsView({
     {
       id: "status",
       header: "Reporting Status",
-      width: "160px",
+      weight: 160,
       cell: (cell) => {
         const isReported = cell.outcomeKind !== null;
         return React.createElement(
@@ -77,7 +77,7 @@ export function MemoryCohortsView({
     {
       id: "outcome",
       header: "Outcome",
-      width: "140px",
+      weight: 140,
       cell: (cell) =>
         React.createElement(
           "span",
@@ -96,7 +96,7 @@ export function MemoryCohortsView({
     {
       id: "count",
       header: "Session Count",
-      width: "140px",
+      weight: 140,
       cell: (cell) =>
         React.createElement(
           "span",
@@ -110,7 +110,7 @@ export function MemoryCohortsView({
     {
       id: "mode",
       header: "Assigned Mode",
-      width: "160px",
+      weight: 160,
       cell: (cell) =>
         React.createElement(
           "span",
@@ -121,7 +121,7 @@ export function MemoryCohortsView({
     {
       id: "sessionCardinality",
       header: "Session Cardinality",
-      width: "180px",
+      weight: 180,
       cell: (cell) =>
         React.createElement(
           "span",
@@ -132,7 +132,7 @@ export function MemoryCohortsView({
     {
       id: "useKind",
       header: "Curator Assessment",
-      width: "190px",
+      weight: 190,
       cell: (cell) =>
         React.createElement(
           "span",
@@ -147,7 +147,7 @@ export function MemoryCohortsView({
     {
       id: "exposureCount",
       header: "Eligible Exposures",
-      width: "180px",
+      weight: 180,
       cell: (cell) =>
         React.createElement(
           "span",

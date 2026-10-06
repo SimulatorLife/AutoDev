@@ -3,7 +3,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
-import { ChipList } from "../../components/tables/Chips.ts";
+import { Chip, ChipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable
@@ -33,12 +33,15 @@ export function McpsView({
     {
       id: "name",
       header: "Server Name",
+      weight: 150,
       cell: (server) =>
         React.createElement(
           "a",
           {
-            className: "font-semibold text-fg font-mono hover:text-accent",
-            href: `/mcps/${encodeURIComponent(server.name)}`
+            className:
+              "block truncate font-semibold text-fg font-mono hover:text-accent",
+            href: `/mcps/${encodeURIComponent(server.name)}`,
+            title: server.name
           },
           server.name
         )
@@ -47,6 +50,7 @@ export function McpsView({
       id: "roles",
       header: "Configured roles",
       align: "tokens",
+      weight: 192,
       cell: (server) =>
         React.createElement(ChipList, {
           items: server.roles,
@@ -56,7 +60,8 @@ export function McpsView({
     },
     {
       id: "declaration",
-      header: "RuleSync Declaration",
+      header: "RuleSync",
+      weight: 110,
       cell: (server) =>
         React.createElement(StatusBadge, {
           status: server.declared ? "configured" : "invalid",
@@ -66,6 +71,7 @@ export function McpsView({
     {
       id: "default-state",
       header: "Default State",
+      weight: 152,
       cell: (server) =>
         React.createElement(StatusBadge, {
           status: server.enabled === null ? NOT_OBSERVED_STATUS : "configured",
@@ -80,24 +86,36 @@ export function McpsView({
     {
       id: "transport",
       header: "Transport",
+      weight: 130,
       cell: (server) => server.transport.toUpperCase()
     },
     {
       id: "targets",
-      header: "Explicit Target Overrides",
+      header: "Overrides",
+      weight: 224,
+      align: "tokens",
       cell: (server) =>
         server.targetOverrides.length === 0
-          ? "None"
-          : server.targetOverrides
-              .map(
+          ? React.createElement(
+              "span",
+              { className: "text-xs text-fg-muted" },
+              "None"
+            )
+          : React.createElement(ChipList, {
+              items: server.targetOverrides.map(
                 ({ target, enabled }) =>
                   `${target}: ${enabled ? "enabled" : "disabled"}`
-              )
-              .join(", ")
+              ),
+              emptyLabel: "None",
+              testId: "mcp-target-overrides",
+              renderItem: (override) =>
+                React.createElement(Chip, { className: "font-mono" }, override)
+            })
     },
     {
       id: "status",
       header: "Connection",
+      weight: 130,
       cell: () =>
         React.createElement(StatusBadge, {
           status: NOT_OBSERVED_STATUS,
