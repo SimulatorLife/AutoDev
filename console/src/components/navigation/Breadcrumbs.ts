@@ -30,7 +30,7 @@ export interface BreadcrumbsProps {
 }
 
 const ITEM_LINK_CLASS =
-  "rounded-sm text-accent hover:brightness-110 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+  "rounded-sm text-accent hover:brightness-110 hover:underline ";
 const ITEM_PLAIN_CLASS = "rounded-sm text-fg font-medium";
 const SEPARATOR_CLASS = "mx-2 select-none text-fg-muted";
 

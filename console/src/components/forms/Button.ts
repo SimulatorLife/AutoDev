@@ -10,11 +10,11 @@ import React from "react";
 
 /** The one primary action in a group: applying, saving, confirming. */
 export const PRIMARY_BUTTON_CLASS =
-  "rounded border border-transparent bg-accent px-3 py-1.5 text-sm font-medium text-fg-inverse transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60";
+  "rounded border border-transparent bg-accent px-3 py-1.5 text-sm font-medium text-fg-inverse transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60";
 
 /** A supporting action: secondary filters, cancel, and inline toggles. */
 export const SECONDARY_BUTTON_CLASS =
-  "rounded border border-border-strong bg-surface-raised px-3 py-1.5 text-sm font-medium text-fg transition-colors hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60";
+  "rounded border border-border-strong bg-surface-raised px-3 py-1.5 text-sm font-medium text-fg transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60";
 
 export interface ButtonProps {
   /** Optional here so callers can pass the label as `createElement`'s child. */

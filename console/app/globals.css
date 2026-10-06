@@ -54,6 +54,23 @@ html {
   color-scheme: dark;
 }
 
+/*
+ * One canonical focus ring for the whole Console.
+ *
+ * Keyboard focus is a property of the design system, not of each component: the
+ * dark-only palette ships a single accent token, so the ring is derived from it
+ * once here. Components must not re-declare this. Without the rule, every
+ * focusable element that never declared a focus style — navigation links, table
+ * links, chips, and most controls — falls back to the user agent's blue ring,
+ * which is not a Console token and does not sit correctly against the slate
+ * canvas. `:where` keeps this at zero specificity so a deliberate component
+ * override can still win.
+ */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
 html,
 body {
   height: 100%;

@@ -44,8 +44,7 @@ export function AppNav({
   const brandLinkProps: NavigationLinkProps = {
     href: "/agents",
     "data-nav-brand": "autodev",
-    className:
-      "flex items-center gap-2 text-inherit no-underline rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+    className: "flex items-center gap-2 text-inherit no-underline rounded-sm "
   };
 
   return React.createElement(

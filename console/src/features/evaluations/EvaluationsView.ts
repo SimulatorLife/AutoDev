@@ -56,7 +56,7 @@ function traceReference(
     {
       href: traceHref(evaluation.spanId, promptFilter),
       className:
-        "font-mono text-xs font-medium text-accent underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+        "font-mono text-xs font-medium text-accent underline-offset-4 hover:underline ",
       "aria-label": `View trace for evaluation ${evaluation.id}`,
       "data-evaluation-trace-span-id": evaluation.spanId
     },
@@ -74,7 +74,7 @@ function traceSpanLink(
     {
       href: traceHref(spanId, promptFilter),
       className:
-        "font-mono text-xs text-accent underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+        "font-mono text-xs text-accent underline-offset-4 hover:underline ",
       "aria-label": `Open span ${spanId}`,
       "data-trace-span-id": spanId
     },
@@ -225,8 +225,7 @@ function renderTraceLookup(
           href: promptFilter
             ? "/evaluations?prompt=" + encodeURIComponent(promptFilter)
             : "/evaluations",
-          className:
-            "text-xs text-accent underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className: "text-xs text-accent underline-offset-4 hover:underline "
         },
         "Back to evaluations"
       )

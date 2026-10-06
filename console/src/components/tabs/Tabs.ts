@@ -96,7 +96,7 @@ export function TabNav({
                 : tabHref(basePath, tab.id, tabParam),
               "aria-current": isActive ? "page" : undefined,
               "data-tab-item": tab.id,
-              className: `inline-block px-4 py-2.5 text-sm font-medium border-b-2 transition-colors no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+              className: `inline-block px-4 py-2.5 text-sm font-medium border-b-2 transition-colors no-underline  ${
                 isActive
                   ? "border-accent text-accent bg-surface/40"
                   : "border-transparent text-fg-muted hover:text-fg hover:border-border-strong"

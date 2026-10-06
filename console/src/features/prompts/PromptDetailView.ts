@@ -102,7 +102,7 @@ function renderPromptSource(prompt: PromptDocument): React.ReactNode {
         "data-prompt-content":
           prompt.content.length === 0 ? "empty" : "observed",
         className:
-          "min-h-[32rem] w-full resize-y overflow-auto rounded border border-border bg-background p-4 font-mono text-xs text-fg-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          "min-h-[32rem] w-full resize-y overflow-auto rounded border border-border bg-background p-4 font-mono text-xs text-fg-secondary "
       }),
       React.createElement(
         "div",
@@ -117,7 +117,7 @@ function renderPromptSource(prompt: PromptDocument): React.ReactNode {
           {
             type: "submit",
             className:
-              "rounded border border-accent/60 bg-accent/15 px-3 py-2 text-sm font-medium text-accent hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              "rounded border border-accent/60 bg-accent/15 px-3 py-2 text-sm font-medium text-accent hover:bg-hover "
           },
           "Save & Apply"
         )
@@ -301,8 +301,7 @@ function renderPromptHistory(
             "a",
             {
               href: promptUrl,
-              className:
-                "text-xs font-medium text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              className: "text-xs font-medium text-accent hover:underline "
             },
             "Return to current source"
           )
@@ -342,7 +341,7 @@ function renderPromptHistory(
                     href: `${promptUrl}?revision=${encodeURIComponent(version.versionHash)}`,
                     ...(selected ? { "aria-current": "page" as const } : {}),
                     className:
-                      "flex flex-wrap items-center gap-2 rounded border border-border px-3 py-2 text-xs hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                      "flex flex-wrap items-center gap-2 rounded border border-border px-3 py-2 text-xs hover:bg-hover ",
                     "data-prompt-version": version.versionHash
                   },
                   React.createElement(
