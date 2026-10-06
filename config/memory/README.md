@@ -25,7 +25,21 @@ provider must expose an OpenAI-compatible `/embeddings` endpoint and return
 1536-dimensional vectors; the adapter reuses that route's base URL and `envKey`
 credential, and does not create a separate model router or API key. Missing
 routing/credentials or a recoverable provider outage keeps lexical retrieval
-available. No embedding model is selected by default. Embedding requests contain
+available. No embedding model is selected by default.
+
+`AUTODEV_MEMORY_EMBEDDING_TIMEOUT_MS` tunes how long one embedding request may
+take, and defaults to 5000 when unset. Set it when the routed provider is
+slower than that default: a hosted embedding API under cold start routinely
+takes longer, and a local model server on CPU can take far longer. The accepted
+range is 100–30000 ms, the same bounds the adapter enforces. A value outside
+that range, or one that is not a number, is ignored and the default applies — a
+mistyped override must not be able to switch vector retrieval off, which is why
+it is dropped here rather than handed to the adapter that would reject it.
+This matters because the timeout is not a loud failure: an aborted request is
+classified as a recoverable provider outage, so a too-tight setting quietly
+degrades retrieval to lexical rather than reporting an error.
+
+Embedding requests contain
 the memory claim or bounded task query, never raw transcript contents; configure
 only a provider route approved to process that data and restart the router after
 changing the embedding model setting.

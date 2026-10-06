@@ -18,7 +18,16 @@ import {
 const MAX_EMBEDDING_INPUT_CHARACTERS = 16_000;
 const MAX_EMBEDDING_RESPONSE_BYTES = 64 * 1024;
 const DEFAULT_EMBEDDING_TIMEOUT_MS = 5000;
-const MAX_EMBEDDING_TIMEOUT_MS = 30_000;
+/**
+ * The adapter's accepted timeout range.
+ *
+ * These are the bounds the constructor enforces, and the same two values the
+ * router's configuration wiring reads when it validates
+ * `AUTODEV_MEMORY_EMBEDDING_TIMEOUT_MS`. One owner for both, so an operator can
+ * only be offered the range the adapter will actually accept.
+ */
+export const MIN_EMBEDDING_TIMEOUT_MS = 100;
+export const MAX_EMBEDDING_TIMEOUT_MS = 30_000;
 const EMBEDDING_PATH_SUFFIX = /\/+$/u;
 const LOCAL_EMBEDDING_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -64,7 +73,7 @@ export class OpenAICompatibleMemoryEmbeddingProvider implements MemoryEmbeddingP
     const timeoutMs = options.timeoutMs ?? DEFAULT_EMBEDDING_TIMEOUT_MS;
     if (
       !Number.isInteger(timeoutMs) ||
-      timeoutMs < 100 ||
+      timeoutMs < MIN_EMBEDDING_TIMEOUT_MS ||
       timeoutMs > MAX_EMBEDDING_TIMEOUT_MS
     ) {
       throw new TypeError("Memory embedding timeout is outside its bound.");
