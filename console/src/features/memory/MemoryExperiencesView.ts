@@ -42,6 +42,7 @@ import {
   type MemoryListScope,
   memoryPageHref
 } from "./memory-list-url.ts";
+import { InjectionReports } from "./MemoryInjectionReports.ts";
 
 /**
  * The only reasons the Runtime's purge endpoint accepts. Offering anything else
@@ -521,6 +522,8 @@ function ExperienceDetailPanel({
 
       // Observed evidence, and the claims made about it, as separate classes.
       React.createElement(ExperienceEvidence, {
+        experience,
+        listScope,
         outcomes,
         outcomeTotal,
         useAssessments,
@@ -555,11 +558,15 @@ function ExperienceDetailPanel({
  * an operator must never confuse.
  */
 function ExperienceEvidence({
+  experience,
+  listScope,
   outcomes,
   outcomeTotal,
   useAssessments,
   useAssessmentTotal
 }: {
+  readonly experience: ExperienceEnvelope;
+  readonly listScope: MemoryListScope;
   readonly outcomes?:
     readonly ControlApiMemoryInjectionOutcomeJoin[] | null | undefined;
   readonly outcomeTotal?: number | null | undefined;
@@ -608,6 +615,18 @@ function ExperienceEvidence({
                 key: row.injection.id,
                 injection: row.injection,
                 sessionInjectionCount: row.sessionInjectionCount,
+                // An injection nobody has reported on is exactly where a report
+                // belongs: the claim is per-injection, and the row already holds
+                // the correlation token the Runtime binds it to.
+                listScope,
+                experienceId: experience.id,
+                // The Runtime rejects a second report for the same binding, so
+                // the form is not offered once one exists.
+                alreadyReported: row.outcome !== null,
+                useAssessment:
+                  useAssessments?.find(
+                    (candidate) => candidate.injection.id === row.injection.id
+                  )?.use ?? null,
                 // The reported half renders separately, and says "unreported"
                 // rather than borrowing the injection's own verdict.
                 report:
@@ -683,7 +702,11 @@ function ExperienceEvidence({
 function EvidenceRow({
   injection,
   sessionInjectionCount,
-  report
+  report,
+  listScope,
+  experienceId,
+  alreadyReported,
+  useAssessment
 }: {
   readonly injection: ControlApiMemoryInjectionOutcomeJoin["injection"];
   readonly sessionInjectionCount: number;
@@ -692,6 +715,10 @@ function EvidenceRow({
     readonly value: string;
     readonly detail: string;
   } | null;
+  readonly listScope: MemoryListScope;
+  readonly experienceId: string;
+  readonly alreadyReported: boolean;
+  readonly useAssessment: { readonly useKind: string } | null;
 }): React.JSX.Element {
   return React.createElement(
     "li",
@@ -744,6 +771,16 @@ function EvidenceRow({
             { className: MUTED_TEXT_CLASS },
             report.detail
           )
-        )
+        ),
+
+    // The report forms live on the injection they describe, because both claims
+    // are per-injection.
+    React.createElement(InjectionReports, {
+      injection,
+      listScope,
+      experienceId,
+      alreadyReported,
+      useAssessment
+    })
   );
 }

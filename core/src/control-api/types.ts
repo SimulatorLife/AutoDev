@@ -590,6 +590,17 @@ export type ControlApiMemoryUseCohortsResponse = MemoryInjectionUseCohortPage;
 export interface ControlApiMemoryInjectionOutcomeJoin {
   readonly injection: {
     readonly id: string;
+    /**
+     * The key a reporter-supplied outcome for *this* injection binds to.
+     *
+     * Content-free by design -- it never enters a prompt or a metric -- and
+     * safe for an operator interface to carry, because
+     * `MemoryService.recordOutcomeReport` resolves it against the reporter's
+     * trusted session scope and rejects a token that matches no injection there.
+     * A report is therefore always bound to an injection the reporter could
+     * legitimately see, and a wrong token fails closed rather than mis-binding.
+     */
+    readonly correlationToken: string;
     readonly memoryMode: string;
     readonly injectionResult: string;
     readonly packetCharacterCount: number;
@@ -623,6 +634,8 @@ export type ControlApiMemoryInjectionOutcomesResponse =
 export interface ControlApiMemoryInjectionUseAssessment {
   readonly injection: {
     readonly id: string;
+    /** See `ControlApiMemoryInjectionOutcomeJoin.injection.correlationToken`. */
+    readonly correlationToken: string;
     readonly memoryMode: string;
     readonly injectionResult: string;
     readonly packetCharacterCount: number;

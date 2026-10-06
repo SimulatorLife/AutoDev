@@ -1147,7 +1147,12 @@ function isObservedInjection(value: unknown): boolean {
     typeof value.packetCharacterCount === "number" &&
     Array.isArray(value.memoryIds) &&
     value.memoryIds.every((id) => typeof id === "string") &&
-    typeof value.occurredAt === "string"
+    typeof value.occurredAt === "string" &&
+    // Required, though the evidence panel does not render it: an outcome report
+    // for this injection carries it, so a projection without it cannot be
+    // reported against and must not be mistaken for one that can.
+    typeof value.correlationToken === "string" &&
+    value.correlationToken !== ""
   );
 }
 
@@ -2467,6 +2472,85 @@ export function purgeMemoryExperience(
   const search = new URLSearchParams({ workspaceId: payload.workspaceId });
   const path = `${CONTROL_API_PATHS.memoryExperiences}/${encodeURIComponent(id)}/purge?${search.toString()}`;
   return postControlApi<unknown>(path, { reason }, config, options);
+}
+
+/**
+ * Report an outcome against one observed injection.
+ *
+ * The Runtime takes `exactKeys` on this body, so the Console sends exactly
+ * `{correlationToken, outcomeKind, reportKind, evidence}` and nothing else --
+ * not the operator, not a timestamp, not a verdict. `reporterId` and
+ * `reporterAuthority` come from the authenticated session, because a report
+ * that names its own author is not evidence of anything.
+ */
+export function reportMemoryExperienceOutcome(
+  id: string,
+  payload: {
+    readonly workspaceId: string;
+    readonly correlationToken: string;
+    readonly outcomeKind: string;
+    readonly reportKind: string;
+    readonly evidence: readonly {
+      readonly kind: string;
+      readonly uri: string;
+      readonly revision?: string;
+    }[];
+  },
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<unknown>> {
+  const search = new URLSearchParams({ workspaceId: payload.workspaceId });
+  const path = `${CONTROL_API_PATHS.memoryExperiences}/${encodeURIComponent(id)}/outcomes?${search.toString()}`;
+  return postControlApi<unknown>(
+    path,
+    {
+      correlationToken: payload.correlationToken,
+      outcomeKind: payload.outcomeKind,
+      reportKind: payload.reportKind,
+      evidence: payload.evidence
+    },
+    config,
+    options
+  );
+}
+
+/**
+ * A curator's assessment of whether an injected packet was used.
+ *
+ * `useKind` and `usedMemoryIds` are the whole claim, and the Runtime holds them
+ * to their own rules: a `used` verdict must cite every injected id, a
+ * `partially_used` a strict non-empty subset, and `not_used`/`unobservable`
+ * none. A curator cannot simply assert "not used" over memories it never cites.
+ */
+export function reportMemoryInjectionUse(
+  id: string,
+  payload: {
+    readonly workspaceId: string;
+    readonly injectionEventId: string;
+    readonly useKind: string;
+    readonly usedMemoryIds: readonly string[];
+    readonly evidence: readonly {
+      readonly kind: string;
+      readonly uri: string;
+      readonly revision?: string;
+    }[];
+  },
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<unknown>> {
+  const search = new URLSearchParams({ workspaceId: payload.workspaceId });
+  const path = `${CONTROL_API_PATHS.memoryExperiences}/${encodeURIComponent(id)}/use-assessments?${search.toString()}`;
+  return postControlApi<unknown>(
+    path,
+    {
+      injectionEventId: payload.injectionEventId,
+      useKind: payload.useKind,
+      usedMemoryIds: payload.usedMemoryIds,
+      evidence: payload.evidence
+    },
+    config,
+    options
+  );
 }
 
 export function promoteMemoryProcedureToSkill(

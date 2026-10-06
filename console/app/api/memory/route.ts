@@ -11,6 +11,8 @@ import {
   promoteMemoryProcedureToSkill,
   purgeMemoryExperience,
   readControlApiConfig,
+  reportMemoryExperienceOutcome,
+  reportMemoryInjectionUse,
   transitionMemoryRecord
 } from "../../../src/lib/server/control-api.ts";
 
@@ -25,6 +27,17 @@ interface MemoryActionPayload {
   readonly reason: string;
   readonly claim: string;
   readonly skillName: string;
+  readonly correlationToken: string;
+  readonly outcomeKind: string;
+  readonly reportKind: string;
+  readonly useKind: string;
+  readonly injectionEventId: string;
+  readonly usedMemoryIds: readonly string[];
+  readonly evidence: readonly {
+    readonly kind: string;
+    readonly uri: string;
+    readonly revision?: string;
+  }[];
   readonly isForm: boolean;
   /**
    * The query string of the list this action was made on.
@@ -45,6 +58,83 @@ interface MemoryActionPayload {
 
 const PURGE_REASONS = ["privacy_request", "retention_expired"] as const;
 
+/** The payload fields a report names the single thing it acts on. */
+type MemorySubjectField =
+  | "recordId"
+  | "experienceId"
+  | "correlationToken"
+  | "injectionEventId";
+
+interface MemoryActionTarget {
+  /** The tab the operator came from and is sent back to. */
+  readonly tab: "records" | "experiences";
+  /** The key that tab reads its selection from, and that the page reads it back from. */
+  readonly subjectField: Extract<
+    MemorySubjectField,
+    "recordId" | "experienceId"
+  >;
+  /**
+   * Every field the action must carry to be sendable at all.
+   *
+   * A report names the one injection it describes as well as the experience it
+   * belongs to, because the Runtime binds an outcome to a correlation token and
+   * a use assessment to an injection event id. Those are not optional filters:
+   * a report without one has nothing to bind to, so it is a malformed request
+   * rather than a refusal with a reason to report.
+   */
+  readonly required: readonly MemorySubjectField[];
+}
+
+/**
+ * What each action acts on.
+ *
+ * Keyed by action rather than by tab because the two are not the same question.
+ * Purge and both reports act on an experience while every other action acts on a
+ * durable record, but the reports also carry the identifier of the single
+ * injection they annotate. Deriving the subject from the action's shape — which
+ * is what a single `isPurge` boolean invites — got the identifier gate wrong for
+ * two of the three actions it was meant to describe.
+ */
+const MEMORY_ACTION_TARGETS: Readonly<
+  Record<string, MemoryActionTarget>
+> = {
+  verify: {
+    tab: "records",
+    subjectField: "recordId",
+    required: ["recordId"]
+  },
+  invalidate: {
+    tab: "records",
+    subjectField: "recordId",
+    required: ["recordId"]
+  },
+  revise: {
+    tab: "records",
+    subjectField: "recordId",
+    required: ["recordId"]
+  },
+  "promote-skill": {
+    tab: "records",
+    subjectField: "recordId",
+    required: ["recordId"]
+  },
+  purge: {
+    tab: "experiences",
+    subjectField: "experienceId",
+    required: ["experienceId"]
+  },
+  "report-outcome": {
+    tab: "experiences",
+    subjectField: "experienceId",
+    required: ["experienceId", "correlationToken"]
+  },
+  "report-use": {
+    tab: "experiences",
+    subjectField: "experienceId",
+    required: ["experienceId", "injectionEventId"]
+  }
+};
+
 function redirectTo(location: string): NextResponse {
   return new NextResponse(null, { status: 303, headers: { location } });
 }
@@ -52,7 +142,7 @@ function redirectTo(location: string): NextResponse {
 /**
  * The query a redirect back to Memory needs to re-select what was acted on.
  *
- * Purge acts on an experience and the experiences tab reads its selection from
+ * A purge acts on an experience and the experiences tab reads its selection from
  * `experienceId`; every other action acts on a durable record, which the records
  * tab reads from `recordId`. One key, because getting it wrong is silent rather
  * than loud: the redirect still lands on the right tab, still carries the right
@@ -62,10 +152,13 @@ function redirectTo(location: string): NextResponse {
  * action disappears from the page, and on the failure path nothing identified it
  * in the first place.
  */
-function selectionQuery(isPurge: boolean, identifier: string): URLSearchParams {
+function selectionQuery(
+  target: MemoryActionTarget,
+  identifier: string
+): URLSearchParams {
   return new URLSearchParams({
-    tab: isPurge ? "experiences" : "records",
-    [isPurge ? "experienceId" : "recordId"]: identifier
+    tab: target.tab,
+    [target.subjectField]: identifier
   });
 }
 
@@ -103,7 +196,7 @@ const MAX_RETURN_QUERY_LENGTH = 2048;
  */
 function memoryReturnQuery(
   payload: MemoryActionPayload,
-  isPurge: boolean,
+  target: MemoryActionTarget,
   identifier: string | undefined
 ): URLSearchParams {
   const query = new URLSearchParams();
@@ -119,11 +212,11 @@ function memoryReturnQuery(
     }
   }
   if (identifier === undefined || identifier === "") {
-    query.set("tab", isPurge ? "experiences" : "records");
+    query.set("tab", target.tab);
   } else {
-    const selection = selectionQuery(isPurge, identifier);
-    query.set("tab", selection.get("tab") ?? "records");
-    query.set(isPurge ? "experienceId" : "recordId", identifier);
+    const selection = selectionQuery(target, identifier);
+    query.set("tab", selection.get("tab") ?? target.tab);
+    query.set(target.subjectField, identifier);
   }
   if (payload.workspaceId !== "") {
     query.set("workspaceId", payload.workspaceId);
@@ -151,6 +244,21 @@ async function parsePayload(
       reason: String(formData.get("reason") ?? "").trim(),
       claim: String(formData.get("claim") ?? "").trim(),
       skillName: String(formData.get("skillName") ?? "").trim(),
+      correlationToken: String(formData.get("correlationToken") ?? "").trim(),
+      outcomeKind: String(formData.get("outcomeKind") ?? "").trim(),
+      reportKind: String(formData.get("reportKind") ?? "").trim(),
+      useKind: String(formData.get("useKind") ?? "").trim(),
+      injectionEventId: String(formData.get("injectionEventId") ?? "").trim(),
+      usedMemoryIds: String(formData.get("usedMemoryIds") ?? "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value) => value !== ""),
+      evidence: [
+        {
+          kind: String(formData.get("evidenceKind") ?? "").trim(),
+          uri: String(formData.get("evidenceUri") ?? "").trim()
+        }
+      ].filter((reference) => reference.kind !== "" && reference.uri !== ""),
       confirm: String(formData.get("confirm") ?? "").trim(),
       ...(formData.has("returned")
         ? { returned: String(formData.get("returned") ?? "") }
@@ -170,6 +278,28 @@ async function parsePayload(
       reason: String(json.reason ?? "").trim(),
       claim: String(json.claim ?? "").trim(),
       skillName: String(json.skillName ?? "").trim(),
+      correlationToken: String(json.correlationToken ?? "").trim(),
+      outcomeKind: String(json.outcomeKind ?? "").trim(),
+      reportKind: String(json.reportKind ?? "").trim(),
+      useKind: String(json.useKind ?? "").trim(),
+      injectionEventId: String(json.injectionEventId ?? "").trim(),
+      usedMemoryIds: Array.isArray(json.usedMemoryIds)
+        ? json.usedMemoryIds
+            .map((value) => String(value).trim())
+            .filter((value) => value !== "")
+        : [],
+      evidence: Array.isArray(json.evidence)
+        ? json.evidence
+            .filter(
+              (value): value is Record<string, unknown> =>
+                Boolean(value) && typeof value === "object"
+            )
+            .map((value) => ({
+              kind: String(value.kind ?? "").trim(),
+              uri: String(value.uri ?? "").trim()
+            }))
+            .filter((value) => value.kind !== "" && value.uri !== "")
+        : [],
       confirm: String(json.confirm ?? "").trim(),
       ...(typeof json.returned === "string" ? { returned: json.returned } : {}),
       isForm: false
@@ -182,13 +312,19 @@ async function parsePayload(
 /**
  * Run one action, or report why this route would not send it.
  *
- * The refusal reason is returned rather than a bare `null` because the three
- * reasons a purge can be turned down here need different operator responses, and
- * two of them are indistinguishable from the action alone: a purge with the
- * confirmation ticked but a reason the Runtime does not accept is *not* a
- * missing confirmation. Keying the reason off the action -- which is what a
- * single `null` invites -- would state a false cause on a form the operator had
- * filled in correctly.
+ * The refusal reason is returned rather than a bare `null` because the reasons a
+ * route can turn a submission down on itself need different operator responses,
+ * and two of them are indistinguishable from the action alone: a purge with the
+ * confirmation ticked but a reason the Runtime does not accept is *not* a missing
+ * confirmation. Keying the reason off the action -- which is what a single `null`
+ * invites -- would state a false cause on a form the operator had filled in
+ * correctly.
+ *
+ * Only checks the Runtime would otherwise answer are made here, and only where
+ * the route's own answer says more than the Runtime's would: that nothing was
+ * sent. Whether the injection belongs to the reporter, whether an outcome kind is
+ * one the Runtime accepts, and whether cited memories are the injected set are all
+ * the Runtime's to decide -- it holds the experience, and this route does not.
  */
 function executeAction(
   payload: MemoryActionPayload,
@@ -202,6 +338,13 @@ function executeAction(
     reason,
     claim,
     skillName,
+    correlationToken,
+    outcomeKind,
+    reportKind,
+    useKind,
+    injectionEventId,
+    usedMemoryIds,
+    evidence,
     confirm
   } = payload;
   switch (action) {
@@ -248,6 +391,48 @@ function executeAction(
         config
       );
     }
+    case "report-outcome": {
+      // An outcome binds to one observed injection, not to the experience, so it
+      // carries the correlation token the Runtime minted for that injection. The
+      // Runtime re-resolves it against the reporter's trusted scope, so a token
+      // that does not belong here fails there rather than binding a report to
+      // someone else's injection.
+      //
+      // Evidence is checked here rather than forwarded. A non-`unknown` outcome
+      // with none is refused by the Runtime, and naming the missing field locally
+      // says something the Runtime's message could not: the request never reached
+      // it, so the outcome is unrecorded rather than rejected.
+      if (outcomeKind !== "unknown" && evidence.length === 0) {
+        return "evidence_required";
+      }
+      return reportMemoryExperienceOutcome(
+        experienceId,
+        {
+          workspaceId,
+          correlationToken,
+          outcomeKind,
+          reportKind,
+          evidence
+        },
+        config
+      );
+    }
+    case "report-use": {
+      // A curator assessment names the injection it judges and the memories it
+      // saw used. The Runtime holds the verdict to its own cited ids, so the
+      // Console forwards them without deciding anything.
+      return reportMemoryInjectionUse(
+        experienceId,
+        {
+          workspaceId,
+          injectionEventId,
+          useKind,
+          usedMemoryIds,
+          evidence
+        },
+        config
+      );
+    }
     case "promote-skill": {
       const name = skillName || `memory-proc-${recordId.slice(0, 8)}`;
       return promoteMemoryProcedureToSkill(
@@ -268,7 +453,23 @@ function executeAction(
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const payload = await parsePayload(request);
-  const isPurge = payload?.action === "purge";
+  // The subject is the action's, not the tab's. Purge and both reports act on an
+  // experience rather than a durable record, and each report additionally names
+  // the one injection it annotates.
+  const target =
+    payload === null ? undefined : MEMORY_ACTION_TARGETS[payload.action];
+
+  // An action this route does not implement has no subject, no tab, and no cause
+  // to report, so there is nothing a redirect could name. It answers the caller
+  // instead, which is also the only honest thing to do with a payload the route
+  // cannot place.
+  if (payload === null || target === undefined) {
+    return NextResponse.json(
+      { error: "Invalid request payload or unsupported action" },
+      { status: 400 }
+    );
+  }
+  const identifier = payload[target.subjectField];
 
   /**
    * A form submission is a browser navigation, so whatever this returns becomes
@@ -280,10 +481,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const respond = (
     status: number,
     error: unknown,
-    identifier?: string,
     refusal?: ControlRefusalReason
   ): NextResponse => {
-    if (payload?.isForm === true) {
+    if (payload.isForm === true) {
       // Re-select the subject whenever it is known. A refusal that lands on the
       // tab without the item the operator acted on leaves them to work out
       // which of the rows in the table failed, which is not something the notice
@@ -291,10 +491,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return redirectTo(
         refusal === undefined
           ? withControlFailure(
-              `/memory?${memoryReturnQuery(payload, isPurge, identifier).toString()}`
+              `/memory?${memoryReturnQuery(payload, target, identifier).toString()}`
             )
           : withControlRefusal(
-              `/memory?${memoryReturnQuery(payload, isPurge, identifier).toString()}`,
+              `/memory?${memoryReturnQuery(payload, target, identifier).toString()}`,
               refusal
             )
       );
@@ -302,34 +502,41 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error }, { status });
   };
 
+  // Every field the action must name, checked together. A report missing its
+  // correlation token or injection id was never sendable -- the Runtime binds both
+  // to one injection -- so it is a malformed request with no cause to report,
+  // exactly like a missing identifier, and reporting a refusal reason for it
+  // would name a field the operator never saw. The tab is still known, so the
+  // form is sent back to where it came from.
+  if (target.required.some((field) => payload[field] === "")) {
+    return respond(400, "Invalid request payload or missing identifier");
+  }
+
   const config = readControlApiConfig();
   if (!config) {
     return respond(503, "Control API configuration or token is missing");
   }
 
-  // Purge targets an experience rather than a durable record, so each action
-  // names the identifier it needs instead of demanding `recordId` up front.
-  const identifier = isPurge ? payload?.experienceId : payload?.recordId;
-  if (!payload || !identifier) {
-    return respond(400, "Invalid request payload or missing identifier");
-  }
-
   const result = await executeAction(payload, config);
-  if (!result) {
-    return respond(
-      400,
-      `Unsupported or incomplete action: ${payload.action}`,
-      identifier,
-      "reason_not_accepted"
-    );
-  }
-  // The route refused to send it, and says which of its own checks stopped it.
+  // `executeAction` returns a reason rather than a bare null because the checks a
+  // route can refuse on itself need different operator responses, and two of them
+  // are indistinguishable from the action alone: a purge with the confirmation
+  // ticked but a reason the Runtime does not accept is *not* a missing
+  // confirmation. Keying the reason off the action -- which is what a single null
+  // invites -- would state a false cause on a form the operator had filled in
+  // correctly.
   if (typeof result === "string") {
     return respond(
       400,
       `Unsupported or incomplete action: ${payload.action}`,
-      identifier,
       result
+    );
+  }
+  // Every action in MEMORY_ACTION_TARGETS is implemented here, so a null now means
+  // the two tables have drifted rather than that a caller asked for something odd.
+  if (!result) {
+    throw new Error(
+      `Memory action "${payload.action}" has no implementation; add it to executeAction.`
     );
   }
 
@@ -337,14 +544,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return respond(
       "status" in result ? result.status : 500,
       result,
-      identifier,
       "runtime_refused"
     );
   }
 
   if (payload.isForm) {
     return redirectTo(
-      `/memory?${memoryReturnQuery(payload, isPurge, identifier).toString()}`
+      `/memory?${memoryReturnQuery(payload, target, identifier).toString()}`
     );
   }
 

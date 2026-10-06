@@ -8811,6 +8811,7 @@ test("an experience shows observed packets and reported outcomes as separate cla
     },
     evidence: []
   };
+          correlationToken: "corr-1",
 
   const renderPanel = (
     overrides: Partial<MemoryExperiencesViewProps>
@@ -8833,6 +8834,7 @@ test("an experience shows observed packets and reported outcomes as separate cla
           id: "inj-1",
           memoryMode: "jit",
           injectionResult: "injected",
+          correlationToken: "corr-1",
           packetCharacterCount: 900,
           memoryIds: ["mem-1", "mem-2"],
           occurredAt: "2026-10-01T00:00:00Z"
@@ -8863,6 +8865,7 @@ test("an experience shows observed packets and reported outcomes as separate cla
           useKind: "partially_used",
           usedMemoryIds: ["mem-1"],
           reportedAt: "2026-10-01T02:00:00Z"
+          correlationToken: "corr-2",
         },
         sessionInjectionCount: 1
       }
@@ -8892,6 +8895,7 @@ test("an experience shows observed packets and reported outcomes as separate cla
         outcome: null,
         sessionInjectionCount: 3
       }
+          correlationToken: "corr-3",
     ],
     outcomeTotal: 1,
     useAssessments: [],
@@ -8921,6 +8925,7 @@ test("an experience shows observed packets and reported outcomes as separate cla
         use: { useKind: "unobservable", usedMemoryIds: [], reportedAt: "x" },
         sessionInjectionCount: 1
       }
+    correlationToken: "corr-1",
     ],
     useAssessmentTotal: 1
   });
@@ -8974,6 +8979,26 @@ test("the experience evidence validators refuse a response that would read as 'u
   assert.equal(await read(page), true);
 
   // A row that simply omits `outcome` is not "unreported" -- it is unreadable,
+      ]
+    }),
+    false
+  );
+  assert.equal(
+    await read({
+      ...page,
+      items: [
+        {
+          injection: { ...injection, memoryIds: [null] },
+          outcome: null,
+          sessionInjectionCount: 1
+        }
+      ]
+    }),
+    false
+  );
+  assert.equal(await read({ ...page, schema: "something-else" }), false);
+});
+
   // and accepting it would render a dropped field as a negative finding.
   assert.equal(
     await read({
@@ -9316,6 +9341,272 @@ function minimalExperience(id: string): ExperienceEnvelope {
     trajectory: {
       format: "codex-v1",
       uri: "file:///t.jsonl",
+test("an observed injection offers both reports, on the injection they describe", () => {
+  // Both claims are per-injection: the Runtime binds an outcome to the
+  // correlation token minted for one injection and a use assessment to an
+  // injection event id. A form on the experience header would have to pick one,
+  // and picking silently is how a report ends up bound to the wrong evidence.
+  const experience: ExperienceEnvelope = {
+    id: "exp-report",
+    workspaceId: "SimulatorLife/AutoDev",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    taskId: "task-1",
+    runId: "run-1",
+    agentId: "agent-1",
+    agentRole: "orchestrator",
+    startedAt: "2026-10-01T00:00:00Z",
+    outcome: "success",
+    memoryMode: "jit",
+    trajectory: {
+      format: "codex-v1",
+      uri: "file:///t.jsonl",
+      sourceAdapter: "codex"
+    },
+    evidence: []
+  };
+  const injection = {
+    id: "inj-r",
+    correlationToken: "corr-r",
+    memoryMode: "jit",
+    injectionResult: "injected",
+    packetCharacterCount: 900,
+    memoryIds: ["mem-1", "mem-2"],
+    occurredAt: "2026-10-01T00:00:00Z"
+  };
+
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryExperiencesView, {
+      experiences: [experience],
+      total: 1,
+      selectedExperience: experience,
+      listScope: memoryListScope({ tab: "experiences", query: "guard" }),
+      outcomes: [{ injection, outcome: null, sessionInjectionCount: 1 }],
+      useAssessments: [{ injection, use: null, sessionInjectionCount: 1 }]
+    })
+  );
+
+  assert.match(markup, /data-injection-reports="inj-r"/);
+  // Two separate forms: an outcome is a reporter's claim about the task, a use
+  // assessment a curator's judgement about the packet.
+  assert.match(markup, /name="action" value="report-outcome"/);
+  assert.match(markup, /name="action" value="report-use"/);
+  // The correlation token rides along so the Runtime can re-resolve the binding.
+  assert.match(markup, /name="correlationToken" value="corr-r"/);
+  assert.match(markup, /name="injectionEventId" value="inj-r"/);
+  // The evidence a report must carry is part of the form, not a nicety.
+  assert.match(markup, /name="evidenceKind"/);
+  assert.match(markup, /name="evidenceUri"/);
+  // The injected set bounds a use verdict, so it is shown as the answer's range.
+  assert.match(markup, /placeholder="mem-1, mem-2"/);
+
+  // Once a report exists the form is gone: the Runtime binds one per injection,
+  // so offering a second would be offering a submission it will refuse.
+  const reported = renderToStaticMarkup(
+    React.createElement(MemoryExperiencesView, {
+      experiences: [experience],
+      total: 1,
+      selectedExperience: experience,
+      listScope: memoryListScope({ tab: "experiences" }),
+      outcomes: [
+        {
+          injection,
+          outcome: {
+            outcomeKind: "success",
+            reportKind: "task",
+            reportedAt: "2026-10-01T01:00:00Z",
+            reporterId: "op",
+            reporterAuthority: "root",
+            reasonCode: "reporter_supplied"
+          },
+          sessionInjectionCount: 1
+        }
+      ],
+      useAssessments: [
+        {
+          injection,
+          use: {
+            useKind: "used",
+            usedMemoryIds: ["mem-1", "mem-2"],
+            reportedAt: "2026-10-01T02:00:00Z"
+          },
+          sessionInjectionCount: 1
+        }
+      ]
+    })
+  );
+  assert.doesNotMatch(reported, /value="report-outcome"/);
+  assert.doesNotMatch(reported, /value="report-use"/);
+  assert.match(reported, /already reported for this injection/);
+  assert.match(reported, /already assessed this injection as used/);
+});
+
+test("Memory reports reach the Runtime bound to one injection, or not at all", async () => {
+  await withMemoryRoute(async (requests) => {
+    const response = await memoryRoute.POST(
+      memoryPurgeRequest({
+        action: "report-outcome",
+        experienceId: "exp-1",
+        workspaceId: "SimulatorLife/AutoDev",
+        correlationToken: "corr-1",
+        outcomeKind: "success",
+        reportKind: "task",
+        evidenceKind: "trajectory",
+        evidenceUri: "traj://run-1"
+      })
+    );
+    assert.equal(response.status, 303);
+    assert.equal(requests.length, 1);
+    assert.match(
+      requests[0]?.url ?? "",
+      /\/control\/memory\/experiences\/exp-1\/outcomes\?/
+    );
+    const sent = JSON.parse(requests[0]?.body ?? "{}") as Record<
+      string,
+      unknown
+    >;
+    // Exactly the Runtime's `exactKeys` body: no author, no timestamp, no
+    // verdict of the Console's own. `reporterId` and `reporterAuthority` come
+    // from the session, because a report that names its own author is not
+    // evidence of anything.
+    assert.deepEqual(Object.keys(sent).sort(), [
+      "correlationToken",
+      "evidence",
+      "outcomeKind",
+      "reportKind"
+    ]);
+    assert.equal(sent.correlationToken, "corr-1");
+    assert.deepEqual(sent.evidence, [
+      { kind: "trajectory", uri: "traj://run-1" }
+    ]);
+  });
+
+  await withMemoryRoute(async (requests) => {
+    const response = await memoryRoute.POST(
+      memoryPurgeRequest({
+        action: "report-use",
+        experienceId: "exp-1",
+        workspaceId: "SimulatorLife/AutoDev",
+        injectionEventId: "inj-1",
+        useKind: "partially_used",
+        usedMemoryIds: "mem-1, mem-2",
+        evidenceKind: "trace",
+        evidenceUri: "trace://run-1"
+      })
+    );
+    assert.equal(response.status, 303);
+    const sent = JSON.parse(requests[0]?.body ?? "{}") as Record<
+      string,
+      unknown
+    >;
+    assert.deepEqual(sent.usedMemoryIds, ["mem-1", "mem-2"]);
+    assert.equal(sent.useKind, "partially_used");
+  });
+
+  // An outcome with no evidence is refused here rather than forwarded. The
+  // Runtime refuses it too, but its message would name a Runtime decision on a
+  // request it never saw. The code says what is actually true of this refusal:
+  // the Runtime was never asked, so no outcome was recorded.
+  await withMemoryRoute(async (requests) => {
+    const response = await memoryRoute.POST(
+      memoryPurgeRequest({
+        action: "report-outcome",
+        experienceId: "exp-1",
+        workspaceId: "SimulatorLife/AutoDev",
+        correlationToken: "corr-1",
+        outcomeKind: "success",
+        reportKind: "task"
+      })
+    );
+    assert.equal(response.status, 303);
+    assert.match(
+      response.headers.get("location") ?? "",
+      /refusal=evidence_required/
+    );
+    assert.equal(requests.length, 0, "an unevidenced claim is not a request");
+  });
+
+  // `unknown` is the honest answer when there is no evidence, so it is the one
+  // outcome kind that may be recorded without one. Refusing it would make the
+  // route refuse the only report it should accept unevidenced.
+  await withMemoryRoute(async (requests) => {
+    const response = await memoryRoute.POST(
+      memoryPurgeRequest({
+        action: "report-outcome",
+        experienceId: "exp-1",
+        workspaceId: "SimulatorLife/AutoDev",
+        correlationToken: "corr-1",
+        outcomeKind: "unknown",
+        reportKind: "task"
+      })
+    );
+    assert.equal(response.status, 303);
+    assert.doesNotMatch(response.headers.get("location") ?? "", /control=failed/);
+    assert.equal(requests.length, 1);
+  });
+
+  // And a report with no injection to bind to is refused as incomplete.
+  await withMemoryRoute(async (requests) => {
+    const response = await memoryRoute.POST(
+      memoryPurgeRequest({
+        action: "report-outcome",
+        workspaceId: "SimulatorLife/AutoDev",
+        correlationToken: "corr-1",
+        outcomeKind: "success",
+        reportKind: "task",
+        evidenceKind: "trace",
+        evidenceUri: "trace://1"
+      })
+    );
+    assert.equal(response.status, 303);
+    // A request naming no identifier at all is malformed, not a refused claim,
+    // so it carries the generic could-not-confirm notice and no refusal code.
+    assert.match(response.headers.get("location") ?? "", /control=failed/);
+    assert.doesNotMatch(response.headers.get("location") ?? "", /refusal=/);
+    assert.equal(requests.length, 0);
+  });
+
+  // A report that names the experience but not the injection it annotates has no
+  // subject to bind to. It is malformed rather than refused for a reason an
+  // operator can act on, and `claim_required` -- "a revision needs the
+  // replacement claim text" -- was the code it used to carry, which named a field
+  // this form has no control for.
+  await withMemoryRoute(async (requests) => {
+    const response = await memoryRoute.POST(
+      memoryPurgeRequest({
+        action: "report-outcome",
+        experienceId: "exp-1",
+        workspaceId: "SimulatorLife/AutoDev",
+        outcomeKind: "success",
+        reportKind: "task",
+        evidenceKind: "trace",
+        evidenceUri: "trace://1"
+      })
+    );
+    assert.equal(response.status, 303);
+    assert.match(
+      response.headers.get("location") ?? "",
+      /[?&]tab=experiences&experienceId=exp-1/
+    );
+    assert.doesNotMatch(response.headers.get("location") ?? "", /refusal=/);
+    assert.equal(requests.length, 0);
+  });
+
+  // An action this route does not implement has no subject, no tab, and no cause
+  // to report, so there is nothing a redirect could name. It answers the caller
+  // instead of redirecting to a list the operator never asked about.
+  await withMemoryRoute(async () => {
+    const response = await memoryRoute.POST(
+      memoryPurgeRequest({
+        action: "supersede",
+        recordId: "rec-1",
+        workspaceId: "SimulatorLife/AutoDev"
+      })
+    );
+    assert.equal(response.status, 400);
+    assert.equal(response.headers.get("location"), null);
+  });
+});
+
       sourceAdapter: "codex"
     },
     evidence: []
@@ -11012,10 +11303,10 @@ test("a purge redirect names the experience its tab reads, on success and on ref
     // purge" could have been satisfied by always sending experienceId.
     const recordAction = await memoryRoute.POST(
       form({
-        action: "supersede",
+        action: "verify",
         recordId: "rec-1",
         workspaceId: "SimulatorLife/AutoDev",
-        reason: "superseded"
+        reason: "Checked against the repository."
       })
     );
     const recordLocation = recordAction.headers.get("location") ?? "";

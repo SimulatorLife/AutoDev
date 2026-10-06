@@ -20,6 +20,8 @@ const REFUSAL_DETAIL: Record<ControlRefusalReason, string> = {
     "The Runtime does not accept that reason for this action, so nothing was changed.",
   claim_required:
     "A revision needs the replacement claim text; nothing was sent to the Runtime.",
+  evidence_required:
+    "An outcome other than Not observed has to name the evidence for it — a kind and where it lives. Nothing was sent to the Runtime, so no outcome was recorded.",
   runtime_refused:
     "The Runtime refused the change. It may still be citing this record, in which case the action cannot proceed."
 };
