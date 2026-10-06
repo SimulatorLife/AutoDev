@@ -271,7 +271,33 @@ test("documentation keeps one broad target-state authority", () => {
     assert.doesNotMatch(content, /docs\/metrics-dashboard\.md/);
     assert.doesNotMatch(content, /docs\/merge-conflict-handling\.md/);
     assert.doesNotMatch(content, /127\.0\.0\.1:4100\/dashboard/);
-    assert.doesNotMatch(content, /\/Users\/henrykirk/);
+  }
+
+  // Rule 6 of docs/README.md -- normative documentation uses repo-relative
+  // paths -- holds for the whole doc tree, not for a hand-listed subset of it.
+  // Listing the files instead of deriving them let a doc join the tree already
+  // breaking the rule, which is exactly how docs/autodev-console-migration.md
+  // came to carry one machine's home directory while every guarded file stayed
+  // green. Any home directory counts, not one developer's, so a path recorded on
+  // a different machine is caught by the same guard.
+  const normativeDocumentation = readdirSync(new URL("docs/", repositoryRoot), {
+    withFileTypes: true
+  })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+    .map((entry) => `docs/${entry.name}`)
+    .concat("README.md")
+    .sort();
+  assert.ok(
+    normativeDocumentation.length > 5,
+    "the doc tree is what this rule governs, not a fixed list of files"
+  );
+  for (const path of normativeDocumentation) {
+    const content = readFileSync(new URL(path, repositoryRoot), "utf8");
+    assert.doesNotMatch(
+      content,
+      /\/(?:Users|home)\/[a-z0-9_.-]+\//i,
+      `${path} must not carry a machine-specific absolute path`
+    );
   }
 });
 
