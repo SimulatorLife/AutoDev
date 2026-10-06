@@ -10618,7 +10618,7 @@ test("authenticated Control API provider role mutation validates, persists, and 
     assert.equal(viewerRead.status, 200);
     assert.equal(
       (await viewerRead.json()).schema,
-      "autodev-control-providers-v1"
+      "autodev-control-providers-v2"
     );
 
     const wrongMethod = await originalFetch(endpoint, {
@@ -10680,7 +10680,7 @@ test("authenticated Control API provider role mutation validates, persists, and 
     });
     assert.equal(disable.status, 200);
     const disabled = await disable.json();
-    assert.equal(disabled.schema, "autodev-control-provider-role-v1");
+    assert.equal(disabled.schema, "autodev-control-provider-role-v2");
     assert.equal(disabled.provider, "claude");
     assert.equal(disabled.role, "subagent");
     assert.equal(disabled.enabled, false);
@@ -10985,6 +10985,57 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
     await closeServer(server);
     routing.resetDisabledProvidersForRole("subagent");
     routing.resetDisabledProvidersForRole("orchestrator");
+    resetRouterTelemetry();
+  }
+});
+
+test("a disabled model is skipped for role aliases and rejected for direct requests", async () => {
+  resetRouterTelemetry();
+  routing.resetDisabledProvidersForRole("subagent");
+  routing.resetDisabledProvidersForRole("orchestrator");
+  routing.resetDisabledModels();
+  const model = routing.configuredModel("claude", "default")!;
+  const originalCredential = process.env.LITELLM_API_KEY;
+  process.env.LITELLM_API_KEY = "test-key";
+  routing.setModelEnabled(model, false);
+
+  assert.equal(
+    routing
+      .roleCandidates("default", () => 0.5)
+      .some((candidate) => candidate.model === model),
+    false,
+    "a disabled model must not be a role candidate"
+  );
+  assert.ok(
+    routing.roleCandidates("default", () => 0.5).length > 0,
+    "other providers still serve the tier"
+  );
+  assert.deepEqual(getRouterStatus().routing.disabledModels, [model]);
+  assert.deepEqual(getRouterStatus().disabledModels, [model]);
+
+  const server = createServer((request, response) => {
+    void handle(request, response);
+  });
+  await listenServer(server);
+  const port = (server.address() as AddressInfo).port;
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model, stream: false })
+    });
+    assert.equal(response.status, 503);
+    const body = await response.json();
+    assert.equal(body.error?.code, "router_provider_unavailable");
+    assert.equal(body.error?.failureClass, "model_disabled");
+    assert.equal(body.error?.provider, "claude");
+    assert.equal(body.error?.model, model);
+    assert.match(body.error?.message ?? "", /model .* is disabled/u);
+  } finally {
+    await closeServer(server);
+    routing.resetDisabledModels();
+    if (originalCredential === undefined) delete process.env.LITELLM_API_KEY;
+    else process.env.LITELLM_API_KEY = originalCredential;
     resetRouterTelemetry();
   }
 });

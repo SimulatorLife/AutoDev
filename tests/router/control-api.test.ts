@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { once } from "node:events";
 import {
   cpSync,
@@ -26,6 +27,7 @@ import {
   type ControlApiRequestOptions,
   githubWorkflowsView,
   handleControlApiRequest,
+  setControlApiProviderHealthSource,
   setGithubActionsAdapterForTests
 } from "@simulatorlife/autodev-runtime/control-api";
 import {
@@ -283,7 +285,7 @@ test("viewer reads control resources; MCP and Skills views contain configuration
       actor: "viewer-a"
     });
     assert.equal(providers.response.statusCode, 200);
-    assert.equal(providers.body.schema, "autodev-control-providers-v1");
+    assert.equal(providers.body.schema, "autodev-control-providers-v2");
 
     const mcps = await call("GET", CONTROL_API_PATHS.mcps, {
       actor: "viewer-a"
@@ -441,6 +443,14 @@ test("operator PATCH validates fields, persists provider state, and audits the a
     assert.equal(captured.result.body.previous, previous);
     assert.equal(captured.result.body.enabled, false);
     assert.equal(
+      captured.result.body.schema,
+      "autodev-control-provider-role-v2"
+    );
+    assert.equal(
+      captured.result.body.reconciliation.status.convergence,
+      "converged"
+    );
+    assert.equal(
       ROUTING_POLICY.isProviderEnabledForRole("claude", "subagent"),
       false
     );
@@ -453,6 +463,9 @@ test("operator PATCH validates fields, persists provider state, and audits the a
     assert.equal(audit.actorRole, "operator");
     assert.equal(audit.outcome, "ok");
     assert.deepEqual(audit.changes, { enabled: false, previous });
+    assert.equal(audit.desiredGeneration, "subagent:enabled=false");
+    assert.equal(audit.observedGeneration, audit.desiredGeneration);
+    assert.equal(audit.restartRequired, false);
     assert.equal(JSON.stringify(audit).includes(SERVICE_TOKEN), false);
     const mutationSpan = getFinishedSpans().find(
       (span) =>
@@ -463,10 +476,7 @@ test("operator PATCH validates fields, persists provider state, and audits the a
       mutationSpan?.attributes["autodev.control.action"],
       "patch_provider_role"
     );
-    assert.equal(
-      mutationSpan?.attributes["autodev.control.resource"],
-      "claude/roles/subagent"
-    );
+    assert.equal(mutationSpan?.attributes["autodev.control.resource"], path);
     assert.equal(mutationSpan?.attributes["autodev.control.outcome"], "ok");
     assert.equal(
       mutationSpan?.attributes["autodev.control.actor_role"],
@@ -516,6 +526,231 @@ test("failed persistence rolls back the in-memory provider policy", async () => 
   }
 });
 
+test("providers v2 reports routes, credential presence, tier models, priorities, and router health only when observed", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    const unobserved = await call("GET", CONTROL_API_PATHS.providers, {
+      actor: "viewer-a"
+    });
+    assert.equal(unobserved.response.statusCode, 200);
+    const body = unobserved.body;
+    assert.equal(
+      body.orchestratorTier,
+      ROUTING_POLICY.config.orchestrator.tier
+    );
+    assert.deepEqual(
+      body.tiers.map(({ tier }: { tier: string }) => tier).sort(),
+      Object.keys(ROUTING_POLICY.config.providerGroups).sort()
+    );
+    const claude = body.providers.find(
+      (provider: { id: string }) => provider.id === "claude"
+    );
+    assert.ok(claude);
+    assert.equal(typeof claude.route.baseUrl, "string");
+    assert.equal(claude.credential.envKey, "LITELLM_API_KEY");
+    assert.equal(typeof claude.credential.configured, "boolean");
+    assert.equal(JSON.stringify(body).includes(SERVICE_TOKEN), false);
+    assert.deepEqual(
+      claude.models,
+      Object.entries(ROUTING_POLICY.config.providers.claude!.models).map(
+        ([tier, model]) => ({ tier, model })
+      )
+    );
+    for (const { tier, group } of claude.priorities) {
+      assert.ok(
+        ROUTING_POLICY.config.providerGroups[tier]![group - 1]!.includes(
+          "claude"
+        )
+      );
+    }
+    // No audited orchestrator write exists yet, so the role's convergence is
+    // unobserved even though its current generation is known.
+    const orchestratorEnabled = ROUTING_POLICY.isProviderEnabledForRole(
+      "claude",
+      "orchestrator"
+    );
+    const orchestratorGeneration = `orchestrator:enabled=${String(orchestratorEnabled)}`;
+    const { explanation, ...orchestratorConvergence } =
+      claude.roles.orchestrator.convergence;
+    assert.deepEqual(
+      { ...claude.roles.orchestrator, convergence: orchestratorConvergence },
+      {
+        enabled: orchestratorEnabled,
+        mutable: true,
+        convergence: {
+          convergence: "not-observed",
+          desiredGeneration: orchestratorGeneration,
+          observedGeneration: orchestratorGeneration,
+          lastApplyAt: null,
+          lastObservationAt: null,
+          lastError: null
+        }
+      }
+    );
+    assert.match(explanation, /has not yet reported observed state/u);
+    assert.equal(claude.health, null, "no router evidence means unobserved");
+
+    setControlApiProviderHealthSource(() => ({
+      claude: {
+        cooldown: null,
+        failureStreak: 0,
+        probeFailureStreak: 0,
+        inFlightRequests: 2,
+        activeAgents: 1,
+        attempts: 5,
+        successes: 5,
+        failures: 0,
+        lastSuccessAt: "2026-10-05T15:00:00.000Z",
+        lastFailure: null
+      }
+    }));
+    const observed = await call("GET", CONTROL_API_PATHS.providers, {
+      actor: "viewer-a"
+    });
+    const observedClaude = observed.body.providers.find(
+      (provider: { id: string }) => provider.id === "claude"
+    );
+    assert.equal(observedClaude.health.inFlightRequests, 2);
+    assert.equal(
+      observed.body.providers.find(
+        (provider: { id: string }) => provider.id === "codex"
+      ).health,
+      null
+    );
+  } finally {
+    setControlApiProviderHealthSource(null);
+    restoreEnv(saved);
+  }
+});
+
+test("models v2 lists each routed model once with its provider, tiers, and enablement", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    const result = await call("GET", CONTROL_API_PATHS.models, {
+      actor: "viewer-a"
+    });
+    assert.equal(result.response.statusCode, 200);
+    assert.equal(result.body.schema, "autodev-control-models-v2");
+    const ids = result.body.models.map((model: { id: string }) => model.id);
+    assert.equal(new Set(ids).size, ids.length);
+    assert.deepEqual(
+      [...ids].sort(),
+      ROUTING_POLICY.configuredModels()
+        .map(({ model }) => model)
+        .sort()
+    );
+    for (const model of result.body.models) {
+      assert.equal(
+        ROUTING_POLICY.routeForModel(model.id)?.provider,
+        model.provider
+      );
+      assert.ok(model.tiers.length > 0);
+      assert.deepEqual(model.enablement, {
+        enabled: ROUTING_POLICY.isModelEnabled(model.id),
+        mutable: true
+      });
+    }
+    const sonnet = result.body.models.find(
+      (model: { id: string }) => model.id === "sonnet"
+    );
+    assert.equal(sonnet?.displayName, "Claude Sonnet subscription");
+  } finally {
+    restoreEnv(saved);
+  }
+});
+
+test("operator model PATCH validates, persists, audits, and rolls back on persistence failure", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  const model = ROUTING_POLICY.configuredModels()[0]!.model;
+  const path = CONTROL_API_PATHS.models + "/" + model;
+  let persistCalls = 0;
+  let failPersist = false;
+  setDefaultPersistenceManager({
+    async persistNow() {
+      persistCalls += 1;
+      if (failPersist) throw new Error("disk failure");
+      return true;
+    }
+  } as unknown as RouterPersistence);
+  try {
+    configure();
+    const viewer = await call("PATCH", path, {
+      actor: "viewer-a",
+      body: { enabled: false }
+    });
+    assert.equal(viewer.response.statusCode, 403);
+
+    const extraField = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { enabled: false, tier: "default" }
+    });
+    assert.equal(extraField.response.statusCode, 400);
+
+    const unknown = await call(
+      "PATCH",
+      CONTROL_API_PATHS.models + "/gpt-not-configured",
+      { actor: "operator-a", body: { enabled: false } }
+    );
+    assert.equal(unknown.response.statusCode, 404);
+    assert.equal(unknown.body.error.code, "autodev_control_api_unknown_model");
+
+    const read = await call("GET", path, { actor: "operator-a" });
+    assert.equal(read.response.statusCode, 405);
+    assert.equal(read.response.headers.allow, "PATCH");
+    assert.equal(persistCalls, 0);
+
+    resetTelemetryExporter();
+    const captured = await captureAudit(() =>
+      call("PATCH", path, { actor: "operator-a", body: { enabled: false } })
+    );
+    assert.equal(captured.result.response.statusCode, 200);
+    assert.deepEqual(captured.result.body, {
+      schema: "autodev-control-model-v1",
+      model,
+      enabled: false,
+      previous: true,
+      actor: "operator-a"
+    });
+    assert.equal(ROUTING_POLICY.isModelEnabled(model), false);
+    assert.deepEqual(ROUTING_POLICY.runtimeState().disabledModels, [model]);
+    assert.equal(persistCalls, 1);
+    const audit = captured.lines
+      .map((line) => JSON.parse(line))
+      .find((entry) => entry.schema === "autodev-control-api-audit-v1");
+    assert.equal(audit.action, "patch_model");
+    assert.equal(audit.resource, model);
+    assert.deepEqual(audit.changes, { enabled: false, previous: true });
+    assert.equal(
+      getFinishedSpans().find(
+        (span) =>
+          span.name === "autodev.control.mutation" &&
+          span.attributes["autodev.control.action"] === "patch_model"
+      )?.attributes["autodev.control.outcome"],
+      "ok"
+    );
+
+    failPersist = true;
+    const failed = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { enabled: true }
+    });
+    assert.equal(failed.response.statusCode, 500);
+    assert.equal(
+      ROUTING_POLICY.isModelEnabled(model),
+      false,
+      "a failed persist rolls the model back to its previous state"
+    );
+  } finally {
+    resetTelemetryExporter();
+    ROUTING_POLICY.resetDisabledModels();
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
 test("read-only collections reject mutations and the removed admin route stays absent", async () => {
   const saved = saveEnv();
   try {
@@ -541,7 +776,7 @@ test("read-only collections reject mutations and the removed admin route stays a
   }
 });
 
-test("Tools catalog remains unknown when the role source is unavailable", async () => {
+test("Tools catalog stays authoritative when the role projection is empty but the RuleSync MCP source is valid", async () => {
   const saved = saveEnv();
   const priorContract = getDefaultExecutionContract();
   try {
@@ -554,9 +789,21 @@ test("Tools catalog remains unknown when the role source is unavailable", async 
       actor: "viewer-a"
     });
     assert.equal(tools.response.statusCode, 200);
-    assert.equal(tools.body.coverage, "unknown");
-    assert.equal(tools.body.totalTools, null);
-    assert.deepEqual(tools.body.tools, []);
+    assert.equal(tools.body.schema, "autodev-control-tools-v2");
+    // The composite read model still reports declared MCP/plugin tools
+    // because the canonical RuleSync source is authoritative on its own.
+    assert.equal(tools.body.coverage, "complete");
+    assert.equal(tools.body.validity, "valid");
+    assert.equal(typeof tools.body.totalTools, "number");
+    assert.ok(Array.isArray(tools.body.tools));
+    assert.ok(
+      tools.body.tools.every(
+        (tool: { exposedRoles: readonly string[] }) =>
+          Array.isArray(tool.exposedRoles) && tool.exposedRoles.length === 0
+      )
+    );
+    assert.equal(tools.body.usageLink, "/usage");
+    assert.equal(tools.body.readOnly, true);
   } finally {
     setExecutionContractForTests(priorContract);
     restoreEnv(saved);
@@ -590,7 +837,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
       { actor: "viewer-a" }
     );
     assert.equal(agentDetail.response.statusCode, 200);
-    assert.equal(agentDetail.body.schema, "autodev-control-agent-detail-v1");
+    assert.equal(agentDetail.body.schema, "autodev-control-agent-detail-v2");
     assert.equal(agentDetail.body.role, "orchestrator");
     assert.equal(agentDetail.body.kind, "orchestrator");
     assert.equal(agentDetail.body.status, "configured");
@@ -615,15 +862,15 @@ test("Control API surfaces all 13 typed resource families", async () => {
       actor: "viewer-a"
     });
     assert.equal(providers.response.statusCode, 200);
-    assert.equal(providers.body.schema, "autodev-control-providers-v1");
+    assert.equal(providers.body.schema, "autodev-control-providers-v2");
 
     // 3. Models
     const models = await call("GET", CONTROL_API_PATHS.models, {
       actor: "viewer-a"
     });
     assert.equal(models.response.statusCode, 200);
-    assert.equal(models.body.schema, "autodev-control-models-v1");
-    assert.ok(models.body.totalModels > 0);
+    assert.equal(models.body.schema, "autodev-control-models-v2");
+    assert.ok(models.body.models.length > 0);
 
     // 4. MCPs
     const mcps = await call("GET", CONTROL_API_PATHS.mcps, {
@@ -664,27 +911,56 @@ test("Control API surfaces all 13 typed resource families", async () => {
       /CONTEXT7_API_KEY|MCP_TOKEN|bearer_token/u
     );
 
-    // 5. Tools: known capability declarations only; health and use are unknown.
+    // 5. Tools: composite read model joining RuleSync MCP declarations with
+    // the execution-contract role projection; per-tool historical use/error
+    // evidence lives on the dedicated Usage path and is not synthesized here.
     const tools = await call("GET", CONTROL_API_PATHS.tools, {
       actor: "viewer-a"
     });
     assert.equal(tools.response.statusCode, 200);
-    assert.equal(tools.body.schema, "autodev-control-tools-v1");
-    assert.equal(tools.body.source, "execution-contract");
-    assert.equal(tools.body.coverage, "partial");
+    assert.equal(tools.body.schema, "autodev-control-tools-v2");
+    assert.equal(tools.body.source, ".rulesync/mcp.jsonc");
+    assert.equal(tools.body.readOnly, true);
+    assert.ok(["complete", "partial"].includes(tools.body.coverage));
+    assert.equal(tools.body.validity, "valid");
+    assert.equal(tools.body.usageLink, "/usage");
+    assert.equal(typeof tools.body.totalTools, "number");
     const webSearch = tools.body.tools.find(
-      (tool: { name: string; source: string }) =>
-        tool.name === "web_search" && tool.source === "native"
+      (tool: { name: string; source: string; sourceAuthority: string }) =>
+        tool.name === "web_search" &&
+        tool.source === "native" &&
+        tool.sourceAuthority === "codex-native"
     );
     assert.ok(webSearch);
     assert.ok(webSearch.exposedRoles.includes("docs-researcher"));
+    assert.equal(webSearch.availability, "configured");
+    assert.ok(webSearch.canonicalEditSurface);
     const appTool = tools.body.tools.find(
-      (tool: { name: string; source: string }) =>
-        tool.name === "request_user_input" && tool.source === "plugin"
+      (tool: { name: string; source: string; sourceAuthority: string }) =>
+        tool.name === "request_user_input" &&
+        tool.source === "plugin" &&
+        tool.sourceAuthority === "rulesync-plugin"
     );
     assert.ok(appTool);
     assert.ok(appTool.exposedRoles.includes("orchestrator"));
     assert.equal("status" in webSearch, false);
+    // The RuleSync plugin entry for codex_app surfaces through the
+    // composite catalog so the Console can pivot to its canonical edit
+    // surface (MCP codex_app) without inventing per-tool evidence.
+    assert.ok(
+      tools.body.tools.some(
+        (tool: { source: string; sourceAuthority: string; server?: string }) =>
+          tool.source === "plugin" &&
+          tool.sourceAuthority === "rulesync-plugin" &&
+          tool.server === "codex_app"
+      )
+    );
+    // The payload must never invent per-tool use/error evidence.
+    assert.ok(
+      tools.body.tools.every(
+        (tool: { usage?: unknown }) => tool.usage === undefined
+      )
+    );
 
     // 6. Skills
     const skills = await call("GET", CONTROL_API_PATHS.skills, {
@@ -761,7 +1037,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
       actor: "viewer-a"
     });
     assert.equal(promptDetail.response.statusCode, 200);
-    assert.equal(promptDetail.body.schema, "autodev-control-prompt-detail-v2");
+    assert.equal(promptDetail.body.schema, "autodev-control-prompt-detail-v4");
     assert.equal(promptDetail.body.name, "dry");
 
     const unknownPrompt = await call(
@@ -863,6 +1139,117 @@ test("Control API prompts listing projects the canonical RuleSyncRepository.load
   }
 });
 
+test("Control API exposes bounded Git prompt history and selected-version diff as read-only data", async () => {
+  const saved = saveEnv();
+  const repositoryRoot = mkdtempSync(
+    join(tmpdir(), "autodev-prompt-history-control-")
+  );
+  try {
+    configure();
+    const commandsDir = join(repositoryRoot, ".rulesync", "commands");
+    mkdirSync(commandsDir, { recursive: true });
+    const commandPath = join(commandsDir, "audit.md");
+    const canonical =
+      "---\ntargets: [codexcli]\ndescription: Review source.\n---\n\n# Audit\n\nReview the source.\n";
+    await writeFileSync(commandPath, canonical);
+    execFileSync("git", ["-C", repositoryRoot, "init", "-q"]);
+    execFileSync("git", ["-C", repositoryRoot, "config", "user.name", "Tests"]);
+    execFileSync("git", [
+      "-C",
+      repositoryRoot,
+      "config",
+      "user.email",
+      "tests@example.invalid"
+    ]);
+    execFileSync("git", [
+      "-C",
+      repositoryRoot,
+      "add",
+      ".rulesync/commands/audit.md"
+    ]);
+    execFileSync("git", [
+      "-C",
+      repositoryRoot,
+      "commit",
+      "-q",
+      "-m",
+      "Initial command"
+    ]);
+    await writeFileSync(
+      commandPath,
+      canonical.replace("Review the source.", "Review the current source.")
+    );
+
+    const options = { repositoryRoot };
+    const list = await call(
+      "GET",
+      `${CONTROL_API_PATHS.prompts}/audit/versions`,
+      { actor: "viewer-a" },
+      options
+    );
+    assert.equal(list.response.statusCode, 200);
+    assert.equal(list.body.schema, "autodev-control-prompt-versions-v1");
+    assert.equal(list.body.name, "audit");
+    assert.equal(list.body.status, "available");
+    assert.equal(list.body.hasMore, false);
+    assert.equal(list.body.versions.length, 1);
+    const revision = list.body.versions[0].versionHash as string;
+
+    const version = await call(
+      "GET",
+      `${CONTROL_API_PATHS.prompts}/audit/versions/${revision}`,
+      { actor: "viewer-a" },
+      options
+    );
+    assert.equal(version.response.statusCode, 200);
+    assert.equal(version.body.schema, "autodev-control-prompt-version-v1");
+    assert.equal(version.body.name, "audit");
+    assert.equal(version.body.versionHash, revision);
+    assert.equal(version.body.content, canonical);
+    assert.match(version.body.diff, /-Review the source\./u);
+    assert.match(version.body.diff, /\+Review the current source\./u);
+
+    const mutation = await call(
+      "PATCH",
+      `${CONTROL_API_PATHS.prompts}/audit/versions/${revision}`,
+      { actor: "operator-a", body: {} },
+      options
+    );
+    assert.equal(mutation.response.statusCode, 405);
+    assert.equal(mutation.response.headers.allow, "GET");
+
+    const unavailableRepository = mkdtempSync(
+      join(tmpdir(), "autodev-prompt-history-no-git-")
+    );
+    try {
+      const noGitCommands = join(
+        unavailableRepository,
+        ".rulesync",
+        "commands"
+      );
+      mkdirSync(noGitCommands, { recursive: true });
+      writeFileSync(
+        join(noGitCommands, "audit.md"),
+        "---\ndescription: Review source.\n---\n\n# Audit\n"
+      );
+      const unavailable = await call(
+        "GET",
+        `${CONTROL_API_PATHS.prompts}/audit/versions`,
+        { actor: "viewer-a" },
+        { repositoryRoot: unavailableRepository }
+      );
+      assert.equal(unavailable.response.statusCode, 200);
+      assert.equal(unavailable.body.status, "unavailable");
+      assert.deepEqual(unavailable.body.versions, []);
+    } finally {
+      rmSync(unavailableRepository, { recursive: true, force: true });
+    }
+  } finally {
+    restoreEnv(saved);
+    rmSync(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
 test("Control API prompt detail serves the canonical command content from RuleSyncRepository.loadCommands", async () => {
   const saved = saveEnv();
   try {
@@ -879,17 +1266,22 @@ test("Control API prompt detail serves the canonical command content from RuleSy
       { actor: "viewer-a" }
     );
     assert.equal(detail.response.statusCode, 200);
-    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v2");
+    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v4");
     assert.equal(detail.body.name, target.name);
     assert.equal(detail.body.type, "command");
     assert.equal(detail.body.source, target.path);
     assert.equal(detail.body.content, target.content);
+    assert.equal(detail.body.preview, target.prompt);
     assert.equal(detail.body.revision, target.revision);
 
-    // The detail surface contains only canonical content and its revision.
+    // The detail surface contains only canonical content, its revision,
+    // the bounded diff summary, and the reconciliation view.
     assert.deepEqual(Object.keys(detail.body).sort(), [
       "content",
+      "diff",
       "name",
+      "preview",
+      "reconciliation",
       "revision",
       "schema",
       "source",
@@ -955,12 +1347,19 @@ test("operator Prompt PATCH validates source, applies the Rulesync projection, a
       )
     );
     assert.equal(result.response.statusCode, 200);
-    assert.equal(result.body.schema, "autodev-control-prompt-command-patch-v1");
+    assert.equal(result.body.schema, "autodev-control-prompt-command-patch-v2");
     assert.equal(result.body.name, "dry");
     assert.match(result.body.revision, /^[a-f0-9]{64}$/u);
     assert.equal(result.body.changed, true);
-    assert.equal(result.body.projectionUpdated, true);
-    assert.equal(result.body.restartRequired, true);
+    assert.equal(result.body.diff.summary.length > 0, true);
+    assert.equal(result.body.diff.identifier.length, 64);
+    assert.equal(result.body.reconciliation.status.convergence, "converged");
+    assert.equal(
+      result.body.reconciliation.status.desiredGeneration,
+      result.body.reconciliation.status.observedGeneration
+    );
+    assert.equal(result.body.reconciliation.status.lastError, null);
+    assert.equal(result.body.reconciliation.history.length > 0, true);
     assert.doesNotMatch(lines.join(""), /A canonical edit reaches/u);
     assert.equal(
       new RuleSyncRepository(repositoryRoot)
@@ -980,9 +1379,37 @@ test("operator Prompt PATCH validates source, applies the Rulesync projection, a
       runtimeOptions
     );
     assert.equal(detail.response.statusCode, 200);
-    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v2");
+    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v4");
     assert.equal(detail.body.revision, result.body.revision);
     assert.equal(detail.body.content, content);
+    assert.equal(
+      detail.body.preview,
+      "# Edited command\n\nA canonical edit reaches the generated Codex prompt."
+    );
+
+    const invalidSource = await call(
+      "PATCH",
+      CONTROL_API_PATHS.prompts + "/dry",
+      {
+        actor: "operator-a",
+        body: {
+          content: "not frontmatter",
+          expectedRevision: result.body.revision
+        }
+      },
+      runtimeOptions
+    );
+    assert.equal(invalidSource.response.statusCode, 400);
+    assert.equal(
+      invalidSource.body.error.code,
+      "autodev_control_prompt_invalid_source"
+    );
+    assert.equal(
+      new RuleSyncRepository(repositoryRoot)
+        .loadCommands()
+        .commands.find((command) => command.name === "dry")?.content,
+      content
+    );
 
     const stale = await call(
       "PATCH",
@@ -998,6 +1425,17 @@ test("operator Prompt PATCH validates source, applies the Rulesync projection, a
       stale.body.error.code,
       "autodev_control_prompt_revision_conflict"
     );
+    const wrongMethod = await call(
+      "POST",
+      CONTROL_API_PATHS.prompts + "/dry",
+      {
+        actor: "operator-a",
+        body: { content, expectedRevision: result.body.revision }
+      },
+      runtimeOptions
+    );
+    assert.equal(wrongMethod.response.statusCode, 405);
+    assert.equal(wrongMethod.response.headers.allow, "GET, PATCH");
   } finally {
     restoreEnv(saved);
     rmSync(repositoryRoot, { recursive: true, force: true });
@@ -1030,7 +1468,7 @@ test("Control API prompt detail serves an unshadowed role prompt from its canoni
       { actor: "viewer-a" }
     );
     assert.equal(detail.response.statusCode, 200);
-    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v2");
+    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v4");
     assert.equal(detail.body.type, "role");
     assert.equal(detail.body.name, rolePrompt.role);
     assert.match(detail.body.revision, /^[a-f0-9]{64}$/u);
@@ -1039,6 +1477,7 @@ test("Control API prompt detail serves an unshadowed role prompt from its canoni
       detail.body.content,
       readFileSync(join(process.cwd(), rolePrompt.path), "utf8")
     );
+    assert.equal(detail.body.preview, detail.body.content);
   } finally {
     restoreEnv(saved);
   }

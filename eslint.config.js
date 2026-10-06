@@ -51,6 +51,7 @@ const baseIgnorePatterns = [
   "**/node_modules/**",
   "**/coverage/**",
   "**/.next/**",
+  "**/.next-dev/**",
   ".tmp/**",
   "**/*.md",
   ".DS_Store",
@@ -198,7 +199,7 @@ const architecturePolicies = [
     "runtime-shared",
     "runtime-telemetry"
   ]),
-  allowOnly("runtime-platform", ["runtime-config", "runtime-shared"]),
+  allowOnly("runtime-platform", ["data", "runtime-config", "runtime-shared"]),
   allowOnly("runtime-mcp", ["runtime-shared"]),
   allowOnly("runtime-agents", ["runtime-shared"]),
   allowOnly("runtime-providers", [
@@ -225,9 +226,8 @@ const architecturePolicies = [
     "runtime-shared",
     "runtime-telemetry-context"
   ]),
-  // A RuleSync-owned mutation through the Control API validates the
-  // canonical source, then generates and applies its projections (target
-  // state §6); the platform materializer owns that generate/apply step.
+  // The Control API applies named RuleSync mutations through the existing
+  // platform materializer; it does not shell out to caller-selected commands.
   allowOnly("runtime-control-api", [
     "core",
     "data",
@@ -282,6 +282,8 @@ const architecturePolicies = [
   allowFileOnly("test", ["runtime-router-status"]),
   allowFileOnly("runtime-router", ["runtime-router-state-collector"]),
   allowFileOnly("test", ["runtime-router-state-collector"]),
+  // next.config.ts applies Console build policy owned by console/src/lib.
+  allowFileOnly("package-config", ["console-lib"]),
   allowFileOnly("console-entrypoint", [
     "console-app",
     "console-components",

@@ -8,7 +8,7 @@
 >
 > **Focused Memory design:** [memory-target-state.md](memory-target-state.md) and [memory-injection-outcome-evaluation.md](memory-injection-outcome-evaluation.md).
 >
-> **Last reviewed:** 2026-10-05 (RuleSync skill catalog and role-eligibility contract).
+> **Last reviewed:** 2026-10-05 (top-level Providers resource and contextual controls; RuleSync skill catalog and role-eligibility contract).
 
 ## 1. Canonical-document contract
 
@@ -40,6 +40,7 @@ The canonical top-level resources are:
 ~~~text
 Configure
 ├── Agents
+├── Providers
 ├── MCPs
 ├── Skills
 ├── Hooks
@@ -57,13 +58,13 @@ Operate
 └── GitHub
 ~~~
 
-The grouping is presentation only; the 12 resources remain first-class routes.
+The grouping is presentation only; the 13 resources remain first-class routes.
 
-There is no required generic Home/Dashboard page. The root route should redirect to a useful canonical resource rather than introduce a thirteenth surface that duplicates Usage, runtime status, or GitHub activity.
+There is no required generic Home/Dashboard page. The root route should redirect to a useful canonical resource rather than introduce a fourteenth surface that duplicates Usage, runtime status, or GitHub activity.
 
 Use **Workspaces**, not OpenLIT Projects, for AutoDev repositories/workspaces. OpenLIT project/environment/organization/account tenancy must not reappear under different names.
 
-Provider, model, routing, and runtime configuration are required domain data but remain secondary surfaces under **Agents** and relevant detail views rather than additional top-level navigation. Provider/model observability remains available in **Usage**.
+**Providers** is a top-level Configure resource in the Console navigation, listed directly after Agents. It is the canonical surface for model providers (for example Claude, Codex, Copilot, Antigravity, and MiniMax) and their models: provider orchestrator/subagent enablement, model enablement, priority/fallback groups, per-tier model mapping, routes, and live readiness, health, cooldown, and failure state. Models is a tab inside Providers, not another top-level resource. Agents shows each role's effective provider/model eligibility as a read-only summary that links to Providers. Historical provider/model observability remains in **Usage**.
 
 Configuration, desired state, actual runtime state, health, activity, and historical telemetry should be composable on the same resource pages while remaining separate architectural data/control paths.
 
@@ -120,7 +121,8 @@ Every domain concept has one canonical editable surface. Other pages may show a 
 
 | Concern | Canonical edit surface | Other surfaces |
 | --- | --- | --- |
-| Agent definition, provider/model eligibility, routing | Agents | scoped effective summaries |
+| Agent definition | Agents | scoped effective summaries |
+| Provider orchestrator/subagent enablement, model enablement, priority/fallback groups, per-tier models, routing | Providers (Providers and Models tabs) | read-only effective provider/model summaries on Agents |
 | MCP configuration | MCPs | read-only role/tool summaries |
 | Skill definition/enablement | Skills | read-only assignments/evidence |
 | Hook configuration | Hooks | read-only effective status |
@@ -133,7 +135,17 @@ Every domain concept has one canonical editable surface. Other pages may show a 
 | GitHub workflow catalog and Actions runtime state | GitHub (read-only; workflow definitions remain repository-owned) | read-only workflow/run links elsewhere |
 | Historical telemetry | Usage | small scoped summaries with links to Usage |
 
-Do not duplicate provider, routing, permission, prompt, MCP, tool, skill, or workspace controls across several pages for convenience.
+Do not duplicate provider, routing, permission, prompt, MCP, tool, skill, or workspace controls across several resources for convenience. Showing an item's control on its own list row and in its own detail view inside the owning resource is required by the contextual-controls rule below; it is not duplication.
+
+### Contextual controls
+
+Controls live with the item they act on. There is no separate settings, admin, or control page for state that belongs to a listed item.
+
+- An item's enable/disable toggle and other item-scoped actions appear on that item's row or card in its resource list view **and** in that item's detail view. The toggle that disables a model provider sits on that provider's row in Providers and in that provider's detail view; the toggle that enables or disables a model sits next to that model in the Models view and in that model's detail view.
+- When a detail view lists child items, each child row carries its own controls; a provider's detail view lists its models with their model toggles.
+- Each rendering of a control uses the same typed Control API operation and the same current, pending, and could-not-be-confirmed states. A list control and a detail control are one shared component, not two implementations.
+- Pages outside the owning resource show the item's state read-only and link to it; they do not embed its controls.
+- When an item's state cannot be changed (for example a read-only source, a missing credential, or unobserved state), the control stays in place, disabled, with the reason, rather than disappearing.
 
 ### State correctness
 
@@ -437,7 +449,8 @@ The Console remains one application/package. A lightweight typed feature registr
 
 | Resource | Primary authority | Target surface |
 | --- | --- | --- |
-| **Agents** | RuleSync + Runtime | role definition, provider/model eligibility, routing/runtime controls, desired/actual state, health, activity |
+| **Agents** | RuleSync + Runtime | role definition, read-only effective provider/model eligibility, desired/actual state, health, activity |
+| **Providers** | typed AutoDev routing configuration + Runtime + OTel | provider and model catalogs, provider orchestrator/subagent enablement, model enablement, priority/fallback groups, per-tier models, credential presence (never values), readiness/health, cooldown/failure state, in-flight load, links to Usage |
 | **MCPs** | RuleSync + Runtime + OTel | server configuration, role exposure, Tools/Resources/Prompts, connection health, usage/errors |
 | **Skills** | RuleSync + OTel | canonical definitions, role/workspace eligibility, observed exposure/use/error |
 | **Hooks** | RuleSync + Runtime evidence | event/matcher/action, target projections, validation/effective status, observed executions/errors |
@@ -464,7 +477,22 @@ Converged / Pending / Error
 Last activity
 ~~~
 
-Agent detail may combine canonical role/prompt, assigned capabilities, provider/model/routing controls, generated projections, actual readiness/health, and scoped activity/usage.
+Agent detail may combine canonical role/prompt, assigned capabilities, a read-only effective provider/model summary linking to Providers, generated projections, actual readiness/health, and scoped activity/usage.
+
+### Providers
+
+Providers is the one place an operator decides which model providers and models may serve the orchestrator and subagents, in what priority order, and with which model per capability tier. It has a **Providers** tab (one row per provider) and a **Models** tab (one row per model across providers); each row carries that item's enable/disable toggle per the contextual-controls rule.
+
+Useful states include:
+
+~~~text
+Enabled / Disabled (orchestrator, subagent)
+Ready / Cooling down / Unavailable
+Credential configured / Missing
+Last failure
+~~~
+
+Provider detail may combine its enable/disable controls, configured routes, its models with their own toggles, per-tier models, the tier priority/fallback groups the provider appears in, live readiness/cooldown/failure evidence, and small scoped Usage summaries that link to Usage. Mutations go through typed Control API provider/routing operations. Credentials are shown only as configured/missing status, never as values, and Providers must not become a second credential or model-catalog authority.
 
 ### MCPs
 
@@ -699,7 +727,9 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 ### Console UI/product
 
 - console/ is the sole final user-facing application.
-- Canonical resource navigation contains exactly the intended 12 resources, grouped consistently; no duplicate generic Home/Analytics/Settings product is required.
+- Canonical resource navigation contains exactly the intended 13 resources, grouped consistently; no duplicate generic Home/Analytics/Settings product is required.
+- Providers is a top-level Configure navigation item with Providers and Models tabs, and the only editable surface for provider role enablement, model enablement, priority/fallback groups, and per-tier models; Agents shows read-only provider summaries that link to it.
+- Item-scoped controls are contextual: each appears on the item's list row and in its detail view inside the owning resource (provider toggles on Providers rows and provider detail; model toggles on Models rows, model detail, and the provider detail's model list), backed by one typed operation; other resources show read-only state with a link.
 - Dark-only operation is enforced; there is no light/system theme or theme selector.
 - Otter/chat is absent.
 - Documentation/Community/blog/marketing navigation is absent.
@@ -786,4 +816,4 @@ Do not remove an incumbent path until its replacement has end-to-end evidence. D
 
 AutoDev is a **single-user, dark-only, deliberately compact control and observability Console** built on a reduced OpenLIT telemetry foundation.
 
-Retain the useful OpenTelemetry ingestion/storage/querying and selected reusable components/capabilities; remove the generic OpenLIT product shell; make the 12 AutoDev resources the canonical product surface; keep RuleSync/runtime ownership explicit; and never conflate configuration, actual runtime state, or historical telemetry.
+Retain the useful OpenTelemetry ingestion/storage/querying and selected reusable components/capabilities; remove the generic OpenLIT product shell; make the 13 AutoDev resources the canonical product surface; keep RuleSync/runtime ownership explicit; and never conflate configuration, actual runtime state, or historical telemetry.

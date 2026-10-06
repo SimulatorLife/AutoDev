@@ -34,6 +34,8 @@ const PINNED_IMAGE_DIGEST =
   "sha256:94552ccd09379b5e2fec3c51c4fec1b41d88d6b56b0a5ccc895c116673884fa8";
 
 const PATCHES_DIR = join(repositoryRoot, "patches/openlit");
+const REMOVED_CHAT_MODULE_IMPORT =
+  /from "@\/(?:components\/\(playground\)\/chat|lib\/platform\/chat|lib\/chat|store\/chat|selectors\/chat|types\/store\/chat)[/"]/u;
 
 function run(
   cmd: string,
@@ -1417,17 +1419,17 @@ test(
     }
 
     if (patches.some((p) => p.startsWith("20-"))) {
-      for (const locale of ["en", "hi"]) {
-        const messages = readFileSync(
-          join(dir, "src/client/src/constants/messages/" + locale + ".ts"),
-          "utf8"
-        );
-        assert.doesNotMatch(
-          messages,
-          /^export const AGENTS_(?:SOURCE_CONTROLLER|SOURCE_BOTH|COLUMN_CONTROLLER|STATUS_INSTRUMENTED|LLM_OBSERVABILITY_DESCRIPTION|AGENT_USE_NOTE|AGENT_TOGGLE_CONTROLLER_UPGRADE|CONTROLLER_DEFAULT_TITLE|STAT_INSTRUMENTED|CONFIG_SAVED)\\b/mu,
-          "patch 20 must remove stale Controller constants from " + locale
-        );
-      }
+      // 27-remove-otter-chat-docs-onboarding-chrome deletes the Hindi
+      // catalog, so English is the only locale left to check.
+      const messages = readFileSync(
+        join(dir, "src/client/src/constants/messages/en.ts"),
+        "utf8"
+      );
+      assert.doesNotMatch(
+        messages,
+        /^export const AGENTS_(?:SOURCE_CONTROLLER|SOURCE_BOTH|COLUMN_CONTROLLER|STATUS_INSTRUMENTED|LLM_OBSERVABILITY_DESCRIPTION|AGENT_USE_NOTE|AGENT_TOGGLE_CONTROLLER_UPGRADE|CONTROLLER_DEFAULT_TITLE|STAT_INSTRUMENTED|CONFIG_SAVED)\\b/mu,
+        "patch 20 must remove stale Controller constants from en"
+      );
     }
   }
 );
@@ -1532,7 +1534,9 @@ test(
         "22-autodev-memory-injection-use",
         "23-autodev-memory-visible-connector",
         "24-autodev-pricing-empty-history",
-        "25-autodev-usage-filter-options"
+        "25-autodev-usage-filter-options",
+        "26-autodev-usage-trace-detail",
+        "27-remove-otter-chat-docs-onboarding-chrome"
       );
       assert.ok(
         patches.length >= expectedPatchNames.length,
@@ -1666,19 +1670,14 @@ test(
         );
       }
       if (patches.some((p) => p.startsWith("20-"))) {
-        for (const locale of ["en", "hi"]) {
-          const messages = readFileSync(
-            join(
-              workDirectory,
-              "src/client/src/constants/messages/" + locale + ".ts"
-            ),
-            "utf8"
-          );
-          assert.doesNotMatch(
-            messages,
-            /^export const AGENTS_(?:SOURCE_CONTROLLER|SOURCE_BOTH|COLUMN_CONTROLLER|STATUS_INSTRUMENTED|LLM_OBSERVABILITY_DESCRIPTION|AGENT_USE_NOTE|AGENT_TOGGLE_CONTROLLER_UPGRADE|CONTROLLER_DEFAULT_TITLE|STAT_INSTRUMENTED|CONFIG_SAVED)\\b/mu
-          );
-        }
+        const messages = readFileSync(
+          join(workDirectory, "src/client/src/constants/messages/en.ts"),
+          "utf8"
+        );
+        assert.doesNotMatch(
+          messages,
+          /^export const AGENTS_(?:SOURCE_CONTROLLER|SOURCE_BOTH|COLUMN_CONTROLLER|STATUS_INSTRUMENTED|LLM_OBSERVABILITY_DESCRIPTION|AGENT_USE_NOTE|AGENT_TOGGLE_CONTROLLER_UPGRADE|CONTROLLER_DEFAULT_TITLE|STAT_INSTRUMENTED|CONFIG_SAVED)\\b/mu
+        );
       }
 
       if (patches.some((p) => p.startsWith("21-"))) {
@@ -1781,6 +1780,53 @@ test(
         "23-autodev-memory-visible-connector must add autodev to VISIBLE_CONNECTOR_TYPES"
       );
 
+      // 27-remove-otter-chat-docs-onboarding-chrome removes the Otter chat,
+      // getting-started, and onboarding surfaces, and nothing left in the
+      // patched client links to OpenLIT docs or mounts the Otter panel.
+      for (const rel of [
+        "src/app/(playground)/chat",
+        "src/app/(playground)/getting-started",
+        "src/app/(playground)/onboarding",
+        "src/app/api/chat",
+        "src/components/(playground)/chat",
+        "src/components/(playground)/getting-started",
+        "src/components/(playground)/memory/ask-otter.tsx",
+        "src/components/(playground)/sidebar/otter-sidebar.tsx",
+        "src/components/(playground)/prompt-hub/prompt-otter-inline-assistant.tsx",
+        "src/components/(playground)/request/components/trace-improvement-view.tsx",
+        "src/components/(playground)/request/components/trace-ai-analysis-panel.tsx",
+        "src/components/svg/otter.tsx",
+        "src/components/rbac/otter-page-access.tsx",
+        "src/constants/messages/hi.ts",
+        "src/lib/chat",
+        "src/lib/platform/chat",
+        "src/lib/platform/connectors/memory/ask.ts",
+        "src/lib/platform/governance/otter-findings.ts",
+        "src/lib/platform/kubernetes/index.ts"
+      ]) {
+        assert.equal(
+          existsSync(join(workDirectory, "src/client", rel)),
+          false,
+          `27-remove-otter-chat-docs-onboarding-chrome must remove ${rel}`
+        );
+      }
+      const otterAndDocsReferences = run(
+        "grep",
+        [
+          "-rlE",
+          String.raw`docs\.openlit\.io|ask-otter-panel|OtterSidebar`,
+          "src/client/src"
+        ],
+        workDirectory
+      )
+        .stdout.split("\n")
+        .filter((rel) => rel && !rel.includes("/__tests__/"));
+      assert.deepEqual(
+        otterAndDocsReferences,
+        [],
+        "27-remove-otter-chat-docs-onboarding-chrome must leave no OpenLIT docs links or Otter panel references in the patched client"
+      );
+
       const status = run("git", ["status", "--short"], workDirectory);
       assert.doesNotMatch(
         status.stdout,
@@ -1823,6 +1869,19 @@ test("OpenLIT patches do not add a producer-facing Collector sidecar", () => {
       `patch ${patch} must not point producers at a Collector pass-through`
     );
   }
+});
+
+test("27-remove-otter-chat-docs-onboarding-chrome adds no imports of the chat modules it removes", () => {
+  const patch = readFileSync(
+    join(PATCHES_DIR, "27-remove-otter-chat-docs-onboarding-chrome.patch"),
+    "utf8"
+  );
+  const addedChatImports = patch
+    .split("\n")
+    .filter(
+      (line) => line.startsWith("+") && REMOVED_CHAT_MODULE_IMPORT.test(line)
+    );
+  assert.deepEqual(addedChatImports, []);
 });
 
 test("openlit pin metadata matches the published digest and image tag", () => {

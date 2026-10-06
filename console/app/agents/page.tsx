@@ -14,20 +14,7 @@ import { ResourceUnavailable } from "../_console.ts";
 
 export const dynamic = "force-dynamic";
 
-interface AgentsPageProps {
-  readonly searchParams?: Promise<
-    Record<string, string | string[] | undefined>
-  >;
-}
-
-function hasProviderRoleFailure(raw: string | string[] | undefined): boolean {
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  return value === "failed";
-}
-
-export default async function AgentsPage({
-  searchParams
-}: AgentsPageProps): Promise<React.JSX.Element> {
+export default async function AgentsPage(): Promise<React.JSX.Element> {
   const config = readControlApiConfig();
   if (!config) {
     return React.createElement(ResourceUnavailable, {
@@ -37,10 +24,6 @@ export default async function AgentsPage({
         "Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read agent configuration."
     });
   }
-  const resolvedSearchParams = (await searchParams) ?? {};
-  const providerRoleFailed = hasProviderRoleFailure(
-    resolvedSearchParams.providerRole
-  );
   const [agentsResult, providersResult, routingResult, runtimeResult] =
     await Promise.all([
       fetchAgents(config),
@@ -55,17 +38,11 @@ export default async function AgentsPage({
       message: agentsResult.message
     });
   }
-  const agents = agentsFromControlApi(agentsResult.data);
-  const providers =
-    providersResult.kind === "ok" ? providersResult.data : undefined;
-  const routing = routingResult.kind === "ok" ? routingResult.data : undefined;
-  const runtime = runtimeResult.kind === "ok" ? runtimeResult.data : undefined;
 
   return React.createElement(AgentsView, {
-    agents,
-    providers,
-    routing,
-    runtime,
-    providerRoleFailed
+    agents: agentsFromControlApi(agentsResult.data),
+    providers: providersResult.kind === "ok" ? providersResult.data : undefined,
+    routing: routingResult.kind === "ok" ? routingResult.data : undefined,
+    runtime: runtimeResult.kind === "ok" ? runtimeResult.data : undefined
   });
 }

@@ -133,6 +133,18 @@ Look for evidence such as:
 
 Treat size thresholds only as investigation signals. A small file can have excellent cohesion and a large file can represent one clear concept
 
+### Test Coupling and Extensible Catalogs
+
+Do not make tests mirror the current inventory of an extensible configuration or catalog. Tests that assert specific provider/model names, exact item counts, or every current value make routine additions and removals require unrelated test edits and create a second source of truth.
+
+Prefer tests that verify:
+
+- Structural invariants, such as required fields, valid ranges, unique identifiers, and synchronized indexes
+- Supported behavior through public APIs
+- Explicit contractual examples only when the exact item or value is itself a supported requirement
+
+For example, a model catalog test should validate that every entry is well-formed and usable, not enumerate the current model IDs, prices, capabilities, or length. If a test must change whenever an ordinary catalog entry changes, first question whether it is testing correctness or merely restating configuration.
+
 ### 3. Define the Better Ownership Model
 
 Before editing, state the intended simplification in structural terms

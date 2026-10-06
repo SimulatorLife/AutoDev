@@ -64,6 +64,10 @@ writeLine(
 writeLine(
   `Subagents: ${enabledSubagentProviders.length} enabled (${enabledSubagentProviders.join(", ") || "-"}), ${disabledSubagentProviders.length} disabled (${disabledSubagentProviders.join(", ") || "none"})`
 );
+const disabledModels = routing.disabledModels ?? [];
+writeLine(
+  `Models: ${disabledModels.length} disabled (${disabledModels.join(", ") || "none"})`
+);
 
 if (routing.providerGroups && typeof routing.providerGroups === "object") {
   writeLine("Configured priority groups:");

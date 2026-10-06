@@ -15,8 +15,17 @@ import type {
   MemorySessionOutcomeCohortPage,
   MemoryStatus
 } from "../memory/types.ts";
-import type { ProviderRole } from "../routing/types.ts";
-import type { ToolCatalogItem } from "../tools/types.ts";
+import type {
+  OperationHistoryEntry,
+  ReconciliationDiff,
+  ReconciliationStatus
+} from "../reconciliation/types.ts";
+import type { ProviderRole, RoutingPolicyState } from "../routing/types.ts";
+import type {
+  ToolCatalogCoverage,
+  ToolCatalogItem,
+  ToolCatalogValidity
+} from "../tools/types.ts";
 import type {
   WorkspaceCatalogStatus,
   WorkspaceEntry
@@ -60,48 +69,126 @@ export interface ControlApiAgentsResponse {
 }
 
 export interface ControlApiAgentDetailResponse extends ControlApiAgentRecord {
-  readonly schema: "autodev-control-agent-detail-v1";
+  readonly schema: "autodev-control-agent-detail-v2";
   readonly promptPath: string | null;
   readonly systemPrompt: string;
+  /** Reusable reconciliation view shared with mutation responses. */
+  readonly reconciliation: {
+    readonly status: ReconciliationStatus;
+    readonly history: readonly OperationHistoryEntry[];
+  };
+}
+
+export interface ControlApiEnablement {
+  readonly enabled: boolean;
+  readonly mutable: boolean;
+}
+
+/** Live router evidence for one provider; absent when the router is not observed. */
+export interface ControlApiProviderHealth {
+  readonly cooldown: {
+    readonly kind: string;
+    readonly failureClass: string | null;
+    readonly until: string;
+    readonly resetsAt: string | null;
+    readonly lastResortEligible: boolean;
+  } | null;
+  readonly failureStreak: number;
+  readonly probeFailureStreak: number;
+  readonly inFlightRequests: number;
+  readonly activeAgents: number;
+  readonly attempts: number;
+  readonly successes: number;
+  readonly failures: number;
+  readonly lastSuccessAt: string | null;
+  readonly lastFailure: {
+    readonly at: string;
+    readonly failureClass: string | null;
+    readonly status: number | null;
+  } | null;
+}
+
+export interface ControlApiProviderRecord {
+  readonly id: string;
+  readonly route: {
+    readonly pattern: string;
+    readonly baseUrl: string;
+    readonly healthUrl: string | null;
+  } | null;
+  /** Credential presence only; the value never leaves Runtime. */
+  readonly credential: {
+    readonly envKey: string | null;
+    readonly configured: boolean;
+  };
+  readonly roles: Readonly<
+    Record<
+      ProviderRole,
+      ControlApiEnablement & {
+        /** Convergence for this single role; `not-observed` until a write occurs. */
+        readonly convergence: ReconciliationStatus;
+      }
+    >
+  >;
+  /** Configured model per capability tier. */
+  readonly models: readonly {
+    readonly tier: string;
+    readonly model: string;
+  }[];
+  /** 1-based priority group the provider occupies in each tier it serves. */
+  readonly priorities: readonly {
+    readonly tier: string;
+    readonly group: number;
+  }[];
+  readonly orchestratorReasoningEffort: string | null;
+  readonly health: ControlApiProviderHealth | null;
 }
 
 export interface ControlApiProvidersResponse {
-  readonly schema: "autodev-control-providers-v1";
-  readonly providers: readonly {
-    readonly id: string;
-    readonly roles: {
-      readonly orchestrator: {
-        readonly enabled: boolean;
-        readonly mutable: boolean;
-      };
-      readonly subagent: {
-        readonly enabled: boolean;
-        readonly mutable: boolean;
-      };
-    };
+  readonly schema: "autodev-control-providers-v2";
+  readonly orchestratorTier: string;
+  /** Ordered priority/fallback groups per capability tier. */
+  readonly tiers: readonly {
+    readonly tier: string;
+    readonly groups: readonly (readonly string[])[];
   }[];
-  readonly disabledOrchestratorProviders: readonly string[];
-  readonly disabledSubagentProviders: readonly string[];
+  readonly providers: readonly ControlApiProviderRecord[];
 }
 
 export interface ControlApiProviderRolePatchResponse {
-  readonly schema: "autodev-control-provider-role-v1";
+  readonly schema: "autodev-control-provider-role-v2";
   readonly provider: string;
   readonly role: ProviderRole;
   readonly enabled: boolean;
   readonly previous: boolean;
   readonly actor: string;
+  /** Reusable reconciliation view shared with read paths. */
+  readonly reconciliation: {
+    readonly status: ReconciliationStatus;
+    readonly history: readonly OperationHistoryEntry[];
+  };
+}
+
+export interface ControlApiModelRecord {
+  readonly id: string;
+  readonly provider: string;
+  /** Capability tiers this provider serves with the model. */
+  readonly tiers: readonly string[];
+  readonly displayName: string | null;
+  readonly enablement: ControlApiEnablement;
 }
 
 export interface ControlApiModelsResponse {
-  readonly schema: "autodev-control-models-v1";
+  readonly schema: "autodev-control-models-v2";
   readonly source: string;
-  readonly readOnly: boolean;
-  readonly totalModels: number;
-  readonly models: readonly {
-    readonly slug: string;
-    readonly display_name?: string;
-  }[];
+  readonly models: readonly ControlApiModelRecord[];
+}
+
+export interface ControlApiModelPatchResponse {
+  readonly schema: "autodev-control-model-v1";
+  readonly model: string;
+  readonly enabled: boolean;
+  readonly previous: boolean;
+  readonly actor: string;
 }
 
 export interface ControlApiMcpsResponse {
@@ -113,12 +200,14 @@ export interface ControlApiMcpsResponse {
 }
 
 export interface ControlApiToolsResponse {
-  readonly schema: "autodev-control-tools-v1";
+  readonly schema: "autodev-control-tools-v2";
   readonly source: string;
-  readonly readOnly: boolean;
-  readonly coverage: "partial" | "unknown";
+  readonly readOnly: true;
+  readonly coverage: ToolCatalogCoverage;
+  readonly validity: ToolCatalogValidity;
   readonly totalTools: number | null;
   readonly tools: readonly ToolCatalogItem[];
+  readonly usageLink: string;
 }
 
 export interface ControlApiSkillsResponse {
@@ -189,12 +278,42 @@ export interface ControlApiPromptsResponse {
 }
 
 export interface ControlApiPromptDetailResponse {
-  readonly schema: "autodev-control-prompt-detail-v2";
+  readonly schema: "autodev-control-prompt-detail-v4";
   readonly name: string;
   readonly type: "command" | "role";
   readonly source: string;
   readonly content: string;
+  readonly preview: string;
   readonly revision: string;
+  /** Bounded diff summary between the canonical and projected state. */
+  readonly diff: ReconciliationDiff;
+  /** Reusable reconciliation view shared with mutation responses. */
+  readonly reconciliation: {
+    readonly status: ReconciliationStatus;
+    readonly history: readonly OperationHistoryEntry[];
+  };
+}
+
+export interface ControlApiPromptVersionReference {
+  readonly versionHash: string;
+  readonly updatedAt: string;
+}
+
+export interface ControlApiPromptVersionsResponse {
+  readonly schema: "autodev-control-prompt-versions-v1";
+  readonly name: string;
+  readonly status: "available" | "unavailable";
+  readonly versions: readonly ControlApiPromptVersionReference[];
+  readonly hasMore: boolean;
+}
+
+export interface ControlApiPromptVersionResponse {
+  readonly schema: "autodev-control-prompt-version-v1";
+  readonly name: string;
+  readonly versionHash: string;
+  readonly updatedAt: string;
+  readonly content: string;
+  readonly diff: string;
 }
 
 export interface ControlApiPromptCommandPatchRequest {
@@ -203,12 +322,17 @@ export interface ControlApiPromptCommandPatchRequest {
 }
 
 export interface ControlApiPromptCommandPatchResponse {
-  readonly schema: "autodev-control-prompt-command-patch-v1";
+  readonly schema: "autodev-control-prompt-command-patch-v2";
   readonly name: string;
   readonly revision: string;
   readonly changed: boolean;
-  readonly projectionUpdated: boolean;
-  readonly restartRequired: boolean;
+  /** Bounded diff summary between the canonical and projected state. */
+  readonly diff: ReconciliationDiff;
+  /** Reusable reconciliation view shared with read paths. */
+  readonly reconciliation: {
+    readonly status: ReconciliationStatus;
+    readonly history: readonly OperationHistoryEntry[];
+  };
 }
 
 export interface ControlApiWorkspacesResponse {
@@ -254,10 +378,7 @@ export interface ControlApiConcurrencyStatus {
 
 export interface ControlApiRoutingResponse {
   readonly schema: "autodev-control-routing-v1";
-  readonly runtime: {
-    readonly disabledOrchestratorProviders: readonly string[];
-    readonly disabledSubagentProviders: readonly string[];
-  };
+  readonly runtime: RoutingPolicyState;
   readonly routes: readonly {
     readonly provider: string;
     readonly pattern: string;

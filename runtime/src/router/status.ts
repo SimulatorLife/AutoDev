@@ -38,6 +38,7 @@ export interface RouterRuntimeStatus {
     enabledSubagentProviders?: string[];
     disabledOrchestratorProviders?: string[];
     disabledSubagentProviders?: string[];
+    disabledModels?: string[];
     providerGroups?: Record<string, unknown[]>;
     priorities?: Record<string, Record<string, unknown>>;
   };
@@ -63,6 +64,7 @@ const ROUTING_KEYS = [
   "enabledSubagentProviders",
   "disabledOrchestratorProviders",
   "disabledSubagentProviders",
+  "disabledModels",
   "providerGroups",
   "priorities"
 ] as const;

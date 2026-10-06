@@ -866,10 +866,11 @@ without leaking a stale tracker.
 
 ### Provider administration and disable semantics
 
-Provider role enablement is mutable runtime/configuration state. The supported control boundary is the dedicated AutoDev Control API, not the model-router HTTP surface:
+Provider role enablement and model enablement are mutable runtime state. The supported control boundary is the dedicated AutoDev Control API, not the model-router HTTP surface:
 
-- `GET /control/providers` returns provider configuration and current role enablement.
-- `PATCH /control/providers/:provider/roles/:role` accepts only `{"enabled": boolean}`.
+- `GET /control/providers` (v2) returns each provider's route, credential presence, role enablement, tier models, priority groups, orchestrator reasoning effort, and live router health.
+- `GET /control/models` (v2) returns each model the routing config maps a provider tier to, with its provider, tiers, and enablement.
+- `PATCH /control/providers/:provider/roles/:role` and `PATCH /control/models/:model` accept only `{"enabled": boolean}`.
 - Mutations require operator authorization, are audited, persist atomically, and roll back the in-memory change when persistence fails.
 
 The router may retain a loopback-only direct mutation endpoint temporarily as a compatibility implementation detail while callers migrate, but it is not an AutoDev Console/API contract and must not be used by new UI or automation. The canonical target is to remove duplicate mutation paths.
@@ -877,8 +878,8 @@ The router may retain a loopback-only direct mutation endpoint temporarily as a 
 #### Persistence and default behavior
 
 - **Default state:** Every configured provider starts enabled for both roles.
-- **Immediate atomic persistence:** A successful role mutation persists `disabledOrchestratorProviders` and `disabledSubagentProviders` atomically to `$CODEX_HOME/codex-router-state.json`.
-- **Survives restarts:** router-state loading restores both role-specific arrays.
+- **Immediate atomic persistence:** A successful role or model mutation persists `disabledOrchestratorProviders`, `disabledSubagentProviders`, and `disabledModels` atomically to `$CODEX_HOME/codex-router-state.json`.
+- **Survives restarts:** router-state loading restores all three arrays; a restored model that is no longer configured is dropped.
 
 #### Disable semantics across routing tiers
 
@@ -897,14 +898,24 @@ Each skipped candidate records skip reason `"disabled"` and failure class
 `"provider_disabled"`; disabled providers are never probed, attempted, or counted against
 attempt budgets for that role.
 
-#### Provider role controls
+#### Model disable semantics
 
-The retired router HTML dashboard is not a control surface. Provider-role mutations belong to the dedicated AutoDev Control API:
+A disabled model is removed from every tier its provider serves with it, for both roles:
+the provider is skipped for those tiers (it does not fall back to its `default` model), and
+other providers in the tier's groups serve instead. A direct concrete request that names a
+disabled model fails with HTTP 503 `router_provider_unavailable` and
+`failureClass: "model_disabled"`. Fallback passes re-check enablement before each attempt, so
+a model disabled mid-request is skipped with failure class `"model_disabled"`. A provider
+that is itself disabled for the role reports `"provider_disabled"` first.
 
-- `GET /control/providers` returns provider configuration/current role enablement.
-- `PATCH /control/providers/:provider/roles/:role` accepts only `{"enabled": boolean}`.
-- Mutations require the Control API's operator authorization, persist the role setting, audit success/failure, and roll back the in-memory value when persistence fails.
-- The AutoDev Console may render these controls under **Agents**/provider detail views, but browser UI code must call the authenticated Control API path rather than a router-local dashboard endpoint.
+#### Provider and model controls
+
+The retired router HTML dashboard is not a control surface. Provider-role and model mutations belong to the dedicated AutoDev Control API:
+
+- `GET /control/providers` and `GET /control/models` return configuration, live state, and current enablement.
+- `PATCH /control/providers/:provider/roles/:role` and `PATCH /control/models/:model` accept only `{"enabled": boolean}`.
+- Mutations require the Control API's operator authorization, persist the setting, audit success/failure, and roll back the in-memory value when persistence fails.
+- The AutoDev Console renders these controls in **Providers**: each provider's role toggles on its Providers row and detail page, and each model's toggle on its Models row, its detail page, and its provider's model list. Console routes forward to the authenticated Control API; browser code never calls a router-local endpoint. **Agents** shows provider eligibility read-only and links to Providers.
 
 ### Local provider/workspace diagnostics
 
@@ -1558,10 +1569,23 @@ therefore has effect only through the model the orchestrator tier selects.
 
 ### Reasoning effort on MiniMax
 
-MiniMax-M3 supports only `none` or `high` reasoning effort, as declared in its
-model catalog entries (`config/catalogs/minimax-model-catalog.json` and
-`config/catalogs/codex-model-catalog.json`). It does not support `medium`
-or `low` reasoning levels.
+Each MiniMax model declares its own reasoning levels in its model catalog
+entries (`config/catalogs/minimax-model-catalog.json` and
+`config/catalogs/codex-model-catalog.json`), and the proxy forwards the
+requested effort unchanged:
+
+- MiniMax-M3 supports only `none` or `high`. It does not support `medium` or
+  `low`.
+- MiniMax-M3.1-Flash-Preview supports `low`, `medium`, `high`, `xhigh`, and
+  `max` (default `max`). Its thinking cannot be disabled, so MiniMax rejects
+  `none` with HTTP 400. MiniMax currently serves this preview only to M Plan
+  (and MiniMax Code) keys.
+
+Every `MiniMax-*` model id routes to the MiniMax provider through
+`MINIMAX_MODEL_PATTERN` in `runtime/src/shared/provider-model-ids.ts`, which
+both the router's built-in route and the proxy lifecycle gate
+(`runtime/src/platform/minimax-ensure.ts`) use, so selecting any MiniMax model
+starts the compatibility proxy.
 
 Agent config TOML files under `agents/roles/` omit role-level
 `model_reasoning_effort` declarations so each child agent inherits
@@ -1668,13 +1692,13 @@ intended repository, and inspect the app task/log event for those failures.
 
 ## Provider paths and constraints
 
-| Provider       | Local path                                                           | Important constraint                                                                                                                                                                                                                                                                                                       |
-| -------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude         | Codex -> Claude Responses bridge on `127.0.0.1:4000` -> Claude CLI   | Uses `CLAUDE_CODE_OAUTH_TOKEN`; the selected role model and reasoning effort are forwarded.                                                                                                                                                                                                                                |
-| MiniMax        | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                | Pass-through to the remote API, not a CLI gateway; only `accept`, `authorization`, and `content-type` headers are forwarded, and `client_metadata` is dropped. MiniMax-M3 supports only `none` or `high` reasoning effort. Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them. |
-| Antigravity    | Codex -> Antigravity adapter `:4002` -> `agy` CLI                    | `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode.                                                                                                                                                                       |
-| GitHub Copilot | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI    | Requires an authenticated local Copilot CLI; unavailable adapters are skipped by fallback.                                                                                                                                                                                                                                 |
-| Local router   | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges.                                                                                                                                                                                                                          |
+| Provider       | Local path                                                           | Important constraint                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude         | Codex -> Claude Responses bridge on `127.0.0.1:4000` -> Claude CLI   | Uses `CLAUDE_CODE_OAUTH_TOKEN`; the selected role model and reasoning effort are forwarded.                                                                                                                                                                                                                                                                                                          |
+| MiniMax        | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                | Pass-through to the remote API, not a CLI gateway; only `accept`, `authorization`, and `content-type` headers are forwarded, and `client_metadata` is dropped. MiniMax-M3 supports only `none` or `high` reasoning effort; MiniMax-M3.1-Flash-Preview supports `low` through `max` but never `none`. Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them. |
+| Antigravity    | Codex -> Antigravity adapter `:4002` -> `agy` CLI                    | `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode.                                                                                                                                                                                                                                                 |
+| GitHub Copilot | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI    | Requires an authenticated local Copilot CLI; unavailable adapters are skipped by fallback.                                                                                                                                                                                                                                                                                                           |
+| Local router   | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges.                                                                                                                                                                                                                                                                                                    |
 
 The Claude Responses adapter is not the GPT passthrough: it launches the
 OAuth-authenticated Claude CLI. The `LITELLM_API_KEY` used between the local

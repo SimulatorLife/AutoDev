@@ -10,7 +10,20 @@ import { ResourceUnavailable } from "../_console.ts";
 
 export const dynamic = "force-dynamic";
 
-export default async function ToolsPage(): Promise<React.JSX.Element> {
+interface ToolsSearchParams {
+  readonly source?: string | string[] | undefined;
+  readonly role?: string | string[] | undefined;
+}
+
+function first(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
+}
+
+export default async function ToolsPage({
+  searchParams
+}: {
+  readonly searchParams?: Promise<ToolsSearchParams>;
+}): Promise<React.JSX.Element> {
   const config = readControlApiConfig();
   if (!config) {
     return React.createElement(ResourceUnavailable, {
@@ -21,7 +34,12 @@ export default async function ToolsPage(): Promise<React.JSX.Element> {
     });
   }
 
-  const result = await fetchTools(config);
+  const [result, resolvedSearch] = await Promise.all([
+    fetchTools(config),
+    searchParams ?? Promise.resolve<ToolsSearchParams>({})
+  ]);
+  const sourceFilter = first(resolvedSearch.source);
+  const roleFilter = first(resolvedSearch.role);
   if (result.kind !== "ok") {
     return React.createElement(ResourceUnavailable, {
       title: "Tool catalog could not be loaded",
@@ -32,6 +50,10 @@ export default async function ToolsPage(): Promise<React.JSX.Element> {
 
   return React.createElement(ToolsView, {
     tools: result.data.tools,
-    coverage: result.data.coverage
+    coverage: result.data.coverage,
+    validity: result.data.validity,
+    totalTools: result.data.totalTools,
+    usageLink: result.data.usageLink,
+    filters: { source: sourceFilter, role: roleFilter }
   });
 }

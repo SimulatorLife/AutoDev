@@ -28,3 +28,6 @@ export const ANTIGRAVITY_MODEL_PATTERN =
  */
 export const CLAUDE_MODEL_PATTERN =
   /^(sonnet|opus|haiku|claude-(?![a-z0-9-]*-(?:low|medium|high)$)[a-z0-9-]*[a-z0-9])$/;
+
+/** Every MiniMax model id, in MiniMax's own casing (`MiniMax-M3`, `MiniMax-M3.1-Flash-Preview`). */
+export const MINIMAX_MODEL_PATTERN = /^MiniMax-[A-Za-z0-9][A-Za-z0-9.-]*$/;

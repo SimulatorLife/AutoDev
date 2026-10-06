@@ -22,14 +22,10 @@ test("RuleSyncRepository parses canonical command metadata and prompt body", asy
   try {
     const temporaryCommandsDir = join(temporaryRoot, ".rulesync", "commands");
     await mkdir(temporaryCommandsDir, { recursive: true });
-    await writeFile(
-      join(temporaryCommandsDir, "test-refactor.md"),
-      `---\ntargets: [codexcli, claudecode]\ndescription: Custom command for refactoring.\n---\n# Refactor command\n\nDo something cleanly.\n`
-    );
+    const content = `---\ntargets: [codexcli, claudecode]\ndescription: Custom command for refactoring.\n---\n# Refactor command\n\nDo something cleanly.\n`;
+    await writeFile(join(temporaryCommandsDir, "test-refactor.md"), content);
 
     const state = new RuleSyncRepository(temporaryRoot).loadCommands();
-    const content =
-      "---\ntargets: [codexcli, claudecode]\ndescription: Custom command for refactoring.\n---\n# Refactor command\n\nDo something cleanly.\n";
     assert.equal(state.valid, true);
     assert.deepEqual(state.commands, [
       {
@@ -38,9 +34,9 @@ test("RuleSyncRepository parses canonical command metadata and prompt body", asy
         kind: "command",
         content,
         prompt: "# Refactor command\n\nDo something cleanly.",
+        revision: createHash("sha256").update(content, "utf8").digest("hex"),
         description: "Custom command for refactoring.",
-        targets: ["codexcli", "claudecode"],
-        revision: createHash("sha256").update(content, "utf8").digest("hex")
+        targets: ["codexcli", "claudecode"]
       }
     ]);
   } finally {

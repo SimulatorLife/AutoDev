@@ -15,6 +15,8 @@ import {
   CANONICAL_NAV_GROUPS,
   CANONICAL_NAVIGATION,
   type CanonicalNavSection,
+  type ControlApiModelsResponse,
+  type ControlApiProvidersResponse,
   type ExperienceEnvelope,
   type GithubWorkflowDefinition,
   LOCAL_CONTROL_API_ACTOR,
@@ -24,10 +26,16 @@ import {
   type ToolCatalogItem,
   type UsageMetricsData
 } from "@simulatorlife/autodev-core";
+import {
+  PHASE_DEVELOPMENT_SERVER,
+  PHASE_PRODUCTION_BUILD,
+  PHASE_PRODUCTION_SERVER
+} from "next/constants.js";
 import { NextRequest } from "next/server.js";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import * as modelRoute from "../app/api/models/[model]/route.ts";
 import * as promptMutationRoute from "../app/api/prompts/[name]/route.ts";
 import * as providerRoleRoute from "../app/api/providers/[provider]/roles/[role]/route.ts";
 import EvaluationsPage from "../app/evaluations/page.ts";
@@ -47,6 +55,7 @@ import {
   formatTokenCount,
   GithubView,
   HooksView,
+  isProvidersReturnPath,
   LinkPendingIndicator,
   MCP_DETAIL_TABS,
   McpDetailView,
@@ -61,19 +70,29 @@ import {
   MemorySummaryStream,
   type MemoryUrlScope,
   MemoryView,
+  ModelDetailView,
   observeSummaryCounts,
   PromptDetailView,
   PromptsView,
+  ProviderDetailView,
+  ProvidersView,
   resolveActiveTabId,
   SkillsView,
   StatCard,
   StatusBadge,
   tabHref,
   TabNav,
+  ToolDetailView,
   ToolsView,
   UsageView,
+  withControlFailure,
   WorkspacesView
 } from "../src/index.ts";
+import {
+  CONSOLE_BUILD_DIST_DIR,
+  CONSOLE_DEV_DIST_DIR,
+  consoleDistDir
+} from "../src/lib/build-output.ts";
 import {
   canonicalNavPath,
   canonicalSectionFromPath
@@ -85,8 +104,11 @@ import {
   fetchEvaluations,
   fetchGithubWorkflows,
   fetchMemoryRecords,
+  fetchModels,
   fetchPromptDetail,
   fetchPrompts,
+  fetchPromptVersion,
+  fetchPromptVersions,
   fetchProviders,
   fetchSkills,
   fetchTools,
@@ -130,6 +152,11 @@ function anchorTagFor(markup: string, href: string): string | undefined {
     (tag) => tag.includes(`href="${href}"`)
   );
 }
+
+const unavailablePromptHistory = {
+  status: "unavailable",
+  message: "Git history unavailable in this test."
+} as const;
 
 const MEMORY_PAGE_ENV_KEYS = [
   "HOME",
@@ -746,22 +773,96 @@ test("PromptsView distinguishes an unavailable command source from a valid empty
 test("Prompt detail renders canonical text and reports an actually empty source", () => {
   const source = "# /dry\n\nUse a dry run.";
   const prompt = promptDocumentFromControlApi({
-    schema: "autodev-control-prompt-detail-v2",
+    schema: "autodev-control-prompt-detail-v4",
     name: "dry",
     type: "command",
     source: ".rulesync/commands/dry.md",
     content: source,
-    revision: "a".repeat(64)
+    preview: "## Rendered Prompt\n\n**Use a dry run.**",
+    revision: "a".repeat(64),
+    diff: {
+      summary: "Canonical RuleSync command.",
+      identifier: "a".repeat(64)
+    },
+    reconciliation: {
+      status: {
+        convergence: "not-observed",
+        desiredGeneration: null,
+        observedGeneration: null,
+        lastApplyAt: null,
+        lastObservationAt: null,
+        lastError: null,
+        explanation: "Not observed."
+      },
+      history: []
+    }
   });
   const markup = renderToStaticMarkup(
-    React.createElement(PromptDetailView, { prompt })
+    React.createElement(PromptDetailView, {
+      prompt,
+      history: unavailablePromptHistory
+    })
   );
   assert.match(markup, /Use a dry run\./);
+  assert.match(
+    markup,
+    /<h2 class="mb-2 mt-4 text-lg font-semibold text-fg">Rendered Prompt<\/h2>/
+  );
+  assert.match(markup, /<strong>Use a dry run\.<\/strong>/);
   assert.match(markup, /\.rulesync\/commands\/dry\.md/);
   assert.match(markup, /data-prompt-editor="canonical"/);
   assert.match(markup, /action="\/api\/prompts\/dry"/);
   assert.match(markup, /name="expectedRevision" value="a{64}"/);
   assert.match(markup, /Save &amp; Apply/);
+  assert.match(markup, /data-prompt-history="unavailable"/);
+  assert.match(markup, /Git history unavailable in this test\./);
+
+  const hostilePreview = renderToStaticMarkup(
+    React.createElement(PromptDetailView, {
+      prompt: {
+        ...prompt,
+        preview: "<script>alert(1)</script>\n\n[unsafe](javascript:alert(1))"
+      },
+      history: unavailablePromptHistory
+    })
+  );
+  assert.doesNotMatch(hostilePreview, /<script>/iu);
+  assert.doesNotMatch(hostilePreview, /href="javascript:/iu);
+
+  const versionHash = "b".repeat(40);
+  const comparisonMarkup = renderToStaticMarkup(
+    React.createElement(PromptDetailView, {
+      prompt,
+      history: {
+        status: "available",
+        versions: [{ versionHash, updatedAt: "2026-01-02T03:04:05Z" }],
+        hasMore: false
+      },
+      selectedVersion: {
+        schema: "autodev-control-prompt-version-v1",
+        name: "dry",
+        versionHash,
+        updatedAt: "2026-01-02T03:04:05Z",
+        content: source,
+        diff: "-Use a dry run.\n+Use the current source.\n"
+      }
+    })
+  );
+  assert.match(comparisonMarkup, new RegExp(`revision=${versionHash}`));
+  assert.match(comparisonMarkup, /data-prompt-version-comparison=/);
+  assert.match(comparisonMarkup, /data-prompt-diff="observed"/);
+  assert.match(comparisonMarkup, /Use the current source\./);
+  assert.match(comparisonMarkup, /View committed source/);
+
+  const applyFailedMarkup = renderToStaticMarkup(
+    React.createElement(PromptDetailView, {
+      prompt,
+      history: unavailablePromptHistory,
+      saveOutcome: "apply-failed"
+    })
+  );
+  assert.match(applyFailedMarkup, /data-prompt-save-outcome="apply-failed"/);
+  assert.match(applyFailedMarkup, /source was saved, but RuleSync generation/);
 
   const roleMarkup = renderToStaticMarkup(
     React.createElement(PromptDetailView, {
@@ -770,8 +871,10 @@ test("Prompt detail renders canonical text and reports an actually empty source"
         kind: "role",
         path: "agents/prompts/roles/orchestrator.md",
         content: "# Role prompt",
+        preview: "# Role prompt",
         revision: "d".repeat(64)
-      }
+      },
+      history: unavailablePromptHistory
     })
   );
   assert.match(roleMarkup, /data-prompt-editor="read-only"/);
@@ -779,7 +882,8 @@ test("Prompt detail renders canonical text and reports an actually empty source"
 
   const emptyMarkup = renderToStaticMarkup(
     React.createElement(PromptDetailView, {
-      prompt: { ...prompt, content: "" }
+      prompt: { ...prompt, content: "" },
+      history: unavailablePromptHistory
     })
   );
   assert.match(emptyMarkup, /data-prompt-content="empty"/);
@@ -819,8 +923,10 @@ test("PromptsView and PromptDetailView render prompt types, linkage, and Git aut
         kind: "role",
         path: "agents/prompts/roles/orchestrator.md",
         content: "# Orchestrator System Prompt\nYou are an orchestrator.",
+        preview: "# Orchestrator System Prompt\nYou are an orchestrator.",
         revision: "c".repeat(64)
-      }
+      },
+      history: unavailablePromptHistory
     })
   );
   assert.match(detailMarkup, /data-section="prompt-linkage"/);
@@ -909,10 +1015,10 @@ test("server Control API client uses only its configured token and fixed local a
       headers: new Headers(init?.headers)
     });
     return Response.json({
-      schema: "autodev-control-providers-v1",
-      providers: [],
-      disabledOrchestratorProviders: [],
-      disabledSubagentProviders: []
+      schema: "autodev-control-providers-v2",
+      orchestratorTier: "orchestrator",
+      tiers: [],
+      providers: []
     });
   };
 
@@ -995,6 +1101,109 @@ test("Control API detail fetchers encode identifiers and preserve not-found stat
   assert.equal(agent.status, 404);
   assert.equal(prompt.kind, "http-error");
   assert.equal(prompt.status, 404);
+
+  const stalePrompt = await fetchPromptDetail("dry", config, {
+    fetchImpl: async () =>
+      Response.json({
+        schema: "autodev-control-prompt-detail-v2",
+        name: "dry",
+        type: "command",
+        source: ".rulesync/commands/dry.md",
+        content: "# Dry",
+        revision: "a".repeat(64)
+      })
+  });
+  assert.equal(stalePrompt.kind, "invalid-response");
+  if (stalePrompt.kind === "invalid-response") {
+    assert.equal(
+      stalePrompt.code,
+      "autodev_control_api_invalid_prompt_detail_response"
+    );
+    assert.match(stalePrompt.message, /v4 reconciliation contract/);
+  }
+});
+
+test("Prompt version fetchers validate recent history and selected revision identity", async () => {
+  const config = {
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "server-only"
+  };
+  const versionHash = "a".repeat(40);
+  const urls: string[] = [];
+  const payloads: unknown[] = [
+    {
+      schema: "autodev-control-prompt-versions-v1",
+      name: "audit",
+      status: "available",
+      versions: [{ versionHash, updatedAt: "2026-01-02T03:04:05Z" }],
+      hasMore: false
+    },
+    {
+      schema: "autodev-control-prompt-version-v1",
+      name: "audit",
+      versionHash,
+      updatedAt: "2026-01-02T03:04:05Z",
+      content: "# Audit",
+      diff: ""
+    }
+  ];
+  const fetchImpl: typeof fetch = async (input) => {
+    urls.push(String(input));
+    return Response.json(payloads.shift());
+  };
+
+  const versions = await fetchPromptVersions("audit", config, { fetchImpl });
+  const version = await fetchPromptVersion("audit", versionHash, config, {
+    fetchImpl
+  });
+  assert.equal(versions.kind, "ok");
+  assert.equal(version.kind, "ok");
+  assert.deepEqual(urls, [
+    "http://127.0.0.1:4101/control/prompts/audit/versions",
+    `http://127.0.0.1:4101/control/prompts/audit/versions/${versionHash}`
+  ]);
+
+  const mismatchedVersion = await fetchPromptVersion(
+    "audit",
+    versionHash,
+    config,
+    {
+      fetchImpl: async () =>
+        Response.json({
+          schema: "autodev-control-prompt-version-v1",
+          name: "other-command",
+          versionHash,
+          updatedAt: "2026-01-02T03:04:05Z",
+          content: "# Other",
+          diff: ""
+        })
+    }
+  );
+  assert.equal(mismatchedVersion.kind, "invalid-response");
+
+  const mismatchedHistory = await fetchPromptVersions("audit", config, {
+    fetchImpl: async () =>
+      Response.json({
+        schema: "autodev-control-prompt-versions-v1",
+        name: "other-command",
+        status: "available",
+        versions: [],
+        hasMore: false
+      })
+  });
+  assert.equal(mismatchedHistory.kind, "invalid-response");
+
+  const malformedUnavailable = await fetchPromptVersions("audit", config, {
+    fetchImpl: async () =>
+      Response.json({
+        schema: "autodev-control-prompt-versions-v1",
+        name: "audit",
+        status: "unavailable",
+        versions: [{ versionHash, updatedAt: "2026-01-02T03:04:05Z" }],
+        hasMore: false
+      })
+  });
+  assert.equal(malformedUnavailable.kind, "invalid-response");
 });
 
 test("Skills fetcher validates the v2 catalog contract and rejects stale responses", async () => {
@@ -1410,12 +1619,16 @@ test("McpDetailView renders populated configured tool allowlist from the Tools c
       name: "resolve-library-id",
       source: "mcp",
       server: "context7",
+      sourceAuthority: "execution-contract",
+      availability: "configured",
       exposedRoles: ["docs-researcher"]
     },
     {
       name: "get-library-docs",
       source: "mcp",
       server: "context7",
+      sourceAuthority: "execution-contract",
+      availability: "configured",
       exposedRoles: ["docs-researcher", "code-reviewer"]
     }
   ];
@@ -1549,6 +1762,8 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
       name: "lsp_goto_definition",
       source: "mcp",
       server: "lsp",
+      sourceAuthority: "execution-contract",
+      availability: "configured",
       exposedRoles: ["orchestrator"]
     }
   ];
@@ -1772,6 +1987,8 @@ test("McpDetailView renders exactly one data-section panel per tab with no conte
       name: "lsp_goto_definition",
       source: "mcp",
       server: "lsp",
+      sourceAuthority: "execution-contract",
+      availability: "configured",
       exposedRoles: ["orchestrator"]
     }
   ];
@@ -2167,70 +2384,92 @@ test("GithubView displays explicit unavailable notice without synthesizing zero 
   assert.equal(markup.includes("Active Workflows"), false);
 });
 
-test("ToolsView falls back to 'Unknown' when status is missing", () => {
+test("ToolsView renders explicit availability per tool with the catalog coverage banner", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ToolsView, {
       coverage: "partial",
+      validity: "valid",
+      totalTools: 1,
+      usageLink: "/usage",
+      filters: { source: "", role: "" },
       tools: [
         {
           name: "read_file",
           source: "native",
+          sourceAuthority: "codex-native",
+          availability: "configured",
           exposedRoles: ["orchestrator"]
-          // status intentionally omitted
         }
       ]
     })
   );
   assert.equal(markup.includes(">ready<"), false);
-  assert.match(markup, /Unknown/);
+  assert.match(markup, /data-status="configured"/);
   assert.match(markup, /data-tools-coverage="partial"/);
   assert.match(
     markup,
-    /Other tools, runtime availability, and historical use are not observed/
+    /Partial catalog: the execution-contract role projection is observed/
   );
   assert.doesNotMatch(markup, /Universal/);
 });
 
 test("ToolsView keeps an unavailable capability source unknown instead of zero", () => {
   const markup = renderToStaticMarkup(
-    React.createElement(ToolsView, { tools: [], coverage: "unknown" })
+    React.createElement(ToolsView, {
+      coverage: "unknown",
+      validity: "not-observed",
+      totalTools: 0,
+      usageLink: "/usage",
+      filters: { source: "", role: "" },
+      tools: []
+    })
   );
-  assert.match(markup, /Known Declarations/);
-  assert.match(markup, />Unknown</);
-  assert.match(markup, /execution-contract role inventory is not observed/);
-  assert.doesNotMatch(markup, /Known Declarations[\s\S]*?>0</);
+  assert.match(markup, /Composite catalog/);
+  assert.match(markup, />Not observed</);
+  assert.match(markup, /The canonical RuleSync MCP source was not observed/);
+  assert.doesNotMatch(markup, /Composite catalog[\s\S]*?>0</);
 });
 
-test("ToolsView preserves explicit 'ready'/'unavailable' status values", () => {
-  const readyMarkup = renderToStaticMarkup(
+test("ToolsView surfaces availability through the StatusBadge vocabulary and never invents ready", () => {
+  const configuredMarkup = renderToStaticMarkup(
     React.createElement(ToolsView, {
       coverage: "partial",
+      validity: "valid",
+      totalTools: 1,
+      usageLink: "/usage",
+      filters: { source: "", role: "" },
       tools: [
         {
           name: "exec_command",
           source: "native",
-          exposedRoles: ["orchestrator"],
-          status: "ready"
+          sourceAuthority: "codex-native",
+          availability: "configured",
+          exposedRoles: ["orchestrator"]
         }
       ]
     })
   );
-  assert.match(readyMarkup, /data-status="ready"/);
+  assert.match(configuredMarkup, /data-status="configured"/);
 
   const unavailableMarkup = renderToStaticMarkup(
     React.createElement(ToolsView, {
       coverage: "partial",
+      validity: "valid",
+      totalTools: 1,
+      usageLink: "/usage",
+      filters: { source: "", role: "" },
       tools: [
         {
           name: "exec_command",
           source: "native",
-          exposedRoles: ["orchestrator"],
-          status: "unavailable"
+          sourceAuthority: "codex-native",
+          availability: "invalid",
+          exposedRoles: ["orchestrator"]
         }
       ]
     })
   );
-  assert.match(unavailableMarkup, /data-status="unavailable"/);
+  assert.match(unavailableMarkup, /data-status="invalid"/);
 });
 
 test("readMemoryPortalConfig defaults to the local OpenLIT UI base URL", () => {
@@ -3025,45 +3264,206 @@ test("EvaluationsView renders metrics, pass rate, and outcome badges when evalua
   assert.match(markup, /Passed/);
 });
 
-test("AgentsView renders secondary provider routing policy and runtime health sections", () => {
+const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
+  schema: "autodev-control-providers-v2",
+  orchestratorTier: "orchestrator",
+  tiers: [
+    { tier: "default", groups: [["claude"], ["codex"]] },
+    { tier: "orchestrator", groups: [["codex"], ["claude"]] }
+  ],
+  providers: [
+    {
+      id: "claude",
+      route: {
+        pattern: "^(sonnet|claude-[a-z0-9-]*[a-z0-9])$",
+        baseUrl: "http://127.0.0.1:4000/v1",
+        healthUrl: "http://127.0.0.1:4000/health/liveliness"
+      },
+      credential: { envKey: "LITELLM_API_KEY", configured: false },
+      roles: {
+        orchestrator: {
+          enabled: true,
+          mutable: true,
+          convergence: {
+            convergence: "converged",
+            desiredGeneration: "orchestrator:enabled=true",
+            observedGeneration: "orchestrator:enabled=true",
+            lastApplyAt: "2026-10-05T15:00:00.000Z",
+            lastObservationAt: "2026-10-05T15:00:00.000Z",
+            lastError: null,
+            explanation: "Converged."
+          }
+        },
+        subagent: {
+          enabled: true,
+          mutable: true,
+          convergence: {
+            convergence: "converged",
+            desiredGeneration: "subagent:enabled=true",
+            observedGeneration: "subagent:enabled=true",
+            lastApplyAt: "2026-10-05T15:00:00.000Z",
+            lastObservationAt: "2026-10-05T15:00:00.000Z",
+            lastError: null,
+            explanation: "Converged."
+          }
+        }
+      },
+      models: [
+        { tier: "default", model: "sonnet" },
+        { tier: "orchestrator", model: "claude-opus-5-5" }
+      ],
+      priorities: [
+        { tier: "default", group: 1 },
+        { tier: "orchestrator", group: 2 }
+      ],
+      orchestratorReasoningEffort: "medium",
+      health: {
+        cooldown: {
+          kind: "transient",
+          failureClass: "session_limit",
+          until: "2026-10-05T16:00:00.000Z",
+          resetsAt: null,
+          lastResortEligible: true
+        },
+        failureStreak: 2,
+        probeFailureStreak: 0,
+        inFlightRequests: 1,
+        activeAgents: 1,
+        attempts: 10,
+        successes: 8,
+        failures: 2,
+        lastSuccessAt: "2026-10-05T15:00:00.000Z",
+        lastFailure: {
+          at: "2026-10-05T15:30:00.000Z",
+          failureClass: "session_limit",
+          status: 429
+        }
+      }
+    },
+    {
+      id: "codex",
+      route: {
+        pattern: "^gpt-.*$",
+        baseUrl: "https://chatgpt.com/backend-api/codex",
+        healthUrl: null
+      },
+      credential: { envKey: null, configured: true },
+      roles: {
+        orchestrator: {
+          enabled: false,
+          mutable: true,
+          convergence: {
+            convergence: "pending",
+            desiredGeneration: "orchestrator:enabled=false",
+            observedGeneration: null,
+            lastApplyAt: "2026-10-05T15:30:00.000Z",
+            lastObservationAt: null,
+            lastError: null,
+            explanation: "Pending observation."
+          }
+        },
+        subagent: {
+          enabled: false,
+          mutable: false,
+          convergence: {
+            convergence: "not-observed",
+            desiredGeneration: null,
+            observedGeneration: null,
+            lastApplyAt: null,
+            lastObservationAt: null,
+            lastError: null,
+            explanation: "Not observed."
+          }
+        }
+      },
+      models: [
+        { tier: "default", model: "gpt-6-luna" },
+        { tier: "orchestrator", model: "gpt-6-luna" }
+      ],
+      priorities: [
+        { tier: "default", group: 2 },
+        { tier: "orchestrator", group: 1 }
+      ],
+      orchestratorReasoningEffort: null,
+      health: null
+    }
+  ]
+};
+
+const MODELS_FIXTURE: ControlApiModelsResponse = {
+  schema: "autodev-control-models-v2",
+  source: "model-routing.json",
+  models: [
+    {
+      id: "claude-opus-5-5",
+      provider: "claude",
+      tiers: ["orchestrator"],
+      displayName: null,
+      enablement: { enabled: true, mutable: true }
+    },
+    {
+      id: "sonnet",
+      provider: "claude",
+      tiers: ["default"],
+      displayName: "Claude Sonnet subscription",
+      enablement: { enabled: false, mutable: true }
+    },
+    {
+      id: "gpt-6-luna",
+      provider: "codex",
+      tiers: ["default", "orchestrator"],
+      displayName: "GPT-6 Luna",
+      enablement: { enabled: true, mutable: true }
+    }
+  ]
+};
+
+const ROUTING_FIXTURE = {
+  schema: "autodev-control-routing-v1" as const,
+  runtime: {
+    disabledOrchestratorProviders: ["codex"],
+    disabledSubagentProviders: ["codex"],
+    disabledModels: ["sonnet"]
+  },
+  routes: [
+    {
+      provider: "codex",
+      pattern: "^gpt-.*$",
+      baseUrl: "https://chatgpt.com/backend-api/codex"
+    }
+  ],
+  cooldowns: {},
+  concurrency: {
+    effectivePerSessionLimit: 2,
+    activeSubagentThreads: 1,
+    activeSessions: 1,
+    denials: 0
+  }
+};
+
+function formTags(markup: string): string[] {
+  return Array.from(markup.matchAll(/<form\b[^>]*>/gu), (match) => match[0]);
+}
+
+function hiddenValue(
+  markup: string,
+  form: string,
+  name: string
+): string | null {
+  const start = markup.indexOf(form);
+  const end = markup.indexOf("</form>", start);
+  const match = new RegExp(`name="${name}" value="([^"]*)"`, "u").exec(
+    markup.slice(start, end)
+  );
+  return match?.[1] ?? null;
+}
+
+test("AgentsView shows read-only provider summaries that link to Providers", () => {
   const markup = renderToStaticMarkup(
     React.createElement(AgentsView, {
       agents: [CONFIGURED_AGENT],
-      providers: {
-        schema: "autodev-control-providers-v1",
-        providers: [
-          {
-            id: "codex",
-            roles: {
-              orchestrator: { enabled: true, mutable: true },
-              subagent: { enabled: false, mutable: true }
-            }
-          }
-        ],
-        disabledOrchestratorProviders: [],
-        disabledSubagentProviders: ["codex"]
-      },
-      routing: {
-        schema: "autodev-control-routing-v1",
-        runtime: {
-          disabledOrchestratorProviders: [],
-          disabledSubagentProviders: ["codex"]
-        },
-        routes: [
-          {
-            provider: "codex",
-            pattern: "^gpt-.*$",
-            baseUrl: "https://chatgpt.com/backend-api/codex"
-          }
-        ],
-        cooldowns: {},
-        concurrency: {
-          effectivePerSessionLimit: 2,
-          activeSubagentThreads: 1,
-          activeSessions: 1,
-          denials: 0
-        }
-      },
+      providers: PROVIDERS_FIXTURE,
+      routing: ROUTING_FIXTURE,
       runtime: {
         schema: "autodev-control-runtime-v1",
         routerInstanceId: "router-uuid-test",
@@ -3074,117 +3474,57 @@ test("AgentsView renders secondary provider routing policy and runtime health se
     })
   );
   assert.match(markup, /data-section="configured-agents"/);
-  assert.match(markup, /data-section="providers-routing"/);
   assert.match(markup, /data-section="runtime-health"/);
-  assert.match(markup, /Providers &amp; Routing Policy/);
-  assert.match(markup, /Runtime Concurrency &amp; Circuit Health/);
   assert.match(markup, /router-uuid-test/);
-  assert.match(markup, /https:\/\/chatgpt\.com\/backend-api\/codex/);
-  assert.match(markup, /In-Flight Requests/);
+  assert.match(markup, /data-agent-providers="orchestrator"/);
+  assert.match(markup, /href="\/providers\/codex"/);
+  // codex is disabled for the orchestrator role the agent runs as.
+  assert.match(markup, />Disabled</);
+  // Provider controls and routing live in Providers, not Agents.
+  assert.equal(markup.includes("<form"), false);
+  assert.equal(markup.includes('data-section="providers-routing"'), false);
+  assert.equal(markup.includes("chatgpt.com"), false);
 });
 
-test("AgentDetailView renders provider routes and concurrency details when observed", () => {
+test("AgentDetailView renders a read-only provider summary and concurrency details", () => {
   const markup = renderToStaticMarkup(
     React.createElement(AgentDetailView, {
       agent: CONFIGURED_AGENT,
-      routing: {
-        schema: "autodev-control-routing-v1",
-        runtime: {
-          disabledOrchestratorProviders: [],
-          disabledSubagentProviders: []
-        },
-        routes: [
-          {
-            provider: "codex",
-            pattern: "^gpt-.*$",
-            baseUrl: "https://chatgpt.com/backend-api/codex"
-          }
-        ],
-        cooldowns: {},
-        concurrency: {
-          effectivePerSessionLimit: 2,
-          activeSubagentThreads: 0
-        }
-      },
-      providers: {
-        schema: "autodev-control-providers-v1",
-        providers: [
-          {
-            id: "codex",
-            roles: {
-              orchestrator: { enabled: true, mutable: true },
-              subagent: { enabled: false, mutable: true }
-            }
-          }
-        ],
-        disabledOrchestratorProviders: [],
-        disabledSubagentProviders: []
-      }
+      routing: ROUTING_FIXTURE,
+      providers: PROVIDERS_FIXTURE
     })
   );
-  assert.match(markup, /data-section="agent-provider-routes"/);
+  assert.match(markup, /data-section="agent-providers"/);
   assert.match(markup, /data-section="agent-concurrency"/);
-  assert.match(markup, /Provider Routing &amp; Circuit Endpoints/);
-  assert.match(markup, /https:\/\/chatgpt\.com\/backend-api\/codex/);
+  assert.match(markup, /href="\/providers\/codex"/);
+  assert.match(markup, /Provider controls and routing live in Providers/);
   assert.match(markup, /Session concurrency limit/);
   assert.equal(markup.includes("<form"), false);
 });
 
-test("Agents provider roles remain not observed when provider configuration is missing", () => {
-  const routing = {
-    schema: "autodev-control-routing-v1" as const,
-    runtime: {
-      disabledOrchestratorProviders: [],
-      disabledSubagentProviders: []
-    },
-    routes: [
-      {
-        provider: "codex",
-        pattern: "^gpt-.*$",
-        baseUrl: "https://chatgpt.com/backend-api/codex"
-      }
-    ],
-    cooldowns: {},
-    concurrency: {
-      effectivePerSessionLimit: 2,
-      activeSubagentThreads: 0
-    }
-  };
+test("Agents provider summaries stay not observed without provider configuration", () => {
   const agentsMarkup = renderToStaticMarkup(
     React.createElement(AgentsView, {
       agents: [CONFIGURED_AGENT],
-      routing
+      routing: ROUTING_FIXTURE
     })
   );
-  const providersStart = agentsMarkup.indexOf(
-    'data-section="providers-routing"'
-  );
-  const runtimeStart = agentsMarkup.indexOf('data-section="runtime-health"');
-  const providerMarkup = agentsMarkup.slice(providersStart, runtimeStart);
-  assert.equal(
-    (providerMarkup.match(/data-status="not-observed"/gu) ?? []).length,
-    2
-  );
-  assert.equal(providerMarkup.includes(">Disabled</span>"), false);
-  assert.equal(providerMarkup.includes("<form"), false);
+  const summaryStart = agentsMarkup.indexOf("data-agent-providers=");
+  const summaryEnd = agentsMarkup.indexOf("</ul>", summaryStart);
+  const summary = agentsMarkup.slice(summaryStart, summaryEnd);
+  assert.match(summary, /data-status="not-observed"/);
+  assert.equal(summary.includes(">Enabled<"), false);
+  assert.equal(summary.includes(">Disabled<"), false);
 
   const detailMarkup = renderToStaticMarkup(
     React.createElement(AgentDetailView, { agent: CONFIGURED_AGENT })
   );
-  const detailsStart = detailMarkup.indexOf(
-    'data-section="agent-provider-routes"'
-  );
-  const concurrencyStart = detailMarkup.indexOf(
-    'data-section="agent-concurrency"'
-  );
-  const detailProviderMarkup = detailMarkup.slice(
-    detailsStart,
-    concurrencyStart
-  );
-  assert.match(detailProviderMarkup, /data-status="not-observed"/);
-  assert.match(detailProviderMarkup, />Not observed</);
-  assert.equal(detailProviderMarkup.includes(">Enabled</span>"), false);
-  assert.equal(detailProviderMarkup.includes(">Disabled</span>"), false);
+  const detailStart = detailMarkup.indexOf('data-section="agent-providers"');
+  const detailEnd = detailMarkup.indexOf('data-section="agent-concurrency"');
+  const detail = detailMarkup.slice(detailStart, detailEnd);
+  assert.match(detail, /data-status="not-observed"/);
+  assert.equal(detail.includes(">Enabled<"), false);
+  assert.equal(detail.includes(">Disabled<"), false);
 });
 
 test("HooksView only renders hooks with valid action command lists", () => {
@@ -3276,18 +3616,36 @@ test("View adapters translate Control API responses without inventing data", () 
   assert.equal(prompts[1]?.name, "orchestrator");
 
   const promptDocument = promptDocumentFromControlApi({
-    schema: "autodev-control-prompt-detail-v2",
+    schema: "autodev-control-prompt-detail-v4",
     name: "dry",
     type: "command",
     source: ".rulesync/commands/dry.md",
     content: "Exact source",
-    revision: "b".repeat(64)
+    preview: "Parsed prompt body",
+    revision: "b".repeat(64),
+    diff: {
+      summary: "Canonical RuleSync command.",
+      identifier: "b".repeat(64)
+    },
+    reconciliation: {
+      status: {
+        convergence: "converged",
+        desiredGeneration: "b".repeat(64),
+        observedGeneration: "b".repeat(64),
+        lastApplyAt: "2026-01-01T00:00:00.000Z",
+        lastObservationAt: "2026-01-01T00:00:00.000Z",
+        lastError: null,
+        explanation: "Converged."
+      },
+      history: []
+    }
   });
   assert.deepEqual(promptDocument, {
     name: "dry",
     kind: "command",
     path: ".rulesync/commands/dry.md",
     content: "Exact source",
+    preview: "Parsed prompt body",
     revision: "b".repeat(64)
   });
 
@@ -3332,7 +3690,7 @@ test("View adapters translate Control API responses without inventing data", () 
   assert.equal(perms.roleMatrices[0]?.sandboxMode, "workspace-write");
 });
 
-test("All 12 canonical Console route paths map to a canonical nav section", () => {
+test("Every canonical Console route path maps to a canonical nav section", () => {
   for (const section of CANONICAL_NAVIGATION) {
     const path = canonicalNavPath(section);
     assert.equal(canonicalSectionFromPath(path), section);
@@ -3342,6 +3700,7 @@ test("All 12 canonical Console route paths map to a canonical nav section", () =
 test("Canonical nav order matches Configure/Observe/Operate grouping", () => {
   const expected: readonly CanonicalNavSection[] = [
     "Agents",
+    "Providers",
     "MCPs",
     "Skills",
     "Hooks",
@@ -4044,67 +4403,227 @@ test("fetchMemoryRecords issues authenticated GET to /control/memory/records wit
   }
 });
 
-test("Agents provider-role controls require observed mutable provider configuration", () => {
+test("ProvidersView puts each provider's role toggles in its own row", () => {
   const markup = renderToStaticMarkup(
-    React.createElement(AgentsView, {
-      agents: [CONFIGURED_AGENT],
-      providers: {
-        schema: "autodev-control-providers-v1",
-        providers: [
-          {
-            id: "codex",
-            roles: {
-              orchestrator: { enabled: true, mutable: true },
-              subagent: { enabled: false, mutable: false }
-            }
-          },
-          {
-            id: "anthropic",
-            roles: {
-              orchestrator: { enabled: false, mutable: true },
-              subagent: { enabled: true, mutable: false }
-            }
-          }
-        ],
-        disabledOrchestratorProviders: [],
-        disabledSubagentProviders: []
-      }
+    React.createElement(ProvidersView, {
+      providers: PROVIDERS_FIXTURE,
+      models: { status: "available", data: MODELS_FIXTURE }
     })
   );
+  assert.match(markup, /data-feature="providers"/);
+  assert.match(markup, /<nav aria-label="Providers views"/);
+  assert.match(
+    markup,
+    /data-tab-item="providers"[^>]*>|aria-current="page"[^>]*data-tab-item="providers"/
+  );
+  assert.match(markup, /data-tab-panel="providers"/);
 
-  const forms = Array.from(
-    markup.matchAll(/<form\b[^>]*>/gu),
-    (match) => match[0]
-  );
-  assert.equal(forms.length, 2);
+  const forms = formTags(markup);
+  assert.equal(forms.length, 4);
   assert.ok(
-    forms.every((form) =>
-      form.includes('data-provider-role-form="orchestrator"')
-    )
+    forms.every((form) => form.includes('data-enablement-form="provider-role"'))
   );
-  assert.ok(
-    forms.some((form) => form.includes('data-provider-role-provider="codex"'))
+  for (const provider of ["claude", "codex"]) {
+    for (const role of ["orchestrator", "subagent"]) {
+      const form = forms.find((tag) =>
+        tag.includes(`action="/api/providers/${provider}/roles/${role}"`)
+      );
+      assert.ok(form, `${provider} ${role} toggle must be in its row`);
+      assert.equal(hiddenValue(markup, form, "returnTo"), "/providers");
+      assert.equal(hiddenValue(markup, form, "provider"), provider);
+    }
+  }
+  // The read-only codex subagent control stays in place, disabled, with why.
+  const codexSubagent = markup.slice(
+    markup.indexOf('data-enablement-target="codex/subagent"')
   );
-  assert.ok(
-    forms.some((form) =>
-      form.includes('data-provider-role-provider="anthropic"')
-    )
-  );
-  assert.equal(markup.includes("Disable</button>"), true);
-  assert.equal(markup.includes("Enable</button>"), true);
+  assert.match(codexSubagent, /<button type="submit" disabled=""/);
+  assert.match(codexSubagent, /Runtime reports this setting as read-only/);
+
+  assert.match(markup, /Cooling down \(session_limit\)/);
+  assert.match(markup, /Missing LITELLM_API_KEY/);
+  assert.match(markup, />Not required</);
+  assert.match(markup, />Not observed</);
+  assert.match(markup, /href="\/providers\/claude\/models\/sonnet"/);
+  assert.match(markup, /data-section="routing-priority"/);
+  assert.match(markup, /orchestrator \(root\)/);
+  assert.equal(markup.includes('data-enablement-form="model"'), false);
 });
 
-test("Agents provider-role feedback reports outcomes without optimistic state claims", () => {
-  const failedMarkup = renderToStaticMarkup(
-    React.createElement(AgentsView, {
-      agents: [],
-      providerRoleFailed: true
+test("ProvidersView Models tab puts each model's toggle next to the model", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(ProvidersView, {
+      providers: PROVIDERS_FIXTURE,
+      models: { status: "available", data: MODELS_FIXTURE },
+      activeTab: "models"
     })
   );
-  assert.match(failedMarkup, /data-provider-role-outcome="failed"/);
-  assert.match(failedMarkup, /could not be confirmed/);
-  assert.match(failedMarkup, /Check the current role state before retrying/);
-  assert.doesNotMatch(failedMarkup, /No change was made/);
+  assert.match(markup, /data-tab-panel="models"/);
+  const forms = formTags(markup);
+  assert.equal(forms.length, 3);
+  for (const model of MODELS_FIXTURE.models) {
+    const form = forms.find((tag) =>
+      tag.includes(`action="/api/models/${model.id}"`)
+    );
+    assert.ok(form, `${model.id} toggle must be next to the model`);
+    assert.equal(hiddenValue(markup, form, "model"), model.id);
+    assert.equal(
+      hiddenValue(markup, form, "returnTo"),
+      "/providers?tab=models"
+    );
+    assert.equal(
+      hiddenValue(markup, form, "enabled"),
+      String(!model.enablement.enabled)
+    );
+  }
+  assert.match(markup, /Claude Sonnet subscription/);
+  assert.match(markup, /href="\/providers\/codex\/models\/gpt-6-luna"/);
+  assert.equal(markup.includes('data-enablement-form="provider-role"'), false);
+
+  const unavailable = renderToStaticMarkup(
+    React.createElement(ProvidersView, {
+      providers: PROVIDERS_FIXTURE,
+      models: { status: "unavailable", message: "Runtime unreachable" },
+      activeTab: "models"
+    })
+  );
+  assert.match(unavailable, /data-status="unavailable"/);
+  assert.match(unavailable, /Runtime unreachable/);
+  assert.equal(unavailable.includes("<form"), false);
+});
+
+test("ProviderDetailView keeps the provider's role and model toggles on its page", () => {
+  const claude = PROVIDERS_FIXTURE.providers[0]!;
+  const markup = renderToStaticMarkup(
+    React.createElement(ProviderDetailView, {
+      provider: claude,
+      tiers: PROVIDERS_FIXTURE.tiers,
+      orchestratorTier: PROVIDERS_FIXTURE.orchestratorTier,
+      models: MODELS_FIXTURE.models.filter(
+        (model) => model.provider === "claude"
+      )
+    })
+  );
+  assert.match(markup, /data-feature="provider-detail"/);
+  assert.match(markup, /href="\/providers"[^>]*>Providers<\/a>/);
+  assert.match(markup, /aria-current="page"[^>]*>claude</);
+
+  const forms = formTags(markup);
+  const roleForms = forms.filter((form) =>
+    form.includes('data-enablement-form="provider-role"')
+  );
+  const modelForms = forms.filter((form) =>
+    form.includes('data-enablement-form="model"')
+  );
+  assert.equal(roleForms.length, 2);
+  assert.equal(modelForms.length, 2);
+  for (const form of forms) {
+    assert.equal(hiddenValue(markup, form, "returnTo"), "/providers/claude");
+  }
+  assert.ok(
+    modelForms.some((form) => form.includes('action="/api/models/sonnet"'))
+  );
+
+  assert.match(markup, /data-section="provider-health"/);
+  assert.match(markup, /2026-10-05T16:00:00.000Z/);
+  assert.match(markup, /session_limit · HTTP 429/);
+  assert.match(markup, /href="\/usage\?provider=claude"/);
+  assert.match(markup, /Orchestrator reasoning effort/);
+  assert.match(markup, /Missing LITELLM_API_KEY/);
+  assert.equal(markup.includes("gpt-6-luna"), false);
+
+  const withoutModels = renderToStaticMarkup(
+    React.createElement(ProviderDetailView, {
+      provider: PROVIDERS_FIXTURE.providers[1]!,
+      tiers: PROVIDERS_FIXTURE.tiers,
+      orchestratorTier: PROVIDERS_FIXTURE.orchestratorTier,
+      models: null
+    })
+  );
+  assert.equal(withoutModels.includes('data-enablement-form="model"'), false);
+  assert.match(withoutModels, /Model enablement could not be loaded/);
+  assert.match(withoutModels, /has not reported live evidence/);
+});
+
+test("ModelDetailView renders the model toggle under its provider's breadcrumbs", () => {
+  const sonnet = MODELS_FIXTURE.models[1]!;
+  const markup = renderToStaticMarkup(
+    React.createElement(ModelDetailView, {
+      model: sonnet,
+      provider: PROVIDERS_FIXTURE.providers[0]!
+    })
+  );
+  assert.match(markup, /data-feature="model-detail"/);
+  assert.match(markup, /href="\/providers\/claude"[^>]*>claude<\/a>/);
+  assert.match(markup, /aria-current="page"[^>]*>sonnet</);
+  const forms = formTags(markup);
+  assert.equal(forms.length, 1);
+  assert.match(forms[0]!, /action="\/api\/models\/sonnet"/);
+  assert.equal(
+    hiddenValue(markup, forms[0]!, "returnTo"),
+    "/providers/claude/models/sonnet"
+  );
+  assert.equal(hiddenValue(markup, forms[0]!, "enabled"), "true");
+  assert.match(markup, /orchestrator: enabled/);
+  assert.match(markup, /href="\/usage\?model=sonnet"/);
+});
+
+test("Providers surfaces report unconfirmed changes without optimistic state", () => {
+  for (const element of [
+    React.createElement(ProvidersView, {
+      providers: PROVIDERS_FIXTURE,
+      models: { status: "available", data: MODELS_FIXTURE },
+      controlFailed: true
+    }),
+    React.createElement(ProviderDetailView, {
+      provider: PROVIDERS_FIXTURE.providers[0]!,
+      tiers: PROVIDERS_FIXTURE.tiers,
+      orchestratorTier: PROVIDERS_FIXTURE.orchestratorTier,
+      models: null,
+      controlFailed: true
+    }),
+    React.createElement(ModelDetailView, {
+      model: MODELS_FIXTURE.models[0]!,
+      provider: null,
+      controlFailed: true
+    })
+  ]) {
+    const markup = renderToStaticMarkup(element);
+    assert.match(markup, /data-control-outcome="failed"/);
+    assert.match(markup, /could not be confirmed/);
+  }
+});
+
+test("Providers toggles may only return to Providers pages", () => {
+  for (const path of [
+    "/providers",
+    "/providers?tab=providers",
+    "/providers?tab=models",
+    "/providers/claude",
+    "/providers/antigravity/models/gemini-3.8-flash-high"
+  ]) {
+    assert.equal(isProvidersReturnPath(path), true, path);
+  }
+  for (const path of [
+    null,
+    "",
+    "/agents",
+    "//attacker.test/providers",
+    "https://attacker.test/providers",
+    "/providers?tab=evil",
+    "/providers/../agents",
+    "/providers/claude/roles/orchestrator"
+  ]) {
+    assert.equal(isProvidersReturnPath(path), false, String(path));
+  }
+  assert.equal(
+    withControlFailure("/providers?tab=models"),
+    "/providers?tab=models&control=failed"
+  );
+  assert.equal(
+    withControlFailure("/providers/claude"),
+    "/providers/claude?control=failed"
+  );
 });
 
 test("Prompt edit form submits only source content and its revision through the typed Control API", async () => {
@@ -4130,12 +4649,26 @@ test("Prompt edit form submits only source content and its revision through the 
       body: String(init?.body ?? "")
     });
     return Response.json({
-      schema: "autodev-control-prompt-command-patch-v1",
+      schema: "autodev-control-prompt-command-patch-v2",
       name: "dry",
       revision: "b".repeat(64),
       changed: true,
-      projectionUpdated: true,
-      restartRequired: true
+      diff: {
+        summary: "Canonical source updated.",
+        identifier: "c".repeat(64)
+      },
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: "c".repeat(64),
+          observedGeneration: "c".repeat(64),
+          lastApplyAt: "2026-01-01T00:00:00.000Z",
+          lastObservationAt: "2026-01-01T00:00:00.000Z",
+          lastError: null,
+          explanation: "Converged."
+        },
+        history: []
+      }
     });
   };
 
@@ -4180,6 +4713,54 @@ test("Prompt edit form submits only source content and its revision through the 
     if (previousBaseUrl === undefined)
       delete process.env.AUTODEV_CONTROL_API_BASE_URL;
     else process.env.AUTODEV_CONTROL_API_BASE_URL = previousBaseUrl;
+  }
+});
+
+test("Prompt edit route returns an explicit apply-failed state without a success claim", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "prompt-apply-failure-token";
+  globalThis.fetch = async () =>
+    Response.json(
+      {
+        error: {
+          code: "autodev_control_prompt_apply_failed",
+          message: "The canonical source was saved, but apply failed."
+        }
+      },
+      { status: 503 }
+    );
+  try {
+    const request = new NextRequest("http://console.test/api/prompts/dry", {
+      method: "POST",
+      headers: {
+        origin: "http://console.test",
+        host: "console.test",
+        "sec-fetch-site": "same-origin",
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({
+        expectedRevision: "a".repeat(64),
+        content: '---\ntargets: ["*"]\ndescription: Save me.\n---\n\nBody\n'
+      }).toString()
+    });
+    const response = await promptMutationRoute.POST(request, {
+      params: Promise.resolve({ name: "dry" })
+    });
+    assert.equal(response.status, 303);
+    assert.equal(
+      response.headers.get("location"),
+      "/prompts/dry?save=apply-failed"
+    );
+    assert.equal(
+      response.headers.get("location")?.includes("prompt-apply-failure-token"),
+      false
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined)
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    else process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
   }
 });
 
@@ -4264,10 +4845,58 @@ test("Prompt edit route rejects CSRF, malformed forms, and exposes no mutation m
   assert.equal("DELETE" in promptMutationRoute, false);
 });
 
-test("provider-role Console route sends only a same-origin typed PATCH with server credentials", async () => {
+const CONTROL_ROUTE_ENV_KEYS = [
+  "AUTODEV_CONTROL_API_TOKEN",
+  "AUTODEV_CONTROL_API_BASE_URL"
+] as const;
+
+async function withControlRouteEnvironment(
+  token: string,
+  fetchImpl: typeof fetch,
+  run: () => Promise<void>
+): Promise<void> {
   const previousFetch = globalThis.fetch;
-  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
-  const previousBaseUrl = process.env.AUTODEV_CONTROL_API_BASE_URL;
+  const saved = Object.fromEntries(
+    CONTROL_ROUTE_ENV_KEYS.map((key) => [key, process.env[key]])
+  );
+  process.env.AUTODEV_CONTROL_API_TOKEN = token;
+  process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+  globalThis.fetch = fetchImpl;
+  try {
+    await run();
+  } finally {
+    globalThis.fetch = previousFetch;
+    for (const key of CONTROL_ROUTE_ENV_KEYS) {
+      const value = saved[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+function sameOriginFormRequest(
+  path: string,
+  body: string,
+  overrides: {
+    readonly origin?: string;
+    readonly fetchSite?: string;
+    readonly contentType?: string;
+  } = {}
+): NextRequest {
+  return new NextRequest("http://console.test" + path, {
+    method: "POST",
+    headers: {
+      origin: overrides.origin ?? "http://console.test",
+      host: "console.test",
+      "sec-fetch-site": overrides.fetchSite ?? "same-origin",
+      "content-type":
+        overrides.contentType ?? "application/x-www-form-urlencoded"
+    },
+    body
+  });
+}
+
+test("provider-role Console route sends only a same-origin typed PATCH and returns to the toggle's page", async () => {
   const token = "provider-role-route-server-token";
   const requests: Array<{
     readonly url: string;
@@ -4275,277 +4904,591 @@ test("provider-role Console route sends only a same-origin typed PATCH with serv
     readonly headers: Headers;
     readonly body: string;
   }> = [];
+  await withControlRouteEnvironment(
+    token,
+    async (input, init) => {
+      requests.push({
+        url: String(input),
+        method: init?.method,
+        headers: new Headers(init?.headers),
+        body: String(init?.body ?? "")
+      });
+      return Response.json({
+        schema: "autodev-control-provider-role-v2",
+        provider: "codex",
+        role: "orchestrator",
+        enabled: false,
+        previous: true,
+        actor: LOCAL_CONTROL_API_ACTOR
+      });
+    },
+    async () => {
+      const response = await providerRoleRoute.POST(
+        sameOriginFormRequest(
+          "/api/providers/codex/roles/orchestrator",
+          new URLSearchParams({
+            provider: "codex",
+            role: "orchestrator",
+            enabled: "false",
+            returnTo: "/providers/codex"
+          }).toString()
+        ),
+        { params: Promise.resolve({ provider: "codex", role: "orchestrator" }) }
+      );
 
-  process.env.AUTODEV_CONTROL_API_TOKEN = token;
-  process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
-  globalThis.fetch = async (input, init) => {
-    requests.push({
-      url: String(input),
-      method: init?.method,
-      headers: new Headers(init?.headers),
-      body: String(init?.body ?? "")
-    });
-    return Response.json({
-      schema: "autodev-control-provider-role-v1",
-      provider: "codex",
-      role: "orchestrator",
-      enabled: false,
-      previous: true,
-      actor: LOCAL_CONTROL_API_ACTOR
-    });
-  };
-
-  try {
-    const request = new NextRequest(
-      "http://console.test/api/providers/codex/roles/orchestrator",
-      {
-        method: "POST",
-        headers: {
-          origin: "http://console.test",
-          host: "console.test",
-          "sec-fetch-site": "same-origin",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        body: new URLSearchParams({
-          provider: "codex",
-          role: "orchestrator",
-          enabled: "false"
-        }).toString()
-      }
-    );
-    const response = await providerRoleRoute.POST(request, {
-      params: Promise.resolve({ provider: "codex", role: "orchestrator" })
-    });
-
-    assert.equal(response.status, 303);
-    assert.equal(response.headers.get("location"), "/agents");
-    assert.equal(requests.length, 1);
-    assert.equal(
-      requests[0]?.url,
-      "http://127.0.0.1:4101/control/providers/codex/roles/orchestrator"
-    );
-    assert.equal(requests[0]?.method, "PATCH");
-    assert.equal(requests[0]?.headers.get("authorization"), "Bearer " + token);
-    assert.equal(
-      requests[0]?.headers.get("x-autodev-actor"),
-      LOCAL_CONTROL_API_ACTOR
-    );
-    assert.deepEqual(JSON.parse(requests[0]?.body ?? "{}"), { enabled: false });
-    assert.equal(response.headers.get("location")?.includes(token), false);
-  } finally {
-    globalThis.fetch = previousFetch;
-    if (previousToken === undefined) {
-      delete process.env.AUTODEV_CONTROL_API_TOKEN;
-    } else {
-      process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
+      assert.equal(response.status, 303);
+      assert.equal(response.headers.get("location"), "/providers/codex");
+      assert.equal(requests.length, 1);
+      assert.equal(
+        requests[0]?.url,
+        "http://127.0.0.1:4101/control/providers/codex/roles/orchestrator"
+      );
+      assert.equal(requests[0]?.method, "PATCH");
+      assert.equal(
+        requests[0]?.headers.get("authorization"),
+        "Bearer " + token
+      );
+      assert.equal(
+        requests[0]?.headers.get("x-autodev-actor"),
+        LOCAL_CONTROL_API_ACTOR
+      );
+      assert.deepEqual(JSON.parse(requests[0]?.body ?? "{}"), {
+        enabled: false
+      });
     }
-    if (previousBaseUrl === undefined) {
-      delete process.env.AUTODEV_CONTROL_API_BASE_URL;
-    } else {
-      process.env.AUTODEV_CONTROL_API_BASE_URL = previousBaseUrl;
-    }
-  }
+  );
 });
 
-test("provider-role Console route fails closed for CSRF and malformed or oversized forms", async () => {
-  const previousFetch = globalThis.fetch;
-  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
-  process.env.AUTODEV_CONTROL_API_TOKEN = "provider-role-no-fetch-token";
+test("provider-role Console route fails closed for CSRF, foreign return paths, and malformed or oversized forms", async () => {
   let fetchCalls = 0;
-  globalThis.fetch = async () => {
-    fetchCalls += 1;
-    return Response.json({ error: "unexpected mutation" }, { status: 500 });
-  };
-
-  const validBody = new URLSearchParams({
+  const validFields = {
     provider: "codex",
     role: "orchestrator",
-    enabled: "true"
-  }).toString();
+    enabled: "true",
+    returnTo: "/providers/codex"
+  };
+  const validBody = new URLSearchParams(validFields).toString();
+  const DEFAULT_FAILURE = "/providers?control=failed";
+  const PAGE_FAILURE = "/providers/codex?control=failed";
   const cases = [
     {
       name: "cross-origin Origin",
       origin: "http://attacker.test",
       fetchSite: "cross-site",
-      provider: "codex",
-      role: "orchestrator",
-      contentType: "application/x-www-form-urlencoded",
-      body: validBody
+      expected: DEFAULT_FAILURE
     },
     {
       name: "same-site but not same-origin fetch",
-      origin: "http://console.test",
       fetchSite: "same-site",
-      provider: "codex",
-      role: "orchestrator",
-      contentType: "application/x-www-form-urlencoded",
-      body: validBody
+      expected: DEFAULT_FAILURE
     },
     {
       name: "malformed Origin with a path",
       origin: "http://console.test/attacker",
-      fetchSite: "same-origin",
-      provider: "codex",
-      role: "orchestrator",
-      contentType: "application/x-www-form-urlencoded",
-      body: validBody
+      expected: DEFAULT_FAILURE
     },
     {
       name: "content type prefix spoof",
-      origin: "http://console.test",
-      fetchSite: "same-origin",
-      provider: "codex",
-      role: "orchestrator",
       contentType: "application/x-www-form-urlencoded-evil",
-      body: validBody
-    },
-    {
-      name: "extra form field",
-      origin: "http://console.test",
-      fetchSite: "same-origin",
-      provider: "codex",
-      role: "orchestrator",
-      contentType: "application/x-www-form-urlencoded",
-      body: validBody + "&extra=value"
-    },
-    {
-      name: "provider and role mismatch",
-      origin: "http://console.test",
-      fetchSite: "same-origin",
-      provider: "codex",
-      role: "subagent",
-      contentType: "application/x-www-form-urlencoded",
-      body: validBody
+      expected: DEFAULT_FAILURE
     },
     {
       name: "path traversal provider",
-      origin: "http://console.test",
-      fetchSite: "same-origin",
       provider: "..",
-      role: "orchestrator",
-      contentType: "application/x-www-form-urlencoded",
-      body: validBody
+      expected: DEFAULT_FAILURE
     },
     {
       name: "oversized body",
-      origin: "http://console.test",
-      fetchSite: "same-origin",
-      provider: "codex",
-      role: "orchestrator",
-      contentType: "application/x-www-form-urlencoded",
-      body: "x".repeat(4097)
+      body: "x".repeat(4097),
+      expected: DEFAULT_FAILURE
+    },
+    {
+      name: "foreign return path",
+      body: new URLSearchParams({
+        ...validFields,
+        returnTo: "https://attacker.test/"
+      }).toString(),
+      expected: DEFAULT_FAILURE
+    },
+    {
+      name: "non-Providers return path",
+      body: new URLSearchParams({
+        ...validFields,
+        returnTo: "/agents"
+      }).toString(),
+      expected: DEFAULT_FAILURE
+    },
+    {
+      name: "extra form field",
+      body: validBody + "&extra=value",
+      expected: PAGE_FAILURE
+    },
+    {
+      name: "provider and role mismatch",
+      role: "subagent",
+      expected: PAGE_FAILURE
     }
   ];
 
-  try {
-    for (const testCase of cases) {
-      const request = new NextRequest(
-        "http://console.test/api/providers/" +
-          testCase.provider +
-          "/roles/" +
-          testCase.role,
-        {
-          method: "POST",
-          headers: {
-            origin: testCase.origin,
-            host: "console.test",
-            "sec-fetch-site": testCase.fetchSite,
-            "content-type": testCase.contentType
-          },
-          body: testCase.body
-        }
-      );
-      const response = await providerRoleRoute.POST(request, {
-        params: Promise.resolve({
-          provider: testCase.provider,
-          role: testCase.role
-        })
-      });
-      assert.equal(response.status, 303, testCase.name);
-      assert.equal(
-        response.headers.get("location"),
-        "/agents?providerRole=failed",
-        testCase.name
-      );
+  await withControlRouteEnvironment(
+    "provider-role-no-fetch-token",
+    async () => {
+      fetchCalls += 1;
+      return Response.json({ error: "unexpected mutation" }, { status: 500 });
+    },
+    async () => {
+      for (const testCase of cases) {
+        const provider = testCase.provider ?? "codex";
+        const role = testCase.role ?? "orchestrator";
+        const response = await providerRoleRoute.POST(
+          sameOriginFormRequest(
+            `/api/providers/${provider}/roles/${role}`,
+            testCase.body ?? validBody,
+            testCase
+          ),
+          { params: Promise.resolve({ provider, role }) }
+        );
+        assert.equal(response.status, 303, testCase.name);
+        assert.equal(
+          response.headers.get("location"),
+          testCase.expected,
+          testCase.name
+        );
+      }
+      assert.equal(fetchCalls, 0);
     }
-    assert.equal(fetchCalls, 0);
-  } finally {
-    globalThis.fetch = previousFetch;
-    if (previousToken === undefined) {
-      delete process.env.AUTODEV_CONTROL_API_TOKEN;
-    } else {
-      process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
-    }
-  }
+  );
 });
 
-test("provider-role Console route exports no non-POST mutation methods", () => {
-  assert.equal("GET" in providerRoleRoute, false);
-  assert.equal("PATCH" in providerRoleRoute, false);
-  assert.equal("PUT" in providerRoleRoute, false);
-  assert.equal("DELETE" in providerRoleRoute, false);
+test("Providers mutation routes export only POST", () => {
+  for (const route of [providerRoleRoute, modelRoute]) {
+    assert.equal(typeof route.POST, "function");
+    assert.equal("GET" in route, false);
+    assert.equal("PATCH" in route, false);
+    assert.equal("PUT" in route, false);
+    assert.equal("DELETE" in route, false);
+  }
 });
 
 test("provider-role Console route returns an unconfirmed failure when Runtime rejects the PATCH", async () => {
-  const previousFetch = globalThis.fetch;
-  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
-  const previousBaseUrl = process.env.AUTODEV_CONTROL_API_BASE_URL;
-  process.env.AUTODEV_CONTROL_API_TOKEN = "provider-role-rejected-token";
-  process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
-  globalThis.fetch = async () =>
-    Response.json(
-      {
-        error: {
-          code: "autodev_control_api_operator_required",
-          message: "An operator actor is required.",
-          status: 403
+  await withControlRouteEnvironment(
+    "provider-role-rejected-token",
+    async () =>
+      Response.json(
+        {
+          error: {
+            code: "autodev_control_api_operator_required",
+            message: "An operator actor is required.",
+            status: 403
+          }
+        },
+        { status: 403 }
+      ),
+    async () => {
+      const response = await providerRoleRoute.POST(
+        sameOriginFormRequest(
+          "/api/providers/codex/roles/orchestrator",
+          new URLSearchParams({
+            provider: "codex",
+            role: "orchestrator",
+            enabled: "false",
+            returnTo: "/providers?tab=providers"
+          }).toString()
+        ),
+        { params: Promise.resolve({ provider: "codex", role: "orchestrator" }) }
+      );
+      assert.equal(response.status, 303);
+      assert.equal(
+        response.headers.get("location"),
+        "/providers?tab=providers&control=failed"
+      );
+      assert.equal(
+        response.headers.get("location")?.includes("rejected-token"),
+        false
+      );
+    }
+  );
+});
+
+test("model Console route sends a typed model PATCH and returns to the toggle's page", async () => {
+  const token = "model-route-server-token";
+  const requests: Array<{
+    readonly url: string;
+    readonly method: string | undefined;
+    readonly headers: Headers;
+    readonly body: string;
+  }> = [];
+  await withControlRouteEnvironment(
+    token,
+    async (input, init) => {
+      requests.push({
+        url: String(input),
+        method: init?.method,
+        headers: new Headers(init?.headers),
+        body: String(init?.body ?? "")
+      });
+      return Response.json({
+        schema: "autodev-control-model-v1",
+        model: "gemini-3.8-flash-high",
+        enabled: false,
+        previous: true,
+        actor: LOCAL_CONTROL_API_ACTOR
+      });
+    },
+    async () => {
+      const response = await modelRoute.POST(
+        sameOriginFormRequest(
+          "/api/models/gemini-3.8-flash-high",
+          new URLSearchParams({
+            model: "gemini-3.8-flash-high",
+            enabled: "false",
+            returnTo: "/providers?tab=models"
+          }).toString()
+        ),
+        { params: Promise.resolve({ model: "gemini-3.8-flash-high" }) }
+      );
+      assert.equal(response.status, 303);
+      assert.equal(response.headers.get("location"), "/providers?tab=models");
+      assert.equal(requests.length, 1);
+      assert.equal(
+        requests[0]?.url,
+        "http://127.0.0.1:4101/control/models/gemini-3.8-flash-high"
+      );
+      assert.equal(requests[0]?.method, "PATCH");
+      assert.equal(
+        requests[0]?.headers.get("authorization"),
+        "Bearer " + token
+      );
+      assert.deepEqual(JSON.parse(requests[0]?.body ?? "{}"), {
+        enabled: false
+      });
+    }
+  );
+});
+
+test("model Console route fails closed and reports Runtime rejections without a success claim", async () => {
+  let fetchCalls = 0;
+  const fields = {
+    model: "sonnet",
+    enabled: "true",
+    returnTo: "/providers/claude/models/sonnet"
+  };
+  const cases = [
+    {
+      name: "cross-origin Origin",
+      origin: "http://attacker.test",
+      fetchSite: "cross-site",
+      expected: "/providers?tab=models&control=failed"
+    },
+    {
+      name: "invalid model segment",
+      model: "../agents",
+      expected: "/providers?tab=models&control=failed"
+    },
+    {
+      name: "foreign return path",
+      body: new URLSearchParams({
+        ...fields,
+        returnTo: "//attacker.test"
+      }).toString(),
+      expected: "/providers?tab=models&control=failed"
+    },
+    {
+      name: "model mismatch",
+      model: "claude-opus-5-5",
+      expected: "/providers/claude/models/sonnet?control=failed"
+    },
+    {
+      name: "non-boolean enabled",
+      body: new URLSearchParams({ ...fields, enabled: "yes" }).toString(),
+      expected: "/providers/claude/models/sonnet?control=failed"
+    }
+  ];
+  await withControlRouteEnvironment(
+    "model-route-no-fetch-token",
+    async () => {
+      fetchCalls += 1;
+      return Response.json({ error: "unexpected mutation" }, { status: 500 });
+    },
+    async () => {
+      for (const testCase of cases) {
+        const model = testCase.model ?? "sonnet";
+        const response = await modelRoute.POST(
+          sameOriginFormRequest(
+            `/api/models/${model}`,
+            testCase.body ?? new URLSearchParams(fields).toString(),
+            testCase
+          ),
+          { params: Promise.resolve({ model }) }
+        );
+        assert.equal(response.status, 303, testCase.name);
+        assert.equal(
+          response.headers.get("location"),
+          testCase.expected,
+          testCase.name
+        );
+      }
+      assert.equal(fetchCalls, 0);
+    }
+  );
+
+  await withControlRouteEnvironment(
+    "model-route-rejected-token",
+    async () =>
+      Response.json(
+        {
+          error: {
+            code: "autodev_control_api_unknown_model",
+            message: "Unknown model.",
+            status: 404
+          }
+        },
+        { status: 404 }
+      ),
+    async () => {
+      const response = await modelRoute.POST(
+        sameOriginFormRequest(
+          "/api/models/sonnet",
+          new URLSearchParams(fields).toString()
+        ),
+        { params: Promise.resolve({ model: "sonnet" }) }
+      );
+      assert.equal(
+        response.headers.get("location"),
+        "/providers/claude/models/sonnet?control=failed"
+      );
+    }
+  );
+});
+
+test("Console rejects provider and model responses that do not match the v2 contracts", async () => {
+  const config = { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" };
+  const providersV1 = await fetchProviders(config, {
+    fetchImpl: async () =>
+      Response.json({
+        schema: "autodev-control-providers-v1",
+        providers: [],
+        disabledOrchestratorProviders: [],
+        disabledSubagentProviders: []
+      })
+  });
+  assert.equal(providersV1.kind, "invalid-response");
+  const modelsV1 = await fetchModels(config, {
+    fetchImpl: async () =>
+      Response.json({
+        schema: "autodev-control-models-v1",
+        source: "codex-model-catalog.json",
+        readOnly: true,
+        totalModels: 0,
+        models: []
+      })
+  });
+  assert.equal(modelsV1.kind, "invalid-response");
+
+  const providers = await fetchProviders(config, {
+    fetchImpl: async () => Response.json(PROVIDERS_FIXTURE)
+  });
+  assert.equal(providers.kind, "ok");
+  const models = await fetchModels(config, {
+    fetchImpl: async () => Response.json(MODELS_FIXTURE)
+  });
+  assert.equal(models.kind, "ok");
+});
+
+test("next dev and the production build never share a dist directory", () => {
+  // The LaunchAgent's `next start` and run-codex-console.sh's BUILD_ID gate
+  // read the production build from console/.next.
+  assert.equal(CONSOLE_BUILD_DIST_DIR, ".next");
+  assert.notEqual(CONSOLE_DEV_DIST_DIR, CONSOLE_BUILD_DIST_DIR);
+  assert.equal(consoleDistDir(PHASE_DEVELOPMENT_SERVER), CONSOLE_DEV_DIST_DIR);
+  assert.equal(consoleDistDir(PHASE_PRODUCTION_BUILD), CONSOLE_BUILD_DIST_DIR);
+  assert.equal(consoleDistDir(PHASE_PRODUCTION_SERVER), CONSOLE_BUILD_DIST_DIR);
+});
+
+test("ToolsView applies URL-addressable source and role filters without losing catalog coverage banner", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(ToolsView, {
+      coverage: "complete",
+      validity: "valid",
+      totalTools: 4,
+      usageLink: "/usage",
+      filters: { source: "mcp", role: "" },
+      tools: [
+        {
+          name: "lsp_goto_definition",
+          source: "mcp",
+          sourceAuthority: "execution-contract",
+          server: "lsp",
+          availability: "configured",
+          exposedRoles: ["default", "worker"]
+        },
+        {
+          name: "web_search",
+          source: "native",
+          sourceAuthority: "codex-native",
+          availability: "configured",
+          exposedRoles: ["docs-researcher"]
+        },
+        {
+          name: "request_user_input",
+          source: "plugin",
+          sourceAuthority: "rulesync-plugin",
+          server: "codex_app",
+          availability: "configured",
+          exposedRoles: ["orchestrator"]
+        },
+        {
+          name: "unknown_native",
+          source: "native",
+          sourceAuthority: "codex-native",
+          availability: "not-observed",
+          exposedRoles: []
+        }
+      ]
+    })
+  );
+  // Filter is active for mcp only.
+  assert.match(markup, /data-source-filter="mcp"[^>]*bg-surface-raised/);
+  assert.match(markup, /Showing 1 of 4 tool entries/);
+  // MCP entry is visible; native and plugin are filtered out.
+  assert.match(markup, /lsp_goto_definition/);
+  assert.doesNotMatch(markup, /data-tool-name="web_search"/);
+  assert.doesNotMatch(markup, /request_user_input/);
+  // Composite catalog coverage banner stays accurate.
+  assert.match(markup, /data-tools-coverage="complete"/);
+  assert.match(markup, /Composite catalog: RuleSync MCP declarations/);
+});
+
+test("ToolsView renders a Not observed availability badge when source authority is missing", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(ToolsView, {
+      coverage: "partial",
+      validity: "valid",
+      totalTools: 1,
+      usageLink: "/usage",
+      filters: { source: "", role: "" },
+      tools: [
+        {
+          name: "future_tool",
+          source: "mcp",
+          sourceAuthority: "execution-contract",
+          server: "future",
+          availability: "not-observed",
+          exposedRoles: [],
+          canonicalEditSurface: {
+            section: "mcps",
+            identifier: "future",
+            label: "MCP future"
+          }
+        }
+      ]
+    })
+  );
+  assert.match(markup, /data-status="not-observed"/);
+  assert.match(markup, /No roles assigned/);
+  // The catalog still links to the canonical MCP edit surface.
+  assert.match(markup, /href="\/mcps\/future"/);
+});
+
+test("ToolsView reports explicit invalid source via the error vocabulary", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(ToolsView, {
+      coverage: "unavailable",
+      validity: "invalid",
+      totalTools: 0,
+      usageLink: "/usage",
+      filters: { source: "", role: "" },
+      tools: []
+    })
+  );
+  assert.match(markup, /data-tools-validity="invalid"/);
+  assert.match(markup, /source is invalid/);
+});
+
+test("ToolDetailView renders source authority, edit surface, and unobserved historical use", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(ToolDetailView, {
+      tool: {
+        name: "lsp_goto_definition",
+        source: "mcp",
+        sourceAuthority: "execution-contract",
+        server: "lsp",
+        availability: "configured",
+        exposedRoles: ["default", "worker"],
+        canonicalEditSurface: {
+          section: "mcps",
+          identifier: "lsp",
+          label: "MCP lsp"
         }
       },
-      { status: 403 }
-    );
+      coverage: "complete",
+      validity: "valid",
+      usage: { calls: null, errors: null, observed: false },
+      usageLink: "/usage",
+      usageUnavailable: false
+    })
+  );
+  assert.match(markup, /data-tool-name="mcp__lsp__lsp_goto_definition"/);
+  assert.match(markup, /Source authority/);
+  assert.match(markup, /Role exposure/);
+  assert.match(markup, /Historical use/);
+  assert.match(markup, /No recorded tool calls/);
+  assert.match(markup, /href="\/mcps\/lsp"/);
+  // No raw usage values are rendered when unobserved.
+  assert.doesNotMatch(markup, /0</);
+});
 
-  try {
-    const request = new NextRequest(
-      "http://console.test/api/providers/codex/roles/orchestrator",
-      {
-        method: "POST",
-        headers: {
-          origin: "http://console.test",
-          host: "console.test",
-          "sec-fetch-site": "same-origin",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        body: new URLSearchParams({
-          provider: "codex",
-          role: "orchestrator",
-          enabled: "false"
-        }).toString()
-      }
-    );
-    const response = await providerRoleRoute.POST(request, {
-      params: Promise.resolve({ provider: "codex", role: "orchestrator" })
-    });
+test("ToolDetailView surfaces observed historical use and falls back to Unavailable when telemetry errors", () => {
+  const observedMarkup = renderToStaticMarkup(
+    React.createElement(ToolDetailView, {
+      tool: {
+        name: "request_user_input",
+        source: "plugin",
+        sourceAuthority: "rulesync-plugin",
+        server: "codex_app",
+        availability: "configured",
+        exposedRoles: ["orchestrator"],
+        canonicalEditSurface: {
+          section: "mcps",
+          identifier: "codex_app",
+          label: "MCP codex_app"
+        }
+      },
+      coverage: "complete",
+      validity: "valid",
+      usage: { calls: 12, errors: null, observed: true },
+      usageLink: "/usage",
+      usageUnavailable: false
+    })
+  );
+  assert.match(
+    observedMarkup,
+    /data-tool-name="mcp__codex_app__request_user_input"/
+  );
+  assert.match(observedMarkup, /Calls \(24h\)/);
+  assert.match(observedMarkup, /12/);
 
-    assert.equal(response.status, 303);
-    assert.equal(
-      response.headers.get("location"),
-      "/agents?providerRole=failed"
-    );
-    assert.equal(
-      response.headers.get("location")?.includes("rejected-token"),
-      false
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-    if (previousToken === undefined) {
-      delete process.env.AUTODEV_CONTROL_API_TOKEN;
-    } else {
-      process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
-    }
-    if (previousBaseUrl === undefined) {
-      delete process.env.AUTODEV_CONTROL_API_BASE_URL;
-    } else {
-      process.env.AUTODEV_CONTROL_API_BASE_URL = previousBaseUrl;
-    }
-  }
+  const unavailableMarkup = renderToStaticMarkup(
+    React.createElement(ToolDetailView, {
+      tool: {
+        name: "request_user_input",
+        source: "plugin",
+        sourceAuthority: "rulesync-plugin",
+        server: "codex_app",
+        availability: "configured",
+        exposedRoles: ["orchestrator"],
+        canonicalEditSurface: {
+          section: "mcps",
+          identifier: "codex_app",
+          label: "MCP codex_app"
+        }
+      },
+      coverage: "complete",
+      validity: "valid",
+      usage: { calls: null, errors: null, observed: false },
+      usageLink: "/usage",
+      usageUnavailable: true
+    })
+  );
+  assert.match(unavailableMarkup, /Usage telemetry unavailable/);
 });

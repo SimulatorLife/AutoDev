@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 
+import type { ControlApiProviderHealth } from "@simulatorlife/autodev-core";
 import {
   createAgentActivityTracker,
   resolveAgentActivityTtlMs
@@ -81,7 +82,10 @@ import {
   normalizeInputItemIds
 } from "@simulatorlife/autodev-runtime/shared/responses-item-ids";
 
-import { handleControlApiRequest } from "../control-api/index.ts";
+import {
+  handleControlApiRequest,
+  setControlApiProviderHealthSource
+} from "../control-api/index.ts";
 import {
   codexTelemetryStatus,
   getDefaultOtelTracker,
@@ -519,6 +523,13 @@ function restorePersistedSection(args: {
     });
     return;
   }
+  if (section === "disabledModels") {
+    ROUTING_POLICY.restoreRuntimeState({
+      ...ROUTING_POLICY.runtimeState(),
+      disabledModels: value
+    });
+    return;
+  }
   if (section === "liveFeed" && Array.isArray(value)) {
     liveFeedEvents.restore(value);
     return;
@@ -615,6 +626,7 @@ const routerPersistence = new RouterPersistence({
       ROUTING_POLICY.runtimeState().disabledOrchestratorProviders,
     disabledSubagentProviders:
       ROUTING_POLICY.runtimeState().disabledSubagentProviders,
+    disabledModels: ROUTING_POLICY.runtimeState().disabledModels,
     providerTelemetry: Object.fromEntries(providerTelemetry),
     usage: usagePersistenceSnapshot(),
     concurrency: concurrencyManager.telemetry,
@@ -698,6 +710,7 @@ export function routingStatus(): Record<string, unknown> {
       ROUTING_POLICY.runtimeState().disabledOrchestratorProviders,
     disabledSubagentProviders:
       ROUTING_POLICY.runtimeState().disabledSubagentProviders,
+    disabledModels: ROUTING_POLICY.runtimeState().disabledModels,
     routes: Object.fromEntries(
       ROUTES.map((route) => [
         route.provider,
@@ -1297,6 +1310,47 @@ function routerProviderStatus(
   ];
 }
 
+/** Typed live provider evidence the Control API serves to the Console. */
+function controlApiProviderHealth(
+  now: number
+): Record<string, ControlApiProviderHealth> {
+  const projection = projectLiveAgents(now);
+  return Object.fromEntries(
+    ROUTES.map((route) => {
+      const state = providerState(route.provider);
+      const cooldown = COOLDOWNS.get(route.provider, now);
+      const health: ControlApiProviderHealth = {
+        cooldown: cooldown
+          ? {
+              kind: cooldown.kind,
+              failureClass: cooldown.failureClass ?? null,
+              until: new Date(cooldown.until).toISOString(),
+              resetsAt: cooldown.resetsAt ?? null,
+              lastResortEligible: COOLDOWNS.allowsLastResort(cooldown, now)
+            }
+          : null,
+        failureStreak: COOLDOWNS.failureStreak(route.provider) ?? 0,
+        probeFailureStreak: COOLDOWNS.probeFailureStreak(route.provider) ?? 0,
+        inFlightRequests: getActiveRequests(route.provider),
+        activeAgents: projection.byProvider[route.provider] ?? 0,
+        attempts: state.attempts,
+        successes: state.successes,
+        failures: state.failures,
+        lastSuccessAt: state.lastSuccessAt,
+        lastFailure: state.lastFailure
+          ? {
+              at: state.lastFailure.timestamp,
+              failureClass: state.lastFailure.class,
+              status: state.lastFailure.status ?? null
+            }
+          : null
+      };
+      return [route.provider, health];
+    })
+  );
+}
+setControlApiProviderHealthSource(controlApiProviderHealth);
+
 function buildRouterStatus(
   now = Date.now(),
   includeActiveAgentCorrelation = false
@@ -1344,6 +1398,7 @@ function buildRouterStatus(
       ROUTING_POLICY.runtimeState().disabledOrchestratorProviders,
     disabledSubagentProviders:
       ROUTING_POLICY.runtimeState().disabledSubagentProviders,
+    disabledModels: ROUTING_POLICY.runtimeState().disabledModels,
     usage: usageStatus(now, projection),
     attributionDiagnostics: attributionDiagnosticsStatus(),
     liveAgentAttribution: {

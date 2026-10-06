@@ -6,15 +6,23 @@ import path from "node:path";
 
 import { SpanStatusCode } from "@opentelemetry/api";
 import {
+  buildReconciliationView,
+  type ControlApiProviderHealth,
   type GithubActionsRuntimeStatus,
   type GithubWorkflowDefinition,
   type GithubWorkflowRun,
   type GithubWorkflowState,
   LOCAL_CONTROL_API_ACTOR,
+  type OperationHistoryEntry,
   type ProviderRole,
-  type ToolCatalogItem
+  type ReconciliationDiff,
+  type ReconciliationStatus,
+  type ToolCatalogItem,
+  type ToolCatalogView
 } from "@simulatorlife/autodev-core";
 import {
+  auditEnvelopesToHistory,
+  boundReconciliationError,
   ConfigRepository,
   EvaluationRepository,
   EvaluationSourceUnavailableError,
@@ -23,9 +31,13 @@ import {
   type GithubActionsRuntimeSnapshot,
   type GithubApiWorkflow,
   GithubWorkflowRepository,
+  reconcileDiffSummary,
+  reconcileDiffWithIdentifier,
   RuleSyncCommandConflictError,
+  RuleSyncCommandHistoryUnavailableError,
   RuleSyncCommandValidationError,
-  RuleSyncRepository
+  RuleSyncRepository,
+  ToolCatalogAdapter
 } from "@simulatorlife/autodev-data";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
@@ -42,7 +54,10 @@ import {
   WEB_SEARCH_TOOL
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
-import { materializeCommands } from "../platform/install-materializer.ts";
+import {
+  type CommandMaterialization,
+  materializeCommands
+} from "../platform/install-materializer.ts";
 import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "../router/proxy.ts";
 import { getDefaultExecutionContract } from "../router/subagents.ts";
 import { routerTelemetryTracer } from "../router/telemetry.ts";
@@ -70,8 +85,11 @@ export const CONTROL_API_PATHS = {
 
 const PROVIDER_ROLE_PATH =
   /^\/control\/providers\/([a-zA-Z0-9._-]+)\/roles\/(orchestrator|subagent)$/u;
+const MODEL_PATH = /^\/control\/models\/([a-zA-Z0-9._-]+)$/u;
 const AGENT_DETAIL_PATH = /^\/control\/agents\/([a-zA-Z0-9._-]+)$/u;
 const PROMPT_DETAIL_PATH = /^\/control\/prompts\/([a-zA-Z0-9._-]+)$/u;
+const PROMPT_COMMAND_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
+const GIT_REVISION_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const ACTOR_ID_PATTERN = /^[A-Za-z0-9@._:+-]{1,128}$/u;
 const CONTROL_API_COLLATOR = new Intl.Collator();
 const EXECUTION_CONTRACT_SOURCE = "execution-contract" as const;
@@ -245,7 +263,11 @@ function auditMutation(record: {
   outcome: "ok" | "denied" | "error";
   changes: Record<string, unknown> | null;
   reason?: string;
+  desiredGeneration?: string | null;
+  observedGeneration?: string | null;
+  restartRequired?: boolean;
 }): void {
+  const restartRequired = record.restartRequired === true;
   const event: Record<string, unknown> = {
     schema: "autodev-control-api-audit-v1",
     timestamp: new Date().toISOString(),
@@ -256,11 +278,54 @@ function auditMutation(record: {
     action: record.action,
     resource: record.resource.slice(0, 200),
     outcome: record.outcome,
-    changes: record.changes
+    changes: record.changes,
+    desiredGeneration: record.desiredGeneration ?? null,
+    observedGeneration: record.observedGeneration ?? null,
+    restartRequired
   };
   if (record.reason) event.reason = record.reason;
   writeErrorLine(JSON.stringify(event));
+  recordAuditEnvelope(event);
   recordMutationTelemetry(record);
+}
+
+/**
+ * Bounded, in-memory ring of recent audit envelopes. The Runtime keeps the
+ * most recent 32 entries so the Control API GET responses can surface a
+ * bounded operation history on the Console without touching the stderr
+ * audit sink or duplicating the audit storage. Newest entries come first.
+ */
+const OPERATION_HISTORY_BUFFER = 32;
+const auditHistory: Record<string, unknown>[] = [];
+
+function recordAuditEnvelope(event: Record<string, unknown>): void {
+  auditHistory.unshift(event);
+  if (auditHistory.length > OPERATION_HISTORY_BUFFER) {
+    auditHistory.length = OPERATION_HISTORY_BUFFER;
+  }
+}
+
+/**
+ * Returns the bounded operation history filtered by the supplied resource
+ * prefix. Callers pass the canonical resource path (`/control/...` or the
+ * resource id) and the runtime returns only envelopes whose `resource`
+ * field matches.
+ */
+export function getOperationHistory(
+  resourceFilter?: string | null
+): readonly Record<string, unknown>[] {
+  if (!resourceFilter) return [...auditHistory];
+  const filter = resourceFilter.trim();
+  if (!filter) return [...auditHistory];
+  return auditHistory.filter(
+    (entry) =>
+      typeof entry.resource === "string" && entry.resource.startsWith(filter)
+  );
+}
+
+/** Test-only escape hatch: clears the in-memory audit ring. */
+export function resetOperationHistoryForTests(): void {
+  auditHistory.length = 0;
 }
 
 function sendControlError(
@@ -280,35 +345,122 @@ function sendControlError(
   );
 }
 
-function providersView(): Record<string, unknown> {
+/** Live router evidence keyed by provider id. */
+export type ControlApiProviderHealthSource = (
+  now: number
+) => Readonly<Record<string, ControlApiProviderHealth>>;
+
+let providerHealthSource: ControlApiProviderHealthSource | null = null;
+
+/**
+ * The router registers its live per-provider evidence here. Without a
+ * registered source (for example a standalone Control API in tests) provider
+ * health is reported as unobserved rather than healthy.
+ */
+export function setControlApiProviderHealthSource(
+  source: ControlApiProviderHealthSource | null
+): void {
+  providerHealthSource = source;
+}
+
+function providerTierPriorities(
+  provider: string
+): { tier: string; group: number }[] {
+  return Object.entries(ROUTING_POLICY.config.providerGroups).flatMap(
+    ([tier, groups]) => {
+      const index = groups.findIndex((group) =>
+        group.some((name) => name.trim().toLowerCase() === provider)
+      );
+      return index === -1 ? [] : [{ tier, group: index + 1 }];
+    }
+  );
+}
+
+/** Generation label for one provider role's enabled state. */
+function providerRoleGeneration(role: ProviderRole, enabled: boolean): string {
+  return `${role}:enabled=${enabled ? "true" : "false"}`;
+}
+
+function providerRoleConvergence(
+  provider: string,
+  role: ProviderRole
+): ReconciliationStatus {
+  const resource = `${CONTROL_API_PATHS.providers}/${provider}/roles/${role}`;
+  const lastApplyAt = findLatestAuditFor(resource, "ok")?.timestamp ?? null;
+  const observed =
+    ROUTING_POLICY.isProviderEnabledForRole(provider, role) === true;
+  const desiredGeneration = providerRoleGeneration(role, observed);
+  const observedGeneration = desiredGeneration;
+  return buildReconciliationView({
+    evidence: {
+      desiredGeneration,
+      observedGeneration,
+      lastApplyAt,
+      lastObservationAt: lastApplyAt,
+      lastError: failureSinceApply(resource, lastApplyAt)
+    },
+    history: historyForResource(resource),
+    hasObservation: lastApplyAt !== null
+  }).status;
+}
+
+function providersView(now: number): Record<string, unknown> {
   const names = Array.from(
     new Set([
       ...Object.keys(ROUTING_POLICY.config.providers ?? {}),
       ...ROUTES.map((route) => route.provider)
     ])
   ).sort(CONTROL_API_COLLATOR.compare);
-  const providers = names.map((provider) => ({
-    id: provider,
-    roles: {
-      orchestrator: {
-        enabled: ROUTING_POLICY.isProviderEnabledForRole(
-          provider,
-          "orchestrator"
-        ),
-        mutable: true
+  const reasoningEffort = ROUTING_POLICY.config.orchestrator.reasoningEffort;
+  const health = providerHealthSource?.(now) ?? null;
+  const providers = names.map((provider) => {
+    const route = ROUTES.find((entry) => entry.provider === provider) ?? null;
+    return {
+      id: provider,
+      route: route
+        ? {
+            pattern: route.pattern.source,
+            baseUrl: route.baseUrl,
+            healthUrl: route.healthUrl ?? null
+          }
+        : null,
+      credential: {
+        envKey: route?.envKey ?? null,
+        configured: ROUTING_POLICY.routeCredentialAvailable(route)
       },
-      subagent: {
-        enabled: ROUTING_POLICY.isProviderEnabledForRole(provider, "subagent"),
-        mutable: true
-      }
-    }
-  }));
-  const runtime = ROUTING_POLICY.runtimeState();
+      roles: {
+        orchestrator: {
+          enabled: ROUTING_POLICY.isProviderEnabledForRole(
+            provider,
+            "orchestrator"
+          ),
+          mutable: true,
+          convergence: providerRoleConvergence(provider, "orchestrator")
+        },
+        subagent: {
+          enabled: ROUTING_POLICY.isProviderEnabledForRole(
+            provider,
+            "subagent"
+          ),
+          mutable: true,
+          convergence: providerRoleConvergence(provider, "subagent")
+        }
+      },
+      models: Object.entries(
+        ROUTING_POLICY.config.providers[provider]?.models ?? {}
+      ).map(([tier, model]) => ({ tier, model: model.trim() })),
+      priorities: providerTierPriorities(provider),
+      orchestratorReasoningEffort: reasoningEffort?.[provider] ?? null,
+      health: health?.[provider] ?? null
+    };
+  });
   return {
-    schema: "autodev-control-providers-v1",
-    providers,
-    disabledOrchestratorProviders: runtime.disabledOrchestratorProviders,
-    disabledSubagentProviders: runtime.disabledSubagentProviders
+    schema: "autodev-control-providers-v2",
+    orchestratorTier: ROUTING_POLICY.config.orchestrator.tier,
+    tiers: Object.entries(ROUTING_POLICY.config.providerGroups).map(
+      ([tier, groups]) => ({ tier, groups })
+    ),
+    providers
   };
 }
 
@@ -380,20 +532,33 @@ function mcpsView(): Record<string, unknown> {
   };
 }
 
-interface ToolCatalogDraft {
+interface ToolCatalogExecutionContractSummary {
+  readonly mcp?: readonly string[];
+  readonly mcpTools?: Readonly<Record<string, readonly string[]>>;
+  readonly webResearch?: {
+    readonly search?: boolean;
+    readonly fetch?: boolean;
+  };
+}
+
+interface ToolCatalogSource {
   readonly name: string;
   readonly source: ToolCatalogItem["source"];
+  readonly sourceAuthority: ToolCatalogItem["sourceAuthority"];
   readonly server?: string;
+  readonly availability: ToolCatalogItem["availability"];
   readonly exposedRoles: Set<string>;
 }
 
 function addToolToCatalog(
-  catalog: Map<string, ToolCatalogDraft>,
+  catalog: Map<string, ToolCatalogSource>,
   input: {
     name: string;
     source: ToolCatalogItem["source"];
+    sourceAuthority: ToolCatalogItem["sourceAuthority"];
     role: string;
     server?: string;
+    availability: ToolCatalogItem["availability"];
   }
 ): void {
   if (!input.name.trim()) return;
@@ -403,6 +568,8 @@ function addToolToCatalog(
     item = {
       name: input.name,
       source: input.source,
+      sourceAuthority: input.sourceAuthority,
+      availability: input.availability,
       ...(input.server ? { server: input.server } : {}),
       exposedRoles: new Set<string>()
     };
@@ -412,7 +579,7 @@ function addToolToCatalog(
 }
 
 function addNativeResearchTools(
-  catalog: Map<string, ToolCatalogDraft>,
+  catalog: Map<string, ToolCatalogSource>,
   role: string,
   contract: { webResearch?: { search?: boolean; fetch?: boolean } }
 ): void {
@@ -420,6 +587,8 @@ function addNativeResearchTools(
     addToolToCatalog(catalog, {
       name: WEB_SEARCH_TOOL,
       source: "native",
+      sourceAuthority: "codex-native",
+      availability: "configured",
       role
     });
   }
@@ -427,41 +596,112 @@ function addNativeResearchTools(
     addToolToCatalog(catalog, {
       name: WEB_FETCH_TOOL,
       source: "native",
+      sourceAuthority: "codex-native",
+      availability: "configured",
       role
     });
   }
 }
 
-function addMcpTools(
-  catalog: Map<string, ToolCatalogDraft>,
+function addExecutionContractMcpTools(
+  catalog: Map<string, ToolCatalogSource>,
   role: string,
-  mcpTools: unknown
+  contract: { mcpTools?: unknown; mcp?: readonly string[] }
 ): void {
-  if (!mcpTools || typeof mcpTools !== "object" || Array.isArray(mcpTools))
-    return;
+  const mcpTools = readMcpToolsRecord(contract.mcpTools);
+  if (!mcpTools) return;
   for (const [server, names] of Object.entries(mcpTools)) {
-    if (!Array.isArray(names)) continue;
-    const source: ToolCatalogItem["source"] =
-      server === "codex_app" ? "plugin" : "mcp";
-    for (const name of names) {
-      if (typeof name !== "string") continue;
-      addToolToCatalog(catalog, { name, source, role, server });
-    }
+    addServerAllowlistTools(catalog, server, names, role);
+  }
+}
+
+function readMcpToolsRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function addServerAllowlistTools(
+  catalog: Map<string, ToolCatalogSource>,
+  server: string,
+  names: unknown,
+  role: string
+): void {
+  if (!Array.isArray(names)) return;
+  const source: ToolCatalogItem["source"] =
+    server === "codex_app" ? "plugin" : "mcp";
+  const sourceAuthority: ToolCatalogItem["sourceAuthority"] =
+    server === "codex_app" ? "rulesync-plugin" : "execution-contract";
+  for (const name of names) {
+    if (typeof name !== "string") continue;
+    addToolToCatalog(catalog, {
+      name,
+      source,
+      sourceAuthority,
+      availability: "configured",
+      role,
+      server
+    });
+  }
+}
+
+function mergeRuleSyncDeclaredTools(
+  catalog: Map<string, ToolCatalogSource>,
+  rulesyncTools: readonly ToolCatalogItem[]
+): void {
+  // The RuleSync adapter is the canonical authority for declared
+  // `enabled_tools` lists on every MCP target projection; merge those
+  // entries so the catalog never loses a declared tool just because the
+  // execution-contract role projection did not enumerate it for the current
+  // role. Roles remain empty when no execution-contract role exposed the
+  // tool; the entry is still presented so the operator can see the declared
+  // surface.
+  for (const tool of rulesyncTools) {
+    if (tool.exposedRoles.length > 0) continue;
+    const key = `${tool.source}\u0000${tool.server ?? ""}\u0000${tool.name}`;
+    if (catalog.has(key)) continue;
+    catalog.set(key, {
+      name: tool.name,
+      source: tool.source,
+      sourceAuthority: tool.sourceAuthority,
+      ...(tool.server ? { server: tool.server } : {}),
+      availability: tool.availability,
+      exposedRoles: new Set<string>()
+    });
   }
 }
 
 function toolCatalogItems(
-  catalog: Map<string, ToolCatalogDraft>
+  catalog: Map<string, ToolCatalogSource>
 ): ToolCatalogItem[] {
   return Array.from(catalog.values())
-    .map((item) => ({
-      name: item.name,
-      source: item.source,
-      ...(item.server ? { server: item.server } : {}),
-      exposedRoles: Array.from(item.exposedRoles).sort(
+    .map((item) => {
+      const exposedRoles = Array.from(item.exposedRoles).sort(
         CONTROL_API_COLLATOR.compare
-      )
-    }))
+      );
+      const canonicalEditSurface =
+        item.sourceAuthority === "codex-native"
+          ? {
+              section: "agents" as const,
+              identifier: "any",
+              label: "Provider role exposure"
+            }
+          : item.server
+            ? {
+                section: "mcps" as const,
+                identifier: item.server,
+                label: `MCP ${item.server}`
+              }
+            : undefined;
+      return {
+        name: item.name,
+        source: item.source,
+        sourceAuthority: item.sourceAuthority,
+        ...(item.server ? { server: item.server } : {}),
+        exposedRoles,
+        availability: item.availability,
+        ...(canonicalEditSurface ? { canonicalEditSurface } : {})
+      };
+    })
     .sort((left, right) =>
       CONTROL_API_COLLATOR.compare(
         `${left.source}:${left.server ?? ""}:${left.name}`,
@@ -470,33 +710,67 @@ function toolCatalogItems(
     );
 }
 
-function toolsView(): Record<string, unknown> {
-  const catalog = new Map<string, ToolCatalogDraft>();
-  const roles = Object.entries(getDefaultExecutionContract().roles ?? {});
-  if (roles.length === 0) {
+function deriveCoverage(
+  catalog: Map<string, ToolCatalogSource>,
+  rulesyncValidity: "valid" | "invalid" | "not-observed"
+): ToolCatalogView["coverage"] {
+  if (catalog.size === 0) {
+    return rulesyncValidity === "valid" ? "unavailable" : "unknown";
+  }
+  const hasRulesyncBacked = Array.from(catalog.values()).some(
+    (entry) =>
+      entry.sourceAuthority === "rulesync-mcp" ||
+      entry.sourceAuthority === "rulesync-plugin"
+  );
+  if (hasRulesyncBacked) return "complete";
+  return "partial";
+}
+
+function toolsView(): ToolCatalogView {
+  const adapter = new ToolCatalogAdapter();
+  const rulesyncCatalog = adapter.load();
+  const catalog = new Map<string, ToolCatalogSource>();
+  const executionContract = getDefaultExecutionContract();
+  const roles = Object.entries(
+    (executionContract.roles ?? {}) as Readonly<
+      Record<string, ToolCatalogExecutionContractSummary>
+    >
+  );
+
+  if (roles.length === 0 && rulesyncCatalog.tools.length === 0) {
     return {
-      schema: "autodev-control-tools-v1",
-      source: EXECUTION_CONTRACT_SOURCE,
+      schema: "autodev-control-tools-v2",
+      source: rulesyncCatalog.source,
       readOnly: true,
-      coverage: "unknown",
-      totalTools: null,
-      tools: []
+      coverage:
+        rulesyncCatalog.validity === "valid" ? "unavailable" : "unknown",
+      validity: rulesyncCatalog.validity,
+      totalTools: 0,
+      tools: [],
+      usageLink: "/usage"
     };
   }
 
   for (const [role, contract] of roles) {
     addNativeResearchTools(catalog, role, contract);
-    addMcpTools(catalog, role, contract.mcpTools);
+    addExecutionContractMcpTools(catalog, role, contract);
   }
+  // Always pull in declared RuleSync tool entries so an MCP server's
+  // `enabled_tools` projection is visible to the console without needing a
+  // role projection to enumerate it. Already-enumerated entries keep the
+  // role attribution from the execution-contract pass.
+  mergeRuleSyncDeclaredTools(catalog, rulesyncCatalog.tools);
 
   const tools = toolCatalogItems(catalog);
   return {
-    schema: "autodev-control-tools-v1",
-    source: EXECUTION_CONTRACT_SOURCE,
+    schema: "autodev-control-tools-v2",
+    source: rulesyncCatalog.source,
     readOnly: true,
-    coverage: "partial",
+    coverage: deriveCoverage(catalog, rulesyncCatalog.validity),
+    validity: rulesyncCatalog.validity,
     totalTools: tools.length,
-    tools
+    tools,
+    usageLink: "/usage"
   };
 }
 
@@ -982,7 +1256,7 @@ function agentDetailView(
   );
 
   return {
-    schema: "autodev-control-agent-detail-v1",
+    schema: "autodev-control-agent-detail-v2",
     id: role,
     role,
     kind,
@@ -998,37 +1272,73 @@ function agentDetailView(
     promptPath: existsSync(promptPath)
       ? `agents/prompts/roles/${role}.md`
       : null,
-    systemPrompt
+    systemPrompt,
+    reconciliation: promptReconciliationView({
+      name: role,
+      codexHome: defaultCodexHomeForReconciliation(),
+      revision: createHash("sha256").update(systemPrompt, "utf8").digest("hex")
+    })
   };
 }
 
-function modelsView(
-  repositoryRoot: string = DEFAULT_REPO_ROOT
-): Record<string, unknown> {
+/** Display names from the Codex model catalog; absent names stay null. */
+function modelCatalogDisplayNames(repositoryRoot: string): Map<string, string> {
   const catalogPath = path.join(
     repositoryRoot,
     "config",
     "catalogs",
     "codex-model-catalog.json"
   );
-  let models: unknown[] = [];
-  if (existsSync(catalogPath)) {
-    try {
-      const parsed = JSON.parse(readFileSync(catalogPath, "utf8")) as {
-        models?: unknown[];
-      };
-      if (Array.isArray(parsed.models)) {
-        models = parsed.models;
+  const names = new Map<string, string>();
+  if (!existsSync(catalogPath)) return names;
+  try {
+    const parsed = JSON.parse(readFileSync(catalogPath, "utf8")) as {
+      models?: unknown;
+    };
+    if (!Array.isArray(parsed.models)) return names;
+    for (const entry of parsed.models as unknown[]) {
+      if (
+        entry &&
+        typeof entry === "object" &&
+        typeof (entry as { slug?: unknown }).slug === "string" &&
+        typeof (entry as { display_name?: unknown }).display_name === "string"
+      ) {
+        const { slug, display_name } = entry as {
+          slug: string;
+          display_name: string;
+        };
+        names.set(slug, display_name);
       }
-    } catch {
-      // Ignore catalog parse failure
     }
+  } catch {
+    // An unreadable catalog leaves display names unobserved.
   }
+  return names;
+}
+
+function modelsView(
+  repositoryRoot: string = DEFAULT_REPO_ROOT
+): Record<string, unknown> {
+  const displayNames = modelCatalogDisplayNames(repositoryRoot);
+  const models = ROUTING_POLICY.configuredModels()
+    .map((entry) => ({
+      id: entry.model,
+      provider: entry.provider,
+      tiers: entry.tiers,
+      displayName: displayNames.get(entry.model) ?? null,
+      enablement: {
+        enabled: ROUTING_POLICY.isModelEnabled(entry.model),
+        mutable: true
+      }
+    }))
+    .sort(
+      (left, right) =>
+        CONTROL_API_COLLATOR.compare(left.provider, right.provider) ||
+        CONTROL_API_COLLATOR.compare(left.id, right.id)
+    );
   return {
-    schema: "autodev-control-models-v1",
-    source: "codex-model-catalog.json",
-    readOnly: true,
-    totalModels: models.length,
+    schema: "autodev-control-models-v2",
+    source: path.basename(ROUTING_POLICY.configFile),
     models
   };
 }
@@ -1127,6 +1437,150 @@ function promptsView(
   };
 }
 
+/**
+ * Observe the projected Codex prompt file for a RuleSync command and return
+ * the sha256 content hash of its bytes. Returns `null` when the file is
+ * missing, unreadable, or the canonical command is not a RuleSync command;
+ * either way the observation is "not observed" rather than a synthetic
+ * success.
+ */
+function observePromptProjection(
+  name: string,
+  codexHome: string
+): string | null {
+  const projectedPath = path.join(codexHome, "prompts", `${name}.md`);
+  try {
+    const content = readFileSync(projectedPath, "utf8");
+    return createHash("sha256").update(content, "utf8").digest("hex");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    return null;
+  }
+}
+
+function hashString(value: string | null | undefined): string | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+/**
+ * Look up the most recent audit envelope with `outcome` for a resource
+ * identifier and extract its bounded fields. Returns `null` when no such
+ * audit entry exists yet, so callers can render `not-observed` rather than
+ * fabricating a last-apply timestamp.
+ */
+function findLatestAuditFor(
+  resourceFilter: string,
+  outcome: "ok" | "denied" | "error"
+): {
+  readonly timestamp: string;
+  readonly revision: string | null;
+  readonly desiredGeneration: string | null;
+  readonly restartRequired: boolean;
+  readonly reason: string | null;
+} | null {
+  const envelope = getOperationHistory(resourceFilter).find(
+    (entry) => entry.outcome === outcome && typeof entry.timestamp === "string"
+  );
+  if (!envelope) return null;
+  // `auditMutation` records `changes` as a flat metadata record or null.
+  const changes = envelope.changes as Record<string, unknown> | null;
+  return {
+    timestamp: envelope.timestamp as string,
+    revision: typeof changes?.revision === "string" ? changes.revision : null,
+    desiredGeneration:
+      typeof envelope.desiredGeneration === "string"
+        ? envelope.desiredGeneration
+        : null,
+    restartRequired: envelope.restartRequired === true,
+    reason: typeof envelope.reason === "string" ? envelope.reason : null
+  };
+}
+
+function historyForResource(
+  resource: string
+): readonly OperationHistoryEntry[] {
+  return auditEnvelopesToHistory(getOperationHistory(resource));
+}
+
+/**
+ * The redacted reason of a failed write recorded after the last successful
+ * one; a later successful write supersedes it.
+ */
+function failureSinceApply(
+  resource: string,
+  lastApplyAt: string | null
+): string | null {
+  const failure = findLatestAuditFor(resource, "error");
+  return failure !== null &&
+    (lastApplyAt === null || failure.timestamp > lastApplyAt)
+    ? boundReconciliationError(failure.reason)
+    : null;
+}
+
+function promptReconciliationView(args: {
+  readonly name: string;
+  readonly codexHome: string;
+  /** Revision of the canonical source as it reads now. */
+  readonly revision: string;
+}): {
+  readonly status: ReconciliationStatus;
+  readonly history: readonly OperationHistoryEntry[];
+} {
+  const resource = `${CONTROL_API_PATHS.prompts}/${args.name}`;
+  const lastApply = findLatestAuditFor(resource, "ok");
+  const lastApplyAt = lastApply?.timestamp ?? null;
+  const observedGeneration = observePromptProjection(args.name, args.codexHome);
+  // Only an audited apply of this exact source revision records which
+  // projection RuleSync generates from it; regenerating here would put a
+  // RuleSync run on every detail read.
+  const desiredGeneration =
+    lastApply?.revision === args.revision ? lastApply.desiredGeneration : null;
+  return buildReconciliationView({
+    evidence: {
+      desiredGeneration,
+      observedGeneration,
+      lastApplyAt,
+      lastObservationAt:
+        observedGeneration === null ? null : new Date().toISOString(),
+      lastError: failureSinceApply(resource, lastApplyAt)
+    },
+    history: historyForResource(resource),
+    hasObservation: observedGeneration !== null,
+    restartRequired:
+      lastApply?.restartRequired === true &&
+      observedGeneration !== desiredGeneration
+  });
+}
+
+function promptDiffSummary(args: {
+  readonly name: string;
+  readonly codexHome: string;
+  readonly projectionUpdated: boolean;
+}): ReconciliationDiff {
+  const observed = observePromptProjection(args.name, args.codexHome);
+  if (args.projectionUpdated && observed === null) {
+    return reconcileDiffSummary({
+      summary:
+        "Canonical source updated; Rulesync projection is pending observation."
+    });
+  }
+  if (args.projectionUpdated) {
+    return reconcileDiffWithIdentifier({
+      summary: "Canonical source updated; Rulesync projection applied.",
+      identifier: observed ?? ""
+    });
+  }
+  return reconcileDiffSummary({
+    summary: "Canonical source unchanged."
+  });
+}
+
+function defaultCodexHomeForReconciliation(): string {
+  const home = process.env.HOME?.trim() || homedir();
+  return process.env.CODEX_HOME?.trim() || path.join(home, ".codex");
+}
+
 function promptDetailView(
   name: string,
   repositoryRoot: string = DEFAULT_REPO_ROOT
@@ -1137,13 +1591,25 @@ function promptDetailView(
       ? commandState.commands.find((entry) => entry.name === name)
       : undefined;
   if (command) {
+    const reconciliation = promptReconciliationView({
+      name,
+      codexHome: defaultCodexHomeForReconciliation(),
+      revision: command.revision
+    });
     return {
-      schema: "autodev-control-prompt-detail-v2",
+      schema: "autodev-control-prompt-detail-v4",
       name,
       type: "command",
       source: command.path,
       content: command.content,
-      revision: command.revision
+      preview: command.prompt,
+      revision: command.revision,
+      diff: reconcileDiffWithIdentifier({
+        summary:
+          "Canonical RuleSync command; Rulesync projection observed via Codex home.",
+        identifier: hashString(command.revision) ?? ""
+      }),
+      reconciliation
     };
   }
   const rolePath = path.join(
@@ -1156,19 +1622,69 @@ function promptDetailView(
   if (existsSync(rolePath)) {
     try {
       const content = readFileSync(rolePath, "utf8");
+      const revision = createHash("sha256")
+        .update(content, "utf8")
+        .digest("hex");
       return {
-        schema: "autodev-control-prompt-detail-v2",
+        schema: "autodev-control-prompt-detail-v4",
         name,
         type: "role",
         source: `agents/prompts/roles/${name}.md`,
         content,
-        revision: createHash("sha256").update(content, "utf8").digest("hex")
+        preview: content,
+        revision,
+        diff: reconcileDiffSummary({
+          summary:
+            "Role prompt is read-only; canonical source lives under agents/prompts/roles/."
+        }),
+        reconciliation: promptReconciliationView({
+          name,
+          codexHome: defaultCodexHomeForReconciliation(),
+          revision
+        })
       };
     } catch {
       return null;
     }
   }
   return null;
+}
+
+function promptVersionsView(
+  name: string,
+  repositoryRoot: string = DEFAULT_REPO_ROOT
+): Record<string, unknown> | null {
+  const history = new RuleSyncRepository(repositoryRoot).loadCommandHistory(
+    name
+  );
+  if (!history) return null;
+  return {
+    schema: "autodev-control-prompt-versions-v1",
+    name,
+    status: history.status,
+    versions: history.versions,
+    hasMore: history.hasMore
+  };
+}
+
+function promptVersionView(
+  name: string,
+  versionHash: string,
+  repositoryRoot: string = DEFAULT_REPO_ROOT
+): Record<string, unknown> | null {
+  const version = new RuleSyncRepository(repositoryRoot).loadCommandVersion(
+    name,
+    versionHash
+  );
+  if (!version) return null;
+  return {
+    schema: "autodev-control-prompt-version-v1",
+    name: version.name,
+    versionHash: version.versionHash,
+    updatedAt: version.updatedAt,
+    content: version.content,
+    diff: version.diff
+  };
 }
 
 function routingView(now: number): Record<string, unknown> {
@@ -1192,51 +1708,80 @@ function routingView(now: number): Record<string, unknown> {
   };
 }
 
-async function persistProviderRole(): Promise<void> {
+async function persistRoutingPolicy(): Promise<void> {
   const persisted = await getDefaultPersistenceManager().persistNow();
-  if (!persisted) throw new Error("Provider policy persistence failed.");
+  if (!persisted) throw new Error("Routing policy persistence failed.");
 }
 
-async function patchProviderRole(
+/**
+ * One operator-only `{ "enabled": boolean }` toggle over Runtime routing
+ * policy state. Provider-role and model enablement share this flow so every
+ * toggle validates, persists, rolls back, and audits identically.
+ */
+interface EnablementMutation {
+  readonly action: string;
+  readonly resource: string;
+  readonly subject: string;
+  readonly known: boolean;
+  readonly unknownReason: string;
+  readonly unknownCode: string;
+  readonly unknownMessage: string;
+  readonly current: () => boolean;
+  readonly apply: (enabled: boolean) => void;
+  /** Desired-generation label recorded for a requested enabled value. */
+  readonly generation: (enabled: boolean) => string;
+  readonly result: (applied: AppliedEnablement) => Record<string, unknown>;
+}
+
+interface AppliedEnablement {
+  readonly enabled: boolean;
+  readonly previous: boolean;
+  readonly desiredGeneration: string;
+  /** Equal to `desiredGeneration` once the routing policy reflects it. */
+  readonly observedGeneration: string | null;
+}
+
+async function patchEnablement(
   request: IncomingMessage,
   response: ServerResponse,
   actor: ControlApiActor,
-  providerInput: string,
-  role: ProviderRole
+  mutation: EnablementMutation
 ): Promise<void> {
-  const resource = providerInput + "/roles/" + role;
-  if (actor.role !== "operator") {
+  const audit = (
+    outcome: "ok" | "denied" | "error",
+    changes: Record<string, unknown> | null,
+    reason?: string,
+    generations?: Pick<
+      AppliedEnablement,
+      "desiredGeneration" | "observedGeneration"
+    >
+  ): void =>
     auditMutation({
       actor: actor.actor,
       actorVerified: true,
       role: actor.role,
-      action: "patch_provider_role",
-      resource,
-      outcome: "denied",
-      changes: null,
-      reason: "viewer_cannot_mutate"
+      action: mutation.action,
+      resource: mutation.resource,
+      outcome,
+      changes,
+      ...(reason ? { reason } : {}),
+      ...generations
     });
+
+  if (actor.role !== "operator") {
+    audit("denied", null, "viewer_cannot_mutate");
     sendControlError(
       response,
       403,
       "autodev_control_api_viewer_forbidden",
-      "Operator access is required to change provider role state."
+      `Operator access is required to change ${mutation.subject} state.`
     );
     return;
   }
 
   const parsedBody = await readControlApiJsonObject(request);
   if (!parsedBody.ok) {
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "patch_provider_role",
-      resource,
-      outcome: "error",
-      changes: null,
-      reason: "invalid_body"
-    });
+    audit("error", null, "invalid_body");
     sendControlError(
       response,
       parsedBody.status,
@@ -1247,103 +1792,139 @@ async function patchProviderRole(
   }
   const body = parsedBody.body;
   if (Object.keys(body).length !== 1 || typeof body.enabled !== "boolean") {
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "patch_provider_role",
-      resource,
-      outcome: "error",
-      changes: null,
-      reason: "invalid_body"
-    });
+    audit("error", null, "invalid_body");
     sendControlError(
       response,
       400,
       "autodev_control_api_bad_body",
-      "Provider role body must contain only a boolean enabled field."
+      `${mutation.subject.charAt(0).toUpperCase()}${mutation.subject.slice(1)} body must contain only a boolean enabled field.`
     );
     return;
   }
+  const enabled = body.enabled;
 
-  const provider = providerInput.toLowerCase();
-  if (
-    !Object.hasOwn(ROUTING_POLICY.config.providers ?? {}, provider) &&
-    !ROUTES.some((route) => route.provider === provider)
-  ) {
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "patch_provider_role",
-      resource,
-      outcome: "error",
-      changes: { enabled: body.enabled },
-      reason: "unknown_provider"
-    });
+  if (!mutation.known) {
+    audit("error", { enabled }, mutation.unknownReason);
     sendControlError(
       response,
       404,
-      "autodev_control_api_unknown_provider",
-      "Unknown provider."
+      mutation.unknownCode,
+      mutation.unknownMessage
     );
     return;
   }
 
-  const previous = ROUTING_POLICY.isProviderEnabledForRole(provider, role);
+  const previous = mutation.current();
   try {
-    ROUTING_POLICY.setProviderEnabledForRole(provider, role, body.enabled);
-    await persistProviderRole();
+    mutation.apply(enabled);
+    await persistRoutingPolicy();
   } catch {
     try {
-      ROUTING_POLICY.setProviderEnabledForRole(provider, role, previous);
+      mutation.apply(previous);
     } catch {
       // Preserve the original failure; the audit record below captures it.
     }
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "patch_provider_role",
-      resource,
-      outcome: "error",
-      changes: { enabled: body.enabled, previous },
-      reason: "persistence_failed"
-    });
+    audit("error", { enabled, previous }, "persistence_failed");
     sendControlError(
       response,
       500,
       "autodev_control_api_persistence_failed",
-      "Provider role change could not be persisted."
+      `${mutation.subject.charAt(0).toUpperCase()}${mutation.subject.slice(1)} change could not be persisted.`
     );
     return;
   }
 
-  auditMutation({
-    actor: actor.actor,
-    actorVerified: true,
-    role: actor.role,
-    action: "patch_provider_role",
-    resource,
-    outcome: "ok",
-    changes: { enabled: body.enabled, previous }
-  });
+  const desiredGeneration = mutation.generation(enabled);
+  const applied: AppliedEnablement = {
+    enabled,
+    previous,
+    desiredGeneration,
+    observedGeneration:
+      mutation.current() === enabled ? desiredGeneration : null
+  };
+  audit("ok", { enabled, previous }, undefined, applied);
   sendJson(
     response,
     200,
-    {
-      schema: "autodev-control-provider-role-v1",
-      provider,
-      role,
-      enabled: body.enabled,
-      previous,
-      actor: actor.actor
-    },
+    { ...mutation.result(applied), actor: actor.actor },
     {
       "cache-control": "no-store",
       vary: CONTROL_VARY_HEADER
     }
   );
+}
+
+function patchProviderRole(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  providerInput: string,
+  role: ProviderRole
+): Promise<void> {
+  const provider = providerInput.toLowerCase();
+  const resource = `${CONTROL_API_PATHS.providers}/${providerInput}/roles/${role}`;
+  return patchEnablement(request, response, actor, {
+    action: "patch_provider_role",
+    resource,
+    subject: "provider role",
+    known:
+      Object.hasOwn(ROUTING_POLICY.config.providers ?? {}, provider) ||
+      ROUTES.some((route) => route.provider === provider),
+    unknownReason: "unknown_provider",
+    unknownCode: "autodev_control_api_unknown_provider",
+    unknownMessage: "Unknown provider.",
+    current: () => ROUTING_POLICY.isProviderEnabledForRole(provider, role),
+    apply: (enabled) =>
+      ROUTING_POLICY.setProviderEnabledForRole(provider, role, enabled),
+    generation: (enabled) => providerRoleGeneration(role, enabled),
+    result: ({ enabled, previous, desiredGeneration, observedGeneration }) => {
+      const appliedAt = new Date().toISOString();
+      return {
+        schema: "autodev-control-provider-role-v2",
+        provider,
+        role,
+        enabled,
+        previous,
+        reconciliation: buildReconciliationView({
+          evidence: {
+            desiredGeneration,
+            observedGeneration,
+            lastApplyAt: appliedAt,
+            lastObservationAt: observedGeneration === null ? null : appliedAt,
+            lastError: null
+          },
+          history: historyForResource(resource),
+          hasObservation: observedGeneration !== null
+        })
+      };
+    }
+  });
+}
+
+function patchModel(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  model: string
+): Promise<void> {
+  return patchEnablement(request, response, actor, {
+    action: "patch_model",
+    resource: model,
+    subject: "model",
+    known: ROUTING_POLICY.isConfiguredModel(model),
+    unknownReason: "unknown_model",
+    unknownCode: "autodev_control_api_unknown_model",
+    unknownMessage: "Unknown model.",
+    current: () => ROUTING_POLICY.isModelEnabled(model),
+    apply: (enabled) => ROUTING_POLICY.setModelEnabled(model, enabled),
+    generation: (enabled) => `enabled=${enabled ? "true" : "false"}`,
+    result: ({ enabled, previous }) => ({
+      schema: "autodev-control-model-v1",
+      model,
+      enabled,
+      previous
+    })
+  });
 }
 
 function methodChangesState(method: string): boolean {
@@ -1401,10 +1982,13 @@ const READ_ONLY_COLLECTIONS: ReadonlyMap<
   ) => Record<string, unknown> | Promise<Record<string, unknown>>
 >([
   [CONTROL_API_PATHS.agents, () => agentsView()],
-  [CONTROL_API_PATHS.providers, () => providersView()],
+  [CONTROL_API_PATHS.providers, () => providersView(Date.now())],
   [CONTROL_API_PATHS.models, () => modelsView()],
   [CONTROL_API_PATHS.mcps, () => mcpsView()],
-  [CONTROL_API_PATHS.tools, () => toolsView()],
+  [
+    CONTROL_API_PATHS.tools,
+    () => toolsView() as unknown as Record<string, unknown>
+  ],
   [CONTROL_API_PATHS.skills, () => skillsView()],
   [CONTROL_API_PATHS.hooks, () => hooksView()],
   [CONTROL_API_PATHS.permissions, () => permissionsView()],
@@ -1499,6 +2083,35 @@ async function providerRoleRoute(
   return true;
 }
 
+async function modelRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  method: string,
+  pathname: string,
+  model: string
+): Promise<boolean> {
+  if (method !== "PATCH") {
+    auditRejectedRequest(
+      request,
+      method,
+      pathname,
+      "method_not_allowed",
+      actor
+    );
+    response.setHeader("allow", "PATCH");
+    sendControlError(
+      response,
+      405,
+      "autodev_control_api_method_not_allowed",
+      "Model enablement is mutated via PATCH only."
+    );
+    return true;
+  }
+  await patchModel(request, response, actor, model);
+  return true;
+}
+
 interface ReadOnlyDetailRoute {
   readonly action: string;
   readonly unknownReason: string;
@@ -1572,7 +2185,7 @@ async function patchPromptCommand(
   repositoryRoot: string,
   codexHome: string
 ): Promise<void> {
-  const resource = `.rulesync/commands/${name}.md`;
+  const resource = `${CONTROL_API_PATHS.prompts}/${name}`;
   if (actor.role !== "operator") {
     auditMutation({
       actor: actor.actor,
@@ -1663,9 +2276,9 @@ async function patchPromptCommand(
     return;
   }
 
-  let updatedPrompts: readonly string[];
+  let materialized: CommandMaterialization;
   try {
-    updatedPrompts = materializeCommands(
+    materialized = materializeCommands(
       { repositoryRoot },
       path.join(codexHome, "prompts")
     );
@@ -1689,34 +2302,133 @@ async function patchPromptCommand(
     return;
   }
 
-  const projectionUpdated = updatedPrompts.includes(name);
+  // The desired generation is the projection RuleSync generated from the
+  // saved revision; the observed one is what `$CODEX_HOME/prompts` holds.
+  const projectionUpdated = materialized.updated.includes(name);
+  const desiredGeneration = materialized.generations.get(name) ?? null;
+  const observedGeneration = observePromptProjection(name, codexHome);
+  const restartRequired = projectionUpdated && observedGeneration === null;
+  const resourceKey = `${CONTROL_API_PATHS.prompts}/${name}`;
   auditMutation({
     actor: actor.actor,
     actorVerified: true,
     role: actor.role,
     action: "update_rule_sync_command",
-    resource,
+    resource: resourceKey,
     outcome: "ok",
     changes: {
       name,
       revision: updated.revision,
-      projectionUpdated,
-      restartRequired: projectionUpdated
-    }
+      projectionUpdated
+    },
+    desiredGeneration,
+    observedGeneration,
+    restartRequired
   });
+  const reconciliation = buildReconciliationView({
+    evidence: {
+      desiredGeneration,
+      observedGeneration,
+      lastApplyAt: new Date().toISOString(),
+      lastObservationAt:
+        observedGeneration === null ? null : new Date().toISOString(),
+      lastError: null
+    },
+    history: historyForResource(resourceKey),
+    hasObservation: observedGeneration !== null,
+    restartRequired
+  });
+  const diff = promptDiffSummary({ name, codexHome, projectionUpdated });
   sendJson(
     response,
     200,
     {
-      schema: "autodev-control-prompt-command-patch-v1",
+      schema: "autodev-control-prompt-command-patch-v2",
       name,
       revision: updated.revision,
       changed: updated.revision !== body.expectedRevision,
-      projectionUpdated,
-      restartRequired: projectionUpdated
+      diff,
+      reconciliation
     },
     { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
   );
+}
+
+function promptVersionsPath(
+  pathname: string
+): { readonly name: string; readonly versionHash?: string } | null {
+  const segments = pathname.split("/");
+  if (
+    (segments.length !== 5 && segments.length !== 6) ||
+    segments[1] !== "control" ||
+    segments[2] !== "prompts" ||
+    !PROMPT_COMMAND_NAME_PATTERN.test(segments[3] ?? "") ||
+    segments[4] !== "versions"
+  ) {
+    return null;
+  }
+  if (segments.length === 5) return { name: segments[3]! };
+  const versionHash = segments[5] ?? "";
+  return GIT_REVISION_PATTERN.test(versionHash)
+    ? { name: segments[3]!, versionHash }
+    : null;
+}
+
+function promptVersionsRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  method: string,
+  pathname: string,
+  name: string,
+  versionHash: string | undefined,
+  options: ControlApiRequestOptions
+): boolean {
+  const route: ReadOnlyDetailRoute = {
+    action: versionHash ? "Prompt version" : "Prompt versions",
+    unknownReason: versionHash ? "unknown_prompt_version" : "unknown_prompt",
+    unknownCode: versionHash
+      ? "autodev_control_api_unknown_prompt_version"
+      : "autodev_control_api_unknown_prompt",
+    unknownMessage: versionHash
+      ? "Unknown committed prompt version."
+      : "Unknown prompt.",
+    read: () =>
+      versionHash
+        ? promptVersionView(
+            name,
+            versionHash,
+            options.repositoryRoot ?? DEFAULT_REPO_ROOT
+          )
+        : promptVersionsView(name, options.repositoryRoot ?? DEFAULT_REPO_ROOT)
+  };
+  try {
+    return readOnlyDetailRoute(
+      request,
+      response,
+      actor,
+      method,
+      pathname,
+      name,
+      route
+    );
+  } catch (error) {
+    if (!(error instanceof RuleSyncCommandHistoryUnavailableError)) throw error;
+    auditRejectedRequest(
+      request,
+      method,
+      pathname,
+      "prompt_history_unavailable",
+      actor
+    );
+    sendControlError(
+      response,
+      503,
+      "autodev_control_api_prompt_history_unavailable",
+      "Committed prompt history is unavailable for this source."
+    );
+    return true;
+  }
 }
 
 async function promptDetailRoute(
@@ -1817,6 +2529,16 @@ export async function handleControlApiRequest(
     );
     return true;
   }
+  const modelMatch = pathname.match(MODEL_PATH);
+  if (modelMatch)
+    return modelRoute(
+      request,
+      response,
+      actor,
+      method,
+      pathname,
+      modelMatch[1]!
+    );
   const agentMatch = pathname.match(AGENT_DETAIL_PATH);
   if (agentMatch)
     return readOnlyDetailRoute(
@@ -1827,6 +2549,18 @@ export async function handleControlApiRequest(
       pathname,
       agentMatch[1]!,
       AGENT_DETAIL_ROUTE
+    );
+  const promptVersionsMatch = promptVersionsPath(pathname);
+  if (promptVersionsMatch)
+    return promptVersionsRoute(
+      request,
+      response,
+      actor,
+      method,
+      pathname,
+      promptVersionsMatch.name,
+      promptVersionsMatch.versionHash,
+      options
     );
   const promptMatch = pathname.match(PROMPT_DETAIL_PATH);
   if (promptMatch)

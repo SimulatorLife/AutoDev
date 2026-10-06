@@ -90,8 +90,10 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
     "every CANONICAL_NAVIGATION entry must be presented in the target doc"
   );
 
-  // The resource-surface tree must contain exactly the 12 canonical entries;
-  // no extra nav items, no removed product surfaces sneaking in.
+  // The resource-surface tree contains every implemented nav resource once.
+  // A target resource the Console does not ship yet is allowed only while the
+  // migration tracker records its route/navigation gap; no removed product
+  // surface can sneak in unrecorded.
   const treeSet = new Set(treeEntries);
   for (const item of CANONICAL_NAVIGATION) {
     assert.ok(
@@ -101,17 +103,36 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
   }
   assert.equal(
     treeSet.size,
-    CANONICAL_NAVIGATION.length,
-    "resource-surface tree must list exactly the 12 canonical nav resources"
+    treeEntries.length,
+    "resource-surface tree must not repeat a resource"
   );
+  const migration = readFileSync(migrationPath, "utf8");
+  const implemented = new Set<string>(CANONICAL_NAVIGATION);
+  for (const item of treeEntries.filter((entry) => !implemented.has(entry))) {
+    assert.ok(
+      migration.includes(
+        `The top-level ${item} route and navigation item are not implemented yet`
+      ),
+      `Target-only resource "${item}" must be recorded as a migration gap`
+    );
+  }
 
   // Configure / Observe / Operate must each contain exactly its canonical
   // members from the target doc's tree (mirroring the document; no invented
   // group assignments).
   assert.deepEqual(
     groups.Configure.slice().sort(),
-    ["Agents", "Hooks", "MCPs", "Permissions", "Prompts", "Skills", "Tools"],
-    "Configure must list exactly its seven canonical nav resources"
+    [
+      "Agents",
+      "Hooks",
+      "MCPs",
+      "Permissions",
+      "Prompts",
+      "Providers",
+      "Skills",
+      "Tools"
+    ],
+    "Configure must list exactly its eight canonical nav resources"
   );
   assert.deepEqual(
     groups.Observe.slice().sort(),
@@ -125,7 +146,7 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
   );
   assert.equal(
     groups.Configure.length + groups.Observe.length + groups.Operate.length,
-    CANONICAL_NAVIGATION.length,
+    treeEntries.length,
     "every canonical nav resource must appear under Configure/Observe/Operate"
   );
 
@@ -184,14 +205,32 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
     /A missing or invalid RuleSync catalog is not a successful empty catalog/u
   );
 
-  // Provider / model / routing / runtime config is required domain data but
-  // remains a secondary surface under Agents (not a top-level nav item).
-  assert.match(target, /secondary surfaces? under \*\*Agents\*\*/u);
+  // Providers is the top-level Configure resource and the one editable
+  // surface for provider enablement/routing; models and routing stay inside
+  // it rather than becoming further top-level nav items.
+  assert.match(
+    target,
+    /\*\*Providers\*\* is a top-level Configure resource in the Console navigation/u
+  );
+  assert.match(
+    target,
+    /\| Provider orchestrator\/subagent enablement, model enablement, priority\/fallback groups, per-tier models, routing \| Providers \(Providers and Models tabs\) \|/u
+  );
+
+  // Item-scoped controls live with their item: on its list row and in its
+  // detail view inside the owning resource, never on a detached page.
+  assert.match(target, /^### Contextual controls$/mu);
+  assert.match(
+    target,
+    /appear on that item's row or card in its resource list view \*\*and\*\* in that item's detail view/u
+  );
+  assert.match(
+    target,
+    /Pages outside the owning resource show the item's state read-only and link to it/u
+  );
   assert.ok(
-    !treeSet.has("Providers") &&
-      !treeSet.has("Models") &&
-      !treeSet.has("Routing"),
-    "Providers/Models/Routing must not appear as top-level nav resources"
+    !treeSet.has("Models") && !treeSet.has("Routing"),
+    "Models/Routing must not appear as top-level nav resources"
   );
 });
 
@@ -293,7 +332,7 @@ test("monorepo layout, console features, and control API match target state exac
     assert.ok(existsSync(new URL(`${mod}/src/index.ts`, repositoryRoot)));
   }
 
-  // All 12 canonical nav resources have a Console feature folder.
+  // Every canonical nav resource has a Console feature folder.
   const featureFolders = CANONICAL_NAVIGATION.map((item) => item.toLowerCase());
   for (const feat of featureFolders) {
     assert.ok(
@@ -314,6 +353,18 @@ test("monorepo layout, console features, and control API match target state exac
     true,
     "MCP detail rendering belongs to the Console feature"
   );
+
+  // Providers keeps provider and model detail inside its own resource.
+  for (const route of [
+    "console/app/providers/page.tsx",
+    "console/app/providers/[id]/page.tsx",
+    "console/app/providers/[id]/models/[model]/page.tsx"
+  ]) {
+    assert.ok(
+      existsSync(new URL(route, repositoryRoot)),
+      `${route} must be a URL-addressable Providers route`
+    );
+  }
 
   // Ensure removed concepts are not present as features.
   for (const removed of [
@@ -345,8 +396,17 @@ test("root quality scripts validate all code workspaces", () => {
     manifest.scripts.typecheck ?? "",
     /typecheck:root.*--recursive.*typecheck/u
   );
-  for (const workspace of ["core", "data", "console", "runtime"])
+  for (const workspace of ["core", "data", "console", "runtime"]) {
     assert.match(manifest.scripts.format ?? "", new RegExp(`${workspace}`));
+    const workspaceManifest = JSON.parse(
+      readFileSync(new URL(`${workspace}/package.json`, repositoryRoot), "utf8")
+    ) as { scripts: Record<string, string> };
+    assert.equal(
+      workspaceManifest.scripts.test,
+      "node --test",
+      `${workspace} must use Node's recursive test discovery without shell globs`
+    );
+  }
 });
 
 test("canonical migration tracker records the current repository quality-gate evidence", () => {

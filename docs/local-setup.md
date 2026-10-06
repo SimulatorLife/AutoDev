@@ -461,14 +461,21 @@ entry, mode `0o644`). Rulesync's `codexcli` commands feature is global-only
 and honors `$HOME` rather than `$CODEX_HOME`, so the installer runs Rulesync
 with `$HOME` pointed at a throwaway `mkdtempSync` directory and copies each
 generated prompt into the real `$CODEX_HOME/prompts/` via
-`materializeRuntimeFile`. The `COMMANDS` catalog constant in
-`runtime/src/platform/install-materializer.ts` is a validated materialization inventory derived from the canonical `.rulesync/commands/` catalog: the
-materializer fails loudly if a catalog entry produces no projection, if a
-projection names a prompt that is not in the inventory, and `checkCommands`
-verifies the installed file equals a fresh projection of the current RuleSync source.
-The `$CODEX_HOME/prompts/` directory is AutoDev-owned and reconciled — any
-`*.md` not in `COMMANDS` is removed during install via
-`removeStalePaths` — so unmanaged prompts cannot drift in.
+`materializeRuntimeFile`. Data's `RuleSyncRepository` validates and reads the
+canonical `.rulesync/commands/` catalog. Runtime's `loadCodexCommands` selects
+entries targeted at `codexcli` or `*`; both the installer and `checkCommands`
+use this same inventory. The materializer fails loudly if a selected command
+produces no projection or if Rulesync generates a prompt without a canonical
+Codex target. The `$CODEX_HOME/prompts/` directory is AutoDev-owned and
+reconciled — any `*.md` not in the selected catalog is removed during install
+via `removeStalePaths`, so unmanaged prompts cannot drift in.
+
+The Console's Prompt detail also renders the canonical Markdown body with raw
+HTML disabled. Its read-only Git history lists the newest 20 committed versions;
+selecting one displays its source and a unified diff against the current working
+tree. These views use GET-only `/control/prompts/:name/versions` routes and do
+not check out or modify Git state. A non-Git repository reports history as
+unavailable rather than as an empty version list.
 
 The Codex desktop app reads `$CODEX_HOME/prompts/` only when its window
 opens (the Electron main process sends `custom-prompts-updated` from its
@@ -620,7 +627,7 @@ The suites generate from `.rulesync/` into temporary roots:
 
 - `tests/rulesync-mcp.test.ts` checks that the Codex projection and each user-level file list exactly the servers `.rulesync/mcp.jsonc` declares for that tool, that non-MCP keys survive, and that `--check` catches edited or extra servers.
 - `tests/rulesync-hooks-shadow.test.ts` checks the six command hooks across SessionStart, SubagentStart, UserPromptSubmit, and PreToolUse. Rulesync emits only the supported PreToolUse hook for Antigravity and omits Codex-only fields such as `prevent_idle_sleep`; Copilot and Antigravity projections are intentionally lossy and the tests freeze those limits.
-- `tests/rulesync-commands.test.ts` checks the `.rulesync/commands/*.md` catalog: every file carries valid frontmatter with `targets` and a non-empty `description`, the `COMMANDS` constant exactly matches the on-disk files, the rulesync `codexcli` commands projection produces one prompt per catalog entry with description-only frontmatter (no `targets` leak), the body is preserved verbatim through projection, a pre-existing non-catalog prompt is removed by reconciliation, and re-running is idempotent.
+- `tests/rulesync-commands.test.ts` checks the `.rulesync/commands/*.md` catalog: Data reads every canonical file, Runtime selects only `codexcli` and wildcard targets (including RuleSync's default target), the Rulesync projection contains exactly those commands with description-only frontmatter (no `targets` leak), and real materialization preserves prompt bodies, reconciles stale files, reports changed prompts, and is idempotent.
 
 AutoDev scripts remain the hook implementations, while Rulesync owns declarations. The installer materializes the generated projections in the active repository and validates them with `--check`; no duplicate hook declarations remain in `config.autodev.toml`. RuleSync permissions generation is not yet the current runtime authority, but the canonical target requires permissions to migrate into RuleSync once the existing effective policy has been inventoried and represented losslessly. After changing `.rulesync/`, `rulesync.jsonc`, or the pinned Rulesync version, run the same suites CI runs:
 
@@ -678,6 +685,16 @@ pnpm --filter @simulatorlife/autodev-console dev
 pnpm --filter @simulatorlife/autodev-console build
 pnpm --filter @simulatorlife/autodev-console start
 ```
+
+`next dev` writes to `console/.next-dev`; `next build` (and the Runtime
+installer's console-build step) writes the production build that `next start`
+and the Console LaunchAgent serve to `console/.next`. The split lives in
+`console/src/lib/build-output.ts` (applied by `console/next.config.ts`), so a build cannot delete the chunks a running dev
+server loads (the `Cannot find module './<n>.js'` crash from `_document.js`).
+`console/next-env.d.ts` points at whichever directory generated it last, so it
+is gitignored; `pnpm --filter @simulatorlife/autodev-console typecheck` runs
+`next typegen` first, which regenerates it and the `console/.next/types` route
+types. The dev server's `console/.next-dev/types` stay out of the type-check.
 
 The Console defaults to port 3300 (`AUTODEV_CONSOLE_PORT` overrides it). Set
 `AUTODEV_CONTROL_API_TOKEN` only in the Console server environment; the

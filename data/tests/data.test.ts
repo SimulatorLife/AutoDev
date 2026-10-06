@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
@@ -17,10 +18,15 @@ import {
   ClickHouseTelemetryClient,
   ConfigRepository,
   RuleSyncCommandConflictError,
+  RuleSyncCommandHistoryUnavailableError,
   RuleSyncCommandValidationError,
   RuleSyncRepository,
   RuleSyncSkillConflictError
 } from "../src/index.ts";
+
+function git(repositoryRoot: string, args: readonly string[]): void {
+  execFileSync("git", ["-C", repositoryRoot, ...args], { stdio: "ignore" });
+}
 
 test("RuleSyncRepository loads canonical RuleSync sources", () => {
   const repo = new RuleSyncRepository();
@@ -118,6 +124,188 @@ test("RuleSyncRepository reflects command and skill edits, additions, and remova
   }
 });
 
+test("RuleSyncRepository reads bounded Git command history and compares it with the working tree", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-rulesync-command-history-")
+  );
+  try {
+    const commandsDir = path.join(repositoryRoot, ".rulesync", "commands");
+    await mkdir(commandsDir, { recursive: true });
+    const commandPath = path.join(commandsDir, "audit.md");
+    const first =
+      "---\ntargets: [codexcli]\ndescription: Audit source.\n---\n\n# Audit\n\nReview the source.\n";
+    const second = first.replace(
+      "Review the source.",
+      "Review the canonical source."
+    );
+    const workingTree = second.replace(
+      "Review the canonical source.",
+      "Review the current canonical source."
+    );
+    await writeFile(commandPath, first);
+    git(repositoryRoot, ["init", "-q"]);
+    git(repositoryRoot, ["config", "user.name", "AutoDev Tests"]);
+    git(repositoryRoot, [
+      "config",
+      "user.email",
+      "autodev-tests@example.invalid"
+    ]);
+    git(repositoryRoot, ["add", ".rulesync/commands/audit.md"]);
+    git(repositoryRoot, ["commit", "-q", "-m", "Initial command"]);
+
+    await writeFile(commandPath, second);
+    git(repositoryRoot, ["add", ".rulesync/commands/audit.md"]);
+    git(repositoryRoot, ["commit", "-q", "-m", "Update command"]);
+    await writeFile(commandPath, workingTree);
+
+    const repo = new RuleSyncRepository(repositoryRoot);
+    const history = repo.loadCommandHistory("audit");
+    assert.ok(history);
+    assert.equal(history.status, "available");
+    assert.equal(history.hasMore, false);
+    assert.equal(history.versions.length, 2);
+    assert.equal(history.versions[0]?.versionHash.length, 40);
+    assert.ok(
+      Number.isFinite(Date.parse(history.versions[0]?.updatedAt ?? ""))
+    );
+
+    const previous = history.versions[1];
+    assert.ok(previous);
+    const version = repo.loadCommandVersion("audit", previous.versionHash);
+    assert.ok(version);
+    assert.equal(version.content, first);
+    assert.match(version.diff, /-Review the source\./u);
+    assert.match(version.diff, /\+Review the current canonical source\./u);
+    assert.equal(repo.loadCommandVersion("audit", "0".repeat(40)), null);
+    assert.equal(repo.loadCommandHistory("../audit"), null);
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test("RuleSyncRepository re-reads cached command history after a commit and version diffs after an edit", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-rulesync-command-history-cache-")
+  );
+  try {
+    const commandsDir = path.join(repositoryRoot, ".rulesync", "commands");
+    await mkdir(commandsDir, { recursive: true });
+    const commandPath = path.join(commandsDir, "audit.md");
+    const source = (body: string): string =>
+      `---\ntargets: [codexcli]\ndescription: Audit source.\n---\n\n# Audit\n\n${body}\n`;
+    git(repositoryRoot, ["init", "-q"]);
+    git(repositoryRoot, ["config", "user.name", "AutoDev Tests"]);
+    git(repositoryRoot, [
+      "config",
+      "user.email",
+      "autodev-tests@example.invalid"
+    ]);
+    const commit = async (body: string): Promise<void> => {
+      await writeFile(commandPath, source(body));
+      git(repositoryRoot, ["add", ".rulesync/commands/audit.md"]);
+      git(repositoryRoot, ["commit", "-q", "-m", body]);
+    };
+    await commit("First.");
+
+    const repo = new RuleSyncRepository(repositoryRoot);
+    const first = repo.loadCommandHistory("audit");
+    assert.equal(first?.versions.length, 1);
+    assert.equal(repo.loadCommandHistory("audit"), first);
+
+    await commit("Second.");
+    const second = repo.loadCommandHistory("audit");
+    assert.equal(second?.versions.length, 2);
+    const initial = second?.versions[1];
+    assert.ok(initial);
+
+    assert.match(
+      repo.loadCommandVersion("audit", initial.versionHash)?.diff ?? "",
+      /\+Second\./u
+    );
+    await writeFile(commandPath, source("Working tree."));
+    const edited = repo.loadCommandVersion("audit", initial.versionHash);
+    assert.equal(edited?.content, source("First."));
+    assert.match(edited?.diff ?? "", /\+Working tree\./u);
+    assert.doesNotMatch(edited?.diff ?? "", /\+Second\./u);
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test("RuleSyncRepository bounds command history and reports older revisions", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-rulesync-command-history-bound-")
+  );
+  try {
+    const commandsDir = path.join(repositoryRoot, ".rulesync", "commands");
+    await mkdir(commandsDir, { recursive: true });
+    const commandPath = path.join(commandsDir, "audit.md");
+    git(repositoryRoot, ["init", "-q"]);
+    git(repositoryRoot, ["config", "user.name", "AutoDev Tests"]);
+    git(repositoryRoot, [
+      "config",
+      "user.email",
+      "autodev-tests@example.invalid"
+    ]);
+
+    for (let revision = 0; revision < 21; revision += 1) {
+      await writeFile(
+        commandPath,
+        `---\ntargets: [codexcli]\ndescription: Audit revision ${revision}.\n---\n\n# Audit\n\nRevision ${revision}.\n`
+      );
+      git(repositoryRoot, ["add", ".rulesync/commands/audit.md"]);
+      git(repositoryRoot, [
+        "commit",
+        "-q",
+        "-m",
+        `Command revision ${revision}`
+      ]);
+    }
+
+    const history = new RuleSyncRepository(repositoryRoot).loadCommandHistory(
+      "audit"
+    );
+    assert.ok(history);
+    assert.equal(history.status, "available");
+    assert.equal(history.versions.length, 20);
+    assert.equal(history.hasMore, true);
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test("RuleSyncRepository distinguishes unavailable Git history from an empty command history", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-rulesync-command-no-git-")
+  );
+  try {
+    const commandsDir = path.join(repositoryRoot, ".rulesync", "commands");
+    await mkdir(commandsDir, { recursive: true });
+    await writeFile(
+      path.join(commandsDir, "audit.md"),
+      "---\ndescription: Audit source.\n---\n\n# Audit\n"
+    );
+    const repo = new RuleSyncRepository(repositoryRoot);
+    assert.deepEqual(repo.loadCommandHistory("audit"), {
+      status: "unavailable",
+      versions: [],
+      hasMore: false
+    });
+    assert.throws(
+      () => repo.loadCommandVersion("audit", "a".repeat(40)),
+      RuleSyncCommandHistoryUnavailableError
+    );
+    git(repositoryRoot, ["init", "-q"]);
+    assert.deepEqual(repo.loadCommandHistory("audit"), {
+      status: "available",
+      versions: [],
+      hasMore: false
+    });
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
 test("RuleSyncRepository updates an existing command with revision checks", async () => {
   const repositoryRoot = await mkdtemp(
     path.join(tmpdir(), "autodev-rulesync-command-update-")
@@ -171,64 +359,30 @@ test("RuleSyncRepository updates an existing command with revision checks", asyn
       RuleSyncCommandValidationError
     );
     assert.equal(await readFile(commandPath, "utf8"), updated);
-  } finally {
-    await rm(repositoryRoot, { recursive: true, force: true });
-  }
-});
 
-test("RuleSyncRepository updates only the expected command revision", async () => {
-  const repositoryRoot = await mkdtemp(
-    path.join(tmpdir(), "autodev-rulesync-command-update-")
-  );
-  try {
-    const commandsDir = path.join(repositoryRoot, ".rulesync", "commands");
-    await mkdir(commandsDir, { recursive: true });
-    const commandPath = path.join(commandsDir, "audit.md");
-    const original =
-      "---\ntargets: [codexcli]\ndescription: Inspect the repository.\n---\n\n# Audit\n\nReview the source.\n";
-    const updated =
-      "---\ntargets: [codexcli, claudecode]\ndescription: Audit canonical input.\n---\n\n# Audit\n\nReview canonical source and verify the generated result.\n";
-    await writeFile(commandPath, original);
-
-    const repo = new RuleSyncRepository(repositoryRoot);
-    const current = repo.loadCommands().commands[0];
-    assert.ok(current);
-    const saved = await repo.updateCommand({
-      name: "audit",
-      expectedRevision: current.revision,
-      content: updated
-    });
-    assert.equal(saved.content, updated);
-    assert.equal(saved.description, "Audit canonical input.");
-    assert.deepEqual(saved.targets, ["codexcli", "claudecode"]);
-    assert.notEqual(saved.revision, current.revision);
-    assert.equal(await readFile(commandPath, "utf8"), updated);
-
-    await assert.rejects(
-      repo.updateCommand({
-        name: "audit",
-        expectedRevision: current.revision,
-        content: original
-      }),
-      RuleSyncCommandConflictError
+    const competingContents = ["First writer.", "Second writer."].map(
+      (description) =>
+        `---\ntargets: [codexcli]\ndescription: ${description}\n---\n\n# Audit\n${description}\n`
     );
-    await assert.rejects(
-      repo.updateCommand({
-        name: "../outside",
-        expectedRevision: saved.revision,
-        content: updated
-      }),
-      RuleSyncCommandValidationError
-    );
-    await assert.rejects(
+    const competingUpdates = competingContents.map((content) =>
       repo.updateCommand({
         name: "audit",
         expectedRevision: saved.revision,
-        content: "Missing frontmatter."
-      }),
-      RuleSyncCommandValidationError
+        content
+      })
     );
-    assert.equal(await readFile(commandPath, "utf8"), updated);
+    const outcomes = await Promise.allSettled(competingUpdates);
+    assert.equal(
+      outcomes.filter((outcome) => outcome.status === "fulfilled").length,
+      1
+    );
+    const rejected = outcomes.find(
+      (outcome): outcome is PromiseRejectedResult =>
+        outcome.status === "rejected"
+    );
+    assert.ok(rejected?.reason instanceof RuleSyncCommandConflictError);
+    const finalSource = await readFile(commandPath, "utf8");
+    assert.ok(competingContents.includes(finalSource));
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });
   }
@@ -260,100 +414,6 @@ test("RuleSyncRepository rejects a symlinked canonical command root before write
         name: "audit",
         expectedRevision: "0".repeat(64),
         content
-      }),
-      RuleSyncCommandValidationError
-    );
-  } finally {
-    await rm(repositoryRoot, { recursive: true, force: true });
-    await rm(externalRoot, { recursive: true, force: true });
-  }
-});
-
-test("RuleSyncRepository updates an existing command with optimistic concurrency", async () => {
-  const repositoryRoot = await mkdtemp(
-    path.join(tmpdir(), "autodev-rulesync-command-update-")
-  );
-  try {
-    const commandsDir = path.join(repositoryRoot, ".rulesync", "commands");
-    await mkdir(commandsDir, { recursive: true });
-    const commandPath = path.join(commandsDir, "audit.md");
-    const original =
-      "---\ntargets: [codexcli]\ndescription: Inspect the repository.\n---\n\n# Audit\n\nReview the source.\n";
-    const updated =
-      "---\ntargets: [codexcli, claudecode]\ndescription: Audit canonical input.\n---\n\n# Audit\n\nReview canonical source and verify the generated result.\n";
-    await writeFile(commandPath, original);
-
-    const repo = new RuleSyncRepository(repositoryRoot);
-    const current = repo.loadCommands().commands[0];
-    assert.ok(current);
-    const saved = await repo.updateCommand({
-      name: "audit",
-      expectedRevision: current.revision,
-      content: updated
-    });
-    assert.equal(saved.content, updated);
-    assert.equal(saved.description, "Audit canonical input.");
-    assert.deepEqual(saved.targets, ["codexcli", "claudecode"]);
-    assert.notEqual(saved.revision, current.revision);
-    assert.equal(await readFile(commandPath, "utf8"), updated);
-
-    await assert.rejects(
-      repo.updateCommand({
-        name: "audit",
-        expectedRevision: current.revision,
-        content: original
-      }),
-      RuleSyncCommandConflictError
-    );
-    await assert.rejects(
-      repo.updateCommand({
-        name: "../outside",
-        expectedRevision: saved.revision,
-        content: updated
-      }),
-      RuleSyncCommandValidationError
-    );
-    await assert.rejects(
-      repo.updateCommand({
-        name: "audit",
-        expectedRevision: saved.revision,
-        content: "Missing frontmatter."
-      }),
-      RuleSyncCommandValidationError
-    );
-    assert.equal(await readFile(commandPath, "utf8"), updated);
-  } finally {
-    await rm(repositoryRoot, { recursive: true, force: true });
-  }
-});
-
-test("RuleSyncRepository refuses a symlinked canonical source root for command updates", async () => {
-  const repositoryRoot = await mkdtemp(
-    path.join(tmpdir(), "autodev-rulesync-command-root-")
-  );
-  const externalRoot = await mkdtemp(
-    path.join(tmpdir(), "autodev-rulesync-command-external-")
-  );
-  try {
-    const externalCommands = path.join(externalRoot, ".rulesync", "commands");
-    await mkdir(externalCommands, { recursive: true });
-    await writeFile(
-      path.join(externalCommands, "audit.md"),
-      "---\ntargets: [codexcli]\ndescription: External command.\n---\n\nReview.\n"
-    );
-    await symlink(
-      path.join(externalRoot, ".rulesync"),
-      path.join(repositoryRoot, ".rulesync"),
-      "dir"
-    );
-    const repo = new RuleSyncRepository(repositoryRoot);
-    assert.equal(repo.loadCommands().valid, false);
-    await assert.rejects(
-      repo.updateCommand({
-        name: "audit",
-        expectedRevision: "0".repeat(64),
-        content:
-          "---\ntargets: [codexcli]\ndescription: Replace.\n---\n\nReview.\n"
       }),
       RuleSyncCommandValidationError
     );

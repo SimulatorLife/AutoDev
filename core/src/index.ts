@@ -9,6 +9,7 @@ export * from "./memory/types.ts";
 export * from "./navigation.ts";
 export * from "./permissions/types.ts";
 export * from "./prompts/types.ts";
+export * from "./reconciliation/index.ts";
 export * from "./routing/types.ts";
 export * from "./skills/types.ts";
 export * from "./tools/types.ts";
