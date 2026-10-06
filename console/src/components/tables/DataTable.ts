@@ -59,6 +59,24 @@ const TOKENS_COLUMN_WEIGHT = 170;
 const DEFAULT_COLUMN_WEIGHT = 100;
 
 /**
+ * Highest floor any table may demand.
+ *
+ * A floor is a legibility limit, not a target: it exists so a table scrolls
+ * when the window genuinely cannot give its columns room. Deriving the floor
+ * from the weight sum alone made it the table's *natural* width, so any table
+ * whose columns wanted even a little more than the page offered scrolled at
+ * full desktop width — a 26px scroll on a 1440px window, with no small-screen
+ * cause.
+ *
+ * The cap sits below the tightest layout the Console actually produces, which
+ * is not the narrowest viewport: at 1280 the sidebar is still expanded, so the
+ * content column measures about 901px, and at 1024 the rail leaves about 877px.
+ * A cap under both keeps every table scroll-free at those widths; below them the
+ * region scrolls as intended.
+ */
+const TABLE_FLOOR_CEILING_PX = 54 * 16;
+
+/**
  * Floor for the table itself, derived from the weights this table declares.
  *
  * The table takes the full width of its wrapper but never squeezes below the
@@ -75,7 +93,11 @@ const DEFAULT_COLUMN_WEIGHT = 100;
  * scale, so their sum is the width the columns were measured at.
  */
 function tableMinWidthPx(columns: readonly ColumnDef<never>[]): number {
-  return columns.reduce((sum, column) => sum + columnWeight(column), 0);
+  const natural = columns.reduce(
+    (sum, column) => sum + columnWeight(column),
+    0
+  );
+  return Math.min(natural, TABLE_FLOOR_CEILING_PX);
 }
 
 function cellClassName(column: ColumnDef<never>): string {

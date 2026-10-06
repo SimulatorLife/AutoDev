@@ -5480,3 +5480,55 @@ test("ClosePanelLink renders the shared close mark and keeps its accessible name
   assert.match(markup, /aria-hidden="true"/);
   assert.match(markup, />Close<\/a>$/);
 });
+
+test("DataTable caps its scroll floor so a table never scrolls at desktop width", () => {
+  interface TestRow {
+    readonly id: string;
+  }
+  // Weights authored at their measured pixel widths: this set sums to 1300,
+  // wider than the ~1060px content column at 1440. The floor must not become
+  // that natural width, or the table region scrolls 240px on a desktop window
+  // for no small-screen reason.
+  const wide = renderToStaticMarkup(
+    DataTable<TestRow>({
+      data: [{ id: "1" }],
+      columns: [
+        { id: "a", header: "A", cell: (r: TestRow) => r.id, weight: 500 },
+        { id: "b", header: "B", cell: (r: TestRow) => r.id, weight: 500 },
+        { id: "c", header: "C", cell: (r: TestRow) => r.id, weight: 300 }
+      ],
+      keyExtractor: (r: TestRow) => r.id
+    })
+  );
+  const wideFloor = Number(
+    wide.match(/style="min-width:([0-9]+)px"/)?.[1] ?? 0
+  );
+  assert.ok(wideFloor > 0, "a table must still declare a floor");
+  assert.equal(
+    wideFloor,
+    56 * 16,
+    "the floor must be capped, not the natural sum"
+  );
+
+  // A narrow table still gets its own smaller floor, so it is never handed a
+  // scrollbar it does not need.
+  const narrow = renderToStaticMarkup(
+    DataTable<TestRow>({
+      data: [{ id: "1" }],
+      columns: [
+        { id: "a", header: "A", cell: (r: TestRow) => r.id, weight: 120 },
+        { id: "b", header: "B", cell: (r: TestRow) => r.id, weight: 120 }
+      ],
+      keyExtractor: (r: TestRow) => r.id
+    })
+  );
+  const narrowFloor = Number(
+    narrow.match(/style="min-width:([0-9]+)px"/)?.[1] ?? 0
+  );
+  assert.equal(
+    narrowFloor,
+    240,
+    "a narrow table keeps the floor its columns need"
+  );
+  assert.ok(narrowFloor < wideFloor, "narrow tables must floor below the cap");
+});
