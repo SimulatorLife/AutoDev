@@ -1656,6 +1656,12 @@ so it still surfaces as the same `400`). Taking the first would let JSON key
 order -- which carries no meaning and which the caller does not control --
 decide which repository a coding agent edits, so a turn rooted in one repo
 could land in another with nothing but a changed working tree to show for it.
+
+Every bridge answers step 6 through one owner: `sendWorkspaceResolutionFailure`
+in `runtime/src/shared/provider-http.ts`, which logs which bridge rejected the
+request and sends the `400 invalid_request_error`. The bridges pass their own
+label (`claude`, `copilot`, `agy`) and nothing else, so the response contract
+cannot drift apart between them.
 `CODEX_PROJECT_ROOT` is the documented tiebreak and settles the ambiguity when
 a multi-root turn is legitimate.
 

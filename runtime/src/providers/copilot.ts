@@ -33,6 +33,10 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
+  sendJson,
+  sendWorkspaceResolutionFailure
+} from "@simulatorlife/autodev-runtime/shared/provider-http";
+import {
   classifyCliLimit,
   INCOMPLETE_REASON_INTERRUPTED,
   INCOMPLETE_REASON_PROVIDER_LIMIT,
@@ -522,22 +526,6 @@ function reportToolObservation(
       eventId: event.eventId
     });
   }
-}
-
-function sendJson(
-  response: ServerResponse,
-  status: number,
-  body: object,
-  extraHeaders: Record<string, string> = {}
-): void {
-  const encoded = Buffer.from(JSON.stringify(body));
-  response.writeHead(status, {
-    "content-type": "application/json",
-    "content-length": encoded.length,
-    connection: "close",
-    ...extraHeaders
-  });
-  response.end(encoded);
 }
 
 function responseMessageItem(text: string, itemId: string): JsonRecord {
@@ -1617,10 +1605,7 @@ function resolveCopilotWorkspace(
     return resolveCwd(payload, request.headers, PROJECT_ROOT);
   } catch (error) {
     if (!(error instanceof WorkspaceResolutionError)) throw error;
-    writeErrorLine("copilot workspace resolution failed: " + error.message);
-    sendJson(response, 400, {
-      error: { type: "invalid_request_error", message: error.message }
-    });
+    sendWorkspaceResolutionFailure(response, "copilot", error);
     return null;
   }
 }

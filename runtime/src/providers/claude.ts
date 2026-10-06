@@ -38,6 +38,10 @@ import {
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
+  sendJson,
+  sendWorkspaceResolutionFailure
+} from "@simulatorlife/autodev-runtime/shared/provider-http";
+import {
   classifyCliLimit,
   INCOMPLETE_REASON_INTERRUPTED,
   INCOMPLETE_REASON_PROVIDER_LIMIT,
@@ -901,21 +905,6 @@ export async function* runClaudeStream(
     }
   }
 }
-function sendJson(
-  response: ServerResponse,
-  status: number,
-  body: JsonRecord,
-  extraHeaders: Record<string, string | number> = {}
-): void {
-  const encoded = Buffer.from(JSON.stringify(body));
-  response.writeHead(status, {
-    "content-type": "application/json",
-    "content-length": encoded.length,
-    connection: "close",
-    ...extraHeaders
-  });
-  response.end(encoded);
-}
 
 // Live turns, parked or streaming. See runtime/src/providers/claude-turn.ts.
 const turns = new ClaudeTurnRegistry();
@@ -1013,10 +1002,7 @@ function resolveTurnCwd(
     );
   } catch (error) {
     if (!(error instanceof WorkspaceResolutionError)) throw error;
-    writeErrorLine(`claude workspace resolution failed: ${error.message}`);
-    sendJson(response, 400, {
-      error: { type: "invalid_request_error", message: error.message }
-    });
+    sendWorkspaceResolutionFailure(response, "claude", error);
     return null;
   }
 }

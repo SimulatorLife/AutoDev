@@ -42,6 +42,10 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
+  sendJson,
+  sendWorkspaceResolutionFailure
+} from "@simulatorlife/autodev-runtime/shared/provider-http";
+import {
   classifyCliLimit,
   INCOMPLETE_REASON_CLIENT_DISCONNECTED,
   INCOMPLETE_REASON_INTERRUPTED,
@@ -1705,22 +1709,6 @@ function responsePayload(
   };
 }
 
-function sendJson(
-  response: ServerResponse,
-  status: number,
-  body: unknown,
-  extraHeaders: Record<string, string | number> = {}
-) {
-  const encoded = Buffer.from(JSON.stringify(body));
-  response.writeHead(status, {
-    "content-type": "application/json",
-    "content-length": encoded.length,
-    connection: "close",
-    ...extraHeaders
-  });
-  response.end(encoded);
-}
-
 const EVENT_OUTPUT_ITEM_ADDED = "response.output_item.added";
 const EVENT_OUTPUT_ITEM_DONE = "response.output_item.done";
 const EVENT_REASONING_SUMMARY_TEXT_DELTA =
@@ -2889,10 +2877,7 @@ function prepareResponsesTurn(
     cwd = resolveCwd(payload, request.headers, PROJECT_ROOT);
   } catch (error) {
     if (!(error instanceof WorkspaceResolutionError)) throw error;
-    writeErrorLine(`agy workspace resolution failed: ${error.message}`);
-    sendJson(response, 400, {
-      error: { type: "invalid_request_error", message: error.message }
-    });
+    sendWorkspaceResolutionFailure(response, "agy", error);
     return null;
   }
   const prompt = promptFromInput(
