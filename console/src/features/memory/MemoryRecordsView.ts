@@ -1,4 +1,5 @@
 import type {
+  ControlApiMemoryWhyResponse,
   EvidenceReference,
   MemoryKind,
   MemoryRecord,
@@ -65,6 +66,8 @@ export interface MemoryRecordsViewProps {
   readonly total: number;
   readonly selectedRecord?: MemoryRecord | null | undefined;
   readonly history?: MemoryRecordHistory | null | undefined;
+  /** The Runtime's eligibility-bounded explanation, when it was read. */
+  readonly why?: ControlApiMemoryWhyResponse | null | undefined;
   /**
    * The address of the list these rows came from. Every link in this view —
    * opening a record, closing the drawer, reading a source experience,
@@ -123,6 +126,7 @@ export function MemoryRecordsView({
   total,
   selectedRecord,
   history,
+  why,
   listScope
 }: MemoryRecordsViewProps): React.JSX.Element {
   const columns: ColumnDef<MemoryRecord>[] = [
@@ -295,6 +299,7 @@ export function MemoryRecordsView({
       ? React.createElement(RecordDetailPanel, {
           record: selectedRecord,
           history,
+          why,
           listScope
         })
       : null
@@ -308,13 +313,21 @@ export function MemoryRecordsView({
  * experiences" was the one line on this panel an operator could not act on. The
  * ids are already in the record; all that was missing was somewhere to go with
  * them.
+ *
+ * `why` sharpens that: the Runtime reports which cited experiences *this*
+ * reader can still resolve, and that set is allowed to be shorter than the
+ * citation list. A record citing three sources of which one has fallen outside
+ * the caller's scope is not a record with two sources, so the gap is named
+ * rather than absorbed into the count.
  */
 function ProvenanceSources({
   record,
-  listScope
+  listScope,
+  why
 }: {
   readonly record: MemoryRecord;
   readonly listScope: MemoryListScope;
+  readonly why?: ControlApiMemoryWhyResponse | null | undefined;
 }): React.JSX.Element {
   const ids = record.provenance.experienceIds;
   if (ids.length === 0) {
@@ -324,6 +337,11 @@ function ProvenanceSources({
       "No source experiences are cited."
     );
   }
+  const resolvable = why?.sourceExperiences.length;
+  const unresolved =
+    why === null || why === undefined
+      ? null
+      : Math.max(0, ids.length - (why.sourceExperiences.length ?? 0));
   return React.createElement(
     "div",
     { className: "flex flex-col gap-1", "data-provenance-sources": "linked" },
@@ -343,19 +361,41 @@ function ProvenanceSources({
         },
         id
       )
-    )
+    ),
+    // Read but unresolvable is a different fact from "not read": it is the
+    // caller's scope, not the record, and an operator chasing a discrepancy
+    // between two readers needs to be able to tell which one they are looking
+    // at.
+    unresolved === null || unresolved === 0
+      ? unresolved === null
+        ? null
+        : React.createElement(
+            "span",
+            {
+              className: MUTED_TEXT_CLASS,
+              "data-provenance-unresolved": "false"
+            },
+            "All cited sources are resolvable to this reader."
+          )
+      : React.createElement(
+          "span",
+          { className: MUTED_TEXT_CLASS, "data-provenance-unresolved": "true" },
+          `${resolvable} of ${ids.length} resolvable to this reader; the rest are outside this scope.`
+        )
   );
 }
 
 interface RecordDetailPanelProps {
   readonly record: MemoryRecord;
   readonly history?: MemoryRecordHistory | null | undefined;
+  readonly why?: ControlApiMemoryWhyResponse | null | undefined;
   readonly listScope: MemoryListScope;
 }
 
 function RecordDetailPanel({
   record,
   history,
+  why,
   listScope
 }: RecordDetailPanelProps): React.JSX.Element {
   return React.createElement(
@@ -475,7 +515,7 @@ function RecordDetailPanel({
           // It used to be a count: the panel said a claim had three sources and
           // offered no way to reach any of them, which is the one thing an
           // operator reading "Provenance & Citations" is there to do.
-          React.createElement(ProvenanceSources, { record, listScope })
+          React.createElement(ProvenanceSources, { record, listScope, why })
         ),
         record.provenance.lastVerifiedAt
           ? React.createElement(

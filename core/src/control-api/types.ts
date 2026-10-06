@@ -548,6 +548,27 @@ export interface ControlApiMemoryExperienceDetailResponse {
   readonly experience: ExperienceEnvelope;
 }
 
+/**
+ * The Runtime's eligibility-bounded explanation of one record.
+ *
+ * This is not the same answer as `provenance.experienceIds`. A record cites the
+ * experiences it was derived from; `why` returns the ones this reader can
+ * *currently* resolve, plus the records it supersedes or is superseded by. The
+ * two sets differ whenever a cited experience has fallen outside the caller's
+ * scope, and that difference is the interesting part -- a record whose sources
+ * cannot be shown is not the same as one that has no sources.
+ *
+ * `sourceExperiences` is therefore allowed to be shorter than the citation list,
+ * and the Console reports the gap rather than presenting the shorter list as
+ * though it were the whole truth.
+ */
+export interface ControlApiMemoryWhyResponse {
+  readonly schema: "autodev-memory-why-v1";
+  readonly memory: MemoryRecord;
+  readonly relatedMemories: readonly MemoryRecord[];
+  readonly sourceExperiences: readonly ExperienceEnvelope[];
+}
+
 export type ControlApiMemoryCohortsResponse = MemorySessionOutcomeCohortPage;
 export type ControlApiMemoryUseCohortsResponse = MemoryInjectionUseCohortPage;
 

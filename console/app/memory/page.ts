@@ -39,6 +39,7 @@ import {
   fetchMemoryRecord,
   fetchMemoryRecords,
   fetchMemoryUseCohorts,
+  fetchMemoryWhy,
   fetchWorkspaces
 } from "../../src/lib/server/control-api.ts";
 import {
@@ -283,6 +284,7 @@ type MemoryUseCohortsResult = Awaited<ReturnType<typeof fetchMemoryUseCohorts>>;
 type MemoryOutcomesResult = Awaited<
   ReturnType<typeof fetchMemoryExperienceOutcomes>
 >;
+type MemoryWhyResult = Awaited<ReturnType<typeof fetchMemoryWhy>>;
 type MemoryUseAssessmentsResult = Awaited<
   ReturnType<typeof fetchMemoryExperienceUseAssessments>
 >;
@@ -296,6 +298,7 @@ interface MemoryReadResults {
   readonly selectedExperience: MemoryExperienceDetailResult | null;
   readonly selectedRecord: MemoryRecordDetailResult | null;
   readonly history: MemoryHistoryResult | null;
+  readonly why: MemoryWhyResult | null;
   /**
    * The selected experience's evidence classes, each nullable because an
    * absent read is "not asked for" and a failed one is "not observed" -- two
@@ -405,6 +408,7 @@ async function fetchMemoryPageData(
   const [
     selectedRecord,
     history,
+    why,
     experiences,
     selectedExperience,
     cohorts,
@@ -417,6 +421,12 @@ async function fetchMemoryPageData(
       : Promise.resolve(null),
     params.activeTab === "records" && params.recordId
       ? fetchMemoryHistory(params.recordId, workspaceId, config)
+      : Promise.resolve(null),
+    // The Runtime's eligibility-bounded explanation, read with the detail: it
+    // reports which cited experiences this reader can still resolve, which is
+    // not the same answer as the citation list on the record itself.
+    params.activeTab === "records" && params.recordId
+      ? fetchMemoryWhy(params.recordId, workspaceId, config)
       : Promise.resolve(null),
     fetchMemoryExperiences(
       {
@@ -494,6 +504,7 @@ async function fetchMemoryPageData(
       records: recordsResult.data,
       selectedRecord,
       history,
+      why,
       experiences,
       selectedExperience,
       cohorts,

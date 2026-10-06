@@ -1,6 +1,7 @@
 import type {
   ControlApiMemoryInjectionOutcomeJoin,
   ControlApiMemoryInjectionUseAssessment,
+  ControlApiMemoryWhyResponse,
   ExperienceEnvelope,
   MemoryInjectionUseCohortPage,
   MemoryRecord,
@@ -53,6 +54,11 @@ export interface MemoryViewProps {
   readonly useCohorts: MemoryInjectionUseCohortPage | null;
   readonly selectedRecord?: MemoryRecord | null | undefined;
   readonly selectedHistory?: MemoryRecordHistory | null | undefined;
+  /**
+   * The Runtime's eligibility-bounded explanation of the selected record, or
+   * null when it was not read or could not be read.
+   */
+  readonly selectedWhy?: ControlApiMemoryWhyResponse | null | undefined;
   readonly selectedExperience?: ExperienceEnvelope | null | undefined;
   /**
    * What the runtime observed attaching packets, what a reporter separately
@@ -101,6 +107,7 @@ export function MemoryView({
   useCohorts,
   selectedRecord,
   selectedHistory,
+  selectedWhy,
   selectedExperience,
   selectedOutcomes,
   selectedOutcomeTotal,
@@ -251,6 +258,7 @@ export function MemoryView({
           total: totalRecords,
           selectedRecord,
           history: selectedHistory,
+          why: selectedWhy,
           listScope
         })
       : activeTab === "experiences"

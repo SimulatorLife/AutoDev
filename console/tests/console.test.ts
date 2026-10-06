@@ -16,6 +16,7 @@ import {
   CANONICAL_NAV_GROUPS,
   CANONICAL_NAVIGATION,
   type CanonicalNavSection,
+  type ControlApiMemoryWhyResponse,
   type ControlApiModelsResponse,
   type ControlApiPromptDetailResponse,
   type ControlApiProviderRecord,
@@ -9235,6 +9236,100 @@ test("DataTable caps its scroll floor so a table never scrolls at desktop width"
   );
   const wideFloor = Number(
     wide.match(/style="min-width:([0-9]+)px"/)?.[1] ?? 0
+/** The why panel reads only the id, but the response type is the whole envelope. */
+function minimalExperience(id: string): ExperienceEnvelope {
+  return {
+    id,
+    workspaceId: "SimulatorLife/AutoDev",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    taskId: "task-1",
+    runId: "run-1",
+    agentId: "agent-1",
+    startedAt: "2026-10-01T00:00:00Z",
+    outcome: "success",
+    memoryMode: "jit",
+    trajectory: {
+      format: "codex-v1",
+      uri: "file:///t.jsonl",
+      sourceAdapter: "codex"
+    },
+    evidence: []
+  };
+}
+
+test("a record says how much of its provenance this reader can resolve", () => {
+  // `why` is the Runtime's eligibility-bounded explanation: it reports the
+  // cited experiences this caller can still resolve, which may be fewer than the
+  // record cites. That difference is the whole reason the route exists, and
+  // presenting the shorter list as the whole truth would be the opposite of it.
+  const record: MemoryRecord = {
+    id: "mem-partial",
+    kind: "semantic",
+    status: "active",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    claim: "A claim citing three sources.",
+    validity: { state: "verified", evidence: [] },
+    provenance: {
+      experienceIds: ["exp-a", "exp-b", "exp-c"],
+      evidence: [],
+      createdBy: "operator",
+      createdAt: "2026-10-01T00:00:00Z"
+    },
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-02T00:00:00Z"
+  };
+
+  const render = (
+    why: ControlApiMemoryWhyResponse | null | undefined
+  ): string =>
+    renderToStaticMarkup(
+      React.createElement(MemoryRecordsView, {
+        records: [record],
+        total: 1,
+        selectedRecord: record,
+        listScope: memoryListScope(),
+        why
+      })
+    );
+
+  const partial = render({
+    schema: "autodev-memory-why-v1",
+    memory: record,
+    relatedMemories: [],
+    sourceExperiences: [minimalExperience("exp-a")]
+  });
+  assert.match(partial, /data-provenance-unresolved="true"/);
+  assert.match(partial, /1 of 3 resolvable to this reader/);
+  // All three ids stay listed and linked; the gap narrows what can be opened,
+  // it does not delete what was cited.
+  for (const id of ["exp-a", "exp-b", "exp-c"]) {
+    assert.match(
+      partial,
+      new RegExp(`data-provenance-experience="${id}"`, "u")
+    );
+  }
+  assert.match(partial, /Sources: 3 experiences/);
+
+  const complete = render({
+    schema: "autodev-memory-why-v1",
+    memory: record,
+    relatedMemories: [],
+    sourceExperiences: [
+      minimalExperience("exp-a"),
+      minimalExperience("exp-b"),
+      minimalExperience("exp-c")
+    ]
+  });
+  assert.match(complete, /data-provenance-unresolved="false"/);
+  assert.match(complete, /All cited sources are resolvable to this reader\./);
+
+  // Not read is not "all resolvable". Saying so would let a failed read look
+  // like a clean provenance check.
+  const unread = render(null);
+  assert.doesNotMatch(unread, /data-provenance-unresolved/);
+  assert.doesNotMatch(unread, /resolvable to this reader/);
+});
+
   );
   assert.ok(wideFloor > 0, "a table must still declare a floor");
   assert.equal(

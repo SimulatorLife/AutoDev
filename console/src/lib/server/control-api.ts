@@ -739,9 +739,7 @@ function providerControlPath(
   const suffixes = segments
     .filter((segment) => segment.length > 0)
     .map((segment) => encodeURIComponent(segment));
-  return suffixes.length === 0
-    ? base
-    : `${base}/${suffixes.join("/")}`;
+  return suffixes.length === 0 ? base : `${base}/${suffixes.join("/")}`;
 }
 
 function isControlApiModelsResponse(
@@ -2180,7 +2178,10 @@ export async function fetchMemoryWhy(
   if (isMemoryWhyResponse(why)) {
     return { kind: "ok", data: why };
   }
-  return invalidMemoryPageResponse("record explanation", "autodev-memory-why-v1");
+  return invalidMemoryPageResponse(
+    "record explanation",
+    "autodev-memory-why-v1"
+  );
 }
 
 export async function fetchMemoryHistory(
