@@ -374,6 +374,58 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     const scopeConsumer = readFileSync(
       join(
         dir,
+// Documentation chrome and account-scoped preferences are gone; the
+    // surfaces AutoDev still owns stay.
+    for (const gone of [
+      "src/client/src/app/(playground)/openapi-spec/page.tsx",
+      "src/client/src/app/(playground)/settings/profile/page.tsx",
+      "src/client/src/components/(playground)/api-keys/api-reference.tsx",
+      "src/client/src/components/(playground)/coding-agents/coding-sessions-tab.tsx",
+      "src/client/src/components/(playground)/coding-agents/coding-users-tab.tsx",
+    ]) {
+      assert.equal(
+        existsSync(join(dir, gone)),
+        false,
+        `${gone} must not survive the docs/account-surface removal`,
+      );
+    }
+
+    // /settings used to redirect to the profile page; it must land somewhere
+    // that still exists rather than on a 404.
+    const settingsIndex = readFileSync(
+      join(dir, "src/client/src/app/(playground)/settings/page.tsx"),
+      "utf8"
+    );
+    assert.match(
+      settingsIndex,
+      /router\.replace\("\/settings\/api-keys"\)/u,
+      "the settings index must redirect to a surviving page",
+    );
+    assert.doesNotMatch(
+      settingsIndex,
+      /\/settings\/profile/u,
+      "the settings index must not redirect to a deleted page"
+    );
+
+    const settingsTabs = readFileSync(
+      join(dir, "src/client/src/constants/settings.ts"),
+      "utf8"
+    );
+    assert.doesNotMatch(
+      settingsTabs,
+      /\/settings\/profile/u,
+      "the removed profile page must leave the settings tab list"
+    );
+
+    const apiKeyNav = readFileSync(
+      join(dir, "src/client/src/constants/sidebar.tsx"),
+      "utf8"
+    );
+    assert.doesNotMatch(
+      apiKeyNav,
+      /"\/openapi-spec"|"\/settings\/profile"/u,
+      "the sidebar must not link to surfaces that no longer exist"
+    );
         "src/client/src/components/(playground)/observability/signal-list.tsx"
       ),
       "utf8"
@@ -448,7 +500,8 @@ const EXPECTED_OPENLIT_PATCH_NAMES = [
   "34-remove-board-authoring-tables",
   "35-remove-vault-administration",
   "36-dead-surfaces-and-broken-sidebar-nav",
-  "37-remove-duplicate-agents-shell"
+  "37-remove-duplicate-agents-shell",
+  "38-remove-docs-and-account-surfaces"
 ] as const;
 test(
   "openlit patch set applies cleanly to pinned commit",

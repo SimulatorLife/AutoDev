@@ -1,0 +1,1520 @@
+diff --git a/src/client/src/__tests__/constants/settings.test.ts b/src/client/src/__tests__/constants/settings.test.ts
+index 04c11bad..3bf69dba 100644
+--- a/src/client/src/__tests__/constants/settings.test.ts
++++ b/src/client/src/__tests__/constants/settings.test.ts
+@@ -9,12 +9,14 @@ jest.mock("@/constants/messages", () => ({
+ import { getSettingsTabs } from "@/constants/settings";
+ 
+ describe("getSettingsTabs", () => {
+-	it("returns CE settings tabs with expected paths", () => {
++	it("returns the API keys tab only", () => {
++		// The profile tab went with the account-scoped preferences surface;
++		// AutoDev identity is owned by the runtime, not by this app.
+ 		const tabs = getSettingsTabs();
+ 
+ 		expect(tabs).toEqual([
+-			{ value: "profile", label: "User Profile", path: "/settings/profile" },
+ 			{ value: "api-keys", label: "API Keys", path: "/settings/api-keys" },
+ 		]);
++		expect(tabs.map((tab) => tab.path)).not.toContain("/settings/profile");
+ 	});
+-});
++});
+\ No newline at end of file
+diff --git a/src/client/src/app/(playground)/openapi-spec/page.tsx b/src/client/src/app/(playground)/openapi-spec/page.tsx
+deleted file mode 100644
+index 93d78c8d..00000000
+--- a/src/client/src/app/(playground)/openapi-spec/page.tsx
++++ /dev/null
+@@ -1,28 +0,0 @@
+-"use client";
+-import ApiReference from "@/components/(playground)/api-keys/api-reference";
+-import FeaturePageHeader from "@/components/(playground)/feature-page-header";
+-import getMessage from "@/constants/messages";
+-import { ApiKey } from "@/types/api-key";
+-import { BookText } from "lucide-react";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-
+-export default function OpenApiPage() {
+-	const messages = getMessage();
+-	const { data } = useFetchWrapper<ApiKey[]>();
+-
+-	const userApiKey = data && data.length > 0 ? data[0].apiKey : undefined;
+-
+-	return (
+-		<div className="flex flex-col grow w-full h-full overflow-hidden">
+-			<FeaturePageHeader
+-				eyebrow={messages.AUTH_DOCUMENTATION}
+-				title={messages.OPENAPI_SPEC_PAGE_TITLE}
+-				icon={<BookText className="h-4 w-4" />}
+-				tone="border-primary/20 bg-primary/10 text-primary dark:border-primary/30 dark:bg-primary/15"
+-			/>
+-			<div className="flex-1 w-full p-4 overflow-hidden grow  overflow-hidden">
+-				<ApiReference userApiKey={userApiKey} />
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/app/(playground)/settings/page.tsx b/src/client/src/app/(playground)/settings/page.tsx
+index 27e7feae..62b183f7 100644
+--- a/src/client/src/app/(playground)/settings/page.tsx
++++ b/src/client/src/app/(playground)/settings/page.tsx
+@@ -10,7 +10,7 @@ export default function DefaultSettingsPage() {
+ 
+   useEffect(() => {
+     posthog?.capture(CLIENT_EVENTS.SETTINGS_PAGE_VISITED);
+-    router.replace("/settings/profile");
++    router.replace("/settings/api-keys");
+   }, []);
+ 
+   return null;
+diff --git a/src/client/src/app/(playground)/settings/profile/page.tsx b/src/client/src/app/(playground)/settings/profile/page.tsx
+deleted file mode 100644
+index 8950e549..00000000
+--- a/src/client/src/app/(playground)/settings/profile/page.tsx
++++ /dev/null
+@@ -1,170 +0,0 @@
+-"use client";
+-
+-import FormBuilder from "@/components/common/form-builder";
+-import { FormBuilderEvent } from "@/types/form";
+-import { CLIENT_EVENTS } from "@/constants/events";
+-import { getUserDetails, setUser } from "@/selectors/user";
+-import { useRootStore } from "@/store";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import { User } from "@prisma/client";
+-import { usePostHog } from "posthog-js/react";
+-import { toast } from "sonner";
+-import { PRIMARY_BACKGROUND } from "@/constants/common-classes";
+-import FeaturePageHeader from "@/components/(playground)/feature-page-header";
+-import { UserIcon } from "lucide-react";
+-
+-const PROFILE_TOAST_ID = "profile-details";
+-
+-function ModifyProfileDetails({
+-	user,
+-	fetchUser,
+-}: {
+-	user: User | null;
+-	fetchUser: () => void;
+-}) {
+-	const posthog = usePostHog();
+-	const { fireRequest, isLoading } = useFetchWrapper();
+-
+-	const modifyDetails: FormBuilderEvent = (event) => {
+-		event.preventDefault();
+-		const formElement = event.target as HTMLFormElement;
+-
+-		const bodyObject = {
+-			currentPassword: (formElement.currentPassword as any)?.value,
+-			newPassword: (formElement.newPassword as any)?.value,
+-			name: (formElement.name as any)?.value,
+-		};
+-
+-		if (
+-			bodyObject.newPassword !== (formElement.confirmNewPassword as any)?.value
+-		) {
+-			toast.loading("New password and Confirm new password does not match...", {
+-				id: PROFILE_TOAST_ID,
+-			});
+-			return;
+-		}
+-
+-		toast.loading("Modifying profile details...", {
+-			id: PROFILE_TOAST_ID,
+-		});
+-
+-		fireRequest({
+-			body: JSON.stringify(bodyObject),
+-			requestType: "POST",
+-			url: "/api/user/profile",
+-			responseDataKey: "data",
+-			successCb: () => {
+-				toast.success("Profile details updated!", {
+-					id: PROFILE_TOAST_ID,
+-				});
+-				formElement.reset();
+-				fetchUser();
+-				posthog?.capture(CLIENT_EVENTS.PROFILE_UPDATE_SUCCESS);
+-			},
+-			failureCb: (err?: string) => {
+-				toast.error(err || "Profile details updation failed!", {
+-					id: PROFILE_TOAST_ID,
+-				});
+-				posthog?.capture(CLIENT_EVENTS.PROFILE_UPDATE_FAILURE);
+-			},
+-		});
+-	};
+-
+-	return (
+-		<FormBuilder
+-			cardClassName={`${PRIMARY_BACKGROUND} py-4 px-6`}
+-			fields={[
+-				{
+-					label: "Email",
+-					inputKey: `${user?.email}-email`,
+-					fieldType: "INPUT",
+-					fieldTypeProps: {
+-						type: "text",
+-						name: "email",
+-						placeholder: "db-config",
+-						defaultValue: user?.email || "",
+-						disabled: true,
+-					},
+-				},
+-				{
+-					label: "Profile Name",
+-					inputKey: `${user?.id}-name`,
+-					fieldType: "INPUT",
+-					fieldTypeProps: {
+-						type: "text",
+-						name: "name",
+-						placeholder: "db-config",
+-						defaultValue: user?.name || "",
+-					},
+-				},
+-				{
+-					label: "Current Password",
+-					inputKey: `${user?.id}-currentPassword`,
+-					fieldType: "INPUT",
+-					fieldTypeProps: {
+-						type: "password",
+-						name: "currentPassword",
+-						placeholder: "*******",
+-					},
+-				},
+-				{
+-					label: "New Password",
+-					fieldType: "INPUT",
+-					inputKey: `${user?.id}-newPassword`,
+-					fieldTypeProps: {
+-						type: "password",
+-						name: "newPassword",
+-						placeholder: "*******",
+-					},
+-				},
+-				{
+-					label: "Confirm New Password",
+-					fieldType: "INPUT",
+-					inputKey: `${user?.id}-confirmNewPassword`,
+-					fieldTypeProps: {
+-						type: "password",
+-						name: "confirmNewPassword",
+-						placeholder: "*******",
+-					},
+-				},
+-			]}
+-			heading={`Update profile details`}
+-			isLoading={isLoading}
+-			onSubmit={modifyDetails}
+-			submitButtonText={"Update"}
+-		/>
+-	);
+-}
+-
+-export default function Profile() {
+-	const userDetails = useRootStore(getUserDetails);
+-	const setUserDetails = useRootStore(setUser);
+-	const { fireRequest: getUser } = useFetchWrapper();
+-
+-	const fetchUser = () => {
+-		getUser({
+-			requestType: "GET",
+-			url: "/api/user/profile",
+-			responseDataKey: "data",
+-			successCb(res) {
+-				setUserDetails(res);
+-			},
+-			failureCb: (err?: string) => {
+-				toast.error(err || "Unauthorized access!", {
+-					id: PROFILE_TOAST_ID,
+-				});
+-			},
+-		});
+-	};
+-
+-	return (
+-		<div className="flex flex-1 h-full w-full flex-col">
+-			<FeaturePageHeader eyebrow="Settings" title="User Profile" icon={<UserIcon className="h-4 w-4" />} tone="border-primary/20 bg-primary/10 text-primary dark:border-primary/30 dark:bg-primary/15" />
+-			<div className={`flex w-full h-full p-4`}>
+-				<div className={`flex flex-col w-full h-full ${PRIMARY_BACKGROUND} rounded-md`}>
+-					<ModifyProfileDetails user={userDetails as User} fetchUser={fetchUser} />
+-				</div>
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/api-keys/api-reference.tsx b/src/client/src/components/(playground)/api-keys/api-reference.tsx
+deleted file mode 100644
+index 61660f56..00000000
+--- a/src/client/src/components/(playground)/api-keys/api-reference.tsx
++++ /dev/null
+@@ -1,837 +0,0 @@
+-"use client";
+-import React, { useState } from "react";
+-import { Badge } from "@/components/ui/badge";
+-import { toast } from "sonner";
+-import { CopyIcon, Terminal, FileText, ChevronRight, Check } from "lucide-react";
+-import copy from "copy-to-clipboard";
+-import getMessage from "@/constants/messages";
+-
+-import { ApiEndpoint, API_REFERENCE_ENDPOINTS } from "@/constants/api-reference";
+-
+-type ParameterLocation = "header" | "path" | "query" | "body";
+-
+-interface ParameterDoc {
+-	name: string;
+-	type: string;
+-	required: boolean;
+-	description: string;
+-	/** Where the value is sent: HTTP header, URL path, query string, or JSON body. */
+-	location: ParameterLocation;
+-	allowedValues?: string[];
+-	example?: string;
+-}
+-
+-const PARAMETER_LOCATION_LABEL: Record<ParameterLocation, string> = {
+-	header: "Header",
+-	path: "Path",
+-	query: "Query",
+-	body: "Body",
+-};
+-
+-function asBodyParams(
+-	docs: Omit<ParameterDoc, "location">[]
+-): ParameterDoc[] {
+-	return docs.map((doc) => ({ ...doc, location: "body" }));
+-}
+-
+-function asPathParam(doc: Omit<ParameterDoc, "location">): ParameterDoc {
+-	return { ...doc, location: "path" };
+-}
+-
+-function asQueryParam(doc: Omit<ParameterDoc, "location">): ParameterDoc {
+-	return { ...doc, location: "query" };
+-}
+-
+-
+-interface ApiReferenceProps {
+-	userApiKey?: string;
+-}
+-
+-export default function ApiReference({ userApiKey }: ApiReferenceProps) {
+-	const activeKey = userApiKey || "YOUR_AUTODEV_API_KEY";
+-	const [selectedEndpoint, setSelectedEndpoint] = useState<ApiEndpoint>(API_REFERENCE_ENDPOINTS[0]);
+-	const [copiedField, setCopiedField] = useState<string | null>(null);
+-	const messages = getMessage();
+-
+-	const contextHeaderDocs: ParameterDoc[] = [
+-		{
+-			name: "x-openlit-organisation-id",
+-			type: "string",
+-			required: false,
+-			location: "header",
+-			description:
+-				"Active organisation ID. Recommended for multi-organisation API-key clients.",
+-			example: "org_01HXYZ",
+-		},
+-		{
+-			name: "x-openlit-project-id",
+-			type: "string",
+-			required: true,
+-			location: "header",
+-			description:
+-				"Active project ID. Telemetry source bindings are project-scoped.",
+-			example: "proj_01HXYZ",
+-		},
+-		{
+-			name: "x-openlit-environment",
+-			type: "string",
+-			required: true,
+-			location: "header",
+-			description:
+-				"Active project environment (e.g. production). Required for signal routing of traces/logs/metrics/intelligence.",
+-			example: "production",
+-		},
+-	];
+-
+-	const withContextHeaders = (docs: ParameterDoc[]): ParameterDoc[] => [
+-		...contextHeaderDocs,
+-		...docs,
+-	];
+-
+-	const sdkContextHeaderDocs: ParameterDoc[] = [
+-		{
+-			name: "x-openlit-organisation-id",
+-			type: "string",
+-			required: false,
+-			location: "header",
+-			description:
+-				"Active organisation ID. Recommended for multi-organisation API-key clients.",
+-			example: "org_01HXYZ",
+-		},
+-		{
+-			name: "x-openlit-project-id",
+-			type: "string",
+-			required: false,
+-			location: "header",
+-			description:
+-				"Preferred with environment for intelligence signal routing. When omitted, the API key's project is used.",
+-			example: "proj_01HXYZ",
+-		},
+-		{
+-			name: "x-openlit-environment",
+-			type: "string",
+-			required: false,
+-			location: "header",
+-			description:
+-				"Preferred for intelligence signal routing. When omitted, falls back to the API key's bound database config.",
+-			example: "production",
+-		},
+-		{
+-			name: "x-openlit-database-config-id",
+-			type: "string",
+-			required: false,
+-			location: "header",
+-			description:
+-				"Optional explicit ClickHouse database config for SDK endpoints. Must belong to the same project as the API key. Prefer signal routing instead.",
+-			example: "dbcfg_01HXYZ",
+-		},
+-	];
+-
+-	const withSdkContextHeaders = (docs: ParameterDoc[]): ParameterDoc[] => [
+-		...sdkContextHeaderDocs,
+-		...docs,
+-	];
+-
+-	const getParameterDocs = (endpointId: string): ParameterDoc[] => {
+-		if (
+-			endpointId === "query-traces" ||
+-			endpointId === "query-exceptions" ||
+-			endpointId === "query-logs" ||
+-			endpointId === "query-metrics" ||
+-			endpointId === "get-metric-detail"
+-		) {
+-			const isLog = endpointId === "query-logs";
+-			const isMetric = endpointId === "query-metrics" || endpointId === "get-metric-detail";
+-			const docs: Omit<ParameterDoc, "location">[] = [
+-				{
+-					name: "timeLimit",
+-					type: "object",
+-					required: true,
+-					description: "Specifies the time range window to query telemetry.",
+-				},
+-				{
+-					name: "timeLimit.type",
+-					type: "string",
+-					required: true,
+-					description: "Predefined relative duration or custom time range.",
+-					allowedValues: ["24H", "7D", "1M", "3M", "CUSTOM"],
+-					example: "24H",
+-				},
+-				{
+-					name: "timeLimit.start",
+-					type: "string",
+-					required: false,
+-					description: "ISO-8601 start timestamp. Required if type is CUSTOM.",
+-					example: "2026-07-09T13:08:52.311Z",
+-				},
+-				{
+-					name: "timeLimit.end",
+-					type: "string",
+-					required: false,
+-					description: "ISO-8601 end timestamp. Required if type is CUSTOM.",
+-					example: "2026-07-10T13:09:17.114Z",
+-				},
+-				{
+-					name: "limit",
+-					type: "number",
+-					required: false,
+-					description: `Pagination limit. Defaults to ${isLog || isMetric ? 25 : 10}.`,
+-					example: "50",
+-				},
+-				{
+-					name: "offset",
+-					type: "number",
+-					required: false,
+-					description: "Pagination offset index. Defaults to 0.",
+-					example: "0",
+-				},
+-				{
+-					name: "selectedConfig",
+-					type: "object",
+-					required: false,
+-					description: "Structured filter properties for telemetry queries.",
+-				},
+-				{
+-					name: "selectedConfig.models",
+-					type: "string[]",
+-					required: false,
+-					description: "Filter records by specific AI model names.",
+-					example: '["gpt-4o", "claude-3-5-sonnet"]',
+-				},
+-				{
+-					name: "selectedConfig.providers",
+-					type: "string[]",
+-					required: false,
+-					description: "Filter records by specific LLM providers.",
+-					example: '["openai", "anthropic"]',
+-				},
+-				{
+-					name: "selectedConfig.serviceNames",
+-					type: "string[]",
+-					required: false,
+-					description: "Filter records by specific client service names.",
+-					example: '["web-app"]',
+-				},
+-				{
+-					name: "selectedConfig.environments",
+-					type: "string[]",
+-					required: false,
+-					description: "Filter records by deployment environment.",
+-					example: '["production"]',
+-				},
+-			];
+-
+-			if (isLog) {
+-				docs.push({
+-					name: "selectedConfig.severities",
+-					type: "string[]",
+-					required: false,
+-					description: "Filter logs by severity levels.",
+-					allowedValues: ["INFO", "WARN", "ERROR", "DEBUG", "FATAL"],
+-					example: '["ERROR", "WARN"]',
+-				});
+-			}
+-
+-			if (endpointId !== "get-metric-detail" && endpointId !== "query-metrics") {
+-				docs.push(
+-					{
+-						name: "sorting",
+-						type: "object",
+-						required: false,
+-						description: "Database sorting order rules.",
+-					},
+-					{
+-						name: "sorting.type",
+-						type: "string",
+-						required: false,
+-						description: "Field name to sort by (e.g. Timestamp, cost, duration, prompt_tokens, completion_tokens).",
+-						example: "Timestamp",
+-					},
+-					{
+-						name: "sorting.direction",
+-						type: "string",
+-						required: false,
+-						description: "Sorting direction.",
+-						allowedValues: ["asc", "desc"],
+-						example: "desc",
+-					}
+-				);
+-			}
+-
+-			docs.push({
+-				name: "includeFilters",
+-				type: "boolean",
+-				required: false,
+-				description: "If true, appends the pagination and dynamic filter metadata inline in the response.",
+-				example: "true",
+-			});
+-
+-			return withContextHeaders(asBodyParams(docs));
+-		}
+-
+-		if (endpointId === "get-log") {
+-			return withContextHeaders([
+-				asPathParam({
+-					name: "id",
+-					type: "string",
+-					required: true,
+-					description: "Unique hash/row identifier of the log record.",
+-					example: "18446744073709551615",
+-				}),
+-			]);
+-		}
+-
+-		if (endpointId === "get-compiled-prompt") {
+-			return withSdkContextHeaders(
+-				asBodyParams([
+-					{
+-						name: "name",
+-						type: "string",
+-						required: true,
+-						description: "Prompt template identifier name.",
+-						example: "summarize-prompt",
+-					},
+-				])
+-			);
+-		}
+-
+-		if (endpointId === "get-secrets") {
+-			return withSdkContextHeaders(
+-				asBodyParams([
+-					{
+-						name: "keys",
+-						type: "string",
+-						required: false,
+-						description: "Comma-separated list of keys to fetch from the vault.",
+-						example: "OPENAI_API_KEY,ANTHROPIC_API_KEY",
+-					},
+-				])
+-			);
+-		}
+-
+-		if (endpointId === "evaluation-offline") {
+-			return withContextHeaders(
+-				asBodyParams([
+-					{
+-						name: "prompt",
+-						type: "string",
+-						required: true,
+-						description: "The prompt text to evaluate.",
+-						example: "I need to reset my password, my email is admin@gmail.com",
+-					},
+-					{
+-						name: "response",
+-						type: "string",
+-						required: true,
+-						description: "The LLM generated response to evaluate.",
+-						example: "I can help with that. Please verify your identity.",
+-					},
+-					{
+-						name: "contexts",
+-						type: "string[]",
+-						required: false,
+-						description: "Retrieved context document texts used by the LLM.",
+-						example: '["User password reset procedure document."]',
+-					},
+-					{
+-						name: "eval_types",
+-						type: "string[]",
+-						required: false,
+-						description: "Scorers to execute. Can be toxicity, hallucination, bias, pii.",
+-						example: '["toxicity", "pii"]',
+-					},
+-					{
+-						name: "threshold_score",
+-						type: "number",
+-						required: false,
+-						description: "Minimum score required to trigger validation flags. Defaults to 0.5.",
+-						example: "0.5",
+-					},
+-					{
+-						name: "store_results",
+-						type: "boolean",
+-						required: false,
+-						description: "Persist the evaluation metrics run results to ClickHouse. Defaults to true.",
+-						example: "true",
+-					},
+-					{
+-						name: "run_id",
+-						type: "string",
+-						required: false,
+-						description: "Optional external execution or batch tracking ID.",
+-						example: "run-998877",
+-					},
+-					{
+-						name: "metadata",
+-						type: "object",
+-						required: false,
+-						description: "Custom metadata key-value properties dictionary (max 20 entries).",
+-					},
+-					{
+-						name: "attributes",
+-						type: "object",
+-						required: false,
+-						description: "Custom payload attributes dictionary.",
+-					},
+-				])
+-			);
+-		}
+-
+-		if (endpointId === "create-prompt") {
+-			return withContextHeaders(
+-				asBodyParams([
+-					{
+-						name: "name",
+-						type: "string",
+-						required: true,
+-						description: "Unique prompt identification name.",
+-						example: "rag-generation-prompt",
+-					},
+-					{
+-						name: "prompt",
+-						type: "string",
+-						required: true,
+-						description: "Prompt template string with support for variable placeholders.",
+-						example: "Answer the query: {{query}} using context: {{context}}",
+-					},
+-					{
+-						name: "version",
+-						type: "string",
+-						required: false,
+-						description: "Optional semantic version for this prompt release.",
+-						example: "1.0.0",
+-					},
+-					{
+-						name: "status",
+-						type: "string",
+-						required: false,
+-						description: "Release status of the prompt.",
+-						allowedValues: ["active", "draft", "retired"],
+-						example: "active",
+-					},
+-					{
+-						name: "tags",
+-						type: "string[]",
+-						required: false,
+-						description: "Labels to categorize the prompt.",
+-						example: '["production", "rag"]',
+-					},
+-					{
+-						name: "metaProperties",
+-						type: "object",
+-						required: false,
+-						description: "Arbitrary key-value metadata properties dict.",
+-					},
+-				])
+-			);
+-		}
+-
+-		if (endpointId === "get-prompt") {
+-			return withContextHeaders(
+-				asBodyParams([
+-					{
+-						name: "name",
+-						type: "string",
+-						required: true,
+-						description: "Prompt identifier name to retrieve detail configurations for.",
+-						example: "summarize-prompt",
+-					},
+-				])
+-			);
+-		}
+-
+-		if (endpointId === "upsert-secret") {
+-			return withContextHeaders(
+-				asBodyParams([
+-					{
+-						name: "key",
+-						type: "string",
+-						required: true,
+-						description: "Secret key name stored in the vault.",
+-						example: "OPENAI_API_KEY",
+-					},
+-					{
+-						name: "value",
+-						type: "string",
+-						required: true,
+-						description: "Unencrypted credentials value that will be encrypted on write.",
+-						example: "sk-proj-...",
+-					},
+-					{
+-						name: "tags",
+-						type: "string[]",
+-						required: false,
+-						description: "Secret classification labels.",
+-						example: '["production"]',
+-					},
+-				])
+-			);
+-		}
+-
+-		if (
+-			endpointId === "get-span-detail" ||
+-			endpointId === "get-trace-detail" ||
+-			endpointId === "get-span-hierarchy"
+-		) {
+-			return withContextHeaders([
+-				asPathParam({
+-					name: "id",
+-					type: "string",
+-					required: true,
+-					description: "Span ID, Trace ID, or Anchor Span ID to fetch.",
+-					example: "557a2bd43ff129ad",
+-				}),
+-			]);
+-		}
+-
+-		if (
+-			endpointId === "get-ai-analysis" ||
+-			endpointId === "run-ai-analysis"
+-		) {
+-			return withContextHeaders([
+-				asPathParam({
+-					name: "spanId",
+-					type: "string",
+-					required: true,
+-					description: "Anchor span ID used to resolve the analysis target.",
+-					example: "557a2bd43ff129ad",
+-				}),
+-				asQueryParam({
+-					name: "scope",
+-					type: "string",
+-					required: false,
+-					description: "Analyze the full hierarchy or only the given span.",
+-					allowedValues: ["trace", "span"],
+-					example: "trace",
+-				}),
+-				asQueryParam({
+-					name: "traceId",
+-					type: "string",
+-					required: false,
+-					description: "Optional Trace ID to disambiguate hierarchy lookup.",
+-					example: "a1b2c3d4e5f6g7h8",
+-				}),
+-			]);
+-		}
+-
+-		return contextHeaderDocs;
+-	};
+-
+-	const getEndpointGroup = (endpoint: ApiEndpoint): string => {
+-		const path = endpoint.path;
+-		if (path.startsWith("/api/telemetry") || path.startsWith("/api/metrics")) {
+-			return "Telemetry";
+-		}
+-		if (path.startsWith("/api/prompt")) {
+-			return "Prompt Hub";
+-		}
+-		if (path.startsWith("/api/vault")) {
+-			return "Secret Vault";
+-		}
+-		if (path.startsWith("/api/evaluation")) {
+-			return "Evaluation Engine";
+-		}
+-		if (path.startsWith("/api/api-key")) {
+-			return "API Keys";
+-		}
+-		return "Other";
+-	};
+-
+-	const groups = [
+-		"Telemetry",
+-		"Prompt Hub",
+-		"Secret Vault",
+-		"Evaluation Engine",
+-		"API Keys"
+-	];
+-
+-	const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
+-		"Telemetry": true,
+-		"Prompt Hub": true,
+-		"Secret Vault": true,
+-		"Evaluation Engine": true,
+-		"API Keys": true,
+-	});
+-
+-	const toggleGroup = (group: string) => {
+-		setExpandedGroups(prev => ({
+-			...prev,
+-			[group]: !prev[group]
+-		}));
+-	};
+-
+-	const handleCopy = (text: string, fieldId: string) => {
+-		copy(text);
+-		setCopiedField(fieldId);
+-		toast.success(messages.COPIED_TO_CLIPBOARD);
+-		setTimeout(() => setCopiedField(null), 2000);
+-	};
+-
+-	const getMethodColor = (method: string) => {
+-		switch (method) {
+-			case "GET":
+-				return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
+-			case "POST":
+-				return "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20";
+-			case "DELETE":
+-				return "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20";
+-			default:
+-				return "bg-stone-500/10 text-stone-600 dark:text-stone-400 border-stone-500/20";
+-		}
+-	};
+-
+-	return (
+-		<div className="flex flex-col border border-stone-200 dark:border-stone-800 rounded-lg overflow-hidden bg-white dark:bg-stone-900 shadow-sm h-full">
+-			<div className="flex items-center gap-2 border-b border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-950 px-4 py-3">
+-				<Terminal className="h-4 w-4 text-stone-500 dark:text-stone-400" />
+-				<h3 className="font-semibold text-stone-900 dark:text-stone-100">{messages.INTERACTIVE_API_REFERENCE}</h3>
+-				<span className="text-xs text-stone-500 dark:text-stone-400 ml-auto">
+-					{messages.OPENAPI_SPEC_BEARER_AUTH}
+-					{" · "}
+-					<span className="text-stone-500 dark:text-stone-400">
+-						{messages.OPENAPI_SPEC_CONTEXT_HEADERS_HINT}
+-					</span>
+-				</span>
+-			</div>
+-
+-			<div className="flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-stone-200 dark:divide-stone-800 h-full overflow-hidden">
+-				{/* Sidebar list */}
+-				<div className="w-full lg:w-80 shrink-0 bg-stone-50/50 dark:bg-stone-950/20 py-2 overflow-y-auto h-full">
+-					<div className="space-y-2 px-2">
+-						{groups.map((group) => {
+-							const endpointsInGroup = API_REFERENCE_ENDPOINTS.filter(
+-								(ep) => getEndpointGroup(ep) === group
+-							);
+-							if (endpointsInGroup.length === 0) return null;
+-							const isExpanded = expandedGroups[group] ?? true;
+-
+-							return (
+-								<div key={group} className="flex flex-col">
+-									<button
+-										onClick={() => toggleGroup(group)}
+-										className="flex items-center justify-between w-full px-3 py-1.5 text-left text-[11px] font-semibold text-stone-500 dark:text-stone-400 hover:text-stone-800 dark:hover:text-stone-200 transition-colors uppercase tracking-wider"
+-									>
+-										<span>{group}</span>
+-										<ChevronRight
+-											className={`h-3 w-3 text-stone-400 dark:text-stone-505 transition-transform ${
+-												isExpanded ? "rotate-90" : ""
+-											}`}
+-										/>
+-									</button>
+-									{isExpanded && (
+-										<div className="mt-1 space-y-0.5 pl-2 border-l border-stone-200 dark:border-stone-800 ml-3">
+-											{endpointsInGroup.map((endpoint) => (
+-												<button
+-													key={endpoint.id}
+-													onClick={() => setSelectedEndpoint(endpoint)}
+-													className={`w-full flex items-center text-left px-3 py-2 rounded-md text-xs transition-colors ${
+-														selectedEndpoint.id === endpoint.id
+-															? "bg-stone-100 dark:bg-stone-800 text-stone-900 dark:text-stone-100 font-medium"
+-															: "text-stone-600 dark:text-stone-400 hover:bg-stone-50 dark:hover:bg-stone-900/50 hover:text-stone-900 dark:hover:text-stone-200"
+-													}`}
+-												>
+-													<Badge
+-														variant="outline"
+-														className={`mr-2.5 text-[9px] px-1 py-0 rounded font-bold shrink-0 ${getMethodColor(
+-															endpoint.method
+-														)}`}
+-													>
+-														{endpoint.method}
+-													</Badge>
+-													<span className="truncate flex-1">{endpoint.summary}</span>
+-												</button>
+-											))}
+-										</div>
+-									)}
+-								</div>
+-							);
+-						})}
+-					</div>
+-				</div>
+-
+-				{/* Detail pane */}
+-				<div className="flex-1 p-6 overflow-y-auto h-full bg-stone-50/10 dark:bg-stone-950/10">
+-					<div className="flex flex-wrap items-center gap-3 mb-2">
+-						<Badge
+-							variant="outline"
+-							className={`text-xs px-2 py-0.5 rounded font-bold ${getMethodColor(
+-								selectedEndpoint.method
+-							)}`}
+-						>
+-							{selectedEndpoint.method}
+-						</Badge>
+-						<span className="font-mono text-xs text-stone-800 dark:text-stone-200 font-semibold bg-stone-100 dark:bg-stone-800 px-2 py-1 rounded">
+-							{selectedEndpoint.path}
+-						</span>
+-						<button
+-							onClick={() => handleCopy(selectedEndpoint.path, "path")}
+-							className="text-stone-400 hover:text-stone-600 dark:hover:text-stone-300"
+-							title="Copy Path"
+-						>
+-							{copiedField === "path" ? (
+-								<Check className="h-3.5 w-3.5 text-emerald-500" />
+-							) : (
+-								<CopyIcon className="h-3.5 w-3.5" />
+-							)}
+-						</button>
+-					</div>
+-
+-					<h4 className="text-base font-semibold text-stone-900 dark:text-stone-100 mb-2">
+-						{selectedEndpoint.summary}
+-					</h4>
+-					<p className="text-xs text-stone-500 dark:text-stone-400 mb-6 leading-relaxed">
+-						{selectedEndpoint.description}
+-					</p>
+-
+-					{/* Parameters Reference */}
+-					{getParameterDocs(selectedEndpoint.id).length > 0 && (
+-						<div className="mb-6">
+-							<details className="group border border-stone-200 dark:border-stone-800 rounded-md bg-stone-50/50 dark:bg-stone-900/30">
+-								<summary className="flex items-center justify-between p-3 font-semibold text-xs text-stone-700 dark:text-stone-300 cursor-pointer hover:bg-stone-50 dark:hover:bg-stone-900/60 select-none">
+-									<span>Parameters Reference ({getParameterDocs(selectedEndpoint.id).length})</span>
+-									<ChevronRight className="h-4 w-4 text-stone-400 transition-transform group-open:rotate-90" />
+-								</summary>
+-								<div className="p-3 border-t border-stone-200 dark:border-stone-800 overflow-x-auto">
+-									<table className="w-full text-left text-xs border-collapse">
+-										<thead>
+-											<tr className="border-b border-stone-200 dark:border-stone-800 text-stone-500 font-medium">
+-												<th className="pb-2 pr-4 font-mono text-[10px]">Parameter</th>
+-												<th className="pb-2 pr-4 font-mono text-[10px]">In</th>
+-												<th className="pb-2 pr-4 font-mono text-[10px]">Type</th>
+-												<th className="pb-2 pr-4 font-mono text-[10px]">Required</th>
+-												<th className="pb-2">Description</th>
+-											</tr>
+-										</thead>
+-										<tbody>
+-											{getParameterDocs(selectedEndpoint.id).map((doc) => (
+-												<tr key={`${doc.location}:${doc.name}`} className="border-b border-stone-100 dark:border-stone-900/40 last:border-0 hover:bg-stone-50/50 dark:hover:bg-stone-900/20">
+-													<td className="py-2.5 pr-4 font-mono text-[11px] font-semibold text-stone-800 dark:text-stone-200">
+-														{doc.name}
+-													</td>
+-													<td className="py-2.5 pr-4">
+-														<Badge
+-															variant="outline"
+-															className="text-[9px] px-1.5 py-0 font-semibold border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-300"
+-														>
+-															{PARAMETER_LOCATION_LABEL[doc.location]}
+-														</Badge>
+-													</td>
+-													<td className="py-2.5 pr-4 font-mono text-[11px] text-stone-500">
+-														{doc.type}
+-													</td>
+-													<td className="py-2.5 pr-4">
+-														{doc.required ? (
+-															<Badge className="bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400 border-red-100 dark:border-red-900/30 text-[9px] px-1.5 py-0 font-bold">Required</Badge>
+-														) : (
+-															<span className="text-[10px] text-stone-400 font-medium">Optional</span>
+-														)}
+-													</td>
+-													<td className="py-2.5 text-stone-600 dark:text-stone-400 leading-relaxed text-[11px]">
+-														<div>{doc.description}</div>
+-														{doc.allowedValues && (
+-															<div className="mt-1 text-[10px] text-stone-500 flex flex-wrap gap-1 items-center">
+-																<span className="font-semibold text-stone-400">Allowed: </span>
+-																{doc.allowedValues.map(val => <code key={val} className="bg-stone-100 dark:bg-stone-800 px-1 py-0.5 rounded text-[10px] text-stone-600 dark:text-stone-300">{val}</code>)}
+-															</div>
+-														)}
+-														{doc.example && (
+-															<div className="mt-1 text-[10px] text-stone-500">
+-																<span className="font-semibold text-stone-400">Example: </span>
+-																<code className="bg-stone-100 dark:bg-stone-800 px-1 py-0.5 rounded text-[10px] text-stone-600 dark:text-stone-300">{doc.example}</code>
+-															</div>
+-														)}
+-													</td>
+-												</tr>
+-											))}
+-										</tbody>
+-									</table>
+-								</div>
+-							</details>
+-						</div>
+-					)}
+-
+-					{/* CURL Example Section */}
+-					<div className="mb-6">
+-						<div className="flex items-center justify-between mb-2">
+-							<span className="text-xs font-semibold text-stone-700 dark:text-stone-300 flex items-center gap-1.5">
+-								<Terminal className="h-3.5 w-3.5 text-stone-400" /> {messages.REQUEST_CURL_EXAMPLE}
+-							</span>
+-							<button
+-								onClick={() =>
+-									handleCopy(selectedEndpoint.curlExample(activeKey), "curl")
+-								}
+-								className="text-xs flex items-center gap-1 text-stone-500 hover:text-stone-700 dark:hover:text-stone-300"
+-							>
+-								{copiedField === "curl" ? (
+-									<>
+-										<Check className="h-3 w-3 text-emerald-500" /> {messages.COPIED}
+-									</>
+-								) : (
+-									<>
+-										<CopyIcon className="h-3 w-3" /> {messages.COPY_SNIPPET}
+-									</>
+-								)}
+-							</button>
+-						</div>
+-						<pre className="p-3 bg-stone-900 text-stone-200 rounded-md font-mono text-[11px] overflow-x-auto leading-relaxed border border-stone-800">
+-							{selectedEndpoint.curlExample(activeKey)}
+-						</pre>
+-					</div>
+-
+-					{/* Request Body & Response Tabs */}
+-					<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+-						{selectedEndpoint.requestBody && (
+-							<div>
+-								<div className="flex items-center justify-between mb-2">
+-									<span className="text-xs font-semibold text-stone-700 dark:text-stone-300 flex items-center gap-1.5">
+-										<FileText className="h-3.5 w-3.5 text-stone-400" /> {messages.REQUEST_PAYLOAD_JSON}
+-									</span>
+-									<button
+-										onClick={() =>
+-											handleCopy(selectedEndpoint.requestBody || "", "payload")
+-										}
+-										className="text-xs text-stone-400 hover:text-stone-600 dark:hover:text-stone-300"
+-									>
+-										{copiedField === "payload" ? (
+-											<Check className="h-3 w-3 text-emerald-500" />
+-										) : (
+-											<CopyIcon className="h-3 w-3" />
+-										)}
+-									</button>
+-								</div>
+-								<pre className="p-3 bg-stone-50 dark:bg-stone-900 text-stone-700 dark:text-stone-300 rounded-md font-mono text-[10px] overflow-x-auto border border-stone-200 dark:border-stone-800">
+-									{selectedEndpoint.requestBody}
+-								</pre>
+-							</div>
+-						)}
+-
+-						{selectedEndpoint.responseBody && (
+-							<div className={selectedEndpoint.requestBody ? "" : "col-span-2"}>
+-								<div className="flex items-center justify-between mb-2">
+-									<span className="text-xs font-semibold text-stone-700 dark:text-stone-300 flex items-center gap-1.5">
+-										<FileText className="h-3.5 w-3.5 text-stone-400" /> {messages.RESPONSE_BODY_JSON}
+-									</span>
+-									<button
+-										onClick={() =>
+-											handleCopy(selectedEndpoint.responseBody || "", "response")
+-										}
+-										className="text-xs text-stone-400 hover:text-stone-600 dark:hover:text-stone-300"
+-									>
+-										{copiedField === "response" ? (
+-											<Check className="h-3 w-3 text-emerald-500" />
+-										) : (
+-											<CopyIcon className="h-3 w-3" />
+-										)}
+-									</button>
+-								</div>
+-								<pre className="p-3 bg-stone-50 dark:bg-stone-900 text-stone-700 dark:text-stone-300 rounded-md font-mono text-[10px] overflow-x-auto border border-stone-200 dark:border-stone-800">
+-									{selectedEndpoint.responseBody}
+-								</pre>
+-							</div>
+-						)}
+-					</div>
+-				</div>
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/api-keys/manage.tsx b/src/client/src/components/(playground)/api-keys/manage.tsx
+index a15a1849..96a6a1f8 100644
+--- a/src/client/src/components/(playground)/api-keys/manage.tsx
++++ b/src/client/src/components/(playground)/api-keys/manage.tsx
+@@ -117,13 +117,6 @@ export default function ManageKeys() {
+ 				tone="border-primary/20 bg-primary/10 text-primary dark:border-primary/30 dark:bg-primary/15"
+ 				actions={
+ 					<div className="flex items-center gap-2">
+-						<Link
+-							href="/openapi-spec"
+-							className="inline-flex items-center justify-center gap-1.5 rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700 hover:bg-stone-50 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-300 dark:hover:bg-stone-800 transition-colors"
+-						>
+-							<BookOpen className="h-4 w-4" />
+-							<span>{messages.OPENAPI_SPECIFICATION}</span>
+-						</Link>
+ 						<Generate refresh={fetchData} />
+ 					</div>
+ 				}
+diff --git a/src/client/src/components/(playground)/coding-agents/coding-quick-filters.tsx b/src/client/src/components/(playground)/coding-agents/coding-quick-filters.tsx
+deleted file mode 100644
+index 4e9c7e19..00000000
+--- a/src/client/src/components/(playground)/coding-agents/coding-quick-filters.tsx
++++ /dev/null
+@@ -1,223 +0,0 @@
+-"use client";
+-
+-/**
+- * User-picker dropdown rendered next to the global filter button on
+- * the Sessions tab toolbar. Reads/writes the `?user=` URL param so
+- * deep-links and the back button round-trip cleanly with the table
+- * state.
+- *
+- * Fetches via the same POST + OpenLIT context path as the Users tab
+- * (`getData` → `/api/coding-agents/users`) so the picker shares the
+- * page time window, vendor pin, and env-routed ClickHouse — a bare
+- * `fetch` previously missed those headers and defaulted to a 24h GET
+- * that often returned an empty set while Sessions still had rows.
+- *
+- * The list endpoint already enforces the privacy cohort floor, so
+- * `low_cohort` / `unknown` rows are skipped client-side — selecting a
+- * masked identity wouldn't navigate anywhere useful.
+- */
+-
+-import { useCallback, useEffect, useMemo, useState } from "react";
+-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+-import { Button } from "@/components/ui/button";
+-import {
+-	DropdownMenu,
+-	DropdownMenuCheckboxItem,
+-	DropdownMenuContent,
+-	DropdownMenuLabel,
+-	DropdownMenuSeparator,
+-	DropdownMenuTrigger,
+-} from "@/components/ui/dropdown-menu";
+-import { ChevronDown, User, X } from "lucide-react";
+-import { getData } from "@/utils/api";
+-import { useRootStore } from "@/store";
+-import { getFilterDetails } from "@/selectors/filter";
+-
+-interface CodingUserRow {
+-	user: string;
+-	session_count?: number;
+-}
+-
+-interface CodingUserPickerProps {
+-	/** When set, the user list is restricted to this vendor. */
+-	vendorScope?: string | null;
+-}
+-
+-const PICKER_LIMIT = 50;
+-
+-function isSelectableUser(user: string | undefined): boolean {
+-	return Boolean(user) && user !== "low_cohort" && user !== "unknown";
+-}
+-
+-export function CodingUserPicker({ vendorScope }: CodingUserPickerProps) {
+-	const router = useRouter();
+-	const pathname = usePathname();
+-	const searchParams = useSearchParams();
+-	const selectedUser = searchParams?.get("user") || "";
+-	const filter = useRootStore(getFilterDetails);
+-
+-	const [open, setOpen] = useState(false);
+-	const [users, setUsers] = useState<CodingUserRow[]>([]);
+-	const [loading, setLoading] = useState(false);
+-	const [error, setError] = useState<string | null>(null);
+-	const [hadMaskedOnly, setHadMaskedOnly] = useState(false);
+-
+-	const writeUserParam = useCallback(
+-		(next: string | null) => {
+-			const sp = new URLSearchParams(searchParams?.toString() || "");
+-			if (next) {
+-				sp.set("user", next);
+-			} else {
+-				sp.delete("user");
+-			}
+-			const query = sp.toString();
+-			router.replace(`${pathname}${query ? `?${query}` : ""}`, {
+-				scroll: false,
+-			});
+-		},
+-		[pathname, router, searchParams]
+-	);
+-
+-	useEffect(() => {
+-		if (!open) return;
+-		let cancelled = false;
+-		(async () => {
+-			setLoading(true);
+-			setError(null);
+-			setHadMaskedOnly(false);
+-			try {
+-				const body: Record<string, unknown> = {
+-					limit: PICKER_LIMIT,
+-					offset: 0,
+-					timeLimit: {
+-						start: filter.timeLimit?.start,
+-						end: filter.timeLimit?.end,
+-					},
+-					sorting: { type: "sessions", direction: "desc" },
+-					runFilters: {
+-						...(vendorScope ? { vendor: vendorScope } : {}),
+-					},
+-				};
+-				const response = (await getData({
+-					url: "/api/coding-agents/users",
+-					method: "POST",
+-					body: JSON.stringify(body),
+-				})) as {
+-					data?: CodingUserRow[];
+-					records?: CodingUserRow[];
+-					err?: string;
+-					error?: string;
+-				};
+-				if (cancelled) return;
+-				if (response?.err || response?.error) {
+-					setError(String(response.err || response.error));
+-					setUsers([]);
+-					return;
+-				}
+-				const raw = response.data || response.records || [];
+-				const rows = raw.filter((row) => isSelectableUser(row.user));
+-				setHadMaskedOnly(raw.length > 0 && rows.length === 0);
+-				setUsers(rows);
+-			} catch (e) {
+-				if (!cancelled) {
+-					setError(String(e));
+-					setUsers([]);
+-				}
+-			} finally {
+-				if (!cancelled) setLoading(false);
+-			}
+-		})();
+-		return () => {
+-			cancelled = true;
+-		};
+-	}, [
+-		open,
+-		vendorScope,
+-		filter.timeLimit?.start,
+-		filter.timeLimit?.end,
+-	]);
+-
+-	const triggerLabel = useMemo(() => {
+-		if (selectedUser) return selectedUser;
+-		return "All users";
+-	}, [selectedUser]);
+-
+-	const emptyLabel = hadMaskedOnly
+-		? "No identifiable users in this window"
+-		: "No users in this window";
+-
+-	return (
+-		<div className="inline-flex items-center gap-1">
+-			<DropdownMenu open={open} onOpenChange={setOpen}>
+-				<DropdownMenuTrigger asChild>
+-					<Button
+-						variant="outline"
+-						size="sm"
+-						className="h-8 gap-1.5 text-xs font-normal"
+-					>
+-						<User className="h-3.5 w-3.5 text-stone-500" />
+-						<span className="max-w-[180px] truncate">{triggerLabel}</span>
+-						<ChevronDown className="h-3.5 w-3.5 text-stone-400" />
+-					</Button>
+-				</DropdownMenuTrigger>
+-				<DropdownMenuContent align="end" className="w-[260px]">
+-					<DropdownMenuLabel>Filter by user</DropdownMenuLabel>
+-					<DropdownMenuSeparator />
+-					<DropdownMenuCheckboxItem
+-						checked={!selectedUser}
+-						onCheckedChange={() => writeUserParam(null)}
+-					>
+-						All users
+-					</DropdownMenuCheckboxItem>
+-					<DropdownMenuSeparator />
+-					{loading && (
+-						<div className="px-2 py-1.5 text-xs text-stone-500">
+-							Loading…
+-						</div>
+-					)}
+-					{error && (
+-						<div className="px-2 py-1.5 text-xs text-red-600 dark:text-red-400">
+-							{error}
+-						</div>
+-					)}
+-					{!loading && !error && users.length === 0 && (
+-						<div className="px-2 py-1.5 text-xs text-stone-500">
+-							{emptyLabel}
+-						</div>
+-					)}
+-					{users.map((row) => (
+-						<DropdownMenuCheckboxItem
+-							key={row.user}
+-							checked={selectedUser === row.user}
+-							onCheckedChange={(checked) =>
+-								writeUserParam(checked ? row.user : null)
+-							}
+-						>
+-							<div className="flex w-full items-center justify-between gap-2">
+-								<span className="truncate" title={row.user}>
+-									{row.user}
+-								</span>
+-								{typeof row.session_count === "number" && (
+-									<span className="text-[10px] text-stone-500 tabular-nums">
+-										{row.session_count}
+-									</span>
+-								)}
+-							</div>
+-						</DropdownMenuCheckboxItem>
+-					))}
+-				</DropdownMenuContent>
+-			</DropdownMenu>
+-			{selectedUser && (
+-				<Button
+-					variant="ghost"
+-					size="sm"
+-					className="h-8 w-8 p-0"
+-					onClick={() => writeUserParam(null)}
+-					title="Clear user filter"
+-				>
+-					<X className="h-3.5 w-3.5" />
+-				</Button>
+-			)}
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/coding-agents/coding-sessions-tab.tsx b/src/client/src/components/(playground)/coding-agents/coding-sessions-tab.tsx
+deleted file mode 100644
+index fb72e7c7..00000000
+--- a/src/client/src/components/(playground)/coding-agents/coding-sessions-tab.tsx
++++ /dev/null
+@@ -1,53 +0,0 @@
+-"use client";
+-
+-/**
+- * Sessions tab for the coding-agent detail page.
+- *
+- * After PR #1200 merged the new telemetry primitives (`<ObservabilitySignalList>`
+- * + `TraceDetailView` + resizable maximize sheet), this tab is a thin
+- * shell that pins the right vendor + optional user filter and lets the
+- * shared list/sheet machinery do the rest:
+- *   - the list renders via the `'sessions'` signal config
+- *   - row click opens the trace detail sheet at the session-root SpanId
+- *     (Phase 2 of the coding-agents work made that SpanId stable)
+- *   - the sheet has the same maximize handle as `/telemetry`
+- *
+- * The legacy table + custom session-detail sheet that lived here have
+- * been removed; the equivalent transcript / tool / edit drilldowns now
+- * live inside the trace hierarchy explorer.
+- */
+-
+-import { useSearchParams } from "next/navigation";
+-import ObservabilitySignalList from "@/components/(playground)/observability/signal-list";
+-import { getSignalConfig } from "@/components/(playground)/observability/registry";
+-import { CodingUserPicker } from "./coding-quick-filters";
+-import type { UnifiedAgent } from "@/types/agents";
+-
+-interface CodingSessionsTabProps {
+-	agent: UnifiedAgent;
+-}
+-
+-export default function CodingSessionsTab({ agent }: CodingSessionsTabProps) {
+-	const searchParams = useSearchParams();
+-	const pinnedVendor = agent.coding_agent_vendor || null;
+-	// `?vendor=` overrides the agent-pinned vendor so deep-links from
+-	// the Coding agents hub still land on the right vendor scope.
+-	const vendorParam = searchParams?.get("vendor") || pinnedVendor;
+-	const userParam = searchParams?.get("user") || null;
+-	// The user picker is rendered as part of the global toolbar (next
+-	// to the SlidersHorizontal filter button) so it stays in the same
+-	// visual cluster as the time range / sorting / share controls
+-	// instead of spawning a second filter bar above the table.
+-	return (
+-		<ObservabilitySignalList
+-			config={getSignalConfig("sessions")}
+-			runFilters={{
+-				vendor: vendorParam,
+-				user: userParam,
+-			}}
+-			toolbarExtraControls={
+-				<CodingUserPicker vendorScope={vendorParam} />
+-			}
+-		/>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/coding-agents/coding-users-tab.tsx b/src/client/src/components/(playground)/coding-agents/coding-users-tab.tsx
+deleted file mode 100644
+index fad3d89f..00000000
+--- a/src/client/src/components/(playground)/coding-agents/coding-users-tab.tsx
++++ /dev/null
+@@ -1,37 +0,0 @@
+-"use client";
+-
+-/**
+- * Users tab for the coding-agent detail page.
+- *
+- * Thin shell that pins the vendor filter and renders the shared
+- * `ObservabilitySignalList` orchestrator with the `'coding_users'`
+- * signal config. Sort options are driven by the registry's
+- * `customSortOptions` so they live in the same toolbar dropdown
+- * everywhere — see `observability/registry.tsx`.
+- *
+- * Rows are not links. They used to open `/coding-agents/users/[userId]`,
+- * which only existed to embed a dashboard pinned to that user; with the
+- * generic dashboard product removed there is nothing for a row to open.
+- */
+-
+-import { useSearchParams } from "next/navigation";
+-import ObservabilitySignalList from "@/components/(playground)/observability/signal-list";
+-import { getSignalConfig } from "@/components/(playground)/observability/registry";
+-import type { UnifiedAgent } from "@/types/agents";
+-
+-interface CodingUsersTabProps {
+-	agent: UnifiedAgent;
+-}
+-
+-export default function CodingUsersTab({ agent }: CodingUsersTabProps) {
+-	const searchParams = useSearchParams();
+-	const pinnedVendor = agent.coding_agent_vendor || null;
+-	const vendorParam = searchParams?.get("vendor") || pinnedVendor;
+-
+-	return (
+-		<ObservabilitySignalList
+-			config={getSignalConfig("coding_users")}
+-			runFilters={{ vendor: vendorParam }}
+-		/>
+-	);
+-}
+diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
+index f55330ef..ed748bca 100644
+--- a/src/client/src/constants/messages/en.ts
++++ b/src/client/src/constants/messages/en.ts
+@@ -27,27 +27,8 @@ export const OPENAPI_SPECIFICATION = "OpenAPI Specification";
+ 
+ export const OPENAPI_SPECIFICATION_UI = "OpenAPI Specification UI";
+ 
+-export const OPENAPI_SPEC_NAV = "OpenAPI Spec";
+-
+-export const OPENAPI_SPEC_PAGE_TITLE = "Open API Spec";
+-
+-export const INTERACTIVE_API_REFERENCE = "Interactive API Reference";
+-
+-export const OPENAPI_SPEC_BEARER_AUTH = "OpenAPI 3.0 Spec • Bearer Auth Authorized";
+-
+-export const OPENAPI_SPEC_CONTEXT_HEADERS_HINT =
+-	"org / project / environment headers required for signal routing";
+-
+-export const REQUEST_CURL_EXAMPLE = "Request Curl Example";
+-
+-export const COPY_SNIPPET = "Copy Snippet";
+-
+ export const COPIED = "Copied";
+ 
+-export const REQUEST_PAYLOAD_JSON = "Request Payload (JSON)";
+-
+-export const RESPONSE_BODY_JSON = "Response Body (JSON)";
+-
+ export const COPIED_TO_CLIPBOARD = "Copied to clipboard!";
+ 
+ // Prompts
+@@ -1483,8 +1464,6 @@ export const CONTEXT_CONTENT_REQUIRED = "Context content is required!";
+ // Onboarding
+ export const ONBOARDING = "Onboarding";
+ 
+-export const AUTH_DOCUMENTATION = "Documentation";
+-
+ // Context UI
+ export const CONTEXT_TITLE = "Context";
+ 
+diff --git a/src/client/src/constants/settings.ts b/src/client/src/constants/settings.ts
+index 87e20091..7bb1fd85 100644
+--- a/src/client/src/constants/settings.ts
++++ b/src/client/src/constants/settings.ts
+@@ -10,7 +10,6 @@ export function getSettingsTabs(): SettingsTab[] {
+ 	const messages = getMessage();
+ 
+ 	return [
+-		{ value: "profile", label: messages.USER_PROFILE, path: "/settings/profile" },
+ 		{ value: "api-keys", label: messages.API_KEYS, path: "/settings/api-keys" },
+ 	];
+ }
+diff --git a/src/client/src/constants/sidebar.tsx b/src/client/src/constants/sidebar.tsx
+index 4f9eb6e9..d23b9584 100644
+--- a/src/client/src/constants/sidebar.tsx
++++ b/src/client/src/constants/sidebar.tsx
+@@ -109,24 +109,12 @@ export const SIDEBAR_ITEMS: SidebarItemProps[] = [
+ 		collapsible: true,
+ 		icon: <SettingsIcon className={ICON_CLASSES} />,
+ 		children: [
+-			{
+-				icon: <User className={ICON_CLASSES} />,
+-				text: m.USER_PROFILE,
+-				link: "/settings/profile",
+-				type: "action",
+-			},
+ 			{
+ 				icon: <Key className={ICON_CLASSES} />,
+ 				text: m.API_KEYS,
+ 				link: "/settings/api-keys",
+ 				type: "action",
+ 			},
+-			{
+-				icon: <BookOpen className={ICON_CLASSES} />,
+-				text: m.OPENAPI_SPEC_NAV,
+-				link: "/openapi-spec",
+-				type: "action",
+-			},
+ 		],
+ 	},
+ ];
