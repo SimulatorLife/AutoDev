@@ -14,6 +14,7 @@ import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { httpHealthProbe } from "./health-probe.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
+import { sleep } from "./sleep.ts";
 import { waitForProbe } from "./wait-for-probe.ts";
 
 export interface ClaudeEnsureOptions {
@@ -104,10 +105,7 @@ function defaultDeps(options: ClaudeEnsureOptions): ClaudeEnsureDeps {
   return {
     launchd: new LaunchdClient(),
     probe: httpHealthProbe(endpoint),
-    sleep: (ms) =>
-      new Promise((resolve) => {
-        setTimeout(resolve, ms);
-      }),
+    sleep,
     tokenAvailable: () =>
       options.oauthToken.length > 0 || keychainToken(process.env).length > 0,
     plistExists: () => existsSync(options.plist),

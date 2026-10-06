@@ -15,6 +15,7 @@ import { MINIMAX_MODEL_PATTERN } from "@simulatorlife/autodev-runtime/shared/pro
 
 import { httpHealthProbe } from "./health-probe.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
+import { sleep } from "./sleep.ts";
 import { waitForProbe } from "./wait-for-probe.ts";
 
 export interface MiniMaxEnsureOptions {
@@ -104,10 +105,7 @@ function defaultDeps(options: MiniMaxEnsureOptions): MiniMaxEnsureDeps {
   return {
     launchd: new LaunchdClient(),
     probe: httpHealthProbe(endpoint),
-    sleep: (ms) =>
-      new Promise((resolve) => {
-        setTimeout(resolve, ms);
-      }),
+    sleep,
     nodeAvailable: () => options.nodeBin.length > 0,
     plistExists: () => existsSync(options.plist),
     startFallback: (current) => {

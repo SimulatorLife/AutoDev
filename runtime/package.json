@@ -38,6 +38,7 @@
     "./platform/runtime-files": "./src/platform/runtime-files.ts",
     "./platform/runtime-reconciliation": "./src/platform/runtime-reconciliation.ts",
     "./platform/service-restart": "./src/platform/service-restart.ts",
+    "./platform/sleep": "./src/platform/sleep.ts",
     "./platform/wait-for-probe": "./src/platform/wait-for-probe.ts",
     "./providers": "./src/providers/index.ts",
     "./providers/antigravity": "./src/providers/antigravity.ts",

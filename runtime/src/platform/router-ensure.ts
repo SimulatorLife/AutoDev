@@ -19,6 +19,7 @@ import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { ensureCopilotProxy } from "./copilot-ensure.ts";
 import { httpHealthProbe } from "./health-probe.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
+import { sleep } from "./sleep.ts";
 
 export interface RouterEnsurePaths {
   readonly codexHome: string;
@@ -248,10 +249,7 @@ export function createDefaultRouterEnsureDeps(
         return false;
       }
     },
-    sleep: (ms) =>
-      new Promise((resolve) => {
-        setTimeout(resolve, ms);
-      }),
+    sleep,
     now: () => Date.now(),
     mkdir: async (filePath, opts) => {
       await mkdirP(filePath, opts);

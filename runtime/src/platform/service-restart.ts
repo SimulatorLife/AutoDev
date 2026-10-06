@@ -14,6 +14,7 @@ import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/e
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { LaunchdClient } from "./macos/launchd.ts";
+import { sleep } from "./sleep.ts";
 
 const WHITESPACE_SPLIT_PATTERN = /\s+/u;
 const PID_NUMERIC_PATTERN = /^\d+$/u;
@@ -206,10 +207,7 @@ function defaultDeps(): ServiceRestartDeps {
         return false;
       }
     },
-    sleep: (ms) =>
-      new Promise((resolve) => {
-        setTimeout(resolve, ms);
-      }),
+    sleep,
     run: (command, args, input, env) => {
       const stdio: "inherit" | ["pipe", "inherit", "inherit"] =
         input === undefined ? "inherit" : ["pipe", "inherit", "inherit"];

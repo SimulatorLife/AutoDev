@@ -8,6 +8,7 @@ import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { httpHealthProbe } from "./health-probe.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
+import { sleep } from "./sleep.ts";
 import { waitForProbe } from "./wait-for-probe.ts";
 
 export interface CopilotEnsureOptions {
@@ -66,10 +67,7 @@ function defaultDeps(options: CopilotEnsureOptions): CopilotEnsureDeps {
   return {
     launchd: new LaunchdClient(),
     probe: httpHealthProbe(endpoint),
-    sleep: (ms) =>
-      new Promise((resolve) => {
-        setTimeout(resolve, ms);
-      }),
+    sleep,
     commandAvailable: (command) => {
       try {
         execFileSync("which", [command], { stdio: "ignore" });

@@ -8,6 +8,7 @@ import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { httpHealthProbe } from "./health-probe.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
+import { sleep } from "./sleep.ts";
 import { waitForProbe } from "./wait-for-probe.ts";
 
 export interface AntigravityEnsureOptions {
@@ -84,10 +85,7 @@ function defaultDeps(options: AntigravityEnsureOptions): AntigravityEnsureDeps {
   return {
     launchd: new LaunchdClient(),
     probe: httpHealthProbe(endpoint),
-    sleep: (ms) =>
-      new Promise((resolve) => {
-        setTimeout(resolve, ms);
-      }),
+    sleep,
     cliAvailable: () => existsSync(options.cliPath),
     settingsValid: () => {
       try {

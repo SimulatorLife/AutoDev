@@ -8,6 +8,7 @@ import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { httpHealthProbe } from "./health-probe.ts";
 import { resolveServiceNode } from "./host-arch.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
+import { sleep } from "./sleep.ts";
 import { waitForProbe } from "./wait-for-probe.ts";
 
 export const LABEL_AUTODEV_CONSOLE = "com.codex.autodev-console";
@@ -82,10 +83,7 @@ function defaultDeps(options: ConsoleEnsureOptions): ConsoleEnsureDeps {
     launchdAvailable: () =>
       existsSync("/bin/launchctl") || existsSync("/usr/bin/launchctl"),
     probe: httpHealthProbe(endpoint, { cache: "no-store" }),
-    sleep: (ms) =>
-      new Promise((resolve) => {
-        setTimeout(resolve, ms);
-      }),
+    sleep,
     plistExists: () => existsSync(options.plist),
     launcherExists: () => existsSync(options.launcher),
     startFallback: (launcher, logPath) => {
