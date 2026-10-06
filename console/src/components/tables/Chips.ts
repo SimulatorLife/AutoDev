@@ -20,7 +20,12 @@ export interface ChipProps {
   readonly children?: React.ReactNode;
   /** Render the chip as a link when the item leads somewhere. */
   readonly href?: string | undefined;
-  /** Screen-reader label for the chip's meaning. */
+  /**
+   * Overrides the hover text. A chip truncates, so when the content is a plain
+   * string the chip titles itself with that string -- otherwise the ellipsis
+   * is the only thing the operator can see and the real identifier is gone
+   * from the page.
+   */
   readonly label?: string | undefined;
   readonly className?: string | undefined;
 }
@@ -32,20 +37,28 @@ export function Chip({
   className
 }: ChipProps): React.JSX.Element {
   const classes = `${CHIP_CLASS}${className === undefined ? "" : ` ${className}`}`;
+  // `title` is the hover affordance for a truncated chip, so it falls back to
+  // the visible text. Only a string child qualifies: richer content has no
+  // single text to offer and a wrong `title` is worse than none.
+  const text = typeof children === "string" ? children : undefined;
+  const title = label ?? text;
   if (href !== undefined) {
     return React.createElement(
       "a",
       {
         href,
         className: `${classes} underline-offset-4 hover:text-accent hover:underline`,
-        ...(label === undefined ? {} : { "aria-label": label })
+        // `aria-label` only when it says something the text does not; a link
+        // whose text is already the label must not have its name replaced.
+        ...(label === undefined ? {} : { "aria-label": label }),
+        ...(title === undefined ? {} : { title })
       },
       children
     );
   }
   return React.createElement(
     "span",
-    { className: classes, ...(label === undefined ? {} : { title: label }) },
+    { className: classes, ...(title === undefined ? {} : { title }) },
     children
   );
 }

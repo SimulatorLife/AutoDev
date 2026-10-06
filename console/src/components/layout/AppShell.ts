@@ -64,7 +64,14 @@ export function AppShell({
             React.createElement("span", { className: "text-fg-muted" }, "/"),
             React.createElement(
               "h1",
-              { className: "text-lg font-bold text-fg truncate" },
+              // The page title truncates on a narrow window, and it is the one
+              // heading on the page: an ellipsized `h1` tells the operator
+              // which page they are on only partially. The full name stays on
+              // its hover title.
+              {
+                className: "text-lg font-bold text-fg truncate",
+                title: activeSection
+              },
               activeSection
             )
           ),

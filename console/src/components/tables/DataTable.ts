@@ -5,8 +5,11 @@ import { EmptyState } from "../status/EmptyState.ts";
 /**
  * How a cell lays out its content inside the column.
  *
- * - `truncate` (default): one line, ellipsis when it does not fit. The full
- *   value stays reachable through the row's own detail view.
+ * - `truncate` (default): one line, ellipsis when it does not fit. A cell
+ *   whose content is a plain string gets a `title` carrying the whole value,
+ *   so the ellipsis never becomes the only copy. A cell built from elements
+ *   owns its own recovery -- a chip or badge titles itself, and a link's
+ *   destination carries the value.
  * - `tokens`: discrete items (chips, links, badges) that wrap onto new lines
  *   between items. Individual tokens are never split mid-token, so a model id
  *   or environment variable stays readable.
@@ -147,6 +150,24 @@ function columnWeight(column: ColumnDef<never>): number {
 }
 
 /**
+ * The hover text for a truncating cell that holds nothing but a string.
+ *
+ * Returns `undefined` for anything else. An element cell already carries its
+ * own recovery -- `Chip` titles itself, a link holds the value in its
+ * destination -- and titling the cell as well would either duplicate that or,
+ * worse, invent text that does not match what the element shows.
+ */
+function truncatingCellTitle(
+  column: ColumnDef<never>,
+  content: React.ReactNode
+): string | undefined {
+  if ((column.align ?? "truncate") !== "truncate") return undefined;
+  if (typeof content !== "string") return undefined;
+  // An empty cell needs no title; `title=""` is a tooltip with nothing in it.
+  return content.length === 0 ? undefined : content;
+}
+
+/**
  * Resolve every column to a percentage of the table width. Percentages are
  * relative, so the table keeps filling its container at any viewport size and
  * a column set that needs more room than is available shrinks proportionally
@@ -250,6 +271,7 @@ export function DataTable<T>({
             columns.map((col, index) => {
               const content = col.cell(row);
               const clamp = clamps[index];
+              const hover = truncatingCellTitle(col, content);
               return React.createElement(
                 "td",
                 {
@@ -257,7 +279,15 @@ export function DataTable<T>({
                   className: `px-4 py-3 align-top ${cellClassName(
                     col as ColumnDef<never>
                   )}`,
-                  style: { width: widths[index] }
+                  style: { width: widths[index] },
+                  // Truncation removes information, so a truncating cell that
+                  // holds nothing but text keeps the whole value on its hover
+                  // title. Without this the operator's only copy of a 60-
+                  // character scope is the first 20 pixels of it. Element
+                  // content is left alone: a chip or badge titles itself, and
+                  // a link already carries the value in its destination, so
+                  // titling here would either duplicate or invent text.
+                  ...(hover === undefined ? {} : { title: hover })
                 },
                 clamp === null
                   ? content

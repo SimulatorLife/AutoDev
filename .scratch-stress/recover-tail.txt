@@ -1,0 +1,550 @@
+import assert from "node:assert/strict";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import {
+  type AgentDefinition,
+  CANONICAL_NAV_GROUPS,
+  CANONICAL_NAVIGATION,
+  type CanonicalNavSection,
+  type ControlApiModelsResponse,
+  type ControlApiPromptDetailResponse,
+  type ControlApiProvidersResponse,
+  type ExperienceEnvelope,
+  type GithubWorkflowDefinition,
+  LOCAL_CONTROL_API_ACTOR,
+  type McpServerResource,
+  type MemoryRecord,
+  type MemorySessionOutcomeCohortPage,
+  type ToolCatalogItem,
+  type UsageMetricsData
+} from "@simulatorlife/autodev-core";
+import {
+  PHASE_DEVELOPMENT_SERVER,
+  PHASE_PRODUCTION_BUILD,
+  PHASE_PRODUCTION_SERVER
+} from "next/constants.js";
+import { NextRequest } from "next/server.js";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import { ResourceUnavailable } from "../app/_console.ts";
+import * as memoryRoute from "../app/api/memory/route.ts";
+import * as modelRoute from "../app/api/models/[model]/route.ts";
+import * as promptMutationRoute from "../app/api/prompts/[name]/route.ts";
+import * as providerRoleRoute from "../app/api/providers/[provider]/roles/[role]/route.ts";
+import EvaluationsPage from "../app/evaluations/page.ts";
+import MemoryPage from "../app/memory/page.ts";
+import {
+  AgentDetailView,
+  AgentsView,
+  AppNav,
+  BarChart,
+  Breadcrumbs,
+  CALLOUT_WARNING_CLASS,
+  ClosePanelLink,
+  CODE_BLOCK_CLASS,
+  CODE_BLOCK_HEIGHT_CLASS,
+  CODE_EDITOR_CLASS,
+  CODE_SNIPPET_CLASS,
+  CodeBlock,
+  CodeEditor,
+  DataTable,
+  type DataTableProps,
+  DETAIL_DRAWER_CLASS,
+  DETAIL_DRAWER_HEADER_CLASS,
+  DETAIL_DRAWER_SUBTITLE_CLASS,
+  DetailDrawer,
+  EMPTY_BOX_CLASS,
+  EMPTY_INLINE_CLASS,
+  EmptyState,
+  ENTITY_TITLE_CLASS,
+  EvaluationsView,
+  FilterBar,
+  FilterSearchField,
+  formatCount,
+  formatLatency,
+  formatTokenCount,
+  GithubView,
+  HooksView,
+  isProvidersReturnPath,
+  MCP_DETAIL_TABS,
+  McpDetailView,
+  McpsView,
+  MemoryCohortsView,
+  MemoryExperiencesView,
+  MemoryRecordsView,
+  MemoryView,
+  ModelDetailView,
+  PromptDetailView,
+  PromptsView,
+  ProviderDetailView,
+  ProvidersView,
+  resolveActiveTabId,
+  SkillsView,
+  StatCard,
+  StatusBadge,
+  tabHref,
+  TabNav,
+  TAG_SHAPE,
+  ToolDetailView,
+  ToolsView,
+  UsageView,
+  withControlFailure,
+  WorkspacesView
+} from "../src/index.ts";
+import {
+  CONSOLE_BUILD_DIST_DIR,
+  CONSOLE_DEV_DIST_DIR,
+  consoleDistDir
+} from "../src/lib/build-output.ts";
+import {
+  canonicalNavPath,
+  canonicalSectionFromPath
+} from "../src/lib/routes.ts";
+import {
+  CONTROL_API_PATHS,
+  fetchAgentDetail,
+  fetchAgents,
+  fetchControlApi,
+  fetchEvaluations,
+  fetchGithubWorkflows,
+  fetchHooks,
+  fetchMcps,
+  fetchMemoryCohorts,
+  fetchMemoryExperiences,
+  fetchMemoryHistory,
+  fetchMemoryRecord,
+  fetchMemoryRecords,
+  fetchModels,
+  fetchPromptDetail,
+  fetchPrompts,
+  fetchPromptVersion,
+  fetchPromptVersions,
+  fetchProviders,
+  fetchRuntime,
+  fetchSkills,
+  fetchTools,
+  fetchWorkspaces,
+  readControlApiConfig
+} from "../src/lib/server/control-api.ts";
+import {
+  readOpenLITUsageConfig,
+  usageSelectionFromSearchParams
+} from "../src/lib/server/openlit-usage.ts";
+import {
+  hooksFromControlApi,
+  permissionsFromControlApi,
+  promptDocumentFromControlApi,
+  promptsFromControlApi,
+  skillEligibilityFromControlApi,
+  skillsFromControlApi,
+  unresolvedSkillAssignmentsFromControlApi,
+  workspacesFromControlApi
+} from "../src/lib/server/views.ts";
+
+const unavailablePromptHistory = {
+  status: "unavailable",
+  message: "Git history unavailable in this test."
+} as const;
+
+const MEMORY_PAGE_ENV_KEYS = [
+  "HOME",
+  "CODEX_HOME",
+  "AUTODEV_CONTROL_API_TOKEN",
+  "AUTODEV_CONTROL_API_BASE_URL",
+  "AUTODEV_OPENLIT_SECRET_FILE",
+  "AUTODEV_OPENLIT_USAGE_TOKEN",
+  "AUTODEV_OPENLIT_USAGE_URL"
+] as const;
+
+function saveConsolePageEnvironment(): Record<string, string | undefined> {
+  return Object.fromEntries(
+    MEMORY_PAGE_ENV_KEYS.map((key) => [key, process.env[key]])
+  );
+}
+
+function restoreConsolePageEnvironment(
+  saved: Record<string, string | undefined>
+): void {
+  for (const key of MEMORY_PAGE_ENV_KEYS) {
+    const value = saved[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+}
+
+const CONFIGURED_AGENT: AgentDefinition = {
+  id: "orchestrator",
+  role: "orchestrator",
+  kind: "orchestrator",
+  readOnly: false,
+  configured: true,
+  valid: null,
+  status: "configured",
+  convergence: "not-observed",
+  primaryModel: "autodev/orchestrator",
+  models: ["autodev/orchestrator"],
+  providers: ["codex"],
+  tools: [
+    { name: "orchestration", type: "skill" },
+    { name: "playwright", type: "mcp", server: "playwright" }
+  ],
+  toolNames: ["orchestration", "playwright"]
+};
+
+test("AppNav renders Configure/Observe/Operate groups with canonical membership, order, and URL links", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(AppNav, {
+      activeSection: "Agents",
+      counts: { Agents: 8, MCPs: 5 }
+    })
+  );
+
+  // The three canonical groups must each appear with the expected heading
+  // and an aria-labelledby binding for accessibility.
+  for (const groupId of ["Configure", "Observe", "Operate"] as const) {
+    const headingId = `autodev-nav-group-${groupId.toLowerCase()}`;
+    assert.ok(
+      markup.includes(`id="${headingId}"`),
+      `AppNav must render the heading for ${groupId}`
+    );
+    assert.ok(
+      markup.includes(`aria-labelledby="${headingId}"`),
+      `AppNav must bind the ${groupId} section to its heading`
+    );
+    assert.ok(
+      markup.includes(`data-nav-group="${groupId}"`),
+      `AppNav must expose data-nav-group="${groupId}"`
+    );
+    const visibleLabel = new RegExp(`>${groupId}<`);
+    assert.ok(
+      visibleLabel.test(markup),
+      `AppNav must render the visible label "${groupId}"`
+    );
+  }
+
+  // Each group must list its sections in canonical order, and groups must
+  // appear Configure → Observe → Operate.
+  const expectedOrder: readonly (typeof CANONICAL_NAV_GROUPS)[number][] = [
+    ...CANONICAL_NAV_GROUPS
+  ];
+  const groupIndexes = expectedOrder.map((group) =>
+    markup.indexOf(`data-nav-group="${group.id}"`)
+  );
+  for (const [i, idx] of groupIndexes.entries()) {
+    assert.ok(idx !== -1, `Group ${expectedOrder[i]?.id} must render`);
+    if (i > 0) {
+      assert.ok(
+        (idx ?? -1) > (groupIndexes[i - 1] ?? -1),
+        `Group order must be Configure → Observe → Operate`
+      );
+    }
+  }
+
+  let lastIndex = -1;
+  for (const group of CANONICAL_NAV_GROUPS) {
+    const groupStart = markup.indexOf(`data-nav-group="${group.id}"`);
+    let groupEnd = markup.length;
+    for (const other of CANONICAL_NAV_GROUPS) {
+      if (other.id === group.id) continue;
+      const candidate = markup.indexOf(`data-nav-group="${other.id}"`);
+      if (candidate !== -1 && candidate > groupStart && candidate < groupEnd) {
+        groupEnd = candidate;
+      }
+    }
+    for (const section of group.sections) {
+      const idx = markup.indexOf(`data-nav-item="${section.toLowerCase()}"`);
+      assert.ok(idx !== -1, `${section} must be present in AppNav`);
+      assert.ok(idx > lastIndex, `${section} must appear in canonical order`);
+      assert.ok(
+        idx >= groupStart && idx < groupEnd,
+        `${section} must be rendered inside the ${group.id} group`
+      );
+      lastIndex = idx;
+    }
+  }
+
+  // AppNav must render the canonical sections through real <a href="/...">
+  // links rather than buttons that mutate local section state.
+  for (const section of CANONICAL_NAVIGATION) {
+    const href = `href="/${section.toLowerCase()}"`;
+    assert.ok(
+      markup.includes(href),
+      `AppNav must expose a URL link for ${section} (${href})`
+    );
+  }
+  assert.equal(markup.includes("<button"), false);
+  assert.equal(markup.includes("Projects"), false);
+  assert.equal(markup.includes("Organizations"), false);
+  assert.equal(markup.includes("Environments"), false);
+  assert.equal(markup.includes("Rule Engine"), false);
+  assert.equal(markup.includes("OpenGround"), false);
+});
+
+/**
+ * The Console's keyboard-focus contract is a single global rule rather than a
+ * per-component class: `:where(a, button, ...):focus-visible` draws an accent
+ * outline at zero specificity, so a component may omit the utility without
+ * losing the indicator. Tests assert the rule exists instead of demanding every
+ * anchor re-declare it.
+ */
+function globalFocusRingIsDeclared(): boolean {
+  const css = readFileSync(
+    join(import.meta.dirname, "..", "app", "globals.css"),
+    "utf8"
+  );
+  return /:where\([^)]*\):focus-visible\s*\{[^}]*outline:\s*2px solid var\(--color-accent\)/u.test(
+    css
+  );
+}
+
+test("AppNav brand link has visible keyboard focus and no unsupported status pulse", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(AppNav, {
+      activeSection: "Agents"
+    })
+  );
+
+  const brandStart = markup.indexOf('data-nav-brand="autodev"');
+  assert.ok(brandStart !== -1, "AppNav must render the brand link");
+  const brandTagStart = markup.lastIndexOf("<a", brandStart);
+  const brandTagEnd = markup.indexOf(">", brandStart);
+  const brandTag = markup.slice(brandTagStart, brandTagEnd + 1);
+
+  // The brand link must not silently remove the keyboard focus indicator
+  // without providing a replacement; a visible focus-visible style must be
+  // present instead.
+  assert.equal(
+    brandTag.includes("focus:outline-none"),
+    false,
+    "AppNav brand link must not remove focus outline without a visible replacement"
+  );
+  assert.ok(
+    globalFocusRingIsDeclared(),
+    "the shared :focus-visible outline rule must exist for keyboard focus"
+  );
+  // A component may still opt into its own visible ring; if it does, that ring
+  // must be visible rather than `outline-none`.
+  if (brandTag.includes("focus-visible:outline")) {
+    assert.doesNotMatch(brandTag, /focus-visible:outline-none/u);
+  }
+
+  // The brand must not render a pulsing/health-status indicator beside it;
+  // there is no runtime health evidence backing such a dot.
+  const brandEnd = markup.indexOf("</a>", brandStart);
+  const brandMarkup = markup.slice(brandTagStart, brandEnd);
+  assert.doesNotMatch(
+    brandMarkup,
+    /\b(?:animate-pulse|bg-emerald-500)\b/u,
+    "AppNav brand must not render an unsupported pulsing health-status dot"
+  );
+});
+
+test("Breadcrumbs renders a server-renderable landmark with native ancestor links and aria-current on the current page", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(Breadcrumbs, {
+      items: [{ label: "MCPs", href: "/mcps" }, { label: "playwright" }]
+    })
+  );
+
+  // Landmarks: a single <nav aria-label="Breadcrumb"> with an ordered list.
+  assert.match(markup, /<nav aria-label="Breadcrumb"/);
+  const navStart = markup.indexOf('<nav aria-label="Breadcrumb"');
+  const navEnd = markup.indexOf("</nav>", navStart);
+  assert.ok(navStart !== -1 && navEnd !== -1);
+  const navMarkup = markup.slice(navStart, navEnd + "</nav>".length);
+  assert.match(navMarkup, /<ol/);
+  assert.match(navMarkup, /<\/ol>/);
+
+  // Ancestor item: a real <a href="/mcps"> anchor (no client-side router).
+  assert.match(navMarkup, /<a href="\/mcps"[^>]*>MCPs<\/a>/);
+  // Ancestor link must expose a visible keyboard focus state, either through the
+  // shared rule or an explicit one it carries itself.
+  assert.ok(
+    globalFocusRingIsDeclared(),
+    "the shared :focus-visible outline rule must exist for keyboard focus"
+  );
+  const ancestorTag = navMarkup.match(/<a href="\/mcps"[^>]*>/u)?.[0] ?? "";
+  assert.doesNotMatch(ancestorTag, /focus-visible:outline-none/u);
+
+  // Current-page item: a non-link <span aria-current="page"> with the
+  // final item's label, and no href attribute.
+  assert.match(
+    navMarkup,
+    /<span[^>]*aria-current="page"[^>]*>playwright<\/span>/
+  );
+  assert.equal(navMarkup.includes("playwright</a>"), false);
+
+  // The trail is ordered: ancestor appears before the current-page item,
+  // separated by a hidden "/" separator span.
+  const ancestorIdx = navMarkup.indexOf('href="/mcps"');
+  const currentIdx = navMarkup.indexOf('aria-current="page"');
+  assert.ok(ancestorIdx !== -1 && currentIdx !== -1);
+  assert.ok(
+    ancestorIdx < currentIdx,
+    "Breadcrumbs must place the ancestor before the current page"
+  );
+  assert.match(navMarkup, /aria-hidden="true"[^>]*>\/</);
+
+  // No synthetic Home entry is added and no placeholder href="#" is ever
+  // emitted by the component, even for ancestor items.
+  assert.equal(navMarkup.includes("Home"), false);
+  assert.equal(navMarkup.includes('href="#"'), false);
+});
+
+test('Breadcrumbs renders ancestor items without an href as non-link elements and never emits href="#"', () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(Breadcrumbs, {
+      items: [
+        { label: "Workspace hub" },
+        { label: "MCPs", href: "/mcps" },
+        { label: "Unlinked group", href: "" },
+        { label: "playwright" }
+      ]
+    })
+  );
+
+  const navStart = markup.indexOf('<nav aria-label="Breadcrumb"');
+  const navEnd = markup.indexOf("</nav>", navStart);
+  assert.ok(navStart !== -1 && navEnd !== -1);
+  const navMarkup = markup.slice(navStart, navEnd + "</nav>".length);
+
+  // The href-less ancestor renders as a plain span (no anchor wrapping it,
+  // no aria-current, no placeholder href). The class assertion tolerates the
+  // title attribute the truncation behaviour added.
+  // Containment rather than a shape regex: the tag now also carries `title`,
+  // and an optional group nested inside another quantifier is a pattern lint
+  // is right to refuse.
+  assert.ok(
+    navMarkup.includes(
+      'class="min-w-0 truncate rounded-sm text-fg font-medium" title="Workspace hub">Workspace hub</span>'
+    ),
+    `href-less ancestor should be a truncating plain span, got: ${navMarkup}`
+  );
+  assert.equal(navMarkup.includes("Workspace hub</a>"), false);
+  assert.doesNotMatch(navMarkup, /<span[^>]*Workspace hub[^>]*aria-current/);
+  assert.ok(
+    navMarkup.includes('title="Unlinked group">Unlinked group</span>'),
+    `unlinked ancestor should be a plain span, got: ${navMarkup}`
+  );
+
+  // A breadcrumb label is a canonical identifier and can be one long
+  // unbreakable token, so the trail must ellipsize rather than push the page
+  // sideways, and the full label must stay reachable on hover.
+  assert.match(navMarkup, /class="[^"]*truncate[^"]*"/);
+  assert.match(navMarkup, /title="Unlinked group"/);
+  assert.match(navMarkup, /<a href="\/mcps"[^>]*title="MCPs"/);
+  assert.equal(navMarkup.includes("Unlinked group</a>"), false);
+  assert.equal(navMarkup.includes('href=""'), false);
+
+  // The middle ancestor still renders as a native <a href> link.
+  assert.match(navMarkup, /<a href="\/mcps"[^>]*>MCPs<\/a>/);
+
+  // Only the final item carries aria-current="page".
+  const currentMatches = navMarkup.match(/aria-current="page"/g) ?? [];
+  assert.equal(currentMatches.length, 1);
+  assert.match(
+    navMarkup,
+    /<span[^>]*aria-current="page"[^>]*>playwright<\/span>/
+  );
+
+  // Never emit a placeholder href="#" anywhere in the breadcrumb landmark.
+  assert.equal(navMarkup.includes('href="#"'), false);
+});
+
+test("Breadcrumbs exposes a custom aria-label override for the landmark", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(Breadcrumbs, {
+      ariaLabel: "MCP detail navigation",
+      items: [{ label: "MCPs", href: "/mcps" }, { label: "playwright" }]
+    })
+  );
+  assert.match(markup, /<nav aria-label="MCP detail navigation"/);
+});
+
+test("Breadcrumbs renders a single ancestor link with current-page aria state when only one parent is supplied", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(Breadcrumbs, {
+      items: [{ label: "Prompts", href: "/prompts" }, { label: "dry" }]
+    })
+  );
+  assert.match(markup, /<a href="\/prompts"[^>]*>Prompts<\/a>/);
+  assert.match(markup, /<span[^>]*aria-current="page"[^>]*>dry<\/span>/);
+  // Only one separator between the two items.
+  const separatorMatches = markup.match(/aria-hidden="true"/g) ?? [];
+  assert.equal(separatorMatches.length, 1);
+});
+
+test("StatusBadge renders valid variants", () => {
+  for (const status of [
+    "configured",
+    "valid",
+    "invalid",
+    "ready",
+    "unavailable",
+    "converged",
+    "pending",
+    "error",
+    "not-observed"
+  ] as const) {
+    const markup = renderToStaticMarkup(
+      React.createElement(StatusBadge, { status })
+    );
+    assert.ok(markup.includes(`data-status="${status}"`));
+  }
+});
+
+test("AgentsView keeps readiness and convergence unknown without observations", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(AgentsView, { agents: [CONFIGURED_AGENT] })
+  );
+
+  assert.equal(markup.includes("Runtime healthy"), false);
+  assert.equal(markup.includes("Desired vs actual in sync"), false);
+  assert.match(markup, /data-status="not-observed"/);
+  assert.equal(markup.includes(">Not observed<"), true);
+  assert.match(markup, /href="\/agents\/orchestrator"/);
+});
+
+test("Agent detail separates configuration from unobserved runtime state", () => {
+  const long = (type: "skill" | "mcp", name: string) =>
+    type === "skill"
+      ? { type, name }
+      : { type, name, server: name };
+  const markup = renderToStaticMarkup(
+    React.createElement(AgentDetailView, {
+      agent: {
+        id: "orchestrator",
+        role: "orchestrator",
+        kind: "orchestrator",
+        readOnly: false,
+        configured: true,
+        valid: null,
+        status: "configured",
+        convergence: "not-observed",
+        primaryModel: "autodev/orchestrator",
+        allowedProviders: ["codex"],
+        tools: [long("skill", "s".repeat(70)), long("mcp", "m".repeat(70))]
+      }
+    })
+  );
+
+  assert.match(markup, /data-chips="agent-names"/);
+  // The old hand-typed chip geometry must not come back.
+  assert.doesNotMatch(
+    markup,
+    /rounded border border-border-strong bg-surface-raised px-2 py-1 font-mono/
+  );
+  // Every chip carries the shared truncating shape.
+  assert.ok(markup.includes("truncate"));
+});

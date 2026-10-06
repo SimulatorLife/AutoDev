@@ -651,7 +651,13 @@ export function PromptDetailView({
         ),
         React.createElement(
           "span",
-          { className: "truncate font-mono text-xs text-fg-muted" },
+          {
+            className: "truncate font-mono text-xs text-fg-muted",
+            // The path is what an operator copies to open the file, so an
+            // ellipsized version of it is the one truncation that costs real
+            // work rather than a glance.
+            title: prompt.path
+          },
           prompt.path
         )
       ),

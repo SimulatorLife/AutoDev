@@ -51,6 +51,7 @@ import {
   BarChart,
   Breadcrumbs,
   CALLOUT_WARNING_CLASS,
+  Chip,
   chipList,
   ClosePanelLink,
   CODE_BLOCK_CLASS,
@@ -552,6 +553,45 @@ test("the shrink chain holds: a long unbreakable identifier cannot widen its con
     trail.includes(`title="${UNBREAKABLE}"`),
     `an ellipsized breadcrumb must keep the full label reachable, got: ${trail}`
   );
+});
+
+test("a truncating chip keeps its full text reachable instead of only its ellipsis", () => {
+  // Truncation removes information. The operator sees an ellipsis and, if
+  // nothing else carries the value, cannot recover the identifier at all --
+  // so a chip that truncates has to keep the whole string reachable. The
+  // default chip list is the case that mattered: it renders the item as the
+  // chip's own text and passed no `label`, so the chip truncated and offered
+  // no way to read what it had cut off.
+  const name = "s".repeat(70);
+
+  const chips = renderToStaticMarkup(chipList({ items: [name], emptyLabel: "" }));
+  assert.match(chips, /truncate/, `chip must truncate a long identifier`);
+  assert.ok(
+    chips.includes(`title="${name}"`),
+    `a truncating chip must title itself with the full text, got: ${chips}`
+  );
+
+  // A link chip titles itself too, but must not replace its own accessible
+  // name with a redundant `aria-label` when the caller gave none.
+  const link = renderToStaticMarkup(
+    React.createElement(Chip, { href: "/skills/x" }, name)
+  );
+  assert.ok(
+    link.includes(`title="${name}"`),
+    `a truncating chip link must keep the full text reachable, got: ${link}`
+  );
+  assert.doesNotMatch(
+    link,
+    /aria-label/,
+    `a link whose text is already the label must not have its name replaced`
+  );
+
+  // Non-string content has no single text to offer, and a wrong `title` is
+  // worse than none.
+  const structured = renderToStaticMarkup(
+    React.createElement(Chip, null, React.createElement("span", null, "a"))
+  );
+  assert.doesNotMatch(structured, /title=/);
 });
 
 test("StatusBadge renders valid variants", () => {
@@ -6621,6 +6661,59 @@ test("no feature view hand-types an empty state", () => {
     offenders,
     [],
     `These views style an absent-state by hand instead of using EmptyState:\n${offenders.join("\n")}`
+  );
+});
+
+test("nothing truncates text it cannot give back", () => {
+  // Truncation is not a display choice, it is a deletion: after `truncate`,
+  // the first twenty pixels are the only copy of the value on the page unless
+  // something else carries it. Ten elements did this and offered nothing --
+  // the page `h1`, every skill name, the prompt path, the task and run ids,
+  // the claim summary, the record scope.
+  //
+  // The rule is deliberately mechanical rather than a matter of taste, because
+  // the failure is invisible in review: the markup looks right, the ellipsis
+  // looks intentional, and only an operator on a narrow window discovers that
+  // the identifier they needed is gone. Two shared components now own it
+  // outright -- `Chip` titles itself, and `DataTable` titles a truncating cell
+  // whose content is a plain string -- so this guard exists to catch the
+  // one-off span in a feature view, which is exactly where the rest were.
+  //
+  // Scanned by brace-matching rather than by a shape regex: the props object
+  // is arbitrary JavaScript, and a pattern that tries to describe it is either
+  // ambiguous or rejected as unsafe.
+  const roots = ["app", "src"].map((root) => join(import.meta.dirname, "..", root));
+  const offenders: string[] = [];
+  for (const root of roots) {
+    for (const relative of readdirSync(root, { recursive: true })) {
+      const file = join(root, relative.toString());
+      if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
+      const source = readFileSync(file, "utf8");
+      for (let at = source.indexOf("React.createElement("); at !== -1; ) {
+        const propsStart = source.indexOf("{", at + "React.createElement(".length);
+        const propsEnd = matchingBrace(source, propsStart);
+        if (propsStart === -1 || propsEnd === -1) break;
+        const props = source.slice(propsStart, propsEnd + 1);
+        const line = source.slice(0, at).split("\n").length;
+        // Only a bare `truncate` counts. `truncate` inside an arbitrary-length
+        // bracket value, or as part of another utility name, is not the
+        // single-line ellipsis this rule is about.
+        const className = props.match(/className:\s*(["'`])([\s\S]*?)\1/);
+        if (
+          className !== null &&
+          /(^|\s)truncate(\s|$)/u.test(className[2] ?? "") &&
+          !/\btitle:/u.test(props)
+        ) {
+          offenders.push(`${relative}:${line}`);
+        }
+        at = propsEnd + 1;
+      }
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `These elements truncate their text with nothing to give it back. Add a title, or use Chip/DataTable, which do it for you:\n${offenders.join("\n")}`
   );
 });
 

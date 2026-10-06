@@ -108,7 +108,11 @@ function providerColumns(
               { key: role, className: "flex items-center gap-2" },
               React.createElement(
                 "span",
-                { className: "w-20 shrink-0 truncate text-xs text-fg-muted" },
+                // A fixed literal in a `w-20` box. `truncate` here was
+                // inherited from the row layout it no longer belongs to and
+                // could never fire; keeping it invited the reader to assume
+                // the label had a recovery path it did not need.
+                { className: "w-20 shrink-0 text-xs text-fg-muted" },
                 label
               ),
               React.createElement(ProviderRoleToggle, {

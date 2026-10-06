@@ -1,0 +1,32 @@
+fix(console): make long canonical identifiers shrink instead of widening
+
+Every identifier the operator reads is a canonical name rather than
+prose -- an agent role, a skill, an MCP server, a model id -- so the one
+input guaranteed to be a single unbreakable token is also the one most
+likely to be wider than the panel it renders in.
+
+The chain that has to shrink together: a flex item's automatic minimum
+size is its *min-content* width, and `break-words` does not lower it.
+`overflow-wrap: break-word` only breaks a token after the box has been
+narrowed below its min-content width, so `min-w-0` is required at every
+level between the container and the text. The entity title already said
+`break-words` and still overflowed, because nothing below it could
+narrow.
+
+- `DetailDrawer`: `min-w-0` on the header row, the identity column and
+  the title row, so a long title ellipsizes inside the panel.
+- `EntityTitle`: `min-w-0` alongside the existing `break-words`.
+- `chipList`: `max-w-full` on the `li`. The chip's own `max-w-full`
+  resolves against its `li`, so without a cap the `li` sized to content
+  and the chip was handed a container that was never narrower than
+  itself -- `truncate` silently did nothing.
+- `Breadcrumbs`: `min-w-0 max-w-full` down to each item, plus `title`
+  so the full label stays reachable once the visible one is ellipsized.
+- `AgentDetailView`: the header column can shrink, and the two name
+  lists use the shared `chipList` instead of a hand-typed copy that
+  carried its own geometry and none of these properties.
+
+Coverage asserts each level of the chain rather than the rendered
+result, so removing any one of them fails. Verified by breaking all three
+families -- drawer title row, chip `li`, breadcrumb nav -- one at a time
+and confirming the guard failed for each.

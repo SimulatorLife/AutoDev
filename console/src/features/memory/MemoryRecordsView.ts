@@ -21,6 +21,7 @@ import {
   type StatusBadgeVariant
 } from "../../components/status/StatusBadge.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
+import { Chip } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable
@@ -152,7 +153,10 @@ export function MemoryRecordsView({
       cell: (record) =>
         React.createElement(
           "div",
-          { className: "max-w-md truncate text-sm text-fg" },
+          {
+            className: "max-w-md truncate text-sm text-fg",
+            title: record.claim
+          },
           record.claim
         )
     },
@@ -165,7 +169,11 @@ export function MemoryRecordsView({
           "span",
           {
             className:
-              "font-mono text-xs text-fg-muted truncate max-w-[150px] inline-block"
+              "font-mono text-xs text-fg-muted truncate max-w-[150px] inline-block",
+            // A workspace-qualified scope is longer than 150px in every real
+            // repository, so this column truncates on every row, not only on
+            // the adversarial ones.
+            title: formatScopeString(record.scope)
           },
           formatScopeString(record.scope)
         )
@@ -394,11 +402,15 @@ function RecordDetailPanel({
               ),
               record.provenance.evidence.map(
                 (ev: EvidenceReference, i: number) =>
+                  // The shared chip rather than a fourth hand-typed tag: a URI
+                  // is long enough to ellipsize in every repository, and the
+                  // shared chip keeps the whole value on its hover title.
                   React.createElement(
-                    "span",
+                    Chip,
                     {
                       key: i,
-                      className: `${TAG_SHAPE} truncate border-accent/40 bg-accent/15 font-mono text-accent`
+                      className:
+                        "border-accent/40 bg-accent/15 font-mono text-accent"
                     },
                     `${ev.kind}: ${ev.uri}`
                   )

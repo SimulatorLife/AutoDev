@@ -169,7 +169,10 @@ function renderNavItem(
           }),
       React.createElement(
         "span",
-        { className: "hidden xl:inline flex-1 truncate" },
+        {
+          className: "hidden xl:inline flex-1 truncate",
+          title: section
+        },
         section
       ),
       count === undefined

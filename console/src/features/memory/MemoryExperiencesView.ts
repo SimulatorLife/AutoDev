@@ -86,12 +86,15 @@ export function MemoryExperiencesView({
           { className: "flex flex-col font-mono text-xs text-fg-secondary" },
           React.createElement(
             "span",
-            { className: "truncate max-w-[180px]" },
+            { className: "truncate max-w-[180px]", title: exp.taskId },
             exp.taskId
           ),
           React.createElement(
             "span",
-            { className: "text-meta text-fg-muted truncate max-w-[180px]" },
+            {
+              className: "text-meta text-fg-muted truncate max-w-[180px]",
+              title: exp.runId
+            },
             exp.runId
           )
         )

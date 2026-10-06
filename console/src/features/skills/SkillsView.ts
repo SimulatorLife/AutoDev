@@ -75,7 +75,13 @@ export function SkillsView({
           { className: "min-w-0" },
           React.createElement(
             "span",
-            { className: "block font-mono font-semibold text-fg truncate" },
+            {
+              className: "block font-mono font-semibold text-fg truncate",
+              // The skill name is the row's identity and the shortest thing
+              // that distinguishes one row from another, so the ellipsis has
+              // to stay recoverable.
+              title: skill.name
+            },
             skill.name
           ),
           React.createElement(
