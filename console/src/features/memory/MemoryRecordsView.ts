@@ -312,7 +312,7 @@ function RecordDetailPanel({
       "div",
       { className: "flex flex-col gap-2" },
       React.createElement(
-        "h4",
+        "h3",
         {
           className: SECTION_HEADING_CLASS
         },
@@ -341,7 +341,7 @@ function RecordDetailPanel({
             "rounded border border-border bg-background/50 p-4 flex flex-col gap-2"
         },
         React.createElement(
-          "h4",
+          "h3",
           {
             className: SECTION_HEADING_CLASS
           },
@@ -387,7 +387,7 @@ function RecordDetailPanel({
             "rounded border border-border bg-background/50 p-4 flex flex-col gap-2"
         },
         React.createElement(
-          "h4",
+          "h3",
           {
             className: SECTION_HEADING_CLASS
           },
@@ -440,7 +440,7 @@ function RecordDetailPanel({
           "div",
           { className: "flex flex-col gap-2 text-xs" },
           React.createElement(
-            "h4",
+            "h3",
             {
               className: SECTION_HEADING_CLASS
             },
@@ -499,7 +499,7 @@ function RecordDetailPanel({
           "div",
           { className: "flex flex-col gap-2" },
           React.createElement(
-            "h4",
+            "h3",
             {
               className: SECTION_HEADING_CLASS,
               id: TRANSITION_HISTORY_HEADING_ID

@@ -140,6 +140,7 @@ import {
   fetchMemoryHistory,
   fetchMemoryRecord,
   fetchMemoryRecords,
+  fetchMemoryUseCohorts,
   fetchModels,
   fetchPermissions,
   fetchPromptDetail,
@@ -5166,10 +5167,44 @@ test("Memory detail and the workspace catalog fail closed on unreadable response
   });
   const workspaceId = "SimulatorLife/AutoDev";
 
-  const record = { schema: "autodev-memory-record-v1", memory: { id: "r1" } };
+  // A *complete* record. This fixture used to be `{ memory: { id: "r1" } }`
+  // asserted `ok`, which is the identifier-only payload the row guards were
+  // originally written around: it passed, and then the detail view dereferenced
+  // `memory.provenance.experienceIds` on nothing. An assertion that encodes the
+  // bug is how the bug survives, so the fixture now carries what the view reads.
+  const memory = {
+    id: "r1",
+    kind: "semantic",
+    scope: { kind: "workspace", workspaceId },
+    claim: "A durable claim.",
+    status: "active",
+    provenance: {
+      experienceIds: ["e1"],
+      evidence: [],
+      createdBy: "x",
+      createdAt: "t"
+    },
+    validity: { state: "verified", evidence: [] },
+    createdAt: "t",
+    updatedAt: "t"
+  };
+  const record = { schema: "autodev-memory-record-v1", memory };
   assert.equal(
     (await fetchMemoryRecord("r1", workspaceId, config, serve(record))).kind,
     "ok"
+  );
+  // The shape that used to pass and then throw on the detail page.
+  assert.notEqual(
+    (
+      await fetchMemoryRecord(
+        "r1",
+        workspaceId,
+        config,
+        serve({ schema: "autodev-memory-record-v1", memory: { id: "r1" } })
+      )
+    ).kind,
+    "ok",
+    "an identifier-only record must not reach the detail view"
   );
   for (const broken of [
     { schema: "autodev-memory-record-v0", memory: { id: "r1" } },
@@ -5188,7 +5223,10 @@ test("Memory detail and the workspace catalog fail closed on unreadable response
   // governed durable record.
   const history = {
     schema: "autodev-memory-history-v1",
-    memory: { id: "r1" },
+    // The same complete record: the history panel renders the record's
+    // provenance and validity beside its transitions, so an identifier-only
+    // `memory` here was a payload that passed and then threw.
+    memory,
     transitions: []
   };
   assert.equal(
@@ -5196,7 +5234,11 @@ test("Memory detail and the workspace catalog fail closed on unreadable response
     "ok"
   );
   for (const broken of [
-    { schema: "autodev-memory-history-v1", memory: { id: "r1" } },
+    {
+      schema: "autodev-memory-history-v1",
+      memory: { id: "r1" },
+      transitions: []
+    },
     { ...history, transitions: {} },
     { ...history, memory: null }
   ]) {
@@ -6902,6 +6944,298 @@ test("the resource failure shell keeps its error tint and lets a long error code
   assert.match(markup, /rounded-lg border shadow p-6/);
 });
 
+test("a memory row missing a member its view dereferences fails closed instead of throwing", async () => {
+  // The row guards checked identifiers and then stopped one level short: a
+  // durable record's `provenance` and `validity` were checked with `isRecord`,
+  // which passes for `{}`, while the view calls `.map` on
+  // `provenance.evidence` and reads `validity.state` three times. An experience
+  // envelope was never checked for `trajectory` at all, and the detail view
+  // reads `experience.trajectory.format` unguarded -- Core declares the member
+  // required, so that payload was well-formed except for one absent field and
+  // produced a live `TypeError: Cannot read properties of undefined (reading
+  // 'format')`: a 500 with no <h1>.
+  //
+  // Found by driving the memory detail route for the first time. No previous
+  // sweep rendered /memory at all, because the live router has no Memory
+  // backend, so every earlier "clean" result for that route was clean because
+  // nothing was there. Each case below is a shape that produced the crash, or
+  // would have.
+  const config = {
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "server-only"
+  };
+  const serve = (payload: unknown) => ({
+    fetchImpl: async () => Response.json(payload)
+  });
+  const scope = { workspaceId: "SimulatorLife/AutoDev" };
+
+  const record = {
+    id: "rec-1",
+    kind: "semantic",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    claim: "A claim",
+    status: "active",
+    provenance: {
+      experienceIds: ["exp-1"],
+      evidence: [{ kind: "trace", uri: "trace://1" }],
+      createdBy: "curator",
+      createdAt: "2026-01-01T00:00:00.000Z"
+    },
+    validity: {
+      state: "verified",
+      evidence: [{ kind: "trace", uri: "trace://1" }]
+    },
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-02T00:00:00.000Z"
+  };
+  const experience = {
+    id: "exp-1",
+    workspaceId: "SimulatorLife/AutoDev",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    taskId: "task-1",
+    runId: "run-1",
+    agentId: "orchestrator",
+    evidence: [{ kind: "trajectory", uri: "traj://1" }],
+    trajectory: { format: "codex/jsonl", uri: "traj://1" }
+  };
+  const page = (items: readonly unknown[], schema: string) => ({
+    schema,
+    items,
+    total: items.length,
+    limit: 50,
+    offset: 0
+  });
+
+  // The complete rows must still be accepted. A guard that is too strict is
+  // indistinguishable in the UI from bad data, and this is the assertion that
+  // keeps these guards from drifting toward rejecting real payloads.
+  assert.equal(
+    (
+      await fetchMemoryRecords(
+        scope,
+        config,
+        serve(page([record], "autodev-memory-records-v1"))
+      )
+    ).kind,
+    "ok",
+    "a complete durable record must be accepted"
+  );
+  assert.equal(
+    (
+      await fetchMemoryExperiences(
+        scope,
+        config,
+        serve(page([experience], "autodev-memory-experiences-v1"))
+      )
+    ).kind,
+    "ok",
+    "a complete experience envelope must be accepted"
+  );
+
+  // Each dropped member is asserted individually, because a loop over one
+  // fixture proves only the first case.
+  const droppedRecords: readonly (readonly [
+    string,
+    Record<string, unknown>
+  ])[] = [
+    ["provenance emptied", { ...record, provenance: {} }],
+    [
+      "provenance without experienceIds",
+      { ...record, provenance: { evidence: [] } }
+    ],
+    ["validity emptied", { ...record, validity: {} }]
+  ];
+  for (const [label, row] of droppedRecords) {
+    const result = await fetchMemoryRecords(
+      scope,
+      config,
+      serve(page([row], "autodev-memory-records-v1"))
+    );
+    assert.notEqual(
+      result.kind,
+      "ok",
+      `a record with ${label} must fail closed`
+    );
+  }
+
+  const noTrajectory: Record<string, unknown> = { ...experience };
+  delete noTrajectory.trajectory;
+  const droppedExperiences: readonly (readonly [
+    string,
+    Record<string, unknown>
+  ])[] = [
+    ["no trajectory", noTrajectory],
+    [
+      "trajectory without format",
+      { ...experience, trajectory: { uri: "traj://1" } }
+    ],
+    [
+      "trajectory without uri",
+      { ...experience, trajectory: { format: "codex/jsonl" } }
+    ]
+  ];
+  for (const [label, row] of droppedExperiences) {
+    const result = await fetchMemoryExperiences(
+      scope,
+      config,
+      serve(page([row], "autodev-memory-experiences-v1"))
+    );
+    assert.notEqual(
+      result.kind,
+      "ok",
+      `an experience with ${label} must fail closed`
+    );
+  }
+
+  // The cohort page validated its envelope and not one cell. The view calls
+  // `.toLocaleString()` on every cell's counts, so a single malformed cell took
+  // the whole tab down.
+  const cohortScope = {
+    workspaceId: "SimulatorLife/AutoDev",
+    repositoryId: "autodev",
+    occurredFrom: "2026-09-06T00:00:00.000Z",
+    occurredUntil: "2026-10-06T00:00:00.000Z"
+  };
+  const sessionCohortPage = (cells: readonly unknown[]) => ({
+    schema: "autodev-memory-session-outcome-cohorts-v1",
+    workspaceId: "SimulatorLife/AutoDev",
+    repositoryId: "autodev",
+    occurredFrom: cohortScope.occurredFrom,
+    occurredUntil: cohortScope.occurredUntil,
+    cells,
+    sessionCount: 64,
+    reportedSessionCount: 60,
+    unreportedSessionCount: 4,
+    conflictingOutcomeSessionCount: 2,
+    mixedModeSessionCount: 1
+  });
+  assert.equal(
+    (
+      await fetchMemoryCohorts(
+        cohortScope,
+        config,
+        serve(
+          sessionCohortPage([
+            {
+              memoryMode: "retrieval-only",
+              outcomeKind: "success",
+              sessionCount: 27
+            },
+            // A null outcomeKind means "no outcome report exists for this
+            // cell", which the view renders as unobserved. That is a real
+            // state, not a malformed cell, so it must still be accepted.
+            { memoryMode: "jit", outcomeKind: null, sessionCount: 18 }
+          ])
+        )
+      )
+    ).kind,
+    "ok",
+    "a cohort page with a null outcomeKind must be accepted"
+  );
+  const droppedCells: readonly (readonly [string, unknown])[] = [
+    ["no sessionCount", { memoryMode: "jit", outcomeKind: "success" }],
+    ["no memoryMode", { outcomeKind: "success", sessionCount: 3 }]
+  ];
+  for (const [label, cell] of droppedCells) {
+    const result = await fetchMemoryCohorts(
+      cohortScope,
+      config,
+      serve(sessionCohortPage([cell]))
+    );
+    assert.notEqual(
+      result.kind,
+      "ok",
+      `a cohort cell with ${label} must fail closed`
+    );
+  }
+
+  // And the injection-use cohort fetch, which had no response guard at all --
+  // how nineteen other fetches were hardened earlier and this one was missed.
+  assert.equal(
+    (
+      await fetchMemoryUseCohorts(
+        cohortScope,
+        config,
+        serve({
+          schema: "autodev-memory-injection-use-cohorts-v1",
+          workspaceId: "SimulatorLife/AutoDev",
+          repositoryId: "autodev",
+          occurredFrom: cohortScope.occurredFrom,
+          occurredUntil: cohortScope.occurredUntil,
+          cells: [
+            {
+              memoryMode: "retrieval-only",
+              sessionCardinality: "single",
+              useKind: "used",
+              exposureCount: 148
+            }
+          ],
+          exposureCount: 148
+        })
+      )
+    ).kind,
+    "ok",
+    "a complete injection-use cohort page must be accepted"
+  );
+  assert.notEqual(
+    (
+      await fetchMemoryUseCohorts(
+        cohortScope,
+        config,
+        serve({
+          schema: "autodev-memory-injection-use-cohorts-v1",
+          workspaceId: "SimulatorLife/AutoDev",
+          repositoryId: "autodev",
+          occurredFrom: cohortScope.occurredFrom,
+          occurredUntil: cohortScope.occurredUntil,
+          cells: [
+            { memoryMode: "jit", sessionCardinality: "single", useKind: "used" }
+          ],
+          exposureCount: 3
+        })
+      )
+    ).kind,
+    "ok",
+    "a use-cohort cell with no exposureCount must fail closed"
+  );
+});
+test("a drawer title row can lose space to its badges, never the other way round", () => {
+  // The title row is the one flex line where the wrong item must not shrink.
+  // Badges are `whitespace-nowrap` pills, so their automatic minimum size is
+  // their full width and they cannot shrink at all; the title carries `min-w-0`
+  // precisely so a long unbreakable id can, which made the title the only item
+  // that *could* give. At a 390px viewport the memory experience drawer had a
+  // 194px row holding "Role: orchestrator" (148px) and "not_run" (79px) plus a
+  // 12px gap, and the entity name collapsed to a zero-width, 224px-tall box:
+  // nothing painted, and the panel reserved the height of a name it was not
+  // showing.
+  //
+  // Measured in Chromium before the fix and after it, on the real page; this
+  // test holds the layout contract so it cannot come back through a refactor.
+  // A `flex-wrap` row is what puts the badges on their own line instead.
+  assert.match(
+    DETAIL_DRAWER_TITLE_ROW_CLASS,
+    /\bflex-wrap\b/,
+    `the drawer title row must wrap, got: ${DETAIL_DRAWER_TITLE_ROW_CLASS}`
+  );
+  assert.match(
+    DETAIL_DRAWER_TITLE_ROW_CLASS,
+    /\bmin-w-0\b/,
+    `the drawer title row must stay shrinkable as a whole, got: ${DETAIL_DRAWER_TITLE_ROW_CLASS}`
+  );
+
+  // The badge pills must keep `whitespace-nowrap`: a chip that breaks mid-word
+  // to avoid this problem trades one defect for another. The fix is the wrap,
+  // not making badges squish.
+  const chip = renderToStaticMarkup(
+    React.createElement(Chip, { label: "Filter" }, "Role: orchestrator")
+  );
+  assert.match(
+    chip,
+    /whitespace-nowrap/,
+    `a badge must not be made to shrink; the row wraps instead, got: ${chip}`
+  );
+});
 test("a catalog row missing the fields its view reads fails closed instead of throwing", async () => {
   // The failure shell is only reachable when a fetcher reports `ok`. A guard
   // that narrows a payload to its catalog type but checks only the row's

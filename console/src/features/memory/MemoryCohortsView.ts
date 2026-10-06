@@ -256,7 +256,7 @@ export function MemoryCohortsView({
           : "unavailable"
       },
       React.createElement(
-        "h3",
+        "h2",
         {
           className: SECTION_HEADING_CLASS
         },
@@ -295,7 +295,7 @@ export function MemoryCohortsView({
           useCohorts === null ? "unavailable" : "observed"
       },
       React.createElement(
-        "h3",
+        "h2",
         {
           className: SECTION_HEADING_CLASS
         },

@@ -743,6 +743,61 @@ function isMemoryScope(value: unknown): boolean {
 }
 
 /**
+ * Narrows one durable record's provenance block.
+ *
+ * `isMemoryRecordRow` checked `isRecord(value.provenance)` and nothing else,
+ * which is the same mistake as checking only a row's identifier: the view reads
+ * `provenance.experienceIds.length` and calls `.map` over `provenance.evidence`,
+ * so a record carrying `provenance: {}` passed the guard and threw during
+ * render -- an HTTP 500 with no `<h1>` at all, which is strictly worse than the
+ * visible failure shell the guards exist to produce. Core declares
+ * `experienceIds` and `evidence` required and `lastVerifiedAt` optional, which
+ * is exactly the boundary this draws.
+ */
+function isMemoryProvenance(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.experienceIds) &&
+    value.experienceIds.every((id) => typeof id === "string") &&
+    Array.isArray(value.evidence)
+  );
+}
+
+/**
+ * Narrows one durable record's validity block.
+ *
+ * Same reasoning as the provenance block: `isRecord(value.validity)` let a
+ * record through whose `validity` had no `state`, and the record detail renders
+ * `validity.state` three times -- including a three-way colour choice between
+ * "verified", "contradicted" and everything else. An absent state compares as
+ * none of them, so it would also have been coloured as a warning about a claim
+ * whose validity was never checked.
+ */
+function isMemoryValidity(value: unknown): boolean {
+  return isRecord(value) && typeof value.state === "string";
+}
+
+/**
+ * Narrows one raw experience envelope's trajectory block.
+ *
+ * This one was live, not theoretical: `MemoryExperiencesView` reads
+ * `experience.trajectory.format` unguarded, Core declares `trajectory` required
+ * and the guard never mentioned it, so an envelope without one arrived as `ok`
+ * and threw `Cannot read properties of undefined (reading 'format')` -- a 500
+ * with no `<h1>`, on the experience detail route. Every other member the view
+ * reads is optional in Core and already read with `?.`: `validation?.state`,
+ * `agentRole ?? "unknown"`, `trajectory.digest?.`, `diagnosticCodes?.`. Only
+ * `format` and `uri` are read as though present, so only they are required here.
+ */
+function isMemoryTrajectory(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.format === "string" &&
+    typeof value.uri === "string"
+  );
+}
+
+/**
  * Narrows one durable record.
  *
  * The paged guard checked the envelope and never the items, so a record missing
@@ -759,8 +814,8 @@ function isMemoryRecordRow(value: unknown): boolean {
     isMemoryScope(value.scope) &&
     typeof value.claim === "string" &&
     typeof value.status === "string" &&
-    isRecord(value.provenance) &&
-    isRecord(value.validity) &&
+    isMemoryProvenance(value.provenance) &&
+    isMemoryValidity(value.validity) &&
     typeof value.createdAt === "string" &&
     typeof value.updatedAt === "string"
   );
@@ -780,7 +835,69 @@ function isMemoryExperienceRow(value: unknown): boolean {
     typeof value.taskId === "string" &&
     typeof value.runId === "string" &&
     typeof value.agentId === "string" &&
-    Array.isArray(value.evidence)
+    Array.isArray(value.evidence) &&
+    isMemoryTrajectory(value.trajectory)
+  );
+}
+
+/**
+ * Narrows one session-outcome cohort cell.
+ *
+ * `isSessionOutcomeCohortPage` checked `Array.isArray(value.cells)` and never a
+ * single cell, so the same hole reached the cohort table: the view calls
+ * `.toLocaleString()` on `sessionCount` and `exposureCount` and reads five other
+ * members off every cell, so one malformed cell turned the tab into a 500 with
+ * no `<h1>`. `outcomeKind` and `useKind` are null by design -- Core says a null
+ * outcomeKind means no outcome report exists for that cell, which the view
+ * renders as unobserved rather than as a failure -- so they are checked as
+ * "string or null" rather than required.
+ */
+function isSessionOutcomeCohortCell(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.memoryMode === "string" &&
+    typeof value.sessionCount === "number" &&
+    (value.outcomeKind === null || typeof value.outcomeKind === "string")
+  );
+}
+
+/**
+ * Narrows one injection-use cohort cell.
+ *
+ * A different cell shape from the session cohort's: it is keyed on how many
+ * injections the session captured and what the curator concluded about them,
+ * and Core says an absent `useKind` means "eligible but unassessed" rather than
+ * "not used" -- so it is checked as "string or null" for the same reason the
+ * session cell's `outcomeKind` is.
+ */
+function isInjectionUseCohortCell(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.memoryMode === "string" &&
+    typeof value.sessionCardinality === "string" &&
+    typeof value.exposureCount === "number" &&
+    (value.useKind === null || typeof value.useKind === "string")
+  );
+}
+
+/**
+ * Narrows the injection-use cohort page.
+ *
+ * This fetch had no response guard at all, which is how nineteen other fetches
+ * were hardened earlier and this one was missed: the response went straight to
+ * the view, where a malformed cell makes the view call `.toLocaleString()` on
+ * `undefined`. The session cohort page beside it has had a guard since it was
+ * added; this one never did.
+ */
+function isInjectionUseCohortPage(
+  value: unknown
+): value is ControlApiMemoryUseCohortsResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-memory-injection-use-cohorts-v1" &&
+    Array.isArray(value.cells) &&
+    value.cells.every(isInjectionUseCohortCell) &&
+    typeof value.exposureCount === "number"
   );
 }
 
@@ -815,7 +932,11 @@ function isMemoryRecordDetailResponse(
   return (
     isRecord(value) &&
     value.schema === "autodev-memory-record-v1" &&
-    isRecord(value.memory)
+    // The record row guard, not `isRecord`: the detail view renders the same
+    // provenance and validity blocks the list view does, so a record that
+    // would fail closed on the list must not pass here and 500 on the detail
+    // page. Reusing the predicate is also what keeps the two from drifting.
+    isMemoryRecordRow(value.memory)
   );
 }
 
@@ -825,10 +946,10 @@ function isMemoryHistoryResponse(
   return (
     isRecord(value) &&
     value.schema === "autodev-memory-history-v1" &&
-    isRecord(value.memory) &&
     // `transitions` is the evidence the history panel is entirely made of; a
     // missing list is not an empty history.
-    Array.isArray(value.transitions)
+    Array.isArray(value.transitions) &&
+    isMemoryRecordRow(value.memory)
   );
 }
 
@@ -838,7 +959,10 @@ function isMemoryExperienceDetailResponse(
   return (
     isRecord(value) &&
     value.schema === "autodev-memory-experience-v1" &&
-    isRecord(value.experience)
+    // This is the guard whose absence produced a live 500: the detail view
+    // renders `experience.trajectory.format`, and `isRecord(value.experience)`
+    // let an envelope without one through. The row guard requires it.
+    isMemoryExperienceRow(value.experience)
   );
 }
 
@@ -855,6 +979,7 @@ function isSessionOutcomeCohortPage(
     isRecord(value) &&
     value.schema === "autodev-memory-session-outcome-cohorts-v1" &&
     Array.isArray(value.cells) &&
+    value.cells.every(isSessionOutcomeCohortCell) &&
     typeof value.sessionCount === "number" &&
     typeof value.reportedSessionCount === "number" &&
     typeof value.unreportedSessionCount === "number"
@@ -1895,7 +2020,7 @@ export async function fetchMemoryCohorts(
       );
 }
 
-export function fetchMemoryUseCohorts(
+export async function fetchMemoryUseCohorts(
   params: {
     readonly workspaceId: string;
     readonly repositoryId: string;
@@ -1912,11 +2037,14 @@ export function fetchMemoryUseCohorts(
   search.set("occurredFrom", params.occurredFrom);
   search.set("occurredUntil", params.occurredUntil);
   const path = `${CONTROL_API_PATHS.memoryUseCohorts}?${search.toString()}`;
-  return fetchControlApi<ControlApiMemoryUseCohortsResponse>(
-    path,
-    config,
-    options
-  );
+  const result = await fetchControlApi<unknown>(path, config, options);
+  if (result.kind !== "ok") return result;
+  return isInjectionUseCohortPage(result.data)
+    ? { kind: "ok", data: result.data }
+    : invalidMemoryPageResponse(
+        "injection-use cohorts",
+        "autodev-memory-injection-use-cohorts-v1"
+      );
 }
 
 export function proposeMemoryRecord(

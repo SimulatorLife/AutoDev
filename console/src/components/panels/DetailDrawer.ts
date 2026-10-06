@@ -42,8 +42,27 @@ export const DETAIL_DRAWER_CLASS =
 export const DETAIL_DRAWER_HEADER_CLASS =
   "flex min-w-0 items-start justify-between border-b border-border pb-4";
 
-/** Title and badges share a baseline; the subtitle sits under them. */
-export const DETAIL_DRAWER_TITLE_ROW_CLASS = "flex min-w-0 items-center gap-3";
+/**
+ * Title and badges share a baseline; the subtitle sits under them.
+ *
+ * `flex-wrap` is load-bearing, and it was added because of what happens without
+ * it at a phone width. The badges are `StatusBadge`/`Chip` pills: `whitespace-
+ * nowrap`, so their min-content width is their full width, and as flex items
+ * their automatic minimum size is that same min-content width. They therefore
+ * cannot shrink at all. The title is the one item carrying `min-w-0`, so it was
+ * the only thing that *could* give -- and at 390px the experience drawer gave
+ * all of it: `Role: orchestrator` (148px) and `not_run` (79px) plus a 12px gap
+ * against a 194px row, so the entity name collapsed to a **zero-width, 224px-
+ * tall** box. Nothing painted, and the panel reserved the height of a name it
+ * was not showing.
+ *
+ * That is the wrong item to lose. A title row whose title can be squeezed out
+ * of existence by its own accessories has no title at the width where a long id
+ * is most likely. Wrapping puts the badges on their own line instead, and the
+ * name keeps whatever line it is on.
+ */
+export const DETAIL_DRAWER_TITLE_ROW_CLASS =
+  "flex min-w-0 flex-wrap items-center gap-3";
 
 /** A machine-readable fact about the selected item, such as its scope. */
 export const DETAIL_DRAWER_SUBTITLE_CLASS = "text-xs text-fg-muted font-mono";
