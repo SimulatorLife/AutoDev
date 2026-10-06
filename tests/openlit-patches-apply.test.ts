@@ -904,6 +904,35 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     /No log entry with this id/u,
     "a readable request that returns no record is not the same as an unreadable one"
   );
+  // The trace detail page had the same two defects: no `error` read, and a
+  // title that settled on the raw span id over a permanently loading body.
+  const traceDetail = readFileSync(
+    join(
+      dir,
+      "src/client/src/components/(playground)/observability/trace-detail-page.tsx"
+    ),
+    "utf8"
+  );
+  assert.match(
+    traceDetail,
+    /const \{ data, fireRequest, isLoading, error, isFetched \} = useFetchWrapper\(\)/u,
+    "the trace detail page cannot tell an unreadable span from a loading one without the hook's error and isFetched"
+  );
+  assert.match(
+    traceDetail,
+    /const fetchError = error \?\? \(data as any\)\?\.err/u,
+    "a 500 on the span route never reaches `data`, so reading only data.err hides it"
+  );
+  assert.doesNotMatch(
+    traceDetail,
+    /: selectedSpanId;?\s*$/mu,
+    "the title must not settle on the raw span id when the read failed"
+  );
+  assert.match(
+    traceDetail,
+    /No trace with this id in the selected source and time range/u,
+    "a readable request that returns no span is not the same as an unreadable one"
+  );
   // `logs/` in the fork's .gitignore silently hid the new route directory.
   assert.match(
     readFileSync(join(dir, ".gitignore"), "utf8"),

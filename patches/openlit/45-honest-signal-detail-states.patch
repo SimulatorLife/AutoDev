@@ -1,0 +1,83 @@
+diff --git a/src/client/src/components/(playground)/observability/trace-detail-page.tsx b/src/client/src/components/(playground)/observability/trace-detail-page.tsx
+index 93346602..6025e513 100644
+--- a/src/client/src/components/(playground)/observability/trace-detail-page.tsx
++++ b/src/client/src/components/(playground)/observability/trace-detail-page.tsx
+@@ -429,7 +429,7 @@ export function TraceDetailView({
+ 	const detailBasePathRef = useRef(
+ 		type === "exceptions" ? "/telemetry/exceptions" : "/telemetry/traces"
+ 	);
+-	const { data, fireRequest, isLoading } = useFetchWrapper();
++	const { data, fireRequest, isLoading, error, isFetched } = useFetchWrapper();
+ 	const {
+ 		data: listData,
+ 		fireRequest: fireListRequest,
+@@ -549,6 +549,12 @@ export function TraceDetailView({
+ 
+ 	const raw = (data as any)?.record;
+ 	const trace = raw ? normalizeTrace(raw) : null;
++	// A failed request never reaches `data` — useFetchWrapper clears it and puts
++	// the message in `error` — so without this the page settled on a title made
++	// of the raw span id and an empty body, which reads as a broken page rather
++	// than an unreadable one.
++	const fetchError = error ?? (data as any)?.err;
++	const notFound = isFetched && !trace && !fetchError;
+ 	const resourceAttributes = raw?.ResourceAttributes || {};
+ 	const spanAttributes = raw?.SpanAttributes || {};
+ 	const serviceNamespace = resourceAttributes["service.namespace"];
+@@ -749,10 +755,24 @@ export function TraceDetailView({
+ 		}),
+ 		[raw]
+ 	);
+-	const title = trace?.spanName || (isLoading ? m.OBSERVABILITY_TRACE_LOADING : selectedSpanId);
++	const title =
++		trace?.spanName ||
++		(isLoading
++			? m.OBSERVABILITY_TRACE_LOADING
++			: fetchError
++				? "Trace unavailable"
++				: notFound
++					? "Trace not found"
++					: selectedSpanId);
+ 	const resultsHref =
+ 		from || `/telemetry?tab=${type === "exceptions" ? "exceptions" : "traces"}`;
+-	const breadcrumbTitle = trace?.spanName || (isLoading ? m.OBSERVABILITY_LOADING : m.OBSERVABILITY_TRACE_DETAILS);
++	const breadcrumbTitle =
++		trace?.spanName ||
++		(isLoading
++			? m.OBSERVABILITY_LOADING
++			: fetchError || notFound
++				? title
++				: m.OBSERVABILITY_TRACE_DETAILS);
+ 
+ 	const customHeader = useMemo(
+ 		() => ({
+@@ -898,6 +918,17 @@ export function TraceDetailView({
+ 						/>
+ 						<Stat icon={<Cpu className="h-3.5 w-3.5" />} label={m.OBSERVABILITY_MODEL} value={modelValue} />
+ 					</div>
++				) : fetchError ? (
++					<div
++						role="alert"
++						className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200"
++					>
++						{String(fetchError)}
++					</div>
++				) : notFound ? (
++					<div className="rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-600 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-400">
++						No trace with this id in the selected source and time range.
++					</div>
+ 				) : undefined
+ 			}
+ 			actions={
+@@ -927,6 +958,11 @@ export function TraceDetailView({
+ 				</div>
+ 			}
+ 		>
++			{!trace && !fetchError ? (
++				<p className="p-3 text-sm text-stone-500 dark:text-stone-400">
++					{notFound ? "Nothing to show." : "Loading trace…"}
++				</p>
++			) : null}
+ 			{trace && (
+ 				<div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+ 					<div className="flex shrink-0 flex-wrap gap-1.5">
