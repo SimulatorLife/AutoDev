@@ -115,6 +115,58 @@ test("limit headers round-trip through the reader the router uses", () => {
   );
 });
 
+test("a declared limit survives any header bag a pluggable fetch could produce", () => {
+  // What reaches readLimitHeaders came off an injectable fetch, so it is never
+  // more specific than unknown. These are the shapes that actually occur: the
+  // global Headers, a plain record, and substitute implementations of the
+  // Headers contract -- workerd, Bun and node-fetch v2 all look like the last
+  // ones, and an `instanceof Headers` check silently read those as empty.
+  const limit: ProviderLimit = {
+    limitClass: "quota_exhausted",
+    limitType: "weekly",
+    resetsAt: "2026-09-06T15:40:00.000Z",
+    source: LIMIT_SOURCE_REPORTED
+  };
+  const headers = limitResponseHeaders(limit);
+  const backing = new Headers(headers);
+  const substitute = {
+    get: (name: string) => backing.get(name) ?? null,
+    has: (name: string) => backing.has(name)
+  };
+  // A substitute whose storage is not enumerable, the way a real Headers is.
+  const opaqueSubstitute = {
+    get: (name: string) => backing.get(name) ?? null,
+    [Symbol.toStringTag]: "Headers"
+  };
+
+  for (const [label, bag] of [
+    ["global Headers", new Headers(headers)],
+    ["plain record", headers],
+    ["substitute { get }", substitute],
+    ["substitute with opaque storage", opaqueSubstitute]
+  ] as const) {
+    assert.deepEqual(
+      readLimitHeaders(bag),
+      limit,
+      `${label} must round-trip the declared limit`
+    );
+  }
+
+  assert.equal(
+    readLimitHeaders({ "X-AutoDev-Limit-Class": "quota_exhausted" })
+      ?.limitClass,
+    "quota_exhausted",
+    "a record must still match its header name case-insensitively"
+  );
+
+  // A substitute that reports nothing is a substitute, not a crash.
+  assert.equal(readLimitHeaders({ get: () => null }), null);
+  assert.equal(readLimitHeaders(undefined), null);
+  assert.equal(readLimitHeaders(null), null);
+  assert.equal(readLimitHeaders("not-headers"), null);
+  assert.equal(readLimitHeaders({ get: "not-callable" }), null);
+});
+
 test("an incomplete turn carries its work, and says plainly that it is partial", () => {
   const limit: ProviderLimit = {
     limitClass: "session_limit",

@@ -185,22 +185,39 @@ export function limitResponseHeaders(
   return headers;
 }
 
-function headerValue(
-  headers: LimitHeaders | Headers | null | undefined,
-  name: string
-): string | null {
-  if (!headers) return null;
-  const get =
-    headers instanceof Headers ? (key: string) => headers.get(key) : null;
-  const raw = get
-    ? get(name)
-    : (() => {
-        const record = headers as LimitHeaders;
-        const key = Object.keys(record).find(
-          (candidate: string) => candidate.toLowerCase() === name
-        );
-        return key === undefined ? undefined : record[key];
-      })();
+/**
+ * A reader for one header name, or null when nothing header-shaped was given.
+ *
+ * This is a capability probe rather than `instanceof Headers`. The same web API
+ * class has several implementations -- undici, workerd, Bun, node-fetch v2 --
+ * lives in more than one realm, and any duck-typed fetch double is a perfectly
+ * good substitute for a header bag. `instanceof` misclassifies every one of
+ * those as a plain record, and `Object.keys()` on a real `Headers` instance
+ * returns nothing, so a header the provider actually sent would read as absent.
+ *
+ * At this boundary that failure is silent and expensive: a missed
+ * `quota_exhausted` or `session_limit` degrades a declared hard limit into a
+ * generic transient failure, which cools down briefly instead of until the
+ * declared reset.
+ */
+function headerReader(headers: unknown): ((name: string) => unknown) | null {
+  if (!headers || typeof headers !== "object") return null;
+  const get = (headers as { get?: unknown }).get;
+  if (typeof get === "function")
+    return (name) => (get as (key: string) => unknown).call(headers, name);
+  const record = headers as LimitHeaders;
+  return (name) => {
+    const key = Object.keys(record).find(
+      (candidate: string) => candidate.toLowerCase() === name
+    );
+    return key === undefined ? undefined : record[key];
+  };
+}
+
+function headerValue(headers: unknown, name: string): string | null {
+  const read = headerReader(headers);
+  if (!read) return null;
+  const raw = read(name);
   const single = Array.isArray(raw) ? raw[0] : raw;
   return typeof single === "string" && single.trim() ? single.trim() : null;
 }
@@ -209,10 +226,12 @@ function headerValue(
  * The inverse of `limitResponseHeaders`, for the router reading a failed
  * upstream response. Returns null when the provider said nothing structural, so
  * the caller can tell "no limit reported" from "limit reported without a reset".
+ *
+ * Accepts any header bag -- a `Headers`, a plain record, or a substitute
+ * implementation of either shape -- because what reaches this point came off a
+ * pluggable fetch and was never more specific than `unknown`.
  */
-export function readLimitHeaders(
-  headers: LimitHeaders | Headers | null | undefined
-): ProviderLimit | null {
+export function readLimitHeaders(headers: unknown): ProviderLimit | null {
   const limitClass = headerValue(headers, LIMIT_HEADER_CLASS);
   if (!limitClass) return null;
   const source = headerValue(headers, LIMIT_HEADER_SOURCE);

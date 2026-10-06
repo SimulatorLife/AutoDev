@@ -557,9 +557,7 @@ export function declaredLimit(
   headers: unknown,
   body: unknown
 ): ProviderLimit | null {
-  const fromHeaders = readLimitHeaders(
-    headers as Parameters<typeof readLimitHeaders>[0]
-  );
+  const fromHeaders = readLimitHeaders(headers);
   if (fromHeaders) {
     return {
       limitClass: fromHeaders.limitClass,
