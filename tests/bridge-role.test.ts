@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   bridgeSandboxMode,
@@ -110,6 +112,93 @@ test("the execution contract preserves role-specific capabilities across bridge 
     /CodeGraphContext \(CGC\)/
   );
   assert.match(roleInstructions("docs-researcher"), /do not call those tools/i);
+});
+
+test("the role-prompt cache is bounded and eviction never changes what a role resolves to", () => {
+  // The role reaches roleInstructions from a request header, so an unbounded
+  // cache grew the heap once per distinct role string -- and nearly all of that
+  // growth was duplication, because roleContract folds every unrecognised role
+  // onto the default contract and rolePromptName folds it onto default.md.
+  //
+  // Two properties have to hold together: the cache must stay bounded, and
+  // eviction must be invisible. A prompt is a deterministic function of the
+  // role, so recomputing an evicted entry returns the identical string.
+  const known = roleInstructions("explorer");
+  const unknown = roleInstructions("mystery-role-a");
+  // Unknown roles genuinely share one prompt; only their cache keys differed.
+  assert.equal(
+    roleInstructions("mystery-role-b"),
+    unknown,
+    "two unrecognised roles must resolve to the same prompt text"
+  );
+
+  // Push far past any plausible cache bound with distinct role strings.
+  for (let index = 0; index < 500; index += 1) {
+    roleInstructions(`cache-pressure-role-${index}`);
+  }
+
+  assert.equal(
+    roleInstructions("explorer"),
+    known,
+    "a re-read after eviction must return the byte-identical prompt"
+  );
+  assert.equal(
+    roleInstructions("mystery-role-a"),
+    unknown,
+    "an evicted unknown role must recompute to the same string"
+  );
+  assert.equal(
+    roleInstructions(ORCHESTRATOR_AGENT_ROLE),
+    roleInstructions(ORCHESTRATOR_AGENT_ROLE),
+    "the orchestrator tier keeps its own entry"
+  );
+});
+
+test("the role-prompt cache declares a limit and evicts the oldest key", () => {
+  // The cache is module-private, so the bound is pinned where it is enforced.
+  // Read through normalizedSource so the assertion survives reformatting.
+  const text = normalizedSource(read("runtime/src/agents/bridge-role.ts"));
+  assert.match(text, /const ROLE_PROMPT_CACHE_LIMIT = \d+;/u);
+  assert.match(text, /cache\.size > ROLE_PROMPT_CACHE_LIMIT/u);
+  assert.match(
+    text,
+    /cache\.keys\(\)\.next\(\)\.value/u,
+    "eviction must drop the oldest key, not an arbitrary one"
+  );
+  assert.match(
+    text,
+    /const cache = new Map<string, string>\(\);/u,
+    "the cache must stay typed so an evicted read cannot return undefined"
+  );
+});
+
+test("distinct roles do not retain heap once per role", () => {
+  // Runs the committed measurement in a child process because it needs
+  // --expose-gc, which the test runner does not pass through. The budget is
+  // chosen to separate the two implementations rather than to pin a number:
+  // bounded retains 131 bytes/role (0.25 MiB over 2000 roles, identical across
+  // repeated runs), unbounded retained 2840 (5.49 MiB). 400 sits ~3x above
+  // bounded and ~7x below unbounded, so a regression fails clearly rather than
+  // flaking in either direction.
+  const script = fileURLToPath(
+    new URL("../scripts/role-prompt-cache-memory.mjs", import.meta.url)
+  );
+  const output = execFileSync(
+    process.execPath,
+    ["--expose-gc", script, "2000"],
+    { encoding: "utf8" }
+  );
+  const bytesPerRole = Number.parseInt(
+    /retained per new role\s*:\s*(\d+)/u.exec(output)?.[1] ?? ""
+  );
+  assert.ok(
+    Number.isFinite(bytesPerRole),
+    `measurement output was not understood:\n${output}`
+  );
+  assert.ok(
+    bytesPerRole <= 400,
+    `retained ${bytesPerRole} bytes per distinct role; the cache is unbounded again\n${output}`
+  );
 });
 
 test("provider adapters put the complete shared prompt in the actual CLI prompt", () => {

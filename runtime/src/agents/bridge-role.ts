@@ -49,7 +49,18 @@ const ROLE_PROMPT_NAMES = new Set([
   "validator",
   "worker"
 ]);
-const cache = new Map();
+// Bounded: the role reaches this module from a request header, so the key
+// domain is caller-controlled and unbounded, and every entry holds a fully
+// composed prompt. That makes an unbounded map into steady heap growth driven
+// by request data -- and the growth is nearly all duplication, because
+// `roleContract` collapses every unrecognised role onto the same default
+// contract and `rolePromptName` folds unknown roles onto the same prompt file,
+// so two different unknown roles cache byte-identical strings under different
+// keys. Map iterates in insertion order, so the oldest entry is the one that
+// goes. Eviction costs a re-read at most: the prompt is a deterministic
+// function of the role, so a re-read returns the same string.
+const ROLE_PROMPT_CACHE_LIMIT = 64;
+const cache = new Map<string, string>();
 const BASE_PROMPT = readFileSync(PROMPTS.base, "utf8").trim();
 const CODE_SEARCH_PROMPT = readFileSync(PROMPTS.codeSearch, "utf8").trim();
 
@@ -125,34 +136,36 @@ export function roleInstructions(role: string | null | undefined): string {
   const contractKey = isOrchestratorRole(role) ? "orchestrator" : role;
   const contract = roleContract(contractKey);
   const cacheKey = `${key}:${contractKey ?? "default"}`;
-  if (!cache.has(cacheKey)) {
-    const bootstrap = readFileSync(PROMPTS[key], "utf8").trim();
-    const canonical =
-      key === "orchestrator"
-        ? `\n\n## Canonical orchestration skill\n\n${readFileSync(ORCHESTRATION_SKILL, "utf8").trim()}`
-        : "";
-    const codeSearch =
-      contract.mcp.includes(MCP_SERVER_CODEGRAPHCONTEXT) &&
-      contract.mcp.includes(MCP_SERVER_LSP) &&
-      contract.mcp.includes(MCP_SERVER_COCOINDEX)
-        ? `\n\n${CODE_SEARCH_PROMPT}`
-        : "";
-    const rolePrompt = readFileSync(
-      path.join(PROMPTS.roleDirectory, `${rolePromptName(role)}.md`),
-      "utf8"
-    ).trim();
-    const tools =
-      contract.mcp.length > 0 ? contract.mcp.join(", ") : "none declared";
-    const webResearch =
-      contract.webResearch?.search && contract.webResearch?.fetch
-        ? " Website research is available through the provider's native search/fetch tools; use those for public documentation and URLs, never Playwright."
-        : "";
-    cache.set(
-      cacheKey,
-      `${bootstrap}${canonical}${codeSearch}\n\n## Effective role contract\n\n${rolePrompt}\n\nExpected MCP/tool capabilities: ${tools}.${webResearch} If a required capability is unavailable, report that fact instead of silently substituting a different workflow.`
-    );
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined) return cached;
+  const bootstrap = readFileSync(PROMPTS[key], "utf8").trim();
+  const canonical =
+    key === "orchestrator"
+      ? `\n\n## Canonical orchestration skill\n\n${readFileSync(ORCHESTRATION_SKILL, "utf8").trim()}`
+      : "";
+  const codeSearch =
+    contract.mcp.includes(MCP_SERVER_CODEGRAPHCONTEXT) &&
+    contract.mcp.includes(MCP_SERVER_LSP) &&
+    contract.mcp.includes(MCP_SERVER_COCOINDEX)
+      ? `\n\n${CODE_SEARCH_PROMPT}`
+      : "";
+  const rolePrompt = readFileSync(
+    path.join(PROMPTS.roleDirectory, `${rolePromptName(role)}.md`),
+    "utf8"
+  ).trim();
+  const tools =
+    contract.mcp.length > 0 ? contract.mcp.join(", ") : "none declared";
+  const webResearch =
+    contract.webResearch?.search && contract.webResearch?.fetch
+      ? " Website research is available through the provider's native search/fetch tools; use those for public documentation and URLs, never Playwright."
+      : "";
+  const prompt = `${bootstrap}${canonical}${codeSearch}\n\n## Effective role contract\n\n${rolePrompt}\n\nExpected MCP/tool capabilities: ${tools}.${webResearch} If a required capability is unavailable, report that fact instead of silently substituting a different workflow.`;
+  cache.set(cacheKey, prompt);
+  if (cache.size > ROLE_PROMPT_CACHE_LIMIT) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey !== undefined) cache.delete(oldestKey);
   }
-  return cache.get(cacheKey);
+  return prompt;
 }
 
 /**
