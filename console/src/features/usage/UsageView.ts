@@ -47,6 +47,18 @@ const DURATION_FORMATTER = new Intl.NumberFormat("en-US", {
 const FILTER_GROUP_CLASS = "flex items-center gap-1.5 text-xs text-fg-muted";
 const EMPTY_STATE_CLASS = "text-xs text-fg-muted italic py-2";
 
+/**
+ * One row of a "label, value" breakdown list.
+ *
+ * Every Usage breakdown widget — requests by role, attempts by provider, calls
+ * by tool — presents the same shape, so they share this row. The tool-name
+ * widget used to render each entry as its own bordered card inside an already
+ * bordered panel, which read as a nested box and left one small tile floating
+ * in a wide empty panel.
+ */
+const BREAKDOWN_ROW_CLASS =
+  "flex items-center justify-between gap-3 text-xs py-1 border-b border-border/60 last:border-none";
+
 export function formatTokenCount(value: number | null): string {
   if (value === null) return NOT_OBSERVED_LABEL;
   return TOKEN_FORMATTER.format(value);
@@ -339,8 +351,7 @@ export function UsageView({
                     "div",
                     {
                       key: item.role,
-                      className:
-                        "flex items-center justify-between text-xs py-1 border-b border-border/60 last:border-none"
+                      className: BREAKDOWN_ROW_CLASS
                     },
                     React.createElement(
                       "span",
@@ -388,8 +399,7 @@ export function UsageView({
                     "div",
                     {
                       key: item.provider,
-                      className:
-                        "flex items-center justify-between text-xs py-1 border-b border-border/60 last:border-none"
+                      className: BREAKDOWN_ROW_CLASS
                     },
                     React.createElement(
                       "span",
@@ -451,41 +461,33 @@ export function UsageView({
       ),
       React.createElement(
         "div",
-        { className: "grid grid-cols-2 md:grid-cols-4 gap-4" },
+        null,
         callsByTool === null || callsByTool === undefined
           ? React.createElement(
               "p",
-              {
-                className: "text-xs text-fg-muted italic col-span-full"
-              },
+              { className: EMPTY_STATE_CLASS },
               "Tool-call telemetry not observed."
             )
           : callsByTool.length === 0
             ? React.createElement(
                 "p",
-                {
-                  className: "text-xs text-fg-muted italic col-span-full"
-                },
+                { className: EMPTY_STATE_CLASS },
                 "No MCP tool calls were observed in this time range."
               )
             : callsByTool.map((item) =>
                 React.createElement(
                   "div",
-                  {
-                    key: item.tool,
-                    className:
-                      "bg-background p-3 rounded border border-border flex flex-col justify-between"
-                  },
+                  { key: item.tool, className: BREAKDOWN_ROW_CLASS },
                   React.createElement(
                     "span",
                     {
-                      className: "text-xs font-mono text-fg-muted truncate"
+                      className: "font-mono text-fg truncate min-w-0"
                     },
                     formatDimension(item.tool)
                   ),
                   React.createElement(
                     "span",
-                    { className: "text-lg font-bold text-fg mt-1" },
+                    { className: "shrink-0 tabular-nums" },
                     formatCount(item.count)
                   )
                 )
