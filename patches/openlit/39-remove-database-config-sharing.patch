@@ -1,0 +1,1931 @@
+diff --git a/src/client/prisma/migrations/20260820100000_drop_database_config_sharing/migration.sql b/src/client/prisma/migrations/20260820100000_drop_database_config_sharing/migration.sql
+new file mode 100644
+index 00000000..8438f3e3
+--- /dev/null
++++ b/src/client/prisma/migrations/20260820100000_drop_database_config_sharing/migration.sql
+@@ -0,0 +1,13 @@
++-- Sharing a database config with another user is not an AutoDev product
++-- concept: there is a single operator, so there is nobody to share it with.
++-- The invited-user queue and the per-user edit/delete/share grants only ever
++-- existed to constrain a second user, and the share dialog that wrote them is
++-- gone.
++--
++-- `databaseconfiguser` itself stays: it is the user<->config link that also
++-- records which config is current. Only the three grant columns go.
++DROP TABLE IF EXISTS "DatabaseConfigInvitedUser";
++
++ALTER TABLE "databaseconfiguser" DROP COLUMN "canShare";
++ALTER TABLE "databaseconfiguser" DROP COLUMN "canEdit";
++ALTER TABLE "databaseconfiguser" DROP COLUMN "canDelete";
+diff --git a/src/client/prisma/schema.prisma b/src/client/prisma/schema.prisma
+index 47031d49..89e0663d 100644
+--- a/src/client/prisma/schema.prisma
++++ b/src/client/prisma/schema.prisma
+@@ -218,7 +218,6 @@ model DatabaseConfig {
+   createdByUser   User                        @relation(fields: [createdByUserId], references: [id])
+   projectId       String?                     @map("project_id")
+   project         Project?                    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+-  dbInvitedUsers  DatabaseConfigInvitedUser[]
+   apiKeys         APIKeys[]
+   opengrounds     OpenGround[]
+   telemetryBindings TelemetrySourceBinding[]
+@@ -301,9 +300,6 @@ model DatabaseConfigUser {
+   user             User            @relation(fields: [userId], references: [id])
+   databaseConfig   DatabaseConfig? @relation(fields: [databaseConfigId], references: [id], onDelete: Cascade)
+   isCurrent        Boolean         @default(false)
+-  canEdit          Boolean         @default(false)
+-  canShare         Boolean         @default(false)
+-  canDelete        Boolean         @default(false)
+   createdAt        DateTime?       @default(now())
+   updatedAt        DateTime?       @updatedAt
+ 
+@@ -330,17 +326,6 @@ model OpenGround {
+   @@map("openground")
+ }
+ 
+-model DatabaseConfigInvitedUser {
+-  databaseConfigId String
+-  databaseConfig   DatabaseConfig? @relation(fields: [databaseConfigId], references: [id])
+-  email            String
+-  canEdit          Boolean         @default(false)
+-  canShare         Boolean         @default(false)
+-  canDelete        Boolean         @default(false)
+-
+-  @@unique([databaseConfigId, email])
+-}
+-
+ model APIKeys {
+   id               String          @id @default(cuid())
+   name             String          @default("default")
+diff --git a/src/client/src/__tests__/app/api/pricing/export/[dbConfigId]/route.test.ts b/src/client/src/__tests__/app/api/pricing/export/[dbConfigId]/route.test.ts
+index d9a95948..62801a36 100644
+--- a/src/client/src/__tests__/app/api/pricing/export/[dbConfigId]/route.test.ts
++++ b/src/client/src/__tests__/app/api/pricing/export/[dbConfigId]/route.test.ts
+@@ -12,17 +12,10 @@ jest.mock("@/lib/audit/route", () => ({
+ 	withAudit: (handler: unknown) => handler,
+ }));
+ 
+-jest.mock("@/lib/rbac/current", () => ({
+-	withCurrentOrganisationPermission: jest.fn(
+-		(_permission: string, handler: unknown) => handler
+-	),
+-}));
+-
+ jest.mock("@/lib/platform/pricing/export", () => ({
+ 	getPricingExport: jest.fn(),
+ }));
+ 
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import { getPricingExport } from "@/lib/platform/pricing/export";
+ import { GET } from "@/app/api/pricing/export/[dbConfigId]/route";
+ 
+@@ -30,23 +23,11 @@ const mockedGetPricingExport = getPricingExport as jest.MockedFunction<
+ 	typeof getPricingExport
+ >;
+ 
+-// Captured before any mock is reset: the wrapping happens once, at
+-// module-evaluation time (`export const GET = withAudit(
+-// withCurrentOrganisationPermission(...))`), not per-request. CE's version
+-// of these wrappers is a no-op pass-through; enterprise editions resolve
+-// them to real permission + audit checks around this same handler.
+-const permissionGateCall = (withCurrentOrganisationPermission as jest.Mock).mock
+-	.calls[0];
+-
+ describe("GET /api/pricing/export/[dbConfigId]", () => {
+ 	beforeEach(() => {
+ 		mockedGetPricingExport.mockReset();
+ 	});
+ 
+-	it("is gated behind the pricing:export permission key", () => {
+-		expect(permissionGateCall).toEqual(["pricing:export", expect.any(Function)]);
+-	});
+-
+ 	it("returns the shared pricing export data with a cache header on success", async () => {
+ 		mockedGetPricingExport.mockResolvedValue({
+ 			data: { chat: { "gpt-4": { promptPrice: 0.01, completionPrice: 0.02 } } },
+diff --git a/src/client/src/__tests__/components/database-config-tabs.test.tsx b/src/client/src/__tests__/components/database-config-tabs.test.tsx
+deleted file mode 100644
+index c8c46486..00000000
+--- a/src/client/src/__tests__/components/database-config-tabs.test.tsx
++++ /dev/null
+@@ -1,54 +0,0 @@
+-import { fireEvent, render, screen } from "@testing-library/react";
+-import DatabaseConfigTabs from "@/components/(playground)/database-config/database-config-tabs";
+-import { TooltipProvider } from "@/components/ui/tooltip";
+-
+-describe("DatabaseConfigTabs", () => {
+-	it("renders localized actions and database config items", () => {
+-		const onClickTab = jest.fn();
+-		const onClickItemChangeActive = jest.fn();
+-
+-		render(
+-			<TooltipProvider>
+-				<DatabaseConfigTabs
+-					addButton
+-					items={[
+-						{
+-							id: "db-1",
+-							name: "Default DB",
+-							badge: "production",
+-							isCurrent: true,
+-							canSelect: false,
+-						},
+-					]}
+-					onClickItemChangeActive={onClickItemChangeActive}
+-					onClickTab={onClickTab}
+-					selectedTabId="db-1"
+-				/>
+-			</TooltipProvider>
+-		);
+-
+-		expect(screen.getByText("Add New Config")).toBeInTheDocument();
+-		expect(screen.getByText("Default DB")).toBeInTheDocument();
+-		expect(screen.getByText("production")).toBeInTheDocument();
+-		expect(screen.getByRole("checkbox")).toBeDisabled();
+-
+-		fireEvent.click(screen.getByText("Add New Config"));
+-		expect(onClickTab).toHaveBeenCalledTimes(1);
+-	});
+-
+-	it("hides the create action when creation is unavailable", () => {
+-		render(
+-			<TooltipProvider>
+-				<DatabaseConfigTabs
+-					items={[]}
+-					onClickItemChangeActive={jest.fn()}
+-					onClickTab={jest.fn()}
+-					selectedTabId=""
+-					addButton={false}
+-				/>
+-			</TooltipProvider>
+-		);
+-
+-		expect(screen.queryByText("Add New Config")).not.toBeInTheDocument();
+-	});
+-});
+diff --git a/src/client/src/__tests__/lib/db-config.test.ts b/src/client/src/__tests__/lib/db-config.test.ts
+index 991b349a..fb126a97 100644
+--- a/src/client/src/__tests__/lib/db-config.test.ts
++++ b/src/client/src/__tests__/lib/db-config.test.ts
+@@ -19,10 +19,6 @@ jest.mock('@/lib/prisma', () => ({
+       delete: jest.fn(),
+       count: jest.fn(),
+     },
+-    databaseConfigInvitedUser: {
+-      findMany: jest.fn(),
+-      create: jest.fn(),
+-    },
+     project: {
+       findFirst: jest.fn(),
+     },
+@@ -87,8 +83,6 @@ import {
+   upsertDBConfig,
+   deleteDBConfig,
+   setCurrentDBConfig,
+-  shareDBConfig,
+-  moveSharedDBConfigToDBUser,
+ } from '@/lib/db-config';
+ import prisma from '@/lib/prisma';
+ import { getCurrentUser } from '@/lib/session';
+@@ -138,14 +132,11 @@ describe('getDBConfigByUser', () => {
+     expect(result).toEqual([]);
+   });
+ 
+-  it('returns configs with permissions and isCurrent flag', async () => {
++  it('returns configs with the isCurrent flag', async () => {
+     const mockUserConfig = {
+       databaseConfigId: 'db1',
+       isCurrent: true,
+       databaseConfig: mockDbConfig,
+-      canEdit: true,
+-      canDelete: true,
+-      canShare: false,
+     };
+     (prisma.databaseConfigUser.findMany as jest.Mock)
+       .mockResolvedValueOnce([]) // orphaned configs query
+@@ -153,8 +144,6 @@ describe('getDBConfigByUser', () => {
+     const result = (await getDBConfigByUser()) as any;
+     expect(result).toHaveLength(1);
+     expect(result[0].isCurrent).toBe(true);
+-    expect(result[0].permissions.canEdit).toBe(true);
+-    expect(result[0].permissions.canShare).toBe(false);
+   });
+ 
+   it('returns currentOnly config when currentOnly=true', async () => {
+@@ -412,9 +401,10 @@ describe('upsertDBConfig', () => {
+   });
+ 
+   it('updates config when id is provided', async () => {
+-    (asaw as jest.Mock)
+-      .mockResolvedValueOnce([null, { canEdit: true, canDelete: true, canShare: true }]) // checkPermissionForDbAction
+-      .mockResolvedValueOnce([null, { id: 'db1' }]); // upsert with id
++    (prisma.databaseConfigUser.findFirst as jest.Mock).mockResolvedValue({
++      databaseConfig: { ...mockDbConfig, id: 'db1' },
++    });
++    (asaw as jest.Mock).mockResolvedValueOnce([null, { id: 'db1' }]); // upsert with id
+ 
+     const result = await upsertDBConfig(validConfig, 'db1');
+     expect(result).toBe('Updated db details successfully');
+@@ -461,19 +451,19 @@ describe('upsertDBConfig', () => {
+     consoleErrorSpy.mockRestore();
+   });
+ 
+-  it('throws when user lacks edit permission (covers line 509 in checkPermissionForDbAction)', async () => {
+-    // checkPermissionForDbAction(userId, id, "EDIT") internally calls asaw(prisma.findFirst)
+-    // mock that inner asaw to return a config with canEdit=false
+-    (asaw as jest.Mock).mockResolvedValueOnce([null, { canEdit: false, canDelete: true, canShare: true }]);
++  it('throws when the config is not one this operator owns', async () => {
++    (prisma.databaseConfigUser.findFirst as jest.Mock).mockResolvedValue(null);
+     await expect(upsertDBConfig(validConfig, 'db1')).rejects.toThrow(
+-      "User doesn't have permission to edit the database config"
++      "Database config doesn't exist"
+     );
+   });
+ });
+ 
+ describe('deleteDBConfig', () => {
+   beforeEach(() => {
+-    (asaw as jest.Mock).mockResolvedValue([null, { canDelete: true }]);
++    (prisma.databaseConfigUser.findFirst as jest.Mock).mockResolvedValue({
++      databaseConfig: { ...mockDbConfig, id: 'db1' },
++    });
+     (prisma.databaseConfigUser.delete as jest.Mock).mockResolvedValue({});
+     (prisma.databaseConfig.delete as jest.Mock).mockResolvedValue({});
+   });
+@@ -489,24 +479,19 @@ describe('deleteDBConfig', () => {
+     await expect(deleteDBConfig('db1')).rejects.toThrow('Unauthorized');
+   });
+ 
+-  it('throws when user lacks delete permission', async () => {
+-    (asaw as jest.Mock).mockResolvedValue([null, { canDelete: false }]);
++  it('throws when the config is not one this operator owns', async () => {
++    (prisma.databaseConfigUser.findFirst as jest.Mock).mockResolvedValue(null);
+     await expect(deleteDBConfig('db1')).rejects.toThrow(
+-      "User doesn't have permission to delete the database config"
++      "Database config doesn't exist"
+     );
+   });
+ 
+   it('throws when db config not found', async () => {
+-    (asaw as jest.Mock).mockResolvedValue([null, null]);
++    (prisma.databaseConfigUser.findFirst as jest.Mock).mockResolvedValue(null);
+     await expect(deleteDBConfig('nonexistent')).rejects.toThrow(
+       "Database config doesn't exist"
+     );
+   });
+-
+-  it('throws when checkPermission returns error', async () => {
+-    (asaw as jest.Mock).mockResolvedValue(['Permission error', null]);
+-    await expect(deleteDBConfig('db1')).rejects.toThrow('Permission error');
+-  });
+ });
+ 
+ describe('setCurrentDBConfig', () => {
+@@ -557,127 +542,4 @@ describe('setCurrentDBConfig', () => {
+       "Database config doesn't exist in current project"
+     );
+   });
+-});
+-
+-describe('shareDBConfig', () => {
+-  it('throws when no id or empty shareArray', async () => {
+-    await expect(shareDBConfig({ id: '', shareArray: [] })).rejects.toThrow(
+-      'No user to share!'
+-    );
+-  });
+-
+-  it('throws when user is not authenticated', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue(null);
+-    await expect(
+-      shareDBConfig({ id: 'db1', shareArray: [{ email: 'a@b.com' }] })
+-    ).rejects.toThrow('Unauthorized');
+-  });
+-
+-  it('shares with existing user who has no access', async () => {
+-    (asaw as jest.Mock)
+-      .mockResolvedValueOnce([null, { canShare: true, canEdit: true, canDelete: true }]) // checkPermissionForDbAction
+-      .mockResolvedValueOnce([null, { id: 'u2', email: 'other@example.com' }]) // user.findUnique
+-      .mockResolvedValueOnce([null, null]); // databaseConfigUser.findFirst (no existing)
+-    (prisma.databaseConfig.findUnique as jest.Mock).mockResolvedValue({ projectId: null });
+-    (prisma.databaseConfigUser.create as jest.Mock).mockResolvedValue({});
+-
+-    const result = await shareDBConfig({
+-      id: 'db1',
+-      shareArray: [{ email: 'other@example.com' }],
+-    });
+-    expect(result).toHaveLength(1);
+-    expect(result[0][1]).toEqual({ success: true });
+-  });
+-
+-  it('returns error when user already has access', async () => {
+-    (asaw as jest.Mock)
+-      .mockResolvedValueOnce([null, { canShare: true }]) // checkPermissionForDbAction
+-      .mockResolvedValueOnce([null, { id: 'u2' }]) // user.findUnique
+-      .mockResolvedValueOnce([null, { id: 'existing-link' }]); // already has access
+-
+-    const result = await shareDBConfig({
+-      id: 'db1',
+-      shareArray: [{ email: 'other@example.com' }],
+-    });
+-    expect(result[0][0]).toContain('Already shared');
+-    expect(result[0][1]).toEqual({ success: false });
+-  });
+-
+-  it('creates invitation for non-existing user', async () => {
+-    (asaw as jest.Mock)
+-      .mockResolvedValueOnce([null, { canShare: true, canEdit: true, canDelete: true }]) // checkPermissionForDbAction
+-      .mockResolvedValueOnce([null, null]) // user.findUnique (not found)
+-      .mockResolvedValueOnce([null, {}]); // databaseConfigInvitedUser.create
+-
+-    const result = await shareDBConfig({
+-      id: 'db1',
+-      shareArray: [{ email: 'new@example.com' }],
+-    });
+-    expect(result[0][1]).toEqual({ success: true });
+-  });
+-
+-  it('returns failure when invitation create fails', async () => {
+-    (asaw as jest.Mock)
+-      .mockResolvedValueOnce([null, { canShare: true, canEdit: false, canDelete: false }])
+-      .mockResolvedValueOnce([null, null]) // user not found
+-      .mockResolvedValueOnce(['Create failed', null]); // invitation create error
+-
+-    const result = await shareDBConfig({
+-      id: 'db1',
+-      shareArray: [{ email: 'new@example.com' }],
+-    });
+-    expect(result[0][1]).toEqual({ success: false });
+-  });
+-
+-  it('throws when user lacks share permission', async () => {
+-    (asaw as jest.Mock).mockResolvedValueOnce([null, { canShare: false }]);
+-
+-    await expect(
+-      shareDBConfig({ id: 'db1', shareArray: [{ email: 'new@example.com' }] })
+-    ).rejects.toThrow("User doesn't have permission to share the database config");
+-  });
+-});
+-
+-describe('moveSharedDBConfigToDBUser', () => {
+-  it('returns early when error from findMany', async () => {
+-    (asaw as jest.Mock).mockResolvedValue(['DB error', null]);
+-    const result = await moveSharedDBConfigToDBUser('user@example.com', 'u1');
+-    expect(result).toBeUndefined();
+-  });
+-
+-  it('returns early when no shared configs', async () => {
+-    (asaw as jest.Mock).mockResolvedValue([null, []]);
+-    const result = await moveSharedDBConfigToDBUser('user@example.com', 'u1');
+-    expect(result).toBeUndefined();
+-  });
+-
+-  it('creates user entries from shared configs (has current config)', async () => {
+-    const sharedConfigs = [
+-      { databaseConfigId: 'db1', canDelete: false, canEdit: false, canShare: false },
+-    ];
+-    (asaw as jest.Mock)
+-      .mockResolvedValueOnce([null, sharedConfigs])
+-      .mockResolvedValueOnce([null, {}]); // createMany
+-    (prisma.databaseConfigUser.count as jest.Mock).mockResolvedValue(1); // has current
+-
+-    await moveSharedDBConfigToDBUser('user@example.com', 'u1');
+-    expect(asaw).toHaveBeenCalledTimes(2);
+-  });
+-
+-  it('sets first db config as current when user has no current', async () => {
+-    const sharedConfigs = [
+-      { databaseConfigId: 'db1', canDelete: false, canEdit: false, canShare: false },
+-    ];
+-    (asaw as jest.Mock)
+-      .mockResolvedValueOnce([null, sharedConfigs])
+-      .mockResolvedValueOnce([null, {}]); // createMany
+-    (prisma.databaseConfigUser.count as jest.Mock).mockResolvedValue(0); // no current
+-    (prisma.databaseConfigUser.findFirst as jest.Mock).mockResolvedValue({
+-      databaseConfigId: 'db1',
+-    });
+-    (prisma.databaseConfigUser.update as jest.Mock).mockResolvedValue({});
+-
+-    await moveSharedDBConfigToDBUser('user@example.com', 'u1');
+-    expect(prisma.databaseConfigUser.update).toHaveBeenCalled();
+-  });
+-});
++});
+\ No newline at end of file
+diff --git a/src/client/src/__tests__/lib/rbac/current.test.ts b/src/client/src/__tests__/lib/rbac/current.test.ts
+deleted file mode 100644
+index 8321a38f..00000000
+--- a/src/client/src/__tests__/lib/rbac/current.test.ts
++++ /dev/null
+@@ -1,46 +0,0 @@
+-beforeAll(() => {
+-	Object.defineProperty(global, "Response", {
+-		value: {
+-			json: (body: unknown, init?: ResponseInit) => ({
+-				status: init?.status ?? 200,
+-				json: jest.fn().mockResolvedValue(body),
+-			}),
+-		},
+-		configurable: true,
+-	});
+-});
+-
+-import {
+-	requireCurrentOrganisationPermission,
+-	requireCurrentOrganisationEntitledPermission,
+-	withCurrentOrganisationPermission,
+-} from "@/lib/rbac/current";
+-
+-describe("CE rbac current organisation fallbacks", () => {
+-	it("requireCurrentOrganisationPermission resolves to null", async () => {
+-		await expect(
+-			requireCurrentOrganisationPermission("dashboard.read")
+-		).resolves.toBeNull();
+-	});
+-
+-	it("requireCurrentOrganisationEntitledPermission resolves to null", async () => {
+-		await expect(
+-			requireCurrentOrganisationEntitledPermission(
+-				"feature.alerts",
+-				"alerts.read"
+-			)
+-		).resolves.toBeNull();
+-	});
+-
+-	it("withCurrentOrganisationPermission returns the handler unchanged", async () => {
+-		const handler = jest.fn().mockResolvedValue(Response.json({ ok: true }));
+-		const wrapped = withCurrentOrganisationPermission(
+-			"dashboard.read",
+-			handler
+-		);
+-
+-		expect(wrapped).toBe(handler);
+-		await wrapped({} as Request, {});
+-		expect(handler).toHaveBeenCalledTimes(1);
+-	});
+-});
+diff --git a/src/client/src/__tests__/utils/breadcrumbs.test.ts b/src/client/src/__tests__/utils/breadcrumbs.test.ts
+index 2268b68a..2dc46189 100644
+--- a/src/client/src/__tests__/utils/breadcrumbs.test.ts
++++ b/src/client/src/__tests__/utils/breadcrumbs.test.ts
+@@ -139,12 +139,6 @@ describe('generatePageHeader', () => {
+     });
+   });
+ 
+-  it('generates breadcrumbs for /settings/database-config', () => {
+-    const header = generatePageHeader('/settings/database-config');
+-    expect(header.title).toBe('Database Config');
+-    expect(header.breadcrumbs).toContainEqual({ title: 'Settings', href: '/settings' });
+-  });
+-
+   it('falls back gracefully for unknown routes', () => {
+     const header = generatePageHeader('/some-unknown-route');
+     expect(header.title).toBe('Some unknown route');
+diff --git a/src/client/src/app/(playground)/settings/database-config/page.tsx b/src/client/src/app/(playground)/settings/database-config/page.tsx
+deleted file mode 100644
+index 6ccaf55d..00000000
+--- a/src/client/src/app/(playground)/settings/database-config/page.tsx
++++ /dev/null
+@@ -1,5 +0,0 @@
+-import { redirect } from "next/navigation";
+-
+-export default function DatabaseConfigSettingsRedirect() {
+-	redirect("/organisation");
+-}
+diff --git a/src/client/src/app/api/api-key/[id]/route.ts b/src/client/src/app/api/api-key/[id]/route.ts
+index d67806aa..62b1af13 100644
+--- a/src/client/src/app/api/api-key/[id]/route.ts
++++ b/src/client/src/app/api/api-key/[id]/route.ts
+@@ -1,5 +1,4 @@
+ import { withAudit } from "@/lib/audit/route";
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import { deleteAPIKey } from "@/lib/platform/api-keys/index";
+ import asaw from "@/utils/asaw";
+ 
+@@ -15,6 +14,4 @@ async function DELETEHandler(_: Request, context: any) {
+ 	return Response.json(res);
+ }
+ 
+-export const DELETE = withAudit(
+-	withCurrentOrganisationPermission("api_key:delete", DELETEHandler)
+-);
++export const DELETE = withAudit(DELETEHandler);
+diff --git a/src/client/src/app/api/api-key/route.ts b/src/client/src/app/api/api-key/route.ts
+index 32428b35..b55d6006 100644
+--- a/src/client/src/app/api/api-key/route.ts
++++ b/src/client/src/app/api/api-key/route.ts
+@@ -1,5 +1,4 @@
+ import { withAudit } from "@/lib/audit/route";
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import { generateAPIKey, getAllAPIKeys } from "@/lib/platform/api-keys";
+ import asaw from "@/utils/asaw";
+ 
+@@ -23,10 +22,5 @@ async function POSTHandler(request: Request) {
+ 	return Response.json(res);
+ }
+ 
+-export const GET = withCurrentOrganisationPermission(
+-	"api_key:read",
+-	GETHandler
+-);
+-export const POST = withAudit(
+-	withCurrentOrganisationPermission("api_key:create", POSTHandler)
+-);
++export const GET = GETHandler;
++export const POST = withAudit(POSTHandler);
+diff --git a/src/client/src/app/api/db-config/[id]/route.ts b/src/client/src/app/api/db-config/[id]/route.ts
+index 17c5b8e1..f8e78944 100644
+--- a/src/client/src/app/api/db-config/[id]/route.ts
++++ b/src/client/src/app/api/db-config/[id]/route.ts
+@@ -1,15 +1,8 @@
+ import { withAudit } from "@/lib/audit/route";
+-import { requireCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import { deleteDBConfig } from "@/lib/db-config";
+ import asaw from "@/utils/asaw";
+-import { errorResponse } from "@/utils/api-response";
+ 
+ async function DELETEHandler(_: Request, context: any) {
+-	const [permissionErr] = await asaw(
+-		requireCurrentOrganisationPermission("db_config:delete")
+-	);
+-	if (permissionErr) return errorResponse(permissionErr, "Forbidden", 403);
+-
+ 	const { id } = context.params;
+ 	const [err, res] = await asaw(deleteDBConfig(id));
+ 	if (err)
+diff --git a/src/client/src/app/api/db-config/current/[id]/route.ts b/src/client/src/app/api/db-config/current/[id]/route.ts
+index 5c877756..9ef3b4da 100644
+--- a/src/client/src/app/api/db-config/current/[id]/route.ts
++++ b/src/client/src/app/api/db-config/current/[id]/route.ts
+@@ -1,15 +1,8 @@
+ import { withAudit } from "@/lib/audit/route";
+-import { requireCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import { setCurrentDBConfig } from "@/lib/db-config";
+ import asaw from "@/utils/asaw";
+-import { errorResponse } from "@/utils/api-response";
+ 
+ async function POSTHandler(_: Request, context: any) {
+-	const [permissionErr] = await asaw(
+-		requireCurrentOrganisationPermission("db_config:select")
+-	);
+-	if (permissionErr) return errorResponse(permissionErr, "Forbidden", 403);
+-
+ 	const { id } = context.params;
+ 	const [err, res] = await asaw(setCurrentDBConfig(id));
+ 	if (err)
+diff --git a/src/client/src/app/api/db-config/route.ts b/src/client/src/app/api/db-config/route.ts
+index e1ef1a59..4ab04570 100644
+--- a/src/client/src/app/api/db-config/route.ts
++++ b/src/client/src/app/api/db-config/route.ts
+@@ -1,8 +1,4 @@
+ import { withAudit } from "@/lib/audit/route";
+-import {
+-	requireCurrentOrganisationPermission,
+-	withCurrentOrganisationPermission,
+-} from "@/lib/rbac/current";
+ import {
+ 	getDBConfigByIdInternal,
+ 	getDBConfigByUser,
+@@ -49,18 +45,6 @@ async function GETHandler(request: Request) {
+ async function POSTHandler(request: Request) {
+ 	const formData = await request.json();
+ 	const id = formData.id;
+-	const apiKeyDatabaseConfigId =
+-		request.headers?.get?.(MIDDLEWARE_DATABASE_CONFIG_HEADER)?.trim() ||
+-		undefined;
+-
+-	if (!apiKeyDatabaseConfigId) {
+-		const requiredPermission = id ? "db_config:update" : "db_config:create";
+-		const [permissionErr] = await asaw(
+-			requireCurrentOrganisationPermission(requiredPermission)
+-		);
+-		if (permissionErr) return errorResponse(permissionErr, "Forbidden", 403);
+-	}
+-
+ 	const dbConfig: Partial<DatabaseConfig> = {
+ 		name: formData.name,
+ 		environment: formData.environment,
+@@ -89,8 +73,5 @@ async function POSTHandler(request: Request) {
+ 	return Response.json(res);
+ }
+ 
+-export const GET = withCurrentOrganisationPermission(
+-	"db_config:read",
+-	GETHandler
+-);
++export const GET = GETHandler;
+ export const POST = withAudit(POSTHandler);
+diff --git a/src/client/src/app/api/db-config/share/route.ts b/src/client/src/app/api/db-config/share/route.ts
+deleted file mode 100644
+index 537b5dd0..00000000
+--- a/src/client/src/app/api/db-config/share/route.ts
++++ /dev/null
+@@ -1,24 +0,0 @@
+-import { withAudit } from "@/lib/audit/route";
+-import { requireCurrentOrganisationPermission } from "@/lib/rbac/current";
+-import { shareDBConfig } from "@/lib/db-config";
+-import asaw from "@/utils/asaw";
+-import { errorResponse } from "@/utils/api-response";
+-
+-async function POSTHandler(request: Request) {
+-	const [permissionErr] = await asaw(
+-		requireCurrentOrganisationPermission("db_config:share")
+-	);
+-	if (permissionErr) return errorResponse(permissionErr, "Forbidden", 403);
+-
+-	const formData = await request.json();
+-	const shareArray = formData.shareArray;
+-	const id = formData.id;
+-	const [err, res] = await asaw(shareDBConfig({ id, shareArray }));
+-	if (err)
+-		return Response.json(err, {
+-			status: 400,
+-		});
+-	return Response.json(res);
+-}
+-
+-export const POST = withAudit(POSTHandler);
+diff --git a/src/client/src/app/api/evaluation/[spanId]/feedback/route.ts b/src/client/src/app/api/evaluation/[spanId]/feedback/route.ts
+index 315d7d5d..b4f43c89 100644
+--- a/src/client/src/app/api/evaluation/[spanId]/feedback/route.ts
++++ b/src/client/src/app/api/evaluation/[spanId]/feedback/route.ts
+@@ -1,5 +1,4 @@
+ import { withAudit } from "@/lib/audit/route";
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import { storeManualFeedback } from "@/lib/platform/evaluation";
+ import { SERVER_EVENTS } from "@/constants/events";
+ import PostHogServer from "@/lib/posthog";
+@@ -51,4 +50,4 @@ async function POSTHandler(
+ 	return Response.json({ success: true });
+ }
+ 
+-export const POST = withAudit(withCurrentOrganisationPermission("evaluation:feedback", POSTHandler));
++export const POST = withAudit(POSTHandler);
+diff --git a/src/client/src/app/api/evaluation/auto/route.ts b/src/client/src/app/api/evaluation/auto/route.ts
+index b4a4c1c4..431cd652 100644
+--- a/src/client/src/app/api/evaluation/auto/route.ts
++++ b/src/client/src/app/api/evaluation/auto/route.ts
+@@ -1,5 +1,4 @@
+ import { withAudit } from "@/lib/audit/route";
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import { SERVER_EVENTS } from "@/constants/events";
+ import { autoEvaluate } from "@/lib/platform/evaluation";
+ import PostHogServer from "@/lib/posthog";
+@@ -18,4 +17,4 @@ async function POSTHandler(request: NextRequest) {
+ 	return Response.json(result);
+ }
+ 
+-export const POST = withAudit(withCurrentOrganisationPermission("evaluation:run", POSTHandler));
++export const POST = withAudit(POSTHandler);
+diff --git a/src/client/src/app/api/evaluation/config/route.ts b/src/client/src/app/api/evaluation/config/route.ts
+index bd812b60..9671cbeb 100644
+--- a/src/client/src/app/api/evaluation/config/route.ts
++++ b/src/client/src/app/api/evaluation/config/route.ts
+@@ -1,5 +1,4 @@
+ import { withAudit } from "@/lib/audit/route";
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import {
+ 	getEvaluationConfig,
+ 	setEvaluationConfig,
+@@ -49,5 +48,5 @@ async function POSTHandler(request: NextRequest) {
+ 	return Response.json(data);
+ }
+ 
+-export const GET = withCurrentOrganisationPermission("evaluation:read", GETHandler);
+-export const POST = withAudit(withCurrentOrganisationPermission("evaluation:configure", POSTHandler));
++export const GET = GETHandler;
++export const POST = withAudit(POSTHandler);
+diff --git a/src/client/src/app/api/evaluation/types/[id]/route.ts b/src/client/src/app/api/evaluation/types/[id]/route.ts
+index afe96ebe..b6c7a787 100644
+--- a/src/client/src/app/api/evaluation/types/[id]/route.ts
++++ b/src/client/src/app/api/evaluation/types/[id]/route.ts
+@@ -1,5 +1,4 @@
+ import { withAudit } from "@/lib/audit/route";
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import { getEvaluationConfig } from "@/lib/platform/evaluation/config";
+ import { normalizeThresholdScore } from "@/lib/platform/evaluation/threshold";
+ import {
+@@ -158,6 +157,6 @@ async function DELETEHandler(
+ 	return Response.json({ data: { deleted: typeId } });
+ }
+ 
+-export const GET = withCurrentOrganisationPermission("evaluation:read", GETHandler);
+-export const PATCH = withAudit(withCurrentOrganisationPermission("evaluation:configure", PATCHHandler));
+-export const DELETE = withAudit(withCurrentOrganisationPermission("evaluation:configure", DELETEHandler));
++export const GET = GETHandler;
++export const PATCH = withAudit(PATCHHandler);
++export const DELETE = withAudit(DELETEHandler);
+diff --git a/src/client/src/app/api/evaluation/types/route.ts b/src/client/src/app/api/evaluation/types/route.ts
+index 78c4c2c7..983ef906 100644
+--- a/src/client/src/app/api/evaluation/types/route.ts
++++ b/src/client/src/app/api/evaluation/types/route.ts
+@@ -1,5 +1,4 @@
+ import { withAudit } from "@/lib/audit/route";
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import { getEvaluationConfig } from "@/lib/platform/evaluation/config";
+ import { normalizeThresholdScore } from "@/lib/platform/evaluation/threshold";
+ import {
+@@ -82,5 +81,5 @@ async function POSTHandler(request: NextRequest) {
+ 	return Response.json({ data: normalizedTypes });
+ }
+ 
+-export const GET = withCurrentOrganisationPermission("evaluation:read", GETHandler);
+-export const POST = withAudit(withCurrentOrganisationPermission("evaluation:configure", POSTHandler));
++export const GET = GETHandler;
++export const POST = withAudit(POSTHandler);
+diff --git a/src/client/src/app/api/pricing/config/route.ts b/src/client/src/app/api/pricing/config/route.ts
+index 54997587..a4be61d0 100644
+--- a/src/client/src/app/api/pricing/config/route.ts
++++ b/src/client/src/app/api/pricing/config/route.ts
+@@ -1,5 +1,4 @@
+ import { withAudit } from "@/lib/audit/route";
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import {
+ 	getPricingConfig,
+ 	setPricingConfig,
+@@ -44,5 +43,5 @@ async function POSTHandler(request: NextRequest) {
+ 	return Response.json({ data });
+ }
+ 
+-export const GET = withCurrentOrganisationPermission("pricing:read", GETHandler);
+-export const POST = withAudit(withCurrentOrganisationPermission("pricing:configure", POSTHandler));
++export const GET = GETHandler;
++export const POST = withAudit(POSTHandler);
+diff --git a/src/client/src/app/api/pricing/export/[dbConfigId]/route.ts b/src/client/src/app/api/pricing/export/[dbConfigId]/route.ts
+index 68cdb2b7..e9ad10fa 100644
+--- a/src/client/src/app/api/pricing/export/[dbConfigId]/route.ts
++++ b/src/client/src/app/api/pricing/export/[dbConfigId]/route.ts
+@@ -1,6 +1,5 @@
+ import { NextRequest, NextResponse } from "next/server";
+ import { withAudit } from "@/lib/audit/route";
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import { getPricingExport } from "@/lib/platform/pricing/export";
+ 
+ /**
+@@ -12,8 +11,8 @@ import { getPricingExport } from "@/lib/platform/pricing/export";
+  *
+  *   openlit.init(pricing_json="http://localhost:3000/api/pricing/export/<dbConfigId>")
+  *
+- * withAudit/withCurrentOrganisationPermission are no-op pass-throughs here;
+- * enterprise editions resolve them to real permission + audit checks.
++ * withAudit is a no-op pass-through here; enterprise editions resolve it to a
++ * real audit check.
+  */
+ async function GETHandler(
+ 	_request: NextRequest,
+@@ -33,6 +32,4 @@ async function GETHandler(
+ 	});
+ }
+ 
+-export const GET = withAudit(
+-	withCurrentOrganisationPermission("pricing:export", GETHandler)
+-);
++export const GET = withAudit(GETHandler);
+diff --git a/src/client/src/app/api/prompt/[id]/route.ts b/src/client/src/app/api/prompt/[id]/route.ts
+index 30eacbdb..36826821 100644
+--- a/src/client/src/app/api/prompt/[id]/route.ts
++++ b/src/client/src/app/api/prompt/[id]/route.ts
+@@ -1,5 +1,4 @@
+ import { withAudit } from "@/lib/audit/route";
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import { deletePrompt } from "@/lib/platform/prompt";
+ 
+ async function DELETEHandler(_: Request, context: any) {
+@@ -14,4 +13,4 @@ async function DELETEHandler(_: Request, context: any) {
+ 	return Response.json(res);
+ }
+ 
+-export const DELETE = withAudit(withCurrentOrganisationPermission("prompt:delete", DELETEHandler));
++export const DELETE = withAudit(DELETEHandler);
+diff --git a/src/client/src/app/api/prompt/route.ts b/src/client/src/app/api/prompt/route.ts
+index 18a01ee8..c37aebfd 100644
+--- a/src/client/src/app/api/prompt/route.ts
++++ b/src/client/src/app/api/prompt/route.ts
+@@ -1,5 +1,4 @@
+ import { withAudit } from "@/lib/audit/route";
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import { PromptInput } from "@/constants/prompts";
+ import { createPrompt } from "@/lib/platform/prompt";
+ import asaw from "@/utils/asaw";
+@@ -27,4 +26,4 @@ async function POSTHandler(request: Request) {
+ 	return Response.json(res);
+ }
+ 
+-export const POST = withAudit(withCurrentOrganisationPermission("prompt:create", POSTHandler));
++export const POST = withAudit(POSTHandler);
+diff --git a/src/client/src/app/api/prompt/version/route.ts b/src/client/src/app/api/prompt/version/route.ts
+index e151e7f5..750118cd 100644
+--- a/src/client/src/app/api/prompt/version/route.ts
++++ b/src/client/src/app/api/prompt/version/route.ts
+@@ -1,5 +1,4 @@
+ import { withAudit } from "@/lib/audit/route";
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import { PromptUpdate } from "@/constants/prompts";
+ import { upsertPromptVersion } from "@/lib/platform/prompt/version";
+ import asaw from "@/utils/asaw";
+@@ -28,4 +27,4 @@ async function POSTHandler(request: Request) {
+ 	return Response.json(res);
+ }
+ 
+-export const POST = withAudit(withCurrentOrganisationPermission("prompt:update", POSTHandler));
++export const POST = withAudit(POSTHandler);
+diff --git a/src/client/src/app/api/providers/models/cleanup/route.ts b/src/client/src/app/api/providers/models/cleanup/route.ts
+index 03556a00..d5df4d28 100644
+--- a/src/client/src/app/api/providers/models/cleanup/route.ts
++++ b/src/client/src/app/api/providers/models/cleanup/route.ts
+@@ -1,5 +1,4 @@
+ import { withAudit } from "@/lib/audit/route";
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import { NextRequest, NextResponse } from "next/server";
+ import { getServerSession } from "next-auth";
+ import { authOptions } from "@/app/auth";
+@@ -103,4 +102,4 @@ async function POSTHandler(request: NextRequest) {
+ 	});
+ }
+ 
+-export const POST = withAudit(withCurrentOrganisationPermission("model:configure", POSTHandler));
++export const POST = withAudit(POSTHandler);
+diff --git a/src/client/src/app/api/providers/models/import/route.ts b/src/client/src/app/api/providers/models/import/route.ts
+index f2a2028a..c0e4aa94 100644
+--- a/src/client/src/app/api/providers/models/import/route.ts
++++ b/src/client/src/app/api/providers/models/import/route.ts
+@@ -1,5 +1,4 @@
+ import { withAudit } from "@/lib/audit/route";
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import { NextRequest, NextResponse } from "next/server";
+ import { getServerSession } from "next-auth";
+ import { authOptions } from "@/app/auth";
+@@ -249,4 +248,4 @@ async function POSTHandler(request: NextRequest) {
+ 	});
+ }
+ 
+-export const POST = withAudit(withCurrentOrganisationPermission("model:configure", POSTHandler));
++export const POST = withAudit(POSTHandler);
+diff --git a/src/client/src/app/api/providers/models/route.ts b/src/client/src/app/api/providers/models/route.ts
+index 78f30daa..1e7f3c43 100644
+--- a/src/client/src/app/api/providers/models/route.ts
++++ b/src/client/src/app/api/providers/models/route.ts
+@@ -1,5 +1,4 @@
+ import { withAudit } from "@/lib/audit/route";
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import { NextRequest, NextResponse } from "next/server";
+ import { getServerSession } from "next-auth";
+ import { SERVER_EVENTS } from "@/constants/events";
+@@ -355,6 +354,6 @@ async function DELETEHandler(request: NextRequest) {
+ 	return NextResponse.json({ success: true, deleted: true });
+ }
+ 
+-export const GET = withCurrentOrganisationPermission("model:read", GETHandler);
+-export const POST = withAudit(withCurrentOrganisationPermission("model:configure", POSTHandler));
+-export const DELETE = withAudit(withCurrentOrganisationPermission("model:configure", DELETEHandler));
++export const GET = GETHandler;
++export const POST = withAudit(POSTHandler);
++export const DELETE = withAudit(DELETEHandler);
+diff --git a/src/client/src/app/api/providers/route.ts b/src/client/src/app/api/providers/route.ts
+index 55b40f6e..85da2e75 100644
+--- a/src/client/src/app/api/providers/route.ts
++++ b/src/client/src/app/api/providers/route.ts
+@@ -1,5 +1,4 @@
+ import { withAudit } from "@/lib/audit/route";
+-import { withCurrentOrganisationPermission } from "@/lib/rbac/current";
+ import { NextRequest, NextResponse } from "next/server";
+ import { getCurrentUser } from "@/lib/session";
+ import { getDBConfigByUser } from "@/lib/db-config";
+@@ -327,7 +326,7 @@ async function DELETEHandler(request: NextRequest) {
+ 	}
+ }
+ 
+-export const GET = withCurrentOrganisationPermission("provider:read", GETHandler);
+-export const POST = withAudit(withCurrentOrganisationPermission("provider:configure", POSTHandler));
+-export const PUT = withAudit(withCurrentOrganisationPermission("provider:configure", PUTHandler));
+-export const DELETE = withAudit(withCurrentOrganisationPermission("provider:configure", DELETEHandler));
++export const GET = GETHandler;
++export const POST = withAudit(POSTHandler);
++export const PUT = withAudit(PUTHandler);
++export const DELETE = withAudit(DELETEHandler);
+diff --git a/src/client/src/app/auth.ts b/src/client/src/app/auth.ts
+index b0f49755..3ccaf11d 100644
+--- a/src/client/src/app/auth.ts
++++ b/src/client/src/app/auth.ts
+@@ -201,22 +201,6 @@ export const authOptions = {
+ 			return session;
+ 		},
+ 	},
+-	events: {
+-		async createUser({ user }) {
+-			// Run custom setup for new users
+-			if (user.email && user.id) {
+-				try {
+-					// Normalize email for consistency
+-					const normalizedEmail = user.email.toLowerCase().trim();
+-					
+-					const { moveSharedDBConfigToDBUser } = await import("@/lib/db-config");
+-					await moveSharedDBConfigToDBUser(normalizedEmail, user.id);
+-				} catch (error) {
+-					console.error("Error during new user setup:", error);
+-				}
+-			}
+-		}
+-	},
+ 	providers: [
+ 		...(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+ 			? [
+diff --git a/src/client/src/components/(playground)/connectors/connectors-page.tsx b/src/client/src/components/(playground)/connectors/connectors-page.tsx
+index fa9d5160..fe37c1f8 100644
+--- a/src/client/src/components/(playground)/connectors/connectors-page.tsx
++++ b/src/client/src/components/(playground)/connectors/connectors-page.tsx
+@@ -2,6 +2,7 @@
+ 
+ import Image from "next/image";
+ import Link from "next/link";
++import { useSearchParams } from "next/navigation";
+ import { useEffect, useMemo, useState } from "react";
+ import { Cable, CheckCircle2, Lock, Plug, Search } from "lucide-react";
+ import FeatureAccess from "@/components/rbac/feature-access";
+@@ -43,9 +44,14 @@ type ConnectorType = {
+ 
+ export default function ConnectorsPage() {
+ 	const messages = getMessage();
++	const searchParams = useSearchParams();
+ 	const [connected, setConnected] = useState<ConnectorSummary[]>([]);
+ 	const [types, setTypes] = useState<ConnectorType[]>([]);
+-	const [requestedType, setRequestedType] = useState<string | null>(null);
++	// `?type=` opens that connector's form directly. The header's datasource
++	// picker links here to add a ClickHouse database config, so the form has
++	// to be reachable by URL rather than only through the in-page button.
++	const requestedTypeParam = searchParams.get("type");
++	const [requestedType, setRequestedType] = useState<string | null>(requestedTypeParam);
+ 	const [loading, setLoading] = useState(true);
+ 	const [loadError, setLoadError] = useState<string | null>(null);
+ 	const [search, setSearch] = useState("");
+diff --git a/src/client/src/components/(playground)/database-config/database-config-page.tsx b/src/client/src/components/(playground)/database-config/database-config-page.tsx
+index 1a70f0fd..7316d0bd 100644
+--- a/src/client/src/components/(playground)/database-config/database-config-page.tsx
++++ b/src/client/src/components/(playground)/database-config/database-config-page.tsx
+@@ -114,9 +114,7 @@ function ModifyDatabaseConfig({
+ 		[dbConfig?.id, onSaved]
+ 	);
+ 
+-	const formFieldsDisabled = dbConfig?.id
+-		? !canUpdate || !dbConfig.permissions?.canEdit
+-		: !canCreate;
++	const formFieldsDisabled = dbConfig?.id ? !canUpdate : !canCreate;
+ 
+ 	return (
+ 		<FormBuilder
+@@ -220,24 +218,14 @@ function ModifyDatabaseConfig({
+ 			]}
+ 			heading={
+ 				dbConfig?.id
+-					? !dbConfig?.permissions?.canEdit
+-						? messages.CLICKHOUSE_CONNECTOR_EDIT_TITLE
+-						: messages.CLICKHOUSE_CONNECTOR_EDIT_TITLE
++					? messages.CLICKHOUSE_CONNECTOR_EDIT_TITLE
+ 					: messages.CLICKHOUSE_CONNECTOR_ADD_TITLE
+ 			}
+-			subHeading={
+-				!dbConfig?.id || dbConfig?.permissions?.canEdit
+-					? `${messages.CLICKHOUSE_CONNECTOR_DESCRIPTION} ${messages.CLICKHOUSE_CONNECTOR_INSTRUCTIONS}`
+-					: messages.DB_CONFIG_EDIT_PERMISSION_REQUIRED
+-			}
++			subHeading={`${messages.CLICKHOUSE_CONNECTOR_DESCRIPTION} ${messages.CLICKHOUSE_CONNECTOR_INSTRUCTIONS}`}
+ 			subHeadingClass="text-error"
+ 			isLoading={isLoading}
+ 			onSubmit={modifyDetails}
+-			isAllowedToSubmit={
+-				dbConfig?.id
+-					? canUpdate && !!dbConfig.permissions?.canEdit
+-					: canCreate
+-			}
++			isAllowedToSubmit={dbConfig?.id ? canUpdate : canCreate}
+ 			submitButtonText={dbConfig?.id ? messages.UPDATE : messages.SAVE}
+ 		/>
+ 	);
+@@ -247,7 +235,6 @@ function DatabaseList({
+ 	canCreate,
+ 	canUpdate,
+ 	canDelete,
+-	canShare,
+ 	hideHeader,
+ 	openNew,
+ 	onOpenNewHandled,
+@@ -261,7 +248,6 @@ function DatabaseList({
+ 	canCreate: boolean;
+ 	canUpdate: boolean;
+ 	canDelete: boolean;
+-	canShare: boolean;
+ 	hideHeader?: boolean;
+ 	openNew?: boolean;
+ 	onOpenNewHandled?: () => void;
+@@ -289,7 +275,7 @@ function DatabaseList({
+ 	}, [onOpenNewHandled, openNew, visibleConfigs.length]);
+ 
+ 	const remove = (config: DatabaseConfigWithActive) => {
+-		if (!canDelete || !config.permissions?.canDelete) return;
++		if (!canDelete) return;
+ 		if (window.confirm(messages.DELETE_DATABASE_CONFIG_CONFIRMATION)) void deleteDatabaseConfig(config.id);
+ 	};
+ 
+@@ -351,7 +337,7 @@ function DatabaseList({
+ 							</div>
+ 							<p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">Telemetry, dashboards, and derived features for this project environment.</p>
+ 							<div className="mt-2 flex flex-wrap gap-1"><Badge variant="secondary" className="text-[10px]">{config.environment || "production"}</Badge><Badge variant="outline" className="max-w-full truncate text-[10px]">{config.host}:{config.port}</Badge></div>
+-							<div className="mt-3 flex items-center justify-end gap-1 border-t border-stone-200 pt-2 dark:border-stone-800"><Button size="sm" variant="ghost" onClick={() => testConnection(config)} disabled={testingId === config.id}><Wifi className="mr-1 h-3.5 w-3.5" />{messages.DATA_SOURCE_TEST}</Button><Button size="icon" variant="ghost" onClick={() => setEditing(config)} disabled={!canUpdate || !config.permissions?.canEdit} aria-label="Edit connector"><Pencil className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" onClick={() => remove(config)} disabled={!canDelete || !config.permissions?.canDelete} aria-label="Delete connector"><Trash2 className="h-3.5 w-3.5 text-error" /></Button></div>
++							<div className="mt-3 flex items-center justify-end gap-1 border-t border-stone-200 pt-2 dark:border-stone-800"><Button size="sm" variant="ghost" onClick={() => testConnection(config)} disabled={testingId === config.id}><Wifi className="mr-1 h-3.5 w-3.5" />{messages.DATA_SOURCE_TEST}</Button><Button size="icon" variant="ghost" onClick={() => setEditing(config)} disabled={!canUpdate} aria-label="Edit connector"><Pencil className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" onClick={() => remove(config)} disabled={!canDelete} aria-label="Delete connector"><Trash2 className="h-3.5 w-3.5 text-error" /></Button></div>
+ 						</div>
+ 					))}
+ 				</div>
+@@ -365,7 +351,6 @@ export default function Database({
+ 	canCreate = true,
+ 	canUpdate = true,
+ 	canDelete = true,
+-	canShare = true,
+ 	hideHeader = false,
+ 	openNew = false,
+ 	onOpenNewHandled,
+@@ -378,7 +363,6 @@ export default function Database({
+ 	canCreate?: boolean;
+ 	canUpdate?: boolean;
+ 	canDelete?: boolean;
+-	canShare?: boolean;
+ 	hideHeader?: boolean;
+ 	openNew?: boolean;
+ 	onOpenNewHandled?: () => void;
+@@ -397,7 +381,6 @@ export default function Database({
+ 				canCreate={canCreate}
+ 				canUpdate={canUpdate}
+ 				canDelete={canDelete}
+-				canShare={canShare}
+ 				hideHeader
+ 				hideEmpty
+ 				hideList
+@@ -422,7 +405,6 @@ export default function Database({
+ 			canCreate={canCreate}
+ 			canUpdate={canUpdate}
+ 			canDelete={canDelete}
+-			canShare={canShare}
+ 			hideHeader={hideHeader}
+ 			openNew={openNew}
+ 			onOpenNewHandled={onOpenNewHandled}
+diff --git a/src/client/src/components/(playground)/database-config/database-config-tabs.tsx b/src/client/src/components/(playground)/database-config/database-config-tabs.tsx
+deleted file mode 100644
+index b833caf4..00000000
+--- a/src/client/src/components/(playground)/database-config/database-config-tabs.tsx
++++ /dev/null
+@@ -1,119 +0,0 @@
+-import { Fragment } from "react";
+-import { Badge } from "@/components/ui/badge";
+-import {
+-	Tooltip,
+-	TooltipContent,
+-	TooltipTrigger,
+-} from "@/components/ui/tooltip";
+-import { Trash2 } from "lucide-react";
+-import ShareDialog from "./share-dialog";
+-import { Checkbox } from "@/components/ui/checkbox";
+-import { DatabaseConfigTabsProps } from "@/types/database-config";
+-import getMessage from "@/constants/messages";
+-
+-const ADD_NEW_ID = "ADD_NEW_ID";
+-
+-const getCommonCardClasses = (isActive: boolean) =>
+-	`item-element-card flex flex-col p-4 text-sm cursor-pointer relative group w-64 hover:bg-primary/10 dark:hover:bg-primary/20 ${
+-		isActive ? "bg-primary/15 dark:bg-primary/25 text-stone-900 dark:text-stone-100" : "text-stone-700 dark:text-stone-300"
+-	}`;
+-
+-export default function DatabaseConfigTabs({
+-	items,
+-	onClickTab,
+-	selectedTabId,
+-	onClickItemDelete,
+-	onClickItemChangeActive,
+-	addButton,
+-}: DatabaseConfigTabsProps) {
+-	const messages = getMessage();
+-
+-	return (
+-		<div className="flex max-h-full shrink-0 flex-col overflow-hidden border-r border-stone-200 dark:border-stone-800">
+-			{addButton && (
+-				<>
+-					<div
+-						className={`${getCommonCardClasses(
+-							selectedTabId === ADD_NEW_ID
+-						)} items-center justify-center shrink-0`}
+-						data-item-id={ADD_NEW_ID}
+-						onClick={onClickTab}
+-					>
+-						{messages.ADD_NEW_CONFIG}
+-					</div>
+-					<hr className="dark:border-stone-800" />
+-				</>
+-			)}
+-			<div className="flex flex-col overflow-y-auto">
+-				{items.map((item) => (
+-					<Fragment key={item.id}>
+-						<div
+-							className={getCommonCardClasses(selectedTabId === item.id)}
+-							data-item-id={item.id}
+-							onClick={onClickTab}
+-						>
+-							<div className="flex w-full">
+-								<div className={`flex flex-col grow`}>
+-									<span className="text-ellipsis overflow-hidden whitespace-nowrap mb-3">
+-										{item.name}
+-									</span>
+-									{item.badge && (
+-										<Badge
+-											variant="default"
+-											className={`mr-auto ${
+-												item.isCurrent
+-													? "border-primary bg-primary text-white dark:border-primary dark:bg-primary dark:text-white hover:bg-primary dark:hover:bg-primary"
+-													: ""
+-											}`}
+-										>
+-											{item.badge}
+-										</Badge>
+-									)}
+-								</div>
+-								<div className="flex flex-col h-full space-y-1 items-end">
+-									<Tooltip>
+-										<TooltipTrigger asChild>
+-											<div
+-												onClick={
+-													item.canSelect === false
+-														? undefined
+-														: onClickItemChangeActive
+-												}
+-											>
+-												<Checkbox
+-													checked={!!item.isCurrent}
+-													disabled={item.canSelect === false}
+-													className="data-[state=checked]:bg-primary dark:data-[state=checked]:bg-primary text-white data-[state=checked]:border-primary dark:data-[state=checked]:border-primary data-[state=checked]:ring-offset-primary dark:text-white data-[state=checked]:text-white dark:data-[state=checked]:text-white"
+-												/>
+-											</div>
+-										</TooltipTrigger>
+-										<TooltipContent side="bottom" sideOffset={5}>
+-											{messages.MARK_DB_CONFIG_ACTIVE(item.name)}
+-										</TooltipContent>
+-									</Tooltip>
+-									{item.canDelete && onClickItemDelete && (
+-										<Trash2
+-											className="w-3 h-3 hidden group-hover:inline text-stone-900 dark:text-stone-100"
+-											onClick={onClickItemDelete}
+-										/>
+-									)}
+-									{item.canShare && (
+-										<ShareDialog
+-											id={item.id}
+-											permissions={{
+-												canEdit: item.canEdit,
+-												canDelete: item.canDelete,
+-												canShare: item.canShare,
+-											}}
+-										/>
+-									)}
+-								</div>
+-							</div>
+-						</div>
+-						<hr className="dark:border-stone-800" />
+-					</Fragment>
+-				))}
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/database-config/share-dialog.tsx b/src/client/src/components/(playground)/database-config/share-dialog.tsx
+deleted file mode 100644
+index c200c230..00000000
+--- a/src/client/src/components/(playground)/database-config/share-dialog.tsx
++++ /dev/null
+@@ -1,221 +0,0 @@
+-import { CornerDownLeft, Share2 } from "lucide-react";
+-
+-import { Button } from "@/components/ui/button";
+-import {
+-	Dialog,
+-	DialogClose,
+-	DialogContent,
+-	DialogDescription,
+-	DialogFooter,
+-	DialogHeader,
+-	DialogTitle,
+-	DialogTrigger,
+-} from "@/components/ui/dialog";
+-import { Input } from "@/components/ui/input";
+-import { MouseEventHandler, useRef, useState } from "react";
+-import { toast } from "sonner";
+-import {
+-	Table,
+-	TableBody,
+-	TableCell,
+-	TableHead,
+-	TableHeader,
+-	TableRow,
+-} from "@/components/ui/table";
+-import { Checkbox } from "@/components/ui/checkbox";
+-import { set } from "lodash";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import { DatabaseConfigPermissions } from "@/constants/dbConfig";
+-import { escapeEmailForDisplay } from "@/utils/string";
+-import getMessage from "@/constants/messages";
+-
+-const validateEmail = (email: string) => {
+-	return String(email)
+-		.toLowerCase()
+-		.match(
+-			/^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|.(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/
+-		);
+-};
+-
+-export default function ShareDialog({
+-	id,
+-	permissions,
+-}: {
+-	id: string;
+-	permissions: DatabaseConfigPermissions;
+-}) {
+-	const [shareArray, setShareArray] = useState<
+-		{
+-			email: string;
+-			permissions: { canDelete: boolean; canEdit: boolean; canShare: boolean };
+-		}[]
+-	>([]);
+-	const { fireRequest, isLoading } = useFetchWrapper();
+-	const messages = getMessage();
+-
+-	const emailRef = useRef<HTMLInputElement>(null);
+-
+-	const onEnterEmail = () => {
+-		if (!emailRef.current) return;
+-		const emailValue = emailRef.current.value || "";
+-		const doesEmailAlreadyExist = shareArray.find(
+-			(s) => s.email === emailValue
+-		);
+-		if (validateEmail(emailValue) && !doesEmailAlreadyExist) {
+-			setShareArray((e) => [
+-				...e,
+-				{
+-					email: emailValue,
+-					permissions: { canDelete: false, canEdit: false, canShare: false },
+-				},
+-			]);
+-			emailRef.current.value = "";
+-			return;
+-		}
+-
+-		toast.error(messages.EMAIL_INVALID, {
+-			id: "share-db-config",
+-		});
+-	};
+-
+-	const onChangePermission = (path: string, value: boolean) => {
+-		setShareArray((e) => [...set(e, path, value)]);
+-	};
+-
+-	const resetData = () => {
+-		setShareArray([]);
+-	};
+-
+-	const shareRequest = () => {
+-		if (isLoading) return;
+-		fireRequest({
+-			body: JSON.stringify({ shareArray, id }),
+-			requestType: "POST",
+-			url: "/api/db-config/share",
+-			responseDataKey: "data",
+-			successCb: () => {
+-				toast.success(messages.DB_CONFIG_SHARED, {
+-					id: "share-db-config",
+-				});
+-				resetData();
+-			},
+-			failureCb: (err?: string) => {
+-				toast.error(err || messages.DB_CONFIG_SHARE_FAILED, {
+-					id: "db-config-details",
+-				});
+-			},
+-		});
+-	};
+-
+-	const onClickDelete: MouseEventHandler<HTMLElement> = (event) => {
+-		event.stopPropagation();
+-	};
+-
+-	return (
+-		<Dialog
+-			onOpenChange={(open) => {
+-				if (!open) {
+-					resetData();
+-				}
+-			}}
+-		>
+-			<DialogTrigger asChild onClick={onClickDelete}>
+-				<Share2 className="w-3 h-3 hidden group-hover:inline text-stone-900 dark:text-stone-100" />
+-			</DialogTrigger>
+-			<DialogContent className="">
+-				<DialogHeader>
+-					<DialogTitle>{messages.SHARE_DATABASE_CONFIG}</DialogTitle>
+-					<DialogDescription>
+-						{messages.SHARE_DATABASE_CONFIG_DESCRIPTION}
+-					</DialogDescription>
+-				</DialogHeader>
+-				<div className="flex items-center space-x-2">
+-					<Input
+-						id="email"
+-						name="email"
+-						className="dark:text-stone-200"
+-						placeholder={messages.ADD_EMAIL_PLACEHOLDER}
+-						ref={emailRef}
+-					/>
+-					<Button
+-						type="submit"
+-						size="sm"
+-						className="px-3"
+-						onClick={onEnterEmail}
+-					>
+-						<span className="sr-only">{messages.ENTER}</span>
+-						<CornerDownLeft className="h-4 w-4" />
+-					</Button>
+-				</div>
+-				<Table>
+-					<TableHeader>
+-						<TableRow>
+-							<TableHead>{messages.EMAIL}</TableHead>
+-							<TableHead className="text-center">{messages.EDIT}</TableHead>
+-							<TableHead className="text-center">{messages.DELETE}</TableHead>
+-							<TableHead className="text-center">{messages.SHARE}</TableHead>
+-						</TableRow>
+-					</TableHeader>
+-					<TableBody>
+-						{shareArray.map((shareObj, index) => (
+-							<TableRow key={shareObj.email}>
+-								<TableCell className="font-medium text-stone-500">
+-									{escapeEmailForDisplay(shareObj.email)}
+-								</TableCell>
+-								<TableCell className="text-center p-0">
+-									<Checkbox
+-										name={`share-${index}.permission.canEdit`}
+-										checked={shareObj.permissions.canEdit}
+-										onCheckedChange={(checked: boolean) =>
+-											onChangePermission(
+-												`[${index}].permissions.canEdit`,
+-												checked
+-											)
+-										}
+-										disabled={!permissions.canEdit}
+-									/>
+-								</TableCell>
+-								<TableCell className="text-center p-0">
+-									<Checkbox
+-										name={`share-${index}.permission.canDelete`}
+-										checked={shareObj.permissions.canDelete}
+-										onCheckedChange={(checked: boolean) =>
+-											onChangePermission(
+-												`[${index}].permissions.canDelete`,
+-												checked
+-											)
+-										}
+-										disabled={!permissions.canDelete}
+-									/>
+-								</TableCell>
+-								<TableCell className="text-center p-0">
+-									<Checkbox
+-										name={`share-${index}.permission.canShare`}
+-										checked={shareObj.permissions.canShare}
+-										onCheckedChange={(checked: boolean) =>
+-											onChangePermission(
+-												`[${index}].permissions.canShare`,
+-												checked
+-											)
+-										}
+-										disabled={!permissions.canShare}
+-									/>
+-								</TableCell>
+-							</TableRow>
+-						))}
+-					</TableBody>
+-				</Table>
+-				<DialogFooter className="justify-end">
+-					<Button type="button" variant="default" onClick={shareRequest}>
+-						{messages.SHARE}
+-					</Button>
+-					<DialogClose asChild>
+-						<Button type="button" variant="secondary">
+-							{messages.CLOSE}
+-						</Button>
+-					</DialogClose>
+-				</DialogFooter>
+-			</DialogContent>
+-		</Dialog>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/sidebar/database-config-switch.tsx b/src/client/src/components/(playground)/sidebar/database-config-switch.tsx
+index e1cfedeb..f3b4448a 100644
+--- a/src/client/src/components/(playground)/sidebar/database-config-switch.tsx
++++ b/src/client/src/components/(playground)/sidebar/database-config-switch.tsx
+@@ -76,7 +76,7 @@ export default function DatabaseConfigSwitch({
+           )}
+           <DropdownMenuSeparator />
+           <DropdownMenuItem asChild>
+-            <Link href="/settings/database-config">
++            <Link href="/connectors?type=clickhouse">
+               <Plus className="mr-2 size-3.5" />
+               {messages.ADD_DB_CONFIG}
+             </Link>
+diff --git a/src/client/src/components/(playground)/telemetry-source/data-sources-page.tsx b/src/client/src/components/(playground)/telemetry-source/data-sources-page.tsx
+index 732ef809..2c277371 100644
+--- a/src/client/src/components/(playground)/telemetry-source/data-sources-page.tsx
++++ b/src/client/src/components/(playground)/telemetry-source/data-sources-page.tsx
+@@ -306,7 +306,6 @@ export default function DataSourcesPage({
+ 						query: settings.query || "",
+ 						password: "",
+ 						isCurrent: false,
+-						permissions: { canEdit: true, canDelete: true, canShare: true },
+ 					};
+ 				});
+ 			useRootStore.getState().databaseConfig.setList(clickHouseConfigs);
+@@ -395,7 +394,7 @@ export default function DataSourcesPage({
+ 	};
+ 
+ 	const removeClickhouse = async (config: DatabaseConfigWithActive) => {
+-		if (!config.permissions?.canDelete) return;
++		if (!config.id) return;
+ 		if (!window.confirm(messages.DATA_SOURCE_DELETE_CONFIRM(config.name))) return;
+ 		await deleteDatabaseConfig(config.id);
+ 		await load();
+@@ -707,7 +706,6 @@ export default function DataSourcesPage({
+ 													variant="ghost"
+ 													title={messages.DATA_SOURCE_EDIT_ACTION}
+ 													aria-label={`${messages.DATA_SOURCE_EDIT_ACTION} ${config.name}`}
+-													disabled={!config.permissions?.canEdit}
+ 													onClick={() => setDbEditing(config)}
+ 												>
+ 													<Pencil className="h-3.5 w-3.5" />
+@@ -717,7 +715,6 @@ export default function DataSourcesPage({
+ 													variant="ghost"
+ 													title={messages.DATA_SOURCE_DELETE_ACTION}
+ 													aria-label={`${messages.DATA_SOURCE_DELETE_ACTION} ${config.name}`}
+-													disabled={!config.permissions?.canDelete}
+ 													onClick={() => void removeClickhouse(config)}
+ 												>
+ 													<Trash2 className="h-3.5 w-3.5 text-error" />
+diff --git a/src/client/src/constants/dbConfig.ts b/src/client/src/constants/dbConfig.ts
+index 559c168b..47c62135 100644
+--- a/src/client/src/constants/dbConfig.ts
++++ b/src/client/src/constants/dbConfig.ts
+@@ -10,13 +10,6 @@ export type DatabaseConfig = {
+ 	query?: string;
+ };
+ 
+-export type DatabaseConfigPermissions = {
+-	canEdit?: boolean;
+-	canDelete?: boolean;
+-	canShare?: boolean;
+-};
+-
+ export type DatabaseConfigWithActive = DatabaseConfig & {
+ 	isCurrent?: boolean;
+-	permissions?: DatabaseConfigPermissions;
+ };
+diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
+index ed748bca..c4b78a63 100644
+--- a/src/client/src/constants/messages/en.ts
++++ b/src/client/src/constants/messages/en.ts
+@@ -1316,9 +1316,6 @@ export const CLICKHOUSE_CONNECTOR_DESCRIPTION =
+ export const CLICKHOUSE_CONNECTOR_INSTRUCTIONS =
+ 	"Use the host, port, database, and credentials for the ClickHouse instance that belongs to this environment.";
+ 
+-export const DB_CONFIG_EDIT_PERMISSION_REQUIRED =
+-	"You don't have enough permissions to edit this database config";
+-
+ export const UPDATE = "Update";
+ 
+ export const DB_CONFIG_EMPTY_TITLE = "You have not created any database config";
+@@ -1340,23 +1337,12 @@ export const DELETE_DATABASE_CONFIG_CONFIRMATION =
+ export const MARK_DB_CONFIG_ACTIVE = (name: string) =>
+ 	`Mark ${name} as the active database config`;
+ 
+-export const SHARE_DATABASE_CONFIG = "Share Database config";
+-
+-export const SHARE_DATABASE_CONFIG_DESCRIPTION =
+-	"You can share the selected database config with multiple users and permissions.";
+-
+ export const ADD_EMAIL_PLACEHOLDER = "Add an email...";
+ 
+ export const ENTER = "Enter";
+ 
+-export const SHARE = "Share";
+-
+ export const EMAIL_INVALID = "Email invalid";
+ 
+-export const DB_CONFIG_SHARED = "Database config shared";
+-
+-export const DB_CONFIG_SHARE_FAILED = "Database config share failed";
+-
+ // Organisation
+ export const ORGANISATION = "Organisation";
+ 
+diff --git a/src/client/src/lib/db-config.ts b/src/client/src/lib/db-config.ts
+index 3dd51ce0..dd499442 100644
+--- a/src/client/src/lib/db-config.ts
++++ b/src/client/src/lib/db-config.ts
+@@ -2,7 +2,7 @@ import asaw from "@/utils/asaw";
+ import prisma from "./prisma";
+ import { removeLegacyConnector, syncDatabaseConfigConnector } from "@/lib/platform/connectors/instances";
+ import { getCurrentUser } from "./session";
+-import { DatabaseConfig, DatabaseConfigInvitedUser } from "@prisma/client";
++import { DatabaseConfig } from "@prisma/client";
+ import migrations from "@/clickhouse/migrations";
+ import getMessage from "@/constants/messages";
+ import { throwIfError } from "@/utils/error";
+@@ -90,9 +90,6 @@ export const getDBConfigByUser = async (currentOnly?: boolean) => {
+ 			databaseConfigId: true,
+ 			isCurrent: true,
+ 			databaseConfig: true,
+-			canEdit: true,
+-			canDelete: true,
+-			canShare: true,
+ 		},
+ 		orderBy: {
+ 			databaseConfig: {
+@@ -101,18 +98,10 @@ export const getDBConfigByUser = async (currentOnly?: boolean) => {
+ 		},
+ 	});
+ 
+-	const dbConfigs = dbUserConfigs.map((dbConfig) => ({
+-		...dbConfig.databaseConfig,
+-		permissions: {
+-			canEdit: dbConfig.canEdit,
+-			canDelete: dbConfig.canDelete,
+-			canShare: dbConfig.canShare,
+-		},
+-	}));
+ 	const currentConfig = dbUserConfigs.find((dbConfig) => dbConfig.isCurrent);
+-	return dbConfigs.map((dbConfig) => ({
+-		...dbConfig,
+-		isCurrent: currentConfig?.databaseConfigId === dbConfig?.id,
++	return dbUserConfigs.map((dbConfig) => ({
++		...dbConfig.databaseConfig,
++		isCurrent: currentConfig?.databaseConfigId === dbConfig.databaseConfigId,
+ 	}));
+ };
+ 
+@@ -226,7 +215,7 @@ export const upsertDBConfig = async (
+ 	if (existingDBName?.id) throw new Error("DB config Name already exists");
+ 
+ 	if (id) {
+-		await checkPermissionForDbAction(user!.id, id, "EDIT");
++		await requireOwnedDBConfig(user!.id, id);
+ 	}
+ 
+ 	let createddbConfig: DatabaseConfig;
+@@ -307,11 +296,7 @@ export const upsertDBConfig = async (
+ 	}
+ 
+ 	if (!id) {
+-		await addDatabaseConfigUserEntry(user!.id, createddbConfig.id, {
+-			canEdit: true,
+-			canDelete: true,
+-			canShare: true,
+-		});
++		await addDatabaseConfigUserEntry(user!.id, createddbConfig.id);
+ 		// A saved connector must be ready for every ClickHouse-backed feature
+ 		// before the API returns. In particular, Rule Engine must not race the
+ 		// asynchronous creation of its openlit_rules tables.
+@@ -353,7 +338,7 @@ export async function deleteDBConfig(id: string) {
+ 
+ 	if (!user) throw new Error(getMessage().UNAUTHORIZED_USER);
+ 
+-	await checkPermissionForDbAction(user.id, id, "DELETE");
++	await requireOwnedDBConfig(user.id, id);
+ 
+ 	await prisma.databaseConfigUser.delete({
+ 		where: {
+@@ -423,163 +408,9 @@ export async function setCurrentDBConfig(id: string) {
+ 	return getMessage().CURRENT_DB_CONFIG_SET_SUCCESS;
+ }
+ 
+-export async function shareDBConfig({
+-	shareArray,
+-	id,
+-}: {
+-	id: string;
+-	shareArray: {
+-		email: string;
+-		permissions?: {
+-			canDelete: boolean;
+-			canEdit: boolean;
+-			canShare: boolean;
+-		};
+-	}[];
+-}) {
+-	if (!id || !shareArray?.length) throw new Error("No user to share!");
+-
+-	const user = await getCurrentUser();
+-
+-	if (!user) throw new Error(getMessage().UNAUTHORIZED_USER);
+-
+-	const { dbUserConfig } = await checkPermissionForDbAction(
+-		user.id,
+-		id,
+-		"SHARE"
+-	);
+-
+-	return await Promise.all(
+-		shareArray.map(
+-			async ({
+-				email,
+-				permissions = {
+-					canDelete: false,
+-					canEdit: false,
+-					canShare: false,
+-				},
+-			}) => {
+-				// Normalize email to lowercase for case-insensitive comparison
+-				const normalizedEmail = email.toLowerCase().trim();
+-				
+-				const [, user] = await asaw(
+-					prisma.user.findUnique({
+-						where: {
+-							email: normalizedEmail,
+-						},
+-					})
+-				);
+-
+-				if (user?.id) {
+-					const [, dbConfigUser] = await asaw(
+-						prisma.databaseConfigUser.findFirst({
+-							where: {
+-								userId: user.id,
+-								databaseConfigId: id,
+-							},
+-						})
+-					);
+-
+-					if (!dbConfigUser) {
+-						await addDatabaseConfigUserEntry(user.id, id, permissions);
+-						return [, { success: true }];
+-					}
+-
+-					return [`Already shared to ${normalizedEmail}`, { success: false }];
+-				} else {
+-					const [createErr] = await asaw(
+-						prisma.databaseConfigInvitedUser.create({
+-							data: {
+-								email: normalizedEmail,
+-								databaseConfigId: id,
+-								canEdit: dbUserConfig.canEdit && permissions.canEdit,
+-								canDelete: dbUserConfig.canDelete && permissions.canDelete,
+-								canShare: dbUserConfig.canShare && permissions.canShare,
+-							},
+-						})
+-					);
+-
+-					return [createErr, { success: !createErr }];
+-				}
+-			}
+-		)
+-	);
+-}
+-
+-export async function moveSharedDBConfigToDBUser(
+-	email: string,
+-	userId: string
+-) {
+-	const [sharedConfigErr, sharedConfig] = await asaw(
+-		prisma.databaseConfigInvitedUser.findMany({
+-			where: {
+-				email,
+-			},
+-		})
+-	);
+-
+-	if (sharedConfigErr) {
+-		consoleLog(sharedConfigErr);
+-		return;
+-	}
+-
+-	if (!sharedConfig?.length) return;
+-
+-	if (sharedConfig.length) {
+-		const [configAddErr] = await asaw(
+-			prisma.databaseConfigUser.createMany({
+-				data: sharedConfig.map(
+-					(sharedConfigObject: DatabaseConfigInvitedUser) => ({
+-						databaseConfigId: sharedConfigObject.databaseConfigId,
+-						userId,
+-						canDelete: sharedConfigObject.canDelete,
+-						canEdit: sharedConfigObject.canEdit,
+-						canShare: sharedConfigObject.canShare,
+-					})
+-				),
+-			})
+-		);
+-
+-		const ifNoCurrentDbConfig = await prisma.databaseConfigUser.count({
+-			where: {
+-				userId,
+-				isCurrent: true,
+-			},
+-		});
+-
+-		if (!ifNoCurrentDbConfig) {
+-			const firstDbConfig = await prisma.databaseConfigUser.findFirst({
+-				where: {
+-					userId,
+-				},
+-			});
+-			if (firstDbConfig) {
+-				await prisma.databaseConfigUser.update({
+-					data: {
+-						isCurrent: true,
+-					},
+-					where: {
+-						databaseConfigId_userId: {
+-							userId,
+-							databaseConfigId: firstDbConfig.databaseConfigId,
+-						},
+-					},
+-				});
+-			}
+-		}
+-	}
+-
+-	return;
+-}
+-
+ async function addDatabaseConfigUserEntry(
+ 	userId: string,
+-	databaseConfigId: string,
+-	permissions: {
+-		canDelete: boolean;
+-		canEdit: boolean;
+-		canShare: boolean;
+-	}
++	databaseConfigId: string
+ ) {
+ 	// Get the database config to find its project
+ 	const dbConfig = await prisma.databaseConfig.findUnique({
+@@ -603,53 +434,24 @@ async function addDatabaseConfigUserEntry(
+ 			userId,
+ 			databaseConfigId,
+ 			isCurrent: !existingCurrentConfigInOrg,
+-			...permissions,
+ 		},
+ 	});
+ }
+ 
+-async function checkPermissionForDbAction(
+-	userId: string,
+-	databaseConfigId: string,
+-	actionType: "DELETE" | "SHARE" | "EDIT"
+-) {
+-	const [dbUserConfigErr, dbUserConfig] = await asaw(
+-		prisma.databaseConfigUser.findFirst({
+-			where: {
+-				databaseConfigId,
+-				userId,
+-			},
+-		})
+-	);
+-
+-	if (dbUserConfigErr || !dbUserConfig)
+-		throw new Error(dbUserConfigErr || "Database config doesn't exist");
+-
+-	switch (actionType) {
+-		case "DELETE":
+-			if (!dbUserConfig.canDelete)
+-				throw new Error(
+-					"User doesn't have permission to delete the database config"
+-				);
+-			break;
+-		case "EDIT":
+-			if (!dbUserConfig.canEdit)
+-				throw new Error(
+-					"User doesn't have permission to edit the database config"
+-				);
+-			break;
+-		case "SHARE":
+-			if (!dbUserConfig.canShare)
+-				throw new Error(
+-					"User doesn't have permission to share the database config"
+-				);
+-			break;
+-		default:
+-			break;
++/**
++ * Ownership check for the single-operator product.
++ *
++ * Database configs were once shared between users, and the caller had to hold
++ * an explicit `canEdit`/`canDelete`/`canShare` grant before touching one.
++ * There is no second user to grant anything to, so the only question left is
++ * whether this config belongs to the caller at all.
++ */
++async function requireOwnedDBConfig(userId: string, databaseConfigId: string) {
++	const owned = await getDBConfigByIdForUser({ id: databaseConfigId, userId });
++
++	if (!owned) {
++		throw new Error("Database config doesn't exist");
+ 	}
+ 
+-	return {
+-		success: true,
+-		dbUserConfig,
+-	};
++	return owned;
+ }
+diff --git a/src/client/src/lib/rbac/current.ts b/src/client/src/lib/rbac/current.ts
+deleted file mode 100644
+index b8f8b5e9..00000000
+--- a/src/client/src/lib/rbac/current.ts
++++ /dev/null
+@@ -1,22 +0,0 @@
+-type RouteHandler = (
+-	request: any,
+-	context: any
+-) => Promise<Response> | Response;
+-
+-export async function requireCurrentOrganisationPermission(_permission: string) {
+-	return null;
+-}
+-
+-export async function requireCurrentOrganisationEntitledPermission(
+-	_featureId: string,
+-	_permission: string
+-) {
+-	return null;
+-}
+-
+-export function withCurrentOrganisationPermission<THandler extends RouteHandler>(
+-	_permission: string,
+-	handler: THandler
+-): THandler {
+-	return handler;
+-}
+diff --git a/src/client/src/lib/user.ts b/src/client/src/lib/user.ts
+index 9b198a61..45c80df6 100644
+--- a/src/client/src/lib/user.ts
++++ b/src/client/src/lib/user.ts
+@@ -3,7 +3,6 @@ import prisma from "./prisma";
+ import asaw from "@/utils/asaw";
+ import { getCurrentUser } from "./session";
+ import { User } from "@prisma/client";
+-import { moveSharedDBConfigToDBUser } from "./db-config";
+ import getMessage from "@/constants/messages";
+ import {
+ 	validateEmail,
+@@ -100,7 +99,6 @@ export const createNewUser = async (
+ 	});
+ 
+ 	if (createdUser?.id) {
+-		await moveSharedDBConfigToDBUser(normalizedEmail, createdUser.id);
+ 		return exclude(createdUser, options?.selectPassword ? [] : undefined);
+ 	}
+ 
+diff --git a/src/client/src/types/database-config.ts b/src/client/src/types/database-config.ts
+index 86483ffb..b3f4a8bc 100644
+--- a/src/client/src/types/database-config.ts
++++ b/src/client/src/types/database-config.ts
+@@ -1,24 +1,3 @@
+ import { DatabaseConfig as PrismaDatabaseConfig } from "@prisma/client";
+-import { MouseEventHandler } from "react";
+ 
+ export interface DatabaseConfig extends PrismaDatabaseConfig {}
+-
+-export type DatabaseConfigTabItemProps = {
+-	id: string;
+-	name: string;
+-	badge?: string;
+-	isCurrent?: boolean;
+-	canDelete?: boolean;
+-	canShare?: boolean;
+-	canEdit?: boolean;
+-	canSelect?: boolean;
+-};
+-
+-export type DatabaseConfigTabsProps = {
+-	items: DatabaseConfigTabItemProps[];
+-	onClickTab: MouseEventHandler<HTMLElement>;
+-	selectedTabId: string;
+-	onClickItemDelete?: MouseEventHandler<SVGSVGElement>;
+-	onClickItemChangeActive: MouseEventHandler<HTMLDivElement>;
+-	addButton?: boolean;
+-};
+diff --git a/src/client/src/utils/breadcrumbs.ts b/src/client/src/utils/breadcrumbs.ts
+index 0be1de73..8e153c9a 100644
+--- a/src/client/src/utils/breadcrumbs.ts
++++ b/src/client/src/utils/breadcrumbs.ts
+@@ -304,14 +304,6 @@ export const ROUTE_CONFIGS: RouteConfig[] = [
+ 		],
+ 	},
+ 	
+-	{
+-		regex: /^\/settings\/database-config$/,
+-		getTitle: () => "Database Config",
+-		getBreadcrumbs: () => [
+-			{ title: "Settings", href: "/settings" }
+-		],
+-	},
+-
+ 	{
+ 		regex: /^\/settings\/api-keys$/,
+ 		getTitle: () => "Api Keys",

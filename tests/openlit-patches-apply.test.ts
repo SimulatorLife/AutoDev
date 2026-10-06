@@ -467,6 +467,129 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     /"\/openapi-spec"|"\/settings\/profile"/u,
     "the sidebar must not link to surfaces that no longer exist"
   );
+
+  // Sharing a database config with another user is not a product concept:
+  // there is a single operator. The share dialog, its API, the invited-user
+  // storage and the per-user edit/delete/share grants all go with it.
+  for (const gone of [
+    "src/client/src/components/(playground)/database-config/share-dialog.tsx",
+    "src/client/src/components/(playground)/database-config/database-config-tabs.tsx",
+    "src/client/src/app/api/db-config/share/route.ts",
+    "src/client/src/app/(playground)/settings/database-config/page.tsx"
+  ]) {
+    assert.equal(
+      existsSync(join(dir, gone)),
+      false,
+      `${gone} must not survive the database-config sharing removal`
+    );
+  }
+
+  // The header's "add a datasource" control is the only way to create a
+  // config from anywhere in the shell, so it must land on the real form
+  // rather than on the page this patch deletes.
+  const datasourceSwitch = readFileSync(
+    join(
+      dir,
+      "src/client/src/components/(playground)/sidebar/database-config-switch.tsx"
+    ),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    datasourceSwitch,
+    /\/settings\/database-config/u,
+    "the header must not link to the deleted settings page"
+  );
+  assert.match(
+    datasourceSwitch,
+    /href="\/connectors\?type=clickhouse"/u,
+    "adding a datasource must deep-link to the ClickHouse connector form"
+  );
+  const connectorsPage = readFileSync(
+    join(
+      dir,
+      "src/client/src/components/(playground)/connectors/connectors-page.tsx"
+    ),
+    "utf8"
+  );
+  assert.match(
+    connectorsPage,
+    /useSearchParams\(\)/u,
+    "the connectors page must read ?type= so the header link can open a form"
+  );
+
+  // The storage went with the product: no invited-user table, and no grant
+  // columns on the user<->config link.
+  const prismaSchema = readFileSync(
+    join(dir, "src/client/prisma/schema.prisma"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    prismaSchema,
+    /DatabaseConfigInvitedUser/u,
+    "the invited-user queue must not survive in the schema"
+  );
+  assert.doesNotMatch(
+    prismaSchema,
+    /\bcanShare\b|\bcanEdit\b|\bcanDelete\b/u,
+    "per-user edit/delete/share grants must not survive in the schema"
+  );
+  const sharingMigration = join(
+    dir,
+    "src/client/prisma/migrations/20260820100000_drop_database_config_sharing/migration.sql"
+  );
+  assert.equal(
+    existsSync(sharingMigration),
+    true,
+    "existing installs need a migration that drops the sharing storage"
+  );
+  const sharingSql = readFileSync(sharingMigration, "utf8");
+  assert.match(sharingSql, /DROP TABLE IF EXISTS "DatabaseConfigInvitedUser"/u);
+  for (const column of ["canShare", "canEdit", "canDelete"]) {
+    assert.match(
+      sharingSql,
+      new RegExp(String.raw`DROP COLUMN "${column}"`),
+      `${column} must be dropped from existing installs`
+    );
+  }
+
+  // The organisation RBAC layer was three stubs that took a permission and
+  // returned null. A gate that authorizes nothing must not be left reading
+  // like one.
+  assert.equal(
+    existsSync(join(dir, "src/client/src/lib/rbac/current.ts")),
+    false,
+    "the no-op organisation permission module must not survive"
+  );
+  for (const route of [
+    "src/client/src/app/api/db-config/route.ts",
+    "src/client/src/app/api/providers/route.ts",
+    "src/client/src/app/api/api-key/route.ts",
+    "src/client/src/app/api/prompt/route.ts"
+  ]) {
+    const source = readFileSync(join(dir, route), "utf8");
+    assert.doesNotMatch(
+      source,
+      /OrganisationPermission/u,
+      `${route} must not call a permission gate that cannot refuse`
+    );
+  }
+
+  // Ownership replaces grants: the caller's own link is the check now, and it
+  // must refuse a config that is not the caller's.
+  const dbConfigModule = readFileSync(
+    join(dir, "src/client/src/lib/db-config.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    dbConfigModule,
+    /shareDBConfig|moveSharedDBConfigToDBUser|checkPermissionForDbAction/u,
+    "the sharing and grant-gate functions must be gone from the db-config owner"
+  );
+  assert.match(
+    dbConfigModule,
+    /async function requireOwnedDBConfig\(/u,
+    "mutating a config must be gated on ownership"
+  );
 }
 
 /** Every patch in the maintained OpenLIT series, in apply order. */
@@ -508,7 +631,8 @@ const EXPECTED_OPENLIT_PATCH_NAMES = [
   "35-remove-vault-administration",
   "36-dead-surfaces-and-broken-sidebar-nav",
   "37-remove-duplicate-agents-shell",
-  "38-remove-docs-and-account-surfaces"
+  "38-remove-docs-and-account-surfaces",
+  "39-remove-database-config-sharing"
 ] as const;
 test(
   "openlit patch set applies cleanly to pinned commit",
