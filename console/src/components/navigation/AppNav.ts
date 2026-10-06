@@ -6,6 +6,7 @@ import {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import { navIcon } from "../icons/Icon.ts";
 import { canonicalNavPath } from "../../lib/routes.ts";
 
 export { canonicalNavPath } from "../../lib/routes.ts";

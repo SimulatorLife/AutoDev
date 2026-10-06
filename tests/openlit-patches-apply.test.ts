@@ -1800,30 +1800,36 @@ test("OpenLIT patches do not add a producer-facing Collector sidecar", () => {
   }
 });
 
-
 test("27-remove-otter-chat-docs-onboarding-chrome removes Otter/chat/docs/onboarding surfaces", () => {
-  const patchPath = join(PATCHES_DIR, "27-remove-otter-chat-docs-onboarding-chrome");
-  assert.ok({
+  const patchPath = join(
+    PATCHES_DIR,
+    "27-remove-otter-chat-docs-onboarding-chrome"
+  );
+  assert.ok(
     existsSync(patchPath),
     "patch 27-remove-otter-chat-docs-onboarding-chrome.patch must exist"
   );
   const content = readFileSync(patchPath, "utf8");
   assertPatchHunkCounts(patchPath);
   for (const banned of [
-    "from "@" + /components/(playground)/chat",
-    "from "@" + /lib/platform/chat",
-    "from "@" + /lib/chat",
-    "from "@" + /store/chat",
-    "from "@" + /selectors/chat",
-    "from "@" + /types/store/chat",
+    /components\/(playground)\/chat/,
+    /lib\/platform\/chat/,
+    /lib\/chat/,
+    /store\/chat/,
+    /selectors\/chat/,
+    /types\/store\/chat/
   ]) {
-    assert.doesNotMatch(content, new RegExp("^\+\s*" + banned), "patch 27 must not reintroduce chat imports" + banned);
+    assert.doesNotMatch(
+      content,
+      new RegExp(String.raw`^\+\s*.*from\s*["']@` + banned.source),
+      "patch 27 must not reintroduce a chat import: " + banned.source
+    );
   }
   const dir = freshClone();
   try {
-    const check = run("git", ["apply","--check",patchPath], dir);
+    const check = run("git", ["apply", "--check", patchPath], dir);
     assert.equal(check.status, 0, "git apply --check failed: " + check.stderr);
-    const apply = run("git", ["apply",patchPath], dir);
+    const apply = run("git", ["apply", patchPath], dir);
     assert.equal(apply.status, 0, "git apply failed: " + apply.stderr);
     const client = join(dir, "src/client");
     const bannedFiles = [
@@ -1849,9 +1855,17 @@ test("27-remove-otter-chat-docs-onboarding-chrome removes Otter/chat/docs/onboar
       "src/lib/chat"
     ];
     for (const rel of bannedFiles) {
-      assert.equal(existsSync(join(client, rel)), false, "27-remove-otter-chat-docs-onboarding-chrome must remove " + rel);
+      assert.equal(
+        existsSync(join(client, rel)),
+        false,
+        "27-remove-otter-chat-docs-onboarding-chrome must remove " + rel
+      );
     }
-    const docsGrep = run("grep", ["-rln","docs.openlit.io",join(client, "src")], dir);
+    const docsGrep = run(
+      "grep",
+      ["-rln", "docs.openlit.io", join(client, "src")],
+      dir
+    );
     const docsOffenders = [];
     for (const line of docsGrep.stdout.split("")) {
       if (!line) continue;
@@ -1861,8 +1875,25 @@ test("27-remove-otter-chat-docs-onboarding-chrome removes Otter/chat/docs/onboar
       if (rel.endsWith("agents/no-coding-agents.tsx")) continue;
       docsOffenders.push(rel);
     }
-    assert.deepEqual(docsOffenders, [], "27-remove-otter-chat-docs-onboarding-chrome must leave no docs.openlit.io references in the patched client (excluded: openground SDK usage and OpenLIT CLI install snippet)");
-    const otterGrep = run("grep", ["-rln","--include=*.ts","--include=*.tsx","-e","ask-otter-panel","-e","OtterSidebar",join(client, "src")], dir);
+    assert.deepEqual(
+      docsOffenders,
+      [],
+      "27-remove-otter-chat-docs-onboarding-chrome must leave no docs.openlit.io references in the patched client (excluded: openground SDK usage and OpenLIT CLI install snippet)"
+    );
+    const otterGrep = run(
+      "grep",
+      [
+        "-rln",
+        "--include=*.ts",
+        "--include=*.tsx",
+        "-e",
+        "ask-otter-panel",
+        "-e",
+        "OtterSidebar",
+        join(client, "src")
+      ],
+      dir
+    );
     const otterOffenders = [];
     for (const line of otterGrep.stdout.split("")) {
       if (!line) continue;
@@ -1870,7 +1901,11 @@ test("27-remove-otter-chat-docs-onboarding-chrome removes Otter/chat/docs/onboar
       if (rel.includes("__tests__")) continue;
       otterOffenders.push(rel);
     }
-    assert.deepEqual(otterOffenders, [], "27-remove-otter-chat-docs-onboarding-chrome must leave no Otter/chat surface references in the patched client");
+    assert.deepEqual(
+      otterOffenders,
+      [],
+      "27-remove-otter-chat-docs-onboarding-chrome must leave no Otter/chat surface references in the patched client"
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

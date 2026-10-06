@@ -5,6 +5,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { ChipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable
@@ -15,6 +16,13 @@ export interface PermissionsViewProps {
   readonly roleMatrices: readonly RoleCapabilityMatrix[];
 }
 
+/** How a sandbox mode reads in prose, so the column is not raw config text. */
+function sandboxLabel(mode: RoleCapabilityMatrix["sandboxMode"]): string {
+  if (mode === "read-only") return "Read-only";
+  if (mode === "workspace-write") return "Workspace write";
+  return "Unrestricted";
+}
+
 export function PermissionsView({
   policy,
   roleMatrices
@@ -23,6 +31,7 @@ export function PermissionsView({
     {
       id: "role",
       header: "Agent Role",
+      width: "11rem",
       cell: (r) =>
         React.createElement(
           "span",
@@ -33,82 +42,40 @@ export function PermissionsView({
     {
       id: "sandboxMode",
       header: "Sandbox Mode",
+      width: "10rem",
       cell: (r) =>
         React.createElement(
           "span",
           {
             className:
-              "text-xs bg-surface-raised text-fg-secondary px-2 py-0.5 rounded font-mono border border-border-strong"
-          },
-          r.sandboxMode
-        )
-    },
-    {
-      id: "readOnly",
-      header: "Capability",
-      cell: (r) =>
-        React.createElement(
-          "span",
-          {
-            className: "text-xs text-fg-secondary",
+              "text-xs bg-surface-raised text-fg-secondary px-2 py-0.5 rounded border border-border-strong",
             "data-permission-mode": r.readOnly ? "read-only" : "workspace-write"
           },
-          r.readOnly ? "Read-Only" : "Workspace-Write"
+          sandboxLabel(r.sandboxMode)
         )
     },
     {
       id: "mcps",
       header: "Allowed MCP Servers",
+      align: "tokens",
       cell: (r) =>
-        React.createElement(
-          "div",
-          { className: "flex flex-wrap gap-1" },
-          r.allowedMcpServers.map((mcp) =>
-            React.createElement(
-              "span",
-              {
-                key: mcp,
-                className:
-                  "text-xs bg-surface-raised text-accent px-1.5 py-0.5 rounded border border-border-strong font-mono"
-              },
-              mcp
-            )
-          ),
-          r.allowedMcpServers.length === 0
-            ? React.createElement(
-                "span",
-                { className: "text-xs text-fg-muted" },
-                "None"
-              )
-            : null
-        )
+        React.createElement(ChipList, {
+          items: r.allowedMcpServers,
+          emptyLabel: "No MCP servers",
+          testId: "role-mcps",
+          className: "font-mono text-accent"
+        })
     },
     {
       id: "skills",
       header: "Allowed Skills",
+      align: "tokens",
       cell: (r) =>
-        React.createElement(
-          "div",
-          { className: "flex flex-wrap gap-1" },
-          r.allowedSkills.map((skill) =>
-            React.createElement(
-              "span",
-              {
-                key: skill,
-                className:
-                  "text-xs bg-surface-raised text-fg-secondary px-1.5 py-0.5 rounded border border-border-strong font-mono"
-              },
-              skill
-            )
-          ),
-          r.allowedSkills.length === 0
-            ? React.createElement(
-                "span",
-                { className: "text-xs text-fg-muted" },
-                "None"
-              )
-            : null
-        )
+        React.createElement(ChipList, {
+          items: r.allowedSkills,
+          emptyLabel: "No skills",
+          testId: "role-skills"
+        })
     }
   ];
 
@@ -124,7 +91,7 @@ export function PermissionsView({
       }),
       React.createElement(StatCard, {
         title: "Default Sandbox",
-        value: policy.sandboxMode
+        value: sandboxLabel(policy.sandboxMode)
       }),
       React.createElement(StatCard, {
         title: "Network Access",

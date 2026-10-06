@@ -531,7 +531,10 @@ test("Prompt detail renders canonical text and reports an actually empty source"
     content: source,
     preview: "## Rendered Prompt\n\n**Use a dry run.**",
     revision: "a".repeat(64),
-    diff: { summary: "Canonical RuleSync command.", identifier: "a".repeat(64) },
+    diff: {
+      summary: "Canonical RuleSync command.",
+      identifier: "a".repeat(64)
+    },
     reconciliation: {
       status: {
         convergence: "not-observed",
@@ -724,7 +727,12 @@ test("DataTable renders table with columns and data", () => {
       data,
       columns: [
         { id: "id", header: "ID", cell: (r: TestRow) => r.id },
-        { id: "name", header: "Name", cell: (r: TestRow) => r.name, wrap: true }
+        {
+          id: "name",
+          header: "Name",
+          cell: (r: TestRow) => r.name,
+          align: "tokens"
+        }
       ],
       keyExtractor: (r: TestRow) => r.id
     })
@@ -732,10 +740,42 @@ test("DataTable renders table with columns and data", () => {
   assert.ok(markup.includes("Alpha"));
   assert.ok(markup.includes("Beta"));
   assert.ok(markup.includes("<table"));
-  assert.match(markup, /<td class="px-4 py-3 whitespace-nowrap">1<\/td>/);
+  assert.match(markup, /<td class="[^"]*truncate[^"]*">1<\/td>/);
+  // A `tokens` column wraps between items and never splits a token, and it
+  // claims real width so the browser cannot collapse it to one chip per line.
+  assert.match(markup, /class="[^"]*whitespace-normal break-normal[^"]*"/);
+  assert.match(markup, /style="width:14rem"/);
+  // Fixed layout is what keeps a long cell from pushing the table past the
+  // page and forcing a horizontal scroll at ordinary desktop widths.
+  assert.match(markup, /<table class="[^"]*table-fixed[^"]*"/);
+});
+
+test("DataTable clamps prose cells on an inner box, not the table cell", () => {
+  interface TestRow {
+    readonly id: string;
+    readonly description: string;
+  }
+  const markup = renderToStaticMarkup(
+    DataTable<TestRow>({
+      data: [{ id: "1", description: "A long description." }],
+      columns: [
+        { id: "id", header: "ID", cell: (r: TestRow) => r.id },
+        {
+          id: "description",
+          header: "Description",
+          cell: (r: TestRow) => r.description,
+          align: "prose",
+          clampLines: 2
+        }
+      ],
+      keyExtractor: (r: TestRow) => r.id
+    })
+  );
+  // `-webkit-line-clamp` needs a box display, so the clamp belongs on a wrapper
+  // inside the cell; clamping the `<td>` itself breaks its table-cell layout.
   assert.match(
     markup,
-    /<td class="px-4 py-3 whitespace-normal break-words">Alpha<\/td>/
+    /<td[^>]*class="[^"]*whitespace-normal break-words[^"]*"><div class="line-clamp-2">/
   );
 });
 
@@ -866,7 +906,7 @@ test("Control API detail fetchers encode identifiers and preserve not-found stat
       stalePrompt.code,
       "autodev_control_api_invalid_prompt_detail_response"
     );
-    assert.match(stalePrompt.message, /v3 Markdown-preview contract/);
+    assert.match(stalePrompt.message, /v4 reconciliation contract/);
   }
 });
 
@@ -2421,7 +2461,7 @@ test("MemoryPage reports failed experience history instead of rendering an empty
         return Response.json({
           schema: "autodev-memory-records-v1",
           items: [],
-          totalCount: 0,
+          total: 0,
           limit: 50,
           offset: 0,
           hasMore: false
@@ -3290,7 +3330,10 @@ test("View adapters translate Control API responses without inventing data", () 
     content: "Exact source",
     preview: "Parsed prompt body",
     revision: "b".repeat(64),
-    diff: { summary: "Canonical RuleSync command.", identifier: "b".repeat(64) },
+    diff: {
+      summary: "Canonical RuleSync command.",
+      identifier: "b".repeat(64)
+    },
     reconciliation: {
       status: {
         convergence: "converged",
@@ -3347,11 +3390,23 @@ test("View adapters translate Control API responses without inventing data", () 
         readOnly: false,
         sandbox: "workspace-write",
         networkAccess: true,
-        approvals: "never"
+        approvals: "never",
+        mcp: ["cocoindex-code", "lsp"],
+        skills: ["autodev-session-diagnostics", "ccc"]
       }
     }
   });
   assert.equal(perms.roleMatrices[0]?.sandboxMode, "workspace-write");
+  // The effective capability matrix must be the projected list, never a
+  // placeholder empty list the UI would render as "None".
+  assert.deepEqual(perms.roleMatrices[0]?.allowedMcpServers, [
+    "cocoindex-code",
+    "lsp"
+  ]);
+  assert.deepEqual(perms.roleMatrices[0]?.allowedSkills, [
+    "autodev-session-diagnostics",
+    "ccc"
+  ]);
 });
 
 test("Every canonical Console route path maps to a canonical nav section", () => {
@@ -3401,7 +3456,7 @@ test("MemoryRecordsView renders records, lifecycle status badges, and claim text
   const markup = renderToStaticMarkup(
     React.createElement(MemoryRecordsView, {
       records: [sampleRecord],
-      totalCount: 1,
+      total: 1,
       currentWorkspaceId: "SimulatorLife/AutoDev"
     })
   );
@@ -3456,7 +3511,7 @@ test("MemoryRecordsView renders record detail panel with validity and transition
   const markup = renderToStaticMarkup(
     React.createElement(MemoryRecordsView, {
       records: [sampleRecord],
-      totalCount: 1,
+      total: 1,
       selectedRecord: sampleRecord,
       history: sampleHistory,
       currentWorkspaceId: "SimulatorLife/AutoDev"
@@ -3494,7 +3549,7 @@ test("MemoryExperiencesView renders experiences with task, role, and validation 
   const markup = renderToStaticMarkup(
     React.createElement(MemoryExperiencesView, {
       experiences: [sampleExp],
-      totalCount: 1,
+      total: 1,
       currentWorkspaceId: "SimulatorLife/AutoDev"
     })
   );
@@ -3734,7 +3789,7 @@ test("fetchMemoryRecords issues authenticated GET to /control/memory/records wit
     return Response.json({
       schema: "autodev-memory-records-v1",
       items: [],
-      totalCount: 0,
+      total: 0,
       limit: 50,
       offset: 0,
       hasMore: false
@@ -4007,7 +4062,10 @@ test("Prompt edit form submits only source content and its revision through the 
       name: "dry",
       revision: "b".repeat(64),
       changed: true,
-      diff: { summary: "Canonical source updated.", identifier: "c".repeat(64) },
+      diff: {
+        summary: "Canonical source updated.",
+        identifier: "c".repeat(64)
+      },
       reconciliation: {
         status: {
           convergence: "converged",

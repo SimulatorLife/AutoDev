@@ -80,7 +80,7 @@ export function AgentsView({
     {
       id: "providers",
       header: "Providers",
-      wrap: true,
+      width: "16rem",
       cell: (agent) =>
         React.createElement(AgentProviderSummary, { agent, providers })
     },

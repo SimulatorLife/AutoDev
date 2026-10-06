@@ -99,6 +99,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/runtime-files.ts",
   "runtime/src/platform/runtime-reconciliation.ts",
   "runtime/src/platform/service-restart.ts",
+  "runtime/src/platform/wait-for-probe.ts",
   "runtime/src/platform/install-state.ts",
   "runtime/src/platform/dependencies.ts",
   "runtime/src/platform/install-materializer.ts",

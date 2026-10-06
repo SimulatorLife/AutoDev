@@ -6,6 +6,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import { ChipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable
@@ -58,22 +59,24 @@ export function SkillsView({
     {
       id: "name",
       header: "Skill Name",
-      wrap: true,
+      width: "24rem",
+      // The description below is prose that must wrap inside the column, so
+      // this cell opts out of the default single-line truncation.
+      align: "prose",
       cell: (skill) =>
         React.createElement(
           "div",
-          null,
+          { className: "min-w-0" },
           React.createElement(
             "span",
-            { className: "font-semibold text-fg font-mono" },
+            { className: "block font-mono font-semibold text-fg truncate" },
             skill.name
           ),
           React.createElement(
             "p",
             {
-              className: "text-xs text-fg-muted mt-0.5 line-clamp-2",
-              title: skill.description,
-              style: { maxWidth: "28rem", whiteSpace: "normal" }
+              className: "mt-0.5 line-clamp-2 text-xs text-fg-muted",
+              title: skill.description
             },
             skill.description
           )
@@ -82,13 +85,12 @@ export function SkillsView({
     {
       id: "path",
       header: "Path",
-      wrap: true,
+      width: "14rem",
       cell: (skill) =>
         React.createElement(
           "span",
           {
-            className:
-              "block max-w-64 truncate text-xs font-mono text-fg-muted",
+            className: "block font-mono text-xs text-fg-muted",
             title: skill.path
           },
           skill.path
@@ -97,38 +99,14 @@ export function SkillsView({
     {
       id: "eligibleRoles",
       header: "Eligible Roles",
+      align: "tokens",
       cell: (skill) => {
         const item = eligibility.find((e) => e.skill === skill.name);
-        if (!item) {
-          return React.createElement(
-            "span",
-            { className: "text-xs text-fg-muted" },
-            "Not observed"
-          );
-        }
-        const roles = item.roles;
-        if (roles.length === 0) {
-          return React.createElement(
-            "span",
-            { className: "text-xs text-fg-muted" },
-            "No roles assigned"
-          );
-        }
-        return React.createElement(
-          "div",
-          { className: "flex flex-wrap gap-1" },
-          roles.map((r) =>
-            React.createElement(
-              "span",
-              {
-                key: r,
-                className:
-                  "text-xs bg-surface-raised text-fg-secondary px-2 py-0.5 rounded border border-border-strong"
-              },
-              r
-            )
-          )
-        );
+        return React.createElement(ChipList, {
+          items: item?.roles ?? [],
+          emptyLabel: item === undefined ? "Not observed" : "No roles assigned",
+          testId: "skill-roles"
+        });
       }
     },
     {

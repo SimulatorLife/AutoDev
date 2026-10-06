@@ -50,6 +50,7 @@ import {
   type ControlApiSkillsResponse,
   type ControlApiToolsResponse,
   type ControlApiWorkspacesResponse,
+  type ConvergenceStatus,
   LOCAL_CONTROL_API_ACTOR,
   type ProviderRole
 } from "@simulatorlife/autodev-core";
@@ -378,8 +379,28 @@ function isEnablement(value: unknown): boolean {
   );
 }
 
+/**
+ * Narrows one provider role entry to the canonical
+ * `ControlApiEnablement & { convergence: ReconciliationStatus }` shape.
+ *
+ * `convergence` is the nested reconciliation status the Control API derives
+ * from desired/observed evidence, not a bare string: it carries the convergence
+ * verdict plus the generations, timestamps, last error, and operator-facing
+ * explanation that Console renders next to the toggle.
+ */
 function isRoleConvergence(value: unknown): boolean {
-  return isRecord(value) && typeof value.convergence === "string";
+  if (!isRecord(value)) return false;
+  const convergence = value.convergence;
+  return (
+    isRecord(convergence) &&
+    isConvergenceStatus(convergence.convergence) &&
+    isNullableString(convergence.desiredGeneration) &&
+    isNullableString(convergence.observedGeneration) &&
+    isNullableString(convergence.lastApplyAt) &&
+    isNullableString(convergence.lastObservationAt) &&
+    isNullableString(convergence.lastError) &&
+    typeof convergence.explanation === "string"
+  );
 }
 
 function isControlApiProvidersResponse(
@@ -554,6 +575,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+/**
+ * Narrows the four reconciliation verdicts the shared contract defines.
+ * Anything else is not a convergence status and must fail closed rather than
+ * be coerced into a healthy-looking badge.
+ */
+function isConvergenceStatus(value: unknown): value is ConvergenceStatus {
+  return (
+    value === "converged" ||
+    value === "pending" ||
+    value === "error" ||
+    value === "not-observed"
+  );
+}
+
 function isStringList(value: unknown): value is readonly string[] {
   return (
     Array.isArray(value) && value.every((entry) => typeof entry === "string")
@@ -620,15 +659,53 @@ export function fetchHooks(
   );
 }
 
-export function fetchPermissions(
+function isControlApiPermissionsResponse(
+  value: unknown
+): value is ControlApiPermissionsResponse {
+  if (
+    !isRecord(value) ||
+    value.schema !== "autodev-control-permissions-v1" ||
+    typeof value.source !== "string" ||
+    value.readOnly !== true ||
+    !isRecord(value.policy) ||
+    !isRecord(value.rolePermissions)
+  ) {
+    return false;
+  }
+  return Object.values(value.rolePermissions).every(
+    (entry) =>
+      isRecord(entry) &&
+      typeof entry.readOnly === "boolean" &&
+      typeof entry.sandbox === "string" &&
+      typeof entry.networkAccess === "boolean" &&
+      typeof entry.approvals === "string" &&
+      // The capability matrix must be a real projection. An absent list is
+      // missing evidence, not "no MCP servers", so it fails closed instead of
+      // letting the Console print a fabricated `None`.
+      isStringList(entry.mcp) &&
+      isStringList(entry.skills)
+  );
+}
+
+export async function fetchPermissions(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiPermissionsResponse>> {
-  return fetchControlApi<ControlApiPermissionsResponse>(
+  const result = await fetchControlApi<unknown>(
     CONTROL_API_PATHS.permissions,
     config,
     options
   );
+  if (result.kind !== "ok") return result;
+  if (isControlApiPermissionsResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_permissions_response",
+    message:
+      "AutoDev Control API returned an incompatible Permissions response; the Console requires the effective capability-matrix contract."
+  };
 }
 
 function isControlApiPromptsResponse(

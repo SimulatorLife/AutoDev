@@ -157,8 +157,8 @@ export function permissionsFromControlApi(
         role: role as RoleCapabilityMatrix["role"],
         readOnly: entry.readOnly,
         sandboxMode,
-        allowedMcpServers: [],
-        allowedSkills: []
+        allowedMcpServers: entry.mcp,
+        allowedSkills: entry.skills
       };
     })
     .sort((left, right) => ROLE_COLLATOR.compare(left.role, right.role));

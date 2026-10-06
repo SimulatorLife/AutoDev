@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import {
-  auditEnvelopeToHistoryEntry,
   auditEnvelopesToHistory,
+  auditEnvelopeToHistoryEntry,
   boundReconciliationError,
   isControlApiAuditEnvelope,
   reconcileDiffSummary,
@@ -44,7 +44,10 @@ describe("isControlApiAuditEnvelope", () => {
   });
 
   test("rejects entries with mismatched schema", () => {
-    assert.equal(isControlApiAuditEnvelope({ ...envelope(), schema: "other" }), false);
+    assert.equal(
+      isControlApiAuditEnvelope({ ...envelope(), schema: "other" }),
+      false
+    );
   });
 
   test("rejects entries that carry raw prompt text in changes", () => {
@@ -72,7 +75,11 @@ describe("auditEnvelopeToHistoryEntry", () => {
 
   test("preserves the bounded redacted reason code", () => {
     const entry = auditEnvelopeToHistoryEntry(
-      asEnvelope({ ...envelope(), outcome: "error", reason: "revision_conflict" })
+      asEnvelope({
+        ...envelope(),
+        outcome: "error",
+        reason: "revision_conflict"
+      })
     );
     assert.equal(entry.outcome, "error");
     assert.equal(entry.reason, "revision_conflict");

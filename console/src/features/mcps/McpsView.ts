@@ -3,6 +3,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import { ChipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable
@@ -45,28 +46,13 @@ export function McpsView({
     {
       id: "roles",
       header: "Configured roles",
+      align: "tokens",
       cell: (server) =>
-        server.roles.length === 0
-          ? React.createElement(
-              "span",
-              { className: "text-xs text-fg-muted" },
-              "No roles assigned"
-            )
-          : React.createElement(
-              "div",
-              { className: "flex flex-wrap gap-1" },
-              server.roles.map((r) =>
-                React.createElement(
-                  "span",
-                  {
-                    key: r,
-                    className:
-                      "text-xs bg-surface-raised text-fg-secondary px-2 py-0.5 rounded border border-border-strong"
-                  },
-                  r
-                )
-              )
-            )
+        React.createElement(ChipList, {
+          items: server.roles,
+          emptyLabel: "No roles assigned",
+          testId: "mcp-roles"
+        })
     },
     {
       id: "declaration",

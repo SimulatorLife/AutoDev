@@ -7,11 +7,11 @@ import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { resolveServiceNode } from "./host-arch.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
+import { waitForProbe } from "./wait-for-probe.ts";
 
 export const LABEL_AUTODEV_CONSOLE = "com.codex.autodev-console";
 export const DEFAULT_CONSOLE_PORT = 3300;
 const DEFAULT_READY_TIMEOUT_MS = 5000;
-const POLL_INTERVAL_MS = 100;
 
 export interface ConsoleEnsureOptions {
   readonly host: "127.0.0.1";
@@ -117,16 +117,6 @@ function defaultDeps(options: ConsoleEnsureOptions): ConsoleEnsureDeps {
   };
 }
 
-async function waitForProbe(
-  deps: ConsoleEnsureDeps,
-  deadline: number
-): Promise<boolean> {
-  if (await deps.probe()) return true;
-  if (Date.now() >= deadline) return false;
-  await deps.sleep(POLL_INTERVAL_MS);
-  return waitForProbe(deps, deadline);
-}
-
 async function startFallback(
   options: ConsoleEnsureOptions,
   deps: ConsoleEnsureDeps
@@ -136,7 +126,7 @@ async function startFallback(
     return 1;
   }
   deps.startFallback(options.launcher, options.logPath);
-  if (await waitForProbe(deps, Date.now() + options.readyTimeoutMs)) return 0;
+  if (await waitForProbe(deps, options.readyTimeoutMs)) return 0;
   writeErrorLine(
     `Console did not become ready at http://${options.host}:${options.port}/api/health.`
   );
@@ -157,7 +147,7 @@ export async function ensureConsole(
     } catch {
       /* report after readiness */
     }
-    if (await waitForProbe(deps, Date.now() + options.readyTimeoutMs)) return 0;
+    if (await waitForProbe(deps, options.readyTimeoutMs)) return 0;
     writeErrorLine(
       `Console LaunchAgent ${options.label} did not become ready.`
     );
@@ -167,8 +157,7 @@ export async function ensureConsole(
   if (deps.plistExists()) {
     try {
       deps.launchd.bootstrap(options.plist);
-      if (await waitForProbe(deps, Date.now() + options.readyTimeoutMs))
-        return 0;
+      if (await waitForProbe(deps, options.readyTimeoutMs)) return 0;
     } catch {
       /* launchd may be unavailable inside a sandbox */
     }

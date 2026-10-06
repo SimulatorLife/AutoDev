@@ -97,12 +97,12 @@ export function deriveReconciliationStatus(
       observed: evidence.observedGeneration
     },
     {
-      ...(options.hasObservation !== undefined
-        ? { hasObservation: options.hasObservation }
-        : {}),
-      ...(options.restartRequired !== undefined
-        ? { restartRequired: options.restartRequired }
-        : {}),
+      ...(options.hasObservation === undefined
+        ? {}
+        : { hasObservation: options.hasObservation }),
+      ...(options.restartRequired === undefined
+        ? {}
+        : { restartRequired: options.restartRequired }),
       lastError: evidence.lastError
     }
   );
@@ -142,12 +142,12 @@ export function buildReconciliationView(args: {
 }): ReconciliationView {
   return {
     status: deriveReconciliationStatus(args.evidence, {
-      ...(args.hasObservation !== undefined
-        ? { hasObservation: args.hasObservation }
-        : {}),
-      ...(args.restartRequired !== undefined
-        ? { restartRequired: args.restartRequired }
-        : {})
+      ...(args.hasObservation === undefined
+        ? {}
+        : { hasObservation: args.hasObservation }),
+      ...(args.restartRequired === undefined
+        ? {}
+        : { restartRequired: args.restartRequired })
     }),
     history: trimOperationHistory(args.history)
   };
@@ -159,7 +159,10 @@ export function buildReconciliationView(args: {
  * missing input; never synthesizes a "converged" answer.
  */
 export function isObservedGeneration(
-  evidence: Pick<ReconciliationEvidence, "desiredGeneration" | "observedGeneration">
+  evidence: Pick<
+    ReconciliationEvidence,
+    "desiredGeneration" | "observedGeneration"
+  >
 ): boolean {
   if (
     evidence.desiredGeneration === null ||

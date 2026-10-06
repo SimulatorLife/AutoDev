@@ -64,7 +64,7 @@ export function GithubView({
     {
       id: "name",
       header: "Workflow",
-      wrap: true,
+      align: "tokens",
       cell: (workflow) =>
         React.createElement(
           "div",

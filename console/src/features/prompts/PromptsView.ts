@@ -3,6 +3,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import { Chip } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable
@@ -46,6 +47,7 @@ export function PromptsView({
     {
       id: "name",
       header: "Command / Prompt",
+      width: "13rem",
       cell: (prompt) =>
         React.createElement(
           "a",
@@ -63,6 +65,7 @@ export function PromptsView({
     {
       id: "kind",
       header: "Type",
+      width: "6rem",
       cell: (prompt) => {
         const isRole = prompt.kind === "role" || prompt.path.includes("roles");
         return React.createElement(StatusBadge, {
@@ -74,48 +77,57 @@ export function PromptsView({
     {
       id: "path",
       header: "Canonical Source",
-      wrap: true,
+      width: "13rem",
       cell: (prompt) =>
         React.createElement(
           "span",
-          { className: "font-mono text-xs text-fg-muted" },
+          { className: "font-mono text-xs text-fg-muted", title: prompt.path },
           prompt.path
         )
     },
     {
       id: "description",
       header: "Description",
-      wrap: true,
-      cell: (prompt) =>
-        React.createElement(
+      align: "prose",
+      clampLines: 2,
+      width: "20rem",
+      cell: (prompt) => {
+        const description = prompt.description;
+        return React.createElement(
           "span",
-          { className: "text-xs text-fg-secondary" },
-          prompt.description ?? "Description not provided"
-        )
+          {
+            className: "text-xs text-fg-secondary",
+            title: description ?? undefined
+          },
+          description ?? "Description not provided"
+        );
+      }
     },
     {
       id: "related",
       header: "Related",
+      align: "tokens",
+      width: "10rem",
       cell: (prompt) => {
         const isRole = prompt.kind === "role" || prompt.path.includes("roles");
         return React.createElement(
           "div",
-          { className: "flex flex-wrap gap-2 text-xs" },
+          { className: "flex flex-wrap items-center gap-1" },
           isRole
             ? React.createElement(
-                "a",
+                Chip,
                 {
                   href: `/agents/${encodeURIComponent(prompt.name)}`,
-                  className: "text-accent hover:underline"
+                  className: "text-accent"
                 },
                 "Agent profile"
               )
             : null,
           React.createElement(
-            "a",
+            Chip,
             {
               href: `/evaluations?prompt=${encodeURIComponent(prompt.name)}`,
-              className: "text-fg-muted hover:underline"
+              className: "text-fg-muted"
             },
             "Evaluations"
           )

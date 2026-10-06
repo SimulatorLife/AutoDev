@@ -15,6 +15,11 @@ import type {
   MemorySessionOutcomeCohortPage,
   MemoryStatus
 } from "../memory/types.ts";
+import type {
+  OperationHistoryEntry,
+  ReconciliationDiff,
+  ReconciliationStatus
+} from "../reconciliation/types.ts";
 import type { ProviderRole, RoutingPolicyState } from "../routing/types.ts";
 import type {
   ToolCatalogCoverage,
@@ -25,11 +30,6 @@ import type {
   WorkspaceCatalogStatus,
   WorkspaceEntry
 } from "../workspaces/types.ts";
-import type {
-  OperationHistoryEntry,
-  ReconciliationDiff,
-  ReconciliationStatus
-} from "../reconciliation/types.ts";
 
 /** Typed response contracts exposed by the AutoDev Control API. */
 export interface ControlApiError {
@@ -255,6 +255,15 @@ export interface ControlApiPermissionsResponse {
         readonly sandbox: string;
         readonly networkAccess: boolean;
         readonly approvals: string;
+        /**
+         * MCP servers this role is permitted to reach, projected from the same
+         * execution contract that backs `/control/agents`. Kept here so the
+         * effective capability matrix is one authoritative join rather than a
+         * value the Console has to guess.
+         */
+        readonly mcp: readonly string[];
+        /** Skills this role is eligible for, from the execution contract. */
+        readonly skills: readonly string[];
       }
     >
   >;
@@ -412,14 +421,29 @@ export interface ControlApiEvaluationsResponse {
   readonly evaluations: readonly EvaluationResult[];
 }
 
-export interface ControlApiMemoryRecordsResponse {
-  readonly schema: "autodev-memory-records-v1";
-  readonly items: readonly MemoryRecord[];
-  readonly totalCount: number;
+/**
+ * Paged Memory collection envelope. The wire field is `total` (not
+ * `totalCount`) and there is no `hasMore` flag: the Runtime forwards
+ * `MemoryService`'s `MemoryPage<T>` verbatim, and pagination state is derived
+ * from `total`/`limit`/`offset` by the consumer. Naming these fields anything
+ * else made the Console read `undefined` totals and render "0 of undefined".
+ */
+export interface ControlApiMemoryPage<T> {
+  readonly items: readonly T[];
+  readonly total: number;
   readonly limit: number;
   readonly offset: number;
-  readonly hasMore: boolean;
 }
+
+export type ControlApiMemoryRecordsResponse =
+  ControlApiMemoryPage<MemoryRecord> & {
+    readonly schema: "autodev-memory-records-v1";
+  };
+
+export type ControlApiMemoryExperiencesResponse =
+  ControlApiMemoryPage<ExperienceEnvelope> & {
+    readonly schema: "autodev-memory-experiences-v1";
+  };
 
 export interface ControlApiMemoryRecordDetailResponse {
   readonly schema: "autodev-memory-record-v1";
@@ -436,15 +460,6 @@ export interface ControlApiMemoryHistoryResponse {
     readonly reason?: string;
     readonly timestamp: string;
   }[];
-}
-
-export interface ControlApiMemoryExperiencesResponse {
-  readonly schema: "autodev-memory-experiences-v1";
-  readonly items: readonly ExperienceEnvelope[];
-  readonly totalCount: number;
-  readonly limit: number;
-  readonly offset: number;
-  readonly hasMore: boolean;
 }
 
 export interface ControlApiMemoryExperienceDetailResponse {

@@ -7,6 +7,7 @@ import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/e
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { LaunchdClient } from "./macos/launchd.ts";
+import { waitForProbe } from "./wait-for-probe.ts";
 
 export interface AntigravityEnsureOptions {
   readonly host: string;
@@ -127,23 +128,6 @@ function defaultDeps(options: AntigravityEnsureOptions): AntigravityEnsureDeps {
       child.unref();
     }
   };
-}
-
-async function pollProbeUntilDeadline(
-  deps: AntigravityEnsureDeps,
-  deadline: number
-): Promise<boolean> {
-  if (Date.now() >= deadline) return deps.probe();
-  if (await deps.probe()) return true;
-  await deps.sleep(100);
-  return pollProbeUntilDeadline(deps, deadline);
-}
-
-function waitForProbe(
-  deps: AntigravityEnsureDeps,
-  timeoutMs: number
-): Promise<boolean> {
-  return pollProbeUntilDeadline(deps, Date.now() + timeoutMs);
 }
 
 /** Best-effort lifecycle owner for Antigravity's retained CLI bridge. */

@@ -7,6 +7,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { Chip, ChipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable
@@ -27,11 +28,7 @@ import {
   PROVIDERS_PATH,
   providersPath
 } from "./paths.ts";
-import {
-  CredentialBadge,
-  ProviderHealthBadge,
-  tierPriorityLabel
-} from "./provider-status.ts";
+import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
 
 const SECTION_PANEL_CLASS =
   "rounded-lg border border-border bg-surface p-5 shadow";
@@ -75,24 +72,6 @@ function ProviderLink({
   );
 }
 
-function ModelLink({
-  provider,
-  model
-}: {
-  readonly provider: string;
-  readonly model: string;
-}): React.JSX.Element {
-  return React.createElement(
-    "a",
-    {
-      href: modelPath(provider, model),
-      className: "font-mono text-xs text-fg underline-offset-4 hover:underline",
-      "aria-label": `Open model ${model}`
-    },
-    model
-  );
-}
-
 function providerColumns(
   returnTo: string
 ): ColumnDef<ControlApiProviderRecord>[] {
@@ -100,12 +79,14 @@ function providerColumns(
     {
       id: "provider",
       header: "Provider",
+      width: "9rem",
       cell: (provider) =>
         React.createElement(ProviderLink, { provider: provider.id })
     },
     {
       id: "orchestrator",
       header: "Orchestrator",
+      width: "9rem",
       cell: (provider) =>
         React.createElement(ProviderRoleToggle, {
           provider: provider.id,
@@ -117,6 +98,7 @@ function providerColumns(
     {
       id: "subagent",
       header: "Subagent",
+      width: "8rem",
       cell: (provider) =>
         React.createElement(ProviderRoleToggle, {
           provider: provider.id,
@@ -128,12 +110,14 @@ function providerColumns(
     {
       id: "health",
       header: "Health",
+      width: "8rem",
       cell: (provider) =>
         React.createElement(ProviderHealthBadge, { health: provider.health })
     },
     {
       id: "credential",
       header: "Credential",
+      width: "13rem",
       cell: (provider) =>
         React.createElement(CredentialBadge, {
           credential: provider.credential
@@ -142,41 +126,73 @@ function providerColumns(
     {
       id: "models",
       header: "Models",
-      wrap: true,
+      align: "tokens",
       cell: (provider) =>
-        provider.models.length === 0
-          ? React.createElement(
-              "span",
-              { className: "text-xs text-fg-muted" },
-              "None configured"
+        React.createElement(ChipList, {
+          items: uniqueModels(provider),
+          emptyLabel: "None configured",
+          testId: "provider-models",
+          renderItem: (model) =>
+            React.createElement(
+              Chip,
+              {
+                href: modelPath(provider.id, model),
+                label: `Open model ${model} on ${provider.id}`,
+                className: "font-mono"
+              },
+              model
             )
-          : React.createElement(
-              "ul",
-              { className: "flex flex-col gap-1 list-none p-0 m-0" },
-              ...uniqueModels(provider).map((model) =>
-                React.createElement(
-                  "li",
-                  { key: model },
-                  React.createElement(ModelLink, {
-                    provider: provider.id,
-                    model
-                  })
-                )
-              )
-            )
+        })
     },
     {
       id: "priority",
-      header: "Priority",
-      wrap: true,
-      cell: (provider) =>
-        React.createElement(
-          "span",
-          { className: "font-mono text-xs text-fg-secondary" },
-          tierPriorityLabel(provider.priorities)
-        )
+      header: "Tier priority",
+      align: "tokens",
+      cell: (provider) => TierPriorityList({ provider })
     }
   ];
+}
+
+/**
+ * One chip per capability tier, labelled with its fallback group. A provider
+ * can sit in several tiers at different depths, so the chip carries both
+ * facts rather than a single run-on string.
+ */
+function TierPriorityList({
+  provider
+}: {
+  readonly provider: ControlApiProviderRecord;
+}): React.JSX.Element {
+  if (provider.priorities.length === 0) {
+    return React.createElement(
+      "span",
+      { className: "text-xs text-fg-muted" },
+      "Not in any tier"
+    );
+  }
+  return React.createElement(
+    "ul",
+    {
+      className: "m-0 flex list-none flex-wrap items-center gap-1 p-0",
+      "data-tier-priority": provider.id
+    },
+    ...provider.priorities.map(({ tier, group }) =>
+      React.createElement(
+        "li",
+        { key: tier, className: "flex min-w-0 items-center" },
+        React.createElement(
+          "span",
+          {
+            className:
+              "inline-flex max-w-full items-center gap-1 truncate rounded border border-border-strong bg-surface-raised px-2 py-0.5 text-xs text-fg-secondary",
+            title: `${tier}: priority group ${group}`
+          },
+          React.createElement("span", { className: "text-fg-muted" }, tier),
+          React.createElement("span", { className: "font-mono" }, `P${group}`)
+        )
+      )
+    )
+  );
 }
 
 function uniqueModels(provider: ControlApiProviderRecord): string[] {
@@ -188,14 +204,20 @@ function modelColumns(returnTo: string): ColumnDef<ControlApiModelRecord>[] {
     {
       id: "model",
       header: "Model",
+      width: "18rem",
       cell: (model) =>
         React.createElement(
           "div",
           { className: "flex flex-col gap-0.5" },
-          React.createElement(ModelLink, {
-            provider: model.provider,
-            model: model.id
-          }),
+          React.createElement(
+            Chip,
+            {
+              href: modelPath(model.provider, model.id),
+              label: `Open model ${model.id}`,
+              className: "w-fit font-mono text-fg"
+            },
+            model.id
+          ),
           model.displayName === null
             ? null
             : React.createElement(
@@ -214,13 +236,15 @@ function modelColumns(returnTo: string): ColumnDef<ControlApiModelRecord>[] {
     {
       id: "tiers",
       header: "Tiers",
-      wrap: true,
+      align: "tokens",
       cell: (model) =>
-        React.createElement(
-          "span",
-          { className: "font-mono text-xs text-fg-secondary" },
-          model.tiers.join(", ")
-        )
+        React.createElement(ChipList, {
+          items: model.tiers,
+          emptyLabel: "Not mapped to a tier",
+          testId: "model-tiers",
+          renderItem: (tier) =>
+            React.createElement(Chip, { className: "font-mono" }, tier)
+        })
     },
     {
       id: "enabled",

@@ -12,7 +12,7 @@ import {
 
 export interface MemoryExperiencesViewProps {
   readonly experiences: readonly ExperienceEnvelope[];
-  readonly totalCount: number;
+  readonly total: number;
   readonly selectedExperience?: ExperienceEnvelope | null | undefined;
   readonly currentWorkspaceId: string;
   readonly currentQuery?: string | undefined;
@@ -28,7 +28,7 @@ const DETAIL_LABEL_CLASS = "text-fg-muted mr-2";
 
 export function MemoryExperiencesView({
   experiences,
-  totalCount,
+  total,
   selectedExperience,
   currentWorkspaceId,
   currentQuery = ""
@@ -180,7 +180,7 @@ export function MemoryExperiencesView({
       React.createElement(
         "span",
         { className: "text-xs text-fg-muted ml-auto" },
-        `${experiences.length} of ${totalCount} experiences`
+        `${experiences.length} of ${total} experiences`
       )
     ),
 

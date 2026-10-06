@@ -34,16 +34,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function readString(
-  value: unknown
-): string | null {
-  return typeof value === "string" ? value : null;
-}
-
-function readBoolean(value: unknown): boolean {
-  return value === true;
-}
-
 function readOutcome(value: unknown): "ok" | "denied" | "error" | null {
   return value === "ok" || value === "denied" || value === "error"
     ? value
@@ -51,9 +41,13 @@ function readOutcome(value: unknown): "ok" | "denied" | "error" | null {
 }
 
 /**
- * Single audit envelope decoded from the existing redacted stderr line
- * emitted by `auditMutation`. Only the bounded fields used for Console
- * history need to round-trip; everything else stays in stderr.
+ * Single audit envelope emitted by `auditMutation`. Only the bounded fields
+ * used for Console history need to round-trip; everything else stays in stderr.
+ *
+ * The shape mirrors exactly what `auditMutation` writes: `reason` is omitted
+ * entirely when there is none, and the reconciliation generations plus
+ * `restartRequired` sit at the top level rather than nested under `changes`.
+ * `changes` stays the opaque redacted diff summary the audit owner produced.
  */
 export interface ControlApiAuditEnvelope {
   readonly schema: typeof AUDIT_SCHEMA;
@@ -62,12 +56,10 @@ export interface ControlApiAuditEnvelope {
   readonly resource: string;
   readonly actor: string | null;
   readonly outcome: "ok" | "denied" | "error";
-  readonly reason: string | null;
-  readonly changes: {
-    readonly desiredGeneration: string | null;
-    readonly observedGeneration: string | null;
-    readonly restartRequired: boolean;
-  } | null;
+  readonly reason?: string;
+  readonly desiredGeneration: string | null;
+  readonly observedGeneration: string | null;
+  readonly restartRequired: boolean;
 }
 
 /** Type guard for the redacted audit envelope. */
@@ -80,54 +72,70 @@ export function isControlApiAuditEnvelope(
   if (typeof value.action !== "string") return false;
   if (typeof value.resource !== "string") return false;
   if (typeof value.actor !== "string" && value.actor !== null) return false;
-  const outcome = readOutcome(value.outcome);
-  if (outcome === null) return false;
+  if (readOutcome(value.outcome) === null) return false;
+  // `auditMutation` only adds `reason` when one exists, so an absent key is
+  // the normal success case rather than a malformed envelope.
+  if (value.reason !== undefined && typeof value.reason !== "string") {
+    return false;
+  }
   if (
-    value.reason !== null &&
-    typeof value.reason !== "string"
+    value.desiredGeneration !== null &&
+    typeof value.desiredGeneration !== "string"
   ) {
     return false;
   }
-  if (value.changes !== null) {
-    if (!isRecord(value.changes)) return false;
-    if (typeof value.changes.restartRequired !== "boolean") return false;
+  if (
+    value.observedGeneration !== null &&
+    typeof value.observedGeneration !== "string"
+  ) {
+    return false;
   }
-  return true;
+  if (typeof value.restartRequired !== "boolean") return false;
+  return !carriesRawContent(value.changes);
 }
 
-function readChanges(
-  value: unknown
-): OperationHistoryEntry["changes"] | null {
-  if (value === null) return null;
-  if (!isRecord(value)) return null;
-  return {
-    desiredGeneration: bound(readString(value.desiredGeneration), 64),
-    observedGeneration: bound(readString(value.observedGeneration), 64),
-    restartRequired: readBoolean(value.restartRequired)
-  };
+/**
+ * Keys whose presence in `changes` means the envelope is carrying document or
+ * prompt content rather than a redacted field summary. The audit owner is
+ * expected to never emit these; refusing the whole envelope is a deliberate
+ * fail-closed response so raw bodies can never reach the Console history.
+ */
+const RAW_CONTENT_KEYS: ReadonlySet<string> = new Set([
+  "body",
+  "content",
+  "markdown",
+  "prompt",
+  "promptBody",
+  "promptText",
+  "raw",
+  "text"
+]);
+
+function carriesRawContent(changes: unknown): boolean {
+  if (!isRecord(changes)) return false;
+  return Object.keys(changes).some((key) => RAW_CONTENT_KEYS.has(key));
 }
 
 /**
  * Project one audit envelope into the reusable `OperationHistoryEntry`
  * shape. The function is pure and never returns raw prompt text, tokens,
- * or bodies; any field that would carry them is replaced with `null`.
+ * or bodies; the reconciliation generations are the only change detail that
+ * crosses this boundary, and each is bounded.
  */
 export function auditEnvelopeToHistoryEntry(
   envelope: ControlApiAuditEnvelope
 ): OperationHistoryEntry {
-  const outcome = envelope.outcome;
-  const reason = bound(envelope.reason, REASON_MAX_LEN);
   return {
     action: envelope.action,
     resource: bound(envelope.resource, RESOURCE_MAX_LEN) ?? "",
     timestamp: envelope.timestamp,
     actor: envelope.actor,
-    outcome,
-    reason,
-    changes: envelope.changes ?? {
-      desiredGeneration: null,
-      observedGeneration: null,
-      restartRequired: false
+    outcome: envelope.outcome,
+    reason: bound(envelope.reason ?? null, REASON_MAX_LEN),
+    changes: {
+      desiredGeneration: bound(envelope.desiredGeneration, 64),
+      observedGeneration: bound(envelope.observedGeneration, 64),
+      restartRequired: envelope.restartRequired
     }
   };
 }
@@ -181,8 +189,6 @@ export function reconcileDiffWithIdentifier(input: {
  * Bound the redacted last-error string before it travels into the
  * reconciliation status.
  */
-export function boundReconciliationError(
-  value: string | null
-): string | null {
+export function boundReconciliationError(value: string | null): string | null {
   return bound(value, ERROR_MAX_LEN);
 }

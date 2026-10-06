@@ -450,11 +450,14 @@ export default async function MemoryPage(
     );
   }
 
-  const totalRecords = data.records.totalCount;
+  const totalRecords = data.records.total;
   const experiences =
     data.experiences.kind === "ok" ? data.experiences.data.items : [];
+  // `null` means the source could not be observed; `0` is a real observed
+  // empty result. Keeping the two distinct is what stops the summary row from
+  // claiming "0 in scope" underneath a "Not observed" headline.
   const totalExperiences =
-    data.experiences.kind === "ok" ? data.experiences.data.totalCount : null;
+    data.experiences.kind === "ok" ? data.experiences.data.total : null;
   const sessionCohorts = data.cohorts.kind === "ok" ? data.cohorts.data : null;
   const useCohorts =
     data.useCohorts?.kind === "ok" ? data.useCohorts.data : null;

@@ -1,5 +1,6 @@
 export * from "./clickhouse/clickhouse-client.ts";
 export * from "./config/config-repository.ts";
+export * from "./control-api/operation-history.ts";
 export * from "./evaluations/index.ts";
 export * from "./github/github-actions-adapter.ts";
 export * from "./github/github-workflow-repository.ts";
@@ -8,4 +9,3 @@ export * as openlit from "./openlit/index.ts";
 export * from "./rulesync/rulesync-repository.ts";
 export * from "./rulesync/tool-catalog-repository.ts";
 export * from "./usage/index.ts";
-export * from "./control-api/operation-history.ts";

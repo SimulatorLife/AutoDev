@@ -16,3 +16,4 @@ export * from "./router-ensure.ts";
 export * from "./runtime-files.ts";
 export * from "./runtime-reconciliation.ts";
 export * from "./service-restart.ts";
+export * from "./wait-for-probe.ts";

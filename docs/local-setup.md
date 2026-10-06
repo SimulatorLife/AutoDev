@@ -148,7 +148,24 @@ diverts from Playwright. Other roles (`default`, `worker`, `validator`,
 `smart`) intentionally omit `context7` and follow their existing MCP surface. The launcher resolves binaries from
 AutoDev's pinned devDependencies while preserving the active workspace as the
 MCP process cwd, so a target repository does not need to duplicate those
-packages. Both resolve from pinned AutoDev devDependencies (`lsp-mcp-server` and `@playwright/mcp`) rather
+packages.
+
+That cwd contract only holds when the caller launches from inside the
+workspace. A host that starts MCP servers from its own process directory
+instead leaves `cocoindex-code` with no project at all: `ccc mcp` binds its
+index to the nearest ancestor holding `.cocoindex_code` and refuses to start
+when there is none, and its auto-init cannot create one on a read-only root.
+Such a caller sets `AUTODEV_MCP_WORKSPACE` to the absolute path of the active
+workspace, and `runtime/src/mcp/launcher.ts` runs the server there rather than
+inheriting the caller's directory. The launcher rejects a relative or missing
+workspace rather than starting in the wrong project, and initializes a
+cocoindex project in the workspace only when no ancestor already holds one.
+`AUTODEV_MCP_WORKSPACE` composes with `AUTODEV_REPO_ROOT`, which selects the
+AutoDev checkout supplying the launcher code and its pinned binaries, so a host
+with more than one AutoDev checkout still runs the workspace it intends.
+`tests/config/mcp-launcher.test.ts` covers both.
+
+Both resolve from pinned AutoDev devDependencies (`lsp-mcp-server` and `@playwright/mcp`) rather
 than `pnpm dlx @playwright/mcp@latest`; `dlx @latest` re-resolves the package on
 every cold start (network + startup latency), grows the pnpm `dlx` cache, and
 drifts the version across hosts and agents, so it is not used. Code-oriented

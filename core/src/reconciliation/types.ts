@@ -18,10 +18,7 @@
 
 /** Convergence status of a desired-state mutation against observed reality. */
 export type ConvergenceStatus =
-  | "converged"
-  | "pending"
-  | "error"
-  | "not-observed";
+  "converged" | "pending" | "error" | "not-observed";
 
 /**
  * Bounded redacted diff summary that a Control API mutation surfaces. No

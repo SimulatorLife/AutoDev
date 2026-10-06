@@ -7,6 +7,7 @@ import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/e
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { LaunchdClient } from "./macos/launchd.ts";
+import { waitForProbe } from "./wait-for-probe.ts";
 
 export interface CopilotEnsureOptions {
   readonly host: string;
@@ -98,23 +99,6 @@ function defaultDeps(options: CopilotEnsureOptions): CopilotEnsureDeps {
       child.unref();
     }
   };
-}
-
-async function pollProbeUntilDeadline(
-  deps: CopilotEnsureDeps,
-  deadline: number
-): Promise<boolean> {
-  if (Date.now() >= deadline) return deps.probe();
-  if (await deps.probe()) return true;
-  await deps.sleep(100);
-  return pollProbeUntilDeadline(deps, deadline);
-}
-
-function waitForProbe(
-  deps: CopilotEnsureDeps,
-  timeoutMs: number
-): Promise<boolean> {
-  return pollProbeUntilDeadline(deps, Date.now() + timeoutMs);
 }
 
 /**

@@ -438,7 +438,10 @@ test("operator PATCH validates fields, persists provider state, and audits the a
     assert.equal(captured.result.response.statusCode, 200);
     assert.equal(captured.result.body.previous, previous);
     assert.equal(captured.result.body.enabled, false);
-    assert.equal(captured.result.body.schema, "autodev-control-provider-role-v2");
+    assert.equal(
+      captured.result.body.schema,
+      "autodev-control-provider-role-v2"
+    );
     assert.equal(
       captured.result.body.reconciliation.status.convergence,
       "converged"
@@ -471,7 +474,7 @@ test("operator PATCH validates fields, persists provider state, and audits the a
     );
     assert.equal(
       mutationSpan?.attributes["autodev.control.resource"],
-      "claude/roles/subagent"
+      "/control/providers/claude/roles/subagent"
     );
     assert.equal(mutationSpan?.attributes["autodev.control.outcome"], "ok");
     assert.equal(
@@ -565,7 +568,26 @@ test("providers v2 reports routes, credential presence, tier models, priorities,
         "claude",
         "orchestrator"
       ),
-      mutable: true
+      mutable: true,
+      // The GET surface reports desired/observed generations but has no
+      // runtime observation for this resource, so convergence stays
+      // not-observed rather than inferring convergence from equal strings.
+      convergence: {
+        convergence: "not-observed",
+        desiredGeneration: `orchestrator:enabled=${ROUTING_POLICY.isProviderEnabledForRole(
+          "claude",
+          "orchestrator"
+        )}`,
+        observedGeneration: `orchestrator:enabled=${ROUTING_POLICY.isProviderEnabledForRole(
+          "claude",
+          "orchestrator"
+        )}`,
+        lastApplyAt: null,
+        lastObservationAt: null,
+        lastError: null,
+        explanation:
+          "The runtime has not yet reported observed state for this resource; convergence is unknown."
+      }
     });
     assert.equal(claude.health, null, "no router evidence means unobserved");
 
@@ -1001,6 +1023,55 @@ test("Control API surfaces all 13 typed resource families", async () => {
     assert.equal(permissions.body.policy.approvalPolicy, "never");
     assert.equal(permissions.body.policy.sandboxMode, "workspace-write");
 
+    // The effective capability matrix must be a real projection of the
+    // execution contract, not an absent value the Console would render as
+    // "None". It is the same join `/control/agents` exposes, so a role's
+    // permissions page can never contradict its Agents row.
+    assert.ok(
+      Object.keys(permissions.body.rolePermissions).length > 0,
+      "rolePermissions must project at least one role"
+    );
+    for (const [role, entry] of Object.entries(
+      permissions.body.rolePermissions
+    ) as Array<[string, Record<string, unknown>]>) {
+      assert.ok(
+        Array.isArray(entry.mcp),
+        `role ${role} must project an mcp list`
+      );
+      assert.ok(
+        Array.isArray(entry.skills),
+        `role ${role} must project a skills list`
+      );
+      assert.ok(
+        (entry.mcp as unknown[]).every((value) => typeof value === "string"),
+        `role ${role} mcp entries must be strings`
+      );
+      assert.ok(
+        (entry.skills as unknown[]).every((value) => typeof value === "string"),
+        `role ${role} skill entries must be strings`
+      );
+    }
+    const agentsForComparison = await call("GET", CONTROL_API_PATHS.agents, {
+      actor: "viewer-a"
+    });
+    for (const agent of agentsForComparison.body.agents) {
+      const entry = permissions.body.rolePermissions[agent.role];
+      assert.ok(
+        entry,
+        `agent ${agent.role} must have a permissions matrix entry`
+      );
+      assert.deepEqual(
+        entry.skills,
+        agent.skills,
+        `role ${agent.role} skills must match its agent record`
+      );
+      assert.deepEqual(
+        entry.mcp,
+        agent.mcps,
+        `role ${agent.role} mcp servers must match its agent record`
+      );
+    }
+
     // 9. Prompts collection and detail
     const prompts = await call("GET", CONTROL_API_PATHS.prompts, {
       actor: "viewer-a"
@@ -1331,22 +1402,13 @@ test("operator Prompt PATCH validates source, applies the Rulesync projection, a
     assert.equal(result.body.changed, true);
     assert.equal(result.body.diff.summary.length > 0, true);
     assert.equal(result.body.diff.identifier.length, 64);
-    assert.equal(
-      result.body.reconciliation.status.convergence,
-      "converged"
-    );
+    assert.equal(result.body.reconciliation.status.convergence, "converged");
     assert.equal(
       result.body.reconciliation.status.desiredGeneration,
       result.body.reconciliation.status.observedGeneration
     );
-    assert.equal(
-      result.body.reconciliation.status.lastError,
-      null
-    );
-    assert.equal(
-      result.body.reconciliation.history.length > 0,
-      true
-    );
+    assert.equal(result.body.reconciliation.status.lastError, null);
+    assert.equal(result.body.reconciliation.history.length > 0, true);
     assert.doesNotMatch(lines.join(""), /A canonical edit reaches/u);
     assert.equal(
       new RuleSyncRepository(repositoryRoot)

@@ -68,12 +68,53 @@ export function resolveMcpCommand(
   throw new Error(`unsupported AutoDev MCP: ${name || "<missing>"}`);
 }
 
+/**
+ * The directory an MCP server runs in. `ccc mcp` binds its index to the nearest
+ * ancestor holding `.cocoindex_code` and refuses to start without one, so a
+ * caller that starts servers from its own process directory leaves
+ * cocoindex-code with no project and no workspace to bind to. Callers that know
+ * the active workspace say so through `AUTODEV_MCP_WORKSPACE`; without it the
+ * caller's own directory stays authoritative.
+ */
+export function resolveMcpWorkspace(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd()
+): string {
+  const configured = env.AUTODEV_MCP_WORKSPACE?.trim();
+  if (!configured) return cwd;
+  if (!path.isAbsolute(configured))
+    throw new Error(
+      `AUTODEV_MCP_WORKSPACE must be an absolute path; got "${configured}"`
+    );
+  const workspace = path.resolve(configured);
+  if (!existsSync(workspace))
+    throw new Error(`AUTODEV_MCP_WORKSPACE does not exist: ${workspace}`);
+  return workspace;
+}
+
+/**
+ * The nearest ancestor of `startDir` that holds a `.cocoindex_code` project, or
+ * null when the directory sits outside every initialized cocoindex project.
+ * `ccc mcp` performs this same ancestor walk, so the launcher has to agree with
+ * it before deciding whether a project needs initializing.
+ */
+export function findCocoindexProjectRoot(startDir: string): string | null {
+  let dir = path.resolve(startDir);
+  for (;;) {
+    if (existsSync(path.join(dir, ".cocoindex_code"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
 export function runMcp(
   name: string,
   repoRoot: string,
   env: NodeJS.ProcessEnv = process.env
 ): number {
   const command = resolveMcpCommand(name, repoRoot, env);
+  const workspace = resolveMcpWorkspace(env);
   if (!isExecutable(command.binary))
     throw new Error(
       `AutoDev MCP binary is missing or not executable: ${command.binary}`
@@ -87,18 +128,19 @@ export function runMcp(
             .join(path.delimiter)
         }
       : env;
-  if (
-    name === "cocoindex-code" &&
-    !existsSync(path.join(process.cwd(), ".cocoindex_code"))
-  ) {
+  if (name === "cocoindex-code" && !findCocoindexProjectRoot(workspace)) {
     spawnSync(command.binary, ["init"], {
-      cwd: process.cwd(),
+      cwd: workspace,
       env,
       stdio: ["ignore", "ignore", "inherit"]
     });
+    if (!findCocoindexProjectRoot(workspace))
+      throw new Error(
+        `AutoDev cocoindex-code has no project under ${workspace}; run \`ccc init\` there or point AUTODEV_MCP_WORKSPACE at an initialized project directory.`
+      );
   }
   const result = spawnSync(command.binary, command.args, {
-    cwd: process.cwd(),
+    cwd: workspace,
     env: childEnv,
     stdio: "inherit"
   });

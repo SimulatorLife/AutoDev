@@ -201,6 +201,8 @@ export function MemoryView({
       React.createElement(StatCard, {
         title: "Experiences",
         value: totalExperiences ?? NOT_OBSERVED_LABEL,
+        // Both headline and subtitle follow the same observed/unobserved
+        // branch, so the card can never pair "Not observed" with a count.
         subtitle:
           totalExperiences === null
             ? NOT_OBSERVED_LABEL
@@ -226,7 +228,7 @@ export function MemoryView({
     activeTab === "records"
       ? React.createElement(MemoryRecordsView, {
           records,
-          totalCount: totalRecords,
+          total: totalRecords,
           selectedRecord,
           history: selectedHistory,
           currentWorkspaceId,
@@ -248,7 +250,7 @@ export function MemoryView({
             )
           : React.createElement(MemoryExperiencesView, {
               experiences,
-              totalCount: totalExperiences,
+              total: totalExperiences,
               selectedExperience,
               currentWorkspaceId,
               currentQuery: query

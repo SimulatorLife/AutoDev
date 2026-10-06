@@ -32,7 +32,7 @@ export interface MemoryRecordHistory {
 
 export interface MemoryRecordsViewProps {
   readonly records: readonly MemoryRecord[];
-  readonly totalCount: number;
+  readonly total: number;
   readonly selectedRecord?: MemoryRecord | null | undefined;
   readonly history?: MemoryRecordHistory | null | undefined;
   readonly currentWorkspaceId: string;
@@ -87,7 +87,7 @@ function formatScopeString(scope: MemoryScope): string {
 
 export function MemoryRecordsView({
   records,
-  totalCount,
+  total,
   selectedRecord,
   history,
   currentWorkspaceId,
@@ -244,7 +244,7 @@ export function MemoryRecordsView({
       React.createElement(
         "span",
         { className: "text-xs text-fg-muted ml-auto" },
-        `${records.length} of ${totalCount} records`
+        `${records.length} of ${total} records`
       )
     ),
 

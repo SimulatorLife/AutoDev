@@ -187,7 +187,7 @@ As of 2026-10-05:
 - An earlier full `pnpm test` run passed root 1283/1285 (two skipped), Core 26/26, Data 182/191 (nine environment-gated skips), Console 102/102, and Runtime 127/130 (three environment-gated skips). The latest full run reported root 1277/1286 (seven failures, two skipped), all startup/readiness timeouts across Claude bridge, Claude Responses, Copilot Responses, and MCP stdio integration tests. A single Claude bridge contract test passed when run alone; a reduced four-suite group still had one readiness timeout, so the full-suite environment remains flaky and must be rerun before claiming green.
 - Current targeted suites pass: Data 185/194 (nine environment-gated skips), Console 103/103, and Control API 24/24; root `data/tests/data.test.ts` also passes 16/16;
 - pnpm run typecheck passes the root project and all four workspaces; the Console production build passes;
-- pnpm run format:check passes repository-wide; targeted ESLint on every modified code file passes. A current repository-wide `lint:ci` completion was not confirmed after the last edits;
+- pnpm run format:check passes repository-wide, and pnpm run lint:ci passes repository-wide with no errors or warnings;
 - all four workspace test scripts use Node's recursive discovery directly so root-level and nested tests are included;
 - OpenLIT p24-p25 patch application/build checks pass; p26 trace-detail source applies to p25 and its patched-client typecheck plus focused route/middleware tests pass; an isolated p26 validation image builds successfully, while the active image remains p25 and activation/live trace acceptance remain open;
 - focused CronLog/Pricing/Evaluation suites pass 166/166;

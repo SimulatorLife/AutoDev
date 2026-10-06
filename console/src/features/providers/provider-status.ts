@@ -51,11 +51,3 @@ export function CredentialBadge({
         label: `Missing ${credential.envKey}`
       });
 }
-
-export function tierPriorityLabel(
-  priorities: ControlApiProviderRecord["priorities"]
-): string {
-  return priorities.length === 0
-    ? "Not in any tier"
-    : priorities.map(({ tier, group }) => `${tier}: P${group}`).join(" · ");
-}

@@ -14,6 +14,7 @@ import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { MINIMAX_MODEL_PATTERN } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
 import { LaunchdClient } from "./macos/launchd.ts";
+import { waitForProbe } from "./wait-for-probe.ts";
 
 export interface MiniMaxEnsureOptions {
   readonly host: string;
@@ -136,23 +137,6 @@ function defaultDeps(options: MiniMaxEnsureOptions): MiniMaxEnsureDeps {
       child.unref();
     }
   };
-}
-
-async function pollProbeUntilDeadline(
-  deps: MiniMaxEnsureDeps,
-  deadline: number
-): Promise<boolean> {
-  if (Date.now() >= deadline) return deps.probe();
-  if (await deps.probe()) return true;
-  await deps.sleep(100);
-  return pollProbeUntilDeadline(deps, deadline);
-}
-
-function waitForProbe(
-  deps: MiniMaxEnsureDeps,
-  timeoutMs: number
-): Promise<boolean> {
-  return pollProbeUntilDeadline(deps, Date.now() + timeoutMs);
 }
 
 /** Own MiniMax's model gate and compatibility-proxy lifecycle without shell policy. */

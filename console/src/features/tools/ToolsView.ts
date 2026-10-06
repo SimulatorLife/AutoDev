@@ -9,6 +9,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import { Chip, ChipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable
@@ -242,7 +243,7 @@ export function ToolsView({
     {
       id: "name",
       header: "Tool",
-      wrap: true,
+      align: "tokens",
       cell: (tool) =>
         React.createElement(
           "div",
@@ -295,35 +296,26 @@ export function ToolsView({
     {
       id: "roles",
       header: "Exposed Roles",
+      align: "tokens",
       cell: (tool) =>
-        tool.exposedRoles.length === 0
-          ? React.createElement(
-              "span",
-              {
-                className: "text-xs text-fg-muted",
-                "data-roles-observed": "false"
-              },
-              "No roles assigned"
-            )
-          : React.createElement(
-              "div",
-              {
-                className: "flex flex-wrap gap-1",
-                "data-roles-observed": "true"
-              },
-              tool.exposedRoles.map((role) =>
-                React.createElement(
-                  "a",
-                  {
-                    key: role,
-                    href: roleFilterHref(filters, role),
-                    className:
-                      "text-xs bg-surface-raised text-fg-secondary px-1.5 py-0.5 rounded border border-border-strong hover:text-accent"
-                  },
-                  role
-                )
+        React.createElement(
+          "div",
+          { "data-roles-observed": String(tool.exposedRoles.length > 0) },
+          React.createElement(ChipList, {
+            items: tool.exposedRoles,
+            emptyLabel: "No roles assigned",
+            testId: "tool-roles",
+            renderItem: (role) =>
+              React.createElement(
+                Chip,
+                {
+                  href: roleFilterHref(filters, role),
+                  label: `Filter tools exposed to ${role}`
+                },
+                role
               )
-            )
+          })
+        )
     },
     {
       id: "edit",

@@ -6,13 +6,18 @@ import path from "node:path";
 
 import { SpanStatusCode } from "@opentelemetry/api";
 import {
+  buildReconciliationView,
   type ControlApiProviderHealth,
   type GithubActionsRuntimeStatus,
   type GithubWorkflowDefinition,
   type GithubWorkflowRun,
   type GithubWorkflowState,
   LOCAL_CONTROL_API_ACTOR,
+  type OperationHistoryEntry,
   type ProviderRole,
+  type ReconciliationDiff,
+  type ReconciliationEvidence,
+  type ReconciliationStatus,
   type ToolCatalogItem,
   type ToolCatalogView
 } from "@simulatorlife/autodev-core";
@@ -35,13 +40,6 @@ import {
   RuleSyncRepository,
   ToolCatalogAdapter
 } from "@simulatorlife/autodev-data";
-import {
-  buildReconciliationView,
-  type OperationHistoryEntry,
-  type ReconciliationDiff,
-  type ReconciliationEvidence,
-  type ReconciliationStatus
-} from "@simulatorlife/autodev-core";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
 import { getDefaultRouterLifecycle } from "@simulatorlife/autodev-runtime/router/lifecycle";
@@ -384,7 +382,6 @@ function providerRoleConvergence(
   const latest = findLatestAuditFor(resource);
   const observed =
     ROUTING_POLICY.isProviderEnabledForRole(provider, role) === true;
-  const desired = observed;
   const desiredGeneration = `${role}:enabled=${observed ? "true" : "false"}`;
   const observedGeneration = desiredGeneration;
   return buildReconciliationView({
@@ -1361,12 +1358,17 @@ function permissionsView(
   const roles = getDefaultExecutionContract().roles ?? {};
   const rolePermissions: Record<string, unknown> = {};
   for (const [role, raw] of Object.entries(roles)) {
-    const isReadOnly = Boolean((raw as Record<string, unknown>)?.readOnly);
+    const entry = (raw ?? {}) as Record<string, unknown>;
+    const isReadOnly = Boolean(entry.readOnly);
     rolePermissions[role] = {
       readOnly: isReadOnly,
       sandbox: isReadOnly ? "read-only" : "workspace-write",
       networkAccess: true,
-      approvals: "never"
+      approvals: "never",
+      // Same execution-contract join `/control/agents` uses, so the effective
+      // capability matrix never contradicts the Agents surface.
+      mcp: Array.isArray(entry.mcp) ? entry.mcp : [],
+      skills: Array.isArray(entry.skills) ? entry.skills : []
     };
   }
   return {
@@ -1465,9 +1467,7 @@ function hashString(value: string | null | undefined): string | null {
  * yet, so callers can render `not-observed` rather than fabricating a
  * last-apply timestamp.
  */
-function findLatestAuditFor(
-  resourceFilter: string
-): {
+function findLatestAuditFor(resourceFilter: string): {
   readonly timestamp: string;
   readonly desiredGeneration: string | null;
   readonly observedGeneration: string | null;
@@ -1491,16 +1491,32 @@ function findLatestAuditFor(
             ? envelope.observedGeneration
             : null,
         restartRequired: envelope.restartRequired === true,
-        reason:
-          typeof envelope.reason === "string" ? envelope.reason : null
+        reason: typeof envelope.reason === "string" ? envelope.reason : null
       };
     }
   }
   return null;
 }
 
-function historyForResource(resource: string): readonly OperationHistoryEntry[] {
+function historyForResource(
+  resource: string
+): readonly OperationHistoryEntry[] {
   return auditEnvelopesToHistory(getOperationHistory(resource));
+}
+
+/**
+ * Generation identity for one canonical prompt.
+ *
+ * Both sides of the comparison must be expressed in the same domain or they
+ * can never be equal. The canonical revision is the only stable identity the
+ * Runtime holds, so the desired generation is the current canonical revision
+ * and the observed generation is the canonical revision that the projection
+ * on disk was generated from (recorded by the apply that wrote it). Hashing
+ * the projected file bytes here instead would compare a revision against a
+ * rendering of it, which can never converge.
+ */
+function promptGeneration(revision: string | null | undefined): string | null {
+  return typeof revision === "string" && revision.length > 0 ? revision : null;
 }
 
 function promptReconciliationView(args: {
@@ -1512,26 +1528,34 @@ function promptReconciliationView(args: {
   readonly history: readonly OperationHistoryEntry[];
 } {
   const resource = `${CONTROL_API_PATHS.prompts}/${args.name}`;
-  const observedHash = observePromptProjection(args.name, args.codexHome);
+  const desiredGeneration = promptGeneration(args.expectedRevision);
   const latest = findLatestAuditFor(resource);
-  const desiredGeneration = hashString(args.expectedRevision);
-  const observedGeneration = observedHash;
+  // The projection counts as observed only when the last successful apply
+  // projected the *current* canonical revision and that projection still
+  // exists on disk. A stale projection, or one generated from an older
+  // revision, stays pending instead of being reported as converged.
+  const projectionPresent =
+    observePromptProjection(args.name, args.codexHome) !== null;
+  const observedGeneration =
+    latest !== null &&
+    latest.observedGeneration !== null &&
+    latest.observedGeneration === desiredGeneration &&
+    projectionPresent
+      ? latest.observedGeneration
+      : null;
   const evidence: ReconciliationEvidence = {
     desiredGeneration,
     observedGeneration,
     lastApplyAt: latest?.timestamp ?? null,
-    lastObservationAt: latest && observedHash ? latest.timestamp : null,
+    lastObservationAt:
+      observedGeneration === null ? null : (latest?.timestamp ?? null),
     lastError: boundReconciliationError(latest?.reason ?? null)
   };
-  const restartRequired =
-    latest !== null &&
-    latest.restartRequired &&
-    observedHash !== desiredGeneration;
   return buildReconciliationView({
     evidence,
     history: historyForResource(resource),
-    hasObservation: observedHash !== null,
-    restartRequired
+    hasObservation: projectionPresent,
+    restartRequired: false
   });
 }
 
@@ -1560,9 +1584,7 @@ function promptDiffSummary(args: {
 
 function defaultCodexHomeForReconciliation(): string {
   const home = process.env.HOME?.trim() || homedir();
-  return (
-    process.env.CODEX_HOME?.trim() || path.join(home, ".codex")
-  );
+  return process.env.CODEX_HOME?.trim() || path.join(home, ".codex");
 }
 
 function promptDetailView(
@@ -1698,6 +1720,53 @@ async function persistRoutingPolicy(): Promise<void> {
 }
 
 /**
+ * Reconciliation fields an enablement result can carry back into the audit
+ * envelope, so the operation history records the same generations the
+ * response reports.
+ */
+interface EnablementReconciliation {
+  readonly desiredGeneration: string;
+  readonly observedGeneration: string | null;
+  readonly restartRequired: boolean;
+}
+
+/** Spread helper so a `null` reconciliation contributes no audit fields. */
+function auditReconciliationFields(
+  reconciliation: EnablementReconciliation | null
+): Partial<{
+  desiredGeneration: string;
+  observedGeneration: string | null;
+  restartRequired: boolean;
+}> {
+  return reconciliation === null ? {} : reconciliation;
+}
+
+/**
+ * Read the reconciliation evidence out of a mutation response body. Returns
+ * `null` for mutations that do not publish reconciliation (model enablement),
+ * which leaves the audit generations null rather than inventing them.
+ */
+function reconciliationOf(
+  body: Record<string, unknown>
+): EnablementReconciliation | null {
+  const reconciliation = body.reconciliation;
+  if (!reconciliation || typeof reconciliation !== "object") return null;
+  const status = (reconciliation as { readonly status?: unknown }).status;
+  if (!status || typeof status !== "object") return null;
+  const { desiredGeneration, observedGeneration } = status as {
+    readonly desiredGeneration?: unknown;
+    readonly observedGeneration?: unknown;
+  };
+  if (typeof desiredGeneration !== "string") return null;
+  return {
+    desiredGeneration,
+    observedGeneration:
+      typeof observedGeneration === "string" ? observedGeneration : null,
+    restartRequired: false
+  };
+}
+
+/**
  * One operator-only `{ "enabled": boolean }` toggle over Runtime routing
  * policy state. Provider-role and model enablement share this flow so every
  * toggle validates, persists, rolls back, and audits identically.
@@ -1727,7 +1796,8 @@ async function patchEnablement(
   const audit = (
     outcome: "ok" | "denied" | "error",
     changes: Record<string, unknown> | null,
-    reason?: string
+    reason?: string,
+    reconciliation: EnablementReconciliation | null = null
   ): void =>
     auditMutation({
       actor: actor.actor,
@@ -1737,7 +1807,8 @@ async function patchEnablement(
       resource: mutation.resource,
       outcome,
       changes,
-      ...(reason ? { reason } : {})
+      ...(reason ? { reason } : {}),
+      ...auditReconciliationFields(reconciliation)
     });
 
   if (actor.role !== "operator") {
@@ -1806,11 +1877,15 @@ async function patchEnablement(
     return;
   }
 
-  audit("ok", { enabled, previous });
+  // Build the response body first: it owns the reconciliation evidence, and
+  // the audit record must carry the same generations the operator sees in the
+  // response. Auditing separately would let the two drift.
+  const result = mutation.result(enabled, previous);
+  audit("ok", { enabled, previous }, undefined, reconciliationOf(result));
   sendJson(
     response,
     200,
-    { ...mutation.result(enabled, previous), actor: actor.actor },
+    { ...result, actor: actor.actor },
     {
       "cache-control": "no-store",
       vary: CONTROL_VARY_HEADER
@@ -1843,9 +1918,8 @@ function patchProviderRole(
     result: (enabled, previous) => {
       const observed = ROUTING_POLICY.isProviderEnabledForRole(provider, role);
       const desiredGeneration = `${role}:enabled=${enabled ? "true" : "false"}`;
-      const observedGeneration = observed === enabled
-        ? desiredGeneration
-        : null;
+      const observedGeneration =
+        observed === enabled ? desiredGeneration : null;
       return {
         schema: "autodev-control-provider-role-v2",
         provider,
@@ -1858,7 +1932,7 @@ function patchProviderRole(
             observedGeneration,
             lastApplyAt: new Date().toISOString(),
             lastObservationAt:
-              observedGeneration !== null ? new Date().toISOString() : null,
+              observedGeneration === null ? null : new Date().toISOString(),
             lastError: null
           },
           history: historyForResource(resource),
@@ -2270,12 +2344,14 @@ async function patchPromptCommand(
   }
 
   const projectionUpdated = updatedPrompts.includes(name);
-  const projectionHash = projectionUpdated
-    ? observePromptProjection(name, codexHome)
-    : null;
-  const desiredGeneration = hashString(updated.revision);
-  const observedGeneration = projectionHash;
-  const restartRequired = projectionUpdated && projectionHash === null;
+  // Observed means "the projection on disk was generated from this canonical
+  // revision and is still present", so it is expressed in the same revision
+  // domain as the desired generation.
+  const projectionPresent = observePromptProjection(name, codexHome) !== null;
+  const desiredGeneration = promptGeneration(updated.revision);
+  const observedGeneration =
+    projectionUpdated && projectionPresent ? desiredGeneration : null;
+  const restartRequired = projectionUpdated && !projectionPresent;
   const resourceKey = `${CONTROL_API_PATHS.prompts}/${name}`;
   auditMutation({
     actor: actor.actor,
@@ -2299,11 +2375,11 @@ async function patchPromptCommand(
       observedGeneration,
       lastApplyAt: new Date().toISOString(),
       lastObservationAt:
-        projectionHash !== null ? new Date().toISOString() : null,
+        observedGeneration === null ? null : new Date().toISOString(),
       lastError: null
     },
     history: historyForResource(resourceKey),
-    hasObservation: projectionHash !== null,
+    hasObservation: observedGeneration !== null,
     restartRequired
   });
   const diff = promptDiffSummary({ name, codexHome, projectionUpdated });

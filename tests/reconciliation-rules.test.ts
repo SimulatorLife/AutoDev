@@ -12,12 +12,17 @@ import {
   trimOperationHistory
 } from "@simulatorlife/autodev-core";
 
+/**
+ * Baseline evidence for a resource whose desired generation has been applied
+ * and observed, so the default fixture is genuinely converged. Any test that
+ * wants another state overrides the generations explicitly.
+ */
 function makeEvidence(
   overrides: Partial<ReconciliationEvidence> = {}
 ): ReconciliationEvidence {
   return {
-    desiredGeneration: "desired-1",
-    observedGeneration: "observed-1",
+    desiredGeneration: "generation-1",
+    observedGeneration: "generation-1",
     lastApplyAt: "2026-01-01T00:00:00.000Z",
     lastObservationAt: "2026-01-01T00:00:00.000Z",
     lastError: null,
@@ -25,7 +30,12 @@ function makeEvidence(
   };
 }
 
-function makeEntry(overrides: Partial<OperationHistoryEntry> = {}): OperationHistoryEntry {
+const CONVERGED_EXPLANATION =
+  "The runtime has observed the latest desired generation; convergence is recorded.";
+
+function makeEntry(
+  overrides: Partial<OperationHistoryEntry> = {}
+): OperationHistoryEntry {
   return {
     action: "patch_provider_role",
     resource: "/control/providers/claude/roles/orchestrator",
@@ -34,8 +44,8 @@ function makeEntry(overrides: Partial<OperationHistoryEntry> = {}): OperationHis
     outcome: "ok",
     reason: null,
     changes: {
-      desiredGeneration: "desired-1",
-      observedGeneration: "observed-1",
+      desiredGeneration: "generation-1",
+      observedGeneration: "generation-1",
       restartRequired: false
     },
     ...overrides
@@ -55,11 +65,17 @@ describe("deriveConvergence", () => {
 
   test("returns not-observed when the runtime has not yet reported state", () => {
     assert.equal(
-      deriveConvergence({ desired: "d", observed: null }, { hasObservation: false }),
+      deriveConvergence(
+        { desired: "d", observed: null },
+        { hasObservation: false }
+      ),
       "not-observed"
     );
     assert.equal(
-      deriveConvergence({ desired: null, observed: null }, { hasObservation: false }),
+      deriveConvergence(
+        { desired: null, observed: null },
+        { hasObservation: false }
+      ),
       "not-observed"
     );
   });
@@ -111,8 +127,8 @@ describe("deriveReconciliationStatus", () => {
       hasObservation: true
     });
     assert.equal(status.convergence, "converged");
-    assert.equal(status.desiredGeneration, "desired-1");
-    assert.equal(status.observedGeneration, "observed-1");
+    assert.equal(status.desiredGeneration, "generation-1");
+    assert.equal(status.observedGeneration, "generation-1");
     assert.equal(status.lastApplyAt, "2026-01-01T00:00:00.000Z");
     assert.equal(status.lastObservationAt, "2026-01-01T00:00:00.000Z");
     assert.equal(status.lastError, null);
@@ -132,7 +148,9 @@ describe("deriveReconciliationStatus", () => {
 describe("trimOperationHistory", () => {
   test("keeps only the bounded Console-visible entries", () => {
     const entries = Array.from({ length: 25 }, (_, index) =>
-      makeEntry({ timestamp: `2026-01-01T00:00:${String(index).padStart(2, "0")}.000Z` })
+      makeEntry({
+        timestamp: `2026-01-01T00:00:${String(index).padStart(2, "0")}.000Z`
+      })
     );
     const trimmed = trimOperationHistory(entries);
     assert.equal(trimmed.length, OPERATION_HISTORY_LIMIT);
@@ -144,10 +162,14 @@ describe("buildReconciliationView", () => {
   test("returns the canonical status + bounded history shape", () => {
     const view = buildReconciliationView({
       evidence: makeEvidence(),
-      history: [makeEntry(), makeEntry({ outcome: "denied", reason: "viewer_cannot_mutate" })],
+      history: [
+        makeEntry(),
+        makeEntry({ outcome: "denied", reason: "viewer_cannot_mutate" })
+      ],
       hasObservation: true
     });
     assert.equal(view.status.convergence, "converged");
+    assert.equal(view.status.explanation, CONVERGED_EXPLANATION);
     assert.equal(view.history.length, 2);
     assert.equal(view.history[1]?.outcome, "denied");
   });
@@ -164,14 +186,41 @@ describe("buildReconciliationView", () => {
 
 describe("isObservedGeneration", () => {
   test("returns false for any missing input", () => {
-    assert.equal(isObservedGeneration({ desiredGeneration: null, observedGeneration: null }), false);
-    assert.equal(isObservedGeneration({ desiredGeneration: "", observedGeneration: "" }), false);
-    assert.equal(isObservedGeneration({ desiredGeneration: "d", observedGeneration: null }), false);
-    assert.equal(isObservedGeneration({ desiredGeneration: null, observedGeneration: "o" }), false);
+    assert.equal(
+      isObservedGeneration({
+        desiredGeneration: null,
+        observedGeneration: null
+      }),
+      false
+    );
+    assert.equal(
+      isObservedGeneration({ desiredGeneration: "", observedGeneration: "" }),
+      false
+    );
+    assert.equal(
+      isObservedGeneration({
+        desiredGeneration: "d",
+        observedGeneration: null
+      }),
+      false
+    );
+    assert.equal(
+      isObservedGeneration({
+        desiredGeneration: null,
+        observedGeneration: "o"
+      }),
+      false
+    );
   });
 
   test("returns true only when desired and observed generations are equal", () => {
-    assert.equal(isObservedGeneration({ desiredGeneration: "x", observedGeneration: "x" }), true);
-    assert.equal(isObservedGeneration({ desiredGeneration: "x", observedGeneration: "y" }), false);
+    assert.equal(
+      isObservedGeneration({ desiredGeneration: "x", observedGeneration: "x" }),
+      true
+    );
+    assert.equal(
+      isObservedGeneration({ desiredGeneration: "x", observedGeneration: "y" }),
+      false
+    );
   });
 });
