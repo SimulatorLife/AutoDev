@@ -1,0 +1,208 @@
+diff --git a/src/client/src/app/(playground)/dashboard/costs/cost-per-time.tsx b/src/client/src/app/(playground)/dashboard/costs/cost-per-time.tsx
+index 8d4bfac3..16be0469 100644
+--- a/src/client/src/app/(playground)/dashboard/costs/cost-per-time.tsx
++++ b/src/client/src/app/(playground)/dashboard/costs/cost-per-time.tsx
+@@ -24,7 +24,7 @@ export default function CostsPerTime() {
+ 	const m = getMessage();
+ 	const filter = useRootStore(getFilterDetails);
+ 	const pingStatus = useRootStore(getPingStatus);
+-	const { data, fireRequest, isFetched, isLoading } = useFetchWrapper();
++	const { data, fireRequest, isFetched, isLoading, error } = useFetchWrapper();
+ 
+ 	const fetchData = useCallback(async () => {
+ 		fireRequest({
+@@ -35,15 +35,13 @@ export default function CostsPerTime() {
+ 		});
+ 	}, [filter, fireRequest]);
+ 
++	// The ping is a pre-flight, not a precondition for the data; see the note in
++	// stat-card.tsx for what gating on it cost.
+ 	useEffect(() => {
+-		if (
+-			filter.timeLimit.start &&
+-			filter.timeLimit.end &&
+-			pingStatus === "success"
+-		) {
++		if (filter.timeLimit.start && filter.timeLimit.end) {
+ 			fetchData();
+ 		}
+-	}, [filter, fetchData, pingStatus]);
++	}, [filter, fetchData]);
+ 
+ 	const chartData = ((data as { request_time?: string; cost?: number }[]) || []).map(
+ 		(row) => ({
+@@ -52,7 +50,9 @@ export default function CostsPerTime() {
+ 		})
+ 	);
+ 
+-	const isLoadingData = isLoading || !isFetched || pingStatus === "pending";
++	// A failed read is not an empty one: the 'No data to display' branch covered both.
++	const unreadable = pingStatus === "failure" || !!error || (isFetched && !data);
++	const isLoadingData = !unreadable && (isLoading || !isFetched);
+ 
+ 	return (
+ 		<Card>
+@@ -63,7 +63,14 @@ export default function CostsPerTime() {
+ 			</CardHeader>
+ 			<CardContent>
+ 				<ResponsiveContainer className="h-40" width="100%" height={160}>
+-					{isLoadingData ? (
++					{unreadable ? (
++						<div
++							role="alert"
++							className="flex h-40 w-full items-center justify-center text-sm text-stone-500 dark:text-stone-400"
++						>
++							Unavailable
++						</div>
++					) : isLoadingData ? (
+ 						<IntermediateState type="loading" classNames="h-40" />
+ 					) : chartData.length === 0 ? (
+ 						<IntermediateState type="nodata" classNames="h-40" />
+diff --git a/src/client/src/components/(playground)/evaluations/evaluation-analytics.tsx b/src/client/src/components/(playground)/evaluations/evaluation-analytics.tsx
+index 7ecb1238..5cc852ad 100644
+--- a/src/client/src/components/(playground)/evaluations/evaluation-analytics.tsx
++++ b/src/client/src/components/(playground)/evaluations/evaluation-analytics.tsx
+@@ -123,7 +123,7 @@ export default function EvaluationAnalytics({
+ 	const m = getMessage();
+ 	const filter = useRootStore(getFilterDetails);
+ 	const pingStatus = useRootStore(getPingStatus);
+-	const { data, isLoading, isFetched, fireRequest } =
++	const { data, isLoading, isFetched, error, fireRequest } =
+ 		useFetchWrapper<EvaluationAnalyticsResponse>();
+ 	const { data: typesResponse, fireRequest: getTypes } = useFetchWrapper<
+ 		ConfiguredType[] | { data?: ConfiguredType[] }
+@@ -137,10 +137,11 @@ export default function EvaluationAnalytics({
+ 	}, [filter, fireRequest]);
+ 
+ 	useEffect(() => {
++		// The ping is a pre-flight, not a precondition for the data.
+ 		if (
+ 			filter.timeLimit.start &&
+ 			filter.timeLimit.end &&
+-			pingStatus === "success"
++			pingStatus !== "pending"
+ 		) {
+ 			fetchAnalytics();
+ 		}
+@@ -174,7 +175,9 @@ export default function EvaluationAnalytics({
+ 		}));
+ 	}, [typesResponse]);
+ 
+-	const loading = isLoading || !isFetched || pingStatus === "pending";
++	// A failed read is not an empty one: `byType.length === 0` covered both.
++	const unreadable = pingStatus === "failure" || !!error || (isFetched && !data);
++	const loading = !unreadable && (isLoading || !isFetched);
+ 
+ 	if (isFetched && data && !data.configured) {
+ 		return <EvaluationOnboarding onConfigure={onConfigure} />;
+@@ -195,6 +198,13 @@ export default function EvaluationAnalytics({
+ 						<div className="p-4">
+ 							<Skeleton className="h-24 w-full" />
+ 						</div>
++					) : unreadable ? (
++						<div
++							role="alert"
++							className="px-4 py-8 text-center text-sm text-stone-500 dark:text-stone-400"
++						>
++							Analytics unavailable — the evaluation results could not be read.
++						</div>
+ 					) : byType.length === 0 ? (
+ 						<div className="px-4 py-8 text-center text-sm text-stone-500 dark:text-stone-400">
+ 							{m.EVALUATION_TABLE_EMPTY}
+diff --git a/src/client/src/components/(playground)/pie-chart-card.tsx b/src/client/src/components/(playground)/pie-chart-card.tsx
+index 85e816b4..c514d1b3 100644
+--- a/src/client/src/components/(playground)/pie-chart-card.tsx
++++ b/src/client/src/components/(playground)/pie-chart-card.tsx
+@@ -119,7 +119,7 @@ const PieChartCard = memo(
+ 	({ categoryKey, extraParams, heading, indexKey, url }: PieChartCardProps) => {
+ 		const filter = useRootStore(getFilterDetails);
+ 		const pingStatus = useRootStore(getPingStatus);
+-		const { data, fireRequest, isFetched, isLoading } = useFetchWrapper();
++		const { data, fireRequest, isFetched, isLoading, error } = useFetchWrapper();
+ 
+ 		const fetchData = useCallback(async () => {
+ 			fireRequest({
+@@ -134,15 +134,21 @@ const PieChartCard = memo(
+ 		}, [filter, url]);
+ 
+ 		useEffect(() => {
++			// The ping is a pre-flight, not a precondition for the data: gating on
++			// 'success' left the chart on its skeleton for the life of the page when the
++			// connector was down, and the read was never attempted.
+ 			if (
+ 				filter.timeLimit.start &&
+ 				filter.timeLimit.end &&
+-				pingStatus === "success"
++				pingStatus !== "pending"
+ 			)
+ 				fetchData();
+ 		}, [filter, fetchData, pingStatus]);
+ 
+ 		const updatedData = data as any[];
++		// A failed read is not an empty one: the "No data to display" branch used to
++		// cover both.
++		const unreadable = pingStatus === "failure" || !!error || (isFetched && !data);
+ 
+ 		return (
+ 			<Card>
+@@ -152,7 +158,14 @@ const PieChartCard = memo(
+ 					</CardTitle>
+ 				</CardHeader>
+ 				<CardContent className="h-60">
+-					{isLoading || !isFetched || pingStatus === "pending" ? (
++					{unreadable ? (
++						<div
++							role="alert"
++							className="flex h-full w-full flex-col items-center justify-center gap-2 p-3 text-sm text-stone-500 dark:text-stone-400"
++						>
++							<span>Unavailable</span>
++						</div>
++					) : isLoading || !isFetched ? (
+ 						<IntermediateState type="loading">
+ 							<div className="flex w-full h-full items-center justify-center gap-2">
+ 								<Loader2 className="h-5 w-5 animate-spin text-stone-500 dark:text-stone-400" />
+diff --git a/src/client/src/components/(playground)/stat-card.tsx b/src/client/src/components/(playground)/stat-card.tsx
+index b3d9dc1b..b1cccce5 100644
+--- a/src/client/src/components/(playground)/stat-card.tsx
++++ b/src/client/src/components/(playground)/stat-card.tsx
+@@ -58,29 +58,22 @@ const StatCard = memo(
+ 		}, [filter, url]);
+ 
+ 		useEffect(() => {
+-			// The ping is a connectivity pre-flight, not a precondition for the
+-			// data: gating the read on `status === "success"` meant a failed or
+-			// never-settling ping left every tile on "Loading..." for the life of
+-			// the page, and the stat was never even attempted. Waiting only for the
+-			// ping to settle lets the read report its own outcome, which is the
+-			// honest one.
+-			if (
+-				filter.timeLimit.start &&
+-				filter.timeLimit.end &&
+-				pingStatus !== "pending"
+-			)
+-				fetchData();
+-		}, [filter, fetchData, pingStatus]);
++			// The ping is a connectivity pre-flight, not a precondition for the data.
++			// Gating the read on it was wrong twice over: a failed ping reported a
++			// permanent "Loading...", and a ping that never settles — which this stack
++			// does, because /api/clickhouse can hang with no connector configured —
++			// meant the stat was never attempted at all. The read answers for itself.
++			if (filter.timeLimit.start && filter.timeLimit.end) fetchData();
++		}, [filter, fetchData]);
+ 
+-		// Three states, not two. The read is gated on a successful ClickHouse ping, so
+-		// a failed ping used to leave `isFetched` false forever and the tile sat on
+-		// "Loading..." for the life of the page; and when the ping did succeed but
++		// Three states, not two. Gating the read on a successful ClickHouse ping left
++		// `isFetched` false forever, so the tile sat on "Loading..." for the life of the
++		// page; and when the ping did succeed but
+ 		// the read failed, `data` was null and the `|| 0` defaults below rendered a
+ 		// confident 0 with a 0% trend. An unreadable count is not a zero count.
+ 		const unreadable =
+ 			pingStatus === "failure" || !!error || (isFetched && !data);
+-		const isLoadingData =
+-			!unreadable && (isLoading || !isFetched || pingStatus === "pending");
++		const isLoadingData = !unreadable && (isLoading || !isFetched);
+ 
+ 		const currentData = (data as Record<any, any>)?.[dataKey] || 0;
+ 		const doesPreviousDataKeyExist =

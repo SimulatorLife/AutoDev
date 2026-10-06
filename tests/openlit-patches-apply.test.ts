@@ -1004,6 +1004,28 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     /doesPreviousDataKeyExist \? "" : "opacity-0"/u,
     "a hidden trend is still in the accessibility tree, so it must not be rendered at all"
   );
+  // The ping is a pre-flight, not a precondition for the data. Twenty
+  // components gated a fetch on `pingStatus === "success"`; with no connector
+  // configured `/api/clickhouse` can hang, so the ping stays pending, the read
+  // is never attempted, and the surface waits forever.
+  for (const site of [
+    "src/client/src/components/(playground)/stat-card.tsx",
+    "src/client/src/components/(playground)/pie-chart-card.tsx",
+    "src/client/src/components/(playground)/evaluations/evaluation-analytics.tsx",
+    "src/client/src/app/(playground)/dashboard/costs/cost-per-time.tsx"
+  ]) {
+    const source = readFileSync(join(dir, site), "utf8");
+    assert.doesNotMatch(
+      source,
+      /pingStatus === "success"/u,
+      `${site} must not gate its read on a ping that can never settle`
+    );
+    assert.match(
+      source,
+      /const unreadable =/u,
+      `${site} must distinguish a failed read from an empty one`
+    );
+  }
   // `logs/` in the fork's .gitignore silently hid the new route directory.
   assert.match(
     readFileSync(join(dir, ".gitignore"), "utf8"),
