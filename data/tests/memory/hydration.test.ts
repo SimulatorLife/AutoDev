@@ -1,16 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type {
+  MemoryInjectionEvent,
+  MemoryOutcomeReport,
+  MemorySessionOutcomeReport,
+  MemoryUseReport
+} from "@simulatorlife/autodev-core";
+
 import { MemoryHydrationError } from "../../src/memory/errors.ts";
 import {
   hydrateExperienceRow,
+  hydrateInjectionEventRow,
+  hydrateInjectionUseReportRow,
   hydrateLifecycleEventRow,
-  hydrateMemoryRecordRow
+  hydrateMemoryRecordRow,
+  hydrateOutcomeReportRow,
+  hydrateSessionOutcomeReportRow
 } from "../../src/memory/hydration.ts";
 import {
   experienceToRow,
+  injectionEventToRow,
+  injectionUseReportToRow,
   lifecycleEventToRow,
-  memoryRecordToRow
+  memoryRecordToRow,
+  outcomeReportToRow,
+  sessionOutcomeReportToRow
 } from "../../src/memory/serialize.ts";
 import {
   makeExperience,
@@ -198,4 +213,159 @@ test("hydrateExperienceRow rejects an evidence entry with an invalid kind", () =
   const row = experienceToRow(makeExperience());
   row.evidence = JSON.stringify([{ kind: "not-a-real-kind", uri: "x://1" }]);
   assert.throws(() => hydrateExperienceRow(row), MemoryHydrationError);
+});
+
+// The four evaluation rows carry the correlation token, the reason code, and the
+// scope that every cohort read is grouped by, and all four had no direct test:
+// three of the seven serializers were exercised only through a live Postgres
+// integration run, and none of the four hydrators ran at all outside one. A
+// round trip is the narrowest proof that the pair agrees on every column name,
+// including the optional ones that disappear on the way to `null`.
+
+test("hydrateInjectionEventRow round-trips a serialized injection event", () => {
+  const event: MemoryInjectionEvent = {
+    id: "inj-1",
+    workspaceId: "ws-1",
+    repositoryId: "owner/repo",
+    scope: { kind: "workspace", workspaceId: "ws-1" },
+    taskId: "task-1",
+    runId: "run-1",
+    agentId: "agent-1",
+    agentRole: "orchestrator",
+    correlationToken: "corr-1",
+    memoryMode: "jit",
+    injectionResult: "injected",
+    packetCharacterCount: 1234,
+    packetTokenCount: 321,
+    memoryIds: ["mem-1", "mem-2"],
+    occurredAt: "2026-10-01T00:00:00.000Z",
+    reasonCode: "packet_attached",
+    evidence: [{ kind: "trajectory", uri: "trace://ci/1" }],
+    recordedBy: "router"
+  };
+  assert.deepEqual(hydrateInjectionEventRow(injectionEventToRow(event)), event);
+});
+
+test("an injection event without its optional columns round-trips unchanged", () => {
+  // `agentRole`, `packetTokenCount` and `repositoryId` are all nullable, and a
+  // hydrator that reconstructs them as empty strings or `[null]` would look
+  // right in a row count and wrong to every reader downstream.
+  const event: MemoryInjectionEvent = {
+    id: "inj-2",
+    workspaceId: "ws-1",
+    scope: { kind: "workspace", workspaceId: "ws-1" },
+    taskId: "task-1",
+    runId: "run-1",
+    agentId: "agent-1",
+    correlationToken: "corr-2",
+    memoryMode: "disabled",
+    injectionResult: "skipped",
+    packetCharacterCount: 0,
+    memoryIds: [],
+    occurredAt: "2026-10-01T00:00:00.000Z",
+    reasonCode: "memory_mode_disabled",
+    evidence: [],
+    recordedBy: "router"
+  };
+  const row = injectionEventToRow(event);
+  assert.equal(row.agent_role, null);
+  assert.equal(row.packet_token_count, null);
+  assert.equal(row.repository_id, null);
+  assert.deepEqual(hydrateInjectionEventRow(row), event);
+});
+
+test("hydrateOutcomeReportRow round-trips a serialized outcome report", () => {
+  const report: MemoryOutcomeReport = {
+    id: "out-1",
+    workspaceId: "ws-1",
+    repositoryId: "owner/repo",
+    scope: { kind: "workspace", workspaceId: "ws-1" },
+    taskId: "task-1",
+    runId: "run-1",
+    agentId: "agent-1",
+    correlationToken: "corr-1",
+    outcomeKind: "success",
+    reportKind: "task",
+    reportedAt: "2026-10-01T00:00:00.000Z",
+    reporterId: "operator-1",
+    reporterAuthority: "root",
+    reasonCode: "reporter_supplied",
+    evidence: [{ kind: "pull_request", uri: "pr://7" }]
+  };
+  assert.deepEqual(hydrateOutcomeReportRow(outcomeReportToRow(report)), report);
+});
+
+test("hydrateInjectionUseReportRow round-trips a serialized use report", () => {
+  const report: MemoryUseReport = {
+    id: "use-1",
+    workspaceId: "ws-1",
+    repositoryId: "owner/repo",
+    scope: { kind: "workspace", workspaceId: "ws-1" },
+    taskId: "task-1",
+    runId: "run-1",
+    agentId: "agent-1",
+    agentRole: "orchestrator",
+    injectionEventId: "inj-1",
+    correlationToken: "corr-1",
+    useKind: "partially_used",
+    usedMemoryIds: ["mem-1"],
+    reportedAt: "2026-10-01T00:00:00.000Z",
+    reporterId: "curator-1",
+    reporterAuthority: "curator",
+    reasonCode: "reporter_supplied",
+    evidence: [{ kind: "trajectory", uri: "trace://ci/1" }]
+  };
+  assert.deepEqual(
+    hydrateInjectionUseReportRow(injectionUseReportToRow(report)),
+    report
+  );
+});
+
+test("hydrateSessionOutcomeReportRow round-trips a serialized session report", () => {
+  const report: MemorySessionOutcomeReport = {
+    id: "sess-1",
+    workspaceId: "ws-1",
+    repositoryId: "owner/repo",
+    taskId: "task-1",
+    outcomeKind: "unknown",
+    reportKind: "other",
+    reportedAt: "2026-10-01T00:00:00.000Z",
+    reporterId: "operator-1",
+    reporterAuthority: "root",
+    reasonCode: "reporter_unknown",
+    evidence: []
+  };
+  assert.deepEqual(
+    hydrateSessionOutcomeReportRow(sessionOutcomeReportToRow(report)),
+    report
+  );
+});
+
+test("the evaluation hydrators refuse a row whose reason code is not its own vocabulary", () => {
+  // The reason code is what makes an unexposed cell explicit, so a row that
+  // cannot name one has not been observed in a way the cohorts can report.
+  assert.throws(
+    () =>
+      hydrateInjectionEventRow({
+        ...injectionEventToRow({
+          id: "inj-3",
+          workspaceId: "ws-1",
+          scope: { kind: "workspace", workspaceId: "ws-1" },
+          taskId: "task-1",
+          runId: "run-1",
+          agentId: "agent-1",
+          correlationToken: "corr-3",
+          memoryMode: "jit",
+          injectionResult: "injected",
+          packetCharacterCount: 1,
+          memoryIds: [],
+          occurredAt: "2026-10-01T00:00:00.000Z",
+          reasonCode: "packet_attached",
+          evidence: [],
+          recordedBy: "router"
+        }),
+        reason_code: "reporter_supplied"
+      }),
+    MemoryHydrationError
+  );
 });
