@@ -28,6 +28,35 @@ import type {
 
 const ROLE_COLLATOR = new Intl.Collator();
 
+/**
+ * Display order for the capability matrix's rows.
+ *
+ * The matrix sorted roles alphabetically, so it showed `orchestrator` before
+ * `smart` -- an order no other role surface used. The target state fixes the
+ * sequence: "the four fixed roles -- Default, Smart, Orchestrator, Subagent"
+ * are "the canonical roles". Alphabetical is neither that order nor any stated
+ * one, so an operator had to re-learn the sequence per page.
+ *
+ * The order is declared here rather than read from Core's `PROVIDER_ROLES`,
+ * which models the two routing roles a *provider* can be enabled for. These
+ * rows are agent roles, and `AgentRole` is an open union: a Runtime may
+ * legitimately report `worker` or `explorer`. Those rank after the canonical
+ * four and are ordered among themselves by the collator -- they stay visible,
+ * because dropping a role the API sent would hide evidence, and they stay
+ * deterministic, because an arbitrary order would churn between reads.
+ */
+const CANONICAL_ROLE_ORDER = ["default", "smart", "orchestrator", "subagent"];
+
+const ROLE_RANK = new Map<string, number>(
+  CANONICAL_ROLE_ORDER.map((role, index) => [role, index])
+);
+
+function compareRoles(left: string, right: string): number {
+  const leftRank = ROLE_RANK.get(left) ?? CANONICAL_ROLE_ORDER.length;
+  const rightRank = ROLE_RANK.get(right) ?? CANONICAL_ROLE_ORDER.length;
+  return leftRank - rightRank || ROLE_COLLATOR.compare(left, right);
+}
+
 export function agentsFromControlApi(
   response: ControlApiAgentsResponse
 ): readonly AgentDefinition[] {
@@ -161,7 +190,7 @@ export function permissionsFromControlApi(
         allowedSkills: entry.skills
       };
     })
-    .sort((left, right) => ROLE_COLLATOR.compare(left.role, right.role));
+    .sort((left, right) => compareRoles(left.role, right.role));
   return {
     policy: {
       approvalPolicy: response.policy.approvalPolicy,

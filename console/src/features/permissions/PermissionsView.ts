@@ -29,6 +29,21 @@ function sandboxLabel(mode: RoleCapabilityMatrix["sandboxMode"]): string {
   return "Unrestricted";
 }
 
+/**
+ * How the approval policy reads in prose, for the same reason as
+ * `sandboxLabel`: its neighbours in that row already render as words
+ * ("Workspace write", "Allowed", "Enabled"), and one card reading
+ * `on-demand` put the raw config value on the page in a display-sized type.
+ *
+ * Keyed by the closed union rather than switched, so a fourth member added to
+ * the policy fails to compile here instead of silently rendering as itself.
+ */
+const APPROVAL_LABELS: Record<PermissionPolicy["approvalPolicy"], string> = {
+  never: "Never",
+  always: "Always",
+  "on-demand": "On demand"
+};
+
 export function PermissionsView({
   policy,
   roleMatrices
@@ -87,7 +102,7 @@ export function PermissionsView({
       { columns: 4 },
       React.createElement(StatCard, {
         title: "Approval Policy",
-        value: policy.approvalPolicy
+        value: APPROVAL_LABELS[policy.approvalPolicy]
       }),
       React.createElement(StatCard, {
         title: "Default Sandbox",

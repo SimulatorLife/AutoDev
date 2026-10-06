@@ -5007,6 +5007,84 @@ test("View adapters translate Control API responses without inventing data", () 
   ]);
 });
 
+test("the capability matrix lists the fixed roles in the one order the app uses", () => {
+  // The matrix sorted roles alphabetically, so it showed `orchestrator` before
+  // `smart` -- an order the target state does not use anywhere. It fixes the
+  // sequence as Default, Smart, Orchestrator, Subagent and calls them the
+  // canonical roles.
+  //
+  // `AgentRole` is an open union, so a Runtime may report roles outside the
+  // four. Those must stay visible -- dropping a role the API sent would hide
+  // evidence -- but they rank after the fixed four and keep a deterministic
+  // order among themselves, so the table cannot churn between reads.
+  const role = () => ({
+    readOnly: true,
+    sandbox: "workspace-write",
+    networkAccess: true,
+    approvals: "user",
+    mcp: [],
+    skills: []
+  });
+  const ordered = permissionsFromControlApi({
+    schema: "autodev-control-permissions-v1",
+    source: "test",
+    readOnly: true,
+    policy: {
+      approvalPolicy: "on-demand",
+      sandboxMode: "workspace-write",
+      approvalsReviewer: "user",
+      networkAccess: true,
+      webSearch: true,
+      defaultToolsApprovalMode: "approve"
+    },
+    // Deliberately scrambled, plus two roles outside the fixed four.
+    rolePermissions: {
+      subagent: role(),
+      worker: role(),
+      orchestrator: role(),
+      explorer: role(),
+      smart: role(),
+      default: role()
+    }
+  }).roleMatrices.map((matrix) => matrix.role);
+
+  assert.deepEqual(ordered, [
+    "default",
+    "smart",
+    "orchestrator",
+    "subagent",
+    "explorer",
+    "worker"
+  ]);
+});
+
+test("the policy cards read as prose rather than raw config values", () => {
+  // Three cards in that row render words -- "Workspace write", "Allowed",
+  // "Enabled" -- and the fourth rendered the enum itself, so `on-demand`
+  // appeared on the page in display-sized type as `on-demand`.
+  for (const [approvalPolicy, expected] of [
+    ["on-demand", "On demand"],
+    ["always", "Always"],
+    ["never", "Never"]
+  ] as const) {
+    const markup = renderToStaticMarkup(
+      React.createElement(PermissionsView, {
+        policy: {
+          approvalPolicy,
+          sandboxMode: "workspace-write",
+          approvalsReviewer: "user",
+          networkAccess: true,
+          webSearch: true,
+          defaultToolsApprovalMode: "approve"
+        },
+        roleMatrices: []
+      })
+    );
+    assert.match(markup, new RegExp(`>${expected}<`, "u"));
+    assert.doesNotMatch(markup, new RegExp(`>${approvalPolicy}<`, "u"));
+  }
+});
+
 test("Every canonical Console route path maps to a canonical nav section", () => {
   for (const section of CANONICAL_NAVIGATION) {
     const path = canonicalNavPath(section);
