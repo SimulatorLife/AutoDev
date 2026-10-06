@@ -61,14 +61,17 @@ export default async function ToolsPage({
     ConsolePageShell,
     {
       section,
-      counts:
-        result.data.totalTools === null ? {} : { Tools: result.data.totalTools }
+      // The badge counts the rows the table renders, not the envelope's
+      // `totalTools`. Both claimed to be "how many tools there are", and they
+      // can disagree: a payload carrying two entries under a `totalTools` of 1
+      // put "1" in the sidebar and "Showing 2 of 2 tool entries" on the page it
+      // links to. Counting what was observed removes the second authority.
+      counts: { Tools: result.data.tools.length }
     },
     React.createElement(ToolsView, {
       tools: result.data.tools,
       coverage: result.data.coverage,
       validity: result.data.validity,
-      totalTools: result.data.totalTools,
       usageLink: result.data.usageLink,
       filters: { source: sourceFilter, role: roleFilter }
     })

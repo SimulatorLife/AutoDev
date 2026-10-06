@@ -65,7 +65,6 @@ export interface ToolsViewProps {
   readonly tools: readonly ToolCatalogItem[];
   readonly coverage: ToolCatalogCoverage;
   readonly validity: ToolCatalogValidity;
-  readonly totalTools: number | null;
   readonly usageLink: string;
   readonly filters: ToolsViewFilters;
 }
@@ -224,7 +223,6 @@ export function ToolsView({
   tools,
   coverage,
   validity,
-  totalTools,
   usageLink,
   filters
 }: ToolsViewProps): React.JSX.Element {
@@ -380,10 +378,12 @@ export function ToolsView({
       { columns: 4 },
       React.createElement(StatCard, {
         title: "Composite catalog",
-        value:
-          validity === "valid" && totalTools !== null
-            ? totalTools
-            : NOT_OBSERVED_LABEL
+        // Counted from the entries themselves, like the three source counts
+        // beside it. Reading the envelope's `totalTools` here made this row
+        // contradict itself -- a composite total of 1 above native 0 + MCP 2 +
+        // plugin 0 -- because one number was the Runtime's claim and the other
+        // three were counted from what arrived.
+        value: validity === "valid" ? tools.length : NOT_OBSERVED_LABEL
       }),
       React.createElement(StatCard, {
         title: "Native entries",

@@ -304,6 +304,72 @@ test("the icon set holds no glyph that nothing renders", () => {
   assert.ok(Object.keys(ICON_PATHS).length > 0, "the icon set is not empty");
 });
 
+test("the Tools summary row counts one collection once, not twice", () => {
+  // The row held two authorities for the same question. "Composite catalog"
+  // read the envelope's `totalTools`; "Native / MCP / Plugin entries" counted
+  // the entries that actually arrived. A payload with two tools under a
+  // `totalTools` of 1 rendered a composite of 1 above 0 + 2 + 0, and the same
+  // split put "1" in the sidebar badge next to "Showing 2 of 2 tool entries".
+  //
+  // One collection, one count: every card in the row is counted from the same
+  // entries, so the four can never contradict each other.
+  const markup = renderToStaticMarkup(
+    React.createElement(ToolsView, {
+      coverage: "complete",
+      validity: "valid",
+      usageLink: "/usage",
+      filters: { source: "", role: "" },
+      tools: [
+        {
+          name: "mcp__github__create_issue",
+          source: "mcp",
+          sourceAuthority: "rulesync-mcp",
+          server: "github",
+          exposedRoles: ["orchestrator"],
+          availability: "configured"
+        },
+        {
+          name: "mcp__future__unconfigured",
+          source: "mcp",
+          sourceAuthority: "rulesync-mcp",
+          server: "future",
+          exposedRoles: [],
+          availability: "not-observed"
+        },
+        {
+          name: "apply_patch",
+          source: "native",
+          sourceAuthority: "codex-native",
+          exposedRoles: ["orchestrator"],
+          availability: "configured"
+        }
+      ]
+    })
+  );
+
+  // Composite must be the sum of the three source counts: 1 + 2 = 3.
+  assert.match(
+    markup,
+    /Composite catalog<\/span>[\s\S]*?>3</,
+    "the composite total must equal the sum of the source counts"
+  );
+  assert.match(markup, /MCP entries<\/span>[\s\S]*?>2</);
+  assert.match(markup, /Native entries<\/span>[\s\S]*?>1</);
+  assert.match(markup, /Plugin entries<\/span>[\s\S]*?>0</);
+
+  // An empty catalog is an observed zero, not an absence.
+  const empty = renderToStaticMarkup(
+    React.createElement(ToolsView, {
+      coverage: "complete",
+      validity: "valid",
+      usageLink: "/usage",
+      filters: { source: "", role: "" },
+      tools: []
+    })
+  );
+  assert.match(empty, /Composite catalog<\/span>[\s\S]*?>0</);
+});
+
 test("an unobserved stat reads as an absence, not as a large measurement", () => {
   // Rendering "Not observed" in the value slot at `text-2xl` bold broke two
   // things at once. It is two words where a number is three or four glyphs, so
@@ -2869,7 +2935,6 @@ test("ToolsView renders explicit availability per tool with the catalog coverage
     React.createElement(ToolsView, {
       coverage: "partial",
       validity: "valid",
-      totalTools: 1,
       usageLink: "/usage",
       filters: { source: "", role: "" },
       tools: [
@@ -2903,7 +2968,6 @@ test("ToolsView keeps an unavailable capability source unknown instead of zero",
     React.createElement(ToolsView, {
       coverage: "unknown",
       validity: "not-observed",
-      totalTools: 0,
       usageLink: "/usage",
       filters: { source: "", role: "" },
       tools: []
@@ -2920,7 +2984,6 @@ test("ToolsView surfaces availability through the StatusBadge vocabulary and nev
     React.createElement(ToolsView, {
       coverage: "partial",
       validity: "valid",
-      totalTools: 1,
       usageLink: "/usage",
       filters: { source: "", role: "" },
       tools: [
@@ -2940,7 +3003,6 @@ test("ToolsView surfaces availability through the StatusBadge vocabulary and nev
     React.createElement(ToolsView, {
       coverage: "partial",
       validity: "valid",
-      totalTools: 1,
       usageLink: "/usage",
       filters: { source: "", role: "" },
       tools: [
@@ -5910,7 +5972,6 @@ test("ToolsView applies URL-addressable source and role filters without losing c
     React.createElement(ToolsView, {
       coverage: "complete",
       validity: "valid",
-      totalTools: 4,
       usageLink: "/usage",
       filters: { source: "mcp", role: "" },
       tools: [
@@ -5964,7 +6025,6 @@ test("ToolsView renders a Not observed availability badge when source authority 
     React.createElement(ToolsView, {
       coverage: "partial",
       validity: "valid",
-      totalTools: 1,
       usageLink: "/usage",
       filters: { source: "", role: "" },
       tools: [
@@ -5995,7 +6055,6 @@ test("ToolsView reports explicit invalid source via the error vocabulary", () =>
     React.createElement(ToolsView, {
       coverage: "unavailable",
       validity: "invalid",
-      totalTools: 0,
       usageLink: "/usage",
       filters: { source: "", role: "" },
       tools: []
@@ -6714,7 +6773,6 @@ test("a catalog row missing the fields its view reads fails closed instead of th
         tools: [toolRow as never],
         coverage: "complete",
         validity: "valid",
-        totalTools: 1,
         usageLink: "/usage",
         filters: { source: "", role: "" }
       })
