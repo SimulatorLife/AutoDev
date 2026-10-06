@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server.js";
 
+import { withControlFailure } from "../../../src/lib/control-failure.ts";
 import {
   type ControlApiConfig,
   type ControlApiResult,
@@ -30,6 +31,10 @@ interface MemoryActionPayload {
 }
 
 const PURGE_REASONS = ["privacy_request", "retention_expired"] as const;
+
+function redirectTo(location: string): NextResponse {
+  return new NextResponse(null, { status: 303, headers: { location } });
+}
 
 async function parsePayload(
   request: NextRequest
@@ -148,45 +153,64 @@ function executeAction(
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const payload = await parsePayload(request);
+  const isPurge = payload?.action === "purge";
+
+  /**
+   * A form submission is a browser navigation, so whatever this returns becomes
+   * the page the operator sees. Returning JSON there dumps `{"error": ...}`
+   * outside the Console shell with no way back, so a failed form redirect
+   * returns to Memory carrying the shared could-not-be-confirmed notice. Only a
+   * non-browser caller still receives a status code.
+   */
+  const respond = (
+    status: number,
+    error: unknown,
+    identifier?: string
+  ): NextResponse => {
+    if (payload?.isForm === true) {
+      const query = new URLSearchParams({
+        tab: isPurge ? "experiences" : "records"
+      });
+      if (payload.workspaceId !== "") {
+        query.set("workspaceId", payload.workspaceId);
+      }
+      if (identifier !== undefined) {
+        query.set("recordId", identifier);
+      }
+      return redirectTo(withControlFailure(`/memory?${query.toString()}`));
+    }
+    return NextResponse.json({ error }, { status });
+  };
+
   const config = readControlApiConfig();
   if (!config) {
-    return NextResponse.json(
-      { error: "Control API configuration or token is missing" },
-      { status: 503 }
-    );
+    return respond(503, "Control API configuration or token is missing");
   }
 
-  const payload = await parsePayload(request);
   // Purge targets an experience rather than a durable record, so each action
   // names the identifier it needs instead of demanding `recordId` up front.
-  const identifier =
-    payload?.action === "purge" ? payload.experienceId : payload?.recordId;
+  const identifier = isPurge ? payload?.experienceId : payload?.recordId;
   if (!payload || !identifier) {
-    return NextResponse.json(
-      { error: "Invalid request payload or missing identifier" },
-      { status: 400 }
-    );
+    return respond(400, "Invalid request payload or missing identifier");
   }
 
   const result = await executeAction(payload, config);
   if (!result) {
-    return NextResponse.json(
-      { error: `Unsupported or incomplete action: ${payload.action}` },
-      { status: 400 }
-    );
+    return respond(400, `Unsupported or incomplete action: ${payload.action}`);
   }
 
   if (result.kind !== "ok") {
-    const status = "status" in result ? result.status : 500;
-    return NextResponse.json({ error: result }, { status });
+    return respond("status" in result ? result.status : 500, result);
   }
 
   if (payload.isForm) {
-    const redirectUrl = new URL("/memory", request.url);
-    redirectUrl.searchParams.set("tab", "records");
-    redirectUrl.searchParams.set("workspaceId", payload.workspaceId);
-    redirectUrl.searchParams.set("recordId", identifier);
-    return NextResponse.redirect(redirectUrl, { status: 303 });
+    const query = new URLSearchParams({
+      tab: isPurge ? "experiences" : "records"
+    });
+    query.set("workspaceId", payload.workspaceId);
+    query.set("recordId", identifier);
+    return redirectTo(`/memory?${query.toString()}`);
   }
 
   return NextResponse.json({

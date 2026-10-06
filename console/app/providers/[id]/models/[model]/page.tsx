@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import React from "react";
 
 import { ModelDetailView } from "../../../../../src/features/providers/ModelDetailView.ts";
-import { isControlFailure } from "../../../../../src/features/providers/paths.ts";
+import { isControlFailure } from "../../../../../src/lib/control-failure.ts";
 import {
   controlApiFailureCode,
   fetchModels,

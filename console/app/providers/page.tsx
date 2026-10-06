@@ -1,7 +1,7 @@
 import React from "react";
 
-import { isControlFailure } from "../../src/features/providers/paths.ts";
 import { ProvidersView } from "../../src/features/providers/ProvidersView.ts";
+import { isControlFailure } from "../../src/lib/control-failure.ts";
 import {
   controlApiFailureCode,
   fetchModels,

@@ -95,6 +95,7 @@ import {
   fetchPromptVersion,
   fetchPromptVersions,
   fetchProviders,
+  fetchRuntime,
   fetchSkills,
   fetchTools,
   readControlApiConfig
@@ -3338,7 +3339,7 @@ test("AgentsView shows read-only provider summaries that link to Providers", () 
         schema: "autodev-control-runtime-v1",
         routerInstanceId: "router-uuid-test",
         lifecycle: { state: "ready", activeResponseRequests: 1 },
-        concurrency: { limit: 2, active: 1 },
+        concurrency: { effectivePerSessionLimit: 2, activeSubagentThreads: 1 },
         inFlightRequestCount: 1
       }
     })
@@ -4969,6 +4970,82 @@ test("Console rejects provider and model responses that do not match the v2 cont
   assert.equal(models.kind, "ok");
 });
 
+test("Console rejects a runtime response that does not match the v1 contract", async () => {
+  const config = { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" };
+  const valid = {
+    schema: "autodev-control-runtime-v1",
+    routerInstanceId: "router-uuid-test",
+    lifecycle: { state: "ready", draining: false },
+    concurrency: { effectivePerSessionLimit: 2, activeSubagentThreads: 1 },
+    inFlightRequestCount: 1
+  };
+  assert.equal(
+    (
+      await fetchRuntime(config, {
+        fetchImpl: async () => Response.json(valid)
+      })
+    ).kind,
+    "ok"
+  );
+
+  // Runtime had no response guard at all, so every one of these rendered as a
+  // healthy runtime. Each must fail closed into an explicit unavailable state
+  // instead of reporting numbers nobody measured.
+  for (const broken of [
+    { ...valid, schema: "autodev-control-runtime-v0" },
+    { ...valid, routerInstanceId: 7 },
+    { ...valid, lifecycle: { state: 1 } },
+    { ...valid, lifecycle: { state: "ready", draining: "yes" } },
+    { ...valid, concurrency: { effectivePerSessionLimit: "two" } },
+    { ...valid, concurrency: { denialsByReason: { cap: "many" } } },
+    { ...valid, inFlightRequestCount: null }
+  ]) {
+    assert.equal(
+      (
+        await fetchRuntime(config, {
+          fetchImpl: async () => Response.json(broken)
+        })
+      ).kind,
+      "invalid-response",
+      JSON.stringify(broken)
+    );
+  }
+});
+
+test("AgentsView reports runtime counters as unobserved instead of zero", () => {
+  const runtime = {
+    schema: "autodev-control-runtime-v1",
+    routerInstanceId: "router-uuid-test",
+    lifecycle: { state: "ready", draining: true },
+    // A Runtime that has no concurrency evidence omits the fields rather than
+    // reporting zero, so the Console must not turn their absence into a zero.
+    concurrency: {},
+    inFlightRequestCount: 0
+  } as const;
+  const markup = renderToStaticMarkup(
+    React.createElement(AgentsView, {
+      agents: [CONFIGURED_AGENT],
+      providers: PROVIDERS_FIXTURE,
+      routing: ROUTING_FIXTURE,
+      runtime
+    })
+  );
+  assert.match(markup, /data-section="runtime-health"/);
+  for (const label of [
+    "Session Concurrency Limit",
+    "Active Subagent Threads",
+    "Active Sessions",
+    "Total Denials"
+  ]) {
+    const start = markup.indexOf(label);
+    assert.ok(start > 0, `${label} must be rendered`);
+    const cell = markup.slice(start, start + 400);
+    assert.match(cell, /Not observed/u, `${label} must not read as a zero`);
+  }
+  // Draining is its own operational state and must not collapse into "ready".
+  assert.match(markup, /Draining/);
+});
+
 test("next dev and the production build never share a dist directory", () => {
   // The LaunchAgent's `next start` and run-codex-console.sh's BUILD_ID gate
   // read the production build from console/.next.
@@ -5259,7 +5336,13 @@ test("Memory purge refuses without explicit confirmation and never reaches the R
       })
     );
 
-    assert.equal(response.status, 400);
+    // A form submission is a browser navigation, so a refusal redirects back
+    // into the Console carrying the shared notice rather than dumping JSON.
+    assert.equal(response.status, 303);
+    assert.equal(
+      response.headers.get("location"),
+      "/memory?tab=experiences&workspaceId=SimulatorLife%2FAutoDev&control=failed"
+    );
     assert.equal(requests.length, 0);
   });
 });
@@ -5276,7 +5359,11 @@ test("Memory purge refuses a reason the Runtime does not accept", async () => {
       })
     );
 
-    assert.equal(response.status, 400);
+    assert.equal(response.status, 303);
+    assert.equal(
+      response.headers.get("location"),
+      "/memory?tab=experiences&workspaceId=SimulatorLife%2FAutoDev&control=failed"
+    );
     assert.equal(requests.length, 0);
   });
 });
@@ -5292,7 +5379,11 @@ test("Memory purge requires an experience id rather than a record id", async () 
       })
     );
 
-    assert.equal(response.status, 400);
+    assert.equal(response.status, 303);
+    assert.equal(
+      response.headers.get("location"),
+      "/memory?tab=experiences&workspaceId=SimulatorLife%2FAutoDev&control=failed"
+    );
     assert.equal(requests.length, 0);
   });
 });

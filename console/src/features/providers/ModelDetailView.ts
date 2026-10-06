@@ -5,9 +5,10 @@ import type {
 import React from "react";
 
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { ConvergenceBadge } from "../../components/status/ConvergenceBadge.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
-import { ControlFailureNotice, ModelToggle } from "./EnablementToggle.ts";
+import { ModelToggle } from "./EnablementToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 
 const SECTION_PANEL_CLASS =

@@ -14,9 +14,9 @@ import { type NextRequest, NextResponse } from "next/server.js";
 
 import {
   isProvidersReturnPath,
-  providersPath,
-  withControlFailure
+  providersPath
 } from "../../../../src/features/providers/paths.ts";
+import { withControlFailure } from "../../../../src/lib/control-failure.ts";
 import {
   patchModel,
   readControlApiConfig

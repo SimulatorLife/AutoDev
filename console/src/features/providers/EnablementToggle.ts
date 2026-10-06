@@ -161,17 +161,3 @@ export function ModelToggle({
     returnTo
   });
 }
-
-/** Shown after a toggle's change could not be confirmed by Runtime. */
-export function ControlFailureNotice(): React.JSX.Element {
-  return React.createElement(
-    "div",
-    {
-      role: "status",
-      "data-control-outcome": "failed",
-      className:
-        "rounded border border-warning/40 bg-warning/15 px-3 py-2 text-xs font-medium text-warning"
-    },
-    "The change could not be confirmed. Check the current state before retrying."
-  );
-}

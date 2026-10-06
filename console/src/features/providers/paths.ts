@@ -8,10 +8,6 @@ export const PROVIDERS_PATH = "/providers";
 export const PROVIDERS_TABS = ["providers", "models"] as const;
 export type ProvidersTab = (typeof PROVIDERS_TABS)[number];
 
-/** Query flag a mutation route sets when a change could not be confirmed. */
-export const CONTROL_FAILED_PARAM = "control";
-const CONTROL_FAILED_VALUE = "failed";
-
 const SEGMENT = "[A-Za-z0-9][A-Za-z0-9._-]{0,127}";
 const RETURN_PATH_PATTERN = new RegExp(
   String.raw`^/providers(?:\?tab=(?:providers|models)|/${SEGMENT}(?:/models/${SEGMENT})?)?$`,
@@ -33,15 +29,4 @@ export function modelPath(provider: string, model: string): string {
 /** Only Providers pages may be a toggle's return destination. */
 export function isProvidersReturnPath(value: string | null): value is string {
   return value !== null && RETURN_PATH_PATTERN.test(value);
-}
-
-export function withControlFailure(path: string): string {
-  return `${path}${path.includes("?") ? "&" : "?"}${CONTROL_FAILED_PARAM}=${CONTROL_FAILED_VALUE}`;
-}
-
-export function isControlFailure(
-  raw: string | readonly string[] | undefined
-): boolean {
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  return value === CONTROL_FAILED_VALUE;
 }

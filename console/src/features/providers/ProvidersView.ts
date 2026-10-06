@@ -7,6 +7,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
@@ -17,11 +18,7 @@ import {
   type TabDefinition,
   TabNav
 } from "../../components/tabs/Tabs.ts";
-import {
-  ControlFailureNotice,
-  ModelToggle,
-  ProviderRoleToggle
-} from "./EnablementToggle.ts";
+import { ModelToggle, ProviderRoleToggle } from "./EnablementToggle.ts";
 import {
   modelPath,
   providerPath,

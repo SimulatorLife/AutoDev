@@ -7,16 +7,13 @@ import type {
 import React from "react";
 
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { ConvergenceBadge } from "../../components/status/ConvergenceBadge.ts";
 import {
   type ColumnDef,
   DataTable
 } from "../../components/tables/DataTable.ts";
-import {
-  ControlFailureNotice,
-  ModelToggle,
-  ProviderRoleToggle
-} from "./EnablementToggle.ts";
+import { ModelToggle, ProviderRoleToggle } from "./EnablementToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
 

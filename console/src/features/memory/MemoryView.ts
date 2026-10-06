@@ -10,6 +10,7 @@ import React from "react";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { Button } from "../../components/forms/Button.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
+import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
 import { MemoryCohortsView } from "./MemoryCohortsView.ts";
 import { MemoryExperiencesView } from "./MemoryExperiencesView.ts";
@@ -41,6 +42,8 @@ export interface MemoryViewProps {
   readonly status?: string | undefined;
   readonly occurredFrom: string;
   readonly occurredUntil: string;
+  /** A mutation was redirected back with the shared could-not-confirm notice. */
+  readonly controlFailed?: boolean | undefined;
 }
 
 export function MemoryView({
@@ -61,7 +64,8 @@ export function MemoryView({
   kind,
   status,
   occurredFrom,
-  occurredUntil
+  occurredUntil,
+  controlFailed
 }: MemoryViewProps): React.JSX.Element {
   const activeRecordsCount = records.filter(
     (r) => r.status === "active"
@@ -192,6 +196,8 @@ export function MemoryView({
       activeTabId: activeTab,
       hrefFor: hrefForTab
     }),
+
+    controlFailed ? React.createElement(ControlFailureNotice) : null,
 
     // Active tab body
     activeTab === "records"
