@@ -2348,6 +2348,152 @@ test("official MCP facade exposes governed tools and binds scope outside model a
   }
 });
 
+test("memory MCP tool arguments stay strict: smuggled keys fail at every schema level", async () => {
+  const repository = new FakeMemoryRepository();
+  await repository.appendExperience(experience());
+  const service = makeService(repository);
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const server = createMemoryMcpServer(service, {
+    current: async () => ({
+      actor: worker,
+      context,
+      taskId: "task-current",
+      task: "Verify tool arguments stay strict.",
+      memoryMode: "unknown"
+    })
+  });
+  const client = new Client(
+    { name: "strict-memory-test-client", version: "1.0.0" },
+    { capabilities: {} }
+  );
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  const validAppend = {
+    startedAt: "2026-09-30T10:00:00.000Z",
+    completedAt: "2026-09-30T10:05:00.000Z",
+    outcome: "success",
+    trajectory: {
+      format: "claude-code-native-jsonl",
+      uri: "https://example.invalid/session/transcript.jsonl",
+      digest: "a".repeat(64),
+      recordCount: 12
+    },
+    validation: { state: "passed", evidence: [] },
+    evidence: [
+      { kind: "file", uri: "https://example.invalid/repo/src/feature.ts" }
+    ]
+  };
+
+  try {
+    const experiencesBefore = repository.experiences.size;
+    const memoriesBefore = repository.memories.size;
+
+    // Baseline: the same payload without smuggled keys is accepted, so every
+    // rejection below is attributable to the unknown key and nothing else.
+    // Without `z.strictObject` these inputs would be stripped and accepted.
+    //
+    // The cases below cover the nested schemas this repo owns. The outermost
+    // tool `inputSchema` is a bare shape object the MCP SDK wraps in its own
+    // `z.object` (strip semantics), so top-level unknown keys are ignored by
+    // the SDK rather than rejected here — harmless, because the handler
+    // rebinds workspace/task/run/agent/role from the host session anyway.
+    const accepted = await client.callTool({
+      name: "experience_append",
+      arguments: validAppend
+    });
+    assert.equal(accepted.isError, undefined);
+    assert.equal(repository.experiences.size, experiencesBefore + 1);
+
+    const smuggled: ReadonlyArray<{
+      readonly level: string;
+      readonly arguments: Record<string, unknown>;
+    }> = [
+      {
+        level: "trajectory",
+        arguments: {
+          ...validAppend,
+          trajectory: {
+            ...validAppend.trajectory,
+            workspaceId: "attacker-selected-workspace"
+          }
+        }
+      },
+      {
+        level: "validation",
+        arguments: {
+          ...validAppend,
+          validation: {
+            ...validAppend.validation,
+            role: "attacker-selected-role"
+          }
+        }
+      },
+      {
+        level: "an evidence reference",
+        arguments: {
+          ...validAppend,
+          evidence: [{ ...validAppend.evidence[0], scope: { kind: "global" } }]
+        }
+      }
+    ];
+
+    for (const { level, arguments: smuggledArguments } of smuggled) {
+      const rejected = await client.callTool({
+        name: "experience_append",
+        arguments: smuggledArguments
+      });
+      assert.equal(
+        rejected.isError,
+        true,
+        `an unknown key on ${level} must be rejected, not stripped`
+      );
+    }
+
+    // `memoryScope` is a discriminatedUnion over strictObject members, so it
+    // gets the same treatment: prove the authorized form is accepted and that
+    // adding a member's unknown key turns it into a rejection rather than a
+    // silently narrowed scope.
+    const propose = (scope: Record<string, unknown>) =>
+      client.callTool({
+        name: "memory_propose",
+        arguments: {
+          kind: "semantic",
+          scope,
+          claim: "Authorized workspace proposal.",
+          experienceIds: ["experience-1"],
+          evidence: [
+            { kind: "file", uri: "https://example.invalid/repo/src/feature.ts" }
+          ]
+        }
+      });
+
+    assert.equal(
+      (await propose({ kind: "workspace", workspaceId: "workspace-a" }))
+        .isError,
+      undefined
+    );
+    assert.equal(
+      (
+        await propose({
+          kind: "workspace",
+          workspaceId: "workspace-a",
+          role: "smuggled"
+        })
+      ).isError,
+      true
+    );
+
+    // Not one smuggled payload reached persistence.
+    assert.equal(repository.experiences.size, experiencesBefore + 1);
+    assert.equal(repository.memories.size, memoriesBefore + 1);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
 test("MemoryService injects only a bounded advisory packet into trusted root instructions", async () => {
   const repository = new FakeMemoryRepository();
   const visible = record("injected");

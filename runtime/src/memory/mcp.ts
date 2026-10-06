@@ -37,34 +37,38 @@ export interface MemoryMcpSessionProvider {
   current(researchQuery?: string): Promise<MemoryMcpSession> | MemoryMcpSession;
 }
 
+/**
+ * Tool arguments are model-controlled, so every object schema below is built
+ * with `z.strictObject`: unknown keys are rejected rather than stripped, so a
+ * misspelled or smuggled field is a hard validation error instead of silent
+ * data loss. That matters most for `memoryScope`, which is the boundary the
+ * host re-binds from the session — anything accepted here but not understood
+ * here is a scope field we failed to notice.
+ */
 const memoryKind = z.enum(["episodic", "semantic", "procedural"]);
-const evidenceReference = z
-  .object({
-    kind: z.enum([
-      "trajectory",
-      "trace",
-      "file",
-      "commit",
-      "pull_request",
-      "issue",
-      "rule",
-      "skill",
-      "document",
-      "other"
-    ]),
-    uri: z.string().min(1).max(2000),
-    revision: z.string().max(300).optional(),
-    observedAt: z.string().datetime().optional()
-  })
-  .strict();
-const trajectoryReference = z
-  .object({
-    format: z.string().min(1).max(128),
-    uri: z.string().min(1).max(2000),
-    digest: z.string().regex(/^[a-f\d]{64}$/iu),
-    recordCount: z.number().int().min(0).max(10_000_000).optional()
-  })
-  .strict();
+const evidenceReference = z.strictObject({
+  kind: z.enum([
+    "trajectory",
+    "trace",
+    "file",
+    "commit",
+    "pull_request",
+    "issue",
+    "rule",
+    "skill",
+    "document",
+    "other"
+  ]),
+  uri: z.string().min(1).max(2000),
+  revision: z.string().max(300).optional(),
+  observedAt: z.string().datetime().optional()
+});
+const trajectoryReference = z.strictObject({
+  format: z.string().min(1).max(128),
+  uri: z.string().min(1).max(2000),
+  digest: z.string().regex(/^[a-f\d]{64}$/iu),
+  recordCount: z.number().int().min(0).max(10_000_000).optional()
+});
 const experienceOutcome = z.enum([
   "success",
   "partial",
@@ -72,49 +76,40 @@ const experienceOutcome = z.enum([
   "cancelled",
   "unknown"
 ]);
-const experienceValidation = z
-  .object({
-    state: z.enum(["passed", "failed", "partial", "not_run"]),
-    evidence: z.array(evidenceReference).max(64)
-  })
-  .strict();
+const experienceValidation = z.strictObject({
+  state: z.enum(["passed", "failed", "partial", "not_run"]),
+  evidence: z.array(evidenceReference).max(64)
+});
 const memoryScope = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("global") }).strict(),
-  z
-    .object({ kind: z.literal("workspace"), workspaceId: z.string().min(1) })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("repository"),
-      workspaceId: z.string().min(1),
-      repositoryId: z.string().min(1)
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("role"),
-      workspaceId: z.string().min(1),
-      role: z.string().min(1),
-      repositoryId: z.string().min(1).optional()
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("task"),
-      workspaceId: z.string().min(1),
-      taskId: z.string().min(1),
-      runId: z.string().min(1)
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("agent"),
-      workspaceId: z.string().min(1),
-      taskId: z.string().min(1),
-      runId: z.string().min(1),
-      agentId: z.string().min(1)
-    })
-    .strict()
+  z.strictObject({ kind: z.literal("global") }),
+  z.strictObject({
+    kind: z.literal("workspace"),
+    workspaceId: z.string().min(1)
+  }),
+  z.strictObject({
+    kind: z.literal("repository"),
+    workspaceId: z.string().min(1),
+    repositoryId: z.string().min(1)
+  }),
+  z.strictObject({
+    kind: z.literal("role"),
+    workspaceId: z.string().min(1),
+    role: z.string().min(1),
+    repositoryId: z.string().min(1).optional()
+  }),
+  z.strictObject({
+    kind: z.literal("task"),
+    workspaceId: z.string().min(1),
+    taskId: z.string().min(1),
+    runId: z.string().min(1)
+  }),
+  z.strictObject({
+    kind: z.literal("agent"),
+    workspaceId: z.string().min(1),
+    taskId: z.string().min(1),
+    runId: z.string().min(1),
+    agentId: z.string().min(1)
+  })
 ]);
 
 const server = () =>
