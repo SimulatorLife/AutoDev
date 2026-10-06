@@ -15,6 +15,7 @@ import {
 } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import {
   resolveActiveTabId,
   type TabDefinition,
@@ -195,8 +196,7 @@ function ConfiguredToolAllowlist({
                   "span",
                   {
                     key: role,
-                    className:
-                      "text-micro bg-surface-raised text-fg-secondary px-1.5 py-0.5 rounded border border-border-strong"
+                    className: `${TAG_SHAPE} border-border-strong bg-surface-raised text-fg-secondary`
                   },
                   role
                 )

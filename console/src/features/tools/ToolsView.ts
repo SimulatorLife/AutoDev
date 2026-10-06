@@ -14,6 +14,7 @@ import {
   CALLOUT_WARNING_CLASS
 } from "../../components/layout/Callout.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
@@ -287,7 +288,7 @@ export function ToolsView({
           React.createElement(
             "span",
             {
-              className: `text-xs px-2 py-0.5 rounded font-mono border w-fit ${
+              className: `${TAG_SHAPE} font-mono ${
                 tool.source === "mcp"
                   ? "bg-accent/15 text-accent border-accent/40"
                   : tool.source === "native"

@@ -1,5 +1,6 @@
 import React from "react";
 
+import { TAG_SHAPE } from "../status/Tag.ts";
 /**
  * Shared presentation primitives for the repeated "a cell holds a list of
  * short labels" pattern (role assignments, MCP servers, tier priorities).
@@ -9,8 +10,7 @@ import React from "react";
  * triples row height and destroys the density an operator table depends on.
  */
 
-export const CHIP_CLASS =
-  "inline-flex max-w-full items-center truncate rounded border border-border-strong bg-surface-raised px-2 py-0.5 text-xs text-fg-secondary";
+export const CHIP_CLASS = `${TAG_SHAPE} truncate border-border-strong bg-surface-raised text-fg-secondary`;
 
 export interface ChipProps {
   /**

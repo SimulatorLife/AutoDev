@@ -21,6 +21,7 @@ import {
   StatusBadge,
   type StatusBadgeVariant
 } from "../../components/status/StatusBadge.ts";
+import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
   DataTable
@@ -127,7 +128,7 @@ export function MemoryRecordsView({
         React.createElement(
           "span",
           {
-            className: `inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-medium border ${KIND_COLORS[record.kind] ?? "bg-surface-raised text-fg-secondary border-border-strong"}`,
+            className: `${TAG_SHAPE} font-mono font-medium ${KIND_COLORS[record.kind] ?? "bg-surface-raised text-fg-secondary border-border-strong"}`,
             "data-memory-kind": record.kind
           },
           record.kind
@@ -303,7 +304,7 @@ function RecordDetailPanel({
           React.createElement(
             "span",
             {
-              className: `px-2 py-0.5 rounded text-xs font-mono font-medium border ${KIND_COLORS[record.kind] ?? "bg-surface-raised text-fg-secondary border-border-strong"}`
+              className: `${TAG_SHAPE} font-mono font-medium ${KIND_COLORS[record.kind] ?? "bg-surface-raised text-fg-secondary border-border-strong"}`
             },
             record.kind
           ),
@@ -431,8 +432,7 @@ function RecordDetailPanel({
                     "span",
                     {
                       key: i,
-                      className:
-                        "font-mono text-meta text-accent bg-accent/15 px-2 py-0.5 rounded border border-accent/40 truncate"
+                      className: `${TAG_SHAPE} truncate border-accent/40 bg-accent/15 font-mono text-accent`
                     },
                     `${ev.kind}: ${ev.uri}`
                   )

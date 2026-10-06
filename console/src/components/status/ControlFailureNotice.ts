@@ -1,5 +1,7 @@
 import React from "react";
 
+import { CALLOUT_WARNING_CLASS } from "../layout/Callout.ts";
+
 /**
  * Shown after a mutation could not be confirmed.
  *
@@ -8,6 +10,10 @@ import React from "react";
  * that the change is unconfirmed: the refreshed value the redirect lands on is
  * the authoritative answer, so the notice must not invent a more specific
  * outcome it cannot know.
+ *
+ * It carries the shared warning callout rather than its own geometry, so a
+ * mutation that could not be confirmed looks like every other warning the
+ * Console shows.
  */
 export function ControlFailureNotice(): React.JSX.Element {
   return React.createElement(
@@ -15,8 +21,7 @@ export function ControlFailureNotice(): React.JSX.Element {
     {
       role: "status",
       "data-control-outcome": "failed",
-      className:
-        "rounded border border-warning/40 bg-warning/15 px-3 py-2 text-xs font-medium text-warning"
+      className: CALLOUT_WARNING_CLASS
     },
     "The change could not be confirmed. Check the current state before retrying."
   );

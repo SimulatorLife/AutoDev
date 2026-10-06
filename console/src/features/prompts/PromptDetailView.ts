@@ -20,6 +20,7 @@ import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import { TAG_SHAPE } from "../../components/status/Tag.ts";
 
 const PROMPT_CARD_CLASS_NAME = "rounded-lg border border-border bg-surface p-4";
 
@@ -229,8 +230,7 @@ const PROMPT_MARKDOWN_COMPONENTS: Components = {
     React.createElement(
       "code",
       {
-        className:
-          "rounded bg-input px-1 py-0.5 font-mono text-xs text-fg-secondary"
+        className: `${TAG_SHAPE} border-transparent bg-input font-mono text-fg-secondary`
       },
       children
     ),

@@ -6,6 +6,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import { chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
@@ -48,8 +49,7 @@ export function PermissionsView({
         React.createElement(
           "span",
           {
-            className:
-              "text-xs bg-surface-raised text-fg-secondary px-2 py-0.5 rounded border border-border-strong",
+            className: `${TAG_SHAPE} border-border-strong bg-surface-raised text-fg-secondary`,
             "data-permission-mode": r.readOnly ? "read-only" : "workspace-write"
           },
           sandboxLabel(r.sandboxMode)

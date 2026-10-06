@@ -15,6 +15,7 @@ import {
   StatusBadge,
   type StatusBadgeVariant
 } from "../../components/status/StatusBadge.ts";
+import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
   DataTable,
@@ -102,8 +103,7 @@ export function MemoryExperiencesView({
         React.createElement(
           "span",
           {
-            className:
-              "font-mono text-xs text-chart-1 bg-chart-1/15 px-2 py-0.5 rounded border border-chart-1/40"
+            className: `${TAG_SHAPE} border-chart-1/40 bg-chart-1/15 font-mono text-chart-1`
           },
           exp.agentRole ?? "unknown"
         )
@@ -260,8 +260,7 @@ function ExperienceDetailPanel({
           React.createElement(
             "span",
             {
-              className:
-                "px-2 py-0.5 rounded text-xs font-mono text-chart-1 bg-chart-1/15 border border-chart-1/40"
+              className: `${TAG_SHAPE} border-chart-1/40 bg-chart-1/15 font-mono text-chart-1`
             },
             `Role: ${experience.agentRole ?? "unknown"}`
           ),
@@ -408,8 +407,7 @@ function ExperienceDetailPanel({
                   "span",
                   {
                     key: code,
-                    className:
-                      "px-2 py-0.5 rounded text-micro font-mono bg-surface-raised text-fg-secondary"
+                    className: `${TAG_SHAPE} border-border-strong bg-surface-raised font-mono text-fg-secondary`
                   },
                   code
                 )

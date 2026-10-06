@@ -11,6 +11,7 @@ import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
   DataTable
@@ -318,7 +319,7 @@ export function EvaluationsView({
               "span",
               {
                 key: m.name,
-                className: `text-xs px-2 py-0.5 rounded font-mono border ${
+                className: `${TAG_SHAPE} font-mono ${
                   m.pass === true
                     ? "bg-success/15 text-success border-success/40"
                     : m.pass === false

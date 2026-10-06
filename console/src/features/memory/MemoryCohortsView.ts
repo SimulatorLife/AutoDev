@@ -9,6 +9,7 @@ import React from "react";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
   DataTable
@@ -66,7 +67,7 @@ export function MemoryCohortsView({
         return React.createElement(
           "span",
           {
-            className: `inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${
+            className: `${TAG_SHAPE} font-medium ${
               isReported
                 ? "bg-success/15 text-success border-success/40"
                 : "bg-surface-raised text-fg-muted border-border-strong"

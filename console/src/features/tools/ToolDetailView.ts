@@ -18,6 +18,7 @@ import {
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import { TAG_SHAPE } from "../../components/status/Tag.ts";
 
 /**
  * Tools catalog detail view.
@@ -290,8 +291,7 @@ function roleExposure(tool: ToolCatalogItem): React.JSX.Element {
         {
           key: role,
           href: `/tools?role=${encodeURIComponent(role)}`,
-          className:
-            "text-xs bg-surface-raised text-fg-secondary px-1.5 py-0.5 rounded border border-border-strong hover:text-accent"
+          className: `${TAG_SHAPE} border-border-strong bg-surface-raised text-fg-secondary hover:text-accent`
         },
         role
       )
