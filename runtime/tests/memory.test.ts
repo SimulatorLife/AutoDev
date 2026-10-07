@@ -4564,3 +4564,291 @@ async function makeOutcomeHarnessAcrossRequests(): Promise<{
   );
   return { repository, service };
 }
+
+/**
+ * The write path that records every observed memory injection. Its bounds are
+ * what keep one event from smuggling an unbounded token, id list, packet size
+ * or credentialed locator into the append-only store.
+ */
+function injectionEventRequest(
+  overrides: Partial<MemoryInjectionEvent> = {}
+): {
+  readonly event: MemoryInjectionEvent;
+  readonly context: MemoryReadContext;
+} {
+  const event = outcomeInjectionEvent(overrides);
+  return {
+    event,
+    context: {
+      ...context,
+      taskId: event.taskId,
+      runId: event.runId,
+      agentId: event.agentId
+    }
+  };
+}
+
+async function recordInjectionEvent(
+  service: MemoryService,
+  overrides: Partial<MemoryInjectionEvent> = {}
+): Promise<{ readonly appended: boolean; readonly id: string }> {
+  const { event, context: eventContext } = injectionEventRequest(overrides);
+  return service.recordInjectionEvent({ event, actor: root, context: eventContext });
+}
+
+test("an injection event is restricted to the trusted session's workspace, task, run and agent", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const { event } = injectionEventRequest();
+
+  for (const override of [
+    { workspaceId: "workspace-other" },
+    { taskId: "task-other" },
+    { runId: "run-other" },
+    { agentId: "agent-other" }
+  ]) {
+    await assert.rejects(
+      service.recordInjectionEvent({
+        event: { ...event, ...override },
+        actor: root,
+        context: {
+          ...context,
+          taskId: event.taskId,
+          runId: event.runId,
+          agentId: event.agentId
+        }
+      }),
+      MemoryAuthorizationError
+    );
+  }
+  assert.equal(repository.injectionEvents.size, 0);
+});
+
+test("an injection event needs a bounded correlation token", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+
+  await assert.rejects(
+    recordInjectionEvent(service, { correlationToken: "   " }),
+    MemoryValidationError
+  );
+  await assert.rejects(
+    recordInjectionEvent(service, { correlationToken: "t".repeat(257) }),
+    MemoryValidationError
+  );
+  assert.equal(repository.injectionEvents.size, 0);
+
+  // 256 is the bound, so it must still be accepted.
+  const result = await recordInjectionEvent(service, {
+    correlationToken: "t".repeat(256)
+  });
+  assert.equal(result.appended, true);
+});
+
+test("an injection event bounds the memory ids it references", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+
+  await assert.rejects(
+    recordInjectionEvent(service, {
+      memoryIds: Array.from({ length: 65 }, (_unused, index) => `memory-${index}`)
+    }),
+    MemoryValidationError
+  );
+  await assert.rejects(
+    recordInjectionEvent(service, { memoryIds: ["   "] }),
+    MemoryValidationError
+  );
+  await assert.rejects(
+    recordInjectionEvent(service, { memoryIds: ["m".repeat(257)] }),
+    MemoryValidationError
+  );
+  assert.equal(repository.injectionEvents.size, 0);
+});
+
+test("an injection event bounds the packet size it claims to have carried", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+
+  await assert.rejects(
+    recordInjectionEvent(service, { packetCharacterCount: -1 }),
+    MemoryValidationError
+  );
+  await assert.rejects(
+    recordInjectionEvent(service, { packetCharacterCount: 24_001 }),
+    MemoryValidationError
+  );
+  await assert.rejects(
+    recordInjectionEvent(service, { packetCharacterCount: 1.5 }),
+    MemoryValidationError
+  );
+  // The token count is optional, but a supplied one is bounded too.
+  await assert.rejects(
+    recordInjectionEvent(service, { packetTokenCount: -1 }),
+    MemoryValidationError
+  );
+  await assert.rejects(
+    recordInjectionEvent(service, { packetTokenCount: 8001 }),
+    MemoryValidationError
+  );
+  assert.equal(repository.injectionEvents.size, 0);
+
+  const result = await recordInjectionEvent(service, {
+    packetCharacterCount: 24_000,
+    packetTokenCount: 8000
+  });
+  assert.equal(result.appended, true);
+});
+
+test("an injection event bounds its evidence references", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+
+  await assert.rejects(
+    recordInjectionEvent(service, {
+      evidence: [{ kind: "document", uri: "u".repeat(2049) }]
+    }),
+    MemoryValidationError
+  );
+  await assert.rejects(
+    recordInjectionEvent(service, {
+      evidence: [{ kind: "commit", uri: "https://example.test/x", revision: "r".repeat(257) }]
+    }),
+    MemoryValidationError
+  );
+  await assert.rejects(
+    recordInjectionEvent(service, { evidence: [{ kind: "document", uri: "" }] }),
+    MemoryValidationError
+  );
+  assert.equal(repository.injectionEvents.size, 0);
+});
+
+test("an injection event's evidence is stripped of credentials before storage", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+
+  await recordInjectionEvent(service, {
+    evidence: [
+      {
+        kind: "pull_request",
+        uri: "https://user:pass@example.test/repo/pull/1?token=do-not-store#frag",
+        revision: "abc123"
+      }
+    ]
+  });
+
+  const stored = repository.injectionEvents.get("private-correlation-token");
+  const uri = stored?.evidence[0]?.uri ?? "";
+  assert.equal(uri.includes("do-not-store"), false);
+  assert.equal(uri.includes("pass"), false);
+  assert.equal(uri.includes("frag"), false);
+  // The locator itself survives, so the evidence still points somewhere real.
+  assert.equal(uri, "https://example.test/repo/pull/1");
+  assert.equal(stored?.evidence[0]?.revision, "abc123");
+});
+
+test("appending the same experience twice is a conflict, not a silent overwrite", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const envelope = experience();
+  const appendContext = {
+    ...context,
+    taskId: envelope.taskId,
+    runId: envelope.runId
+  };
+
+  await service.appendExperience(envelope, worker, appendContext);
+  await assert.rejects(
+    service.appendExperience(envelope, worker, appendContext),
+    MemoryConflictError
+  );
+  assert.equal(repository.experiences.size, 1);
+});
+
+test("an experience bounds the evidence references it carries", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const envelope = experience();
+  const appendContext = {
+    ...context,
+    taskId: envelope.taskId,
+    runId: envelope.runId
+  };
+  const manyReferences = Array.from({ length: 65 }, (_unused, index) => ({
+    kind: "document" as const,
+    uri: `https://example.test/ref-${index}`
+  }));
+
+  await assert.rejects(
+    service.appendExperience(
+      { ...envelope, evidence: manyReferences },
+      worker,
+      appendContext
+    ),
+    MemoryValidationError
+  );
+  await assert.rejects(
+    service.appendExperience(
+      {
+        ...envelope,
+        validation: { state: "passed", evidence: manyReferences }
+      },
+      worker,
+      appendContext
+    ),
+    MemoryValidationError
+  );
+  assert.equal(repository.experiences.size, 0);
+});
+
+test("an experience strips credentials from its trajectory, task and plan locators", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const envelope = experience();
+  const appendContext = {
+    ...context,
+    taskId: envelope.taskId,
+    runId: envelope.runId
+  };
+
+  await service.appendExperience(
+    {
+      ...envelope,
+      trajectory: {
+        ...envelope.trajectory,
+        uri: "file:///tmp/run.jsonl?token=do-not-store"
+      },
+      evidence: [
+        {
+          kind: "document",
+          uri: "https://user:pass@example.test/evidence?api_key=do-not-store#frag"
+        }
+      ],
+      taskReference: {
+        kind: "issue",
+        uri: "https://example.test/task?access_token=do-not-store"
+      },
+      planReference: {
+        kind: "document",
+        uri: "https://example.test/plan?token=do-not-store"
+      }
+    },
+    worker,
+    appendContext
+  );
+
+  const stored = repository.experiences.get(envelope.id);
+  const uris = [
+    stored?.trajectory.uri ?? "",
+    stored?.evidence[0]?.uri ?? "",
+    stored?.taskReference?.uri ?? "",
+    stored?.planReference?.uri ?? ""
+  ];
+  for (const uri of uris) {
+    assert.equal(uri.includes("do-not-store"), false, `leaked in ${uri}`);
+  }
+  assert.equal(stored?.evidence[0]?.uri.includes("pass"), false);
+  assert.equal(stored?.evidence[0]?.uri.includes("frag"), false);
+  // The locators survive; only the credentials are gone.
+  assert.equal(stored?.planReference?.uri, "https://example.test/plan");
+});
