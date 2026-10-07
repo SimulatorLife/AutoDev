@@ -27,6 +27,7 @@ import {
   type McpServerResource,
   type MemoryInjectionUseCohortCell,
   type MemoryRecord,
+  type MemorySessionOutcomeCohortCell,
   type MemorySessionOutcomeCohortPage,
   type MemoryStatusCounts,
   PROVIDER_ROLES,
@@ -6200,6 +6201,65 @@ test("MemoryExperiencesView requires a Runtime-accepted reason and explicit conf
 
   // The destructive control renders through the shared button vocabulary.
   assert.match(markup, /data-button="purge-experience"/);
+});
+
+test("a cohort's outcome is named, and an unreported cell is not given an outcome", () => {
+  // The Outcome column printed the wire key and a bare lowercase literal,
+  // directly beneath a filter that spells the same five values "Success" and
+  // "Partial" — the column contradicting the control that narrows it. The
+  // literal also re-spelled "Unreported", which the Reporting Status column
+  // beside it already carries as a Tag.
+  const cells: MemorySessionOutcomeCohortCell[] = [
+    { memoryMode: "jit", outcomeKind: "success", sessionCount: 15 },
+    { memoryMode: "jit", outcomeKind: "partial", sessionCount: 4 },
+    { memoryMode: "jit", outcomeKind: null, sessionCount: 6 }
+  ];
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryCohortsView, {
+      sessionCohorts: {
+        schema: "autodev-memory-session-outcome-cohorts-v1",
+        workspaceId: "SimulatorLife/AutoDev",
+        repositoryId: "SimulatorLife/AutoDev",
+        occurredFrom: "2026-09-01T00:00:00Z",
+        occurredUntil: "2026-10-01T00:00:00Z",
+        cells,
+        sessionCount: 25,
+        reportedSessionCount: 19,
+        unreportedSessionCount: 6,
+        mixedModeSessionCount: 0,
+        conflictingOutcomeSessionCount: 0
+      },
+      useCohorts: null,
+      listScope: memoryListScope({ tab: "cohorts" }),
+      currentWorkspaceId: "SimulatorLife/AutoDev",
+      repositoryId: "SimulatorLife/AutoDev",
+      occurredFrom: "2026-09-01T00:00:00Z",
+      occurredUntil: "2026-10-01T00:00:00Z"
+    })
+  );
+
+  assert.ok(
+    markup.includes(">Success<"),
+    "a reported outcome should read Success"
+  );
+  assert.ok(
+    markup.includes(">Partial<"),
+    "a partial outcome should read Partial"
+  );
+  // A cell with no report has no outcome. It must not invent one, and it must
+  // not borrow the Reporting Status column's word for it.
+  assert.ok(
+    markup.includes(`>${NOT_OBSERVED_LABEL}<`),
+    "an unreported cell should read the Console's word for missing evidence"
+  );
+  assert.ok(
+    !markup.includes(">unreported<"),
+    "a raw lowercase literal must not be rendered"
+  );
+  assert.ok(
+    !markup.includes(">success<"),
+    "a raw wire key must not be rendered"
+  );
 });
 
 test("MemoryCohortsView renders session outcome cohorts preserving explicit unreported cells", () => {

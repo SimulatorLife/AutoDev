@@ -7,7 +7,10 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
-import { BarChart, type BarChartDatum } from "../../components/charts/BarChart.ts";
+import {
+  BarChart,
+  type BarChartDatum
+} from "../../components/charts/BarChart.ts";
 import { FilterBar } from "../../components/filters/FilterBar.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
@@ -26,7 +29,8 @@ import {
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
 import { SUCCESS_TONE_CLASS } from "../../components/ui/tones.ts";
-import { memoryFilterHref,type MemoryListScope } from "./memory-list-url.ts";
+import { memoryFilterHref, type MemoryListScope } from "./memory-list-url.ts";
+import { MEMORY_OUTCOME_LABEL } from "./memory-status.ts";
 
 /**
  * Every exposure's assessment outcome, weighted, with nothing merged.
@@ -72,7 +76,10 @@ function useOutcomeTotals(
       unassessed += cell.exposureCount;
       continue;
     }
-    judged.set(cell.useKind, (judged.get(cell.useKind) ?? 0) + cell.exposureCount);
+    judged.set(
+      cell.useKind,
+      (judged.get(cell.useKind) ?? 0) + cell.exposureCount
+    );
   }
   return { judged, unassessed };
 }
@@ -91,10 +98,7 @@ function useOutcomeTotals(
 function useCoverageByMode(
   cells: readonly MemoryInjectionUseCohortCell[]
 ): BarChartDatum[] {
-  const byMode = new Map<
-    string,
-    { eligible: number; assessed: number }
-  >();
+  const byMode = new Map<string, { eligible: number; assessed: number }>();
   for (const cell of cells) {
     const current = byMode.get(cell.memoryMode) ?? { eligible: 0, assessed: 0 };
     current.eligible += cell.exposureCount;
@@ -116,9 +120,7 @@ function useCoverageByMode(
     }));
 }
 
-function useJudgementChartData(
-  totals: UseOutcomeTotals
-): BarChartDatum[] {
+function useJudgementChartData(totals: UseOutcomeTotals): BarChartDatum[] {
   const bars = USE_OUTCOME_ORDER.map((kind) => ({
     label: USE_OUTCOME_LABEL[kind],
     value: totals.judged.get(kind) ?? 0,
@@ -221,7 +223,16 @@ export function MemoryCohortsView({
                   : MUTED_TEXT_CLASS
             }`
           },
-          cell.outcomeKind ?? "unreported"
+          // From the shared vocabulary, like the filter above it, which spells
+          // these same five values "Success" and "Partial" — the column was
+          // printing the raw key beside its own dropdown and contradicting it.
+          // A cell with no report has no outcome to report, so it takes the
+          // Console's word for missing evidence rather than the lowercase
+          // literal that was there; "Unreported" in the column beside it
+          // answers the different question of whether a report was filed.
+          cell.outcomeKind === null
+            ? NOT_OBSERVED_LABEL
+            : MEMORY_OUTCOME_LABEL[cell.outcomeKind]
         )
     },
     {
@@ -555,7 +566,8 @@ export function MemoryCohortsView({
             React.createElement(BarChart, {
               data: useCoverageByMode(useCells),
               label: "Eligible exposures assessed, by assigned mode",
-              notObservedMessage: "Use cohort assessment coverage not observed.",
+              notObservedMessage:
+                "Use cohort assessment coverage not observed.",
               emptyMessage:
                 "No eligible injected memory exposures were observed for this scope and time window.",
               barClass: "bg-chart-1",
