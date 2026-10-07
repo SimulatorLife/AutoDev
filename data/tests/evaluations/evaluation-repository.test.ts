@@ -328,3 +328,67 @@ test("EvaluationRepository reports fetch failure and non-ok response as unavaila
     return true;
   });
 });
+
+test("EvaluationRepository refuses a score that is not a finite number", () => {
+  // The repository refuses the whole read when a score is not a finite number,
+  // and until now no test fed it one. Both of its branches are reachable from
+  // what ClickHouse sends: `typeof value !== "number"` fires on a score stored
+  // or written as a string, a boolean or null, and `!Number.isFinite(value)`
+  // fires on an overflowing JSON number -- `1e400` is valid JSON and
+  // `JSON.parse` turns it into Infinity, which is how a Float64 that has run
+  // past its range reaches this code as something that is *not* refused for
+  // being unparseable.
+  //
+  // Without these, deleting the guard is invisible: every other test feeds a
+  // well-formed score, so a repository that passed NaN, Infinity and "0.9"
+  // straight through to a metric cell would pass the file.
+  const repo = new EvaluationRepository();
+  // Written by hand rather than through `JSON.stringify`: `JSON.stringify`
+  // turns Infinity into null and NaN into null, so serialising the very values
+  // under test would produce a fixture that does not contain them.
+  const rowWithScore = (scoreLiteral: string): string =>
+    [
+      '{"id":"9b3c5a7f-1234-4567-89ab-cdef01234567",',
+      '"span_id":"0123456789abcdef",',
+      '"created_at":"2026-10-04 12:00:00",',
+      '"evaluationData.evaluation":["quality"],',
+      '"evaluationData.verdict":["pass"],',
+      `"scores":{"quality":${scoreLiteral}}}`
+    ].join("");
+
+  // The positive control first, so a version that refuses everything cannot
+  // pass this file by accident.
+  const accepted = repo.parseEvaluationRows(rowWithScore("0.9"));
+  assert.equal(accepted.length, 1);
+  assert.deepEqual(accepted[0]?.metrics[0], {
+    name: "quality",
+    value: 0.9,
+    pass: true
+  });
+
+  for (const [label, literal] of [
+    ["a JSON number past the finite range", "1e400"],
+    ["a negative overflow", "-1e400"],
+    ["a string", '"0.9"'],
+    ["an empty string", '""'],
+    ["a boolean", "true"],
+    ["null", "null"]
+  ] as const) {
+    assert.throws(
+      () => repo.parseEvaluationRows(rowWithScore(literal)),
+      EvaluationSourceUnavailableError,
+      `${label} is refused rather than becoming a metric cell`
+    );
+  }
+
+  // And the reason the message must not leak the value: it is the only place
+  // an operator learns the read failed rather than that a score was zero.
+  assert.throws(
+    () => repo.parseEvaluationRows(rowWithScore("1e400")),
+    (error: unknown) => {
+      assert.ok(error instanceof EvaluationSourceUnavailableError);
+      assert.doesNotMatch(error.message, /1e400/u);
+      return true;
+    }
+  );
+});
