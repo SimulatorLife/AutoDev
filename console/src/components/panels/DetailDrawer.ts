@@ -30,7 +30,16 @@ import { ClosePanelLink } from "../navigation/ClosePanelLink.ts";
 export const DETAIL_DRAWER_CLASS =
   "rounded-lg border border-accent/60 bg-selected p-6 flex flex-col gap-6 shadow-xl";
 
-/** The drawer's header row: identity on the left, dismissal on the right. */
+/**
+ * The drawer's header row: identity on the left, dismissal on the right.
+ *
+ * Below `sm` it stacks instead, and it has to: at 390px the drawer's inner width
+ * is about 250px, and a run id and a "Close evaluation detail" label sharing one
+ * row meant the row fought over 250px. Letting the label fold put the dismiss
+ * control in an 88x68 box across four lines; forbidding the fold squeezed the id
+ * into 85px and made the header 227px tall. Stacked, both keep their full width
+ * and the header is as tall as its contents.
+ */
 /**
  * The drawer header carries `min-w-0` on the identity column below it rather
  * than only on the title. Every level between the panel and the title is a
@@ -40,7 +49,7 @@ export const DETAIL_DRAWER_CLASS =
  * itself, so the wrap never happens unless the whole chain can shrink.
  */
 export const DETAIL_DRAWER_HEADER_CLASS =
-  "flex min-w-0 items-start justify-between border-b border-border pb-4";
+  "flex min-w-0 flex-col items-start gap-3 border-b border-border pb-4 sm:flex-row sm:justify-between sm:gap-0";
 
 /**
  * Title and badges share a baseline; the subtitle sits under them.

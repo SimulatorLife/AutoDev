@@ -26,8 +26,16 @@ export function ClosePanelLink({
       // padding straight back so the drawer's title row does not grow. Measured:
       // this link was 58x20 with zero padding on every width, four pixels under
       // the floor, on the control that dismisses the whole panel.
+      //
+      // `whitespace-nowrap` is the same rule `StatusBadge` follows for its word.
+      // The header is a flex row and this link is a flex item, so without it the
+      // link shrinks to the longest word in its label -- at 390px "Close
+      // evaluation detail" fell to 88px wide and folded into four lines, making
+      // the dismiss control 68px tall and the drawer header 155px tall. The
+      // control that closes the panel should not be the thing that folds; the
+      // title beside it carries `min-w-0` and is built to wrap.
       className:
-        "inline-flex items-center gap-1.5 -my-1 py-1 text-sm text-fg-muted hover:text-fg"
+        "inline-flex items-center gap-1.5 -my-1 py-1 text-sm whitespace-nowrap text-fg-muted hover:text-fg"
     },
     // Decorative: the adjacent word is the accessible name.
     React.createElement(Icon, { name: "close" }),

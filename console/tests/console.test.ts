@@ -1572,6 +1572,47 @@ test("Breadcrumbs renders a single ancestor link with current-page aria state wh
   assert.equal(separatorMatches.length, 1);
 });
 
+test("the drawer header stacks at a phone width instead of folding its close control", () => {
+  // The dismiss control and the run id were sharing one flex row across about
+  // 250px at 390px, and neither of them is the right thing to fold.
+  //
+  // Measured, at 390px with a run id of 24 characters and a "Close evaluation
+  // detail" label: as they were, the label's flex item shrank to its min-content
+  // width of 88px and folded across four lines, making the control 68px tall
+  // (nearly three times its 24px target) and the header 155px. Forbidding the
+  // fold alone fixed the control but squeezed the id to 85px, which made the
+  // header 227px. Stacking them keeps both whole: the control is 167x28 on one
+  // line at every width, the id gets the drawer's full 252px, and the header is
+  // 159px -- as tall as its contents rather than as tall as the fight was.
+  //
+  // Two mechanisms, both asserted here because either alone leaves a defect.
+  assert.ok(
+    DETAIL_DRAWER_HEADER_CLASS.includes("flex-col"),
+    "the drawer header stacks by default: got " + DETAIL_DRAWER_HEADER_CLASS
+  );
+  assert.ok(
+    DETAIL_DRAWER_HEADER_CLASS.includes("sm:flex-row"),
+    "and returns to one row from sm up: got " + DETAIL_DRAWER_HEADER_CLASS
+  );
+
+  const drawer = renderToStaticMarkup(
+    React.createElement(DetailDrawer, {
+      title: "eval-implement-0004-b0-3",
+      closeHref: "/evaluations",
+      closeLabel: "Close evaluation detail"
+    })
+  );
+  // The control is an atomic label, the same rule StatusBadge follows for its
+  // word: it does not fold, so the title absorbs the space instead.
+  const link = drawer.match(/<a href="\/evaluations" class="([^"]*)"/);
+  assert.ok(link, "the drawer renders its close link, got " + drawer);
+  assert.ok(
+    link[1].includes("whitespace-nowrap"),
+    "the dismiss control does not fold its label: got " + link[1]
+  );
+  assert.match(drawer, />Close evaluation detail<\/a>/);
+});
+
 test("the shrink chain holds: a long unbreakable identifier cannot widen its container", () => {
   // Every Console identifier the operator reads is a canonical name, not
   // prose: an agent role, a skill, an MCP server, a model id. Those can be one
