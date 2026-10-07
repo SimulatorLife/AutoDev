@@ -1749,6 +1749,17 @@ async function captureCodexExperience(
 
     const service = createOrchestratorMemoryService();
     if (!service) {
+      // Audited, because the hook that fired this sees only a 503. Without an
+      // entry, "capture was refused" and "capture never happened" are the same
+      // fact in the trail, and this is the one failure an operator has no other
+      // way to diagnose.
+      audit({
+        action: MEMORY_CAPTURE_ACTION,
+        resource: MEMORY_EXPERIENCE_RESOURCE,
+        outcome: "error",
+        changes: null,
+        reason: "memory_unavailable"
+      });
       sendMemoryError(
         response,
         503,
@@ -1947,6 +1958,15 @@ async function captureClaudeCodeExperience(
     const input = parseClaudeCodeCaptureInput(parsedBody.body);
     const result = await persistClaudeCodeExperience(input);
     if (result === "unavailable") {
+      // As on the Codex route: the caller is a hook that will only ever see the
+      // 503, so the audit entry is the only place this can be seen from.
+      audit({
+        action: MEMORY_CAPTURE_ACTION,
+        resource: MEMORY_EXPERIENCE_RESOURCE,
+        outcome: "error",
+        changes: null,
+        reason: "memory_unavailable"
+      });
       sendMemoryError(
         response,
         503,
