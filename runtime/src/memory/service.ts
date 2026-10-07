@@ -1295,8 +1295,13 @@ export class MemoryService
 
   /**
    * Look up the single session outcome report for a trusted session key, if any.
+   *
+   * `async` because these three guards run before any repository call: a
+   * method declared as returning a promise that threw synchronously would
+   * escape a caller's `.catch()` chain while looking like an ordinary async
+   * read.
    */
-  getSessionOutcomeReport(
+  async getSessionOutcomeReport(
     workspaceId: string,
     repositoryId: string,
     taskId: string,

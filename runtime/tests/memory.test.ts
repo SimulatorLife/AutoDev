@@ -5433,3 +5433,132 @@ test("purging an experience needs a bounded id and a known reason", async () => 
     "not_visible"
   );
 });
+
+/**
+ * The session-level outcome report: one report per (workspace, repository,
+ * task), read back by session key. The workspace guard on the read was covered;
+ * the repository and task-history guards were not, and the write path's session
+ * restriction and conflict translation were not either.
+ */
+function sessionReportKey(
+  workspaceId: string,
+  repositoryId: string,
+  taskId: string
+): string {
+  return `${workspaceId} ${repositoryId} ${taskId}`;
+}
+
+test("reading a session outcome report is scoped to the caller's repository", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  repository.sessionOutcomeReports.set(
+    sessionReportKey("workspace-a", "repo-a", "task-current"),
+    sessionOutcomeReportHelper()
+  );
+
+  await assert.rejects(
+    service.getSessionOutcomeReport("workspace-a", "repo-a", "task-current", {
+      ...context,
+      repositoryId: "repo-b"
+    }),
+    MemoryAuthorizationError
+  );
+
+  // A context with no repository at all is not a claim of one, so it may ask
+  // about the repository it named.
+  const found = await service.getSessionOutcomeReport(
+    "workspace-a",
+    "repo-a",
+    "task-current",
+    { workspaceId: "workspace-a", taskId: "task-current", canReadGlobal: false }
+  );
+  assert.equal(found?.taskId, "task-current");
+});
+
+test("reading another session's outcome report needs the curator grant", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  repository.sessionOutcomeReports.set(
+    sessionReportKey("workspace-a", "repo-a", "task-other"),
+    sessionOutcomeReportHelper({ taskId: "task-other" })
+  );
+
+  await assert.rejects(
+    service.getSessionOutcomeReport(
+      "workspace-a",
+      "repo-a",
+      "task-other",
+      context
+    ),
+    MemoryAuthorizationError
+  );
+
+  // The same read is permitted once the curator has task-history access.
+  const found = await service.getSessionOutcomeReport(
+    "workspace-a",
+    "repo-a",
+    "task-other",
+    { ...context, canReadTaskHistory: true }
+  );
+  assert.equal(found?.taskId, "task-other");
+});
+
+test("a session outcome report is refused outside the trusted session", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+
+  for (const override of [
+    { workspaceId: "workspace-other" },
+    { repositoryId: "repo-b" },
+    { taskId: "task-other" }
+  ]) {
+    await assert.rejects(
+      service.recordSessionOutcomeReport({
+        report: sessionOutcomeReportHelper(override),
+        actor: root,
+        context
+      }),
+      MemoryAuthorizationError
+    );
+  }
+  await assert.rejects(
+    service.recordSessionOutcomeReport({
+      report: sessionOutcomeReportHelper({ evidence: [] }),
+      actor: root,
+      context
+    }),
+    MemoryValidationError
+  );
+  assert.equal(repository.sessionOutcomeReports.size, 0);
+});
+
+test("one session accepts one report: a retry is a no-op, a different body is a conflict", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const key = sessionReportKey("workspace-a", "repo-a", "task-current");
+
+  const first = await service.recordSessionOutcomeReport({
+    report: sessionOutcomeReportHelper(),
+    actor: root,
+    context
+  });
+  assert.equal(first.appended, true);
+
+  const retry = await service.recordSessionOutcomeReport({
+    report: sessionOutcomeReportHelper(),
+    actor: root,
+    context
+  });
+  assert.equal(retry.appended, false);
+
+  await assert.rejects(
+    service.recordSessionOutcomeReport({
+      report: sessionOutcomeReportHelper({ outcomeKind: "failure" }),
+      actor: root,
+      context
+    }),
+    MemoryConflictError
+  );
+  // The first report is still the one on record.
+  assert.equal(repository.sessionOutcomeReports.get(key)?.outcomeKind, "success");
+});
