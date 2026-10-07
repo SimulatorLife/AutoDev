@@ -285,11 +285,22 @@ const FIRST_EVALUATIONS_PAGE = 1;
  * A page number, as a shape rather than a range check.
  *
  * A page is an address, and this rejects everything that is not one: an empty
- * value, a sign, a decimal, and a run of digits long enough to be a request to
- * render a page nobody could page to. A repeated key is already resolved to
- * "not set" by `singleValue` before this sees it.
+ * value, a sign, a decimal, or anything that is not a run of digits. A repeated
+ * key is already resolved to "not set" by `singleValue` before this sees it.
+ *
+ * Magnitude is deliberately not part of the shape. This used to cap the run at
+ * five digits, which split one rule in two: `?page=99` was a page the read could
+ * not fill and was clamped to the last page that exists, while `?page=100000` was
+ * rejected as not-a-page and silently became the first. Both are the same
+ * operator mistake -- a page past the end -- and the read is capped at a
+ * thousand rows, so neither is a page anyone could reach anyway. Rewinding to
+ * the first page is also the one answer that contradicts the rule stated below,
+ * and it contradicts it silently, because nothing on the page says the request
+ * was discarded rather than clamped. Clamping an absurd page is bounded work:
+ * the renderer clamps before it slices, so a long run of digits costs one
+ * `Math.min`.
  */
-const PAGE_NUMBER = /^[1-9][0-9]{0,4}$/u;
+const PAGE_NUMBER = /^[1-9][0-9]*$/u;
 
 /**
  * The page a request asked for, or the first.

@@ -1604,11 +1604,12 @@ test("the drawer header stacks at a phone width instead of folding its close con
   );
   // The control is an atomic label, the same rule StatusBadge follows for its
   // word: it does not fold, so the title absorbs the space instead.
-  const link = drawer.match(/<a href="\/evaluations" class="([^"]*)"/);
-  assert.ok(link, "the drawer renders its close link, got " + drawer);
+  const [, closeLinkClass] =
+    drawer.match(/<a href="\/evaluations" class="([^"]*)"/) ?? [];
+  assert.ok(closeLinkClass, "the drawer renders its close link, got " + drawer);
   assert.ok(
-    link[1].includes("whitespace-nowrap"),
-    "the dismiss control does not fold its label: got " + link[1]
+    closeLinkClass.includes("whitespace-nowrap"),
+    "the dismiss control does not fold its label: got " + closeLinkClass
   );
   assert.match(drawer, />Close evaluation detail<\/a>/);
 });
@@ -5759,6 +5760,14 @@ test("the history table pages instead of rendering a whole read window", () => {
   assert.match(clamped, /data-evaluations-page="3"/);
   assert.match(clamped, /Rows 101–120 of 120 in this view/);
 
+  // The clamp is bounded by the page count, not by the requested number, so a
+  // page far past the end lands where a page just past it does. This half was
+  // never wrong; it is pinned because the pairing with the URL layer below is
+  // what regressed, and this is the half that makes the other one observable.
+  const farClamped = renderEvaluations({ evaluations: many, page: 100_000 });
+  assert.match(farClamped, /data-evaluations-page="3"/);
+  assert.match(farClamped, /Rows 101–120 of 120 in this view/);
+
   // One page of rows needs no pager navigation, but the range is still stated.
   const short = renderEvaluations({ evaluations: many.slice(0, 3) });
   assert.match(short, /Rows 1–3 of 3 in this view/);
@@ -5872,6 +5881,65 @@ test("page links keep the filters and the section and drop the open run", () => 
   );
 });
 
+test("a page past the end clamps to the last page, however far past it is", async () => {
+  // The defect this pins was between two layers that are each correct alone: the
+  // URL layer resolved a well-formed page number, and the view clamped it to a
+  // page that exists. Testing either half alone passes -- the view clamps
+  // whatever page it is handed, so a view test never sees the URL layer's
+  // decision. Only rendering the page proves the two agree, which is the only
+  // level at which "a bookmark rewound to the top of the list" is expressible.
+  //
+  // The URL layer used to refuse any page of five digits or more and answer with
+  // the first page instead, so `?page=99` clamped to the last page while
+  // `?page=100000` silently became the first. One operator mistake, two answers.
+  const originalFetch = globalThis.fetch;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "evaluation-page-clamp-test-token";
+  process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+  globalThis.fetch = async (input) => {
+    if (String(input).endsWith("/control/evaluations")) {
+      return Response.json({
+        schema: "autodev-control-evaluations-v1",
+        source: "openlit_evaluation",
+        readOnly: true,
+        totalEvaluations: 120,
+        truncated: false,
+        evaluations: Array.from({ length: 120 }, (_, index) => ({
+          id: `run-${index}`,
+          agentRole: "worker",
+          model: "m-1",
+          metrics: [],
+          passed: index % 2 === 0,
+          timestamp: "2026-10-05T12:00:00.000Z"
+        }))
+      });
+    }
+    throw new Error(`Unexpected Evaluations page request: ${String(input)}`);
+  };
+
+  try {
+    const render = async (query: Record<string, string>) =>
+      renderToStaticMarkup(
+        await EvaluationsPage({ searchParams: Promise.resolve(query) })
+      );
+
+    const past = await render({ page: "100000" });
+    assert.match(
+      past,
+      /Rows 101–120 of 120 in this view/,
+      "a page six digits out is the same mistake as one two digits out"
+    );
+    assert.match(past, /data-evaluations-page="3"/);
+
+    // The neighbouring shapes still resolve to themselves: this is a clamp, not
+    // a rule that every page is the last one.
+    const second = await render({ page: "2" });
+    assert.match(second, /Rows 51–100 of 120 in this view/);
+    assert.match(second, /data-evaluations-page="2"/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("a page parameter that is not a page resolves to the first one", () => {
   // A page is an address. `?page=0`, `?page=-2`, `?page=1.5`, `?page=` and a
   // repeated `?page=2&page=3` are not addresses to any page, and resolving one
@@ -5889,6 +5957,21 @@ test("a page parameter that is not a page resolves to the first one", () => {
     "a repeated page is two answers to one question"
   );
   assert.equal(resolveEvaluationsPage("3"), 3);
+
+  // How large a page is not a question this layer answers, and the distinction
+  // matters: a page past the end of the read is clamped by whoever renders it,
+  // which keeps the operator's place. Rejecting a long run of digits here
+  // instead split one rule in two -- `?page=99` clamped to the last page, while
+  // `?page=100000` silently became the first -- and the first page is the one
+  // answer that contradicts the rule, silently, with nothing on the page to say
+  // the request was discarded rather than clamped.
+  for (const value of ["99", "100000", "9".repeat(64)]) {
+    assert.equal(
+      resolveEvaluationsPage(value),
+      Number.parseInt(value),
+      `${value.length} digits is still a page, not a malformed one`
+    );
+  }
 });
 
 test("the run-time window narrows on UTC days, and names the runs it cannot place", () => {
