@@ -30,6 +30,7 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import { PathText } from "../../components/tables/PathText.ts";
 import {
   MONO_META_CLASS,
   MUTED_META_CLASS,
@@ -46,6 +47,7 @@ import {
 } from "./memory-list-url.ts";
 import {
   MEMORY_REASON_LABEL,
+  MEMORY_STATUS_LABEL,
   MEMORY_STATUS_VARIANT,
   NOT_OBSERVED_STATUS
 } from "./memory-status.ts";
@@ -288,7 +290,14 @@ export function MemoryRecordsView({
       weight: 140,
       cell: (record) =>
         React.createElement(StatusBadge, {
-          status: MEMORY_STATUS_VARIANT[record.status] ?? NOT_OBSERVED_STATUS
+          status: MEMORY_STATUS_VARIANT[record.status] ?? NOT_OBSERVED_STATUS,
+          // The tone and the word are two different things. The badge's own
+          // default names the *tone* it wears, which for this column would have
+          // labelled every active record `Ready` and every proposed one
+          // `Pending` — vocabulary borrowed from provider health, saying nothing
+          // about the lifecycle state the column is named for. The word comes
+          // from the shared table, like the tone does.
+          label: MEMORY_STATUS_LABEL[record.status]
         })
     },
     {
@@ -297,11 +306,18 @@ export function MemoryRecordsView({
       // Wide enough for "Summary", the longest word in the header. At 160 it
       // had 68px of content against a 69px word and split mid-word.
       weight: 172,
+      // The claim *is* this page. It was a single truncating line, so all six
+      // rows of the captured workspace read "The AutoDev Console is f…" and
+      // "Memory records are keye…" — the one column whose content no other
+      // column duplicates, hidden behind an ellipsis. Prose wraps on word
+      // boundaries and clamps, which is what the contract asks of it.
+      align: "prose",
+      clampLines: 2,
       cell: (record) =>
         React.createElement(
           "div",
           {
-            className: "max-w-md truncate text-sm text-fg",
+            className: "text-sm text-fg",
             title: record.claim
           },
           record.claim
@@ -310,20 +326,13 @@ export function MemoryRecordsView({
     {
       id: "scope",
       header: "Scope",
+      align: "path",
       weight: 160,
       cell: (record) =>
-        React.createElement(
-          "span",
-          {
-            className:
-              "font-mono text-xs text-fg-muted truncate max-w-[150px] inline-block",
-            // A workspace-qualified scope is longer than 150px in every real
-            // repository, so this column truncates on every row, not only on
-            // the adversarial ones.
-            title: formatScopeString(record.scope)
-          },
-          formatScopeString(record.scope)
-        )
+        React.createElement(PathText, {
+          path: formatScopeString(record.scope),
+          className: MONO_META_CLASS
+        })
     },
     {
       id: "updatedAt",
@@ -757,7 +766,7 @@ function RecordDetailPanel({
                   React.createElement(
                     "span",
                     { className: "text-fg-muted" },
-                    t.action.replaceAll('_', " ")
+                    t.action.replaceAll("_", " ")
                   )
                 ),
                 React.createElement(

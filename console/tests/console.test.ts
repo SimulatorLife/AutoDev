@@ -5752,17 +5752,93 @@ test("the Memory lifecycle vocabulary has one owner", () => {
         listScope: memoryListScope()
       })
     );
-    // The word the table prints is the shared one, and the tone it wears is the
-    // shared one — not a fresh capitalization of the key.
-    assert.ok(
-      markup.includes(`>${MEMORY_STATUS_LABEL[status]}<`),
-      `${status} should read "${MEMORY_STATUS_LABEL[status]}", got: ${markup}`
-    );
-    assert.ok(
-      markup.includes(`data-status="${MEMORY_STATUS_VARIANT[status]}"`),
+    // Scoped to the row's own badge. Asserting `markup.includes("Active")` was
+    // satisfied by the filter dropdown's `<option>Active</option>` — so this
+    // exact bug, the badge wearing the tone's word instead of the lifecycle
+    // state's, passed while every row on screen read "Ready".
+    const badge =
+      /data-status="([a-z-]+)"[^>]*>[\s\S]*?<span class="min-w-0 truncate">([^<]*)</u.exec(
+        markup
+      );
+    assert.ok(badge !== null, `${status} should render a status badge`);
+    assert.equal(
+      badge[1],
+      MEMORY_STATUS_VARIANT[status],
       `${status} should wear the ${MEMORY_STATUS_VARIANT[status]} tone`
     );
+    assert.equal(
+      badge[2],
+      MEMORY_STATUS_LABEL[status],
+      `${status} should read "${MEMORY_STATUS_LABEL[status]}", not the tone's word`
+    );
   }
+});
+
+test("a Memory record shows its claim and scope instead of an ellipsis", () => {
+  const claim =
+    "The AutoDev Console is the single operator surface for every canonical resource in the monorepo.";
+  const record = {
+    id: "rec-prose",
+    kind: "semantic",
+    status: "active",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    claim,
+    validity: { state: "verified", evidence: [] },
+    provenance: {
+      experienceIds: [],
+      evidence: [],
+      createdBy: "operator",
+      createdAt: "2026-10-01T00:00:00Z"
+    },
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-02T00:00:00Z"
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryRecordsView, {
+      records: [record],
+      total: 1,
+      listScope: memoryListScope()
+    })
+  );
+
+  // The claim is the page. It was one truncating line, so every row of the
+  // captured workspace read "The AutoDev Console is f…".
+  assert.ok(markup.includes(claim), "the full claim should be in the markup");
+  // `data-column-label` carries the column *id*, not its header text.
+  const rowStart = markup.lastIndexOf("<tr", markup.indexOf(claim));
+  const row = markup.slice(
+    rowStart,
+    markup.indexOf("</tr>", markup.indexOf(claim))
+  );
+  assert.ok(
+    row.includes("line-clamp-2"),
+    `the claim should clamp to two lines: ${row}`
+  );
+  // Scoped to the claim cell: the badge label and the Kind tag in the same row
+  // legitimately carry `truncate`, and asserting on the whole row would be a
+  // guard that can never pass.
+  const claimCell = row.slice(
+    row.indexOf("<td", row.indexOf("line-clamp-2") - 400)
+  );
+  assert.ok(
+    !/\btruncate\b/u.test(
+      claimCell.slice(0, claimCell.indexOf("line-clamp-2"))
+    ),
+    `the claim cell must not truncate: ${claimCell.slice(0, 200)}`
+  );
+  assert.ok(
+    !markup.includes("max-w-md"),
+    "the claim's fixed max width should be gone"
+  );
+
+  // The scope is a repository path and was capped at 150px, which its own
+  // comment admitted "truncates on every row" in any real repository. The
+  // separator stays on the first line and the break follows it.
+  assert.ok(
+    markup.includes("SimulatorLife/<wbr/>AutoDev"),
+    "the scope should break after its separator"
+  );
+  assert.ok(!markup.includes("max-w-[150px]"), "the scope cap should be gone");
 });
 
 test("MemoryRecordsView renders records, lifecycle status badges, and claim text", () => {
