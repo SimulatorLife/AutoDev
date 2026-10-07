@@ -672,6 +672,36 @@ const EMPTY_TALLY: OutcomeTally = {
   notObserved: 0
 };
 
+/**
+ * One run folded into a set of counts.
+ *
+ * The single place a verdict becomes a number. The stat cards and the comparison
+ * tables used to count separately -- the cards with three `.filter()` passes, the
+ * tables with this arithmetic -- and the two were free to drift, which is how a
+ * page could show a pass rate over one population and a Failed count over
+ * another.
+ */
+function addRun(
+  counts: OutcomeTally,
+  evaluation: EvaluationResult
+): OutcomeTally {
+  return {
+    runs: counts.runs + 1,
+    passed: counts.passed + (evaluation.passed === true ? 1 : 0),
+    failed: counts.failed + (evaluation.passed === false ? 1 : 0),
+    notObserved: counts.notObserved + (hasExplicitVerdict(evaluation) ? 0 : 1)
+  };
+}
+
+/** The outcome counts for a set of runs, in one pass. */
+function tallyOutcomes(evaluations: readonly EvaluationResult[]): OutcomeTally {
+  let counts = EMPTY_TALLY;
+  for (const evaluation of evaluations) {
+    counts = addRun(counts, evaluation);
+  }
+  return counts;
+}
+
 function tallyBy(
   evaluations: readonly EvaluationResult[],
   key: (evaluation: EvaluationResult) => string
@@ -679,16 +709,14 @@ function tallyBy(
   const tallies = new Map<string, OutcomeTally>();
   for (const evaluation of evaluations) {
     const name = key(evaluation);
-    const current = tallies.get(name) ?? EMPTY_TALLY;
-    tallies.set(name, {
-      runs: current.runs + 1,
-      passed: current.passed + (evaluation.passed === true ? 1 : 0),
-      failed: current.failed + (evaluation.passed === false ? 1 : 0),
-      notObserved:
-        current.notObserved + (hasExplicitVerdict(evaluation) ? 0 : 1)
-    });
+    tallies.set(name, addRun(tallies.get(name) ?? EMPTY_TALLY, evaluation));
   }
   return tallies;
+}
+
+/** The runs whose verdict the source actually supplied. */
+function observedVerdicts(counts: OutcomeTally): number {
+  return counts.passed + counts.failed;
 }
 
 /**
@@ -698,11 +726,11 @@ function tallyBy(
  * where most runs report no verdict would otherwise score a single pass as 100%,
  * which is the score-threshold inference the target state rules out.
  */
-function passRate(tally: OutcomeTally): string {
-  const observed = tally.passed + tally.failed;
+function passRate(counts: OutcomeTally): string {
+  const observed = observedVerdicts(counts);
   return observed === 0
     ? NOT_OBSERVED_LABEL
-    : `${Math.round((tally.passed / observed) * 100)}%`;
+    : `${Math.round((counts.passed / observed) * 100)}%`;
 }
 
 function comparisonColumns(
@@ -721,29 +749,33 @@ function comparisonColumns(
       id: "runs",
       header: "Runs",
       weight: 90,
-      cell: ([, tally]) =>
-        React.createElement("span", { className: MONO_VALUE_CLASS }, tally.runs)
+      cell: ([, counts]) =>
+        React.createElement(
+          "span",
+          { className: MONO_VALUE_CLASS },
+          counts.runs
+        )
     },
     {
       id: "passed",
       header: "Passed",
       weight: 100,
-      cell: ([, tally]) =>
+      cell: ([, counts]) =>
         React.createElement(
           "span",
           { className: MONO_VALUE_CLASS },
-          tally.passed
+          counts.passed
         )
     },
     {
       id: "failed",
       header: "Failed",
       weight: 100,
-      cell: ([, tally]) =>
+      cell: ([, counts]) =>
         React.createElement(
           "span",
           { className: MONO_VALUE_CLASS },
-          tally.failed
+          counts.failed
         )
     },
     {
@@ -755,23 +787,23 @@ function comparisonColumns(
       // row whose only other reading was a pass rate -- a claim about quality
       // that the source never made. Only a non-zero count gets the badge, and
       // then it is the marker the column exists for.
-      cell: ([, tally]) =>
-        tally.notObserved === 0
+      cell: ([, counts]) =>
+        counts.notObserved === 0
           ? React.createElement("span", { className: MONO_VALUE_CLASS }, "0")
           : React.createElement(StatusBadge, {
               status: NOT_OBSERVED_STATUS,
-              label: String(tally.notObserved)
+              label: String(counts.notObserved)
             })
     },
     {
       id: "pass-rate",
       header: "Pass rate",
       weight: 120,
-      cell: ([, tally]) =>
+      cell: ([, counts]) =>
         React.createElement(
           "span",
           { className: MONO_VALUE_CLASS },
-          passRate(tally)
+          passRate(counts)
         )
     }
   ];
@@ -825,23 +857,30 @@ function filterSelect(
 }
 
 /**
- * What the filter bar says about how much of the history is on screen.
+ * How much of the history is on screen.
  *
- * The read is capped, so three numbers can differ: how many rows are shown, how
- * many the window held, and how many the source has. The previous wording --
+ * The read is capped and the filters narrow further, so four numbers can differ:
+ * how many rows are shown, how many the window held, how many the source has,
+ * and whether either filter or cap is in play. Both the filter bar's sentence and
+ * the stat card are built from this one value, because the previous wording --
  * "N retained results" -- used the window and said nothing about the rest, which
- * made a capped read describe itself as the complete history. The cap is now
- * stated, and a filter applied on top of a capped window says so, because
- * "12 of 100" reads as "12 of everything" when 5,000 exist.
+ * made a capped read describe itself as the complete history.
  */
-function resultSummary(counts: {
+interface ResultCounts {
   readonly shown: number;
   readonly window: number;
   readonly total: number;
   readonly narrowed: boolean;
   readonly truncated: boolean;
-}): string {
-  const { shown, window, total, narrowed, truncated } = counts;
+}
+
+function resultSummary({
+  shown,
+  window,
+  total,
+  narrowed,
+  truncated
+}: ResultCounts): string {
   if (!truncated) {
     return narrowed
       ? `${shown} of ${total} retained results`
@@ -857,6 +896,43 @@ function resultSummary(counts: {
     : `Most recent ${window} of ${total} retained results`;
 }
 
+/**
+ * The stat card for the same numbers, as a value rather than a sentence.
+ *
+ * This card used to read `evaluations.length` under the title "Total
+ * Evaluations", which is the lie the filter bar was just rewritten to stop
+ * telling: filtered, it reported three as the total; capped, it reported the
+ * window as the whole table. The value is now the store's own size and the
+ * subtitle states the relationship to what is on screen, so the card and the
+ * sentence above it cannot disagree about either number.
+ */
+function retainedResults({
+  shown,
+  window,
+  total,
+  narrowed,
+  truncated
+}: ResultCounts): {
+  readonly value: number;
+  readonly subtitle: string | null;
+} {
+  if (narrowed && truncated) {
+    return {
+      value: total,
+      subtitle: `${shown} of the most recent ${window} shown`
+    };
+  }
+  if (narrowed) {
+    return {
+      value: total,
+      subtitle: `${shown} of ${total} match these filters`
+    };
+  }
+  return truncated
+    ? { value: total, subtitle: `showing the most recent ${window}` }
+    : { value: total, subtitle: null };
+}
+
 export function EvaluationsView({
   evaluations,
   availableCount = evaluations.length,
@@ -868,17 +944,17 @@ export function EvaluationsView({
   selection = null,
   traceLookup = null
 }: EvaluationsViewProps): React.JSX.Element {
-  const passed = evaluations.filter(
-    (evaluation) => evaluation.passed === true
-  ).length;
-  const failed = evaluations.filter(
-    (evaluation) => evaluation.passed === false
-  ).length;
-  const notObserved = evaluations.filter(
-    (evaluation) => !hasExplicitVerdict(evaluation)
-  ).length;
-  const observedOutcomes = passed + failed;
+  const counts = tallyOutcomes(evaluations);
+  const observedOutcomes = observedVerdicts(counts);
   const narrowed = hasActiveFilters(filters);
+  const resultCounts: ResultCounts = {
+    shown: evaluations.length,
+    window: availableCount,
+    total: totalCount ?? availableCount,
+    narrowed,
+    truncated
+  };
+  const retained = retainedResults(resultCounts);
   const nav: EvaluationsNav = { filters, tab };
   const selectedEvaluation =
     selection === null
@@ -999,13 +1075,7 @@ export function EvaluationsView({
         label: "Evaluation filters",
         action: "/evaluations",
         submitTestId: "evaluations-apply",
-        summary: resultSummary({
-          shown: evaluations.length,
-          window: availableCount,
-          total: totalCount ?? availableCount,
-          narrowed,
-          truncated
-        })
+        summary: resultSummary(resultCounts)
       },
       filterSelect(
         "outcome",
@@ -1080,21 +1150,19 @@ export function EvaluationsView({
       StatGrid,
       { columns: 5 },
       React.createElement(StatCard, {
-        title: "Total Evaluations",
-        value: evaluations.length
+        title: "Retained results",
+        value: retained.value,
+        ...(retained.subtitle === null ? {} : { subtitle: retained.subtitle })
       }),
-      React.createElement(StatCard, { title: "Passed", value: passed }),
-      React.createElement(StatCard, { title: "Failed", value: failed }),
+      React.createElement(StatCard, { title: "Passed", value: counts.passed }),
+      React.createElement(StatCard, { title: "Failed", value: counts.failed }),
       React.createElement(StatCard, {
         title: NOT_OBSERVED_LABEL,
-        value: notObserved
+        value: counts.notObserved
       }),
       React.createElement(StatCard, {
         title: "Pass Rate",
-        value:
-          observedOutcomes > 0
-            ? `${Math.round((passed / observedOutcomes) * 100)}%`
-            : NOT_OBSERVED_LABEL,
+        value: passRate(counts),
         subtitle: `${observedOutcomes} of ${evaluations.length} with explicit verdicts`
       })
     ),

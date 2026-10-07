@@ -7,7 +7,8 @@ import {
   filterEvaluations,
   filterOptionsFor,
   parseEvaluationsFilters,
-  resolveEvaluationsTab
+  resolveEvaluationsTab,
+  singleValue
 } from "../../src/features/evaluations/evaluations-url.ts";
 import {
   EvaluationsView,
@@ -30,20 +31,6 @@ interface EvaluationsPageProps {
   readonly searchParams?: Promise<
     Record<string, string | readonly string[] | undefined>
   >;
-}
-
-function firstQueryValue(
-  value: string | readonly string[] | undefined
-): string | undefined {
-  if (typeof value === "string") return value;
-  return value?.[0];
-}
-
-function singleQueryValue(
-  value: string | readonly string[] | undefined
-): string | undefined {
-  if (typeof value === "string") return value;
-  return value?.length === 1 ? value[0] : undefined;
 }
 
 function evaluationTraceState(
@@ -88,10 +75,15 @@ export default async function EvaluationsPage({
   const params = searchParams ? await searchParams : {};
   const filters = parseEvaluationsFilters(params);
   const tab = resolveEvaluationsTab(params.tab);
-  const selectedResult = firstQueryValue(params[EVALUATION_RESULT_PARAM]);
+  // A repeated key is not a choice, so neither selection resolves to the first
+  // of several. `?result=a&result=b` used to open `a` while the URL described
+  // two runs, and the filter bar's own rule already refused to do that to a
+  // filter -- the page and the module it depends on were answering the same
+  // question two different ways.
+  const selectedResult = singleValue(params[EVALUATION_RESULT_PARAM]);
 
   const spanIdValues = params[EVALUATION_SPAN_PARAM];
-  const requestedSpanId = singleQueryValue(spanIdValues);
+  const requestedSpanId = singleValue(spanIdValues);
   const hasInvalidSpanSelection =
     spanIdValues !== undefined && !isOpenTelemetrySpanId(requestedSpanId);
 

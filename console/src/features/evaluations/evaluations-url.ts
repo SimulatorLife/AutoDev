@@ -66,7 +66,7 @@ export const EMPTY_EVALUATIONS_FILTERS: EvaluationsFilters = {
 export const EVALUATION_RESULT_PARAM = "result";
 export const EVALUATION_SPAN_PARAM = "spanId";
 
-type RawQueryValue = string | readonly string[] | undefined;
+export type RawQueryValue = string | readonly string[] | undefined;
 
 /**
  * The two sections of the resource.
@@ -98,11 +98,16 @@ export function resolveEvaluationsTab(value: RawQueryValue): EvaluationsTabId {
 /**
  * Read one parameter, ignoring a repeated one.
  *
- * A filter that quietly takes the first of two values reports one answer while
- * the URL says another, so a duplicated key resolves to "not set" and the page
- * shows the unfiltered list instead of an arbitrary narrowing.
+ * A value that quietly takes the first of two reports one answer while the URL
+ * says another, so a duplicated key resolves to "not set" and the page shows the
+ * unfiltered list instead of an arbitrary narrowing.
+ *
+ * Exported because the rule is not a filter's property, it is this resource's:
+ * a repeated `spanId` cannot be which span to open, and a repeated `result`
+ * cannot be which run to open, and the page used to resolve one of them by
+ * taking the first anyway.
  */
-function singleValue(value: RawQueryValue): string | undefined {
+export function singleValue(value: RawQueryValue): string | undefined {
   if (typeof value === "string") return value;
   return value?.length === 1 ? value[0] : undefined;
 }

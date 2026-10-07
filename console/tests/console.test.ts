@@ -4659,6 +4659,79 @@ test("EvaluationsPage rejects malformed trace query IDs without calling the Usag
   }
 });
 
+test("a repeated selection parameter is not a choice, and opens nothing", async () => {
+  // `?result=a&result=b` and `?spanId=x&spanId=y` each name two things, and
+  // taking the first answers a question the URL did not ask. The filter bar
+  // already refused to do this to a filter -- a duplicated key resolved to "not
+  // set" and the page showed the unfiltered list -- while the page resolved
+  // `result` by taking the first and `spanId` by the same rule, so one resource
+  // answered the same question two ways. One resolver, in the module that owns
+  // the URL contract, for every parameter that selects something.
+  const previousFetch = globalThis.fetch;
+  const previousEnv = saveConsolePageEnvironment();
+  const isolatedHome = mkdtempSync(join(tmpdir(), "autodev-evaluations-page-"));
+  let usageRequests = 0;
+  try {
+    process.env.HOME = isolatedHome;
+    process.env.CODEX_HOME = isolatedHome;
+    process.env.AUTODEV_OPENLIT_SECRET_FILE = join(isolatedHome, "missing.env");
+    process.env.AUTODEV_CONTROL_API_TOKEN = "evaluation-control-test-token";
+    process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+    process.env.AUTODEV_OPENLIT_USAGE_TOKEN = "evaluation-usage-test-token";
+    process.env.AUTODEV_OPENLIT_USAGE_URL = "http://127.0.0.1:3000";
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/control/evaluations")) {
+        return Response.json({
+          schema: "autodev-control-evaluations-v1",
+          source: "openlit_evaluation",
+          readOnly: true,
+          totalEvaluations: 0,
+          truncated: false,
+          evaluations: []
+        });
+      }
+      usageRequests += 1;
+      throw new Error(`Unexpected trace lookup: ${url}`);
+    };
+
+    // Two valid span ids: the span id is well formed, so this is not a
+    // malformed-id request -- it is two answers to one question. The page
+    // refuses to pick one, and says the selection could not be read rather than
+    // quietly rendering no trace at all, because the URL did ask for one and
+    // silence would report an unrequested absence.
+    const markup = renderToStaticMarkup(
+      await EvaluationsPage({
+        searchParams: Promise.resolve({
+          spanId: ["0123456789abcdef", "fedcba9876543210"]
+        })
+      })
+    );
+    assert.equal(usageRequests, 0, "a repeated span id must not pick a span");
+    assert.match(markup, /data-trace-state="invalid-span-id"/);
+    assert.equal(
+      markup.includes("data-trace-span-id"),
+      false,
+      "neither of the two spans may be presented as the one that was opened"
+    );
+
+    const repeatedResult = renderToStaticMarkup(
+      await EvaluationsPage({
+        searchParams: Promise.resolve({ result: ["run-1", "run-2"] })
+      })
+    );
+    assert.equal(
+      repeatedResult.includes('data-feature="evaluation-detail"'),
+      false,
+      "a repeated result id resolves to no selection, so no drawer opens"
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreConsolePageEnvironment(previousEnv);
+    rmSync(isolatedHome, { recursive: true, force: true });
+  }
+});
+
 test("EvaluationsView with empty results renders the explicit empty state", () => {
   const markup = renderEvaluations({ evaluations: [] });
   assert.match(
@@ -4807,6 +4880,57 @@ test("a capped read says so instead of describing its window as the history", ()
   assert.match(complete, /data-evaluations-truncated="false"/);
   assert.match(complete, /2 retained results/);
   assert.equal(complete.includes("Most recent"), false);
+});
+
+test("the retained-results card counts the store, not the window and not the filter", () => {
+  // The card used to read `evaluations.length` under the title "Total
+  // Evaluations" -- the same lie the filter bar sentence was rewritten to stop
+  // telling, one row below it. Filtered it reported a handful as the total;
+  // capped it reported the window as the whole table. The value is the store's
+  // own size and the subtitle states the relationship to what is on screen, so
+  // the number and the sentence cannot disagree about either figure.
+  const rows = [
+    {
+      id: "run-1",
+      agentRole: "worker",
+      model: "m-1",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-04T12:00:00Z"
+    },
+    {
+      id: "run-2",
+      agentRole: "worker",
+      model: "m-1",
+      metrics: [],
+      passed: false,
+      timestamp: "2026-10-04T12:01:00Z"
+    }
+  ];
+
+  const capped = renderEvaluations({
+    evaluations: rows,
+    availableCount: 2,
+    totalCount: 5000,
+    truncated: true
+  });
+  assert.match(capped, /Retained results/);
+  // 5000 is the store; 2 is what is on screen, and the card says which is which.
+  assert.match(capped, /5000<\/span>|>5000</);
+  assert.match(capped, /showing the most recent 2/);
+
+  // Filtered, the card's number is still the store's, and the subtitle is what
+  // says three of them are on screen -- rather than a card reading "3" under
+  // the word "Total".
+  const narrowed = renderEvaluations({
+    evaluations: [rows[1]!],
+    availableCount: 2,
+    totalCount: 5000,
+    truncated: true,
+    filters: { outcome: "failed", role: "", model: "", prompt: "" }
+  });
+  assert.match(narrowed, /1 of the most recent 2 shown/);
+  assert.equal(narrowed.includes("Total Evaluations"), false);
 });
 
 test("fetchEvaluations rejects a response that will not say whether it is capped", async () => {

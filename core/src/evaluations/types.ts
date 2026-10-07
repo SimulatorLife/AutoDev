@@ -15,11 +15,3 @@ export interface EvaluationResult {
   readonly passed: boolean | null;
   readonly timestamp: string;
 }
-
-export interface EvaluationDefinition {
-  readonly id: string;
-  readonly name: string;
-  readonly description?: string;
-  readonly targetRole: string;
-  readonly promptName?: string;
-}
