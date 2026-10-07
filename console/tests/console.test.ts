@@ -6048,106 +6048,6 @@ test("a timestamp is never stamped with an offset the source did not write", () 
   assert.match(trace("2026-10-05T09:31:00Z"), /break-words/);
 });
 
-test("a timestamp is never stamped with an offset the source did not write", () => {
-  // The two tables on this resource rendered a timestamp two different ways --
-  // the history table matched a regex, the trace table sliced the raw string --
-  // and both appended a `Z` the source never had to contain. A span stamped
-  // `+02:00` rendered as `09:31:00Z`: the same clock reading under a zone label
-  // it was not in, which is a claim about the data rather than about formatting.
-  // The wire only requires a timestamp to parse -- the trace validator checks
-  // `Date.parse`, the evaluation validator only `typeof === "string"` -- so an
-  // offset, a date-only value and an unreadable one all reach the view intact.
-  const spanId = "0123456789abcdef";
-  const trace = (timestamp: string): string =>
-    renderEvaluations({
-      evaluations: [],
-      filters: {
-        outcome: "all",
-        role: "",
-        model: "",
-        prompt: "",
-        from: "",
-        until: ""
-      },
-      traceLookup: {
-        kind: "observed",
-        detail: {
-          schema: "autodev-openlit-trace-detail-v1",
-          traceId: "0123456789abcdef0123456789abcdef",
-          selectedSpanId: spanId,
-          partial: false,
-          spans: [
-            {
-              spanId,
-              parentSpanId: null,
-              spanName: "gen_ai.client_operation",
-              serviceName: "autodev-router",
-              timestamp,
-              durationNs: 1_250_000,
-              statusCode: "OK"
-            }
-          ]
-        }
-      }
-    });
-  const run = (timestamp: string): string =>
-    renderEvaluations({
-      evaluations: [
-        {
-          id: "run-1",
-          agentRole: "worker",
-          model: "m-1",
-          metrics: [],
-          passed: true,
-          timestamp
-        }
-      ]
-    });
-
-  // The source's own offset is kept.
-  assert.match(trace("2026-10-05T09:31:00Z"), /09:31:00Z/);
-  assert.match(
-    trace("2026-10-05T09:31:00.000Z"),
-    /09:31:00Z/,
-    "a fractional second is not part of the clock reading"
-  );
-  assert.match(
-    trace("2026-10-05T09:31:00+02:00"),
-    /09:31:00\+02:00/,
-    "a non-UTC offset is shown, not silently relabelled as UTC"
-  );
-  assert.doesNotMatch(trace("2026-10-05T09:31:00+02:00"), /09:31:00Z/);
-  assert.match(
-    trace("2026-10-05T09:31:00"),
-    />09:31:00</,
-    "a timestamp with no offset shows none rather than borrowing one"
-  );
-
-  // A value that is not an ISO instant is shown whole, not cut into a date and a
-  // clock that never were one.
-  assert.match(
-    trace("whenever it was"),
-    /whenever it was/,
-    "an unreadable instant is not sliced into invented parts"
-  );
-  assert.doesNotMatch(trace("whenever it was"), /Z<\/span>/);
-  assert.match(
-    trace("2026-10-05"),
-    /2026-10-05/,
-    "a date-only value keeps its date and invents no clock"
-  );
-  assert.doesNotMatch(trace("2026-10-05"), />Z</);
-
-  // Both tables, because the two copies are the defect: the history table gets
-  // the same treatment, so the columns cannot disagree about what a timestamp is.
-  assert.match(run("2026-10-05T09:31:00+02:00"), /09:31:00\+02:00/);
-  assert.match(run("2026-10-05T09:31:00Z"), /09:31:00Z/);
-  assert.match(run("whenever it was"), /whenever it was/);
-
-  // Every part carries `min-w-0`, which is what keeps a narrow column from
-  // painting through the table's right edge; the trace column never had it.
-  assert.match(trace("2026-10-05T09:31:00Z"), /break-words/);
-});
 test("an evaluation with no metrics reads as unobserved, not as an empty cell", () => {
   // The fixture reports a run with an empty `metrics` array. Rendering nothing
   // there makes the row indistinguishable from one that failed to render, and
@@ -6553,6 +6453,45 @@ test("EvaluationsView links valid span references and marks invalid ones", () =>
     markup.includes('data-evaluation-trace-span-id="offline_0123"'),
     false
   );
+
+  // The drawer had two more answers than the table, and the two it added were
+  // both wrong: it applied no validity check at all, so a malformed reference
+  // rendered as plain text on the same run the table beside it labelled
+  // "Invalid span", and a valid one rendered as plain text too, offering no way
+  // onward to the trace the table linked.
+  const spanId = "0123456789abcdef";
+  const row = (reported: string | undefined) => ({
+    id: "eval-with-trace",
+    ...(reported === undefined ? {} : { spanId: reported }),
+    agentRole: "orchestrator",
+    model: "gpt-5.6-terra",
+    metrics: [],
+    passed: null,
+    timestamp: "2026-10-04T12:00:00Z"
+  });
+  const drawer = (reported: string | undefined): string =>
+    renderEvaluations({
+      evaluations: [row(reported)],
+      selection: "eval-with-trace"
+    });
+
+  assert.match(
+    drawer(spanId),
+    new RegExp(
+      `href="/evaluations\\?spanId=${spanId}"[^>]*data-evaluation-trace-span-id="${spanId}"`
+    ),
+    "a valid span is a link to the trace from the drawer too"
+  );
+  const invalid = drawer("offline_0123");
+  assert.match(
+    invalid,
+    /Invalid span/,
+    "a malformed reference is labelled in the drawer, not printed as one"
+  );
+  assert.doesNotMatch(invalid, />offline_0123</);
+  const absent = drawer(undefined);
+  assert.doesNotMatch(absent, /Invalid span/);
+  assert.match(absent, /Not observed/);
 });
 
 test("fetchEvaluations issues authenticated GET to /control/evaluations", async () => {
@@ -12499,6 +12438,76 @@ test("a record's source experiences are reachable, not just counted", () => {
   assert.doesNotMatch(uncited, /data-provenance-experience=/);
 });
 
+test("a record says what replaced it, and what it replaced", () => {
+  // The Lineage panel is the payoff of supersession: an operator who retires a
+  // claim needs to see the chain afterwards, in both directions, from either
+  // end. It had no coverage at all, because until supersession was reachable no
+  // record could carry lineage and so no test could render one.
+  const withLineage = (
+    lineage: Pick<MemoryRecord, "supersedes" | "supersededBy">
+  ): MemoryRecord =>
+    ({
+      id: "mem-lineage",
+      kind: "procedural",
+      status: "active",
+      scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+      claim: "A claim with a history.",
+      validity: { state: "verified", evidence: [] },
+      provenance: {
+        experienceIds: [],
+        evidence: [],
+        createdBy: "operator",
+        createdAt: "2026-10-01T10:00:00Z"
+      },
+      createdAt: "2026-10-01T10:00:00Z",
+      updatedAt: "2026-10-02T10:00:00Z",
+      ...lineage
+    }) as MemoryRecord;
+
+  const render = (
+    lineage: Pick<MemoryRecord, "supersedes" | "supersededBy">
+  ) => {
+    const record = withLineage(lineage);
+    return renderToStaticMarkup(
+      React.createElement(MemoryRecordsView, {
+        records: [record],
+        total: 1,
+        selectedRecord: record,
+        listScope: memoryListScope({ query: "budget" })
+      })
+    );
+  };
+
+  const both = render({ supersedes: ["mem-old"], supersededBy: ["mem-newer"] });
+  assert.match(both, />Lineage</u);
+  assert.match(both, /Supersedes:/u);
+  assert.match(both, /Superseded By:/u);
+  // Both ends are reachable, and both links keep the list they were read from,
+  // so following one lands back inside the same filtered collection. The order
+  // the two parameters appear in is not this test's business.
+  for (const id of ["mem-old", "mem-newer"]) {
+    const href = new RegExp(
+      `href="(/memory\\?[^"]*recordId=${id}[^"]*)"`,
+      "u"
+    ).exec(both);
+    assert.ok(href, `${id} must be linked from the lineage`);
+    assert.match(
+      href[1]!,
+      /[?&](?:amp;)?query=budget/u,
+      `${id}'s link must carry the list it was read from`
+    );
+  }
+
+  // One direction alone still reads correctly rather than printing an empty half.
+  const replacement = render({ supersedes: ["mem-old"] });
+  assert.match(replacement, /Supersedes:/u);
+  assert.doesNotMatch(replacement, /Superseded By:/u);
+
+  // No lineage at all renders no heading rather than an empty panel.
+  const plain = render({});
+  assert.doesNotMatch(plain, />Lineage</u);
+});
+
 /** The why panel reads only the id, but the response type is the whole envelope. */
 function minimalExperience(id: string): ExperienceEnvelope {
   return {
@@ -12684,7 +12693,13 @@ test("the Memory page carries the Runtime's explanation into the record drawer",
       if (url.includes("/control/memory/status")) {
         return Response.json({
           schema: "autodev-memory-status-v1",
-          counts: { proposed: 0, active: 1, superseded: 0, invalidated: 0, uncertain: 0 }
+          counts: {
+            proposed: 0,
+            active: 1,
+            superseded: 0,
+            invalidated: 0,
+            uncertain: 0
+          }
         });
       }
       if (url.includes("/control/memory/experiences")) {
@@ -12697,7 +12712,11 @@ test("the Memory page carries the Runtime's explanation into the record drawer",
           hasMore: false
         });
       }
-      return Response.json({ schema: "autodev-memory-session-cohorts-v1", cells: [], sessionCount: 0 });
+      return Response.json({
+        schema: "autodev-memory-session-cohorts-v1",
+        cells: [],
+        sessionCount: 0
+      });
     };
 
     const markup = renderToStaticMarkup(
