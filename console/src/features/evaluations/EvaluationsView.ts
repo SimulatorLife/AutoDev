@@ -349,6 +349,30 @@ function timestampCell(timestamp: string): React.JSX.Element {
   );
 }
 
+/**
+ * One instant on a single line, for the places that are not a wrapping cell.
+ *
+ * `timestampCell` gives its parts room to fold between them, which is right in a
+ * table and wrong in a drawer's subtitle, where they want to stay on one line.
+ * The parts still come from `splitInstant`, so the resource keeps one definition
+ * of how it renders an instant and only the layout differs.
+ *
+ * The drawer's subtitle used to carry the raw wire value, which made the same
+ * moment print two ways on one screen -- `2026-10-05 12:20:05Z` in the history
+ * row that opened it and `2026-10-05T12:20:05.000Z` above the detail -- and at
+ * 390px the raw token broke mid-date as `2026-10-` / `05T12:20:05.000Z`. It also
+ * carried no `dateTime`, so the one place showing this run's time was the one
+ * place a machine could not read it.
+ */
+function runTimeInstant(timestamp: string): React.JSX.Element {
+  const { date, clock, offset } = splitInstant(timestamp);
+  return React.createElement(
+    "time",
+    { dateTime: timestamp, title: timestamp },
+    `${date}${clock === undefined ? "" : ` ${clock}${offset ?? ""}`}`
+  );
+}
+
 /** The value a prompt-less run reports instead of naming a prompt. */
 const NO_PROMPT_LABEL = "No prompt";
 
@@ -800,7 +824,7 @@ function renderResultDetail(
     {
       title: evaluation.id,
       badges: outcomeBadge(evaluation),
-      subtitle: evaluation.timestamp,
+      subtitle: runTimeInstant(evaluation.timestamp),
       closeHref: navListHref(nav),
       closeLabel: "Close evaluation detail",
       dataAttributes: { "data-feature": "evaluation-detail" }
@@ -1059,11 +1083,7 @@ function renderComparison(
     "div",
     { className: "flex flex-col gap-3" },
     React.createElement("h3", { className: SECTION_HEADING_CLASS }, title),
-    React.createElement(
-      "p",
-      { className: "text-xs text-fg-muted" },
-      description
-    ),
+    React.createElement("p", { className: MUTED_META_CLASS }, description),
     React.createElement<DataTableProps<readonly [string, OutcomeTally]>>(
       DataTable,
       {
@@ -1147,7 +1167,7 @@ function renderPager(
     React.createElement(
       "p",
       {
-        className: "text-xs text-fg-muted",
+        className: MUTED_META_CLASS,
         "data-evaluations-page-range": "true"
       },
       // The range is over the rows the filters selected, which is not the rows
@@ -1171,7 +1191,7 @@ function renderPager(
           React.createElement(
             "span",
             {
-              className: "text-xs text-fg-muted",
+              className: MUTED_META_CLASS,
               "data-evaluations-page-label": "true"
             },
             `Page ${current} of ${pageCount}`

@@ -75,8 +75,16 @@ export interface DetailDrawerProps {
    * so the feature supplies them rather than the drawer guessing a vocabulary.
    */
   readonly badges?: React.ReactNode | undefined;
-  /** Machine-readable context under the title row. */
-  readonly subtitle?: string | undefined;
+  /**
+   * Machine-readable context under the title row.
+   *
+   * A node rather than a string, so a caller can hand over a `<time>` element
+   * instead of a raw wire value. The run detail passes a formatted instant: a
+   * bare string here meant the same moment was printed two different ways on one
+   * screen, with this one carrying the milliseconds the other had already
+   * decided not to show.
+   */
+  readonly subtitle?: React.ReactNode | undefined;
   /** URL of the list without this selection; the close link's destination. */
   readonly closeHref: string;
   readonly closeLabel?: string | undefined;

@@ -2618,6 +2618,71 @@ function renderEvaluations(
   );
 }
 
+test("one instant is rendered one way, including in the drawer", () => {
+  // The resource has a single definition of how it renders an instant --
+  // `splitInstant` -- and the history and trace tables both go through it. The
+  // drawer's subtitle did not, and it is the third rendering of the same value
+  // on the same screen: opening a run showed `2026-10-05 12:20:05Z` in the row
+  // and `2026-10-05T12:20:05.000Z` in the subtitle above the detail it came
+  // from. Two formats, one moment, a question mark about which one is the fact.
+  // The raw token also broke mid-date at 390px -- `2026-10-` / `05T12:20:05.000Z`
+  // -- and carried no `dateTime`, so the one place showing the run's time was
+  // the one place a machine could not read it.
+  const row = {
+    id: "eval-instant-1",
+    agentRole: "orchestrator",
+    promptName: "dry",
+    model: "gpt-5.6-terra",
+    metrics: [{ name: "quality", value: 1, pass: true }],
+    passed: true,
+    timestamp: "2026-10-05T12:20:05.000Z"
+  };
+  const markup = renderEvaluations({ evaluations: [row], selection: row.id });
+
+  // The same readable instant the table prints.
+  assert.match(
+    markup,
+    /<time dateTime="2026-10-05T12:20:05\.000Z"[^>]*>2026-10-05 12:20:05Z</
+  );
+
+  // And the subtitle is one of those, not a raw wire value beside it.
+  const drawer = markup.slice(
+    markup.indexOf('data-feature="evaluation-detail"')
+  );
+  assert.ok(drawer.length > 0, "the run's detail is rendered");
+  assert.match(
+    drawer,
+    /<time dateTime="2026-10-05T12:20:05\.000Z"[^>]*>2026-10-05 12:20:05Z<\/time>/,
+    "the subtitle renders the instant the way the table does"
+  );
+  assert.equal(
+    drawer.includes(">2026-10-05T12:20:05.000Z<"),
+    false,
+    "and the raw wire value is not printed beside it"
+  );
+
+  // The source's own offset survives, and a value that is not an ISO instant is
+  // shown whole rather than cut into parts.
+  const offsetRow = { ...row, timestamp: "2026-10-05T11:48:00+02:00" };
+  const offsetMarkup = renderEvaluations({
+    evaluations: [offsetRow],
+    selection: offsetRow.id
+  });
+  assert.match(offsetMarkup, /11:48:00\+02:00/);
+  assert.equal(offsetMarkup.includes("11:48:00Z"), false);
+
+  const spaceRow = { ...row, timestamp: "2026-10-05 09:47:58" };
+  const spaceMarkup = renderEvaluations({
+    evaluations: [spaceRow],
+    selection: spaceRow.id
+  });
+  assert.match(
+    spaceMarkup,
+    /text-fg-muted font-mono"[^>]*><time dateTime="2026-10-05 09:47:58"[^>]*>2026-10-05 09:47:58</,
+    "a space-separated value is shown whole, not sliced"
+  );
+});
+
 test("an opened run leads the page, so opening it shows something at any width", () => {
   // The drawer used to render between the stat cards and the run history, which
   // put the filter bar, the tab nav and five stat cards above it. At 390px those
