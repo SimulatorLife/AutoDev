@@ -19,6 +19,7 @@ import {
   type ExperienceEnvelope,
   isMemoryExperienceVisibleTo,
   type MemoryActor,
+  type ExperienceOutcome,
   type MemoryExperiencePurgeRequest,
   type MemoryExperiencePurgeResult,
   type MemoryExpiredExperienceRequest,
@@ -32,8 +33,14 @@ import {
   type MemoryInjectionUseJoin,
   type MemoryInjectionUseJoinPage,
   type MemoryInjectionUseJoinRequest,
+  type MemoryInjectionOutcomeJoin,
+  type MemoryInjectionOutcomeJoinPage,
+  type MemoryInjectionOutcomeJoinRequest,
   type MemoryLifecycleEvent,
+  type MemoryExecutionMode,
+  type MemoryInjectionResult,
   type MemoryOutcomeReport,
+  type MemoryOutcomeReportKind,
   type MemoryPacket,
   type MemoryReadContext,
   type MemoryRecord,
@@ -101,6 +108,8 @@ class FakeMemoryRepository implements MemoryRepository {
     readonly appended: boolean;
     readonly id: string;
   }[] = [];
+  readonly outcomeReports = new Map<string, MemoryOutcomeReport>();
+  readonly outcomeJoinRequests: MemoryInjectionOutcomeJoinRequest[] = [];
   readonly sessionOutcomeReports = new Map<
     string,
     MemorySessionOutcomeReport
@@ -290,6 +299,9 @@ class FakeMemoryRepository implements MemoryRepository {
     readonly appended: boolean;
     readonly id: string;
   }> {
+    // Stored so the session join has reports to attach; the queued result still
+    // decides what the write reports back, which several tests drive directly.
+    this.outcomeReports.set(input.report.correlationToken, input.report);
     return (
       this.outcomeReportResults.shift() ?? {
         appended: false,
@@ -481,13 +493,59 @@ class FakeMemoryRepository implements MemoryRepository {
     };
   }
 
-  async listInjectionOutcomeJoins(): Promise<{
-    readonly items: readonly never[];
-    readonly total: number;
-    readonly limit: number;
-    readonly offset: number;
-  }> {
-    return { items: [], total: 0, limit: 50, offset: 0 };
+  async listInjectionOutcomeJoins(
+    request: MemoryInjectionOutcomeJoinRequest
+  ): Promise<MemoryInjectionOutcomeJoinPage> {
+    this.outcomeJoinRequests.push(request);
+    // Rows are matched on the session key alone, never the request-level
+    // runId/agentId the stored events carry.
+    const session = [...this.injectionEvents.values()].filter(
+      (event) =>
+        event.workspaceId === request.context.workspaceId &&
+        event.taskId === request.context.taskId &&
+        (request.context.repositoryId === undefined ||
+          event.repositoryId === request.context.repositoryId)
+    );
+    const items: MemoryInjectionOutcomeJoin[] = [];
+    for (const event of session) {
+      if (
+        request.memoryModes &&
+        !request.memoryModes.includes(event.memoryMode)
+      )
+        continue;
+      if (
+        request.injectionResults &&
+        !request.injectionResults.includes(event.injectionResult)
+      )
+        continue;
+      const outcome = this.outcomeReports.get(event.correlationToken) ?? null;
+      if (!outcome && request.includeUnreported !== true) continue;
+      if (
+        outcome &&
+        request.outcomeKinds &&
+        !request.outcomeKinds.includes(outcome.outcomeKind)
+      )
+        continue;
+      if (
+        outcome &&
+        request.reportKinds &&
+        !request.reportKinds.includes(outcome.reportKind)
+      )
+        continue;
+      items.push({
+        injection: event,
+        outcome,
+        sessionInjectionCount: session.length
+      });
+    }
+    const limit = request.limit ?? 50;
+    const offset = request.offset ?? 0;
+    return {
+      items: items.slice(offset, offset + limit),
+      total: items.length,
+      limit,
+      offset
+    };
   }
 
   async aggregateInjectionOutcomeCohorts(
@@ -3743,4 +3801,215 @@ test("MemoryService aggregateInjectionUseCohorts counts assessed and unassessed 
     assert.equal("reporterId" in cell, false);
     assert.equal("usedMemoryIds" in cell, false);
   }
+});
+
+/**
+ * The session-scoped injection/outcome join behind the Console's "Injection
+ * events and reported outcomes" panel. Its filters are claims about stored
+ * rows: each must either match the stored vocabulary or be refused, because an
+ * unmatchable filter answered with an empty page reads as "nothing exists".
+ */
+function outcomeJoinRequest(
+  overrides: Partial<MemoryInjectionOutcomeJoinRequest> = {}
+): MemoryInjectionOutcomeJoinRequest {
+  return {
+    context: { ...context, canReadTaskHistory: true },
+    ...overrides
+  };
+}
+
+async function reportedOutcomeJoin(): Promise<{
+  readonly repository: FakeMemoryRepository;
+  readonly service: MemoryService;
+}> {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  await persistOutcomeInjection(repository, service);
+  await service.recordOutcomeReport({
+    report: outcomeReport(),
+    actor: root,
+    context: context
+  });
+  return { repository, service };
+}
+
+test("the injection/outcome join refuses a reader without task history instead of returning nothing", async () => {
+  const { repository, service } = await reportedOutcomeJoin();
+
+  await assert.rejects(
+    service.listInjectionOutcomeJoins({
+      context: { ...context, canReadTaskHistory: false }
+    }),
+    MemoryAuthorizationError
+  );
+
+  // The refusal has to happen at the boundary. Answering from the post-read
+  // visibility filter instead would report an empty page for a session that
+  // does have rows, and `total` would still carry the repository's count.
+  assert.equal(repository.outcomeJoinRequests.length, 0);
+});
+
+test("the injection/outcome join refuses a memory mode outside the vocabulary", async () => {
+  const { repository, service } = await reportedOutcomeJoin();
+
+  // One bogus entry sits well inside the five-member bound, which is why this
+  // read once forwarded it to storage and came back empty.
+  await assert.rejects(
+    service.listInjectionOutcomeJoins(
+      outcomeJoinRequest({
+        memoryModes: ["not-a-mode"] as unknown as MemoryExecutionMode[]
+      })
+    ),
+    MemoryValidationError
+  );
+  assert.equal(repository.outcomeJoinRequests.length, 0);
+});
+
+test("the injection/outcome join refuses a memory mode list longer than the vocabulary", async () => {
+  const { service } = await reportedOutcomeJoin();
+
+  // Six entries, every one of them a valid mode, so the vocabulary check
+  // cannot be what refuses this: only the bound can. Without it the duplicate
+  // list is forwarded and expands into six bind parameters for one mode.
+  await assert.rejects(
+    service.listInjectionOutcomeJoins(
+      outcomeJoinRequest({
+        memoryModes: Array.from(
+          { length: 6 },
+          () => "jit"
+        ) as unknown as MemoryExecutionMode[]
+      })
+    ),
+    MemoryValidationError
+  );
+});
+
+test("the injection/outcome join refuses an injection result and a report kind outside the vocabularies", async () => {
+  const { repository, service } = await reportedOutcomeJoin();
+
+  await assert.rejects(
+    service.listInjectionOutcomeJoins(
+      outcomeJoinRequest({
+        injectionResults: [
+          "not-a-result"
+        ] as unknown as MemoryInjectionResult[]
+      })
+    ),
+    MemoryValidationError
+  );
+  await assert.rejects(
+    service.listInjectionOutcomeJoins(
+      outcomeJoinRequest({
+        reportKinds: ["not-a-kind"] as unknown as MemoryOutcomeReportKind[]
+      })
+    ),
+    MemoryValidationError
+  );
+  assert.equal(repository.outcomeJoinRequests.length, 0);
+});
+
+test("the injection/outcome join refuses an outcome kind outside the vocabulary", async () => {
+  const { repository, service } = await reportedOutcomeJoin();
+
+  // The Control API builds `outcomeKinds` from EXPERIENCE_OUTCOMES, but the
+  // service never checked the field it was actually handed.
+  await assert.rejects(
+    service.listInjectionOutcomeJoins(
+      outcomeJoinRequest({
+        outcomeKinds: ["not-an-outcome"] as unknown as ExperienceOutcome[]
+      })
+    ),
+    MemoryValidationError
+  );
+  assert.equal(repository.outcomeJoinRequests.length, 0);
+});
+
+test("the injection/outcome join accepts every stored vocabulary and returns the reported row", async () => {
+  const { repository, service } = await reportedOutcomeJoin();
+
+  const page = await service.listInjectionOutcomeJoins(
+    outcomeJoinRequest({
+      memoryModes: ["jit"],
+      injectionResults: ["injected"],
+      outcomeKinds: ["success"],
+      reportKinds: ["task"]
+    })
+  );
+
+  assert.equal(page.total, 1);
+  assert.equal(page.items.length, 1);
+  assert.equal(page.items[0]?.outcome?.outcomeKind, "success");
+  assert.equal(page.items[0]?.injection.correlationToken, "private-correlation-token");
+  assert.equal(repository.outcomeJoinRequests.length, 1);
+});
+
+test("includeUnreported surfaces a stored injection that has no outcome yet", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  await persistOutcomeInjection(repository, service);
+
+  const reportedOnly = await service.listInjectionOutcomeJoins(
+    outcomeJoinRequest()
+  );
+  assert.equal(reportedOnly.total, 0);
+
+  const unreported = await service.listInjectionOutcomeJoins(
+    outcomeJoinRequest({ includeUnreported: true })
+  );
+  assert.equal(unreported.total, 1);
+  assert.equal(unreported.items[0]?.outcome, null);
+});
+
+test("the injection/outcome join keys on the session and ignores request-level run and agent identity", async () => {
+  const { service } = await reportedOutcomeJoin();
+
+  // The stored event keeps the request-level runId/agentId the reporter context
+  // does not carry; comparing them would hide every row of a real session.
+  const page = await service.listInjectionOutcomeJoins(outcomeJoinRequest());
+
+  assert.equal(page.items.length, 1);
+  assert.equal(page.items[0]?.injection.runId, "private-injection-run-id");
+  assert.equal(page.items[0]?.injection.agentId, "private-injection-agent-id");
+});
+
+test("a row belonging to another session never appears in the join", async () => {
+  const { repository, service } = await reportedOutcomeJoin();
+  repository.injectionEvents.set(
+    "foreign-token",
+    outcomeInjectionEvent({
+      id: "foreign-injection-id",
+      correlationToken: "foreign-token",
+      taskId: "task-other",
+      runId: "run-other",
+      agentId: "agent-other"
+    })
+  );
+
+  const page = await service.listInjectionOutcomeJoins(outcomeJoinRequest());
+
+  // Enforced here by the repository's session scope, which the service passes
+  // down in its own context. The service re-checks the row after the read so a
+  // repository that returned more than it was asked for still cannot leak it;
+  // that re-check is not what this assertion exercises.
+  assert.equal(page.total, 1);
+  assert.equal(page.items.length, 1);
+  assert.equal(page.items[0]?.injection.correlationToken, "private-correlation-token");
+});
+
+test("an outcome recorded against another session is dropped from the join", async () => {
+  const { repository, service } = await reportedOutcomeJoin();
+  // Same correlation token, so the join attaches it; the session is not the
+  // reporter's. The repository's scope filter covers the event, not the
+  // outcome joined onto it, so this is the service's own visibility check.
+  repository.outcomeReports.set(
+    "private-correlation-token",
+    outcomeReport({
+      id: "foreign-outcome-report-id",
+      taskId: "task-other"
+    })
+  );
+
+  const page = await service.listInjectionOutcomeJoins(outcomeJoinRequest());
+
+  assert.equal(page.items.length, 0);
 });

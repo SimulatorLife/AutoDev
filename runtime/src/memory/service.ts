@@ -27,7 +27,6 @@ import {
   isMemoryUseKind,
   isMemoryExperiencePurgeReason,
   MEMORY_EXECUTION_MODES,
-  MEMORY_OUTCOME_REPORT_KINDS,
   MEMORY_REASON_CODES,
   type MemoryActor,
   type MemoryAuthority,
@@ -277,6 +276,13 @@ function recordMemoryMetric(record: () => void): void {
  * requires the explicit curator task-history grant; this intentionally
  * does not widen `isMemoryScopeVisibleTo`, which remains an exact match
  * for ordinary memory records.
+ *
+ * Defence in depth: the repository already scopes the query to the same
+ * session key, so the check on the injection side of a join is unreachable
+ * for a repository that honours its context. It stays because this is the
+ * only thing standing between an over-returning repository and a leak, and
+ * the outcome side is not covered by the repository's own scope filter --
+ * an outcome row is joined onto its event by correlation token.
  */
 function isInjectionOutcomeVisibleToSession(
   row: {
@@ -1334,20 +1340,21 @@ export class MemoryService
     return this.withSpan(
       MEMORY_OPERATIONS.injectionOutcomeList,
       async (span) => {
-        if (
-          request.memoryModes !== undefined &&
-          request.memoryModes.length > MEMORY_EXECUTION_MODES.length
-        ) {
-          throw new MemoryValidationError(
-            "Injection/outcome join memory mode filter is invalid."
+        if (request.context.canReadTaskHistory !== true) {
+          throw new MemoryAuthorizationError(
+            "Task-history access is required to read injection/outcome outcomes."
           );
         }
+        // Every filter here is a narrowing claim about stored rows, so a filter
+        // that cannot apply must be refused rather than answered with an empty
+        // page. `assertMemoryModes` is the same bound-plus-vocabulary check
+        // `listExperiences` uses; inlining only the bound here once let an
+        // unknown mode through, so the repository was asked for rows that
+        // cannot exist and the caller read the result as "no outcomes".
+        this.assertMemoryModes(request.memoryModes);
         if (
           request.injectionResults !== undefined &&
-          request.injectionResults.some(
-            (value) =>
-              value !== "injected" && value !== "empty" && value !== "skipped"
-          )
+          request.injectionResults.some((value) => !isMemoryInjectionResult(value))
         ) {
           throw new MemoryValidationError(
             "Injection/outcome join injection result filter is invalid."
@@ -1355,14 +1362,15 @@ export class MemoryService
         }
         if (
           request.reportKinds !== undefined &&
-          request.reportKinds.some(
-            (kind) => !MEMORY_OUTCOME_REPORT_KINDS.includes(kind as never)
-          )
+          request.reportKinds.some((kind) => !isMemoryOutcomeReportKind(kind))
         ) {
           throw new MemoryValidationError(
             "Injection/outcome join report kind filter is invalid."
           );
         }
+        // The Control API supplies `outcomeKinds` from this same vocabulary,
+        // but nothing validated it at the service boundary before.
+        this.assertExperienceOutcomes(request.outcomeKinds);
         // Session/task-scoped visibility: the reporter context carries the
         // session-level task id (Codex capture uses taskId=runId=agentId=
         // sessionId). The injection event row, however, retains request-level
