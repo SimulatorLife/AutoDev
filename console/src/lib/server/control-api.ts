@@ -1551,7 +1551,26 @@ function isControlApiEvaluationsResponse(
     // whole history.
     typeof value.truncated === "boolean" &&
     Array.isArray(value.evaluations) &&
-    value.evaluations.every(isEvaluationRow)
+    value.evaluations.every(isEvaluationRow) &&
+    // The envelope's two size claims must agree with the rows it carries, in
+    // both directions, because the view renders each one as a different fact.
+    //
+    // A `totalEvaluations` below `evaluations.length` is a total that cannot
+    // contain what it totals. Nothing produces one -- the Runtime computes
+    // `totalEvaluations` as the table's own size -- so it is unreadable evidence,
+    // not a surprising store. It was accepted, and the card then rendered the
+    // store as "1" with the subtitle "the most recent 120 in this view": a
+    // denominator smaller than its own numerator, on the page the target state
+    // requires never to bias displayed totals.
+    //
+    // The other direction is the same lie told quietly: `truncated: false` over
+    // a total larger than the rows is a capped window describing itself as the
+    // whole history, which is exactly what `truncated` exists to prevent. The
+    // Runtime derives the flag with this precise comparison
+    // (`truncated: page.total > page.results.length`), so enforcing the same
+    // comparison here cannot reject a response this Runtime produced.
+    value.totalEvaluations >= value.evaluations.length &&
+    value.truncated === value.totalEvaluations > value.evaluations.length
   );
 }
 

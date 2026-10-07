@@ -6038,6 +6038,132 @@ test("fetchEvaluations rejects a response that will not say whether it is capped
   }
 });
 
+test("fetchEvaluations rejects a response whose size claims contradict its rows", async () => {
+  // `truncated` being present is not the same as it being right. The envelope
+  // makes two claims about how much exists -- `totalEvaluations` and `truncated` --
+  // and the view renders each as a different fact: the retained-results card
+  // shows the total, and the card's own subtitle and the pager describe the
+  // window. When the claims contradict the rows they ship with, those two
+  // renderings disagree in a way no operator can resolve from the page.
+  //
+  // A total below the row count is the loud one, and it was reachable: the card
+  // rendered "1" with the subtitle "the most recent 120 in this view" -- a
+  // denominator smaller than its own numerator, which is the target state's
+  // "biasing displayed totals" with nothing on screen saying the numbers are
+  // wrong. The Runtime cannot produce it (`totalEvaluations` is the table's own
+  // size), so it is unreadable evidence rather than a surprising store.
+  //
+  // `truncated: false` over a total larger than the rows is the same defect told
+  // quietly: a capped window describing itself as the whole history, which is
+  // the one thing the field exists to prevent. The Runtime derives the flag with
+  // this exact comparison, so requiring the same one here cannot reject a
+  // response this Runtime produced.
+  const row = (id: string) => ({
+    id,
+    agentRole: "orchestrator",
+    promptName: "dry",
+    model: "gpt-5.6-terra",
+    metrics: [{ name: "relevance", value: 0.95, pass: true }],
+    passed: true,
+    timestamp: "2026-10-05T12:00:00.000Z"
+  });
+  const envelope = (
+    totalEvaluations: number,
+    truncated: boolean,
+    evaluations: unknown[]
+  ) => ({
+    schema: "autodev-control-evaluations-v1",
+    source: "openlit_evaluation",
+    readOnly: true,
+    totalEvaluations,
+    truncated,
+    evaluations
+  });
+  const read = async (body: unknown) =>
+    fetchEvaluations(
+      { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" },
+      { fetchImpl: (async () => Response.json(body)) as typeof fetch }
+    );
+
+  for (const [what, body] of [
+    [
+      "a total smaller than the rows it totals",
+      envelope(1, false, [row("a"), row("b")])
+    ],
+    ["a window that will not say it is capped", envelope(5000, false, [])]
+  ] as const) {
+    const rejected = await read(body);
+    assert.equal(
+      rejected.kind,
+      "invalid-response",
+      `${what} must not reach the view`
+    );
+    if (rejected.kind === "invalid-response") {
+      assert.equal(
+        rejected.code,
+        "autodev_control_api_invalid_evaluations_response",
+        `${what} is reported as a malformed Evaluations read`
+      );
+    }
+  }
+
+  // The two consistent shapes, so the rejections above are not just a stricter
+  // rule with nothing behind it.
+  for (const [total, truncated, count] of [
+    [1, false, 1],
+    [5000, true, 0]
+  ] as const) {
+    const ok = await read(
+      envelope(
+        total,
+        truncated,
+        Array.from({ length: count }, (_, i) => row(`r${i}`))
+      )
+    );
+    assert.equal(
+      ok.kind,
+      "ok",
+      `total ${total}, truncated ${truncated} is consistent`
+    );
+  }
+
+  // Page level, because the boundary alone does not say what an operator sees.
+  // The target state's rule for this resource is that an unreadable source is
+  // never represented as a successful empty result: the page has to render the
+  // failure, with no retained-results card and no run table beside it.
+  const originalFetch = globalThis.fetch;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "evaluations-total-test-token";
+  process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/control/evaluations")) {
+      return Response.json(envelope(1, false, [row("a"), row("b")]));
+    }
+    throw new Error(`Unexpected Evaluations page request: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const markup = renderToStaticMarkup(await EvaluationsPage({}));
+    assert.match(
+      markup,
+      /data-error-code="autodev_control_api_invalid_evaluations_response"/,
+      "the page reports the contradictory envelope instead of rendering it"
+    );
+    assert.doesNotMatch(
+      markup,
+      /Retained results/,
+      "a rejected read states no retained-results card, rather than stating zero"
+    );
+    assert.doesNotMatch(
+      markup,
+      /No evaluation results match these filters/,
+      "and it is not the successful empty result the target state forbids"
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("a timestamp is never stamped with an offset the source did not write", () => {
   // The two tables on this resource rendered a timestamp two different ways --
   // the history table matched a regex, the trace table sliced the raw string --
