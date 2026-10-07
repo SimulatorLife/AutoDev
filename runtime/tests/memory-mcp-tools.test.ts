@@ -77,8 +77,16 @@ function recordingService(calls: RecordedCall[]): MemoryService {
 async function connect(
   calls: RecordedCall[]
 ): Promise<{ client: Client; close: () => Promise<void> }> {
+  return connectAs(SESSION, calls);
+}
+
+/** The same server under a session the test supplies, for the host-binding cases. */
+async function connectAs(
+  session: MemoryMcpSession,
+  calls: RecordedCall[] = []
+): Promise<{ client: Client; close: () => Promise<void> }> {
   const server = createMemoryMcpServer(recordingService(calls), {
-    current: () => SESSION
+    current: () => session
   });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -104,6 +112,160 @@ function onlyCall(calls: readonly RecordedCall[]): RecordedCall {
   assert.equal(calls.length, 1, `expected one service call, saw ${calls.length}`);
   return calls[0]!;
 }
+
+/**
+ * A session the host has actually bound to a run.
+ *
+ * `SESSION` alone is not one: its context carries no `runId`, and its context
+ * `taskId` is absent while the session names one. `experience_append` therefore
+ * refuses it outright -- correctly, and for a reason no test exercised until
+ * now. Every binding case below starts from this.
+ */
+const BOUND_SESSION: MemoryMcpSession = {
+  ...SESSION,
+  context: {
+    ...CONTEXT,
+    taskId: SESSION.taskId,
+    runId: "run-from-host"
+  }
+};
+
+const APPEND_ARGS = {
+  trajectory: {
+    format: "letta-trajectory-v1",
+    uri: "file:///workspace/session.jsonl",
+    digest: "a".repeat(64)
+  },
+  startedAt: "2026-09-30T10:00:00.000Z",
+  outcome: "success"
+} as const;
+
+/**
+ * An append only happens when the host has bound the run it is recording.
+ *
+ * The tool's own arguments carry no workspace, run, or agent -- by design, so a
+ * model cannot name its own identity. That makes the *absence* of a binding the
+ * interesting case: without one the append is refused rather than filed against
+ * a scope nothing can locate. Each case below breaks exactly one binding of a
+ * fully bound session, so the one under test is the only thing that can refuse
+ * it -- with the others passing.
+ */
+test("experience append refuses a host session that has not bound the run", async () => {
+  // Each case *omits* its binding rather than setting it to `undefined`:
+  // `exactOptionalPropertyTypes` is on, and an absent binding is the state under
+  // test -- a key that is present and undefined is a different thing.
+  const { taskId: _taskId, ...withoutTaskId } = BOUND_SESSION.context;
+  const { runId: _runId, ...withoutRunId } = BOUND_SESSION.context;
+  const { agentId: _agentId, ...withoutAgentId } = BOUND_SESSION.context;
+
+  const unbound: readonly {
+    readonly why: string;
+    readonly session: MemoryMcpSession;
+  }[] = [
+    {
+      why: "no workspace",
+      session: {
+        ...BOUND_SESSION,
+        context: { ...BOUND_SESSION.context, workspaceId: "" }
+      }
+    },
+    { why: "no task in the read context", session: { ...BOUND_SESSION, context: withoutTaskId } },
+    {
+      why: "the session names a task the context does not",
+      session: { ...BOUND_SESSION, taskId: "task-the-host-did-not-select" }
+    },
+    { why: "no run", session: { ...BOUND_SESSION, context: withoutRunId } },
+    { why: "no agent", session: { ...BOUND_SESSION, context: withoutAgentId } }
+  ];
+
+  // The bound session is accepted, so every refusal below is attributable to the
+  // one binding it breaks rather than to the harness.
+  const accepted: RecordedCall[] = [];
+  const bound = await connectAs(BOUND_SESSION, accepted);
+  try {
+    const response = await bound.client.callTool({
+      name: "experience_append",
+      arguments: APPEND_ARGS
+    });
+    assert.notEqual(
+      response.isError,
+      true,
+      `a bound session must append: ${JSON.stringify(response.content)}`
+    );
+    assert.equal(accepted.length, 1);
+  } finally {
+    await bound.close();
+  }
+
+  for (const { why, session } of unbound) {
+    const calls: RecordedCall[] = [];
+    const { client, close } = await connectAs(session, calls);
+    try {
+      const response = await client.callTool({
+        name: "experience_append",
+        arguments: APPEND_ARGS
+      });
+      assert.equal(
+        response.isError,
+        true,
+        `an unbound session must be refused: ${why}`
+      );
+      assert.equal(calls.length, 0, `nothing may reach the service: ${why}`);
+    } finally {
+      await close();
+    }
+  }
+});
+
+test("the evidence cap counts the trajectory reference too, and lands on 64", async () => {
+  // The schema allows at most 64 caller references and the trajectory reference
+  // is prepended to them, so 64 becomes 65 once deduplicated -- and that is the
+  // only input the runtime cap can ever see. The boundary therefore sits exactly
+  // one below the schema ceiling, which is the case a naive implementation gets
+  // wrong by forwarding the deduplicated list unchecked.
+  const evidence = (count: number) =>
+    Array.from({ length: count }, (_unused, index) => ({
+      kind: "document" as const,
+      uri: `https://example.invalid/${index}`
+    }));
+
+  const accepted: RecordedCall[] = [];
+  const first = await connectAs(BOUND_SESSION, accepted);
+  try {
+    const response = await first.client.callTool({
+      name: "experience_append",
+      arguments: { ...APPEND_ARGS, evidence: evidence(63) }
+    });
+    assert.notEqual(
+      response.isError,
+      true,
+      `63 references plus the trajectory is exactly the cap: ${JSON.stringify(response.content)}`
+    );
+    const forwarded = (
+      onlyCall(accepted).args[0] as { evidence: readonly unknown[] }
+    ).evidence;
+    assert.equal(forwarded.length, 64, "63 references plus the trajectory");
+  } finally {
+    await first.close();
+  }
+
+  const refused: RecordedCall[] = [];
+  const second = await connectAs(BOUND_SESSION, refused);
+  try {
+    const response = await second.client.callTool({
+      name: "experience_append",
+      arguments: { ...APPEND_ARGS, evidence: evidence(64) }
+    });
+    assert.equal(
+      response.isError,
+      true,
+      "65 deduplicated references is over the cap"
+    );
+    assert.equal(refused.length, 0, "nothing may reach the service past the cap");
+  } finally {
+    await second.close();
+  }
+});
 
 test("every registered memory tool is callable with the session's authority", async () => {
   const calls: RecordedCall[] = [];
