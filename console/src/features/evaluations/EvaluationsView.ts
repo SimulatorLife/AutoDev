@@ -246,49 +246,105 @@ function metricCell(evaluation: EvaluationResult): React.JSX.Element {
   );
 }
 
-const UTC_TIMESTAMP = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/u;
+/** `YYYY-MM-DD`. */
+const UTC_DATE = /^\d{4}-\d{2}-\d{2}$/u;
+/** `HH:MM:SS`. */
+const UTC_CLOCK = /^\d{2}:\d{2}:\d{2}$/u;
+/** `Z`, or a signed offset. */
+const UTC_OFFSET = /^(?:Z|[+-]\d{2}:\d{2})$/u;
+/** The digits of a fractional second, which the clock reading does not include. */
+const FRACTION = /^\d+/u;
 
 /**
- * Run time, split so it can break between its parts.
+ * One instant, split into the parts a cell renders: a date, and where the source
+ * wrote them, a clock and an offset.
  *
- * The raw ISO string is 24 characters and has no break opportunity, so a column
- * holding one either truncates or pushes every other column out. Rendering the
- * date and the clock as two items in a wrapping row gives the column a natural
- * 10-character budget and lets the row fold onto two lines at a narrow width
+ * Fixed-width checks in sequence rather than one pattern, for two reasons. The
+ * shape here *is* fixed-width, so each piece is a trivial test. And a single
+ * nested-quantifier regex for it trips `detect-unsafe-regex`, which is a report
+ * worth answering rather than suppressing -- so this is the answer.
+ *
+ * Anything that is not an ISO instant comes back whole, which is the property
+ * that matters: a value that cannot be cut into parts is not cut into parts.
+ */
+function splitInstant(timestamp: string): {
+  readonly date: string;
+  readonly clock?: string | undefined;
+  readonly offset?: string | undefined;
+} {
+  const date = timestamp.slice(0, 10);
+  if (!UTC_DATE.test(date) || timestamp.length === 10)
+    return { date: timestamp };
+  if (timestamp[10] !== "T") return { date: timestamp };
+  const clock = timestamp.slice(11, 19);
+  if (!UTC_CLOCK.test(clock)) return { date: timestamp };
+
+  let offset = timestamp.slice(19);
+  // A fractional second belongs to the instant, not to the clock reading, so it
+  // is skipped rather than rendered as a third number.
+  if (offset.startsWith(".")) {
+    const digits = offset.slice(1).match(FRACTION);
+    if (digits === null) return { date: timestamp };
+    offset = offset.slice(1 + digits[0].length);
+  }
+  return offset === "" || UTC_OFFSET.test(offset)
+    ? { date, clock, offset }
+    : { date: timestamp };
+}
+
+/**
+ * A timestamp, split so it can break between its parts, and never stamped with
+ * an offset it did not read.
+ *
+ * Both tables on this resource render a timestamp, and they did it two ways: the
+ * history table matched a regex and the trace table sliced the raw string, and
+ * both appended a `Z` the source never had to contain. A span stamped
+ * `2026-10-05T09:31:00+02:00` rendered as `09:31:00Z` -- the same clock reading
+ * under a zone label it was not in, which is a claim about the data, not about
+ * formatting. The wire only requires a timestamp to *parse*: the trace validator
+ * checks `Date.parse`, not the shape, and the evaluation validator checks only
+ * that it is a string, so a `+02:00` offset, a date-only value, and an
+ * unreadable one all reach the view intact.
+ *
+ * The source's own offset is kept, then: `Z` stays `Z`, `+02:00` stays
+ * `+02:00`, a value with no offset shows none, and a value that is not an ISO
+ * instant is shown whole.
+ *
+ * Splitting is what makes it fit. The raw string is 24 characters with no break
+ * opportunity, so a column holding one either truncates or pushes every other
+ * column out; the date and the clock as two items in a wrapping row give the
+ * column a natural 10-character budget and let the row fold at a narrow width
  * instead of losing the seconds. The full value stays on `title`, and the
  * machine-readable form stays in `dateTime`.
+ *
+ * `min-w-0` on both parts is what keeps a narrow column from overflowing. A flex
+ * item defaults to `min-width: auto`, so `2026-10-05` refuses to shrink below
+ * its own width and the cell paints straight through the table's right edge --
+ * outside the scroll container that was supposed to contain it. The trace table
+ * did not have it, which is the other half of why this is one function now.
  */
-function runTimeCell(evaluation: EvaluationResult): React.JSX.Element {
-  const match = UTC_TIMESTAMP.exec(evaluation.timestamp);
-  const parts = match
-    ? { date: match[1] ?? "", time: `${match[2] ?? ""}Z` }
-    : { date: evaluation.timestamp, time: "" };
-  // `min-w-0` on both parts is what keeps a narrow column from overflowing.
-  // A flex item defaults to `min-width: auto`, so `2026-10-05` refuses to
-  // shrink below its own width and the cell paints straight through the table's
-  // right edge -- outside the scroll container that was supposed to contain it.
-  // Allowing each part to break instead means a narrow column folds the value
-  // onto more lines rather than losing it off-screen.
+function timestampCell(timestamp: string): React.JSX.Element {
+  const { date, clock, offset } = splitInstant(timestamp);
   return React.createElement(
     "span",
     {
       className: "flex flex-wrap items-baseline gap-x-1.5",
-      title: evaluation.timestamp
+      title: timestamp
     },
     React.createElement(
       "time",
       {
-        dateTime: evaluation.timestamp,
+        dateTime: timestamp,
         className: `${MONO_META_CLASS} min-w-0 break-words`
       },
-      parts.date
+      date
     ),
-    parts.time === ""
+    clock === undefined
       ? null
       : React.createElement(
           "span",
           { className: `${MONO_META_CLASS} min-w-0 break-words` },
-          parts.time
+          `${clock}${offset ?? ""}`
         )
   );
 }
@@ -395,26 +451,13 @@ function traceColumns(
     {
       id: "timestamp",
       header: "Start time",
-      weight: 130,
+      // Sized for the longest honest clock reading, which is a `+HH:MM` offset
+      // and not the nine characters of a bare `Z`. At 130 this column broke
+      // `11:48:00+02:00` across two lines as `+02:0` and `0`, which is a
+      // mid-token break of the very value the column exists to show.
+      weight: 150,
       align: "tokens",
-      cell: (span) =>
-        React.createElement(
-          "span",
-          {
-            className: "flex flex-wrap items-baseline gap-x-1.5",
-            title: span.timestamp
-          },
-          React.createElement(
-            "time",
-            { dateTime: span.timestamp, className: MONO_META_CLASS },
-            span.timestamp.slice(0, 10)
-          ),
-          React.createElement(
-            "span",
-            { className: MONO_META_CLASS },
-            `${span.timestamp.slice(11, 19)}Z`
-          )
-        )
+      cell: (span) => timestampCell(span.timestamp)
     },
     {
       id: "duration",
@@ -1397,7 +1440,7 @@ export function EvaluationsView({
       header: "Run Time",
       weight: 104,
       align: "tokens",
-      cell: runTimeCell
+      cell: (evaluation) => timestampCell(evaluation.timestamp)
     }
   ];
 

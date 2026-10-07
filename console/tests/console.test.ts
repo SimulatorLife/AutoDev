@@ -6048,6 +6048,106 @@ test("a timestamp is never stamped with an offset the source did not write", () 
   assert.match(trace("2026-10-05T09:31:00Z"), /break-words/);
 });
 
+test("a timestamp is never stamped with an offset the source did not write", () => {
+  // The two tables on this resource rendered a timestamp two different ways --
+  // the history table matched a regex, the trace table sliced the raw string --
+  // and both appended a `Z` the source never had to contain. A span stamped
+  // `+02:00` rendered as `09:31:00Z`: the same clock reading under a zone label
+  // it was not in, which is a claim about the data rather than about formatting.
+  // The wire only requires a timestamp to parse -- the trace validator checks
+  // `Date.parse`, the evaluation validator only `typeof === "string"` -- so an
+  // offset, a date-only value and an unreadable one all reach the view intact.
+  const spanId = "0123456789abcdef";
+  const trace = (timestamp: string): string =>
+    renderEvaluations({
+      evaluations: [],
+      filters: {
+        outcome: "all",
+        role: "",
+        model: "",
+        prompt: "",
+        from: "",
+        until: ""
+      },
+      traceLookup: {
+        kind: "observed",
+        detail: {
+          schema: "autodev-openlit-trace-detail-v1",
+          traceId: "0123456789abcdef0123456789abcdef",
+          selectedSpanId: spanId,
+          partial: false,
+          spans: [
+            {
+              spanId,
+              parentSpanId: null,
+              spanName: "gen_ai.client_operation",
+              serviceName: "autodev-router",
+              timestamp,
+              durationNs: 1_250_000,
+              statusCode: "OK"
+            }
+          ]
+        }
+      }
+    });
+  const run = (timestamp: string): string =>
+    renderEvaluations({
+      evaluations: [
+        {
+          id: "run-1",
+          agentRole: "worker",
+          model: "m-1",
+          metrics: [],
+          passed: true,
+          timestamp
+        }
+      ]
+    });
+
+  // The source's own offset is kept.
+  assert.match(trace("2026-10-05T09:31:00Z"), /09:31:00Z/);
+  assert.match(
+    trace("2026-10-05T09:31:00.000Z"),
+    /09:31:00Z/,
+    "a fractional second is not part of the clock reading"
+  );
+  assert.match(
+    trace("2026-10-05T09:31:00+02:00"),
+    /09:31:00\+02:00/,
+    "a non-UTC offset is shown, not silently relabelled as UTC"
+  );
+  assert.doesNotMatch(trace("2026-10-05T09:31:00+02:00"), /09:31:00Z/);
+  assert.match(
+    trace("2026-10-05T09:31:00"),
+    />09:31:00</,
+    "a timestamp with no offset shows none rather than borrowing one"
+  );
+
+  // A value that is not an ISO instant is shown whole, not cut into a date and a
+  // clock that never were one.
+  assert.match(
+    trace("whenever it was"),
+    /whenever it was/,
+    "an unreadable instant is not sliced into invented parts"
+  );
+  assert.doesNotMatch(trace("whenever it was"), /Z<\/span>/);
+  assert.match(
+    trace("2026-10-05"),
+    /2026-10-05/,
+    "a date-only value keeps its date and invents no clock"
+  );
+  assert.doesNotMatch(trace("2026-10-05"), />Z</);
+
+  // Both tables, because the two copies are the defect: the history table gets
+  // the same treatment, so the columns cannot disagree about what a timestamp is.
+  assert.match(run("2026-10-05T09:31:00+02:00"), /09:31:00\+02:00/);
+  assert.match(run("2026-10-05T09:31:00Z"), /09:31:00Z/);
+  assert.match(run("whenever it was"), /whenever it was/);
+
+  // Every part carries `min-w-0`, which is what keeps a narrow column from
+  // painting through the table's right edge; the trace column never had it.
+  assert.match(trace("2026-10-05T09:31:00Z"), /break-words/);
+});
 test("an evaluation with no metrics reads as unobserved, not as an empty cell", () => {
   // The fixture reports a run with an empty `metrics` array. Rendering nothing
   // there makes the row indistinguishable from one that failed to render, and
