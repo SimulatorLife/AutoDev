@@ -19,7 +19,13 @@ const CONTRACT_TYPES = [
   "ControlApiMemoryRecordDetailResponse",
   "ControlApiMemoryStatusResponse",
   "ControlApiMemoryInjectionOutcomesResponse",
-  "ControlApiMemoryInjectionUseAssessmentsResponse"
+  "ControlApiMemoryInjectionUseAssessmentsResponse",
+  // The three cohort pages were the last memory responses still sent raw. They
+  // happened to conform; nothing had said so, which is the same position the
+  // history route was in before it turned out not to conform.
+  "ControlApiMemoryCohortsResponse",
+  "ControlApiMemoryUseCohortsResponse",
+  "MemoryInjectionOutcomeCohortPage"
 ];
 
 test("every declared memory response is checked against its own route payload", () => {

@@ -9,6 +9,7 @@ import {
   assertMemoryInjectionOutcomeCohortFilter,
   assertMemoryInjectionUseCohortFilter,
   assertMemorySessionOutcomeCohortFilter,
+  type ControlApiMemoryCohortsResponse,
   type ControlApiMemoryExperiencesResponse,
   type ControlApiMemoryHistoryResponse,
   type ControlApiMemoryInjectionOutcomesResponse,
@@ -16,6 +17,7 @@ import {
   type ControlApiMemoryRecordDetailResponse,
   type ControlApiMemoryRecordsResponse,
   type ControlApiMemoryStatusResponse,
+  type ControlApiMemoryUseCohortsResponse,
   type ControlApiMemoryWhyResponse,
   type EvidenceReference,
   EXPERIENCE_OUTCOMES,
@@ -32,6 +34,7 @@ import {
   MEMORY_USE_KINDS,
   type MemoryActor,
   type MemoryInjectionOutcomeCohortFilter,
+  type MemoryInjectionOutcomeCohortPage,
   type MemoryInjectionUseCohortFilter,
   type MemoryKind,
   type MemoryOutcomeReport,
@@ -2678,7 +2681,9 @@ async function serveInjectionOutcomeCohorts(
     outcome: "ok",
     changes: null
   });
-  sendJson(response, 200, page, { "cache-control": "no-store" });
+  sendJson(response, 200, page satisfies MemoryInjectionOutcomeCohortPage, {
+    "cache-control": "no-store"
+  });
 }
 
 function parseSessionOutcomeCohortFilter(
@@ -2859,7 +2864,9 @@ async function serveSessionOutcomeCohorts(
     outcome: "ok",
     changes: null
   });
-  sendJson(response, 200, page, { "cache-control": "no-store" });
+  sendJson(response, 200, page satisfies ControlApiMemoryCohortsResponse, {
+    "cache-control": "no-store"
+  });
 }
 
 async function serveInjectionUseCohorts(
@@ -2875,7 +2882,9 @@ async function serveInjectionUseCohorts(
     outcome: "ok",
     changes: null
   });
-  sendJson(response, 200, page, { "cache-control": "no-store" });
+  sendJson(response, 200, page satisfies ControlApiMemoryUseCohortsResponse, {
+    "cache-control": "no-store"
+  });
 }
 
 type ParsedMemoryControlFilters =
