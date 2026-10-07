@@ -56,6 +56,8 @@ import {
   type MemoryAssessmentReader,
   type MemoryAssessmentRecorder,
   MAX_CLAIM_LENGTH,
+  MAX_EVIDENCE_REVISION_CHARACTERS,
+  MAX_EVIDENCE_URI_CHARACTERS,
   MAX_QUERY_LENGTH,
   MemoryAuthorizationError,
   MemoryConflictError,
@@ -569,12 +571,13 @@ function evidenceReferences(value: unknown): readonly EvidenceReference[] {
   return value.map((entry) => {
     if (!isObject(entry) || !MEMORY_EVIDENCE_KINDS.includes(entry.kind as never))
       throw new MemoryValidationError("Memory evidence reference is invalid.");
-    const uri = requiredString(entry, "uri", 2048);
+    const uri = requiredString(entry, "uri", MAX_EVIDENCE_URI_CHARACTERS);
     const revision = entry.revision;
     const observedAt = entry.observedAt;
     if (
       revision !== undefined &&
-      (typeof revision !== "string" || revision.length > 256)
+      (typeof revision !== "string" ||
+        revision.length > MAX_EVIDENCE_REVISION_CHARACTERS)
     ) {
       throw new MemoryValidationError("Memory evidence revision is invalid.");
     }

@@ -40,6 +40,13 @@ const MAX_CAPTURE_VALIDATION_BYTES = 32 * 1024;
 const MAX_CAPTURE_VALIDATION_EVIDENCE = 64;
 const MAX_EVIDENCE_URI_LENGTH = 2000;
 const MAX_EVIDENCE_REVISION_LENGTH = 300;
+// Capture is the loosest boundary in the memory system: the service and the
+// Control API both admit 2048/256 for the same `EvidenceReference` type (see
+// `MAX_EVIDENCE_URI_CHARACTERS` in `service.ts`), and every consumer of a
+// captured reference re-measures it before use. Nothing copies capture evidence
+// into a memory without passing those checks, so the gap between the two pairs
+// is a difference in where a value is first measured rather than a path where
+// one side accepts what the other refuses.
 // The vocabularies come from Core rather than being spelled here, because this
 // is the boundary a capture crosses into memory: the three lists below decided
 // what a capture may say about its own execution, and a capture that rejected a

@@ -216,9 +216,26 @@ const MAX_SKILL_DESCRIPTION_LENGTH = 512;
 const MAX_SKILL_CONTENT_LENGTH = 20_000;
 const MEMORY_SKILL_NAME_PATTERN = /^[a-z0-9-]{1,64}$/u;
 
+/**
+ * Evidence-reference bounds, owned here because both the injection event and
+ * the proposal/revision routes measure the same `EvidenceReference` type and
+ * were previously spelling the numbers out independently.
+ *
+ * Capture admits a looser pair (2000/300, in `capture-main.ts`) as the
+ * boundary machine-written provenance crosses first. The two never collide: a
+ * captured reference is not copied into a memory without being re-validated,
+ * because the only two proposal call sites take their evidence from the caller
+ * rather than from the experience. Which pair is correct for a given boundary
+ * is a question about where a value is first measured, so the looser one is
+ * documented rather than silently widened.
+ */
+export const MAX_EVIDENCE_URI_CHARACTERS = 2048;
+export const MAX_EVIDENCE_REVISION_CHARACTERS = 256;
+
 const MAX_INJECTION_MEMORY_IDS = 64;
-const MAX_INJECTION_REVISION_LENGTH = 256;
-const MAX_INJECTION_URI_LENGTH = 2048;
+const MAX_INJECTION_MEMORY_ID_CHARACTERS = 256;
+const MAX_INJECTION_CORRELATION_TOKEN_CHARACTERS = 256;
+const MAX_INJECTION_TOKEN_COUNT = 8000;
 
 const MEMORY_OPERATIONS = {
   embed: "memory.embed",
@@ -840,7 +857,7 @@ export class MemoryService
       }
       if (
         !event.correlationToken.trim() ||
-        event.correlationToken.length > 256
+        event.correlationToken.length > MAX_INJECTION_CORRELATION_TOKEN_CHARACTERS
       ) {
         throw new MemoryValidationError(
           "Injection event correlationToken is required and bounded."
@@ -854,17 +871,21 @@ export class MemoryService
       if (
         event.memoryIds.some(
           (memoryId) =>
-            !memoryId.trim() || memoryId.length > MAX_INJECTION_REVISION_LENGTH
+            !memoryId.trim() ||
+            memoryId.length > MAX_INJECTION_MEMORY_ID_CHARACTERS
         )
       ) {
         throw new MemoryValidationError(
           "Injection event memory ids are invalid."
         );
       }
+      // The same bound `research` enforced on the packet this event describes.
+      // Spelled out here as a literal, it was free to drift away from a packet
+      // the system could no longer produce.
       if (
         !Number.isInteger(event.packetCharacterCount) ||
         event.packetCharacterCount < 0 ||
-        event.packetCharacterCount > 24_000
+        event.packetCharacterCount > MAX_PACKET_CHARACTERS
       ) {
         throw new MemoryValidationError(
           "Injection event packet character count is invalid."
@@ -874,7 +895,7 @@ export class MemoryService
         event.packetTokenCount !== undefined &&
         (!Number.isInteger(event.packetTokenCount) ||
           event.packetTokenCount < 0 ||
-          event.packetTokenCount > 8000)
+          event.packetTokenCount > MAX_INJECTION_TOKEN_COUNT)
       ) {
         throw new MemoryValidationError(
           "Injection event packet token count is invalid."
@@ -883,9 +904,9 @@ export class MemoryService
       for (const reference of event.evidence) {
         if (
           !reference.uri ||
-          reference.uri.length > MAX_INJECTION_URI_LENGTH ||
+          reference.uri.length > MAX_EVIDENCE_URI_CHARACTERS ||
           (reference.revision !== undefined &&
-            reference.revision.length > MAX_INJECTION_REVISION_LENGTH)
+            reference.revision.length > MAX_EVIDENCE_REVISION_CHARACTERS)
         ) {
           throw new MemoryValidationError(
             "Injection event evidence reference is invalid."

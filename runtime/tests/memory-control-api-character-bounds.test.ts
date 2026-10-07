@@ -187,13 +187,18 @@ function proposeService(): Partial<Record<keyof MemoryService, unknown>> {
   return { propose: async () => storedRecord() };
 }
 
-function proposalBody(claim: string): Record<string, unknown> {
+function proposalBody(
+  claim: string,
+  evidence: readonly Record<string, unknown>[] = [
+    { kind: "file", uri: "runs/42/result.json" }
+  ]
+): Record<string, unknown> {
   return {
     kind: "semantic",
     scope: { ...REPOSITORY_SCOPE },
     claim,
     experienceIds: ["exp-1"],
-    evidence: [{ kind: "file", uri: "runs/42/result.json" }]
+    evidence
   };
 }
 
@@ -226,6 +231,81 @@ test("a proposed claim is bounded by the same limit the service refuses", async 
     pastBound.serviceCalls(),
     0,
     "an over-long claim must be refused at the route, not stored and rejected later"
+  );
+});
+
+test("proposal evidence is bounded on both the uri and the revision", async () => {
+  // 2048 and 256, written out rather than imported. The service measures the
+  // same `EvidenceReference` type at the same two numbers
+  // (`memory.test.ts` pins its own copy at 2049), and these two sites had been
+  // spelling them out independently as bare literals -- so a rename in one
+  // would have compiled cleanly and left the other enforcing something else.
+  const uriAtBound = await call(
+    "POST",
+    "/control/memory/records",
+    proposeService(),
+    proposalBody("A durable claim.", [
+      { kind: "file", uri: "u".repeat(2048) }
+    ])
+  );
+  assert.equal(
+    uriAtBound.response.statusCode,
+    200,
+    "an evidence uri at the bound must be accepted"
+  );
+  assert.equal(uriAtBound.serviceCalls(), 1);
+
+  const uriPastBound = await call(
+    "POST",
+    "/control/memory/records",
+    proposeService(),
+    proposalBody("A durable claim.", [
+      { kind: "file", uri: "u".repeat(2049) }
+    ])
+  );
+  assert.equal(
+    uriPastBound.response.statusCode,
+    400,
+    "an evidence uri past the bound must be refused with 400"
+  );
+  assert.equal(
+    uriPastBound.serviceCalls(),
+    0,
+    "an over-long evidence uri must be refused before the memory is written"
+  );
+
+  const revisionAtBound = await call(
+    "POST",
+    "/control/memory/records",
+    proposeService(),
+    proposalBody("A durable claim.", [
+      { kind: "commit", uri: "runs/42/result.json", revision: "r".repeat(256) }
+    ])
+  );
+  assert.equal(
+    revisionAtBound.response.statusCode,
+    200,
+    "an evidence revision at the bound must be accepted"
+  );
+  assert.equal(revisionAtBound.serviceCalls(), 1);
+
+  const revisionPastBound = await call(
+    "POST",
+    "/control/memory/records",
+    proposeService(),
+    proposalBody("A durable claim.", [
+      { kind: "commit", uri: "runs/42/result.json", revision: "r".repeat(257) }
+    ])
+  );
+  assert.equal(
+    revisionPastBound.response.statusCode,
+    400,
+    "an evidence revision past the bound must be refused with 400"
+  );
+  assert.equal(
+    revisionPastBound.serviceCalls(),
+    0,
+    "an over-long evidence revision must be refused before the memory is written"
   );
 });
 
