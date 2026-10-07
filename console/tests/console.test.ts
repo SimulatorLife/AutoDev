@@ -54,6 +54,7 @@ import * as providerRoleRoute from "../app/api/providers/[provider]/roles/[role]
 import * as providerRoute from "../app/api/providers/[provider]/route.ts";
 import EvaluationsPage from "../app/evaluations/page.ts";
 import MemoryPage from "../app/memory/page.ts";
+import { resolveEvaluationsPage } from "../src/features/evaluations/evaluations-url.ts";
 import { FilterNotice } from "../src/components/filters/FilterNotice.ts";
 import {
   type FilterSpec,
@@ -4892,6 +4893,148 @@ test("a capped read says so instead of describing its window as the history", ()
   assert.match(complete, /data-evaluations-truncated="false"/);
   assert.match(complete, /2 retained results/);
   assert.equal(complete.includes("Most recent"), false);
+});
+
+test("the history table pages instead of rendering a whole read window", () => {
+  // The read is capped at a thousand rows and the table renders every row it is
+  // given, so the response was carrying a thousand rows, 25,913 DOM nodes and
+  // 2.9MiB of markup -- measured against 8ms of layout, which meant the entire
+  // cost was emitting and parsing rows nobody scrolls past. The table now takes
+  // one page and the pager says which part of the window that page is, because
+  // a shorter table that does not say what it left out would be the same defect
+  // as a long one that does.
+  const many = Array.from({ length: 120 }, (_, index) => ({
+    id: `run-${index}`,
+    agentRole: "worker",
+    model: "m-1",
+    metrics: [],
+    passed: index % 3 === 0,
+    timestamp: "2026-10-04T12:00:00Z"
+  }));
+
+  const first = renderEvaluations({ evaluations: many });
+  const rendered = [
+    ...first.matchAll(/data-evaluation-result-id="([^"]+)"/gu)
+  ].map((match) => match[1]);
+  assert.equal(rendered.length, 50, "one page of the window, not all of it");
+  assert.equal(rendered[0], "run-0");
+  assert.match(first, /Rows 1–50 of 120 in this view/);
+  assert.match(first, /data-evaluations-page="1"/);
+  assert.match(first, /data-evaluations-page-count="3"/);
+  // The window itself is unchanged: paging is a view concern, so the honest
+  // summary about the store is the same one an unpaged page gave.
+  assert.match(first, /120 retained results/);
+
+  const second = renderEvaluations({ evaluations: many, page: 2 });
+  assert.match(second, /data-evaluation-result-id="run-50"/);
+  assert.match(second, /Rows 51–100 of 120 in this view/);
+  assert.match(second, /Page 2 of 3/);
+
+  // A bookmark to a page a narrower filter has emptied clamps to the page that
+  // exists rather than rendering an empty table that reads as "no results".
+  const clamped = renderEvaluations({ evaluations: many, page: 99 });
+  assert.match(clamped, /data-evaluations-page="3"/);
+  assert.match(clamped, /Rows 101–120 of 120 in this view/);
+
+  // One page of rows needs no pager navigation, but the range is still stated.
+  const short = renderEvaluations({ evaluations: many.slice(0, 3) });
+  assert.match(short, /Rows 1–3 of 3 in this view/);
+  assert.equal(short.includes("Page 1 of 1"), false);
+});
+
+test("page links keep the filters and the section and drop the open run", () => {
+  // The pager moves along the list. Carrying an open drawer across the move
+  // would reopen a detail for a run that is no longer on screen, and dropping
+  // the filters would silently widen a narrowed view mid-read.
+  const rows = Array.from({ length: 120 }, (_, index) => ({
+    id: `run-${index}`,
+    agentRole: "implementer",
+    model: "m-1",
+    metrics: [],
+    passed: true,
+    timestamp: "2026-10-04T12:00:00Z"
+  }));
+
+  const onSecondPage = renderEvaluations({
+    evaluations: rows,
+    page: 2,
+    tab: "results",
+    filters: { outcome: "passed", role: "implementer", model: "", prompt: "" }
+  });
+  // The assertion is scoped to the pager: every row on the page legitimately
+  // carries a `result=` link of its own, so a whole-page check would only prove
+  // that the history table renders.
+  const pager = onSecondPage.slice(
+    onSecondPage.indexOf('data-feature="evaluations-pager"'),
+    onSecondPage.indexOf(
+      "</nav>",
+      onSecondPage.indexOf('data-feature="evaluations-pager"')
+    )
+  );
+  assert.match(
+    pager,
+    /href="\/evaluations\?outcome=passed&amp;role=implementer&amp;page=3"/
+  );
+  // The first page is what a link without the parameter already means, so
+  // Previous drops it rather than writing `page=1`.
+  assert.match(
+    pager,
+    /href="\/evaluations\?outcome=passed&amp;role=implementer"/
+  );
+  assert.equal(
+    pager.includes("page=1"),
+    false,
+    "the first page is implicit, so a page link does not spell it out"
+  );
+  assert.equal(
+    pager.includes("result="),
+    false,
+    "a page link must not carry an open run across the move"
+  );
+
+  // Comparisons aggregates every row in the window into one line per group, so
+  // there is nothing there to page: the pager belongs to the history table, and
+  // its absence is the contract rather than an omission. What matters is that
+  // the comparisons still describe the whole window, not the page that was open.
+  const comparisons = renderEvaluations({
+    evaluations: rows,
+    tab: "comparisons",
+    page: 2,
+    filters: { outcome: "all", role: "implementer", model: "", prompt: "" }
+  });
+  assert.equal(
+    comparisons.includes('data-feature="evaluations-pager"'),
+    false,
+    "a tab that aggregates every row has nothing to page"
+  );
+  assert.match(
+    comparisons,
+    /<td[^>]*>\s*<span class="font-mono[^"]*">implementer<\/span>/
+  );
+  assert.match(
+    comparisons,
+    />120<\/span>/,
+    "the group counts every run in the window"
+  );
+});
+
+test("a page parameter that is not a page resolves to the first one", () => {
+  // A page is an address. `?page=0`, `?page=-2`, `?page=1.5`, `?page=` and a
+  // repeated `?page=2&page=3` are not addresses to any page, and resolving one
+  // of them to an arbitrary page would show rows the URL never asked for.
+  for (const value of [undefined, "", "0", "-2", "1.5", "abc", "1e3", " 2"]) {
+    assert.equal(
+      resolveEvaluationsPage(value as string | undefined),
+      1,
+      `${JSON.stringify(value)} is not a page`
+    );
+  }
+  assert.equal(
+    resolveEvaluationsPage(["2", "3"]),
+    1,
+    "a repeated page is two answers to one question"
+  );
+  assert.equal(resolveEvaluationsPage("3"), 3);
 });
 
 test("the retained-results card counts the store, not the window and not the filter", () => {

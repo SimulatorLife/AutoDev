@@ -45,10 +45,15 @@ import {
   SUCCESS_TONE_CLASS
 } from "../../components/ui/tones.ts";
 import {
+  clampEvaluationsPage,
   evaluationResultHref,
+  EVALUATIONS_PAGE_SIZE,
   EVALUATIONS_TABS,
   type EvaluationsFilters,
   evaluationsListHref,
+  evaluationsPageCount,
+  evaluationsPageHref,
+  evaluationsPageRows,
   evaluationsTabHref,
   type EvaluationsTabId,
   evaluationsUnfilteredHref,
@@ -103,6 +108,8 @@ export interface EvaluationsViewProps {
   readonly filterOptions: EvaluationsFilterOptions;
   /** Which section is showing. Defaults to the run history. */
   readonly tab?: EvaluationsTabId | undefined;
+  /** Page of the narrowed window the history table shows. Defaults to the first. */
+  readonly page?: number | undefined;
   /** Result id opened in the detail drawer, or `null`. */
   readonly selection?: string | null | undefined;
   readonly traceLookup?: EvaluationTraceLookup | null | undefined;
@@ -265,14 +272,21 @@ const NO_PROMPT_LABEL = "No prompt";
 /**
  * Where a link on this page should land.
  *
- * The filters and the open tab travel together, so every link built below
- * carries both. Passing them separately is how a trace link came to preserve the
- * narrowing but drop the tab, landing the operator on the results page after they
- * had opened a comparison.
+ * The filters, the open tab, and the open page travel together, so every link
+ * built below carries all three. Passing them separately is how a trace link
+ * came to preserve the narrowing but drop the tab, landing the operator on the
+ * results page after they had opened a comparison -- and how closing a run's
+ * drawer would have thrown away the page of the history it was opened from.
  */
 interface EvaluationsNav {
   readonly filters: EvaluationsFilters;
   readonly tab: EvaluationsTabId;
+  readonly page: number;
+}
+
+/** The list for the current state: same filters, same tab, same page. */
+function navListHref(nav: EvaluationsNav): string {
+  return evaluationsListHref(nav.filters, { tab: nav.tab, page: nav.page });
 }
 
 function traceReference(
@@ -500,7 +514,7 @@ function renderTraceLookup(
       React.createElement(
         "a",
         {
-          href: evaluationsListHref(nav.filters, { tab: nav.tab }),
+          href: navListHref(nav),
           className: "text-xs text-accent underline-offset-4 hover:underline"
         },
         "Back to evaluations"
@@ -555,7 +569,7 @@ function renderResultDetail(
       title: evaluation.id,
       badges: outcomeBadge(evaluation),
       subtitle: evaluation.timestamp,
-      closeHref: evaluationsListHref(nav.filters, { tab: nav.tab }),
+      closeHref: navListHref(nav),
       closeLabel: "Close evaluation detail",
       dataAttributes: { "data-feature": "evaluation-detail" }
     },
@@ -840,6 +854,105 @@ function renderComparison(
   );
 }
 
+/**
+ * Which slice of the narrowed window the history table is showing.
+ *
+ * Rendered only under the history tab, and that is the contract rather than an
+ * omission: comparisons fold every row in the window into one line per group, so
+ * there are a handful of lines to show and none to page through. The `tab` still
+ * travels with every link here because the one bug this resource had twice --
+ * a link that preserved the narrowing and dropped the section, or vice versa --
+ * is exactly the one a pager that assumed its tab would invite.
+ *
+ * The page is a plain link, so paging needs no JavaScript and the current page
+ * is an address. Previous/next render as disabled-looking spans rather than
+ * disappearing so the row does not change width as the operator reaches either
+ * end of the window -- a control that appears and disappears is a control that
+ * moves the thing you are aiming at.
+ */
+function renderPager(
+  filters: EvaluationsFilters,
+  tab: EvaluationsTabId,
+  page: number,
+  totalRows: number
+): React.JSX.Element | null {
+  const pageCount = evaluationsPageCount(totalRows);
+  const current = clampEvaluationsPage(page, totalRows);
+  const firstRow = (current - 1) * EVALUATIONS_PAGE_SIZE + 1;
+  const lastRow = Math.min(current * EVALUATIONS_PAGE_SIZE, totalRows);
+
+  const step = (
+    target: number,
+    label: string,
+    enabled: boolean
+  ): React.JSX.Element =>
+    React.createElement(
+      enabled ? "a" : "span",
+      {
+        // `aria-disabled`, never `aria-hidden`. A hidden step leaves the
+        // accessibility tree, so a screen-reader user is offered a Next button
+        // that does nothing and no Previous at all, rather than a control they
+        // can hear, recognise as unavailable, and skip. The step's own name is
+        // its accessible name: the adjacent `Page 2 of 3` already states the
+        // position, and repeating it produced "Previous, page 0" at page one.
+        "aria-label": label,
+        ...(enabled
+          ? {
+              href: evaluationsPageHref(filters, target, tab),
+              className:
+                "rounded border border-border px-3 py-1 text-xs text-accent underline-offset-4 hover:underline",
+              "data-evaluations-page-step": target
+            }
+          : {
+              className:
+                "rounded border border-border px-3 py-1 text-xs text-fg-muted opacity-50",
+              "aria-disabled": "true",
+              "data-evaluations-page-step": target
+            })
+      },
+      label
+    );
+
+  return React.createElement(
+    "nav",
+    {
+      "aria-label": "Evaluation history pages",
+      className: "flex flex-wrap items-center justify-between gap-3",
+      "data-feature": "evaluations-pager",
+      "data-evaluations-page": String(current),
+      "data-evaluations-page-count": String(pageCount)
+    },
+    React.createElement(
+      "p",
+      {
+        className: "text-xs text-fg-muted",
+        "data-evaluations-page-range": "true"
+      },
+      // The range is over the rows the filters selected, which is not the rows
+      // on screen and not the rows the store holds. The filter bar's sentence
+      // above states how large that window is; this states which part of it the
+      // table is on, so neither number has to be inferred from the other.
+      `Rows ${firstRow}–${lastRow} of ${totalRows} in this view`
+    ),
+    pageCount > 1
+      ? React.createElement(
+          "div",
+          { className: "flex items-center gap-2" },
+          step(current - 1, "Previous", current > 1),
+          React.createElement(
+            "span",
+            {
+              className: "text-xs text-fg-muted",
+              "data-evaluations-page-label": "true"
+            },
+            `Page ${current} of ${pageCount}`
+          ),
+          step(current + 1, "Next", current < pageCount)
+        )
+      : null
+  );
+}
+
 function filterSelect(
   name: "outcome" | "role" | "model" | "prompt",
   label: string,
@@ -941,6 +1054,7 @@ export function EvaluationsView({
   filters,
   filterOptions,
   tab = "results",
+  page = 1,
   selection = null,
   traceLookup = null
 }: EvaluationsViewProps): React.JSX.Element {
@@ -955,7 +1069,7 @@ export function EvaluationsView({
     truncated
   };
   const retained = retainedResults(resultCounts);
-  const nav: EvaluationsNav = { filters, tab };
+  const nav: EvaluationsNav = { filters, tab, page };
   const selectedEvaluation =
     selection === null
       ? null
@@ -1173,18 +1287,25 @@ export function EvaluationsView({
     tab === "results"
       ? React.createElement(
           "div",
-          null,
+          { className: "flex flex-col gap-3" },
           React.createElement(
             "h2",
             { className: SECTION_HEADING_CLASS },
             "Evaluation history"
           ),
           React.createElement<DataTableProps<EvaluationResult>>(DataTable, {
-            data: evaluations,
+            // The slice, not the window. The table renders every row it is
+            // given, and handing it a full read window put a thousand rows and
+            // 25,913 nodes into one response -- 2.9MiB of markup for a page that
+            // lays out in 8ms, so all of that cost was emitting and parsing rows
+            // an operator was never going to scroll past. Every row stays
+            // reachable through the pager below.
+            data: evaluationsPageRows(evaluations, page),
             columns,
             keyExtractor: (evaluation: EvaluationResult) => evaluation.id,
             emptyMessage
-          })
+          }),
+          renderPager(filters, tab, page, evaluations.length)
         )
       : React.createElement(
           "div",

@@ -4,9 +4,11 @@ import React from "react";
 import {
   EVALUATION_RESULT_PARAM,
   EVALUATION_SPAN_PARAM,
+  EVALUATIONS_PAGE_PARAM,
   filterEvaluations,
   filterOptionsFor,
   parseEvaluationsFilters,
+  resolveEvaluationsPage,
   resolveEvaluationsTab,
   singleValue
 } from "../../src/features/evaluations/evaluations-url.ts";
@@ -75,6 +77,7 @@ export default async function EvaluationsPage({
   const params = searchParams ? await searchParams : {};
   const filters = parseEvaluationsFilters(params);
   const tab = resolveEvaluationsTab(params.tab);
+  const page = resolveEvaluationsPage(params[EVALUATIONS_PAGE_PARAM]);
   // A repeated key is not a choice, so neither selection resolves to the first
   // of several. `?result=a&result=b` used to open `a` while the URL described
   // two runs, and the filter bar's own rule already refused to do that to a
@@ -138,6 +141,7 @@ export default async function EvaluationsPage({
       filters,
       filterOptions: filterOptionsFor(available),
       tab,
+      page,
       ...(selectedResult === undefined ? {} : { selection: selectedResult }),
       ...(traceLookup ? { traceLookup } : {})
     })

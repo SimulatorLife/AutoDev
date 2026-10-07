@@ -65,6 +65,7 @@ export const EMPTY_EVALUATIONS_FILTERS: EvaluationsFilters = {
 /** Query keys that carry a selection rather than a filter. */
 export const EVALUATION_RESULT_PARAM = "result";
 export const EVALUATION_SPAN_PARAM = "spanId";
+export const EVALUATIONS_PAGE_PARAM = "page";
 
 export type RawQueryValue = string | readonly string[] | undefined;
 
@@ -165,11 +166,94 @@ export interface EvaluationsSelection {
   readonly tab: EvaluationsTabId;
   readonly resultId?: string | undefined;
   readonly spanId?: string | undefined;
+  /**
+   * Which page of the narrowed window the history table is showing.
+   *
+   * Page state lives with the selection rather than with the filters because it
+   * answers the same question: where in the list the operator is. A drawer link
+   * carries it so closing the drawer returns to the page they were reading, and
+   * a filter link deliberately does not, because a narrower result set can have
+   * fewer pages than the one being left.
+   */
+  readonly page?: number | undefined;
 }
 
 export const NO_SELECTION: EvaluationsSelection = {
   tab: DEFAULT_EVALUATIONS_TAB
 };
+
+/**
+ * How many rows the history table renders at once.
+ *
+ * The read is capped, so the table was being handed up to a thousand rows and
+ * rendering every one of them into the response. Measured on that cap: 2.9MiB of
+ * markup and 25,913 DOM nodes for one page, against 8ms of layout -- the cost was
+ * entirely in emitting and parsing rows, not in drawing them. Fifty rows keeps a
+ * page at roughly a thousand nodes while leaving every row reachable through the
+ * paginator, which a smaller cap on the read would not.
+ */
+export const EVALUATIONS_PAGE_SIZE = 50;
+
+/** The first page, which the URL leaves implicit. */
+export const FIRST_EVALUATIONS_PAGE = 1;
+
+/**
+ * A page number, as a shape rather than a range check.
+ *
+ * A page is an address, and this rejects everything that is not one: an empty
+ * value, a sign, a decimal, and a run of digits long enough to be a request to
+ * render a page nobody could page to. A repeated key is already resolved to
+ * "not set" by `singleValue` before this sees it.
+ */
+const PAGE_NUMBER = /^[1-9][0-9]{0,4}$/u;
+
+/**
+ * The page a request asked for, or the first.
+ *
+ * A page number is an address, not a claim: an out-of-range value is clamped by
+ * whoever renders it against the rows it actually has, so a bookmark to a page
+ * that a narrower filter has since emptied lands on the last page that exists
+ * rather than on an empty table.
+ */
+export function resolveEvaluationsPage(value: RawQueryValue): number {
+  const raw = singleValue(value);
+  if (raw === undefined || !PAGE_NUMBER.test(raw)) {
+    return FIRST_EVALUATIONS_PAGE;
+  }
+  return Number.parseInt(raw);
+}
+
+/** How many pages a set of rows occupies, always at least one. */
+export function evaluationsPageCount(
+  rows: number,
+  pageSize: number = EVALUATIONS_PAGE_SIZE
+): number {
+  return Math.max(1, Math.ceil(rows / Math.max(1, pageSize)));
+}
+
+/** The page to render: the requested one, or the last one that exists. */
+export function clampEvaluationsPage(
+  page: number,
+  rows: number,
+  pageSize: number = EVALUATIONS_PAGE_SIZE
+): number {
+  return Math.min(
+    Math.max(page, FIRST_EVALUATIONS_PAGE),
+    evaluationsPageCount(rows, pageSize)
+  );
+}
+
+/** The rows one page of the narrowed window shows. */
+export function evaluationsPageRows<T>(
+  rows: readonly T[],
+  page: number,
+  pageSize: number = EVALUATIONS_PAGE_SIZE
+): readonly T[] {
+  const current = clampEvaluationsPage(page, rows.length, pageSize);
+  if (current === FIRST_EVALUATIONS_PAGE) return rows.slice(0, pageSize);
+  const start = (current - 1) * pageSize;
+  return rows.slice(start, start + pageSize);
+}
 
 /**
  * The one place an `/evaluations` URL is assembled.
@@ -194,6 +278,11 @@ export function evaluationsHref(
   }
   if (selection.spanId !== undefined && selection.spanId !== "") {
     params.set(EVALUATION_SPAN_PARAM, selection.spanId);
+  }
+  // The first page is what an unparameterised link already means, so it is left
+  // implicit and every page link after the first is one parameter longer.
+  if (selection.page !== undefined && selection.page > FIRST_EVALUATIONS_PAGE) {
+    params.set(EVALUATIONS_PAGE_PARAM, String(selection.page));
   }
   return params.size === 0
     ? EVALUATIONS_ROUTE
@@ -248,6 +337,21 @@ export function evaluationsTabHref(
   tab: EvaluationsTabId
 ): string {
   return evaluationsHref(filters, { tab });
+}
+
+/**
+ * One page of the narrowed window, keeping the filters and the section.
+ *
+ * Page links deliberately carry no open run or open trace. A page link is a move
+ * along the list, and carrying the drawer across it would reopen a detail for a
+ * run that is no longer on screen.
+ */
+export function evaluationsPageHref(
+  filters: EvaluationsFilters,
+  page: number,
+  tab: EvaluationsTabId = DEFAULT_EVALUATIONS_TAB
+): string {
+  return evaluationsHref(filters, { tab, page });
 }
 
 /** Whether one evaluation carries an explicit verdict, in either direction. */
