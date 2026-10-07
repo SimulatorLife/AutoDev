@@ -247,3 +247,41 @@ test("different sessions in the same workspace are tracked separately", async ()
     );
   });
 });
+
+test("the map is bounded, and what it drops is the oldest", async () => {
+  // A router is long-lived and every model request can name a new session key,
+  // so an unbounded map here is a slow leak in the one process that cannot be
+  // restarted to shed it. The bound is the property, so this checks the number
+  // exactly rather than that "some were dropped" — a limit that drifted to
+  // 4096 satisfies the looser wording just as well as one at 512, and the cost
+  // of that drift is invisible until the process is large.
+  await withRegisteredSession(async () => {
+    const bound = 512;
+    const total = bound + 8;
+
+    for (let index = 0; index < total; index += 1) {
+      await register(`session-lru-${index}`, WORKSPACE);
+    }
+
+    const oldestRetained = total - bound;
+    assert.ok(
+      trustedMemoryContextForSession(`session-lru-${oldestRetained}`, WORKSPACE.cwd),
+      `the map dropped session ${oldestRetained}, which it still had room for`
+    );
+    assert.equal(
+      trustedMemoryContextForSession(`session-lru-${oldestRetained - 1}`, WORKSPACE.cwd),
+      null,
+      "a session past the bound was kept, so the oldest is not what gets dropped"
+    );
+    assert.ok(
+      trustedMemoryContextForSession(`session-lru-${total - 1}`, WORKSPACE.cwd),
+      "the most recently observed session was evicted"
+    );
+  });
+  // The repository-root map beside it carries the same shape at a bound of 256,
+  // and no test here can reach it. Its resolver is module-private and
+  // `createOrchestratorMemoryService` returns null without a live database, so
+  // nothing exported lets a caller ask what root a workspace resolved to. That
+  // is an observability limit, not agreement that the bound holds; the two loops
+  // are edited together.
+});
