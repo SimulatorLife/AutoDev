@@ -190,24 +190,43 @@ test("a half-open validity window is named, not left blank", () => {
 });
 
 test("the record's verification provenance is shown, not just held", () => {
-  // `checkedAt` and `verificationSource` are what answer "who confirmed this,
-  // and when" for the current-state verification §11 asks the Console to
-  // surface. Both were rendered only when present and never rendered by a
-  // test, so dropping either line would have gone unnoticed.
-  const markup = render(
-    [],
-    record(
-      "mem-provenance",
-      { kind: "global" },
-      {
-        state: "verified",
-        checkedAt: TIMESTAMP,
-        verificationSource: "git-and-rulesync",
-        evidence: []
-      }
-    )
+  // Three fields answer "who confirmed this, and when" for the current-state
+  // verification §11 asks the Console to surface, and they live in two places:
+  // `checkedAt` and `verificationSource` on the validity, `lastVerifiedAt` on
+  // the provenance. All three render only when present, and none of the three
+  // was rendered by a test, so dropping any of them would have gone unnoticed —
+  // and a record whose validity says "verified" with no date beside it looks
+  // equally true whether it was confirmed last week or never.
+  const verified = record(
+    "mem-provenance",
+    { kind: "global" },
+    {
+      state: "verified",
+      checkedAt: TIMESTAMP,
+      verificationSource: "git-and-rulesync",
+      evidence: []
+    }
   );
+  const markup = render([], {
+    ...verified,
+    provenance: {
+      ...verified.provenance,
+      lastVerifiedAt: TIMESTAMP,
+      verificationSource: "git-and-rulesync"
+    }
+  });
 
   assert.match(markup, /Checked at:/u);
   assert.match(markup, /Verification source: git-and-rulesync/u);
+  assert.match(
+    markup,
+    /Last verified:/u,
+    "the provenance-side verification date must be shown too"
+  );
+
+  // Never verified is not the same as not shown: a claim that has never been
+  // checked carries no verification date at all, and must not borrow one.
+  const neverChecked = render([], record("mem-never", { kind: "global" }));
+  assert.equal(neverChecked.includes("Last verified:"), false);
+  assert.equal(neverChecked.includes("Checked at:"), false);
 });
