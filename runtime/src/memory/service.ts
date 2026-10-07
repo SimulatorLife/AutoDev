@@ -2630,6 +2630,16 @@ export class MemoryService
     request: MemoryResearchRequest,
     entries: MemoryPacket["entries"]
   ): MemoryPacket {
+    // Re-rendering the whole packet per entry looks quadratic, and it is: the
+    // text and its token count both grow with the packet built so far. It is
+    // affordable because two hard bounds cap the loop at 40 candidates
+    // (MAX_RESEARCH_CANDIDATES, itself pinned by a test) and 24,000 characters
+    // (MAX_PACKET_CHARACTERS), which bounds the whole thing at well under a
+    // million character copies — measured in the low single-digit milliseconds
+    // at that ceiling, against a request that is about to make a network call
+    // to a model. Incrementing the length instead would have to reimplement
+    // `renderPacket`'s separators exactly, which is real risk for no measured
+    // gain. Re-measure before changing either bound.
     const included: MemoryPacket["entries"][number][] = [];
     let text = "";
     let tokenCount: number | undefined = this.countTokens?.("");
