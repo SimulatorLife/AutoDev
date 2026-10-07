@@ -8,7 +8,7 @@ import type {
 } from "@simulatorlife/autodev-core";
 
 import { PostgresMemoryRepository } from "../../src/memory/postgres-memory-repository.ts";
-import { makeContext } from "./fixtures/builders.ts";
+import { makeContext, makeExperience } from "./fixtures/builders.ts";
 import { FakeMemoryPool } from "./fixtures/fake-memory-pool.ts";
 
 const sessionContext: MemoryReadContext = makeContext({
@@ -470,6 +470,88 @@ test("aggregateInjectionUseCohorts includes unassessed eligible exposures, filte
   assert.equal("correlationToken" in filtered.cells[0]!, false);
   assert.equal("reporterId" in filtered.cells[0]!, false);
   assert.equal("usedMemoryIds" in filtered.cells[0]!, false);
+});
+
+test("purging the raw experience envelope leaves the use reports and their bounded aggregate untouched", async () => {
+  // The spec is explicit that a purge "erases only the raw `memory_experiences`
+  // envelope", is "not blocked by, the independent append-only injection
+  // events, reporter-supplied outcome reports, curator-assessed use reports, or
+  // session outcome reports", and that the bounded aggregates count by their
+  // own timestamps, so "a purge changes nothing about counts already recorded
+  // before it ran".
+  //
+  // That claim was reachable only from a live-PostgreSQL integration test. It
+  // never needed a database: the fake already refuses UPDATE and DELETE against
+  // `memory_injection_use_reports` as append-only, and computes the same cohort
+  // aggregate the repository asks for. So this is a privacy boundary that had
+  // no non-integration home, not a property only Postgres can show.
+  const pool = new FakeMemoryPool();
+  const repository = repo(pool);
+  const experience = makeExperience({
+    id: "exp-use-purge",
+    workspaceId: "ws-use",
+    scope: {
+      kind: "task",
+      workspaceId: "ws-use",
+      taskId: "session-use",
+      runId: "session-run"
+    },
+    taskId: "session-use",
+    runId: "session-run",
+    agentId: "session-agent"
+  });
+  await repository.appendExperience(experience);
+  const event = injectionEvent({
+    id: "inj-use-purge",
+    correlationToken: "token-use-purge"
+  });
+  await appendInjection(repository, event);
+  await repository.recordInjectionUseReport({
+    report: useReport(event),
+    actor: { id: "root", authority: "root" },
+    context: sessionContext
+  });
+
+  const cohortRequest = {
+    context: makeContext({ workspaceId: "ws-use", repositoryId: "repo-use" }),
+    occurredFrom: "2026-10-01T00:00:00.000Z",
+    occurredUntil: "2026-10-04T00:00:00.000Z"
+  };
+  const before = await repository.aggregateInjectionUseCohorts(cohortRequest);
+  assert.equal(before.exposureCount, 1, "the exposure is counted before the purge");
+
+  assert.equal(
+    await repository.purgeExperience({
+      experienceId: experience.id,
+      context: sessionContext,
+      eventId: "privacy-event-use-purge",
+      actorId: "curator-1",
+      reason: "privacy_request",
+      occurredAt: "2026-10-05T12:00:00.000Z"
+    }),
+    "purged"
+  );
+  assert.equal(
+    await repository.getExperience(experience.id, sessionContext),
+    null,
+    "the raw envelope is what a purge removes"
+  );
+
+  assert.deepEqual(
+    await repository.aggregateInjectionUseCohorts(cohortRequest),
+    before,
+    "a purge must not move a bounded aggregate recorded before it ran"
+  );
+  assert.equal(
+    (
+      await repository.listInjectionUseJoins({
+        context: sessionContext,
+        includeUnassessed: true
+      })
+    ).items.find((item) => item.injection.id === event.id)?.use?.useKind,
+    "used",
+    "the curator's append-only use report must survive the purge"
+  );
 });
 
 test("memory injection use reports reject UPDATE and DELETE in the fake append-only table", async () => {
