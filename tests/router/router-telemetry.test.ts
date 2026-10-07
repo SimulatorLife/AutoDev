@@ -31,8 +31,17 @@ import {
   endLogicalRequestSpan,
   flushTelemetryMetrics,
   getFinishedSpans,
+  ATTR_AUTODEV_GIT_PARTIAL,
   METRIC_CONTEXT_COMPACTIONS,
+  METRIC_GIT_COMMITS,
+  METRIC_GIT_FILES_ADDED,
+  METRIC_GIT_FILES_CHANGED,
+  METRIC_GIT_FILES_DELETED,
+  METRIC_GIT_LINES_ADDED,
+  METRIC_GIT_LINES_REMOVED,
   recordContextCompaction,
+  recordGitCommit,
+  resetTrackedGitCommitsForTest,
   resetTelemetryExporter,
   resolveOtlpSignalEndpoint,
   sanitizeCategoricalLabel,
@@ -2536,3 +2545,149 @@ test(
     }
   }
 );
+
+test("a git commit's change output is recorded once, with no identity in dimensions", async () => {
+  installExporter();
+  resetTrackedGitCommitsForTest();
+
+  const commit = "a".repeat(40);
+  const recorded = recordGitCommit({
+    commit,
+    filesChanged: 3,
+    filesAdded: 1,
+    filesDeleted: 1,
+    linesAdded: 42,
+    linesRemoved: 7,
+    workspace: { key: "workspace-a" },
+    role: "worker"
+  });
+  assert.equal(recorded, true, "a first observation must be recorded");
+
+  // A second producer observing the same commit must not double-count it.
+  assert.equal(
+    recordGitCommit({
+      commit,
+      filesChanged: 3,
+      filesAdded: 1,
+      filesDeleted: 1,
+      linesAdded: 42,
+      linesRemoved: 7
+    }),
+    false,
+    "an already-recorded commit must be refused"
+  );
+
+  await flushTelemetryMetrics();
+
+  const value = (name: string): number => {
+    const [point] = findMetricPoints(name);
+    assert.ok(point, `${name} must be emitted`);
+    return typeof point.value === "number" ? point.value : point.value.sum;
+  };
+
+  // Every requested signal is its own instrument.
+  assert.equal(value(METRIC_GIT_COMMITS), 1);
+  // Added and deleted are subsets of changed: three instruments, three
+  // different numbers, and no total that adds them together.
+  assert.equal(value(METRIC_GIT_FILES_CHANGED), 3);
+  assert.equal(value(METRIC_GIT_FILES_ADDED), 1);
+  assert.equal(value(METRIC_GIT_FILES_DELETED), 1);
+  assert.equal(value(METRIC_GIT_LINES_ADDED), 42);
+  assert.equal(value(METRIC_GIT_LINES_REMOVED), 7);
+
+  const [point] = findMetricPoints(METRIC_GIT_COMMITS);
+  assert.ok(point);
+  // The existing `autodev.workspace` dimension, by its wire name.
+  assert.equal(point.attributes["autodev.workspace"], "workspace-a");
+  assert.equal(point.attributes[ATTR_AUTODEV_GIT_PARTIAL], undefined);
+
+  // The commit id is used for idempotency and must never become a dimension.
+  const serialized = JSON.stringify(point.attributes);
+  assert.equal(serialized.includes(commit), false);
+  for (const forbidden of ["commit", "sha", "path", "branch", "repository"]) {
+    assert.equal(
+      Object.keys(point.attributes).some((key) =>
+        key.toLowerCase().includes(forbidden)
+      ),
+      false,
+      `${forbidden} must not appear in metric dimensions`
+    );
+  }
+});
+
+test("a partially measurable commit is labelled rather than silently shrunk", async () => {
+  installExporter();
+  resetTrackedGitCommitsForTest();
+
+  recordGitCommit({
+    commit: "b".repeat(40),
+    filesChanged: 2,
+    filesAdded: 1,
+    filesDeleted: 0,
+    linesAdded: 0,
+    linesRemoved: 0,
+    partial: true,
+    workspace: { key: "workspace-a" }
+  });
+  await flushTelemetryMetrics();
+
+  // Cumulative temporality keeps one point per attribute set, so the partial
+  // one is found by its attribute rather than assumed to be the first.
+  const partialPoint = findMetricPoints(METRIC_GIT_COMMITS).find(
+    (point) => point.attributes[ATTR_AUTODEV_GIT_PARTIAL] === "true"
+  );
+  assert.ok(
+    partialPoint,
+    "a commit with an unsummarizable diff must carry the partial label"
+  );
+});
+
+test("an unmeasurable commit is refused rather than recorded as zero changes", async () => {
+  installExporter();
+  resetTrackedGitCommitsForTest();
+  await flushTelemetryMetrics();
+  const totalBefore = totalGitCommits();
+
+  // Negative counts cannot come from git, so they are rejected instead of
+  // being clamped into a plausible-looking zero.
+  assert.equal(
+    recordGitCommit({
+      commit: "c".repeat(40),
+      filesChanged: -1,
+      filesAdded: 0,
+      filesDeleted: 0,
+      linesAdded: 0,
+      linesRemoved: 0
+    }),
+    false
+  );
+  assert.equal(
+    recordGitCommit({
+      commit: "",
+      filesChanged: 1,
+      filesAdded: 1,
+      filesDeleted: 0,
+      linesAdded: 1,
+      linesRemoved: 0
+    }),
+    false
+  );
+
+  // Re-measure the same way: the exporter keeps every collection snapshot, so
+  // clearing it first means both readings cover exactly one snapshot rather
+  // than summing an accumulating buffer.
+  telemetryMetricExporter.reset();
+  await flushTelemetryMetrics();
+  // Nothing was emitted: the two refused calls left the running total exactly
+  // where it was, rather than adding a zero-change commit.
+  assert.equal(totalGitCommits(), totalBefore);
+});
+
+/** Cumulative temporality keeps one point per attribute set, so sum them. */
+function totalGitCommits(): number {
+  return findMetricPoints(METRIC_GIT_COMMITS).reduce(
+    (sum, point) =>
+      sum + (typeof point.value === "number" ? point.value : point.value.sum),
+    0
+  );
+}

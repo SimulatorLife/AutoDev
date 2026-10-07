@@ -86,6 +86,35 @@ const ATTR_GEN_AI_ERROR_TYPE = "error.type" as const;
 const ATTR_AUTODEV_WORKSPACE = "autodev.workspace" as const;
 const ATTR_AUTODEV_AGENT_ROLE = "autodev.agent.role" as const;
 export const METRIC_CONTEXT_COMPACTIONS = "autodev.context.compactions";
+export const METRIC_GIT_COMMITS = "autodev.git.commits";
+export const METRIC_GIT_FILES_CHANGED = "autodev.git.files_changed";
+export const METRIC_GIT_FILES_ADDED = "autodev.git.files_added";
+export const METRIC_GIT_FILES_DELETED = "autodev.git.files_deleted";
+export const METRIC_GIT_LINES_ADDED = "autodev.git.lines_added";
+export const METRIC_GIT_LINES_REMOVED = "autodev.git.lines_removed";
+/** Marks a commit whose diff could not be fully summarized. */
+export const ATTR_AUTODEV_GIT_PARTIAL = "autodev.git.partial" as const;
+/**
+ * Process-local commit-idempotency bound. A commit observed by two producers
+ * (a session and a later reconciliation pass) must still be counted once.
+ */
+const MAX_TRACKED_GIT_COMMITS = 1_000;
+const trackedGitCommits = new Set<string>();
+
+function claimGitCommit(commit: string): boolean {
+  if (trackedGitCommits.has(commit)) return false;
+  trackedGitCommits.add(commit);
+  if (trackedGitCommits.size > MAX_TRACKED_GIT_COMMITS) {
+    const oldest = trackedGitCommits.values().next().value;
+    if (oldest !== undefined) trackedGitCommits.delete(oldest);
+  }
+  return true;
+}
+
+/** Test seam: the commit dedup set is process-wide and must be resettable. */
+export function resetTrackedGitCommitsForTest(): void {
+  trackedGitCommits.clear();
+}
 export const ATTR_AUTODEV_REQUEST_KIND = "autodev.request_kind" as const;
 export const ATTR_AUTODEV_COMPACTION_TRIGGER =
   "autodev.compaction.trigger" as const;
@@ -171,6 +200,12 @@ interface RouterMetricInstruments {
   cacheReadTokens: ReturnType<Meter["createHistogram"]>;
   skillEvents: ReturnType<Meter["createCounter"]>;
   contextCompactions: ReturnType<Meter["createCounter"]>;
+  gitCommits: ReturnType<Meter["createCounter"]>;
+  gitFilesChanged: ReturnType<Meter["createCounter"]>;
+  gitFilesAdded: ReturnType<Meter["createCounter"]>;
+  gitFilesDeleted: ReturnType<Meter["createCounter"]>;
+  gitLinesAdded: ReturnType<Meter["createCounter"]>;
+  gitLinesRemoved: ReturnType<Meter["createCounter"]>;
 }
 
 let instruments: RouterMetricInstruments | null = null;
@@ -345,6 +380,31 @@ function createMetricInstruments(meter: Meter): RouterMetricInstruments {
       description:
         "Source-confirmed context compactions completed by the AutoDev router.",
       unit: "{compaction}"
+    }),
+    gitCommits: meter.createCounter(METRIC_GIT_COMMITS, {
+      description: "Commits created by AutoDev-managed agent work.",
+      unit: "{commit}"
+    }),
+    gitFilesChanged: meter.createCounter(METRIC_GIT_FILES_CHANGED, {
+      description:
+        "Distinct paths touched by a commit (added, deleted, modified, or renamed).",
+      unit: "{file}"
+    }),
+    gitFilesAdded: meter.createCounter(METRIC_GIT_FILES_ADDED, {
+      description: "Paths added by a commit; a subset of files changed.",
+      unit: "{file}"
+    }),
+    gitFilesDeleted: meter.createCounter(METRIC_GIT_FILES_DELETED, {
+      description: "Paths deleted by a commit; a subset of files changed.",
+      unit: "{file}"
+    }),
+    gitLinesAdded: meter.createCounter(METRIC_GIT_LINES_ADDED, {
+      description: "Lines inserted by a commit, as reported by git numstat.",
+      unit: "{line}"
+    }),
+    gitLinesRemoved: meter.createCounter(METRIC_GIT_LINES_REMOVED, {
+      description: "Lines deleted by a commit, as reported by git numstat.",
+      unit: "{line}"
     })
   };
 }
@@ -808,6 +868,74 @@ export function recordContextCompaction(
     return true;
   } catch {
     logTelemetryError("context_compaction_recording_failed");
+    return false;
+  }
+}
+
+export interface RecordGitCommitOptions {
+  readonly commit: string;
+  readonly filesChanged: number;
+  readonly filesAdded: number;
+  readonly filesDeleted: number;
+  readonly linesAdded: number;
+  readonly linesRemoved: number;
+  readonly partial?: boolean | undefined;
+  readonly workspace?: { key?: string | null | undefined } | null | undefined;
+  readonly role?: string | null | undefined;
+  readonly provider?: string | null | undefined;
+  readonly model?: string | null | undefined;
+}
+
+/**
+ * Record one commit's change output.
+ *
+ * Only the dimensions the producing source actually knew are attached. The
+ * commit id is used for idempotency and is deliberately *not* an attribute:
+ * it is unbounded and identifies a specific object, both of which the privacy
+ * rules forbid. File paths, repository URLs, and branch names never reach here
+ * because the measurement never carries them.
+ *
+ * Returns false when the commit was already recorded, was not measurable, or
+ * telemetry is unavailable -- so a caller can tell "not counted" from "counted".
+ */
+export function recordGitCommit(options: RecordGitCommitOptions): boolean {
+  if (!options.commit) return false;
+  // Deduplicate before anything else: a second producer observing the same
+  // commit must not double-count it.
+  if (!claimGitCommit(options.commit)) return false;
+
+  const counters = [
+    options.filesChanged,
+    options.filesAdded,
+    options.filesDeleted,
+    options.linesAdded,
+    options.linesRemoved
+  ];
+  if (counters.some((value) => !Number.isFinite(value) || value < 0)) {
+    return false;
+  }
+
+  ensureOtelInitialized();
+  if (!instruments) return false;
+
+  const attributes: Record<string, string> = metricAttributes({
+    provider: options.provider,
+    model: options.model,
+    workspace: options.workspace,
+    role: options.role
+  });
+  if (options.partial) attributes[ATTR_AUTODEV_GIT_PARTIAL] = "true";
+
+  try {
+    instruments.gitCommits.add(1, attributes);
+    instruments.gitFilesChanged.add(options.filesChanged, attributes);
+    instruments.gitFilesAdded.add(options.filesAdded, attributes);
+    instruments.gitFilesDeleted.add(options.filesDeleted, attributes);
+    instruments.gitLinesAdded.add(options.linesAdded, attributes);
+    instruments.gitLinesRemoved.add(options.linesRemoved, attributes);
+    return true;
+  } catch {
+    logTelemetryError("git_commit_recording_failed");
     return false;
   }
 }
