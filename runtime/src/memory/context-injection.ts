@@ -12,7 +12,23 @@ const MAX_TASK_TEXT_CHARACTERS = 16_000;
 const MAX_RETRIEVAL_ONLY_ENTRIES = 2;
 const MAX_RETRIEVAL_ONLY_PACKET_CHARACTERS = 4000;
 const MAX_RETRIEVAL_ONLY_EVIDENCE = 4;
-const MAX_RETRIEVAL_ONLY_EVIDENCE_URI_CHARACTERS = 512;
+
+/**
+ * How much of an evidence reference a memory packet may carry.
+ *
+ * Deliberately narrower than what memory storage accepts (2048 and 256, in
+ * `service.ts`), because a packet truncates a reference to fit a prompt while
+ * storage only has to hold one. Truncating more than the store would allow is
+ * the safe direction: the result is always a reference the service accepts, so
+ * the two numbers cannot need to agree.
+ *
+ * Named for the packet rather than reusing the storage names, which meant
+ * something else entirely: `memory-reconstruction.ts` had module-local
+ * constants of the *same* names at 512 and 128, so the two sets were one
+ * rename away from a silent collision in the package's `export *`.
+ */
+export const MAX_PACKET_EVIDENCE_URI_CHARACTERS = 512;
+export const MAX_PACKET_EVIDENCE_REVISION_CHARACTERS = 128;
 const MEMORY_ADVISORY_START = "--- AUTODEV MEMORY PACKET V1 ---";
 const MEMORY_ADVISORY_END = "--- END AUTODEV MEMORY PACKET ---";
 const INJECTED_CONTEXT_PREFIXES = [
@@ -207,8 +223,9 @@ function retrievalOnlyPacket(
         hit.memory.provenance.evidence.slice(0, MAX_RETRIEVAL_ONLY_EVIDENCE)
       ).filter(
         (reference) =>
-          reference.uri.length <= MAX_RETRIEVAL_ONLY_EVIDENCE_URI_CHARACTERS &&
-          (reference.revision === undefined || reference.revision.length <= 128)
+          reference.uri.length <= MAX_PACKET_EVIDENCE_URI_CHARACTERS &&
+          (reference.revision === undefined ||
+            reference.revision.length <= MAX_PACKET_EVIDENCE_REVISION_CHARACTERS)
       )
     };
     const entryCharacters = JSON.stringify(entry).length;

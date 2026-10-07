@@ -1,4 +1,5 @@
 import {
+  MAX_EMBEDDING_MODEL_LENGTH,
   MAX_EMBEDDING_TIMEOUT_MS,
   MIN_EMBEDDING_TIMEOUT_MS,
   OpenAICompatibleMemoryEmbeddingProvider
@@ -12,7 +13,6 @@ import {
 } from "./routing.ts";
 
 const LOCAL_ROUTER_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-const MAX_EMBEDDING_MODEL_LENGTH = 256;
 
 /**
  * The embedding timeout, from `AUTODEV_MEMORY_EMBEDDING_TIMEOUT_MS`.

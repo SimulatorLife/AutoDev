@@ -209,6 +209,8 @@ const MAX_RESEARCH_HITS = 40;
 const MAX_RESEARCH_CANDIDATES = 40;
 const MAX_LIST_OFFSET = 100_000;
 const MAX_PACKET_CHARACTERS = 24_000;
+/** A sanity ceiling on an injected provider's vector; see `validateEmbedding`. */
+const MAX_EMBEDDING_VECTOR_LENGTH = 4096;
 const MAX_EXPERIENCE_REFERENCE_COUNT = 64;
 const MAX_RETENTION_BATCH_SIZE = 100;
 const MIN_VALIDATED_PROMOTION_RUNS = 2;
@@ -2705,9 +2707,20 @@ export class MemoryService
   }
 
   private validateEmbedding(embedding: readonly number[]): readonly number[] {
+    // Looser than the migrated vector width on purpose, and deliberately not
+    // `MEMORY_EMBEDDING_DIMENSIONS`. This Service accepts an injected provider
+    // -- a host test double, or a deployment whose provider is not the bundled
+    // OpenAI-compatible one -- and requiring the store's exact width here would
+    // refuse those before they ever reached storage. The repository is where
+    // the width is actually enforced, and it refuses with a vector error naming
+    // the dimension, which is the better place for a rule about storage.
+    //
+    // So this is a sanity ceiling, not the dimension check. Tightening it to
+    // 1536 would look like a fix and break every provider that is not that
+    // exact width.
     if (
       embedding.length === 0 ||
-      embedding.length > 4096 ||
+      embedding.length > MAX_EMBEDDING_VECTOR_LENGTH ||
       embedding.some((value) => !Number.isFinite(value))
     ) {
       throw new MemoryValidationError(

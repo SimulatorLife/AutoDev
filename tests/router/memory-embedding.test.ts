@@ -173,4 +173,36 @@ test("the adapter enforces the same bounds the configuration wiring reads", () =
       `${timeoutMs} must be outside the adapter's accepted range`
     );
   }
+
+  // The model ceiling is the same arrangement and was not covered, despite this
+  // test's name. The wiring already refused an over-long
+  // `AUTODEV_MEMORY_EMBEDDING_MODEL` before routing, so the constructor's own
+  // ceiling looked exercised while only one of the two was. Widening the
+  // wiring's check alone would have been silent: the constructor rejects, and
+  // `configuredMemoryEmbeddingProvider` swallows a constructor rejection by
+  // design, so the operator's configured model would simply stop being used.
+  // Both read one constant now; this pins that the constructor applies it.
+  //
+  // 256 and 257, written out. Asserting against the shared constant made this
+  // test pass for any value it was given, which is precisely the disagreement
+  // it exists to catch.
+  assert.throws(
+    () =>
+      new OpenAICompatibleMemoryEmbeddingProvider({
+        endpoint: "http://127.0.0.1:4000/v1",
+        model: "m".repeat(257)
+      }),
+    TypeError,
+    "a model past the shared ceiling must be refused by the constructor too"
+  );
+  // And the edge itself: a ceiling one short would refuse a model the wiring
+  // has already accepted, which is the same disagreement pointing the other
+  // way.
+  assert.ok(
+    new OpenAICompatibleMemoryEmbeddingProvider({
+      endpoint: "http://127.0.0.1:4000/v1",
+      model: "m".repeat(256)
+    }),
+    "a model exactly at the shared ceiling must still be accepted"
+  );
 });

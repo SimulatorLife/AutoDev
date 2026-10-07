@@ -286,6 +286,54 @@ test("a memory whose current state cannot support a review is never sent", async
   }
 });
 
+test("a reference is truncated to what a memory packet may carry", async () => {
+  // The uri and revision slices in the review request were unnamed literals
+  // before they were named constants, and -- unlike the twelve-reference cap
+  // beside them -- neither slice had a test. Removing the uri slice outright
+  // left this suite green, which is how it stayed a literal for so long.
+  //
+  // 512 and 128 are written out on purpose. Read from the constant, this would
+  // assert only that the code applies whatever number it currently holds, which
+  // is exactly the property that could not be assumed.
+  const { reconstructor, requests } = rig({ body: reviewResponse(VALID_REVIEW) });
+  await review(reconstructor, {
+    assessment: assessment({
+      evidence: [
+        {
+          kind: "file" as const,
+          uri: `file:///repo/${"u".repeat(600)}`,
+          revision: "r".repeat(200)
+        }
+      ]
+    })
+  });
+
+  assert.equal(
+    requests.length,
+    1,
+    "one over-long reference still fits inside the request"
+  );
+  const body = JSON.parse(String(requests[0]?.init.body)) as Record<string, unknown>;
+  const message = (body.input as Array<{ content: Array<{ text: string }> }>)[0];
+  const context = JSON.parse(message?.content[0]?.text ?? "{}") as Record<string, unknown>;
+  const currentState = context.currentState as {
+    readonly evidence: ReadonlyArray<{
+      readonly uri?: string;
+      readonly revision?: string;
+    }>;
+  };
+  assert.equal(
+    currentState.evidence[0]?.uri?.length,
+    512,
+    "an over-long uri must be truncated to what a packet may carry"
+  );
+  assert.equal(
+    currentState.evidence[0]?.revision,
+    "r".repeat(128),
+    "an over-long revision must be truncated to what a packet may carry"
+  );
+});
+
 test("an over-long context is refused rather than sent", async () => {
   const long = "u".repeat(600);
   const { reconstructor, requests } = rig({ body: reviewResponse(VALID_REVIEW) });

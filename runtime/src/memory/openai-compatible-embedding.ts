@@ -28,6 +28,16 @@ const DEFAULT_EMBEDDING_TIMEOUT_MS = 5000;
  */
 export const MIN_EMBEDDING_TIMEOUT_MS = 100;
 export const MAX_EMBEDDING_TIMEOUT_MS = 30_000;
+/**
+ * One owner for both, again: this is the ceiling the constructor enforces, and
+ * the Router validated the operator's `AUTODEV_MEMORY_EMBEDDING_MODEL` against
+ * a private copy of the same number. Loosening the Router's copy alone would
+ * have looked harmless -- it only decides whether to construct the adapter --
+ * while the constructor kept refusing, and `configuredMemoryEmbeddingProvider`
+ * swallows a constructor rejection by design. The configured model would have
+ * been ignored with nothing logged.
+ */
+export const MAX_EMBEDDING_MODEL_LENGTH = 256;
 const EMBEDDING_PATH_SUFFIX = /\/+$/u;
 const LOCAL_EMBEDDING_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -66,7 +76,7 @@ export class OpenAICompatibleMemoryEmbeddingProvider implements MemoryEmbeddingP
       endpoint.search ||
       endpoint.hash ||
       !model ||
-      model.length > 256
+      model.length > MAX_EMBEDDING_MODEL_LENGTH
     ) {
       throw new TypeError("Memory embedding endpoint or model is invalid.");
     }

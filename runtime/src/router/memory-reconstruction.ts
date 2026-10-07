@@ -3,14 +3,14 @@ import type { MemoryRecord } from "@simulatorlife/autodev-core";
 import {
   type CurrentStateAssessment,
   MAX_CLAIM_LENGTH,
+  MAX_PACKET_EVIDENCE_REVISION_CHARACTERS,
+  MAX_PACKET_EVIDENCE_URI_CHARACTERS,
   memoryQueryFromTask,
   type MemoryReconstructor
 } from "@simulatorlife/autodev-runtime/memory";
 import { ORCHESTRATOR_ALIAS } from "@simulatorlife/autodev-runtime/router/routing";
 
 const MAX_EVIDENCE_REFERENCES = 12;
-const MAX_EVIDENCE_URI_CHARACTERS = 512;
-const MAX_EVIDENCE_REVISION_CHARACTERS = 128;
 const MAX_ISSUE_OBSERVATIONS = 4;
 const MAX_RESPONSE_CHARACTERS = 12_000;
 const MAX_OUTPUT_TOKENS = 512;
@@ -143,15 +143,15 @@ function buildReviewRequest(
     .slice(0, MAX_EVIDENCE_REFERENCES)
     .map((reference) => ({
       kind: reference.kind,
-      uri: reference.uri.slice(0, MAX_EVIDENCE_URI_CHARACTERS),
+      uri: reference.uri.slice(0, MAX_PACKET_EVIDENCE_URI_CHARACTERS),
       ...(reference.revision
-        ? { revision: reference.revision.slice(0, MAX_EVIDENCE_REVISION_CHARACTERS) }
+        ? { revision: reference.revision.slice(0, MAX_PACKET_EVIDENCE_REVISION_CHARACTERS) }
         : {})
     }));
   const issueObservations = (assessment.issueObservations ?? [])
     .slice(0, MAX_ISSUE_OBSERVATIONS)
     .map((observation) => ({
-      uri: observation.uri.slice(0, MAX_EVIDENCE_URI_CHARACTERS),
+      uri: observation.uri.slice(0, MAX_PACKET_EVIDENCE_URI_CHARACTERS),
       state: observation.state,
       stateReason: observation.stateReason,
       updatedAt: observation.updatedAt,

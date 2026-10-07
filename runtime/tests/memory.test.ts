@@ -2720,6 +2720,35 @@ test("embedding vectors are optional retrieval signals and never become record c
   );
 });
 
+test("the vector sanity ceiling is a ceiling, not the store's dimension", async () => {
+  const repository = new FakeMemoryRepository();
+
+  // 4096 and 4097, written out. This bound is deliberately looser than the
+  // migrated vector width: the service accepts an injected provider -- a host
+  // test double, or a deployment whose provider is not the bundled
+  // OpenAI-compatible one -- and the repository is where the exact width is
+  // actually enforced. Tightening this to the store's dimension would refuse
+  // every provider that is not that exact width, which is why it is named and
+  // commented rather than left as a bare 4096 for someone to read as a defect.
+  const atCeiling = new Array<number>(4096).fill(0.5);
+  await makeService(repository, {
+    embedder: { embed: async () => atCeiling }
+  }).research(researchRequest());
+  assert.deepEqual(
+    repository.searchRequests.at(-1)?.queryEmbedding,
+    atCeiling,
+    "a vector exactly at the ceiling must still reach the repository"
+  );
+
+  await assert.rejects(
+    makeService(repository, {
+      embedder: { embed: async () => [...atCeiling, 0.5] }
+    }).research(researchRequest()),
+    MemoryValidationError,
+    "a vector past the ceiling must be refused by the service"
+  );
+});
+
 test("unavailable optional embeddings fall back to lexical memory operations", async () => {
   const repository = new FakeMemoryRepository();
   const embeddingSpanAttributes: Map<string, unknown>[] = [];
