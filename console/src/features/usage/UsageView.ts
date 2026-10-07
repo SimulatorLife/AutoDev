@@ -19,6 +19,7 @@ import {
   FIELD_CONTROL_CLASS,
   FIELD_GROUP_CLASS
 } from "../../components/ui/field-classes.ts";
+import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 
 /**
  * Observability Usage view.
@@ -310,7 +311,7 @@ export function UsageView({
         isActiveSessions
           ? React.createElement(
               "span",
-              { className: "text-xs text-fg-muted" },
+              { className: MUTED_META_CLASS },
               "Live Runtime state, not a time range."
             )
           : React.createElement(
@@ -365,7 +366,7 @@ export function UsageView({
       isActiveSessions
         ? React.createElement(
             "span",
-            { className: "text-xs text-fg-muted" },
+            { className: MUTED_META_CLASS },
             "Workspace, provider, model, and role filters do not narrow live session state."
           )
         : React.createElement(

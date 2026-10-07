@@ -18,7 +18,10 @@ import {
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
-import { gridRowClass } from "../../components/panels/DetailGrid.ts";
+import {
+  FieldBox,
+  gridRowClass
+} from "../../components/panels/DetailGrid.ts";
 import { EmptyState } from "../../components/status/EmptyState.ts";
 import {
   NOT_OBSERVED_LABEL,
@@ -54,24 +57,8 @@ export interface ToolDetailViewProps {
   readonly usageUnavailable: boolean;
 }
 
-const FIELD_LABEL_CLASS = "text-fg-muted block mb-1";
-const FIELD_VALUE_CLASS = "text-fg break-all font-mono";
 const NOT_OBSERVED_STATUS = "not-observed" as const;
 const UNCONFIGURED_LABEL = "Not configured";
-
-function field(
-  label: string,
-  value: string | React.JSX.Element
-): React.JSX.Element {
-  return React.createElement(
-    "div",
-    { className: "rounded border border-border bg-background/40 p-3" },
-    React.createElement("span", { className: FIELD_LABEL_CLASS }, label),
-    typeof value === "string"
-      ? React.createElement("span", { className: FIELD_VALUE_CLASS }, value)
-      : value
-  );
-}
 
 function sourceAuthorityLabel(
   authority: ToolCatalogItem["sourceAuthority"]
@@ -125,36 +112,39 @@ function EditSurfaceLink({
 }: {
   readonly tool: ToolCatalogItem;
 }): React.JSX.Element {
+  // Every branch below is a value in the same field column, and the column's
+  // value treatment is `text-sm`. The links cannot take that treatment
+  // directly -- they need the accent colour -- so the size is set once here
+  // rather than repeated on each link. Without it a link inherits the body's
+  // 16px and renders a head taller than the `Source` and `Server` values
+  // directly above it in the same box.
+  const link = (href: string, text: string): React.JSX.Element =>
+    React.createElement(
+      "a",
+      { href, className: "text-accent hover:underline font-mono" },
+      text
+    );
+
   const surface = tool.canonicalEditSurface;
-  if (!surface) {
-    return React.createElement(
-      "span",
-      { className: MUTED_META_CLASS },
-      "No canonical edit surface"
-    );
-  }
-  if (surface.section === "mcps" && tool.server) {
-    return React.createElement(
-      "a",
-      {
-        href: `/mcps/${encodeURIComponent(tool.server)}`,
-        className: "text-accent hover:underline font-mono"
-      },
-      surface.label ?? `MCP ${tool.server}`
-    );
-  }
-  if (surface.section === "agents") {
-    return React.createElement(
-      "a",
-      { href: "/agents", className: "text-accent hover:underline font-mono" },
-      surface.label ?? "Provider role exposure"
-    );
-  }
-  return React.createElement(
-    "a",
-    { href: "/prompts", className: "text-accent hover:underline font-mono" },
-    surface.label ?? "Prompt catalog"
-  );
+  // An absent surface is an absence note rather than another value, so it
+  // keeps the small muted treatment instead of the column's.
+  const content =
+    surface === undefined || surface === null
+      ? React.createElement(
+          "span",
+          { className: MUTED_META_CLASS },
+          "No canonical edit surface"
+        )
+      : surface.section === "mcps" && tool.server
+        ? link(
+            `/mcps/${encodeURIComponent(tool.server)}`,
+            surface.label ?? `MCP ${tool.server}`
+          )
+        : surface.section === "agents"
+          ? link("/agents", surface.label ?? "Provider role exposure")
+          : link("/prompts", surface.label ?? "Prompt catalog");
+
+  return React.createElement("span", { className: "text-sm" }, content);
 }
 
 function formatCount(value: number | null): string {
@@ -218,11 +208,16 @@ function usageSection(
     "div",
     { className: "flex flex-col gap-3" },
     React.createElement(
-      "div",
+      "dl",
       { className: "flex items-center gap-3" },
-      field("Calls (24h)", formatCount(usage.calls)),
-      field(
-        "Errors (24h)",
+      React.createElement(
+        FieldBox,
+        { label: "Calls (24h)" },
+        formatCount(usage.calls)
+      ),
+      React.createElement(
+        FieldBox,
+        { label: "Errors (24h)" },
         usage.errors === null ? NOT_OBSERVED_LABEL : formatCount(usage.errors)
       )
     ),
@@ -364,16 +359,27 @@ export function ToolDetailView({
           "Source authority"
         ),
         React.createElement(
-          "div",
+          "dl",
           { className: "flex flex-col gap-3" },
-          field("Source", tool.source),
-          tool.server
-            ? field("Server", tool.server)
-            : field("Server", UNCONFIGURED_LABEL),
-          field("Authority", sourceAuthorityLabel(tool.sourceAuthority)),
-          field("Availability", availabilityBadge(tool.availability)),
-          field(
-            "Canonical edit surface",
+          React.createElement(FieldBox, { label: "Source" }, tool.source),
+          React.createElement(
+            FieldBox,
+            { label: "Server" },
+            tool.server ?? UNCONFIGURED_LABEL
+          ),
+          React.createElement(
+            FieldBox,
+            { label: "Authority" },
+            sourceAuthorityLabel(tool.sourceAuthority)
+          ),
+          React.createElement(
+            FieldBox,
+            { label: "Availability", valueClassName: null },
+            availabilityBadge(tool.availability)
+          ),
+          React.createElement(
+            FieldBox,
+            { label: "Canonical edit surface", valueClassName: null },
             React.createElement(EditSurfaceLink, { tool })
           )
         )

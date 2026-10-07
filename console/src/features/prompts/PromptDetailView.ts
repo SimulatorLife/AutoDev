@@ -551,7 +551,7 @@ export function PromptDetailView({
         }),
         React.createElement(
           "p",
-          { className: "mt-2 text-xs text-fg-muted" },
+          { className: `mt-2 ${MUTED_META_CLASS}` },
           "Canonical source lives in the working tree; Git commits provide version history."
         )
       ),

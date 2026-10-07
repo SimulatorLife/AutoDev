@@ -1,6 +1,7 @@
 import React from "react";
 
 import { FIELD_CONTROL_CLASS } from "../ui/field-classes.ts";
+import { MUTED_META_CLASS } from "../ui/text-classes.ts";
 
 /**
  * The Console's free-text form control.
@@ -95,7 +96,7 @@ export function TextField({
       "label",
       {
         htmlFor: controlId,
-        className: hideLabel === true ? "sr-only" : "text-xs text-fg-muted"
+        className: hideLabel === true ? "sr-only" : MUTED_META_CLASS
       },
       label
     ),

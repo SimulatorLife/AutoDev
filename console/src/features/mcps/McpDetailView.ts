@@ -16,6 +16,10 @@ import {
 } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import {
+  FIELD_BOX_CLASS,
+  FieldBox
+} from "../../components/panels/DetailGrid.ts";
+import {
   NOT_OBSERVED_LABEL,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
@@ -33,10 +37,6 @@ import {
 const CONFIGURED_STATUS = "configured" as const;
 const NOT_OBSERVED_STATUS = "not-observed" as const;
 const FLEX_COLUMN_DETAILS_CLASS = "flex flex-col gap-2";
-const CONFIGURATION_FIELD_CLASS =
-  "rounded border border-border bg-background/40 p-3";
-const CONFIGURATION_LABEL_CLASS = "text-fg-muted block mb-1";
-const CONFIGURATION_VALUE_CLASS = "text-fg break-all";
 
 /**
  * MCP detail tabs in the target-state-mandated order. The id values are the
@@ -168,8 +168,7 @@ function ConfiguredToolAllowlist({
         "li",
         {
           key: tool.name,
-          className:
-            "rounded border border-border bg-background/40 p-3 font-mono text-xs"
+          className: `${FIELD_BOX_CLASS} font-mono text-xs`
         },
         React.createElement(
           "div",
@@ -280,7 +279,7 @@ export function McpDetailView({
         React.createElement(DesiredState, { enabled: server.enabled }),
         React.createElement(
           "p",
-          { className: "mt-2 text-xs text-fg-muted" },
+          { className: `mt-2 ${MUTED_META_CLASS}` },
           `Transport: ${server.transport.toUpperCase()}`
         )
       ),
@@ -298,7 +297,7 @@ export function McpDetailView({
         }),
         React.createElement(
           "p",
-          { className: "mt-2 text-xs text-fg-muted" },
+          { className: `mt-2 ${MUTED_META_CLASS}` },
           "A canonical declaration does not prove that a server is connected or healthy."
         )
       ),
@@ -331,128 +330,59 @@ export function McpDetailView({
         "Server configuration"
       ),
       React.createElement(
-        "div",
-        { className: "grid gap-3 sm:grid-cols-2 text-xs font-mono" },
+        "dl",
+        { className: "grid gap-3 sm:grid-cols-2" },
         React.createElement(
-          "div",
-          { className: CONFIGURATION_FIELD_CLASS },
-          React.createElement(
-            "span",
-            { className: CONFIGURATION_LABEL_CLASS },
-            "Transport"
-          ),
-          React.createElement(
-            "span",
-            { className: "text-fg uppercase font-semibold" },
-            server.transport
-          )
+          FieldBox,
+          {
+            label: "Transport",
+            valueClassName: "text-sm text-fg uppercase font-semibold"
+          },
+          server.transport
         ),
         server.command
           ? React.createElement(
-              "div",
-              {
-                className: CONFIGURATION_FIELD_CLASS
-              },
-              React.createElement(
-                "span",
-                { className: CONFIGURATION_LABEL_CLASS },
-                "Command"
-              ),
-              React.createElement(
-                "span",
-                { className: CONFIGURATION_VALUE_CLASS },
-                server.command
-              )
+              FieldBox,
+              { label: "Command" },
+              server.command
             )
           : null,
         server.args && server.args.length > 0
           ? React.createElement(
-              "div",
-              {
-                className: `col-span-2 ${CONFIGURATION_FIELD_CLASS}`
-              },
-              React.createElement(
-                "span",
-                { className: CONFIGURATION_LABEL_CLASS },
-                "Arguments"
-              ),
-              React.createElement(
-                "span",
-                { className: CONFIGURATION_VALUE_CLASS },
-                server.args.join(" ")
-              )
+              FieldBox,
+              { label: "Arguments", className: "col-span-2" },
+              server.args.join(" ")
             )
           : null,
         server.url
           ? React.createElement(
-              "div",
-              {
-                className: CONFIGURATION_FIELD_CLASS
-              },
-              React.createElement(
-                "span",
-                { className: CONFIGURATION_LABEL_CLASS },
-                "Endpoint URL"
-              ),
-              React.createElement(
-                "span",
-                { className: CONFIGURATION_VALUE_CLASS },
-                server.url
-              )
+              FieldBox,
+              { label: "Endpoint URL" },
+              server.url
             )
           : null,
         server.cwd
           ? React.createElement(
-              "div",
-              {
-                className: CONFIGURATION_FIELD_CLASS
-              },
-              React.createElement(
-                "span",
-                { className: CONFIGURATION_LABEL_CLASS },
-                "Working directory"
-              ),
-              React.createElement(
-                "span",
-                { className: CONFIGURATION_VALUE_CLASS },
-                server.cwd
-              )
+              FieldBox,
+              { label: "Working directory" },
+              server.cwd
             )
           : null,
         server.envKeys && server.envKeys.length > 0
           ? React.createElement(
-              "div",
-              {
-                className: CONFIGURATION_FIELD_CLASS
-              },
-              React.createElement(
-                "span",
-                { className: CONFIGURATION_LABEL_CLASS },
-                "Environment keys (values withheld)"
-              ),
-              React.createElement(
-                "span",
-                { className: "text-fg" },
-                server.envKeys.join(", ")
-              )
+              FieldBox,
+              { label: "Environment keys (values withheld)" },
+              server.envKeys.join(", ")
             )
           : null,
         server.defaultToolsApprovalMode
           ? React.createElement(
-              "div",
+              FieldBox,
               {
-                className: CONFIGURATION_FIELD_CLASS
+                label: "Default tools approval mode",
+                valueClassName: "text-sm text-fg"
               },
-              React.createElement(
-                "span",
-                { className: CONFIGURATION_LABEL_CLASS },
-                "Default tools approval mode"
-              ),
-              React.createElement(
-                "span",
-                { className: "text-fg" },
-                server.defaultToolsApprovalMode
-              )
+              server.defaultToolsApprovalMode
             )
           : null
       ),

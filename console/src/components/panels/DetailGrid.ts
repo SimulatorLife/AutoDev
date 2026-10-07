@@ -173,3 +173,67 @@ export function DetailValue({
     )
   );
 }
+
+/**
+ * The box a field is drawn in when it needs a border of its own.
+ *
+ * The same box was written out in three feature views and none of them shared
+ * an owner, so the three copies drifted. The tool detail copy labelled its
+ * fields with `text-fg-muted block mb-1` and rendered the value in monospace;
+ * the MCP copy used a byte-identical label constant under a different name
+ * (`CONFIGURATION_LABEL_CLASS`) and dropped `font-mono` from the value; the
+ * allowlist `<li>`s added `font-mono text-xs` to the box itself. Moving between
+ * a tool and an MCP server therefore changed what a field label looked like,
+ * and `DetailValue`'s label -- the one four other detail pages use -- was a
+ * third appearance.
+ *
+ * So the field label has one treatment now, taken from `SECTION_LABEL_CLASS`
+ * exactly as `DetailValue` takes it, and the value gets `DetailValue`'s
+ * monospace treatment. The box keeps the `rounded border bg-background/40 p-3`
+ * shape all three sites had already agreed on.
+ */
+export const FIELD_BOX_CLASS =
+  "rounded border border-border bg-background/40 p-3";
+
+export interface FieldBoxProps {
+  readonly label: string;
+  readonly children?: React.ReactNode;
+  /**
+   * Replaces the value's treatment outright, on `DetailValue`'s terms: pass
+   * `null` for a value that brings its own typography, such as a status badge
+   * or a link, rather than appending a utility that may not resolve.
+   */
+  readonly valueClassName?: string | null | undefined;
+  readonly className?: string | undefined;
+}
+
+/**
+ * One labelled field inside a box, as a `<dt>`/`<dd>` pair.
+ *
+ * A labelled fact belongs in a definition list, so the enclosing stack is a
+ * `<dl>` and this is the `<div>` that groups one fact's term from its
+ * description. The tool and MCP detail views both used to emit
+ * `div > span > span` instead, which is neither a definition list nor
+ * announced as one.
+ */
+export function FieldBox({
+  label,
+  children,
+  valueClassName,
+  className
+}: FieldBoxProps): React.JSX.Element {
+  const base = "font-mono text-sm text-fg break-all";
+  const classes = valueClassName === undefined ? base : valueClassName;
+  return React.createElement(
+    "div",
+    {
+      className: `${FIELD_BOX_CLASS}${className === undefined ? "" : ` ${className}`}`
+    },
+    React.createElement("dt", { className: SECTION_LABEL_CLASS }, label),
+    React.createElement(
+      "dd",
+      classes === null ? null : { className: classes },
+      children
+    )
+  );
+}
