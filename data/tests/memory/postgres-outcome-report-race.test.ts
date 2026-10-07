@@ -5,7 +5,8 @@ import type {
   MemoryInjectionEvent,
   MemoryOutcomeReport,
   MemoryReadContext,
-  MemorySessionOutcomeReport
+  MemorySessionOutcomeReport,
+  MemoryUseReport
 } from "@simulatorlife/autodev-core";
 
 import { MemoryConflictError } from "../../src/memory/errors.ts";
@@ -41,7 +42,10 @@ import { FakeMemoryPool } from "./fixtures/fake-memory-pool.ts";
 
 function racingPool(
   base: FakeMemoryPool,
-  table: "memory_outcome_reports" | "memory_session_outcome_reports",
+  table:
+    | "memory_outcome_reports"
+    | "memory_session_outcome_reports"
+    | "memory_injection_use_reports",
   race: () => Promise<void>
 ): MemoryConnectionPool {
   let fired = false;
@@ -255,6 +259,139 @@ test("a concurrent session outcome report with a different body still conflicts"
       report: sessionReport({ outcomeKind: "success" }),
       actor: { id: "op-1", authority: "curator" },
       context: sessionContext
+    }),
+    (error: unknown) =>
+      error instanceof MemoryConflictError && /already exists/u.test(error.message)
+  );
+});
+
+// The use-report table is the third place with this shape, and the one with the
+// most preconditions on the way in — eligible injection mode, non-empty packet,
+// cited ids a subset of the packet, trajectory evidence — so the collision is
+// the only one of several reasons this call can refuse. Matching the message is
+// what keeps a refused precondition from passing as a raced conflict.
+const useContext: MemoryReadContext = makeContext({
+  workspaceId: "ws-use",
+  repositoryId: "repo-use",
+  taskId: "session-use",
+  runId: "session-run",
+  agentId: "session-agent"
+});
+
+function useInjectionEvent(): MemoryInjectionEvent {
+  return {
+    id: "inj-use-1",
+    workspaceId: "ws-use",
+    repositoryId: "repo-use",
+    scope: {
+      kind: "task",
+      workspaceId: "ws-use",
+      taskId: "session-use",
+      runId: "request-run"
+    },
+    taskId: "session-use",
+    runId: "request-run",
+    agentId: "request-agent",
+    correlationToken: "token-use-1",
+    memoryMode: "jit",
+    injectionResult: "injected",
+    packetCharacterCount: 32,
+    memoryIds: ["mem-use-1", "mem-use-2"],
+    occurredAt: "2026-10-02T12:00:00.000Z",
+    reasonCode: "packet_attached",
+    evidence: [],
+    recordedBy: "test-runtime"
+  };
+}
+
+function useReport(overrides: Partial<MemoryUseReport> = {}): MemoryUseReport {
+  return {
+    id: "urep-mine",
+    workspaceId: "ws-use",
+    repositoryId: "repo-use",
+    scope: {
+      kind: "task",
+      workspaceId: "ws-use",
+      taskId: "session-use",
+      runId: "session-run"
+    },
+    taskId: "session-use",
+    runId: "session-run",
+    agentId: "session-agent",
+    injectionEventId: "inj-use-1",
+    correlationToken: "token-use-1",
+    useKind: "used",
+    usedMemoryIds: ["mem-use-1", "mem-use-2"],
+    reportedAt: "2026-10-02T12:30:00.000Z",
+    reporterId: "curator-1",
+    reporterAuthority: "curator",
+    reasonCode: "reporter_supplied",
+    evidence: [{ kind: "trajectory", uri: "codex://captured/session-use" }],
+    ...overrides
+  };
+}
+
+async function poolWithUseInjection(): Promise<FakeMemoryPool> {
+  const pool = new FakeMemoryPool();
+  await new PostgresMemoryRepository({ pool }).recordInjectionEvent({
+    event: useInjectionEvent(),
+    actor: { id: "system", authority: "system" },
+    context: useContext
+  });
+  return pool;
+}
+
+test("a concurrent identical use report is idempotent", async () => {
+  const pool = await poolWithUseInjection();
+  const racing = new PostgresMemoryRepository({ pool });
+
+  const repository = new PostgresMemoryRepository({
+    pool: racingPool(pool, "memory_injection_use_reports", async () => {
+      await racing.recordInjectionUseReport({
+        report: useReport({ id: "urep-theirs" }),
+        actor: { id: "curator-2", authority: "curator" },
+        context: useContext
+      });
+    })
+  });
+
+  const result = await repository.recordInjectionUseReport({
+    report: useReport(),
+    actor: { id: "curator-1", authority: "curator" },
+    context: useContext
+  });
+
+  assert.equal(result.appended, false);
+  assert.equal(result.id, "urep-theirs");
+  assert.equal(pool.tables.memory_injection_use_reports.size, 1);
+});
+
+test("a concurrent use report with a different body still conflicts", async () => {
+  const pool = await poolWithUseInjection();
+  const racing = new PostgresMemoryRepository({ pool });
+
+  const repository = new PostgresMemoryRepository({
+    pool: racingPool(pool, "memory_injection_use_reports", async () => {
+      await racing.recordInjectionUseReport({
+        // A *valid* differing body. `not_used` with the full packet cited would
+        // have been refused on the subset invariant before ever reaching the
+        // race, so the collision under test would never have happened.
+        report: useReport({
+          id: "urep-theirs",
+          useKind: "partially_used",
+          usedMemoryIds: ["mem-use-1"]
+        }),
+        actor: { id: "curator-2", authority: "curator" },
+        context: useContext
+      });
+    })
+  });
+
+  await assert.rejects(
+    repository.recordInjectionUseReport({
+      report: useReport({ useKind: "used" }),
+      actor: { id: "curator-1", authority: "curator" },
+      context: useContext
     }),
     (error: unknown) =>
       error instanceof MemoryConflictError && /already exists/u.test(error.message)
