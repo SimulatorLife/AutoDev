@@ -5925,8 +5925,19 @@ test("fetchEvaluations rejects a response that will not say whether it is capped
   );
   assert.equal(rejected.kind, "invalid-response");
   if (rejected.kind === "invalid-response") {
-    assert.equal(rejected.code, "autodev_control_api_invalid_catalog_response");
+    assert.equal(
+      rejected.code,
+      "autodev_control_api_invalid_evaluations_response"
+    );
     assert.match(rejected.message, /autodev-control-evaluations-v1/);
+    // The code is the only thing an operator has to search with, so it has to
+    // name the read that failed. This one reported `..._catalog_response` --
+    // a code for a resource this read is not -- shared with five other reads.
+    assert.match(
+      rejected.code,
+      /evaluations/,
+      "an invalid Evaluations read is reported as an Evaluations read"
+    );
   }
 
   const withFlag: typeof fetch = async () =>
@@ -6478,7 +6489,7 @@ test("EvaluationsView links valid span references and marks invalid ones", () =>
   assert.match(
     drawer(spanId),
     new RegExp(
-      `href="/evaluations\\?spanId=${spanId}"[^>]*data-evaluation-trace-span-id="${spanId}"`
+      String.raw`href="/evaluations\?spanId=${spanId}"[^>]*data-evaluation-trace-span-id="${spanId}"`
     ),
     "a valid span is a link to the trace from the drawer too"
   );
@@ -12487,7 +12498,7 @@ test("a record says what replaced it, and what it replaced", () => {
   // the two parameters appear in is not this test's business.
   for (const id of ["mem-old", "mem-newer"]) {
     const href = new RegExp(
-      `href="(/memory\\?[^"]*recordId=${id}[^"]*)"`,
+      String.raw`href="(/memory\?[^"]*recordId=${id}[^"]*)"`,
       "u"
     ).exec(both);
     assert.ok(href, `${id} must be linked from the lineage`);

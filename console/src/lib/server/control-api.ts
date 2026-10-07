@@ -1335,13 +1335,29 @@ function isInjectionUseAssessmentsResponse(
  * One failure shape for every unreadable catalog, so the Console reports a
  * drifted Runtime the same way whichever collection it was reading.
  */
-function invalidCatalogResponse(
+/**
+ * A read whose payload does not satisfy the Console's validator.
+ *
+ * The code names the resource that failed, because it is the only thing an
+ * operator has to search with: `autodev_control_api_invalid_evaluations_response`
+ * says which read broke, and a shared `..._catalog_response` does not -- the
+ * Evaluations read was reporting a code for a resource it is not. Eight of the
+ * fourteen reads already name themselves this way; Evaluations now does too.
+ *
+ * Five reads -- MCPs, Tools, Hooks, GitHub and Routing -- still share the older
+ * code, and keep it by default rather than being re-coded from a change to this
+ * resource: their failure contracts are not Evaluations' to rewrite here, and
+ * changing an identifier five other pages display is a larger decision than the
+ * one this file's own comment is making.
+ */
+function invalidResponse(
   what: string,
-  schema: string
+  schema: string,
+  code = "autodev_control_api_invalid_catalog_response"
 ): ControlApiResult<never> {
   return {
     kind: INVALID_RESPONSE_KIND,
-    code: "autodev_control_api_invalid_catalog_response",
+    code,
     message: `AutoDev Control API returned an incompatible ${what} response; the Console requires the ${schema} contract.`
   };
 }
@@ -1627,7 +1643,7 @@ export async function fetchMcps(
   if (result.kind !== "ok") return result;
   return isControlApiMcpsResponse(result.data)
     ? { kind: "ok", data: result.data }
-    : invalidCatalogResponse("Mcps", "autodev-control-mcps-v1");
+    : invalidResponse("Mcps", "autodev-control-mcps-v1");
 }
 
 export async function fetchTools(
@@ -1642,7 +1658,7 @@ export async function fetchTools(
   if (result.kind !== "ok") return result;
   return isControlApiToolsResponse(result.data)
     ? { kind: "ok", data: result.data }
-    : invalidCatalogResponse("Tools", "autodev-control-tools-v2");
+    : invalidResponse("Tools", "autodev-control-tools-v2");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1883,7 +1899,7 @@ export async function fetchHooks(
   if (result.kind !== "ok") return result;
   return isControlApiHooksResponse(result.data)
     ? { kind: "ok", data: result.data }
-    : invalidCatalogResponse("Hooks", "autodev-control-hooks-v1");
+    : invalidResponse("Hooks", "autodev-control-hooks-v1");
 }
 
 /**
@@ -2290,7 +2306,7 @@ export async function fetchGithubWorkflows(
   // repository has no workflows".
   return isControlApiGithubResponse(result.data)
     ? { kind: "ok", data: result.data }
-    : invalidCatalogResponse("GitHub", "autodev-control-github-v1");
+    : invalidResponse("GitHub", "autodev-control-github-v1");
 }
 
 export async function fetchRouting(
@@ -2305,7 +2321,7 @@ export async function fetchRouting(
   if (result.kind !== "ok") return result;
   return isControlApiRoutingResponse(result.data)
     ? { kind: "ok", data: result.data }
-    : invalidCatalogResponse("Routing", "autodev-control-routing-v1");
+    : invalidResponse("Routing", "autodev-control-routing-v1");
 }
 
 export async function fetchRuntime(
@@ -2341,7 +2357,11 @@ export async function fetchEvaluations(
   if (result.kind !== "ok") return result;
   return isControlApiEvaluationsResponse(result.data)
     ? { kind: "ok", data: result.data }
-    : invalidCatalogResponse("Evaluations", "autodev-control-evaluations-v1");
+    : invalidResponse(
+        "Evaluations",
+        "autodev-control-evaluations-v1",
+        "autodev_control_api_invalid_evaluations_response"
+      );
 }
 
 /**
