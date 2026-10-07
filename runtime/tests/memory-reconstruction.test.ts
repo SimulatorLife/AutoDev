@@ -306,15 +306,16 @@ test("an over-long context is refused rather than sent", async () => {
 });
 
 test("an over-long task is truncated for the review, not refused", async () => {
-  // `buildReviewRequest` checks `normalizedTask.length > MAX_TASK_CHARACTERS`,
-  // and that branch is unreachable: `memoryQueryFromTask` already caps its
-  // result at exactly the same 4000, keeping the opening and the final
-  // constraints. So an over-long task is *bounded*, not declined -- and the
-  // check that looks like it would refuse it is defence in depth against a
-  // future change to that other constant, not an enforced rule.
+  // There was a `normalizedTask.length > MAX_TASK_CHARACTERS` check here, and
+  // it could never fire: `memoryQueryFromTask` bounds its result by the same
+  // limit. The two were 4000 by coincidence rather than by construction, which
+  // is why the check read as a rule that merely happened to be unreachable. It
+  // is one constant now, and the check is gone.
   //
   // Asserted as the behaviour that exists, because the alternative -- a test
   // asserting a refusal -- would pass for a reason the code never produces.
+  // The bound below is written out rather than imported from the shared
+  // constant, so that raising it has to be a deliberate edit here too.
   const { reconstructor, requests } = rig({ body: reviewResponse(VALID_REVIEW) });
 
   const result = await review(reconstructor, { task: "t".repeat(9000) });

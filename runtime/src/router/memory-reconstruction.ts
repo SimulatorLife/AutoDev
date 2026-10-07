@@ -2,15 +2,15 @@ import { context as otelContext, propagation } from "@opentelemetry/api";
 import type { MemoryRecord } from "@simulatorlife/autodev-core";
 import {
   type CurrentStateAssessment,
+  MAX_CLAIM_LENGTH,
   memoryQueryFromTask,
   type MemoryReconstructor
 } from "@simulatorlife/autodev-runtime/memory";
 import { ORCHESTRATOR_ALIAS } from "@simulatorlife/autodev-runtime/router/routing";
 
-const MAX_TASK_CHARACTERS = 4000;
-const MAX_CLAIM_CHARACTERS = 4000;
 const MAX_EVIDENCE_REFERENCES = 12;
 const MAX_EVIDENCE_URI_CHARACTERS = 512;
+const MAX_EVIDENCE_REVISION_CHARACTERS = 128;
 const MAX_ISSUE_OBSERVATIONS = 4;
 const MAX_RESPONSE_CHARACTERS = 12_000;
 const MAX_OUTPUT_TOKENS = 512;
@@ -122,11 +122,18 @@ function buildReviewRequest(
 ): Record<string, unknown> | null {
   const normalizedTask = memoryQueryFromTask(task);
   const claim = memory.claim.trim();
+  // The task carries no length check here. `memoryQueryFromTask` bounds it by
+  // the service's own query bound, so a local test of its length could only
+  // ever compare that bound against itself; there was one here, and the test
+  // covering this function already documented it as unreachable.
+  //
+  // The claim keeps its check, because it is read back from storage rather than
+  // produced here -- but against the service's bound rather than a local copy,
+  // so the two cannot come to disagree about what a claim may be.
   if (
     !normalizedTask ||
-    normalizedTask.length > MAX_TASK_CHARACTERS ||
     !claim ||
-    claim.length > MAX_CLAIM_CHARACTERS ||
+    claim.length > MAX_CLAIM_LENGTH ||
     assessment.compatibility !== "compatible" ||
     assessment.evidence.length === 0
   ) {
@@ -138,7 +145,7 @@ function buildReviewRequest(
       kind: reference.kind,
       uri: reference.uri.slice(0, MAX_EVIDENCE_URI_CHARACTERS),
       ...(reference.revision
-        ? { revision: reference.revision.slice(0, 128) }
+        ? { revision: reference.revision.slice(0, MAX_EVIDENCE_REVISION_CHARACTERS) }
         : {})
     }));
   const issueObservations = (assessment.issueObservations ?? [])
@@ -206,7 +213,13 @@ function parseReviewResponse(value: unknown): {
       (guidance !== null &&
         guidance !== undefined &&
         typeof guidance !== "string") ||
-      (typeof guidance === "string" && guidance.length > MAX_CLAIM_CHARACTERS)
+      // Bounded by the claim bound, not a local copy: the guidance a review
+      // returns *is* a claim -- `VerifiedMemoryReconstructor` returns the
+      // record's own claim as guidance, and a `revise` disposition returns the
+      // model's replacement for it -- so it is held to the length a claim is
+      // allowed to be. It used to be checked against the same constant that
+      // bounded the record's claim, under a name that did not say so.
+      (typeof guidance === "string" && guidance.length > MAX_CLAIM_LENGTH)
     ) {
       return uncertainReview();
     }

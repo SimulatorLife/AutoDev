@@ -190,10 +190,21 @@ export interface MemoryServiceOptions {
   readonly skillPromotionWriter?: MemorySkillPromotionWriter;
 }
 
-const MAX_QUERY_LENGTH = 4000;
+/**
+ * Exported because callers build the values this layer validates, and a caller
+ * that restates the bound under its own name is free to drift from the rule
+ * that actually refuses it.
+ *
+ * The drift is not loud. A query built past `MAX_QUERY_LENGTH` is rejected by
+ * `assertQuery` inside `research`, and the router catches that rejection and
+ * returns the request unenriched -- so raising a caller's copy of the bound
+ * would not break memory loudly, it would stop memory being injected for long
+ * tasks while every log line still read as success.
+ */
+export const MAX_QUERY_LENGTH = 4000;
 const MAX_TASK_KIND_LENGTH = 200;
 const MAX_MEMORY_REFERENCE_ID_LENGTH = 256;
-const MAX_CLAIM_LENGTH = 4000;
+export const MAX_CLAIM_LENGTH = 4000;
 const MAX_RESEARCH_HITS = 40;
 const MAX_RESEARCH_CANDIDATES = 40;
 const MAX_LIST_OFFSET = 100_000;

@@ -6,10 +6,9 @@ import type {
 } from "@simulatorlife/autodev-core";
 
 import { redactSensitiveText, sanitizeEvidence } from "./privacy.ts";
-import type { MemoryService } from "./service.ts";
+import { MAX_QUERY_LENGTH, type MemoryService } from "./service.ts";
 
 const MAX_TASK_TEXT_CHARACTERS = 16_000;
-const MAX_QUERY_CHARACTERS = 4000;
 const MAX_RETRIEVAL_ONLY_ENTRIES = 2;
 const MAX_RETRIEVAL_ONLY_PACKET_CHARACTERS = 4000;
 const MAX_RETRIEVAL_ONLY_EVIDENCE = 4;
@@ -48,12 +47,20 @@ export function latestUserTask(input: unknown): string | null {
   return null;
 }
 
-/** Create a lexical query that keeps both the task's opening and final constraints. */
+/**
+ * Create a lexical query that keeps both the task's opening and final constraints.
+ *
+ * Bounded by the service's own query bound rather than a local copy of it: this
+ * value is handed straight to `MemoryService.research`, which refuses anything
+ * longer, and the router answers that refusal by returning the request
+ * unenriched. A local constant could therefore raise itself past the limit and
+ * turn every long task into a silent no-injection.
+ */
 export function memoryQueryFromTask(task: string): string {
   const normalized = task.trim();
-  if (normalized.length <= MAX_QUERY_CHARACTERS) return normalized;
-  const trailingCharacters = Math.floor((MAX_QUERY_CHARACTERS - 1) / 2);
-  const leadingCharacters = MAX_QUERY_CHARACTERS - trailingCharacters - 1;
+  if (normalized.length <= MAX_QUERY_LENGTH) return normalized;
+  const trailingCharacters = Math.floor((MAX_QUERY_LENGTH - 1) / 2);
+  const leadingCharacters = MAX_QUERY_LENGTH - trailingCharacters - 1;
   return `${normalized.slice(0, leadingCharacters)}\n${normalized.slice(-trailingCharacters)}`;
 }
 

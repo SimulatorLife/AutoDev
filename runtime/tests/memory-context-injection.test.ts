@@ -94,6 +94,28 @@ test("long task query preserves its beginning and final constraints within the b
   assert.match(query, /FINAL_CONSTRAINT$/);
 });
 
+test("a task exactly at the bound passes through, and one character past it truncates", () => {
+  // The task this module carries is bounded far higher than the query bound, so
+  // every task either passes through unchanged or is truncated -- and the
+  // pass-through branch is the one that can emit an over-length query, because
+  // nothing clamps it afterwards. That branch is exactly what drifted before the
+  // two bounds became one constant.
+  //
+  // The lengths are written out rather than read from the shared constant on
+  // purpose. Taking them from the constant would make this pass for any value
+  // it is given, which is the one property here not worth checking.
+  assert.equal(
+    memoryQueryFromTask("a".repeat(4000)).length,
+    4000,
+    "a task at the bound is already a valid query and must not be truncated"
+  );
+  assert.equal(
+    memoryQueryFromTask("a".repeat(4001)).length,
+    4000,
+    "a task one character past the bound must be truncated, not passed through"
+  );
+});
+
 test("memory packet is serialized as advisory context without replacing current instructions", () => {
   const payload = {
     model: "autodev/orchestrator",
@@ -536,5 +558,59 @@ test("injectMemoryContext performs JIT research and attaches the advisory packet
   assert.equal(
     await injectMemoryContext(emptyService, unmodified, context),
     unmodified
+  );
+});
+
+test("a task at the text bound is truncated to a query research will accept", async () => {
+  // The chain this pins: `memoryQueryFromTask` truncates a task down to the
+  // service's query bound, and `research` refuses anything longer than that
+  // bound. Nothing between them catches, so a query bound that drifted apart
+  // from the accepting bound would reject right here.
+  //
+  // Worth a test of its own because the router answers that rejection by
+  // returning the request unenriched: the failure would be memory silently
+  // never being injected for long tasks, with no error anywhere to notice.
+  //
+  // The task is the longest this module will carry, so the truncation path is
+  // the one exercised rather than a short task passed through untouched.
+  const service = new MemoryService({
+    repository: memoryRepository([]),
+    verifier: {
+      verify: async () => {
+        throw new Error("an empty result has nothing to verify");
+      }
+    },
+    reconstructor: {
+      reconstruct: async () => {
+        throw new Error("an empty result has nothing to reconstruct");
+      }
+    },
+    now: () => "2026-09-30T12:00:00.000Z"
+  });
+  const payload = { instructions: "Root role instructions." };
+  const longTask = `BEGIN ${"a".repeat(15_900)} FINAL_CONSTRAINT`;
+
+  const injected = await injectMemoryContext(service, payload, {
+    taskId: "task-long",
+    runId: "run-long",
+    task: longTask,
+    context: {
+      workspaceId: "workspace-a",
+      repositoryId: "repo-a",
+      role: "orchestrator",
+      taskId: "task-long",
+      runId: "run-long",
+      agentId: "agent-root",
+      canReadGlobal: false
+    }
+  });
+
+  // With no hits the packet is empty, so the payload comes back as it went in.
+  // Identity, not equality: the point is that research ran to completion, and a
+  // rejected query would have thrown instead of returning anything at all.
+  assert.equal(injected, payload);
+  assert.ok(
+    longTask.length > 4000,
+    "the task must actually be over the query bound for this to test truncation"
   );
 });
