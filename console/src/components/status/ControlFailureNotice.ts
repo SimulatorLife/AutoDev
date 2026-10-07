@@ -24,6 +24,8 @@ const REFUSAL_DETAIL: Record<ControlRefusalReason, string> = {
     "A revision needs the replacement claim text; nothing was sent to the Runtime.",
   content_required:
     "A skill promotion needs the procedure body to write. Nothing was sent to the Runtime.",
+  prior_required:
+    "A supersession has to name the record it retires. Nothing was sent to the Runtime, so the older claim is still active.",
   evidence_required:
     "This action needs the evidence it rests on — a kind and where it lives. Nothing was sent to the Runtime.",
   provenance_required:

@@ -149,6 +149,29 @@ test("a revise body carries the claim, its source experiences and evidence", asy
   assert.deepEqual(body.experienceIds, ["exp-1"]);
 });
 
+test("a supersede body names the prior record and the research it rests on", async () => {
+  const body = await forwardedBody(() =>
+    transitionMemoryRecord(
+      "mem-2",
+      "supersede",
+      {
+        workspaceId: "ws-1",
+        priorId: "mem-1",
+        task: "the budget is now measured in attempts",
+        query: "budget"
+      },
+      CONFIG
+    )
+  );
+
+  assertAccepted("supersede", body, ["priorId", "task", "query"]);
+  // `supersededBy` is the spelling the transport used to advertise. It reads
+  // more naturally and the Runtime does not accept it: this action's
+  // `exactKeys` takes `priorId`, so sending the other one is a 400.
+  assert.equal(body.priorId, "mem-1");
+  assert.equal("supersededBy" in body, false);
+});
+
 test("a promote-to-skill body carries the content the Runtime writes", async () => {
   const body = await forwardedBody(() =>
     promoteMemoryProcedureToSkill(
@@ -184,7 +207,8 @@ test("no transition forwards workspaceId in the body", async () => {
     [
       "revise",
       { claim: "c", experienceIds: ["exp-1"], evidence: EVIDENCE }
-    ]
+    ],
+    ["supersede", { priorId: "mem-1", task: "t", query: "q" }]
   ] as Array<[string, Record<string, unknown>]>) {
     const body = await forwardedBody(() =>
       transitionMemoryRecord(

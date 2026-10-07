@@ -90,8 +90,13 @@ function render(records: readonly MemoryRecord[]): string {
  * "is this action reachable at all" answerable in the same breath.
  */
 function markupFor(testId: string): string {
+  // Supersession needs a prior to name, so the states are rendered with one
+  // eligible active record beside the subject rather than alone.
   for (const status of ["proposed", "active", "uncertain"] as const) {
-    const markup = render([record({ status })]);
+    const markup = render([
+      record({ status }),
+      record({ id: "mem-old", claim: "Raise the retry budget to ten minutes." })
+    ]);
     if (markup.includes(`data-button="${testId}"`)) return markup;
   }
   assert.fail(`${testId} is not offered for a record in any governed state`);
@@ -216,6 +221,75 @@ test("a record citing no experiences is not offered a revision it cannot make", 
   );
   // The other governed actions do not depend on provenance, so they stay.
   assert.match(markup, /data-button="memory-invalidate"/);
+});
+
+test("a proposal offers to supersede the active record it corrects", async () => {
+  // Verify promotes a proposal while the claim it contradicts stays active, so
+  // both keep answering the same question. Supersession is the only transition
+  // that retires the older record, and it was unreachable from the Console --
+  // the status, the filter and the lineage panel were all reachable only by a
+  // hand-written request.
+  const prior = record({
+    id: "mem-old",
+    status: "active",
+    claim: "Raise the retry budget to ten minutes."
+  });
+  const markup = render([record({ status: "proposed" }), prior]);
+  const form = actionForm(markup, "memory-supersede");
+
+  // The prior is named by choice, not typed: the Runtime admits only an active
+  // record of the same kind and exact scope, so asking for an id would be asking
+  // for something that is usually refused.
+  assert.deepEqual(selectOptions(form, "priorId"), ["mem-old"]);
+  assert.equal(fieldValue(form, "recordId"), "mem-1");
+  assert.ok(
+    fieldNames(form).includes("reason"),
+    "a supersession is re-derived by the Runtime and needs its research context"
+  );
+});
+
+test("supersession offers only records the Runtime would admit", async () => {
+  const active = record({ id: "mem-old", status: "active" });
+  const proposed = record({ id: "mem-new", status: "proposed" });
+
+  // Wrong kind, wrong scope, wrong status: each is refused by the Runtime, so
+  // each must be absent from the choice rather than offered and turned down.
+  const markup = render([
+    proposed,
+    active,
+    record({ id: "mem-semantic", status: "active", kind: "semantic" }),
+    record({
+      id: "mem-elsewhere",
+      status: "active",
+      scope: { kind: "global" }
+    }),
+    record({ id: "mem-proposed-too", status: "proposed" })
+  ]);
+
+  assert.deepEqual(selectOptions(actionForm(markup, "memory-supersede"), "priorId"), [
+    "mem-old"
+  ]);
+});
+
+test("a proposal with no active record to supersede says so", async () => {
+  const markup = render([record({ status: "proposed" })]);
+
+  assert.ok(
+    !markup.includes('data-button="memory-supersede"'),
+    "there is nothing to supersede, so the action would only ever be refused"
+  );
+  assert.match(markup, /to supersede/u);
+  // The rest of the governance surface is unaffected.
+  assert.match(markup, /data-button="memory-verify"/);
+});
+
+test("an active record is not offered supersession", async () => {
+  // Only a proposal can supersede, and only an active record can be superseded;
+  // an active record is the subject of neither.
+  const markup = render([record({ status: "active" }), record({ id: "mem-old" })]);
+
+  assert.ok(!markup.includes('data-button="memory-supersede"'));
+  assert.ok(!markup.includes('name="priorId"'));
 });
 
 test("every action form names its record, its workspace and where to return to", async () => {

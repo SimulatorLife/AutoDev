@@ -440,7 +440,20 @@ export function MemoryRecordsView({
           history,
           why,
           listScope,
-          renderedAt
+          renderedAt,
+          // The records this one is allowed to supersede, resolved here where
+          // the whole visible page is in hand. A supersession needs a named
+          // prior record, and the Runtime admits only an active one of the same
+          // kind and exact scope -- so the eligible set is derived from what is
+          // on screen rather than asked of the operator as a bare id.
+          supersessionCandidates: records.filter(
+            (candidate) =>
+              candidate.id !== selectedRecord.id &&
+              candidate.status === "active" &&
+              candidate.kind === selectedRecord.kind &&
+              formatScopeString(candidate.scope) ===
+                formatScopeString(selectedRecord.scope)
+          )
         })
       : null
   );
@@ -532,6 +545,15 @@ interface RecordDetailPanelProps {
   readonly listScope: MemoryListScope;
   /** The page's single render instant, so every claim is judged against one clock. */
   readonly renderedAt: string;
+  /**
+   * Active records this one is allowed to supersede, in the current view.
+   *
+   * Empty is a real answer rather than a missing one: supersession needs an
+   * active prior of the same kind and scope, and when the page shows none there
+   * is nothing to name. The drawer says so instead of offering a control the
+   * Runtime will refuse.
+   */
+  readonly supersessionCandidates: readonly MemoryRecord[];
 }
 
 function RecordDetailPanel({
@@ -539,7 +561,8 @@ function RecordDetailPanel({
   history,
   why,
   listScope,
-  renderedAt
+  renderedAt,
+  supersessionCandidates
 }: RecordDetailPanelProps): React.JSX.Element {
   // Computed once: the label is needed both to decide whether to render the row
   // and to fill it, and formatting the same window twice can produce two
@@ -822,6 +845,33 @@ function RecordDetailPanel({
           })
         : null,
 
+      // Supersede the record this one corrects.
+      //
+      // Offered ahead of verify on a proposal because the two differ in what
+      // they leave behind: verify promotes this record while the one it
+      // contradicts stays active, so both go on being retrieved as answers to
+      // the same question. Supersession is the only operation that retires the
+      // older claim, and without it the `superseded` status, the lineage panel
+      // and the status filter were all reachable only by hand-written request.
+      record.status === "proposed"
+        ? supersessionCandidates.length === 0
+          ? React.createElement(
+              "p",
+              { className: `${MUTED_META_CLASS} w-full basis-full` },
+              "No active record of this kind and scope is visible here to supersede. Widen the list to include it."
+            )
+          : React.createElement(RecordActionForm, {
+              record,
+              listScope,
+              action: "supersede",
+              label: "Supersede…",
+              variant: "primary",
+              testId: "memory-supersede",
+              withResearchContext: true,
+              supersedes: supersessionCandidates
+            })
+        : null,
+
       // Invalidate
       record.status === "active" || record.status === "proposed"
         ? React.createElement(RecordActionForm, {
@@ -920,7 +970,12 @@ function RecordDetailPanel({
 interface RecordActionFormProps {
   readonly record: MemoryRecord;
   readonly listScope: MemoryListScope;
-  readonly action: "verify" | "invalidate" | "revise" | "promote-skill";
+  readonly action:
+    | "verify"
+    | "invalidate"
+    | "revise"
+    | "promote-skill"
+    | "supersede";
   readonly label: string;
   readonly variant: "primary" | "secondary" | "destructive";
   readonly testId: string;
@@ -953,6 +1008,16 @@ interface RecordActionFormProps {
   readonly withReasonCode?: boolean | undefined;
   /** Pre-fill for a revision's replacement claim. */
   readonly claim?: string | undefined;
+  /**
+   * The active records this one may supersede.
+   *
+   * A supersession names the record it replaces, and the Runtime admits only an
+   * active record of the same kind and exact scope. So the control is a choice
+   * among the ones that would be accepted rather than a box asking for an id
+   * the operator would have to look up — and a select cannot express a request
+   * the Runtime will refuse for want of a valid prior.
+   */
+  readonly supersedes?: readonly MemoryRecord[] | undefined;
 }
 
 function RecordActionForm({
@@ -965,7 +1030,8 @@ function RecordActionForm({
   withResearchContext,
   withEvidence,
   withReasonCode,
-  claim
+  claim,
+  supersedes
 }: RecordActionFormProps): React.JSX.Element {
   const hidden = (name: string, value: string): React.JSX.Element =>
     React.createElement("input", { key: name, type: "hidden", name, value });
@@ -1009,6 +1075,22 @@ function RecordActionForm({
           rows: 3,
           className: "basis-64 grow",
           testId: "memory-revise-claim"
+        }),
+    supersedes === undefined
+      ? null
+      : React.createElement(SelectField, {
+          name: "priorId",
+          id: `memory-${action}-prior-${record.id}`,
+          // Spelled with the claim alongside it, because an id on its own tells
+          // an operator nothing about what they would be retiring.
+          label: "Replaces",
+          hideLabel: true,
+          className: "basis-64 grow",
+          testId: `memory-${action}-prior`,
+          options: supersedes.map((prior) => ({
+            value: prior.id,
+            label: `${prior.id} — ${prior.claim}`
+          }))
         }),
     withResearchContext === true
       ? React.createElement(TextField, {

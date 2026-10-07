@@ -2749,7 +2749,15 @@ export function transitionMemoryRecord(
     }[];
     /** Bounded by the Runtime's reason-code list; free text is refused there. */
     readonly reasonCode?: string;
-    readonly supersededBy?: string;
+    /**
+     * The record a supersession retires.
+     *
+     * Spelled `priorId` because that is the Runtime's key: it wrote
+     * `supersededBy` here, which reads naturally and is not accepted —
+     * `exactKeys` on the supersede action takes `priorId`, and sending the
+     * other spelling was a malformed request rather than a thin one.
+     */
+    readonly priorId?: string;
   },
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}

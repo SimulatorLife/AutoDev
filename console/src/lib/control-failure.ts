@@ -42,6 +42,7 @@ export const CONTROL_REFUSAL_REASONS = [
   "reason_required",
   "claim_required",
   "content_required",
+  "prior_required",
   "evidence_required",
   "provenance_required",
   "runtime_refused"

@@ -31,6 +31,13 @@ interface MemoryActionPayload {
   readonly workspaceId: string;
   readonly reason: string;
   readonly claim: string;
+  /**
+   * The record a supersession retires.
+   *
+   * Supersession is the only transition that takes a second record as its
+   * subject, so the identifier is the action's own rather than the tab's.
+   */
+  readonly priorId: string;
   readonly skillName: string;
   /**
    * The procedure body a promotion writes to the skill catalog. The Runtime
@@ -138,6 +145,11 @@ const MEMORY_ACTION_TARGETS: Readonly<
   Record<string, MemoryActionTarget>
 > = {
   verify: {
+    tab: "records",
+    subjectField: "recordId",
+    required: ["recordId"]
+  },
+  supersede: {
     tab: "records",
     subjectField: "recordId",
     required: ["recordId"]
@@ -282,6 +294,7 @@ async function parsePayload(
         "SimulatorLife/AutoDev",
       reason: String(formData.get("reason") ?? "").trim(),
       claim: String(formData.get("claim") ?? "").trim(),
+      priorId: String(formData.get("priorId") ?? "").trim(),
       skillName: String(formData.get("skillName") ?? "").trim(),
       promotedContent: String(formData.get("promotedContent") ?? "").trim(),
       correlationToken: String(formData.get("correlationToken") ?? "").trim(),
@@ -321,6 +334,7 @@ async function parsePayload(
         String(json.workspaceId ?? "").trim() || "SimulatorLife/AutoDev",
       reason: String(json.reason ?? "").trim(),
       claim: String(json.claim ?? "").trim(),
+      priorId: String(json.priorId ?? "").trim(),
       skillName: String(json.skillName ?? "").trim(),
       promotedContent: String(json.promotedContent ?? "").trim(),
       correlationToken: String(json.correlationToken ?? "").trim(),
@@ -387,6 +401,7 @@ function executeAction(
     workspaceId,
     reason,
     claim,
+    priorId,
     skillName,
     correlationToken,
     outcomeKind,
@@ -425,6 +440,22 @@ function executeAction(
         recordId,
         "verify",
         { workspaceId, task, query: reason },
+        config
+      );
+    }
+    case "supersede": {
+      // Supersession names the record it retires, and re-derives this one from a
+      // research request exactly as verify does. The prior id is checked here so
+      // the refusal names the missing selection rather than arriving as a
+      // generic 400 from the Runtime, which would send the operator to look at
+      // a form they had already filled in correctly.
+      if (!priorId) return "prior_required";
+      const task = reason.trim();
+      if (!task) return "reason_required";
+      return transitionMemoryRecord(
+        recordId,
+        "supersede",
+        { workspaceId, priorId, task, query: reason },
         config
       );
     }
