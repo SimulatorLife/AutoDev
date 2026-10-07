@@ -1,4 +1,7 @@
-import type { UsageFilterSelection } from "@simulatorlife/autodev-core";
+import {
+  isHistoricalUsageSelection,
+  type UsageFilterSelection
+} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { UsageView } from "../../src/features/usage/UsageView.ts";
@@ -7,6 +10,7 @@ import {
   type UsageSearchParams,
   usageSelectionFromSearchParams
 } from "../../src/lib/server/openlit-usage.ts";
+import { loadUsageActiveSessions } from "../../src/lib/server/usage-active-sessions.ts";
 import {
   ConsolePageShell,
   readNodeContext,
@@ -22,10 +26,53 @@ interface UsagePageProps {
 export default async function UsagePage({
   searchParams
 }: UsagePageProps): Promise<React.JSX.Element> {
-  const { section } = readNodeContext("/usage");
+  const { section, config } = readNodeContext("/usage");
   const selection: UsageFilterSelection = usageSelectionFromSearchParams(
     await searchParams
   );
+
+  // The live-session scope has no interval, so it is served by the Runtime's
+  // read-only control-plane projection rather than by a Usage telemetry query.
+  // Asking OpenLIT for it would request a window that does not exist.
+  if (!isHistoricalUsageSelection(selection)) {
+    const live = await loadUsageActiveSessions(config ?? null);
+    if (live.kind === "not-configured") {
+      return React.createElement(
+        ConsolePageShell,
+        { section },
+        React.createElement(ResourceUnavailable, {
+          title: "Control API credential is not configured",
+          code: live.code,
+          message:
+            "Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read live session state.",
+          hint: "Active sessions come from the Runtime's read-only /control/runtime projection."
+        }),
+        React.createElement(UsageView, { selection })
+      );
+    }
+    if (live.kind === "unavailable") {
+      return React.createElement(
+        ConsolePageShell,
+        { section },
+        React.createElement(ResourceUnavailable, {
+          title: "Live session state could not be read",
+          code: live.code,
+          message: live.message,
+          hint: "An unavailable read is not an idle Runtime; no session count is shown until the Runtime reports one."
+        }),
+        React.createElement(UsageView, { selection })
+      );
+    }
+    return React.createElement(
+      ConsolePageShell,
+      { section },
+      React.createElement(UsageView, {
+        selection,
+        activeSessions: live.activeSessions
+      })
+    );
+  }
+
   const result = await loadOpenLITUsage(selection);
   if (result.kind === "not-configured") {
     return React.createElement(

@@ -1,4 +1,5 @@
 import type {
+  UsageActiveSessions,
   UsageFilterOptions,
   UsageFilterSelection,
   UsageMetricsData
@@ -37,6 +38,13 @@ export interface UsageViewProps {
   readonly metrics?: UsageMetricsData | undefined;
   readonly filterOptions?: UsageFilterOptions | undefined;
   readonly selection?: UsageFilterSelection | undefined;
+  /**
+   * Live Runtime evidence for the `ACTIVE_SESSIONS` scope.
+   *
+   * `undefined` means the scope could not be read at all — the page renders
+   * that as unavailable rather than as an empty scope.
+   */
+  readonly activeSessions?: UsageActiveSessions | undefined;
 }
 
 const COUNT_FORMATTER = new Intl.NumberFormat("en-US", {
@@ -72,6 +80,106 @@ export function formatLatency(value: number | null): string {
 
 export function formatCount(value: number | null): string {
   return value === null ? NOT_OBSERVED_LABEL : COUNT_FORMATTER.format(value);
+}
+
+/**
+ * Render one live-scope counter.
+ *
+ * `null` is "the Runtime did not report this", which is a different fact from
+ * "the Runtime reported zero". Collapsing the two here is exactly the failure
+ * the scope is required not to have: an unreachable Runtime would read as a
+ * quiet one, and an operator would conclude nothing is running.
+ */
+function formatLiveCount(value: number | null): string {
+  return value === null ? NOT_OBSERVED_LABEL : COUNT_FORMATTER.format(value);
+}
+
+function formatLifecycle(
+  state: UsageActiveSessions["lifecycle"],
+  changedAt: string | null
+): string {
+  if (state === null) return NOT_OBSERVED_LABEL;
+  if (state !== "draining") return "Ready";
+  return changedAt === null ? "Draining" : `Draining since ${changedAt}`;
+}
+
+/**
+ * Render the `ACTIVE_SESSIONS` scope.
+ *
+ * Every value here comes from the Runtime's live projection. When that read
+ * failed, the panel says so and shows no counters at all: rendering the
+ * historical widgets instead would leave the previous window's numbers sitting
+ * under a heading that promises live sessions, and rendering zeros would report
+ * an idle Runtime that was never actually observed.
+ */
+function renderActiveSessionsScope(
+  active: UsageActiveSessions | undefined
+): React.JSX.Element {
+  if (active === undefined) {
+    return React.createElement(
+      "div",
+      null,
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "Active Sessions"
+      ),
+      React.createElement(
+        "div",
+        { className: LIST_PANEL_CLASS },
+        React.createElement(
+          "p",
+          { className: "text-sm text-fg-muted" },
+          "Live session state is unavailable. The Runtime did not report session evidence, so no count is shown; an unavailable read is not an idle Runtime."
+        )
+      )
+    );
+  }
+
+  return React.createElement(
+    "div",
+    null,
+    React.createElement(
+      "h3",
+      { className: SECTION_HEADING_CLASS },
+      "Active Sessions"
+    ),
+    React.createElement(
+      StatGrid,
+      { columns: 4 },
+      React.createElement(StatCard, {
+        title: "Active Sessions",
+        value: formatLiveCount(active.activeSessions),
+        subtitle: "Runtime-reported live sessions"
+      }),
+      React.createElement(StatCard, {
+        title: "Active Subagent Threads",
+        value: formatLiveCount(active.activeSubagentThreads),
+        subtitle: "Runtime-reported live threads"
+      }),
+      React.createElement(StatCard, {
+        title: "In-flight Requests",
+        value: formatLiveCount(active.inFlightRequests),
+        subtitle: "Runtime-reported provider requests"
+      }),
+      React.createElement(StatCard, {
+        title: "Router Lifecycle",
+        value: formatLifecycle(active.lifecycle, active.lifecycleChangedAt),
+        subtitle: "Runtime lifecycle state"
+      })
+    ),
+    React.createElement(
+      "div",
+      { className: LIST_PANEL_CLASS },
+      React.createElement(
+        "p",
+        { className: "text-sm text-fg-muted" },
+        active.perSessionIdentityAvailable
+          ? "Per-session detail is reported below."
+          : "The Runtime reports a live session count but no per-session identity yet, so no session list is shown. Absence of a list is not an absence of sessions."
+      )
+    )
+  );
 }
 
 function formatDimension(value: string): string {
@@ -145,7 +253,8 @@ function renderFilterSelect(
 export function UsageView({
   metrics,
   filterOptions = UNKNOWN_FILTER_OPTIONS,
-  selection = DEFAULT_SELECTION
+  selection = DEFAULT_SELECTION,
+  activeSessions
 }: UsageViewProps): React.JSX.Element {
   const safeMetrics = metrics;
   const requestsByRole = safeMetrics?.requestsByRole;
@@ -153,6 +262,10 @@ export function UsageView({
   const callsByTool = safeMetrics?.callsByTool;
   const selectedValues = selection.values;
   const todayUtc = new Date().toISOString().slice(0, 10);
+  // The live scope has no interval, so the custom bounds do not describe
+  // anything here. Rendering them would offer an operator a control that cannot
+  // affect the reading in front of them.
+  const isActiveSessions = selection.range === "ACTIVE_SESSIONS";
   const observed =
     safeMetrics !== undefined &&
     safeMetrics !== null &&
@@ -179,9 +292,13 @@ export function UsageView({
           { className: FIELD_GROUP_CLASS },
           React.createElement(SelectField, {
             name: "range",
-            label: "Time range:",
+            // Not "Time range": this control now holds a selection that is not
+            // a time range, and a label that promises only a window would
+            // misdescribe one of its own options.
+            label: "Usage scope:",
             defaultValue: selection.range,
             options: [
+              { value: "ACTIVE_SESSIONS", label: "Active sessions" },
               { value: "24H", label: "Last 24 hours" },
               { value: "7D", label: "Last 7 days" },
               { value: "1M", label: "Last 30 days" },
@@ -190,230 +307,258 @@ export function UsageView({
             ]
           })
         ),
-        React.createElement(
-          "details",
-          {
-            className:
-              "flex min-w-0 flex-wrap items-center gap-2 text-xs text-fg-muted",
-            open: selection.range === "CUSTOM"
-          },
-          React.createElement(
-            "summary",
-            { className: "cursor-pointer" },
-            "Custom dates"
-          ),
-          React.createElement(
-            "label",
-            { className: FIELD_GROUP_CLASS },
-            React.createElement("span", null, "From (UTC):"),
-            React.createElement("input", {
-              type: "date",
-              name: "startDate",
-              defaultValue: selection.customRange?.startDate ?? "",
-              max: selection.customRange?.endDate ?? todayUtc,
-              "aria-label": "Custom range start date",
-              className: FIELD_CONTROL_CLASS
-            })
-          ),
-          React.createElement(
-            "label",
-            { className: FIELD_GROUP_CLASS },
-            React.createElement("span", null, "To (UTC):"),
-            React.createElement("input", {
-              type: "date",
-              name: "endDate",
-              defaultValue: selection.customRange?.endDate ?? "",
-              min: selection.customRange?.startDate,
-              max: todayUtc,
-              "aria-label": "Custom range end date",
-              className: FIELD_CONTROL_CLASS
-            })
-          ),
-          React.createElement(
+        isActiveSessions
+          ? React.createElement(
+              "span",
+              { className: "text-xs text-fg-muted" },
+              "Live Runtime state, not a time range."
+            )
+          : React.createElement(
+              "details",
+              {
+                className:
+                  "flex min-w-0 flex-wrap items-center gap-2 text-xs text-fg-muted",
+                open: selection.range === "CUSTOM"
+              },
+              React.createElement(
+                "summary",
+                { className: "cursor-pointer" },
+                "Custom dates"
+              ),
+              React.createElement(
+                "label",
+                { className: FIELD_GROUP_CLASS },
+                React.createElement("span", null, "From (UTC):"),
+                React.createElement("input", {
+                  type: "date",
+                  name: "startDate",
+                  defaultValue: selection.customRange?.startDate ?? "",
+                  max: selection.customRange?.endDate ?? todayUtc,
+                  "aria-label": "Custom range start date",
+                  className: FIELD_CONTROL_CLASS
+                })
+              ),
+              React.createElement(
+                "label",
+                { className: FIELD_GROUP_CLASS },
+                React.createElement("span", null, "To (UTC):"),
+                React.createElement("input", {
+                  type: "date",
+                  name: "endDate",
+                  defaultValue: selection.customRange?.endDate ?? "",
+                  min: selection.customRange?.startDate,
+                  max: todayUtc,
+                  "aria-label": "Custom range end date",
+                  className: FIELD_CONTROL_CLASS
+                })
+              ),
+              React.createElement(
+                "span",
+                null,
+                "Custom range accepts up to 90 days; current telemetry retention is about 30 days."
+              )
+            )
+      ),
+      // These dimensions narrow a historical telemetry query. The Runtime's live
+      // projection knows none of them, so offering the controls here would be
+      // offering filters that cannot change the reading below them.
+      isActiveSessions
+        ? React.createElement(
             "span",
+            { className: "text-xs text-fg-muted" },
+            "Workspace, provider, model, and role filters do not narrow live session state."
+          )
+        : React.createElement(
+            "div",
+            { className: "contents" },
+            renderFilterSelect(
+              "workspace",
+              "Workspace",
+              filterOptions.workspace,
+              selectedValues.workspace ?? []
+            ),
+            renderFilterSelect(
+              "provider",
+              "Provider",
+              filterOptions.provider,
+              selectedValues.provider ?? []
+            ),
+            renderFilterSelect(
+              "model",
+              "Requested model",
+              filterOptions.model,
+              selectedValues.model ?? []
+            ),
+            renderFilterSelect(
+              "agent",
+              "Agent / role",
+              filterOptions.agent,
+              selectedValues.agent ?? []
+            )
+          )
+    ),
+    isActiveSessions
+      ? renderActiveSessionsScope(activeSessions)
+      : React.createElement(
+          React.Fragment,
+          null,
+          React.createElement(
+            "div",
             null,
-            "Custom range accepts up to 90 days; current telemetry retention is about 30 days."
+            React.createElement(
+              "h3",
+              {
+                className: SECTION_HEADING_CLASS
+              },
+              "Router & GenAI Observability"
+            ),
+            React.createElement(
+              StatGrid,
+              { columns: 4 },
+              React.createElement(StatCard, {
+                title: "Logical Routed Requests",
+                value: formatCount(safeMetrics?.logicalRequests ?? null),
+                subtitle: "autodev.routed_request"
+              }),
+              React.createElement(StatCard, {
+                title: "Input / Output Tokens",
+                value: `${formatTokenCount(safeMetrics?.totalInputTokens ?? null)} / ${formatTokenCount(safeMetrics?.totalOutputTokens ?? null)}`,
+                subtitle: "Physical attempt totals"
+              }),
+              React.createElement(StatCard, {
+                title: "Cache-read Rate",
+                value: formatCacheRate(safeMetrics?.cacheReadRate ?? null),
+                subtitle: "Cached / Input tokens"
+              }),
+              React.createElement(StatCard, {
+                title: "P95 Latency",
+                value: formatLatency(safeMetrics?.p95LatencyMs ?? null),
+                subtitle: "Physical attempt duration"
+              })
+            )
+          ),
+          React.createElement(
+            "div",
+            { className: gridRowClass(2, "gap-6") },
+            React.createElement(
+              "div",
+              {
+                className: LIST_PANEL_CLASS
+              },
+              React.createElement(
+                "h4",
+                {
+                  className: SECTION_HEADING_CLASS
+                },
+                "Requests by Agent Role"
+              ),
+              React.createElement(BarChart, {
+                data:
+                  requestsByRole === null || requestsByRole === undefined
+                    ? null
+                    : requestsByRole.map((item) => ({
+                        label: formatDimension(item.role),
+                        value: item.count,
+                        valueText: formatCount(item.count)
+                      })),
+                label: "Logical routed requests by agent role",
+                notObservedMessage: "Role telemetry not observed.",
+                emptyMessage:
+                  "No logical requests were observed in this time range.",
+                barClass: "bg-chart-1",
+                valueClass: "text-chart-1"
+              })
+            ),
+            React.createElement(
+              "div",
+              {
+                className: LIST_PANEL_CLASS
+              },
+              React.createElement(
+                "h4",
+                {
+                  className: SECTION_HEADING_CLASS
+                },
+                "Physical Attempts by Provider"
+              ),
+              React.createElement(BarChart, {
+                data:
+                  attemptsByProvider === null ||
+                  attemptsByProvider === undefined
+                    ? null
+                    : attemptsByProvider.map((item) => ({
+                        label: formatDimension(item.provider),
+                        value: item.count,
+                        valueText: formatCount(item.count)
+                      })),
+                label: "Physical attempts by provider",
+                notObservedMessage: "Provider attempt telemetry not observed.",
+                emptyMessage:
+                  "No provider attempts were observed in this time range.",
+                barClass: "bg-chart-2",
+                valueClass: "text-chart-2"
+              })
+            )
+          ),
+          React.createElement(
+            "div",
+            null,
+            React.createElement(
+              "h3",
+              {
+                className: SECTION_HEADING_CLASS
+              },
+              "Model Context Protocol Shim Metrics"
+            ),
+            React.createElement(
+              StatGrid,
+              { columns: 3 },
+              React.createElement(StatCard, {
+                title: "MCP Tool Calls",
+                value: formatCount(safeMetrics?.mcpCalls ?? null),
+                subtitle: "Shim tools/call round trips"
+              }),
+              React.createElement(StatCard, {
+                title: "P95 Tool-call Duration",
+                value: formatLatency(safeMetrics?.p95McpDurationMs ?? null),
+                subtitle: "Shim-owned round trip"
+              }),
+              React.createElement(StatCard, {
+                title: "MCP Tool Errors",
+                value: formatCount(safeMetrics?.mcpErrors ?? null),
+                subtitle: "Errored tools/call spans"
+              })
+            )
+          ),
+          React.createElement(
+            "div",
+            {
+              className: LIST_PANEL_CLASS
+            },
+            React.createElement(
+              "h4",
+              {
+                className: SECTION_HEADING_CLASS
+              },
+              "MCP Calls by Tool Name"
+            ),
+            React.createElement(BarChart, {
+              data:
+                callsByTool === null || callsByTool === undefined
+                  ? null
+                  : callsByTool.map((item) => ({
+                      label: formatDimension(item.tool),
+                      value: item.count,
+                      valueText: formatCount(item.count)
+                    })),
+              label: "MCP calls by tool name",
+              notObservedMessage: "Tool-call telemetry not observed.",
+              emptyMessage:
+                "No MCP tool calls were observed in this time range.",
+              barClass: "bg-chart-3",
+              valueClass: "text-chart-3"
+            })
           )
         )
-      ),
-      renderFilterSelect(
-        "workspace",
-        "Workspace",
-        filterOptions.workspace,
-        selectedValues.workspace ?? []
-      ),
-      renderFilterSelect(
-        "provider",
-        "Provider",
-        filterOptions.provider,
-        selectedValues.provider ?? []
-      ),
-      renderFilterSelect(
-        "model",
-        "Requested model",
-        filterOptions.model,
-        selectedValues.model ?? []
-      ),
-      renderFilterSelect(
-        "agent",
-        "Agent / role",
-        filterOptions.agent,
-        selectedValues.agent ?? []
-      )
-    ),
-    React.createElement(
-      "div",
-      null,
-      React.createElement(
-        "h3",
-        {
-          className: SECTION_HEADING_CLASS
-        },
-        "Router & GenAI Observability"
-      ),
-      React.createElement(
-        StatGrid,
-        { columns: 4 },
-        React.createElement(StatCard, {
-          title: "Logical Routed Requests",
-          value: formatCount(safeMetrics?.logicalRequests ?? null),
-          subtitle: "autodev.routed_request"
-        }),
-        React.createElement(StatCard, {
-          title: "Input / Output Tokens",
-          value: `${formatTokenCount(safeMetrics?.totalInputTokens ?? null)} / ${formatTokenCount(safeMetrics?.totalOutputTokens ?? null)}`,
-          subtitle: "Physical attempt totals"
-        }),
-        React.createElement(StatCard, {
-          title: "Cache-read Rate",
-          value: formatCacheRate(safeMetrics?.cacheReadRate ?? null),
-          subtitle: "Cached / Input tokens"
-        }),
-        React.createElement(StatCard, {
-          title: "P95 Latency",
-          value: formatLatency(safeMetrics?.p95LatencyMs ?? null),
-          subtitle: "Physical attempt duration"
-        })
-      )
-    ),
-    React.createElement(
-      "div",
-      { className: gridRowClass(2, "gap-6") },
-      React.createElement(
-        "div",
-        {
-          className: LIST_PANEL_CLASS
-        },
-        React.createElement(
-          "h4",
-          {
-            className: SECTION_HEADING_CLASS
-          },
-          "Requests by Agent Role"
-        ),
-        React.createElement(BarChart, {
-          data:
-            requestsByRole === null || requestsByRole === undefined
-              ? null
-              : requestsByRole.map((item) => ({
-                  label: formatDimension(item.role),
-                  value: item.count,
-                  valueText: formatCount(item.count)
-                })),
-          label: "Logical routed requests by agent role",
-          notObservedMessage: "Role telemetry not observed.",
-          emptyMessage: "No logical requests were observed in this time range.",
-          barClass: "bg-chart-1",
-          valueClass: "text-chart-1"
-        })
-      ),
-      React.createElement(
-        "div",
-        {
-          className: LIST_PANEL_CLASS
-        },
-        React.createElement(
-          "h4",
-          {
-            className: SECTION_HEADING_CLASS
-          },
-          "Physical Attempts by Provider"
-        ),
-        React.createElement(BarChart, {
-          data:
-            attemptsByProvider === null || attemptsByProvider === undefined
-              ? null
-              : attemptsByProvider.map((item) => ({
-                  label: formatDimension(item.provider),
-                  value: item.count,
-                  valueText: formatCount(item.count)
-                })),
-          label: "Physical attempts by provider",
-          notObservedMessage: "Provider attempt telemetry not observed.",
-          emptyMessage:
-            "No provider attempts were observed in this time range.",
-          barClass: "bg-chart-2",
-          valueClass: "text-chart-2"
-        })
-      )
-    ),
-    React.createElement(
-      "div",
-      null,
-      React.createElement(
-        "h3",
-        {
-          className: SECTION_HEADING_CLASS
-        },
-        "Model Context Protocol Shim Metrics"
-      ),
-      React.createElement(
-        StatGrid,
-        { columns: 3 },
-        React.createElement(StatCard, {
-          title: "MCP Tool Calls",
-          value: formatCount(safeMetrics?.mcpCalls ?? null),
-          subtitle: "Shim tools/call round trips"
-        }),
-        React.createElement(StatCard, {
-          title: "P95 Tool-call Duration",
-          value: formatLatency(safeMetrics?.p95McpDurationMs ?? null),
-          subtitle: "Shim-owned round trip"
-        }),
-        React.createElement(StatCard, {
-          title: "MCP Tool Errors",
-          value: formatCount(safeMetrics?.mcpErrors ?? null),
-          subtitle: "Errored tools/call spans"
-        })
-      )
-    ),
-    React.createElement(
-      "div",
-      {
-        className: LIST_PANEL_CLASS
-      },
-      React.createElement(
-        "h4",
-        {
-          className: SECTION_HEADING_CLASS
-        },
-        "MCP Calls by Tool Name"
-      ),
-      React.createElement(BarChart, {
-        data:
-          callsByTool === null || callsByTool === undefined
-            ? null
-            : callsByTool.map((item) => ({
-                label: formatDimension(item.tool),
-                value: item.count,
-                valueText: formatCount(item.count)
-              })),
-        label: "MCP calls by tool name",
-        notObservedMessage: "Tool-call telemetry not observed.",
-        emptyMessage: "No MCP tool calls were observed in this time range.",
-        barClass: "bg-chart-3",
-        valueClass: "text-chart-3"
-      })
-    )
   );
 }

@@ -18,6 +18,7 @@ import {
   type CanonicalNavSection,
   type ControlApiMemoryWhyResponse,
   type ControlApiModelsResponse,
+  type ControlApiAgentDetailResponse,
   type ControlApiPromptDetailResponse,
   type ControlApiProviderRecord,
   type ControlApiProvidersResponse,
@@ -36,7 +37,8 @@ import {
   SANDBOX_MODES,
   type SkillEligibility,
   type ToolCatalogItem,
-  type UsageMetricsData
+  type UsageMetricsData,
+  isHistoricalUsageSelection
 } from "@simulatorlife/autodev-core";
 import {
   PHASE_DEVELOPMENT_SERVER,
@@ -214,6 +216,7 @@ import {
   readOpenLITUsageConfig,
   usageSelectionFromSearchParams
 } from "../src/lib/server/openlit-usage.ts";
+import { activeSessionsFromRuntime } from "../src/lib/server/usage-active-sessions.ts";
 import {
   hooksFromControlApi,
   permissionsFromControlApi,
@@ -273,6 +276,26 @@ const CONFIGURED_AGENT: AgentDefinition = {
     { name: "playwright", type: "mcp", server: "playwright" }
   ],
   toolNames: ["orchestration", "playwright"]
+};
+
+/**
+ * Desired-vs-actual evidence for an agent. The detail response guard treats this
+ * as a precondition of the page, so every `AgentDetailView` call supplies it.
+ * It is unobserved on purpose: an agent the Runtime has not reconciled against
+ * is the interesting case, and it is the one that has to read `Not observed`
+ * rather than blank.
+ */
+const AGENT_RECONCILIATION: ControlApiAgentDetailResponse["reconciliation"] = {
+  status: {
+    convergence: "not-observed",
+    desiredGeneration: null,
+    observedGeneration: null,
+    lastApplyAt: null,
+    lastObservationAt: null,
+    lastError: null,
+    explanation: "The Runtime has not observed this agent's applied state."
+  },
+  history: []
 };
 
 test("every canonical navigation resource has its own icon, and no icon is orphaned", () => {
@@ -1911,6 +1934,7 @@ test("Agent detail separates configuration from unobserved runtime state", () =>
     type === "skill" ? { type, name } : { type, name, server: name };
   const markup = renderToStaticMarkup(
     React.createElement(AgentDetailView, {
+      reconciliation: AGENT_RECONCILIATION,
       agent: {
         ...CONFIGURED_AGENT,
         tools: [
@@ -1939,7 +1963,10 @@ test("Agent detail separates configuration from unobserved runtime state", () =>
 
 test("Agent detail exposes the shared breadcrumbs landmark with /agents parent and current-page aria state", () => {
   const markup = renderToStaticMarkup(
-    React.createElement(AgentDetailView, { agent: CONFIGURED_AGENT })
+    React.createElement(AgentDetailView, {
+      agent: CONFIGURED_AGENT,
+      reconciliation: AGENT_RECONCILIATION
+    })
   );
 
   // Server-rendered breadcrumbs landmark: single <nav aria-label="Breadcrumb">
@@ -3375,6 +3402,151 @@ test("Usage values stay readable at large scales and keep unattributed groups ex
   assert.match(markup, /8,320/);
   assert.match(markup, /3,419/);
   assert.match(markup, /1,234/);
+});
+
+test("the Usage scope control offers Active sessions and is no longer labelled a time range", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      selection: { range: "24H", values: {} }
+    })
+  );
+
+  // The control now holds a selection that is not a time range, so a label
+  // promising only a window would misdescribe one of its own options.
+  assert.match(markup, /Usage scope:/);
+  assert.doesNotMatch(markup, /Time range:/);
+  assert.match(markup, /value="ACTIVE_SESSIONS"/);
+  assert.match(markup, /Active sessions/);
+  // The historical ranges stay in the same control.
+  for (const value of ["24H", "7D", "1M", "3M", "CUSTOM"]) {
+    assert.match(markup, new RegExp(`value="${value}"`));
+  }
+});
+
+test("the Active sessions URL selection carries no custom bounds", () => {
+  const now = new Date("2026-10-01T12:00:00.000Z");
+
+  // Parsed, and distinct from a range.
+  assert.deepEqual(
+    usageSelectionFromSearchParams({ range: "ACTIVE_SESSIONS" }, now),
+    { range: "ACTIVE_SESSIONS", values: {} }
+  );
+
+  // The live scope has no interval, so the date bounds must not be defaulted
+  // onto it: a 14-day window on a selection with no window would describe
+  // something that does not apply.
+  assert.equal(
+    usageSelectionFromSearchParams({ range: "ACTIVE_SESSIONS" }, now)
+      .customRange,
+    undefined
+  );
+
+  // An unrecognised scope still falls back rather than passing through.
+  assert.equal(
+    usageSelectionFromSearchParams({ range: "live" }, now).range,
+    "24H"
+  );
+
+  // Routing: only historical selections may reach the telemetry query.
+  assert.equal(isHistoricalUsageSelection({ range: "ACTIVE_SESSIONS" }), false);
+  assert.equal(isHistoricalUsageSelection({ range: "24H" }), true);
+  assert.equal(isHistoricalUsageSelection({ range: "CUSTOM" }), true);
+});
+
+test("an Active sessions read that failed renders unavailable, not an empty scope", () => {
+  const unavailable = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      selection: { range: "ACTIVE_SESSIONS", values: {} }
+    })
+  );
+
+  // The historical widgets must not survive under a live-scope heading: the
+  // previous window's numbers would read as though they described now.
+  assert.doesNotMatch(unavailable, /Router &amp; GenAI Observability/);
+  assert.match(unavailable, /Live session state is unavailable/);
+  // An unavailable read is not an idle Runtime, so no count is shown at all.
+  assert.doesNotMatch(unavailable, />0</);
+  assert.match(unavailable, /an unavailable read is not an idle Runtime/i);
+});
+
+test("a measured zero and an unreported counter stay different readings", () => {
+  const measured = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      selection: { range: "ACTIVE_SESSIONS", values: {} },
+      activeSessions: {
+        schema: "autodev-usage-active-sessions-v1",
+        lifecycle: "ready",
+        lifecycleChangedAt: "2026-10-01T12:00:00.000Z",
+        activeSessions: 0,
+        activeSubagentThreads: 0,
+        inFlightRequests: 0,
+        perSessionIdentityAvailable: false
+      }
+    })
+  );
+  // Runtime reachable and reporting zero is a real reading.
+  assert.match(measured, />0</);
+  assert.doesNotMatch(measured, /Live session state is unavailable/);
+
+  const unreported = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      selection: { range: "ACTIVE_SESSIONS", values: {} },
+      activeSessions: {
+        schema: "autodev-usage-active-sessions-v1",
+        lifecycle: "ready",
+        lifecycleChangedAt: "2026-10-01T12:00:00.000Z",
+        activeSessions: null,
+        activeSubagentThreads: null,
+        inFlightRequests: null,
+        perSessionIdentityAvailable: false
+      }
+    })
+  );
+  // Absent counters are "not observed" rather than a synthesized zero. The
+  // earlier selection already rendered "0" three times, so a bare `0` here
+  // would prove the fallback was added.
+  assert.match(unreported, /Not observed/);
+  assert.doesNotMatch(unreported, />0</);
+});
+
+test("live session state projects Runtime counters without inventing defaults", () => {
+  const base = {
+    schema: "autodev-control-runtime-v1" as const,
+    routerInstanceId: "router-1",
+    lifecycle: {
+      state: "ready" as const,
+      draining: false,
+      changedAt: "2026-10-01T12:00:00.000Z",
+      activeResponseRequests: 2
+    },
+    concurrency: {},
+    inFlightRequestCount: 2
+  };
+
+  // Reported counters pass through.
+  assert.deepEqual(
+    activeSessionsFromRuntime({
+      ...base,
+      concurrency: { activeSessions: 3, activeSubagentThreads: 1 }
+    }),
+    {
+      schema: "autodev-usage-active-sessions-v1",
+      lifecycle: "ready",
+      lifecycleChangedAt: "2026-10-01T12:00:00.000Z",
+      activeSessions: 3,
+      activeSubagentThreads: 1,
+      inFlightRequests: 2,
+      perSessionIdentityAvailable: false
+    }
+  );
+
+  // A counter the Runtime never measured is null, not 0.
+  const unreported = activeSessionsFromRuntime({ ...base, concurrency: {} });
+  assert.equal(unreported.activeSessions, null);
+  assert.equal(unreported.activeSubagentThreads, null);
+  // The Runtime publishes a scalar count and no per-session identity, so the
+  // scope must say so instead of rendering an empty session list.
+  assert.equal(unreported.perSessionIdentityAvailable, false);
 });
 
 test("Usage URL filters preserve stock time ranges, custom dates, and server-only credentials", () => {
@@ -7419,6 +7591,7 @@ test("AgentDetailView renders a read-only provider summary and concurrency detai
   const markup = renderToStaticMarkup(
     React.createElement(AgentDetailView, {
       agent: CONFIGURED_AGENT,
+      reconciliation: AGENT_RECONCILIATION,
       providers: PROVIDERS_FIXTURE
     })
   );
@@ -7444,7 +7617,10 @@ test("Agents provider summaries stay not observed without provider configuration
   assert.equal(summary.includes(">Disabled<"), false);
 
   const detailMarkup = renderToStaticMarkup(
-    React.createElement(AgentDetailView, { agent: CONFIGURED_AGENT })
+    React.createElement(AgentDetailView, {
+      agent: CONFIGURED_AGENT,
+      reconciliation: AGENT_RECONCILIATION
+    })
   );
   const detailStart = detailMarkup.indexOf('data-section="agent-providers"');
   const detailEnd = detailMarkup.indexOf('data-section="agent-concurrency"');
@@ -15030,7 +15206,10 @@ test("an unobserved routing counter is never rendered as a zero", () => {
   // observed" for the same missing block, so the page contradicted itself
   // between two adjacent facts.
   const withoutRouting = renderToStaticMarkup(
-    React.createElement(AgentDetailView, { agent: CONFIGURED_AGENT })
+    React.createElement(AgentDetailView, {
+      agent: CONFIGURED_AGENT,
+      reconciliation: AGENT_RECONCILIATION
+    })
   );
   // `CONFIGURED_AGENT` carries no routing block at all.
   assert.ok(
@@ -15332,7 +15511,10 @@ test("a labelled-fact list is named only when its section does not already name 
   // stands alone, directly under the page header with no section of its own, and
   // keeps its name.
   const detail = renderToStaticMarkup(
-    React.createElement(AgentDetailView, { agent: CONFIGURED_AGENT })
+    React.createElement(AgentDetailView, {
+      agent: CONFIGURED_AGENT,
+      reconciliation: AGENT_RECONCILIATION
+    })
   );
   const grids = Array.from(detail.matchAll(/<dl[^>]*>/g), (m) => m[0]);
   assert.ok(grids.length > 0, `expected labelled-fact lists, got: ${detail}`);

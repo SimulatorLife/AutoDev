@@ -6,6 +6,7 @@ import path from "node:path";
 import type {
   UsageCustomRange,
   UsageFilterSelection,
+  UsageHistoricalTimeRange,
   UsageTimeRange,
   UsageVariableId
 } from "@simulatorlife/autodev-core";
@@ -23,7 +24,8 @@ const VALID_RANGES = new Set<UsageTimeRange>([
   "7D",
   "1M",
   "3M",
-  "CUSTOM"
+  "CUSTOM",
+  "ACTIVE_SESSIONS"
 ]);
 const FILTER_IDS: readonly UsageVariableId[] = [
   "workspace",
@@ -141,7 +143,11 @@ export function usageSelectionFromSearchParams(
     endDate: first(searchParams.endDate) || calendarDate(now, 0)
   };
   if (range === "CUSTOM") return { range, values, customRange };
-  const presetRange = range as Exclude<UsageTimeRange, "CUSTOM">;
+  // The live-session scope carries no bounds. Defaulting `customRange` onto it
+  // would put a 14-day window on a selection that has no window at all, and the
+  // two date inputs would then silently describe something that does not apply.
+  if (range === "ACTIVE_SESSIONS") return { range, values };
+  const presetRange = range as Exclude<UsageHistoricalTimeRange, "CUSTOM">;
   return { range: presetRange, values, customRange };
 }
 
