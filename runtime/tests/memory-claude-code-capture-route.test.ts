@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from "node:fs";
 import type { IncomingMessage } from "node:http";
@@ -251,6 +252,42 @@ test("a transcript outside the bound transcript root is refused", async () => {
       "the workspace was authorized; the transcript is what failed"
     );
     assert.match(String(audits.at(-1)?.reason), /transcript/u);
+  } finally {
+    rmSync(fixture.home, { recursive: true, force: true });
+  }
+});
+
+test("a transcript that is a symlink out of the bound root is refused", async () => {
+  // A symlink sitting *inside* the bound transcript root, pointing at a file
+  // outside it, named for the right session. Compared literally the path is
+  // under the root, so this only fails if something canonicalizes it first.
+  //
+  // Two things do, and the test does not claim which: the route realpaths the
+  // hook-supplied path, and `resolveClaudeCodeTranscriptBinding` realpaths both
+  // sides of the comparison itself. Removing either one leaves the refusal in
+  // place — which is worth stating plainly, because the obvious way to test this
+  // is to remove one and expect red, and it stays green.
+  const fixture = workspaceFixture();
+  try {
+    const secret = path.join(fixture.home, "outside.jsonl");
+    writeFileSync(secret, '{"type":"assistant","message":{"content":"secret"}}\n');
+    const link = path.join(path.dirname(fixture.transcript), `${SESSION_ID}.jsonl`);
+    // Replace the fixture's own transcript with a symlink to a file outside the
+    // bound root, keeping the basename that ties it to the session.
+    rmSync(link, { force: true });
+    symlinkSync(secret, link);
+
+    const { status, body, audits } = await capture(WELL_FORMED(fixture), {
+      bindingPath: fixture.bindingPath
+    });
+
+    assert.equal(status, 400, "a symlink escape was accepted");
+    assert.equal(errorCode(body), "autodev_memory_capture_invalid");
+    assert.notEqual(
+      audits.at(-1)?.outcome,
+      "ok",
+      "a symlink escape was reported as a capture"
+    );
   } finally {
     rmSync(fixture.home, { recursive: true, force: true });
   }
