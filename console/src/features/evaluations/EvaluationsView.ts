@@ -1506,6 +1506,13 @@ export function EvaluationsView({
               href: evaluationResultHref(filters, evaluation.id, tab),
               className:
                 "font-mono text-xs font-semibold text-accent underline-offset-4 hover:underline",
+              // The visible text is the role, and roles repeat: a fifty-row page
+              // over six roles announced six words fifty times, with nothing to
+              // tell a non-sighted operator which run they were on. The trace
+              // link in the same row already names itself with the evaluation id,
+              // so this adopts the convention the row's other link set rather
+              // than inventing one.
+              "aria-label": `Open detail for evaluation ${evaluation.id}`,
               "data-evaluation-result-id": evaluation.id
             },
             evaluation.agentRole

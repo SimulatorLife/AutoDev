@@ -6425,6 +6425,50 @@ test("what the view could not include is stated under the filter bar", () => {
   );
 });
 
+test("every history row names its run for assistive technology", () => {
+  // The visible text of a row's link is the agent role, and roles repeat. A
+  // fifty-row page over six roles announced six words fifty times, so a
+  // non-sighted operator moving through the history could not tell the runs
+  // apart -- while the trace link in the same row announced
+  // "View trace for evaluation <id>" and did. The two links disagreed about how
+  // much a run needs to be named.
+  const roles = [
+    "docs-researcher",
+    "browser-tester",
+    "code-reviewer",
+    "architect"
+  ];
+  const rows = roles.flatMap((role, group) =>
+    Array.from({ length: 3 }, (_, index) => ({
+      id: `run-${group}-${index}`,
+      agentRole: role,
+      model: "m-1",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-05T12:00:00Z"
+    }))
+  );
+
+  const html = renderEvaluations({ evaluations: rows });
+  const names = Array.from(
+    html.matchAll(
+      /aria-label="([^"]*)"[^>]*data-evaluation-result-id="([^"]*)"/gu
+    ),
+    (match) => match[1]
+  );
+
+  assert.equal(names.length, rows.length, "every row's link is named");
+  assert.equal(
+    new Set(names).size,
+    rows.length,
+    `every run is named distinctly, got ${new Set(names).size} names for ${rows.length} rows`
+  );
+  // The naming matches the row's other link rather than replacing the visible
+  // text: the role is still what a sighted reader sees.
+  assert.match(html, /aria-label="Open detail for evaluation run-0-0"/);
+  assert.match(html, />docs-researcher</);
+});
+
 test("a window whose own bounds exclude every instant says so", () => {
   // `?from=2026-10-06&until=2026-10-05` names a later start than end, so it
   // holds no instants at all -- knowable from the URL, with no read involved.
