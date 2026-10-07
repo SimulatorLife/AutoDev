@@ -610,3 +610,124 @@ test("native capture validation evidence is a bounded array of well-formed refer
     }
   ]);
 });
+
+/**
+ * The capture configuration's own refusals.
+ *
+ * The file already notes that the *path resolution* refusals could be deleted
+ * with the suite green. The same was true, less visibly, of every refusal in
+ * the environment parser itself: `required`, `requiredBounded`,
+ * `requiredAbsolute` and `optionalBounded` had no failing test at all, because
+ * every fixture spread a complete environment and the refusal cases overrode
+ * values with *invalid* ones rather than omitting or oversizing them.
+ *
+ * Each bound is asserted against the number the reader meets -- 256, 4096 --
+ * rather than against the module-private constant, so raising a constant
+ * cannot quietly widen what is accepted while this test stays green. Each is
+ * asserted from both sides: at the bound and one character past it.
+ */
+test("capture configuration refuses an omitted, oversized, or relative value", () => {
+  const atPathBound = (length: number) => `/${"a".repeat(length - 1)}`;
+
+  // Omitted. `required` is what makes a half-configured capture fail loudly
+  // rather than run against an undefined workspace.
+  for (const name of [
+    "AUTODEV_MEMORY_DATABASE_URL",
+    "AUTODEV_MEMORY_WORKSPACE_ID",
+    "AUTODEV_MEMORY_REPOSITORY_ID",
+    "AUTODEV_MEMORY_REPOSITORY_ROOT",
+    "AUTODEV_MEMORY_CAPTURE_ROOT",
+    "AUTODEV_MEMORY_CAPTURE_PATH",
+    "AUTODEV_MEMORY_TASK_ID",
+    "AUTODEV_MEMORY_RUN_ID",
+    "AUTODEV_MEMORY_AGENT_ID"
+  ] as const) {
+    assert.throws(
+      () =>
+        memoryCaptureConfiguration({
+          ...enabledEnvironment,
+          [name]: undefined
+        }),
+      MemoryCaptureConfigurationError,
+      `${name} is required and omitting it must be refused`
+    );
+  }
+
+  // Required identifiers are bounded at 256 characters.
+  assert.throws(
+    () =>
+      memoryCaptureConfiguration({
+        ...enabledEnvironment,
+        AUTODEV_MEMORY_WORKSPACE_ID: "w".repeat(257)
+      }),
+    /workspace id exceeds its length bound/u,
+    "a workspace id one character past 256 must be refused"
+  );
+  assert.doesNotThrow(
+    () =>
+      memoryCaptureConfiguration({
+        ...enabledEnvironment,
+        AUTODEV_MEMORY_WORKSPACE_ID: "w".repeat(256)
+      }),
+    "a workspace id of exactly 256 must still be accepted"
+  );
+
+  // Absolute paths are bounded at 4096 characters, and must actually be absolute.
+  for (const name of [
+    "AUTODEV_MEMORY_REPOSITORY_ROOT",
+    "AUTODEV_MEMORY_CAPTURE_ROOT"
+  ] as const) {
+    assert.throws(
+      () =>
+        memoryCaptureConfiguration({
+          ...enabledEnvironment,
+          [name]: "relative/path"
+        }),
+      /must be a bounded absolute path/u,
+      `${name} must be refused when it is relative`
+    );
+    assert.throws(
+      () =>
+        memoryCaptureConfiguration({
+          ...enabledEnvironment,
+          [name]: atPathBound(4097)
+        }),
+      /must be a bounded absolute path/u,
+      `${name} must be refused one character past 4096`
+    );
+    assert.doesNotThrow(
+      () =>
+        memoryCaptureConfiguration({
+          ...enabledEnvironment,
+          [name]: atPathBound(4096)
+        }),
+      `${name} of exactly 4096 characters must still be accepted`
+    );
+  }
+
+  // Optional values are bounded too, and their absence is not an error -- so
+  // the refusal has to be proven distinct from both the bound and the default.
+  assert.throws(
+    () =>
+      memoryCaptureConfiguration({
+        ...enabledEnvironment,
+        AUTODEV_MEMORY_CAPTURE_MODEL: "m".repeat(257)
+      }),
+    /model exceeds its length bound/u,
+    "a model one character past 256 must be refused"
+  );
+  assert.doesNotThrow(
+    () =>
+      memoryCaptureConfiguration({
+        ...enabledEnvironment,
+        AUTODEV_MEMORY_CAPTURE_MODEL: "m".repeat(256)
+      }),
+    "a model of exactly 256 must still be accepted"
+  );
+  const absent = memoryCaptureConfiguration(enabledEnvironment);
+  assert.equal(
+    absent.model,
+    undefined,
+    "an omitted optional value is left off the configuration, not refused and not empty"
+  );
+});
