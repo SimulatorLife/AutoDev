@@ -769,11 +769,17 @@ async function serveExperience(
   service: MemoryService,
   route: MemoryControlRoute,
   filters: ReturnType<typeof parseFilters>,
-  response: ServerResponse
+  response: ServerResponse,
+  audit: MemoryControlAudit
 ): Promise<void> {
   if (route.id) {
     const experience = await service.getExperience(route.id, filters.context);
     if (!experience) {
+      // Audited like every sibling that 404s here. Whether the experience is
+      // absent or simply outside the caller's scope, the wire answer is the same
+      // 404 — that is the point of it — so the trail has to carry the reason the
+      // answer cannot carry.
+      auditMemoryFailure(audit, route, "denied", "experience_not_visible");
       sendMemoryError(
         response,
         404,
@@ -836,6 +842,9 @@ async function serveExperienceOutcomes(
   if (!route.id) throw new MemoryValidationError(MEMORY_EXPERIENCE_ID_REQUIRED);
   const experience = await service.getExperience(route.id, filters.context);
   if (!experience) {
+    // The same reason as every sibling 404 on an experience, for the same reason:
+    // the wire answer must not distinguish absent from out-of-scope.
+    auditMemoryFailure(audit, route, "denied", "experience_not_visible");
     sendMemoryError(
       response,
       404,
@@ -872,6 +881,13 @@ async function serveExperienceInjectionUseAssessments(
   response: ServerResponse,
   audit: MemoryControlAudit
 ): Promise<void> {
+  // Masked by the filter. `parseMemoryUseAssessmentFilters` refuses an operator
+  // without the grant before this function is called, on the same condition this
+  // gate checks, so it cannot fire and no test drives it — which is why this
+  // route answers `scope_filter_forbidden` where its sibling reads answer
+  // `task_history_not_granted`. It is kept because the filter is request parsing
+  // and this is route authorization: if the filter is ever relaxed, this is the
+  // layer that should still refuse. Do not write a test here expecting it to run.
   try {
     requireTaskHistoryOperator(actor, filters.context);
   } catch {
@@ -956,7 +972,22 @@ async function reportExperienceOutcome(
   audit: MemoryControlAudit
 ): Promise<void> {
   if (!route.id) throw new MemoryValidationError(MEMORY_EXPERIENCE_ID_REQUIRED);
-  requireTaskHistoryOperator(actor, context);
+  try {
+    requireTaskHistoryOperator(actor, context);
+  } catch {
+    // Caught like every sibling. Uncaught, this reached the generic handler and
+    // answered `scope_or_authority_forbidden`, which names neither the task
+    // history grant nor this route — so an operator auditing a refused outcome
+    // report was told "scope or authority" about a grant that was simply absent.
+    auditMemoryFailure(audit, route, "denied", "task_history_not_granted");
+    sendMemoryError(
+      response,
+      403,
+      "autodev_memory_task_history_forbidden",
+      MEMORY_TASK_HISTORY_ACCESS_REQUIRED
+    );
+    return;
+  }
   const experience = await service.getExperience(route.id, context);
   if (!experience) {
     auditMemoryFailure(audit, route, "denied", "experience_not_visible");
@@ -3034,7 +3065,7 @@ function serveMemoryReadRoute(
     );
   }
   if (route.resource === MEMORY_EXPERIENCES_ROUTE)
-    return serveExperience(service, route, filters, response);
+    return serveExperience(service, route, filters, response, audit);
   return serveRecord(service, route, filters, response);
 }
 
