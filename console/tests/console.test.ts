@@ -6790,6 +6790,87 @@ test("a window the operator cannot have meant narrows nothing", () => {
   );
 });
 
+test("each filter axis still offers its own values while one of them is chosen", () => {
+  // Faceting has two halves, and only one was pinned. Narrowing one axis must
+  // narrow the *other* axes' offers, so the two already had tests. But an axis
+  // must also ignore its own choice: selecting `role=architect` has to leave
+  // `browser-tester` and `planner` in the role dropdown, because that dropdown
+  // is how an operator changes the role back.
+  //
+  // Nothing tested that, and it is invisible to the property the neighbouring
+  // test asserts -- every offered value leading somewhere still holds when the
+  // offers are only the one already chosen. Replacing the faceted scope with
+  // the whole filter set, so each axis collapses onto its own selection, passed
+  // the suite at 396/396 while leaving a filter control that could only ever
+  // re-select what it already had.
+  const rows = [
+    {
+      id: "a",
+      agentRole: "architect",
+      promptName: "migration-plan",
+      model: "opus",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-05T09:00:00Z"
+    },
+    {
+      id: "b",
+      agentRole: "architect",
+      promptName: "migration-plan",
+      model: "opus",
+      metrics: [],
+      passed: false,
+      timestamp: "2026-10-05T10:00:00Z"
+    },
+    {
+      id: "c",
+      agentRole: "browser-tester",
+      promptName: "smoke-check",
+      model: "sonnet",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-05T11:00:00Z"
+    }
+  ] as const;
+  const filters = (
+    over: Partial<Parameters<typeof filterOptionsFor>[1]> = {}
+  ): Parameters<typeof filterOptionsFor>[1] => ({
+    outcome: "all",
+    role: "",
+    model: "",
+    prompt: "",
+    from: "",
+    until: "",
+    ...over
+  });
+
+  // Each axis, choosing one of its own values, still offers every value of
+  // itself that the window holds.
+  assert.deepEqual(
+    filterOptionsFor(rows, filters({ role: "architect" })).roles,
+    ["architect", "browser-tester"],
+    "a chosen role leaves the other roles in the role dropdown"
+  );
+  assert.deepEqual(
+    filterOptionsFor(rows, filters({ model: "opus" })).models,
+    ["opus", "sonnet"],
+    "a chosen model leaves the other models in the model dropdown"
+  );
+  assert.deepEqual(
+    filterOptionsFor(rows, filters({ prompt: "migration-plan" })).prompts,
+    ["migration-plan", "smoke-check"],
+    "a chosen prompt leaves the other prompts in the prompt dropdown"
+  );
+
+  // And both halves together, because the point of ignoring the axis's own
+  // filter is that the *other* filters still narrow what it offers.
+  assert.deepEqual(
+    filterOptionsFor(rows, filters({ role: "architect", model: "opus" })).roles,
+    ["architect"],
+    "narrowed by the model, the role dropdown offers only roles that ran on it"
+  );
+});
+
 test("the filter bar only offers combinations that exist", () => {
   // The options were computed once over the whole fetched window with the
   // filters ignored, and the measured consequence was that they never moved:
