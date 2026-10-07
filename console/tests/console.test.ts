@@ -1022,7 +1022,11 @@ test("the Tools summary row counts one collection once, not twice", () => {
       filters: { source: "", role: "" },
       tools: [
         {
-          name: "mcp__github__create_issue",
+          // The catalog keys entries on source, server and name separately and
+          // carries the name bare, so a fixture that pre-joined
+          // `mcp__<server>__<name>` into the name made the cell render
+          // `mcp__github__mcp__github__create_issue`.
+          name: "create_issue",
           source: "mcp",
           sourceAuthority: "rulesync-mcp",
           server: "github",
@@ -1030,7 +1034,7 @@ test("the Tools summary row counts one collection once, not twice", () => {
           availability: "configured"
         },
         {
-          name: "mcp__future__unconfigured",
+          name: "unconfigured",
           source: "mcp",
           sourceAuthority: "rulesync-mcp",
           server: "future",
@@ -1069,6 +1073,119 @@ test("the Tools summary row counts one collection once, not twice", () => {
     })
   );
   assert.match(empty, /Composite catalog<\/span>[\s\S]*?>0</);
+});
+
+test("the Tools cell does not repeat the server name its own Source column states", () => {
+  // The catalog carries `source`, `server` and `name` separately and the cell
+  // printed the joined `mcp__<server>__<name>` form beside a Source column
+  // already reading `mcp (codegraphcontext)`. Twenty of the column's
+  // thirty-eight characters went on a fact the neighbour stated, which left the
+  // longest name needing 414px in a 317px box and cut it by 96px -- inside the
+  // one part of the cell that distinguishes one row from another.
+  const markup = renderToStaticMarkup(
+    React.createElement(ToolsView, {
+      coverage: "complete",
+      validity: "valid",
+      usageLink: "/usage",
+      filters: { source: "", role: "" },
+      tools: [
+        {
+          name: "analyze_code_relationships",
+          source: "mcp",
+          sourceAuthority: "rulesync-mcp",
+          server: "codegraphcontext",
+          exposedRoles: ["orchestrator"],
+          availability: "configured"
+        }
+      ]
+    })
+  );
+
+  // The visible text is the tool's own name...
+  assert.match(
+    markup,
+    />analyze_code_relationships</,
+    "the cell shows the tool name, not the joined wire name"
+  );
+  // ...the server is still stated, once, by the Source pill...
+  assert.match(markup, /mcp \(codegraphcontext\)/);
+  // ...and nothing lost the qualified identifier: it is the row's title and
+  // its address.
+  assert.match(
+    markup,
+    /title="mcp__codegraphcontext__analyze_code_relationships"/
+  );
+  assert.match(
+    markup,
+    /href="\/tools\/mcp__codegraphcontext__analyze_code_relationships"/
+  );
+
+  // A native tool has no server, so there is no prefix to elide and the cell
+  // is unchanged.
+  const native = renderToStaticMarkup(
+    React.createElement(ToolsView, {
+      coverage: "complete",
+      validity: "valid",
+      usageLink: "/usage",
+      filters: { source: "", role: "" },
+      tools: [
+        {
+          name: "apply_patch",
+          source: "native",
+          sourceAuthority: "codex-native",
+          exposedRoles: ["orchestrator"],
+          availability: "configured"
+        }
+      ]
+    })
+  );
+  assert.match(native, />apply_patch</);
+  assert.equal(native.includes("mcp__"), false);
+});
+
+test("a skill path wraps between its segments and shows every one of them", () => {
+  // The column elided the middle of the path -- `.rulesync/…/<name>/SKILL.md`
+  // -- on the theory that a truncated head hides which skill a row is. It hid
+  // it anyway: eliding the prefix left the skill name itself as the widest
+  // thing in the cell, so at 1440 it needed 362px in a 314px box and was cut
+  // on nine of nine rows. Elision bought nothing and cost the constant tail,
+  // which is 9 characters of `SKILL.md` repeated on every row.
+  const markup = renderToStaticMarkup(
+    React.createElement(SkillsView, {
+      skills: [
+        {
+          name: "improve-codebase-architecture",
+          path: ".rulesync/skills/improve-codebase-architecture/SKILL.md",
+          description: "Analyze and improve codebase architecture."
+        }
+      ],
+      eligibility: [],
+      unresolvedAssignments: [],
+      validationIssues: [],
+      sourceValidity: true,
+      assignmentRoles: [],
+      executionContractRevision: null
+    })
+  );
+
+  // Every segment is present in full: no `…` standing in for a real directory.
+  assert.equal(
+    markup.includes("rulesync/…/"),
+    false,
+    "the path must not elide a segment it can simply wrap"
+  );
+  assert.match(markup, /\.rulesync\/skills\//);
+  assert.match(markup, /improve-codebase-architecture/);
+  assert.match(markup, /SKILL\.md/);
+  // Wrapping is declared, not incidental: the cell carries `<wbr>` at the
+  // separators, which is what lets the browser break between them and nowhere
+  // else. `break-words` would split a segment mid-token, and `truncate` would
+  // cut the row's own path.
+  assert.match(markup, /<wbr/);
+  assert.match(
+    markup,
+    /title="\.rulesync\/skills\/improve-codebase-architecture\/SKILL\.md"/
+  );
 });
 
 test("an unobserved stat reads as an absence, not as a large measurement", () => {

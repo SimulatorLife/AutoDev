@@ -33,7 +33,7 @@ import {
   ACCENT_TONE_CLASS,
   SUCCESS_TONE_CLASS
 } from "../../components/ui/tones.ts";
-import { toolId } from "./tool-identity.ts";
+import { qualifiedToolName, toolId } from "./tool-identity.ts";
 
 /**
  * Tools catalog list view.
@@ -275,7 +275,10 @@ export function ToolsView({
       id: "name",
       header: "Tool",
       align: "tokens",
-      weight: 300,
+      // The cell stopped printing `mcp__<server>__` once Source took over
+      // naming the server, so this column's widest content fell from 414px to
+      // 238px and it had 282px of slack to give.
+      weight: 270,
       cell: (tool) =>
         React.createElement(
           "div",
@@ -286,9 +289,17 @@ export function ToolsView({
               href: `/tools/${toolId(tool)}`,
               className:
                 "block truncate font-semibold text-fg font-mono hover:text-accent",
-              title: toolId(tool)
+              // The wire name, because that is what a row is identified by and
+              // what the href addresses. The visible text is only the tool's
+              // own name: the Source column directly beside it already reads
+              // `mcp (codegraphcontext)`, and repeating `mcp__codegraphcontext__`
+              // in the cell spent 20 of the column's 38 characters on a fact the
+              // neighbour states. That left the longest name needing 413px in a
+              // 317px box, cut by 96px, and the cut fell inside the one part
+              // that distinguishes one row from another.
+              title: qualifiedToolName(tool)
             },
-            tool.server ? `mcp__${tool.server}__${tool.name}` : tool.name
+            tool.name
           ),
           tool.description
             ? React.createElement(
@@ -305,7 +316,12 @@ export function ToolsView({
     {
       id: "source",
       header: "Source",
-      weight: 170,
+      // Sized for the pill, not the header: `mcp (codegraphcontext)` measures
+      // 195px with its own padding and border, and an MCP server name has no
+      // length limit, so the column truncates. At 170 it granted 166px and cut
+      // every one of those pills by 29px. The 30 it needs came off Tool, which
+      // had it spare once the cell stopped repeating the server name.
+      weight: 200,
       cell: (tool) =>
         React.createElement(
           "div",
@@ -319,9 +335,10 @@ export function ToolsView({
                   : "bg-chart-3/15 text-chart-3 border-chart-3/40"
             }`,
             dataAttributes: { "data-source": tool.source },
-            // This pill names the MCP server, which has no length limit, and the
-            // column truncates. `Tag` titles itself from its own content, so the
-            // whole value is recoverable however narrow the cell gets.
+            // An MCP server name has no length limit, so below the width this
+            // column is sized for the pill still truncates. `Tag` titles itself
+            // from its own content, so the whole value is recoverable however
+            // narrow the cell gets.
             children: tool.server
               ? `${tool.source} (${tool.server})`
               : tool.source

@@ -24,6 +24,7 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import { PathText } from "../../components/tables/PathText.ts";
 import {
   type SkillAssignmentSaveOutcome,
   SkillRoleAssignment
@@ -132,29 +133,12 @@ export function SkillsView({
     {
       id: "path",
       header: "Path",
-      // Gives the share the State column needs for its badge. A path already
-      // truncates recoverably and keeps its leading root and trailing segments,
-      // so it is the cheaper place to take width than the skill name, which is
-      // the row's primary key.
+      // Gives the share the State column needs for its badge. A path can wrap
+      // between its segments and keep every one of them, so it is the cheaper
+      // place to take width than the skill name, which is the row's primary key.
+      align: "path",
       weight: 269,
-      cell: (skill) => {
-        // A truncated head (".rulesync/skills/autodev-code…") hides the part
-        // that distinguishes one skill from another, so the column keeps the
-        // leading root for context and always renders the trailing segments.
-        const segments = skill.path.split("/");
-        const root = segments[0] ?? "";
-        const tail = segments.slice(-2).join("/");
-        const shorthand =
-          segments.length > 2 ? `${root}/…/${tail}` : skill.path;
-        return React.createElement(
-          "span",
-          {
-            className: "block truncate font-mono text-xs text-fg-muted",
-            title: skill.path
-          },
-          shorthand
-        );
-      }
+      cell: (skill) => React.createElement(PathText, { path: skill.path })
     },
     {
       id: "eligibleRoles",

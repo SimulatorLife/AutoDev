@@ -62,7 +62,17 @@ export function AgentsView({
     {
       id: "role",
       header: "Role / Agent",
-      weight: 201,
+      // The widest cell on the page: `orchestrator (orchestrator)` measures
+      // 179px, which is 211 with the cell's own 32px of padding, and this is
+      // the only column here that names a row rather than a property of one.
+      //
+      // Every weight on this table is sized to the larger of that content
+      // budget at the 1440 content column and the column's own header at the
+      // table's 864px floor. Sizing them as shares of a total that was never
+      // reconciled with either is what had these seven summing to 1125 against
+      // a 1076px content column, so every percentage on the page was handing
+      // out 96% of the budget its weight described.
+      weight: 221,
       cell: (agent) =>
         React.createElement(
           "a",
@@ -84,10 +94,10 @@ export function AgentsView({
     {
       id: "primaryModel",
       header: "Primary Model",
-      // Gives the share the two badge columns need. The model id titles itself,
-      // so narrowing it costs a truncation the reader can recover rather than a
-      // status word with nothing behind it.
-      weight: 178,
+      // `autodev/orchestrator` measures 145px, 177 with the cell own 32px of
+      // padding. The model id titles itself, so narrowing it costs a truncation
+      // the reader can recover rather than a status word with nothing behind it.
+      weight: 185,
       cell: (agent) =>
         React.createElement(
           "span",
@@ -103,39 +113,38 @@ export function AgentsView({
       id: "providers",
       header: "Providers",
       align: "tokens",
-      // Gives the share the two badge columns need. The provider chips still
-      // wrap — that is the target state's rule for discrete cell content — and
-      // wrapping costs height, not legibility, so this is the cheapest column
-      // on the page to narrow.
-      weight: 176,
+      // The provider chips wrap -- that is the target state's rule for discrete
+      // cell content -- and wrapping costs height, not legibility, so this is the
+      // cheapest column on the page to narrow.
+      weight: 147,
       cell: (agent) =>
         React.createElement(AgentProviderSummary, { agent, providers })
     },
     {
       id: "status",
       header: "Status",
-      // "Configured" is 99px of pill plus 32px of cell padding. A weight is a share
-      // of the table rather than a width, so it has to clear that at the table's
-      // 864px floor instead of at the viewport the badge was measured at — 136
-      // left it cut at its last glyph on every row, and measuring against the
-      // badge's already-clamped width understated it by a further 8px.
-      weight: 171,
+      // "Configured" measures 115px as a badge -- status dot, gap and padding --
+      // against 52px of header text. Measuring only the badge label span reads
+      // 83px here and calls the column fine while the badge is cut at its last
+      // glyph on every row.
+      weight: 154,
       cell: (agent) =>
         React.createElement(StatusBadge, { status: agent.status })
     },
     {
       id: "convergence",
       header: "Convergence",
-      // "Not-observed" is the longest label on this table at 115px of pill, so
-      // this column needs more than Status even though it reads less often.
-      weight: 191,
+      // "Not observed" measures 128px as a badge, and its 101px header is the
+      // longest on the page, so this column is bounded by its header at the floor
+      // even though it reads less often than Status.
+      weight: 173,
       cell: (agent) =>
         React.createElement(StatusBadge, { status: agent.convergence })
     },
     {
       id: "skillsCount",
       header: "Skills",
-      weight: 108,
+      weight: 103,
       cell: (agent) =>
         React.createElement(
           "span",
@@ -146,7 +155,7 @@ export function AgentsView({
     {
       id: "mcpsCount",
       header: "MCPs",
-      weight: 100,
+      weight: 93,
       cell: (agent) =>
         React.createElement(
           "span",

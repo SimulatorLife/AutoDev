@@ -29,6 +29,7 @@ import {
   MONO_META_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
+import { qualifiedToolName } from "./tool-identity.ts";
 
 /**
  * Tools catalog detail view.
@@ -318,9 +319,10 @@ export function ToolDetailView({
   usageLink,
   usageUnavailable
 }: ToolDetailViewProps): React.JSX.Element {
-  const canonicalName = tool.server
-    ? `mcp__${tool.server}__${tool.name}`
-    : tool.name;
+  // The detail page is the one place the wire name is the whole subject: it is
+  // the page's identity and the thing the URL addresses, so it is shown in full
+  // rather than elided the way the list cell does beside its Source column.
+  const canonicalName = qualifiedToolName(tool);
   return React.createElement(
     PageBody,
     {

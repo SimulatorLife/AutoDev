@@ -54,6 +54,17 @@ export function McpsView({
     {
       id: "name",
       header: "Server Name",
+      // The primary key of the row and its link target. Measured in the browser
+      // at 1440 against the live catalog, the widest server name is
+      // `openaiDeveloperDocs` at 161px, so the column needs 193 with the cell's
+      // own 32px of padding.
+      //
+      // Every weight here is sized to the larger of that content budget and the
+      // column's own header at the table's 864px floor, rather than to a share
+      // of a total that was never reconciled with either. A share is only
+      // meaningful next to the width it was authored against, and these seven
+      // summed to 1272 while the content column measures 1118px at 1440, so
+      // every percentage was handing out 88% of what the weights described.
       // The primary key of the row, and the link target. It was declared at 150,
       // tied with the RuleSync declaration column and below `Configured roles`,
       // so at the table's 864px floor -- what every viewport under 864 sees --
@@ -70,7 +81,7 @@ export function McpsView({
       // the 111px that is left. A header that does not fit its column is the one
       // defect the target state names outright; a name that truncates gives
       // itself back on hover and a title.
-      weight: 163,
+      weight: 230,
       cell: (server) =>
         React.createElement(
           "a",
@@ -87,7 +98,7 @@ export function McpsView({
       id: "roles",
       header: "Configured roles",
       align: "tokens",
-      weight: 177,
+      weight: 185,
       cell: (server) =>
         chipList({
           items: server.roles,
@@ -98,10 +109,9 @@ export function McpsView({
     {
       id: "declaration",
       header: "RuleSync",
-      // "Canonical" is a 91px pill and needs 123px of column at the table's
-      // 864px floor. Sized against the pill rather than the word: the word is
-      // 55px, which is what an earlier measurement read.
-      weight: 181,
+      // Sized against the pill rather than the word: "Canonical" measures
+      // 107px with its status dot and padding, against 62px of header text.
+      weight: 165,
       cell: (server) =>
         React.createElement(StatusBadge, {
           status: server.declared ? "configured" : "invalid",
@@ -111,14 +121,11 @@ export function McpsView({
     {
       id: "default-state",
       header: "Default State",
-      // Sized for the badge, not for the header. "Default State" is the
-      // longest header in the table and it still fitted at 152, but the column
-      // holds a `StatusBadge` and the longest label that badge ever carries is
-      // "Not observed" -- status dot, rounded padding and all, 117px. At 152 the
-      // cell granted 109, so every not-observed server's pill was clipped 8px
-      // at its right edge on every viewport up to 768. A header-width check
-      // cannot see this: the header was never the problem.
-      weight: 212,
+      // Sized for the badge, not for the header. "Not observed" measures 128px
+      // as a badge -- status dot, gap and padding -- against 59px of header. A
+      // measurement that reads only the badge's label span reports 78px here
+      // and calls the column fine while the pill is cut 8px on every row.
+      weight: 190,
       cell: (server) =>
         React.createElement(StatusBadge, {
           status: server.enabled === null ? NOT_OBSERVED_STATUS : "configured",
@@ -135,25 +142,30 @@ export function McpsView({
       header: "Transport",
       // Sized for its own header, which is wider than the cell it labels: nine
       // characters of 12px uppercase with tracking measure 82px, and the cell
-      // adds its own 32px of padding, so 114. At 95 the header ran into
-      // "OVERRIDES" with no gap between the two and "STDIO" cut to "STD…".
-      weight: 168,
+      // adds its own 32px of padding, so 114. "STDIO" is only 74. At 95 the
+      // header ran into "OVERRIDES" with no gap between the two.
+      weight: 176,
       cell: (server) => server.transport.toUpperCase()
     },
     {
       id: "targets",
       header: "Overrides",
-      // Sized for its own header, which needs 108px: 76px of text plus the
-      // cell's padding. The content would like 162 -- a 130px `antigravity-cli`
-      // chip plus padding -- and does not get it, which is the point of the
-      // arithmetic on Server Name: this table's seven columns ask for 793px of
-      // the 864px floor between them before the primary key takes any, so
-      // something has to truncate and this is the column whose loss is cheapest.
-      // The status dot is what makes that survivable. The spelled-out state made
-      // an `antigravity-cli: enabled` chip 175px wide where `antigravity-cli`
-      // with a dot is 130px, and the full `target: enabled` is on the chip's
-      // title either way.
-      weight: 159,
+      // This is the column that yields, and it yields on purpose.
+      //
+      // The seven columns cannot all have what they want. Measured, their needs
+      // are 193px for this table's primary key and 165px for the widest target
+      // chip, while their own headers need another 743px between them, and that
+      // comes to 100.2% of the table at 1440. Something has to give, and this
+      // is the cheapest thing to give up: `antigravity-cli` truncates to about
+      // 143px and the full `target: enabled` is on the chip's title, whereas a
+      // header rendering as an ellipsis is the one layout defect the target
+      // state names outright, and the guard "no column is narrower than its own
+      // header" fails on it.
+      //
+      // The status dot is what makes the column affordable at all. Spelling the
+      // state out made the chip 175px wide; the dot form is 133px, and the state
+      // is still on the chip's title and on the dot's own accessible label.
+      weight: 166,
       align: "tokens",
       cell: (server) =>
         chipList({
@@ -175,9 +187,9 @@ export function McpsView({
     {
       id: "status",
       header: "Connection",
-      // Carries the same "Not observed" pill as Default State, so it needs the
-      // same share; at 176 it was cut 11px on every row.
-      weight: 212,
+      // Carries the same "Not observed" badge as Default State, so it needs the
+      // same 128px of badge.
+      weight: 190,
       cell: () =>
         React.createElement(StatusBadge, {
           status: NOT_OBSERVED_STATUS,
