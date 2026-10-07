@@ -23,6 +23,17 @@ const NON_FILE_URI_SCHEME_PATTERN = /^[a-z][a-z\d+.-]*:/i;
 const RULESYNC_SKILL_NAME_PATTERN = /^[a-z0-9-]{1,64}$/u;
 const GITHUB_REPOSITORY_SEGMENT_PATTERN = /^[A-Za-z0-9_.-]{1,100}$/u;
 const GITHUB_PULL_REQUEST_NUMBER_PATTERN = /^[1-9]\d{0,9}$/u;
+/**
+ * GraphQL type names the supersession parse compares against.
+ *
+ * Named once because they appear in both the query selection and the parser, and
+ * a typo that changed only one of them would produce a query the API accepts and
+ * a branch the parser never takes -- which reads as "GitHub never supersedes
+ * anything".
+ */
+const GITHUB_CLOSED_EVENT = "ClosedEvent";
+const GITHUB_COMMIT_CLOSER = "Commit";
+const GITHUB_PULL_REQUEST_CLOSER = "PullRequest";
 const GIT_TIMEOUT_MS = 2000;
 const GIT_MAX_BUFFER_BYTES = 512 * 1024;
 const GITHUB_LOOKUPS_PER_CONTEXT = 1;
@@ -31,6 +42,32 @@ interface GitHubPullRequestLocator {
   readonly owner: string;
   readonly repository: string;
   readonly number: number;
+}
+
+/**
+ * The pull request that superseded this one, as GitHub reported it.
+ *
+ * Carried as the number and the canonical URL rather than a full locator: the
+ * closer is a field of the same repository's pull request, so its owner and
+ * repository are the ones already in hand and re-deriving them would only add a
+ * way to disagree with them.
+ */
+interface GitHubSupersedingPullRequest {
+  readonly number: number;
+  readonly url: string;
+}
+
+/**
+ * A pull request that was closed by something other than its own merge.
+ *
+ * `byPullRequest` is `null` when GitHub reported the closer as a commit rather
+ * than naming the pull request. The supersession is still observed -- the PR was
+ * closed by an outside commit, which is how a referencing commit closes an issue
+ * -- but the operator is not handed an address they can open, because none was
+ * observed.
+ */
+interface GitHubSupersession {
+  readonly byPullRequest: GitHubSupersedingPullRequest | null;
 }
 
 interface GitHubIssueLocator {
@@ -60,6 +97,14 @@ interface GitHubPullRequestState {
   readonly checksState: string | null;
   readonly reviewThreadsComplete: boolean;
   readonly unresolvedReviewThreadCount: number;
+  /**
+   * Set when GitHub recorded this pull request being closed by something other
+   * than its own merge or a human closing it.
+   *
+   * `null` is the ordinary case and is what every merged and hand-closed
+   * pull request reports; it is an observation, not a missing value.
+   */
+  readonly supersession: GitHubSupersession | null;
 }
 
 interface GitHubLookupState {
@@ -83,6 +128,11 @@ type GitHubReferenceSelectionResult =
 type GitHubEvidenceVerificationResult =
   | { readonly kind: "none" }
   | { readonly kind: "unknown"; readonly source: GitHubReferenceSource }
+  | {
+      readonly kind: "superseded";
+      readonly source: "git_github_pr_supersession";
+      readonly supersedingPullRequest: EvidenceReference | null;
+    }
   | {
       readonly kind: "verified";
       readonly pullRequestReference: EvidenceReference | null;
@@ -171,6 +221,14 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
         checkedAt,
         "verification_inconclusive",
         githubEvidence.source
+      );
+    }
+    if (githubEvidence.kind === "superseded") {
+      return supersededAssessment(
+        checkedAt,
+        input.context.repositoryId,
+        currentCommit,
+        githubEvidence.supersedingPullRequest
       );
     }
     const sourceCommit =
@@ -355,6 +413,26 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
       return {
         kind: "unknown",
         source: referenceStateSource(pullRequestReference, issueReference)
+      };
+    }
+    if (pullRequestReference && state.pullRequest?.supersession) {
+      // Checked before the merge/review/checks gate, not after it. A PR that
+      // was replaced by a later one is usually *not* itself merged and approved,
+      // so letting the gate answer first would report this as an ordinary
+      // inconclusive read and discard the one finding that explains what
+      // happened to the work the memory describes.
+      const byPullRequest = state.pullRequest.supersession.byPullRequest;
+      return {
+        kind: "superseded",
+        source: "git_github_pr_supersession",
+        // Null when GitHub named a commit rather than the pull request that
+        // closed this one. The supersession is still observed; only the address
+        // an operator could open is missing, and inventing one would be
+        // inventing evidence.
+        supersedingPullRequest:
+          byPullRequest === null
+            ? null
+            : { kind: "pull_request", uri: byPullRequest.url, observedAt }
       };
     }
     if (
@@ -571,37 +649,17 @@ function parseGitHubPullRequestLocator(
   uri: string,
   repositoryId: string
 ): GitHubPullRequestLocator | null {
-  try {
-    const parsed = new URL(uri);
-    if (
-      parsed.protocol !== "https:" ||
-      parsed.hostname.toLowerCase() !== "github.com" ||
-      parsed.port ||
-      parsed.username ||
-      parsed.password ||
-      parsed.search ||
-      parsed.hash
-    ) {
-      return null;
-    }
-    const segments = parsed.pathname.split("/").filter(Boolean);
-    if (
-      segments.length !== 4 ||
-      segments[2] !== "pull" ||
-      !GITHUB_REPOSITORY_SEGMENT_PATTERN.test(segments[0]!) ||
-      !GITHUB_REPOSITORY_SEGMENT_PATTERN.test(segments[1]!) ||
-      !GITHUB_PULL_REQUEST_NUMBER_PATTERN.test(segments[3]!) ||
-      `${segments[0]}/${segments[1]}`.toLowerCase() !==
-        repositoryId.trim().toLowerCase()
-    ) {
-      return null;
-    }
-    const number = Number(segments[3]);
-    if (!Number.isSafeInteger(number)) return null;
-    return { owner: segments[0]!, repository: segments[1]!, number };
-  } catch {
+  const target = canonicalGitHubPullRequestTarget(uri);
+  if (!target) return null;
+  // Evidence must name this repository. A pull request in another project is
+  // not evidence about these files no matter how canonical its URL is.
+  if (
+    `${target.owner}/${target.repository}`.toLowerCase() !==
+    repositoryId.trim().toLowerCase()
+  ) {
     return null;
   }
+  return target;
 }
 
 function parseGitHubIssueLocator(
@@ -718,6 +776,17 @@ async function githubReferenceState(
         totalCount
         nodes { isResolved isOutdated }
       }
+      timelineItems(first: 1, itemTypes: [CLOSED_EVENT]) {
+        nodes {
+          __typename
+          ... on ClosedEvent {
+            closer {
+              __typename
+              ... on PullRequest { number url merged }
+            }
+          }
+        }
+      }
     }`);
   }
   if (issueLocator) {
@@ -764,8 +833,9 @@ async function githubReferenceState(
       return null;
     return { pullRequest, issue };
   } catch {
-    // Missing gh, unavailable credentials/network, private-repo access, and
-    // API failures remain inconclusive; none may authorize memory injection.
+    // Missing gh, unavailable credentials/network, private-repo access, an
+    // invalid query, and API failures all remain inconclusive; none may
+    // authorize memory injection.
     return null;
   }
 }
@@ -794,6 +864,13 @@ function parseGitHubPullRequestState(
   ) {
     return null;
   }
+  const supersession = parseGitHubPullRequestSupersession(
+    pullRequest.timelineItems
+  );
+  // An unreadable timeline must not become "nothing superseded this". Failing
+  // the whole PR state closed here sends the memory down the existing unknown
+  // path rather than minting an absence of supersession we never observed.
+  if (!supersession.readable) return null;
   const mergeCommitOid = mergeCommit?.oid;
   return {
     state: pullRequest.state,
@@ -810,8 +887,130 @@ function parseGitHubPullRequestState(
         ? statusCheckRollup.state
         : null,
     reviewThreadsComplete: reviewThreadSummary.complete,
-    unresolvedReviewThreadCount: reviewThreadSummary.unresolvedCount
+    unresolvedReviewThreadCount: reviewThreadSummary.unresolvedCount,
+    supersession: supersession.supersession
   };
+}
+
+/**
+ * The outcome of reading the supersession timeline.
+ *
+ * `readable: false` is deliberately not `supersession: null`. "Nothing superseded
+ * this" and "we could not tell" have opposite consequences, and collapsing them
+ * into one nullable value means the caller cannot fail closed on the second one.
+ */
+type SupersessionParse =
+  | {
+      readonly readable: true;
+      readonly supersession: GitHubSupersession | null;
+    }
+  | { readonly readable: false };
+
+const UNREADABLE_SUPERSESSION: SupersessionParse = { readable: false };
+
+/**
+ * Read whether anything superseded this pull request.
+ *
+ * The timeline is the only route to a close event: `PullRequest` has no
+ * `closedEvent` field, so the closer is reached through
+ * `PullRequestTimelineItemsConnection` filtered to `CLOSED_EVENT`. An open pull
+ * request has no close event, so an empty node list is a readable "nothing did"
+ * -- and the review and check gate rejects the open pull request on its own.
+ */
+function parseGitHubPullRequestSupersession(
+  value: unknown
+): SupersessionParse {
+  const timeline = asRecord(value);
+  if (!timeline) return UNREADABLE_SUPERSESSION;
+  const nodes = timeline.nodes;
+  if (!Array.isArray(nodes)) return UNREADABLE_SUPERSESSION;
+  // One close event was requested. More than one means the connection answered
+  // a different question than the one asked, and picking the first of them would
+  // be guessing which one closed the pull request.
+  if (nodes.length > 1) return UNREADABLE_SUPERSESSION;
+  if (nodes.length === 0) return { readable: true, supersession: null };
+  const event = asRecord(nodes[0]);
+  if (!event || typeof event.__typename !== "string")
+    return UNREADABLE_SUPERSESSION;
+  // A node that is not a close event is not a supersession finding, but it is
+  // also not a response that answered the question, so it stays unreadable.
+  if (event.__typename !== GITHUB_CLOSED_EVENT)
+    return UNREADABLE_SUPERSESSION;
+  const closer = event.closer;
+  if (closer === null) return { readable: true, supersession: null };
+  const closerRecord = asRecord(closer);
+  if (!closerRecord) return UNREADABLE_SUPERSESSION;
+  const typeName = closerRecord.__typename;
+  if (typeName === GITHUB_COMMIT_CLOSER)
+    return { readable: true, supersession: { byPullRequest: null } };
+  if (typeName !== GITHUB_PULL_REQUEST_CLOSER)
+    return UNREADABLE_SUPERSESSION;
+  if (
+    typeof closerRecord.merged !== "boolean" ||
+    typeof closerRecord.url !== "string" ||
+    typeof closerRecord.number !== "number"
+  ) {
+    return UNREADABLE_SUPERSESSION;
+  }
+  // A pull request closed by another that never merged replaced nothing: the
+  // closing pull request was abandoned, so the cited work is still the latest
+  // account of itself.
+  if (!closerRecord.merged) return { readable: true, supersession: null };
+  const target = canonicalGitHubPullRequestTarget(closerRecord.url);
+  // The URL is the address an operator would open and the number is the value
+  // the rest of the system compares, so a response where they disagree is not
+  // one to build a verdict on.
+  if (target === null || target.number !== closerRecord.number)
+    return UNREADABLE_SUPERSESSION;
+  return {
+    readable: true,
+    supersession: {
+      byPullRequest: { number: target.number, url: closerRecord.url }
+    }
+  };
+}
+
+/**
+ * Owner, repository, and number of a canonical GitHub pull request URL.
+ *
+ * Split out from `parseGitHubPullRequestLocator` so a URL this code merely
+ * inspects -- the superseding pull request reported inside a close event -- is
+ * checked by the same rules as one it is about to authorize. A second copy of
+ * these comparisons is a second set of rules that can drift from the first, and
+ * it drifts in the direction of accepting a URL the first one would refuse.
+ */
+function canonicalGitHubPullRequestTarget(
+  uri: string
+): { owner: string; repository: string; number: number } | null {
+  try {
+    const parsed = new URL(uri);
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.hostname.toLowerCase() !== "github.com" ||
+      parsed.port ||
+      parsed.username ||
+      parsed.password ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      return null;
+    }
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    if (
+      segments.length !== 4 ||
+      segments[2] !== "pull" ||
+      !GITHUB_REPOSITORY_SEGMENT_PATTERN.test(segments[0]!) ||
+      !GITHUB_REPOSITORY_SEGMENT_PATTERN.test(segments[1]!) ||
+      !GITHUB_PULL_REQUEST_NUMBER_PATTERN.test(segments[3]!)
+    ) {
+      return null;
+    }
+    const number = Number(segments[3]);
+    if (!Number.isSafeInteger(number)) return null;
+    return { owner: segments[0]!, repository: segments[1]!, number };
+  } catch {
+    return null;
+  }
 }
 
 interface GitHubReviewThreadSummary {
@@ -1097,6 +1296,29 @@ function contradictedAssessment(
         observedAt: checkedAt
       },
       ...files
+    ]
+  };
+}
+
+function supersededAssessment(
+  checkedAt: string,
+  repositoryId: string,
+  currentCommit: string,
+  supersedingPullRequest: EvidenceReference | null
+): CurrentStateAssessment {
+  return {
+    compatibility: "contradicted",
+    source: "git_github_pr_supersession",
+    checkedAt,
+    reasonCode: "superseded",
+    evidence: [
+      {
+        kind: "commit",
+        uri: commitUri(repositoryId, currentCommit),
+        revision: currentCommit,
+        observedAt: checkedAt
+      },
+      ...(supersedingPullRequest === null ? [] : [supersedingPullRequest])
     ]
   };
 }

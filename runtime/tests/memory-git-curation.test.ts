@@ -23,6 +23,7 @@ import {
   GitWorkingTreeMemoryVerifier,
   VerifiedMemoryReconstructor
 } from "../src/memory/git-curation.ts";
+import type { CurrentStateAssessment } from "../src/memory/service.ts";
 
 const context: MemoryReadContext = {
   workspaceId: "workspace-a",
@@ -44,7 +45,10 @@ function approvedPullRequestState(mergeCommit: string) {
     reviewDecision: "APPROVED",
     checksState: "SUCCESS",
     reviewThreadsComplete: true,
-    unresolvedReviewThreadCount: 0
+    unresolvedReviewThreadCount: 0,
+    // Required, so a fixture that forgets to say whether anything superseded
+    // the PR cannot silently stand for "nothing did".
+    supersession: null
   };
 }
 
@@ -910,196 +914,204 @@ test("Git verifier caps concurrent PR lookups at one per research context", asyn
   });
 });
 
-test("GitHub CLI resolver queries same-repository merge, review, and check state", async () => {
-  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
-    const temporary = await mkdtemp(join(tmpdir(), "autodev-memory-fake-gh-"));
-    const previousPath = process.env.PATH;
-    const previousTmpDir = process.env.TMPDIR;
-    const previousSecret = process.env.AUTODEV_MEMORY_TEST_SECRET;
-    try {
-      const ghPath = join(temporary, "gh");
-      const argsPath = join(temporary, "args.txt");
-      const hostPath = join(temporary, "host.txt");
-      const secretPath = join(temporary, "secret.txt");
-      const pullRequestPath = join(temporary, "pull-request.json");
-      await writeFile(
-        pullRequestPath,
-        JSON.stringify({
-          data: {
-            repository: {
-              pullRequest: {
-                state: "CLOSED",
-                isDraft: false,
-                merged: true,
-                mergedAt: "2026-09-30T10:00:00.000Z",
-                mergeCommit: { oid: sourceCommit },
-                reviewDecision: "APPROVED",
-                statusCheckRollup: { state: "SUCCESS" },
-                reviewThreads: { totalCount: 0, nodes: [] }
-              },
-              issue: {
-                state: "CLOSED",
-                stateReason: "COMPLETED",
-                updatedAt: "2026-09-30T12:00:00.000Z"
-              }
-            }
-          }
-        }),
-        "utf8"
-      );
-      const fakeGitHubCli = String.raw`#!/bin/sh
+/**
+ * Run the verifier with `gh` replaced by a script that answers with `payload`.
+ *
+ * One implementation for every test that needs the real `gh api graphql`
+ * boundary. Two copies of this looked like the obvious way to avoid coupling and
+ * only produced two different answers: the second copy's fake was never
+ * executed and the real CLI reached the network, so its "responses" were
+ * `Could not resolve to a Repository` and every assertion quietly measured the
+ * fail-closed path instead of the parse it was written to cover.
+ *
+ * The `gh` name is resolved from `PATH`, so the temporary directory is prepended
+ * and both `PATH` and `TMPDIR` are restored afterwards. `AUTODEV_MEMORY_TEST_SECRET`
+ * is set on purpose: the child environment is an allowlist, and a secret leaking
+ * into it would be a real finding rather than a test artefact.
+ */
+async function withFakeGitHubCli<T>(
+  root: string,
+  repository: unknown,
+  run: (temporary: string) => Promise<T>
+): Promise<T> {
+  const temporary = await mkdtemp(join(tmpdir(), "autodev-memory-github-cli-"));
+  const previousPath = process.env.PATH;
+  const previousTmpDir = process.env.TMPDIR;
+  const previousSecret = process.env.AUTODEV_MEMORY_TEST_SECRET;
+  try {
+    const ghPath = join(temporary, "gh");
+    await writeFile(
+      join(temporary, "pull-request.json"),
+      JSON.stringify({ data: { repository } }),
+      "utf8"
+    );
+    await writeFile(
+      ghPath,
+      String.raw`#!/bin/sh
 printf '%s\n' "$*" > "$TMPDIR/args.txt"
 printf '%s\n' "$GH_HOST" > "$TMPDIR/host.txt"
 printf '%s\n' "$AUTODEV_MEMORY_TEST_SECRET" > "$TMPDIR/secret.txt"
 cat "$TMPDIR/pull-request.json"
-`;
-      await writeFile(ghPath, fakeGitHubCli, { mode: 0o700 });
-      await chmod(ghPath, 0o700);
-      process.env.PATH = `${temporary}${delimiter}${previousPath ?? ""}`;
-      process.env.TMPDIR = temporary;
-      process.env.AUTODEV_MEMORY_TEST_SECRET = "must-not-be-inherited";
+`,
+      { mode: 0o700 }
+    );
+    await chmod(ghPath, 0o700);
+    process.env.PATH = `${temporary}${delimiter}${previousPath ?? ""}`;
+    process.env.TMPDIR = temporary;
+    process.env.AUTODEV_MEMORY_TEST_SECRET = "must-not-be-inherited";
+    return await run(temporary);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    if (previousTmpDir === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = previousTmpDir;
+    if (previousSecret === undefined)
+      delete process.env.AUTODEV_MEMORY_TEST_SECRET;
+    else process.env.AUTODEV_MEMORY_TEST_SECRET = previousSecret;
+    await rm(temporary, { recursive: true, force: true });
+  }
+}
 
-      const verifier = new GitWorkingTreeMemoryVerifier({
-        repositories: { resolve: async () => root }
-      });
-      const assessment = await verifier.verify({
-        memory: recordWithEvidence([
-          {
-            kind: "pull_request",
-            uri: "https://github.com/owner/repo/pull/52"
-          },
-          { kind: "issue", uri: "https://github.com/owner/repo/issues/53" },
-          { kind: "file", uri: pathToFileURL(filePath).href }
-        ]),
-        task: "Use the merged change after verifying current files.",
-        context: { ...context },
-        asOf: "2026-10-01T12:00:00.000Z"
-      });
-
-      assert.equal(assessment.compatibility, "compatible");
-      assert.deepEqual(assessment.issueObservations, [
-        {
-          uri: "https://github.com/owner/repo/issues/53",
+test("GitHub CLI resolver queries same-repository merge, review, and check state", async () => {
+  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    await withFakeGitHubCli(
+      root,
+      {
+        pullRequest: {
+          state: "CLOSED",
+          isDraft: false,
+          merged: true,
+          mergedAt: "2026-09-30T10:00:00.000Z",
+          mergeCommit: { oid: sourceCommit },
+          reviewDecision: "APPROVED",
+          statusCheckRollup: { state: "SUCCESS" },
+          reviewThreads: { totalCount: 0, nodes: [] },
+          // A merged PR closes without naming an outside closer, which is what
+          // every normally merged and hand-closed PR reports.
+          timelineItems: { nodes: [{ __typename: "ClosedEvent", closer: null }] }
+        },
+        issue: {
           state: "CLOSED",
           stateReason: "COMPLETED",
-          updatedAt: "2026-09-30T12:00:00.000Z",
-          observedAt: assessment.checkedAt
+          updatedAt: "2026-09-30T12:00:00.000Z"
         }
-      ]);
-      const args = await readFile(argsPath, "utf8");
-      assert.match(args, /api graphql/u);
-      assert.match(args, /owner=owner/u);
-      assert.match(args, /name=repo/u);
-      assert.match(args, /pullRequestNumber=52/u);
-      assert.match(args, /issueNumber=53/u);
-      assert.match(args, /stateReason/u);
-      assert.match(args, /reviewDecision/u);
-      assert.match(args, /statusCheckRollup/u);
-      assert.match(args, /reviewThreads\(first: 100\)/u);
-      assert.match(args, /isResolved isOutdated/u);
-      assert.doesNotMatch(args, /comments|body/u);
-      assert.equal((await readFile(hostPath, "utf8")).trim(), "github.com");
-      assert.equal((await readFile(secretPath, "utf8")).trim(), "");
+      },
+      async (temporary) => {
+        const argsPath = join(temporary, "args.txt");
+        const hostPath = join(temporary, "host.txt");
+        const secretPath = join(temporary, "secret.txt");
+        const pullRequestPath = join(temporary, "pull-request.json");
+        const verifier = new GitWorkingTreeMemoryVerifier({
+          repositories: { resolve: async () => root }
+        });
+        const assess = (runId: string) =>
+          verifier.verify({
+            memory: recordWithEvidence([
+              {
+                kind: "pull_request",
+                uri: "https://github.com/owner/repo/pull/52"
+              },
+              { kind: "issue", uri: "https://github.com/owner/repo/issues/53" },
+              { kind: "file", uri: pathToFileURL(filePath).href }
+            ]),
+            task: "Use only fully reviewed current code.",
+            context: { ...context, runId },
+            asOf: "2026-10-01T12:00:00.000Z"
+          });
 
-      const structuredResponse = JSON.parse(
-        await readFile(pullRequestPath, "utf8")
-      ) as {
-        data: {
-          repository: {
-            pullRequest: {
-              reviewThreads: {
-                totalCount: number;
-                nodes: Array<{ isResolved: boolean; isOutdated: boolean }>;
+        const assessment = await assess("github-cli-resolver");
+        assert.equal(assessment.compatibility, "compatible");
+        assert.deepEqual(assessment.issueObservations, [
+          {
+            uri: "https://github.com/owner/repo/issues/53",
+            state: "CLOSED",
+            stateReason: "COMPLETED",
+            updatedAt: "2026-09-30T12:00:00.000Z",
+            observedAt: assessment.checkedAt
+          }
+        ]);
+        const args = await readFile(argsPath, "utf8");
+        assert.match(args, /api graphql/u);
+        assert.match(args, /owner=owner/u);
+        assert.match(args, /name=repo/u);
+        assert.match(args, /pullRequestNumber=52/u);
+        assert.match(args, /issueNumber=53/u);
+        assert.match(args, /stateReason/u);
+        assert.match(args, /reviewDecision/u);
+        assert.match(args, /statusCheckRollup/u);
+        assert.match(args, /reviewThreads\(first: 100\)/u);
+        assert.match(args, /isResolved isOutdated/u);
+        // Supersession rides in the same bounded query rather than costing a
+        // second lookup, so the one-lookup budget is unchanged by reading it.
+        // `PullRequest` has no `closedEvent` field: the closer is reached
+        // through the timeline, filtered to the one item type that carries it.
+        assert.match(args, /timelineItems/u);
+        assert.match(args, /itemTypes: \[CLOSED_EVENT\]/u);
+        assert.match(args, /on ClosedEvent/u);
+        assert.match(args, /closer/u);
+        assert.doesNotMatch(args, /comments|body/u);
+        assert.equal((await readFile(hostPath, "utf8")).trim(), "github.com");
+        assert.equal((await readFile(secretPath, "utf8")).trim(), "");
+
+        const structuredResponse = JSON.parse(
+          await readFile(pullRequestPath, "utf8")
+        ) as {
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  totalCount: number;
+                  nodes: Array<{ isResolved: boolean; isOutdated: boolean }>;
+                };
               };
             };
           };
         };
-      };
-      const verifyThreadState = async (
-        reviewThreads: {
-          totalCount: number;
-          nodes: Array<{ isResolved: boolean; isOutdated: boolean }>;
-        },
-        runId: string
-      ) => {
-        structuredResponse.data.repository.pullRequest.reviewThreads =
-          reviewThreads;
-        await writeFile(pullRequestPath, JSON.stringify(structuredResponse));
-        return new GitWorkingTreeMemoryVerifier({
-          repositories: { resolve: async () => root }
-        }).verify({
-          memory: recordWithEvidence([
-            {
-              kind: "pull_request",
-              uri: "https://github.com/owner/repo/pull/52"
-            },
-            { kind: "issue", uri: "https://github.com/owner/repo/issues/53" },
-            { kind: "file", uri: pathToFileURL(filePath).href }
-          ]),
-          task: "Use only fully reviewed current code.",
-          context: { ...context, runId },
-          asOf: "2026-10-01T12:00:00.000Z"
-        });
-      };
-      const unresolvedThreads = await verifyThreadState(
-        { totalCount: 1, nodes: [{ isResolved: false, isOutdated: false }] },
-        "unresolved-review-thread"
-      );
-      assert.equal(unresolvedThreads.compatibility, "unknown");
-      const outdatedThread = await verifyThreadState(
-        { totalCount: 1, nodes: [{ isResolved: false, isOutdated: true }] },
-        "outdated-review-thread"
-      );
-      assert.equal(outdatedThread.compatibility, "compatible");
-      const truncatedThreads = await verifyThreadState(
-        {
-          totalCount: 101,
-          nodes: Array.from({ length: 100 }, () => ({
-            isResolved: true,
-            isOutdated: false
-          }))
-        },
-        "truncated-review-threads"
-      );
-      assert.equal(truncatedThreads.compatibility, "unknown");
-
-      structuredResponse.data.repository.pullRequest.reviewThreads = {
-        totalCount: 0,
-        nodes: []
-      };
-      await writeFile(
-        pullRequestPath,
-        JSON.stringify({
-          ...structuredResponse,
-          errors: [{ message: "partial GraphQL response" }]
-        })
-      );
-      const partialResponse = await new GitWorkingTreeMemoryVerifier({
-        repositories: { resolve: async () => root }
-      }).verify({
-        memory: recordWithEvidence([
-          {
-            kind: "pull_request",
-            uri: "https://github.com/owner/repo/pull/52"
+        const verifyThreadState = async (
+          reviewThreads: {
+            totalCount: number;
+            nodes: Array<{ isResolved: boolean; isOutdated: boolean }>;
           },
-          { kind: "issue", uri: "https://github.com/owner/repo/issues/53" },
-          { kind: "file", uri: pathToFileURL(filePath).href }
-        ]),
-        task: "Do not authorize partial GitHub state.",
-        context: { ...context, runId: "partial-graphql-response" },
-        asOf: "2026-10-01T12:00:00.000Z"
-      });
-      assert.equal(partialResponse.compatibility, "unknown");
-    } finally {
-      if (previousPath === undefined) delete process.env.PATH;
-      else process.env.PATH = previousPath;
-      if (previousTmpDir === undefined) delete process.env.TMPDIR;
-      else process.env.TMPDIR = previousTmpDir;
-      if (previousSecret === undefined)
-        delete process.env.AUTODEV_MEMORY_TEST_SECRET;
-      else process.env.AUTODEV_MEMORY_TEST_SECRET = previousSecret;
-      await rm(temporary, { recursive: true, force: true });
-    }
+          runId: string
+        ) => {
+          structuredResponse.data.repository.pullRequest.reviewThreads =
+            reviewThreads;
+          await writeFile(pullRequestPath, JSON.stringify(structuredResponse));
+          return assess(runId);
+        };
+        const unresolvedThreads = await verifyThreadState(
+          { totalCount: 1, nodes: [{ isResolved: false, isOutdated: false }] },
+          "unresolved-review-thread"
+        );
+        assert.equal(unresolvedThreads.compatibility, "unknown");
+        const outdatedThread = await verifyThreadState(
+          { totalCount: 1, nodes: [{ isResolved: false, isOutdated: true }] },
+          "outdated-review-thread"
+        );
+        assert.equal(outdatedThread.compatibility, "compatible");
+        const truncatedThreads = await verifyThreadState(
+          {
+            totalCount: 101,
+            nodes: Array.from({ length: 100 }, () => ({
+              isResolved: true,
+              isOutdated: false
+            }))
+          },
+          "truncated-review-threads"
+        );
+        assert.equal(truncatedThreads.compatibility, "unknown");
+
+        await writeFile(
+          pullRequestPath,
+          JSON.stringify({
+            ...structuredResponse,
+            errors: [{ message: "partial GraphQL response" }]
+          })
+        );
+        const partialResponse = await assess("partial-graphql-response");
+        assert.equal(partialResponse.compatibility, "unknown");
+      }
+    );
   });
 });
 
@@ -1194,5 +1206,366 @@ test("Git verifier treats reverted cited-path history as stale or unknown even w
     assert.equal(reconciled.compatibility, "unknown");
     assert.equal(reconciled.reasonCode, "verification_inconclusive");
     assert.equal(reconciled.source, "git_cited_file_history_changed");
+  });
+});
+
+const SUPERSEDING_PULL_REQUEST = {
+  number: 61,
+  url: "https://github.com/owner/repo/pull/61"
+};
+
+/**
+ * Assess a memory against a stubbed GitHub pull-request response.
+ *
+ * Drives the real `gh api graphql` boundary through the shared harness, so
+ * `timelineItems` is parsed by the production parser rather than by a copy of
+ * it in this file. A test that re-implements the shape rules proves only that
+ * the copy agrees with itself, and it keeps agreeing after production changes.
+ */
+async function assessAgainstGitHubResponse(input: {
+  readonly root: string;
+  readonly filePath: string;
+  readonly pullRequest: unknown;
+  readonly runId: string;
+}): Promise<CurrentStateAssessment> {
+  return withFakeGitHubCli(
+    input.root,
+    { pullRequest: input.pullRequest },
+    async () =>
+      new GitWorkingTreeMemoryVerifier({
+        repositories: { resolve: async () => input.root }
+      }).verify({
+        memory: recordWithEvidence([
+          {
+            kind: "pull_request",
+            uri: "https://github.com/owner/repo/pull/52"
+          },
+          { kind: "file", uri: pathToFileURL(input.filePath).href }
+        ]),
+        task: "Apply the approach the cited pull request established.",
+        context: { ...context, runId: input.runId },
+        asOf: "2026-10-01T12:00:00.000Z"
+      })
+  );
+}
+
+/** The merged, approved, green PR every supersession case starts from. */
+function mergedPullRequestPayload(mergeCommit: string): Record<string, unknown> {
+  return {
+    state: "CLOSED",
+    isDraft: false,
+    merged: true,
+    mergedAt: "2026-09-30T10:00:00.000Z",
+    mergeCommit: { oid: mergeCommit },
+    reviewDecision: "APPROVED",
+    statusCheckRollup: { state: "SUCCESS" },
+    reviewThreads: { totalCount: 0, nodes: [] }
+  };
+}
+
+test("a PR replaced by a later merged PR is superseded even when every cited file is byte-identical", async () => {
+  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    // The repository is left untouched after the source commit: no cited path
+    // changed, no revert exists, ancestry holds, and the PR itself is merged,
+    // approved and green. Every existing check passes. This is the case the
+    // verifier previously called `compatible` while the work the memory
+    // describes had been replaced outright.
+    const assessment = await assessAgainstGitHubResponse({
+      root,
+      filePath,
+      runId: "superseded-pr",
+      pullRequest: {
+        ...mergedPullRequestPayload(sourceCommit),
+        timelineItems: {
+          nodes: [
+            {
+              __typename: "ClosedEvent",
+              closer: {
+                __typename: "PullRequest",
+                ...SUPERSEDING_PULL_REQUEST,
+                merged: true
+              }
+            }
+          ]
+        }
+      }
+    });
+
+    assert.equal(assessment.compatibility, "contradicted");
+    assert.equal(assessment.reasonCode, "superseded");
+    assert.equal(assessment.source, "git_github_pr_supersession");
+    // The superseding PR is carried as evidence so an operator can open it
+    // rather than being told only that something superseded the memory.
+    assert.ok(
+      assessment.evidence.some(
+        (reference) =>
+          reference.kind === "pull_request" &&
+          reference.uri === SUPERSEDING_PULL_REQUEST.url
+      ),
+      `superseding PR missing from ${JSON.stringify(assessment.evidence)}`
+    );
+    assert.ok(
+      assessment.evidence.some((reference) => reference.kind === "commit"),
+      "the commit at which this was observed must stay attached"
+    );
+  });
+});
+
+test("supersession is reported ahead of the merge gate, not hidden behind it", async () => {
+  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    // A PR closed *by* another PR was, by construction, never itself merged
+    // and approved. Before this change the merge/review/checks gate answered
+    // first and returned an ordinary inconclusive read, which tells an operator
+    // their evidence could not be checked rather than that it was replaced.
+    const assessment = await assessAgainstGitHubResponse({
+      root,
+      filePath,
+      runId: "superseded-before-merge-gate",
+      pullRequest: {
+        ...mergedPullRequestPayload(sourceCommit),
+        state: "CLOSED",
+        merged: false,
+        mergedAt: null,
+        reviewDecision: null,
+        timelineItems: {
+          nodes: [
+            {
+              __typename: "ClosedEvent",
+              closer: {
+                __typename: "PullRequest",
+                ...SUPERSEDING_PULL_REQUEST,
+                merged: true
+              }
+            }
+          ]
+        }
+      }
+    });
+
+    assert.equal(assessment.compatibility, "contradicted");
+    assert.equal(assessment.reasonCode, "superseded");
+    assert.notEqual(assessment.source, "git_github_pr_review_checks");
+  });
+});
+
+test("a PR closed by a commit is superseded, and is not given an address nobody observed", async () => {
+  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    // GitHub's closer union also names a bare commit, which is how a commit
+    // that references an issue closes it. That is a supersession: the PR was
+    // closed by something outside its own merge. But no pull request was named,
+    // so the assessment must not attach a PR reference an operator would open
+    // and find something else at.
+    const assessment = await assessAgainstGitHubResponse({
+      root,
+      filePath,
+      runId: "superseded-by-commit",
+      pullRequest: {
+        ...mergedPullRequestPayload(sourceCommit),
+        timelineItems: {
+          nodes: [{ __typename: "ClosedEvent", closer: { __typename: "Commit" } }]
+        }
+      }
+    });
+
+    assert.equal(assessment.compatibility, "contradicted");
+    assert.equal(assessment.reasonCode, "superseded");
+    assert.deepEqual(
+      assessment.evidence.filter((reference) => reference.kind === "pull_request"),
+      [],
+      "an unattributable supersession must not invent a pull request to cite"
+    );
+    assert.ok(
+      assessment.evidence.some((reference) => reference.kind === "commit"),
+      "the commit at which this was observed must stay attached"
+    );
+  });
+});
+
+test("the ways a PR is closed that are not supersession stay compatible", async () => {
+  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    // Merging a PR closes it via its own merge commit; closing it by hand
+    // closes it with no closer at all; and a PR closed by another that was
+    // itself abandoned replaced nothing. None of the three is a supersession,
+    // and reading any of them as one would contradict memories that are still
+    // the current account of themselves.
+    const notSuperseding = [
+      {
+        label: "closed without naming a closer",
+        timelineItems: {
+          nodes: [{ __typename: "ClosedEvent", closer: null }]
+        }
+      },
+      {
+        label: "open, so it has no close event at all",
+        timelineItems: { nodes: [] }
+      },
+      {
+        label: "closer PR never merged",
+        timelineItems: {
+          nodes: [
+            {
+              __typename: "ClosedEvent",
+              closer: {
+                __typename: "PullRequest",
+                ...SUPERSEDING_PULL_REQUEST,
+                merged: false
+              }
+            }
+          ]
+        }
+      }
+    ];
+
+    for (const [index, timeline] of notSuperseding.entries()) {
+      const assessment = await assessAgainstGitHubResponse({
+        root,
+        filePath,
+        runId: `not-superseded-${index}`,
+        pullRequest: {
+          ...mergedPullRequestPayload(sourceCommit),
+          timelineItems: timeline.timelineItems
+        }
+      });
+      assert.equal(
+        assessment.compatibility,
+        "compatible",
+        `${timeline.label} must not read as supersession`
+      );
+      assert.equal(assessment.reasonCode, "verified_current_state");
+    }
+  });
+});
+
+test("an unreadable close event is unknown, never an observed absence of supersession", async () => {
+  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    // Each of these is a response that did not say whether anything superseded
+    // the PR. Reporting them as "nothing superseded it" would turn a lookup we
+    // could not complete into a clean bill of health for the memory.
+    const unreadable: readonly { label: string; timelineItems?: unknown }[] = [
+      { label: "timeline absent" },
+      { label: "timeline is not an object", timelineItems: "closed" },
+      { label: "timeline has no nodes array", timelineItems: { totalCount: 1 } },
+      {
+        label: "nodes is not an array",
+        timelineItems: { nodes: { __typename: "ClosedEvent" } }
+      },
+      {
+        // One close event was requested. More than one means the connection
+        // answered a different question, and taking the first would be a guess.
+        label: "more than one timeline item",
+        timelineItems: {
+          nodes: [
+            { __typename: "ClosedEvent", closer: null },
+            { __typename: "ClosedEvent", closer: null }
+          ]
+        }
+      },
+      {
+        label: "node has no type name",
+        timelineItems: { nodes: [{ closer: null }] }
+      },
+      {
+        label: "node is not a close event",
+        timelineItems: { nodes: [{ __typename: "MergedEvent" }] }
+      },
+      { label: "closer is not an object", timelineItems: { nodes: [{ __typename: "ClosedEvent", closer: 7 }] } },
+      {
+        label: "closer type is unknown",
+        timelineItems: { nodes: [{ __typename: "ClosedEvent", closer: { __typename: "Bot" } }] }
+      },
+      {
+        label: "closer PR has no merged flag",
+        timelineItems: {
+          nodes: [
+            {
+              __typename: "ClosedEvent",
+              closer: { __typename: "PullRequest", ...SUPERSEDING_PULL_REQUEST }
+            }
+          ]
+        }
+      },
+      {
+        label: "closer URL is not a canonical pull request URL",
+        timelineItems: {
+          nodes: [
+            {
+              __typename: "ClosedEvent",
+              closer: {
+                __typename: "PullRequest",
+                number: 61,
+                url: "https://gitlab.com/owner/repo/pull/61",
+                merged: true
+              }
+            }
+          ]
+        }
+      },
+      {
+        // The URL is what an operator would open and the number is what the
+        // rest of the system compares; a response where they disagree is not
+        // one to build a verdict on.
+        label: "closer number disagrees with its URL",
+        timelineItems: {
+          nodes: [
+            {
+              __typename: "ClosedEvent",
+              closer: {
+                __typename: "PullRequest",
+                number: 62,
+                url: "https://github.com/owner/repo/pull/61",
+                merged: true
+              }
+            }
+          ]
+        }
+      }
+    ];
+
+    for (const [index, shape] of unreadable.entries()) {
+      const pullRequest: Record<string, unknown> = {
+        ...mergedPullRequestPayload(sourceCommit)
+      };
+      // An absent key is left absent: that is what "GitHub did not tell us"
+      // looks like, and it must not be smoothed into an explicit empty list.
+      if ("timelineItems" in shape)
+        pullRequest.timelineItems = shape.timelineItems;
+
+      const assessment = await assessAgainstGitHubResponse({
+        root,
+        filePath,
+        runId: `unreadable-closer-${index}`,
+        pullRequest
+      });
+      assert.equal(
+        assessment.compatibility,
+        "unknown",
+        `${shape.label} must not be reported as a clean verification`
+      );
+      assert.equal(assessment.reasonCode, "verification_inconclusive");
+    }
+  });
+});
+
+test("a memory citing no pull request is unaffected by supersession state", async () => {
+  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    // Supersession is observable only through a cited PR. A memory grounded in
+    // files and a commit has no PR to supersede, and inventing one for it would
+    // be inventing evidence.
+    const assessment = await new GitWorkingTreeMemoryVerifier({
+      repositories: { resolve: async () => root },
+      githubState: async () => {
+        throw new Error("no pull request is cited, so no lookup may be spent");
+      }
+    }).verify({
+      memory: recordWithEvidence([
+        { kind: "commit", uri: "git://owner/repo/commit/" + sourceCommit },
+        { kind: "file", uri: pathToFileURL(filePath).href }
+      ]),
+      task: "Apply the approach the cited commit established.",
+      context: { ...context, runId: "no-cited-pull-request" },
+      asOf: "2026-10-01T12:00:00.000Z"
+    });
+    assert.equal(assessment.compatibility, "compatible");
+    assert.equal(assessment.reasonCode, "verified_current_state");
   });
 });
