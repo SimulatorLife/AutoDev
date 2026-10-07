@@ -14,8 +14,15 @@ const SECRET_PATTERNS: readonly RegExp[] = [
 export function redactSensitiveText(value: string): string {
   return SECRET_PATTERNS.reduce(
     (text, pattern) =>
-      text.replace(pattern, (match, key?: string) =>
-        key ? `${key}=[REDACTED]` : "[REDACTED]"
+      text.replace(pattern, (match, key?: string | number) =>
+        // `String.replace` hands the callback `(match, ...captures, offset,
+        // string)`. The patterns that have no capture group therefore receive
+        // the *offset* where a key name was expected, and it is a number — and
+        // truthy for anything past the first character. Testing it for
+        // truthiness redaction silently turned into `12=[REDACTED]`, stamping
+        // the secret's position into the stored claim and inventing a variable
+        // name that was never there.
+        typeof key === "string" ? `${key}=[REDACTED]` : "[REDACTED]"
       ),
     value
   );
