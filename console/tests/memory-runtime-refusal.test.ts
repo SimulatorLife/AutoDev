@@ -152,33 +152,57 @@ test("an unrecognised code still falls through rather than guessing", async () =
   const refusal = await refusalForCode(400, "autodev_memory_some_future_thing");
 
   assert.equal(refusal, "runtime_refused");
+
+  // Pinning the *reason* is not enough. Every other sentence in this table is
+  // allowed to name a cause because the code named it; the fallback's whole
+  // value is that it does not. It used to blame a citation conflict for every
+  // failure, which sent an operator whose supersession was rejected for an
+  // unrelated reason looking for citations that were never involved — so the
+  // sentence itself has to be guarded, not just the mapping that reaches it.
+  const markup = renderToStaticMarkup(
+    React.createElement(ControlFailureNotice, { refusal: "runtime_refused" })
+  );
+  const detail = /<span class="[^"]*">([^<]+)</u.exec(markup)?.[1] ?? "";
+  assert.doesNotMatch(
+    detail,
+    /citing|citation|scope|conflict|stale|not permitted|unreachable/u,
+    "the neutral fallback must not name a cause the Runtime never stated"
+  );
+  assert.match(
+    detail,
+    /did not say why/u,
+    "the fallback should say that no reason was given, which is what it knows"
+  );
 });
 
 test("every refusal the route can emit has a sentence of its own", async () => {
   // Unreachable reasons are the other half of the same problem: a sentence no
-  // code produces reads as coverage and is not. The route-emitted refusals
-  // (`confirmation_missing` and friends) are covered by the route tests; this
-  // asserts only that none of the Runtime-derived ones is unreachable.
-  const reachable = new Set(RUNTIME_CODES.map(([, , expected]) => expected));
+  // code produces reads as coverage and is not. Only the refusals the route
+  // raises on its own may be unreachable from a Runtime code, so anything else
+  // unreachable is a sentence nobody will ever read.
+  const ROUTE_EMITTED: readonly ControlRefusalReason[] = [
+    "confirmation_missing",
+    "reason_not_accepted",
+    "reason_required",
+    "claim_required",
+    "content_required",
+    "prior_required",
+    "evidence_required",
+    "provenance_required"
+  ];
+  const reachable = new Set(RUNTIME_CODES.map(([, , reason]) => reason));
   const unreachable = CONTROL_REFUSAL_REASONS.filter(
     (reason) => !reachable.has(reason)
   );
 
   assert.deepEqual(
-    unreachable.filter((reason) =>
-      [
-        "confirmation_missing",
-        "reason_not_accepted",
-        "reason_required",
-        "claim_required",
-        "content_required",
-        "prior_required",
-        "evidence_required",
-        "provenance_required"
-      ].includes(reason)
-    ),
+    unreachable.filter((reason) => !ROUTE_EMITTED.includes(reason)),
     [],
-    "only route-emitted refusals may be unreachable from a Runtime code"
+    "every Runtime-derived refusal must be reachable from some Runtime code"
+  );
+  assert.ok(
+    reachable.has("operation_failed"),
+    "a failed operation must be distinguishable from the neutral fallback"
   );
 
   for (const [, , reason] of RUNTIME_CODES) {
