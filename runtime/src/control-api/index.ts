@@ -7,12 +7,19 @@ import path from "node:path";
 import { SpanStatusCode } from "@opentelemetry/api";
 import {
   buildReconciliationView,
+  type ControlApiHooksResponse,
+  type ControlApiMcpsResponse,
+  type ControlApiModelsResponse,
+  type ControlApiPromptsResponse,
   type ControlApiProviderHealth,
+  type ControlApiSkillsResponse,
+  type ControlApiWorkspacesResponse,
   type GithubActionsRuntimeStatus,
   type GithubWorkflowDefinition,
   type GithubWorkflowRun,
   type GithubWorkflowState,
   LOCAL_CONTROL_API_ACTOR,
+  type McpServerResource,
   type OperationHistoryEntry,
   PROVIDER_ROLES,
   type ProviderRole,
@@ -610,7 +617,11 @@ function mcpsView(): Record<string, unknown> {
     declared: true,
     roles: rolesByServer.get(server.name) ?? []
   }));
-  const unbackedRoleExposures = exposures
+  // Typed rather than left to inference: `transport: "unknown"` in an inferred
+  // array widens to `string`, which quietly stopped satisfying the declared
+  // `McpServerTransport` union and let this projection drift from the contract
+  // it is supposed to publish.
+  const unbackedRoleExposures: McpServerResource[] = exposures
     .filter(({ name }) => !declaredNames.has(name))
     .map(({ name, roles }) => ({
       name,
@@ -631,7 +642,7 @@ function mcpsView(): Record<string, unknown> {
     servers: [...declared, ...unbackedRoleExposures].sort((left, right) =>
       CONTROL_API_COLLATOR.compare(left.name, right.name)
     )
-  };
+  } satisfies ControlApiMcpsResponse;
 }
 
 interface ToolCatalogExecutionContractSummary {
@@ -909,7 +920,7 @@ function skillsView(
       catalog.valid === true
         ? assignments.filter(({ name }) => !catalogNames.has(name))
         : []
-  };
+  } satisfies ControlApiSkillsResponse;
 }
 
 function runtimeView(now: number): Record<string, unknown> {
@@ -938,7 +949,7 @@ function workspacesView(repositoryRoot?: string): Record<string, unknown> {
     totalWorkspaces:
       catalog.status === "valid" ? catalog.workspaces.length : null,
     workspaces: catalog.workspaces
-  };
+  } satisfies ControlApiWorkspacesResponse;
 }
 
 let githubActionsAdapterOverride: GithubActionsAdapter | null = null;
@@ -1454,7 +1465,7 @@ function modelsView(
     schema: "autodev-control-models-v2",
     source: path.basename(ROUTING_POLICY.configFile),
     models
-  };
+  } satisfies ControlApiModelsResponse;
 }
 
 function hooksView(
@@ -1471,7 +1482,7 @@ function hooksView(
     valid: state.valid,
     issues: state.issues,
     hooks
-  };
+  } satisfies ControlApiHooksResponse;
 }
 
 /**
@@ -1584,7 +1595,7 @@ function promptsView(
     totalCommands: commandState.valid === true ? commands.length : null,
     commands,
     rolePrompts
-  };
+  } satisfies ControlApiPromptsResponse;
 }
 
 /**
