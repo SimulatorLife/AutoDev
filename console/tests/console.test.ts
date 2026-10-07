@@ -402,7 +402,11 @@ test("missing evidence is reported in one word, from one constant", () => {
   // And the constant is what the pages actually render, so the guard above
   // cannot pass against a word that nothing ships.
   const unobserved = renderToStaticMarkup(
-    React.createElement(McpsView, { servers: [], sourceValidity: true, validationIssues: [] })
+    React.createElement(McpsView, {
+      servers: [],
+      sourceValidity: true,
+      validationIssues: []
+    })
   );
   assert.ok(
     unobserved.includes(NOT_OBSERVED_LABEL),
@@ -1827,6 +1831,7 @@ test("Prompt list links to source detail instead of synthesizing a preview", () 
           description: "Dry-run command"
         }
       ],
+      validationIssues: [],
       commandSourceValidity: true
     })
   );
@@ -1847,6 +1852,7 @@ test("PromptsView distinguishes an unavailable command source from a valid empty
   const invalid = renderToStaticMarkup(
     React.createElement(PromptsView, {
       commands,
+      validationIssues: [],
       commandSourceValidity: false
     })
   );
@@ -1858,6 +1864,7 @@ test("PromptsView distinguishes an unavailable command source from a valid empty
   const missing = renderToStaticMarkup(
     React.createElement(PromptsView, {
       commands: [],
+      validationIssues: [],
       commandSourceValidity: null
     })
   );
@@ -2150,6 +2157,7 @@ test("PromptsView and PromptDetailView render prompt types, linkage, and Git aut
           description: "Agent role prompt for orchestrator"
         }
       ],
+      validationIssues: [],
       commandSourceValidity: true
     })
   );
@@ -2464,6 +2472,7 @@ test("no column is narrower than its own header", () => {
         eligibility: [{ skill: "orchestration", roles: ["orchestrator"] }],
         unresolvedAssignments: [],
         sourceValidity: true,
+        validationIssues: [],
         assignmentRoles: ["orchestrator", "worker"],
         executionContractRevision: "c".repeat(64)
       })
@@ -2477,6 +2486,7 @@ test("no column is narrower than its own header", () => {
             description: "Dry-run command"
           }
         ],
+        validationIssues: [],
         commandSourceValidity: true
       })
     ),
@@ -2979,6 +2989,7 @@ test("Skills fetcher validates the v2 catalog contract and rejects stale respons
     valid: true,
     executionContractRevision: "b".repeat(64),
     assignmentRoles: ["validator"],
+    issues: [],
     skills: [
       {
         name: "audit",
@@ -3916,7 +3927,11 @@ test("McpsView renders an explicit empty configured-role scope", () => {
 
 test("McpsView distinguishes invalid canonical configuration from an empty list", () => {
   const markup = renderToStaticMarkup(
-    React.createElement(McpsView, { servers: [], sourceValidity: false, validationIssues: [] })
+    React.createElement(McpsView, {
+      servers: [],
+      sourceValidity: false,
+      validationIssues: []
+    })
   );
   assert.match(markup, /data-mcp-source-validity="false"/);
   assert.match(markup, /RuleSync source invalid/);
@@ -3939,6 +3954,7 @@ test("SkillsView never reports 'Active' or 'Recorded' without OTel evidence", ()
       eligibility: [],
       unresolvedAssignments: [],
       sourceValidity: true,
+      validationIssues: [],
       assignmentRoles: ["orchestrator"],
       executionContractRevision: "c".repeat(64)
     })
@@ -3962,6 +3978,7 @@ test("SkillsView distinguishes declared role scope from missing eligibility evid
       ],
       unresolvedAssignments: [{ skill: "missing", roles: ["worker"] }],
       sourceValidity: true,
+      validationIssues: [],
       assignmentRoles: ["orchestrator", "worker"],
       executionContractRevision: "c".repeat(64)
     })
@@ -3983,6 +4000,7 @@ test("SkillsView does not synthesize empty catalog counts for an unavailable Rul
       eligibility: [],
       unresolvedAssignments: [],
       sourceValidity: null,
+      validationIssues: [],
       assignmentRoles: ["orchestrator"],
       executionContractRevision: "c".repeat(64)
     })
@@ -4814,6 +4832,7 @@ test("Prompts fetcher validates source state and rejects stale contracts", async
         schema: "autodev-control-prompts-v2",
         source: ".rulesync/commands",
         readOnly: true,
+        issues: [],
         valid: true,
         totalCommands: 1,
         commands: [
@@ -5441,7 +5460,8 @@ test("View adapters translate Control API responses without inventing data", () 
         roles: []
       }
     ],
-    unresolvedAssignments: [{ name: "missing", roles: ["worker"] }]
+    unresolvedAssignments: [{ name: "missing", roles: ["worker"] }],
+    issues: []
   };
   const skills = skillsFromControlApi(skillsResponse);
   assert.deepEqual(skills[0], {
@@ -5461,6 +5481,7 @@ test("View adapters translate Control API responses without inventing data", () 
     schema: "autodev-control-prompts-v2",
     source: ".rulesync/commands",
     readOnly: true,
+    issues: [],
     valid: true,
     totalCommands: 1,
     commands: [
@@ -6336,6 +6357,7 @@ test("a skill that reached the catalog but reached no agent says so", () => {
         eligibility,
         unresolvedAssignments: [],
         sourceValidity: true,
+        validationIssues: [],
         assignmentRoles: ["orchestrator", "worker"],
         executionContractRevision: "c".repeat(64)
       })
@@ -12898,6 +12920,7 @@ test("a skill assignment form posts the whole desired set, and an empty one clea
       eligibility: [{ skill: "release-checklist", roles: ["worker"] }],
       unresolvedAssignments: [],
       sourceValidity: true,
+      validationIssues: [],
       assignmentRoles: ["orchestrator", "worker"],
       executionContractRevision: "d".repeat(64)
     })
@@ -12917,6 +12940,7 @@ test("a skill assignment form posts the whole desired set, and an empty one clea
       eligibility: [{ skill: "release-checklist", roles: [] }],
       unresolvedAssignments: [],
       sourceValidity: true,
+      validationIssues: [],
       assignmentRoles: ["orchestrator", "worker"],
       executionContractRevision: "d".repeat(64)
     })
@@ -12942,6 +12966,7 @@ test("an unassigned skill is fixable from the page that reports it as unassigned
       eligibility: [{ skill: "release-checklist", roles: [] }],
       unresolvedAssignments: [],
       sourceValidity: true,
+      validationIssues: [],
       assignmentRoles: ["orchestrator"],
       executionContractRevision: "e".repeat(64)
     })
@@ -12965,6 +12990,7 @@ test("no execution contract means no assignment form and a reason, not a broken 
       eligibility: [],
       unresolvedAssignments: [],
       sourceValidity: true,
+      validationIssues: [],
       assignmentRoles: ["orchestrator"],
       executionContractRevision: null
     })
@@ -12985,6 +13011,7 @@ test("a refused assignment says what happened and claims nothing was written", (
       eligibility: [{ skill: "release-checklist", roles: [] }],
       unresolvedAssignments: [],
       sourceValidity: true,
+      validationIssues: [],
       assignmentRoles: ["orchestrator"],
       executionContractRevision: "f".repeat(64),
       saveOutcome: "conflict"
@@ -13192,7 +13219,13 @@ test("a permissions payload whose tool grants are unreadable fails closed", asyn
   });
   assert.equal(ok.kind, "ok");
 
-  for (const mcpTools of [undefined, null, "lsp", { lsp: "find" }, { lsp: [7] }]) {
+  for (const mcpTools of [
+    undefined,
+    null,
+    "lsp",
+    { lsp: "find" },
+    { lsp: [7] }
+  ]) {
     const malformed = await fetchPermissions(config, {
       fetchImpl: async () =>
         Response.json({
@@ -13242,4 +13275,88 @@ test("a valid MCP source renders no validation panel", () => {
     })
   );
   assert.doesNotMatch(markup, /data-testid="mcp-validation-issues"/u);
+});
+
+test("an invalid command source names the file it could not read, like every other RuleSync source", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(PromptsView, {
+      commands: [],
+      commandSourceValidity: false,
+      validationIssues: [
+        {
+          location: ".rulesync/commands/dry.md",
+          message:
+            '".rulesync/commands/dry.md" is a symbolic link, and canonical commands are read from the repository itself.'
+        }
+      ]
+    })
+  );
+  // An empty command list is otherwise indistinguishable from "this directory
+  // declares no commands", and the stat card beside it said exactly that.
+  assert.match(markup, /data-testid="command-validation-issues"/u);
+  assert.match(markup, /data-validation-issue-count="1"/);
+  assert.match(
+    markup,
+    /data-validation-issue="\.rulesync\/commands\/dry\.md"/u
+  );
+  assert.match(markup, /is a symbolic link/u);
+  // The heading names the source, so a page with both a command and an MCP
+  // problem does not show two identical "invalid" panels.
+  assert.match(markup, /Command catalog invalid — 1 problem</u);
+});
+
+test("a valid command source renders no validation panel", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(PromptsView, {
+      commands: [],
+      commandSourceValidity: true,
+      validationIssues: []
+    })
+  );
+  assert.doesNotMatch(markup, /data-testid="command-validation-issues"/u);
+});
+
+test("an invalid skill catalog names the file it could not apply, like every other RuleSync source", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(SkillsView, {
+      skills: [],
+      eligibility: [],
+      unresolvedAssignments: [],
+      sourceValidity: false,
+      validationIssues: [
+        {
+          location: ".rulesync/skills/release-checklist/SKILL.md",
+          message:
+            'The skill frontmatter declares "Release", but the directory is "release-checklist". A skill must be addressable by the name it declares.'
+        }
+      ],
+      assignmentRoles: ["orchestrator"],
+      executionContractRevision: "c".repeat(64)
+    })
+  );
+  // A skill dropped from the catalog is a skill no agent can be assigned, and
+  // the count beside the panel reported the survivors as if it were the catalog.
+  assert.match(markup, /data-testid="skill-catalog-validation-issues"/u);
+  assert.match(markup, /data-validation-issue-count="1"/);
+  assert.match(
+    markup,
+    /data-validation-issue="\.rulesync\/skills\/release-checklist\/SKILL\.md"/u
+  );
+  assert.match(markup, /addressable by the name it declares/u);
+  assert.match(markup, /Skill catalog invalid — 1 problem</u);
+});
+
+test("a valid skill catalog renders no validation panel", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(SkillsView, {
+      skills: [],
+      eligibility: [],
+      unresolvedAssignments: [],
+      sourceValidity: true,
+      validationIssues: [],
+      assignmentRoles: ["orchestrator"],
+      executionContractRevision: "c".repeat(64)
+    })
+  );
+  assert.doesNotMatch(markup, /data-testid="skill-catalog-validation-issues"/u);
 });

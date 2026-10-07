@@ -1349,16 +1349,11 @@ function isControlApiMcpsResponse(
     typeof value.source === "string" &&
     typeof value.readOnly === "boolean" &&
     (value.valid === null || typeof value.valid === "boolean") &&
-    // Required, not optional, for the same reason as hooks: `valid: false`
-    // with no reasons renders as "no servers" and leaves the operator to
-    // re-find a fault the Runtime had already located.
-    Array.isArray(value.issues) &&
-    value.issues.every(
-      (issue) =>
-        isRecord(issue) &&
-        typeof issue.location === "string" &&
-        typeof issue.message === "string"
-    ) &&
+    // Required, not optional. `valid: false` with no issues renders as "the
+    // source is invalid" and nothing else, which is the state this field exists
+    // to end: the Runtime has already located the fault and thrown the location
+    // and the reason away.
+    isValidationIssueList(value.issues) &&
     Array.isArray(value.servers) &&
     value.servers.every(isMcpServerRow)
   );
@@ -1406,6 +1401,25 @@ function isControlApiToolsResponse(
   );
 }
 
+/**
+ * Canonical-source validation issues.
+ *
+ * Shared by every RuleSync catalog so one malformed reason cannot pass the guard
+ * on one page and fail another -- the fields are identical because the loader
+ * that produces them is identical.
+ */
+function isValidationIssueList(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (issue) =>
+        isRecord(issue) &&
+        typeof issue.location === "string" &&
+        typeof issue.message === "string"
+    )
+  );
+}
+
 function isControlApiHooksResponse(
   value: unknown
 ): value is ControlApiHooksResponse {
@@ -1419,13 +1433,7 @@ function isControlApiHooksResponse(
     // source is invalid" and nothing else, which is the state this field exists
     // to end: the Runtime has already located the fault and thrown the location
     // and the reason away.
-    Array.isArray(value.issues) &&
-    value.issues.every(
-      (issue) =>
-        isRecord(issue) &&
-        typeof issue.location === "string" &&
-        typeof issue.message === "string"
-    ) &&
+    isValidationIssueList(value.issues) &&
     isRecord(value.hooks)
   );
 }
@@ -1675,6 +1683,9 @@ function isControlApiSkillsResponse(
     typeof value.source === "string" &&
     value.readOnly === true &&
     (value.valid === true || value.valid === false || value.valid === null) &&
+    // Every catalog carries the reasons it located, so one flag cannot stand in
+    // for six faults that need six different repairs.
+    isValidationIssueList(value.issues) &&
     // Required, and pattern-checked rather than merely typed, because a form
     // built from it is the only thing standing between two concurrent operators
     // and a silently discarded assignment. A malformed revision would post as a
@@ -1898,6 +1909,7 @@ function isControlApiPromptsResponse(
     typeof value.source === "string" &&
     value.readOnly === true &&
     (value.valid === true || value.valid === false || value.valid === null) &&
+    isValidationIssueList(value.issues) &&
     (value.totalCommands === null ||
       (Number.isSafeInteger(value.totalCommands) &&
         (value.totalCommands as number) >= 0)) &&

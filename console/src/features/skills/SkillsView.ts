@@ -1,4 +1,5 @@
 import type {
+  RuleSyncValidationIssue,
   SkillDefinition,
   SkillEligibility
 } from "@simulatorlife/autodev-core";
@@ -12,6 +13,7 @@ import {
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
+import { SourceValidationIssues } from "../../components/status/SourceValidationIssues.ts";
 import {
   NOT_OBSERVED_LABEL,
   StatusBadge
@@ -24,7 +26,8 @@ import {
 } from "../../components/tables/DataTable.ts";
 import {
   type SkillAssignmentSaveOutcome,
-  SkillRoleAssignment} from "./SkillRoleAssignment.ts";
+  SkillRoleAssignment
+} from "./SkillRoleAssignment.ts";
 
 /**
  * Skills resource view.
@@ -40,6 +43,14 @@ export interface SkillsViewProps {
   readonly eligibility: readonly SkillEligibility[];
   readonly unresolvedAssignments: readonly SkillEligibility[];
   readonly sourceValidity: boolean | null;
+  /**
+   * Why the canonical catalog is invalid.
+   *
+   * Required rather than defaulted to `[]`: an invalid catalog renders no
+   * skills, so without the reasons the page says "the catalog is empty" for a
+   * directory that holds six and cannot apply one of them.
+   */
+  readonly validationIssues: readonly RuleSyncValidationIssue[];
   /**
    * Roles the execution contract declares, and its digest.
    *
@@ -58,6 +69,7 @@ export function SkillsView({
   skills,
   eligibility,
   unresolvedAssignments,
+  validationIssues,
   sourceValidity,
   assignmentRoles,
   executionContractRevision,
@@ -326,6 +338,11 @@ export function SkillsView({
     // page something more than a report. A skill promoted from a procedural
     // memory lands assigned to nothing, and until this existed there was no
     // control anywhere that could reach the execution contract and change that.
+    React.createElement(SourceValidationIssues, {
+      issues: validationIssues,
+      testId: "skill-catalog-validation-issues",
+      subject: "Skill catalog"
+    }),
     React.createElement(SkillRoleAssignment, {
       skills,
       eligibility,

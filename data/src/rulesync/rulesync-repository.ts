@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
+  type Dirent,
   existsSync,
   lstatSync,
   readdirSync,
@@ -33,11 +34,7 @@ import type {
   RuleSyncValidationIssue,
   SkillDefinition
 } from "@simulatorlife/autodev-core";
-import {
-  parse,
-  type ParseError,
-  printParseErrorCode
-} from "jsonc-parser";
+import { parse, type ParseError, printParseErrorCode } from "jsonc-parser";
 import { parse as parseYaml } from "yaml";
 
 const DEFAULT_REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
@@ -114,9 +111,149 @@ export interface RuleSyncCommand extends PromptAsset {
   readonly revision: string;
 }
 
+/**
+ * Why one skill's frontmatter cannot be applied, or `null` when it can.
+ *
+ * Split from the walk so the checks stay a readable list rather than a wall of
+ * conditions, and so each one can say what is wrong instead of contributing to a
+ * single boolean.
+ */
+function skillFrontmatterProblem(
+  metadata: unknown,
+  directoryName: string
+): string | null {
+  if (!isRecord(metadata)) {
+    return "The skill frontmatter must be a mapping of fields.";
+  }
+  if (metadata.name !== directoryName) {
+    return `The skill frontmatter declares ${
+      typeof metadata.name === "string" ? `"${metadata.name}"` : "no name"
+    }, but the directory is "${directoryName}". A skill must be addressable by the name it declares.`;
+  }
+  if (typeof metadata.description !== "string") {
+    return "The skill frontmatter must declare a description string.";
+  }
+  if (metadata.description.trim().length === 0) {
+    return "The skill frontmatter declares an empty description.";
+  }
+  return null;
+}
+
+/** One located fault in the skill catalog. */
+function invalidSkills(location: string, message: string): RuleSyncSkillsState {
+  return {
+    source: SKILLS_SOURCE,
+    valid: false,
+    issues: [{ location, message }],
+    skills: []
+  };
+}
+
+type SkillEntry =
+  /** An entry that is not a skill at all, and not a fault. */
+  | { readonly kind: "ignored" }
+  | { readonly kind: "skill"; readonly skill: SkillDefinition }
+  | {
+      readonly kind: "invalid";
+      readonly issue: readonly [location: string, message: string];
+    };
+
+/**
+ * One `.rulesync/skills` entry, judged on its own.
+ *
+ * Split out of the walk so each fault stays a single named reason rather than a
+ * branch in a growing loop, and so the rules live in one place instead of being
+ * scattered between the walk and its caller. The walk reports the first fault it
+ * meets; this says why that one entry is a fault.
+ */
+function readSkillEntry(skillsDir: string, entry: Dirent): SkillEntry {
+  const skillLocation = `.rulesync/skills/${entry.name}/SKILL.md`;
+  const unreadable = (error: unknown): SkillEntry => ({
+    kind: "invalid",
+    issue: [
+      skillLocation,
+      `"${skillLocation}" could not be read: ${describeFileSystemError(error)}.`
+    ]
+  });
+  if (entry.isSymbolicLink()) {
+    return {
+      kind: "invalid",
+      issue: [
+        `.rulesync/skills/${entry.name}`,
+        `".rulesync/skills/${entry.name}" is a symbolic link, and canonical skills are read from the repository itself.`
+      ]
+    };
+  }
+  if (!entry.isDirectory()) return { kind: "ignored" };
+  if (!SKILL_NAME_PATTERN.test(entry.name)) {
+    return {
+      kind: "invalid",
+      issue: [
+        `.rulesync/skills/${entry.name}`,
+        `"${entry.name}" is not a usable skill directory name: expected lowercase letters, digits, and hyphens.`
+      ]
+    };
+  }
+  const skillPath = path.join(skillsDir, entry.name, "SKILL.md");
+  let skillStat: ReturnType<typeof lstatSync>;
+  try {
+    skillStat = lstatSync(skillPath);
+  } catch (error) {
+    return unreadable(error);
+  }
+  if (!skillStat.isFile() || skillStat.isSymbolicLink()) {
+    return {
+      kind: "invalid",
+      issue: [
+        skillLocation,
+        `"${skillLocation}" is not a regular file in the skill directory.`
+      ]
+    };
+  }
+  let text: string;
+  try {
+    text = readFileSync(skillPath, "utf8");
+  } catch (error) {
+    return unreadable(error);
+  }
+  const frontmatter = text.match(SKILL_FRONTMATTER_PATTERN);
+  if (!frontmatter) {
+    return {
+      kind: "invalid",
+      issue: [skillLocation, `"${skillLocation}" must have YAML frontmatter.`]
+    };
+  }
+  let metadata: unknown;
+  try {
+    metadata = parseYaml(frontmatter[1]!);
+  } catch {
+    return {
+      kind: "invalid",
+      issue: [
+        skillLocation,
+        `"${skillLocation}" frontmatter is not valid YAML.`
+      ]
+    };
+  }
+  const problem = skillFrontmatterProblem(metadata, entry.name);
+  if (problem !== null) {
+    return { kind: "invalid", issue: [skillLocation, problem] };
+  }
+  return {
+    kind: "skill",
+    skill: {
+      name: entry.name,
+      description: (metadata as { description: string }).description,
+      path: skillLocation
+    }
+  };
+}
+
 export interface RuleSyncCommandsState {
   readonly source: typeof COMMANDS_SOURCE;
   readonly valid: boolean | null;
+  /** Why the source is invalid; empty when valid or not observed. */
+  readonly issues: readonly RuleSyncValidationIssue[];
   readonly commands: readonly RuleSyncCommand[];
 }
 
@@ -247,6 +384,8 @@ export class RuleSyncCommandValidationError extends Error {
 export interface RuleSyncSkillsState {
   readonly source: typeof SKILLS_SOURCE;
   readonly valid: boolean | null;
+  /** Why the source is invalid; empty when valid or not observed. */
+  readonly issues: readonly RuleSyncValidationIssue[];
   readonly skills: readonly SkillDefinition[];
 }
 
@@ -338,9 +477,7 @@ function projectBaseMcpServer(
  * to find the fault -- is a second copy of the rules, and a second copy of a
  * validation rule drifts toward accepting what the first one refuses.
  */
-function parseBaseMcpServers(
-  declarations: Record<string, unknown>
-):
+function parseBaseMcpServers(declarations: Record<string, unknown>):
   | {
       readonly servers: Map<string, MutableMcpServer>;
       readonly invalid: null;
@@ -633,7 +770,9 @@ function jsoncParseIssue(
   const before = content.slice(0, Math.max(0, error.offset));
   const line = before.split("\n").length;
   const codeName = printParseErrorCode(error.error);
-  const words = codeName.replaceAll(/([a-z\d])([A-Z])/gu, "$1 $2").toLowerCase();
+  const words = codeName
+    .replaceAll(/([a-z\d])([A-Z])/gu, "$1 $2")
+    .toLowerCase();
   return {
     location: `line ${line}`,
     message: `${sentenceCase(words)}.`
@@ -748,6 +887,17 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 interface CanonicalRuleSyncDirectory {
   readonly valid: boolean | null;
   readonly path: string | null;
+  /**
+   * Why the directory could not be used, empty when it could.
+   *
+   * The resolver distinguishes four outcomes the loaders were collapsing into
+   * one flag: the repository root is unreadable, `.rulesync` is a symlink or not
+   * a directory, the child is a symlink or not a directory, or the child is
+   * simply absent. Only the last is "not observed"; the first three are
+   * different repairs, and reporting one flag for all of them sent an operator
+   * to whichever of the three they happened to guess first.
+   */
+  readonly issues: readonly RuleSyncValidationIssue[];
 }
 
 function resolveCanonicalRuleSyncDirectory(
@@ -758,38 +908,101 @@ function resolveCanonicalRuleSyncDirectory(
   try {
     root = realpathSync(repositoryRoot);
   } catch (error) {
-    return {
-      valid: isMissingFileError(error) ? null : false,
-      path: null
-    };
+    return unresolvableRuleSyncDirectory(error, repositoryRoot);
   }
   const rootPath = path.join(root, ".rulesync");
   let rootStat: ReturnType<typeof lstatSync>;
   try {
     rootStat = lstatSync(rootPath);
   } catch (error) {
-    return {
-      valid: isMissingFileError(error) ? null : false,
-      path: null
-    };
+    return unresolvableRuleSyncDirectory(error, rootPath);
   }
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
-    return { valid: false, path: null };
+    return {
+      valid: false,
+      path: null,
+      issues: [
+        {
+          location: ".rulesync",
+          message: rootStat.isSymbolicLink()
+            ? '".rulesync" is a symbolic link, and canonical RuleSync sources are read from the repository itself.'
+            : '".rulesync" exists but is not a directory.'
+        }
+      ]
+    };
   }
   const sourcePath = path.join(rootPath, childDirectory);
   let sourceStat: ReturnType<typeof lstatSync>;
   try {
     sourceStat = lstatSync(sourcePath);
   } catch (error) {
-    return {
-      valid: isMissingFileError(error) ? null : false,
-      path: null
-    };
+    return unresolvableRuleSyncDirectory(error, sourcePath);
   }
   if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) {
-    return { valid: false, path: null };
+    return {
+      valid: false,
+      path: null,
+      issues: [
+        {
+          location: `.rulesync/${childDirectory}`,
+          message: sourceStat.isSymbolicLink()
+            ? `".rulesync/${childDirectory}" is a symbolic link, and canonical RuleSync sources are read from the repository itself.`
+            : `".rulesync/${childDirectory}" exists but is not a directory.`
+        }
+      ]
+    };
   }
-  return { valid: true, path: sourcePath };
+  return { valid: true, path: sourcePath, issues: [] };
+}
+
+/**
+ * A path that could not be inspected at all.
+ *
+ * Absent is not observed and is not a fault, so it carries no issue and answers
+ * `null`. Anything else failed in a way the operator has to know about, and the
+ * errno is what separates "permission denied" from "the path is not there".
+ */
+function unresolvableRuleSyncDirectory(
+  error: unknown,
+  location: string
+): CanonicalRuleSyncDirectory {
+  if (isMissingFileError(error)) return { valid: null, path: null, issues: [] };
+  return {
+    valid: false,
+    path: null,
+    issues: [
+      {
+        location,
+        message: `"${location}" could not be read: ${describeFileSystemError(
+          error
+        )}.`
+      }
+    ]
+  };
+}
+
+/** A filesystem errno as a short phrase, without the absolute path it repeats. */
+function describeFileSystemError(error: unknown): string {
+  if (!isNodeError(error)) return "unknown error";
+  switch (error.code) {
+    case "EACCES":
+    case "EPERM": {
+      return "permission denied";
+    }
+    case "ELOOP": {
+      return "too many symbolic links";
+    }
+    case "ENOTDIR": {
+      return "a path component is not a directory";
+    }
+    case "EMFILE":
+    case "ENFILE": {
+      return "too many open files";
+    }
+    default: {
+      return error.code ?? "unknown error";
+    }
+  }
 }
 
 function parseRuleSyncCommand(name: string, content: string): RuleSyncCommand {
@@ -852,31 +1065,97 @@ export class RuleSyncRepository {
       return {
         source: COMMANDS_SOURCE,
         valid: directory.valid,
+        issues: directory.issues,
         commands: []
       };
     }
     const commandsDir = directory.path;
 
+    let entries: Dirent[];
     try {
-      const commands: RuleSyncCommand[] = [];
-      for (const entry of readdirSync(commandsDir, { withFileTypes: true })) {
-        if (!entry.name.endsWith(".md")) continue;
-        if (entry.isSymbolicLink() || !entry.isFile()) {
-          return { source: COMMANDS_SOURCE, valid: false, commands: [] };
-        }
-        const name = entry.name.replace(MD_EXTENSION_PATTERN, "");
-        commands.push(
-          parseRuleSyncCommand(
-            name,
-            readFileSync(path.join(commandsDir, entry.name), "utf8")
-          )
-        );
-      }
-      commands.sort((left, right) => COLLATOR.compare(left.name, right.name));
-      return { source: COMMANDS_SOURCE, valid: true, commands };
-    } catch {
-      return { source: COMMANDS_SOURCE, valid: false, commands: [] };
+      entries = readdirSync(commandsDir, { withFileTypes: true });
+    } catch (error) {
+      return {
+        source: COMMANDS_SOURCE,
+        valid: false,
+        issues: [
+          {
+            location: ".rulesync/commands",
+            message: `"${COMMANDS_SOURCE}" could not be listed: ${describeFileSystemError(
+              error
+            )}.`
+          }
+        ],
+        commands: []
+      };
     }
+
+    const commands: RuleSyncCommand[] = [];
+    // Per-entry rather than one `try` around the whole walk. A single catch
+    // around the loop reported the same `valid: false` for "this file is a
+    // symlink", "this file cannot be read", and "the directory listing failed",
+    // and named none of them -- three different repairs behind one flag.
+    for (const entry of entries) {
+      if (!entry.name.endsWith(".md")) continue;
+      const location = `.rulesync/commands/${entry.name}`;
+      if (entry.isSymbolicLink() || !entry.isFile()) {
+        return {
+          source: COMMANDS_SOURCE,
+          valid: false,
+          issues: [
+            {
+              location,
+              message: entry.isSymbolicLink()
+                ? `"${location}" is a symbolic link, and canonical commands are read from the repository itself.`
+                : `"${location}" exists but is not a regular file.`
+            }
+          ],
+          commands: []
+        };
+      }
+      const name = entry.name.replace(MD_EXTENSION_PATTERN, "");
+      let content: string;
+      try {
+        content = readFileSync(path.join(commandsDir, entry.name), "utf8");
+      } catch (error) {
+        return {
+          source: COMMANDS_SOURCE,
+          valid: false,
+          issues: [
+            {
+              location,
+              message: `"${location}" could not be read: ${describeFileSystemError(
+                error
+              )}.`
+            }
+          ],
+          commands: []
+        };
+      }
+      try {
+        commands.push(parseRuleSyncCommand(name, content));
+      } catch (error) {
+        // The parser already names the command, which is the one string an
+        // operator can search for, so its message is carried through rather than
+        // replaced by a generic walk failure.
+        return {
+          source: COMMANDS_SOURCE,
+          valid: false,
+          issues: [
+            {
+              location,
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "The command could not be parsed."
+            }
+          ],
+          commands: []
+        };
+      }
+    }
+    commands.sort((left, right) => COLLATOR.compare(left.name, right.name));
+    return { source: COMMANDS_SOURCE, valid: true, issues: [], commands };
   }
 
   loadCommandHistory(name: string): RuleSyncCommandHistory | null {
@@ -1181,7 +1460,8 @@ export class RuleSyncRepository {
   loadMcpState(): RuleSyncMcpState {
     const source = ".rulesync/mcp.jsonc" as const;
     const mcpPath = path.join(this.repositoryRoot, source);
-    if (!existsSync(mcpPath)) return { source, valid: null, issues: [], servers: [] };
+    if (!existsSync(mcpPath))
+      return { source, valid: null, issues: [], servers: [] };
 
     let content: string;
     try {
@@ -1321,49 +1601,38 @@ export class RuleSyncRepository {
       "skills"
     );
     if (directory.valid !== true || directory.path === null) {
-      return { source: SKILLS_SOURCE, valid: directory.valid, skills: [] };
+      return {
+        source: SKILLS_SOURCE,
+        valid: directory.valid,
+        issues: directory.issues,
+        skills: []
+      };
     }
     const skillsDir = directory.path;
 
+    let entries: Dirent[];
     try {
-      const skills: SkillDefinition[] = [];
-      for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
-        if (entry.isSymbolicLink()) {
-          return { source: SKILLS_SOURCE, valid: false, skills: [] };
-        }
-        if (!entry.isDirectory()) continue;
-        if (!SKILL_NAME_PATTERN.test(entry.name)) {
-          return { source: SKILLS_SOURCE, valid: false, skills: [] };
-        }
-        const skillPath = path.join(skillsDir, entry.name, "SKILL.md");
-        const skillStat = lstatSync(skillPath);
-        if (!skillStat.isFile() || skillStat.isSymbolicLink()) {
-          return { source: SKILLS_SOURCE, valid: false, skills: [] };
-        }
-        const text = readFileSync(skillPath, "utf8");
-        const frontmatter = text.match(SKILL_FRONTMATTER_PATTERN);
-        if (!frontmatter) {
-          return { source: SKILLS_SOURCE, valid: false, skills: [] };
-        }
-        const metadata: unknown = parseYaml(frontmatter[1]!);
-        if (
-          !isRecord(metadata) ||
-          metadata.name !== entry.name ||
-          typeof metadata.description !== "string" ||
-          metadata.description.trim().length === 0
-        ) {
-          return { source: SKILLS_SOURCE, valid: false, skills: [] };
-        }
-        skills.push({
-          name: entry.name,
-          description: metadata.description,
-          path: `.rulesync/skills/${entry.name}/SKILL.md`
-        });
-      }
-      skills.sort((left, right) => COLLATOR.compare(left.name, right.name));
-      return { source: SKILLS_SOURCE, valid: true, skills };
-    } catch {
-      return { source: SKILLS_SOURCE, valid: false, skills: [] };
+      entries = readdirSync(skillsDir, { withFileTypes: true });
+    } catch (error) {
+      return invalidSkills(
+        ".rulesync/skills",
+        `"${SKILLS_SOURCE}" could not be listed: ${describeFileSystemError(
+          error
+        )}.`
+      );
     }
+
+    const skills: SkillDefinition[] = [];
+    // One fault per return, each naming the skill it is about. This walk had
+    // six distinct failures behind a single `valid: false` and a blanket catch,
+    // so a skill directory that was a symlink and a SKILL.md whose frontmatter
+    // named a different skill were indistinguishable on the page.
+    for (const entry of entries) {
+      const outcome = readSkillEntry(skillsDir, entry);
+      if (outcome.kind === "invalid") return invalidSkills(...outcome.issue);
+      if (outcome.kind === "skill") skills.push(outcome.skill);
+    }
+    skills.sort((left, right) => COLLATOR.compare(left.name, right.name));
+    return { source: SKILLS_SOURCE, valid: true, issues: [], skills };
   }
 }

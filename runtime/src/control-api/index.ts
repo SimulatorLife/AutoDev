@@ -514,7 +514,9 @@ function providersView(now: number): Record<string, unknown> {
             // An unobserved assignment is reported as enabled rather than as
             // a disabled role: a provider nobody has touched must keep routing,
             // and "disabled" is a decision the operator makes.
-            priority: disabled ? "disabled" : (assignments[role]?.priority ?? 1),
+            priority: disabled
+              ? "disabled"
+              : (assignments[role]?.priority ?? 1),
             model: assignments[role]?.model ?? null,
             // A globally disabled provider's roles cannot be edited until it
             // is enabled again, but their values are preserved.
@@ -893,6 +895,7 @@ function skillsView(
     source: `${catalog.source}+${EXECUTION_CONTRACT_SOURCE}`,
     readOnly: true,
     valid: catalog.valid,
+    issues: catalog.issues,
     executionContractRevision:
       contractFile === null
         ? null
@@ -1480,14 +1483,8 @@ function hooksView(
  * grant could not be read, which is what actually happened. Same distinction the
  * servers column makes, where an absent entry is not "all servers".
  */
-function contractMcpTools(
-  value: unknown
-): Record<string, readonly string[]> {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    Array.isArray(value)
-  ) {
+function contractMcpTools(value: unknown): Record<string, readonly string[]> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return {};
   }
   const tools: Record<string, readonly string[]> = {};
@@ -1583,6 +1580,7 @@ function promptsView(
     source: commandState.source,
     readOnly: true,
     valid: commandState.valid,
+    issues: commandState.issues,
     totalCommands: commandState.valid === true ? commands.length : null,
     commands,
     rolePrompts
@@ -2108,7 +2106,10 @@ async function patchProviderRole(
   const priority = body.priority;
   const model = body.model ?? null;
   const priorityIsValid =
-    priority === 1 || priority === 2 || priority === 3 || priority === "disabled";
+    priority === 1 ||
+    priority === 2 ||
+    priority === 3 ||
+    priority === "disabled";
   const modelIsValid =
     model === null ||
     (typeof model === "string" && ROUTING_POLICY.isConfiguredModel(model));
@@ -2122,7 +2123,7 @@ async function patchProviderRole(
       response,
       400,
       "autodev_control_api_bad_body",
-      "Provider role body must carry a priority of 1, 2, 3 or \"disabled\", and a model that is either null or a model this provider is configured for."
+      'Provider role body must carry a priority of 1, 2, 3 or "disabled", and a model that is either null or a model this provider is configured for.'
     );
     return;
   }
@@ -2169,7 +2170,8 @@ async function patchProviderRole(
       // none, not only writing back the one this change replaced. A rejected
       // change must never keep steering routing just because it had nothing to
       // overwrite.
-      if (previous) ROUTING_POLICY.setProviderAssignment(provider, role, previous);
+      if (previous)
+        ROUTING_POLICY.setProviderAssignment(provider, role, previous);
       else ROUTING_POLICY.clearProviderAssignment(provider, role);
     } catch {
       // Preserve the original failure; the audit record captures it.
@@ -2247,7 +2249,10 @@ function providerMutationReconciliation(
   resource: string,
   desiredGeneration: string,
   observed: boolean
-): { audit: EnablementReconciliation; view: ReturnType<typeof buildReconciliationView> } {
+): {
+  audit: EnablementReconciliation;
+  view: ReturnType<typeof buildReconciliationView>;
+} {
   const evidence = {
     desiredGeneration,
     observedGeneration: observed ? desiredGeneration : null,
@@ -2330,10 +2335,7 @@ async function patchProviderEnabled(
     return;
   }
   const body = parsed.body;
-  if (
-    Object.keys(body).length !== 1 ||
-    typeof body.disabled !== "boolean"
-  ) {
+  if (Object.keys(body).length !== 1 || typeof body.disabled !== "boolean") {
     audit("error", null, "invalid_body");
     sendControlError(
       response,
@@ -2371,12 +2373,7 @@ async function patchProviderEnabled(
     `disabled=${disabled ? "true" : "false"}`,
     observed
   );
-  audit(
-    "ok",
-    { disabled, previous },
-    undefined,
-    reconciliation.audit
-  );
+  audit("ok", { disabled, previous }, undefined, reconciliation.audit);
   sendJson(
     response,
     200,
@@ -3120,8 +3117,16 @@ async function applySkillRoles(
   skill: string,
   assignment: SkillRolesRequestBody
 ): Promise<
-  | { readonly ok: true; readonly assigned: Awaited<ReturnType<typeof assignSkillRoles>> }
-  | { readonly ok: false; readonly status: number; readonly code: string; readonly message: string }
+  | {
+      readonly ok: true;
+      readonly assigned: Awaited<ReturnType<typeof assignSkillRoles>>;
+    }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly message: string;
+    }
 > {
   try {
     return {
@@ -3282,12 +3287,7 @@ async function patchSkillRoles(
       reason:
         written.status === 409 ? "revision_conflict" : "invalid_assignment"
     });
-    sendControlError(
-      response,
-      written.status,
-      written.code,
-      written.message
-    );
+    sendControlError(response, written.status, written.code, written.message);
     return;
   }
   const assigned = written.assigned;
@@ -3341,7 +3341,9 @@ async function skillDetailRoute(
   );
   const contractFile = executionContractFile();
   const revision =
-    contractFile === null ? null : executionContractRevision(readContract(contractFile));
+    contractFile === null
+      ? null
+      : executionContractRevision(readContract(contractFile));
   // A GET on a skill that is not there is a wrong answer, not an empty one: the
   // Console would render a detail panel for a skill that does not exist.
   if (!skill) {
@@ -3375,13 +3377,7 @@ async function skillDetailRoute(
     await patchSkillRoles(request, response, actor, name, options);
     return true;
   }
-  auditRejectedRequest(
-    request,
-    method,
-    pathname,
-    "method_not_allowed",
-    actor
-  );
+  auditRejectedRequest(request, method, pathname, "method_not_allowed", actor);
   response.setHeader("allow", "GET, PATCH");
   sendControlError(
     response,
@@ -3502,7 +3498,12 @@ export async function handleControlApiRequest(
       );
       return true;
     }
-    await patchProviderLimits(request, response, actor, providerLimitsMatch[1]!);
+    await patchProviderLimits(
+      request,
+      response,
+      actor,
+      providerLimitsMatch[1]!
+    );
     return true;
   }
   const providerOnlyMatch = pathname.match(PROVIDER_PATH);

@@ -6,18 +6,20 @@ import {
   InMemoryMetricExporter
 } from "@opentelemetry/sdk-metrics";
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
-import type {
-  EvidenceReference,
-  ExperienceEnvelope,
-  MemoryExpiredExperienceRequest,
-  MemoryHistory,
-  MemoryLifecycleEvent,
-  MemoryReadContext,
-  MemoryRecord,
-  MemoryRepository,
-  MemorySearchHit,
-  MemorySearchRequest,
-  MemoryVersionedUpdate
+import {
+  emptyMemoryStatusCounts,
+  type EvidenceReference,
+  type ExperienceEnvelope,
+  type MemoryExpiredExperienceRequest,
+  type MemoryHistory,
+  type MemoryLifecycleEvent,
+  type MemoryReadContext,
+  type MemoryRecord,
+  type MemoryRecordPage,
+  type MemoryRepository,
+  type MemorySearchHit,
+  type MemorySearchRequest,
+  type MemoryVersionedUpdate
 } from "@simulatorlife/autodev-core";
 import {
   MemoryService,
@@ -95,13 +97,14 @@ class MemoryRepositoryStub implements MemoryRepository {
   ): Promise<readonly MemorySearchHit[]> {
     return [{ memory: this.record, score: 1, matchedSignals: ["lexical"] }];
   }
-  async listMemories(): Promise<{
-    items: readonly MemoryRecord[];
-    total: number;
-    limit: number;
-    offset: number;
-  }> {
-    return { items: [], total: 0, limit: 50, offset: 0 };
+  async listMemories(): Promise<MemoryRecordPage> {
+    return {
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0,
+      statusCounts: emptyMemoryStatusCounts()
+    };
   }
 
   async getMemoryHistory(_id: string): Promise<MemoryHistory | null> {
@@ -289,6 +292,7 @@ function memoryHost(
           })
         }
       }),
+    probe: async () => "reachable",
     close: async () => {}
   };
 }
@@ -787,6 +791,11 @@ test("router initializes the OTel meter provider before creating MemoryService i
       disabled = await injectOrchestratorMemory(disabledRequest, {
         createService: () => {
           throw new Error("disabled mode must not construct MemoryService");
+        },
+        // Disabled mode must not reach the database either, so the stub fails
+        // loudly rather than reporting a host it never asked about.
+        probe: async () => {
+          throw new Error("disabled mode must not probe the database");
         },
         close: async () => {}
       });

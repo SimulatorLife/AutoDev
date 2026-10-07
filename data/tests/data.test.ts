@@ -369,6 +369,7 @@ test("RuleSync command catalog distinguishes an absent, empty, and invalid sourc
     assert.deepEqual(repo.loadCommands(), {
       source: ".rulesync/commands",
       valid: null,
+      issues: [],
       commands: []
     });
 
@@ -377,14 +378,23 @@ test("RuleSync command catalog distinguishes an absent, empty, and invalid sourc
     assert.deepEqual(repo.loadCommands(), {
       source: ".rulesync/commands",
       valid: true,
+      issues: [],
       commands: []
     });
 
     const commandPath = path.join(commandsDir, "audit.md");
     await writeFile(commandPath, "No command frontmatter.");
+    // The parser names the command; that string is what an operator searches
+    // for, so it is carried through instead of a generic walk failure.
     assert.deepEqual(repo.loadCommands(), {
       source: ".rulesync/commands",
       valid: false,
+      issues: [
+        {
+          location: ".rulesync/commands/audit.md",
+          message: 'Command "audit" must have valid YAML frontmatter.'
+        }
+      ],
       commands: []
     });
 
@@ -446,11 +456,277 @@ test("RuleSync catalogs reject a symlinked canonical .rulesync root", async () =
     );
 
     const repo = new RuleSyncRepository(repositoryRoot);
+    // Asserting `valid === false` alone is what let this defect exist: the flag
+    // said "the catalog is broken" without saying that the *canonical root* is a
+    // symlink, which is a different repair from a bad file inside a real one.
+    assert.deepEqual(repo.loadCommands().issues, [
+      {
+        location: ".rulesync",
+        message:
+          '".rulesync" is a symbolic link, and canonical RuleSync sources are read from the repository itself.'
+      }
+    ]);
     assert.equal(repo.loadCommands().valid, false);
+    assert.deepEqual(repo.loadSkills().issues, [
+      {
+        location: ".rulesync",
+        message:
+          '".rulesync" is a symbolic link, and canonical RuleSync sources are read from the repository itself.'
+      }
+    ]);
     assert.equal(repo.loadSkills().valid, false);
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });
     await rm(externalRoot, { recursive: true, force: true });
+  }
+});
+
+test("RuleSync catalogs name the canonical directory fault, not just an invalid flag", async () => {
+  const holder = await mkdtemp(
+    path.join(tmpdir(), "autodev-rulesync-canonical-")
+  );
+  const repositoryRoot = path.join(holder, "repository-root");
+  try {
+    // A repository root that is a regular file cannot contain `.rulesync`, so
+    // resolving the canonical directory fails with ENOTDIR. That is neither
+    // "absent" nor "an invalid catalog", and used to be reported as the latter.
+    await writeFile(repositoryRoot, "This repository root is a file.");
+    const fileRootState = new RuleSyncRepository(repositoryRoot).loadCommands();
+    assert.equal(fileRootState.valid, false);
+    assert.equal(fileRootState.commands.length, 0);
+    // The resolver resolves symlinks before it joins `.rulesync`, so the test
+    // asserts what the operator is shown rather than rebuilding that path here.
+    assert.equal(fileRootState.issues.length, 1);
+    assert.match(
+      String(fileRootState.issues[0]?.location),
+      /[/\\]\.rulesync$/u
+    );
+    assert.match(
+      String(fileRootState.issues[0]?.message),
+      /could not be read: a path component is not a directory\.$/u
+    );
+
+    const repo = new RuleSyncRepository(holder);
+    await mkdir(path.join(holder, ".rulesync"), { recursive: true });
+
+    // ".rulesync" present but not a directory.
+    await rm(path.join(holder, ".rulesync"), { recursive: true });
+    await writeFile(path.join(holder, ".rulesync"), "Not a directory.");
+    assert.deepEqual(repo.loadSkills(), {
+      source: ".rulesync/skills",
+      valid: false,
+      issues: [
+        {
+          location: ".rulesync",
+          message: '".rulesync" exists but is not a directory.'
+        }
+      ],
+      skills: []
+    });
+
+    // The child being a regular file is a different path and a different
+    // message from the root above.
+    await rm(path.join(holder, ".rulesync"));
+    await mkdir(path.join(holder, ".rulesync"), { recursive: true });
+    await writeFile(path.join(holder, ".rulesync", "commands"), "x");
+    assert.deepEqual(repo.loadCommands(), {
+      source: ".rulesync/commands",
+      valid: false,
+      issues: [
+        {
+          location: ".rulesync/commands",
+          message: '".rulesync/commands" exists but is not a directory.'
+        }
+      ],
+      commands: []
+    });
+
+    // A child symlink names the child, so an operator is not sent to fix the
+    // root when the root is fine.
+    await rm(path.join(holder, ".rulesync", "commands"));
+    await mkdir(path.join(holder, "external", "commands"), {
+      recursive: true
+    });
+    await symlink(
+      path.join(holder, "external", "commands"),
+      path.join(holder, ".rulesync", "commands"),
+      "dir"
+    );
+    assert.deepEqual(repo.loadCommands(), {
+      source: ".rulesync/commands",
+      valid: false,
+      issues: [
+        {
+          location: ".rulesync/commands",
+          message:
+            '".rulesync/commands" is a symbolic link, and canonical RuleSync sources are read from the repository itself.'
+        }
+      ],
+      commands: []
+    });
+
+    // A repository root that does not exist is not observed and carries no
+    // fault: nothing about its contents was observed to be wrong.
+    const absentRepo = new RuleSyncRepository(path.join(holder, "absent"));
+    assert.deepEqual(absentRepo.loadCommands(), {
+      source: ".rulesync/commands",
+      valid: null,
+      issues: [],
+      commands: []
+    });
+  } finally {
+    await rm(holder, { recursive: true, force: true });
+  }
+});
+
+test("RuleSync command entries that are not regular files name themselves", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-rulesync-command-entry-")
+  );
+  const commandsDir = path.join(repositoryRoot, ".rulesync", "commands");
+  try {
+    await mkdir(commandsDir, { recursive: true });
+    const repo = new RuleSyncRepository(repositoryRoot);
+
+    // A directory named like a command is not a command with a bad header.
+    await mkdir(path.join(commandsDir, "notes.md"));
+    assert.deepEqual(repo.loadCommands(), {
+      source: ".rulesync/commands",
+      valid: false,
+      issues: [
+        {
+          location: ".rulesync/commands/notes.md",
+          message:
+            '".rulesync/commands/notes.md" exists but is not a regular file.'
+        }
+      ],
+      commands: []
+    });
+    await rm(path.join(commandsDir, "notes.md"), { recursive: true });
+
+    const command =
+      "---\ntargets: [codexcli]\ndescription: Audit command.\n---\n\nReview.\n";
+    await writeFile(path.join(repositoryRoot, "outside.md"), command);
+    await symlink(
+      path.join(repositoryRoot, "outside.md"),
+      path.join(commandsDir, "linked.md")
+    );
+    assert.deepEqual(repo.loadCommands(), {
+      source: ".rulesync/commands",
+      valid: false,
+      issues: [
+        {
+          location: ".rulesync/commands/linked.md",
+          message:
+            '".rulesync/commands/linked.md" is a symbolic link, and canonical commands are read from the repository itself.'
+        }
+      ],
+      commands: []
+    });
+    assert.equal(repo.loadCommands().valid, false);
+
+    // Entries that are not commands are not faults and do not stop the walk.
+    await rm(path.join(commandsDir, "linked.md"));
+    await writeFile(path.join(commandsDir, "notes.txt"), "Ignore me.");
+    await writeFile(path.join(commandsDir, "audit.md"), command);
+    const state = repo.loadCommands();
+    assert.equal(state.valid, true);
+    assert.deepEqual(state.issues, []);
+    assert.deepEqual(
+      state.commands.map((item) => item.name),
+      ["audit"]
+    );
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test("RuleSync skill frontmatter faults name the field that is wrong", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-rulesync-skill-frontmatter-")
+  );
+  const skillsDir = path.join(repositoryRoot, ".rulesync", "skills");
+  try {
+    await mkdir(path.join(skillsDir, "audit"), { recursive: true });
+    const skillPath = path.join(skillsDir, "audit", "SKILL.md");
+    const repo = new RuleSyncRepository(repositoryRoot);
+
+    // A name that disagrees with its directory means the skill cannot be
+    // addressed by the name it declares, which is a different repair from a
+    // missing description and was previously the same bare flag.
+    await writeFile(
+      skillPath,
+      "---\nname: Release\ndescription: Cut a release.\n---\n\nSteps.\n"
+    );
+    assert.deepEqual(repo.loadSkills(), {
+      source: ".rulesync/skills",
+      valid: false,
+      issues: [
+        {
+          location: ".rulesync/skills/audit/SKILL.md",
+          message:
+            'The skill frontmatter declares "Release", but the directory is "audit". A skill must be addressable by the name it declares.'
+        }
+      ],
+      skills: []
+    });
+
+    // A missing description, an empty one, and frontmatter that is not a
+    // mapping are three faults that otherwise all render as a blank cell.
+    await writeFile(skillPath, "---\nname: audit\n---\n\nSteps.\n");
+    assert.equal(
+      repo.loadSkills().issues[0]?.message,
+      "The skill frontmatter must declare a description string."
+    );
+
+    await writeFile(
+      skillPath,
+      '---\nname: audit\ndescription: "  "\n---\n\nSteps.\n'
+    );
+    assert.equal(
+      repo.loadSkills().issues[0]?.message,
+      "The skill frontmatter declares an empty description."
+    );
+
+    await writeFile(skillPath, "---\n- audit\n- release\n---\n\nSteps.\n");
+    assert.equal(
+      repo.loadSkills().issues[0]?.message,
+      "The skill frontmatter must be a mapping of fields."
+    );
+
+    // Frontmatter that is not YAML names the file, like every other fault here.
+    await writeFile(skillPath, "---\nname: [audit\n---\n\nSteps.\n");
+    assert.deepEqual(repo.loadSkills(), {
+      source: ".rulesync/skills",
+      valid: false,
+      issues: [
+        {
+          location: ".rulesync/skills/audit/SKILL.md",
+          message:
+            '".rulesync/skills/audit/SKILL.md" frontmatter is not valid YAML.'
+        }
+      ],
+      skills: []
+    });
+
+    // A directory name the loader cannot address is named as such rather than
+    // skipped, which would report a shorter catalog than the directory holds.
+    await rm(path.join(skillsDir, "audit"), { recursive: true });
+    await mkdir(path.join(skillsDir, "Not A Name"), { recursive: true });
+    assert.deepEqual(repo.loadSkills(), {
+      source: ".rulesync/skills",
+      valid: false,
+      issues: [
+        {
+          location: ".rulesync/skills/Not A Name",
+          message:
+            '"Not A Name" is not a usable skill directory name: expected lowercase letters, digits, and hyphens.'
+        }
+      ],
+      skills: []
+    });
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
   }
 });
 
@@ -463,6 +739,7 @@ test("RuleSync skill catalog distinguishes an absent, empty, and invalid source"
     assert.deepEqual(repo.loadSkills(), {
       source: ".rulesync/skills",
       valid: null,
+      issues: [],
       skills: []
     });
 
@@ -471,6 +748,7 @@ test("RuleSync skill catalog distinguishes an absent, empty, and invalid source"
     assert.deepEqual(repo.loadSkills(), {
       source: ".rulesync/skills",
       valid: true,
+      issues: [],
       skills: []
     });
 
@@ -478,9 +756,18 @@ test("RuleSync skill catalog distinguishes an absent, empty, and invalid source"
     await mkdir(skillDir);
     const skillPath = path.join(skillDir, "SKILL.md");
     await writeFile(skillPath, "Not a RuleSync skill document.");
+    // A SKILL.md with no frontmatter is a different repair from a symlinked
+    // directory or a name mismatch, and the page could not tell them apart.
     assert.deepEqual(repo.loadSkills(), {
       source: ".rulesync/skills",
       valid: false,
+      issues: [
+        {
+          location: ".rulesync/skills/audit/SKILL.md",
+          message:
+            '".rulesync/skills/audit/SKILL.md" must have YAML frontmatter.'
+        }
+      ],
       skills: []
     });
 
@@ -491,6 +778,7 @@ test("RuleSync skill catalog distinguishes an absent, empty, and invalid source"
     assert.deepEqual(repo.loadSkills(), {
       source: ".rulesync/skills",
       valid: true,
+      issues: [],
       skills: [
         {
           name: "audit",
@@ -507,9 +795,18 @@ test("RuleSync skill catalog distinguishes an absent, empty, and invalid source"
     );
     await rm(skillPath);
     await symlink(externalSkillPath, skillPath);
+    // A symlinked SKILL.md and a symlinked skill directory are different faults
+    // at different paths, and the page reported both as one flag.
     assert.deepEqual(repo.loadSkills(), {
       source: ".rulesync/skills",
       valid: false,
+      issues: [
+        {
+          location: ".rulesync/skills/audit/SKILL.md",
+          message:
+            '".rulesync/skills/audit/SKILL.md" is not a regular file in the skill directory.'
+        }
+      ],
       skills: []
     });
 
@@ -519,6 +816,13 @@ test("RuleSync skill catalog distinguishes an absent, empty, and invalid source"
     assert.deepEqual(repo.loadSkills(), {
       source: ".rulesync/skills",
       valid: false,
+      issues: [
+        {
+          location: ".rulesync/skills/audit",
+          message:
+            '".rulesync/skills/audit" is a symbolic link, and canonical skills are read from the repository itself.'
+        }
+      ],
       skills: []
     });
   } finally {
@@ -723,11 +1027,7 @@ test("RuleSync hook state distinguishes absent, valid JSONC, and invalid source"
       }
     ]);
 
-    await writeFile(
-      sourcePath,
-      `{"hooks":{"SessionStartt":[]}}`,
-      "utf8"
-    );
+    await writeFile(sourcePath, `{"hooks":{"SessionStartt":[]}}`, "utf8");
     const unknownEvent = repo.loadHooksState();
     assert.deepEqual(unknownEvent.issues, [
       {
@@ -764,7 +1064,11 @@ test("RuleSync hook state distinguishes absent, valid JSONC, and invalid source"
 
     // A syntax fault reports a line an operator can navigate to, not a character
     // offset they would have to convert themselves.
-    await writeFile(sourcePath, `{\n  "hooks": {\n    "sessionStart": [,]\n  }\n}`, "utf8");
+    await writeFile(
+      sourcePath,
+      `{\n  "hooks": {\n    "sessionStart": [,]\n  }\n}`,
+      "utf8"
+    );
     const syntax = repo.loadHooksState();
     assert.equal(syntax.valid, false);
     assert.ok(syntax.issues.length > 0, "a syntax fault must say something");
@@ -936,7 +1240,9 @@ test("RuleSyncRepository refuses unsafe skill names and symlinked canonical dire
 });
 
 test("RuleSync MCP state names the declaration or override it could not apply", async () => {
-  const repositoryRoot = await mkdtemp(path.join(tmpdir(), "autodev-mcp-issues-"));
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-mcp-issues-")
+  );
   const sourcePath = path.join(repositoryRoot, ".rulesync", "mcp.jsonc");
   const repo = new RuleSyncRepository(repositoryRoot);
   const load = async (content: string) => {
@@ -948,9 +1254,7 @@ test("RuleSync MCP state names the declaration or override it could not apply", 
   try {
     // A base declaration that is not an MCP server object. The name is the
     // thing an operator can act on, and the loader had it in hand.
-    const badDisabled = await load(
-      `{"mcpServers":{"lsp":{"disabled":"yes"}}}`
-    );
+    const badDisabled = await load(`{"mcpServers":{"lsp":{"disabled":"yes"}}}`);
     assert.equal(badDisabled.valid, false);
     assert.deepEqual(badDisabled.servers, []);
     assert.deepEqual(badDisabled.issues, [
@@ -981,8 +1285,7 @@ test("RuleSync MCP state names the declaration or override it could not apply", 
     assert.deepEqual(badOverrides.issues, [
       {
         location: "codexcli.mcpServers.mcpServers",
-        message:
-          'The overrides for "codexcli" must be an object of servers.'
+        message: 'The overrides for "codexcli" must be an object of servers.'
       }
     ]);
 

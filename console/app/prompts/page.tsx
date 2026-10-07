@@ -51,7 +51,8 @@ export default async function PromptsPage(): Promise<React.JSX.Element> {
     },
     React.createElement(PromptsView, {
       commands,
-      commandSourceValidity: result.data.valid
+      commandSourceValidity: result.data.valid,
+      validationIssues: result.data.issues
     })
   );
 }

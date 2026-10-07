@@ -298,6 +298,15 @@ export interface ControlApiSkillsResponse {
   readonly readOnly: boolean;
   readonly valid: boolean | null;
   /**
+   * Why the canonical catalog is invalid; empty when valid or not observed.
+   *
+   * Required rather than optional so `valid: false` cannot arrive alone. The
+   * loader distinguishes a symlinked skill directory, an unusable directory
+   * name, a missing SKILL.md, absent or invalid frontmatter, and frontmatter that
+   * names a different skill -- six faults that shared one flag.
+   */
+  readonly issues: readonly RuleSyncValidationIssue[];
+  /**
    * Digest of the execution contract that backs role assignment, or `null`
    * when no contract file was found.
    *
@@ -433,6 +442,8 @@ export interface ControlApiPromptsResponse {
   readonly source: string;
   readonly readOnly: boolean;
   readonly valid: boolean | null;
+  /** Why the catalog is invalid; empty when valid or not observed. */
+  readonly issues: readonly RuleSyncValidationIssue[];
   readonly totalCommands: number | null;
   readonly commands: readonly {
     readonly name: string;

@@ -1,4 +1,6 @@
-import type { PromptAsset } from "@simulatorlife/autodev-core";
+import type {
+  PromptAsset,
+  RuleSyncValidationIssue} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
@@ -6,6 +8,7 @@ import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
+import { SourceValidationIssues } from "../../components/status/SourceValidationIssues.ts";
 import {
   NOT_OBSERVED_LABEL,
   StatusBadge
@@ -22,12 +25,26 @@ import { MUTED_TEXT_CLASS } from "../../components/ui/text-classes.ts";
 export interface PromptsViewProps {
   readonly commands: readonly PromptAsset[];
   readonly commandSourceValidity: boolean | null;
+  /**
+   * Why the catalog is invalid.
+   *
+   * Required rather than defaulted to `[]`: an invalid catalog renders an
+   * empty command list, so without the reasons the page says "no commands"
+   * for a directory that holds several and cannot apply them.
+   */
+  readonly validationIssues: readonly RuleSyncValidationIssue[];
 }
 
 export function PromptsView({
   commands,
+  validationIssues,
   commandSourceValidity
 }: PromptsViewProps): React.JSX.Element {
+  const sourceIssues = React.createElement(SourceValidationIssues, {
+    issues: validationIssues,
+    testId: "command-validation-issues",
+    subject: "Command catalog"
+  });
   const commandCount = commands.filter(
     (c) => c.kind === "command" || c.path.includes("commands")
   ).length;
@@ -164,6 +181,7 @@ export function PromptsView({
             : String(commandSourceValidity)
       }
     },
+    sourceIssues,
     React.createElement(
       StatGrid,
       { columns: 4 },

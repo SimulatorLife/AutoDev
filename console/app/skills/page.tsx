@@ -27,7 +27,9 @@ export default async function SkillsPage({
   >;
 }): Promise<React.JSX.Element> {
   const query = await (searchParams ??
-    Promise.resolve({} as Record<string, string | readonly string[] | undefined>));
+    Promise.resolve(
+      {} as Record<string, string | readonly string[] | undefined>
+    ));
   const { section, config } = readNodeContext("/skills");
   if (!config) {
     return React.createElement(
@@ -67,6 +69,7 @@ export default async function SkillsPage({
       eligibility,
       unresolvedAssignments,
       sourceValidity: result.data.valid,
+      validationIssues: result.data.issues,
       // Drawn from the same catalog read rather than from a route of its own:
       // the revision and the assignable roles are properties of the execution
       // contract this response already carries, and re-reading the catalog to

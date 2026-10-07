@@ -59,6 +59,14 @@ test("RuleSyncRepository reports invalid command frontmatter instead of a partia
     assert.deepEqual(new RuleSyncRepository(temporaryRoot).loadCommands(), {
       source: ".rulesync/commands",
       valid: false,
+      // The parser's own message is carried through: it names the command,
+      // which is the one string an operator can search for.
+      issues: [
+        {
+          location: ".rulesync/commands/bad.md",
+          message: 'Command "bad" must have valid YAML frontmatter.'
+        }
+      ],
       commands: []
     });
   } finally {
