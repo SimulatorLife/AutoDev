@@ -12,11 +12,10 @@ import type {
 } from "../mcps/types.ts";
 import type {
   ExperienceEnvelope,
-  MemoryActor,
   MemoryInjectionUseCohortPage,
+  MemoryLifecycleEvent,
   MemoryRecord,
   MemorySessionOutcomeCohortPage,
-  MemoryStatus,
   MemoryStatusCounts
 } from "../memory/types.ts";
 import type { SandboxMode } from "../permissions/types.ts";
@@ -690,16 +689,25 @@ export interface ControlApiMemoryRecordDetailResponse {
   readonly memory: MemoryRecord;
 }
 
+/**
+ * One record's lifecycle, as the Console's Transition History panel reads it.
+ *
+ * `transitions` carries `MemoryLifecycleEvent` unchanged rather than a second
+ * spelling of it. The panel previously declared its own `{ actor, timestamp,
+ * reason }` row, and the route emitted the repository's `{ actorId, occurredAt,
+ * reasonCode, evidence }` event instead -- two shapes for one fact, so the
+ * panel could never render: the Console refused the response as unreadable and
+ * the record detail page failed to open at all.
+ *
+ * `reasonCode` in particular is the only field that says *why* a claim stopped
+ * being trustworthy, and a free-text `reason` the producer never set is how that
+ * answer went missing.
+ */
 export interface ControlApiMemoryHistoryResponse {
   readonly schema: "autodev-memory-history-v1";
   readonly memory: MemoryRecord;
-  readonly transitions: readonly {
-    readonly fromStatus?: MemoryStatus;
-    readonly toStatus: MemoryStatus;
-    readonly actor: MemoryActor;
-    readonly reason?: string;
-    readonly timestamp: string;
-  }[];
+  readonly relatedMemories: readonly MemoryRecord[];
+  readonly transitions: readonly MemoryLifecycleEvent[];
 }
 
 export interface ControlApiMemoryExperienceDetailResponse {

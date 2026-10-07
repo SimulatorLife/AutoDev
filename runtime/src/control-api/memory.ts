@@ -1284,12 +1284,9 @@ async function serveRecord(
   response: ServerResponse
 ): Promise<void> {
   if (route.id) {
-    if (route.action === "history" || route.action === "why") {
-      const result =
-        route.action === "history"
-          ? await service.history(route.id, filters.context)
-          : await service.why(route.id, filters.context);
-      if (!result) {
+    if (route.action === "history") {
+      const history = await service.history(route.id, filters.context);
+      if (!history) {
         sendMemoryError(
           response,
           404,
@@ -1298,10 +1295,48 @@ async function serveRecord(
         );
         return;
       }
+      // Projected rather than spread. The route used to answer `history` with
+      // the repository's own shape -- `{ memory, relatedMemories, events }` --
+      // while the wire contract declares `transitions`, so every real response
+      // failed the Console's guard and the record detail page refused to open
+      // at all. Naming the fields is what makes the two sides agree, and it
+      // keeps `events` from leaking onto the wire under a name no client reads.
       sendJson(
         response,
         200,
-        { schema: `autodev-memory-${route.action}-v1`, ...result },
+        {
+          schema: "autodev-memory-history-v1",
+          memory: history.memory,
+          relatedMemories: history.relatedMemories,
+          transitions: history.events
+        },
+        { "cache-control": "no-store" }
+      );
+      return;
+    }
+    if (route.action === "why") {
+      const why = await service.why(route.id, filters.context);
+      if (!why) {
+        sendMemoryError(
+          response,
+          404,
+          "autodev_memory_not_found",
+          "Memory record was not found."
+        );
+        return;
+      }
+      // `sourceExperiences` only, and not the events: this is the explanation
+      // of what this reader can still resolve, and the transitions already have
+      // their own response.
+      sendJson(
+        response,
+        200,
+        {
+          schema: "autodev-memory-why-v1",
+          memory: why.memory,
+          relatedMemories: why.relatedMemories,
+          sourceExperiences: why.sourceExperiences
+        },
         { "cache-control": "no-store" }
       );
       return;
@@ -3126,7 +3161,6 @@ export async function handleMemoryControlApiRequest(
   ) {
     return true;
   }
-
 
   let parsedFilters: ParsedMemoryControlFilters;
   try {

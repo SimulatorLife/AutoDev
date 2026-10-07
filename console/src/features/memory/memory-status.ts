@@ -1,4 +1,7 @@
-import type { MemoryStatus } from "@simulatorlife/autodev-core";
+import type {
+  MemoryReasonCode,
+  MemoryStatus
+} from "@simulatorlife/autodev-core";
 
 import type { StatusBadgeVariant } from "../../components/status/StatusBadge.ts";
 
@@ -52,3 +55,38 @@ export const MEMORY_STATUS_ORDER: readonly MemoryStatus[] = [
   "superseded",
   "invalidated"
 ];
+
+/**
+ * The word each lifecycle reason is called, everywhere it appears.
+ *
+ * Exhaustive over `MemoryReasonCode` for the same reason as the tables above:
+ * the Runtime's reason vocabulary is a union, and a transition that renders
+ * `superseded_by_newer_evidence` raw reads as a database key rather than as the
+ * answer to "why did this claim stop being trustworthy".
+ *
+ * Two codes are deliberately given the same word where they mean the same
+ * thing. `superseded_by_newer_evidence` is written when *this service* replaced
+ * a record with a newer one; `superseded` is written when a verifier found the
+ * record's cited evidence had itself been superseded. Those are different
+ * provenance and the action column beside them says which happened.
+ */
+export const MEMORY_REASON_LABEL: Record<MemoryReasonCode, string> = {
+  candidate_submitted: "Proposed for review",
+  revised_after_review: "Revised after review",
+  verified_current_state: "Verified against current state",
+  promoted_to_skill: "Promoted to a canonical skill",
+  verification_inconclusive: "Verification was inconclusive",
+  current_state_conflict: "Conflicts with current state",
+  superseded_by_newer_evidence: "Superseded by newer evidence",
+  invalidated_by_curator: "Invalidated by a curator",
+  stale: "Stale",
+  contradicted: "Contradicted by current state",
+  superseded: "Cited evidence was superseded",
+  low_relevance: "Too low relevance",
+  uncertain: "Uncertain",
+  rejected: "Rejected",
+  scope_mismatch: "Outside this reader's scope",
+  missing_provenance: "Provenance is missing",
+  invalidated: "Invalidated",
+  unknown: "Reason not reported"
+};

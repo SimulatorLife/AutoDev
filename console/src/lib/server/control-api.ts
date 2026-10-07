@@ -66,6 +66,7 @@ import {
   isSandboxMode,
   LOCAL_CONTROL_API_ACTOR,
   MEMORY_STATUSES,
+  type MemoryStatus,
   PROVIDER_ROLES,
   type ProviderRole,
   type ProviderRolePriority,
@@ -1083,6 +1084,31 @@ function isMemoryRecordDetailResponse(
   );
 }
 
+/**
+ * One rendered transition row.
+ *
+ * The panel reads all six of these, so the guard requires all six. Checking
+ * only that `transitions` is an array let a row missing `action` reach the
+ * renderer and throw, turning one malformed transition into a failed page.
+ *
+ * Both statuses are checked against the vocabulary rather than merely for being
+ * strings: the row renders its status names verbatim in the transition badge,
+ * so a status the Runtime never defined would be shown as though it were one.
+ */
+function isMemoryTransitionRow(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const { fromStatus, toStatus } = value;
+  return (
+    MEMORY_STATUSES.includes(toStatus as MemoryStatus) &&
+    (fromStatus === undefined ||
+      MEMORY_STATUSES.includes(fromStatus as MemoryStatus)) &&
+    typeof value.action === "string" &&
+    typeof value.actorId === "string" &&
+    typeof value.reasonCode === "string" &&
+    typeof value.occurredAt === "string"
+  );
+}
+
 function isMemoryHistoryResponse(
   value: unknown
 ): value is ControlApiMemoryHistoryResponse {
@@ -1090,8 +1116,10 @@ function isMemoryHistoryResponse(
     isRecord(value) &&
     value.schema === "autodev-memory-history-v1" &&
     // `transitions` is the evidence the history panel is entirely made of; a
-    // missing list is not an empty history.
+    // missing list is not an empty history, and a list the panel cannot render
+    // is not a history at all.
     Array.isArray(value.transitions) &&
+    value.transitions.every(isMemoryTransitionRow) &&
     isMemoryRecordRow(value.memory)
   );
 }

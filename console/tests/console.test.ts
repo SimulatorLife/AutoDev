@@ -5828,12 +5828,22 @@ test("MemoryRecordsView renders record detail panel with validity and transition
   const sampleHistory = {
     schema: "autodev-memory-history-v1" as const,
     memory: sampleRecord,
+    relatedMemories: [],
+    // The Runtime's own lifecycle event, unchanged. This fixture used to be
+    // written in the view's `{ actor, reason, timestamp }` spelling while the
+    // route sent `{ actorId, reasonCode, occurredAt }`, so the fixture agreed
+    // with the view and disagreed with the only producer.
     transitions: [
       {
+        id: "event-001",
+        memoryId: "mem-002",
+        action: "proposed" as const,
+        actorId: "operator-1",
+        occurredAt: "2026-10-02T00:00:00Z",
         toStatus: "proposed" as const,
-        actor: { id: "operator-1", authority: "operator" as const },
-        reason: "Initial proposed claim",
-        timestamp: "2026-10-02T00:00:00Z"
+        reasonCode: "candidate_submitted" as const,
+        evidence: [],
+        relatedMemoryIds: []
       }
     ]
   };
@@ -5852,6 +5862,9 @@ test("MemoryRecordsView renders record detail panel with validity and transition
   assert.match(markup, /Durable Claim/);
   assert.match(markup, /Validity State/);
   assert.match(markup, /Transition History/);
+  // The transition carries the machine reason and the actor who made it.
+  assert.match(markup, /Proposed for review/);
+  assert.match(markup, /operator-1/);
   assert.match(markup, /Verify &amp; Promote/);
   assert.match(markup, /Invalidate/);
 });
@@ -7357,6 +7370,7 @@ test("Memory detail and the workspace catalog fail closed on unreadable response
     // provenance and validity beside its transitions, so an identifier-only
     // `memory` here was a payload that passed and then threw.
     memory,
+    relatedMemories: [],
     transitions: []
   };
   assert.equal(
@@ -7370,7 +7384,50 @@ test("Memory detail and the workspace catalog fail closed on unreadable response
       transitions: []
     },
     { ...history, transitions: {} },
-    { ...history, memory: null }
+    { ...history, memory: null },
+    // A list the panel cannot render is not a history. These rows each drop one
+    // field the panel reads, which used to pass the guard and throw during
+    // render instead of reporting an unreadable response.
+    { ...history, transitions: [{ toStatus: "proposed" }] },
+    {
+      ...history,
+      transitions: [
+        {
+          toStatus: "proposed",
+          action: "proposed",
+          actorId: "operator-1",
+          reasonCode: "candidate_submitted",
+          occurredAt: "2026-10-02T00:00:00Z",
+          // A status the Runtime never defined. The badge renders the name
+          // verbatim, so accepting it would show a lifecycle state that does
+          // not exist.
+          fromStatus: "retired"
+        }
+      ]
+    },
+    {
+      ...history,
+      transitions: [
+        {
+          toStatus: "proposed",
+          action: "proposed",
+          actorId: "operator-1",
+          reasonCode: "candidate_submitted"
+        }
+      ]
+    },
+    {
+      ...history,
+      transitions: [
+        {
+          toStatus: "retired",
+          action: "proposed",
+          actorId: "operator-1",
+          reasonCode: "candidate_submitted",
+          occurredAt: "2026-10-02T00:00:00Z"
+        }
+      ]
+    }
   ]) {
     assert.equal(
       (await fetchMemoryHistory("r1", workspaceId, config, serve(broken))).kind,
@@ -12723,23 +12780,54 @@ test("transition history is an ordered, named list rather than a stack of divs",
         updatedAt: "2026-10-02T00:00:00Z"
       },
       history: {
+        schema: "autodev-memory-history-v1",
+        memory: {
+          id: "mem-history",
+          kind: "procedural",
+          status: "invalidated",
+          scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+          claim: "A claim.",
+          validity: { state: "verified", evidence: [] },
+          provenance: {
+            experienceIds: [],
+            evidence: [],
+            createdBy: "operator",
+            createdAt: "2026-10-01T00:00:00Z"
+          },
+          createdAt: "2026-10-01T00:00:00Z",
+          updatedAt: "2026-10-03T00:00:00Z"
+        },
+        relatedMemories: [],
+        // Real lifecycle events. This fixture was cast with `as never` and
+        // written in the old `{ actor, timestamp, reason }` spelling, so it
+        // exercised a row shape no producer has ever sent.
         transitions: [
           {
+            id: "event-1",
+            memoryId: "mem-history",
+            action: "verified",
+            actorId: "operator",
+            occurredAt: "2026-10-02T00:00:00Z",
             fromStatus: "proposed",
             toStatus: "active",
-            actor: { id: "operator" },
-            timestamp: "2026-10-02T00:00:00Z",
-            reason: "verified"
+            reasonCode: "verified_current_state",
+            evidence: [],
+            relatedMemoryIds: []
           },
           {
+            id: "event-2",
+            memoryId: "mem-history",
+            action: "invalidated",
+            actorId: "curator",
+            occurredAt: "2026-10-03T00:00:00Z",
             fromStatus: "active",
             toStatus: "invalidated",
-            actor: { id: "operator" },
-            timestamp: "2026-10-03T00:00:00Z",
-            reason: null
+            reasonCode: "superseded",
+            evidence: [],
+            relatedMemoryIds: []
           }
         ]
-      } as never
+      }
     })
   );
 

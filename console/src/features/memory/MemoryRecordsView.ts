@@ -2,9 +2,9 @@ import type {
   ControlApiMemoryWhyResponse,
   EvidenceReference,
   MemoryKind,
+  MemoryLifecycleEvent,
   MemoryRecord,
   MemoryScope,
-  MemoryStatus,
   MemoryValidity
 } from "@simulatorlife/autodev-core";
 import React from "react";
@@ -44,19 +44,28 @@ import {
   type MemoryListScope,
   memoryPageHref
 } from "./memory-list-url.ts";
-import { MEMORY_STATUS_VARIANT, NOT_OBSERVED_STATUS } from "./memory-status.ts";
+import {
+  MEMORY_REASON_LABEL,
+  MEMORY_STATUS_VARIANT,
+  NOT_OBSERVED_STATUS
+} from "./memory-status.ts";
 
-export interface MemoryRecordTransition {
-  readonly fromStatus?: MemoryStatus;
-  readonly toStatus: MemoryStatus;
-  readonly actor: { readonly id: string; readonly authority: string };
-  readonly reason?: string;
-  readonly timestamp: string;
-}
+/**
+ * One lifecycle transition, as the Runtime recorded it.
+ *
+ * `MemoryLifecycleEvent` rather than a local row shape. This view used to
+ * declare `{ actor: { id }, timestamp, reason }` and receive none of those
+ * fields -- the Runtime sends `actorId`, `occurredAt` and `reasonCode` -- so the
+ * transition panel rendered blank attributions, and the response carrying it
+ * was rejected as unreadable. Declaring the event means the panel and the wire
+ * cannot drift into two shapes for one fact.
+ */
+export type MemoryRecordTransition = MemoryLifecycleEvent;
 
 export interface MemoryRecordHistory {
   readonly schema: string;
   readonly memory: MemoryRecord;
+  readonly relatedMemories: readonly MemoryRecord[];
   readonly transitions: readonly MemoryRecordTransition[];
 }
 
@@ -736,13 +745,20 @@ function RecordDetailPanel({
                       MEMORY_STATUS_VARIANT[t.toStatus] ?? NOT_OBSERVED_STATUS,
                     label: `${t.fromStatus ?? "none"} → ${t.toStatus}`
                   }),
-                  t.reason
-                    ? React.createElement(
-                        "span",
-                        { className: "text-fg-secondary" },
-                        `(${t.reason})`
-                      )
-                    : null
+                  // The machine reason, not a free-text note the producer never
+                  // set. It is the only thing on the wire that says *why* a
+                  // claim stopped being trustworthy -- a verification that
+                  // found its evidence superseded, for instance.
+                  React.createElement(
+                    "span",
+                    { className: "text-fg-secondary" },
+                    MEMORY_REASON_LABEL[t.reasonCode]
+                  ),
+                  React.createElement(
+                    "span",
+                    { className: "text-fg-muted" },
+                    t.action.replaceAll('_', " ")
+                  )
                 ),
                 React.createElement(
                   "div",
@@ -750,11 +766,11 @@ function RecordDetailPanel({
                     className:
                       "flex items-center gap-3 text-fg-muted font-mono text-meta"
                   },
-                  React.createElement("span", null, t.actor.id),
+                  React.createElement("span", null, t.actorId),
                   React.createElement(
                     "span",
                     null,
-                    new Date(t.timestamp).toLocaleString()
+                    new Date(t.occurredAt).toLocaleString()
                   )
                 )
               )
