@@ -4,6 +4,7 @@ import type {
   ExperienceEnvelope,
   ExperienceValidationState
 } from "@simulatorlife/autodev-core";
+import { MEMORY_EXPERIENCE_PURGE_REASONS } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import {
@@ -32,6 +33,7 @@ import {
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
+import { codeOptions } from "./memory-code-options.ts";
 import {
   memoryDetailHref,
   memoryFilterHref,
@@ -50,12 +52,16 @@ import { InjectionReports } from "./MemoryInjectionReports.ts";
 /**
  * The only reasons the Runtime's purge endpoint accepts. Offering anything else
  * would let an operator compose a request that is guaranteed to be rejected, so
- * the choice is the Runtime's vocabulary rather than free text.
+ * the choice is the Runtime's vocabulary rather than free text — taken from Core,
+ * which is where the Runtime reads it from, rather than restated here.
  */
-const PURGE_REASON_OPTIONS: readonly SelectOption[] = [
-  { value: "privacy_request", label: "Privacy request" },
-  { value: "retention_expired", label: "Retention expired" }
-];
+const PURGE_REASON_OPTIONS: readonly SelectOption[] = codeOptions(
+  MEMORY_EXPERIENCE_PURGE_REASONS,
+  {
+    privacy_request: "Privacy request",
+    retention_expired: "Retention expired"
+  }
+);
 
 /** De-emphasised supporting copy, shared across this view's sub-panels. */
 

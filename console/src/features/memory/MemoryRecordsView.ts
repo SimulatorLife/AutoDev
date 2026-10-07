@@ -40,6 +40,7 @@ import {
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
+import { codeOptions } from "./memory-code-options.ts";
 import {
   memoryDetailHref,
   memoryExperienceHref,
@@ -1031,10 +1032,7 @@ function RecordActionForm({
           hideLabel: true,
           className: "basis-56 grow",
           testId: `memory-${action}-reason-code`,
-          options: MEMORY_REASON_CODES.map((code) => ({
-            value: code,
-            label: MEMORY_REASON_LABEL[code] ?? code
-          }))
+          options: codeOptions(MEMORY_REASON_CODES, MEMORY_REASON_LABEL)
         })
       : null,
     withEvidence === true
@@ -1047,10 +1045,7 @@ function RecordActionForm({
             hideLabel: true,
             className: "basis-32",
             testId: `memory-${action}-evidence-kind`,
-            options: MEMORY_EVIDENCE_KINDS.map((kind) => ({
-              value: kind,
-              label: kind.replace(/_/gu, " ")
-            }))
+            options: codeOptions(MEMORY_EVIDENCE_KINDS)
           }),
           React.createElement(TextField, {
             key: "evidence-uri",

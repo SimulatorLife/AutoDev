@@ -66,6 +66,7 @@ import {
   isSandboxMode,
   LOCAL_CONTROL_API_ACTOR,
   MEMORY_STATUSES,
+  type MemoryExperiencePurgeReason,
   type MemoryStatus,
   PROVIDER_ROLES,
   type ProviderRole,
@@ -2774,8 +2775,7 @@ export function transitionMemoryRecord(
  * be ready to surface that refusal rather than retry. The reason is not free-form
  * — the Runtime accepts exactly these two codes and rejects anything else.
  */
-export type ControlApiMemoryPurgeReason =
-  "privacy_request" | "retention_expired";
+export type ControlApiMemoryPurgeReason = MemoryExperiencePurgeReason;
 
 export function purgeMemoryExperience(
   id: string,

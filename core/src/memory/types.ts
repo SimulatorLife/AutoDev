@@ -1147,8 +1147,32 @@ export function isMemoryStatus(value: unknown): value is MemoryStatus {
   );
 }
 
+/**
+ * Why a raw experience envelope may be erased.
+ *
+ * A list rather than a bare union because this is the only vocabulary a purge
+ * accepts, and every side has to agree on it: the Runtime refuses anything
+ * outside it, and the Console has to offer it. Written out as a union it was
+ * re-spelled in six places -- the Runtime's service, its control API, the
+ * Console's route, its transport and its form -- and nothing would have said so
+ * when a reason was added. Two reasons, because erasure is irreversible and the
+ * only defensible grounds are the subject's own request and a policy deadline.
+ */
+export const MEMORY_EXPERIENCE_PURGE_REASONS = [
+  "privacy_request",
+  "retention_expired"
+] as const;
 export type MemoryExperiencePurgeReason =
-  "privacy_request" | "retention_expired";
+  (typeof MEMORY_EXPERIENCE_PURGE_REASONS)[number];
+
+export function isMemoryExperiencePurgeReason(
+  value: unknown
+): value is MemoryExperiencePurgeReason {
+  return (
+    typeof value === "string" &&
+    (MEMORY_EXPERIENCE_PURGE_REASONS as readonly string[]).includes(value)
+  );
+}
 
 export interface MemoryExperiencePurgeRequest {
   readonly experienceId: string;

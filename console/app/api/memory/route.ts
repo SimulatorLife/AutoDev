@@ -1,4 +1,7 @@
-import { MEMORY_REASON_CODES } from "@simulatorlife/autodev-core";
+import {
+  MEMORY_EXPERIENCE_PURGE_REASONS,
+  MEMORY_REASON_CODES
+} from "@simulatorlife/autodev-core";
 
 import { type NextRequest, NextResponse } from "next/server.js";
 
@@ -72,7 +75,14 @@ interface MemoryActionPayload {
   readonly confirm: string;
 }
 
-const PURGE_REASONS = ["privacy_request", "retention_expired"] as const;
+/**
+ * The Runtime's purge vocabulary, read from Core rather than restated.
+ *
+ * Checking a submitted reason against a local copy of the two codes was a
+ * re-spelling of a list the Runtime reads from Core, so the two could disagree
+ * with nothing to notice.
+ */
+const PURGE_REASONS = MEMORY_EXPERIENCE_PURGE_REASONS;
 
 /**
  * Is this one of the Runtime's bounded reason codes?

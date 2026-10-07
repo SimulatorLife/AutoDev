@@ -1,4 +1,10 @@
 import type { ControlApiMemoryInjectionOutcomeJoin } from "@simulatorlife/autodev-core";
+import {
+  EXPERIENCE_OUTCOMES,
+  MEMORY_EVIDENCE_KINDS,
+  MEMORY_OUTCOME_REPORT_KINDS,
+  MEMORY_USE_KINDS
+} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { Button } from "../../components/forms/Button.ts";
@@ -6,6 +12,7 @@ import { SelectField } from "../../components/forms/SelectField.ts";
 import { TextField } from "../../components/forms/TextField.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { MUTED_TEXT_CLASS } from "../../components/ui/text-classes.ts";
+import { codeOptions } from "./memory-code-options.ts";
 import { memoryListQuery, type MemoryListScope } from "./memory-list-url.ts";
 
 /**
@@ -99,25 +106,16 @@ export function InjectionReports({
               label: "Outcome:",
               hideLabel: true,
               testId: `memory-report-outcome-kind-${injection.id}`,
-              options: [
-                { value: "success", label: "Success" },
-                { value: "partial", label: "Partial" },
-                { value: "failure", label: "Failure" },
-                { value: "cancelled", label: "Cancelled" },
-                { value: "unknown", label: NOT_OBSERVED_LABEL }
-              ]
+              options: codeOptions(EXPERIENCE_OUTCOMES, {
+                unknown: NOT_OBSERVED_LABEL
+              })
             }),
             React.createElement(SelectField, {
               name: "reportKind",
               label: "Reported as:",
               hideLabel: true,
               testId: `memory-report-kind-${injection.id}`,
-              options: [
-                { value: "task", label: "Task" },
-                { value: "pull_request", label: "Pull request" },
-                { value: "issue", label: "Issue" },
-                { value: "other", label: "Other" }
-              ]
+              options: codeOptions(MEMORY_OUTCOME_REPORT_KINDS)
             }),
             ...evidenceControls(`outcome-${injection.id}`)
           ]
@@ -130,12 +128,7 @@ export function InjectionReports({
             label: "Used:",
             hideLabel: true,
             testId: `memory-report-use-kind-${injection.id}`,
-            options: [
-              { value: "used", label: "Used" },
-              { value: "partially_used", label: "Partially used" },
-              { value: "not_used", label: "Not used" },
-              { value: "unobservable", label: "Unobservable" }
-            ]
+            options: codeOptions(MEMORY_USE_KINDS)
           }),
           React.createElement(TextField, {
             name: "usedMemoryIds",
@@ -176,6 +169,10 @@ function hidden(name: string, value: string): React.JSX.Element {
  * not enough: the kind is what says whether this is a trajectory, a test run,
  * or a pull request, and an untyped reference is not evidence of anything in
  * particular.
+ *
+ * The kinds are Core's, because that is the list the Runtime checks an evidence
+ * reference against — a copy written out here could offer a kind it refuses, and
+ * would silently stop offering one it had gained.
  */
 function evidenceControls(suffix: string): readonly React.JSX.Element[] {
   return [
@@ -184,18 +181,7 @@ function evidenceControls(suffix: string): readonly React.JSX.Element[] {
       label: "Evidence:",
       hideLabel: true,
       testId: `memory-evidence-kind-${suffix}`,
-      options: [
-        { value: "trajectory", label: "Trajectory" },
-        { value: "trace", label: "Trace" },
-        { value: "file", label: "File" },
-        { value: "commit", label: "Commit" },
-        { value: "pull_request", label: "Pull request" },
-        { value: "issue", label: "Issue" },
-        { value: "rule", label: "Rule" },
-        { value: "skill", label: "Skill" },
-        { value: "document", label: "Document" },
-        { value: "other", label: "Other" }
-      ]
+      options: codeOptions(MEMORY_EVIDENCE_KINDS)
     }),
     React.createElement(TextField, {
       name: "evidenceUri",

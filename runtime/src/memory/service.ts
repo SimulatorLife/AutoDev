@@ -25,6 +25,7 @@ import {
   isMemoryOutcomeReportKind,
   isMemoryScopeVisibleTo,
   isMemoryUseKind,
+  isMemoryExperiencePurgeReason,
   MEMORY_EXECUTION_MODES,
   MEMORY_OUTCOME_REPORT_KINDS,
   MEMORY_REASON_CODES,
@@ -1823,7 +1824,7 @@ export class MemoryService
       ) {
         throw new MemoryValidationError("Memory experience id is invalid.");
       }
-      if (reason !== "privacy_request" && reason !== "retention_expired") {
+      if (!isMemoryExperiencePurgeReason(reason)) {
         throw new MemoryValidationError("Memory purge reason is invalid.");
       }
       span.setAttribute("memory.experience.purge.reason", reason);

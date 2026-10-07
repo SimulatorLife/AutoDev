@@ -25,6 +25,7 @@ import {
   EXPERIENCE_OUTCOMES,
   type ExperienceEnvelope,
   MEMORY_EXECUTION_MODES,
+  isMemoryExperiencePurgeReason,
   MEMORY_INJECTION_RESULTS,
   MEMORY_KINDS,
   MEMORY_MAX_TIME_WINDOW_MS,
@@ -1415,7 +1416,7 @@ async function purgeMemoryExperience(
     throw new MemoryValidationError("A memory experience id is required.");
   exactKeys(body, ["reason"]);
   const reason = requiredString(body, "reason");
-  if (reason !== "privacy_request" && reason !== "retention_expired")
+  if (!isMemoryExperiencePurgeReason(reason))
     throw new MemoryValidationError("Memory purge reason is invalid.");
   const purge = await service.purgeExperience(
     route.id,
