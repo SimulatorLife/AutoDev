@@ -1009,6 +1009,62 @@ test("listMemories returns scoped lifecycle pages and an exact total beyond the 
   assert.equal(pastEnd.total, 1);
 });
 
+test("a row whose status is outside the vocabulary leaves the rollup rather than inventing a bucket", async () => {
+  // `isMemoryStatus` has exactly one caller -- the rollup loop in
+  // `listMemories` -- and rewriting it to accept everything left every suite
+  // green. Every row a test creates goes through `proposeMemory`, which only
+  // ever writes a status from the vocabulary, so the guard's rejection had
+  // nothing to act on.
+  //
+  // Reachable only when the unknown-status row is *not* on the page being
+  // returned. `hydrateMemoryRecordRow` fails loudly on an unrecognised status,
+  // so a bad row that is on the page takes the whole read down before the
+  // rollup could matter -- which is also why this was not obvious: the two
+  // behaviours are the same policy applied at different moments.
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+  const onPage = makeMemoryRecord({ id: "on-page" });
+  const offPage = makeMemoryRecord({ id: "off-page" });
+  for (const record of [onPage, offPage]) {
+    await repo.proposeMemory(record, makeLifecycleEvent({ memoryId: record.id }));
+  }
+  const stored = pool.tables.memory_records.get(offPage.id);
+  assert.ok(stored, "the second record should be stored");
+  // A status no Runtime in this tree declares -- as an older build, or a
+  // direct write, could leave behind.
+  pool.tables.memory_records.set(offPage.id, {
+    ...stored,
+    status: "archived"
+  });
+
+  const page = await repo.listMemories({
+    context: makeContext({ workspaceId: "ws-1" }),
+    limit: 1,
+    offset: 0
+  });
+
+  assert.deepEqual(
+    page.items.map(({ id }) => id),
+    [onPage.id],
+    "the page itself is unaffected"
+  );
+  assert.deepEqual(
+    page.statusCounts,
+    { proposed: 1, active: 0, uncertain: 0, superseded: 0, invalidated: 0 },
+    "the breakdown must carry only declared statuses"
+  );
+  assert.equal(
+    Object.keys(page.statusCounts).length,
+    5,
+    "no key may be invented for a status the vocabulary does not declare"
+  );
+  // Deliberate, and worth stating: the unknown-status row is left out of the
+  // total rather than counted somewhere. A record the Console cannot render
+  // is not counted in a page whose every row it does render.
+  assert.equal(page.total, 1);
+});
+
 test("listExperiences can read prior task history only in a workspace-bounded curator context", async () => {
   const pool = new FakeMemoryPool();
   const repo = repoWith(pool);
