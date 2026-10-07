@@ -1596,7 +1596,7 @@ export function EvaluationsView({
           React.createElement(
             "a",
             {
-              href: evaluationResultHref(filters, evaluation.id, tab),
+              href: evaluationResultHref(filters, evaluation.id, tab, page),
               className:
                 "font-mono text-xs font-semibold text-accent underline-offset-4 hover:underline",
               // The visible text is the role, and roles repeat: a fifty-row page

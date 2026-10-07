@@ -5673,6 +5673,61 @@ test("EvaluationsPage rejects malformed trace query IDs without calling the Usag
   }
 });
 
+test("opening a run keeps the page of the history it was opened from", () => {
+  // The history table pages at 50 rows, so any history longer than a screen has
+  // a page the operator is genuinely reading rather than the only page. The
+  // drawer is inline -- the list beneath it is the context the detail is read
+  // against -- and the drawer's own close link already keeps the page, so the
+  // link that opened it has to carry it too or the round trip cannot close.
+  //
+  // Measured before the fix against a 120-row history: page 3's row links
+  // carried no page, so opening one landed on page 1. The clicked row was not in
+  // the list beneath the drawer at all, and because the page had already left
+  // the URL, closing the drawer could not put the operator back on page 3
+  // either. The page was the one piece of list state the link dropped while
+  // carrying the filters.
+  const row = {
+    id: "run-page-3",
+    agentRole: "implementer",
+    promptName: "dry",
+    model: "gpt-5.6-terra",
+    metrics: [{ name: "quality", value: 1, pass: true }],
+    passed: true,
+    timestamp: "2026-10-05T12:00:00.000Z"
+  };
+
+  assert.match(
+    renderEvaluations({ evaluations: [row], page: 3 }),
+    /href="\/evaluations\?result=run-page-3&amp;page=3"/,
+    "a row on page 3 opens a run without leaving page 3"
+  );
+  // Scoped to the drawer, because the pager on the same page links to page 3 as
+  // well and a bare href assertion would pass on the wrong element.
+  const drawerMarkup = renderEvaluations({
+    evaluations: [row],
+    selection: row.id,
+    page: 3
+  }).split('data-feature="evaluation-detail"')[1];
+  assert.ok(drawerMarkup, "the run's drawer is open");
+  assert.match(
+    drawerMarkup,
+    /href="\/evaluations\?page=3"/,
+    "closing the drawer returns to the page it was opened from"
+  );
+
+  // The first page is what an unparameterised link already means, so carrying
+  // the page must not start putting it on every row's link.
+  assert.match(
+    renderEvaluations({ evaluations: [row], page: 1 }),
+    /href="\/evaluations\?result=run-page-3"/
+  );
+  assert.doesNotMatch(
+    renderEvaluations({ evaluations: [row], page: 1 }),
+    /href="\/evaluations\?result=run-page-3&amp;page=1"/,
+    "page 1 stays implicit rather than appearing on every link"
+  );
+});
+
 test("a repeated selection parameter is not a choice, and opens nothing", async () => {
   // `?result=a&result=b` and `?spanId=x&spanId=y` each name two things, and
   // taking the first answers a question the URL did not ask. The filter bar

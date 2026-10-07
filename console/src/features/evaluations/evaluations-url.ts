@@ -403,13 +403,28 @@ export function evaluationsUnfilteredHref(): string {
  * The filter state travels with it so the drawer's close link returns the
  * operator to the list they narrowed, not to an unfiltered page that no longer
  * contains the row they were reading.
+ *
+ * The page travels for the same reason, and it was the one piece of state the
+ * list was already carrying that this link dropped. The history table pages at
+ * 50 rows, so any history longer than a screen has a page the operator is
+ * genuinely reading rather than the only page. Measured on a 120-row history:
+ * opening a run from page 3 navigated to a URL with no page in it, which is page
+ * 1, so the list beneath the open drawer showed page 1 -- the row just clicked
+ * was not in the list at all -- and because the page had already left the URL,
+ * closing the drawer could not put the operator back on page 3 either. The
+ * drawer is inline, so that list is the context the detail is read against.
+ *
+ * `evaluationsUnfilteredHref` deliberately does not carry the page: clearing a
+ * filter changes which rows exist, so the page it was on is not a position in
+ * the list that follows.
  */
 export function evaluationResultHref(
   filters: EvaluationsFilters,
   resultId: string,
-  tab: EvaluationsTabId = DEFAULT_EVALUATIONS_TAB
+  tab: EvaluationsTabId = DEFAULT_EVALUATIONS_TAB,
+  page?: number | undefined
 ): string {
-  return evaluationsHref(filters, { tab, resultId });
+  return evaluationsHref(filters, { tab, resultId, page });
 }
 
 /**
