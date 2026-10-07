@@ -532,6 +532,58 @@ test("canonical migration tracker records the current repository quality-gate ev
   );
 });
 
+test("Usage Active Sessions is a runtime-scoped selection, not a time range", () => {
+  const target = readFileSync(targetStatePath, "utf8");
+  const migration = readFileSync(migrationPath, "utf8");
+
+  const section = /###\s+Active Sessions\b([\s\S]*?)(?=\n##\s|\n###\s)/u.exec(
+    target
+  );
+  assert.ok(section, "the Usage Active Sessions requirement must be defined");
+  const body = section?.[1] ?? "";
+
+  // The option exists and is scoped to live runtime state rather than to an
+  // interval. This is the whole point of the requirement, so it is asserted
+  // positively: an option described only as another range would satisfy a
+  // weaker "mentions Active Sessions" check and be wrong.
+  assert.match(body, /not a temporal window/u);
+  assert.match(body, /Control API runtime projection/u);
+
+  // Must not be approximated as a shortened/derived range, and must not be
+  // inferred from span recency: absent telemetry is not inactivity.
+  assert.match(
+    body,
+    /must not approximate it as a shortened or derived range/u
+  );
+  assert.match(
+    body,
+    /absence of telemetry is not evidence that a session is inactive/u
+  );
+
+  // Missing evidence must stay explicit and must never become a synthesized
+  // zero, while a measured zero stays a valid reading.
+  assert.match(body, /must never render a synthesized `0` active sessions/u);
+  assert.match(body, /measured zero/u);
+
+  // Reads stay read-only and reuse the single runtime authority rather than
+  // creating a second session store.
+  assert.match(body, /stays read-only/u);
+  assert.match(body, /no second session registry/u);
+
+  // URL-persisted with the rest of the Usage selection, and custom bounds do
+  // not silently apply to this scope.
+  assert.match(body, /URL-persisted/u);
+  assert.match(body, /do not apply to this scope/u);
+
+  // Session identifiers stay out of metric dimensions.
+  assert.match(body, /stay out of metric dimensions/u);
+
+  // Per the §1 docs contract, the observed gap belongs to the migration
+  // tracker, which must record that the option is not implemented and why.
+  assert.match(migration, /Active Sessions/u);
+  assert.match(migration, /not implemented/u);
+});
+
 test("canonical target and migration tracker track gaps without claiming premature cutover", () => {
   const target = readFileSync(targetStatePath, "utf8");
   const migration = readFileSync(migrationPath, "utf8");

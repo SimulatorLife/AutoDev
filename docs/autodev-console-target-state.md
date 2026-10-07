@@ -653,6 +653,32 @@ The Console's same-origin server calls only fixed read-only Usage telemetry endp
 
 Target views include logical requests, attempts/provider reliability, input/output/cache tokens, cost, latency, failures, MCP activity, relevant skill evidence, traces, and source-confirmed context compactions. Current verified widgets/evidence belong in the migration tracker. Evaluation-to-trace navigation uses the fixed read-only `GET /api/autodev/usage/span/:spanId` endpoint with the dedicated Usage service credential. It accepts only a validated OpenTelemetry SpanId, resolves its TraceId server-side, and returns at most 200 privacy-filtered span summaries (IDs/parent, operation/service, timestamp, duration, status) without span attributes, events, prompts, responses, tool arguments, SQL, or tenant context.
 
+### Active Sessions
+
+The Usage Time Range selector gains an **Active Sessions** option that scopes the page to sessions running right now, instead of to a historical interval.
+
+It is a scope over live runtime state, not a temporal window. It is deliberately not a retained OpenLIT time-range value, because every retained value maps to a bounded historical query while this one has no window at all. Implementations must not approximate it as a shortened or derived range, and must not synthesize an active-session set from span recency: **absence of telemetry is not evidence that a session is inactive.**
+
+"Active" is defined solely by the Runtime's own live session/concurrency state published on the authenticated read-only Control API runtime projection — the same authority behind the Agents runtime panel. There is no second session registry and no Console-side session cache that could disagree with it.
+
+Because this scope reaches from the observability plane into the control plane:
+
+- it reads runtime state through the Control API with the existing scoped service credential, and does not issue a Usage telemetry query for it;
+- it stays read-only. Active Sessions never mutates, cancels, or acts on a session; session control stays on the owning resource;
+- results are bounded, and a truncated result reports partial/overflow explicitly rather than quietly showing fewer sessions.
+
+State semantics follow the shared rule that missing evidence stays explicit:
+
+- when the runtime is unreachable, draining, or reports no session evidence, the view renders `unavailable` / `not observed`; it must never render a synthesized `0` active sessions, because no evidence and an idle runtime are different facts;
+- a measured zero — runtime reachable and reporting no live sessions — is a valid reading and renders as `0`;
+- sessions that end, or that the runtime never registered, simply leave the scope. That is normal, not an error, and it must not be backfilled into the scope from history.
+
+Widget applicability is explicit rather than inherited. Under Active Sessions, window-based widgets whose semantics require a bounded interval render their not-applicable/unavailable state instead of continuing to display the previous window's numbers, while genuinely live readings (current active sessions, in-flight requests, live concurrency and denial state) render from the runtime projection. The existing Usage filter dimensions still apply where the runtime source actually knows them, and unsupported signal/filter combinations fail closed rather than silently changing semantics. The CUSTOM range start/end inputs do not apply to this scope and are not presented as though they did.
+
+Selection state is shared with the rest of the Usage selection: Active Sessions is URL-persisted, restoring that URL reproduces the scope, and entering or leaving it must not carry stale window state into a reading whose semantics differ.
+
+Session identifiers stay out of metric dimensions, and any per-session rows carry bounded redacted fields only, consistent with the semantic conventions and privacy rules above. This scope adds no new historical aggregation store, compatibility dashboard, or query backend.
+
 ## 11. Control API and authorization
 
 The Control API is the only AutoDev mutation/action boundary.
@@ -754,7 +780,8 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 - dimensions remain bounded/privacy-safe;
 - attribution comes from owning producers;
 - MCP/skill/memory observations are asserted only from real evidence;
-- compactions are emitted only for actual/reported source events and never synthesized.
+- compactions are emitted only for actual/reported source events and never synthesized;
+- the Usage Active Sessions option scopes to Runtime-reported live sessions rather than a derived or shortened time range, renders `unavailable`/`not observed` instead of a synthesized `0` when runtime session evidence is absent, distinguishes a measured `0` from missing evidence, fails closed on unsupported widget/filter combinations, and adds no second session authority.
 
 ### RuleSync/configuration
 
