@@ -23,7 +23,10 @@ import {
   SECTION_HEADING_CLASS
 } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
-import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
+import {
+  DETAIL_PANEL_CLASS,
+  NESTED_PANEL_CLASS
+} from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
@@ -33,8 +36,6 @@ import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
-
-const PROMPT_CARD_CLASS_NAME = "rounded-lg border border-border bg-surface p-4";
 
 export type PromptSaveOutcome =
   "conflict" | "validation" | "apply-failed" | "failed";
@@ -259,7 +260,7 @@ function renderPromptPreview(prompt: PromptDocument): React.ReactNode {
   return React.createElement(
     "details",
     {
-      className: PROMPT_CARD_CLASS_NAME,
+      className: NESTED_PANEL_CLASS,
       "data-prompt-preview": "markdown"
     },
     React.createElement(
@@ -539,7 +540,7 @@ export function PromptDetailView({
       },
       React.createElement(
         "div",
-        { className: PROMPT_CARD_CLASS_NAME },
+        { className: NESTED_PANEL_CLASS },
         React.createElement(
           "h3",
           { className: SECTION_HEADING_CLASS },
@@ -557,7 +558,7 @@ export function PromptDetailView({
       ),
       React.createElement(
         "div",
-        { className: PROMPT_CARD_CLASS_NAME },
+        { className: NESTED_PANEL_CLASS },
         React.createElement(
           "h3",
           { className: SECTION_HEADING_CLASS },
@@ -588,7 +589,7 @@ export function PromptDetailView({
       ),
       React.createElement(
         "div",
-        { className: PROMPT_CARD_CLASS_NAME },
+        { className: NESTED_PANEL_CLASS },
         React.createElement(
           "h3",
           { className: SECTION_HEADING_CLASS },
