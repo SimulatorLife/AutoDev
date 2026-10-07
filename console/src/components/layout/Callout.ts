@@ -24,16 +24,26 @@
  * should not decide that.
  */
 
+/**
+ * The shape every callout shares: the box, and nothing about its colour.
+ *
+ * The three tones below are built from this rather than each re-spelling
+ * `rounded border p-3 text-sm`, which left this constant exported and unused
+ * while the same four tokens appeared in every variant. Token order moves here,
+ * but nothing conflicts: this sets border-radius, border-width, padding and
+ * font-size, and a tone adds only border colour, background colour and text
+ * colour.
+ */
 export const CALLOUT_CLASS = "rounded border p-3 text-sm";
 
 /** Neutral information: what the Console is showing and where it came from. */
 export const CALLOUT_ACCENT_CLASS =
-  "rounded border border-accent/40 bg-accent/10 p-3 text-sm text-accent";
+  `${CALLOUT_CLASS} border-accent/40 bg-accent/10 text-accent`;
 
 /** A condition the operator should check, but which is not a failure. */
 export const CALLOUT_WARNING_CLASS =
-  "rounded border border-warning/40 bg-warning/10 p-3 text-sm text-warning";
+  `${CALLOUT_CLASS} border-warning/40 bg-warning/10 text-warning`;
 
 /** Something could not be loaded, confirmed or applied. */
 export const CALLOUT_ERROR_CLASS =
-  "rounded border border-error/40 bg-error/10 p-3 text-sm text-error";
+  `${CALLOUT_CLASS} border-error/40 bg-error/10 text-error`;

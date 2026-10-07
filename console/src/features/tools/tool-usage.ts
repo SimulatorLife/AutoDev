@@ -1,7 +1,6 @@
 import type {
   ToolCatalogItem,
   ToolUsageEvidence,
-  UsageFilterSelection,
   UsageSnapshot
 } from "@simulatorlife/autodev-core";
 
@@ -43,16 +42,4 @@ export function filterToolCatalogUsage(
     errors: null,
     observed: observedCalls !== null
   };
-}
-
-export function toolUsageQuery(
-  _tool: ToolCatalogItem,
-  selection: UsageFilterSelection
-): UsageFilterSelection {
-  // The Usage telemetry filter UI today is bounded to workspace / provider /
-  // model / agent; pass the selection through unchanged so the URL filters
-  // the operator chose remain authoritative. Per-tool name filtering is not
-  // a Usage filter yet; the catalog surfaces the matching row in the Usage
-  // breakdown instead.
-  return selection;
 }

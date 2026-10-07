@@ -92,11 +92,6 @@ export function readControlRefusal(
     : undefined;
 }
 
-/** Mark a redirect target being built with the flag. */
-export function markControlFailure(url: URL): void {
-  url.searchParams.set(CONTROL_FAILED_PARAM, CONTROL_FAILED_VALUE);
-}
-
 export function isControlFailure(
   raw: string | readonly string[] | undefined
 ): boolean {

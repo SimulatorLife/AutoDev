@@ -15,7 +15,6 @@ import type {
   ControlApiPromptsResponse,
   ControlApiSkillsResponse,
   ControlApiWorkspacesResponse,
-  EvaluationResult,
   HookDefinition,
   PermissionPolicy,
   PromptAsset,
@@ -244,5 +243,3 @@ export function workspacesFromControlApi(
 ): readonly WorkspaceEntry[] {
   return response.workspaces;
 }
-
-export const emptyEvaluations: readonly EvaluationResult[] = [];
