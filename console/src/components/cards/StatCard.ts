@@ -63,56 +63,80 @@ export function StatCard({
   const unobserved = isUnobserved(value);
   const redundantSubtitle = unobserved && subtitle === NOT_OBSERVED_LABEL;
 
+  // A card is a labelled fact, and this module already says what a labelled fact
+  // is: `DetailGrid` is "the <dl> behind a row of label/value pairs" and
+  // `FieldBox` groups each term with its description as a `<dt>`/`<dd>` pair.
+  // This card was `div > span > span` -- the same shape `FieldBox`'s comment
+  // names as "neither a definition list nor announced as one" -- so five cards
+  // on the Evaluations page read as one flat run of fifteen fragments with
+  // nothing pairing "PASSED" with 34 or "PASS RATE" with 40%. Every resource
+  // that shows a row of cards had that.
+  //
+  // The term and its description sit in one grouping `<div>` because HTML allows
+  // a `<dl>` only `<dt>`, `<dd>`, and `<div>`s wrapping them, and a `<div>` is
+  // what pairs them. Splitting the title row from the value row -- which is how
+  // the card was laid out, with a badge beside the title -- would put the term
+  // in one group and its description in another, so each would announce alone.
+  // The badge stays beside the term and the trend beside the value, because that
+  // is what each qualifies.
   return React.createElement(
-    "div",
+    "dl",
     {
       className:
         "bg-surface border border-border rounded-lg p-5 shadow-sm flex flex-col justify-between"
     },
     React.createElement(
       "div",
-      { className: "flex items-center justify-between mb-2" },
+      null,
       React.createElement(
-        "span",
-        {
-          className:
-            "text-xs font-medium text-fg-muted uppercase tracking-wider"
-        },
-        title
+        "div",
+        { className: "flex items-center justify-between mb-2" },
+        React.createElement(
+          "dt",
+          {
+            className:
+              "text-xs font-medium text-fg-muted uppercase tracking-wider"
+          },
+          title
+        ),
+        badge
       ),
-      badge
-    ),
-    React.createElement(
-      "div",
-      { className: "flex items-baseline gap-2" },
       React.createElement(
-        "span",
-        {
-          className: unobserved
-            ? "text-sm text-fg-muted"
-            : "text-2xl font-bold text-fg tracking-tight",
-          ...(unobserved ? { "data-stat-unobserved": "true" } : {})
-        },
-        value
-      ),
-      trend
-        ? React.createElement(
+        "dd",
+        null,
+        React.createElement(
+          "div",
+          { className: "flex items-baseline gap-2" },
+          React.createElement(
             "span",
             {
-              className: `text-xs font-semibold ${
-                trend.isPositive ? "text-success" : "text-error"
-              }`
+              className: unobserved
+                ? "text-sm text-fg-muted"
+                : "text-2xl font-bold text-fg tracking-tight",
+              ...(unobserved ? { "data-stat-unobserved": "true" } : {})
             },
-            `${trend.isPositive ? "+" : ""}${trend.value}%`
-          )
-        : null
-    ),
-    subtitle && !redundantSubtitle
-      ? React.createElement(
-          "p",
-          { className: "mt-1 text-xs text-fg-muted" },
-          subtitle
-        )
-      : null
+            value
+          ),
+          trend
+            ? React.createElement(
+                "span",
+                {
+                  className: `text-xs font-semibold ${
+                    trend.isPositive ? "text-success" : "text-error"
+                  }`
+                },
+                `${trend.isPositive ? "+" : ""}${trend.value}%`
+              )
+            : null
+        ),
+        subtitle && !redundantSubtitle
+          ? React.createElement(
+              "p",
+              { className: "mt-1 text-xs text-fg-muted" },
+              subtitle
+            )
+          : null
+      )
+    )
   );
 }

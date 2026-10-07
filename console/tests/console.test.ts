@@ -1083,12 +1083,12 @@ test("the Tools summary row counts one collection once, not twice", () => {
   // Composite must be the sum of the three source counts: 1 + 2 = 3.
   assert.match(
     markup,
-    /Composite catalog<\/span>[\s\S]*?>3</,
+    /Composite catalog<\/dt>[\s\S]*?>3</,
     "the composite total must equal the sum of the source counts"
   );
-  assert.match(markup, /MCP entries<\/span>[\s\S]*?>2</);
-  assert.match(markup, /Native entries<\/span>[\s\S]*?>1</);
-  assert.match(markup, /Plugin entries<\/span>[\s\S]*?>0</);
+  assert.match(markup, /MCP entries<\/dt>[\s\S]*?>2</);
+  assert.match(markup, /Native entries<\/dt>[\s\S]*?>1</);
+  assert.match(markup, /Plugin entries<\/dt>[\s\S]*?>0</);
 
   // An empty catalog is an observed zero, not an absence.
   const empty = renderToStaticMarkup(
@@ -1100,7 +1100,7 @@ test("the Tools summary row counts one collection once, not twice", () => {
       tools: []
     })
   );
-  assert.match(empty, /Composite catalog<\/span>[\s\S]*?>0</);
+  assert.match(empty, /Composite catalog<\/dt>[\s\S]*?>0</);
 });
 
 test("the Tools cell does not repeat the server name its own Source column states", () => {
@@ -3225,6 +3225,36 @@ test("StatCard renders value and title", () => {
   assert.ok(markup.includes("Requests"));
   assert.ok(markup.includes("1234"));
   assert.ok(markup.includes("Last 24h"));
+});
+
+test("a stat card pairs its label with its value as a definition list", () => {
+  // A card is a labelled fact, which this codebase already says is a
+  // definition list: DetailGrid is "the <dl> behind a row of label/value pairs"
+  // and FieldBox groups each term with its description. The card was
+  // `div > span > span` -- the shape FieldBox's own comment calls "neither a
+  // definition list nor announced as one" -- so five cards on one page read as
+  // a flat run of fifteen fragments with nothing pairing "Passed" with 34.
+  const markup = renderToStaticMarkup(
+    React.createElement(StatCard, {
+      title: "Passed",
+      value: 34,
+      subtitle: "of 86 with explicit verdicts"
+    })
+  );
+
+  assert.match(markup, /^<dl /u, "the card is a definition list");
+  assert.match(markup, /<dt[^>]*>Passed<\/dt>/u, "the label is the term");
+  assert.match(markup, /<dd>[\s\S]*?>34</u, "the value is the description");
+
+  // The pairing has to hold in one grouping element. A <dl> allows dt, dd, and
+  // divs wrapping them, and a div is what pairs them -- so splitting the title
+  // row from the value row, as the old layout did, would leave a term and its
+  // description in two different groups, each announcing alone.
+  assert.match(
+    markup,
+    /<div><div[^>]*><dt[^>]*>Passed<\/dt>[\s\S]*?<\/div><dd>/u,
+    "the term and its description sit in the same group"
+  );
 });
 
 test("server Control API client uses only its configured token and fixed local actor", async () => {
@@ -7197,9 +7227,9 @@ test("the pass-rate denominator counts only supplied verdicts", () => {
   assert.match(markup, /25%/);
   // Each of the three counts is its own card, so an operator can read the
   // failed and unobserved populations without counting rows.
-  assert.match(markup, /<span[^>]*>Passed<\/span>[\s\S]{0,400}?>1</);
-  assert.match(markup, /<span[^>]*>Failed<\/span>[\s\S]{0,400}?>3</);
-  assert.match(markup, /Not observed<\/span>[\s\S]{0,400}?>2</);
+  assert.match(markup, /<dt[^>]*>Passed<\/dt>[\s\S]{0,400}?>1</);
+  assert.match(markup, /<dt[^>]*>Failed<\/dt>[\s\S]{0,400}?>3</);
+  assert.match(markup, /Not observed<\/dt>[\s\S]{0,400}?>2</);
 });
 
 test("every filter axis is offered and every link states what it keeps", () => {
@@ -9663,8 +9693,8 @@ test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace
   assert.match(markup, /data-feature="memory"/);
   assert.match(markup, /data-memory-experiences-observed="false"/);
   assert.match(markup, /data-memory-session-cohorts-observed="false"/);
-  const experiencesLabel = markup.indexOf(">Experiences</span>");
-  const cohortSessionsLabel = markup.indexOf(">Mode-Isolated Sessions</span>");
+  const experiencesLabel = markup.indexOf(">Experiences</dt>");
+  const cohortSessionsLabel = markup.indexOf(">Mode-Isolated Sessions</dt>");
   const tabsStart = markup.indexOf("<nav", cohortSessionsLabel);
   assert.notEqual(experiencesLabel, -1);
   assert.ok(cohortSessionsLabel > experiencesLabel);
