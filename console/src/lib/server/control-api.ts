@@ -1528,6 +1528,11 @@ function isControlApiEvaluationsResponse(
     typeof value.source === "string" &&
     typeof value.readOnly === "boolean" &&
     typeof value.totalEvaluations === "number" &&
+    // Required, not optional. Without it a consumer has to compare
+    // `totalEvaluations` against `evaluations.length` to learn that the array
+    // is a bounded window, and a consumer that forgets renders the cap as the
+    // whole history.
+    typeof value.truncated === "boolean" &&
     Array.isArray(value.evaluations) &&
     value.evaluations.every(isEvaluationRow)
   );

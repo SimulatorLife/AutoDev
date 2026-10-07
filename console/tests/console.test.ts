@@ -4545,6 +4545,7 @@ test("EvaluationsPage loads the linked trace through the Usage token and keeps p
           source: "openlit_evaluation",
           readOnly: true,
           totalEvaluations: 1,
+          truncated: false,
           evaluations: [
             {
               id: "evaluation-1",
@@ -4636,6 +4637,7 @@ test("EvaluationsPage rejects malformed trace query IDs without calling the Usag
           source: "openlit_evaluation",
           readOnly: true,
           totalEvaluations: 0,
+          truncated: false,
           evaluations: []
         });
       }
@@ -4744,6 +4746,107 @@ test("EvaluationsView keeps missing verdicts unobserved", () => {
   // rendered verdict, so no badge may claim a verdict that was never supplied.
   assert.equal(markup.includes('data-status="invalid"'), false);
   assert.equal(markup.includes("99%"), false);
+});
+
+test("a capped read says so instead of describing its window as the history", () => {
+  // The read is capped at 100 rows. Before this, the API answered
+  // `totalEvaluations: evaluations.length`, so a table holding 5,000 rows
+  // reported a total of 100 and the page said "100 retained results" with no
+  // hint that 4,900 more existed. The store's own size and the fact that the
+  // window is bounded are both now on the wire, and the page states them.
+  const rows = [
+    {
+      id: "run-1",
+      agentRole: "worker",
+      model: "m-1",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-04T12:00:00Z"
+    },
+    {
+      id: "run-2",
+      agentRole: "worker",
+      model: "m-1",
+      metrics: [],
+      passed: false,
+      timestamp: "2026-10-04T12:01:00Z"
+    }
+  ];
+
+  const capped = renderEvaluations({
+    evaluations: rows,
+    availableCount: 2,
+    totalCount: 5000,
+    truncated: true
+  });
+  assert.match(capped, /data-evaluations-truncated="true"/);
+  assert.match(capped, /Most recent 2 of 5000 retained results/);
+  assert.equal(capped.includes("2 retained results"), false);
+
+  // Narrowed on top of a capped window, the count is of the window -- and the
+  // store's real size stays on screen, because "1 of 2" reads as "1 of
+  // everything" to anyone who does not already have the unfiltered line open
+  // beside it.
+  const narrowed = renderEvaluations({
+    evaluations: [rows[1]!],
+    availableCount: 2,
+    totalCount: 5000,
+    truncated: true,
+    filters: { outcome: "failed", role: "", model: "", prompt: "" }
+  });
+  assert.match(narrowed, /1 of the most recent 2 · 5000 retained/);
+
+  // Uncapped and unfiltered, the window is the history and nothing is implied
+  // beyond it.
+  const complete = renderEvaluations({
+    evaluations: rows,
+    availableCount: 2,
+    totalCount: 2,
+    truncated: false
+  });
+  assert.match(complete, /data-evaluations-truncated="false"/);
+  assert.match(complete, /2 retained results/);
+  assert.equal(complete.includes("Most recent"), false);
+});
+
+test("fetchEvaluations rejects a response that will not say whether it is capped", async () => {
+  // Without `truncated` the consumer has to infer the bound by comparing
+  // `totalEvaluations` to `evaluations.length`, and a consumer that forgets
+  // renders the cap as the whole history. The field is required so the inference
+  // has nowhere to happen.
+  const base = {
+    schema: "autodev-control-evaluations-v1",
+    source: "openlit_evaluation",
+    readOnly: true,
+    totalEvaluations: 5000,
+    evaluations: []
+  };
+
+  const withoutFlag: typeof fetch = async () =>
+    new Response(JSON.stringify(base), { status: 200 });
+  const rejected = await fetchEvaluations(
+    { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" },
+    { fetchImpl: withoutFlag }
+  );
+  assert.equal(rejected.kind, "invalid-response");
+  if (rejected.kind === "invalid-response") {
+    assert.equal(rejected.code, "autodev_control_api_invalid_catalog_response");
+    assert.match(rejected.message, /autodev-control-evaluations-v1/);
+  }
+
+  const withFlag: typeof fetch = async () =>
+    new Response(JSON.stringify({ ...base, truncated: true }), {
+      status: 200
+    });
+  const accepted = await fetchEvaluations(
+    { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" },
+    { fetchImpl: withFlag }
+  );
+  assert.equal(accepted.kind, "ok");
+  if (accepted.kind === "ok") {
+    assert.equal(accepted.data.totalEvaluations, 5000);
+    assert.equal(accepted.data.truncated, true);
+  }
 });
 
 test("an evaluation with no metrics reads as unobserved, not as an empty cell", () => {
@@ -5072,6 +5175,7 @@ test("fetchEvaluations issues authenticated GET to /control/evaluations", async 
       source: "openlit_evaluation",
       readOnly: true,
       totalEvaluations: 1,
+      truncated: false,
       evaluations: [
         {
           id: "eval-1",
@@ -7552,6 +7656,7 @@ test("Catalog collections fail closed on unreadable responses", async () => {
     source: "evaluations",
     readOnly: true,
     totalEvaluations: 0,
+    truncated: false,
     evaluations: []
   };
   assert.equal((await fetchEvaluations(config, serve(evaluations))).kind, "ok");
@@ -11830,6 +11935,7 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     source: "clickhouse",
     readOnly: true,
     totalEvaluations: 1,
+    truncated: false,
     evaluations
   });
   const evaluationsAccept = await fetchEvaluations(

@@ -203,19 +203,105 @@ test("EvaluationRepository.listEvaluations returns parsed rows with custom fetch
   });
 
   const mockFetch: typeof fetch = async (input) => {
-    assert.match(
-      decodeURIComponent(String(input)),
-      /FROM openlit\.openlit_evaluation/
-    );
+    const query = decodeURIComponent(String(input));
+    // The read issues two statements against one table: the rows, and the count
+    // of everything the table holds. Answering both is what lets a caller tell a
+    // bounded window from the whole history.
+    if (/COUNT\(\*\)/u.test(query)) {
+      return new Response(JSON.stringify({ total: "1" }), { status: 200 });
+    }
+    assert.match(query, /FROM openlit\.openlit_evaluation/);
     return new Response(sampleRow, { status: 200 });
   };
 
   const repo = new EvaluationRepository({ fetchImpl: mockFetch });
-  const list = await repo.listEvaluations(50);
-  assert.equal(list.length, 1);
-  assert.equal(list[0]?.id, "uuid-123");
-  assert.equal(list[0]?.agentRole, "docs-researcher");
-  assert.equal(list[0]?.model, "unknown");
+  const page = await repo.listEvaluations(50);
+  assert.equal(page.results.length, 1);
+  assert.equal(page.total, 1);
+  assert.equal(page.results[0]?.id, "uuid-123");
+  assert.equal(page.results[0]?.agentRole, "docs-researcher");
+  assert.equal(page.results[0]?.model, "unknown");
+});
+
+test("EvaluationRepository reports the table's own size, not the size of the window", async () => {
+  // The read is capped. A page that reported `results.length` as the total would
+  // tell a caller the table holds 2 evaluations when it holds 5,000, and the
+  // consumer of that number has no way to recover the difference.
+  const rows = [
+    JSON.stringify({
+      id: "uuid-1",
+      created_at: "2026-10-04 10:00:00",
+      meta: { agent: "worker" }
+    }),
+    JSON.stringify({
+      id: "uuid-2",
+      created_at: "2026-10-04 09:00:00",
+      meta: { agent: "worker" }
+    })
+  ].join("\n");
+
+  const mockFetch: typeof fetch = async (input) => {
+    const query = decodeURIComponent(String(input));
+    if (/COUNT\(\*\)/u.test(query)) {
+      return new Response(JSON.stringify({ total: "5000" }), { status: 200 });
+    }
+    return new Response(rows, { status: 200 });
+  };
+
+  const repo = new EvaluationRepository({ fetchImpl: mockFetch });
+  const page = await repo.listEvaluations(2);
+  assert.equal(page.results.length, 2);
+  assert.equal(page.total, 5000);
+});
+
+test("EvaluationRepository fails the read rather than reporting an unreadable count as zero", async () => {
+  // Zero is a claim -- "this table holds no evaluations" -- and a count that
+  // cannot be parsed is no such claim. Defaulting would turn a broken count into
+  // a page asserting an empty store while rows sit right above it.
+  for (const body of [
+    "",
+    "not json",
+    JSON.stringify({ total: "many" }),
+    JSON.stringify({ rows: "1" })
+  ]) {
+    const mockFetch: typeof fetch = async (input) => {
+      const query = decodeURIComponent(String(input));
+      if (/COUNT\(\*\)/u.test(query)) {
+        return new Response(body, { status: 200 });
+      }
+      return new Response("", { status: 200 });
+    };
+    const repo = new EvaluationRepository({ fetchImpl: mockFetch });
+    await assert.rejects(
+      repo.listEvaluations(),
+      EvaluationSourceUnavailableError,
+      `count body ${JSON.stringify(body)} must not read as a total`
+    );
+  }
+});
+
+test("EvaluationRepository never reports a total below the rows it returned", async () => {
+  // The two statements are separate reads of one table, so a write between them
+  // can make the count smaller than the rows already in hand. The rows are the
+  // smaller, truthful number to report.
+  const rows = JSON.stringify({
+    id: "uuid-1",
+    created_at: "2026-10-04 10:00:00",
+    meta: { agent: "worker" }
+  });
+
+  const mockFetch: typeof fetch = async (input) => {
+    const query = decodeURIComponent(String(input));
+    if (/COUNT\(\*\)/u.test(query)) {
+      return new Response(JSON.stringify({ total: "0" }), { status: 200 });
+    }
+    return new Response(rows, { status: 200 });
+  };
+
+  const repo = new EvaluationRepository({ fetchImpl: mockFetch });
+  const page = await repo.listEvaluations();
+  assert.equal(page.results.length, 1);
+  assert.equal(page.total, 1);
 });
 
 test("EvaluationRepository reports fetch failure and non-ok response as unavailable", async () => {

@@ -138,6 +138,11 @@ export default async function EvaluationsPage({
     React.createElement(EvaluationsView, {
       evaluations,
       availableCount: available.length,
+      // The store's own size, not the size of the window this read returned.
+      // The filter summary states a narrowing against it, and a window that
+      // reported itself as the whole history would make that summary wrong.
+      totalCount: result.data.totalEvaluations,
+      truncated: result.data.truncated,
       filters,
       filterOptions: filterOptionsFor(available),
       tab,

@@ -616,7 +616,23 @@ export interface ControlApiEvaluationsResponse {
   readonly schema: "autodev-control-evaluations-v1";
   readonly source: string;
   readonly readOnly: boolean;
+  /**
+   * Every evaluation row the source holds.
+   *
+   * This is not `evaluations.length`. The read is capped, so the array is the
+   * most recent N results while this is how many exist -- and a consumer that
+   * derived a total from the array would report the cap as the size of the
+   * store.
+   */
   readonly totalEvaluations: number;
+  /**
+   * Whether `evaluations` is a bounded window rather than the whole table.
+   *
+   * Required rather than inferred. A consumer can compare `totalEvaluations`
+   * against `evaluations.length` itself, and every such comparison is a place to
+   * forget it and render a capped window as the complete history.
+   */
+  readonly truncated: boolean;
   readonly evaluations: readonly EvaluationResult[];
 }
 

@@ -88,6 +88,17 @@ export interface EvaluationsViewProps {
   readonly evaluations: readonly EvaluationResult[];
   /** Rows in the fetched window before filtering, for the filter bar's count. */
   readonly availableCount?: number | undefined;
+  /**
+   * Every result the source holds, which is more than `availableCount` whenever
+   * the read was capped.
+   *
+   * The page states this rather than letting the window describe itself: a
+   * filter summary that counts a capped window as the whole history tells an
+   * operator a filtered set is everything that exists.
+   */
+  readonly totalCount?: number | undefined;
+  /** Whether the read returned a bounded window rather than the whole table. */
+  readonly truncated?: boolean | undefined;
   readonly filters: EvaluationsFilters;
   readonly filterOptions: EvaluationsFilterOptions;
   /** Which section is showing. Defaults to the run history. */
@@ -813,9 +824,44 @@ function filterSelect(
   });
 }
 
+/**
+ * What the filter bar says about how much of the history is on screen.
+ *
+ * The read is capped, so three numbers can differ: how many rows are shown, how
+ * many the window held, and how many the source has. The previous wording --
+ * "N retained results" -- used the window and said nothing about the rest, which
+ * made a capped read describe itself as the complete history. The cap is now
+ * stated, and a filter applied on top of a capped window says so, because
+ * "12 of 100" reads as "12 of everything" when 5,000 exist.
+ */
+function resultSummary(counts: {
+  readonly shown: number;
+  readonly window: number;
+  readonly total: number;
+  readonly narrowed: boolean;
+  readonly truncated: boolean;
+}): string {
+  const { shown, window, total, narrowed, truncated } = counts;
+  if (!truncated) {
+    return narrowed
+      ? `${shown} of ${total} retained results`
+      : `${total} retained results`;
+  }
+  // Narrowing must not drop the size of the store. "3 of 6 in the most recent 6"
+  // reads as "3 of everything" to anyone who did not already have the
+  // unfiltered line open beside it, which is exactly the moment the number
+  // matters -- the filter matched a handful of rows and the operator is deciding
+  // whether that is a small problem or a window too small to see the problem.
+  return narrowed
+    ? `${shown} of the most recent ${window} · ${total} retained`
+    : `Most recent ${window} of ${total} retained results`;
+}
+
 export function EvaluationsView({
   evaluations,
   availableCount = evaluations.length,
+  totalCount,
+  truncated = false,
   filters,
   filterOptions,
   tab = "results",
@@ -943,7 +989,8 @@ export function EvaluationsView({
       attributes: {
         "data-evaluation-pass-rate-observed":
           observedOutcomes > 0 ? "true" : "false",
-        "data-evaluations-filtered": narrowed ? "true" : "false"
+        "data-evaluations-filtered": narrowed ? "true" : "false",
+        "data-evaluations-truncated": truncated ? "true" : "false"
       }
     },
     React.createElement(
@@ -952,9 +999,13 @@ export function EvaluationsView({
         label: "Evaluation filters",
         action: "/evaluations",
         submitTestId: "evaluations-apply",
-        summary: narrowed
-          ? `${evaluations.length} of ${availableCount} retained results`
-          : `${availableCount} retained results`
+        summary: resultSummary({
+          shown: evaluations.length,
+          window: availableCount,
+          total: totalCount ?? availableCount,
+          narrowed,
+          truncated
+        })
       },
       filterSelect(
         "outcome",
