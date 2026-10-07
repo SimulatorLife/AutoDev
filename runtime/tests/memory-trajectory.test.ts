@@ -122,6 +122,34 @@ test("native trajectory normalization refuses unbounded transcript payloads", ()
   );
 });
 
+test("native trajectory normalization refuses a summary with no way back to the raw transcript", () => {
+  // The trajectory URI is the only handle from a stored experience to the raw
+  // transcript it was derived from. Without one, the derived metadata survives
+  // and the trajectory does not -- silently, because nothing in the summary
+  // says where to look. §12 requires the raw trajectory to survive
+  // independently of the summary, so an empty or whitespace-only URI is not a
+  // degraded capture, it is a capture that quietly lost its subject.
+  const transcript = [
+    {
+      type: "user",
+      uuid: "user-record",
+      sessionId: "session-a",
+      cwd: "/workspace/repo",
+      message: { role: "user", content: "a task nobody can get back to" }
+    }
+  ]
+    .map((record) => JSON.stringify(record))
+    .join("\n");
+
+  for (const uri of ["", "   "]) {
+    assert.throws(
+      () => normalizeNativeTrajectory({ source: "codex", transcript, uri }),
+      TypeError,
+      `uri ${JSON.stringify(uri)} must be refused, not normalized into a summary`
+    );
+  }
+});
+
 test("Letta normalization accepts each enabled native harness source", () => {
   const transcripts: Readonly<Record<NativeTrajectorySource, string>> = {
     codex: [
