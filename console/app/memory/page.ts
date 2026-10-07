@@ -729,6 +729,12 @@ export default async function MemoryPage(
           ? data.selectedRecord.data.memory
           : null,
       selectedHistory: data.history?.kind === "ok" ? data.history.data : null,
+      // Read above, and worth saying why it reaches the drawer: without it the
+      // Runtime's eligibility-bounded explanation was fetched on every drawer
+      // open and then dropped, so the provenance panel never said which cited
+      // experiences this reader could resolve. `null` is a read that did not
+      // succeed, which the panel renders as silence rather than as a claim.
+      selectedWhy: data.why?.kind === "ok" ? data.why.data : null,
       selectedExperience:
         data.selectedExperience?.kind === "ok"
           ? data.selectedExperience.data.experience
