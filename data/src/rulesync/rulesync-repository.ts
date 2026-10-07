@@ -32,7 +32,7 @@ import type {
   RuleSyncMcpState,
   SkillDefinition
 } from "@simulatorlife/autodev-core";
-import { parse, type ParseError } from "jsonc-parser";
+import { parse, type ParseError,printParseErrorCode } from "jsonc-parser";
 import { parse as parseYaml } from "yaml";
 
 const DEFAULT_REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
@@ -84,9 +84,31 @@ async function withCommandUpdateLock<T>(
   }
 }
 
+/**
+ * One reason a canonical source cannot be applied.
+ *
+ * `location` names the part of the document at fault in the same terms the
+ * operator is looking at -- an event name, an action index, or a source line --
+ * and `message` says what is wrong with it. Neither is a diagnosis of the fix;
+ * both are the fact the loader observed and would otherwise have discarded.
+ */
+export interface RuleSyncValidationIssue {
+  readonly location: string;
+  readonly message: string;
+}
+
 export interface RuleSyncHooksState {
   readonly source: ".rulesync/hooks.jsonc";
   readonly valid: boolean | null;
+  /**
+   * Why the source is invalid, empty when it is valid or was not observed.
+   *
+   * Required rather than optional so that a caller cannot read `valid: false`
+   * and conclude there is nothing more to say. The loader knows which event
+   * failed and what the parser objected to; reporting only the boolean made an
+   * operator hunt through the file for a fault the system had already located.
+   */
+  readonly issues: readonly RuleSyncValidationIssue[];
   readonly hooks: readonly HookDefinition[];
 }
 
@@ -439,31 +461,148 @@ function isHookEvent(value: string): value is HookEvent {
   return HOOK_EVENTS.has(value);
 }
 
+/** One action, or `null` when it cannot be applied. The single rule set. */
+function parseHookAction(value: unknown): HookAction | null {
+  if (
+    !isRecord(value) ||
+    value.type !== "command" ||
+    typeof value.command !== "string" ||
+    value.command.trim().length === 0 ||
+    (value.matcher !== undefined && typeof value.matcher !== "string") ||
+    (value.statusMessage !== undefined &&
+      typeof value.statusMessage !== "string")
+  ) {
+    return null;
+  }
+  return {
+    type: "command",
+    command: value.command,
+    ...(typeof value.matcher === "string" ? { matcher: value.matcher } : {}),
+    ...(typeof value.statusMessage === "string"
+      ? { statusMessage: value.statusMessage }
+      : {})
+  };
+}
+
 function parseHookActions(value: unknown): HookAction[] | null {
   if (!Array.isArray(value)) return null;
   const actions: HookAction[] = [];
   for (const entry of value) {
-    if (
-      !isRecord(entry) ||
-      entry.type !== "command" ||
-      typeof entry.command !== "string" ||
-      entry.command.trim().length === 0 ||
-      (entry.matcher !== undefined && typeof entry.matcher !== "string") ||
-      (entry.statusMessage !== undefined &&
-        typeof entry.statusMessage !== "string")
-    ) {
-      return null;
-    }
-    actions.push({
-      type: "command",
-      command: entry.command,
-      ...(typeof entry.matcher === "string" ? { matcher: entry.matcher } : {}),
-      ...(typeof entry.statusMessage === "string"
-        ? { statusMessage: entry.statusMessage }
-        : {})
-    });
+    const action = parseHookAction(entry);
+    if (action === null) return null;
+    actions.push(action);
   }
   return actions;
+}
+
+/**
+ * The first action that cannot be applied, or `null` when every one can.
+ *
+ * The index is carried rather than swallowed because "an action under
+ * SessionStart is malformed" and "action 2 under SessionStart is malformed"
+ * send an operator to different lines of the same file, and only this loader
+ * knows which. Shares `parseHookAction` with the applying path so the diagnosis
+ * and the decision cannot drift apart.
+ */
+function firstInvalidHookActionIndex(value: unknown): number | null {
+  if (!Array.isArray(value)) return null;
+  for (const [index, entry] of value.entries()) {
+    if (parseHookAction(entry) === null) return index;
+  }
+  return null;
+}
+
+/**
+ * A human sentence for one parse error.
+ *
+ * The code name comes from the parser's own `printParseErrorCode` rather than a
+ * local switch, so an error code this build of `jsonc-parser` adds later is
+ * described by name instead of falling through to a generic sentence that would
+ * make two different faults look identical.
+ *
+ * `offset` is a character offset, not a line. Counting the newlines before it is
+ * what makes the message actionable: an operator editing `hooks.jsonc` needs the
+ * line, not a byte count they would have to convert themselves.
+ */
+function hookParseIssue(
+  content: string,
+  error: ParseError
+): RuleSyncValidationIssue {
+  const before = content.slice(0, Math.max(0, error.offset));
+  const line = before.split("\n").length;
+  const codeName = printParseErrorCode(error.error);
+  const words = codeName.replaceAll(/([a-z\d])([A-Z])/gu, "$1 $2").toLowerCase();
+  return {
+    location: `line ${line}`,
+    message: `${sentenceCase(words)}.`
+  };
+}
+
+function sentenceCase(value: string): string {
+  return value.length === 0
+    ? value
+    : `${value[0]!.toUpperCase()}${value.slice(1)}`;
+}
+
+/**
+ * Turn what the parser and the event checks observed into operator-facing issues.
+ *
+ * Everything here was already known when the loader decided the source was
+ * invalid; returning it is the whole point. `issues` is empty only when the
+ * source is valid or was never found, so a caller that receives `valid: false`
+ * always receives a reason too.
+ */
+function hookValidationIssues(
+  source: string,
+  content: string,
+  errors: readonly ParseError[],
+  document: unknown
+): RuleSyncValidationIssue[] {
+  if (errors.length > 0) {
+    return errors.map((error) => hookParseIssue(content, error));
+  }
+  if (!isRecord(document)) {
+    return [
+      { location: source, message: "The hook source must be a JSON object." }
+    ];
+  }
+  const hooksValue = document.hooks;
+  if (!isRecord(hooksValue)) {
+    return [
+      {
+        location: "hooks",
+        message: 'The hook source must have a "hooks" object.'
+      }
+    ];
+  }
+  const issues: RuleSyncValidationIssue[] = [];
+  for (const [event, value] of Object.entries(hooksValue)) {
+    if (!isHookEvent(event)) {
+      issues.push({
+        location: event,
+        message: `"${event}" is not a known hook event.`
+      });
+      continue;
+    }
+    // `firstInvalidHookActionIndex` answers "which action is bad", so it
+    // answers `null` for a value that is not a list at all -- which is a
+    // different fault and must be named here rather than passing as a clean
+    // event with no actions.
+    if (!Array.isArray(value)) {
+      issues.push({
+        location: event,
+        message: `The actions for "${event}" must be an array.`
+      });
+      continue;
+    }
+    const invalidIndex = firstInvalidHookActionIndex(value);
+    if (invalidIndex === null) continue;
+    issues.push({
+      location: `${event} action ${invalidIndex + 1}`,
+      message: `Action ${invalidIndex + 1} of "${event}" is not a command hook with a non-empty command string.`
+    });
+  }
+  return issues;
 }
 
 function hasControlCharacters(value: string): boolean {
@@ -897,31 +1036,44 @@ export class RuleSyncRepository {
       "hooks.jsonc"
     );
     const source = ".rulesync/hooks.jsonc" as const;
-    if (!existsSync(hooksPath)) return { source, valid: null, hooks: [] };
+    if (!existsSync(hooksPath))
+      return { source, valid: null, issues: [], hooks: [] };
 
     let content: string;
     try {
       content = readFileSync(hooksPath, "utf8");
     } catch {
-      return { source, valid: null, hooks: [] };
+      // Unreadable is not invalid. The file is there and the system has not
+      // read it, so nothing about its contents may be claimed.
+      return { source, valid: null, issues: [], hooks: [] };
     }
 
     const errors: ParseError[] = [];
     const document: unknown = parse(content, errors, {
       allowTrailingComma: true
     });
-    if (errors.length > 0 || !isRecord(document) || !isRecord(document.hooks)) {
-      return { source, valid: false, hooks: [] };
+
+    const issues = hookValidationIssues(source, content, errors, document);
+    if (issues.length > 0) {
+      // No hooks are returned: the first issue is why the rest of the document
+      // was never examined, and a partial list would read as the whole file.
+      return { source, valid: false, issues, hooks: [] };
     }
 
+    // No issues means the document parsed, is an object, has a `hooks` object,
+    // and every event and action in it applied. The empty-object fallback is
+    // unreachable for that reason alone; it exists so the narrowing is done by
+    // the type system rather than by a cast.
+    const hooksDocument =
+      isRecord(document) && isRecord(document.hooks) ? document.hooks : {};
     const hooks: HookDefinition[] = [];
-    for (const [event, value] of Object.entries(document.hooks)) {
-      if (!isHookEvent(event)) return { source, valid: false, hooks: [] };
+    for (const [event, value] of Object.entries(hooksDocument)) {
+      if (!isHookEvent(event)) continue;
       const actions = parseHookActions(value);
-      if (!actions) return { source, valid: false, hooks: [] };
+      if (actions === null) continue;
       hooks.push({ event, actions });
     }
-    return { source, valid: true, hooks };
+    return { source, valid: true, issues: [], hooks };
   }
 
   loadMcpState(): RuleSyncMcpState {

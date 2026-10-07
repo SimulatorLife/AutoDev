@@ -1459,6 +1459,7 @@ function hooksView(
     source: state.source,
     readOnly: true,
     valid: state.valid,
+    issues: state.issues,
     hooks
   };
 }

@@ -1405,6 +1405,17 @@ function isControlApiHooksResponse(
     typeof value.source === "string" &&
     typeof value.readOnly === "boolean" &&
     (value.valid === null || typeof value.valid === "boolean") &&
+    // Required, not optional. `valid: false` with no issues renders as "the
+    // source is invalid" and nothing else, which is the state this field exists
+    // to end: the Runtime has already located the fault and thrown the location
+    // and the reason away.
+    Array.isArray(value.issues) &&
+    value.issues.every(
+      (issue) =>
+        isRecord(issue) &&
+        typeof issue.location === "string" &&
+        typeof issue.message === "string"
+    ) &&
     isRecord(value.hooks)
   );
 }

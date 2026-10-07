@@ -639,7 +639,13 @@ test("RuleSync hook state distinguishes absent, valid JSONC, and invalid source"
   const sourcePath = path.join(repositoryRoot, ".rulesync", "hooks.jsonc");
   const repo = new RuleSyncRepository(repositoryRoot);
   try {
-    assert.equal(repo.loadHooksState().valid, null);
+    const absent = repo.loadHooksState();
+    assert.equal(absent.valid, null);
+    assert.deepEqual(
+      absent.issues,
+      [],
+      "an unobserved source has no faults to report and must not invent any"
+    );
 
     await mkdir(path.dirname(sourcePath), { recursive: true });
     await writeFile(
@@ -657,16 +663,98 @@ test("RuleSync hook state distinguishes absent, valid JSONC, and invalid source"
     );
     const valid = repo.loadHooksState();
     assert.equal(valid.valid, true);
+    assert.deepEqual(valid.issues, []);
     assert.equal(valid.hooks[0]?.actions[0]?.command, "node hook.ts");
 
+    // Every one of these faults was located by the loader before it answered
+    // `valid: false`. Reporting only the flag left the operator to re-find a
+    // position the system had already computed.
     await writeFile(
       sourcePath,
       `{"hooks":{"sessionStart":[{"type":"command"}]}}`,
       "utf8"
     );
-    const invalid = repo.loadHooksState();
-    assert.equal(invalid.valid, false);
-    assert.deepEqual(invalid.hooks, []);
+    const missingCommand = repo.loadHooksState();
+    assert.equal(missingCommand.valid, false);
+    assert.deepEqual(missingCommand.hooks, []);
+    assert.deepEqual(missingCommand.issues, [
+      {
+        location: "sessionStart action 1",
+        message:
+          'Action 1 of "sessionStart" is not a command hook with a non-empty command string.'
+      }
+    ]);
+
+    // The index is the point: the first action is fine, the second is not, and
+    // both faults would otherwise be reported as "an action under sessionStart".
+    await writeFile(
+      sourcePath,
+      `{"hooks":{"sessionStart":[{"type":"command","command":"ok"},{"type":"command","command":"   "}]}}`,
+      "utf8"
+    );
+    const secondAction = repo.loadHooksState();
+    assert.deepEqual(secondAction.issues, [
+      {
+        location: "sessionStart action 2",
+        message:
+          'Action 2 of "sessionStart" is not a command hook with a non-empty command string.'
+      }
+    ]);
+
+    await writeFile(
+      sourcePath,
+      `{"hooks":{"SessionStartt":[]}}`,
+      "utf8"
+    );
+    const unknownEvent = repo.loadHooksState();
+    assert.deepEqual(unknownEvent.issues, [
+      {
+        location: "SessionStartt",
+        message: '"SessionStartt" is not a known hook event.'
+      }
+    ]);
+
+    await writeFile(sourcePath, `{"hooks":{"sessionStart":"nope"}}`, "utf8");
+    const actionsNotAnArray = repo.loadHooksState();
+    assert.equal(actionsNotAnArray.valid, false);
+    assert.deepEqual(actionsNotAnArray.issues, [
+      {
+        location: "sessionStart",
+        message: 'The actions for "sessionStart" must be an array.'
+      }
+    ]);
+
+    await writeFile(sourcePath, `{"other":true}`, "utf8");
+    assert.deepEqual(repo.loadHooksState().issues, [
+      {
+        location: "hooks",
+        message: 'The hook source must have a "hooks" object.'
+      }
+    ]);
+
+    await writeFile(sourcePath, `[1,2,3]`, "utf8");
+    assert.deepEqual(repo.loadHooksState().issues, [
+      {
+        location: ".rulesync/hooks.jsonc",
+        message: "The hook source must be a JSON object."
+      }
+    ]);
+
+    // A syntax fault reports a line an operator can navigate to, not a character
+    // offset they would have to convert themselves.
+    await writeFile(sourcePath, `{\n  "hooks": {\n    "sessionStart": [,]\n  }\n}`, "utf8");
+    const syntax = repo.loadHooksState();
+    assert.equal(syntax.valid, false);
+    assert.ok(syntax.issues.length > 0, "a syntax fault must say something");
+    assert.match(
+      syntax.issues[0]?.location ?? "",
+      /^line \d+$/u,
+      `expected a line number, got ${JSON.stringify(syntax.issues[0]?.location)}`
+    );
+    assert.ok(
+      (syntax.issues[0]?.message.length ?? 0) > 0,
+      "a reported line with no explanation is not actionable"
+    );
 
     await writeFile(sourcePath, "{", "utf8");
     assert.equal(repo.loadHooksState().valid, false);

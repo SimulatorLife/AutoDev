@@ -46,7 +46,10 @@ export default async function HooksPage(): Promise<React.JSX.Element> {
     { section, counts: { Hooks: hooks.length } },
     React.createElement(HooksView, {
       hooks,
-      sourceValidity: result.data.valid
+      sourceValidity: result.data.valid,
+      // Carried straight through: the page renders what the Runtime located in
+      // the canonical source rather than re-deriving a reason from the flag.
+      validationIssues: result.data.issues
     })
   );
 }

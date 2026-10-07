@@ -5221,31 +5221,61 @@ test("HooksView only renders hooks with valid action command lists", () => {
     source: "test",
     readOnly: true,
     valid: true,
+    issues: [],
     hooks: {
       sessionStart: [{ command: "echo hi", matcher: ".*" }]
     }
   });
   const markup = renderToStaticMarkup(
-    React.createElement(HooksView, { hooks, sourceValidity: true })
+    React.createElement(HooksView, {
+      hooks,
+      sourceValidity: true,
+      validationIssues: []
+    })
   );
   assert.match(markup, /echo hi/);
   assert.match(markup, /Source validation/);
+  assert.doesNotMatch(
+    markup,
+    /data-hook-issue-count/,
+    "a valid source has no faults, and a panel saying so would add nothing"
+  );
 });
 
 test("HooksView reports source validity as unknown when no validation is available", () => {
   const markup = renderToStaticMarkup(
-    React.createElement(HooksView, { hooks: [] })
+    React.createElement(HooksView, { hooks: [], validationIssues: [] })
   );
   assert.match(markup, /data-hook-state="not-observed"/);
   assert.equal(markup.includes(">Valid<"), false);
 });
 
-test("HooksView distinguishes an invalid source from an absent one", () => {
+test("HooksView names the fault the Runtime located instead of only calling the source invalid", () => {
   const markup = renderToStaticMarkup(
-    React.createElement(HooksView, { hooks: [], sourceValidity: false })
+    React.createElement(HooksView, {
+      hooks: [],
+      sourceValidity: false,
+      validationIssues: [
+        {
+          location: "SessionStart action 2",
+          message:
+            'Action 2 of "SessionStart" is not a command hook with a non-empty command string.'
+        },
+        {
+          location: "PreCompact",
+          message: '"PreCompact" is not a known hook event.'
+        }
+      ]
+    })
   );
-  assert.match(markup, /data-hook-state="invalid"/);
-  assert.match(markup, /Hook source is invalid/);
+  assert.match(markup, /data-hook-issue-count="2"/);
+  assert.match(markup, /data-hook-issue="SessionStart action 2"/u);
+  assert.match(markup, /is not a command hook with a non-empty command string/u);
+  assert.match(markup, /data-hook-issue="PreCompact"/u);
+  assert.match(markup, /is not a known hook event/u);
+  // The count is in the empty-state line too, so an operator reading only the
+  // hook list still learns there were two faults and not one.
+  assert.match(markup, /2 problems found/);
 });
 
 test("an empty list names its resource instead of inheriting a generic sentence", () => {
@@ -6979,11 +7009,30 @@ test("Catalog collections fail closed on unreadable responses", async () => {
     source: ".rulesync/hooks.jsonc",
     readOnly: true,
     valid: null,
+    issues: [],
     hooks: { pre_tool_use: [] }
   };
   assert.equal((await fetchHooks(config, serve(hooks))).kind, "ok");
   assert.equal(
     (await fetchHooks(config, serve({ ...hooks, hooks: [] }))).kind,
+    "invalid-response"
+  );
+  // A response that reports the source invalid but carries no reasons at all is
+  // the shape this field exists to end, so it fails closed with the rest.
+  const { issues: _absentIssues, ...hooksWithoutIssues } = hooks;
+  assert.equal(
+    (
+      await fetchHooks(config, serve({ ...hooksWithoutIssues, valid: false }))
+    ).kind,
+    "invalid-response"
+  );
+  assert.equal(
+    (
+      await fetchHooks(
+        config,
+        serve({ ...hooks, issues: [{ location: "line 3" }] })
+      )
+    ).kind,
     "invalid-response"
   );
 

@@ -346,11 +346,31 @@ export interface ControlApiSkillRolesPatchResponse {
   readonly revision: string;
 }
 
+/**
+ * One reason a canonical source could not be applied.
+ *
+ * `location` names the part at fault in the terms the operator is looking at --
+ * an event name, an action index, or a source line -- and `message` says what is
+ * wrong with it.
+ */
+export interface ControlApiValidationIssue {
+  readonly location: string;
+  readonly message: string;
+}
+
 export interface ControlApiHooksResponse {
   readonly schema: "autodev-control-hooks-v1";
   readonly source: string;
   readonly readOnly: boolean;
   readonly valid: boolean | null;
+  /**
+   * Why the source is invalid; empty when it is valid or was not observed.
+   *
+   * Required rather than optional so `valid: false` can never arrive alone. A
+   * loader that has already located the fault and reports only the boolean
+   * leaves the operator to re-find what the system read in a single pass.
+   */
+  readonly issues: readonly ControlApiValidationIssue[];
   readonly hooks: Readonly<Record<string, unknown>>;
 }
 
