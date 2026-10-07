@@ -5967,3 +5967,148 @@ test("a use report bounds the memory ids and evidence it carries", async () => {
     /subset of the injected memoryIds/u
   );
 });
+
+/**
+ * How much of the research the packet dropped, and how much of it it kept.
+ *
+ * `boundPacket` walks reconstructed entries in rank order and stops adding once
+ * the rendered text would exceed `maxPacketCharacters`. Everything it skips is
+ * counted, and that count is the only thing an operator has when a memory they
+ * expect to see never reaches the model — a silent omission reads exactly like a
+ * memory the curator had already superseded.
+ *
+ * The count was emitted (`memory.packet.omitted`) but nothing held it: the
+ * attribute set had no test, so "omitted is counted" and "omitted is reported"
+ * were the same unverified claim. The count is what these tests read, together
+ * with the per-candidate `packet_included`/`packet_omitted` metric stages that
+ * say *which* memories were dropped rather than only how many.
+ *
+ * The span is read through the `tracer` the service already accepts, so this is
+ * the service's own instrumentation and not a test-only path.
+ */
+function recordingTracer(attributes: Map<string, unknown>): Tracer {
+  return {
+    startActiveSpan(name: string, callback: (span: never) => Promise<unknown>) {
+      return callback({
+        setAttribute: (key: string, value: unknown) => {
+          // Every span's attributes land in one map: these tests read the packet
+          // span's, and the research span's, without caring which wrote a key.
+          attributes.set(key, value);
+          void name;
+        },
+        setStatus: () => undefined,
+        end: () => undefined
+      } as never);
+    }
+  } as unknown as Tracer;
+}
+
+/** A memory whose reconstruction is long enough to overflow a small packet. */
+function bulkyRecord(id: string): MemoryRecord {
+  return record(id, { claim: `${id}: a claim long enough to occupy real space in the packet body.` });
+}
+
+test("a packet that had to drop entries reports how many it dropped", async () => {
+  // Four eligible memories, a bound that fits roughly one. `boundPacket` walks in
+  // rank order and keeps what fits, so the omissions are a suffix of the ranking
+  // rather than an arbitrary subset — that ordering is the property the count is
+  // only meaningful alongside.
+  const repository = new FakeMemoryRepository();
+  const ids = ["mem-1", "mem-2", "mem-3", "mem-4"];
+  repository.hits = ids.map((id) => ({
+    memory: bulkyRecord(id),
+    score: 1,
+    matchedSignals: ["lexical"]
+  }));
+  const attributes = new Map<string, unknown>();
+  const service = makeService(repository, {
+    tracer: recordingTracer(attributes),
+    reconstruct: () => ({
+      disposition: "retain",
+      guidance: "x".repeat(400),
+      rationale: "The cited source is unchanged."
+    })
+  });
+
+  const packet = await service.research(researchRequest({ maxPacketCharacters: 600 }));
+
+  assert.ok(
+    packet.entries.length < ids.length,
+    `the fixture must overflow the bound; ${packet.entries.length} of ${ids.length} fit`
+  );
+  assert.equal(
+    attributes.get("memory.packet.entries"),
+    packet.entries.length,
+    "the span reported a different entry count than the packet contains"
+  );
+  assert.equal(
+    attributes.get("memory.packet.omitted"),
+    ids.length - packet.entries.length,
+    "the span did not report how many entries were dropped"
+  );
+  assert.equal(
+    attributes.get("memory.packet.characters"),
+    packet.characterCount
+  );
+});
+
+test("a packet that dropped nothing reports zero, not an absent attribute", async () => {
+  // The other edge, and the one a `if (omitted > 0)` guard would break. A missing
+  // attribute and a zero mean the same thing to a reader and completely different
+  // things to a dashboard: one is a gap in the data, the other is a healthy
+  // packet.
+  const repository = new FakeMemoryRepository();
+  repository.hits = [
+    { memory: bulkyRecord("mem-1"), score: 1, matchedSignals: ["lexical"] }
+  ];
+  const attributes = new Map<string, unknown>();
+  const service = makeService(repository, {
+    tracer: recordingTracer(attributes)
+  });
+
+  const packet = await service.research(researchRequest());
+
+  assert.equal(packet.entries.length, 1, "the fixture did not fit; nothing to test");
+  assert.equal(
+    attributes.get("memory.packet.omitted"),
+    0,
+    "an untruncated packet did not report zero omissions"
+  );
+});
+
+test("the omissions are the entries that did not fit, not an arbitrary subset", async () => {
+  // The count alone is satisfied by any number, including a wrong one. This
+  // pins the membership: the kept entries are a prefix of the ranking, because
+  // `boundPacket` drops by `continue` and never reorders.
+  const repository = new FakeMemoryRepository();
+  const ids = ["mem-1", "mem-2", "mem-3", "mem-4"];
+  repository.hits = ids.map((id) => ({
+    memory: bulkyRecord(id),
+    score: 1,
+    matchedSignals: ["lexical"]
+  }));
+  const service = makeService(repository, {
+    reconstruct: () => ({
+      disposition: "retain",
+      guidance: "x".repeat(200),
+      rationale: "The cited source is unchanged."
+    })
+  });
+
+  const packet = await service.research(researchRequest({ maxPacketCharacters: 900 }));
+  const kept = packet.entries.map((entry) => entry.memoryId);
+
+  // At least two must fit, or the ordering claim below is vacuous: a prefix of
+  // length one is a prefix however the entries are added. This assertion is what
+  // stops the fixture from quietly degrading back to one entry.
+  assert.ok(
+    kept.length >= 2,
+    `the fixture must admit at least two entries to observe ordering; it admitted ${kept.length}`
+  );
+  assert.ok(kept.length < ids.length, "the fixture dropped nothing");
+  assert.deepEqual(
+    kept,
+    ids.slice(0, kept.length),
+    "the kept entries are not a prefix of the ranking"
+  );
+});
