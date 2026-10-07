@@ -4,8 +4,8 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { MemorySessionOutcome } from "../src/features/memory/MemorySessionOutcome.ts";
 import type { MemoryListScope } from "../src/features/memory/memory-list-url.ts";
+import { MemorySessionOutcome } from "../src/features/memory/MemorySessionOutcome.ts";
 
 /**
  * The session-outcome panel, which the Console had no version of at all.
@@ -144,7 +144,13 @@ test("the form offers exactly the Runtime's evidence and outcome vocabularies", 
   // select is Core's own list, because that is what the Runtime checks against.
   const markup = render(null);
 
-  for (const code of ["success", "partial", "failure", "cancelled", "unknown"]) {
+  for (const code of [
+    "success",
+    "partial",
+    "failure",
+    "cancelled",
+    "unknown"
+  ]) {
     assert.match(markup, new RegExp(`value="${code}"`, "u"), `missing ${code}`);
   }
   for (const code of ["task", "pull_request", "issue", "other"]) {
@@ -157,15 +163,63 @@ test("the form sends no field the Runtime does not read", () => {
   // field carried here would be refused outright, which is how the earlier
   // lifecycle actions became unreachable.
   const markup = render(null);
-  const names = [...markup.matchAll(/name="([^"]+)"/gu)].map((m) => m[1] ?? "");
+  const names = Array.from(
+    markup.matchAll(/name="([^"]+)"/gu),
+    (m) => m[1] ?? ""
+  );
 
   for (const carried of names) {
     assert.ok(
-      ["action", "experienceId", "workspaceId", "returned", "outcomeKind", "reportKind", "evidenceKind", "evidenceUri"].includes(carried),
+      [
+        "action",
+        "experienceId",
+        "workspaceId",
+        "returned",
+        "outcomeKind",
+        "reportKind",
+        "evidenceKind",
+        "evidenceUri"
+      ].includes(carried),
       `the form carries ${carried}, which the Runtime does not read`
     );
   }
   // No correlation token: the session outcome binds to the session, not to one
   // injected packet, so the injection's token is not one of its keys.
   assert.doesNotMatch(markup, /correlationToken|injectionEventId/u);
+});
+
+test("a vocabulary word this Console has no label for is shown verbatim", () => {
+  // The Runtime can add an outcome, a report kind, or an evidence kind after
+  // this Console is built. Every label lookup falls back to the wire word, and
+  // that fallback is the only thing standing between a report the Runtime
+  // legitimately sent and a panel that renders `undefined` beside a real
+  // outcome — which reads as a rendering bug rather than as a word we do not
+  // have a name for yet.
+  const markup = render({
+    ...REPORT,
+    outcomeKind: "partially_succeeded" as never,
+    reportKind: "incident_review" as never,
+    evidence: [{ kind: "video" as never, uri: "artifact://run/42" }]
+  });
+
+  assert.match(markup, /partially_succeeded/u, "the outcome word is shown");
+  assert.match(markup, /incident_review/u, "the report kind word is shown");
+  assert.match(markup, /video: /u, "the evidence kind word is shown");
+  assert.match(markup, /artifact:\/\/run\/42/u, "beside its uri");
+  assert.doesNotMatch(
+    markup,
+    /undefined/u,
+    "an unlabelled word must never render as undefined"
+  );
+});
+
+test("a labelled vocabulary word is not shown as its wire form", () => {
+  // The counterpart to the fallback above, so it cannot be satisfied by simply
+  // printing every code it is given: a word we do have a name for shows the name.
+  const markup = render(REPORT);
+
+  assert.doesNotMatch(markup, />success</u);
+  assert.doesNotMatch(markup, />task by/u);
+  assert.match(markup, /Trajectory/u);
+  assert.doesNotMatch(markup, /trajectory: /u);
 });
