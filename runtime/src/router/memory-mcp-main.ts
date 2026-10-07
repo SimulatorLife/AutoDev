@@ -32,5 +32,18 @@ async function start(): Promise<void> {
 
 const entryPoint = process.argv[1];
 if (entryPoint && import.meta.url === pathToFileURL(entryPoint).href) {
-  await start();
+  try {
+    await start();
+  } catch (error) {
+    // Reported the way the other two memory entry points report, and it matters
+    // more here than for them. An MCP host forwards this process's stderr to
+    // the model, so an uncaught rejection turned a one-line misconfiguration
+    // into twelve lines of Node stack trace — internal frames and source
+    // locations, in the agent's context, every time the server is launched
+    // without a database URL.
+    const message =
+      error instanceof Error ? error.message : "Memory MCP failed to start.";
+    process.stderr.write(`memory-mcp: ${message}\n`);
+    process.exitCode = 1;
+  }
 }
