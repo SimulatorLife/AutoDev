@@ -598,7 +598,15 @@ export function PromptDetailView({
         ),
         React.createElement(
           "div",
-          { className: "flex flex-col gap-1 text-xs" },
+          // `gap-3`, not `gap-1`. WCAG 2.5.8 asks for a 24px target, with an
+          // exception for undersized targets whose 24px circles do not intersect
+          // another target's. These two links are the cell's whole content and
+          // are both 16px tall, so the exception is the only thing standing
+          // between them and the floor -- and at `gap-1` their centres were
+          // 20px apart, which fails it. `gap-2` lands exactly on 24, where the
+          // circles merely touch and any line-height rounding turns a pass into
+          // a fail, so the row takes `gap-3` and clears it at 28px.
+          { className: "flex flex-col gap-3 text-xs" },
           React.createElement(
             "a",
             {
