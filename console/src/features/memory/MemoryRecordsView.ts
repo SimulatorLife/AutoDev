@@ -538,6 +538,22 @@ function ProvenanceSources({
   );
 }
 
+/**
+ * Could this list be hiding the record a supersession needs?
+ *
+ * The eligible priors are drawn from the records on screen, so a filter that
+ * keeps them out leaves the action unnameable. `status=proposed` is the trap:
+ * it is the obvious way to find something to review, and it excludes every
+ * active record that could have been superseded — which is exactly what the
+ * operator then cannot select.
+ */
+function isListFilteredForSupersession(scope: MemoryListScope): boolean {
+  return (
+    (scope.status !== undefined && scope.status !== "all") ||
+    (scope.query !== undefined && scope.query !== "")
+  );
+}
+
 interface RecordDetailPanelProps {
   readonly record: MemoryRecord;
   readonly history?: MemoryRecordHistory | null | undefined;
@@ -858,7 +874,14 @@ function RecordDetailPanel({
           ? React.createElement(
               "p",
               { className: `${MUTED_META_CLASS} w-full basis-full` },
-              "No active record of this kind and scope is visible here to supersede. Widen the list to include it."
+              // The candidates are the records on this list, so a filter that
+              // hides them hides the action — and the obvious way to find a
+              // proposal is to filter to `proposed`, which hides every active
+              // record there could have superseded. Saying which of the two it
+              // is turns a dead end into the next thing to press.
+              isListFilteredForSupersession(listScope)
+                ? "No active record is visible in this filtered list to supersede. Clear the filters to choose the record this one replaces."
+                : "No active record of this kind and scope is visible here to supersede."
             )
           : React.createElement(RecordActionForm, {
               record,

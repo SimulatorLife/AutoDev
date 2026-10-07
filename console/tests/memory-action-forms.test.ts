@@ -283,6 +283,38 @@ test("a proposal with no active record to supersede says so", async () => {
   assert.match(markup, /data-button="memory-verify"/);
 });
 
+test("a proposal says the filters are hiding the record it would supersede", async () => {
+  // The candidates are the records on this list, so filtering to `proposed` --
+  // the obvious way to find something to review -- excludes every active record
+  // that could have been superseded. Told only "no record visible", an operator
+  // concludes there is nothing to supersede, which is the opposite of the truth.
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryRecordsView, {
+      records: [record({ status: "proposed" })],
+      total: 1,
+      selectedRecord: record({ status: "proposed" }),
+      listScope: listScope({ status: "proposed" })
+    })
+  );
+
+  assert.match(
+    markup,
+    /Clear the filters to choose the record this one replaces/u,
+    "the drawer must name the filters as the reason, not imply there is nothing"
+  );
+  assert.ok(!markup.includes("data-button=\"memory-supersede\""));
+});
+
+test("an unfiltered list says plainly that no record is eligible", async () => {
+  const markup = render([record({ status: "proposed" })]);
+
+  assert.match(markup, /No active record of this kind and scope/u);
+  assert.ok(
+    !/Clear the filters/u.test(markup),
+    "there are no filters to clear here, so blaming them would be wrong"
+  );
+});
+
 test("an active record is not offered supersession", async () => {
   // Only a proposal can supersede, and only an active record can be superseded;
   // an active record is the subject of neither.
