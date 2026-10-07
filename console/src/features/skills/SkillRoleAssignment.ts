@@ -233,7 +233,15 @@ function SkillAssignmentForm({
           "label",
           {
             key: role,
-            className: "flex items-center gap-1.5 text-xs text-fg-secondary",
+            // `py-1` is the target size, not decoration. The label is the
+            // clickable target for this checkbox -- the input inside it is the
+            // browser's default 13x13 -- and measured at 320px the label was
+            // 102x16, 113x16, 58x16 across the role options. WCAG 2.5.8 asks for
+            // 24x24 CSS px, and every one of these 124 role checkboxes missed
+            // it by a third. Four pixels of padding brings the target to 24
+            // without changing the type size or the gap between options, and
+            // the form already carries `gap-y-2` so the rows stay apart.
+            className: "flex items-center gap-1.5 py-1 text-xs text-fg-secondary",
             "data-skill-role-option": role
           },
           React.createElement("input", {
@@ -241,7 +249,7 @@ function SkillAssignmentForm({
             name: "roles",
             value: role,
             defaultChecked: assigned.has(role),
-            className: "accent-accent"
+            className: "accent-accent h-3.5 w-3.5 shrink-0"
           }),
           React.createElement("span", null, role)
         )
