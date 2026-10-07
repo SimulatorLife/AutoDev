@@ -16715,9 +16715,24 @@ test("Console source names values only through the theme", () => {
   //   - `bg-neutral/15` -- `neutral` is this theme's own `--color-neutral`, which
   //     is why it is usable bare. A sweep that flagged it would be wrong, not
   //     strict, so the rule requires the *numbered* shade the raw palettes use.
+  //
+  // And the third rule is the same idea on the other side: `text-classes.ts`
+  // exists to be the one owner of these treatments, which it stops being the
+  // moment a call site spells one out. Five did, each standing alone with
+  // nothing composed on top -- there was no reason for any of them to be inline.
+  const roles = [
+    MUTED_TEXT_CLASS,
+    MUTED_META_CLASS,
+    MUTED_BODY_CLASS,
+    SECTION_LABEL_CLASS,
+    MONO_ID_CLASS,
+    MONO_VALUE_CLASS,
+    MONO_META_CLASS
+  ];
   const srcDir = join(import.meta.dirname, "..", "src");
   const rawSizes: string[] = [];
   const rawShades: string[] = [];
+  const inlineRoles: string[] = [];
   const numberedShade =
     /\b(?:bg|text|border|ring|outline|divide|from|to|via|fill|stroke|shadow|accent|caret|decoration|placeholder)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|white|black)-[0-9]/gu;
   for (const relative of readdirSync(srcDir, { recursive: true })) {
@@ -16731,6 +16746,12 @@ test("Console source names values only through the theme", () => {
     for (const match of source.matchAll(numberedShade)) {
       rawShades.push(`${name}: ${match[0]}`);
     }
+    // The declarations themselves are the one place a role may be written out,
+    // and `text-classes.ts` is where they live.
+    if (name.endsWith("text-classes.ts")) continue;
+    for (const role of roles) {
+      if (source.includes(`"${role}"`)) inlineRoles.push(`${name}: "${role}"`);
+    }
   }
   assert.deepEqual(
     rawSizes,
@@ -16741,6 +16762,11 @@ test("Console source names values only through the theme", () => {
     rawShades,
     [],
     `These call sites use a numbered palette shade instead of a semantic colour:\n${rawShades.join("\n")}`
+  );
+  assert.deepEqual(
+    inlineRoles,
+    [],
+    `These call sites spell a shared text treatment instead of importing it:\n${inlineRoles.join("\n")}`
   );
 });
 test("the monospace family has one spelling per role", () => {

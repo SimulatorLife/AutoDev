@@ -41,7 +41,8 @@ import {
   MONO_META_CLASS,
   MONO_VALUE_CLASS,
   MUTED_META_CLASS,
-  MUTED_TEXT_CLASS
+  MUTED_TEXT_CLASS,
+  SECTION_LABEL_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
   ERROR_TONE_CLASS,
@@ -1062,7 +1063,7 @@ function renderResultDetail(
       { className: "flex flex-col gap-2" },
       React.createElement(
         "h3",
-        { className: "text-xs uppercase tracking-wider text-fg-muted" },
+        { className: SECTION_LABEL_CLASS },
         evaluation.metrics.length === 1 ? "Metric" : "Metrics"
       ),
       evaluation.metrics.length === 0

@@ -308,7 +308,7 @@ export function AgentsView({
               DetailValue,
               {
                 label: "Last Denial Reason",
-                valueClassName: "font-mono text-xs text-fg-secondary",
+                valueClassName: MONO_VALUE_CLASS,
                 rowClassName: "sm:col-span-2"
               },
               runtime.concurrency.lastDenial === undefined ||

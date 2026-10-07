@@ -1,6 +1,7 @@
 import React from "react";
 
 import { NOT_OBSERVED_LABEL } from "../status/StatusBadge.ts";
+import { MUTED_BODY_CLASS } from "../ui/text-classes.ts";
 
 export interface StatCardProps {
   readonly title: string;
@@ -111,7 +112,7 @@ export function StatCard({
             "span",
             {
               className: unobserved
-                ? "text-sm text-fg-muted"
+                ? MUTED_BODY_CLASS
                 : "text-2xl font-bold text-fg tracking-tight",
               ...(unobserved ? { "data-stat-unobserved": "true" } : {})
             },

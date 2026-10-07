@@ -19,7 +19,10 @@ import {
   FIELD_CONTROL_CLASS,
   FIELD_GROUP_CLASS
 } from "../../components/ui/field-classes.ts";
-import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
+import {
+  MUTED_BODY_CLASS,
+  MUTED_META_CLASS
+} from "../../components/ui/text-classes.ts";
 
 /**
  * Observability Usage view.
@@ -130,7 +133,7 @@ function renderActiveSessionsScope(
         { className: LIST_PANEL_CLASS },
         React.createElement(
           "p",
-          { className: "text-sm text-fg-muted" },
+          { className: MUTED_BODY_CLASS },
           "Live session state is unavailable. The Runtime did not report session evidence, so no count is shown; an unavailable read is not an idle Runtime."
         )
       )
@@ -174,7 +177,7 @@ function renderActiveSessionsScope(
       { className: LIST_PANEL_CLASS },
       React.createElement(
         "p",
-        { className: "text-sm text-fg-muted" },
+        { className: MUTED_BODY_CLASS },
         active.perSessionIdentityAvailable
           ? "Per-session detail is reported below."
           : "The Runtime reports a live session count but no per-session identity yet, so no session list is shown. Absence of a list is not an absence of sessions."

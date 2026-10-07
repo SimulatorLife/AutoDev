@@ -817,7 +817,7 @@ function RecordDetailPanel({
                   ),
                   React.createElement(
                     "span",
-                    { className: "text-fg-muted" },
+                    { className: MUTED_TEXT_CLASS },
                     t.action.replaceAll("_", " ")
                   )
                 ),
