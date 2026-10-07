@@ -361,3 +361,110 @@ test("a failed experience detail read is reported on the experiences tab", async
 
   assert.match(markup, /Selected memory experience could not be loaded/u);
 });
+
+test("a failed experience list is reported as a failed read, not as no experiences", async () => {
+  // The list read is unconditional, so this guard is keyed off the active tab
+  // rather than off the `requested` tag the detail reads carry. Rendering an
+  // empty list here would claim "this scope has no experiences" on the strength
+  // of a read that never completed.
+  const { markup } = await renderMemoryPage(
+    { tab: "experiences" },
+    {
+      status: statusResponse(HEALTHY_STORAGE),
+      fail: (path) => /^\/control\/memory\/experiences\?/u.test(path)
+    }
+  );
+
+  assert.match(markup, /Memory experiences could not be loaded/u);
+});
+
+test("an unreachable workspace source is reported as unreadable, not as empty", async () => {
+  // The catalog answering "unavailable" and the catalog read *failing* are both
+  // "no scope could be established", and neither may quietly resolve to the
+  // first workspace or to an empty list. Failing closed is the whole point of
+  // resolving scope exclusively against the canonical source.
+  const { markup, paths } = await renderMemoryPage(
+    {},
+    {
+      fail: (path) => path.startsWith("/control/workspaces")
+    }
+  );
+
+  assert.match(markup, /Workspace configuration could not be loaded/u);
+  assert.equal(
+    paths.some((path) => path.startsWith("/control/memory/")),
+    false,
+    "an unreadable workspace source must not be replaced with a guessed scope"
+  );
+});
+
+test("a failed records read is diagnosed from the status read, one state at a time", async () => {
+  // The records read answers 503 for "nobody configured a database" and for "the
+  // database is not answering", and those send an operator to two different
+  // places. The reason is read from the status read rather than inferred from the
+  // failure -- and when the status read itself did not answer, the page says so
+  // instead of falling back to the guess it replaced. A guess that is right most
+  // of the time is what makes a wrong one expensive.
+  // Each case asserts the title the diagnosis is *delivered as*. Two of the four
+  // states name the storage problem as the headline itself rather than as a
+  // subordinate hint, so there is no one title to assert in common -- only the
+  // refusal shell itself.
+  const cases = [
+    {
+      storage: { state: "not_configured", embeddings: "configured" },
+      expect: /Memory storage is not configured/u,
+      reason: "nothing configured storage"
+    },
+    {
+      storage: { state: "unreachable", embeddings: "configured" },
+      expect: /Memory storage is unreachable/u,
+      reason: "storage configured but not answering"
+    },
+    {
+      storage: HEALTHY_STORAGE,
+      expect:
+        /Durable memory storage answered, so this read failed on its own terms rather than because the store is down\./u,
+      reason: "storage answered, so the read failed on its own terms"
+    }
+  ] as const;
+
+  for (const testCase of cases) {
+    const { markup } = await renderMemoryPage(
+      {},
+      {
+        status: statusResponse(testCase.storage),
+        fail: (path) => path.startsWith("/control/memory/records")
+      }
+    );
+    assert.match(
+      markup,
+      /data-error-code=/u,
+      `a failed read must render a refusal, not a list (${testCase.reason})`
+    );
+    assert.match(
+      markup,
+      testCase.expect,
+      `the diagnosis must name ${testCase.reason}`
+    );
+  }
+});
+
+test("an unobserved status leaves the failed read undiagnosed rather than guessed", async () => {
+  const { markup } = await renderMemoryPage(
+    {},
+    {
+      status: null,
+      fail: (path) => path.startsWith("/control/memory/records")
+    }
+  );
+
+  assert.match(
+    markup,
+    /Storage status was not observed, so whether memory is configured could not be confirmed\./u
+  );
+  assert.doesNotMatch(
+    markup,
+    /is not configured|is unreachable/u,
+    "with no status read, the page must not name a cause it did not observe"
+  );
+});

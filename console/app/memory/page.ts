@@ -303,12 +303,42 @@ type MemoryRecordsFailure = Exclude<
 >;
 type MemoryStatusResult = Awaited<ReturnType<typeof fetchMemoryStatus>>;
 
+/**
+ * The reads issued for a selected record, tagged with whether one was asked for.
+ *
+ * These were three nullable fields plus a read condition written out a second
+ * time at the guard that reports their failures, which left each guard carrying
+ * a `??` fallback synthesising "the response was not observed" -- an arm nothing
+ * could reach, because the reads are issued under exactly the condition the
+ * guard tests. A fallback that cannot run is still a claim in the source that
+ * a missing response is a supported state, and it hides the real one: a failed
+ * read.
+ *
+ * Tagging the group with the question makes that arm unrepresentable rather
+ * than merely unreachable, and keeps the condition written down once, where the
+ * reads are actually issued.
+ */
+type RecordDetailReads =
+  | { readonly requested: false }
+  | {
+      readonly requested: true;
+      readonly record: MemoryRecordDetailResult;
+      readonly history: MemoryHistoryResult;
+      readonly why: MemoryWhyResult;
+    };
+
+/** The same, for the selected experience. */
+type ExperienceDetailReads =
+  | { readonly requested: false }
+  | {
+      readonly requested: true;
+      readonly experience: MemoryExperienceDetailResult;
+    };
+
 interface MemoryReadResults {
   readonly experiences: MemoryExperiencesResult;
-  readonly selectedExperience: MemoryExperienceDetailResult | null;
-  readonly selectedRecord: MemoryRecordDetailResult | null;
-  readonly history: MemoryHistoryResult | null;
-  readonly why: MemoryWhyResult | null;
+  readonly selectedExperience: ExperienceDetailReads;
+  readonly selectedRecord: RecordDetailReads;
   /**
    * The selected experience's evidence classes, each nullable because an
    * absent read is "not asked for" and a failed one is "not observed" -- two
@@ -351,48 +381,43 @@ interface MemoryReadFailure {
   readonly result: MemoryControlApiFailure;
 }
 
-function missingDetailFailure(message: string): MemoryControlApiFailure {
-  return { kind: "unreachable", message };
-}
-
 function activeMemoryReadFailure(
   params: ParsedMemoryParams,
   results: MemoryReadResults
 ): MemoryReadFailure | null {
-  if (params.activeTab === "experiences") {
-    if (results.experiences.kind !== "ok") {
-      return {
-        title: "Memory experiences could not be loaded",
-        result: results.experiences
-      };
-    }
-    if (params.experienceId && results.selectedExperience?.kind !== "ok") {
+  // The list read is unconditional, so "which tab am I on" is still the right
+  // question for it.
+  if (params.activeTab === "experiences" && results.experiences.kind !== "ok") {
+    return {
+      title: "Memory experiences could not be loaded",
+      result: results.experiences
+    };
+  }
+
+  // The detail reads are conditional, and `results` already knows whether one was
+  // issued. That is what replaces the `??` arms these used to carry.
+  if (results.selectedExperience.requested) {
+    const { experience } = results.selectedExperience;
+    if (experience.kind !== "ok") {
       return {
         title: "Selected memory experience could not be loaded",
-        result:
-          results.selectedExperience ??
-          missingDetailFailure(
-            "The selected experience response was not observed."
-          )
+        result: experience
       };
     }
   }
 
-  if (params.activeTab === "records" && params.recordId) {
-    if (results.selectedRecord?.kind !== "ok") {
+  if (results.selectedRecord.requested) {
+    const { record, history } = results.selectedRecord;
+    if (record.kind !== "ok") {
       return {
         title: "Selected memory record could not be loaded",
-        result:
-          results.selectedRecord ??
-          missingDetailFailure("The selected record response was not observed.")
+        result: record
       };
     }
-    if (results.history?.kind !== "ok") {
+    if (history.kind !== "ok") {
       return {
         title: "Memory record history could not be loaded",
-        result:
-          results.history ??
-          missingDetailFailure("The record history response was not observed.")
+        result: history
       };
     }
   }
@@ -553,11 +578,31 @@ async function fetchMemoryPageData(
     kind: "ok",
     data: {
       records: recordsResult.data,
-      selectedRecord,
-      history,
-      why,
+      // The read conditions written once, next to the reads they govern, rather
+      // than restated at each guard that inspects the results.
+      //
+      // The assertions are what those conditions buy: `Promise.all` widens each
+      // conditional element to `T | null`, and rather than let that nullability
+      // reach the guards -- where it became a "the response was not observed"
+      // failure for a case that cannot occur -- the condition that issued the
+      // read is restated once here and the value narrowed to match it.
+      selectedRecord:
+        params.activeTab === "records" && params.recordId
+          ? {
+              requested: true,
+              record: selectedRecord as MemoryRecordDetailResult,
+              history: history as MemoryHistoryResult,
+              why: why as MemoryWhyResult
+            }
+          : { requested: false },
+      selectedExperience:
+        params.activeTab === "experiences" && params.experienceId
+          ? {
+              requested: true,
+              experience: selectedExperience as MemoryExperienceDetailResult
+            }
+          : { requested: false },
       experiences,
-      selectedExperience,
       cohorts,
       useCohorts,
       outcomes,
@@ -765,19 +810,26 @@ export default async function MemoryPage(
       sessionCohorts,
       useCohorts,
       selectedRecord:
-        data.selectedRecord?.kind === "ok"
-          ? data.selectedRecord.data.memory
+        data.selectedRecord.requested && data.selectedRecord.record.kind === "ok"
+          ? data.selectedRecord.record.data.memory
           : null,
-      selectedHistory: data.history?.kind === "ok" ? data.history.data : null,
+      selectedHistory:
+        data.selectedRecord.requested && data.selectedRecord.history.kind === "ok"
+          ? data.selectedRecord.history.data
+          : null,
       // Read above, and worth saying why it reaches the drawer: without it the
       // Runtime's eligibility-bounded explanation was fetched on every drawer
       // open and then dropped, so the provenance panel never said which cited
       // experiences this reader could resolve. `null` is a read that did not
       // succeed, which the panel renders as silence rather than as a claim.
-      selectedWhy: data.why?.kind === "ok" ? data.why.data : null,
+      selectedWhy:
+        data.selectedRecord.requested && data.selectedRecord.why.kind === "ok"
+          ? data.selectedRecord.why.data
+          : null,
       selectedExperience:
-        data.selectedExperience?.kind === "ok"
-          ? data.selectedExperience.data.experience
+        data.selectedExperience.requested &&
+        data.selectedExperience.experience.kind === "ok"
+          ? data.selectedExperience.experience.data.experience
           : null,
       selectedOutcomes:
         data.outcomes?.kind === "ok" ? data.outcomes.data.items : null,
