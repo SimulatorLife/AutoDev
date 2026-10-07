@@ -9822,9 +9822,12 @@ test("an experience shows observed packets and reported outcomes as separate cla
     outcomeTotal: 1,
     useAssessments: [
       {
+        // The Runtime's own projection: no correlation token, and the evidence
+        // a curator assessed against. The fixture used to carry the token the
+        // route withholds and omit the evidence it always sends, so it agreed
+        // with neither the contract nor the producer.
         injection: {
           id: "inj-1",
-          correlationToken: "corr-1",
           memoryMode: "jit",
           injectionResult: "injected",
           packetCharacterCount: 900,
@@ -9834,7 +9837,10 @@ test("an experience shows observed packets and reported outcomes as separate cla
         use: {
           useKind: "partially_used",
           usedMemoryIds: ["mem-1"],
-          reportedAt: "2026-10-01T02:00:00Z"
+          reportedAt: "2026-10-01T02:00:00Z",
+          evidence: [
+            { kind: "trajectory", uri: "codex://captured/exp-1", revision: "1" }
+          ]
         },
         sessionInjectionCount: 1
       }
@@ -9885,14 +9891,18 @@ test("an experience shows observed packets and reported outcomes as separate cla
       {
         injection: {
           id: "inj-3",
-          correlationToken: "corr-3",
           memoryMode: "jit",
           injectionResult: "injected",
           packetCharacterCount: 10,
           memoryIds: [],
           occurredAt: "2026-10-01T00:00:00Z"
         },
-        use: { useKind: "unobservable", usedMemoryIds: [], reportedAt: "x" },
+        use: {
+          useKind: "unobservable",
+          usedMemoryIds: [],
+          reportedAt: "x",
+          evidence: []
+        },
         sessionInjectionCount: 1
       }
     ],

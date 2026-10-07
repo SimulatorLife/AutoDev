@@ -9,6 +9,14 @@ import {
   assertMemoryInjectionOutcomeCohortFilter,
   assertMemoryInjectionUseCohortFilter,
   assertMemorySessionOutcomeCohortFilter,
+  type ControlApiMemoryExperiencesResponse,
+  type ControlApiMemoryHistoryResponse,
+  type ControlApiMemoryInjectionOutcomesResponse,
+  type ControlApiMemoryInjectionUseAssessmentsResponse,
+  type ControlApiMemoryRecordDetailResponse,
+  type ControlApiMemoryRecordsResponse,
+  type ControlApiMemoryStatusResponse,
+  type ControlApiMemoryWhyResponse,
   type EvidenceReference,
   EXPERIENCE_OUTCOMES,
   type ExperienceEnvelope,
@@ -787,7 +795,10 @@ async function serveExperience(
   sendJson(
     response,
     200,
-    { schema: "autodev-memory-experiences-v1", ...result },
+    {
+      schema: "autodev-memory-experiences-v1",
+      ...result
+    } satisfies ControlApiMemoryExperiencesResponse,
     { "cache-control": "no-store" }
   );
 }
@@ -838,7 +849,7 @@ async function serveExperienceOutcomes(
       schema: "autodev-memory-injection-outcomes-v1",
       experienceId: experience.id,
       ...page
-    },
+    } satisfies ControlApiMemoryInjectionOutcomesResponse,
     { "cache-control": "no-store" }
   );
 }
@@ -920,7 +931,7 @@ async function serveExperienceInjectionUseAssessments(
       total: page.total,
       limit: page.limit,
       offset: page.offset
-    },
+    } satisfies ControlApiMemoryInjectionUseAssessmentsResponse,
     { "cache-control": "no-store" }
   );
 }
@@ -1309,7 +1320,7 @@ async function serveRecord(
           memory: history.memory,
           relatedMemories: history.relatedMemories,
           transitions: history.events
-        },
+        } satisfies ControlApiMemoryHistoryResponse,
         { "cache-control": "no-store" }
       );
       return;
@@ -1336,7 +1347,7 @@ async function serveRecord(
           memory: why.memory,
           relatedMemories: why.relatedMemories,
           sourceExperiences: why.sourceExperiences
-        },
+        } satisfies ControlApiMemoryWhyResponse,
         { "cache-control": "no-store" }
       );
       return;
@@ -1354,7 +1365,10 @@ async function serveRecord(
     sendJson(
       response,
       200,
-      { schema: "autodev-memory-record-v1", memory },
+      {
+        schema: "autodev-memory-record-v1",
+        memory
+      } satisfies ControlApiMemoryRecordDetailResponse,
       { "cache-control": "no-store" }
     );
     return;
@@ -1371,7 +1385,10 @@ async function serveRecord(
   sendJson(
     response,
     200,
-    { schema: "autodev-memory-records-v1", ...result },
+    {
+      schema: "autodev-memory-records-v1",
+      ...result
+    } satisfies ControlApiMemoryRecordsResponse,
     { "cache-control": "no-store" }
   );
 }
@@ -3064,7 +3081,7 @@ async function serveMemoryStorageStatus(
         embeddings: status.embeddings,
         probeTimeoutMs: status.probeTimeoutMs
       }
-    },
+    } satisfies ControlApiMemoryStatusResponse,
     { "cache-control": "no-store" }
   );
 }

@@ -1189,6 +1189,17 @@ function isSessionOutcomeCohortPage(
  * as "unreported", turning an unreadable response into a claim that nobody
  * reported anything.
  */
+/**
+ * An injection as the *outcome join* reports it.
+ *
+ * `correlationToken` is required here, though the evidence panel does not render
+ * it: an outcome report for this injection carries it, so a projection without
+ * it cannot be reported against and must not be mistaken for one that can.
+ *
+ * Deliberately not shared with the use-assessment projection below. That route
+ * withholds the token on purpose, and when both rows were checked by this one
+ * guard every real use-assessment response was refused as unreadable.
+ */
 function isObservedInjection(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -1199,11 +1210,30 @@ function isObservedInjection(value: unknown): boolean {
     Array.isArray(value.memoryIds) &&
     value.memoryIds.every((id) => typeof id === "string") &&
     typeof value.occurredAt === "string" &&
-    // Required, though the evidence panel does not render it: an outcome report
-    // for this injection carries it, so a projection without it cannot be
-    // reported against and must not be mistaken for one that can.
     typeof value.correlationToken === "string" &&
     value.correlationToken !== ""
+  );
+}
+
+/**
+ * An injection as the *use-assessment* projection reports it: the same observed
+ * injection without the correlation token.
+ *
+ * There is no caller that needs to bind a new report to an injection from this
+ * read — it answers "was this packet used?" — and withholding the token keeps it
+ * from doubling as a way to address any injection in the workspace. Its absence
+ * is the design, so this guard must not require it.
+ */
+function isAssessedInjection(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.memoryMode === "string" &&
+    typeof value.injectionResult === "string" &&
+    typeof value.packetCharacterCount === "number" &&
+    Array.isArray(value.memoryIds) &&
+    value.memoryIds.every((id) => typeof id === "string") &&
+    typeof value.occurredAt === "string"
   );
 }
 
@@ -1230,13 +1260,17 @@ function isInjectionUseAssessment(
 ): value is ControlApiMemoryInjectionUseAssessment {
   return (
     isRecord(value) &&
-    isObservedInjection(value.injection) &&
+    isAssessedInjection(value.injection) &&
     (value.use === null ||
       (isRecord(value.use) &&
         typeof value.use.useKind === "string" &&
         Array.isArray(value.use.usedMemoryIds) &&
         value.use.usedMemoryIds.every((id) => typeof id === "string") &&
-        typeof value.use.reportedAt === "string")) &&
+        typeof value.use.reportedAt === "string" &&
+        // The Runtime sends it, so the type predicate is only telling the truth
+        // if it is checked. A curator's assessment is a claim about what was
+        // observed, and the evidence is the observation.
+        Array.isArray(value.use.evidence))) &&
     typeof value.sessionInjectionCount === "number"
   );
 }

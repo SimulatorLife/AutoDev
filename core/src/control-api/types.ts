@@ -11,6 +11,7 @@ import type {
   RuleSyncValidationIssue
 } from "../mcps/types.ts";
 import type {
+  EvidenceReference,
   ExperienceEnvelope,
   MemoryInjectionUseCohortPage,
   MemoryLifecycleEvent,
@@ -797,12 +798,23 @@ export type ControlApiMemoryInjectionOutcomesResponse =
  * Same discipline as the outcome join: `use` is null until a curator has
  * assessed, and `unobservable` is a distinct verdict from `not_used` — one says
  * nobody could tell, the other says nobody saw it used.
+ *
+ * This row is deliberately *not* the outcome join's injection with fields
+ * removed, and it is worth saying why rather than leaving the difference to be
+ * discovered. The outcome join carries `correlationToken` because a reporter
+ * needs it to bind a new outcome to an injection. This read has no such caller:
+ * it answers "was this packet used?", and withholding the token keeps the read
+ * from being a capability to address any injection in the workspace. So the
+ * token is absent here by design, not by omission — which is why the declaration
+ * must not simply mirror its sibling's.
+ *
+ * `use.evidence` is included even though it is not in the outcome join: a
+ * curator reading an assessment is deciding on the basis of what was observed,
+ * and the evidence is the observation. It arrives sanitized by the service.
  */
 export interface ControlApiMemoryInjectionUseAssessment {
   readonly injection: {
     readonly id: string;
-    /** See `ControlApiMemoryInjectionOutcomeJoin.injection.correlationToken`. */
-    readonly correlationToken: string;
     readonly memoryMode: string;
     readonly injectionResult: string;
     readonly packetCharacterCount: number;
@@ -813,6 +825,7 @@ export interface ControlApiMemoryInjectionUseAssessment {
     readonly useKind: string;
     readonly usedMemoryIds: readonly string[];
     readonly reportedAt: string;
+    readonly evidence: readonly EvidenceReference[];
   } | null;
   readonly sessionInjectionCount: number;
 }
