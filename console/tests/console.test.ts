@@ -5947,6 +5947,107 @@ test("fetchEvaluations rejects a response that will not say whether it is capped
   }
 });
 
+test("a timestamp is never stamped with an offset the source did not write", () => {
+  // The two tables on this resource rendered a timestamp two different ways --
+  // the history table matched a regex, the trace table sliced the raw string --
+  // and both appended a `Z` the source never had to contain. A span stamped
+  // `+02:00` rendered as `09:31:00Z`: the same clock reading under a zone label
+  // it was not in, which is a claim about the data rather than about formatting.
+  // The wire only requires a timestamp to parse -- the trace validator checks
+  // `Date.parse`, the evaluation validator only `typeof === "string"` -- so an
+  // offset, a date-only value and an unreadable one all reach the view intact.
+  const spanId = "0123456789abcdef";
+  const trace = (timestamp: string): string =>
+    renderEvaluations({
+      evaluations: [],
+      filters: {
+        outcome: "all",
+        role: "",
+        model: "",
+        prompt: "",
+        from: "",
+        until: ""
+      },
+      traceLookup: {
+        kind: "observed",
+        detail: {
+          schema: "autodev-openlit-trace-detail-v1",
+          traceId: "0123456789abcdef0123456789abcdef",
+          selectedSpanId: spanId,
+          partial: false,
+          spans: [
+            {
+              spanId,
+              parentSpanId: null,
+              spanName: "gen_ai.client_operation",
+              serviceName: "autodev-router",
+              timestamp,
+              durationNs: 1_250_000,
+              statusCode: "OK"
+            }
+          ]
+        }
+      }
+    });
+  const run = (timestamp: string): string =>
+    renderEvaluations({
+      evaluations: [
+        {
+          id: "run-1",
+          agentRole: "worker",
+          model: "m-1",
+          metrics: [],
+          passed: true,
+          timestamp
+        }
+      ]
+    });
+
+  // The source's own offset is kept.
+  assert.match(trace("2026-10-05T09:31:00Z"), /09:31:00Z/);
+  assert.match(
+    trace("2026-10-05T09:31:00.000Z"),
+    /09:31:00Z/,
+    "a fractional second is not part of the clock reading"
+  );
+  assert.match(
+    trace("2026-10-05T09:31:00+02:00"),
+    /09:31:00\+02:00/,
+    "a non-UTC offset is shown, not silently relabelled as UTC"
+  );
+  assert.doesNotMatch(trace("2026-10-05T09:31:00+02:00"), /09:31:00Z/);
+  assert.match(
+    trace("2026-10-05T09:31:00"),
+    />09:31:00</,
+    "a timestamp with no offset shows none rather than borrowing one"
+  );
+
+  // A value that is not an ISO instant is shown whole, not cut into a date and a
+  // clock that never were one.
+  assert.match(
+    trace("whenever it was"),
+    /whenever it was/,
+    "an unreadable instant is not sliced into invented parts"
+  );
+  assert.doesNotMatch(trace("whenever it was"), /Z<\/span>/);
+  assert.match(
+    trace("2026-10-05"),
+    /2026-10-05/,
+    "a date-only value keeps its date and invents no clock"
+  );
+  assert.doesNotMatch(trace("2026-10-05"), />Z</);
+
+  // Both tables, because the two copies are the defect: the history table gets
+  // the same treatment, so the columns cannot disagree about what a timestamp is.
+  assert.match(run("2026-10-05T09:31:00+02:00"), /09:31:00\+02:00/);
+  assert.match(run("2026-10-05T09:31:00Z"), /09:31:00Z/);
+  assert.match(run("whenever it was"), /whenever it was/);
+
+  // Every part carries `min-w-0`, which is what keeps a narrow column from
+  // painting through the table's right edge; the trace column never had it.
+  assert.match(trace("2026-10-05T09:31:00Z"), /break-words/);
+});
+
 test("an evaluation with no metrics reads as unobserved, not as an empty cell", () => {
   // The fixture reports a run with an empty `metrics` array. Rendering nothing
   // there makes the row indistinguishable from one that failed to render, and
@@ -6272,92 +6373,6 @@ test("a comparison names the rows it is comparing, not the whole store", () => {
   );
 });
 
-test("a comparison names the rows it is comparing, not the whole store", () => {
-  // The blurb above the role table read "Every retained run grouped by the
-  // agent role it evaluated" whatever the filters selected, so
-  // `?prompt=release-notes` described its 35 rows as every run the retained
-  // history holds. One page cannot describe its own contents two ways, and the
-  // rule for naming them already exists here: "in this view", and "retained"
-  // only when nothing has narrowed it.
-  const rows = [
-    {
-      id: "a",
-      agentRole: "architect",
-      promptName: "release-notes",
-      model: "opus",
-      metrics: [],
-      passed: true,
-      timestamp: "2026-10-05T09:00:00Z"
-    },
-    {
-      id: "b",
-      agentRole: "architect",
-      promptName: "smoke-check",
-      model: "opus",
-      metrics: [],
-      passed: false,
-      timestamp: "2026-10-05T10:00:00Z"
-    }
-  ];
-  const filters = (over: Partial<EvaluationsFilters>): EvaluationsFilters => ({
-    outcome: "all",
-    role: "",
-    model: "",
-    prompt: "",
-    from: "",
-    until: "",
-    ...over
-  });
-  const narrowed = filterEvaluations(
-    rows,
-    filters({ prompt: "release-notes" })
-  );
-
-  const filtered = renderEvaluations({
-    evaluations: narrowed.results,
-    availableCount: 2,
-    totalCount: 5000,
-    truncated: true,
-    tab: "comparisons",
-    filters: filters({ prompt: "release-notes" })
-  });
-  assert.match(filtered, /Every run in this view grouped by the agent role/);
-  assert.doesNotMatch(
-    filtered,
-    /Every retained run/,
-    "a narrowed view is not every run the retained history holds"
-  );
-
-  const whole = renderEvaluations({
-    evaluations: rows,
-    availableCount: 2,
-    totalCount: 5000,
-    truncated: true,
-    tab: "comparisons",
-    filters: filters({})
-  });
-  assert.match(whole, /Every retained run grouped by the agent role/);
-
-  // "This window" was the leftover from before the page settled on "this view",
-  // and on a page that also uses "window" for the capped read it read as the
-  // read rather than the filters that actually emptied the table.
-  assert.match(
-    renderEvaluations({
-      evaluations: [],
-      tab: "comparisons",
-      filters: filters({ role: "nobody" })
-    }),
-    /No evaluation targets were observed in this view/
-  );
-  assert.doesNotMatch(
-    renderEvaluations({
-      evaluations: [],
-      tab: "comparisons",
-      filters: filters({ role: "nobody" })
-    }),
-    /in this window/
-  );
-});
 test("comparisons report a pass rate over supplied verdicts only", () => {
   // A target whose runs all report no verdict must not score 0%, and one whose
   // runs all failed must. Both are readings of the same runs, so they can only
@@ -12808,6 +12823,71 @@ test("a supersession with no prior named is refused for that, not for its eviden
       "a supersession naming nothing is not a request"
     );
   });
+});
+
+test("a Runtime refusal is reported as what the Runtime said it was", async () => {
+  // The Runtime states its reasons with codes, and they ask for different next
+  // moves. One notice used to offer "it may still be citing this record" for
+  // all of them, which sent an operator whose supersession was rejected for an
+  // unrelated reason looking for citations that were never involved.
+  const cases: readonly [number, string, string, string][] = [
+    [
+      409,
+      "autodev_memory_experience_referenced",
+      "still_cited",
+      "the envelope is load-bearing"
+    ],
+    [409, "autodev_memory_conflict", "conflicted", "it changed under you"],
+    [404, "autodev_memory_not_found", "not_found", "the list was stale"],
+    [403, "autodev_memory_scope_forbidden", "forbidden", "not your scope"],
+    [503, "autodev_memory_unavailable", "unavailable", "not reachable"],
+    [
+      400,
+      "autodev_memory_invalid_request",
+      "runtime_refused",
+      "no reason given"
+    ]
+  ];
+
+  for (const [status, code, expected, why] of cases) {
+    await withMemoryRoute(
+      async (requests) => {
+        const response = await memoryRoute.POST(
+          memoryPurgeRequest({
+            action: "purge",
+            experienceId: "exp-1",
+            workspaceId: "SimulatorLife/AutoDev",
+            reason: "privacy_request",
+            confirm: "purge"
+          })
+        );
+        assert.equal(response.status, 303);
+        assert.match(
+          response.headers.get("location") ?? "",
+          new RegExp(`refusal=${expected}$`, "u"),
+          `${code} (${why}) must be reported as ${expected}`
+        );
+        assert.equal(requests.length, 1, `${code} did send a request`);
+      },
+      () => Response.json({ code, message: "Runtime said no." }, { status })
+    );
+  }
+});
+
+test("the generic Runtime refusal makes no claim about why", async () => {
+  // The one sentence that covers an unrecognised failure must not name a
+  // cause. "It may still be citing this record" is true of one code out of many.
+  const markup = renderToStaticMarkup(
+    React.createElement(ControlFailureNotice, {
+      refusal: "runtime_refused"
+    })
+  );
+
+  assert.match(markup, /did not accept this change/u);
+  assert.ok(
+    !/citing/u.test(markup),
+    "an unexplained refusal must not assert a particular cause"
+  );
 });
 
 test("ClosePanelLink renders the shared close mark and keeps its accessible name", () => {
