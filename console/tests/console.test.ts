@@ -8693,7 +8693,12 @@ test("MemoryCohortsView renders session outcome cohorts preserving explicit unre
   assert.match(markup, /Conflicting Reports/);
   assert.match(markup, /Reported/);
   assert.match(markup, /Unreported/);
-  assert.match(markup, /Non-inferential cohort policy/);
+  // The basis callout renders beside the cells. It used to assert on the
+  // literal label "Non-inferential cohort policy", a phrase that appears in no
+  // spec document and whose section pointer resolved to nothing; the wording it
+  // names now, and the guarantee that its citation resolves, are covered by
+  // tests/memory-spec-citation.test.ts.
+  assert.match(markup, /Cohort basis/);
 });
 
 test("MemoryCohortsView does not render unavailable session data as an empty cohort", () => {

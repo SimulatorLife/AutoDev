@@ -517,7 +517,21 @@ export function MemoryCohortsView({
       React.createElement(
         "p",
         null,
-        "§10/§14 Non-inferential cohort policy: Session outcome cohorts reflect only explicitly appended reporter-supplied outcomes. Absences remain explicit unreported cells; model packet usage is never inferred from output text or task success."
+        // This cited "§10/§14", and `docs/memory-target-state.md` has no §14 — it
+        // ends at §13 — so an operator who followed the pointer found nothing. A
+        // pointer that resolves to nothing is worse than no pointer: it lends
+        // the sentence an authority it never earned. The clause was wrong on its
+        // own terms too, naming a provenance the spec does not forbid: §11 says
+        // outcomes are not inferred from "injection/provider telemetry", while
+        // this said "output text", which is the separate rule about model-output
+        // scanners — and it dropped the rule that actually governs this table.
+        //
+        // The mechanics behind the "Unreported" tag come from the companion's
+        // "Bounded session outcome cohorts" rules 3 and 8: the outcome is the one
+        // canonical report for the session, an eligible session with no report
+        // carries `outcomeKind: null`, and deduplication claims no verified task
+        // success or causal effectiveness.
+        "Cohort basis — memory-target-state §11: a session's outcome is the single canonical reporter-supplied report for that session, so an eligible session with no report stays an explicit unreported cell. Outcomes are never inferred from injection or provider telemetry, so these counts claim neither verified task success nor causal effectiveness."
       )
     ),
 
