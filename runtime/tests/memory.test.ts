@@ -114,6 +114,10 @@ class FakeMemoryRepository implements MemoryRepository {
   readonly outcomeJoinRequests: MemoryInjectionOutcomeJoinRequest[] = [];
   readonly experienceListRequests: ExperienceListRequest[] = [];
   readonly experienceSearchRequests: ExperienceSearchRequest[] = [];
+  readonly outcomeReportLookups: {
+    readonly lookupContext: MemoryInjectionEventSessionLookup;
+    readonly correlationToken: string;
+  }[] = [];
   readonly sessionOutcomeReports = new Map<
     string,
     MemorySessionOutcomeReport
@@ -352,10 +356,22 @@ class FakeMemoryRepository implements MemoryRepository {
   }
 
   async findInjectionEventByTokenForSession(
-    _context: MemoryInjectionEventSessionLookup,
+    lookupContext: MemoryInjectionEventSessionLookup,
     correlationToken: string
   ): Promise<MemoryInjectionEvent | null> {
-    return this.injectionEvents.get(correlationToken) ?? null;
+    this.outcomeReportLookups.push({ lookupContext, correlationToken });
+    const event = this.injectionEvents.get(correlationToken);
+    if (!event) return null;
+    // The stored event keeps its own request-level runId/agentId; this join is
+    // on the session key alone, so those are deliberately not compared.
+    if (event.workspaceId !== lookupContext.workspaceId) return null;
+    if (
+      lookupContext.repositoryId !== undefined &&
+      event.repositoryId !== lookupContext.repositoryId
+    )
+      return null;
+    if (event.taskId !== lookupContext.taskId) return null;
+    return event;
   }
 
   async getInjectionEventByIdForSession(
@@ -4346,3 +4362,205 @@ test("a workspace-scoped memory supersedes another workspace-scoped one", async 
   assert.equal(active.status, "active");
   assert.equal(repository.memories.get(prior.id)?.status, "superseded");
 });
+
+/**
+ * The write path that produces every reported outcome, and therefore the whole
+ * basis of the injection/outcome evaluation. Each guard here decides whether a
+ * reporter's claim reaches storage at all.
+ */
+async function outcomeReportHarness(): Promise<{
+  readonly repository: FakeMemoryRepository;
+  readonly service: MemoryService;
+}> {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  await persistOutcomeInjection(repository, service);
+  return { repository, service };
+}
+
+test("only root or curator authorities may record an outcome, and the actor supplies the recorded authority", async () => {
+  const { repository, service } = await outcomeReportHarness();
+
+  await assert.rejects(
+    service.recordOutcomeReport({
+      report: outcomeReport(),
+      actor: worker,
+      context
+    }),
+    MemoryAuthorizationError
+  );
+  await assert.rejects(
+    service.recordOutcomeReport({
+      report: outcomeReport(),
+      actor: { id: "system-agent", authority: "system" },
+      context
+    }),
+    MemoryAuthorizationError
+  );
+  assert.equal(repository.outcomeReports.size, 0);
+
+  // `outcomeReport()` claims reporterAuthority "worker"; the stored value must
+  // come from the authenticated actor instead.
+  await service.recordOutcomeReport({
+    report: outcomeReport(),
+    actor: root,
+    context
+  });
+  assert.equal(
+    repository.outcomeReports.get("private-correlation-token")?.reporterAuthority,
+    "root"
+  );
+});
+
+test("an outcome report outside the trusted session scope is refused", async () => {
+  const { repository, service } = await outcomeReportHarness();
+
+  for (const scope of [
+    { kind: "global" as const },
+    {
+      kind: "workspace" as const,
+      workspaceId: "workspace-other"
+    },
+    {
+      kind: "repository" as const,
+      workspaceId: "workspace-a",
+      repositoryId: "repo-b"
+    }
+  ]) {
+    await assert.rejects(
+      service.recordOutcomeReport({
+        report: outcomeReport({ scope }),
+        actor: root,
+        context
+      }),
+      MemoryAuthorizationError
+    );
+  }
+
+  // A scope that matches but a taskId that does not is still the wrong session.
+  await assert.rejects(
+    service.recordOutcomeReport({
+      report: outcomeReport({ taskId: "task-other" }),
+      actor: root,
+      context
+    }),
+    MemoryAuthorizationError
+  );
+  assert.equal(repository.outcomeReports.size, 0);
+});
+
+test("an outcome report needs a correlation token and evidence for a decided outcome", async () => {
+  const { repository, service } = await outcomeReportHarness();
+
+  // The blank token and the unresolvable token are both MemoryValidationError,
+  // so the message is the only thing that separates "you sent nothing" from
+  // "that token does not resolve in your session".
+  await assert.rejects(
+    service.recordOutcomeReport({
+      report: outcomeReport({ correlationToken: "   " }),
+      actor: root,
+      context
+    }),
+    /correlationToken is required/u
+  );
+  await assert.rejects(
+    service.recordOutcomeReport({
+      report: outcomeReport({ correlationToken: "no-such-token" }),
+      actor: root,
+      context
+    }),
+    /no scope-aligned injection event/u
+  );
+  await assert.rejects(
+    service.recordOutcomeReport({
+      report: outcomeReport({ evidence: [] }),
+      actor: root,
+      context
+    }),
+    MemoryValidationError
+  );
+  assert.equal(repository.outcomeReports.size, 0);
+
+  // "unknown" is the reporter declining to decide, so it needs no citation.
+  const result = await service.recordOutcomeReport({
+    report: outcomeReport({ outcomeKind: "unknown", evidence: [] }),
+    actor: root,
+    context
+  });
+  assert.equal(result.id, "private-outcome-report-id");
+});
+
+test("an outcome report must target an injection event in the reporter's own session", async () => {
+  const { repository, service } = await outcomeReportHarness();
+
+  await assert.rejects(
+    service.recordOutcomeReport({
+      report: outcomeReport({ correlationToken: "no-such-token" }),
+      actor: root,
+      context
+    }),
+    MemoryValidationError
+  );
+
+  // A token that does exist, but under a different session's injection event.
+  // The reporter stays on its own session, so the token cannot be resolved.
+  await persistOutcomeInjection(
+    repository,
+    service,
+    outcomeInjectionEvent({
+      id: "other-injection-id",
+      correlationToken: "other-session-token",
+      taskId: "task-other",
+      runId: "run-other",
+      agentId: "agent-other"
+    })
+  );
+  await assert.rejects(
+    service.recordOutcomeReport({
+      report: outcomeReport({ correlationToken: "other-session-token" }),
+      actor: root,
+      context
+    }),
+    MemoryValidationError
+  );
+  assert.equal(repository.outcomeReports.size, 0);
+});
+
+test("an outcome report joins its injection event on the session, not on the request", async () => {
+  const { repository, service } = await makeOutcomeHarnessAcrossRequests();
+
+  const result = await service.recordOutcomeReport({
+    report: outcomeReport(),
+    actor: root,
+    context
+  });
+
+  // The stored event keeps request-level identity the reporter never had. The
+  // service's job is to forward the reporter's own session identity in the
+  // lookup and leave the event's run/agent out of the comparison; the
+  // repository double enforces that by matching on workspace/task only.
+  assert.equal(result.id, "private-outcome-report-id");
+  assert.equal(
+    repository.injectionEvents.get("private-correlation-token")?.runId,
+    "private-injection-run-id"
+  );
+  const lookup = repository.outcomeReportLookups[0];
+  assert.equal(lookup?.correlationToken, "private-correlation-token");
+  assert.equal(lookup?.lookupContext.workspaceId, "workspace-a");
+  assert.equal(lookup?.lookupContext.taskId, "task-current");
+  assert.equal(lookup?.lookupContext.runId, "run-current");
+  assert.equal(lookup?.lookupContext.agentId, "agent-current");
+});
+
+async function makeOutcomeHarnessAcrossRequests(): Promise<{
+  readonly repository: FakeMemoryRepository;
+  readonly service: MemoryService;
+}> {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  repository.injectionEvents.set(
+    "private-correlation-token",
+    outcomeInjectionEvent()
+  );
+  return { repository, service };
+}
