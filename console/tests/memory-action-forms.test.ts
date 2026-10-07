@@ -10,6 +10,12 @@ import {
 } from "@simulatorlife/autodev-core";
 
 import { MemoryRecordsView } from "../src/features/memory/MemoryRecordsView.ts";
+import {
+  actionForm,
+  fieldNames,
+  fieldValue,
+  selectOptions
+} from "./support/memory-markup.ts";
 import type { MemoryListScope } from "../src/features/memory/memory-list-url.ts";
 
 /**
@@ -75,83 +81,24 @@ function render(records: readonly MemoryRecord[]): string {
   );
 }
 
-/** The `<form>` that submits through the button with this test id. */
-function actionForm(markup: string, testId: string): string {
-  const button = markup.indexOf(`data-button="${testId}"`);
-  assert.notEqual(button, -1, `no action button rendered for ${testId}`);
-  // The form opens before its button and closes after it.
-  const open = markup.lastIndexOf("<form", button);
-  const close = markup.indexOf("</form>", button);
-  assert.ok(open !== -1 && close > open, `${testId} is not inside a form`);
-  return markup.slice(open, close);
-}
-
-/** The `name` of every control a form will submit, in document order. */
-function fieldNames(form: string): string[] {
-  return [...form.matchAll(/<(?:input|select|textarea)\b[^>]*>/gu)]
-    .map((match) => /\bname="([^"]*)"/u.exec(match[0])?.[1])
-    .filter((name): name is string => name !== undefined);
-}
-
-/** What a single control submits. A `<select>` submits its chosen option. */
-function fieldValue(form: string, name: string): string | undefined {
-  const tag = new RegExp(
-    `<(input|textarea|select)\\b[^>]*\\bname="${name}"[^>]*>`,
-    "u"
-  ).exec(form);
-  if (!tag) return undefined;
-  if (tag[1] === "select") {
-    const body = form.slice(tag.index, form.indexOf("</select>", tag.index));
-    return /<option[^>]*\bvalue="([^"]*)"/u.exec(body)?.[1] ?? "";
-  }
-  // A textarea's value is its text, not an attribute; React escapes it on the
-  // way out, so it has to be read back the way it will arrive on submit.
-  if (tag[1] === "textarea") {
-    const text = form.slice(
-      tag.index + tag[0].length,
-      form.indexOf("</textarea>", tag.index)
-    );
-    return text
-      .replaceAll("&lt;", "<")
-      .replaceAll("&gt;", ">")
-      .replaceAll("&quot;", '"')
-      .replaceAll("&#x27;", "'")
-      .replaceAll("&amp;", "&");
-  }
-  return /\bvalue="([^"]*)"/u.exec(tag[0])?.[1] ?? "";
-}
-
-/** Every option a `<select>` offers, so a bounded vocabulary can be checked. */
-function selectOptions(form: string, name: string): string[] {
-  const open = new RegExp(`<select\\b[^>]*\\bname="${name}"[^>]*>`, "u").exec(
-    form
-  );
-  assert.ok(open, `no select named ${name}`);
-  const body = form.slice(
-    open.index,
-    form.indexOf("</select>", open.index)
-  );
-  return [...body.matchAll(/<option[^>]*\bvalue="([^"]*)"/gu)].map(
-    (match) => match[1]!
-  );
-}
-
 /**
- * The form for one action, from whichever governed state offers it.
+ * The markup for whichever governed state offers this action.
  *
  * Eligibility differs per action -- `verify` needs a record awaiting review,
  * `promote-skill` needs an active procedure -- so no single record renders all
  * four. Asking each question of the state that has the button is also what makes
  * "is this action reachable at all" answerable in the same breath.
  */
-function formFor(testId: string): string {
+function markupFor(testId: string): string {
   for (const status of ["proposed", "active", "uncertain"] as const) {
     const markup = render([record({ status })]);
-    if (markup.includes(`data-button="${testId}"`)) {
-      return actionForm(markup, testId);
-    }
+    if (markup.includes(`data-button="${testId}"`)) return markup;
   }
   assert.fail(`${testId} is not offered for a record in any governed state`);
+}
+
+function formFor(testId: string): string {
+  return actionForm(markupFor(testId), testId);
 }
 
 test("every governed action is reachable from the record drawer", async () => {
@@ -164,7 +111,7 @@ test("every governed action is reachable from the record drawer", async () => {
     "memory-revise",
     "memory-promote-skill"
   ]) {
-    const form = formFor(testId);
+    const form = actionForm(markupFor(testId), testId);
     assert.match(form, /^<form/, `${testId} has no form`);
   }
 });

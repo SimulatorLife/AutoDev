@@ -13,6 +13,10 @@ import {
 
 import { MemoryCohortsView } from "../src/features/memory/MemoryCohortsView.ts";
 import {
+  selectEntries,
+  selectOptions
+} from "./support/memory-markup.ts";
+import {
   MEMORY_COHORT_MODE_LABEL,
   MEMORY_INJECTION_RESULT_LABEL,
   MEMORY_OUTCOME_LABEL,
@@ -58,32 +62,6 @@ function render(): string {
       occurredUntil: "2026-10-01T00:00:00.000Z",
       listScope: listScope()
     })
-  );
-}
-
-function selectOptions(markup: string, name: string): string[] {
-  const open = new RegExp(`<select\\b[^>]*\\bname="${name}"[^>]*>`, "u").exec(
-    markup
-  );
-  assert.ok(open, `no select named ${name}`);
-  const body = markup.slice(open.index, markup.indexOf("</select>", open.index));
-  return [...body.matchAll(/<option[^>]*\bvalue="([^"]*)"/gu)].map(
-    (match) => match[1]!
-  );
-}
-
-/** Option values with the text shown beside each. */
-function selectEntries(
-  markup: string,
-  name: string
-): { value: string; label: string }[] {
-  const open = new RegExp(`<select\\b[^>]*\\bname="${name}"[^>]*>`, "u").exec(
-    markup
-  );
-  assert.ok(open, `no select named ${name}`);
-  const body = markup.slice(open.index, markup.indexOf("</select>", open.index));
-  return [...body.matchAll(/<option[^>]*value="([^"]*)"[^>]*>([^<]*)</gu)].map(
-    (match) => ({ value: match[1]!, label: match[2]! })
   );
 }
 

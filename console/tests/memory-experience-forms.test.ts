@@ -15,6 +15,12 @@ import {
 } from "@simulatorlife/autodev-core";
 
 import { MemoryExperiencesView } from "../src/features/memory/MemoryExperiencesView.ts";
+import {
+  actionForm as formFor,
+  allOptions,
+  fieldValue,
+  selectOptions
+} from "./support/memory-markup.ts";
 import type { MemoryListScope } from "../src/features/memory/memory-list-url.ts";
 
 /**
@@ -139,54 +145,6 @@ function render(
   );
 }
 
-function formFor(markup: string, testId: string): string {
-  const button = markup.indexOf(`data-button="${testId}"`);
-  assert.notEqual(button, -1, `no action button rendered for ${testId}`);
-  const open = markup.lastIndexOf("<form", button);
-  const close = markup.indexOf("</form>", button);
-  assert.ok(open !== -1 && close > open, `${testId} is not inside a form`);
-  return markup.slice(open, close);
-}
-
-function fieldValue(form: string, name: string): string | undefined {
-  const tag = new RegExp(
-    `<(input|textarea|select)\\b[^>]*\\bname="${name}"[^>]*>`,
-    "u"
-  ).exec(form);
-  if (!tag) return undefined;
-  if (tag[1] === "select") {
-    const body = form.slice(tag.index, form.indexOf("</select>", tag.index));
-    return /<option[^>]*\bvalue="([^"]*)"/u.exec(body)?.[1] ?? "";
-  }
-  return /\bvalue="([^"]*)"/u.exec(tag[0])?.[1] ?? "";
-}
-
-function selectOptions(form: string, name: string): string[] {
-  const open = new RegExp(`<select\\b[^>]*\\bname="${name}"[^>]*>`, "u").exec(
-    form
-  );
-  assert.ok(open, `no select named ${name}`);
-  const body = form.slice(open.index, form.indexOf("</select>", open.index));
-  return [...body.matchAll(/<option[^>]*\bvalue="([^"]*)"/gu)].map(
-    (match) => match[1]!
-  );
-}
-
-/** Every evidence-kind select anywhere on the page, with the options it offers. */
-function allEvidenceKindOptions(markup: string): string[][] {
-  return [...markup.matchAll(/<select\b[^>]*name="evidenceKind"[^>]*>/gu)].map(
-    (match) => {
-      const body = markup.slice(
-        match.index,
-        markup.indexOf("</select>", match.index)
-      );
-      return [...body.matchAll(/<option[^>]*\bvalue="([^"]*)"/gu)].map(
-        (option) => option[1]!
-      );
-    }
-  );
-}
-
 test("a purge offers only the reasons the Runtime accepts", async () => {
   const form = formFor(render(), "purge-experience");
 
@@ -241,11 +199,14 @@ test("a use assessment submits the injection it judges and the Runtime's use kin
 test("every evidence-kind select on the page offers one identical list", async () => {
   // The duplication this file exists to prevent: two forms citing the same
   // vocabulary from two hand-written lists, which agree until one is edited.
-  const lists = allEvidenceKindOptions(render());
+  const lists = allOptions(render(), "evidenceKind");
 
   assert.ok(lists.length >= 2, "expected several evidence selects on one drawer");
   for (const list of lists) {
-    assert.deepEqual(list, [...MEMORY_EVIDENCE_KINDS]);
+    assert.deepEqual(
+      list.map((entry) => entry.value),
+      [...MEMORY_EVIDENCE_KINDS]
+    );
   }
 });
 
