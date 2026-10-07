@@ -36,12 +36,19 @@ import {
  *   stop values that a terminal or a log line would render as something other
  *   than themselves, and a `\n` inside a URI is exactly that.
  *
- * One case is deliberately *not* asserted: an unknown key on an evidence entry is
- * accepted and dropped, where the same mistake elsewhere in this file is refused
- * — `exactKeys` guards the body, the scope, and every filter object. That is an
- * asymmetry, not an oversight this file can settle: tightening it changes what
- * existing callers may send, which is a product decision. It is noted here so
- * the gap is written down rather than left as an accident.
+ * An unknown key on an evidence entry used to be accepted and dropped, where the
+ * same mistake elsewhere in this file is refused -- `exactKeys` guards the body,
+ * the scope, and every filter object. That was left as a written-down gap on the
+ * theory that tightening it would change what existing callers may send. That
+ * premise has since been checked rather than assumed: the Console builds these
+ * references as `{ kind, uri, revision? }` and nothing else, and no existing
+ * test sends anything wider. The other two boundaries for this same type already
+ * refuse it -- capture rejects an unknown field outright, and the MCP adapter
+ * uses `strictObject` with the reason written down, that a misspelled or
+ * smuggled field must be a hard error rather than silent data loss.
+ *
+ * So the asymmetry is now closed. Reversible in one line if an external caller
+ * turns out to rely on the leniency.
  */
 
 const RECORDS = "/control/memory/records";
@@ -112,6 +119,39 @@ test("a valid proposal with one evidence reference is stored", async () => {
 
   assert.equal(status, 200, JSON.stringify(body));
   assert.equal(body?.schema, "autodev-memory-record-v1");
+});
+
+test("an unknown key on an evidence entry is refused, not dropped", async () => {
+  // The entry is rebuilt field by field, so an unrecognised key used to vanish
+  // without a word. A caller who misspells `revision` stored a reference that
+  // silently does not carry one -- and, per the rest of this file's argument, a
+  // memory that looks sourced and is not.
+  //
+  // `revison` is the realistic case rather than a stray `note`: the field is
+  // optional, so nothing else about the payload looks wrong.
+  for (const [label, entry] of [
+    ["a misspelled revision", { ...VALID_EVIDENCE, revison: "abc123" }],
+    ["a field from another shape", { ...VALID_EVIDENCE, note: "not part of a reference" }]
+  ] as const) {
+    const { status, body } = await propose(withEvidence([entry]));
+
+    assert.equal(
+      status,
+      400,
+      `${label} was accepted and dropped instead of refused`
+    );
+    assert.equal(errorCode(body), "autodev_memory_invalid_request");
+  }
+
+  // The positive control for the optional fields: both are accepted when the
+  // key is spelled correctly, so the rule above is about unknown keys and not
+  // about refusing the richer shape.
+  const { status } = await propose(
+    withEvidence([
+      { ...VALID_EVIDENCE, revision: "abc123", observedAt: "2026-10-01T00:00:00.000Z" }
+    ])
+  );
+  assert.equal(status, 200, "a fully populated reference must still be accepted");
 });
 
 test("evidence must be a non-empty array", async () => {

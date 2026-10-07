@@ -571,6 +571,15 @@ function evidenceReferences(value: unknown): readonly EvidenceReference[] {
   return value.map((entry) => {
     if (!isObject(entry) || !MEMORY_EVIDENCE_KINDS.includes(entry.kind as never))
       throw new MemoryValidationError("Memory evidence reference is invalid.");
+    // Every other object this file reads is checked for unsupported keys --
+    // the body, the scope, each cohort filter -- and this one was not, so an
+    // unknown field was dropped on the way to the returned object below rather
+    // than reported. That is the outcome the other two boundaries already refuse:
+    // capture rejects it outright, and the MCP adapter uses `strictObject` with
+    // the reason written down, that a misspelled or smuggled field must be a
+    // hard error rather than silent data loss. A caller whose `revision` is
+    // misspelled otherwise stores a reference silently missing it.
+    exactKeys(entry, ["kind", "uri", "revision", "observedAt"]);
     const uri = requiredString(entry, "uri", MAX_EVIDENCE_URI_CHARACTERS);
     const revision = entry.revision;
     const observedAt = entry.observedAt;
