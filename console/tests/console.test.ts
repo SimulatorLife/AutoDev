@@ -54,7 +54,6 @@ import * as providerRoleRoute from "../app/api/providers/[provider]/roles/[role]
 import * as providerRoute from "../app/api/providers/[provider]/route.ts";
 import EvaluationsPage from "../app/evaluations/page.ts";
 import MemoryPage from "../app/memory/page.ts";
-import { resolveEvaluationsPage } from "../src/features/evaluations/evaluations-url.ts";
 import { FilterNotice } from "../src/components/filters/FilterNotice.ts";
 import {
   type FilterSpec,
@@ -77,6 +76,13 @@ import {
   MONO_META_CLASS,
   MONO_VALUE_CLASS
 } from "../src/components/ui/text-classes.ts";
+import {
+  type EvaluationsFilters,
+  evaluationsHref,
+  filterEvaluations,
+  hasActiveFilters,
+  parseEvaluationsFilters,
+  resolveEvaluationsPage} from "../src/features/evaluations/evaluations-url.ts";
 import {
   AgentDetailView,
   AgentsView,
@@ -2374,7 +2380,9 @@ function renderEvaluations(
         outcome: "all",
         role: "",
         model: "",
-        prompt: ""
+        prompt: "",
+        from: "",
+        until: ""
       },
       filterOptions: { roles: [], models: [], prompts: [] },
       ...props
@@ -4764,7 +4772,9 @@ test("EvaluationsView renders safe trace details and prompt-preserving span link
       outcome: "all",
       role: "",
       model: "",
-      prompt: "dry"
+      prompt: "dry",
+      from: "",
+      until: ""
     },
     traceLookup: {
       kind: "observed",
@@ -4878,7 +4888,14 @@ test("a capped read says so instead of describing its window as the history", ()
     availableCount: 2,
     totalCount: 5000,
     truncated: true,
-    filters: { outcome: "failed", role: "", model: "", prompt: "" }
+    filters: {
+      outcome: "failed",
+      role: "",
+      model: "",
+      prompt: "",
+      from: "",
+      until: ""
+    }
   });
   assert.match(narrowed, /1 of the most recent 2 · 5000 retained/);
 
@@ -4913,9 +4930,7 @@ test("the history table pages instead of rendering a whole read window", () => {
   }));
 
   const first = renderEvaluations({ evaluations: many });
-  const rendered = [
-    ...first.matchAll(/data-evaluation-result-id="([^"]+)"/gu)
-  ].map((match) => match[1]);
+  const rendered = Array.from(first.matchAll(/data-evaluation-result-id="([^"]+)"/gu), (match) => match[1]);
   assert.equal(rendered.length, 50, "one page of the window, not all of it");
   assert.equal(rendered[0], "run-0");
   assert.match(first, /Rows 1–50 of 120 in this view/);
@@ -4940,6 +4955,23 @@ test("the history table pages instead of rendering a whole read window", () => {
   const short = renderEvaluations({ evaluations: many.slice(0, 3) });
   assert.match(short, /Rows 1–3 of 3 in this view/);
   assert.equal(short.includes("Page 1 of 1"), false);
+
+  // An empty view has no first row. The range arithmetic is right for a
+  // non-empty window and produced "Rows 1-0 of 0" here, which reads as a broken
+  // range rather than as the absence it is.
+  const empty = renderEvaluations({
+    evaluations: [],
+    filters: {
+      outcome: "all",
+      role: "",
+      model: "",
+      prompt: "",
+      from: "2026-10-06",
+      until: "2026-10-06"
+    }
+  });
+  assert.match(empty, /No results in this view/);
+  assert.equal(empty.includes("Rows 1–0"), false);
 });
 
 test("page links keep the filters and the section and drop the open run", () => {
@@ -4959,7 +4991,14 @@ test("page links keep the filters and the section and drop the open run", () => 
     evaluations: rows,
     page: 2,
     tab: "results",
-    filters: { outcome: "passed", role: "implementer", model: "", prompt: "" }
+    filters: {
+      outcome: "passed",
+      role: "implementer",
+      model: "",
+      prompt: "",
+      from: "",
+      until: ""
+    }
   });
   // The assertion is scoped to the pager: every row on the page legitimately
   // carries a `result=` link of its own, so a whole-page check would only prove
@@ -5000,7 +5039,14 @@ test("page links keep the filters and the section and drop the open run", () => 
     evaluations: rows,
     tab: "comparisons",
     page: 2,
-    filters: { outcome: "all", role: "implementer", model: "", prompt: "" }
+    filters: {
+      outcome: "all",
+      role: "implementer",
+      model: "",
+      prompt: "",
+      from: "",
+      until: ""
+    }
   });
   assert.equal(
     comparisons.includes('data-feature="evaluations-pager"'),
@@ -5035,6 +5081,154 @@ test("a page parameter that is not a page resolves to the first one", () => {
     "a repeated page is two answers to one question"
   );
   assert.equal(resolveEvaluationsPage("3"), 3);
+});
+
+test("the run-time window narrows on UTC days, and names the runs it cannot place", () => {
+  // Every other axis on this resource is categorical, so "which failures
+  // happened on Tuesday" had no answer at all -- the read is capped at the most
+  // recent thousand, and the only route to an older run was to page through
+  // twenty pages of rows reading their timestamps.
+  //
+  // The bounds are UTC days and the ends are inclusive. `until` is exclusive at
+  // the start of the next day rather than at midnight of the named one,
+  // because "to 2026-10-05" that excluded everything on the fifth after its
+  // first second, and the adjacent windows would have left that second in
+  // neither.
+  const rows = [
+    {
+      id: "before",
+      agentRole: "worker",
+      model: "m-1",
+      metrics: [],
+      passed: false,
+      timestamp: "2026-10-04T23:59:59Z"
+    },
+    {
+      id: "first-second",
+      agentRole: "worker",
+      model: "m-1",
+      metrics: [],
+      passed: false,
+      timestamp: "2026-10-05T00:00:00Z"
+    },
+    {
+      id: "last-second",
+      agentRole: "worker",
+      model: "m-1",
+      metrics: [],
+      passed: false,
+      timestamp: "2026-10-05T23:59:59Z"
+    },
+    {
+      id: "after",
+      agentRole: "worker",
+      model: "m-1",
+      metrics: [],
+      passed: false,
+      timestamp: "2026-10-06T00:00:00Z"
+    }
+  ];
+  const window = (from: string, until: string): EvaluationsFilters => ({
+    outcome: "all",
+    role: "",
+    model: "",
+    prompt: "",
+    from,
+    until
+  });
+
+  const oneDay = filterEvaluations(rows, window("2026-10-05", "2026-10-05"));
+  assert.deepEqual(
+    oneDay.results.map((row) => row.id),
+    ["first-second", "last-second"],
+    "a named day is the whole UTC day, both ends of it"
+  );
+  assert.equal(oneDay.unplaceable, 0);
+
+  // Adjacent windows cover every instant exactly once rather than repeating or
+  // losing the boundary between them.
+  const split = [
+    ...filterEvaluations(rows, window("2026-10-04", "2026-10-04")).results,
+    ...filterEvaluations(rows, window("2026-10-05", "2026-10-05")).results,
+    ...filterEvaluations(rows, window("2026-10-06", "2026-10-06")).results
+  ];
+  assert.deepEqual(
+    split.map((row) => row.id),
+    ["before", "first-second", "last-second", "after"],
+    "no instant is left out or counted twice across adjacent windows"
+  );
+
+  // A row the window cannot place is counted and stated, never absorbed: the
+  // target state forbids silently dropping a row and biasing the totals.
+  const unplaceable = filterEvaluations(
+    [
+      ...rows,
+      {
+        id: "unreadable",
+        agentRole: "worker",
+        model: "m-1",
+        metrics: [],
+        passed: false,
+        timestamp: "whenever it was"
+      }
+    ],
+    window("2026-10-05", "2026-10-05")
+  );
+  assert.equal(unplaceable.unplaceable, 1);
+  assert.equal(
+    unplaceable.results.some((row) => row.id === "unreadable"),
+    false
+  );
+  // With no bound set there is nothing to place, so nothing can be unplaceable.
+  assert.equal(
+    filterEvaluations(rows, window("", "")).unplaceable,
+    0,
+    "an unbounded filter never has to place a row"
+  );
+});
+
+test("a window the operator cannot have meant narrows nothing", () => {
+  // `2026-02-31` matches a date's shape and is not a date; `Date.parse` rolls it
+  // to March 3rd, which would quietly start the window three days late. A bound
+  // that cannot be read is treated as unset rather than guessed at, and the
+  // control renders empty so it cannot display a date the filter ignores.
+  for (const value of [
+    "",
+    "2026-13-01",
+    "2026-02-31",
+    "2026-2-3",
+    "yesterday"
+  ]) {
+    const parsed = parseEvaluationsFilters({ from: value });
+    assert.equal(parsed.from, "", `${JSON.stringify(value)} is not a UTC day`);
+  }
+  assert.equal(
+    parseEvaluationsFilters({ from: "2026-02-28" }).from,
+    "2026-02-28"
+  );
+  assert.equal(
+    parseEvaluationsFilters({ from: ["2026-02-28", "2026-03-01"] }).from,
+    "",
+    "two values for one key is not one answer"
+  );
+
+  // Both ends travel through every link on the page.
+  const narrowed = parseEvaluationsFilters({
+    outcome: "failed",
+    role: "worker",
+    from: "2026-10-01",
+    until: "2026-10-05"
+  });
+  assert.ok(hasActiveFilters(narrowed));
+  assert.equal(
+    evaluationsHref(narrowed),
+    "/evaluations?outcome=failed&role=worker&from=2026-10-01&until=2026-10-05"
+  );
+  assert.equal(
+    hasActiveFilters(parseEvaluationsFilters({ from: "2026-10-01" })),
+    true,
+    "a window alone is a narrowed view, so the clear affordance offers itself"
+  );
 });
 
 test("the retained-results card counts the store, not the window and not the filter", () => {
@@ -5072,7 +5266,7 @@ test("the retained-results card counts the store, not the window and not the fil
   assert.match(capped, /Retained results/);
   // 5000 is the store; 2 is what is on screen, and the card says which is which.
   assert.match(capped, /5000<\/span>|>5000</);
-  assert.match(capped, /showing the most recent 2/);
+  assert.match(capped, /the most recent 2 in this view/);
 
   // Filtered, the card's number is still the store's, and the subtitle is what
   // says three of them are on screen -- rather than a card reading "3" under
@@ -5082,9 +5276,16 @@ test("the retained-results card counts the store, not the window and not the fil
     availableCount: 2,
     totalCount: 5000,
     truncated: true,
-    filters: { outcome: "failed", role: "", model: "", prompt: "" }
+    filters: {
+      outcome: "failed",
+      role: "",
+      model: "",
+      prompt: "",
+      from: "",
+      until: ""
+    }
   });
-  assert.match(narrowed, /1 of the most recent 2 shown/);
+  assert.match(narrowed, /1 of the most recent 2 in this view/);
   assert.equal(narrowed.includes("Total Evaluations"), false);
 });
 
@@ -5102,7 +5303,7 @@ test("fetchEvaluations rejects a response that will not say whether it is capped
   };
 
   const withoutFlag: typeof fetch = async () =>
-    new Response(JSON.stringify(base), { status: 200 });
+    Response.json(base, { status: 200 });
   const rejected = await fetchEvaluations(
     { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" },
     { fetchImpl: withoutFlag }
@@ -5114,7 +5315,7 @@ test("fetchEvaluations rejects a response that will not say whether it is capped
   }
 
   const withFlag: typeof fetch = async () =>
-    new Response(JSON.stringify({ ...base, truncated: true }), {
+    Response.json({ ...base, truncated: true }, {
       status: 200
     });
   const accepted = await fetchEvaluations(
@@ -5257,7 +5458,14 @@ test("every filter axis is offered and every link states what it keeps", () => {
     // filtered set and `availableCount` is the window they came from.
     evaluations: [evaluations[1]!],
     availableCount: 3,
-    filters: { outcome: "failed", role: "worker", model: "", prompt: "" },
+    filters: {
+      outcome: "failed",
+      role: "worker",
+      model: "",
+      prompt: "",
+      from: "",
+      until: ""
+    },
     filterOptions: {
       roles: ["orchestrator", "worker"],
       models: ["m-1", "m-2"],
@@ -5334,7 +5542,9 @@ test("the section tabs keep the filters and the open section keeps its own links
     outcome: "failed" as const,
     role: "worker",
     model: "",
-    prompt: ""
+    prompt: "",
+    from: "",
+    until: ""
   };
   const narrowed = renderEvaluations({
     evaluations,

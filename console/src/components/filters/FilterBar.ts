@@ -1,8 +1,8 @@
 import React from "react";
 
 import { Button } from "../forms/Button.ts";
-import { FIELD_CONTROL_CLASS } from "../forms/SelectField.ts";
 import { FILTER_PANEL_CLASS } from "../layout/Panel.ts";
+import { FIELD_CONTROL_CLASS } from "../ui/field-classes.ts";
 
 /**
  * The Console's filter bar.

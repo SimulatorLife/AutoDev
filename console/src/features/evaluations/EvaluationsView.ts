@@ -33,6 +33,10 @@ import {
 } from "../../components/tables/DataTable.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
 import {
+  FIELD_CONTROL_CLASS,
+  FIELD_GROUP_CLASS
+} from "../../components/ui/field-classes.ts";
+import {
   MONO_ID_CLASS,
   MONO_META_CLASS,
   MONO_VALUE_CLASS,
@@ -110,6 +114,15 @@ export interface EvaluationsViewProps {
   readonly tab?: EvaluationsTabId | undefined;
   /** Page of the narrowed window the history table shows. Defaults to the first. */
   readonly page?: number | undefined;
+  /**
+   * Runs a time bound could not place, because their run time is not a readable
+   * instant.
+   *
+   * Stated on the page rather than absorbed into the counts. A row that cannot
+   * be placed is excluded from the match, and a denominator that quietly lost it
+   * would be a pass rate over a population nobody chose.
+   */
+  readonly unplaceable?: number | undefined;
   /** Result id opened in the detail drawer, or `null`. */
   readonly selection?: string | null | undefined;
   readonly traceLookup?: EvaluationTraceLookup | null | undefined;
@@ -932,7 +945,14 @@ function renderPager(
       // on screen and not the rows the store holds. The filter bar's sentence
       // above states how large that window is; this states which part of it the
       // table is on, so neither number has to be inferred from the other.
-      `Rows ${firstRow}–${lastRow} of ${totalRows} in this view`
+      //
+      // An empty view has no first row, and the arithmetic below is right for a
+      // non-empty window while producing "Rows 1-0 of 0" for an empty one --
+      // which reads as a broken range rather than as the absence it is. So the
+      // empty case is said rather than computed.
+      totalRows === 0
+        ? "No results in this view"
+        : `Rows ${firstRow}–${lastRow} of ${totalRows} in this view`
     ),
     pageCount > 1
       ? React.createElement(
@@ -950,6 +970,44 @@ function renderPager(
           step(current + 1, "Next", current < pageCount)
         )
       : null
+  );
+}
+
+/**
+ * One end of the run-time window.
+ *
+ * The label says UTC because that is what the bound is: a day is midnight UTC to
+ * midnight UTC, and "Friday" here means the UTC Friday, which is not the
+ * operator's Friday everywhere. `/usage`'s custom range already phrases it this
+ * way, and two surfaces that both narrow time and disagree about the timezone
+ * would be worse than one that says so.
+ *
+ * `min`/`max` cross-link the two controls so a browser rejects an inverted range
+ * rather than the operator submitting one and getting an empty table. The
+ * server-side parse re-checks regardless: a constraint on an input is a
+ * convenience, not a rule.
+ */
+function runTimeBound(
+  name: "from" | "until",
+  label: string,
+  value: string,
+  other: string
+): React.JSX.Element {
+  return React.createElement(
+    "label",
+    { className: FIELD_GROUP_CLASS },
+    React.createElement("span", null, `${label} (UTC):`),
+    React.createElement("input", {
+      type: "date",
+      name,
+      defaultValue: value,
+      ...(name === "from"
+        ? { max: other || undefined }
+        : { min: other || undefined }),
+      "aria-label": `Runs ${name === "from" ? "from" : "up to"} this UTC date`,
+      className: FIELD_CONTROL_CLASS,
+      "data-evaluations-bound": name
+    })
   );
 }
 
@@ -1018,6 +1076,12 @@ function resultSummary({
  * window as the whole table. The value is now the store's own size and the
  * subtitle states the relationship to what is on screen, so the card and the
  * sentence above it cannot disagree about either number.
+ *
+ * The subtitle counts rows, never pages. "334 of the most recent 1000 shown"
+ * became ambiguous the moment the table started showing 50 rows at a time: 50
+ * are on the table, 334 are in the view, and "shown" pointed at both. It now
+ * says "in this view", the same phrase the pager uses for its own range, so one
+ * word names one population across the page.
  */
 function retainedResults({
   shown,
@@ -1032,7 +1096,7 @@ function retainedResults({
   if (narrowed && truncated) {
     return {
       value: total,
-      subtitle: `${shown} of the most recent ${window} shown`
+      subtitle: `${shown} of the most recent ${window} in this view`
     };
   }
   if (narrowed) {
@@ -1042,7 +1106,7 @@ function retainedResults({
     };
   }
   return truncated
-    ? { value: total, subtitle: `showing the most recent ${window}` }
+    ? { value: total, subtitle: `the most recent ${window} in this view` }
     : { value: total, subtitle: null };
 }
 
@@ -1055,6 +1119,7 @@ export function EvaluationsView({
   filterOptions,
   tab = "results",
   page = 1,
+  unplaceable = 0,
   selection = null,
   traceLookup = null
 }: EvaluationsViewProps): React.JSX.Element {
@@ -1232,7 +1297,9 @@ export function EvaluationsView({
           }))
         ],
         filters.prompt
-      )
+      ),
+      runTimeBound("from", "From", filters.from, filters.until),
+      runTimeBound("until", "To", filters.until, filters.from)
     ),
     React.createElement(
       "div",
@@ -1283,6 +1350,17 @@ export function EvaluationsView({
     selectedEvaluation === null
       ? null
       : renderResultDetail(selectedEvaluation, nav),
+    unplaceable === 0
+      ? null
+      : React.createElement(
+          "p",
+          {
+            className: "text-xs text-warning",
+            role: "status",
+            "data-evaluations-unplaceable": String(unplaceable)
+          },
+          `${unplaceable} ${unplaceable === 1 ? "run reports" : "runs report"} no readable run time and cannot be placed in this window, so ${unplaceable === 1 ? "it is" : "they are"} left out of every count on this page.`
+        ),
     traceLookup ? renderTraceLookup(traceLookup, nav) : null,
     tab === "results"
       ? React.createElement(
