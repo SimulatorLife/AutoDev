@@ -445,6 +445,18 @@ function parseFilters(
   ) {
     throw new TypeError("Experience-only filters cannot be used for records.");
   }
+  // The mirror of the check above, and for the same reason. `kind` and `status`
+  // describe a durable record's lifecycle; an experience has neither. They were
+  // parsed, validated and then dropped on the way to the service, so a caller
+  // filtering experiences by status got the whole unfiltered collection with a
+  // 200 and no indication the filter had been ignored. Refusing is the same
+  // answer the route already gives for the other direction.
+  if (
+    resource === MEMORY_EXPERIENCES_ROUTE &&
+    (params.has("kind") || params.has("status"))
+  ) {
+    throw new TypeError("Record-only filters cannot be used for experiences.");
+  }
   const memoryModes = valuesFromQuery(
     params,
     "memoryMode",
