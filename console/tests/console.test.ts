@@ -21,11 +21,13 @@ import {
   type ControlApiPromptDetailResponse,
   type ControlApiProviderRecord,
   type ControlApiProvidersResponse,
+  type ControlApiRuntimeResponse,
   type ExperienceEnvelope,
   type GithubWorkflowDefinition,
   LOCAL_CONTROL_API_ACTOR,
   type McpServerResource,
   type MemoryInjectionUseCohortCell,
+  type MemoryInjectionUseCohortPage,
   type MemoryRecord,
   type MemorySessionOutcomeCohortCell,
   type MemorySessionOutcomeCohortPage,
@@ -5049,7 +5051,10 @@ test("the history table pages instead of rendering a whole read window", () => {
   }));
 
   const first = renderEvaluations({ evaluations: many });
-  const rendered = Array.from(first.matchAll(/data-evaluation-result-id="([^"]+)"/gu), (match) => match[1]);
+  const rendered = Array.from(
+    first.matchAll(/data-evaluation-result-id="([^"]+)"/gu),
+    (match) => match[1]
+  );
   assert.equal(rendered.length, 50, "one page of the window, not all of it");
   assert.equal(rendered[0], "run-0");
   assert.match(first, /Rows 1–50 of 120 in this view/);
@@ -5469,7 +5474,6 @@ test("the filter bar only offers combinations that exist", () => {
   assert.equal(filterOptionsFor(rows, filters({})).prompts.includes(""), false);
 });
 
-
 test("a run that reports no prompt is counted, not hidden", () => {
   // Measured in Chromium: `?prompt=release-notes` rendered 35 rows of which 17
   // read "No prompt", directly under a filter bar saying "Prompt:
@@ -5653,6 +5657,7 @@ test("what the view could not include is stated under the filter bar", () => {
     "the caveats sit with the filters, above the counts they qualify"
   );
 });
+
 test("the retained-results card counts the store, not the window and not the filter", () => {
   // The card used to read `evaluations.length` under the title "Total
   // Evaluations" -- the same lie the filter bar sentence was rewritten to stop
@@ -5737,9 +5742,12 @@ test("fetchEvaluations rejects a response that will not say whether it is capped
   }
 
   const withFlag: typeof fetch = async () =>
-    Response.json({ ...base, truncated: true }, {
-      status: 200
-    });
+    Response.json(
+      { ...base, truncated: true },
+      {
+        status: 200
+      }
+    );
   const accepted = await fetchEvaluations(
     { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" },
     { fetchImpl: withFlag }
@@ -7104,7 +7112,7 @@ test("a Memory record shows its claim and scope instead of an ellipsis", () => {
     },
     createdAt: "2026-10-01T00:00:00Z",
     updatedAt: "2026-10-02T00:00:00Z"
-  };
+  } satisfies MemoryRecord;
   const markup = renderToStaticMarkup(
     React.createElement(MemoryRecordsView, {
       records: [record],
@@ -7275,7 +7283,7 @@ test("a Memory record shows its claim and scope instead of an ellipsis", () => {
     },
     createdAt: "2026-10-01T00:00:00Z",
     updatedAt: "2026-10-02T00:00:00Z"
-  };
+  } satisfies MemoryRecord;
   const markup = renderToStaticMarkup(
     React.createElement(MemoryRecordsView, {
       records: [record],
@@ -7364,7 +7372,13 @@ test("an experience's validation and outcome are named, not left as wire keys", 
       /data-status="([a-z-]+)"[^>]*>[\s\S]*?<span class="min-w-0 truncate">([^<]*)</u.exec(
         markup
       );
-    return found === null ? null : [found[1], found[2]];
+    // Both capture groups are non-optional to the regex, but `noUncheckedIndexedAccess`
+    // cannot see that, and indexing past the match is genuinely `undefined`.
+    // Treated as "no badge" rather than asserted away. The leading hole matters:
+    // element 0 of a `RegExpExecArray` is the whole match, not the first group.
+    if (found === null) return null;
+    const [, status, word] = found;
+    return status === undefined || word === undefined ? null : [status, word];
   };
 
   for (const [state, word, tone] of [
@@ -7589,7 +7603,7 @@ test("a cohort cell never renders blank, and names what a curator assessed", () 
     conflictingOutcomeSessionCount: 0
   };
   const useCohorts = {
-    schema: "autodev-memory-use-cohorts-v1" as const,
+    schema: "autodev-memory-injection-use-cohorts-v1" as const,
     workspaceId: "SimulatorLife/AutoDev",
     repositoryId: "SimulatorLife/AutoDev",
     occurredFrom: "2026-09-01T00:00:00Z",
@@ -7614,10 +7628,8 @@ test("a cohort cell never renders blank, and names what a curator assessed", () 
         exposureCount: 4
       }
     ],
-    exposureCount: 79,
-    usedExposureCount: 61,
-    unassessedExposureCount: 4
-  };
+    exposureCount: 79
+  } satisfies MemoryInjectionUseCohortPage;
 
   const markup = renderToStaticMarkup(
     React.createElement(MemoryCohortsView, {
@@ -11274,7 +11286,9 @@ test("a record's governed actions submit the revision the route requires", () =>
     claim: "The claim as it stands.",
     validity: { state: "verified", evidence: [] },
     provenance: {
-      experienceIds: [],
+      // A revision cites the record's own experiences, so a record citing none
+      // is not offered the action at all.
+      experienceIds: ["exp-governed"],
       evidence: [],
       createdBy: "operator",
       createdAt: "2026-10-01T00:00:00Z"
@@ -11309,23 +11323,33 @@ test("a record's governed actions submit the revision the route requires", () =>
   assert.match(revise, /data-text-field="memory-revise-claim"/);
   assert.match(revise, /The claim as it stands\./);
 
-  // An append-only lifecycle reason is recorded for every transition, so the
-  // forms that make one carry a box for it. Blank still falls back to the
-  // route's sentence; it just stops being the only option.
-  for (const testId of ["memory-invalidate", "memory-revise"]) {
-    assert.match(
-      form(testId),
-      /data-text-field="memory-[a-z-]+-reason"/,
-      `${testId} must offer an audit reason`
-    );
-  }
+  // An invalidation is permanent, so the Runtime takes one of its own bounded
+  // codes rather than prose and refuses anything else. A select makes a
+  // reason it would reject impossible to compose in the first place.
+  assert.match(
+    form("memory-invalidate"),
+    /data-select="memory-invalidate-reason-code"/,
+    "an invalidation must offer a bounded reason code rather than free text"
+  );
+
+  // A revision collects no reason at all. The Runtime reads one as claim, the
+  // experiences it derives from and its evidence, so a reason typed into a box
+  // here was discarded on submit -- and a box that reads as an audit trail
+  // while recording nothing is worse than its absence.
+  assert.doesNotMatch(
+    revise,
+    /name="reason"/,
+    "a revision must not collect a reason the Runtime would discard"
+  );
 
   // Labels must be real: a placeholder disappears once the field has a value,
   // leaving the control with no accessible name at all.
   assert.match(revise, /<label for="memory-revise-claim-mem-governed"/);
-  assert.match(revise, /<label for="memory-revise-reason-mem-governed"/);
+  assert.match(revise, /<label for="memory-revise-evidence-uri-mem-governed"/);
 
-  // Verify applies to a claim awaiting review, and carries the same reason box.
+  // Verify applies to a claim awaiting review. The Runtime re-derives it from a
+  // research request, so the form states the task to check it against rather
+  // than offering a free-text reason it would refuse.
   const proposed = renderToStaticMarkup(
     React.createElement(MemoryRecordsView, {
       records: [{ ...record, status: "proposed" }],
@@ -11335,7 +11359,7 @@ test("a record's governed actions submit the revision the route requires", () =>
     })
   );
   assert.match(proposed, /data-button="memory-verify"/);
-  assert.match(proposed, /data-text-field="memory-verify-reason"/);
+  assert.match(proposed, /data-text-field="memory-verify-research-context"/);
 
   // A superseded or invalidated claim is not editable, so no revision form.
   const closed = renderToStaticMarkup(
@@ -11356,6 +11380,8 @@ test("Memory revise reaches the Runtime only with a replacement claim", async ()
         action: "revise",
         recordId: "mem-1",
         workspaceId: "SimulatorLife/AutoDev",
+        // A reason is not one of a revision's fields, so nothing but the claim
+        // can stand in for a missing one.
         reason: "Outgrew its wording."
       })
     );
@@ -11378,7 +11404,11 @@ test("Memory revise reaches the Runtime only with a replacement claim", async ()
         recordId: "mem-1",
         workspaceId: "SimulatorLife/AutoDev",
         claim: "The revised claim.",
-        reason: "Outgrew its wording."
+        // What the record form submits: the record's own provenance, and the
+        // evidence the operator cites for the change.
+        experienceIds: "exp-1,exp-2",
+        evidenceKind: "trace",
+        evidenceUri: "runs/42"
       })
     );
     assert.equal(response.status, 303);
@@ -11394,7 +11424,41 @@ test("Memory revise reaches the Runtime only with a replacement claim", async ()
       unknown
     >;
     assert.equal(sent.claim, "The revised claim.");
-    assert.equal(sent.reason, "Outgrew its wording.");
+    // A revision is the replacement text plus what it rests on. The Runtime
+    // refuses any other key, so a reason is neither collected nor forwarded --
+    // and `workspaceId` is the Console's scope, carried in the path instead.
+    assert.deepEqual(sent.experienceIds, ["exp-1", "exp-2"]);
+    assert.deepEqual(sent.evidence, [
+      { kind: "trace", uri: "runs/42" }
+    ]);
+    assert.equal("reason" in sent, false, "a revision has no reason to record");
+    assert.equal("workspaceId" in sent, false, "the scope is in the path");
+  });
+});
+
+test("a revision of a record citing no experiences is refused for that, not for its evidence", async () => {
+  // The record's own provenance is the only source the form can cite, so a
+  // record that cites none cannot be revised from the Console at all. Reported
+  // as missing evidence it blamed a field the operator had filled in correctly,
+  // which sends them off to fix something that was never wrong.
+  await withMemoryRoute(async (requests) => {
+    const response = await memoryRoute.POST(
+      memoryPurgeRequest({
+        action: "revise",
+        recordId: "mem-1",
+        workspaceId: "SimulatorLife/AutoDev",
+        claim: "The revised claim.",
+        evidenceKind: "trace",
+        evidenceUri: "runs/42"
+      })
+    );
+    assert.equal(response.status, 303);
+    assert.match(
+      response.headers.get("location") ?? "",
+      /refusal=provenance_required$/u,
+      "the refusal must name the missing experiences, not the evidence that was given"
+    );
+    assert.equal(requests.length, 0, "a revision with no sources is not a request");
   });
 });
 
@@ -12137,7 +12201,8 @@ test("an observed injection offers both reports, on the injection they describe"
           use: {
             useKind: "used",
             usedMemoryIds: ["mem-1", "mem-2"],
-            reportedAt: "2026-10-01T02:00:00Z"
+            reportedAt: "2026-10-01T02:00:00Z",
+            evidence: []
           },
           sessionInjectionCount: 1
         }
@@ -15191,14 +15256,14 @@ test("a Runtime response with no concurrency limit is readable, and says so", as
       activeSessions: 0
     },
     inFlightRequestCount: 0
-  };
+  } satisfies ControlApiRuntimeResponse;
   assert.equal(
     (await fetchRuntime(config, serve(runtime))).kind,
     "ok",
     "a router deliberately running without a limit must not read as unreadable"
   );
 
-  // And a limit that is present but is not a number is still not a limit.
+  // And a limit that is present but not a number is still not a limit.
   for (const broken of [
     {
       ...runtime,
@@ -15220,17 +15285,30 @@ test("a Runtime response with no concurrency limit is readable, and says so", as
   }
 
   // The three states stay distinct: a real limit, no limit, and not reported.
+  // "Not reported" is the key being *absent*, not present-and-undefined: the
+  // contract declares the field optional under `exactOptionalPropertyTypes`, so
+  // spelling it `undefined` is a fourth state the producer can never emit.
+  const { effectivePerSessionLimit: _unreported, ...observedConcurrency } =
+    runtime.concurrency;
   const render = (effectivePerSessionLimit: number | null | undefined) =>
     renderToStaticMarkup(
       React.createElement(AgentsView, {
         agents: [CONFIGURED_AGENT],
         runtime: {
           ...runtime,
-          concurrency: { ...runtime.concurrency, effectivePerSessionLimit }
+          concurrency: {
+            ...observedConcurrency,
+            ...(effectivePerSessionLimit === undefined
+              ? {}
+              : { effectivePerSessionLimit })
+          }
         }
       })
     );
   assert.match(render(2), /Session Concurrency Limit[\s\S]*?2/u);
   assert.match(render(null), /Session Concurrency Limit[\s\S]*?Unlimited/u);
-  assert.match(render(undefined), /Session Concurrency Limit[\s\S]*?Not observed/u);
+  assert.match(
+    render(undefined),
+    /Session Concurrency Limit[\s\S]*?Not observed/u
+  );
 });
