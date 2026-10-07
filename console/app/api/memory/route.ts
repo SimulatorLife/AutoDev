@@ -406,6 +406,12 @@ function memoryRefusalFor(
       return "forbidden";
     case "autodev_memory_unavailable":
       return "unavailable";
+    // The Runtime accepted the body and the operation then failed, which is a
+    // different thing from the fallback's "declined without saying why". It said
+    // exactly why, so telling the operator otherwise sends them to look for a
+    // mistake in a form that was correct.
+    case "autodev_memory_operation_failed":
+      return "operation_failed";
     default:
       return "runtime_refused";
   }

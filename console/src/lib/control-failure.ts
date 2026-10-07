@@ -52,7 +52,12 @@ export const CONTROL_REFUSAL_REASONS = [
   "conflicted",
   "not_found",
   "forbidden",
-  "unavailable"
+  "unavailable",
+  // The Runtime accepted the request and the work then failed. Distinct from
+  // `runtime_refused`, which means it declined without saying why: here it did
+  // say, and the answer is a failure rather than a refusal, so retrying is the
+  // next move instead of looking for something in the form to correct.
+  "operation_failed"
 ] as const;
 export type ControlRefusalReason = (typeof CONTROL_REFUSAL_REASONS)[number];
 

@@ -544,8 +544,16 @@ const TRACE_UNAVAILABLE_MESSAGES: Readonly<
 > = {
   "invalid-span-id": {
     status: "invalid",
+    // The URL, not the evaluation. This state is reached by exactly one thing on
+    // this page: the page checks `?spanId=` with the same
+    // `isOpenTelemetrySpanId` the reader uses before it ever calls the reader,
+    // so the reader's own `invalid-span-id` cannot arrive here. An operator who
+    // hand-edited the URL, or followed a stale link, was told the selected
+    // evaluation does not contain a trace reference -- a claim about an
+    // evaluation that was never consulted, sending them to inspect the wrong
+    // resource over a request they could fix themselves.
     message:
-      "The selected evaluation does not contain a valid OpenTelemetry trace reference."
+      "The span id in this URL is not a valid OpenTelemetry span id, so no trace was requested."
   },
   "not-configured": {
     status: "unavailable",
@@ -640,15 +648,38 @@ function renderTraceLookup(
   if (traceLookup.kind !== "observed") {
     const { status, message } = TRACE_UNAVAILABLE_MESSAGES[traceLookup.kind];
     return React.createElement(
-      "div",
-      {
-        role: "alert",
-        className: CALLOUT_WARNING_CLASS,
-        "data-feature": "evaluation-trace-detail",
-        "data-trace-state": traceLookup.kind,
-        "data-status": status
-      },
-      message
+      React.Fragment,
+      null,
+      React.createElement(
+        "div",
+        {
+          role: "alert",
+          className: CALLOUT_WARNING_CLASS,
+          "data-feature": "evaluation-trace-detail",
+          "data-trace-state": traceLookup.kind,
+          "data-status": status
+        },
+        message
+      ),
+      // The way back the observed state offers, given to the states that did not
+      // have one. A trace lookup that failed is reached by hand-editing the URL
+      // or by following a link to a span telemetry no longer holds, and every one
+      // of those states rendered the message and nothing else -- so the one case
+      // where an operator most needs to try a different span offered no way to
+      // reach one. The alert stays its own element so assistive technology
+      // announces the message and not the link text.
+      React.createElement(
+        "p",
+        { className: "text-xs" },
+        React.createElement(
+          "a",
+          {
+            href: navListHref(nav),
+            className: "text-accent underline-offset-4 hover:underline"
+          },
+          "Back to evaluations"
+        )
+      )
     );
   }
 

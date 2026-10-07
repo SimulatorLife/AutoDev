@@ -4788,6 +4788,136 @@ test("an unconfigured Control API says which results it would have read", async 
   }
 });
 
+test("a trace lookup that failed says what failed and offers the way back", async () => {
+  // Two defects in one place, and both are visible only when a lookup fails.
+  //
+  // The page checks `?spanId=` with the same `isOpenTelemetrySpanId` the Usage
+  // reader uses before it ever calls the reader, so `invalid-span-id` on this
+  // page can only ever mean "the URL asked for something that is not a span id".
+  // The message said the opposite: it blamed the selected evaluation for not
+  // containing a valid trace reference -- a claim about an evaluation the page
+  // never consulted, sending an operator to inspect the wrong resource over a
+  // request they could fix themselves. The test proves the reader is never
+  // reached by failing any request to the Usage span endpoint.
+  //
+  // And the observed state offers "Back to evaluations" while every failed state
+  // offered nothing at all. A failed lookup is reached by hand-editing the URL or
+  // by following a link to a span telemetry no longer holds, so the one case
+  // where an operator most needs to try a different span was a dead end.
+  const previousFetch = globalThis.fetch;
+  const previousEnv = saveConsolePageEnvironment();
+  const isolatedHome = mkdtempSync(
+    join(tmpdir(), "autodev-evaluations-trace-")
+  );
+  const requested: string[] = [];
+  const spanId = "0123456789abcdef";
+  try {
+    process.env.HOME = isolatedHome;
+    process.env.CODEX_HOME = isolatedHome;
+    process.env.AUTODEV_OPENLIT_SECRET_FILE = join(isolatedHome, "missing.env");
+    process.env.AUTODEV_CONTROL_API_TOKEN = "evaluation-control-test-token";
+    process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+    process.env.AUTODEV_OPENLIT_USAGE_TOKEN = "evaluation-usage-test-token";
+    process.env.AUTODEV_OPENLIT_USAGE_URL = "http://127.0.0.1:3000";
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url.endsWith("/control/evaluations")) {
+        return Response.json({
+          schema: "autodev-control-evaluations-v1",
+          source: "openlit_evaluation",
+          readOnly: true,
+          totalEvaluations: 1,
+          truncated: false,
+          evaluations: [
+            {
+              id: "evaluation-1",
+              spanId,
+              agentRole: "orchestrator",
+              promptName: "dry",
+              model: "gpt-5.6-terra",
+              metrics: [{ name: "quality", value: 1, pass: true }],
+              passed: true,
+              timestamp: "2026-10-05T12:00:00.000Z"
+            }
+          ]
+        });
+      }
+      if (url.includes("/api/autodev/usage/span/")) {
+        // The reader only reads a 404 as "this span is absent" when the body
+        // says so. A bare 404 is a route that may not be deployed, which is a
+        // different answer, so the fixture has to carry the code.
+        return Response.json(
+          { error: { code: "autodev_usage_trace_not_found" } },
+          { status: 404 }
+        );
+      }
+      throw new Error(`Unexpected Evaluations page request: ${url}`);
+    };
+
+    // A span id that is not a span id. Nothing is requested, because nothing
+    // could be: the failure is the request itself.
+    requested.length = 0;
+    const malformed = renderToStaticMarkup(
+      await EvaluationsPage({
+        searchParams: Promise.resolve({ spanId: "not-a-span" })
+      })
+    );
+    assert.equal(
+      requested.filter((url) => url.includes("/usage/span/")).length,
+      0,
+      "an unusable span id is refused before the reader is called"
+    );
+    assert.match(malformed, /data-trace-state="invalid-span-id"/);
+    assert.match(
+      malformed,
+      /The span id in this URL is not a valid OpenTelemetry span id/,
+      "the message names the request the operator made"
+    );
+    assert.doesNotMatch(
+      malformed,
+      /The selected evaluation does not contain/,
+      "and not an evaluation the page never consulted"
+    );
+
+    // A span id of the right shape that telemetry no longer holds.
+    requested.length = 0;
+    const missing = renderToStaticMarkup(
+      await EvaluationsPage({
+        searchParams: Promise.resolve({ spanId })
+      })
+    );
+    assert.equal(
+      requested.filter((url) => url.includes("/usage/span/")).length,
+      1,
+      "a well-formed span id is looked up"
+    );
+    assert.match(missing, /data-trace-state="not-found"/);
+    assert.match(missing, /was not observed in retained telemetry/);
+
+    // Every failed state offers the way back the observed one does. The panel
+    // keeps `data-trace-state` on the element that carries `data-feature`, so
+    // the alert stays the element a screen reader announces and the link beside
+    // it is not part of the announcement.
+    for (const markup of [malformed, missing]) {
+      assert.match(
+        markup,
+        /data-feature="evaluation-trace-detail"[^>]*data-trace-state="/,
+        "the trace state stays on the panel's own element"
+      );
+      assert.match(
+        markup,
+        /<a href="\/evaluations"[^>]*>Back to evaluations<\/a>/,
+        "a failed lookup is not a dead end"
+      );
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreConsolePageEnvironment(previousEnv);
+    rmSync(isolatedHome, { recursive: true, force: true });
+  }
+});
+
 test("EvaluationsPage loads the linked trace through the Usage token and keeps prompt scope", async () => {
   const previousFetch = globalThis.fetch;
   const previousEnv = saveConsolePageEnvironment();

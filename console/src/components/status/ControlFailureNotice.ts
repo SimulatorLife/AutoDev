@@ -41,7 +41,9 @@ const REFUSAL_DETAIL: Record<ControlRefusalReason, string> = {
   forbidden:
     "Your reader is not permitted to do this. Nothing was changed.",
   unavailable:
-    "The Runtime could not be reached, so nothing was changed."
+    "The Runtime could not be reached, so nothing was changed.",
+  operation_failed:
+    "The Runtime accepted this change and then could not complete it, so nothing was changed. Unlike a refusal, this can succeed on a second attempt."
 };
 
 /**
