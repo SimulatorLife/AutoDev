@@ -67,7 +67,8 @@ import {
   hasActiveFilters,
   hasExplicitVerdict,
   OUTCOME_FILTER_LABELS,
-  reportedPrompt
+  reportedPrompt,
+  traceSpanAnchorId
 } from "./evaluations-url.ts";
 
 /**
@@ -481,7 +482,29 @@ function spanLink(
   return selected
     ? React.createElement(
         "span",
-        { className: "inline-flex flex-wrap items-baseline gap-1.5" },
+        {
+          // `scroll-mt-6` is not decoration. The browser aligns the anchor with
+          // the top of the scrollport -- which here is `<main>`, because the
+          // shell is `h-screen overflow-hidden` and never scrolls the window --
+          // and the anchor is the cell's first child, so the row's own 12px of
+          // padding sits above it. Measured without the margin: the selected row
+          // arrives at top -15 and the ascenders of the span id are shaved off by
+          // the viewport edge. The margin buys back the padding the anchor sits
+          // inside, plus a little air so the row reads as the destination rather
+          // than as a row the page happened to stop on.
+          className: "inline-flex flex-wrap items-baseline gap-1.5 scroll-mt-6",
+          // The anchor `evaluationTraceHref` points its fragment at. This is the
+          // only element in the panel that carries it, so a link scrolls to
+          // exactly one place and `document.getElementById` finds exactly one.
+          id: traceSpanAnchorId(spanId),
+          // The fragment moves the viewport, not the keyboard: measured, arrival
+          // leaves `document.activeElement` on `<body>`, so a keyboard user
+          // scrolled to row 150 would resume tabbing from the top of the page and
+          // have to cross the whole document again to reach what they just
+          // landed on. `tabIndex: -1` takes focus without adding a tab stop, so
+          // the arrow keys do not get 200 extra stops in the sequence.
+          tabIndex: -1
+        },
         link,
         React.createElement(
           "span",

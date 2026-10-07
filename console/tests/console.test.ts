@@ -5458,7 +5458,7 @@ test("EvaluationsPage loads the linked trace through the Usage token and keeps p
     assert.match(markup, /12\.3 ms/);
     assert.match(
       markup,
-      /href="\/evaluations\?prompt=dry&amp;spanId=0123456789abcdef"/
+      /href="\/evaluations\?prompt=dry&amp;spanId=0123456789abcdef#evaluation-trace-span-0123456789abcdef"/
     );
     assert.equal(markup.includes("sensitive prompt value"), false);
     assert.equal(requests.length, 2);
@@ -5590,6 +5590,38 @@ test("the trace table marks the span the trace was opened for, and only that one
       markup,
       /data-trace-selected-span="4444444444444444"/,
       "the meta line names the span the table marked"
+    );
+
+    // The anchor. A trace link names the span twice -- once in the query and
+    // once in the fragment -- and the fragment only scrolls if it matches the id
+    // the opened page will render. Nothing here would report the two drifting
+    // apart: the link would look right and scroll nowhere. So the assertion is
+    // that each fragment is the anchor of the span its own query names.
+    //
+    // It cannot be "every fragment resolves here": a panel carries links to
+    // every other span in the trace, and each of those fragments resolves on the
+    // page that link opens, where that span is the selected one.
+    const traceLinks = Array.from(
+      markup.matchAll(/href="[^"]*[?&]spanId=([0-9a-f]{16})#([^"]+)"/g),
+      (m) => ({ spanId: m[1], fragment: m[2] })
+    );
+    assert.ok(traceLinks.length > 0, "the page links to at least one trace");
+    for (const link of traceLinks) {
+      assert.equal(
+        link.fragment,
+        `evaluation-trace-span-${link.spanId}`,
+        `a link to ${link.spanId} scrolls to that span and no other`
+      );
+    }
+    assert.match(
+      markup,
+      /id="evaluation-trace-span-4444444444444444"/,
+      "the selected span is the one element that carries the anchor"
+    );
+    assert.equal(
+      markup.match(/id="evaluation-trace-span-/g)?.length,
+      1,
+      "only the selected span is an anchor, so a link scrolls to exactly one place"
     );
   } finally {
     globalThis.fetch = previousFetch;
@@ -5765,7 +5797,7 @@ test("EvaluationsView renders safe trace details and prompt-preserving span link
   assert.match(markup, /autodev-router/);
   assert.match(
     markup,
-    /href="\/evaluations\?prompt=dry&amp;spanId=0123456789abcdef"/
+    /href="\/evaluations\?prompt=dry&amp;spanId=0123456789abcdef#evaluation-trace-span-0123456789abcdef"/
   );
   assert.match(markup, /Back to evaluations/);
 });
@@ -7451,7 +7483,7 @@ test("the section tabs keep the filters and the open section keeps its own links
   const results = renderEvaluations({ evaluations });
   assert.match(
     results,
-    /href="\/evaluations\?spanId=4bf92f3577b34da6"[^>]*data-evaluation-trace-span-id/
+    /href="\/evaluations\?spanId=4bf92f3577b34da6#evaluation-trace-span-4bf92f3577b34da6"[^>]*data-evaluation-trace-span-id/
   );
   assert.match(results, /href="\/evaluations\?result=run-1"/);
   assert.match(results, /Evaluation history/);
@@ -7494,7 +7526,7 @@ test("the section tabs keep the filters and the open section keeps its own links
   );
   assert.match(
     narrowedResults,
-    /href="\/evaluations\?outcome=failed&amp;role=worker&amp;spanId=4bf92f3577b34da6"/
+    /href="\/evaluations\?outcome=failed&amp;role=worker&amp;spanId=4bf92f3577b34da6#evaluation-trace-span-4bf92f3577b34da6"/
   );
 });
 
@@ -7658,7 +7690,7 @@ test("EvaluationsView links valid span references and marks invalid ones", () =>
   });
   assert.match(
     markup,
-    /href="\/evaluations\?spanId=0123456789abcdef"[^>]*data-evaluation-trace-span-id="0123456789abcdef"/
+    /href="\/evaluations\?spanId=0123456789abcdef#evaluation-trace-span-0123456789abcdef"[^>]*data-evaluation-trace-span-id="0123456789abcdef"/
   );
   assert.match(markup, /Invalid span/);
   assert.equal(
@@ -7690,7 +7722,7 @@ test("EvaluationsView links valid span references and marks invalid ones", () =>
   assert.match(
     drawer(spanId),
     new RegExp(
-      String.raw`href="/evaluations\?spanId=${spanId}"[^>]*data-evaluation-trace-span-id="${spanId}"`
+      String.raw`href="/evaluations\?spanId=${spanId}#evaluation-trace-span-${spanId}"[^>]*data-evaluation-trace-span-id="${spanId}"`
     ),
     "a valid span is a link to the trace from the drawer too"
   );

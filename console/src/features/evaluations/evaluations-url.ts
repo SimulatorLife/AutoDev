@@ -413,17 +413,44 @@ export function evaluationResultHref(
 }
 
 /**
+ * The element a trace URL scrolls to.
+ *
+ * The trace panel is 200 rows tall at the cap, and every link in it -- a row's
+ * "View trace", the drawer's trace value, every span cell -- is a full
+ * server-rendered page load. A link that names the span without naming where it
+ * is therefore drops the operator at the top of a table they then have to
+ * search: measured, a trace opened for a span at row 100 lands at scrollY=0
+ * with the selected row 4,600px below the fold, which is the same hunt the
+ * in-row marker exists to end one step earlier.
+ *
+ * A fragment is the whole of the fix and it needs no script. The browser scrolls
+ * to the element whose id the fragment names, before anything this page does
+ * runs, and a link that arrives without a matching element scrolls nowhere --
+ * the current behaviour -- so it degrades to what is there rather than breaking.
+ *
+ * Derived next to the href builder because a fragment that does not match the id
+ * is a link that silently goes nowhere, and the two drifting apart is invisible
+ * until someone clicks.
+ */
+export function traceSpanAnchorId(spanId: string): string {
+  return `evaluation-trace-span-${spanId}`;
+}
+
+/**
  * The trace for one span, keeping the filters.
  *
  * A trace is a property of the run that produced it, so opening one from a
  * filtered list must not silently widen the list the operator is reading.
+ *
+ * The fragment is the span's anchor, so the link lands on the row it names
+ * rather than at the top of the panel.
  */
 export function evaluationTraceHref(
   filters: EvaluationsFilters,
   spanId: string,
   tab: EvaluationsTabId = DEFAULT_EVALUATIONS_TAB
 ): string {
-  return evaluationsHref(filters, { tab, spanId });
+  return `${evaluationsHref(filters, { tab, spanId })}#${traceSpanAnchorId(spanId)}`;
 }
 
 /** One section of the resource, keeping the filters. */
