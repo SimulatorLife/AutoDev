@@ -444,14 +444,16 @@ async function emitInjectionObservation(input: {
       packetCharacterCount,
       memoryIds,
       occurredAt: new Date().toISOString(),
+      // Two arms, not four. `disabled` and `invalid` cannot reach this function:
+      // `injectOrchestratorMemory` returns through `persistMemoryModeSkip`
+      // before enrichment, and `emitSkipObservation` is what records those two
+      // reason codes. This branch only ever sees a mode that actually attempted
+      // a packet -- `jit`, `retrieval-only`, or an ablation arm -- so the
+      // question it has to answer is only "did the packet arrive".
       reasonCode:
         injectionResult === "injected"
           ? "packet_attached"
-          : input.taskContext.memoryMode === "disabled"
-            ? "memory_mode_disabled"
-            : input.taskContext.memoryMode === "invalid"
-              ? "memory_mode_invalid"
-              : "no_packet_research_returned_empty",
+          : "no_packet_research_returned_empty",
       evidence: [],
       recordedBy: RUNTIME_INJECTION_RECORDED_BY
     };
