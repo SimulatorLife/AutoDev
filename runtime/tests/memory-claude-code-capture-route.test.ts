@@ -202,7 +202,7 @@ test("capture fails closed when the binding opts out", async () => {
       bindingPath: fixture.bindingPath
     });
 
-    assert.equal(status, 400);
+    assert.equal(status, 400, JSON.stringify({ body, audits }));
     assert.equal(audits.at(-1)?.reason, "claude_binding_disabled");
     // The wire message is deliberately the generic one; the reason is what
     // carries the distinction. What the message must not do is describe the
@@ -499,9 +499,45 @@ test("no refusal is audited as a success", async () => {
 });
 
 /**
- * Two configurations the single-workspace fixture cannot express, each of which
- * makes the authorized workspace ambiguous. Both were unenforced.
+ * The transcript reader sits *below* the store lookup on this route, so with no
+ * memory service configured it never runs at all. Every guard inside
+ * `readClaudeCodeTranscript` — regular file, non-empty, byte bound, open without
+ * following symlinks — is therefore not reachable from here, and a directory
+ * named exactly like the session's transcript is accepted by everything above
+ * it and answered 503. That is the ordering worth pinning: a capture against
+ * unconfigured storage reads no transcript at all, so an operator's transcript
+ * is not loaded into memory by a request that cannot store the result.
+ *
+ * What it costs: those seven refusals are unenforced, and closing them needs a
+ * live memory service rather than a test seam. They are not dead code — the
+ * route reaches them the moment a service exists — but nothing currently
+ * demonstrates that they refuse.
  */
+test("capture reads no transcript at all when storage is not configured", async () => {
+  const fixture = workspaceFixture();
+  try {
+    // A directory named exactly like the session's transcript. It resolves, its
+    // basename matches, and it sits inside the bound root, so every binding
+    // check admits it. If the reader ran, this would be refused as not a regular
+    // file; the 503 is the proof that it did not run.
+    const transcriptPath = path.join(
+      path.dirname(fixture.transcript),
+      `${SESSION_ID}.jsonl`
+    );
+    rmSync(transcriptPath, { force: true });
+    mkdirSync(transcriptPath);
+
+    const { status, body, audits } = await capture(WELL_FORMED(fixture), {
+      bindingPath: fixture.bindingPath
+    });
+
+    assert.equal(status, 503);
+    assert.equal(errorCode(body), "autodev_memory_unavailable");
+    assert.equal(audits.at(-1)?.reason, "memory_unavailable");
+  } finally {
+    rmSync(fixture.home, { recursive: true, force: true });
+  }
+});
 function ambiguousBinding(home: string, entries: readonly WorkspaceEntry[]) {
   const bindingPath = path.join(home, "claude-code-memory.toml");
   writeFileSync(
