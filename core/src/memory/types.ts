@@ -804,6 +804,21 @@ export interface EvidenceReference {
 }
 
 /**
+ * Whether an experience's outcome was verified, and how far.
+ *
+ * Distinct from `MemoryValidationState` above, which describes how much a stored
+ * *claim* has been corroborated; this describes how far an *execution's* result
+ * was checked. Named rather than left inline so the Console can key its
+ * vocabulary tables by the union instead of `string`: a `Record<string, …>` tone
+ * map silently accepts any state, renders a raw wire key as the operator-facing
+ * word (`not_run`, underscore and all, in one of two places that showed it), and
+ * makes the next state the Runtime adds a typecheck failure nobody sees until it
+ * ships.
+ */
+export type ExperienceValidationState =
+  "passed" | "failed" | "partial" | "not_run";
+
+/**
  * An append-only envelope around a normalized native transcript. It retains
  * references and execution metadata rather than duplicating prompts or tool
  * payloads in the memory database.
@@ -831,7 +846,7 @@ export interface ExperienceEnvelope {
   /** Host-selected cohort policy, not proof that a packet was injected. */
   readonly memoryMode?: MemoryExecutionMode;
   readonly validation?: {
-    readonly state: "passed" | "failed" | "partial" | "not_run";
+    readonly state: ExperienceValidationState;
     readonly evidence: readonly EvidenceReference[];
   };
   readonly trajectory: {

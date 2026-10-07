@@ -368,6 +368,17 @@ test("missing evidence is reported in one word, from one constant", () => {
   // where this class of guard dies: "a string that means missing" cannot be
   // distinguished from data by reading the source. `StatusBadge.ts` is skipped
   // because it declares the constant and documents the failure in prose.
+  //
+  // `memory-status.ts` is skipped for the same reason: it is the Memory
+  // vocabulary declaration, where `unknown` is a value Core reports as an
+  // outcome (`ExperienceOutcome` carries it beside success/partial/failure) and
+  // not a stand-in for missing evidence. A view is not allowed to invent the
+  // word; the table that declares the vocabulary has to contain it, or the
+  // honest fix is to change what the Runtime reports rather than to reword it.
+  const VOCABULARY_DECLARATIONS = [
+    join("status", "StatusBadge.ts"),
+    join("memory", "memory-status.ts")
+  ];
   const consoleRoot = join(import.meta.dirname, "..");
   const offenders: string[] = [];
   for (const dir of ["src", "app"]) {
@@ -376,7 +387,7 @@ test("missing evidence is reported in one word, from one constant", () => {
     })) {
       const file = join(consoleRoot, dir, relative.toString());
       if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
-      if (file.endsWith(join("status", "StatusBadge.ts"))) continue;
+      if (VOCABULARY_DECLARATIONS.some((skip) => file.endsWith(skip))) continue;
       const source = readFileSync(file, "utf8");
       source.split("\n").forEach((line, index) => {
         const trimmed = line.trim();
@@ -5943,6 +5954,170 @@ test("MemoryRecordsView renders record detail panel with validity and transition
   assert.match(markup, /operator-1/);
   assert.match(markup, /Verify &amp; Promote/);
   assert.match(markup, /Invalidate/);
+});
+
+test("a Memory record shows its claim and scope instead of an ellipsis", () => {
+  const claim =
+    "The AutoDev Console is the single operator surface for every canonical resource in the monorepo.";
+  const record = {
+    id: "rec-prose",
+    kind: "semantic",
+    status: "active",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    claim,
+    validity: { state: "verified", evidence: [] },
+    provenance: {
+      experienceIds: [],
+      evidence: [],
+      createdBy: "operator",
+      createdAt: "2026-10-01T00:00:00Z"
+    },
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-02T00:00:00Z"
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryRecordsView, {
+      records: [record],
+      total: 1,
+      listScope: memoryListScope()
+    })
+  );
+
+  // The claim is the page. It was one truncating line, so every row of the
+  // captured workspace read "The AutoDev Console is f…".
+  assert.ok(markup.includes(claim), "the full claim should be in the markup");
+  // `data-column-label` carries the column *id*, not its header text.
+  const rowStart = markup.lastIndexOf("<tr", markup.indexOf(claim));
+  const row = markup.slice(
+    rowStart,
+    markup.indexOf("</tr>", markup.indexOf(claim))
+  );
+  assert.ok(
+    row.includes("line-clamp-2"),
+    `the claim should clamp to two lines: ${row}`
+  );
+  // Scoped to the claim cell: the badge label and the Kind tag in the same row
+  // legitimately carry `truncate`, and asserting on the whole row would be a
+  // guard that can never pass.
+  const claimCell = row.slice(
+    row.indexOf("<td", row.indexOf("line-clamp-2") - 400)
+  );
+  assert.ok(
+    !/\btruncate\b/u.test(
+      claimCell.slice(0, claimCell.indexOf("line-clamp-2"))
+    ),
+    `the claim cell must not truncate: ${claimCell.slice(0, 200)}`
+  );
+  assert.ok(
+    !markup.includes("max-w-md"),
+    "the claim's fixed max width should be gone"
+  );
+
+  // The scope is a repository path and was capped at 150px, which its own
+  // comment admitted "truncates on every row" in any real repository. The
+  // separator stays on the first line and the break follows it.
+  assert.ok(
+    markup.includes("SimulatorLife/<wbr/>AutoDev"),
+    "the scope should break after its separator"
+  );
+  assert.ok(!markup.includes("max-w-[150px]"), "the scope cap should be gone");
+});
+
+test("an experience's validation and outcome are named, not left as wire keys", () => {
+  // Two call sites were deriving the validation word from the wire key — one
+  // through `state.replace("_", " ")`, which rendered `not run` in lowercase,
+  // and one which passed `not_run` straight through, so the detail panel's badge
+  // showed a raw snake_case token to an operator. A `Record<string, …>` tone map
+  // also let a state this build has no word for render as itself instead of
+  // failing closed. The Outcome column had the same problem, lowercased.
+  const base: ExperienceEnvelope = {
+    id: "exp-vocab",
+    workspaceId: "SimulatorLife/AutoDev",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    taskId: "task-vocab",
+    runId: "run-vocab",
+    agentId: "agent-orch",
+    startedAt: "2026-10-03T10:00:00Z",
+    outcome: "success",
+    trajectory: {
+      format: "codex-v1",
+      uri: "file:///tmp/transcripts/run-vocab.jsonl",
+      sourceAdapter: "codex"
+    },
+    evidence: []
+  };
+
+  const renderOne = (over: Partial<ExperienceEnvelope>): string =>
+    renderToStaticMarkup(
+      React.createElement(MemoryExperiencesView, {
+        experiences: [{ ...base, ...over }],
+        total: 1,
+        listScope: memoryListScope({ tab: "experiences" })
+      })
+    );
+
+  // Scoped to the badge: asserting a word "somewhere in the page" is how the
+  // Memory status guard came to pass while every row read the wrong one.
+  const badgeOf = (markup: string): readonly [string, string] | null => {
+    const found =
+      /data-status="([a-z-]+)"[^>]*>[\s\S]*?<span class="min-w-0 truncate">([^<]*)</u.exec(
+        markup
+      );
+    return found === null ? null : [found[1], found[2]];
+  };
+
+  for (const [state, word, tone] of [
+    ["passed", "Passed", "valid"],
+    ["failed", "Failed", "invalid"],
+    ["partial", "Partial", "pending"],
+    ["not_run", "Not run", "not-observed"]
+  ] as const) {
+    const badge = badgeOf(
+      renderOne({
+        validation: { state, evidence: [] }
+      } as Partial<ExperienceEnvelope>)
+    );
+    assert.ok(badge !== null, `${state} should render a badge`);
+    assert.equal(badge[0], tone, `${state} should wear the ${tone} tone`);
+    assert.equal(badge[1], word, `${state} should read "${word}"`);
+    assert.ok(
+      !renderOne({
+        validation: { state, evidence: [] }
+      } as Partial<ExperienceEnvelope>).includes(`>${state}<`),
+      "a raw wire key must not be rendered as a word"
+    );
+  }
+
+  // An experience the Runtime reported no validation for is `not_run`, not a
+  // blank cell and not an invented pass.
+  const unvalidated = renderOne({});
+  assert.ok(
+    unvalidated.includes(">Not run<"),
+    "absent validation should read Not run"
+  );
+  assert.ok(
+    unvalidated.includes('data-status="not-observed"'),
+    "absent validation must not read as observed"
+  );
+
+  for (const [outcome, word] of [
+    ["success", "Success"],
+    ["partial", "Partial"],
+    ["failure", "Failure"],
+    ["cancelled", "Cancelled"],
+    ["unknown", "Unknown"]
+  ] as const) {
+    const markup = renderOne({ outcome });
+    assert.ok(markup.includes(`>${word}<`), `${outcome} should read "${word}"`);
+    const outcomeCell = markup.slice(
+      markup.indexOf("font-semibold"),
+      markup.indexOf("</td>", markup.indexOf("font-semibold"))
+    );
+    assert.ok(
+      !outcomeCell.includes(`>${outcome}<`),
+      `${outcome} must not be shown as a raw key in the outcome cell`
+    );
+  }
 });
 
 test("MemoryExperiencesView renders experiences with task, role, and validation indicators", () => {

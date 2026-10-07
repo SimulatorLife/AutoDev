@@ -1,4 +1,6 @@
 import type {
+  ExperienceOutcome,
+  ExperienceValidationState,
   MemoryReasonCode,
   MemoryStatus
 } from "@simulatorlife/autodev-core";
@@ -22,6 +24,22 @@ import type { StatusBadgeVariant } from "../../components/status/StatusBadge.ts"
 
 export const NOT_OBSERVED_STATUS = "not-observed" as const;
 
+/**
+ * Lifecycle statuses in an order a reader can act on.
+ *
+ * The order is the argument rather than the vocabulary's: proposed is what a
+ * curator still has work to do, active is the healthy middle, and the three
+ * terminal states are what a reader is looking for when they ask whether memory
+ * is any good. An alphabetical list would put `invalidated` between them.
+ */
+export const MEMORY_STATUS_ORDER: readonly MemoryStatus[] = [
+  "proposed",
+  "active",
+  "uncertain",
+  "superseded",
+  "invalidated"
+];
+
 /** The word each lifecycle status is called, everywhere it appears. */
 export const MEMORY_STATUS_LABEL: Record<MemoryStatus, string> = {
   proposed: "Proposed",
@@ -41,20 +59,58 @@ export const MEMORY_STATUS_VARIANT: Record<MemoryStatus, StatusBadgeVariant> = {
 };
 
 /**
- * Lifecycle statuses in an order a reader can act on.
+ * How far an experience's result was checked, in words and in tones.
  *
- * The order is the argument rather than the vocabulary's: proposed is what a
- * curator still has work to do, active is the healthy middle, and the three
- * terminal states are what a reader is looking for when they ask whether memory
- * is any good. An alphabetical list would put `invalidated` between them.
+ * Both call sites used to derive the word from the wire key — one through
+ * `state.replace("_", " ")`, which turned `not_run` into a lowercase `not run`
+ * on the Validation column, and one which passed `not_run` through untouched so
+ * the detail panel's badge showed an operator a raw snake_case token. Keyed by
+ * Core's union, so the next state the Runtime adds is a typecheck failure rather
+ * than a new string nobody chose.
+ *
+ * An unrecognised state leaves the label `undefined`, which makes the badge fall
+ * back to naming its own tone — `Not observed` — the honest reading of a state
+ * this build has no evidence for.
  */
-export const MEMORY_STATUS_ORDER: readonly MemoryStatus[] = [
-  "proposed",
-  "active",
-  "uncertain",
-  "superseded",
-  "invalidated"
-];
+export const MEMORY_VALIDATION_LABEL: Record<
+  ExperienceValidationState,
+  string
+> = {
+  passed: "Passed",
+  failed: "Failed",
+  partial: "Partial",
+  not_run: "Not run"
+};
+
+export const MEMORY_VALIDATION_VARIANT: Record<
+  ExperienceValidationState,
+  StatusBadgeVariant
+> = {
+  passed: "valid",
+  failed: "invalid",
+  partial: "pending",
+  not_run: NOT_OBSERVED_STATUS
+};
+
+/**
+ * What an experience's run is called, keyed by Core's `ExperienceOutcome`.
+ *
+ * The column rendered the wire key verbatim, so the table read `success` and
+ * `partial` in lowercase beside a Validation column reading `Not run`.
+ *
+ * `unknown` is the one entry that overlaps the missing-evidence vocabulary, and
+ * it is deliberate: Core declares it as a reported outcome, distinct from
+ * "nothing was reported". The Console's one-word-for-missing-evidence guard
+ * skips this module for the same reason it skips `StatusBadge.ts` — this is a
+ * declaration of the vocabulary, not a view inventing a word.
+ */
+export const MEMORY_OUTCOME_LABEL: Record<ExperienceOutcome, string> = {
+  success: "Success",
+  partial: "Partial",
+  failure: "Failure",
+  cancelled: "Cancelled",
+  unknown: "Unknown"
+};
 
 /**
  * The word each lifecycle reason is called, everywhere it appears.
