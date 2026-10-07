@@ -93,9 +93,14 @@ const RUNTIME_CODES: readonly [number, string, ControlRefusalReason][] = [
   [403, "autodev_memory_forbidden", "forbidden"],
   [503, "autodev_memory_unavailable", "unavailable"],
   [503, "autodev_memory_operation_failed", "operation_failed"],
-  // The Runtime said only that the request was invalid. That is a genuine
-  // unknown rather than a mapped reason, so it falls through on purpose.
-  [400, "autodev_memory_invalid_request", "runtime_refused"]
+  // Both invalid-request codes name their cause — "Memory request failed
+  // validation." and "Native trajectory capture input is invalid." — so they
+  // are not the fallback. This table listed `invalid_request` as falling
+  // through on purpose, on the reasoning that the Runtime "said only that the
+  // request was invalid". That is a 400 with a stated cause, and routing it to
+  // the fallback told the operator the Runtime had not said why.
+  [400, "autodev_memory_invalid_request", "request_invalid"],
+  [400, "autodev_memory_capture_invalid", "request_invalid"]
 ];
 
 test("each Runtime code reaches the refusal that describes it", async () => {
@@ -142,6 +147,39 @@ test("an unreachable Runtime is not confused with a failed operation", async () 
     await refusalForCode(503, "autodev_memory_operation_failed"),
     "operation_failed"
   );
+});
+
+test("an invalid request is not reported as a refusal with no reason", async () => {
+  // The other false cause this table used to produce, and the same shape as the
+  // failed-operation case below. The Runtime named a cause — validation failed
+  // — and the fallback's sentence denies that it named anything, which sends an
+  // operator to re-read a form whose contents were never the problem: the route
+  // assembles these bodies, so the thing to report is the Console, not them.
+  for (const code of [
+    "autodev_memory_invalid_request",
+    "autodev_memory_capture_invalid"
+  ]) {
+    const refusal = await refusalForCode(400, code);
+
+    assert.equal(refusal, "request_invalid", `${code} was reported wrongly`);
+    assert.notEqual(refusal, "runtime_refused");
+
+    const markup = renderToStaticMarkup(
+      React.createElement(ControlFailureNotice, {
+        refusal: refusal ?? undefined
+      })
+    );
+    assert.doesNotMatch(
+      markup,
+      /did not say why/u,
+      `${code} states a cause, so the notice must not claim none was given`
+    );
+    assert.match(
+      markup,
+      /rejected this request as invalid/u,
+      `${code} must be shown as the stated cause it is`
+    );
+  }
 });
 
 test("an unrecognised code still falls through rather than guessing", async () => {
@@ -191,6 +229,14 @@ test("every refusal the route can emit has a sentence of its own", async () => {
     "provenance_required"
   ];
   const reachable = new Set(RUNTIME_CODES.map(([, , reason]) => reason));
+  // The fallback is reachable, but not through a listed code — through the
+  // `default:` branch, for every code this build does not recognise. It was
+  // reachable through a listed code only while `invalid_request` fell through,
+  // which is why it needs naming here rather than a row in the table: leaving
+  // it out of both would have quietly made the guard pass by deletion.
+  // `an unrecognised code still falls through rather than guessing` covers that
+  // branch directly.
+  reachable.add("runtime_refused");
   const unreachable = CONTROL_REFUSAL_REASONS.filter(
     (reason) => !reachable.has(reason)
   );

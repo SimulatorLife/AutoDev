@@ -13814,8 +13814,8 @@ test("a Runtime refusal is reported as what the Runtime said it was", async () =
     [
       400,
       "autodev_memory_invalid_request",
-      "runtime_refused",
-      "no reason given"
+      "request_invalid",
+      "validation failed"
     ]
   ];
 

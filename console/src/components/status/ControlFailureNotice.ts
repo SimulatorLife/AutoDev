@@ -32,6 +32,8 @@ const REFUSAL_DETAIL: Record<ControlRefusalReason, string> = {
     "A revision has to name the experiences it derives from, and this record cites none. Nothing was sent to the Runtime.",
   runtime_refused:
     "The Runtime did not accept this change, and did not say why. Nothing was changed.",
+  request_invalid:
+    "The Runtime rejected this request as invalid before doing any work, so nothing was changed. Sending the same thing again will be refused the same way.",
   still_cited:
     "A durable memory still cites this raw experience, so erasing it would leave a claim with no source. It cannot be purged while it is cited.",
   conflicted:

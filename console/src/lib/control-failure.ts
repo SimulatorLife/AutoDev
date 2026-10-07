@@ -45,6 +45,11 @@ export const CONTROL_REFUSAL_REASONS = [
   "prior_required",
   "evidence_required",
   "provenance_required",
+  // The Runtime rejected the request as invalid, and said so in the code. Not
+  // the same as `runtime_refused`, which claims no reason was given: this one
+  // names one, and it names one the operator can do nothing about, because the
+  // body was assembled by the route rather than typed into the form.
+  "request_invalid",
   "runtime_refused",
   // What the Runtime itself said, by code. Each asks for a different next move,
   // so one sentence cannot cover them.

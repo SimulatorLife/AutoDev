@@ -421,6 +421,14 @@ function memoryRefusalFor(
     // mistake in a form that was correct.
     case "autodev_memory_operation_failed":
       return "operation_failed";
+    // A 400 carrying a specific reason: the request failed validation before
+    // any work started. Mapping it to the fallback was wrong twice over — it
+    // made the notice claim the Runtime said nothing, when the code names the
+    // cause, and it left the operator with nothing to act on when the cause is
+    // in a body the route assembled rather than one they filled in.
+    case "autodev_memory_invalid_request":
+    case "autodev_memory_capture_invalid":
+      return "request_invalid";
     default:
       return "runtime_refused";
   }
