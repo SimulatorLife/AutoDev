@@ -144,7 +144,21 @@ function isUniqueViolation(error: unknown): boolean {
  * it (the pg driver returns bigint columns as strings).
  */
 function parseCohortCount(value: unknown, column: string): number {
-  const parsed = Number(value);
+  // Screened before conversion, not after: `Number()` does not turn malformed
+  // input into `NaN` the way the check below expects. It coerces `null`, `""`
+  // and `"   "` to `0`, and `true` to `1` -- each of which then passes the
+  // safe-integer test and reads as a real measurement.
+  //
+  // Every current caller passes a `COUNT(...)::bigint`, which Postgres never
+  // returns as NULL, so this is unreachable today. It matters because the
+  // function's contract is to fail closed rather than coerce, because this is a
+  // primitive four aggregates share, and because the nullable column beside it
+  // already needs a `?? 0` at the call site -- one more nullable count column
+  // and the coercion would read a missing measurement as a zero.
+  const convertible =
+    typeof value === "number" ||
+    (typeof value === "string" && value.trim() !== "");
+  const parsed = convertible ? Number(value) : Number.NaN;
   if (!Number.isSafeInteger(parsed) || parsed < 0) {
     throw new MemoryHydrationError(
       "memory_injection_events",

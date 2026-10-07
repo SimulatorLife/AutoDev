@@ -194,3 +194,59 @@ test("a null session cardinality is refused rather than read as unknown", async 
       /session_cardinality/u.test(error.message)
   );
 });
+/**
+ * `parseCohortCount` is the primitive every guard above is built on, and it had
+ * no failing test of its own. Each case in this file feeds it a well-formed
+ * count — `"4"`, `"2"`, `"3"` — because that is what the query can emit, so a
+ * version that dropped its check and returned `Number(value)` outright would
+ * pass all of them.
+ *
+ * The driver's own shape is the positive control and has to stay legal:
+ * `COUNT(...)::bigint` arrives as a *string*, and `Number("4") === 4` is the
+ * whole reason this function exists rather than a plain cast.
+ */
+test("a count that is not a non-negative integer is refused, not coerced", async () => {
+  for (const [label, value] of [
+    ["a non-numeric string", "not-a-number"],
+    ["a negative count", "-1"],
+    ["a fractional count", "1.5"],
+    ["a missing count", undefined],
+    ["an empty string", ""],
+    ["a whitespace-only string", "   "],
+    ["a null count", null],
+    ["a boolean", true]
+  ] as const) {
+    const repository = new PostgresMemoryRepository({
+      pool: poolReturning([wellFormedCell({ exposure_count: value })])
+    });
+
+    await assert.rejects(
+      repository.aggregateInjectionOutcomeCohorts(cohortFilterBase),
+      (error: unknown) =>
+        error instanceof MemoryHydrationError &&
+        /expected a non-negative safe integer/u.test(error.message),
+      `${label} must be refused rather than coerced`
+    );
+  }
+});
+
+test("a bigint string and a zero count are both legal, so the guard is not 'reject everything'", async () => {
+  for (const [label, value] of [
+    ["a driver bigint string", "4"],
+    ["zero", "0"],
+    ["a large-but-safe count", "9007199254740991"]
+  ] as const) {
+    const repository = new PostgresMemoryRepository({
+      pool: poolReturning([
+        wellFormedCell({ exposure_count: value, report_count: "0" })
+      ])
+    });
+
+    const page = await repository.aggregateInjectionOutcomeCohorts(cohortFilterBase);
+    assert.equal(
+      page.cells[0]?.exposureCount,
+      Number(value),
+      `${label} must still hydrate`
+    );
+  }
+});
