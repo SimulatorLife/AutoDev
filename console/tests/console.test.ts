@@ -132,6 +132,7 @@ import {
   MemoryView,
   ModelDetailView,
   NOT_OBSERVED_LABEL,
+  PathText,
   PermissionsView,
   PromptDetailView,
   PromptsView,
@@ -1517,6 +1518,88 @@ test("a truncating chip keeps its full text reachable instead of only its ellips
     React.createElement(Chip, null, React.createElement("span", null, "a"))
   );
   assert.doesNotMatch(structured, /title=/);
+});
+
+test("a path wraps between its segments and never inside one", () => {
+  // Measured at 1440 against the live RuleSync catalog, `/prompts`'s Canonical
+  // Source was cut on 70 of 70 rows: the constant `.rulesync/commands/` prefix
+  // consumed 18 of the 38 characters while the part that differs between rows
+  // was the part that disappeared. Truncation was the wrong tool, and so was
+  // `break-words` — a path has no spaces, so it is one token to the line breaker
+  // and gets split at an arbitrary character, which the contract forbids for
+  // discrete content.
+  const markup = renderToStaticMarkup(
+    React.createElement(PathText, {
+      path: ".rulesync/commands/advance-autodev.md"
+    })
+  );
+
+  // Every separator is a legal break opportunity. React renders the void
+  // element as `<wbr/>`, so the pattern has to accept the self-closing form --
+  // matching `/<wbr>/` finds zero and reports a working component as broken.
+  assert.equal((markup.match(/<wbr\s*\/?>/gu) ?? []).length, 2);
+  // ...and the text is still exactly the path, with nothing added or removed.
+  assert.ok(markup.includes(".rulesync/commands/advance-autodev.md"));
+  // Strip the markup and compare what the reader actually gets. This is the
+  // assertion that matters: the component's first version pushed each array
+  // index alongside its string, and React rendered those numbers as text, so
+  // the column read `.rulesync0/1commands1/2advance-autodev.md2` — a corrupt
+  // identifier on the one column whose whole job is to be exact.
+  assert.equal(
+    markup.replaceAll(/<[^>]*>/gu, ""),
+    ".rulesync/commands/advance-autodev.md"
+  );
+  // A truncating cell is only as good as what it can give back; the path is the
+  // hover text, so the full value is always recoverable.
+  assert.ok(markup.includes('title=".rulesync/commands/advance-autodev.md"'));
+
+  // A rooted path breaks after its leading separator, which is a segment
+  // boundary like any other, and keeps its text exactly.
+  const rooted = renderToStaticMarkup(
+    React.createElement(PathText, { path: "/composition-over-inheritance" })
+  );
+  assert.equal((rooted.match(/<wbr\s*\/?>/gu) ?? []).length, 1);
+  assert.equal(
+    rooted.replaceAll(/<[^>]*>/gu, ""),
+    "/composition-over-inheritance"
+  );
+  // A value with no separator at all has no legal break point, so it must not
+  // acquire one.
+  const bare = renderToStaticMarkup(
+    React.createElement(PathText, { path: "composition-over-inheritance" })
+  );
+  assert.equal((bare.match(/<wbr\s*\/?>/gu) ?? []).length, 0);
+  assert.equal(
+    bare.replaceAll(/<[^>]*>/gu, ""),
+    "composition-over-inheritance"
+  );
+
+  // Asserted on rendered markup rather than by scanning source: a column can
+  // declare `align: "path"` and still render a truncating span, and a source
+  // grep would call that a pass.
+  const workspaces = renderToStaticMarkup(
+    React.createElement(WorkspacesView, {
+      workspaces: [
+        {
+          id: "SimulatorLife/Colourful-Life",
+          baseBranch: "main",
+          enabled: true,
+          agentRoles: null
+        }
+      ]
+    })
+  );
+  assert.ok(
+    workspaces.includes("SimulatorLife/<wbr/>Colourful-Life"),
+    `workspaces should break after the separator, got: ${workspaces}`
+  );
+  // And the cell must not still be a truncating one.
+  assert.ok(
+    !/title="SimulatorLife\/Colourful-Life"[^>]*class="[^"]*\btruncate\b/u.test(
+      workspaces
+    ),
+    "the repository cell should not truncate"
+  );
 });
 
 test("StatusBadge renders valid variants", () => {
@@ -5270,7 +5353,10 @@ test("HooksView names the fault the Runtime located instead of only calling the 
   );
   assert.match(markup, /data-hook-issue-count="2"/);
   assert.match(markup, /data-hook-issue="SessionStart action 2"/u);
-  assert.match(markup, /is not a command hook with a non-empty command string/u);
+  assert.match(
+    markup,
+    /is not a command hook with a non-empty command string/u
+  );
   assert.match(markup, /data-hook-issue="PreCompact"/u);
   assert.match(markup, /is not a known hook event/u);
   // The count is in the empty-state line too, so an operator reading only the
@@ -7021,9 +7107,8 @@ test("Catalog collections fail closed on unreadable responses", async () => {
   // the shape this field exists to end, so it fails closed with the rest.
   const { issues: _absentIssues, ...hooksWithoutIssues } = hooks;
   assert.equal(
-    (
-      await fetchHooks(config, serve({ ...hooksWithoutIssues, valid: false }))
-    ).kind,
+    (await fetchHooks(config, serve({ ...hooksWithoutIssues, valid: false })))
+      .kind,
     "invalid-response"
   );
   assert.equal(

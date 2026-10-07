@@ -25,6 +25,7 @@ export * from "./components/status/StatusBadge.ts";
 export * from "./components/status/Tag.ts";
 export * from "./components/tables/Chips.ts";
 export * from "./components/tables/DataTable.ts";
+export * from "./components/tables/PathText.ts";
 export * from "./components/tabs/Tabs.ts";
 export * from "./features/agents/AgentDetailView.ts";
 export * from "./features/agents/AgentProviderSummary.ts";

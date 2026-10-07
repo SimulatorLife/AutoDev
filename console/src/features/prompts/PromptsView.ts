@@ -16,10 +16,8 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
-import {
-  MONO_META_CLASS,
-  MUTED_TEXT_CLASS
-} from "../../components/ui/text-classes.ts";
+import { PathText } from "../../components/tables/PathText.ts";
+import { MUTED_TEXT_CLASS } from "../../components/ui/text-classes.ts";
 
 export interface PromptsViewProps {
   readonly commands: readonly PromptAsset[];
@@ -96,13 +94,9 @@ export function PromptsView({
     {
       id: "path",
       header: "Canonical Source",
+      align: "path",
       weight: 208,
-      cell: (prompt) =>
-        React.createElement(
-          "span",
-          { className: MONO_META_CLASS, title: prompt.path },
-          prompt.path
-        )
+      cell: (prompt) => React.createElement(PathText, { path: prompt.path })
     },
     {
       id: "description",

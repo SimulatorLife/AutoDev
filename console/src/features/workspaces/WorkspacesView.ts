@@ -15,6 +15,7 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import { PathText } from "../../components/tables/PathText.ts";
 import {
   MONO_ID_CLASS,
   MONO_VALUE_CLASS
@@ -42,17 +43,13 @@ export function WorkspacesView({
     {
       id: "id",
       header: "Repository / Workspace",
+      align: "path",
       weight: 220,
-      // Titles itself: a repository slug is the one value on this page with no
-      // length limit, and a truncating cell is only titled when its content is
-      // a plain string. Measured against real data, "SimulatorLife/Colourful-
-      // Life" was cut with nothing to recover it.
+      // Wraps between `owner` and `name` instead of cutting. Measured against
+      // real data, "SimulatorLife/Colourful-Life" was cut with nothing to
+      // recover it; the two halves are exactly the break points it wants.
       cell: (ws) =>
-        React.createElement(
-          "span",
-          { className: MONO_ID_CLASS, title: ws.id },
-          ws.id
-        )
+        React.createElement(PathText, { path: ws.id, className: MONO_ID_CLASS })
     },
     {
       id: "baseBranch",

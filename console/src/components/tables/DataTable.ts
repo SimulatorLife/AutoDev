@@ -16,8 +16,14 @@ import { EmptyState } from "../status/EmptyState.ts";
  *   second line rather than being cut short, because these columns exist to
  *   keep identifiers readable.
  * - `prose`: flowing sentences that wrap on word boundaries.
+ * - `path`: a filesystem or repository path, which wraps between its segments
+ *   and never inside one. It is a fourth align rather than a special case of
+ *   `tokens` because the two disagree about what a break is: `tokens` splits a
+ *   token too wide for its cell mid-token on purpose, which is legible for a
+ *   model id and wrong for a path, whose segments are already meaningful units.
+ *   Render path cells with `PathText`, which supplies the break opportunities.
  */
-export type ColumnAlign = "truncate" | "tokens" | "prose";
+export type ColumnAlign = "truncate" | "tokens" | "prose" | "path";
 
 export interface ColumnDef<T> {
   readonly id: string;
@@ -149,6 +155,10 @@ function cellClassName(column: ColumnDef<never>): string {
   // this: a header is a label, and splitting a label reads as a fault.
   if (align === "tokens") return "whitespace-normal break-words";
   if (align === "prose") return "whitespace-normal break-words";
+  // No `break-words`: a path's only legal breaks are the ones `PathText` marks
+  // with `<wbr>`, and letting the browser invent a break anywhere would undo the
+  // only thing this align is for.
+  if (align === "path") return "whitespace-normal break-normal";
   return "truncate";
 }
 
@@ -348,10 +358,10 @@ export function DataTable<T>({
                 style: { width: widths[index] }
               },
               React.createElement(
-                    "span",
-                    { "data-column-label": col.id },
-                    col.header
-                  ),
+                "span",
+                { "data-column-label": col.id },
+                col.header
+              ),
               col.headerHelp === undefined
                 ? null
                 : React.createElement(
