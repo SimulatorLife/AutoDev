@@ -24,6 +24,7 @@ import {
   type ExperienceOutcome,
   type MemoryExperiencePurgeRequest,
   type MemoryExperiencePurgeResult,
+  type MemoryExperiencePurgeReason,
   type MemoryExpiredExperienceRequest,
   type MemoryHistory,
   type MemoryInjectionEvent,
@@ -5160,4 +5161,275 @@ test("only a live memory record can be invalidated", async () => {
     );
   }
   assert.equal(repository.events.length, 0);
+});
+
+/**
+ * The use-assessment join. Its two filter validators run on every call but had
+ * no failing test, so "this filter cannot apply" had never been distinguished
+ * from "nothing matches it".
+ */
+function useJoinRequest(
+  overrides: Partial<MemoryInjectionUseJoinRequest> = {}
+): MemoryInjectionUseJoinRequest {
+  return {
+    context: { ...context, canReadTaskHistory: true },
+    ...overrides
+  };
+}
+
+test("the use-assessment join refuses a memory mode outside the vocabulary", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+
+  await assert.rejects(
+    service.listInjectionUseJoins(
+      useJoinRequest({
+        memoryModes: ["not-a-mode"] as unknown as MemoryExecutionMode[]
+      })
+    ),
+    /memory mode filter is invalid/u
+  );
+  assert.equal(repository.useJoinRequests.length, 0);
+});
+
+test("the use-assessment join refuses a use kind outside the vocabulary", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+
+  await assert.rejects(
+    service.listInjectionUseJoins(
+      useJoinRequest({
+        useKinds: ["not-a-use-kind"] as unknown as MemoryUseKind[]
+      })
+    ),
+    /useKind filter is invalid/u
+  );
+  assert.equal(repository.useJoinRequests.length, 0);
+});
+
+test("the use-assessment join looks its session up without request-level identity", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  await persistOutcomeInjection(repository, service, useInjectionEvent());
+
+  const page = await service.listInjectionUseJoins(
+    useJoinRequest({
+      includeUnassessed: true,
+      // The use-assessment join is session-scoped, so the caller reads the
+      // session the event was captured in, not the one it is running in.
+      context: { ...context, taskId: "task-old", canReadTaskHistory: true }
+    })
+  );
+
+  // The stored event keeps its own run/agent; the read must join on the session
+  // alone, so the context handed to storage deliberately omits both.
+  assert.equal(page.items.length, 1);
+  const sent = repository.useJoinRequests[0]?.context;
+  assert.equal(sent?.workspaceId, "workspace-a");
+  assert.equal(sent?.taskId, "task-old");
+  assert.equal("runId" in (sent ?? {}), false);
+  assert.equal("agentId" in (sent ?? {}), false);
+});
+
+test("use-assessment cohorts refuse a caller without task history", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  // A cohort aggregate is workspace/repository scoped: selecting a role, task,
+  // run or agent would make the counts per-request rather than per-session.
+  const cohortContext: MemoryReadContext = {
+    workspaceId: "workspace-a",
+    repositoryId: "repo-a",
+    canReadGlobal: false
+  };
+  const window = {
+    occurredFrom: "2026-09-01T00:00:00.000Z",
+    occurredUntil: "2026-10-01T00:00:00.000Z"
+  } as const;
+
+  await assert.rejects(
+    service.aggregateInjectionUseCohorts({ context: cohortContext, ...window }),
+    MemoryAuthorizationError
+  );
+  assert.equal(repository.useCohortRequests.length, 0);
+
+  const page = await service.aggregateInjectionUseCohorts({
+    context: { ...cohortContext, canReadTaskHistory: true },
+    ...window
+  });
+  assert.equal(page.exposureCount, 0);
+  assert.equal(repository.useCohortRequests.length, 1);
+});
+
+/**
+ * The retention erasure path: a batch, irreversible delete over every expired
+ * experience in a scope. `purgeExpiredExperiences` had no test reference at all,
+ * so none of the bounds that decide how much is deleted, or from where, were
+ * held by anything.
+ */
+function retentionContext(): MemoryReadContext {
+  return {
+    workspaceId: "workspace-a",
+    repositoryId: "repo-a",
+    canReadGlobal: false,
+    canReadTaskHistory: true
+  };
+}
+
+test("retention requires an explicit workspace and repository to erase from", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const input = {
+    completedBefore: "2026-09-01T00:00:00.000Z",
+    limit: 10,
+    actor: root
+  };
+
+  for (const scope of [
+    { workspaceId: "  ", repositoryId: "repo-a", canReadGlobal: false },
+    { workspaceId: "workspace-a", canReadGlobal: false },
+    { workspaceId: "workspace-a", repositoryId: "   ", canReadGlobal: false }
+  ]) {
+    await assert.rejects(
+      service.purgeExpiredExperiences({
+        ...input,
+        context: { ...scope, canReadTaskHistory: true }
+      }),
+      /explicit workspace and repository/u
+    );
+  }
+  assert.equal(repository.purgeRequests.length, 0);
+});
+
+test("retention refuses a cutoff or batch it cannot honour", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const expired = experience("expired-one");
+  await repository.appendExperience(expired);
+
+  for (const bounds of [
+    { completedBefore: "not-a-date", limit: 10 },
+    // A cutoff in the future would select everything that has not expired yet.
+    { completedBefore: "2099-01-01T00:00:00.000Z", limit: 10 },
+    { completedBefore: "2026-09-01T00:00:00.000Z", limit: 0 },
+    { completedBefore: "2026-09-01T00:00:00.000Z", limit: 101 },
+    { completedBefore: "2026-09-01T00:00:00.000Z", limit: 1.5 }
+  ]) {
+    await assert.rejects(
+      service.purgeExpiredExperiences({
+        ...bounds,
+        actor: root,
+        context: retentionContext()
+      }),
+      /scan bounds are invalid/u,
+      `expected ${JSON.stringify(bounds)} to be refused`
+    );
+  }
+  // Nothing was erased while the bounds were being argued about.
+  assert.equal(repository.experiences.has("expired-one"), true);
+  assert.equal(repository.purgeRequests.length, 0);
+});
+
+test("retention erases only expired, unreferenced, visible experiences", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const now = "2026-09-30T10:00:00.000Z";
+  const expired = experience("expired-one");
+  await repository.appendExperience({
+    ...expired,
+    completedAt: "2026-09-01T00:00:00.000Z"
+  });
+  // A run that never completed has no completedAt at all; an absent key and an
+  // explicit undefined are different under exactOptionalPropertyTypes.
+  const { completedAt: _stillRunning, ...stillRunning } = experience(
+    "still-running"
+  );
+  await repository.appendExperience(stillRunning);
+  await repository.appendExperience({
+    ...experience("referenced-one"),
+    completedAt: "2026-09-01T00:00:00.000Z"
+  });
+  repository.memories.set("mem-refs-it", {
+    ...record("mem-refs-it"),
+    provenance: {
+      experienceIds: ["referenced-one"],
+      evidence: [source],
+      createdBy: root.id,
+      createdAt: now
+    }
+  });
+  await repository.appendExperience({
+    ...experience("foreign-repo"),
+    completedAt: "2026-09-01T00:00:00.000Z",
+    repositoryId: "repo-b",
+    scope: { kind: "repository", workspaceId: "workspace-a", repositoryId: "repo-b" }
+  });
+
+  const report = await service.purgeExpiredExperiences({
+    completedBefore: "2026-09-15T00:00:00.000Z",
+    limit: 10,
+    actor: root,
+    context: retentionContext()
+  });
+
+  assert.deepEqual(report, {
+    selected: 1,
+    purged: 1,
+    referencedByMemory: 0,
+    noLongerVisible: 0
+  });
+  assert.equal(repository.experiences.has("expired-one"), false);
+  // An experience that has not completed, one a memory still cites, and one in
+  // another repository all survive: none of them is an expired orphan here.
+  // The not-completed and referenced exclusions come from the scan query
+  // (buildExpiredExperienceQuery carries the same NOT EXISTS check), and the
+  // repository scopes the scan to the caller's context as well. The service
+  // re-checks visibility after the read so an over-returning repository still
+  // cannot be erased from; that re-check is not what this assertion exercises.
+  assert.equal(repository.experiences.has("still-running"), true);
+  assert.equal(repository.experiences.has("referenced-one"), true);
+  assert.equal(repository.experiences.has("foreign-repo"), true);
+});
+
+test("purging an experience needs a bounded id and a known reason", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+
+  await assert.rejects(
+    service.purgeExperience(
+      "   ",
+      "privacy_request",
+      root,
+      retentionContext()
+    ),
+    /experience id is invalid/u
+  );
+  await assert.rejects(
+    service.purgeExperience(
+      "e".repeat(257),
+      "privacy_request",
+      root,
+      retentionContext()
+    ),
+    /experience id is invalid/u
+  );
+  await assert.rejects(
+    service.purgeExperience(
+      "experience-1",
+      "not-a-reason" as MemoryExperiencePurgeReason,
+      root,
+      retentionContext()
+    ),
+    /purge reason is invalid/u
+  );
+  assert.equal(repository.purgeRequests.length, 0);
+
+  assert.equal(
+    await service.purgeExperience(
+      "experience-1",
+      "privacy_request",
+      root,
+      retentionContext()
+    ),
+    "not_visible"
+  );
 });
