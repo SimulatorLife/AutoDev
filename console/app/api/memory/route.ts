@@ -374,6 +374,44 @@ async function parsePayload(
 }
 
 /**
+ * The refusal the operator is told about, given what the Runtime answered.
+ *
+ * The Runtime states its reasons with machine-readable codes, and every one asks
+ * for a different next move: a conflict means reload and retry, a scope refusal
+ * means do not bother, and a reference means the thing being changed is
+ * load-bearing. Collapsing all of them into one notice made that notice offer
+ * "it may still be citing this record" as the explanation for every failure,
+ * which sent an operator whose supersession was rejected for an unrelated
+ * reason looking for citations that were never involved.
+ *
+ * Anything unrecognised stays `runtime_refused`, whose sentence now says only
+ * that the change did not happen and does not guess why.
+ */
+function memoryRefusalFor(
+  result: Exclude<ControlApiResult<unknown>, { readonly kind: "ok" }>
+): ControlRefusalReason {
+  if (result.kind === "unreachable") return "unavailable";
+  const code = "code" in result ? result.code : "";
+  switch (code) {
+    case "autodev_memory_experience_referenced":
+      return "still_cited";
+    case "autodev_memory_conflict":
+      return "conflicted";
+    case "autodev_memory_not_found":
+      return "not_found";
+    case "autodev_memory_scope_forbidden":
+    case "autodev_memory_viewer_forbidden":
+    case "autodev_memory_task_history_forbidden":
+    case "autodev_memory_forbidden":
+      return "forbidden";
+    case "autodev_memory_unavailable":
+      return "unavailable";
+    default:
+      return "runtime_refused";
+  }
+}
+
+/**
  * Run one action, or report why this route would not send it.
  *
  * The refusal reason is returned rather than a bare `null` because the reasons a
@@ -659,7 +697,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return respond(
       "status" in result ? result.status : 500,
       result,
-      "runtime_refused"
+      memoryRefusalFor(result)
     );
   }
 

@@ -45,7 +45,14 @@ export const CONTROL_REFUSAL_REASONS = [
   "prior_required",
   "evidence_required",
   "provenance_required",
-  "runtime_refused"
+  "runtime_refused",
+  // What the Runtime itself said, by code. Each asks for a different next move,
+  // so one sentence cannot cover them.
+  "still_cited",
+  "conflicted",
+  "not_found",
+  "forbidden",
+  "unavailable"
 ] as const;
 export type ControlRefusalReason = (typeof CONTROL_REFUSAL_REASONS)[number];
 

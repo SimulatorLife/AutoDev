@@ -31,7 +31,17 @@ const REFUSAL_DETAIL: Record<ControlRefusalReason, string> = {
   provenance_required:
     "A revision has to name the experiences it derives from, and this record cites none. Nothing was sent to the Runtime.",
   runtime_refused:
-    "The Runtime refused the change. It may still be citing this record, in which case the action cannot proceed."
+    "The Runtime did not accept this change, and did not say why. Nothing was changed.",
+  still_cited:
+    "A durable memory still cites this raw experience, so erasing it would leave a claim with no source. It cannot be purged while it is cited.",
+  conflicted:
+    "This changed since the list you acted on was read. Reload it and decide again.",
+  not_found:
+    "This is no longer there. The list you acted on was stale.",
+  forbidden:
+    "Your reader is not permitted to do this. Nothing was changed.",
+  unavailable:
+    "The Runtime could not be reached, so nothing was changed."
 };
 
 /**
