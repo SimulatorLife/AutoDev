@@ -13,6 +13,12 @@ import { TextField } from "../../components/forms/TextField.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { MUTED_TEXT_CLASS } from "../../components/ui/text-classes.ts";
 import { codeOptions } from "./memory-code-options.ts";
+import {
+  MEMORY_EVIDENCE_KIND_LABEL,
+  MEMORY_OUTCOME_LABEL,
+  MEMORY_REPORT_KIND_LABEL,
+  MEMORY_USE_KIND_LABEL
+} from "./memory-status.ts";
 import { memoryListQuery, type MemoryListScope } from "./memory-list-url.ts";
 
 /**
@@ -107,6 +113,7 @@ export function InjectionReports({
               hideLabel: true,
               testId: `memory-report-outcome-kind-${injection.id}`,
               options: codeOptions(EXPERIENCE_OUTCOMES, {
+                ...MEMORY_OUTCOME_LABEL,
                 unknown: NOT_OBSERVED_LABEL
               })
             }),
@@ -115,7 +122,10 @@ export function InjectionReports({
               label: "Reported as:",
               hideLabel: true,
               testId: `memory-report-kind-${injection.id}`,
-              options: codeOptions(MEMORY_OUTCOME_REPORT_KINDS)
+              options: codeOptions(
+                MEMORY_OUTCOME_REPORT_KINDS,
+                MEMORY_REPORT_KIND_LABEL
+              )
             }),
             ...evidenceControls(`outcome-${injection.id}`)
           ]
@@ -128,7 +138,7 @@ export function InjectionReports({
             label: "Used:",
             hideLabel: true,
             testId: `memory-report-use-kind-${injection.id}`,
-            options: codeOptions(MEMORY_USE_KINDS)
+            options: codeOptions(MEMORY_USE_KINDS, MEMORY_USE_KIND_LABEL)
           }),
           React.createElement(TextField, {
             name: "usedMemoryIds",
@@ -181,7 +191,7 @@ function evidenceControls(suffix: string): readonly React.JSX.Element[] {
       label: "Evidence:",
       hideLabel: true,
       testId: `memory-evidence-kind-${suffix}`,
-      options: codeOptions(MEMORY_EVIDENCE_KINDS)
+      options: codeOptions(MEMORY_EVIDENCE_KINDS, MEMORY_EVIDENCE_KIND_LABEL)
     }),
     React.createElement(TextField, {
       name: "evidenceUri",

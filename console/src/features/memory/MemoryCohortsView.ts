@@ -4,6 +4,13 @@ import type {
   MemorySessionOutcomeCohortCell,
   MemorySessionOutcomeCohortPage
 } from "@simulatorlife/autodev-core";
+import {
+  EXPERIENCE_OUTCOMES,
+  MEMORY_INJECTION_RESULTS,
+  MEMORY_OUTCOME_REPORT_KINDS,
+  MEMORY_SESSION_COHORT_ASSIGNED_MODES,
+  MEMORY_USE_KINDS
+} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
@@ -29,11 +36,31 @@ import {
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
 import { SUCCESS_TONE_CLASS } from "../../components/ui/tones.ts";
+import { codeOptions, type CodeOption } from "./memory-code-options.ts";
 import { memoryFilterHref, type MemoryListScope } from "./memory-list-url.ts";
 import {
+  MEMORY_COHORT_MODE_LABEL,
+  MEMORY_INJECTION_RESULT_LABEL,
   MEMORY_OUTCOME_LABEL,
+  MEMORY_REPORT_KIND_LABEL,
   MEMORY_USE_KIND_LABEL
 } from "./memory-status.ts";
+
+/**
+ * A cohort filter's "no narrowing" entry, in front of the vocabulary it narrows.
+ *
+ * `all` is the page's own word for unspecified rather than a value the Runtime
+ * knows, so it is added here and not to any list in Core. Everything after it is
+ * Core's, because the Runtime validates a submitted cohort filter against those
+ * lists -- a filter spelling its own options can offer a value that is refused.
+ */
+function cohortFilterOptions<T extends string>(
+  codes: readonly T[],
+  allLabel: string,
+  labels: Readonly<Record<T, string>>
+): CodeOption<string>[] {
+  return [{ value: "all", label: allLabel }, ...codeOptions(codes, labels)];
+}
 
 /**
  * Every exposure's assessment outcome, weighted, with nothing merged.
@@ -356,13 +383,14 @@ export function MemoryCohortsView({
         // Only the modes a cohort can actually be assigned. Both cohort
         // matrices carry exactly these three, so offering invalid or unknown
         // would filter to an empty matrix and imply the tab can explain a
-        // cell it has no axis for.
-        options: [
-          { value: "all", label: "All modes" },
-          { value: "jit", label: "JIT" },
-          { value: "retrieval-only", label: "Retrieval only" },
-          { value: "disabled", label: "Disabled" }
-        ]
+        // cell it has no axis for. The list is Core's, because that is the
+        // narrower one the page accepts -- not the five execution modes an
+        // experience may be observed in.
+        options: cohortFilterOptions(
+          MEMORY_SESSION_COHORT_ASSIGNED_MODES,
+          "All modes",
+          MEMORY_COHORT_MODE_LABEL
+        )
       }),
       React.createElement(SelectField, {
         name: "injectionResult",
@@ -370,12 +398,11 @@ export function MemoryCohortsView({
         hideLabel: true,
         defaultValue: listScope.injectionResult ?? "all",
         testId: "memory-cohort-injection-result",
-        options: [
-          { value: "all", label: "All results" },
-          { value: "injected", label: "Injected" },
-          { value: "empty", label: "Empty" },
-          { value: "skipped", label: "Skipped" }
-        ]
+        options: cohortFilterOptions(
+          MEMORY_INJECTION_RESULTS,
+          "All results",
+          MEMORY_INJECTION_RESULT_LABEL
+        )
       }),
       React.createElement(SelectField, {
         name: "reportKind",
@@ -383,13 +410,11 @@ export function MemoryCohortsView({
         hideLabel: true,
         defaultValue: listScope.reportKind ?? "all",
         testId: "memory-cohort-report-kind",
-        options: [
-          { value: "all", label: "All report kinds" },
-          { value: "task", label: "Task" },
-          { value: "pull_request", label: "Pull request" },
-          { value: "issue", label: "Issue" },
-          { value: "other", label: "Other" }
-        ]
+        options: cohortFilterOptions(
+          MEMORY_OUTCOME_REPORT_KINDS,
+          "All report kinds",
+          MEMORY_REPORT_KIND_LABEL
+        )
       }),
       React.createElement(SelectField, {
         name: "outcomeKind",
@@ -397,17 +422,13 @@ export function MemoryCohortsView({
         hideLabel: true,
         defaultValue: listScope.outcomeKind ?? "all",
         testId: "memory-cohort-outcome-kind",
-        options: [
-          { value: "all", label: "All outcomes" },
-          { value: "success", label: "Success" },
-          { value: "partial", label: "Partial" },
-          { value: "failure", label: "Failure" },
-          { value: "cancelled", label: "Cancelled" },
-          // `unknown` here means no reporter supplied an outcome, which is
-          // exactly the state the shared constant names. Spelling it
-          // "Unknown" would reintroduce the drift the constant exists to stop.
-          { value: "unknown", label: NOT_OBSERVED_LABEL }
-        ]
+        // `unknown` here means no reporter supplied an outcome, which is
+        // exactly the state the shared constant names. Spelling it
+        // "Unknown" would reintroduce the drift the constant exists to stop.
+        options: cohortFilterOptions(EXPERIENCE_OUTCOMES, "All outcomes", {
+          ...MEMORY_OUTCOME_LABEL,
+          unknown: NOT_OBSERVED_LABEL
+        })
       }),
       React.createElement(SelectField, {
         name: "useKind",
@@ -415,13 +436,11 @@ export function MemoryCohortsView({
         hideLabel: true,
         defaultValue: listScope.useKind ?? "all",
         testId: "memory-cohort-use-kind",
-        options: [
-          { value: "all", label: "All use kinds" },
-          { value: "used", label: "Used" },
-          { value: "partially_used", label: "Partially used" },
-          { value: "not_used", label: "Not used" },
-          { value: "unobservable", label: "Unobservable" }
-        ]
+        options: cohortFilterOptions(
+          MEMORY_USE_KINDS,
+          "All use kinds",
+          MEMORY_USE_KIND_LABEL
+        )
       })
     ),
     // Time and scope banner

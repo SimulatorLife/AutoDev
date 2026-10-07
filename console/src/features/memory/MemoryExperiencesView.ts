@@ -44,6 +44,7 @@ import {
 } from "./memory-list-url.ts";
 import {
   MEMORY_OUTCOME_LABEL,
+  MEMORY_PURGE_REASON_LABEL,
   MEMORY_VALIDATION_LABEL,
   MEMORY_VALIDATION_VARIANT
 } from "./memory-status.ts";
@@ -57,10 +58,7 @@ import { InjectionReports } from "./MemoryInjectionReports.ts";
  */
 const PURGE_REASON_OPTIONS: readonly SelectOption[] = codeOptions(
   MEMORY_EXPERIENCE_PURGE_REASONS,
-  {
-    privacy_request: "Privacy request",
-    retention_expired: "Retention expired"
-  }
+  MEMORY_PURGE_REASON_LABEL
 );
 
 /** De-emphasised supporting copy, shared across this view's sub-panels. */

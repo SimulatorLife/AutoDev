@@ -8,27 +8,23 @@
  * spelling can offer something the Runtime refuses, and cannot offer something
  * it just gained, and nothing fails until an operator reaches for it.
  *
- * Labels stay at the call site. How a vocabulary reads on one compact form is a
- * presentation choice -- sentence case in the records action row, title case in
- * the injection reports -- and a code with no label falls back to its readable
- * form rather than to the wire key, which is what `?? code` would show.
+ * Labels are required and exhaustive, and that is the point. A fallback that
+ * prettified an unknown code (`superseded_by_newer_evidence` becoming
+ * `superseded by newer evidence`) looked safe and was not: for a single-word
+ * code it hands back the wire key itself, so `used` and `success` render raw —
+ * which this repo has tests forbidding. Requiring a complete
+ * `Record<T, string>` turns "Core gained a code the Console has no word for"
+ * into a typecheck failure instead, which is the only version of that change
+ * anyone actually wants to notice.
  */
 export interface CodeOption<T extends string> {
   readonly value: T;
   readonly label: string;
 }
 
-/** `superseded_by_newer_evidence` reads as `superseded by newer evidence`. */
-function readableCode(code: string): string {
-  return code.replaceAll("_", " ");
-}
-
 export function codeOptions<T extends string>(
   codes: readonly T[],
-  labels?: Readonly<Partial<Record<T, string>>> | undefined
+  labels: Readonly<Record<T, string>>
 ): CodeOption<T>[] {
-  return codes.map((code) => ({
-    value: code,
-    label: labels?.[code] ?? readableCode(code)
-  }));
+  return codes.map((code) => ({ value: code, label: labels[code] }));
 }

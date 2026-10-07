@@ -51,6 +51,7 @@ import {
   memoryPageHref
 } from "./memory-list-url.ts";
 import {
+  MEMORY_EVIDENCE_KIND_LABEL,
   MEMORY_REASON_LABEL,
   MEMORY_STATUS_LABEL,
   MEMORY_STATUS_VARIANT,
@@ -1045,7 +1046,7 @@ function RecordActionForm({
             hideLabel: true,
             className: "basis-32",
             testId: `memory-${action}-evidence-kind`,
-            options: codeOptions(MEMORY_EVIDENCE_KINDS)
+            options: codeOptions(MEMORY_EVIDENCE_KINDS, MEMORY_EVIDENCE_KIND_LABEL)
           }),
           React.createElement(TextField, {
             key: "evidence-uri",

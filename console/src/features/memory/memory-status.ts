@@ -1,7 +1,12 @@
 import type {
   ExperienceOutcome,
   ExperienceValidationState,
+  MemoryEvidenceKind,
+  MemoryExperiencePurgeReason,
+  MemoryInjectionResult,
+  MemoryOutcomeReportKind,
   MemoryReasonCode,
+  MemorySessionCohortAssignedMode,
   MemoryStatus,
   MemoryUseKind
 } from "@simulatorlife/autodev-core";
@@ -166,4 +171,70 @@ export const MEMORY_REASON_LABEL: Record<MemoryReasonCode, string> = {
   missing_provenance: "Provenance is missing",
   invalidated: "Invalidated",
   unknown: "Reason not reported"
+};
+
+/**
+ * The four vocabularies the filter bars offer, labelled the same way.
+ *
+ * Exhaustive for the reason the tables above are. A cohort filter written with
+ * its own option list is a second spelling of a Core list the Runtime validates
+ * against, and the two agree only until someone edits one. Declaring the words
+ * here means a code added to Core fails to typecheck in the Console until it has
+ * been given one, rather than rendering as a database key.
+ *
+ * These are also the words the cohort *cells* read, so an operator selects
+ * "Used" and then sees "Used" beside the rows it selected.
+ */
+export const MEMORY_REPORT_KIND_LABEL: Record<MemoryOutcomeReportKind, string> =
+  {
+    task: "Task",
+    pull_request: "Pull request",
+    issue: "Issue",
+    other: "Other"
+  };
+
+export const MEMORY_INJECTION_RESULT_LABEL: Record<
+  MemoryInjectionResult,
+  string
+> = {
+  injected: "Injected",
+  empty: "Empty",
+  skipped: "Skipped"
+};
+
+/**
+ * Only the modes a cohort can be *assigned*, which is fewer than the five an
+ * experience can be observed in: `invalid` and `unknown` are results, not
+ * assignments, so no cohort matrix carries them as an axis.
+ */
+export const MEMORY_COHORT_MODE_LABEL: Record<
+  MemorySessionCohortAssignedMode,
+  string
+> = {
+  jit: "JIT",
+  "retrieval-only": "Retrieval only",
+  disabled: "Disabled"
+};
+
+/** What kind of thing a piece of evidence is, as an operator would name it. */
+export const MEMORY_EVIDENCE_KIND_LABEL: Record<MemoryEvidenceKind, string> = {
+  trajectory: "Trajectory",
+  trace: "Trace",
+  file: "File",
+  commit: "Commit",
+  pull_request: "Pull request",
+  issue: "Issue",
+  rule: "Rule",
+  skill: "Skill",
+  document: "Document",
+  other: "Other"
+};
+
+/** Why an envelope may be erased. Two reasons, because erasure is final. */
+export const MEMORY_PURGE_REASON_LABEL: Record<
+  MemoryExperiencePurgeReason,
+  string
+> = {
+  privacy_request: "Privacy request",
+  retention_expired: "Retention expired"
 };
