@@ -372,32 +372,58 @@ function navListHref(nav: EvaluationsNav): string {
   return evaluationsListHref(nav.filters, { tab: nav.tab, page: nav.page });
 }
 
+/**
+ * What a row's trace reference actually is.
+ *
+ * Three answers, decided once, because two surfaces render this field and they
+ * had drifted into answering different questions: the history table checked
+ * whether the value was a span id, and the run drawer did not check at all --
+ * so the drawer showed a malformed reference as a real one, on the same run the
+ * table beside it labelled "Invalid span". A malformed source must not read as a
+ * valid one, and the drawer's title text is not an exception.
+ */
+type EvaluationTraceReference =
+  | { readonly kind: "none" }
+  | { readonly kind: "invalid"; readonly reported: string }
+  | { readonly kind: "openable"; readonly spanId: string };
+
+function traceReferenceOf(
+  evaluation: EvaluationResult
+): EvaluationTraceReference {
+  if (!evaluation.spanId) return { kind: "none" };
+  if (!isOpenTelemetrySpanId(evaluation.spanId)) {
+    return { kind: "invalid", reported: evaluation.spanId };
+  }
+  return { kind: "openable", spanId: evaluation.spanId };
+}
+
 function traceReference(
   evaluation: EvaluationResult,
   nav: EvaluationsNav
 ): React.ReactNode {
-  if (!evaluation.spanId) {
+  const reference = traceReferenceOf(evaluation);
+  if (reference.kind === "none") {
     return React.createElement(StatusBadge, {
       status: NOT_OBSERVED_STATUS,
       label: NOT_OBSERVED_LABEL,
       title: "This evaluation did not report a trace reference."
     });
   }
-  if (!isOpenTelemetrySpanId(evaluation.spanId)) {
+  if (reference.kind === "invalid") {
     return React.createElement(StatusBadge, {
       status: "invalid",
       label: "Invalid span",
-      title: `The reported trace reference is not a valid OpenTelemetry span id: ${evaluation.spanId}`
+      title: `The reported trace reference is not a valid OpenTelemetry span id: ${reference.reported}`
     });
   }
   return React.createElement(
     "a",
     {
-      href: evaluationTraceHref(nav.filters, evaluation.spanId, nav.tab),
+      href: evaluationTraceHref(nav.filters, reference.spanId, nav.tab),
       className:
         "font-mono text-xs font-medium text-accent underline-offset-4 hover:underline",
       "aria-label": `View trace for evaluation ${evaluation.id}`,
-      "data-evaluation-trace-span-id": evaluation.spanId
+      "data-evaluation-trace-span-id": reference.spanId
     },
     "View trace"
   );
@@ -685,6 +711,48 @@ function renderTraceLookup(
 }
 
 /**
+ * The drawer's trace value, which is the same three answers as the table's --
+ * and now the same answers, not merely the same three.
+ *
+ * It used to be plain text for any reported span, valid or not, while the table
+ * beside it linked the valid ones and labelled the malformed ones "Invalid
+ * span". So opening a run to read it either offered no way onward to its trace,
+ * or presented a value the page had already decided is not a span id as though
+ * it were one. The decision belongs to `traceReferenceOf`; only the typography
+ * is the drawer's own.
+ */
+function drawerTraceValue(
+  evaluation: EvaluationResult,
+  nav: EvaluationsNav
+): React.ReactNode {
+  const reference = traceReferenceOf(evaluation);
+  if (reference.kind === "none") {
+    return React.createElement(StatusBadge, {
+      status: NOT_OBSERVED_STATUS,
+      label: NOT_OBSERVED_LABEL,
+      title: "This evaluation did not report a trace reference."
+    });
+  }
+  if (reference.kind === "invalid") {
+    return React.createElement(StatusBadge, {
+      status: "invalid",
+      label: "Invalid span",
+      title: `The reported trace reference is not a valid OpenTelemetry span id: ${reference.reported}`
+    });
+  }
+  return React.createElement(
+    "a",
+    {
+      href: evaluationTraceHref(nav.filters, reference.spanId, nav.tab),
+      className: `${MONO_VALUE_CLASS} text-accent underline-offset-4 hover:underline`,
+      "aria-label": `View trace for evaluation ${evaluation.id}`,
+      "data-evaluation-trace-span-id": reference.spanId
+    },
+    reference.spanId
+  );
+}
+
+/**
  * The detail drawer for one evaluation run.
  *
  * The table carries the run's identity and its verdicts; the measurements
@@ -734,17 +802,7 @@ function renderResultDetail(
           // the history table uses.
           valueClassName: null
         },
-        evaluation.spanId
-          ? React.createElement(
-              "span",
-              { className: MONO_VALUE_CLASS },
-              evaluation.spanId
-            )
-          : React.createElement(StatusBadge, {
-              status: NOT_OBSERVED_STATUS,
-              label: NOT_OBSERVED_LABEL,
-              title: "This evaluation did not report a trace reference."
-            })
+        drawerTraceValue(evaluation, nav)
       )
     ),
     React.createElement(
