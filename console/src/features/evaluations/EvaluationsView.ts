@@ -540,7 +540,12 @@ function traceReference(
   return React.createElement(
     "a",
     {
-      href: evaluationTraceHref(nav.filters, reference.spanId, nav.tab),
+      href: evaluationTraceHref(
+        nav.filters,
+        reference.spanId,
+        nav.tab,
+        nav.page
+      ),
       className:
         "font-mono text-xs font-medium text-accent underline-offset-4 hover:underline",
       "aria-label": `View trace for evaluation ${evaluation.id}`,
@@ -558,7 +563,7 @@ function spanLink(
   const link = React.createElement(
     "a",
     {
-      href: evaluationTraceHref(nav.filters, spanId, nav.tab),
+      href: evaluationTraceHref(nav.filters, spanId, nav.tab, nav.page),
       className:
         "font-mono text-xs text-accent underline-offset-4 hover:underline",
       // `aria-current` is what makes the row findable rather than merely
@@ -980,7 +985,12 @@ function drawerTraceValue(
   return React.createElement(
     "a",
     {
-      href: evaluationTraceHref(nav.filters, reference.spanId, nav.tab),
+      href: evaluationTraceHref(
+        nav.filters,
+        reference.spanId,
+        nav.tab,
+        nav.page
+      ),
       className: `${MONO_VALUE_CLASS} text-accent underline-offset-4 hover:underline`,
       "aria-label": `View trace for evaluation ${evaluation.id}`,
       "data-evaluation-trace-span-id": reference.spanId
@@ -1888,10 +1898,11 @@ export function EvaluationsView({
         basePath: "/evaluations",
         tabs: EVALUATIONS_TABS,
         activeTabId: tab,
-        // Filters travel with the tab, so narrowing the history does not throw
-        // the operator out of the comparison they were reading.
+        // Filters and the page travel with the tab, so narrowing the history
+        // does not throw the operator out of the comparison they were reading,
+        // and the way back to Results is the page they left.
         hrefFor: (tabId: string) =>
-          evaluationsTabHref(filters, tabId as EvaluationsTabId)
+          evaluationsTabHref(filters, tabId as EvaluationsTabId, page)
       }),
       narrowed
         ? React.createElement(

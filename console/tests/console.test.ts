@@ -5785,6 +5785,64 @@ test("opening a run keeps the page of the history it was opened from", () => {
   );
 });
 
+test("the other two links out of a row's page keep it too", () => {
+  // The run link, the trace link and the section links all leave the list and
+  // come back to it, so all three carry the page or none of them should. The
+  // run link already did; the other two did not, and their round trips were the
+  // ones an operator actually makes.
+  //
+  // Measured before the fix against a 120-row history, from page 2 of 3: a row's
+  // "View trace" produced `?spanId=...` with no page, so the list beside the
+  // trace re-rendered as rows 1-50 rather than 51-100. Both section links
+  // produced the same, so looking at the same runs grouped by role and coming
+  // back put the operator at the top of the list.
+  const row = {
+    id: "run-page-2",
+    agentRole: "implementer",
+    promptName: "dry",
+    model: "gpt-5.6-terra",
+    metrics: [{ name: "quality", value: 1, pass: true }],
+    passed: true,
+    timestamp: "2026-10-05T12:00:00.000Z"
+  };
+  const traced = { ...row, id: "run-traced", spanId: "4bf92f3577b34da6" };
+
+  assert.match(
+    renderEvaluations({ evaluations: [traced], page: 2 }),
+    /href="\/evaluations\?spanId=4bf92f3577b34da6&amp;page=2#/,
+    "a trace opened from page 2 does not leave page 2"
+  );
+
+  const onPage2 = renderEvaluations({ evaluations: [row], page: 2 });
+  const navStart = onPage2.indexOf('aria-label="Evaluations sections"');
+  const navEnd = onPage2.indexOf("</nav>", navStart);
+  assert.ok(navStart !== -1 && navEnd !== -1, "the section nav is rendered");
+  const sectionLinks = Array.from(
+    onPage2.slice(navStart, navEnd).matchAll(/href="([^"]*)"/g),
+    (match) => match[1]
+  );
+  assert.equal(sectionLinks.length, 2, "both sections are linked from here");
+  assert.deepEqual(
+    sectionLinks,
+    ["/evaluations?page=2", "/evaluations?tab=comparisons&amp;page=2"],
+    "both section links carry the page, so the way back is the page they left"
+  );
+
+  // And the other half of the same rule: page 1 is what an unparameterised link
+  // means, so this must not put a page on every link on every list.
+  const onPage1 = renderEvaluations({ evaluations: [traced], page: 1 });
+  assert.doesNotMatch(
+    onPage1,
+    /href="\/evaluations\?spanId=4bf92f3577b34da6&amp;page=1#/,
+    "a trace opened from the first page keeps that implicit"
+  );
+  assert.doesNotMatch(
+    renderEvaluations({ evaluations: [row], page: 1 }),
+    /href="\/evaluations\?page=1/,
+    "and so does a section link"
+  );
+});
+
 test("closing a run leaves the trace open, and leaving the trace closes neither", () => {
   // The two selections are alternatives, so a link that opens one closes the
   // other. That rule does not settle this pair: closing a run and closing a

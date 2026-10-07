@@ -481,10 +481,19 @@ export function traceSpanAnchorId(spanId: string): string {
 }
 
 /**
- * The trace for one span, keeping the filters.
+ * The trace for one span, keeping the filters and the page.
  *
  * A trace is a property of the run that produced it, so opening one from a
  * filtered list must not silently widen the list the operator is reading.
+ *
+ * The page travels for the same reason `evaluationResultHref` carries it: the
+ * trace panel is rendered beside the list it was opened from, so that list is
+ * the context the trace is read against. Measured on a 120-row history, opening
+ * a trace from page 2 left the URL with no page in it -- which is page 1 -- so
+ * the list re-rendered as rows 1-50 beside the trace, fifty rows away from the
+ * row the link came from. The run link beside it already carried the page, so
+ * the two ways into a detail from the same row disagreed about where they left
+ * the operator.
  *
  * The fragment is the span's anchor, so the link lands on the row it names
  * rather than at the top of the panel.
@@ -492,17 +501,33 @@ export function traceSpanAnchorId(spanId: string): string {
 export function evaluationTraceHref(
   filters: EvaluationsFilters,
   spanId: string,
-  tab: EvaluationsTabId = DEFAULT_EVALUATIONS_TAB
+  tab: EvaluationsTabId = DEFAULT_EVALUATIONS_TAB,
+  page?: number | undefined
 ): string {
-  return `${evaluationsHref(filters, { tab, spanId })}#${traceSpanAnchorId(spanId)}`;
+  return `${evaluationsHref(filters, { tab, spanId, page })}#${traceSpanAnchorId(spanId)}`;
 }
 
-/** One section of the resource, keeping the filters. */
+/**
+ * One section of the resource, keeping the filters and the page.
+ *
+ * A section is another view of the same runs, not a different question, so the
+ * position in the list is part of the reading and travels with it. Measured on a
+ * 120-row history: from page 2 of a narrowed Results, both section links dropped
+ * the page, so a round trip through Comparisons -- the one place an operator goes
+ * to look at the same runs grouped differently -- came back to rows 1-50.
+ *
+ * This is the opposite of `evaluationsClearedHref`, which drops the page on
+ * purpose: clearing a filter changes which rows exist, so an old position names
+ * rows that are no longer there. Changing section does not. The page is carried
+ * into the comparisons URL too, where it is inert -- the view clamps a page its
+ * own section has no pager for -- and that is the price of the way back.
+ */
 export function evaluationsTabHref(
   filters: EvaluationsFilters,
-  tab: EvaluationsTabId
+  tab: EvaluationsTabId,
+  page?: number | undefined
 ): string {
-  return evaluationsHref(filters, { tab });
+  return evaluationsHref(filters, { tab, page });
 }
 
 /**
