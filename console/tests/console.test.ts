@@ -1961,6 +1961,79 @@ test("Agent detail separates configuration from unobserved runtime state", () =>
   );
 });
 
+test("Agent detail renders the reconciliation its own response requires of it", () => {
+  // `isControlApiAgentDetailResponse` makes `reconciliation` a precondition of
+  // the page: without a well-formed bundle the whole page fails closed rather
+  // than rendering half an agent. The view mapper then dropped it, so the page
+  // fetched the evidence, validated it, and rendered none of it -- the only
+  // trace of a desired-vs-actual contract was the agent's own `convergence`
+  // field, which is a different fact. `/prompts/[id]` renders the same panel
+  // from the same bundle, so two detail pages for two mutable resources
+  // answered the same question differently.
+  const unobserved = renderToStaticMarkup(
+    React.createElement(AgentDetailView, {
+      agent: CONFIGURED_AGENT,
+      reconciliation: AGENT_RECONCILIATION
+    })
+  );
+  assert.match(
+    unobserved,
+    /data-section="agent-reconciliation"/,
+    "the page must render the reconciliation it requires"
+  );
+  assert.match(unobserved, /data-feature="reconciliation"/);
+  assert.match(unobserved, /aria-label="Reconciliation state"/);
+  // Absent evidence is an absence, not an empty value that reads as "none".
+  assert.match(unobserved, /The Runtime has not observed this agent&#x27;s applied state/);
+  assert.match(
+    unobserved,
+    /data-field="desired-generation">Not observed</,
+    "an unobserved generation must read as not observed"
+  );
+  assert.equal(
+    /data-field="last-error"><\/dd>/.test(unobserved),
+    false,
+    "an absent last error must not render as an empty value"
+  );
+
+  // Observed evidence reaches the page too: a status that is only ever
+  // "not observed" is a panel that renders but does not report.
+  const converged = renderToStaticMarkup(
+    React.createElement(AgentDetailView, {
+      agent: CONFIGURED_AGENT,
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: "gen-7",
+          observedGeneration: "gen-7",
+          lastApplyAt: "2026-10-07T00:00:00Z",
+          lastObservationAt: "2026-10-07T00:00:05Z",
+          lastError: null,
+          explanation: "The applied configuration matches the desired state."
+        },
+        history: [
+          {
+            action: "apply",
+            timestamp: "2026-10-07T00:00:00Z",
+            outcome: "ok",
+            reason: "operator save",
+            actor: "henrykirk"
+          }
+        ]
+      }
+    })
+  );
+  assert.match(converged, /data-field="desired-generation">gen-7</);
+  assert.match(converged, /data-field="observed-generation">gen-7</);
+  assert.match(converged, /data-field="last-apply">2026-10-07T00:00:00Z</);
+  assert.match(
+    converged,
+    /data-history-outcome="ok"/,
+    "the bounded operation history must reach the page"
+  );
+  assert.match(converged, /The applied configuration matches the desired state/);
+});
+
 test("Agent detail exposes the shared breadcrumbs landmark with /agents parent and current-page aria state", () => {
   const markup = renderToStaticMarkup(
     React.createElement(AgentDetailView, {

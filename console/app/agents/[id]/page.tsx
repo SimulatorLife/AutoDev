@@ -67,6 +67,7 @@ export default async function AgentDetailPage({
     { section },
     React.createElement(AgentDetailView, {
       agent: agentDetailFromControlApi(detailResult.data),
+      reconciliation: detailResult.data.reconciliation,
       routing,
       providers
     })

@@ -1,5 +1,6 @@
 import type {
   AgentDefinition,
+  ControlApiAgentDetailResponse,
   ControlApiProvidersResponse,
   ControlApiRoutingResponse
 } from "@simulatorlife/autodev-core";
@@ -15,6 +16,7 @@ import { PageBody } from "../../components/layout/PageBody.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
+import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import {
   NOT_OBSERVED_LABEL,
   StatusBadge
@@ -25,12 +27,26 @@ import { AgentProviderSummary } from "./AgentProviderSummary.ts";
 
 export interface AgentDetailViewProps {
   readonly agent: AgentDefinition;
+  /**
+   * Desired-vs-actual state for this agent.
+   *
+   * The response guard makes this field a precondition of the page: without a
+   * well-formed reconciliation bundle the whole detail page fails closed rather
+   * than rendering half an agent. It was then dropped by the view mapper, so the
+   * page fetched it, validated it, and rendered none of it -- the only trace of
+   * a desired-vs-actual contract on the page was the agent's own `convergence`
+   * field, which is a different fact. `/prompts/[id]` renders the same panel
+   * from the same bundle; two detail pages for two mutable resources answered
+   * the same question differently.
+   */
+  readonly reconciliation: ControlApiAgentDetailResponse["reconciliation"];
   readonly routing?: ControlApiRoutingResponse | undefined;
   readonly providers?: ControlApiProvidersResponse | undefined;
 }
 
 export function AgentDetailView({
   agent,
+  reconciliation,
   routing,
   providers
 }: AgentDetailViewProps): React.JSX.Element {
@@ -128,6 +144,23 @@ export function AgentDetailView({
           status: agent.convergence
         })
       )
+    ),
+    React.createElement(
+      "section",
+      {
+        className: DETAIL_PANEL_CLASS,
+        "aria-label": "Reconciliation state",
+        "data-section": "agent-reconciliation"
+      },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "Reconciliation"
+      ),
+      React.createElement(ReconciliationPanel, {
+        status: reconciliation.status,
+        history: reconciliation.history
+      })
     ),
     React.createElement(
       "section",
