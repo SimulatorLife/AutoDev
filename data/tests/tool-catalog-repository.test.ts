@@ -177,6 +177,8 @@ test("ToolCatalogAdapter handles the not-observed validity without dropping the 
   const mcpState: RuleSyncMcpState = {
     source: ".rulesync/mcp.jsonc",
     valid: null,
+    // An unobserved source has no faults to report and must not invent any.
+    issues: [],
     servers: []
   };
   const result = adapter.fromMcpState(mcpState);

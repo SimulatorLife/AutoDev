@@ -590,6 +590,10 @@ function mcpsView(): Record<string, unknown> {
       source: state.source,
       readOnly: true,
       valid: state.valid,
+      // Carried on the failure branch too: "no servers" and "these servers
+      // could not be applied" are different states, and the second one is only
+      // actionable with the reasons.
+      issues: state.issues,
       servers: []
     };
   }
@@ -619,6 +623,9 @@ function mcpsView(): Record<string, unknown> {
     source: state.source,
     readOnly: true,
     valid: state.valid,
+    // A valid source has none. Carried explicitly rather than omitted so the
+    // field means the same thing on both branches of the projection.
+    issues: state.issues,
     servers: [...declared, ...unbackedRoleExposures].sort((left, right) =>
       CONTROL_API_COLLATOR.compare(left.name, right.name)
     )

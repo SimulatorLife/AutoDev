@@ -1,10 +1,14 @@
-import type { McpServerResource } from "@simulatorlife/autodev-core";
+import type {
+  McpServerResource,
+  RuleSyncValidationIssue
+} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
+import { SourceValidationIssues } from "../../components/status/SourceValidationIssues.ts";
 import {
   NOT_OBSERVED_LABEL,
   StatusBadge
@@ -30,10 +34,20 @@ const NOT_OBSERVED_STATUS = "not-observed" as const;
 export interface McpsViewProps {
   readonly servers: readonly McpServerResource[];
   readonly sourceValidity: boolean | null;
+  /**
+   * Why the source is invalid.
+   *
+   * Required rather than defaulted to `[]`: the page renders an empty server
+   * list on an invalid source, so without the reasons it says "no servers" for
+   * a file that declares some and could not be applied. The loader has already
+   * located the fault.
+   */
+  readonly validationIssues: readonly RuleSyncValidationIssue[];
 }
 
 export function McpsView({
   servers,
+  validationIssues,
   sourceValidity
 }: McpsViewProps): React.JSX.Element {
   const columns: ColumnDef<McpServerResource>[] = [
@@ -182,6 +196,11 @@ export function McpsView({
           sourceValidity === null ? NOT_OBSERVED_STATUS : String(sourceValidity)
       }
     },
+    React.createElement(SourceValidationIssues, {
+      issues: validationIssues,
+      testId: "mcp-validation-issues",
+      subject: "MCP source"
+    }),
     React.createElement(
       StatGrid,
       { columns: 3 },

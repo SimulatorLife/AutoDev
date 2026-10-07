@@ -534,6 +534,7 @@ test("RuleSync MCP state parses canonical JSONC and target overrides without exp
     assert.deepEqual(repo.loadMcpState(), {
       source: ".rulesync/mcp.jsonc",
       valid: null,
+      issues: [],
       servers: []
     });
 
@@ -565,6 +566,7 @@ test("RuleSync MCP state parses canonical JSONC and target overrides without exp
     assert.deepEqual(repo.loadMcpState(), {
       source: ".rulesync/mcp.jsonc",
       valid: true,
+      issues: [],
       servers: [
         {
           name: "codex-only",
@@ -614,6 +616,15 @@ test("RuleSync MCP state parses canonical JSONC and target overrides without exp
     assert.deepEqual(repo.loadMcpState(), {
       source: ".rulesync/mcp.jsonc",
       valid: false,
+      // The base declaration of `bad` is fine; it is the per-target override
+      // that cannot be applied, so the reason names the target too.
+      issues: [
+        {
+          location: "codexcli.mcpServers.bad",
+          message:
+            'The override for "bad" under "codexcli" is not a usable MCP server declaration.'
+        }
+      ],
       servers: []
     });
 
@@ -621,14 +632,25 @@ test("RuleSync MCP state parses canonical JSONC and target overrides without exp
     assert.deepEqual(repo.loadMcpState(), {
       source: ".rulesync/mcp.jsonc",
       valid: false,
+      issues: [
+        {
+          location: "mcpServers",
+          message: 'The MCP source must have an "mcpServers" object.'
+        }
+      ],
       servers: []
     });
     await writeFile(sourcePath, "{", "utf8");
-    assert.deepEqual(repo.loadMcpState(), {
-      source: ".rulesync/mcp.jsonc",
-      valid: false,
-      servers: []
-    });
+    const truncated = repo.loadMcpState();
+    assert.equal(truncated.valid, false);
+    assert.deepEqual(truncated.servers, []);
+    // A truncated document is reported by line, like every other RuleSync
+    // source, so an operator is sent to the fault rather than to the file.
+    assert.match(
+      truncated.issues[0]?.location ?? "",
+      /^line \d+$/u,
+      `expected a line number, got ${JSON.stringify(truncated.issues[0]?.location)}`
+    );
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });
   }
@@ -910,5 +932,101 @@ test("RuleSyncRepository refuses unsafe skill names and symlinked canonical dire
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });
     await rm(externalRoot, { recursive: true, force: true });
+  }
+});
+
+test("RuleSync MCP state names the declaration or override it could not apply", async () => {
+  const repositoryRoot = await mkdtemp(path.join(tmpdir(), "autodev-mcp-issues-"));
+  const sourcePath = path.join(repositoryRoot, ".rulesync", "mcp.jsonc");
+  const repo = new RuleSyncRepository(repositoryRoot);
+  const load = async (content: string) => {
+    await mkdir(path.dirname(sourcePath), { recursive: true });
+    await writeFile(sourcePath, content, "utf8");
+    return repo.loadMcpState();
+  };
+
+  try {
+    // A base declaration that is not an MCP server object. The name is the
+    // thing an operator can act on, and the loader had it in hand.
+    const badDisabled = await load(
+      `{"mcpServers":{"lsp":{"disabled":"yes"}}}`
+    );
+    assert.equal(badDisabled.valid, false);
+    assert.deepEqual(badDisabled.servers, []);
+    assert.deepEqual(badDisabled.issues, [
+      {
+        location: "mcpServers.lsp",
+        message: '"lsp" is not a usable MCP server declaration.'
+      }
+    ]);
+
+    // A server name no target can address. Distinct from a malformed
+    // declaration: the declaration is fine and the name is the fault.
+    const emptyName = await load(`{"mcpServers":{"":{"command":"x"}}}`);
+    assert.equal(emptyName.valid, false);
+    assert.deepEqual(emptyName.issues, [
+      {
+        location: "mcpServers",
+        message:
+          "The MCP source has an empty server name, which no target can address."
+      }
+    ]);
+
+    // A target's override block that is not an object. The base file is valid,
+    // so reporting only the file would point at the wrong edit.
+    const badOverrides = await load(
+      `{"mcpServers":{},"codexcli":{"mcpServers":"none"}}`
+    );
+    assert.equal(badOverrides.valid, false);
+    assert.deepEqual(badOverrides.issues, [
+      {
+        location: "codexcli.mcpServers.mcpServers",
+        message:
+          'The overrides for "codexcli" must be an object of servers.'
+      }
+    ]);
+
+    // An override naming a server that is not a usable declaration. Both halves
+    // of the location are reported because they are different edits in the same
+    // file: the base `mcpServers` entry and the per-target one.
+    const badOverrideServer = await load(
+      `{"mcpServers":{"lsp":{"command":"x"}},"codexcli":{"mcpServers":{"lsp":{"disabled":1}}}}`
+    );
+    assert.equal(badOverrideServer.valid, false);
+    assert.deepEqual(badOverrideServer.issues, [
+      {
+        location: "codexcli.mcpServers.lsp",
+        message:
+          'The override for "lsp" under "codexcli" is not a usable MCP server declaration.'
+      }
+    ]);
+
+    const noBlock = await load(`{"servers":{}}`);
+    assert.deepEqual(noBlock.issues, [
+      {
+        location: "mcpServers",
+        message: 'The MCP source must have an "mcpServers" object.'
+      }
+    ]);
+
+    const notAnObject = await load(`[1,2,3]`);
+    assert.deepEqual(notAnObject.issues, [
+      {
+        location: ".rulesync/mcp.jsonc",
+        message: "The MCP source must be a JSON object."
+      }
+    ]);
+
+    // A syntax fault reports a line, matching the hook loader, because the two
+    // are read by the same operator editing the same directory.
+    const syntax = await load(`{\n  "mcpServers": {\n    "lsp": [,]\n  }\n}`);
+    assert.equal(syntax.valid, false);
+    assert.match(
+      syntax.issues[0]?.location ?? "",
+      /^line \d+$/u,
+      `expected a line number, got ${JSON.stringify(syntax.issues[0]?.location)}`
+    );
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
   }
 });

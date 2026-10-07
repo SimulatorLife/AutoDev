@@ -59,8 +59,35 @@ export interface McpServerResource extends McpServerDefinition {
   readonly roles: readonly AgentRole[];
 }
 
+/**
+ * One reason a canonical source cannot be applied.
+ *
+ * `location` names the part of the document at fault in the same terms the
+ * operator is looking at -- a server name, a target's override of a server, an
+ * event name, an action index, or a source line -- and `message` says what is
+ * wrong with it. Neither is a diagnosis of the fix; both are the fact the loader
+ * observed and would otherwise have discarded.
+ *
+ * Lives here rather than in the loader because two independent loaders produce
+ * it, and a shared shape is what lets the Control API and the Console validate
+ * one form across every canonical source instead of per resource.
+ */
+export interface RuleSyncValidationIssue {
+  readonly location: string;
+  readonly message: string;
+}
+
 export interface RuleSyncMcpState {
   readonly source: ".rulesync/mcp.jsonc";
   readonly valid: boolean | null;
+  /**
+   * Why the source is invalid; empty when it is valid or was not observed.
+   *
+   * Required rather than optional so `valid: false` cannot arrive alone. The
+   * loader knows which server name, or which target's override of which server,
+   * it could not apply; reporting only the flag sent an operator back into the
+   * file to re-find a position the system had already located.
+   */
+  readonly issues: readonly RuleSyncValidationIssue[];
   readonly servers: readonly McpServerDefinition[];
 }

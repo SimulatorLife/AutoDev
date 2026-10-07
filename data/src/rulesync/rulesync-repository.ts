@@ -30,9 +30,14 @@ import type {
   PromptAsset,
   PromptVersion,
   RuleSyncMcpState,
+  RuleSyncValidationIssue,
   SkillDefinition
 } from "@simulatorlife/autodev-core";
-import { parse, type ParseError,printParseErrorCode } from "jsonc-parser";
+import {
+  parse,
+  type ParseError,
+  printParseErrorCode
+} from "jsonc-parser";
 import { parse as parseYaml } from "yaml";
 
 const DEFAULT_REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
@@ -82,19 +87,6 @@ async function withCommandUpdateLock<T>(
       COMMAND_UPDATE_QUEUES.delete(commandPath);
     }
   }
-}
-
-/**
- * One reason a canonical source cannot be applied.
- *
- * `location` names the part of the document at fault in the same terms the
- * operator is looking at -- an event name, an action index, or a source line --
- * and `message` says what is wrong with it. Neither is a diagnosis of the fix;
- * both are the fact the loader observed and would otherwise have discarded.
- */
-export interface RuleSyncValidationIssue {
-  readonly location: string;
-  readonly message: string;
 }
 
 export interface RuleSyncHooksState {
@@ -338,15 +330,45 @@ function projectBaseMcpServer(
   };
 }
 
+/**
+ * The base servers, or the first declaration that could not be read.
+ *
+ * Returning the offending key rather than a bare `null` is what lets the caller
+ * name it. The alternative -- a second pass that re-walks the same structures
+ * to find the fault -- is a second copy of the rules, and a second copy of a
+ * validation rule drifts toward accepting what the first one refuses.
+ */
 function parseBaseMcpServers(
   declarations: Record<string, unknown>
-): Map<string, MutableMcpServer> | null {
+):
+  | {
+      readonly servers: Map<string, MutableMcpServer>;
+      readonly invalid: null;
+    }
+  | {
+      readonly servers: null;
+      readonly invalid: {
+        readonly name: string;
+        /**
+         * Which half is at fault. A server name that cannot be addressed and a
+         * declaration that is not an MCP server are different edits in the same
+         * file, and reporting one as the other sends an operator to fix the line
+         * that was already correct.
+         */
+        readonly reason: "name" | "declaration";
+      };
+    } {
   const servers = new Map<string, MutableMcpServer>();
   for (const [name, config] of Object.entries(declarations)) {
-    if (!name.trim() || !isMcpConfig(config)) return null;
+    if (!name.trim()) {
+      return { servers: null, invalid: { name, reason: "name" } };
+    }
+    if (!isMcpConfig(config)) {
+      return { servers: null, invalid: { name, reason: "declaration" } };
+    }
     servers.set(name, projectBaseMcpServer(config));
   }
-  return servers;
+  return { servers, invalid: null };
 }
 
 function isTargetMcpConfig(
@@ -361,26 +383,36 @@ function isTargetMcpConfig(
   );
 }
 
+/**
+ * Apply every target's overrides, or name the target and server that failed.
+ *
+ * The base declaration and an override can both be malformed, and they are
+ * different edits in the same file -- `mcpServers.lsp` against the top-level
+ * `mcpServers` against `codex.cli.mcpServers.lsp` -- so the report carries both
+ * halves of the location rather than one of them.
+ */
 function applyMcpTargetOverrides(
   document: Record<string, unknown>,
   servers: Map<string, MutableMcpServer>
-): boolean {
+): { readonly target: string; readonly server: string } | null {
   for (const [target, targetConfig] of Object.entries(document)) {
     if (!isTargetMcpConfig(target, targetConfig)) continue;
     const overrides = targetConfig.mcpServers;
-    if (!isRecord(overrides)) return false;
-    if (!applyMcpOverridesForTarget(target, overrides, servers)) return false;
+    if (!isRecord(overrides)) return { target, server: "mcpServers" };
+    const invalidName = applyMcpOverridesForTarget(target, overrides, servers);
+    if (invalidName !== null) return { target, server: invalidName };
   }
-  return true;
+  return null;
 }
 
+/** The first server whose override could not be read, or `null` when all applied. */
 function applyMcpOverridesForTarget(
   target: string,
   overrides: Record<string, unknown>,
   servers: Map<string, MutableMcpServer>
-): boolean {
+): string | null {
   for (const [name, config] of Object.entries(overrides)) {
-    if (config !== null && !isMcpConfig(config)) return false;
+    if (config !== null && !isMcpConfig(config)) return name;
     let server = servers.get(name);
     if (!server) {
       server = {
@@ -392,7 +424,7 @@ function applyMcpOverridesForTarget(
     }
     server.targetOverrides.push(projectMcpTargetOverride(target, config));
   }
-  return true;
+  return null;
 }
 
 function projectMcpTargetOverride(
@@ -442,17 +474,87 @@ function projectMcpDefinitions(
 }
 
 function parseMcpState(content: string): RuleSyncMcpState | null {
+  const source = ".rulesync/mcp.jsonc" as const;
   const errors: ParseError[] = [];
   const document: unknown = parse(content, errors, {
     allowTrailingComma: true
   });
-  if (errors.length > 0 || !isRecord(document)) return null;
-  if (!isRecord(document.mcpServers)) return null;
-  const servers = parseBaseMcpServers(document.mcpServers);
-  if (!servers || !applyMcpTargetOverrides(document, servers)) return null;
+  if (errors.length > 0) {
+    return {
+      source,
+      valid: false,
+      issues: errors.map((error) => jsoncParseIssue(content, error)),
+      servers: []
+    };
+  }
+  if (!isRecord(document)) {
+    return {
+      source,
+      valid: false,
+      issues: [
+        { location: source, message: "The MCP source must be a JSON object." }
+      ],
+      servers: []
+    };
+  }
+  const declarations = document.mcpServers;
+  if (!isRecord(declarations)) {
+    return {
+      source,
+      valid: false,
+      issues: [
+        {
+          location: "mcpServers",
+          message: 'The MCP source must have an "mcpServers" object.'
+        }
+      ],
+      servers: []
+    };
+  }
+
+  const { servers, invalid } = parseBaseMcpServers(declarations);
+  if (servers === null) {
+    return {
+      source,
+      valid: false,
+      issues: [
+        invalid.reason === "name"
+          ? {
+              location: "mcpServers",
+              message:
+                "The MCP source has an empty server name, which no target can address."
+            }
+          : {
+              location: `mcpServers.${invalid.name}`,
+              message: `"${invalid.name}" is not a usable MCP server declaration.`
+            }
+      ],
+      servers: []
+    };
+  }
+
+  const invalidOverride = applyMcpTargetOverrides(document, servers);
+  if (invalidOverride !== null) {
+    return {
+      source,
+      valid: false,
+      issues: [
+        {
+          location: `${invalidOverride.target}.mcpServers.${invalidOverride.server}`,
+          message:
+            invalidOverride.server === "mcpServers"
+              ? `The overrides for "${invalidOverride.target}" must be an object of servers.`
+              : `The override for "${invalidOverride.server}" under "${invalidOverride.target}" is not a usable MCP server declaration.`
+        }
+      ],
+      servers: []
+    };
+  }
+
   return {
-    source: ".rulesync/mcp.jsonc",
+    source,
     valid: true,
+    issues: [],
     servers: projectMcpDefinitions(servers)
   };
 }
@@ -513,7 +615,7 @@ function firstInvalidHookActionIndex(value: unknown): number | null {
 }
 
 /**
- * A human sentence for one parse error.
+ * A human sentence for one parse error, shared by every RuleSync source.
  *
  * The code name comes from the parser's own `printParseErrorCode` rather than a
  * local switch, so an error code this build of `jsonc-parser` adds later is
@@ -524,7 +626,7 @@ function firstInvalidHookActionIndex(value: unknown): number | null {
  * what makes the message actionable: an operator editing `hooks.jsonc` needs the
  * line, not a byte count they would have to convert themselves.
  */
-function hookParseIssue(
+function jsoncParseIssue(
   content: string,
   error: ParseError
 ): RuleSyncValidationIssue {
@@ -559,7 +661,7 @@ function hookValidationIssues(
   document: unknown
 ): RuleSyncValidationIssue[] {
   if (errors.length > 0) {
-    return errors.map((error) => hookParseIssue(content, error));
+    return errors.map((error) => jsoncParseIssue(content, error));
   }
   if (!isRecord(document)) {
     return [
@@ -1079,16 +1181,32 @@ export class RuleSyncRepository {
   loadMcpState(): RuleSyncMcpState {
     const source = ".rulesync/mcp.jsonc" as const;
     const mcpPath = path.join(this.repositoryRoot, source);
-    if (!existsSync(mcpPath)) return { source, valid: null, servers: [] };
+    if (!existsSync(mcpPath)) return { source, valid: null, issues: [], servers: [] };
 
     let content: string;
     try {
       content = readFileSync(mcpPath, "utf8");
     } catch {
-      return { source, valid: false, servers: [] };
+      // Unreadable is not invalid, and this loader used to disagree with the
+      // hook loader about it. The file is present and nothing about its contents
+      // has been read, so no fault may be attributed to it and no servers may be
+      // projected from a guess.
+      return { source, valid: null, issues: [], servers: [] };
     }
 
-    return parseMcpState(content) ?? { source, valid: false, servers: [] };
+    return (
+      parseMcpState(content) ?? {
+        source,
+        valid: false,
+        issues: [
+          {
+            location: source,
+            message: "The MCP source could not be applied."
+          }
+        ],
+        servers: []
+      }
+    );
   }
 
   async createSkill(

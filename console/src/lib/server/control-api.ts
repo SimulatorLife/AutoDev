@@ -1349,6 +1349,16 @@ function isControlApiMcpsResponse(
     typeof value.source === "string" &&
     typeof value.readOnly === "boolean" &&
     (value.valid === null || typeof value.valid === "boolean") &&
+    // Required, not optional, for the same reason as hooks: `valid: false`
+    // with no reasons renders as "no servers" and leaves the operator to
+    // re-find a fault the Runtime had already located.
+    Array.isArray(value.issues) &&
+    value.issues.every(
+      (issue) =>
+        isRecord(issue) &&
+        typeof issue.location === "string" &&
+        typeof issue.message === "string"
+    ) &&
     Array.isArray(value.servers) &&
     value.servers.every(isMcpServerRow)
   );

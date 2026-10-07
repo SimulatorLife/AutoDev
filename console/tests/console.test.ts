@@ -402,7 +402,7 @@ test("missing evidence is reported in one word, from one constant", () => {
   // And the constant is what the pages actually render, so the guard above
   // cannot pass against a word that nothing ships.
   const unobserved = renderToStaticMarkup(
-    React.createElement(McpsView, { servers: [], sourceValidity: true })
+    React.createElement(McpsView, { servers: [], sourceValidity: true, validationIssues: [] })
   );
   assert.ok(
     unobserved.includes(NOT_OBSERVED_LABEL),
@@ -2539,7 +2539,8 @@ test("no column is narrower than its own header", () => {
             roles: ["docs-researcher"]
           }
         ],
-        sourceValidity: true
+        sourceValidity: true,
+        validationIssues: []
       })
     ),
     renderToStaticMarkup(
@@ -3335,7 +3336,8 @@ test("McpsView never reports 'Connected' or '100%' without runtime evidence", ()
           targetOverrides: [{ target: "codexcli", enabled: false }]
         }
       ],
-      sourceValidity: true
+      sourceValidity: true,
+      validationIssues: []
     })
   );
   assert.equal(markup.includes("Connected"), false);
@@ -3904,7 +3906,8 @@ test("McpsView renders an explicit empty configured-role scope", () => {
           targetOverrides: []
         }
       ],
-      sourceValidity: true
+      sourceValidity: true,
+      validationIssues: []
     })
   );
   assert.match(markup, /Configured roles/);
@@ -3913,7 +3916,7 @@ test("McpsView renders an explicit empty configured-role scope", () => {
 
 test("McpsView distinguishes invalid canonical configuration from an empty list", () => {
   const markup = renderToStaticMarkup(
-    React.createElement(McpsView, { servers: [], sourceValidity: false })
+    React.createElement(McpsView, { servers: [], sourceValidity: false, validationIssues: [] })
   );
   assert.match(markup, /data-mcp-source-validity="false"/);
   assert.match(markup, /RuleSync source invalid/);
@@ -5320,7 +5323,7 @@ test("HooksView only renders hooks with valid action command lists", () => {
   assert.match(markup, /Source validation/);
   assert.doesNotMatch(
     markup,
-    /data-hook-issue-count/,
+    /data-validation-issue-count/,
     "a valid source has no faults, and a panel saying so would add nothing"
   );
 });
@@ -5351,13 +5354,13 @@ test("HooksView names the fault the Runtime located instead of only calling the 
       ]
     })
   );
-  assert.match(markup, /data-hook-issue-count="2"/);
-  assert.match(markup, /data-hook-issue="SessionStart action 2"/u);
+  assert.match(markup, /data-validation-issue-count="2"/);
+  assert.match(markup, /data-validation-issue="SessionStart action 2"/u);
   assert.match(
     markup,
     /is not a command hook with a non-empty command string/u
   );
-  assert.match(markup, /data-hook-issue="PreCompact"/u);
+  assert.match(markup, /data-validation-issue="PreCompact"/u);
   assert.match(markup, /is not a known hook event/u);
   // The count is in the empty-state line too, so an operator reading only the
   // hook list still learns there were two faults and not one.
@@ -7033,6 +7036,7 @@ test("Catalog collections fail closed on unreadable responses", async () => {
     source: ".rulesync/mcp.jsonc",
     readOnly: true,
     valid: true,
+    issues: [],
     servers: [
       {
         name: "lsp",
@@ -7049,7 +7053,9 @@ test("Catalog collections fail closed on unreadable responses", async () => {
     { ...mcps, schema: "autodev-control-mcps-v0" },
     { ...mcps, servers: {} },
     { ...mcps, servers: [{ enabled: true }] },
-    { ...mcps, valid: "yes" }
+    { ...mcps, valid: "yes" },
+    { ...mcps, valid: false, issues: [{ location: "mcpServers.lsp" }] },
+    { ...mcps, valid: false, issues: [{ location: "a", message: 7 }] }
   ]) {
     assert.equal(
       (await fetchMcps(config, serve(broken))).kind,
@@ -7057,6 +7063,16 @@ test("Catalog collections fail closed on unreadable responses", async () => {
       JSON.stringify(broken)
     );
   }
+  // A Runtime that omits the reasons entirely fails closed too. Without this
+  // the field could be dropped at the source and every page would still render,
+  // reporting "no servers" with no way to tell that from "the servers could not
+  // be applied".
+  const { issues: _omittedIssues, ...mcpsWithoutIssues } = mcps;
+  assert.equal(
+    (await fetchMcps(config, serve({ ...mcpsWithoutIssues, valid: false })))
+      .kind,
+    "invalid-response"
+  );
 
   const tools = {
     schema: "autodev-control-tools-v2",
@@ -11003,6 +11019,7 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     source: ".rulesync/mcp.jsonc",
     readOnly: true,
     valid: true,
+    issues: [],
     servers
   });
   const mcpAccept = await fetchMcps(config, serve(mcpEnvelope([mcpRow])));
@@ -11382,7 +11399,8 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     renderToStaticMarkup(
       React.createElement(McpsView, {
         servers: [mcpRow as never],
-        sourceValidity: true
+        sourceValidity: true,
+        validationIssues: []
       })
     ),
     /github/
@@ -13188,4 +13206,40 @@ test("a permissions payload whose tool grants are unreadable fails closed", asyn
       `mcpTools ${JSON.stringify(mcpTools)} must not be accepted`
     );
   }
+});
+
+test("an invalid MCP source names the declaration it could not apply, like every other RuleSync source", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(McpsView, {
+      servers: [],
+      sourceValidity: false,
+      validationIssues: [
+        {
+          location: "codexcli.mcpServers.bad",
+          message:
+            'The override for "bad" under "codexcli" is not a usable MCP server declaration.'
+        }
+      ]
+    })
+  );
+  // An empty server list is otherwise indistinguishable from "this file declares
+  // none", and the stat card beside it said exactly that.
+  assert.match(markup, /data-testid="mcp-validation-issues"/u);
+  assert.match(markup, /data-validation-issue-count="1"/);
+  assert.match(markup, /data-validation-issue="codexcli\.mcpServers\.bad"/u);
+  assert.match(markup, /is not a usable MCP server declaration/u);
+  // The heading names the source, so a page with both a hook and an MCP problem
+  // does not show two identical "invalid" panels.
+  assert.match(markup, /MCP source invalid — 1 problem</u);
+});
+
+test("a valid MCP source renders no validation panel", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(McpsView, {
+      servers: [],
+      sourceValidity: true,
+      validationIssues: []
+    })
+  );
+  assert.doesNotMatch(markup, /data-testid="mcp-validation-issues"/u);
 });

@@ -6,7 +6,10 @@ import type {
   GithubWorkflowDefinition,
   GithubWorkflowRun
 } from "../github/types.ts";
-import type { McpServerResource } from "../mcps/types.ts";
+import type {
+  McpServerResource,
+  RuleSyncValidationIssue
+} from "../mcps/types.ts";
 import type {
   ExperienceEnvelope,
   MemoryActor,
@@ -267,6 +270,14 @@ export interface ControlApiMcpsResponse {
   readonly source: ".rulesync/mcp.jsonc";
   readonly readOnly: boolean;
   readonly valid: boolean | null;
+  /**
+   * Why the source is invalid; empty when it is valid or was not observed.
+   *
+   * Required rather than optional so `valid: false` cannot arrive alone. The
+   * loader knows which server declaration, or which target's override of which
+   * server, it could not apply.
+   */
+  readonly issues: readonly RuleSyncValidationIssue[];
   readonly servers: readonly McpServerResource[];
 }
 

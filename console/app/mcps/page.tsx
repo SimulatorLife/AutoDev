@@ -45,7 +45,8 @@ export default async function McpsPage(): Promise<React.JSX.Element> {
     { section, counts: result.data.valid ? { MCPs: servers.length } : {} },
     React.createElement(McpsView, {
       servers,
-      sourceValidity: result.data.valid
+      sourceValidity: result.data.valid,
+      validationIssues: result.data.issues
     })
   );
 }
