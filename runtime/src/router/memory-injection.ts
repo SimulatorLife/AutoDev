@@ -99,6 +99,18 @@ export function isTrustedSession(
     trimmed === "process-scope" ||
     sessionScope !== "identified"
   ) {
+    // The scope clause short-circuits ahead of the conflict check below, so a
+    // non-identified observation neither grants nor revokes trust. That is
+    // deliberate, and the ordering is what makes it safe: revocation is
+    // absorbing (see the `existing === null` branch), so a caller who supplies
+    // its own `sessionScope` must not be able to destroy trust by asserting a
+    // weaker one. Revoking here would let anyone who can name a session key
+    // kill that session's capture with an ordinary anonymous request, where a
+    // cross-workspace conflict already demands the stronger claim of an
+    // identified session. An unidentified session simply gets no memory this
+    // turn, which is the whole of what the target state asks for — "missing,
+    // process-fallback, or cross-workspace conflicted identities select
+    // invalid".
     return false;
   }
 
@@ -114,15 +126,21 @@ export function isTrustedSession(
 
   const existing = trustedSessionContexts.get(trimmed);
   if (existing === null) {
+    // Absorbing: the only writer runs once this function has returned true, so
+    // a revoked session stays untrusted for the life of the process. Keeping
+    // revocation narrow is what stops that permanence from being a denial of
+    // service — see the note on the scope clause above.
     return false;
   }
   if (existing !== undefined) {
     const workspaceId = workspace.workspace_id?.trim() || workspace.key;
+    // No scope term here on purpose. By the time an entry exists, its scope was
+    // checked against "identified" above, and it was written by a call that had
+    // already passed that same check, so the two could only ever compare equal.
     if (
       existing.workspaceId !== workspaceId ||
       existing.repositoryId !== workspace.key ||
-      path.resolve(existing.root) !== path.resolve(workspace.cwd) ||
-      existing.sessionScope !== sessionScope
+      path.resolve(existing.root) !== path.resolve(workspace.cwd)
     ) {
       trustedSessionContexts.set(trimmed, null);
       return false;
@@ -708,6 +726,11 @@ function rememberTrustedRepositoryRoot(
   }
   for (const sessionId of sessionIds) {
     const existing = trustedSessionContexts.get(sessionId);
+    // `sessionScope` is the literal "identified": the sole caller reaches this
+    // function only through `isTrustedSession`, which admits nothing else, and
+    // a stored entry therefore always carries that same literal. It is kept on
+    // the context because the capture route reads it back to describe the trust
+    // it is acting on — not because it can ever disagree with itself here.
     const next = {
       workspaceId,
       repositoryId,
@@ -719,8 +742,7 @@ function rememberTrustedRepositoryRoot(
       existing &&
         (existing.workspaceId !== workspaceId ||
           existing.repositoryId !== repositoryId ||
-          path.resolve(existing.root) !== path.resolve(root) ||
-          existing.sessionScope !== next.sessionScope)
+          path.resolve(existing.root) !== path.resolve(root))
         ? null
         : next
     );
