@@ -87,7 +87,7 @@ export type EvaluationTraceLookup =
   | { readonly kind: "unavailable" }
   | { readonly kind: "observed"; readonly detail: UsageTraceDetail };
 
-export interface EvaluationsViewProps {
+interface EvaluationsViewProps {
   /** Already narrowed by `filters`; the page owns the read, the view owns the shape. */
   readonly evaluations: readonly EvaluationResult[];
   /** Rows in the fetched window before filtering, for the filter bar's count. */
@@ -526,7 +526,7 @@ function traceColumns(
  */
 const MINUTE_MS = 60_000;
 
-export function formatDuration(durationNs: number): string {
+function formatDuration(durationNs: number): string {
   const milliseconds = durationNs / 1_000_000;
   if (milliseconds < 1) return `${(durationNs / 1000).toFixed(0)} µs`;
   if (milliseconds < 1000) return `${milliseconds.toFixed(1)} ms`;

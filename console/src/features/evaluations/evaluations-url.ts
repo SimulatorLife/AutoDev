@@ -14,7 +14,7 @@
 
 import type { EvaluationResult } from "@simulatorlife/autodev-core";
 
-export const EVALUATIONS_ROUTE = "/evaluations";
+const EVALUATIONS_ROUTE = "/evaluations";
 
 /**
  * How an evaluation's own verdict reads. `Not observed` is the third state, not
@@ -23,10 +23,9 @@ export const EVALUATIONS_ROUTE = "/evaluations";
  * cannot separate "failed" from "never answered" cannot answer the question an
  * operator is actually asking.
  */
-export type EvaluationOutcomeFilter =
-  "all" | "passed" | "failed" | "not-observed";
+type EvaluationOutcomeFilter = "all" | "passed" | "failed" | "not-observed";
 
-export const EVALUATION_OUTCOME_FILTERS: readonly EvaluationOutcomeFilter[] = [
+const EVALUATION_OUTCOME_FILTERS: readonly EvaluationOutcomeFilter[] = [
   "all",
   "passed",
   "failed",
@@ -68,7 +67,7 @@ export interface EvaluationsFilters {
   readonly until: string;
 }
 
-export const EMPTY_EVALUATIONS_FILTERS: EvaluationsFilters = {
+const EMPTY_EVALUATIONS_FILTERS: EvaluationsFilters = {
   outcome: "all",
   role: "",
   model: "",
@@ -104,7 +103,7 @@ const UTC_DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/u;
  * parameter is a bound only when it is a real UTC day that survives being
  * parsed back into the same text.
  */
-export function resolveUtcDayBound(value: RawQueryValue): number | undefined {
+function resolveUtcDayBound(value: RawQueryValue): number | undefined {
   const raw = singleValue(value);
   const text = raw === undefined ? "" : raw.trim();
   const parsed = UTC_DATE.test(text)
@@ -125,7 +124,7 @@ export function resolveUtcDayBound(value: RawQueryValue): number | undefined {
  * day, which also makes an adjacent window (`from` the sixth, `until` the fifth)
  * cover every instant exactly once rather than leaving or repeating a boundary.
  */
-export function resolveUtcDayEnd(value: RawQueryValue): number | undefined {
+function resolveUtcDayEnd(value: RawQueryValue): number | undefined {
   const start = resolveUtcDayBound(value);
   return start === undefined ? undefined : start + 86_400_000;
 }
@@ -135,7 +134,7 @@ export const EVALUATION_RESULT_PARAM = "result";
 export const EVALUATION_SPAN_PARAM = "spanId";
 export const EVALUATIONS_PAGE_PARAM = "page";
 
-export type RawQueryValue = string | readonly string[] | undefined;
+type RawQueryValue = string | readonly string[] | undefined;
 
 /**
  * The two sections of the resource.
@@ -155,7 +154,7 @@ export const EVALUATIONS_TABS: readonly {
   { id: "comparisons", label: "Comparisons" }
 ];
 
-export const DEFAULT_EVALUATIONS_TAB: EvaluationsTabId = "results";
+const DEFAULT_EVALUATIONS_TAB: EvaluationsTabId = "results";
 
 export function resolveEvaluationsTab(value: RawQueryValue): EvaluationsTabId {
   const raw = singleValue(value);
@@ -185,9 +184,7 @@ function bounded(value: string | undefined, max = 256): string {
   return (value ?? "").trim().slice(0, max);
 }
 
-export function resolveOutcomeFilter(
-  value: RawQueryValue
-): EvaluationOutcomeFilter {
+function resolveOutcomeFilter(value: RawQueryValue): EvaluationOutcomeFilter {
   const raw = singleValue(value);
   return EVALUATION_OUTCOME_FILTERS.find((option) => option === raw) ?? "all";
 }
@@ -249,7 +246,7 @@ function filtersParams(filters: EvaluationsFilters): URLSearchParams {
 }
 
 /** One selection at a time: an open run, or the trace it links to. */
-export interface EvaluationsSelection {
+interface EvaluationsSelection {
   readonly tab: EvaluationsTabId;
   readonly resultId?: string | undefined;
   readonly spanId?: string | undefined;
@@ -265,7 +262,7 @@ export interface EvaluationsSelection {
   readonly page?: number | undefined;
 }
 
-export const NO_SELECTION: EvaluationsSelection = {
+const NO_SELECTION: EvaluationsSelection = {
   tab: DEFAULT_EVALUATIONS_TAB
 };
 
@@ -282,7 +279,7 @@ export const NO_SELECTION: EvaluationsSelection = {
 export const EVALUATIONS_PAGE_SIZE = 50;
 
 /** The first page, which the URL leaves implicit. */
-export const FIRST_EVALUATIONS_PAGE = 1;
+const FIRST_EVALUATIONS_PAGE = 1;
 
 /**
  * A page number, as a shape rather than a range check.
@@ -487,7 +484,7 @@ function matchesOutcome(
  * counted for the page to state. It is zero unless a time bound is set, because
  * without one no row has to be placed at all.
  */
-export interface PlacedEvaluations {
+interface PlacedEvaluations {
   readonly results: readonly EvaluationResult[];
   readonly unplaceable: number;
   /**
@@ -542,7 +539,7 @@ export function filterEvaluations(
 /**
  * A window the bounded read never reached.
  */
-export interface UnreadWindow {
+interface UnreadWindow {
   /**
    * The oldest run the read did fetch, as epoch milliseconds.
    *
