@@ -2342,6 +2342,33 @@ test("DataTable wraps column headers instead of truncating them", () => {
   assert.doesNotMatch(markup, /<th [^>]*class="[^"]*break-words[^"]*"/);
 });
 
+/**
+ * Renders the Evaluations view with the props every caller would otherwise have
+ * to restate.
+ *
+ * The view now takes its filter state and the values each filter axis can
+ * narrow on as props rather than inventing them. Supplying an empty selection
+ * here is not a shortcut: it is the state the resource is in when no filter is
+ * set, and a test that means to exercise a filter has to say so explicitly.
+ */
+function renderEvaluations(
+  props: Partial<React.ComponentProps<typeof EvaluationsView>> &
+    Pick<React.ComponentProps<typeof EvaluationsView>, "evaluations">
+): string {
+  return renderToStaticMarkup(
+    React.createElement(EvaluationsView, {
+      filters: {
+        outcome: "all",
+        role: "",
+        model: "",
+        prompt: ""
+      },
+      filterOptions: { roles: [], models: [], prompts: [] },
+      ...props
+    })
+  );
+}
+
 test("no column is narrower than its own header", () => {
   // A column header is a label. The target state is explicit that "a column's
   // weight must be large enough for its own header: a header that renders as an
@@ -2372,7 +2399,7 @@ test("no column is narrower than its own header", () => {
   // carries the source casing.
   const MEASURED_MINIMUM_PX: Record<string, number> = {
     Edit: 63,
-    "Run Time": 65,
+    "Run Time": 97,
     Type: 67,
     Path: 68,
     Tool: 69,
@@ -2387,7 +2414,7 @@ test("no column is narrower than its own header", () => {
     "Server Name": 84,
     Status: 84,
     Health: 85,
-    "Target Role": 85,
+    Target: 85,
     Source: 87,
     Models: 88,
     "Base Branch": 89,
@@ -2553,20 +2580,18 @@ test("no column is narrower than its own header", () => {
         validationIssues: []
       })
     ),
-    renderToStaticMarkup(
-      React.createElement(EvaluationsView, {
-        evaluations: [
-          {
-            id: "eval-1",
-            agentRole: "orchestrator",
-            model: "autodev/orchestrator",
-            passed: null,
-            timestamp: "2026-10-01T00:00:00.000Z",
-            metrics: [{ name: "latency", value: 12, pass: null }]
-          }
-        ]
-      })
-    )
+    renderEvaluations({
+      evaluations: [
+        {
+          id: "eval-1",
+          agentRole: "orchestrator",
+          model: "autodev/orchestrator",
+          passed: null,
+          timestamp: "2026-10-01T00:00:00.000Z",
+          metrics: [{ name: "latency", value: 12, pass: null }]
+        }
+      ]
+    })
   ].join("");
 
   const offenders: string[] = [];
@@ -4633,9 +4658,7 @@ test("EvaluationsPage rejects malformed trace query IDs without calling the Usag
 });
 
 test("EvaluationsView with empty results renders the explicit empty state", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(EvaluationsView, { evaluations: [] })
-  );
+  const markup = renderEvaluations({ evaluations: [] });
   assert.match(
     markup,
     /No evaluation results are present in the available history/
@@ -4647,32 +4670,35 @@ test("EvaluationsView with empty results renders the explicit empty state", () =
 
 test("EvaluationsView renders safe trace details and prompt-preserving span links", () => {
   const spanId = "0123456789abcdef";
-  const markup = renderToStaticMarkup(
-    React.createElement(EvaluationsView, {
-      evaluations: [],
-      promptFilter: "dry",
-      traceLookup: {
-        kind: "observed",
-        detail: {
-          schema: "autodev-openlit-trace-detail-v1",
-          traceId: "0123456789abcdef0123456789abcdef",
-          selectedSpanId: spanId,
-          partial: true,
-          spans: [
-            {
-              spanId,
-              parentSpanId: null,
-              spanName: "gen_ai.client_operation",
-              serviceName: "autodev-router",
-              timestamp: "2026-10-05T12:00:00.000Z",
-              durationNs: 1_250_000,
-              statusCode: "OK"
-            }
-          ]
-        }
+  const markup = renderEvaluations({
+    evaluations: [],
+    filters: {
+      outcome: "all",
+      role: "",
+      model: "",
+      prompt: "dry"
+    },
+    traceLookup: {
+      kind: "observed",
+      detail: {
+        schema: "autodev-openlit-trace-detail-v1",
+        traceId: "0123456789abcdef0123456789abcdef",
+        selectedSpanId: spanId,
+        partial: true,
+        spans: [
+          {
+            spanId,
+            parentSpanId: null,
+            spanName: "gen_ai.client_operation",
+            serviceName: "autodev-router",
+            timestamp: "2026-10-05T12:00:00.000Z",
+            durationNs: 1_250_000,
+            statusCode: "OK"
+          }
+        ]
       }
-    })
-  );
+    }
+  });
   assert.match(markup, /data-feature="evaluation-trace-detail"/);
   assert.match(markup, /data-trace-partial="true"/);
   assert.match(markup, /Trace ID:/);
@@ -4686,12 +4712,10 @@ test("EvaluationsView renders safe trace details and prompt-preserving span link
 });
 
 test("EvaluationsView keeps a missing trace out of its empty-history state", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(EvaluationsView, {
-      evaluations: [],
-      traceLookup: { kind: "not-found" }
-    })
-  );
+  const markup = renderEvaluations({
+    evaluations: [],
+    traceLookup: { kind: "not-found" }
+  });
   assert.match(markup, /data-trace-state="not-found"/);
   assert.match(markup, /data-status="not-observed"/);
   assert.match(markup, /was not observed in retained telemetry/);
@@ -4699,57 +4723,334 @@ test("EvaluationsView keeps a missing trace out of its empty-history state", () 
 });
 
 test("EvaluationsView keeps missing verdicts unobserved", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(EvaluationsView, {
-      evaluations: [
-        {
-          id: "eval-unscored",
-          agentRole: "orchestrator",
-          model: "unknown",
-          metrics: [{ name: "quality", value: 0.99, pass: null }],
-          passed: null,
-          timestamp: "2026-10-04 12:00:00"
-        }
-      ]
-    })
-  );
+  const markup = renderEvaluations({
+    evaluations: [
+      {
+        id: "eval-unscored",
+        agentRole: "orchestrator",
+        model: "unknown",
+        metrics: [{ name: "quality", value: 0.99, pass: null }],
+        passed: null,
+        timestamp: "2026-10-04 12:00:00"
+      }
+    ]
+  });
   assert.match(markup, /data-evaluation-pass-rate-observed="false"/);
   assert.match(markup, /Not observed/);
   assert.match(markup, /quality: 0\.99 · Not observed/);
-  assert.equal(markup.includes(">Failed<"), false);
+  // Assert on the badge, not the word. The filter bar offers "Failed" as a
+  // selectable outcome, so the string alone can no longer distinguish "this run
+  // failed" from "the operator may filter to failed runs". `data-status` is the
+  // rendered verdict, so no badge may claim a verdict that was never supplied.
+  assert.equal(markup.includes('data-status="invalid"'), false);
   assert.equal(markup.includes("99%"), false);
 });
 
-test("EvaluationsView links valid span references and marks invalid ones", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(EvaluationsView, {
-      evaluations: [
-        {
-          id: "eval-with-trace",
-          spanId: "0123456789abcdef",
-          agentRole: "orchestrator",
-          model: "gpt-5.6-terra",
-          metrics: [],
-          passed: null,
-          timestamp: "2026-10-04 12:00:00"
-        },
-        {
-          id: "eval-without-otel-span",
-          spanId: "offline_0123",
-          agentRole: "worker",
-          model: "unknown",
-          metrics: [],
-          passed: null,
-          timestamp: "2026-10-04 12:01:00"
-        }
-      ]
-    })
+test("an evaluation with no metrics reads as unobserved, not as an empty cell", () => {
+  // The fixture reports a run with an empty `metrics` array. Rendering nothing
+  // there makes the row indistinguishable from one that failed to render, and
+  // "no measurement was supplied" is a different answer from "no measurement
+  // displayed" -- so it gets the same Not observed badge every other unobserved
+  // verdict does.
+  const markup = renderEvaluations({
+    evaluations: [
+      {
+        id: "eval-no-metrics",
+        agentRole: "orchestrator",
+        model: "unknown",
+        metrics: [],
+        passed: null,
+        timestamp: "2026-10-04 12:00:00"
+      }
+    ]
+  });
+  const historyRow = markup.slice(
+    markup.indexOf('data-evaluation-result-id="eval-no-metrics"')
   );
+  assert.match(historyRow, /Not observed/);
+  assert.equal(historyRow.includes("data-evaluation-metric="), false);
+});
+
+test("the pass-rate denominator counts only supplied verdicts", () => {
+  // Six runs, four of which supplied a verdict: one pass and three failures.
+  // Counting the two unobserved runs in the denominator instead would report 17%
+  // for a window where one run in four actually passed, and would let a store
+  // that mostly reports nothing score a single pass as 100%.
+  const evaluations = [
+    {
+      id: "pass",
+      agentRole: "a",
+      model: "m",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-04T12:00:00Z"
+    },
+    {
+      id: "fail-1",
+      agentRole: "a",
+      model: "m",
+      metrics: [],
+      passed: false,
+      timestamp: "2026-10-04T12:01:00Z"
+    },
+    {
+      id: "fail-2",
+      agentRole: "a",
+      model: "m",
+      metrics: [],
+      passed: false,
+      timestamp: "2026-10-04T12:02:00Z"
+    },
+    {
+      id: "fail-3",
+      agentRole: "a",
+      model: "m",
+      metrics: [],
+      passed: false,
+      timestamp: "2026-10-04T12:03:00Z"
+    },
+    {
+      id: "unobserved-1",
+      agentRole: "a",
+      model: "m",
+      metrics: [],
+      passed: null,
+      timestamp: "2026-10-04T12:04:00Z"
+    },
+    {
+      id: "unobserved-2",
+      agentRole: "a",
+      model: "m",
+      metrics: [],
+      passed: null,
+      timestamp: "2026-10-04T12:05:00Z"
+    }
+  ];
+  const markup = renderEvaluations({ evaluations });
+  assert.match(markup, /data-evaluation-pass-rate-observed="true"/);
+  assert.match(markup, /4 of 6 with explicit verdicts/);
+  assert.match(markup, /25%/);
+  // Each of the three counts is its own card, so an operator can read the
+  // failed and unobserved populations without counting rows.
+  assert.match(markup, /<span[^>]*>Passed<\/span>[\s\S]{0,400}?>1</);
+  assert.match(markup, /<span[^>]*>Failed<\/span>[\s\S]{0,400}?>3</);
+  assert.match(markup, /Not observed<\/span>[\s\S]{0,400}?>2</);
+});
+
+test("every filter axis is offered and every link states what it keeps", () => {
+  // The resource had one reachable filter -- `?prompt=`, reachable only by
+  // following a link from Prompts -- and no way to narrow by the outcomes the
+  // page is about. Each axis now offers exactly the values the results contain,
+  // so no control can select a narrowing that matches nothing.
+  const evaluations = [
+    {
+      id: "1",
+      agentRole: "orchestrator",
+      promptName: "dry",
+      model: "m-1",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-04T12:00:00Z"
+    },
+    {
+      id: "2",
+      agentRole: "worker",
+      model: "m-2",
+      metrics: [],
+      passed: false,
+      timestamp: "2026-10-04T12:01:00Z"
+    },
+    {
+      id: "3",
+      agentRole: "worker",
+      promptName: "smoke",
+      model: "m-2",
+      metrics: [],
+      passed: null,
+      timestamp: "2026-10-04T12:02:00Z"
+    }
+  ];
+  const markup = renderEvaluations({
+    // The page narrows before the view renders, so the rows here are the
+    // filtered set and `availableCount` is the window they came from.
+    evaluations: [evaluations[1]!],
+    availableCount: 3,
+    filters: { outcome: "failed", role: "worker", model: "", prompt: "" },
+    filterOptions: {
+      roles: ["orchestrator", "worker"],
+      models: ["m-1", "m-2"],
+      prompts: ["dry", "smoke"]
+    }
+  });
+  assert.match(markup, /data-select="evaluations-outcome"/);
+  assert.match(markup, /data-select="evaluations-role"/);
+  assert.match(markup, /data-select="evaluations-model"/);
+  assert.match(markup, /data-select="evaluations-prompt"/);
+  assert.match(markup, /<option value="orchestrator"/);
+  assert.match(markup, /<option value="worker"/);
+  assert.match(markup, /<option value="m-1"/);
+  assert.match(markup, /<option value="dry"/);
+  // The applied filters are reflected back into the controls, and the count
+  // states the narrowing rather than implying the store holds this many rows.
+  assert.match(markup, /data-evaluations-filtered="true"/);
+  assert.match(markup, /1 of 3 retained results/);
+  // Opening a run from a narrowed list keeps the narrowing, so the drawer's
+  // close link returns to the list the operator was reading. The surviving row
+  // is the failed `worker` run, which is id "2".
+  assert.match(
+    markup,
+    /href="\/evaluations\?outcome=failed&amp;role=worker&amp;result=2"/
+  );
+  assert.match(
+    markup,
+    /href="\/evaluations\?outcome=failed&amp;role=worker&amp;tab=comparisons"/
+  );
+  assert.match(markup, /href="\/evaluations"[^>]*data-evaluations-clear/);
+});
+
+test("the section tabs keep the filters and the open section keeps its own links", () => {
+  // The comparisons tab is a second reading of the same rows, and every link on
+  // the page says which of the two it keeps. A tab link that dropped the
+  // narrowing would silently widen the list an operator was reading; a row link
+  // that dropped the tab would return them to the results page after they had
+  // opened a comparison.
+  const evaluations = [
+    {
+      id: "run-1",
+      spanId: "4bf92f3577b34da6",
+      agentRole: "orchestrator",
+      promptName: "dry",
+      model: "m-1",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-04T12:00:00Z"
+    }
+  ];
+
+  const results = renderEvaluations({ evaluations });
+  assert.match(
+    results,
+    /href="\/evaluations\?spanId=4bf92f3577b34da6"[^>]*data-evaluation-trace-span-id/
+  );
+  assert.match(results, /href="\/evaluations\?result=run-1"/);
+  assert.match(results, /Evaluation history/);
+
+  // Unfiltered, the two sections are one parameter apart.
+  const comparisons = renderEvaluations({ evaluations, tab: "comparisons" });
+  assert.match(comparisons, /Outcomes by target role/);
+  assert.match(comparisons, /Outcomes by model/);
+  assert.equal(comparisons.includes("Evaluation history"), false);
+  assert.match(comparisons, /href="\/evaluations"[^>]*data-tab-item="results"/);
+  assert.match(
+    comparisons,
+    /href="\/evaluations\?tab=comparisons"[^>]*data-tab-item="comparisons"/
+  );
+
+  // Narrowed, the section links carry the narrowing, and a row link opened from
+  // the narrowed list carries it too.
+  const filters = {
+    outcome: "failed" as const,
+    role: "worker",
+    model: "",
+    prompt: ""
+  };
+  const narrowed = renderEvaluations({
+    evaluations,
+    filters,
+    tab: "comparisons"
+  });
+  assert.match(
+    narrowed,
+    /href="\/evaluations\?outcome=failed&amp;role=worker"[^>]*data-tab-item="results"/
+  );
+
+  const narrowedResults = renderEvaluations({ evaluations, filters });
+  assert.match(
+    narrowedResults,
+    /href="\/evaluations\?outcome=failed&amp;role=worker&amp;result=run-1"/
+  );
+  assert.match(
+    narrowedResults,
+    /href="\/evaluations\?outcome=failed&amp;role=worker&amp;spanId=4bf92f3577b34da6"/
+  );
+});
+
+test("comparisons report a pass rate over supplied verdicts only", () => {
+  // A target whose runs all report no verdict must not score 0%, and one whose
+  // runs all failed must. Both are readings of the same runs, so they can only
+  // differ by what the source actually said.
+  const markup = renderEvaluations({
+    evaluations: [
+      {
+        id: "1",
+        agentRole: "silent",
+        model: "m",
+        metrics: [],
+        passed: null,
+        timestamp: "2026-10-04T12:00:00Z"
+      },
+      {
+        id: "2",
+        agentRole: "broken",
+        model: "m",
+        metrics: [],
+        passed: false,
+        timestamp: "2026-10-04T12:01:00Z"
+      }
+    ],
+    tab: "comparisons"
+  });
+  // Both groups share one model, so read the by-role table. Its rows are sorted,
+  // so slice by position rather than assuming either name comes first.
+  const silentAt = markup.indexOf(">silent<");
+  const brokenAt = markup.indexOf(">broken<");
+  assert.notEqual(silentAt, -1);
+  assert.notEqual(brokenAt, -1);
+  const [silent, broken] =
+    silentAt < brokenAt
+      ? [
+          markup.slice(silentAt, brokenAt),
+          markup.slice(brokenAt, markup.indexOf("Outcomes by model"))
+        ]
+      : [
+          markup.slice(silentAt, markup.indexOf("Outcomes by model")),
+          markup.slice(brokenAt, silentAt)
+        ];
+  // A target whose only run reported no verdict is unobserved, not 0%.
+  assert.match(silent, /Not observed/);
+  assert.equal(silent.includes(">0%<"), false);
+  // A target whose run did fail reports the failure.
+  assert.match(broken, /0%/);
+});
+
+test("EvaluationsView links valid span references and marks invalid ones", () => {
+  const markup = renderEvaluations({
+    evaluations: [
+      {
+        id: "eval-with-trace",
+        spanId: "0123456789abcdef",
+        agentRole: "orchestrator",
+        model: "gpt-5.6-terra",
+        metrics: [],
+        passed: null,
+        timestamp: "2026-10-04 12:00:00"
+      },
+      {
+        id: "eval-without-otel-span",
+        spanId: "offline_0123",
+        agentRole: "worker",
+        model: "unknown",
+        metrics: [],
+        passed: null,
+        timestamp: "2026-10-04 12:01:00"
+      }
+    ]
+  });
   assert.match(
     markup,
     /href="\/evaluations\?spanId=0123456789abcdef"[^>]*data-evaluation-trace-span-id="0123456789abcdef"/
   );
-  assert.match(markup, /Invalid reference/);
+  assert.match(markup, /Invalid span/);
   assert.equal(
     markup.includes('data-evaluation-trace-span-id="offline_0123"'),
     false
@@ -4914,21 +5215,19 @@ test("fetchGithubWorkflows issues authenticated GET to /control/github", async (
 });
 
 test("EvaluationsView renders metrics, pass rate, and outcome badges when evaluations exist", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(EvaluationsView, {
-      evaluations: [
-        {
-          id: "eval-1",
-          agentRole: "orchestrator",
-          promptName: "dry",
-          model: "gpt-5.6-terra",
-          metrics: [{ name: "relevance", value: 0.95, pass: true }],
-          passed: true,
-          timestamp: "2026-10-04 12:00:00"
-        }
-      ]
-    })
-  );
+  const markup = renderEvaluations({
+    evaluations: [
+      {
+        id: "eval-1",
+        agentRole: "orchestrator",
+        promptName: "dry",
+        model: "gpt-5.6-terra",
+        metrics: [{ name: "relevance", value: 0.95, pass: true }],
+        passed: true,
+        timestamp: "2026-10-04 12:00:00"
+      }
+    ]
+  });
   assert.match(markup, /data-evaluation-pass-rate-observed="true"/);
   assert.match(markup, /100%/);
   assert.match(markup, /orchestrator/);
@@ -4947,23 +5246,21 @@ test("the metric chips wrap between items instead of clipping each to its prefix
   // content ... wraps between items, never mid-token"), and it is also what
   // makes the column's width budget legible, since the budget now has to fit
   // one chip rather than half of two.
-  const markup = renderToStaticMarkup(
-    React.createElement(EvaluationsView, {
-      evaluations: [
-        {
-          id: "eval-two-metrics",
-          agentRole: "orchestrator",
-          model: "gemini-3.8-flash-high",
-          metrics: [
-            { name: "tool_calls", value: 14, pass: true },
-            { name: "tool_failures", value: 4, pass: false }
-          ],
-          passed: false,
-          timestamp: "2026-10-05T09:48:00.000Z"
-        }
-      ]
-    })
-  );
+  const markup = renderEvaluations({
+    evaluations: [
+      {
+        id: "eval-two-metrics",
+        agentRole: "orchestrator",
+        model: "gemini-3.8-flash-high",
+        metrics: [
+          { name: "tool_calls", value: 14, pass: true },
+          { name: "tool_failures", value: 4, pass: false }
+        ],
+        passed: false,
+        timestamp: "2026-10-05T09:48:00.000Z"
+      }
+    ]
+  });
 
   assert.match(markup, /flex flex-wrap/, "metric chips must be able to wrap");
   // Each metric keeps its own full text, so a clipped chip is still told apart
@@ -11590,11 +11887,9 @@ test("a catalog row missing the fields its view reads fails closed instead of th
   );
   // `passed: null` is the unobserved verdict, and it must survive the whole
   // round trip as "Not observed" rather than collapsing into a counted zero.
-  const evaluationsMarkup = renderToStaticMarkup(
-    React.createElement(EvaluationsView, {
-      evaluations: [evaluationRow as never]
-    })
-  );
+  const evaluationsMarkup = renderEvaluations({
+    evaluations: [evaluationRow as never]
+  });
   assert.match(evaluationsMarkup, /orchestrator/);
   assert.match(evaluationsMarkup, /data-evaluation-pass-rate-observed="false"/);
   assert.match(evaluationsMarkup, /Not observed/);

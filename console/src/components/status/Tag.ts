@@ -51,11 +51,38 @@ export const TAG_SHAPE =
  * A title on a tag that happens to fit is redundant rather than wrong: it repeats
  * the visible text on hover, which is what `Chip` already does in this product.
  */
+/**
+ * The wrap variant's shape.
+ *
+ * `TAG_SHAPE` truncates because a tag is an identifier: `workflow_dispatch` cut
+ * at an ellipsis still names the workflow trigger, and a broken line inside it
+ * would not. A chip that carries a *reading* rather than an identifier is
+ * different, because a reading has more than one part and losing the tail loses
+ * one of them. An evaluation metric rendered `tool_failures: 4 · Fai…` is not a
+ * shorter metric, it is a metric whose verdict -- the only part of it that says
+ * whether the run passed -- is gone.
+ *
+ * So this shape drops `truncate`/`whitespace-nowrap` for `break-words`. The chip
+ * still wraps between items in its container; it can additionally break onto a
+ * second line rather than cutting itself, which is the `tokens` align's own
+ * documented behaviour for a token too wide for its cell.
+ */
+const TAG_WRAP_SHAPE =
+  "block max-w-full whitespace-normal break-words rounded border px-2 py-0.5 text-xs";
+
 export interface TagProps {
   /** The identifier or category. Also becomes the title. */
   readonly children: string;
   /** Colour and typography only; the shape is not the caller's to change. */
   readonly className?: string | undefined;
+  /**
+   * Let the chip's own text break instead of truncating.
+   *
+   * For a chip that carries a measurement. The default truncates, which is right
+   * for an identifier whose prefix still identifies it and wrong for a reading
+   * whose tail is a separate piece of the same fact.
+   */
+  readonly wrap?: boolean | undefined;
   /**
    * Overrides the title. Pass `null` for a tag whose visible text is its own
    * answer and whose tooltip would add nothing.
@@ -68,13 +95,14 @@ export interface TagProps {
 export function Tag({
   children,
   className,
+  wrap = false,
   title,
   dataAttributes
 }: TagProps): React.JSX.Element {
   return React.createElement(
     "span",
     {
-      className: `${TAG_SHAPE}${className === undefined ? "" : ` ${className}`}`,
+      className: `${wrap ? TAG_WRAP_SHAPE : TAG_SHAPE}${className === undefined ? "" : ` ${className}`}`,
       ...(title === null ? {} : { title: title ?? children }),
       "data-tag": "true",
       ...dataAttributes

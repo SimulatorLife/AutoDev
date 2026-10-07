@@ -2,6 +2,14 @@ import { isOpenTelemetrySpanId } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import {
+  EVALUATION_RESULT_PARAM,
+  EVALUATION_SPAN_PARAM,
+  filterEvaluations,
+  filterOptionsFor,
+  parseEvaluationsFilters,
+  resolveEvaluationsTab
+} from "../../src/features/evaluations/evaluations-url.ts";
+import {
   EvaluationsView,
   type EvaluationTraceLookup
 } from "../../src/features/evaluations/EvaluationsView.ts";
@@ -54,6 +62,12 @@ function evaluationTraceState(
     case "not-configured": {
       return { kind: "not-configured" };
     }
+    case "unauthorized": {
+      return { kind: "unauthorized" };
+    }
+    case "http-error": {
+      return { kind: "http-error", status: result.status };
+    }
     default: {
       return { kind: "unavailable" };
     }
@@ -63,18 +77,24 @@ function evaluationTraceState(
 /**
  * Evaluations resource view.
  *
- * Direct resource evaluation definition and result-history view reading from
- * the AutoDev Control API `/control/evaluations` endpoint backed by ClickHouse.
+ * One bounded read of the AutoDev Control API `/control/evaluations` endpoint,
+ * then narrowing on the page. Filters, the open section, the open run, and the
+ * open trace are all query parameters, so the whole surface is addressable
+ * without JavaScript and every link can state what it preserves.
  */
 export default async function EvaluationsPage({
   searchParams
 }: EvaluationsPageProps): Promise<React.JSX.Element> {
   const params = searchParams ? await searchParams : {};
-  const promptFilter = firstQueryValue(params.prompt)?.slice(0, 256);
-  const spanIdValues = params.spanId;
+  const filters = parseEvaluationsFilters(params);
+  const tab = resolveEvaluationsTab(params.tab);
+  const selectedResult = firstQueryValue(params[EVALUATION_RESULT_PARAM]);
+
+  const spanIdValues = params[EVALUATION_SPAN_PARAM];
   const requestedSpanId = singleQueryValue(spanIdValues);
   const hasInvalidSpanSelection =
     spanIdValues !== undefined && !isOpenTelemetrySpanId(requestedSpanId);
+
   const { section, config } = readNodeContext("/evaluations");
   if (!config) {
     return React.createElement(
@@ -102,11 +122,9 @@ export default async function EvaluationsPage({
     );
   }
 
-  const evaluations = promptFilter
-    ? result.data.evaluations.filter(
-        (evaluation) => evaluation.promptName === promptFilter
-      )
-    : result.data.evaluations;
+  const available = result.data.evaluations;
+  const evaluations = filterEvaluations(available, filters);
+
   let traceLookup: EvaluationTraceLookup | null = null;
   if (spanIdValues !== undefined) {
     traceLookup = hasInvalidSpanSelection
@@ -119,7 +137,11 @@ export default async function EvaluationsPage({
     { section, counts: { Evaluations: evaluations.length } },
     React.createElement(EvaluationsView, {
       evaluations,
-      ...(promptFilter ? { promptFilter } : {}),
+      availableCount: available.length,
+      filters,
+      filterOptions: filterOptionsFor(available),
+      tab,
+      ...(selectedResult === undefined ? {} : { selection: selectedResult }),
       ...(traceLookup ? { traceLookup } : {})
     })
   );
