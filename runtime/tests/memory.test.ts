@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -65,6 +68,7 @@ import {
   type MemorySkillPromotionWriter,
   MemoryValidationError
 } from "../src/memory/service.ts";
+import { RuleSyncMemorySkillPromoter } from "../src/memory/skill-promotion.ts";
 
 const context: MemoryReadContext = {
   workspaceId: "workspace-a",
@@ -1626,6 +1630,43 @@ test("verified procedures promote to canonical skills only after two passed succ
     ),
     MemoryValidationError
   );
+});
+
+test("a graduation decision reaches a real canonical skill on disk", async () => {
+  // Every other promotion test substitutes a writer that fabricates its
+  // artifact, so none of them proved the two halves meet: that the context the
+  // service hands the writer still names a repository (the writer refuses
+  // otherwise, which would make *every* real promotion fail), and that a
+  // governance decision actually produces a version-controlled artifact.
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-graduation-")
+  );
+  try {
+    const { repository, current } = await promotableProcedure();
+    const graduating = makeService(repository, {
+      skillPromotionWriter: new RuleSyncMemorySkillPromoter({
+        resolve: () => repositoryRoot
+      })
+    });
+
+    const result = await graduating.promoteProcedureToSkill(
+      current.id,
+      SKILL_INPUT,
+      root,
+      researchRequest()
+    );
+
+    assert.equal(result.memory.status, "invalidated");
+    assert.equal(result.skill.revision.length, 64);
+    assert.ok(
+      (
+        await readFile(path.join(repositoryRoot, result.skill.path), "utf8")
+      ).includes(SKILL_INPUT.content),
+      "the promoted procedure is canonical on disk, not a stub artifact"
+    );
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
 });
 
 test("skill promotion rejects procedures without sufficient validation and never writes", async () => {
