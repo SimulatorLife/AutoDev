@@ -51,6 +51,7 @@ import {
 import {
   clampEvaluationsPage,
   contradictoryWindow,
+  DEFAULT_EVALUATIONS_TAB,
   evaluationResultHref,
   EVALUATIONS_PAGE_SIZE,
   EVALUATIONS_TABS,
@@ -1542,7 +1543,7 @@ export function EvaluationsView({
   truncated = false,
   filters,
   filterOptions,
-  tab = "results",
+  tab = DEFAULT_EVALUATIONS_TAB,
   page = 1,
   unplaceable = 0,
   promptless = 0,
@@ -1712,6 +1713,20 @@ export function EvaluationsView({
       {
         label: "Evaluation filters",
         action: "/evaluations",
+        // The tab travels, because a GET form rebuilds the query string from its
+        // own controls and everything else in it resets. This is the same rule
+        // the tab links follow in the other direction -- they carry the
+        // narrowing -- and this resource's pager names the omission as the bug it
+        // had twice: "a link that preserved the narrowing and dropped the
+        // section, or vice versa". Measured: narrowing a comparison and applying
+        // it landed the operator on Results, so the filter they chose took them
+        // to a different view of the data rather than a narrower one.
+        //
+        // Only when it is not the default, because `tab=results` is what a plain
+        // `/evaluations` already means and the rest of this module exists to
+        // leave it implicit.
+        preserved:
+          tab === DEFAULT_EVALUATIONS_TAB ? [] : [{ name: "tab", value: tab }],
         submitTestId: "evaluations-apply",
         summary: resultSummary(resultCounts)
       },

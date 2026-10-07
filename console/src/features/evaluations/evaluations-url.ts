@@ -154,7 +154,16 @@ export const EVALUATIONS_TABS: readonly {
   { id: "comparisons", label: "Comparisons" }
 ];
 
-const DEFAULT_EVALUATIONS_TAB: EvaluationsTabId = "results";
+/**
+ * The tab a plain `/evaluations` URL means.
+ *
+ * Exported because two things outside this module have to agree with it: the
+ * view's own prop default, and the filter bar's decision about whether a
+ * submission needs to carry the tab at all. A submission that carried
+ * `tab=results` would be harmless but would put a parameter on the URL that the
+ * rest of the module exists to leave implicit.
+ */
+export const DEFAULT_EVALUATIONS_TAB: EvaluationsTabId = "results";
 
 export function resolveEvaluationsTab(value: RawQueryValue): EvaluationsTabId {
   const raw = singleValue(value);

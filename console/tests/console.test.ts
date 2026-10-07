@@ -5730,6 +5730,45 @@ test("opening a run keeps the page of the history it was opened from", () => {
   );
 });
 
+test("applying a filter keeps the tab the operator was reading", () => {
+  // A GET form rebuilds the query string from its own controls, so anything not
+  // on the bar resets. The tab links already carry the narrowing; this is the
+  // other direction, and this resource's pager names the omission as the bug it
+  // had twice -- "a link that preserved the narrowing and dropped the section,
+  // or vice versa".
+  //
+  // Measured before the fix: narrowing a comparison and applying it landed the
+  // operator on Results, so the filter they chose took them to a different view
+  // of the data rather than a narrower one. The shared `FilterBar` primitive
+  // already owns the mechanism for this (`preserved`, documented as "losing the
+  // active tab"); this surface was the one not using it.
+  const form = (markup: string): string => {
+    const label = markup.indexOf('aria-label="Evaluation filters"');
+    assert.notEqual(label, -1, "the filter bar is rendered");
+    // `<form` precedes the attributes that name it, so the tag is found by
+    // searching back from the label rather than forward from it.
+    const open = markup.lastIndexOf("<form", label);
+    assert.notEqual(open, -1, "the filter bar is a form");
+    return markup.slice(open, markup.indexOf("</form>", open));
+  };
+
+  assert.match(
+    form(renderEvaluations({ evaluations: [], tab: "comparisons" })),
+    /<input type="hidden" name="tab" value="comparisons"\/?>/,
+    "a submission from Comparisons carries the tab"
+  );
+  assert.match(
+    form(renderEvaluations({ evaluations: [], tab: "results" })),
+    /action="\/evaluations"/,
+    "the results tab is what a bare /evaluations means, so nothing carries it"
+  );
+  assert.doesNotMatch(
+    form(renderEvaluations({ evaluations: [], tab: "results" })),
+    /name="tab"/,
+    "the default tab stays implicit rather than appearing on every submission"
+  );
+});
+
 test("a repeated selection parameter is not a choice, and opens nothing", async () => {
   // `?result=a&result=b` and `?spanId=x&spanId=y` each name two things, and
   // taking the first answers a question the URL did not ask. The filter bar
