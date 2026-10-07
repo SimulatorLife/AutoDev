@@ -5703,12 +5703,14 @@ test("opening a run keeps the page of the history it was opened from", () => {
   );
   // Scoped to the drawer, because the pager on the same page links to page 3 as
   // well and a bare href assertion would pass on the wrong element.
-  const drawerMarkup = renderEvaluations({
+  const selected = renderEvaluations({
     evaluations: [row],
     selection: row.id,
     page: 3
-  }).split('data-feature="evaluation-detail"')[1];
-  assert.ok(drawerMarkup, "the run's drawer is open");
+  });
+  const drawerStart = selected.indexOf('data-feature="evaluation-detail"');
+  assert.notEqual(drawerStart, -1, "the run's drawer is open");
+  const drawerMarkup = selected.slice(drawerStart);
   assert.match(
     drawerMarkup,
     /href="\/evaluations\?page=3"/,
