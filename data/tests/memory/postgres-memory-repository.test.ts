@@ -8,6 +8,7 @@ import {
   MemoryVectorError
 } from "../../src/memory/errors.ts";
 import { PostgresMemoryRepository } from "../../src/memory/postgres-memory-repository.ts";
+import type { MemoryConnectionPool } from "../../src/memory/query-client.ts";
 import { MEMORY_EMBEDDING_DIMENSIONS } from "../../src/memory/schema.ts";
 import {
   makeContext,
@@ -19,6 +20,36 @@ import { FakeMemoryPool } from "./fixtures/fake-memory-pool.ts";
 
 function repoWith(pool: FakeMemoryPool): PostgresMemoryRepository {
   return new PostgresMemoryRepository({ pool });
+}
+
+/**
+ * A pool whose `memory_records` compare-and-set update fails outright.
+ *
+ * `transitionMemories` runs inside `withMemoryTransaction`, so the update goes
+ * through the connection the pool hands out rather than the pool's own `query`.
+ * Wrapping only `query` would let the update succeed, and the test below would
+ * then assert a throw that never happened.
+ */
+function failingUpdatePool(
+  base: FakeMemoryPool,
+  failure: Error
+): MemoryConnectionPool {
+  const shouldFail = (text: string) => text.includes("UPDATE memory_records");
+  return {
+    query: (text, params) =>
+      shouldFail(text) ? Promise.reject(failure) : base.query(text, params),
+    connect: async () => {
+      const connection = await base.connect();
+      return {
+        query: (text, params) =>
+          shouldFail(text)
+            ? Promise.reject(failure)
+            : connection.query(text, params),
+        release: () => connection.release()
+      };
+    },
+    end: () => base.end()
+  };
 }
 
 test("appendExperience persists and getExperience enforces scope visibility", async () => {
@@ -411,6 +442,67 @@ test("transitionMemories rejects a stale compare-and-set update atomically, appl
     "proposed",
     "a valid change in the same batch must also roll back"
   );
+});
+
+test("transitionMemories surfaces an unreachable database as an error, not as a rejected change", async () => {
+  const pool = new FakeMemoryPool();
+  await repoWith(pool).appendExperience(makeExperience());
+  const candidate = makeMemoryRecord();
+  await repoWith(pool).proposeMemory(candidate, makeLifecycleEvent());
+
+  // A real pg `connection_failure`, so `code` is present and the catch's
+  // `instanceof` discrimination is exercised rather than bypassed.
+  const failure = Object.assign(
+    new Error("connection terminated unexpectedly"),
+    { code: "08006" }
+  );
+  const repo = new PostgresMemoryRepository({
+    pool: failingUpdatePool(pool, failure)
+  });
+
+  // `false` is this method's answer to exactly one situation: the record
+  // changed under us, so the compare-and-set was rejected and nothing was
+  // written. Returning it for an unreachable database tells the caller its
+  // verification lost a race with another writer -- so it re-reads, or reports
+  // a conflict, over a record whose state nobody can vouch for.
+  //
+  // The assertion is identity rather than "it threw": a stale rejection and an
+  // unreachable database are both "did not apply", so only the thrown value
+  // distinguishes the two.
+  await assert.rejects(
+    repo.transitionMemories(
+      [
+        {
+          expectedUpdatedAt: candidate.updatedAt,
+          next: {
+            ...candidate,
+            status: "active" as const,
+            validity: { state: "verified" as const, evidence: [] },
+            updatedAt: "2026-01-02T00:00:00.000Z"
+          }
+        }
+      ],
+      [
+        makeLifecycleEvent({
+          id: "evt-verify",
+          action: "verified",
+          fromStatus: "proposed",
+          toStatus: "active",
+          reasonCode: "verified_current_state"
+        })
+      ]
+    ),
+    (error: unknown) => error === failure
+  );
+
+  // The transaction rolled back, so the record is untouched rather than half
+  // transitioned. Asserting the stored state as well as the thrown error pins
+  // both halves of the promise: the caller learns why, and nothing was written.
+  const stored = await repoWith(pool).getMemory(
+    candidate.id,
+    makeContext({ workspaceId: "ws-1", canReadGlobal: true })
+  );
+  assert.equal(stored?.status, "proposed");
 });
 
 test("getMemoryHistory returns the current record, lineage, and ordered governance events", async () => {
