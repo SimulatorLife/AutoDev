@@ -160,7 +160,15 @@ export function ReconciliationPanel({
           // 64-character generation hash of the width it needs -- so the
           // longest, most-worth-comparing value on the panel was the one that
           // wrapped, while the space beside every label went unused.
-          "grid grid-cols-1 gap-1 text-xs text-fg-muted sm:grid-cols-[max-content_1fr]"
+          //
+          // The column gap is 12px rather than 4px because `max-content` sizes
+          // that column to its *widest* label. "Observed generation" is one
+          // character wider than "Desired generation", so it fills the column
+          // exactly while the other four labels end early -- and at a 4px gap
+          // the widest label ran straight into its value, reading as
+          // "Observed generationNot observed" while the row above it looked
+          // separated. The row gap stays at 4px so the pairs stay grouped.
+          "grid grid-cols-1 gap-y-1 gap-x-3 text-xs text-fg-muted sm:grid-cols-[max-content_1fr]"
       },
       ...(
         [
