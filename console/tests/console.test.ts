@@ -13829,3 +13829,77 @@ test("a valid skill catalog renders no validation panel", () => {
   );
   assert.doesNotMatch(markup, /data-testid="skill-catalog-validation-issues"/u);
 });
+
+test("a Runtime response with no concurrency limit is readable, and says so", async () => {
+  // "Unlimited" is the Runtime's default: `/control/runtime` answers
+  // `maxConcurrentThreadsPerSession: null` unless an operator configured one.
+  // The guard read that as an unreadable number, so the whole Runtime response
+  // failed closed on an ordinary deployment and the page reported an
+  // incompatible contract precisely when nothing was wrong. No fixture covered
+  // it -- every existing one passed a real limit.
+  const config = {
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "server-only"
+  };
+  const serve = (payload: unknown) => ({
+    fetchImpl: async () => Response.json(payload)
+  });
+  const runtime = {
+    schema: "autodev-control-runtime-v1",
+    routerInstanceId: "router-uuid-test",
+    lifecycle: {
+      state: "ready",
+      draining: false,
+      changedAt: "2026-10-05T15:00:00.000Z",
+      activeResponseRequests: 0
+    },
+    concurrency: {
+      maxConcurrentThreadsPerSession: null,
+      effectivePerSessionLimit: null,
+      activeSubagentThreads: 0,
+      activeSessions: 0
+    },
+    inFlightRequestCount: 0
+  };
+  assert.equal(
+    (await fetchRuntime(config, serve(runtime))).kind,
+    "ok",
+    "a router deliberately running without a limit must not read as unreadable"
+  );
+
+  // And a limit that is present but is not a number is still not a limit.
+  for (const broken of [
+    {
+      ...runtime,
+      concurrency: { ...runtime.concurrency, effectivePerSessionLimit: "2" }
+    },
+    {
+      ...runtime,
+      concurrency: {
+        ...runtime.concurrency,
+        maxConcurrentThreadsPerSession: {}
+      }
+    }
+  ]) {
+    assert.equal(
+      (await fetchRuntime(config, serve(broken))).kind,
+      "invalid-response",
+      JSON.stringify(broken.concurrency)
+    );
+  }
+
+  // The three states stay distinct: a real limit, no limit, and not reported.
+  const render = (effectivePerSessionLimit: number | null | undefined) =>
+    renderToStaticMarkup(
+      React.createElement(AgentsView, {
+        agents: [CONFIGURED_AGENT],
+        runtime: {
+          ...runtime,
+          concurrency: { ...runtime.concurrency, effectivePerSessionLimit }
+        }
+      })
+    );
+  assert.match(render(2), /Session Concurrency Limit[\s\S]*?2/u);
+  assert.match(render(null), /Session Concurrency Limit[\s\S]*?Unlimited/u);
+  assert.match(render(undefined), /Session Concurrency Limit[\s\S]*?Not observed/u);
+});

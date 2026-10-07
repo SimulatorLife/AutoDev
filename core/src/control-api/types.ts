@@ -540,8 +540,17 @@ export interface ControlApiGithubResponse {
 
 export interface ControlApiConcurrencyStatus {
   readonly scope?: string;
-  readonly maxConcurrentThreadsPerSession?: number;
-  readonly effectivePerSessionLimit?: number;
+  /**
+   * `null` means no per-session limit is configured, which is the default.
+   *
+   * Nullable rather than merely optional because "unlimited" is an observed
+   * fact about this deployment, not a missing field: the Runtime's own status
+   * CLI prints it as `unlimited`, and collapsing it to `undefined` here would
+   * make a router that deliberately runs without a limit indistinguishable from
+   * one whose limit was never read.
+   */
+  readonly maxConcurrentThreadsPerSession?: number | null;
+  readonly effectivePerSessionLimit?: number | null;
   readonly activeSubagentThreads?: number;
   readonly activeSessions?: number;
   readonly denials?: number;
