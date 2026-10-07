@@ -5843,6 +5843,78 @@ test("the other two links out of a row's page keep it too", () => {
   );
 });
 
+test("a duration that rounds into its next minute says how many minutes", () => {
+  // The trace's Duration column steps units so the number stays short. It used
+  // to floor the minutes and round the leftover seconds separately, which is two
+  // roundings of one value: at 119.9 seconds the column read "1m 60s". Sixty
+  // seconds inside a minute is not a duration, and an operator reading it has no
+  // way to tell whether the trace took just under two minutes or twenty.
+  //
+  // Measured before the fix at each boundary: 119.4s printed "1m 59s" and
+  // 119.9s printed "1m 60s", so two spans one second apart differed by a whole
+  // minute on the page and agreed with neither.
+  const spanWith = (durationNs: number): string => {
+    const spanId = "0123456789abcdef";
+    const markup = renderEvaluations({
+      evaluations: [],
+      spanId,
+      traceLookup: {
+        kind: "observed",
+        detail: {
+          schema: "autodev-openlit-trace-detail-v1",
+          traceId: "0123456789abcdef0123456789abcdef",
+          selectedSpanId: spanId,
+          partial: false,
+          spans: [
+            {
+              spanId,
+              parentSpanId: null,
+              spanName: "gen_ai.client_operation",
+              serviceName: "autodev-router",
+              timestamp: "2026-10-05T12:00:00.000Z",
+              durationNs,
+              statusCode: "OK" as const
+            }
+          ]
+        }
+      }
+    });
+    // Scoped to the trace panel, because the history above it renders its own
+    // numbers and a bare match would read whichever came first.
+    const traceStart = markup.indexOf('data-feature="evaluation-trace-detail"');
+    assert.notEqual(traceStart, -1, "the trace panel is rendered");
+    // Three bounded alternatives rather than one optional group: `\d+(\.\d+)?`
+    // nested under an alternation is the shape the unsafe-regex rule rejects.
+    const found = />(\d+m \d+s|\d+\.\d+ (?:ms|s)|\d+ µs)</.exec(
+      markup.slice(traceStart)
+    );
+    assert.ok(found !== null, `a duration is rendered for ${durationNs} ns`);
+    return found[1] as string;
+  };
+
+  assert.equal(spanWith(119_400_000_000), "1m 59s", "just under the carry");
+  assert.equal(spanWith(119_900_000_000), "2m 0s", "and just past it");
+  assert.equal(spanWith(119_999_000_000), "2m 0s", "which is the whole point");
+  assert.equal(
+    spanWith(119_900_000_000) === spanWith(119_400_000_000),
+    false,
+    "so a minute boundary is still visible rather than swallowed"
+  );
+  // The units either side of the boundary stay where they were.
+  assert.equal(
+    spanWith(999_999),
+    "1000 µs",
+    "sub-millisecond still reads in µs"
+  );
+  assert.equal(spanWith(1_250_000), "1.3 ms", "milliseconds still read in ms");
+  assert.equal(spanWith(1_000_000_000), "1.00 s", "seconds still read in s");
+  assert.equal(
+    spanWith(60_000_000_000),
+    "1m 0s",
+    "a whole minute still reads as one"
+  );
+});
+
 test("closing a run leaves the trace open, and leaving the trace closes neither", () => {
   // The two selections are alternatives, so a link that opens one closes the
   // other. That rule does not settle this pair: closing a run and closing a

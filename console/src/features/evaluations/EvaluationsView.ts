@@ -716,6 +716,12 @@ function traceColumns(
  * Always milliseconds, `1842.0 ms` states a number nobody parses without doing
  * arithmetic, and it grew the column to fit the digits a reader has to convert.
  * The unit steps so the value stays small at every magnitude.
+ *
+ * The seconds are rounded once, before they are split from the minutes, because
+ * splitting first and rounding each half separately is how a minute ends up
+ * holding sixty: 119.9s rounded as "1m 59s" and rounded seconds became "1m 60s",
+ * which is a duration that does not exist and that no reader can reconcile with
+ * the one next to it.
  */
 const MINUTE_MS = 60_000;
 
@@ -724,9 +730,8 @@ function formatDuration(durationNs: number): string {
   if (milliseconds < 1) return `${(durationNs / 1000).toFixed(0)} µs`;
   if (milliseconds < 1000) return `${milliseconds.toFixed(1)} ms`;
   if (milliseconds < MINUTE_MS) return `${(milliseconds / 1000).toFixed(2)} s`;
-  const minutes = Math.floor(milliseconds / MINUTE_MS);
-  const seconds = Math.round((milliseconds % MINUTE_MS) / 1000);
-  return `${minutes}m ${seconds}s`;
+  const totalSeconds = Math.round(milliseconds / 1000);
+  return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
 }
 
 const TRACE_UNAVAILABLE_MESSAGES: Readonly<
