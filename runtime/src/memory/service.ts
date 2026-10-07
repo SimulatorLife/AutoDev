@@ -1138,16 +1138,6 @@ export class MemoryService
           "Injection-use join memory mode filter is invalid."
         );
       }
-      if (
-        request.injectionResults?.some(
-          (value) =>
-            value !== "injected" && value !== "empty" && value !== "skipped"
-        )
-      ) {
-        throw new MemoryValidationError(
-          "Injection-use join injection-result filter is invalid."
-        );
-      }
       if (request.useKinds?.some((kind) => !isMemoryUseKind(kind))) {
         throw new MemoryValidationError(
           "Injection-use join useKind filter is invalid."

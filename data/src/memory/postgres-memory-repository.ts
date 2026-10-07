@@ -1085,11 +1085,6 @@ export class PostgresMemoryRepository implements MemoryRepository {
         `i.memory_mode = ANY(${params.add(request.memoryModes)}::text[])`
       );
     }
-    if (request.injectionResults && request.injectionResults.length > 0) {
-      filters.push(
-        `i.injection_result = ANY(${params.add(request.injectionResults)}::text[])`
-      );
-    }
     if (request.useKinds && request.useKinds.length > 0) {
       filters.push(`r.use_kind = ANY(${params.add(request.useKinds)}::text[])`);
     }

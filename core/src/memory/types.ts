@@ -650,7 +650,17 @@ export interface MemoryInjectionUseJoin {
 export interface MemoryInjectionUseJoinRequest {
   readonly context: MemoryReadContext;
   readonly memoryModes?: readonly MemoryExecutionMode[];
-  readonly injectionResults?: readonly MemoryInjectionResult[];
+  /**
+   * Deliberately absent: an `injectionResults` filter. This read only ever
+   * surfaces injected packets — it is the join curator use assessments are
+   * recorded against, and a packet that was empty or skipped was never
+   * assessable. Declaring the filter here invited callers to pass `empty` or
+   * `skipped` and receive an empty list that read as "nothing matches your
+   * filter" rather than "that filter cannot apply to this read", and the
+   * Runtime's validator accepted exactly those two values. `listInjectionOutcomeJoins`
+   * does take the filter, because it groups by `injection_result` rather than
+   * restricting to it.
+   */
   readonly useKinds?: readonly MemoryUseKind[];
   /**
    * Default false. When false, only injection events with a matching

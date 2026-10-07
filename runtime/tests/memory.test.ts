@@ -398,11 +398,6 @@ class FakeMemoryRepository implements MemoryRepository {
         !request.memoryModes.includes(event.memoryMode)
       )
         continue;
-      if (
-        request.injectionResults &&
-        !request.injectionResults.includes(event.injectionResult)
-      )
-        continue;
       const report = this.useReports.get(
         `${event.workspaceId}\u0000${event.correlationToken}`
       );
