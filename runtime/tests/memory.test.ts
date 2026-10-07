@@ -4996,3 +4996,168 @@ test("a use report is refused for an experience outside the caller's repository"
     /outside the captured session/u
   );
 });
+
+/**
+ * The remaining promotion guards. Promoting a procedure writes a canonical
+ * skill that other agents load by name, so a re-promotion that silently
+ * re-points or accepts a drifted artifact is worse than a refusal.
+ */
+test("a procedure already promoted cannot be re-pointed at a different canonical skill", async () => {
+  const { repository, service, current } = await promotableProcedure();
+
+  await service.promoteProcedureToSkill(
+    current.id,
+    SKILL_INPUT,
+    root,
+    researchRequest()
+  );
+
+  // Same procedure, different skill name: the first artifact would be orphaned.
+  await assert.rejects(
+    service.promoteProcedureToSkill(
+      current.id,
+      { ...SKILL_INPUT, name: "some-other-skill" },
+      root,
+      researchRequest()
+    ),
+    /already promoted to a different canonical skill/u
+  );
+  assert.equal(
+    repository.events.filter((event) => event.action === "procedure_promoted")
+      .length,
+    1
+  );
+});
+
+test("a canonical skill that drifted from its recorded revision is a conflict, not a re-promotion", async () => {
+  const { repository, current } = await promotableProcedure();
+
+  const drifted = makeService(repository, {
+    skillPromotionWriter: {
+      createSkill: async ({ name }) => ({
+        name,
+        path: `.rulesync/skills/${name}/SKILL.md`,
+        uri: `rulesync://skills/${name}/SKILL.md`,
+        revision: "d".repeat(64)
+      })
+    }
+  });
+
+  // Promote on disk through the real writer, then read it back with a writer
+  // that reports a different revision: the artifact moved under us.
+  const first = await makeService(repository, {
+    skillPromotionWriter: SKILL_WRITER
+  }).promoteProcedureToSkill(
+    current.id,
+    SKILL_INPUT,
+    root,
+    researchRequest()
+  );
+  assert.equal(first.skill.revision, "c".repeat(64));
+
+  await assert.rejects(
+    drifted.promoteProcedureToSkill(
+      current.id,
+      SKILL_INPUT,
+      root,
+      researchRequest()
+    ),
+    /differs from its recorded promotion revision/u
+  );
+});
+
+test("skill promotion needs a configured canonical writer", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const current = record("procedure-candidate", { kind: "procedural" });
+  repository.memories.set(current.id, current);
+
+  await assert.rejects(
+    service.promoteProcedureToSkill(
+      current.id,
+      SKILL_INPUT,
+      root,
+      researchRequest()
+    ),
+    /not configured/u
+  );
+});
+
+test("only a procedural memory can become a canonical skill", async () => {
+  const { service, current } = await promotableProcedure({ kind: "semantic" });
+
+  await assert.rejects(
+    service.promoteProcedureToSkill(
+      current.id,
+      SKILL_INPUT,
+      root,
+      researchRequest()
+    ),
+    /visible procedural memory/u
+  );
+});
+
+test("skill promotion bounds the name, description and content it writes", async () => {
+  for (const input of [
+    { ...SKILL_INPUT, name: "-leading-dash" },
+    { ...SKILL_INPUT, name: "trailing-dash-" },
+    { ...SKILL_INPUT, name: "double--dash" },
+    { ...SKILL_INPUT, name: "Not Lowercase" },
+    { ...SKILL_INPUT, description: "" },
+    { ...SKILL_INPUT, description: "d".repeat(513) },
+    { ...SKILL_INPUT, content: "" },
+    { ...SKILL_INPUT, content: "c".repeat(20_001) }
+  ]) {
+    const { service, current } = await promotableProcedure();
+    await assert.rejects(
+      service.promoteProcedureToSkill(
+        current.id,
+        input,
+        root,
+        researchRequest()
+      ),
+      /exceeds its validation bound/u,
+      `expected ${JSON.stringify(input).slice(0, 60)} to be refused`
+    );
+  }
+});
+
+test("two citations to the same run are not two validated runs", async () => {
+  // The provenance names two experience ids, but both resolve to one run, so
+  // the distinct-run count is one and promotion must not graduate the memory.
+  const { service, current } = await promotableProcedure({
+    provenance: {
+      experienceIds: ["success-run-a", "success-run-a"],
+      evidence: [source],
+      createdBy: root.id,
+      createdAt: "2026-09-30T10:00:00.000Z"
+    }
+  });
+
+  await assert.rejects(
+    service.promoteProcedureToSkill(
+      current.id,
+      SKILL_INPUT,
+      root,
+      researchRequest()
+    ),
+    /two distinct successful runs/u
+  );
+});
+
+test("only a live memory record can be invalidated", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const invalidated = record("already-gone", { status: "invalidated" });
+  const superseded = record("already-superseded", { status: "superseded" });
+  repository.memories.set(invalidated.id, invalidated);
+  repository.memories.set(superseded.id, superseded);
+
+  for (const target of [invalidated, superseded]) {
+    await assert.rejects(
+      service.invalidate(target.id, root, context, [source]),
+      /live memory records/u
+    );
+  }
+  assert.equal(repository.events.length, 0);
+});
