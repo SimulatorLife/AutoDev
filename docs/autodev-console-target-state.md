@@ -486,7 +486,7 @@ The page header names the surface and states its purpose — *Configure which pr
 
 **Agent Limits are provider-wide**, not per-role, and carry a provider-level **Disabled control beside the Unlimited control**. That control globally disables use of the provider regardless of individual role settings, **while preserving its configured priorities, models and limits** so re-enabling later restores the same configuration rather than requiring it to be re-entered.
 
-**Unlimited and the provider Disabled state are buttons, not a checkbox and a toggle switch,** because the Console is server-rendered and every mutation is a form POST. A checkbox can only carry one boolean, so an `Unlimited` checkbox could set the state but never clear it without a second control beside it. One **Unlimited** button clears the operator-set ceiling on both axes at once; leaving it is per axis, through the steppers, which start an Unlimited axis at the minimum rather than at zero — zero is not a limit, it would read as "no agents allowed" and would silently stop the provider spawning. The provider **Disabled** control is one button that carries the state it would set and names it in its own label, so `Disable` and `Enable` are one honest control rather than a switch with an ambiguous position. This is the same rule the table applies elsewhere: an affordance that cannot actually do the thing is worse than a control that names what it will do.
+**Unlimited and the provider Disabled state are buttons, not a checkbox and a toggle switch,** because provider settings remain server-rendered and every mutation is a form POST. A checkbox can only carry one boolean, so an `Unlimited` checkbox could set the state but never clear it without a second control beside it. One **Unlimited** button clears the operator-set ceiling on both axes at once; leaving it is per axis, through the steppers, which start an Unlimited axis at the minimum rather than at zero — zero is not a limit, it would read as "no agents allowed" and would silently stop the provider spawning. The provider **Disabled** control is one button that carries the state it would set and names it in its own label, so `Disable` and `Enable` are one honest control rather than a switch with an ambiguous position. This is the same rule the table applies elsewhere: an affordance that cannot actually do the thing is worse than a control that names what it will do.
 
 The Providers tab has exactly these four columns. The separate **Role Enablement**, **Health**, **Credential**, **Available Models** and **Tier Priority** columns are removed: their facts are either folded into Status or reachable from the row's controls. Its **Models** tab (one row per model across providers) remains, and each row carries that model's enable/disable toggle per the contextual-controls rule.
 
@@ -617,7 +617,7 @@ Target Usage may show count/time-series and bounded breakdowns by workspace, pro
 
 Git change-output telemetry is a target requirement for Usage and for bounded per-resource aggregate views. It answers "what did the work actually produce" next to "what did it cost".
 
-Emit one bounded source-owned observation per commit the Runtime actually creates, recorded at the producer that can establish it. Recommended instruments follow the existing `autodev.*` shape and bounded-unit style of `autodev.context.compactions`:
+Emit one bounded source-owned observation per commit an AutoDev-managed agent actually creates. The Runtime does not create commits itself, so the observation is recorded where the commit can be established and attributed. Recommended instruments follow the existing `autodev.*` shape and bounded-unit style of `autodev.context.compactions`:
 
 - `autodev.git.commits`, unit `{commit}`
 - `autodev.git.files_changed`, unit `{file}`
@@ -625,6 +625,12 @@ Emit one bounded source-owned observation per commit the Runtime actually create
 - `autodev.git.files_deleted`, unit `{file}`
 - `autodev.git.lines_added`, unit `{line}`
 - `autodev.git.lines_removed`, unit `{line}`
+
+**Attribution comes from the commit, never from the observing Runtime.** An agent commits under its own bounded AutoDev committer identity, and the actor is read back out of the commit. This is required rather than merely preferable: agents and their subagents share one workspace, so commits form a single stream with no per-actor markers, git records a committer but not which model wrote the code, and there is no subagent lifecycle boundary at which a per-agent range could be read. A session-scoped or time-windowed attribution would therefore credit every subagent's commits to the orchestrator's role and model.
+
+The identity is bounded and permanent-safe, because a commit outlives the session and may be pushed: a fixed local domain plus an allowlisted role and provider. It carries no session id, model id, path, URL, or free text. An out-of-vocabulary provider collapses to `other` rather than being written verbatim, and an unknown role yields no identity at all, so that commit remains the operator's rather than becoming agent output attributed to nobody. The identity is supplied as process environment, not repository configuration: nothing is persisted into the workspace, managed workspaces stay read-only, and the operator's own commits are unaffected.
+
+Every commit carries an `autodev.git.attribution` dimension from a closed set of `commit_identity` and `unattributed`. An actor supplied by the observer rather than read from the commit is dropped from the dimensions and recorded as `unattributed`, so a shared-workspace commit cannot be blended onto a role; a query grouping commits by role, provider, or model must exclude unattributed commits rather than average over them.
 
 Definitions must be exact, because these words are otherwise used loosely:
 
@@ -823,7 +829,7 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 - MCP/skill/memory observations are asserted only from real evidence;
 - compactions are emitted only for actual/reported source events and never synthesized;
 - the Usage Active Sessions option is presented in the same scope control as the time ranges under a label that names both kinds of selection and no longer reads "Time range"; it scopes to Runtime-reported live sessions rather than a derived or shortened time range, renders `unavailable`/`not observed` instead of a synthesized `0` when runtime session evidence is absent, distinguishes a measured `0` from missing evidence, fails closed on unsupported widget/filter combinations, and adds no second session authority;
-- git change metrics (`commits`, `files changed`, `files added`, `files deleted`, `lines added`, `lines removed`) are emitted only for commits the Runtime actually creates, count each commit once across producers, keep files-added/deleted as subsets of files-changed so totals never double-count, carry no file paths, repository URLs, branch names, or commit SHAs as metric dimensions, report partial measurements as partial, and render unavailable rather than zero when diff statistics are missing.
+- git change metrics (`commits`, `files changed`, `files added`, `files deleted`, `lines added`, `lines removed`) are measured from the commit itself rather than inferred, attribute the actor from the commit's own bounded committer identity rather than from the observing session, count each commit once across producers, keep files-added/deleted as subsets of files-changed so totals never double-count, carry no file paths, repository URLs, branch names, or commit SHAs as metric dimensions, report partial measurements as partial, and render unavailable rather than zero when diff statistics are missing.
 
 ### RuleSync/configuration
 
