@@ -6262,6 +6262,97 @@ test("a cohort's outcome is named, and an unreported cell is not given an outcom
   );
 });
 
+test("a cohort cell never renders blank, and names what a curator assessed", () => {
+  // Two separate failures met in one cell.
+  //
+  // `useKind` printed the wire key, so the column read `used`,
+  // `partially_used`, `not_used` — and because `not_used` is a *reported*
+  // assessment, it was indistinguishable on screen from the null that means no
+  // assessment was filed, which is precisely the distinction Core spells out
+  // when it says absence means "unassessed" rather than "not_used".
+  //
+  // And an outcome value outside `EXPERIENCE_OUTCOMES` rendered as an empty
+  // cell: a plain `<span>` given `undefined` draws nothing, and a blank cell
+  // reads as "no outcome" rather than as "an outcome this build cannot name".
+  // A `StatusBadge` would have covered itself with a default; a span has none.
+  const cohort = {
+    schema: "autodev-memory-session-outcome-cohorts-v1" as const,
+    workspaceId: "SimulatorLife/AutoDev",
+    repositoryId: "SimulatorLife/AutoDev",
+    occurredFrom: "2026-09-01T00:00:00Z",
+    occurredUntil: "2026-10-01T00:00:00Z",
+    cells: [],
+    sessionCount: 0,
+    reportedSessionCount: 0,
+    unreportedSessionCount: 0,
+    mixedModeSessionCount: 0,
+    conflictingOutcomeSessionCount: 0
+  };
+  const useCohorts = {
+    schema: "autodev-memory-use-cohorts-v1" as const,
+    workspaceId: "SimulatorLife/AutoDev",
+    repositoryId: "SimulatorLife/AutoDev",
+    occurredFrom: "2026-09-01T00:00:00Z",
+    occurredUntil: "2026-10-01T00:00:00Z",
+    cells: [
+      {
+        memoryMode: "jit",
+        sessionCardinality: "single",
+        useKind: "used",
+        exposureCount: 61
+      },
+      {
+        memoryMode: "jit",
+        sessionCardinality: "multiple",
+        useKind: "partially_used",
+        exposureCount: 14
+      },
+      {
+        memoryMode: "jit",
+        sessionCardinality: "single",
+        useKind: null,
+        exposureCount: 4
+      }
+    ],
+    exposureCount: 79,
+    usedExposureCount: 61,
+    unassessedExposureCount: 4
+  };
+
+  const markup = renderToStaticMarkup(
+    React.createElement(MemoryCohortsView, {
+      sessionCohorts: cohort,
+      useCohorts,
+      listScope: memoryListScope({ tab: "cohorts" }),
+      currentWorkspaceId: "SimulatorLife/AutoDev",
+      repositoryId: "SimulatorLife/AutoDev",
+      occurredFrom: "2026-09-01T00:00:00Z",
+      occurredUntil: "2026-10-01T00:00:00Z"
+    })
+  );
+
+  assert.ok(
+    markup.includes(">Used<"),
+    "a reported assessment should read Used"
+  );
+  assert.ok(
+    markup.includes(">Partially used<"),
+    "a partial assessment should read Partially used"
+  );
+  // The null keeps its own word: no assessment was filed, which is not the same
+  // answer as one that was filed and said the packet went unused.
+  assert.ok(
+    markup.includes(">Unassessed<"),
+    "an absent assessment should read Unassessed"
+  );
+  for (const raw of [">used<", ">partially_used<", ">not_used<"]) {
+    assert.ok(
+      !markup.includes(raw),
+      `${raw} is a wire key and must not be rendered`
+    );
+  }
+});
+
 test("MemoryCohortsView renders session outcome cohorts preserving explicit unreported cells", () => {
   const sampleCohort: MemorySessionOutcomeCohortPage = {
     schema: "autodev-memory-session-outcome-cohorts-v1",

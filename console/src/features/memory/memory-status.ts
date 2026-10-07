@@ -2,7 +2,8 @@ import type {
   ExperienceOutcome,
   ExperienceValidationState,
   MemoryReasonCode,
-  MemoryStatus
+  MemoryStatus,
+  MemoryUseKind
 } from "@simulatorlife/autodev-core";
 
 import type { StatusBadgeVariant } from "../../components/status/StatusBadge.ts";
@@ -110,6 +111,26 @@ export const MEMORY_OUTCOME_LABEL: Record<ExperienceOutcome, string> = {
   failure: "Failure",
   cancelled: "Cancelled",
   unknown: "Unknown"
+};
+
+/**
+ * What a curator concluded about an actually-injected packet.
+ *
+ * The column printed the wire key, so the table read `used`, `partially_used`
+ * and `not_used` in lowercase — and, because `not_used` is a *reported*
+ * assessment, it was indistinguishable on screen from the null that means no
+ * assessment was filed, which is the distinction Core spells out at length and
+ * this cell flattened.
+ *
+ * `unobservable` is kept as its own word rather than folded into `not_used`: an
+ * unobservable packet was injected and its use could not be determined, which
+ * is a different answer from one that was observable and went unused.
+ */
+export const MEMORY_USE_KIND_LABEL: Record<MemoryUseKind, string> = {
+  used: "Used",
+  partially_used: "Partially used",
+  not_used: "Not used",
+  unobservable: "Unobservable"
 };
 
 /**

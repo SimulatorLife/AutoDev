@@ -30,7 +30,10 @@ import {
 } from "../../components/ui/text-classes.ts";
 import { SUCCESS_TONE_CLASS } from "../../components/ui/tones.ts";
 import { memoryFilterHref, type MemoryListScope } from "./memory-list-url.ts";
-import { MEMORY_OUTCOME_LABEL } from "./memory-status.ts";
+import {
+  MEMORY_OUTCOME_LABEL,
+  MEMORY_USE_KIND_LABEL
+} from "./memory-status.ts";
 
 /**
  * Every exposure's assessment outcome, weighted, with nothing merged.
@@ -230,9 +233,16 @@ export function MemoryCohortsView({
           // Console's word for missing evidence rather than the lowercase
           // literal that was there; "Unreported" in the column beside it
           // answers the different question of whether a report was filed.
+          //
+          // The `?? NOT_OBSERVED_LABEL` is not belt-and-braces. A plain `<span>`
+          // renders an unknown key as nothing at all, and an empty cell reads
+          // as "no outcome" rather than as "an outcome this build cannot name"
+          // — which is how a value outside `EXPERIENCE_OUTCOMES` becomes
+          // invisible instead of wrong. (A `StatusBadge` would have covered
+          // itself with its default; a span has none.)
           cell.outcomeKind === null
             ? NOT_OBSERVED_LABEL
-            : MEMORY_OUTCOME_LABEL[cell.outcomeKind]
+            : (MEMORY_OUTCOME_LABEL[cell.outcomeKind] ?? NOT_OBSERVED_LABEL)
         )
     },
     {
@@ -283,7 +293,16 @@ export function MemoryCohortsView({
               cell.useKind === null ? MUTED_TEXT_CLASS : "text-accent"
             }`
           },
-          cell.useKind ?? "Unassessed"
+          // `not_used` is a *reported* assessment, so printing the key made it
+          // read as an error code and, worse, indistinguishable on screen from
+          // the null that means no assessment was filed — the exact distinction
+          // Core spells out when it says absence means "unassessed", not
+          // "not_used". `Unobservable` keeps its own word for the same reason:
+          // injected and undeterminable is not the same answer as observable
+          // and unused.
+          cell.useKind === null
+            ? "Unassessed"
+            : (MEMORY_USE_KIND_LABEL[cell.useKind] ?? NOT_OBSERVED_LABEL)
         )
     },
     {
