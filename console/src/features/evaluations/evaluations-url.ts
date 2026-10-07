@@ -446,6 +446,28 @@ export function hasExplicitVerdict(evaluation: EvaluationResult): boolean {
   return evaluation.passed !== null && evaluation.passed !== undefined;
 }
 
+/**
+ * The prompt a run reports, or nothing.
+ *
+ * One predicate for "this run named no prompt", because the field is optional on
+ * the wire and the Console validated it as optional without ever checking what
+ * the optional value was. Four places used to answer the question separately and
+ * disagree: the filter options skipped a blank name as well as an absent field,
+ * the table rendered "No prompt" for an absent field but an empty cell for a
+ * blank one, and the prompt filter matched only on an absent field -- so a blank
+ * prompt made a run vanish from the filtered view while the unfiltered table
+ * above it showed nothing at all in that cell. An unreadable field now reads the
+ * same way everywhere: as no prompt.
+ */
+export function reportedPrompt(
+  evaluation: EvaluationResult
+): string | undefined {
+  const name = evaluation.promptName;
+  return typeof name === "string" && name.trim() !== ""
+    ? name.trim()
+    : undefined;
+}
+
 function matchesOutcome(
   evaluation: EvaluationResult,
   outcome: EvaluationOutcomeFilter
@@ -468,6 +490,11 @@ function matchesOutcome(
 export interface PlacedEvaluations {
   readonly results: readonly EvaluationResult[];
   readonly unplaceable: number;
+  /**
+   * Runs that report no prompt and matched anyway because a prompt filter was
+   * set. Zero unless one was: with no prompt filter there is nothing to explain.
+   */
+  readonly promptless: number;
 }
 
 /**
@@ -492,6 +519,7 @@ export function filterEvaluations(
 
   const results: EvaluationResult[] = [];
   let unplaceable = 0;
+  let promptless = 0;
   for (const evaluation of evaluations) {
     if (!matchesTarget(evaluation, filters)) continue;
     const verdict = runTimeVerdict(evaluation, from, until);
@@ -501,8 +529,14 @@ export function filterEvaluations(
     }
     if (verdict === RUN_OUTSIDE) continue;
     results.push(evaluation);
+    // Counted here rather than derived from `results` afterwards because a row
+    // that a time bound excluded was not in the view to be explained, and a
+    // caveat must never describe a row the operator cannot see.
+    if (filters.prompt !== "" && reportedPrompt(evaluation) === undefined) {
+      promptless += 1;
+    }
   }
-  return { results, unplaceable };
+  return { results, unplaceable, promptless };
 }
 
 /**
@@ -511,7 +545,8 @@ export function filterEvaluations(
  * A prompt-less row still matches a prompt filter. `promptName` is optional on
  * the wire, and a row that reports no prompt is not evidence that it ran under
  * some other prompt, so dropping it from a filtered view would report a smaller
- * history than the source holds.
+ * history than the source holds. The page states how many rows that was rather
+ * than leaving the inclusion silent.
  */
 function matchesTarget(
   evaluation: EvaluationResult,
@@ -521,11 +556,11 @@ function matchesTarget(
   if (filters.role !== "" && evaluation.agentRole !== filters.role)
     return false;
   if (filters.model !== "" && evaluation.model !== filters.model) return false;
-  return (
-    filters.prompt === "" ||
-    evaluation.promptName === undefined ||
-    evaluation.promptName === filters.prompt
-  );
+  if (filters.prompt !== "") {
+    const prompt = reportedPrompt(evaluation);
+    if (prompt !== undefined && prompt !== filters.prompt) return false;
+  }
+  return true;
 }
 
 /** Where a run sits relative to the window, or that it cannot be placed. */
@@ -641,10 +676,6 @@ export function filterOptionsFor(
   return {
     roles: offered("role", filters.role, (evaluation) => evaluation.agentRole),
     models: offered("model", filters.model, (evaluation) => evaluation.model),
-    prompts: offered(
-      "prompt",
-      filters.prompt,
-      (evaluation) => evaluation.promptName
-    )
+    prompts: offered("prompt", filters.prompt, reportedPrompt)
   };
 }

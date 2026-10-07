@@ -65,7 +65,8 @@ import {
   evaluationTraceHref,
   hasActiveFilters,
   hasExplicitVerdict,
-  OUTCOME_FILTER_LABELS
+  OUTCOME_FILTER_LABELS,
+  reportedPrompt
 } from "./evaluations-url.ts";
 
 /**
@@ -117,6 +118,16 @@ export interface EvaluationsViewProps {
    * would be a pass rate over a population nobody chose.
    */
   readonly unplaceable?: number | undefined;
+  /**
+   * Runs that report no prompt and matched a prompt filter anyway.
+   *
+   * The inclusion is deliberate -- a row that named no prompt is not evidence it
+   * ran under another one, so dropping it would under-report the history -- but
+   * it used to be silent, which put "No prompt" rows under a bar reading
+   * "Prompt: release-notes". Stating the count keeps the rule and removes the
+   * contradiction.
+   */
+  readonly promptless?: number | undefined;
   /** Result id opened in the detail drawer, or `null`. */
   readonly selection?: string | null | undefined;
   readonly traceLookup?: EvaluationTraceLookup | null | undefined;
@@ -596,7 +607,7 @@ function renderResultDetail(
       React.createElement(
         DetailValue,
         { key: "prompt", label: "Prompt" },
-        evaluation.promptName ?? NO_PROMPT_LABEL
+        reportedPrompt(evaluation) ?? NO_PROMPT_LABEL
       ),
       React.createElement(
         DetailValue,
@@ -1005,6 +1016,55 @@ function runTimeBound(
   );
 }
 
+/**
+ * What this view could not include, said next to the controls that decided it.
+ *
+ * Two filters can match rows the operator did not ask for, and both are stated
+ * rather than absorbed. A run the window cannot place is excluded from every
+ * count; a run that reports no prompt matches any prompt filter, because a row
+ * that named no prompt is not evidence that it ran under some other one and
+ * dropping it would under-report the history. The second used to be invisible,
+ * which put rows reading "No prompt" directly under a bar reading
+ * "Prompt: release-notes" -- a contradiction in one viewport, in a table whose
+ * whole job is to say what each row is.
+ *
+ * Grouped immediately under the filter bar rather than beside the counts,
+ * because each sentence explains a control the operator just used, and a caveat
+ * about a filter belongs where the filter is.
+ */
+function renderViewCaveats(
+  unplaceable: number,
+  promptless: number
+): React.JSX.Element | null {
+  const lines: string[] = [];
+  if (unplaceable > 0) {
+    lines.push(
+      `${unplaceable} ${unplaceable === 1 ? "run reports" : "runs report"} no readable run time and cannot be placed in this window`
+    );
+  }
+  if (promptless > 0) {
+    lines.push(
+      `${promptless} ${promptless === 1 ? "run reports" : "runs report"} no prompt and therefore match any prompt filter`
+    );
+  }
+  if (lines.length === 0) return null;
+  return React.createElement(
+    "div",
+    {
+      className: "flex flex-col gap-1 text-xs text-fg-secondary",
+      role: "status",
+      "data-evaluations-caveats": "true",
+      ...(unplaceable > 0
+        ? { "data-evaluations-unplaceable": String(unplaceable) }
+        : {}),
+      ...(promptless > 0
+        ? { "data-evaluations-promptless": String(promptless) }
+        : {})
+    },
+    ...lines.map((line) => React.createElement("p", { key: line }, `${line}.`))
+  );
+}
+
 function filterSelect(
   name: "outcome" | "role" | "model" | "prompt",
   label: string,
@@ -1114,6 +1174,7 @@ export function EvaluationsView({
   tab = "results",
   page = 1,
   unplaceable = 0,
+  promptless = 0,
   selection = null,
   traceLookup = null
 }: EvaluationsViewProps): React.JSX.Element {
@@ -1167,7 +1228,7 @@ export function EvaluationsView({
           // The prompt is the axis the Prompts resource links in on and the axis
           // the filter narrows by, so a history that cannot show it makes both of
           // those links land on a row set the operator cannot reason about.
-          evaluation.promptName === undefined
+          reportedPrompt(evaluation) === undefined
             ? React.createElement(StatusBadge, {
                 status: NOT_OBSERVED_STATUS,
                 label: NO_PROMPT_LABEL,
@@ -1179,7 +1240,7 @@ export function EvaluationsView({
                   className: `${MUTED_META_CLASS} break-words`,
                   "data-evaluation-prompt": true
                 },
-                evaluation.promptName
+                reportedPrompt(evaluation)
               )
         )
     },
@@ -1295,6 +1356,7 @@ export function EvaluationsView({
       runTimeBound("from", "From", filters.from, filters.until),
       runTimeBound("until", "To", filters.until, filters.from)
     ),
+    renderViewCaveats(unplaceable, promptless),
     React.createElement(
       "div",
       { className: "flex flex-wrap items-center justify-between gap-3" },
@@ -1344,17 +1406,6 @@ export function EvaluationsView({
     selectedEvaluation === null
       ? null
       : renderResultDetail(selectedEvaluation, nav),
-    unplaceable === 0
-      ? null
-      : React.createElement(
-          "p",
-          {
-            className: "text-xs text-warning",
-            role: "status",
-            "data-evaluations-unplaceable": String(unplaceable)
-          },
-          `${unplaceable} ${unplaceable === 1 ? "run reports" : "runs report"} no readable run time and cannot be placed in this window, so ${unplaceable === 1 ? "it is" : "they are"} left out of every count on this page.`
-        ),
     traceLookup ? renderTraceLookup(traceLookup, nav) : null,
     tab === "results"
       ? React.createElement(

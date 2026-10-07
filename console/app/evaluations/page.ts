@@ -144,6 +144,7 @@ export default async function EvaluationsPage({
       tab,
       page,
       ...(placed.unplaceable === 0 ? {} : { unplaceable: placed.unplaceable }),
+      ...(placed.promptless === 0 ? {} : { promptless: placed.promptless }),
       ...(selectedResult === undefined ? {} : { selection: selectedResult }),
       ...(traceLookup ? { traceLookup } : {})
     })

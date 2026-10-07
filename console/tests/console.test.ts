@@ -5469,6 +5469,190 @@ test("the filter bar only offers combinations that exist", () => {
   assert.equal(filterOptionsFor(rows, filters({})).prompts.includes(""), false);
 });
 
+
+test("a run that reports no prompt is counted, not hidden", () => {
+  // Measured in Chromium: `?prompt=release-notes` rendered 35 rows of which 17
+  // read "No prompt", directly under a filter bar saying "Prompt:
+  // release-notes". The inclusion is deliberate -- a row that named no prompt is
+  // not evidence it ran under another one, so dropping it would report less
+  // history than the source holds -- but it was silent, so the view contradicted
+  // itself in one viewport. The rule stays; the page now states it.
+  const rows = [
+    {
+      id: "named",
+      agentRole: "architect",
+      promptName: "release-notes",
+      model: "opus",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-05T09:00:00Z"
+    },
+    {
+      id: "absent",
+      agentRole: "architect",
+      model: "opus",
+      metrics: [],
+      passed: false,
+      timestamp: "2026-10-05T09:01:00Z"
+    },
+    {
+      // The wire validated `prompt_name` as optional without checking the
+      // optional value, so an empty string reaches the view typed as a string.
+      id: "blank",
+      agentRole: "architect",
+      promptName: "",
+      model: "opus",
+      metrics: [],
+      passed: null,
+      timestamp: "2026-10-05T09:02:00Z"
+    },
+    {
+      id: "whitespace",
+      agentRole: "architect",
+      promptName: "   ",
+      model: "opus",
+      metrics: [],
+      passed: null,
+      timestamp: "2026-10-05T09:03:00Z"
+    },
+    {
+      id: "other-prompt",
+      agentRole: "architect",
+      promptName: "smoke-check",
+      model: "opus",
+      metrics: [],
+      passed: false,
+      timestamp: "2026-10-05T09:04:00Z"
+    }
+  ];
+  const filters = (over: Partial<EvaluationsFilters>): EvaluationsFilters => ({
+    outcome: "all",
+    role: "",
+    model: "",
+    prompt: "",
+    from: "",
+    until: "",
+    ...over
+  });
+
+  const narrowed = filterEvaluations(
+    rows,
+    filters({ prompt: "release-notes" })
+  );
+  assert.deepEqual(
+    narrowed.results.map((row) => row.id),
+    ["named", "absent", "blank", "whitespace"],
+    "every run that named no prompt still matches; only another prompt excludes"
+  );
+  assert.equal(
+    narrowed.promptless,
+    3,
+    "all three spellings of 'no prompt' are counted, not just the absent field"
+  );
+  assert.equal(
+    filterEvaluations(rows, filters({})).promptless,
+    0,
+    "with no prompt filter there is no inclusion to explain"
+  );
+
+  // Nothing unreadable is offered as a value an operator could select.
+  assert.deepEqual(
+    filterOptionsFor(rows, filters({})).prompts,
+    ["release-notes", "smoke-check"],
+    "a blank prompt name is not a prompt an operator can narrow on"
+  );
+
+  // The cell and the caveat read from the same predicate, so a blank prompt
+  // cannot render as an empty cell above a count that says it has one.
+  const html = renderEvaluations({
+    evaluations: narrowed.results,
+    filterOptions: filterOptionsFor(rows, filters({ prompt: "release-notes" })),
+    filters: filters({ prompt: "release-notes" }),
+    promptless: narrowed.promptless
+  });
+  assert.match(html, /data-evaluations-promptless="3"/);
+  assert.match(
+    html,
+    /3 runs report no prompt and therefore match any prompt filter/,
+    "the count is stated where the filter that caused it is set"
+  );
+  assert.equal(
+    html.match(/No prompt/g)?.length,
+    3,
+    "each counted row shows why it is in the view"
+  );
+
+  // Nothing to explain, nothing rendered.
+  assert.doesNotMatch(
+    renderEvaluations({
+      evaluations: narrowed.results,
+      filters: filters({ prompt: "release-notes" })
+    }),
+    /data-evaluations-caveats/,
+    "an unremarkable view states nothing"
+  );
+});
+
+test("what the view could not include is stated under the filter bar", () => {
+  // Two filters admit rows the operator did not ask for, and both are said out
+  // loud in one block. The block sits directly under the controls that produced
+  // it rather than beside the counts: each sentence explains a filter the
+  // operator just used, and a caveat about a filter belongs where the filter is.
+  const rows = [
+    {
+      id: "placed",
+      agentRole: "worker",
+      promptName: "dry",
+      model: "m-1",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-05T09:00:00Z"
+    },
+    {
+      id: "no-prompt",
+      agentRole: "worker",
+      model: "m-1",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-05T09:01:00Z"
+    },
+    {
+      id: "unreadable",
+      agentRole: "worker",
+      model: "m-1",
+      metrics: [],
+      passed: true,
+      timestamp: "whenever it was"
+    }
+  ];
+
+  const html = renderEvaluations({
+    evaluations: rows.filter((row) => row.id === "placed"),
+    filters: {
+      outcome: "all",
+      role: "",
+      model: "",
+      prompt: "dry",
+      from: "2026-10-05",
+      until: "2026-10-05"
+    },
+    unplaceable: 1,
+    promptless: 1
+  });
+
+  assert.match(
+    html,
+    /1 run reports no readable run time and cannot be placed in this window/
+  );
+  assert.match(
+    html,
+    /1 run reports no prompt and therefore match any prompt filter/
+  );
+  assert.ok(
+    html.indexOf("data-evaluations-caveats") < html.indexOf("Retained results"),
+    "the caveats sit with the filters, above the counts they qualify"
+  );
+});
 test("the retained-results card counts the store, not the window and not the filter", () => {
   // The card used to read `evaluations.length` under the title "Total
   // Evaluations" -- the same lie the filter bar sentence was rewritten to stop
