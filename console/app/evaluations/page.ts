@@ -136,7 +136,18 @@ export default async function EvaluationsPage({
 
   return React.createElement(
     ConsolePageShell,
-    { section, counts: { Evaluations: evaluations.length } },
+    {
+      section,
+      // The store's own size, not the narrowed window. The sidebar describes the
+      // resource, so it was reading as though a filter emptied it: on
+      // `?role=nobody` the badge said "Evaluations (0)" while the card above it
+      // said 5,000 retained, and two numbers for one resource on one screen with
+      // nothing saying which was which. This is the same correction the
+      // retained-results card needed, in the last place on this page that was
+      // still reporting the window as the whole. The window and the narrowing
+      // are already stated three times, all labelled, inside the page.
+      counts: { Evaluations: result.data.totalEvaluations }
+    },
     React.createElement(EvaluationsView, {
       evaluations,
       availableCount: available.length,

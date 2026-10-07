@@ -4656,6 +4656,86 @@ test("MemoryPage reports failed experience history instead of rendering an empty
   }
 });
 
+test("the sidebar counts the resource, not the filter that emptied it", async () => {
+  // The badge described the narrowed window, so a filter that excluded
+  // everything rendered "Evaluations (0)" in the sidebar while the card on the
+  // same screen said 5,000 retained: two numbers for one resource, with nothing
+  // saying which was which, and the sidebar's reading the worse one. It is the
+  // same correction the retained-results card needed, in the last place on this
+  // page still reporting the window as the whole.
+  //
+  // This has to be a page test. A view test renders `EvaluationsView` directly
+  // and never sees the badge at all -- it is the page that owns both the read
+  // and the shell's counts, so the page is the only level where "the badge
+  // disagrees with the card" is expressible.
+  const originalFetch = globalThis.fetch;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "evaluation-badge-test-token";
+  process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/control/evaluations")) {
+      return Response.json({
+        schema: "autodev-control-evaluations-v1",
+        source: "openlit_evaluation",
+        readOnly: true,
+        totalEvaluations: 5000,
+        truncated: true,
+        evaluations: [
+          {
+            id: "evaluation-1",
+            agentRole: "orchestrator",
+            promptName: "dry",
+            model: "gpt-5.6-terra",
+            metrics: [{ name: "quality", value: 1, pass: true }],
+            passed: true,
+            timestamp: "2026-10-05T12:00:00.000Z"
+          },
+          {
+            id: "evaluation-2",
+            agentRole: "worker",
+            promptName: "smoke",
+            model: "gpt-5.6-terra",
+            metrics: [{ name: "quality", value: 1, pass: true }],
+            passed: false,
+            timestamp: "2026-10-05T12:01:00.000Z"
+          }
+        ]
+      });
+    }
+    throw new Error(`Unexpected Evaluations page request: ${url}`);
+  };
+
+  try {
+    // Unfiltered: the badge is the store, which the card beside it also shows.
+    const whole = renderToStaticMarkup(
+      await EvaluationsPage({ searchParams: Promise.resolve({}) })
+    );
+    assert.match(whole, /title="Evaluations \(5000\)"/);
+    assert.match(whole, /5000/);
+
+    // A filter that excludes everything: the sidebar still describes a resource
+    // holding 5,000 runs rather than claiming it is empty.
+    const emptied = renderToStaticMarkup(
+      await EvaluationsPage({
+        searchParams: Promise.resolve({ prompt: "does-not-exist" })
+      })
+    );
+    assert.match(
+      emptied,
+      /title="Evaluations \(5000\)"/,
+      "a filter that empties the view does not empty the sidebar"
+    );
+    assert.match(
+      emptied,
+      /No evaluation results match these filters/,
+      "and the page still says plainly that the filters matched nothing"
+    );
+    assert.doesNotMatch(emptied, /title="Evaluations \(0\)"/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("EvaluationsPage loads the linked trace through the Usage token and keeps prompt scope", async () => {
   const previousFetch = globalThis.fetch;
   const previousEnv = saveConsolePageEnvironment();
