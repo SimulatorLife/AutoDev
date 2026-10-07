@@ -785,18 +785,31 @@ export interface MemoryInjectionEventSessionLookup {
   readonly canReadGlobal: boolean;
 }
 
+/**
+ * What an evidence reference can point at.
+ *
+ * Named here rather than left as the inline union below, because two places now
+ * need it: the Runtime validates a reference against it, and the Console renders
+ * the select that produces one. Two copies of this list would drift, and the
+ * failure is silent — a kind the Console offers but the Runtime refuses would be
+ * accepted by the form and rejected by the request, with no test in between.
+ */
+export const MEMORY_EVIDENCE_KINDS = [
+  "trajectory",
+  "trace",
+  "file",
+  "commit",
+  "pull_request",
+  "issue",
+  "rule",
+  "skill",
+  "document",
+  "other"
+] as const;
+export type MemoryEvidenceKind = (typeof MEMORY_EVIDENCE_KINDS)[number];
+
 export interface EvidenceReference {
-  readonly kind:
-    | "trajectory"
-    | "trace"
-    | "file"
-    | "commit"
-    | "pull_request"
-    | "issue"
-    | "rule"
-    | "skill"
-    | "document"
-    | "other";
+  readonly kind: MemoryEvidenceKind;
   /** Stable URI or provider-owned reference; payloads belong in their source system. */
   readonly uri: string;
   readonly revision?: string;

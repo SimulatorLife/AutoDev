@@ -1,3 +1,7 @@
+import {
+  MEMORY_EVIDENCE_KINDS,
+  MEMORY_REASON_CODES
+} from "@simulatorlife/autodev-core";
 import type {
   ControlApiMemoryWhyResponse,
   EvidenceReference,
@@ -825,7 +829,8 @@ function RecordDetailPanel({
             label: "Invalidate",
             variant: "destructive",
             testId: "memory-invalidate",
-            withReason: true
+            withReasonCode: true,
+            withEvidence: true
           })
         : null,
 
@@ -871,6 +876,7 @@ function RecordDetailPanel({
           variant: "secondary",
           testId: "memory-revise",
           withReason: true,
+          withEvidence: true,
           claim: record.claim
         })
       : null
@@ -904,6 +910,22 @@ interface RecordActionFormProps {
    * sentence; it just stops being the only option.
    */
   readonly withReason?: boolean | undefined;
+  /**
+   * Collect an evidence reference — a kind and where it lives.
+   *
+   * The Runtime refuses an invalidation or a revision that carries none, so
+   * without these inputs the action could only ever arrive as a rejected
+   * request. Every other transition records *why*; this records *on what basis*.
+   */
+  readonly withEvidence?: boolean | undefined;
+  /**
+   * Offer the bounded reason codes rather than a free-text reason.
+   *
+   * Invalidation is permanent, so the Runtime takes one of its own codes rather
+   * than prose. A select means the operator cannot compose a reason the Runtime
+   * will refuse.
+   */
+  readonly withReasonCode?: boolean | undefined;
   /** Pre-fill for a revision's replacement claim. */
   readonly claim?: string | undefined;
 }
@@ -916,6 +938,8 @@ function RecordActionForm({
   variant,
   testId,
   withReason,
+  withEvidence,
+  withReasonCode,
   claim
 }: RecordActionFormProps): React.JSX.Element {
   const hidden = (name: string, value: string): React.JSX.Element =>
@@ -936,6 +960,19 @@ function RecordActionForm({
     // inside the filters the operator was working in rather than at the top of
     // an unfiltered 30-day list.
     hidden("returned", memoryListQuery(listScope)),
+    // The Runtime requires a revision to name the experiences it derives from,
+    // and a promotion to carry the procedure body. Both are already on the
+    // record, so the form states them rather than asking the operator to retype
+    // what the page is showing them.
+    hidden(
+      "experienceIds",
+      (record.provenance?.experienceIds ?? []).join(",")
+    ),
+    // A MemoryRecord carries a `claim`, not a separate procedure body, so the
+    // promotion writes what the record actually asserts rather than a document
+    // the form had to ask for. A record that is not procedural never renders
+    // this form at all.
+    hidden("promotedContent", record.claim),
     claim === undefined
       ? null
       : React.createElement(TextField, {
@@ -958,6 +995,49 @@ function RecordActionForm({
           className: "basis-56 grow",
           testId: `memory-${action}-reason`
         })
+      : null,
+    // A bounded code rather than prose: the Runtime refuses any reason outside
+    // its own list, and a select makes that impossible to get wrong.
+    withReasonCode === true
+      ? React.createElement(SelectField, {
+          name: "reason",
+          id: `memory-${action}-reason-code-${record.id}`,
+          label: "Reason",
+          hideLabel: true,
+          className: "basis-56 grow",
+          testId: `memory-${action}-reason-code`,
+          options: MEMORY_REASON_CODES.map((code) => ({
+            value: code,
+            label: MEMORY_REASON_LABEL[code] ?? code
+          }))
+        })
+      : null,
+    withEvidence === true
+      ? [
+          React.createElement(SelectField, {
+            key: "evidence-kind",
+            name: "evidenceKind",
+            id: `memory-${action}-evidence-kind-${record.id}`,
+            label: "Evidence",
+            hideLabel: true,
+            className: "basis-32",
+            testId: `memory-${action}-evidence-kind`,
+            options: MEMORY_EVIDENCE_KINDS.map((kind) => ({
+              value: kind,
+              label: kind.replace(/_/gu, " ")
+            }))
+          }),
+          React.createElement(TextField, {
+            key: "evidence-uri",
+            name: "evidenceUri",
+            id: `memory-${action}-evidence-uri-${record.id}`,
+            label: "Where it lives",
+            hideLabel: true,
+            placeholder: "path, PR, or run reference",
+            className: "basis-56 grow",
+            testId: `memory-${action}-evidence-uri`
+          })
+        ]
       : null,
     React.createElement(Button, { type: "submit", variant, testId }, label)
   );

@@ -18,8 +18,12 @@ const REFUSAL_DETAIL: Record<ControlRefusalReason, string> = {
     "This action needs the confirmation box ticked before it can run; nothing was sent to the Runtime.",
   reason_not_accepted:
     "The Runtime does not accept that reason for this action, so nothing was changed.",
+  reason_required:
+    "This action needs to say what it is acting on before it can run; nothing was sent to the Runtime.",
   claim_required:
     "A revision needs the replacement claim text; nothing was sent to the Runtime.",
+  content_required:
+    "A skill promotion needs the procedure body to write. Nothing was sent to the Runtime.",
   evidence_required:
     "An outcome other than Not observed has to name the evidence for it — a kind and where it lives. Nothing was sent to the Runtime, so no outcome was recorded.",
   runtime_refused:

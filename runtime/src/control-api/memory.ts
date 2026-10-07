@@ -21,6 +21,7 @@ import {
   type ControlApiMemoryUseCohortsResponse,
   type ControlApiMemoryWhyResponse,
   type EvidenceReference,
+  MEMORY_EVIDENCE_KINDS,
   EXPERIENCE_OUTCOMES,
   type ExperienceEnvelope,
   MEMORY_EXECUTION_MODES,
@@ -118,18 +119,7 @@ const MEMORY_EXPERIENCE_ID_REQUIRED = "An experience id is required.";
 const MEMORY_FILTERS_INVALID = "Memory filters are invalid or incomplete.";
 const MEMORY_CONTROL_API_ORIGIN = "http://127.0.0.1";
 const PAGE_NUMBER_PATTERN = /^(0|[1-9]\d{0,8})$/u;
-const EVIDENCE_KINDS = [
-  "trajectory",
-  "trace",
-  "file",
-  "commit",
-  "pull_request",
-  "issue",
-  "rule",
-  "skill",
-  "document",
-  "other"
-] as const satisfies readonly EvidenceReference["kind"][];
+
 
 type MemoryControlRoute = {
   readonly resource:
@@ -556,7 +546,7 @@ function evidenceReferences(value: unknown): readonly EvidenceReference[] {
     throw new MemoryValidationError("Memory evidence references are invalid.");
   }
   return value.map((entry) => {
-    if (!isObject(entry) || !EVIDENCE_KINDS.includes(entry.kind as never))
+    if (!isObject(entry) || !MEMORY_EVIDENCE_KINDS.includes(entry.kind as never))
       throw new MemoryValidationError("Memory evidence reference is invalid.");
     const uri = requiredString(entry, "uri", 2048);
     const revision = entry.revision;

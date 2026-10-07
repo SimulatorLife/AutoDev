@@ -1,3 +1,5 @@
+import { MEMORY_REASON_CODES } from "@simulatorlife/autodev-core";
+
 import { type NextRequest, NextResponse } from "next/server.js";
 
 import {
@@ -27,12 +29,26 @@ interface MemoryActionPayload {
   readonly reason: string;
   readonly claim: string;
   readonly skillName: string;
+  /**
+   * The procedure body a promotion writes to the skill catalog. The Runtime
+   * requires it and refuses a promotion without one, so the records view sends
+   * the record's own content rather than letting the Runtime write a skill
+   * file with only a name and a description in it.
+   */
+  readonly promotedContent: string;
   readonly correlationToken: string;
   readonly outcomeKind: string;
   readonly reportKind: string;
   readonly useKind: string;
   readonly injectionEventId: string;
   readonly usedMemoryIds: readonly string[];
+  /**
+   * The experiences the record was derived from, as the records view renders
+   * them from the record's own provenance. A revision has to cite them, and
+   * the view is the only place that knows them; a request that invents a set
+   * would produce a revision nobody can trace.
+   */
+  readonly sourceExperienceIds: readonly string[];
   readonly evidence: readonly {
     readonly kind: string;
     readonly uri: string;
@@ -57,6 +73,19 @@ interface MemoryActionPayload {
 }
 
 const PURGE_REASONS = ["privacy_request", "retention_expired"] as const;
+
+/**
+ * Is this one of the Runtime's bounded reason codes?
+ *
+ * Checked against Core's own list rather than a copy of it, so a code the
+ * Runtime adds is accepted here the day it is added and one it drops stops
+ * being accepted the day it is dropped. Free text is refused: an invalidation
+ * is permanent, and "the operator had a feeling" is not something an audit
+ * record can carry.
+ */
+function isMemoryReasonCode(value: string): value is string {
+  return (MEMORY_REASON_CODES as readonly string[]).includes(value);
+}
 
 /** The payload fields a report names the single thing it acts on. */
 type MemorySubjectField =
@@ -244,11 +273,16 @@ async function parsePayload(
       reason: String(formData.get("reason") ?? "").trim(),
       claim: String(formData.get("claim") ?? "").trim(),
       skillName: String(formData.get("skillName") ?? "").trim(),
+      promotedContent: String(formData.get("promotedContent") ?? "").trim(),
       correlationToken: String(formData.get("correlationToken") ?? "").trim(),
       outcomeKind: String(formData.get("outcomeKind") ?? "").trim(),
       reportKind: String(formData.get("reportKind") ?? "").trim(),
       useKind: String(formData.get("useKind") ?? "").trim(),
       injectionEventId: String(formData.get("injectionEventId") ?? "").trim(),
+      sourceExperienceIds: String(formData.get("experienceIds") ?? "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value) => value !== ""),
       usedMemoryIds: String(formData.get("usedMemoryIds") ?? "")
         .split(",")
         .map((value) => value.trim())
@@ -278,6 +312,7 @@ async function parsePayload(
       reason: String(json.reason ?? "").trim(),
       claim: String(json.claim ?? "").trim(),
       skillName: String(json.skillName ?? "").trim(),
+      promotedContent: String(json.promotedContent ?? "").trim(),
       correlationToken: String(json.correlationToken ?? "").trim(),
       outcomeKind: String(json.outcomeKind ?? "").trim(),
       reportKind: String(json.reportKind ?? "").trim(),
@@ -285,6 +320,11 @@ async function parsePayload(
       injectionEventId: String(json.injectionEventId ?? "").trim(),
       usedMemoryIds: Array.isArray(json.usedMemoryIds)
         ? json.usedMemoryIds
+            .map((value) => String(value).trim())
+            .filter((value) => value !== "")
+        : [],
+      sourceExperienceIds: Array.isArray(json.sourceExperienceIds)
+        ? json.sourceExperienceIds
             .map((value) => String(value).trim())
             .filter((value) => value !== "")
         : [],
@@ -344,6 +384,8 @@ function executeAction(
     useKind,
     injectionEventId,
     usedMemoryIds,
+    sourceExperienceIds,
+    promotedContent,
     evidence,
     confirm
   } = payload;
@@ -364,18 +406,30 @@ function executeAction(
       );
     }
     case "verify": {
+      // The Runtime reads this action's body through `researchRequest`: a task
+      // and a query, nothing else. A free-text reason is not one of its keys,
+      // so sending one was a malformed request rather than a thin one.
+      const task = reason.trim();
+      if (!task) return "reason_required";
       return transitionMemoryRecord(
         recordId,
         "verify",
-        { workspaceId, reason: reason || "Operator manual verification." },
+        { workspaceId, task, query: reason },
         config
       );
     }
     case "invalidate": {
+      // Invalidation is permanent and permanent things need a reason an audit
+      // record can count on, so the Runtime takes one of its bounded
+      // `reasonCode`s rather than free text, and evidence of what contradicted
+      // the record. Both are checked here so the refusal names the missing
+      // field instead of arriving as a generic 400 from the Runtime.
+      if (!evidence.length) return "evidence_required";
+      if (!isMemoryReasonCode(reason)) return "reason_not_accepted";
       return transitionMemoryRecord(
         recordId,
         "invalidate",
-        { workspaceId, reason: reason || "Operator invalidation." },
+        { workspaceId, reasonCode: reason, evidence },
         config
       );
     }
@@ -384,10 +438,16 @@ function executeAction(
       // send, and saying "reason not accepted" would blame a reason the
       // operator filled in perfectly.
       if (!claim) return "claim_required";
+      if (!evidence.length) return "evidence_required";
+      // The Runtime requires the experiences a revision derives from, and the
+      // record's own provenance already names them — citing the record's
+      // sources is honest, where inventing a set would not be.
+      const experienceIds = [...new Set(sourceExperienceIds)];
+      if (experienceIds.length === 0) return "evidence_required";
       return transitionMemoryRecord(
         recordId,
         "revise",
-        { workspaceId, claim, reason: reason || "Operator revision." },
+        { workspaceId, claim, experienceIds, evidence },
         config
       );
     }
@@ -435,12 +495,21 @@ function executeAction(
     }
     case "promote-skill": {
       const name = skillName || `memory-proc-${recordId.slice(0, 8)}`;
+      // The Runtime requires the procedure's own `content` alongside the name
+      // and description, and a research context for the promotion. `memoryId`
+      // is not one of its keys — it lives in the path, not the body — so
+      // sending it was a malformed request.
+      const task = reason.trim();
+      if (!task) return "reason_required";
+      if (!promotedContent) return "content_required";
       return promoteMemoryProcedureToSkill(
         {
           workspaceId,
-          memoryId: recordId,
           skillName: name,
-          description: `Promoted from durable procedure memory ${recordId}`
+          description: `Promoted from durable procedure memory ${recordId}`,
+          content: promotedContent,
+          task,
+          query: reason
         },
         config
       );

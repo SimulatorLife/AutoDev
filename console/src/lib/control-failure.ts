@@ -39,7 +39,9 @@ export const CONTROL_REFUSAL_PARAM = "refusal";
 export const CONTROL_REFUSAL_REASONS = [
   "confirmation_missing",
   "reason_not_accepted",
+  "reason_required",
   "claim_required",
+  "content_required",
   "evidence_required",
   "runtime_refused"
 ] as const;

@@ -2714,13 +2714,40 @@ export function proposeMemoryRecord(
   );
 }
 
+/**
+ * Apply one lifecycle transition to a durable record.
+ *
+ * Each action has its *own* body, and the Runtime rejects the whole request if
+ * it carries a key that action does not read (`exactKeys` on the way in). The
+ * body this used to forward was the caller's payload verbatim — including
+ * `workspaceId`, which already travels in the query string, and a free-text
+ * `reason` that none of these actions read. Every record transition therefore
+ * came back `400 autodev_memory_invalid_request`, so verify, invalidate and
+ * revise were unreachable from the Console.
+ *
+ * The shapes below are the Runtime's, not this file's: research-backed actions
+ * take `task` and `query`, invalidation takes a bounded `reasonCode` plus
+ * evidence, and a revision takes the replacement `claim`, the experiences it
+ * derives from, and evidence. The names are per-action so a caller cannot
+ * assemble a body that is valid for a different one.
+ */
 export function transitionMemoryRecord(
   id: string,
   action: "verify" | "revise" | "invalidate" | "supersede",
   payload: {
     readonly workspaceId: string;
-    readonly reason?: string;
+    /** The research context a verification or supersession is justified by. */
+    readonly task?: string;
+    readonly query?: string;
     readonly claim?: string;
+    readonly experienceIds?: readonly string[];
+    readonly evidence?: readonly {
+      readonly kind: string;
+      readonly uri: string;
+      readonly revision?: string;
+    }[];
+    /** Bounded by the Runtime's reason-code list; free text is refused there. */
+    readonly reasonCode?: string;
     readonly supersededBy?: string;
   },
   config: ControlApiConfig,
@@ -2728,9 +2755,12 @@ export function transitionMemoryRecord(
 ): Promise<ControlApiResult<{ readonly memory: unknown }>> {
   const search = new URLSearchParams({ workspaceId: payload.workspaceId });
   const path = `${CONTROL_API_PATHS.memoryRecords}/${encodeURIComponent(id)}/${action}?${search.toString()}`;
+  // `workspaceId` is scope, not body: it is already in the query, and the
+  // Runtime treats an unexpected body key as a malformed request.
+  const { workspaceId: _scope, ...body } = payload;
   return postControlApi<{ readonly memory: unknown }>(
     path,
-    payload,
+    body,
     config,
     options
   );
@@ -2843,18 +2873,24 @@ export function reportMemoryInjectionUse(
 export function promoteMemoryProcedureToSkill(
   payload: {
     readonly workspaceId: string;
-    readonly memoryId: string;
     readonly skillName: string;
-    readonly description?: string;
+    readonly description: string;
+    /** The procedure body. The Runtime refuses a promotion without one. */
+    readonly content: string;
+    /** The research context the promotion is justified by. */
+    readonly task: string;
+    readonly query: string;
   },
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<{ readonly skill: unknown }>> {
   const search = new URLSearchParams({ workspaceId: payload.workspaceId });
   const path = `${CONTROL_API_PATHS.memoryPromoteSkill}?${search.toString()}`;
+  // `workspaceId` is scope, not body: the Runtime rejects an unexpected key.
+  const { workspaceId: _scope, ...body } = payload;
   return postControlApi<{ readonly skill: unknown }>(
     path,
-    payload,
+    body,
     config,
     options
   );
