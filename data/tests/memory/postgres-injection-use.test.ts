@@ -7,7 +7,9 @@ import type {
   MemoryUseReport
 } from "@simulatorlife/autodev-core";
 
+import { MemoryVectorError } from "../../src/memory/errors.ts";
 import { PostgresMemoryRepository } from "../../src/memory/postgres-memory-repository.ts";
+import { MEMORY_EMBEDDING_DIMENSIONS } from "../../src/memory/schema.ts";
 import { makeContext, makeExperience } from "./fixtures/builders.ts";
 import { FakeMemoryPool } from "./fixtures/fake-memory-pool.ts";
 
@@ -578,4 +580,118 @@ test("memory injection use reports reject UPDATE and DELETE in the fake append-o
     ]),
     /append-only/u
   );
+});
+
+/**
+ * The trusted-scope checks that stand in front of a use report.
+ *
+ * `assertTrustedUseReportScope` is what stops a caller filing an assessment
+ * against an injection event belonging to a repository they were not trusted
+ * for -- and its two structural checks, that the context *carries* a repository
+ * and task scope at all, and that the report's own identity *matches* that
+ * scope, had no failing test. The checks beside them did: authority, and a
+ * blank repository id, are both asserted above. The neighbouring cases
+ * (subset, eligible mode, status) were all reachable because they take a
+ * report about a real event; these two are about the context around it, and
+ * every fixture supplied a complete one.
+ */
+test("a use report is refused unless the context carries a repository and task scope", async () => {
+  const repository = repo();
+  const event = injectionEvent();
+  await appendInjection(repository, event);
+  const report = useReport(event);
+
+  for (const [label, context] of [
+    ["no repository", { ...sessionContext, repositoryId: undefined }],
+    ["a blank repository", { ...sessionContext, repositoryId: "  " }],
+    ["no task", { ...sessionContext, taskId: undefined }],
+    ["a blank task", { ...sessionContext, taskId: "   " }]
+  ] as const) {
+    await assert.rejects(
+      () =>
+        repository.recordInjectionUseReport({
+          report,
+          actor: { id: "trusted-curator", authority: "root" },
+          context: context as MemoryReadContext
+        }),
+      /require a trusted repository and task scope/u,
+      `${label} must not produce a trusted scope`
+    );
+  }
+});
+
+test("a use report whose identity differs from the trusted scope is refused", async () => {
+  const repository = repo();
+  const event = injectionEvent();
+  await appendInjection(repository, event);
+
+  // The attack this closes: the event lookup below is scoped to the trusted
+  // repository, but only *after* these three fields have been compared. A
+  // report claiming another repository would otherwise carry its own identity
+  // into storage while being read against this session's scope.
+  for (const [label, overrides] of [
+    ["another workspace", { workspaceId: "ws-other" }],
+    ["another repository", { repositoryId: "repo-other" }],
+    ["another task", { taskId: "session-other" }]
+  ] as const) {
+    await assert.rejects(
+      () =>
+        repository.recordInjectionUseReport({
+          report: { ...useReport(event), ...overrides },
+          actor: { id: "trusted-curator", authority: "root" },
+          context: sessionContext
+        }),
+      /identity must match trusted repository scope/u,
+      `${label} must be refused`
+    );
+  }
+});
+
+test("a use report naming an injection event outside the session is refused", async () => {
+  const repository = repo();
+  const event = injectionEvent();
+  await appendInjection(repository, event);
+
+  await assert.rejects(
+    () =>
+      repository.recordInjectionUseReport({
+        report: useReport(event, { injectionEventId: "inj-does-not-exist" }),
+        actor: { id: "trusted-curator", authority: "root" },
+        context: sessionContext
+      }),
+    /has no scope-aligned injection/u,
+    "a report must not be recorded against an event it cannot see"
+  );
+});
+
+test("the repository refuses a vector width that does not match the migrated width", () => {
+  // Fail-fast at construction rather than at query time. The mismatch is a
+  // deployment error -- a migration that moved the column width without the
+  // caller being redeployed -- and the alternative is every vector query
+  // failing deep inside pgvector with a distance complaint that names neither
+  // the configuration nor the migration.
+  const pool = new FakeMemoryPool();
+  assert.throws(
+    () =>
+      new PostgresMemoryRepository({
+        pool,
+        vectorSupport: { dimensions: MEMORY_EMBEDDING_DIMENSIONS + 1 }
+      }),
+    (error: unknown) =>
+      error instanceof MemoryVectorError &&
+      error.message.includes(String(MEMORY_EMBEDDING_DIMENSIONS + 1)) &&
+      error.message.includes(String(MEMORY_EMBEDDING_DIMENSIONS)),
+    "the message must name both the configured and the migrated width"
+  );
+
+  // The positive control: the matching width constructs, and no vectorSupport
+  // at all is legal, so "always throw" does not pass.
+  assert.doesNotThrow(
+    () =>
+      new PostgresMemoryRepository({
+        pool,
+        vectorSupport: { dimensions: MEMORY_EMBEDDING_DIMENSIONS }
+      })
+  );
+  assert.doesNotThrow(() => new PostgresMemoryRepository({ pool }));
 });
