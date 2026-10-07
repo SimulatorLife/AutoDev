@@ -3199,6 +3199,18 @@ export async function handleMemoryControlApiRequest(
   try {
     parsedFilters = parseMemoryRequestFilters(request, pathname, route, actor);
   } catch (error) {
+    // A refused filter is still a request someone made against this resource,
+    // and it leaves no other trace: the read never reaches the service, so the
+    // audit trail is the only record that a caller was probing windows it
+    // cannot read. Auditing here rather than in `sendFilterError` keeps the
+    // route on the entry, which is what makes the refusal attributable.
+    const scopeRefusal = error instanceof MemoryScopeAccessError;
+    auditMemoryFailure(
+      audit,
+      route,
+      scopeRefusal ? "denied" : "error",
+      scopeRefusal ? "scope_filter_forbidden" : "invalid_filter"
+    );
     sendFilterError(response, error);
     return true;
   }
