@@ -580,3 +580,63 @@ test("a non-collision injection-event insert failure surfaces as itself", async 
   );
   assert.equal(pool.tables.memory_injection_events.size, 0);
 });
+/**
+ * The identity and scope checks in front of a session outcome report.
+ *
+ * Same shape as the use-report checks, and the same reason they went untested:
+ * every case in this file is a *concurrency* case about a well-formed report
+ * against a complete context, so nothing here could express a caller whose
+ * report claims an identity the trusted context does not carry.
+ *
+ * A session outcome report is the evidence a whole ablation is judged on, so a
+ * report filed under another repository's identity would attribute one
+ * repository's task success to another's window.
+ */
+test("a session outcome report must match the trusted identity and carry a session task", async () => {
+  const pool = await poolWithInjection();
+  const repository = new PostgresMemoryRepository({ pool });
+  const record = (
+    report: MemorySessionOutcomeReport,
+    context: MemoryReadContext
+  ) =>
+    repository.recordSessionOutcomeReport({
+      report,
+      actor: { id: "op-1", authority: "curator" },
+      context
+    });
+
+  for (const [label, overrides] of [
+    ["another repository", { repositoryId: "repo-2" }],
+    ["another workspace", { workspaceId: "ws-2" }],
+    ["another session", { taskId: "session-B" }]
+  ] as const) {
+    await assert.rejects(
+      () => record(sessionReport(overrides), sessionContext),
+      /identity must match trusted context/u,
+      `${label} must be refused`
+    );
+  }
+
+  // The context side of the same check. Only reachable when *both* sides carry
+  // the blank task: the identity comparison above runs first, so a context with
+  // no task against a report that has one is already refused there. A blank on
+  // both is the one shape that matches and then trips this guard, which is why
+  // it reads as unreachable until you follow the comparison order.
+  for (const taskId of ["", "   "] as const) {
+    await assert.rejects(
+      () =>
+        record(
+          sessionReport({ taskId }),
+          { ...sessionContext, taskId } as MemoryReadContext
+        ),
+      /requires a trusted session task context/u,
+      `a blank session task on both sides (${JSON.stringify(taskId)}) must be refused`
+    );
+  }
+
+  // The positive control: the matching report on the matching context is
+  // appended, so the refusals above are about the identity and not about the
+  // write being impossible.
+  const accepted = await record(sessionReport(), sessionContext);
+  assert.equal(accepted.appended, true);
+});

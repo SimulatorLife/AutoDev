@@ -250,3 +250,34 @@ test("a bigint string and a zero count are both legal, so the guard is not 'reje
     );
   }
 });
+
+test("a use-cohort cell with an unknown use kind is refused", async () => {
+  // The third enumerated field on this row, and the only one of the three that
+  // the cases above leave alone: `session_cardinality` and `memory_mode` are
+  // both refused above, while `use_kind` sits beside them behind a `?? null`
+  // and a membership test that nothing could reach. A cell grouped by an
+  // unrecognised use kind is what the Console reads as assessment coverage.
+  const repository = new PostgresMemoryRepository({
+    pool: poolReturning([useCell({ use_kind: "maybe" })])
+  });
+
+  await assert.rejects(
+    repository.aggregateInjectionUseCohorts(useCohortFilterBase),
+    (error: unknown) =>
+      error instanceof MemoryHydrationError &&
+      /expected a bounded use kind, got maybe/u.test(error.message)
+  );
+
+  // The positive control, and it is the reason the check is `useKind !== null
+  // && ...`: a LEFT JOIN produces NULL here for an exposure nobody assessed,
+  // which is a real and common cell rather than a malformed one.
+  const unreported = new PostgresMemoryRepository({
+    pool: poolReturning([useCell({ use_kind: null })])
+  });
+  const page = await unreported.aggregateInjectionUseCohorts(useCohortFilterBase);
+  assert.equal(
+    page.cells[0]?.useKind,
+    null,
+    "an exposure with no assessment must hydrate with a null use kind"
+  );
+});
