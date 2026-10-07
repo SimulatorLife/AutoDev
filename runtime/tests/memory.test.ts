@@ -5875,3 +5875,95 @@ test("only a live memory can be revised", async () => {
   assert.deepEqual(repository.events.at(-1)?.relatedMemoryIds, [uncertain.id]);
   assert.equal(repository.events.at(-1)?.action, "revised");
 });
+/**
+ * Three invariants that were stated in comments and held by nothing: telemetry
+ * is observational, the candidate cap is a real bound, and a use report cannot
+ * smuggle an unbounded id list or evidence list past the service.
+ */
+function explodingMeter(): Meter {
+  const boom = (): never => {
+    throw new Error("telemetry backend is down");
+  };
+  return {
+    createCounter: () => ({ add: boom, record: boom }),
+    createHistogram: () => ({ add: boom, record: boom }),
+    createGauge: () => ({ add: boom, record: boom })
+  } as unknown as Meter;
+}
+
+test("telemetry is observational: a broken meter never fails a memory operation", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository, { meter: explodingMeter() });
+  await repository.appendExperience(experience("source-experience"));
+  repository.hits = [
+    { memory: record("candidate"), score: 1, matchedSignals: ["lexical"] }
+  ];
+
+  // `withSpan` records an operation counter and a duration for every call, so
+  // every operation below hits the failing instruments at least once.
+  const proposal = await service.propose(proposalInput(), root, context);
+  assert.equal(proposal.status, "proposed");
+
+  const packet = await service.research(researchRequest());
+  assert.deepEqual(
+    packet.entries.map((entry) => entry.memoryId),
+    ["candidate"]
+  );
+  assert.equal(repository.memories.size, 1);
+  assert.equal(repository.events.length, 1);
+});
+
+test("the reconstruction candidate cap is a bound, not a default", async () => {
+  const repository = new FakeMemoryRepository();
+
+  for (const maxResearchCandidates of [0, 41, 1.5]) {
+    assert.throws(
+      () => makeService(repository, { maxResearchCandidates }),
+      /between 1 and 40/u,
+      `expected ${maxResearchCandidates} to be refused`
+    );
+  }
+
+  // Both ends of the accepted range.
+  assert.ok(makeService(repository, { maxResearchCandidates: 1 }));
+  assert.ok(makeService(repository, { maxResearchCandidates: 40 }));
+  assert.ok(makeService(repository));
+});
+
+test("a use report bounds the memory ids and evidence it carries", async () => {
+  const tooMany = (count: number): readonly string[] =>
+    Array.from({ length: count }, (_unused, index) => `mem-${index}`);
+  const manyEvidence = Array.from({ length: 65 }, (_unused, index) => ({
+    kind: "document" as const,
+    uri: `https://example.test/evidence-${index}`
+  }));
+
+  // The bounds sit after the event lookup, so the session has to be there.
+  for (const [override, message] of [
+    [{ usedMemoryIds: tooMany(65) }, /too many memory ids/u],
+    [{ evidence: manyEvidence }, /[Tt]oo many injection-use evidence references/u]
+  ] as const) {
+    const { repository, service } = await useReportHarness();
+    await persistOutcomeInjection(repository, service, useInjectionEvent());
+    await assert.rejects(
+      service.recordInjectionUseReport({
+        ...useReportInput(experience()),
+        ...override
+      }),
+      message
+    );
+  }
+
+  // 64 memory ids is inside the bound, so it gets as far as the invariant that
+  // asks them to actually be part of the injected packet -- a different check,
+  // with its own message, one layer further on.
+  const { repository, service } = await useReportHarness();
+  await persistOutcomeInjection(repository, service, useInjectionEvent());
+  await assert.rejects(
+    service.recordInjectionUseReport({
+      ...useReportInput(experience()),
+      usedMemoryIds: tooMany(64)
+    }),
+    /subset of the injected memoryIds/u
+  );
+});
