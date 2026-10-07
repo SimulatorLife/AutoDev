@@ -95,6 +95,20 @@ export const METRIC_GIT_LINES_REMOVED = "autodev.git.lines_removed";
 /** Marks a commit whose diff could not be fully summarized. */
 export const ATTR_AUTODEV_GIT_PARTIAL = "autodev.git.partial" as const;
 /**
+ * How the actor on a commit was established.
+ *
+ * `commit_identity` means the commit itself carried an AutoDev committer, so
+ * the actor is read from git. `unattributed` means the commit was observed but
+ * carries no agent identity -- a human commit, or one made before this
+ * identity existed. Both are facts worth querying; a downstream breakdown must
+ * be able to exclude the unattributed ones rather than average over them.
+ */
+export const ATTR_AUTODEV_GIT_ATTRIBUTION = "autodev.git.attribution" as const;
+export const GIT_ATTRIBUTION_VALUES = Object.freeze([
+  "commit_identity",
+  "unattributed"
+] as const);
+/**
  * Process-local commit-idempotency bound. A commit observed by two producers
  * (a session and a later reconciliation pass) must still be counted once.
  */
@@ -884,6 +898,14 @@ export interface RecordGitCommitOptions {
   readonly role?: string | null | undefined;
   readonly provider?: string | null | undefined;
   readonly model?: string | null | undefined;
+  /**
+   * Whether `role`/`provider` came from the commit's own committer identity.
+   *
+   * When false they are dropped rather than emitted: an actor supplied by the
+   * observing Runtime is a guess whenever more than one actor could have made
+   * the commit, and a blended number is worse than an unattributed one.
+   */
+  readonly actorFromCommitIdentity?: boolean | undefined;
 }
 
 /**
@@ -919,11 +941,17 @@ export function recordGitCommit(options: RecordGitCommitOptions): boolean {
   if (!instruments) return false;
 
   const attributes: Record<string, string> = metricAttributes({
-    provider: options.provider,
+    // Actor dimensions are only carried when the commit itself established
+    // them. `metricAttributes` already drops anything that fails its bounded
+    // allowlist, so an unknown role contributes no dimension at all.
+    provider: options.actorFromCommitIdentity ? options.provider : null,
     model: options.model,
     workspace: options.workspace,
-    role: options.role
+    role: options.actorFromCommitIdentity ? options.role : null
   });
+  attributes[ATTR_AUTODEV_GIT_ATTRIBUTION] = options.actorFromCommitIdentity
+    ? "commit_identity"
+    : "unattributed";
   if (options.partial) attributes[ATTR_AUTODEV_GIT_PARTIAL] = "true";
 
   try {

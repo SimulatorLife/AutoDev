@@ -55,6 +55,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
   type AgentEventReporter,
+  gitCommitIdentityEnv,
   resolveAgentEventReporter,
   SKILL_READ_SOURCE
 } from "@simulatorlife/autodev-runtime/telemetry";
@@ -724,7 +725,10 @@ function copilotMcpArgs(
       env: {
         AUTODEV_BRIDGE_URL: `http://${HOST}:${PORT}`,
         AUTODEV_BRIDGE_TOKEN: AUTH_TOKEN,
-        AUTODEV_SPAWN_SESSION: spawnSession
+        AUTODEV_SPAWN_SESSION: spawnSession,
+        // The spawned Codex inherits this, so commits it makes carry an
+        // identity attribution can be read back from.
+        ...gitCommitIdentityEnv({ role: agentRole, provider: "copilot" })
       }
     };
   }

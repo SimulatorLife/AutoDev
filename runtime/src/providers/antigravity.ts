@@ -67,6 +67,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
   type AgentEventReporter,
+  gitCommitIdentityEnv,
   REQUEST_ID_HEADER,
   resolveAgentEventReporter,
   SKILL_READ_SOURCE
@@ -2409,7 +2410,17 @@ function runAgy(
         {
           cwd,
           env: withAutoDevOtelResourceContext(
-            agyEnvironment(spawnSession, isolatedState.isolatedHome),
+            {
+              ...agyEnvironment(spawnSession, isolatedState.isolatedHome),
+              // Commits this agent makes carry its own bounded identity, so
+              // attribution is read back from git rather than guessed by the
+              // observing Runtime. Set as env, not repo config, so nothing is
+              // persisted into the workspace.
+              ...gitCommitIdentityEnv({
+                role: agentRole,
+                provider: "antigravity"
+              })
+            },
             workspaceKey,
             agentRole
           ),

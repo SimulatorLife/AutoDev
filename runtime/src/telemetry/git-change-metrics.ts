@@ -11,6 +11,11 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import {
+  type GitCommitActor,
+  gitCommitActorFromEmail
+} from "./git-commit-identity.ts";
+
 const execFileAsync = promisify(execFile);
 
 const GIT_TIMEOUT_MS = 10_000;
@@ -31,6 +36,15 @@ export interface GitCommitChange {
   readonly filesDeleted: number;
   readonly linesAdded: number;
   readonly linesRemoved: number;
+  /**
+   * The actor recovered from the commit's own committer identity, or `null`
+   * when the commit was not made by an AutoDev agent.
+   *
+   * Recovered from git rather than supplied by the caller: the caller is
+   * observing a workspace it may share with subagents, and cannot know which
+   * of them made this commit.
+   */
+  readonly actor: GitCommitActor | null;
   /**
    * True when some diff could not be summarized -- a binary file, an unreadable
    * numstat, or a merge commit whose combined diff git declines to render.
@@ -150,6 +164,14 @@ export async function measureGitCommitChanges({
     .slice(0, MAX_COMMITS_PER_OBSERVATION);
 
   for (const commit of bounded) {
+    // The committer email is read from the commit itself, so attribution does
+    // not depend on the caller knowing which actor ran in this workspace.
+    const identity = await runGit(repositoryRoot, [
+      "log",
+      "-1",
+      "--format=%ce",
+      commit
+    ]);
     const names = await runGit(repositoryRoot, [
       "diff-tree",
       "--no-commit-id",
@@ -179,6 +201,11 @@ export async function measureGitCommitChanges({
         .length,
       linesAdded: lines.linesAdded,
       linesRemoved: lines.linesRemoved,
+      // A human commit has no AutoDev identity and stays unattributed rather
+      // than being folded into agent output.
+      actor: gitCommitActorFromEmail(
+        identity.exitCode === 0 ? identity.stdout.trim() : null
+      ),
       partial: statuses.partial || lines.partial
     });
   }

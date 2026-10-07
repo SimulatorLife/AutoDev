@@ -11,11 +11,20 @@ import {
   parseChangeStatuses,
   parseNumstat
 } from "../src/telemetry/git-change-metrics.ts";
+import {
+  gitCommitActorFromEmail,
+  gitCommitIdentity
+} from "../src/telemetry/git-commit-identity.ts";
 
-function execGit(root: string, args: readonly string[]): string {
+function execGit(
+  root: string,
+  args: readonly string[],
+  options: { readonly env?: NodeJS.ProcessEnv } = {}
+): string {
   return execFileSync("git", ["-C", root, ...args], {
     encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"]
+    stdio: ["ignore", "pipe", "pipe"],
+    ...options
   }).trim();
 }
 
@@ -138,5 +147,81 @@ test("an empty commit range lists no commits rather than failing", async () => {
     assert.deepEqual(await listCommitsInRange(root, ""), []);
     // Nothing committed since HEAD: a normal result, not an error.
     assert.deepEqual(await listCommitsInRange(root, `${head}..${head}`), []);
+  });
+});
+
+test("an agent commit's own identity is read back from git, a human commit's is not", async () => {
+  await withGitRepository(async (root) => {
+    // A human commit: the repository's ordinary identity, no AutoDev marker.
+    await writeFile(join(root, "human.txt"), "human\n");
+    execGit(root, ["add", "."]);
+    execGit(root, ["commit", "-q", "-m", "human work"]);
+    const humanCommit = execGit(root, ["rev-parse", "HEAD"]);
+
+    // An agent commit: made in a process carrying the AutoDev identity, which
+    // is exactly how a spawned agent commits.
+    const identity = gitCommitIdentity({
+      role: "orchestrator",
+      provider: "antigravity"
+    });
+    assert.ok(identity, "a known role must yield an identity");
+    await writeFile(join(root, "agent.txt"), "agent\n");
+    execGit(root, ["add", "."]);
+    execGit(root, ["commit", "-q", "-m", "agent work"], {
+      env: {
+        ...process.env,
+        GIT_COMMITTER_NAME: identity.name,
+        GIT_COMMITTER_EMAIL: identity.email,
+        GIT_AUTHOR_NAME: identity.name,
+        GIT_AUTHOR_EMAIL: identity.email
+      }
+    });
+    const agentCommit = execGit(root, ["rev-parse", "HEAD"]);
+
+    const changes = await measureGitCommitChanges({
+      repositoryRoot: root,
+      commits: [humanCommit, agentCommit]
+    });
+    const byCommit = new Map(changes.map((change) => [change.commit, change]));
+
+    // Attribution comes from the commit, so the two are told apart without the
+    // observer knowing which actor ran.
+    assert.equal(byCommit.get(humanCommit)?.actor, null);
+    assert.deepEqual(byCommit.get(agentCommit)?.actor, {
+      role: "orchestrator",
+      provider: "antigravity"
+    });
+  });
+});
+
+test("the agent identity is bounded and round-trips through a real commit", async () => {
+  await withGitRepository(async (root) => {
+    const identity = gitCommitIdentity({ role: "subagent", provider: "codex" });
+    assert.ok(identity);
+    assert.equal(
+      identity.email,
+      "autodev-subagent-codex@agents.autodev.local",
+      "the identity must be a fixed domain plus bounded parts"
+    );
+    assert.deepEqual(gitCommitActorFromEmail(identity.email), {
+      role: "subagent",
+      provider: "codex"
+    });
+
+    // An unknown role produces no identity at all, so the commit stays the
+    // user's rather than becoming a fabricated agent commit.
+    assert.equal(
+      gitCommitIdentity({ role: undefined, provider: "codex" }),
+      null
+    );
+    assert.equal(gitCommitIdentity({ role: "  ", provider: "codex" }), null);
+    // An out-of-vocabulary provider is collapsed, not written verbatim.
+    assert.equal(
+      gitCommitIdentity({ role: "subagent", provider: "some-random-vendor" })
+        ?.email,
+      "autodev-subagent-other@agents.autodev.local"
+    );
+    // A human email is not an AutoDev identity.
+    assert.equal(gitCommitActorFromEmail("dev@example.com"), null);
   });
 });

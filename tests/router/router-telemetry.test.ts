@@ -31,6 +31,7 @@ import {
   endLogicalRequestSpan,
   flushTelemetryMetrics,
   getFinishedSpans,
+  ATTR_AUTODEV_GIT_ATTRIBUTION,
   ATTR_AUTODEV_GIT_PARTIAL,
   METRIC_CONTEXT_COMPACTIONS,
   METRIC_GIT_COMMITS,
@@ -2559,7 +2560,9 @@ test("a git commit's change output is recorded once, with no identity in dimensi
     linesAdded: 42,
     linesRemoved: 7,
     workspace: { key: "workspace-a" },
-    role: "worker"
+    role: "worker",
+    // Established by the commit's own committer identity, not by the observer.
+    actorFromCommitIdentity: true
   });
   assert.equal(recorded, true, "a first observation must be recorded");
 
@@ -2599,6 +2602,11 @@ test("a git commit's change output is recorded once, with no identity in dimensi
   assert.ok(point);
   // The existing `autodev.workspace` dimension, by its wire name.
   assert.equal(point.attributes["autodev.workspace"], "workspace-a");
+  assert.equal(
+    point.attributes[ATTR_AUTODEV_GIT_ATTRIBUTION],
+    "commit_identity",
+    "a commit-sourced actor is labelled as such"
+  );
   assert.equal(point.attributes[ATTR_AUTODEV_GIT_PARTIAL], undefined);
 
   // The commit id is used for idempotency and must never become a dimension.
@@ -2613,6 +2621,46 @@ test("a git commit's change output is recorded once, with no identity in dimensi
       `${forbidden} must not appear in metric dimensions`
     );
   }
+});
+
+test("an actor the observer merely guessed is dropped, not blended onto a role", async () => {
+  installExporter();
+  resetTrackedGitCommitsForTest();
+
+  // An actor the observing Runtime merely guessed is dropped, so a commit made
+  // in a workspace shared with subagents cannot be blended onto the root role.
+  recordGitCommit({
+    commit: "d".repeat(40),
+    filesChanged: 1,
+    filesAdded: 1,
+    filesDeleted: 0,
+    linesAdded: 5,
+    linesRemoved: 0,
+    // Supplied by the observer, NOT read from the commit:
+    actorFromCommitIdentity: false,
+    role: "orchestrator",
+    provider: "antigravity",
+    // Distinct workspace so this point is selected by identity rather than by
+    // being the first "unattributed" one -- the partial-commit test produces an
+    // unattributed point too, and matching on that alone would assert against
+    // the wrong commit and stay green no matter what.
+    workspace: { key: "workspace-multi-actor" }
+  });
+  await flushTelemetryMetrics();
+  const unattributed = findMetricPoints(METRIC_GIT_COMMITS).find(
+    (point) => point.attributes["autodev.workspace"] === "workspace-multi-actor"
+  );
+  assert.ok(
+    unattributed,
+    "a commit with no source-confirmed actor is labelled"
+  );
+  assert.equal(unattributed.attributes["autodev.agent.role"], undefined);
+  assert.equal(unattributed.attributes["gen_ai.provider.name"], undefined);
+  // The workspace is still certain, so it survives.
+  assert.equal(
+    unattributed.attributes["autodev.workspace"],
+    "workspace-multi-actor"
+  );
 });
 
 test("a partially measurable commit is labelled rather than silently shrunk", async () => {
