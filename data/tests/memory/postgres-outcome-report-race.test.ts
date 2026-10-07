@@ -397,3 +397,105 @@ test("a concurrent use report with a different body still conflicts", async () =
       error instanceof MemoryConflictError && /already exists/u.test(error.message)
   );
 });
+
+/**
+ * The other half of the same catch block: what an insert failure that is *not*
+ * a collision does.
+ *
+ * `isUniqueViolation` is the only discriminator in those blocks, so every other
+ * driver failure has to reach the caller as itself. That is not a stylistic
+ * preference. A connection lost, a missing table, a constraint the schema
+ * added after this code shipped — all of them would otherwise be reported as
+ * `MemoryConflictError("... already exists ...")`, which tells the reporter
+ * their report lost a race with another writer. Nothing raced. The reporter
+ * reads a collision, concludes a duplicate is already stored, and the report
+ * is dropped with no signal that it was never written at all.
+ *
+ * So the assertion is object identity, not type: it fails both if the error is
+ * swallowed and if it is converted, and the converted case is the one that
+ * matters. These are the last unexecuted lines of the three write paths.
+ *
+ * The injected error carries a `code` because that is the harder shape to
+ * discriminate. `isUniqueViolation` tests the code's *value*, so an error that
+ * has a code and is not `23505` exercises the decision itself rather than the
+ * `typeof`/`in` guards above it — and `08006` is a real pg
+ * `connection_failure`, not a value invented to pass.
+ */
+function driverFailure(code: string, message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code });
+}
+
+function failingInsertPool(
+  base: FakeMemoryPool,
+  table:
+    | "memory_outcome_reports"
+    | "memory_session_outcome_reports"
+    | "memory_injection_use_reports",
+  failure: Error
+): MemoryConnectionPool {
+  return {
+    query: (text, params) => {
+      if (text.includes(`INSERT INTO ${table}`)) return Promise.reject(failure);
+      return base.query(text, params);
+    },
+    connect: () => base.connect(),
+    end: () => base.end()
+  };
+}
+
+test("a non-collision outcome-report insert failure surfaces as itself", async () => {
+  const pool = await poolWithInjection();
+  const failure = driverFailure("08006", "connection terminated unexpectedly");
+  const repository = new PostgresMemoryRepository({
+    pool: failingInsertPool(pool, "memory_outcome_reports", failure)
+  });
+
+  await assert.rejects(
+    repository.recordOutcomeReport({
+      report: outcomeReport(),
+      actor: { id: "op-1", authority: "root" },
+      context: sessionContext
+    }),
+    // Identity, not `instanceof`: `MemoryConflictError` is also what four
+    // unrelated preconditions on this path throw, so a type check would pass
+    // for a write that never reached the insert at all.
+    (error: unknown) => error === failure
+  );
+  assert.equal(pool.tables.memory_outcome_reports.size, 0);
+});
+
+test("a non-collision session-report insert failure surfaces as itself", async () => {
+  const pool = await poolWithInjection();
+  const failure = driverFailure("08006", "connection terminated unexpectedly");
+  const repository = new PostgresMemoryRepository({
+    pool: failingInsertPool(pool, "memory_session_outcome_reports", failure)
+  });
+
+  await assert.rejects(
+    repository.recordSessionOutcomeReport({
+      report: sessionReport(),
+      actor: { id: "op-1", authority: "curator" },
+      context: sessionContext
+    }),
+    (error: unknown) => error === failure
+  );
+  assert.equal(pool.tables.memory_session_outcome_reports.size, 0);
+});
+
+test("a non-collision use-report insert failure surfaces as itself", async () => {
+  const pool = await poolWithUseInjection();
+  const failure = driverFailure("08006", "connection terminated unexpectedly");
+  const repository = new PostgresMemoryRepository({
+    pool: failingInsertPool(pool, "memory_injection_use_reports", failure)
+  });
+
+  await assert.rejects(
+    repository.recordInjectionUseReport({
+      report: useReport(),
+      actor: { id: "curator-1", authority: "curator" },
+      context: useContext
+    }),
+    (error: unknown) => error === failure
+  );
+  assert.equal(pool.tables.memory_injection_use_reports.size, 0);
+});
