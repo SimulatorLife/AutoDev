@@ -17,10 +17,12 @@ import {
  * read*: the hook takes a transcript path from its stdin payload and asks the
  * Runtime to read that file, so a payload naming an arbitrary absolute path
  * would turn a memory hook into an arbitrary-file reader. `isTranscriptPathAllowed`
- * is the only thing standing there. The second is a *credential read*: with no
- * token in the environment the hook goes looking through `~/.codex` and
- * `~/.claude` for one, so which file it reads first — and what it accepts out
- * of it — decides whose credential it uses.
+ * is the hook's half of that, and for Codex it is the only check at all. For
+ * Claude Code the hook declines to constrain the path -- see the test below for
+ * why, and for where that boundary actually is. The second is a *credential
+ * read*: with no token in the environment the hook goes looking through
+ * `~/.codex` and `~/.claude` for one, so which file it reads first — and what
+ * it accepts out of it — decides whose credential it uses.
  *
  * The hook's contract is to fail open and quietly, which is exactly what makes
  * it hard to test: a capture that silently declines is indistinguishable from
@@ -280,11 +282,28 @@ test("CODEX_HOME defaults to ~/.codex when unset", async () => {
   });
 });
 
-test("a Claude Code capture is routed to its own endpoint and skips the allowlist", async () => {
-  // Deliberate asymmetry, and worth pinning rather than guessing at: the Codex
-  // path is constrained to its sessions directory because Codex writes
-  // transcripts there, while a Claude Code capture accepts any absolute path.
-  // If that ever stops being true this is the test that notices.
+test("a Claude Code capture is routed to its own endpoint and skips the hook-side allowlist", async () => {
+  // Deliberate asymmetry, and worth pinning for the *right* reason, because the
+  // obvious reading of it is wrong in a way that would lead to a damaging fix.
+  //
+  // The hook constrains a Codex transcript to `~/.codex/sessions` because it
+  // knows where Codex writes them. It cannot do the same for Claude Code, not
+  // because any absolute path is acceptable there -- it is not -- but because
+  // the root that actually governs a Claude Code capture is the operator's
+  // `transcript_root` in their own binding file, which this hook never reads.
+  // Guessing `~/.claude/projects` instead would constrain a boundary to a
+  // directory the operator may not use, and silently drop captures for anyone
+  // whose configured root is elsewhere.
+  //
+  // The boundary is not missing, it is one layer down and strictly stronger:
+  // `runtime/src/control-api/memory.ts` canonicalises the path with `realpath`,
+  // holds it beneath the operator-configured root, matches the session id in the
+  // filename, and re-opens it with `O_NOFOLLOW`. That is covered directly by
+  // runtime/tests/memory-claude-code-capture-route.test.ts ("a transcript
+  // outside the bound transcript root is refused", "a transcript that is a
+  // symlink out of the bound root is refused", "a transcript whose name carries
+  // another session is refused"). This hook check is an early-out that saves a
+  // pointless request, not the thing standing there.
   await withTempHome(async (home) => {
     const { requests } = await capture({
       env: {
