@@ -3230,8 +3230,11 @@ export async function handleMemoryControlApiRequest(
     dependencies.createMemoryService ?? createOrchestratorMemoryService
   )();
   if (!service) {
-    if (method === "POST")
-      auditMemoryFailure(audit, route, "error", "memory_unavailable");
+    // Audited for reads as well as writes. Reads are audited when they succeed,
+    // so a read that cannot even start would otherwise be the one outcome on
+    // this route with no trace at all — and "storage is not configured" is a
+    // deployment fault whose only symptom is a page that will not load.
+    auditMemoryFailure(audit, route, "error", "memory_unavailable");
     sendMemoryError(
       response,
       503,
@@ -3262,7 +3265,32 @@ export async function handleMemoryControlApiRequest(
       audit
     );
   } catch (error) {
+    // A read is audited when it succeeds, so a failed one has to be audited
+    // too — otherwise the trail shows an operator a clean record of reads that
+    // in fact fell over. The causes stay apart because they ask for different
+    // next moves: a refusal is the caller's business and will fail identically
+    // on retry, a rejected request is theirs to fix, and a failed operation is
+    // the store's, where retrying is the answer.
+    //
+    // Authorization and scope are classified exactly as `mutateRequest`
+    // classifies them. The service re-checks authority per record, so it can
+    // raise these from a read; answering 503 for one would tell an operator
+    // their permissions problem is a broken install.
+    if (
+      error instanceof MemoryAuthorizationError ||
+      error instanceof MemoryScopeAccessError
+    ) {
+      auditMemoryFailure(audit, route, "denied", "scope_or_authority_forbidden");
+      sendMemoryError(
+        response,
+        403,
+        "autodev_memory_forbidden",
+        "Memory access is not granted for this reader."
+      );
+      return true;
+    }
     if (error instanceof MemoryValidationError) {
+      auditMemoryFailure(audit, route, "error", "invalid_request");
       sendMemoryError(
         response,
         400,
@@ -3271,6 +3299,7 @@ export async function handleMemoryControlApiRequest(
       );
       return true;
     }
+    auditMemoryFailure(audit, route, "error", "operation_failed");
     sendMemoryError(
       response,
       503,
