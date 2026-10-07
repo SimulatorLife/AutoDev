@@ -1270,6 +1270,227 @@ test("revisions create proposals and never rewrite the currently active claim", 
   assert.deepEqual(repository.events.at(-1)?.relatedMemoryIds, [original.id]);
 });
 
+test("a worker may not propose memory into the global scope, even one that may read it", async () => {
+  // `isMemoryScopeVisibleTo` answers `canReadGlobal` for a global scope, so a
+  // worker permitted to *read* global memory passes the visibility arm outright.
+  // The explicit `scope.kind === "global"` arm is then the only thing that can
+  // refuse, which is why it exists separately.
+  //
+  // The global grant is what makes this a test of that arm. With the default
+  // context the visibility arm refuses for a different reason, and the case
+  // passes whether or not the global arm is there -- it asserts the guard, not
+  // the branch, and a guard with a tested arm and an untested one reads, to a
+  // mutation, as a guard.
+  const service = makeService(new FakeMemoryRepository());
+  const globalReader: MemoryReadContext = { ...context, canReadGlobal: true };
+
+  await assert.rejects(
+    service.propose(
+      {
+        kind: "semantic",
+        scope: { kind: "global" },
+        claim: "Every task should read the shared configuration first.",
+        experienceIds: ["experience-1"],
+        evidence: [source]
+      },
+      worker,
+      globalReader
+    ),
+    /Workers may propose only memory scoped to their authorized/u
+  );
+});
+
+/**
+ * The graduation preconditions, each refused on its own terms.
+ *
+ * Promoting a procedure writes a canonical skill -- an artifact other agents
+ * load by name. Every gate on that path was therefore load-bearing and every one
+ * of them except the "successful, passing" run filter had no failing test: a
+ * procedure that was never verified, that cited one run, that no longer matches
+ * current state at the moment of promotion, or whose superseding replacement was
+ * never verified, all reached the writer. Each case below therefore builds a
+ * memory that satisfies *every other* precondition, so the one it asserts is the
+ * only thing that can refuse it.
+ */
+
+const SKILL_INPUT = {
+  name: "verified-memory-workflow",
+  description: "A validated workflow.",
+  content: "Re-check evidence and run focused tests."
+} as const;
+
+const SKILL_WRITER: MemorySkillPromotionWriter = {
+  createSkill: async ({ name }) => ({
+    name,
+    path: `.rulesync/skills/${name}/SKILL.md`,
+    uri: `rulesync://skills/${name}/SKILL.md`,
+    revision: "c".repeat(64)
+  })
+};
+
+/**
+ * A procedural memory that satisfies every promotion precondition, plus the two
+ * distinct successful runs it cites. `overrides` changes exactly one thing, and
+ * `assessment` decides what the current-state check answers when it is asked.
+ */
+async function promotableProcedure(
+  overrides: Partial<MemoryRecord> = {},
+  options: { readonly assessment?: () => CurrentStateAssessment } = {}
+): Promise<{
+  readonly repository: FakeMemoryRepository;
+  readonly service: MemoryService;
+  readonly current: MemoryRecord;
+}> {
+  const repository = new FakeMemoryRepository();
+  const current = record("procedure-candidate", {
+    kind: "procedural",
+    provenance: {
+      experienceIds: ["success-run-a", "success-run-b"],
+      evidence: [source],
+      createdBy: root.id,
+      createdAt: "2026-09-30T10:00:00.000Z"
+    },
+    ...overrides
+  });
+  repository.memories.set(current.id, current);
+  for (const [id, taskId, runId] of [
+    ["success-run-a", "task-a", "run-a"],
+    ["success-run-b", "task-b", "run-b"]
+  ] as const) {
+    await repository.appendExperience({
+      ...experience(id),
+      taskId,
+      runId,
+      outcome: "success",
+      validation: { state: "passed", evidence: [source] }
+    });
+  }
+  return {
+    repository,
+    service: makeService(repository, {
+      skillPromotionWriter: SKILL_WRITER,
+      ...(options.assessment ? { assessment: options.assessment } : {})
+    }),
+    current
+  };
+}
+
+test("a procedure that was never current-state-verified cannot graduate", async () => {
+  const { service, current } = await promotableProcedure({
+    status: "proposed",
+    validity: { state: "unverified", evidence: [] }
+  });
+
+  await assert.rejects(
+    service.promoteProcedureToSkill(
+      current.id,
+      SKILL_INPUT,
+      root,
+      researchRequest()
+    ),
+    /Only a current-state-verified procedural memory can be promoted\./u
+  );
+});
+
+test("a procedure citing a single run cannot graduate", async () => {
+  // Two *successful* runs exist in the repository, so this isolates the
+  // citation count rather than the run quality the neighbouring case covers: a
+  // record that names one experience has not earned two validated runs, however
+  // good the run it names was.
+  const { service, current } = await promotableProcedure({
+    provenance: {
+      experienceIds: ["success-run-a"],
+      evidence: [source],
+      createdBy: root.id,
+      createdAt: "2026-09-30T10:00:00.000Z"
+    }
+  });
+
+  await assert.rejects(
+    service.promoteProcedureToSkill(
+      current.id,
+      SKILL_INPUT,
+      root,
+      researchRequest()
+    ),
+    /at least two validated successful runs/u
+  );
+});
+
+test("a procedure that stopped matching current state cannot graduate", async () => {
+  // The memory carries a verified verdict from whenever it was last checked.
+  // Graduation happens later, against a repository that has moved since, so the
+  // question has to be asked again at the moment of promotion -- otherwise the
+  // stored verdict is trusted indefinitely and the check is decoration.
+  const { service, current } = await promotableProcedure(
+    {},
+    {
+      assessment: () => ({
+        ...compatibleAssessment(),
+        compatibility: "contradicted",
+        reasonCode: "stale"
+      })
+    }
+  );
+
+  await assert.rejects(
+    service.promoteProcedureToSkill(
+      current.id,
+      SKILL_INPUT,
+      root,
+      researchRequest()
+    ),
+    /verified against current state immediately before promotion/u
+  );
+});
+
+test("a superseding replacement must itself be verified", async () => {
+  // Supersession is how a corrected claim takes over from a wrong one, and it
+  // activates the replacement. If the replacement went live unverified, the
+  // correction would be the thing that introduces an unexamined active claim --
+  // and it would do so over the record that was verified.
+  const repository = new FakeMemoryRepository();
+  const prior = record("prior");
+  repository.memories.set(prior.id, prior);
+  const replacement = record("replacement", {
+    status: "proposed",
+    validity: { state: "unverified", evidence: [] }
+  });
+  repository.memories.set(replacement.id, replacement);
+  const service = makeService(repository, {
+    assessment: () => ({
+      ...compatibleAssessment(),
+      compatibility: "contradicted",
+      reasonCode: "stale"
+    })
+  });
+
+  await assert.rejects(
+    service.supersede(replacement.id, prior.id, root, researchRequest()),
+    /Replacement must be verified against current authoritative state\./u
+  );
+});
+
+test("only a proposed memory may be promoted to active", async () => {
+  // Promotion is what turns a proposal into guidance an agent will be handed.
+  // Applying it to an already-active record would re-activate a claim that has
+  // already been superseded, invalidated, or withdrawn.
+  const repository = new FakeMemoryRepository();
+  const active = record("already-active");
+  repository.memories.set(active.id, active);
+  const service = makeService(repository);
+
+  await assert.rejects(
+    service.verifyAndPromote(active.id, root, researchRequest()),
+    /Only proposed memories can be promoted\./u
+  );
+  assert.equal(
+    repository.memories.get(active.id)?.status,
+    "active",
+    "the refused record must be left exactly as it was"
+  );
+});
+
 test("verified procedures promote to canonical skills only after two passed successful runs", async () => {
   const repository = new FakeMemoryRepository();
   const current = record("procedure-candidate", {
