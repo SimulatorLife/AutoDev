@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import type { IncomingMessage, ServerResponse } from "node:http";
-import { Readable } from "node:stream";
 import test from "node:test";
 
 import type {
@@ -12,45 +10,11 @@ import type {
 import type { MemoryService } from "@simulatorlife/autodev-runtime/memory";
 
 import { handleMemoryControlApiRequest } from "../src/control-api/memory.ts";
-
-interface RecordedResponse extends ServerResponse {
-  readonly statusCode: number;
-  readonly body: string;
-}
-
-class ResponseRecorder {
-  statusCode = 0;
-  body = "";
-  headersSent = false;
-  writableEnded = false;
-  private readonly chunks: Buffer[] = [];
-
-  setHeader(): this {
-    return this;
-  }
-  writeHead(status: number): this {
-    this.statusCode = status;
-    this.headersSent = true;
-    return this;
-  }
-  write(chunk: string | Buffer): boolean {
-    this.chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    return true;
-  }
-  end(chunk?: string | Buffer): this {
-    if (chunk) {
-      this.chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    this.body = Buffer.concat(this.chunks).toString("utf8");
-    this.writableEnded = true;
-    return this;
-  }
-}
-
-function request(method: string, url: string): IncomingMessage {
-  const stream = Readable.from([]);
-  return Object.assign(stream, { method, url, headers: {} }) as IncomingMessage;
-}
+import {
+  makeRequest,
+  responseBody,
+  responseRecorder
+} from "./support/control-api-harness.ts";
 
 async function callHistoryRoute(history: MemoryHistory | null): Promise<{
   readonly status: number;
@@ -62,9 +26,9 @@ async function callHistoryRoute(history: MemoryHistory | null): Promise<{
       _context: MemoryReadContext
     ): Promise<MemoryHistory | null> => history
   } as unknown as MemoryService;
-  const response = new ResponseRecorder() as unknown as RecordedResponse;
+  const response = responseRecorder();
   await handleMemoryControlApiRequest(
-    request("GET", "/control/memory/records/mem-1/history?workspaceId=ws-1"),
+    makeRequest("GET", "/control/memory/records/mem-1/history?workspaceId=ws-1"),
     response,
     "/control/memory/records/mem-1/history",
     { actor: "test-operator", role: "operator" },
@@ -73,7 +37,7 @@ async function callHistoryRoute(history: MemoryHistory | null): Promise<{
   );
   return {
     status: response.statusCode,
-    body: response.body ? JSON.parse(response.body) : null
+    body: responseBody(response)
   };
 }
 

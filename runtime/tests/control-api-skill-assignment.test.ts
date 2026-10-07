@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -10,58 +10,13 @@ import { executionContractRevision } from "@simulatorlife/autodev-data";
 
 import { handleControlApiRequest } from "../src/control-api/index.ts";
 import { reloadExecutionContract } from "../src/router/subagents.ts";
+import { responseRecorder } from "./support/control-api-harness.ts";
 
 /**
  * `PATCH /control/skills/:name` is the operation a memory promotion needed and
  * did not have, so these tests are about the ways it could report success and
  * do nothing.
  */
-
-interface RecordedResponse extends ServerResponse {
-  readonly statusCode: number;
-  readonly headers: Record<string, string | number>;
-  readonly body: string;
-}
-
-class ResponseRecorder {
-  statusCode = 0;
-  headers: Record<string, string | number> = {};
-  body = "";
-  headersSent = false;
-  writableEnded = false;
-  errorMessage: string | null = null;
-  private readonly chunks: Buffer[] = [];
-
-  setHeader(name: string, value: string | number): this {
-    this.headers[name.toLowerCase()] = value;
-    return this;
-  }
-
-  writeHead(status: number, headers?: Record<string, string | number>): this {
-    this.statusCode = status;
-    if (headers) Object.assign(this.headers, headers);
-    this.headersSent = true;
-    return this;
-  }
-
-  write(chunk: string | Buffer): boolean {
-    this.chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    return true;
-  }
-
-  end(chunk?: string | Buffer): this {
-    if (chunk) {
-      this.chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    this.body = Buffer.concat(this.chunks).toString("utf8");
-    this.writableEnded = true;
-    return this;
-  }
-}
-
-function responseRecorder(): RecordedResponse {
-  return new ResponseRecorder() as unknown as RecordedResponse;
-}
 
 const SERVICE_TOKEN = "s".repeat(64);
 const OPERATOR_ACTOR = "test-operator";

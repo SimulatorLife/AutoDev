@@ -1,69 +1,17 @@
 import assert from "node:assert/strict";
-import type { IncomingMessage, ServerResponse } from "node:http";
-import { Readable } from "node:stream";
 import test from "node:test";
 
 import { handleMemoryControlApiRequest } from "../src/control-api/memory.ts";
+import {
+  makeRequest,
+  responseRecorder
+} from "./support/control-api-harness.ts";
 
 /**
  * `GET /control/memory/status` is the one memory read that has to work when
  * every other one fails, so these tests drive it through the route handler with
  * no service at all -- which is the state it exists to describe.
  */
-
-interface RecordedResponse extends ServerResponse {
-  readonly statusCode: number;
-  readonly headers: Record<string, string | number>;
-  readonly body: string;
-}
-
-class ResponseRecorder {
-  statusCode = 0;
-  headers: Record<string, string | number> = {};
-  body = "";
-  headersSent = false;
-  writableEnded = false;
-  errorMessage: string | null = null;
-  private readonly chunks: Buffer[] = [];
-
-  setHeader(name: string, value: string | number): this {
-    this.headers[name.toLowerCase()] = value;
-    return this;
-  }
-
-  writeHead(status: number, headers?: Record<string, string | number>): this {
-    this.statusCode = status;
-    if (headers) Object.assign(this.headers, headers);
-    this.headersSent = true;
-    return this;
-  }
-
-  write(chunk: string | Buffer): boolean {
-    this.chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    return true;
-  }
-
-  end(chunk?: string | Buffer): this {
-    if (chunk) {
-      this.chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    this.body = Buffer.concat(this.chunks).toString("utf8");
-    this.writableEnded = true;
-    return this;
-  }
-}
-
-function responseRecorder(): RecordedResponse {
-  return new ResponseRecorder() as unknown as RecordedResponse;
-}
-
-function getRequest(url: string, method = "GET"): IncomingMessage {
-  return Object.assign(Readable.from([]), {
-    method,
-    url,
-    headers: {}
-  }) as IncomingMessage;
-}
 
 const operator = {
   actor: "test-operator",
@@ -82,7 +30,7 @@ async function readStatus(
 ): Promise<StatusCall> {
   const response = responseRecorder();
   await handleMemoryControlApiRequest(
-    getRequest(pathname, method),
+    makeRequest(method, pathname),
     response,
     pathname,
     operator,
@@ -196,7 +144,7 @@ test("the status read never touches the service it reports on", async () => {
   try {
     const response = responseRecorder();
     await handleMemoryControlApiRequest(
-      getRequest("/control/memory/status"),
+      makeRequest("GET", "/control/memory/status"),
       response,
       "/control/memory/status",
       operator,
