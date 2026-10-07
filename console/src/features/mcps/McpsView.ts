@@ -19,6 +19,7 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import { MONO_ID_LINK_CLASS } from "../../components/ui/text-classes.ts";
 
 const NOT_OBSERVED_STATUS = "not-observed" as const;
 
@@ -86,8 +87,7 @@ export function McpsView({
         React.createElement(
           "a",
           {
-            className:
-              "block truncate font-semibold text-fg font-mono hover:text-accent",
+            className: MONO_ID_LINK_CLASS,
             href: `/mcps/${encodeURIComponent(server.name)}`,
             title: server.name
           },

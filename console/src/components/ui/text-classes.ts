@@ -69,3 +69,21 @@ export const MONO_ID_CLASS = "font-mono font-semibold text-fg";
 export const MONO_VALUE_CLASS = "font-mono text-xs text-fg-secondary";
 
 export const MONO_META_CLASS = "font-mono text-xs text-fg-muted";
+
+/**
+ * The row's identifier as the link that opens it.
+ *
+ * `MONO_ID_CLASS` plus the two things that make it a link rather than a label:
+ * it occupies its own block so `truncate` applies, and it changes colour on
+ * hover so it reads as clickable. The list views for tools and MCP servers
+ * carried the whole eight-token string spelled out, which meant the definition
+ * of "the thing you click to open a row" lived in whichever file was edited
+ * last.
+ *
+ * Built from `MONO_ID_CLASS` rather than restated, because it is the same role:
+ * the identifier is the row's subject on `/permissions` and `/workspaces` too,
+ * where it is not a link. The extra tokens conflict with nothing in the base --
+ * display, overflow, and a hover colour beside font family, weight, and colour.
+ */
+export const MONO_ID_LINK_CLASS =
+  `${MONO_ID_CLASS} block truncate hover:text-accent`;

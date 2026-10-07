@@ -28,7 +28,10 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
-import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
+import {
+  MONO_ID_LINK_CLASS,
+  MUTED_META_CLASS
+} from "../../components/ui/text-classes.ts";
 import {
   ACCENT_TONE_CLASS,
   SUCCESS_TONE_CLASS
@@ -294,8 +297,7 @@ export function ToolsView({
             "a",
             {
               href: `/tools/${toolId(tool)}`,
-              className:
-                "block truncate font-semibold text-fg font-mono hover:text-accent",
+              className: MONO_ID_LINK_CLASS,
               // The wire name, because that is what a row is identified by and
               // what the href addresses. The visible text is only the tool's
               // own name: the Source column directly beside it already reads
