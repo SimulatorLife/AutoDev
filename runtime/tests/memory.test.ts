@@ -955,6 +955,47 @@ test("captureExperience normalizes a native transcript and persists only its sou
   );
 });
 
+test("capture refuses a transcript that contains no conversation to learn from", async () => {
+  // A metadata-only transcript is a session that was opened and never used.
+  // Storing an experience for it would create a durable record -- with a
+  // trajectory digest, a task reference, and eventually derived memories pointing
+  // this way -- describing a conversation that did not happen.
+  //
+  // Two layers refuse this and the test deliberately does not say which: the
+  // trajectory adapter rejects a transcript with no normalizable user records,
+  // and `captureExperience` independently checks that the normalized roles are
+  // not all `meta`. Removing the service's own check leaves this case still
+  // refused -- it is defence in depth against a dependency's validation, and
+  // this test pins the guarantee rather than the guard that happens to fire.
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const { trajectory: _previousReference, ...metadata } = experience();
+  const transcript = [
+    { type: "session_meta", payload: { id: "session-empty", cwd: "/repo" } }
+  ]
+    .map((record) => JSON.stringify(record))
+    .join("\n");
+
+  await assert.rejects(
+    service.captureExperience(
+      {
+        source: "codex",
+        transcript,
+        trajectoryUri: "file:///workspace/session.jsonl",
+        experience: metadata
+      },
+      worker,
+      { ...context, taskId: "task-old", runId: "run-old" }
+    ),
+    /did not contain any normalizable user records|no conversation records/u
+  );
+  assert.equal(
+    repository.experiences.size,
+    0,
+    "nothing may be stored for a transcript with no conversation in it"
+  );
+});
+
 test("captureExperience does not persist library-synthesized timestamps as source time", async () => {
   const repository = new FakeMemoryRepository();
   const service = makeService(repository);
