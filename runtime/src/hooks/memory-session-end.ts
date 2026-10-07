@@ -215,9 +215,20 @@ function parseControlApiToken(line: string): string | null {
   const rawValue = entry.slice(CONTROL_TOKEN_KEY.length).trim();
   const first = rawValue[0];
   const last = rawValue.at(-1);
-  const quoted =
-    rawValue.length >= 2 &&
-    ((first === '"' && last === '"') || (first === "'" && last === "'"));
+  // A value that opens a quote and never closes it is not an assignment, it is
+  // a torn write -- an append cut off part-way, an editor that died mid-save.
+  // Read as a literal, the quote itself becomes part of the credential, and
+  // because the caller takes the first line that yields one, that garbage
+  // shadows a correct token further down the same file: the operator's token is
+  // right and they get no captures, with nothing to say why.
+  //
+  // Skipping such a line costs nothing when it is the only entry, because the
+  // hook posts nothing either way, and it recovers the credential when it is
+  // not. This is deliberately not an ordering rule: leaving first-wins alone
+  // means a correct token *before* a torn one still wins, which switching to
+  // dotenv's last-wins would have broken.
+  const quoted = first === '"' || first === "'";
+  if (quoted && !(rawValue.length >= 2 && last === first)) return null;
   const value = quoted ? rawValue.slice(1, -1) : rawValue;
   return value || null;
 }

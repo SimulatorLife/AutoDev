@@ -411,36 +411,84 @@ test("only a line that really carries a token counts as a credential", async () 
   });
 });
 
-test("a truncated quote in the credential file shadows a valid token after it", async () => {
-  // Found while writing the test above, and reported rather than worked around.
-  // `parseControlApiToken` only strips quotes when the value has a matching
-  // pair, so `AUTODEV_CONTROL_API_TOKEN="` is taken as the literal character
-  // `"` -- and `tokenFromFile` returns the *first* truthy match, so a correct
-  // token later in the same file is never read.
+test("a torn quote in the credential file does not shadow a valid token", async () => {
+  // `parseControlApiToken` used to read an unbalanced quote as a literal, so
+  // `AUTODEV_CONTROL_API_TOKEN="` yielded the one-character credential `"` --
+  // and `tokenFromFile` takes the first line that yields one, so a correct
+  // token later in the same file was never read. It failed closed at the
+  // Runtime rather than open, so nothing leaked; the cost was that an operator
+  // whose token was correct got no captures and nothing to say why.
   //
-  // It fails closed at the Runtime rather than open, so this is a
-  // diagnosability problem and not a credential leak: an operator whose token
-  // is correct can still get no captures, with nothing to say why.
-  await withTempHome(async (home) => {
-    const codexHome = join(home, ".codex");
-    mkdirSync(join(codexHome, "sessions"), { recursive: true });
-    writeFileSync(
-      join(codexHome, ".env"),
-      ['AUTODEV_CONTROL_API_TOKEN="', `AUTODEV_CONTROL_API_TOKEN=${TOKEN}`, ""].join("\n")
-    );
+  // Both orders are covered on purpose. "Torn line first" is the reported case;
+  // "torn line last" is what rules out the tempting fix, because switching to
+  // dotenv's last-wins would have fixed the first and broken the second.
+  for (const [label, lines] of [
+    ["torn line first", ['AUTODEV_CONTROL_API_TOKEN="', `AUTODEV_CONTROL_API_TOKEN=${TOKEN}`]],
+    ["torn line last", [`AUTODEV_CONTROL_API_TOKEN=${TOKEN}`, 'AUTODEV_CONTROL_API_TOKEN="']],
+    ["torn mid-value", ['AUTODEV_CONTROL_API_TOKEN="abc', `AUTODEV_CONTROL_API_TOKEN=${TOKEN}`]],
+    ["mismatched quotes", [`AUTODEV_CONTROL_API_TOKEN="${TOKEN}'`]]
+  ] as const) {
+    await withTempHome(async (home) => {
+      const codexHome = join(home, ".codex");
+      mkdirSync(join(codexHome, "sessions"), { recursive: true });
+      writeFileSync(join(codexHome, ".env"), [...lines, ""].join("\n"));
 
-    const { requests } = await capture({
-      env: { HOME: home, CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
-      payload: sessionEndPayload(join(codexHome, "sessions", "r.jsonl"), join(home, "repo"))
+      const { requests } = await capture({
+        env: { HOME: home, CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+        payload: sessionEndPayload(
+          join(codexHome, "sessions", "r.jsonl"),
+          join(home, "repo")
+        )
+      });
+
+      // The "mismatched quotes" case has no usable token anywhere, so the hook
+      // posts nothing -- which is the point: it must not post a credential built
+      // out of a stray quote character.
+      assert.equal(
+        requests.length,
+        label === "mismatched quotes" ? 0 : 1,
+        `${label}: the torn line must not become the credential`
+      );
+      if (requests.length > 0) {
+        assert.equal(
+          (requests[0]?.init.headers as Record<string, string>).Authorization,
+          `Bearer ${TOKEN}`,
+          `${label}: the well-formed token must be the one that is used`
+        );
+      }
     });
+  }
+});
 
-    assert.equal(requests.length, 1);
-    assert.equal(
-      (requests[0]?.init.headers as Record<string, string>).Authorization,
-      'Bearer "',
-      "the first non-empty line wins even when it is a broken quote"
-    );
-  });
+test("a balanced quote is still stripped, in both quote styles", async () => {
+  // The positive control for the rule above. Without it, "the torn quote is
+  // skipped" and "quoting was never handled" are the same observation.
+  for (const [label, line] of [
+    ["double", `AUTODEV_CONTROL_API_TOKEN="${TOKEN}"`],
+    ["single", `AUTODEV_CONTROL_API_TOKEN='${TOKEN}'`],
+    ["bare", `AUTODEV_CONTROL_API_TOKEN=${TOKEN}`]
+  ] as const) {
+    await withTempHome(async (home) => {
+      const codexHome = join(home, ".codex");
+      mkdirSync(join(codexHome, "sessions"), { recursive: true });
+      writeFileSync(join(codexHome, ".env"), `${line}\n`);
+
+      const { requests } = await capture({
+        env: { HOME: home, CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+        payload: sessionEndPayload(
+          join(codexHome, "sessions", "r.jsonl"),
+          join(home, "repo")
+        )
+      });
+
+      assert.equal(requests.length, 1, `${label}: a well-formed token must be used`);
+      assert.equal(
+        (requests[0]?.init.headers as Record<string, string>).Authorization,
+        `Bearer ${TOKEN}`,
+        `${label}: the quotes must be stripped, not carried into the credential`
+      );
+    });
+  }
 });
 
 test("with no credential anywhere the hook posts nothing and still succeeds", async () => {
