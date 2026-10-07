@@ -7,11 +7,16 @@ import path from "node:path";
 import { SpanStatusCode } from "@opentelemetry/api";
 import {
   buildReconciliationView,
+  type ControlApiAgentRecord,
+  type ControlApiAgentsResponse,
   type ControlApiHooksResponse,
   type ControlApiMcpsResponse,
   type ControlApiModelsResponse,
+  type ControlApiPermissionsResponse,
   type ControlApiPromptsResponse,
   type ControlApiProviderHealth,
+  type ControlApiProviderRoleAssignment,
+  type ControlApiProvidersResponse,
   type ControlApiSkillsResponse,
   type ControlApiWorkspacesResponse,
   type GithubActionsRuntimeStatus,
@@ -479,6 +484,24 @@ function modelConvergence(model: string): ReconciliationStatus {
   }).status;
 }
 
+/**
+ * One entry per provider role, keyed by role.
+ *
+ * `Object.fromEntries` over `PROVIDER_ROLES` produces exactly this at runtime,
+ * but its result type is an index signature, so the compiler saw a record that
+ * might be missing every role and rejected it against `Record<ProviderRole, …>`.
+ * The cast is confined here, and it is safe precisely because the loop runs over
+ * the same `PROVIDER_ROLES` the record type enumerates -- adding a role to Core
+ * adds it to the loop, so the two cannot fall out of step.
+ */
+function rolesForEveryProviderRole(
+  build: (role: ProviderRole) => ControlApiProviderRoleAssignment
+): Record<ProviderRole, ControlApiProviderRoleAssignment> {
+  const assigned = {} as Record<ProviderRole, ControlApiProviderRoleAssignment>;
+  for (const role of PROVIDER_ROLES) assigned[role] = build(role);
+  return assigned;
+}
+
 function providersView(now: number): Record<string, unknown> {
   const names = Array.from(
     new Set([
@@ -514,24 +537,17 @@ function providersView(now: number): Record<string, unknown> {
       disabled,
       // Derived from PROVIDER_ROLES so a role added to Core cannot be missing
       // from this response.
-      roles: Object.fromEntries(
-        PROVIDER_ROLES.map((role) => [
-          role,
-          {
-            // An unobserved assignment is reported as enabled rather than as
-            // a disabled role: a provider nobody has touched must keep routing,
-            // and "disabled" is a decision the operator makes.
-            priority: disabled
-              ? "disabled"
-              : (assignments[role]?.priority ?? 1),
-            model: assignments[role]?.model ?? null,
-            // A globally disabled provider's roles cannot be edited until it
-            // is enabled again, but their values are preserved.
-            mutable: !disabled,
-            convergence: providerRoleConvergence(provider, role)
-          }
-        ])
-      ),
+      roles: rolesForEveryProviderRole((role) => ({
+        // An unobserved assignment is reported as enabled rather than as
+        // a disabled role: a provider nobody has touched must keep routing,
+        // and "disabled" is a decision the operator makes.
+        priority: disabled ? "disabled" : (assignments[role]?.priority ?? 1),
+        model: assignments[role]?.model ?? null,
+        // A globally disabled provider's roles cannot be edited until it
+        // is enabled again, but their values are preserved.
+        mutable: !disabled,
+        convergence: providerRoleConvergence(provider, role)
+      })),
       agentLimits,
       models: Object.entries(
         ROUTING_POLICY.config.providers[provider]?.models ?? {}
@@ -548,7 +564,7 @@ function providersView(now: number): Record<string, unknown> {
       ([tier, groups]) => ({ tier, groups })
     ),
     providers
-  };
+  } satisfies ControlApiProvidersResponse;
 }
 
 function configuredRoleExposure(
@@ -1263,13 +1279,17 @@ export async function githubWorkflowsView(
 
 async function evaluationsView(): Promise<Record<string, unknown>> {
   const repository = new EvaluationRepository();
-  const evaluations = await repository.listEvaluations();
+  const page = await repository.listEvaluations();
   return {
     schema: "autodev-control-evaluations-v1",
     source: "openlit_evaluation",
     readOnly: true,
-    totalEvaluations: evaluations.length,
-    evaluations
+    // The table's own size, not the size of the window. This used to be
+    // `evaluations.length`, so a table holding more rows than the read's cap
+    // reported the cap as the total and the Console had no way to tell.
+    totalEvaluations: page.total,
+    truncated: page.total > page.results.length,
+    evaluations: page.results
   };
 }
 
@@ -1278,60 +1298,72 @@ function agentsView(
 ): Record<string, unknown> {
   const roles = getDefaultExecutionContract().roles ?? {};
   const names = Object.keys(roles).sort(CONTROL_API_COLLATOR.compare);
-  const agents = names.map((role) => {
-    const raw = roles[role] as Record<string, unknown> | undefined;
-    const isOrchestrator = role === "orchestrator";
-    const kind =
-      typeof raw?.kind === "string"
-        ? raw.kind
-        : isOrchestrator
-          ? "orchestrator"
-          : "leaf";
-    const readOnly = Boolean(raw?.readOnly);
-    const mcps = Array.isArray(raw?.mcp) ? raw.mcp : [];
-    const skills = Array.isArray(raw?.skills) ? raw.skills : [];
-    const roleType = isOrchestrator ? "orchestrator" : "subagent";
-    const allowedProviders = [
-      "codex",
-      "claude",
-      "antigravity",
-      "copilot",
-      "minimax"
-    ].filter((provider) =>
-      ROUTING_POLICY.isProviderEnabledForRole(provider, roleType)
-    );
-    const promptPath = path.join(
-      repositoryRoot,
-      "agents",
-      "prompts",
-      "roles",
-      `${role}.md`
-    );
-    return {
-      id: role,
-      role,
-      kind,
-      readOnly,
-      configured: true,
-      valid: null,
-      status: "configured",
-      convergence: "not-observed",
-      primaryModel: isOrchestrator
-        ? "autodev/orchestrator"
-        : "autodev/subagent",
-      allowedProviders,
-      hasPrompt: existsSync(promptPath),
-      mcps,
-      skills
-    };
-  });
+  const agents = names.map(
+    (
+      role
+    ): ControlApiAgentRecord & {
+      readonly hasPrompt: boolean;
+    } => {
+      const raw = roles[role] as Record<string, unknown> | undefined;
+      const isOrchestrator = role === "orchestrator";
+      // Normalised rather than passed through. `kind` comes out of a hand-editable
+      // JSON contract, and the contract declares two words; a typo there used to
+      // reach the Console as a third, and the Console could only either show it or
+      // reject the whole page. The role name is validated, so the derived value is
+      // the safe answer whenever the file's own is not one of the two.
+      const declaredKind = raw?.kind;
+      const kind: ControlApiAgentRecord["kind"] =
+        declaredKind === "orchestrator" || declaredKind === "leaf"
+          ? declaredKind
+          : isOrchestrator
+            ? "orchestrator"
+            : "leaf";
+      const readOnly = Boolean(raw?.readOnly);
+      const mcps = Array.isArray(raw?.mcp) ? raw.mcp : [];
+      const skills = Array.isArray(raw?.skills) ? raw.skills : [];
+      const roleType = isOrchestrator ? "orchestrator" : "subagent";
+      const allowedProviders = [
+        "codex",
+        "claude",
+        "antigravity",
+        "copilot",
+        "minimax"
+      ].filter((provider) =>
+        ROUTING_POLICY.isProviderEnabledForRole(provider, roleType)
+      );
+      const promptPath = path.join(
+        repositoryRoot,
+        "agents",
+        "prompts",
+        "roles",
+        `${role}.md`
+      );
+      return {
+        id: role,
+        role,
+        kind,
+        readOnly,
+        configured: true,
+        valid: null,
+        status: "configured",
+        convergence: "not-observed",
+        primaryModel: isOrchestrator
+          ? "autodev/orchestrator"
+          : "autodev/subagent",
+        allowedProviders,
+        hasPrompt: existsSync(promptPath),
+        mcps,
+        skills
+      };
+    }
+  );
   return {
     schema: "autodev-control-agents-v1",
     source: EXECUTION_CONTRACT_SOURCE,
     readOnly: true,
     totalAgents: agents.length,
     agents
-  };
+  } satisfies ControlApiAgentsResponse;
 }
 
 function agentDetailView(
@@ -1514,7 +1546,14 @@ function permissionsView(
   _repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> {
   const roles = getDefaultExecutionContract().roles ?? {};
-  const rolePermissions: Record<string, unknown> = {};
+  // Typed as the contract's own entry rather than `Record<string, unknown>`:
+  // the anonymous shape above *is* the published one, and writing it out here is
+  // what stops the two from drifting without a compiler noticing. Mutable
+  // because the published type is `Readonly` and this loop is what fills it.
+  const rolePermissions: Record<
+    string,
+    ControlApiPermissionsResponse["rolePermissions"][string]
+  > = {};
   for (const [role, raw] of Object.entries(roles)) {
     const entry = (raw ?? {}) as Record<string, unknown>;
     const isReadOnly = Boolean(entry.readOnly);
@@ -1546,7 +1585,7 @@ function permissionsView(
       defaultToolsApprovalMode: "approve"
     },
     rolePermissions
-  };
+  } satisfies ControlApiPermissionsResponse;
 }
 
 function promptsView(
