@@ -610,7 +610,7 @@ function spanLink(
           "span",
           {
             className:
-              "text-[10px] font-medium uppercase tracking-wider text-fg-muted"
+              "text-micro font-medium uppercase tracking-wider text-fg-muted"
           },
           "Selected"
         )

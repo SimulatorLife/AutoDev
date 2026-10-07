@@ -383,7 +383,7 @@ export function DataTable<T>({
                     "span",
                     {
                       className:
-                        "ml-1.5 inline-flex cursor-help align-middle justify-center rounded-full border border-border-strong px-1 text-[10px] normal-case leading-none text-fg-muted",
+                        "ml-1.5 inline-flex cursor-help align-middle justify-center rounded-full border border-border-strong px-1 text-micro normal-case leading-none text-fg-muted",
                       title: col.headerHelp,
                       "aria-label": `${col.header}: ${col.headerHelp}`,
                       "data-column-help": col.id

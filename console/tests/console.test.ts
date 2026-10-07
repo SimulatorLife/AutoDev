@@ -16690,6 +16690,39 @@ test("one page rhythm: every view body stacks its sections through the shared cl
   );
 });
 
+test("no Console source names a font size as a raw pixel value", () => {
+  // The theme defines two label steps below `text-xs` and gives them names
+  // precisely so call sites stop spelling the numbers: `text-micro` (10px) and
+  // `text-meta` (11px). Seven call sites used the names; two still wrote
+  // `text-[10px]`. Both rendered the same size, so nothing looked wrong -- but a
+  // raw value is the one form that cannot follow the token, and the theme is
+  // where a design decision about label sizes belongs.
+  //
+  // This matches the *shape*, not a list of sizes, and for the reason the page
+  // rhythm guard above records: a guard that names the values it has seen today
+  // passes the first value nobody thought of. An arbitrary font size is the
+  // defect by construction, whatever number is inside the brackets.
+  //
+  // Scoped to font sizes on purpose. A fixed `w-[180px]` control width or a
+  // `h-[32rem]` code block is a measurement, not a bypass of the type scale, and
+  // a guard that swept those in would be wrong rather than strict.
+  const srcDir = join(import.meta.dirname, "..", "src");
+  const offenders: string[] = [];
+  for (const relative of readdirSync(srcDir, { recursive: true })) {
+    const name = relative.toString();
+    const file = join(srcDir, name);
+    if (!/\.tsx?$/u.test(file) || !statSync(file).isFile()) continue;
+    const source = readFileSync(file, "utf8");
+    for (const match of source.matchAll(/text-\[([^\]]+)\]/gu)) {
+      offenders.push(`${name}: text-[${match[1]}]`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `These call sites name a font size instead of using the theme's steps:\n${offenders.join("\n")}`
+  );
+});
 test("the monospace family has one spelling per role", () => {
   // Almost every value the Console shows is a canonical name rather than prose,
   // and those want a different treatment from muted copy. The family was
