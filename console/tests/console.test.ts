@@ -12493,6 +12493,134 @@ test("a record says how much of its provenance this reader can resolve", () => {
   assert.doesNotMatch(unread, /resolvable to this reader/);
 });
 
+test("the Memory page carries the Runtime's explanation into the record drawer", async () => {
+  // The provenance explanation is read with the record, but it was fetched and
+  // then dropped on the floor: the page never passed it on, so the panel's
+  // "N of M resolvable" line could never render and the read cost a round trip
+  // per drawer open. The view's own test passes `why` in by hand, which is why
+  // it stayed green over a feature that could not run.
+  //
+  // So this drives the page, which is the only level at which the wiring is
+  // visible.
+  const previousFetch = globalThis.fetch;
+  const previousEnv = saveConsolePageEnvironment();
+  const record: MemoryRecord = {
+    id: "mem-why",
+    kind: "procedural",
+    status: "active",
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    claim: "A claim citing three sources.",
+    validity: { state: "verified", evidence: [] },
+    provenance: {
+      experienceIds: ["exp-a", "exp-b", "exp-c"],
+      evidence: [],
+      createdBy: "operator",
+      createdAt: "2026-10-01T10:00:00.000Z"
+    },
+    createdAt: "2026-10-01T10:00:00.000Z",
+    updatedAt: "2026-10-02T10:00:00.000Z"
+  };
+
+  try {
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/control/workspaces")) {
+        return Response.json({
+          schema: "autodev-control-workspaces-v1",
+          source: "config/workspaces.json",
+          readOnly: true,
+          catalogStatus: "valid",
+          totalWorkspaces: 1,
+          workspaces: [
+            {
+              id: "SimulatorLife/AutoDev",
+              baseBranch: "main",
+              enabled: true,
+              agentRoles: null
+            }
+          ]
+        });
+      }
+      if (url.includes("/why")) {
+        return Response.json({
+          schema: "autodev-memory-why-v1",
+          memory: record,
+          relatedMemories: [],
+          // One of the three is resolvable to this reader.
+          sourceExperiences: [minimalExperience("exp-a")]
+        });
+      }
+      if (url.includes("/control/memory/records/mem-why/history")) {
+        return Response.json({
+          schema: "autodev-memory-history-v1",
+          memory: record,
+          relatedMemories: [],
+          transitions: []
+        });
+      }
+      if (url.includes("/control/memory/records/mem-why")) {
+        return Response.json({
+          schema: "autodev-memory-record-v1",
+          memory: record
+        });
+      }
+      if (url.includes("/control/memory/records")) {
+        return Response.json({
+          schema: "autodev-memory-records-v1",
+          items: [record],
+          total: 1,
+          limit: 50,
+          statusCounts: {
+            proposed: 0,
+            active: 1,
+            superseded: 0,
+            invalidated: 0,
+            uncertain: 0
+          },
+          offset: 0,
+          hasMore: false
+        });
+      }
+      if (url.includes("/control/memory/status")) {
+        return Response.json({
+          schema: "autodev-memory-status-v1",
+          counts: { proposed: 0, active: 1, superseded: 0, invalidated: 0, uncertain: 0 }
+        });
+      }
+      if (url.includes("/control/memory/experiences")) {
+        return Response.json({
+          schema: "autodev-memory-experiences-v1",
+          items: [],
+          total: 0,
+          limit: 50,
+          offset: 0,
+          hasMore: false
+        });
+      }
+      return Response.json({ schema: "autodev-memory-session-cohorts-v1", cells: [], sessionCount: 0 });
+    };
+
+    const markup = renderToStaticMarkup(
+      await MemoryPage({
+        searchParams: Promise.resolve({
+          tab: "records",
+          workspaceId: "SimulatorLife/AutoDev",
+          recordId: "mem-why"
+        })
+      })
+    );
+
+    assert.match(
+      markup,
+      /1 of 3 resolvable to this reader/u,
+      "the explanation read by the page must reach the drawer"
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreConsolePageEnvironment(previousEnv);
+  }
+});
+
 test("an observed injection offers both reports, on the injection they describe", () => {
   // Both claims are per-injection: the Runtime binds an outcome to the
   // correlation token minted for one injection and a use assessment to an
