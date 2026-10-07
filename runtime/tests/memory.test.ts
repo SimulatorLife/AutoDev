@@ -5708,3 +5708,170 @@ test("every way research drops a candidate reports a distinct reason", async () 
     7
   );
 });
+/**
+ * The durable-memory proposal path. Every record in the store was written
+ * through `createCandidate`, and four of its guards had no failing test: the
+ * claim bound, the source-experience bound, the evidence requirement, and the
+ * rule that only a live record may be revised.
+ */
+function proposalInput(
+  overrides: Partial<{
+    claim: string;
+    experienceIds: readonly string[];
+    evidence: readonly EvidenceReference[];
+  }> = {}
+): {
+  readonly kind: "semantic";
+  readonly scope: {
+    readonly kind: "repository";
+    readonly workspaceId: string;
+    readonly repositoryId: string;
+  };
+  readonly claim: string;
+  readonly experienceIds: readonly string[];
+  readonly evidence: readonly EvidenceReference[];
+} {
+  return {
+    kind: "semantic",
+    scope: { kind: "repository", workspaceId: "workspace-a", repositoryId: "repo-a" },
+    claim: "A claim whose evidence must be visible.",
+    experienceIds: ["source-experience"],
+    evidence: [source],
+    ...overrides
+  };
+}
+
+async function proposalHarness(): Promise<{
+  readonly repository: FakeMemoryRepository;
+  readonly service: MemoryService;
+}> {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  await repository.appendExperience(experience("source-experience"));
+  return { repository, service };
+}
+
+test("a proposal needs a claim that survives as text and stays bounded", async () => {
+  const { repository, service } = await proposalHarness();
+
+  await assert.rejects(
+    service.propose(proposalInput({ claim: "   " }), root, context),
+    /must be concise and non-empty/u
+  );
+  await assert.rejects(
+    service.propose(
+      proposalInput({ claim: "c".repeat(4001) }),
+      root,
+      context
+    ),
+    /must be concise and non-empty/u
+  );
+  assert.equal(repository.memories.size, 0);
+
+  // 4000 is the bound, so it must still be accepted.
+  const accepted = await service.propose(
+    proposalInput({ claim: "c".repeat(4000) }),
+    root,
+    context
+  );
+  assert.equal(accepted.claim.length, 4000);
+});
+
+test("a proposal needs a bounded set of source experiences it can actually cite", async () => {
+  const { repository, service } = await proposalHarness();
+
+  await assert.rejects(
+    service.propose(proposalInput({ experienceIds: [] }), root, context),
+    /bounded set of source experiences/u
+  );
+  await assert.rejects(
+    service.propose(
+      proposalInput({
+        experienceIds: Array.from({ length: 65 }, (_unused, index) => `e-${index}`)
+      }),
+      root,
+      context
+    ),
+    /bounded set of source experiences/u
+  );
+  await assert.rejects(
+    service.propose(proposalInput({ experienceIds: ["   "] }), root, context),
+    /bounded set of source experiences/u
+  );
+  await assert.rejects(
+    service.propose(
+      proposalInput({ experienceIds: ["e".repeat(257)] }),
+      root,
+      context
+    ),
+    /bounded set of source experiences/u
+  );
+  assert.equal(repository.memories.size, 0);
+
+  // A duplicate citation is bounded too: the stored list is deduplicated.
+  const accepted = await service.propose(
+    proposalInput({ experienceIds: ["source-experience", "source-experience"] }),
+    root,
+    context
+  );
+  assert.deepEqual(accepted.provenance.experienceIds, ["source-experience"]);
+});
+
+test("a proposal needs evidence", async () => {
+  const { repository, service } = await proposalHarness();
+
+  await assert.rejects(
+    service.propose(proposalInput({ evidence: [] }), root, context),
+    /requires evidence references/u
+  );
+  assert.equal(repository.memories.size, 0);
+});
+
+test("only a live memory can be revised", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  await repository.appendExperience(experience("source-experience"));
+
+  for (const status of [
+    "proposed",
+    "invalidated",
+    "superseded"
+  ] as const) {
+    const target = record(`target-${status}`, { status });
+    repository.memories.set(target.id, target);
+    await assert.rejects(
+      service.revise(
+        target.id,
+        { claim: "A revised claim.", experienceIds: ["source-experience"], evidence: [source] },
+        root,
+        context
+      ),
+      /active or uncertain memory can be revised/u,
+      `expected a ${status} record to be refused`
+    );
+  }
+  await assert.rejects(
+    service.revise(
+      "no-such-record",
+      { claim: "A revised claim.", experienceIds: ["source-experience"], evidence: [source] },
+      root,
+      context
+    ),
+    /active or uncertain memory can be revised/u
+  );
+  assert.equal(repository.events.length, 0);
+
+  // "uncertain" is live: it is the one non-active status that may be revised.
+  const uncertain = record("target-uncertain", { status: "uncertain" });
+  repository.memories.set(uncertain.id, uncertain);
+  const revised = await service.revise(
+    uncertain.id,
+    { claim: "A revised claim.", experienceIds: ["source-experience"], evidence: [source] },
+    root,
+    context
+  );
+  assert.equal(revised.status, "proposed");
+  // The link back to the record being revised lives on the lifecycle event.
+  assert.deepEqual(repository.events.at(-1)?.relatedMemoryIds, [uncertain.id]);
+  assert.equal(repository.events.at(-1)?.action, "revised");
+});
