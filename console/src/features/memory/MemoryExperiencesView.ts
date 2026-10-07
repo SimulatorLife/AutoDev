@@ -1,7 +1,8 @@
 import type {
   ControlApiMemoryInjectionOutcomeJoin,
   ControlApiMemoryInjectionUseAssessment,
-  ExperienceEnvelope
+  ExperienceEnvelope,
+  ExperienceValidationState
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
@@ -19,10 +20,7 @@ import { PageBody } from "../../components/layout/PageBody.ts";
 import { Pagination } from "../../components/navigation/Pagination.ts";
 import { DetailDrawer } from "../../components/panels/DetailDrawer.ts";
 import { gridRowClass } from "../../components/panels/DetailGrid.ts";
-import {
-  StatusBadge,
-  type StatusBadgeVariant
-} from "../../components/status/StatusBadge.ts";
+import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
@@ -42,6 +40,11 @@ import {
   type MemoryListScope,
   memoryPageHref
 } from "./memory-list-url.ts";
+import {
+  MEMORY_OUTCOME_LABEL,
+  MEMORY_VALIDATION_LABEL,
+  MEMORY_VALIDATION_VARIANT
+} from "./memory-status.ts";
 import { InjectionReports } from "./MemoryInjectionReports.ts";
 
 /**
@@ -74,12 +77,13 @@ export interface MemoryExperiencesViewProps {
   readonly listScope: MemoryListScope;
 }
 
-const VALIDATION_STATUS_MAP: Record<string, StatusBadgeVariant> = {
-  passed: "valid",
-  failed: "invalid",
-  partial: "pending",
-  not_run: "not-observed"
-};
+/** The state for an experience, or `not_run` when the Runtime reported none. */
+function validationState(
+  experience: ExperienceEnvelope
+): ExperienceValidationState {
+  return experience.validation?.state ?? "not_run";
+}
+
 const DETAIL_LABEL_CLASS = "text-fg-muted mr-2";
 
 export function MemoryExperiencesView({
@@ -158,7 +162,7 @@ export function MemoryExperiencesView({
                   : MUTED_TEXT_CLASS
             }`
           },
-          exp.outcome
+          MEMORY_OUTCOME_LABEL[exp.outcome]
         )
     },
     {
@@ -177,10 +181,10 @@ export function MemoryExperiencesView({
       header: "Validation",
       weight: 120,
       cell: (exp) => {
-        const state = exp.validation?.state ?? "not_run";
+        const state = validationState(exp);
         return React.createElement(StatusBadge, {
-          status: VALIDATION_STATUS_MAP[state] ?? "not-observed",
-          label: state.replace("_", " ")
+          status: MEMORY_VALIDATION_VARIANT[state] ?? "not-observed",
+          label: MEMORY_VALIDATION_LABEL[state]
         });
       }
     },
@@ -296,9 +300,9 @@ function ExperienceDetailPanel({
         React.createElement(StatusBadge, {
           key: "status",
           status:
-            VALIDATION_STATUS_MAP[experience.validation?.state ?? "not_run"] ??
+            MEMORY_VALIDATION_VARIANT[validationState(experience)] ??
             "not-observed",
-          label: experience.validation?.state ?? "not_run"
+          label: MEMORY_VALIDATION_LABEL[validationState(experience)]
         })
       ]
     },
