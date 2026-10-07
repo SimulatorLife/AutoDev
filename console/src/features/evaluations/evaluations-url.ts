@@ -562,6 +562,33 @@ interface UnreadWindow {
 }
 
 /**
+ * Whether the operator's window excludes every instant.
+ *
+ * Both bounds naming real UTC days, with `from` on a later day than `until`.
+ * This is not a narrow window and not a window with no runs in it: it is a
+ * window with no instants in it, which the URL establishes on its own, with no
+ * data and no read involved.
+ *
+ * The two date controls cross-link with `min`/`max` so a browser refuses an
+ * inverted range, and the view's own comment on that control says the
+ * server-side parse re-checks regardless -- a constraint on an input is a
+ * convenience, not a rule. It did not re-check: an inverted range simply
+ * matched nothing, which is exactly what a narrow window holding no runs also
+ * does, so the page answered with the same "clear or widen" it gives for an
+ * ordinary empty result. The URL is hand-edited, bookmarked and shared, so the
+ * inverted range arrives by all three.
+ *
+ * Both bounds must be readable days. One bound alone cannot exclude every
+ * instant -- a window with no end may still reach runs -- and an unreadable day
+ * is not a bound at all, which the caller already reports on its own terms.
+ */
+export function contradictoryWindow(filters: EvaluationsFilters): boolean {
+  const from = resolveUtcDayBound(filters.from);
+  const until = resolveUtcDayBound(filters.until);
+  return from !== undefined && until !== undefined && from > until;
+}
+
+/**
  * Whether the operator's window ends before anything the bounded read holds.
  *
  * The read is capped, so the history the page can speak about stops at some run.

@@ -6425,6 +6425,55 @@ test("what the view could not include is stated under the filter bar", () => {
   );
 });
 
+test("a window whose own bounds exclude every instant says so", () => {
+  // `?from=2026-10-06&until=2026-10-05` names a later start than end, so it
+  // holds no instants at all -- knowable from the URL, with no read involved.
+  // It used to render as an ordinary empty result and be answered with the same
+  // "clear or widen" any narrow window gets, which is advice that cannot work
+  // until the operator also moves the other bound. The two date controls
+  // cross-link with min/max, so the picker refuses to produce this; the URL is
+  // hand-edited, bookmarked and shared, so it arrives anyway.
+  const filters = (from: string, until: string): EvaluationsFilters => ({
+    outcome: "all",
+    role: "",
+    model: "",
+    prompt: "",
+    from,
+    until
+  });
+
+  const inverted = renderEvaluations({
+    evaluations: [],
+    filters: filters("2026-10-06", "2026-10-05")
+  });
+  assert.match(inverted, /data-evaluations-contradictory-window="true"/);
+  assert.match(
+    inverted,
+    /From 2026-10-06 is after To 2026-10-05/,
+    "the sentence names which bound to move"
+  );
+  // It qualifies the empty state rather than replacing it: the history is still
+  // empty and still says so.
+  assert.match(inverted, /No evaluation results match these filters/);
+
+  // The shapes that are empty for an ordinary reason must stay quiet, or the
+  // sentence becomes noise and an operator stops reading the block. A single day,
+  // a wide window and a window with one bound on its own are all valid.
+  for (const [from, until] of [
+    ["2026-10-05", "2026-10-05"],
+    ["2026-10-01", "2026-10-31"],
+    ["2026-10-05", ""],
+    ["", "2026-10-05"],
+    ["", ""]
+  ] as const) {
+    assert.doesNotMatch(
+      renderEvaluations({ evaluations: [], filters: filters(from, until) }),
+      /data-evaluations-contradictory-window/,
+      `from=${from} until=${until} is a window, not a contradiction`
+    );
+  }
+});
+
 test("a window older than the bounded read is not an empty history", () => {
   // Measured in Chromium: `?from=2020-01-01&until=2020-12-31` rendered "No
   // evaluation results match these filters" against a store holding five

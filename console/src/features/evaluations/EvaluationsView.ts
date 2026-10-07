@@ -50,6 +50,7 @@ import {
 } from "../../components/ui/tones.ts";
 import {
   clampEvaluationsPage,
+  contradictoryWindow,
   evaluationResultHref,
   EVALUATIONS_PAGE_SIZE,
   EVALUATIONS_TABS,
@@ -1240,8 +1241,14 @@ function runTimeBound(
   );
 }
 
-/** The three things a view can hold back, as one value rather than a tuple. */
+/** The things a view can hold back, as one value rather than a tuple. */
 interface ViewCaveats {
+  /**
+   * Whether the window's own two bounds exclude every instant, and the bounds
+   * themselves so the sentence can name which one to move.
+   */
+  readonly contradictory?:
+    { readonly from: string; readonly until: string } | undefined;
   readonly unplaceable: number;
   readonly promptless: number;
   /** Oldest run the bounded read holds, when the window ends before it. */
@@ -1268,6 +1275,7 @@ interface ViewCaveats {
  * about a filter belongs where the filter is.
  */
 function renderViewCaveats({
+  contradictory,
   unplaceable,
   promptless,
   oldestReadAt,
@@ -1275,6 +1283,15 @@ function renderViewCaveats({
   storeTotal
 }: ViewCaveats): React.JSX.Element | null {
   const lines: string[] = [];
+  // First, because it is the one cause that needs no data to establish and is
+  // the only one of them the operator can fix without changing what the page
+  // has read. The others describe what the history holds; this one describes
+  // what the URL asked for.
+  if (contradictory !== undefined) {
+    lines.push(
+      `this window holds no instants at all: From ${contradictory.from} is after To ${contradictory.until}, so it is empty whatever the retained history contains`
+    );
+  }
   if (unplaceable > 0) {
     lines.push(
       `${unplaceable} ${unplaceable === 1 ? "run reports" : "runs report"} no readable run time and cannot be placed in this time window`
@@ -1297,6 +1314,9 @@ function renderViewCaveats({
       className: "flex flex-col gap-1 text-xs text-fg-secondary",
       role: "status",
       "data-evaluations-caveats": "true",
+      ...(contradictory === undefined
+        ? {}
+        : { "data-evaluations-contradictory-window": "true" }),
       ...(unplaceable > 0
         ? { "data-evaluations-unplaceable": String(unplaceable) }
         : {}),
@@ -1641,6 +1661,9 @@ export function EvaluationsView({
       runTimeBound("until", "To", filters.until, filters.from)
     ),
     renderViewCaveats({
+      contradictory: contradictoryWindow(filters)
+        ? { from: filters.from, until: filters.until }
+        : undefined,
       unplaceable,
       promptless,
       oldestReadAt,
