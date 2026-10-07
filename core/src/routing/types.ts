@@ -53,9 +53,23 @@ export interface ProviderAgentLimits {
 
 /** Operator-controlled routing state persisted by the Runtime router. */
 export interface RoutingPolicyState {
-  /** Per-provider, per-role priority and model assignment. */
+  /**
+   * Per-provider, per-role priority and model assignment.
+   *
+   * A role is present only when an operator actually assigned it. This is not a
+   * complete four-role record per provider, and the type used to claim it was:
+   * `setProviderAssignment` writes one role at a time onto whatever exists for
+   * that provider, so a provider configured for `subagent` alone carries one key.
+   * The persisted state file is written from this same live map, so the shape
+   * that reaches disk is the partial one too — declaring all four roles made
+   * every reader index a key that need not exist, and nothing failed until a
+   * consumer did.
+   */
   readonly roleAssignments: Readonly<
-    Record<string, Readonly<Record<ProviderRole, ProviderRoleAssignment>>>
+    Record<
+      string,
+      Readonly<Partial<Record<ProviderRole, ProviderRoleAssignment>>>
+    >
   >;
   /**
    * Providers disabled globally. This is independent of the per-role

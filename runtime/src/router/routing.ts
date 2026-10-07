@@ -5,7 +5,8 @@ import {
   PROVIDER_ROLES,
   type ProviderAgentLimits,
   type ProviderRole,
-  type ProviderRoleAssignment
+  type ProviderRoleAssignment,
+  type RoutingPolicyState
 } from "@simulatorlife/autodev-core";
 import { MINIMAX_MODEL_PATTERN } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
@@ -76,16 +77,6 @@ export interface OrchestratorCandidate extends Candidate {
 export interface RoutingRuntime {
   providerFailureStreak?: (provider: string) => number;
   liveProviderCount?: (provider: string) => number;
-}
-
-export interface RoutingRuntimeState {
-  roleAssignments: Record<
-    string,
-    Partial<Record<ProviderRole, ProviderRoleAssignment>>
-  >;
-  disabledProviders: string[];
-  disabledModels: string[];
-  providerLimits: Record<string, ProviderAgentLimits>;
 }
 
 /**
@@ -653,7 +644,7 @@ export class RoutingPolicy {
     return null;
   }
 
-  runtimeState(): RoutingRuntimeState {
+  runtimeState(): RoutingPolicyState {
     const roleAssignments: Record<
       string,
       Partial<Record<ProviderRole, ProviderRoleAssignment>>

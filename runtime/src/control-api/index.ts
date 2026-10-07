@@ -15,6 +15,7 @@ import {
   type ControlApiHooksResponse,
   type ControlApiProviderEnabledPatchResponse,
   type ControlApiProviderRolePatchResponse,
+  type ControlApiRoutingResponse,
   type ControlApiMcpsResponse,
   type ControlApiModelsResponse,
   type ControlApiModelPatchResponse,
@@ -1940,15 +1941,7 @@ function routingView(now: number): Record<string, unknown> {
     })),
     cooldowns: activeCooldowns,
     concurrency: getDefaultConcurrencyManager().concurrencyStatus(now)
-  };
-  // Deliberately unannotated. `ControlApiRoutingResponse.runtime` declares
-  // `RoutingPolicyState`, whose per-provider role assignments require all four
-  // roles, while the Runtime publishes `RoutingRuntimeState`, whose are partial
-  // -- it drops a provider with no assignments at all and merges the rest one
-  // role at a time. Annotating this forces a decision about which of those two
-  // the wire means, and that is a question about Core's routing contract rather
-  // than about this view. No Console surface reads `roleAssignments` today, so
-  // nothing depends on the answer yet.
+  } satisfies ControlApiRoutingResponse;
 }
 
 async function persistRoutingPolicy(): Promise<void> {
