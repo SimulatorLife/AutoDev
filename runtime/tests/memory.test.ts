@@ -1562,6 +1562,93 @@ test("research validates current state, filters scope and lifecycle, and injects
   assert.equal(packet.characterCount, packet.text.length);
 });
 
+test("search and research exclude exactly the same ineligible memories", async () => {
+  // These two public reads used to decide eligibility from two separate
+  // statements of the same rule: `search` filtered through a boolean helper,
+  // `research` refused through `rejectionReason`. Two copies drift silently --
+  // removing any single condition from the boolean helper changed nothing
+  // observable, because the other copy masked it, so the whole helper could
+  // have been wrong with the suite green. `search` had no eligibility test at
+  // all; its only coverage was input validation.
+  //
+  // So this asserts the *agreement* rather than restating the table twice: one
+  // fixture set, both reads, both expected to keep the single eligible record.
+  // A future rule added to one path and not the other fails here by
+  // construction, which is the property the duplication could not express.
+  const repository = new FakeMemoryRepository();
+  const applicable = record("applicable");
+
+  const provenance = record("applicable").provenance;
+  const validity = { state: "verified" as const, evidence: [source] };
+  const ineligible: MemoryRecord[] = [
+    record("wrong-scope", {
+      scope: {
+        kind: "repository",
+        workspaceId: "workspace-b",
+        repositoryId: "repo-b"
+      }
+    }),
+    record("superseded", { status: "superseded" }),
+    record("invalidated", { status: "invalidated" }),
+    // Statuses that are not `active` are refused even when the validity state
+    // is `verified` -- the two fields are separate and both are checked.
+    record("proposed", { status: "proposed" }),
+    record("unverified", { validity: { state: "unverified", evidence: [] } }),
+    record("contradicted", {
+      validity: { state: "contradicted", evidence: [] }
+    }),
+    // The validity window is half-open: [validFrom, validTo). An instant that is
+    // exactly `validFrom` is inside it; an instant at `validTo` is not.
+    record("not-yet-valid", {
+      validity: { ...validity, validFrom: "2099-01-01T00:00:00.000Z" }
+    }),
+    record("expired", {
+      validity: { ...validity, validTo: "2026-09-30T09:00:00.000Z" }
+    }),
+    record("no-experience", {
+      provenance: { ...provenance, experienceIds: [] }
+    }),
+    record("no-evidence", { provenance: { ...provenance, evidence: [] } })
+  ];
+
+  // Typed explicitly rather than mapped inline: inside the array literal the
+  // spread defeats the contextual type, and `matchedSignals` widens to
+  // `string[]`, which is not the signal union.
+  const ineligibleHits: MemorySearchHit[] = ineligible.map((memory) => ({
+    memory,
+    score: 1,
+    matchedSignals: ["lexical"]
+  }));
+  repository.hits = [
+    { memory: applicable, score: 1, matchedSignals: ["lexical"] },
+    // A hit whose score cannot rank it. `research` already refused these as
+    // `low_relevance`; `search` did not, and would have sorted them in.
+    {
+      memory: record("unrankable"),
+      score: Number.NaN,
+      matchedSignals: ["lexical"]
+    },
+    ...ineligibleHits
+  ];
+  const service = makeService(repository);
+
+  const searched = await service.search({
+    query: "memory repository implementation",
+    context,
+    limit: 40
+  });
+  const packet = await service.research(researchRequest());
+
+  assert.deepEqual(
+    searched.map((hit) => hit.memory.id),
+    ["applicable"]
+  );
+  assert.deepEqual(
+    packet.entries.map((entry) => entry.memoryId),
+    ["applicable"]
+  );
+});
+
 test("memory search and research reject empty or oversized task-kind signals", async () => {
   const repository = new FakeMemoryRepository();
   const service = makeService(repository);

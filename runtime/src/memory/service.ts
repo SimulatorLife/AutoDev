@@ -1843,10 +1843,23 @@ export class MemoryService
         ...(queryEmbedding ? { queryEmbedding } : {}),
         limit: Math.min(Math.max(request.limit ?? 10, 1), MAX_RESEARCH_HITS)
       });
+      // One rule, one implementation.
+      //
+      // `isEligibleRecord` used to restate the same eligibility conditions as a
+      // boolean, alongside `rejectionReason`, which states them again and
+      // explains each refusal. Two copies of one rule drift: deleting any single
+      // condition from the boolean changed nothing observable, because the copy
+      // behind `research` masked it, so the whole of `isEligibleRecord` could
+      // have been wrong without a failing test.
+      //
+      // Filtering here through `rejectionReason` makes `search` and `research`
+      // agree by construction. The one behaviour this adds is that a hit with a
+      // non-finite score is now excluded here too: `research` already refused
+      // it as `low_relevance`, and a hit that cannot be ranked has no business
+      // being ranked.
       const eligibleHits = hits
-        .filter((hit) => this.isEligibleRecord(hit.memory, asOf))
-        .filter((hit) =>
-          isMemoryScopeVisibleTo(hit.memory.scope, request.context)
+        .filter(
+          (hit) => this.rejectionReason(hit, request.context, asOf) === null
         )
         .sort((left, right) => right.score - left.score)
         .slice(
@@ -2634,19 +2647,6 @@ export class MemoryService
       omittedCount,
       generatedAt: this.now()
     };
-  }
-
-  private isEligibleRecord(memory: MemoryRecord, asOf: string): boolean {
-    return (
-      memory.status === "active" &&
-      memory.validity.state === "verified" &&
-      (memory.validity.validFrom === undefined ||
-        memory.validity.validFrom <= asOf) &&
-      (memory.validity.validTo === undefined ||
-        memory.validity.validTo > asOf) &&
-      memory.provenance.experienceIds.length > 0 &&
-      memory.provenance.evidence.length > 0
-    );
   }
 
   private validateEmbedding(embedding: readonly number[]): readonly number[] {
