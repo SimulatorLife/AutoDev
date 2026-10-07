@@ -157,14 +157,19 @@ function providerColumns(
       // from the row. The contract asks for a help affordance on this header.
       headerHelp:
         "Each fixed role takes a priority (P1, P2, P3 or Disabled) and a model. Disabled dims its model selector but keeps the chosen model, so re-enabling restores it.",
-      // Rebalanced in the browser against live Runtime data. Roles at 420 of 934
-      // took 45% of the table at 1440 and left the Roles cell visibly empty
-      // while Agent Limits was cramped against the right edge: the model select
-      // is an intrinsic-width native control, so extra column width is spent on
-      // padding rather than on anything readable. 300 keeps the four role rows
-      // side by side and hands the difference to Status, whose verdict names a
-      // long environment variable, and to Agent Limits.
-      weight: 460,
+      // Measured in the browser against the committed Runtime's own providers,
+      // not against a fixture. The widest of the four role forms is
+      // `orchestrator` at 486px — its label is nine characters against
+      // `default`'s seven — and the cell has to hold that plus 32px of padding,
+      // so 518px is the floor. At 460 the cell rendered 488px: `default` (455)
+      // and `smart` (448) just fit, `orchestrator` (486) and `subagent` (468)
+      // did not, and each of those two pushed its Apply button onto a second
+      // line. That is worse than uniform wrapping, because within one column
+      // the same control appeared inline on two rows and wrapped on the other
+      // two, and the row grew to 255px to hold it. 490 puts every role on one
+      // line at 1440; the difference comes off Agent Limits, whose widest
+      // content is the 120px "Provider disabled" caption.
+      weight: 490,
       align: "tokens",
       cell: (provider) =>
         React.createElement(ProviderRoleControls, {
@@ -177,7 +182,11 @@ function providerColumns(
       header: "Agent Limits",
       headerHelp:
         "Provider-wide concurrent-agent limits. Unlimited has no ceiling; disabling the provider turns it off entirely while preserving its priorities, models and limits.",
-      weight: 214,
+      // Sized by its widest single content, the 120px "Provider disabled"
+      // caption, rather than by its stack. It gave 30 to Roles so every role's
+      // Apply button stays on one line; the column still holds its widest
+      // content with room to spare.
+      weight: 184,
       align: "tokens",
       cell: (provider) =>
         React.createElement(ProviderLimitsControls, { provider, returnTo })
