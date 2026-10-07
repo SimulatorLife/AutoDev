@@ -142,6 +142,17 @@ interface EvaluationsViewProps {
   readonly oldestReadAt?: number | undefined;
   /** Result id opened in the detail drawer, or `null`. */
   readonly selection?: string | null | undefined;
+  /**
+   * The span the URL names, when it names one this page accepts.
+   *
+   * The view is handed this rather than reading it back off `traceLookup`,
+   * because it is needed for links and not for rendering. The reader's answer
+   * is only available once a trace came back observed, and "close this run"
+   * still has to keep the selection on a page whose trace was not found --
+   * which is exactly when the trace panel has no other way to say which span it
+   * was about.
+   */
+  readonly spanId?: string | undefined;
   readonly traceLookup?: EvaluationTraceLookup | null | undefined;
 }
 
@@ -407,11 +418,47 @@ interface EvaluationsNav {
   readonly filters: EvaluationsFilters;
   readonly tab: EvaluationsTabId;
   readonly page: number;
+  /**
+   * The span the URL names, when it names one.
+   *
+   * Carried here rather than left to each call site because only the page knows
+   * it: the reader's answer is absent whenever the trace did not come back
+   * observed, and a link that must keep the selection still has to keep it on
+   * those pages.
+   */
+  readonly spanId?: string | undefined;
 }
 
-/** The list for the current state: same filters, same tab, same page. */
+/**
+ * The list for the current state: same filters, same tab, same page, neither
+ * selection.
+ *
+ * This is "back to the list", so it is what the trace panel offers when the
+ * operator wants to leave the trace.
+ */
 function navListHref(nav: EvaluationsNav): string {
   return evaluationsListHref(nav.filters, { tab: nav.tab, page: nav.page });
+}
+
+/**
+ * The same list with the run closed and the trace left open.
+ *
+ * The drawer's link says "Close evaluation detail", so it closes the detail. It
+ * used to hand back `navListHref`, which closed the trace as well -- and a page
+ * whose URL named both a run and a span rendered both, so an operator who had
+ * deliberately put them side by side lost the trace they were reading to close a
+ * drawer, with no link anywhere to get back to it.
+ *
+ * The result is a URL naming one selection rather than two, so this is not the
+ * page rendering two panels at once by a link; it is the one link that undoes
+ * one of them.
+ */
+function navCloseResultHref(nav: EvaluationsNav): string {
+  return evaluationsListHref(nav.filters, {
+    tab: nav.tab,
+    page: nav.page,
+    spanId: nav.spanId
+  });
 }
 
 /**
@@ -928,7 +975,7 @@ function renderResultDetail(
       title: evaluation.id,
       badges: outcomeBadge(evaluation),
       subtitle: runTimeInstant(evaluation.timestamp),
-      closeHref: navListHref(nav),
+      closeHref: navCloseResultHref(nav),
       closeLabel: "Close evaluation detail",
       dataAttributes: { "data-feature": "evaluation-detail" }
     },
@@ -1564,6 +1611,7 @@ export function EvaluationsView({
   promptless = 0,
   oldestReadAt,
   selection = null,
+  spanId,
   traceLookup = null
 }: EvaluationsViewProps): React.JSX.Element {
   const counts = tallyOutcomes(evaluations);
@@ -1583,7 +1631,7 @@ export function EvaluationsView({
   const comparedRuns = narrowed
     ? "Every run in this view"
     : "Every retained run";
-  const nav: EvaluationsNav = { filters, tab, page };
+  const nav: EvaluationsNav = { filters, tab, page, spanId };
   const selectedEvaluation =
     selection === null
       ? null

@@ -175,6 +175,14 @@ export default async function EvaluationsPage({
       ...(placed.promptless === 0 ? {} : { promptless: placed.promptless }),
       ...(unread === undefined ? {} : { oldestReadAt: unread.oldestReadAt }),
       ...(selectedResult === undefined ? {} : { selection: selectedResult }),
+      // Only a span id the page accepts. A URL can name one that is not a span
+      // id, and the trace panel already says so; carrying it into every link
+      // would spread a selection the page has declared unreadable across the
+      // page, and the one link that must keep it -- the drawer's close -- would
+      // then be keeping something meaningless.
+      ...(hasInvalidSpanSelection || requestedSpanId === undefined
+        ? {}
+        : { spanId: requestedSpanId }),
       ...(traceLookup ? { traceLookup } : {})
     })
   );

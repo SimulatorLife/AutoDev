@@ -2666,6 +2666,28 @@ function renderEvaluations(
   );
 }
 
+/**
+ * A filter state for a test, overriding only what it names.
+ *
+ * Module level because several tests here need one and three others declare
+ * their own local `filters` with the same shape. Those are left alone: one of
+ * them takes `(from, until)` rather than an overrides object, so folding them
+ * in would be a change to tests this work does not own.
+ */
+function evaluationsFilters(
+  over: Partial<EvaluationsFilters> = {}
+): EvaluationsFilters {
+  return {
+    outcome: "all",
+    role: "",
+    model: "",
+    prompt: "",
+    from: "",
+    until: "",
+    ...over
+  };
+}
+
 test("one instant is rendered one way, including in the drawer", () => {
   // The resource has a single definition of how it renders an instant --
   // `splitInstant` -- and the history and trace tables both go through it. The
@@ -5730,6 +5752,83 @@ test("opening a run keeps the page of the history it was opened from", () => {
   );
 });
 
+test("closing a run leaves the trace open, and leaving the trace closes neither", () => {
+  // The two selections are alternatives, so a link that opens one closes the
+  // other. That rule does not settle this pair: closing a run and closing a
+  // trace are both "leave this open", and what each leaves is the question.
+  //
+  // The drawer's link says "Close evaluation detail", so it closes the detail.
+  // It used to hand back the same href as the trace panel's "Back to
+  // evaluations", which closed the trace too -- so on a URL naming both, closing
+  // a drawer destroyed the trace that was open beside it, and nothing on the
+  // page offered a way back to it. The trace's own link is the one that says
+  // "back to evaluations", so it is the one that closes both.
+  const run = {
+    id: "run-1",
+    agentRole: "implementer",
+    promptName: "dry",
+    model: "gpt-5.6-terra",
+    metrics: [],
+    passed: true,
+    timestamp: "2026-10-05T12:00:00.000Z"
+  };
+  const spanId = "0123456789abcdef";
+  const traceLookup = {
+    kind: "observed",
+    detail: {
+      schema: "autodev-openlit-trace-detail-v1",
+      traceId: "0123456789abcdef0123456789abcdef",
+      selectedSpanId: spanId,
+      partial: false,
+      spans: [
+        {
+          spanId,
+          parentSpanId: null,
+          spanName: "gen_ai.client_operation",
+          serviceName: "autodev-router",
+          timestamp: "2026-10-05T12:00:00.000Z",
+          durationNs: 1_250_000,
+          statusCode: "OK" as const
+        }
+      ]
+    }
+  } as const;
+
+  const both = renderEvaluations({
+    evaluations: [run],
+    filters: evaluationsFilters({ role: "worker" }),
+    page: 2,
+    selection: run.id,
+    spanId,
+    traceLookup
+  });
+
+  const drawerStart = both.indexOf('data-feature="evaluation-detail"');
+  assert.notEqual(drawerStart, -1, "the run's drawer is open");
+  assert.match(
+    both.slice(drawerStart, both.indexOf("</main>")),
+    new RegExp(
+      String.raw`href="/evaluations\?role=worker&amp;spanId=${spanId}&amp;page=2"`
+    ),
+    "closing the run keeps the span, the filters and the page"
+  );
+
+  // The trace's own way back leaves both selections, because that is what
+  // "back to evaluations" says.
+  assert.match(
+    both.slice(both.indexOf('data-feature="evaluation-trace-detail"')),
+    /href="\/evaluations\?role=worker&amp;page=2"/,
+    "leaving the trace leaves the list with neither selection"
+  );
+
+  // With no span open, closing a run is the plain list.
+  assert.match(
+    renderEvaluations({ evaluations: [run], selection: run.id }),
+    /href="\/evaluations"/,
+    "a page with one selection still closes to the plain list"
+  );
+});
+
 test("clearing the filters keeps the section and the run being looked for", () => {
   // Both "clear" links used to hand back a bare `/evaluations`, and neither of
   // them means "forget everything". The one beside the section links says
@@ -5738,23 +5837,16 @@ test("clearing the filters keeps the section and the run being looked for", () =
   // the whole retained history", which is a promise to go to that run -- and in
   // an unfiltered list of fifty-row pages the run it is looking for may not be
   // on the first one.
-  const filters = (over: Partial<EvaluationsFilters>): EvaluationsFilters => ({
-    outcome: "all",
-    role: "",
-    model: "",
-    prompt: "",
-    from: "",
-    until: "",
-    ...over
-  });
-
   const clearLinks = (markup: string): string[] => {
     const found: string[] = [];
     let at = markup.indexOf('data-evaluations-clear="true"');
     while (at !== -1) {
       const open = markup.lastIndexOf("<a", at);
-      const href = /href="([^"]+)"/.exec(markup.slice(open, at));
-      if (href) found.push(href[1]);
+      // The capture group is what is wanted, not the match: `exec` reports
+      // the group as `string | undefined` under `noUncheckedIndexedAccess`, so
+      // a truthy match is not evidence the group is there.
+      const captured = /href="([^"]+)"/.exec(markup.slice(open, at))?.[1];
+      if (captured !== undefined) found.push(captured);
       at = markup.indexOf('data-evaluations-clear="true"', at + 1);
     }
     return found;
@@ -5764,7 +5856,7 @@ test("clearing the filters keeps the section and the run being looked for", () =
     clearLinks(
       renderEvaluations({
         evaluations: [],
-        filters: filters({ role: "worker" }),
+        filters: evaluationsFilters({ role: "worker" }),
         tab: "comparisons"
       })
     ),
@@ -5776,7 +5868,7 @@ test("clearing the filters keeps the section and the run being looked for", () =
   // the section link is on the same page and would satisfy a bare href match.
   const callout = renderEvaluations({
     evaluations: [],
-    filters: filters({ outcome: "failed" }),
+    filters: evaluationsFilters({ outcome: "failed" }),
     selection: "run-1"
   });
   const calloutStart = callout.indexOf('data-detail-state="not-found"');
@@ -5792,7 +5884,9 @@ test("clearing the filters keeps the section and the run being looked for", () =
   );
 
   assert.deepEqual(
-    clearLinks(renderEvaluations({ evaluations: [], filters: filters({}) })),
+    clearLinks(
+      renderEvaluations({ evaluations: [], filters: evaluationsFilters({}) })
+    ),
     [],
     "there is nothing to clear, so there is no clear link"
   );
