@@ -123,7 +123,7 @@ export function PromptsView({
       // column on the page that can be sized from a header alone. `.rulesync/`
       // is the constant leading segment and `SKILL.md`-style tails are constant
       // per kind; the varying middle is exactly the part a wrap keeps whole.
-      weight: 140,
+      weight: 170,
       cell: (prompt) => React.createElement(PathText, { path: prompt.path })
     },
     {
@@ -135,7 +135,7 @@ export function PromptsView({
       // content is already bounded: a clamped description discards its tail by
       // design, so widening it costs height the operator chose and narrowing it
       // costs rows. Every other column here has to clear a measured width.
-      weight: 320,
+      weight: 290,
       cell: (prompt) => {
         const description = prompt.description;
         return React.createElement(
