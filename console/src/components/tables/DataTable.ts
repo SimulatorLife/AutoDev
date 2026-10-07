@@ -347,14 +347,29 @@ export function DataTable<T>({
                 // fit on one line, and "CONVERGEN…" tells an operator less than
                 // two short lines do.
                 //
-                // It wraps at word boundaries only. `break-words` was letting a
-                // single-word header split mid-word -- "CONVERGENC E" -- which
-                // reads as a rendering fault rather than as a label. A label
-                // that genuinely cannot fit its column is a width problem, and
-                // the width is the column's `weight`; the header refuses to
-                // paper over it.
+                // `break-words` is `overflow-wrap: break-word`, which is exactly
+                // the two rules the target state asks for (see
+                // `docs/autodev-console-target-state.md`, "Tables"): a header
+                // wraps at word boundaries, and a single word that cannot fit
+                // its column anyway breaks rather than hiding which column it
+                // labels. It is deliberately not `break-all`, which would also
+                // split a multi-word header mid-word.
+                //
+                // This replaced `break-normal`, on the reasoning that a split
+                // label ("CONVERGENC E") reads as a rendering fault. That
+                // reasoning contradicts the spec, which names the split as the
+                // preferred outcome to the alternative -- an ellipsis or a spill
+                // that leaves the operator unable to tell which column is which.
+                // The width is still the real fix, and the spec says so first:
+                // "A column's weight must be large enough for its own header."
+                // This class is the floor under that rule, not a substitute.
+                //
+                // Measured across every table route at 1440/1024/768/390, no
+                // header currently needs to break, so this changes no rendered
+                // output today; it decides what happens when a column is
+                // rebalanced into a header too wide for its share.
                 className:
-                  "px-4 py-2.5 text-xs uppercase leading-tight tracking-wider break-normal",
+                  "px-4 py-2.5 text-xs uppercase leading-tight tracking-wider break-words",
                 style: { width: widths[index] }
               },
               React.createElement(

@@ -2617,18 +2617,24 @@ test("DataTable wraps column headers instead of truncating them", () => {
   );
   // Relative widths shrink proportionally on a narrower viewport, so a header
   // that runs out of room wraps. Truncating it would render "CONVERGEN…" and
-  // hide which column it labels.
+  // hide which column it labels -- the one header outcome the spec rules out.
   //
-  // It wraps at word boundaries only. `break-words` used to be here, which let a
-  // single-word header split mid-word -- "CONVERGENC E" -- and that reads as a
-  // rendering fault rather than as a label. A column too narrow for its own
-  // single word is a width to fix, not a word to break.
+  // `break-words` is `overflow-wrap: break-word`, which is the spec's pair of
+  // rules in one class: wrap at word boundaries, and break a single word that
+  // cannot fit its column anyway rather than hide it. This replaced
+  // `break-normal`, which was chosen on the grounds that a split label
+  // ("CONVERGENC E") reads as a rendering fault -- but the target state names
+  // the split as the preferred outcome to the alternative, so the two disagreed
+  // and the spec wins. No header on any route currently needs to break (measured
+  // at 1440/1024/768/390), so this decides a future column rather than today's.
   assert.match(
     markup,
-    /<th [^>]*class="[^"]*break-normal[^"]*"[^>]*><span data-column-label="[^"]*">Convergence<\/span><\/th>/
+    /<th [^>]*class="[^"]*break-words[^"]*"[^>]*><span data-column-label="[^"]*">Convergence<\/span><\/th>/
   );
   assert.doesNotMatch(markup, /<th [^>]*class="[^"]*truncate[^"]*"/);
-  assert.doesNotMatch(markup, /<th [^>]*class="[^"]*break-words[^"]*"/);
+  // `break-all` would also satisfy "breaks rather than hides", but it splits a
+  // multi-word header mid-word too, which the same rule forbids.
+  assert.doesNotMatch(markup, /<th [^>]*class="[^"]*break-all[^"]*"/);
 });
 
 /**
