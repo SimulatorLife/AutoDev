@@ -6112,3 +6112,245 @@ test("the omissions are the entries that did not fit, not an arbitrary subset", 
     "the kept entries are not a prefix of the ranking"
   );
 });
+
+/**
+ * The seven MCP tools that had never been invoked by any test.
+ *
+ * The facade test above asserts the tool *list* and exercises four write tools.
+ * Every handler that reads was therefore never executed: an agent-facing surface
+ * with a workspace-scoping rule, and no test that a rule applies to it. The
+ * write tools were already covered for exactly this — `memory_research` is
+ * asserted to ignore an attacker-selected `workspaceId` — which makes the read
+ * side the larger half of the gap, because a read tool that returns another
+ * workspace's memory hands over exactly what the write tools refuse to accept.
+ *
+ * The arguments here deliberately carry a caller-selected workspace on every
+ * call. None of these seven takes one, so the assertions are about the host
+ * session binding instead: the two search tools are checked against the request
+ * their repository recorded, and the four id-based reads are checked by asking
+ * for an id that belongs to somebody else.
+ */
+
+const FOREIGN_WORKSPACE = {
+  scope: {
+    kind: "repository" as const,
+    workspaceId: "workspace-b",
+    repositoryId: "repo-b"
+  },
+  workspaceId: "workspace-b",
+  repositoryId: "repo-b"
+};
+
+/** Connect a client bound to the `context` fixture's workspace. */
+async function withMcpClient(
+  repository: FakeMemoryRepository,
+  run: (client: Client) => Promise<void>
+): Promise<void> {
+  const service = makeService(repository);
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const server = createMemoryMcpServer(service, {
+    current: async () => ({
+      actor: worker,
+      context,
+      taskId: "task-current",
+      task: "Investigate memory MCP scope safety.",
+      memoryMode: "unknown"
+    })
+  });
+  const client = new Client(
+    { name: "memory-read-test-client", version: "1.0.0" },
+    { capabilities: {} }
+  );
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    await run(client);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+}
+
+test("every MCP read tool runs against the host session and ignores a caller-selected workspace", async () => {
+  const repository = new FakeMemoryRepository();
+  const visibleExperience = experience("visible-experience");
+  repository.experiences.set(visibleExperience.id, visibleExperience);
+  const visible = record("visible-record");
+  repository.memories.set(visible.id, visible);
+  repository.hits = [
+    { memory: visible, score: 1, matchedSignals: ["lexical"] }
+  ];
+
+  await withMcpClient(repository, async (client) => {
+    const call = async (
+      name: string,
+      args: Record<string, unknown>
+    ): Promise<{ isError?: boolean; text: string }> => {
+      const result = await client.callTool({ name, arguments: args });
+      const first = (result.content as Array<{ text?: string }>)[0];
+      return {
+        // The SDK types `isError` as unknown, so narrow it here rather than
+        // asserting against a value the client has not promised is boolean.
+        ...(typeof result.isError === "boolean" ? { isError: result.isError } : {}),
+        text: first?.text ?? ""
+      };
+    };
+
+    // Every call carries a workspaceId the caller chose. None of these tools
+    // accepts one, so if any of them honoured it the request its repository
+    // recorded below would say "attacker-selected-workspace".
+    const search = await call("experience_search", {
+      query: "retry",
+      workspaceId: "attacker-selected-workspace"
+    });
+    assert.equal(
+      search.isError,
+      undefined,
+      `experience_search failed: ${search.text}`
+    );
+    assert.equal(
+      repository.experienceSearchRequests.at(-1)?.context.workspaceId,
+      "workspace-a",
+      "experience_search searched a workspace the caller chose"
+    );
+
+    const memorySearch = await call("memory_search", {
+      query: "retry",
+      workspaceId: "attacker-selected-workspace"
+    });
+    assert.equal(
+      memorySearch.isError,
+      undefined,
+      `memory_search failed: ${memorySearch.text}`
+    );
+    assert.equal(
+      repository.searchRequests.at(-1)?.context.workspaceId,
+      "workspace-a",
+      "memory_search searched a workspace the caller chose"
+    );
+
+    for (const [name, args] of [
+      ["experience_get", { id: "visible-experience" }],
+      ["memory_get", { id: "visible-record" }],
+      ["memory_history", { id: "visible-record" }],
+      ["memory_why", { id: "visible-record" }]
+    ] as const) {
+      const result = await call(name, {
+        ...args,
+        workspaceId: "attacker-selected-workspace"
+      });
+      assert.equal(result.isError, undefined, `${name} failed: ${result.text}`);
+      assert.notEqual(
+        result.text,
+        "null",
+        `${name} returned nothing for a record in the host's own workspace`
+      );
+    }
+
+    const revised = await call("memory_revise", {
+      id: "visible-record",
+      claim: "Run the focused suite before the broad one.",
+      experienceIds: ["visible-experience"],
+      evidence: [source],
+      workspaceId: "attacker-selected-workspace"
+    });
+    assert.equal(revised.isError, undefined, `memory_revise failed: ${revised.text}`);
+  });
+});
+
+test("no MCP read tool returns an object belonging to another workspace", async () => {
+  // The refusal half. An id is the only thing a read tool takes from the
+  // caller, so "can I read this id" is the whole security question, and a tool
+  // that answers with somebody else's record leaks precisely what the write
+  // tools refuse to accept.
+  const repository = new FakeMemoryRepository();
+  const foreignExperience = experience("foreign-experience");
+  repository.experiences.set(foreignExperience.id, {
+    ...foreignExperience,
+    ...FOREIGN_WORKSPACE,
+    scope: FOREIGN_WORKSPACE.scope
+  });
+  const foreign = record("foreign-record", {
+    ...FOREIGN_WORKSPACE,
+    scope: FOREIGN_WORKSPACE.scope,
+    provenance: {
+      ...record("foreign-record").provenance,
+      experienceIds: ["foreign-experience"]
+    }
+  });
+  repository.memories.set(foreign.id, foreign);
+  repository.hits = [
+    { memory: foreign, score: 1, matchedSignals: ["lexical"] }
+  ];
+  // A visible record that *cites* the foreign experience, so `memory_why` has
+  // something to over-report: the record is readable, and its provenance is not.
+  const citing = record("citing-record", {
+    provenance: {
+      ...record("citing-record").provenance,
+      experienceIds: ["foreign-experience"]
+    }
+  });
+  repository.memories.set(citing.id, citing);
+
+  await withMcpClient(repository, async (client) => {
+    const call = async (
+      name: string,
+      args: Record<string, unknown>
+    ): Promise<string> => {
+      const result = await client.callTool({ name, arguments: args });
+      const first = (result.content as Array<{ text?: string }>)[0];
+      return first?.text ?? "";
+    };
+
+    for (const [name, args] of [
+      ["experience_get", { id: "foreign-experience" }],
+      ["memory_get", { id: "foreign-record" }],
+      ["memory_history", { id: "foreign-record" }],
+      ["memory_why", { id: "foreign-record" }]
+    ] as const) {
+      const text = await call(name, args);
+      assert.doesNotMatch(
+        text,
+        /foreign-record|foreign-experience|workspace-b/u,
+        `${name} returned an object from another workspace`
+      );
+    }
+
+    // The case that is easy to miss, because nothing here looks like a
+    // cross-workspace read: the record is *readable*, and its provenance cites
+    // an experience that is not. `why` answers for the record it was asked
+    // about, then walks that record's own provenance — so the record's
+    // visibility says nothing about what its citations resolve to. Asking
+    // `why` about the foreign record above does not cover this at all: that
+    // stops at the record, before any provenance is read.
+    const why = await call("memory_why", { id: "citing-record" });
+    const whyResult = JSON.parse(why) as {
+      readonly memory: { readonly id: string };
+      readonly sourceExperiences: readonly { readonly id: string }[];
+    };
+    assert.equal(
+      whyResult.memory.id,
+      "citing-record",
+      "the citing record is not readable, so the assertion below proves nothing"
+    );
+    // Scoped to `sourceExperiences`, not to the whole response: the record's
+    // own provenance legitimately names the experience it cites, and matching
+    // the id anywhere in the payload would fail on the record itself rather
+    // than on anything the reader was not entitled to.
+    assert.deepEqual(
+      whyResult.sourceExperiences.map((experience) => experience.id),
+      [],
+      "why resolved a cited experience belonging to another workspace"
+    );
+
+    // The same for a search: the repository is asked with the host's context,
+    // so a foreign record can only appear if the *service* stops filtering.
+    const searched = await call("memory_search", { query: "suite" });
+    assert.doesNotMatch(
+      searched,
+      /foreign-record/u,
+      "memory_search returned a record from another workspace"
+    );
+  });
+});
