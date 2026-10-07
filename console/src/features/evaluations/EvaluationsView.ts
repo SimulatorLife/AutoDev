@@ -55,6 +55,7 @@ import {
   evaluationResultHref,
   EVALUATIONS_PAGE_SIZE,
   EVALUATIONS_TABS,
+  evaluationsClearedHref,
   type EvaluationsFilterOptions,
   type EvaluationsFilters,
   evaluationsListHref,
@@ -63,7 +64,6 @@ import {
   evaluationsPageRows,
   evaluationsTabHref,
   type EvaluationsTabId,
-  evaluationsUnfilteredHref,
   evaluationTraceHref,
   hasActiveFilters,
   hasExplicitVerdict,
@@ -387,6 +387,21 @@ const NO_PROMPT_LABEL = "No prompt";
  * came to preserve the narrowing but drop the tab, landing the operator on the
  * results page after they had opened a comparison -- and how closing a run's
  * drawer would have thrown away the page of the history it was opened from.
+ *
+ * Those three are dimensions of *one* reading, so a link that changes any of
+ * them keeps the others. The two selections are a different kind of thing:
+ * which run is open and which span is open are alternatives, and a link that
+ * opens one closes the other -- opening a run from a trace, paging the list
+ * while a run is open, clearing the filters from beside a trace. The page
+ * renders both at once when a URL names both, but no link produces that pair,
+ * so treating them as exclusive costs an operator nothing they could reach.
+ *
+ * The rule exists because the alternative was five bugs of one shape. Read as a
+ * table of what every link keeps, the three dimensions were carrying each other
+ * and the selections were being dropped by links whose own labels promised
+ * otherwise: the filter bar dropped the tab, a row dropped the page it was on,
+ * and "Clear the filters and look for it in the whole retained history" dropped
+ * the very run it offered to go to.
  */
 interface EvaluationsNav {
   readonly filters: EvaluationsFilters;
@@ -725,7 +740,7 @@ function renderMissingResult(
       ? React.createElement(
           "a",
           {
-            href: evaluationsUnfilteredHref(),
+            href: evaluationsClearedHref({ resultId: selection }),
             className: "text-xs text-accent underline-offset-4 hover:underline",
             "data-evaluations-clear": "true"
           },
@@ -1802,7 +1817,7 @@ export function EvaluationsView({
         ? React.createElement(
             "a",
             {
-              href: evaluationsUnfilteredHref(),
+              href: evaluationsClearedHref({ tab }),
               className:
                 "text-xs text-accent underline-offset-4 hover:underline",
               "data-evaluations-clear": "true"

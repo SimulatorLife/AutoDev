@@ -401,9 +401,30 @@ export function evaluationsListHref(
   return evaluationsHref(filters, { ...NO_SELECTION, ...selection });
 }
 
-/** The list without any narrowing, which is where "Clear filters" goes. */
-export function evaluationsUnfilteredHref(): string {
-  return EVALUATIONS_ROUTE;
+/**
+ * The whole retained history, keeping whatever the operator was reading.
+ *
+ * Two links clear the filters and neither of them means "forget everything":
+ * the one beside the section links says "Clear filters" and is on a page whose
+ * whole shape is the section you are reading, and the one in the callout for an
+ * excluded run says "Clear the filters and look for it in the whole retained
+ * history" -- a promise to go to that run, which the unfiltered list cannot keep
+ * because the run may be on any page of fifty. Both used to hand back a bare
+ * `/evaluations`, dropping the section and the run as well as the narrowing.
+ *
+ * The page is deliberately not kept, and that is the one thing it drops: a
+ * narrower result set can have fewer pages than the one being left, so the page
+ * is not a position in the list that follows. `clampEvaluationsPage` would hide
+ * an out-of-range page, but landing on page 1 of a different list is the honest
+ * answer to "show me everything".
+ */
+export function evaluationsClearedHref(
+  selection: Partial<EvaluationsSelection> = {}
+): string {
+  return evaluationsHref(parseEvaluationsFilters({}), {
+    ...NO_SELECTION,
+    ...selection
+  });
 }
 
 /**
@@ -423,9 +444,8 @@ export function evaluationsUnfilteredHref(): string {
  * closing the drawer could not put the operator back on page 3 either. The
  * drawer is inline, so that list is the context the detail is read against.
  *
- * `evaluationsUnfilteredHref` deliberately does not carry the page: clearing a
- * filter changes which rows exist, so the page it was on is not a position in
- * the list that follows.
+ * `evaluationsClearedHref` is the same rule on the other link: it drops the
+ * page too, because clearing a filter changes which rows exist.
  */
 export function evaluationResultHref(
   filters: EvaluationsFilters,

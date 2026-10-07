@@ -5730,6 +5730,74 @@ test("opening a run keeps the page of the history it was opened from", () => {
   );
 });
 
+test("clearing the filters keeps the section and the run being looked for", () => {
+  // Both "clear" links used to hand back a bare `/evaluations`, and neither of
+  // them means "forget everything". The one beside the section links says
+  // "Clear filters" on a page whose shape is the section being read; the one in
+  // the callout for an excluded run says "Clear the filters and look for it in
+  // the whole retained history", which is a promise to go to that run -- and in
+  // an unfiltered list of fifty-row pages the run it is looking for may not be
+  // on the first one.
+  const filters = (over: Partial<EvaluationsFilters>): EvaluationsFilters => ({
+    outcome: "all",
+    role: "",
+    model: "",
+    prompt: "",
+    from: "",
+    until: "",
+    ...over
+  });
+
+  const clearLinks = (markup: string): string[] => {
+    const found: string[] = [];
+    let at = markup.indexOf('data-evaluations-clear="true"');
+    while (at !== -1) {
+      const open = markup.lastIndexOf("<a", at);
+      const href = /href="([^"]+)"/.exec(markup.slice(open, at));
+      if (href) found.push(href[1]);
+      at = markup.indexOf('data-evaluations-clear="true"', at + 1);
+    }
+    return found;
+  };
+
+  assert.deepEqual(
+    clearLinks(
+      renderEvaluations({
+        evaluations: [],
+        filters: filters({ role: "worker" }),
+        tab: "comparisons"
+      })
+    ),
+    ["/evaluations?tab=comparisons"],
+    "clearing the filters leaves the section the operator was reading"
+  );
+
+  // The callout link, with the run it is about. Scoped to the callout, because
+  // the section link is on the same page and would satisfy a bare href match.
+  const callout = renderEvaluations({
+    evaluations: [],
+    filters: filters({ outcome: "failed" }),
+    selection: "run-1"
+  });
+  const calloutStart = callout.indexOf('data-detail-state="not-found"');
+  const calloutEnd = callout.indexOf('aria-label="Evaluation filters"');
+  assert.notEqual(calloutStart, -1, "the excluded run renders its callout");
+  assert.notEqual(calloutEnd, -1, "the filter bar follows the callout");
+  // Bounded at the filter bar: the section row carries a second clear link on
+  // the same page, and a slice to the end of the document would collect it.
+  assert.deepEqual(
+    clearLinks(callout.slice(calloutStart, calloutEnd)),
+    ["/evaluations?result=run-1"],
+    "the way out of an excluded run goes to that run, not to the top of the list"
+  );
+
+  assert.deepEqual(
+    clearLinks(renderEvaluations({ evaluations: [], filters: filters({}) })),
+    [],
+    "there is nothing to clear, so there is no clear link"
+  );
+});
+
 test("applying a filter keeps the tab the operator was reading", () => {
   // A GET form rebuilds the query string from its own controls, so anything not
   // on the bar resets. The tab links already carry the narrowing; this is the
@@ -7015,8 +7083,8 @@ test("a run a link asked for and the page cannot show says so", () => {
   );
   assert.match(
     narrowed,
-    /href="\/evaluations"[^>]*>Clear the filters and look for it in the whole retained history/,
-    "the way out is one click"
+    /href="\/evaluations\?result=run-1"[^>]*>Clear the filters and look for it in the whole retained history/,
+    "the way out is one click, and it goes to the run the callout is about"
   );
 
   // No filters and an untruncated read: there is exactly one reason left to give.
