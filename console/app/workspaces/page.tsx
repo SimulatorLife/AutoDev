@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import React from "react";
 
 import { WorkspacesView } from "../../src/features/workspaces/WorkspacesView.ts";
@@ -12,6 +13,10 @@ import {
 } from "../_console.ts";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Workspaces"
+};
 
 export default async function WorkspacesPage(): Promise<React.JSX.Element> {
   const { section, config } = readNodeContext("/workspaces");

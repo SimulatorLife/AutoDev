@@ -1,4 +1,5 @@
 import { isOpenTelemetrySpanId } from "@simulatorlife/autodev-core";
+import type { Metadata } from "next";
 import React from "react";
 
 import {
@@ -72,6 +73,10 @@ function evaluationTraceState(
  * open trace are all query parameters, so the whole surface is addressable
  * without JavaScript and every link can state what it preserves.
  */
+export const metadata: Metadata = {
+  title: "Evaluations"
+};
+
 export default async function EvaluationsPage({
   searchParams
 }: EvaluationsPageProps): Promise<React.JSX.Element> {

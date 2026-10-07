@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import React from "react";
 
 import { PromptsView } from "../../src/features/prompts/PromptsView.ts";
@@ -13,6 +14,10 @@ import {
 } from "../_console.ts";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Prompts"
+};
 
 export default async function PromptsPage(): Promise<React.JSX.Element> {
   const { section, config } = readNodeContext("/prompts");

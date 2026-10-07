@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import React from "react";
 
 import { ProvidersView } from "../../src/features/providers/ProvidersView.ts";
@@ -20,6 +21,10 @@ interface ProvidersPageProps {
     Record<string, string | string[] | undefined>
   >;
 }
+
+export const metadata: Metadata = {
+  title: "Providers"
+};
 
 export default async function ProvidersPage({
   searchParams

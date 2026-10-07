@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import React from "react";
 
 import { PermissionsView } from "../../src/features/permissions/PermissionsView.ts";
@@ -13,6 +14,10 @@ import {
 } from "../_console.ts";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Permissions"
+};
 
 export default async function PermissionsPage(): Promise<React.JSX.Element> {
   const { section, config } = readNodeContext("/permissions");

@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import React from "react";
 
 import { ToolsView } from "../../src/features/tools/ToolsView.ts";
@@ -21,6 +22,10 @@ interface ToolsSearchParams {
 function first(value: string | string[] | undefined): string {
   return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
 }
+
+export const metadata: Metadata = {
+  title: "Tools"
+};
 
 export default async function ToolsPage({
   searchParams

@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import React from "react";
 
 import { HooksView } from "../../src/features/hooks/HooksView.ts";
@@ -13,6 +14,10 @@ import {
 } from "../_console.ts";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Hooks"
+};
 
 export default async function HooksPage(): Promise<React.JSX.Element> {
   const { section, config } = readNodeContext("/hooks");

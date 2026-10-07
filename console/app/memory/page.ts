@@ -10,6 +10,7 @@ import {
   MEMORY_USE_KINDS,
   type WorkspaceEntry
 } from "@simulatorlife/autodev-core";
+import type { Metadata } from "next";
 import React from "react";
 
 import {
@@ -663,6 +664,10 @@ function renderRecordsUnavailableShell(
     )
   );
 }
+
+export const metadata: Metadata = {
+  title: "Memory"
+};
 
 export default async function MemoryPage(
   props: PageProps

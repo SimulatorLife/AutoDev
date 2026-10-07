@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import React from "react";
 
 import { skillSaveOutcome } from "../../src/features/skills/SkillRoleAssignment.ts";
@@ -18,6 +19,10 @@ import {
 } from "../_console.ts";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Skills"
+};
 
 export default async function SkillsPage({
   searchParams

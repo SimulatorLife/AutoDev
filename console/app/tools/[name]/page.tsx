@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
 
@@ -24,6 +25,22 @@ interface ToolDetailSearchParams {
 
 function first(value: string | string[] | undefined): string {
   return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
+}
+
+/**
+ * The resource's own name, taken from the route parameter rather than from a
+ * second fetch of the resource. The page body already reads the same
+ * parameter, and a metadata function that fetched would double every
+ * detail-page request.
+ */
+export async function generateMetadata({
+  params
+}: {
+  readonly params: Promise<{ readonly name: string }>;
+}): Promise<Metadata> {
+  const { name: raw } = await params;
+  const name = decodeURIComponent(raw);
+  return { title: `${name} · Tools` };
 }
 
 export default async function ToolDetailPage({

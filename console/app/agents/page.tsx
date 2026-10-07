@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import React from "react";
 
 import { AgentsView } from "../../src/features/agents/AgentsView.ts";
@@ -15,6 +16,10 @@ import {
 } from "../_console.ts";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Agents"
+};
 
 export default async function AgentsPage(): Promise<React.JSX.Element> {
   const { section, config } = readNodeContext("/agents");

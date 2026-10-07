@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import React from "react";
 
 import { GithubView } from "../../src/features/github/GithubView.ts";
@@ -12,6 +13,10 @@ import {
 } from "../_console.ts";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "GitHub"
+};
 
 export default async function GithubPage(): Promise<React.JSX.Element> {
   const { section, config } = readNodeContext("/github");

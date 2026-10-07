@@ -2,6 +2,7 @@ import {
   isHistoricalUsageSelection,
   type UsageFilterSelection
 } from "@simulatorlife/autodev-core";
+import type { Metadata } from "next";
 import React from "react";
 
 import { UsageView } from "../../src/features/usage/UsageView.ts";
@@ -22,6 +23,10 @@ export const dynamic = "force-dynamic";
 interface UsagePageProps {
   readonly searchParams: Promise<UsageSearchParams>;
 }
+
+export const metadata: Metadata = {
+  title: "Usage"
+};
 
 export default async function UsagePage({
   searchParams
