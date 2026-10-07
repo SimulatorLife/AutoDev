@@ -1661,7 +1661,8 @@ async function captureCodexExperience(
   request: IncomingMessage,
   response: ServerResponse,
   actor: MemoryControlActor,
-  audit: MemoryControlAudit
+  audit: MemoryControlAudit,
+  dependencies: MemoryControlApiDependencies
 ): Promise<void> {
   if (actor.role !== "operator") {
     audit({
@@ -1747,7 +1748,9 @@ async function captureCodexExperience(
     if (Buffer.byteLength(transcript, "utf8") > MAX_NATIVE_TRANSCRIPT_BYTES)
       throw new MemoryValidationError("Codex transcript size is invalid.");
 
-    const service = createOrchestratorMemoryService();
+    const service = (
+      dependencies.createMemoryService ?? createOrchestratorMemoryService
+    )();
     if (!service) {
       // Audited, because the hook that fired this sees only a 503. Without an
       // entry, "capture was refused" and "capture never happened" are the same
@@ -1922,7 +1925,8 @@ async function captureClaudeCodeExperience(
   request: IncomingMessage,
   response: ServerResponse,
   actor: MemoryControlActor,
-  audit: MemoryControlAudit
+  audit: MemoryControlAudit,
+  dependencies: MemoryControlApiDependencies
 ): Promise<void> {
   if (actor.role !== "operator") {
     audit({
@@ -1956,7 +1960,7 @@ async function captureClaudeCodeExperience(
 
   try {
     const input = parseClaudeCodeCaptureInput(parsedBody.body);
-    const result = await persistClaudeCodeExperience(input);
+    const result = await persistClaudeCodeExperience(input, dependencies);
     if (result === "unavailable") {
       // As on the Codex route: the caller is a hook that will only ever see the
       // 503, so the audit entry is the only place this can be seen from.
@@ -2016,7 +2020,8 @@ function parseClaudeCodeCaptureInput(
 }
 
 async function persistClaudeCodeExperience(
-  input: ClaudeCodeCaptureInput
+  input: ClaudeCodeCaptureInput,
+  dependencies: MemoryControlApiDependencies
 ): Promise<"captured" | "duplicate" | "unavailable"> {
   const binding = requireClaudeCodeBinding();
   const workspace = requireClaudeCodeWorkspace(binding, input.cwd);
@@ -2025,7 +2030,9 @@ async function persistClaudeCodeExperience(
     input.transcriptPath,
     input.sessionId
   );
-  const service = createOrchestratorMemoryService();
+  const service = (
+    dependencies.createMemoryService ?? createOrchestratorMemoryService
+  )();
   if (!service) return "unavailable";
   const transcript = await readClaudeCodeTranscript(transcriptPath);
 
@@ -3127,14 +3134,19 @@ export interface MemoryControlApiDependencies {
 }
 
 /**
- * The memory routes that answer without a parsed route and without a service.
+ * The memory routes that answer without a parsed route.
  *
  * Both capture endpoints are POST-only and identical apart from the adapter they
  * hand the body to, and the storage-status read is a read rather than a capture.
  * They are dispatched together because they share the one thing that made them
  * separate branches in the first place: none of them can go through
- * `parseRoute`, which requires a workspace-scoped collection route, and none of
- * them may resolve the service first.
+ * `parseRoute`, which requires a workspace-scoped collection route.
+ *
+ * The capture endpoints resolve the service through the caller's injected
+ * factory, exactly as the routed reads and writes below do. They used to call
+ * `createOrchestratorMemoryService` directly, which meant the only way to reach
+ * a successful capture — including the idempotent-duplicate reply and the 409 a
+ * differing replay earns — was with a live store behind it.
  *
  * Returns `true` when the path was one of these, so the caller stops. `false`
  * means the path belongs to the routed API below.
@@ -3144,7 +3156,8 @@ async function servePathWithoutStorage(
   request: IncomingMessage,
   response: ServerResponse,
   actor: MemoryControlActor,
-  audit: MemoryControlAudit
+  audit: MemoryControlAudit,
+  dependencies: MemoryControlApiDependencies
 ): Promise<boolean> {
   const method = (request.method ?? "GET").toUpperCase();
   const capture =
@@ -3164,7 +3177,7 @@ async function servePathWithoutStorage(
       );
       return true;
     }
-    await capture(request, response, actor, audit);
+    await capture(request, response, actor, audit, dependencies);
     return true;
   }
   if (pathname === MEMORY_STATUS_PATH) {
@@ -3194,7 +3207,14 @@ export async function handleMemoryControlApiRequest(
 ): Promise<boolean> {
   if (!pathname.startsWith(MEMORY_PATH_PREFIX)) return false;
   if (
-    await servePathWithoutStorage(pathname, request, response, actor, audit)
+    await servePathWithoutStorage(
+    pathname,
+    request,
+    response,
+    actor,
+    audit,
+    dependencies
+  )
   ) {
     return true;
   }

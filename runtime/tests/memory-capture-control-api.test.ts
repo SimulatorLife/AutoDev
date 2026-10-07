@@ -43,13 +43,13 @@ import {
  * registers a session while proxying, before it consults any database. The
  * tests below drive that path directly rather than around it.
  *
- * Note what is *not* observable here: this handler builds its service with
+ * What used to be *not* observable here: this handler built its service with
  * `createOrchestratorMemoryService()` directly, never the injectable dependency,
- * so no stub can observe it being called. The equivalent guarantee — that a
- * refusal wrote nothing — comes from the audit trail instead, where `outcome:
- * "ok"` is emitted only after the envelope has been stored, and where a
- * request that clears every guard is answered with the 503 of an unconfigured
- * store rather than a refusal.
+ * so no stub could observe it being called and the only answer a request that
+ * cleared every guard could produce was the 503 of an unconfigured store. The
+ * route now resolves through the same injection point as every routed read and
+ * write in the file, and `memory-capture-storage-contract.test.ts` covers what
+ * comes after: stored, already stored, and in conflict.
  */
 
 const CAPTURE = "/control/memory/capture";

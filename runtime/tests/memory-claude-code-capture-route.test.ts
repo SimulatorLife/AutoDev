@@ -500,18 +500,15 @@ test("no refusal is audited as a success", async () => {
 
 /**
  * The transcript reader sits *below* the store lookup on this route, so with no
- * memory service configured it never runs at all. Every guard inside
- * `readClaudeCodeTranscript` — regular file, non-empty, byte bound, open without
- * following symlinks — is therefore not reachable from here, and a directory
- * named exactly like the session's transcript is accepted by everything above
- * it and answered 503. That is the ordering worth pinning: a capture against
- * unconfigured storage reads no transcript at all, so an operator's transcript
- * is not loaded into memory by a request that cannot store the result.
+ * memory service configured it never runs at all. That ordering is the point of
+ * the test below: a capture against unconfigured storage reads no transcript, so
+ * an operator's transcript is not loaded into memory by a request that cannot
+ * store the result.
  *
- * What it costs: those seven refusals are unenforced, and closing them needs a
- * live memory service rather than a test seam. They are not dead code — the
- * route reaches them the moment a service exists — but nothing currently
- * demonstrates that they refuse.
+ * While the reader was only reachable through a live service, that same ordering
+ * meant its internal guards were unenforced — and the note here used to say so.
+ * The route now resolves the service through the injectable dependency, so those
+ * guards are reachable and are covered in `memory-capture-storage-contract.test.ts`.
  */
 test("capture reads no transcript at all when storage is not configured", async () => {
   const fixture = workspaceFixture();
