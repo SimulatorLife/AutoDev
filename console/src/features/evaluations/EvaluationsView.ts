@@ -1083,7 +1083,14 @@ function renderComparison(
   return React.createElement(
     "div",
     { className: "flex flex-col gap-3" },
-    React.createElement("h3", { className: SECTION_HEADING_CLASS }, title),
+    // h2, like every other section heading in this module -- "Evaluation
+    // history" on the results tab and "Trace detail" on the drawer. These two
+    // were the only ones at h3, and nothing sat between them and the page's h1,
+    // so the comparisons tab's outline read "Evaluations" and then two h3s with
+    // no parent saying which section they belonged to. They are not subsections
+    // of anything; each is a whole section of the tab, so they are peers of
+    // "Evaluation history" and belong at the same level.
+    React.createElement("h2", { className: SECTION_HEADING_CLASS }, title),
     React.createElement("p", { className: MUTED_META_CLASS }, description),
     React.createElement<DataTableProps<readonly [string, OutcomeTally]>>(
       DataTable,

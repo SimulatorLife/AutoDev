@@ -6425,6 +6425,67 @@ test("what the view could not include is stated under the filter bar", () => {
   );
 });
 
+test("every section heading on this page sits one level below the page title", () => {
+  // A page is navigable by its headings, and an outline that skips a level is
+  // an outline whose structure does not match the page. The results tab carried
+  // "Evaluation history" as an h2 and the drawer "Trace detail" as an h2, but
+  // the comparisons tab's two sections were h3 with nothing between them and the
+  // h1 -- so moving by heading on that tab read "Evaluations" and then two
+  // headings whose parent section did not exist.
+  const rows = [
+    {
+      id: "run-0",
+      agentRole: "worker",
+      model: "m-1",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-05T12:00:00Z"
+    }
+  ];
+
+  // Walk the rendered outline and fail on any jump of more than one level.
+  const outlineOf = (html: string) =>
+    Array.from(html.matchAll(/<h([1-6])\b[^>]*>(.*?)<\/h\1>/gu), (match) => ({
+      level: Number(match[1]),
+      text: (match[2] ?? "").replace(/<[^>]*>/gu, "").trim()
+    }));
+
+  for (const [label, query] of [
+    ["results", {}],
+    ["comparisons", { tab: "comparisons" }],
+    ["a run selected", { result: "run-0" }]
+  ] as const) {
+    const html = renderEvaluations({
+      evaluations: rows,
+      filters: {
+        outcome: "all",
+        role: "",
+        model: "",
+        prompt: "",
+        from: "",
+        until: ""
+      },
+      ...query
+    });
+
+    const outline = outlineOf(html);
+    // Start from the page's own title, which the view does not render; the view
+    // is rendered inside a page that supplies it.
+    const withTitle: { level: number; text: string }[] = [
+      { level: 1, text: "the page title" },
+      ...outline
+    ];
+    for (let i = 1; i < withTitle.length; i += 1) {
+      const previous = withTitle[i - 1]!;
+      const current = withTitle[i]!;
+      assert.ok(
+        current.level - previous.level <= 1,
+        `${label}: h${previous.level} "${previous.text}" -> h${current.level} "${current.text}" skips a level`
+      );
+    }
+  }
+});
+
 test("every history row names its run for assistive technology", () => {
   // The visible text of a row's link is the agent role, and roles repeat. A
   // fifty-row page over six roles announced six words fifty times, so a
