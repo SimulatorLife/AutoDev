@@ -1,5 +1,6 @@
 import React from "react";
 
+import { skillSaveOutcome } from "../../src/features/skills/SkillRoleAssignment.ts";
 import { SkillsView } from "../../src/features/skills/SkillsView.ts";
 import {
   controlApiFailureCode,
@@ -18,7 +19,15 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export default async function SkillsPage(): Promise<React.JSX.Element> {
+export default async function SkillsPage({
+  searchParams
+}: {
+  readonly searchParams?: Promise<
+    Record<string, string | readonly string[] | undefined>
+  >;
+}): Promise<React.JSX.Element> {
+  const query = await (searchParams ??
+    Promise.resolve({} as Record<string, string | readonly string[] | undefined>));
   const { section, config } = readNodeContext("/skills");
   if (!config) {
     return React.createElement(
@@ -49,6 +58,7 @@ export default async function SkillsPage(): Promise<React.JSX.Element> {
   const unresolvedAssignments = unresolvedSkillAssignmentsFromControlApi(
     result.data
   );
+  const saveOutcome = skillSaveOutcome(query.save);
   return React.createElement(
     ConsolePageShell,
     { section, counts: { Skills: skills.length } },
@@ -56,7 +66,14 @@ export default async function SkillsPage(): Promise<React.JSX.Element> {
       skills,
       eligibility,
       unresolvedAssignments,
-      sourceValidity: result.data.valid
+      sourceValidity: result.data.valid,
+      // Drawn from the same catalog read rather than from a route of its own:
+      // the revision and the assignable roles are properties of the execution
+      // contract this response already carries, and re-reading the catalog to
+      // show the same page twice would be two reads of one fact.
+      assignmentRoles: result.data.assignmentRoles,
+      executionContractRevision: result.data.executionContractRevision,
+      ...(saveOutcome ? { saveOutcome } : {})
     })
   );
 }

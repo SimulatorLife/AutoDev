@@ -57,6 +57,8 @@ import {
   type ControlApiProvidersResponse,
   type ControlApiRoutingResponse,
   type ControlApiRuntimeResponse,
+  type ControlApiSkillRolesPatchRequest,
+  type ControlApiSkillRolesPatchResponse,
   type ControlApiSkillsResponse,
   type ControlApiToolsResponse,
   type ControlApiWorkspacesResponse,
@@ -1640,6 +1642,14 @@ function isControlApiSkillsResponse(
     typeof value.source === "string" &&
     value.readOnly === true &&
     (value.valid === true || value.valid === false || value.valid === null) &&
+    // Required, and pattern-checked rather than merely typed, because a form
+    // built from it is the only thing standing between two concurrent operators
+    // and a silently discarded assignment. A malformed revision would post as a
+    // conflict on every submission and read as "the Console is broken".
+    (value.executionContractRevision === null ||
+      (typeof value.executionContractRevision === "string" &&
+        CONTROL_API_REVISION_PATTERN.test(value.executionContractRevision))) &&
+    isStringList(value.assignmentRoles) &&
     Array.isArray(value.skills) &&
     value.skills.every(
       (skill) =>
@@ -1677,6 +1687,59 @@ export async function fetchSkills(
     code: "autodev_control_api_invalid_skills_response",
     message:
       "AutoDev Control API returned an incompatible Skills response; the Console requires the v2 canonical catalog contract."
+  };
+}
+
+/**
+ * Narrows an assignment result.
+ *
+ * The roles come back from a re-read of the contract rather than from the
+ * request, so accepting any string list here is what lets a write that did not
+ * stick present as success. A response whose `roles` do not match what was asked
+ * for is a lie the page would then render as the new truth.
+ */
+function isControlApiSkillRolesPatchResponse(
+  value: unknown
+): value is ControlApiSkillRolesPatchResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-skill-assignment-v1" &&
+    typeof value.skill === "string" &&
+    isStringList(value.roles) &&
+    typeof value.revision === "string" &&
+    CONTROL_API_REVISION_PATTERN.test(value.revision)
+  );
+}
+
+/**
+ * Assigns a skill to exactly the roles named, or to none when the list is empty.
+ *
+ * The whole desired set travels rather than an addition, so an operator who
+ * unchecks a role is not silently appending to what is already there. That is
+ * also why there is no separate unassign verb to get wrong.
+ */
+export async function patchSkillRoles(
+  name: string,
+  payload: ControlApiSkillRolesPatchRequest,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiSkillRolesPatchResponse>> {
+  const result = await mutateControlApi<unknown>(
+    "PATCH",
+    `${CONTROL_API_PATHS.skills}/${encodeURIComponent(name)}`,
+    payload,
+    config,
+    options
+  );
+  if (result.kind !== "ok") return result;
+  if (isControlApiSkillRolesPatchResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_skill_assignment_response",
+    message:
+      "AutoDev Control API returned an incompatible skill assignment response; the Console cannot tell which roles were written."
   };
 }
 

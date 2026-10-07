@@ -286,6 +286,28 @@ export interface ControlApiSkillsResponse {
   readonly source: string;
   readonly readOnly: boolean;
   readonly valid: boolean | null;
+  /**
+   * Digest of the execution contract that backs role assignment, or `null`
+   * when no contract file was found.
+   *
+   * It is carried on the collection rather than per-skill because it is a
+   * property of the contract, not of any skill: every row in one render was
+   * written against the same revision. An assignment form needs it to detect a
+   * concurrent write, and fetching it per skill would mean one request per row
+   * to hand a page what it already knows. `null` is a distinct third state --
+   * it means "no contract exists", not "revision zero" -- so a Console that
+   * cannot tell them apart does not offer the form at all.
+   */
+  readonly executionContractRevision: string | null;
+  /**
+   * Roles an assignment form may offer, from the same contract as the revision.
+   *
+   * Taken from the contract rather than from `/control/agents` because the
+   * contract is what the write edits and what decides validity: a role that is
+   * not listed here would be refused, so offering it would be offering a
+   * submission that cannot succeed.
+   */
+  readonly assignmentRoles: readonly string[];
   readonly skills: readonly {
     readonly name: string;
     readonly description: string;
@@ -296,6 +318,32 @@ export interface ControlApiSkillsResponse {
     readonly name: string;
     readonly roles: readonly string[];
   }[];
+}
+
+/**
+ * Assigns a skill to exactly the roles named.
+ *
+ * A complete desired set rather than an addition, so unassigning is the same
+ * call with an empty list and there is no second verb to get wrong. The
+ * revision is the contract's own digest, because the failure this guards
+ * against is two operators assigning at once: last-writer-wins would discard
+ * the first assignment and leave both of them believing theirs took.
+ */
+export interface ControlApiSkillRolesPatchRequest {
+  readonly expectedRevision: string;
+  readonly roles: readonly string[];
+}
+
+export interface ControlApiSkillRolesPatchResponse {
+  readonly schema: "autodev-control-skill-assignment-v1";
+  readonly skill: string;
+  /**
+   * Roles as read back after the write, not as requested. The Runtime
+   * re-reads the contract to confirm, and reporting the requested set would
+   * hide the case where the file was changed underneath the write.
+   */
+  readonly roles: readonly string[];
+  readonly revision: string;
 }
 
 export interface ControlApiHooksResponse {

@@ -22,6 +22,9 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import {
+  type SkillAssignmentSaveOutcome,
+  SkillRoleAssignment} from "./SkillRoleAssignment.ts";
 
 /**
  * Skills resource view.
@@ -37,13 +40,28 @@ export interface SkillsViewProps {
   readonly eligibility: readonly SkillEligibility[];
   readonly unresolvedAssignments: readonly SkillEligibility[];
   readonly sourceValidity: boolean | null;
+  /**
+   * Roles the execution contract declares, and its digest.
+   *
+   * Required rather than optional: the reason this view grew a write surface is
+   * that a skill promoted from a procedural memory arrived in the catalog
+   * assigned to nothing with no control anywhere on the page able to fix it. An
+   * optional pair here would let a later caller drop the assignment section
+   * without a compile error and reopen exactly that dead end.
+   */
+  readonly assignmentRoles: readonly string[];
+  readonly executionContractRevision: string | null;
+  readonly saveOutcome?: SkillAssignmentSaveOutcome | undefined;
 }
 
 export function SkillsView({
   skills,
   eligibility,
   unresolvedAssignments,
-  sourceValidity
+  sourceValidity,
+  assignmentRoles,
+  executionContractRevision,
+  saveOutcome
 }: SkillsViewProps): React.JSX.Element {
   const catalogNames = new Set(skills.map((skill) => skill.name));
   const eligibleSkills = new Set(
@@ -158,10 +176,13 @@ export function SkillsView({
       // knowledge of whether it is reachable are three different facts. This cell
       // used to ignore the row entirely and badge every skill "Configured", so a
       // skill promoted from a procedural memory — which lands in the catalog with
-      // no role assignment, and which `/control/skills` is read-only so cannot be
-      // given one — sat beside "No roles assigned" under a green badge saying it
-      // was fine. It is not fine: no agent can reach it, and the promotion that
-      // created it reported success.
+      // no role assignment — sat beside "No roles assigned" under a green badge
+      // saying it was fine. It is not fine: no agent can reach it, and the
+      // promotion that created it reported success.
+      //
+      // The assignment section below the table is what makes "Not assigned" a
+      // problem the operator can do something about rather than a row they can
+      // only read.
       //
       // An eligibility entry we never resolved stays "Not observed". Collapsing
       // it into "Not assigned" would claim we checked and found nothing, which is
@@ -300,6 +321,18 @@ export function SkillsView({
         keyExtractor: (s: SkillDefinition) => s.name,
         emptyMessage
       })
-    )
+    ),
+    // The catalog above is a projection and always was; this is what makes the
+    // page something more than a report. A skill promoted from a procedural
+    // memory lands assigned to nothing, and until this existed there was no
+    // control anywhere that could reach the execution contract and change that.
+    React.createElement(SkillRoleAssignment, {
+      skills,
+      eligibility,
+      assignmentRoles,
+      executionContractRevision,
+      sourceValidity,
+      ...(saveOutcome === undefined ? {} : { saveOutcome })
+    })
   );
 }

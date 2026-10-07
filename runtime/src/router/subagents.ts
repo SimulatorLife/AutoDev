@@ -442,6 +442,51 @@ export function setExecutionContractForTests(
   cachedExecutionContract = contract;
 }
 
+/**
+ * The execution-contract file the last read resolved to, or `null` when none
+ * existed.
+ *
+ * Exposed because a mutation has to write the file it read. Reading the contract
+ * through a cached accessor and writing through a separately-computed path is how
+ * a change lands in one file while the process keeps serving another, and the
+ * mutation would report success for an edit nothing reads.
+ *
+ * Resolution is repeated rather than remembered, so the path is the one this
+ * call would use now -- including after a reload invalidated the document.
+ */
+export function executionContractFile(): string | null {
+  const codexHome =
+    process.env.CODEX_HOME ?? `${process.env.HOME ?? process.cwd()}/.codex`;
+  const defaultContract = path.join(
+    resolveRuntimeSourceRoot(import.meta.dirname),
+    "config",
+    "execution-contract.json"
+  );
+  return (
+    [
+      process.env.CODEX_EXECUTION_CONTRACT_FILE,
+      defaultContract,
+      `${codexHome}/config/execution-contract.json`
+    ].find(
+      (candidate): candidate is string =>
+        typeof candidate === "string" &&
+        candidate.length > 0 &&
+        existsSync(candidate)
+    ) ?? null
+  );
+}
+
+/**
+ * Drop the cached contract so the next read comes from disk.
+ *
+ * Called after a successful write and nowhere else. A cache that outlives its
+ * own mutation is the difference between an assignment that takes effect and one
+ * that appears to have succeeded and then quietly does nothing.
+ */
+export function reloadExecutionContract(): void {
+  cachedExecutionContract = null;
+}
+
 export function providerCapabilities(
   provider: string,
   executionContract: ExecutionContract = getDefaultExecutionContract()

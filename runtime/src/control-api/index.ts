@@ -24,11 +24,15 @@ import {
   type ToolCatalogView
 } from "@simulatorlife/autodev-core";
 import {
+  assignSkillRoles,
   auditEnvelopesToHistory,
   boundReconciliationError,
   ConfigRepository,
   EvaluationRepository,
   EvaluationSourceUnavailableError,
+  ExecutionContractConflictError,
+  executionContractRevision,
+  ExecutionContractValidationError,
   GithubActionsAdapter,
   GithubActionsApiError,
   type GithubActionsRuntimeSnapshot,
@@ -59,7 +63,11 @@ import {
 
 import { materializeCommands } from "../platform/install-materializer.ts";
 import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "../router/proxy.ts";
-import { getDefaultExecutionContract } from "../router/subagents.ts";
+import {
+  executionContractFile,
+  getDefaultExecutionContract,
+  reloadExecutionContract
+} from "../router/subagents.ts";
 import { routerTelemetryTracer } from "../router/telemetry.ts";
 import { readControlApiJsonObject } from "./body.ts";
 import { handleMemoryControlApiRequest } from "./memory.ts";
@@ -108,6 +116,22 @@ function isAgentLimitBody(value: unknown): boolean {
 const MODEL_PATH = /^\/control\/models\/([a-zA-Z0-9._-]+)$/u;
 const AGENT_DETAIL_PATH = /^\/control\/agents\/([a-zA-Z0-9._-]+)$/u;
 const PROMPT_DETAIL_PATH = /^\/control\/prompts\/([a-zA-Z0-9._-]+)$/u;
+const SKILL_DETAIL_PATH = /^\/control\/skills\/([a-zA-Z0-9._-]+)$/u;
+
+/**
+ * The contract's digest, read without throwing.
+ *
+ * A contract that cannot be read is reported as `null` rather than as a
+ * revision: the assignment view must still render, and it has to be able to say
+ * that the revision is unavailable instead of refusing to draw.
+ */
+function readContract(file: string): string {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+}
 const PROMPT_COMMAND_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const GIT_REVISION_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const ACTOR_ID_PATTERN = /^[A-Za-z0-9@._:+-]{1,128}$/u;
@@ -543,6 +567,21 @@ function configuredRoleExposure(
   );
 }
 
+/**
+ * Roles the execution contract defines, and therefore the only roles an
+ * assignment can name.
+ *
+ * Enumerated from the contract rather than from `/control/agents`: the write
+ * edits the contract, so a role absent from it would be refused. Offering one
+ * anyway turns a correct answer into a failed submission.
+ */
+function assignableRoles(): string[] {
+  const roles = getDefaultExecutionContract().roles ?? {};
+  return Object.keys(roles).sort((left, right) =>
+    CONTROL_API_COLLATOR.compare(left, right)
+  );
+}
+
 function mcpsView(): Record<string, unknown> {
   const state = new RuleSyncRepository(DEFAULT_REPO_ROOT).loadMcpState();
   if (state.valid !== true) {
@@ -837,11 +876,21 @@ function skillsView(
     assignments.map(({ name, roles }) => [name, roles])
   );
   const catalogNames = new Set(catalog.skills.map((skill) => skill.name));
+  // The Console renders an assignment form per row, and that form has to post
+  // the revision it was drawn from or it cannot detect a concurrent write. The
+  // contract is one file shared by every row, so it is read once here rather
+  // than once per skill.
+  const contractFile = executionContractFile();
   return {
     schema: "autodev-control-skills-v2",
     source: `${catalog.source}+${EXECUTION_CONTRACT_SOURCE}`,
     readOnly: true,
     valid: catalog.valid,
+    executionContractRevision:
+      contractFile === null
+        ? null
+        : executionContractRevision(readContract(contractFile)),
+    assignmentRoles: assignableRoles(),
     skills: catalog.skills.map((skill) => ({
       ...skill,
       roles: rolesBySkill.get(skill.name) ?? []
@@ -2978,6 +3027,328 @@ function promptVersionsRoute(
   }
 }
 
+/**
+ * `PATCH /control/skills/:name` — assign a skill to exactly the roles named.
+ *
+ * This is the operation the memory system needed and did not have. A procedural
+ * memory promoted to a skill lands in the catalog with no role assignment, and
+ * because role assignment lives in the execution contract while this collection
+ * was read-only, the Console had no way to finish the job: the promotion
+ * succeeded, the skill appeared, and no agent could reach it.
+ *
+ * The body carries the *complete* desired set rather than an addition, so
+ * unassigning is the same call with an empty list and there is no second verb to
+ * get wrong. `expectedRevision` is the contract's own digest, because the failure
+ * this protects against is two operators assigning at once — a last-writer-wins
+ * merge would discard the first assignment and leave both of them believing
+ * theirs took.
+ */
+interface SkillRolesRequestBody {
+  readonly expectedRevision: string;
+  readonly roles: readonly string[];
+}
+
+/**
+ * The body of a skill assignment, or the reason it is not one.
+ *
+ * Exactly two fields, checked exactly. A body carrying a third key is refused
+ * rather than ignored, because an operator whose tooling sent something this
+ * route does not understand should be told so instead of watching the
+ * assignment they asked for happen to some subset of what they sent.
+ */
+function readSkillRolesBody(
+  body: Record<string, unknown>
+): SkillRolesRequestBody | null {
+  const roles = body.roles;
+  if (
+    Object.keys(body).length !== 2 ||
+    typeof body.expectedRevision !== "string" ||
+    !Array.isArray(roles) ||
+    !roles.every((role): role is string => typeof role === "string")
+  ) {
+    return null;
+  }
+  return { expectedRevision: body.expectedRevision, roles };
+}
+
+/** The write itself, mapped onto the two refusals it can legitimately return. */
+async function applySkillRoles(
+  file: string,
+  skill: string,
+  assignment: SkillRolesRequestBody
+): Promise<
+  | { readonly ok: true; readonly assigned: Awaited<ReturnType<typeof assignSkillRoles>> }
+  | { readonly ok: false; readonly status: number; readonly code: string; readonly message: string }
+> {
+  try {
+    return {
+      ok: true,
+      assigned: await assignSkillRoles({
+        file,
+        expectedRevision: assignment.expectedRevision,
+        skill,
+        roles: assignment.roles
+      })
+    };
+  } catch (error) {
+    const conflict = error instanceof ExecutionContractConflictError;
+    const validation = error instanceof ExecutionContractValidationError;
+    // Anything else is a defect rather than a refusal, and is left to throw:
+    // reporting it as "the assignment was refused" would turn a bug into a
+    // message that tells an operator their valid request was wrong.
+    if (!conflict && !validation) throw error;
+    return {
+      ok: false,
+      status: conflict ? 409 : 400,
+      code: conflict
+        ? "autodev_control_execution_contract_conflict"
+        : "autodev_control_execution_contract_invalid",
+      message:
+        error instanceof Error
+          ? error.message
+          : "The role assignment was refused."
+    };
+  }
+}
+
+async function patchSkillRoles(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  name: string,
+  options: ControlApiRequestOptions
+): Promise<void> {
+  const resource = `${CONTROL_API_PATHS.skills}/${name}`;
+  if (actor.role !== "operator") {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "assign_skill_roles",
+      resource,
+      outcome: "denied",
+      changes: null,
+      reason: "operator_required"
+    });
+    sendControlError(
+      response,
+      403,
+      "autodev_control_api_forbidden",
+      "Assigning skills to agent roles requires an operator."
+    );
+    return;
+  }
+
+  // The skill has to exist before it can be exposed. Assigning one that is not
+  // in the catalog would produce exactly the `unresolvedAssignments` this page
+  // already reports as a configuration defect.
+  const catalog = new RuleSyncRepository(
+    options.repositoryRoot ?? DEFAULT_REPO_ROOT
+  ).loadSkills();
+  const skill = catalog.skills.find((entry) => entry.name === name);
+  if (!skill) {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "assign_skill_roles",
+      resource,
+      outcome: "error",
+      changes: null,
+      reason: "unknown_skill"
+    });
+    sendControlError(
+      response,
+      404,
+      "autodev_control_skill_not_found",
+      catalog.valid === true
+        ? `No RuleSync skill named "${name}" exists.`
+        : "The RuleSync skill catalog is invalid, so no skill could be assigned."
+    );
+    return;
+  }
+
+  const contractFile = executionContractFile();
+  if (contractFile === null) {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "assign_skill_roles",
+      resource,
+      outcome: "error",
+      changes: null,
+      reason: "no_execution_contract"
+    });
+    sendControlError(
+      response,
+      409,
+      "autodev_control_execution_contract_missing",
+      "No execution contract file was found, so no role assignment was made."
+    );
+    return;
+  }
+
+  const parsed = await readControlApiJsonObject(request);
+  if (!parsed.ok) {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "assign_skill_roles",
+      resource,
+      outcome: "error",
+      changes: null,
+      reason: parsed.code
+    });
+    sendControlError(response, parsed.status, parsed.code, parsed.message);
+    return;
+  }
+  const { body } = parsed;
+  const assignment = readSkillRolesBody(body);
+  if (assignment === null) {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "assign_skill_roles",
+      resource,
+      outcome: "error",
+      changes: null,
+      reason: "invalid_body"
+    });
+    sendControlError(
+      response,
+      400,
+      "autodev_control_api_invalid_body",
+      "Skill role assignment requires exactly the expected execution-contract revision and a roles array of strings."
+    );
+    return;
+  }
+
+  const written = await applySkillRoles(contractFile, skill.name, assignment);
+  if (!written.ok) {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "assign_skill_roles",
+      resource,
+      outcome: "error",
+      changes: null,
+      reason:
+        written.status === 409 ? "revision_conflict" : "invalid_assignment"
+    });
+    sendControlError(
+      response,
+      written.status,
+      written.code,
+      written.message
+    );
+    return;
+  }
+  const assigned = written.assigned;
+
+  // The read path caches the contract in the router. Without dropping that cache
+  // the write would succeed, this response would report the new roles, and the
+  // next `/control/skills` read would show the old ones — an assignment that
+  // reports working and does nothing.
+  reloadExecutionContract();
+  const observed = configuredRoleExposure("skills").find(
+    (entry) => entry.name === name
+  );
+  auditMutation({
+    actor: actor.actor,
+    actorVerified: true,
+    role: actor.role,
+    action: "assign_skill_roles",
+    resource,
+    outcome: "ok",
+    changes: { name, roles: assigned.roles, revision: assigned.revision },
+    desiredGeneration: assigned.revision,
+    observedGeneration:
+      observed !== undefined &&
+      assigned.roles.join("\n") === observed.roles.join("\n")
+        ? assigned.revision
+        : null
+  });
+  sendJson(response, 200, {
+    schema: "autodev-control-skill-assignment-v1",
+    skill: assigned.skill,
+    roles: observed?.roles ?? [],
+    revision: assigned.revision
+  });
+}
+
+async function skillDetailRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  method: string,
+  pathname: string,
+  name: string,
+  options: ControlApiRequestOptions
+): Promise<boolean> {
+  const catalog = new RuleSyncRepository(
+    options.repositoryRoot ?? DEFAULT_REPO_ROOT
+  ).loadSkills();
+  const skill = catalog.skills.find((entry) => entry.name === name);
+  const assignment = configuredRoleExposure("skills").find(
+    (entry) => entry.name === name
+  );
+  const contractFile = executionContractFile();
+  const revision =
+    contractFile === null ? null : executionContractRevision(readContract(contractFile));
+  // A GET on a skill that is not there is a wrong answer, not an empty one: the
+  // Console would render a detail panel for a skill that does not exist.
+  if (!skill) {
+    sendControlError(
+      response,
+      404,
+      "autodev_control_skill_not_found",
+      catalog.valid === true
+        ? `No RuleSync skill named "${name}" exists.`
+        : "The RuleSync skill catalog is invalid, so no skill could be read."
+    );
+    return true;
+  }
+  if (method === "GET") {
+    sendJson(response, 200, {
+      schema: "autodev-control-skill-detail-v1",
+      skill: {
+        ...skill,
+        // Absent rather than empty only when exposure could not be computed at
+        // all, which happens when the catalog is invalid. With a valid catalog
+        // and no role listing this skill, "assigned to nothing" is an observed
+        // fact rather than a missing one -- and the Console's State column draws
+        // a different badge for each.
+        ...(catalog.valid === true ? { roles: assignment?.roles ?? [] } : {}),
+        executionContractRevision: revision
+      }
+    });
+    return true;
+  }
+  if (method === "PATCH") {
+    await patchSkillRoles(request, response, actor, name, options);
+    return true;
+  }
+  auditRejectedRequest(
+    request,
+    method,
+    pathname,
+    "method_not_allowed",
+    actor
+  );
+  response.setHeader("allow", "GET, PATCH");
+  sendControlError(
+    response,
+    405,
+    "autodev_control_api_method_not_allowed",
+    "Skill routes accept GET and PATCH."
+  );
+  return true;
+}
+
 async function promptDetailRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -3137,6 +3508,17 @@ export async function handleControlApiRequest(
       pathname,
       promptVersionsMatch.name,
       promptVersionsMatch.versionHash,
+      options
+    );
+  const skillMatch = pathname.match(SKILL_DETAIL_PATH);
+  if (skillMatch)
+    return skillDetailRoute(
+      request,
+      response,
+      actor,
+      method,
+      pathname,
+      skillMatch[1]!,
       options
     );
   const promptMatch = pathname.match(PROMPT_DETAIL_PATH);

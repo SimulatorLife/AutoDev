@@ -833,17 +833,17 @@ function RecordDetailPanel({
               testId: "memory-promote-skill"
             }),
             // What the button will produce, before it is pressed. The promotion
-            // succeeds and the skill lands in the catalog, but `/control/skills`
-            // is read-only and role assignment lives in the execution contract,
-            // so the skill arrives exposed to nothing. An operator who is not
-            // told that will read a successful promotion as a working skill.
+            // creates the RuleSync skill but does not assign it: role assignment
+            // lives in the execution contract, which is a separate write. So the
+            // skill arrives exposed to nothing, and an operator told only "promoted"
+            // would read that as a working skill.
             React.createElement(
               "p",
               {
                 className: `${MUTED_META_CLASS} w-full basis-full`,
                 "data-testid": "memory-promote-skill-consequence"
               },
-              "Creates the RuleSync skill. It is not assigned to an agent role, so nothing can invoke it until the execution contract assigns one."
+              "Creates the RuleSync skill. It is not assigned to an agent role, so nothing can invoke it — assign it on the Skills page."
             )
           )
         : null
