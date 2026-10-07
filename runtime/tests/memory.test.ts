@@ -1462,6 +1462,66 @@ test("promotion requires current-state evidence and uncertain claims remain excl
   assert.equal(packet.text, "");
 });
 
+test("every write path that publishes an active claim also verifies it", async () => {
+  // The Console's "Active Claims" card renders the Runtime's `statusCounts`
+  // rollup — a `GROUP BY status` over the whole filtered collection — under the
+  // subtitle "Verified & in service". That subtitle is a claim about
+  // `validity.state`, which is a different field from the `status` the rollup
+  // groups by. Nothing on the Console side can check it: it is true only if
+  // every write path keeps the two paired, and nothing asserted that.
+  //
+  // Swept over the repository rather than asserted field by field, so a path
+  // added later that publishes an active record without verifying it fails
+  // here instead of silently turning a status count into a claim that the
+  // claims are true.
+  const repository = new FakeMemoryRepository();
+  // Swept after each path, not once at the end. A single sweep at the end
+  // looks equivalent and is not: superseding the promoted record demotes it to
+  // `superseded`, so the record the promote path produced is no longer `active`
+  // by the time the sweep runs, and a promote path that published an active but
+  // unverified claim would pass. Checked once the status is set is the only
+  // moment the invariant is observable for that path.
+  const assertEveryActiveClaimIsVerified = (when: string): void => {
+    const unverifiedButActive = [...repository.memories.values()]
+      .filter((memory) => memory.status === "active")
+      .filter((memory) => memory.validity.state !== "verified")
+      .map((memory) => `${memory.id}:${memory.status}/${memory.validity.state}`);
+    assert.deepEqual(
+      unverifiedButActive,
+      [],
+      `${when}: a record published as active must carry verified validity`
+    );
+  };
+  const proposed = record("candidate", {
+    status: "proposed",
+    validity: { state: "unverified", evidence: [] }
+  });
+  repository.memories.set(proposed.id, proposed);
+  const service = makeService(repository);
+
+  const promoted = await service.verifyAndPromote(
+    proposed.id,
+    root,
+    researchRequest()
+  );
+  assert.equal(promoted.status, "active");
+  assertEveryActiveClaimIsVerified("after promote");
+
+  const replacement = record("replacement", {
+    status: "proposed",
+    validity: { state: "unverified", evidence: [] }
+  });
+  repository.memories.set(replacement.id, replacement);
+  const superseding = await service.supersede(
+    replacement.id,
+    promoted.id,
+    root,
+    researchRequest()
+  );
+  assert.equal(superseding.status, "active");
+  assertEveryActiveClaimIsVerified("after supersede");
+});
+
 test("research validates current state, filters scope and lifecycle, and injects only cited guidance", async () => {
   const repository = new FakeMemoryRepository();
   const applicable = record("applicable");
