@@ -12,7 +12,12 @@ import type {
 import { MemoryConflictError } from "../../src/memory/errors.ts";
 import { PostgresMemoryRepository } from "../../src/memory/postgres-memory-repository.ts";
 import type { MemoryConnectionPool } from "../../src/memory/query-client.ts";
-import { makeContext } from "./fixtures/builders.ts";
+import {
+  makeContext,
+  makeExperience,
+  makeLifecycleEvent,
+  makeMemoryRecord
+} from "./fixtures/builders.ts";
 import { FakeMemoryPool } from "./fixtures/fake-memory-pool.ts";
 
 /**
@@ -40,12 +45,18 @@ import { FakeMemoryPool } from "./fixtures/fake-memory-pool.ts";
  * on the same unique index it would against Postgres.
  */
 
+/** Every table the repository inserts into, for the two pool wrappers below. */
+type MemoryWriteTable =
+  | "memory_experiences"
+  | "memory_records"
+  | "memory_injection_events"
+  | "memory_outcome_reports"
+  | "memory_session_outcome_reports"
+  | "memory_injection_use_reports";
+
 function racingPool(
   base: FakeMemoryPool,
-  table:
-    | "memory_outcome_reports"
-    | "memory_session_outcome_reports"
-    | "memory_injection_use_reports",
+  table: MemoryWriteTable,
   race: () => Promise<void>
 ): MemoryConnectionPool {
   let fired = false;
@@ -427,18 +438,27 @@ function driverFailure(code: string, message: string): Error & { code: string } 
 
 function failingInsertPool(
   base: FakeMemoryPool,
-  table:
-    | "memory_outcome_reports"
-    | "memory_session_outcome_reports"
-    | "memory_injection_use_reports",
+  table: MemoryWriteTable,
   failure: Error
 ): MemoryConnectionPool {
+  const shouldFail = (text: string) => text.includes(`INSERT INTO ${table}`);
   return {
-    query: (text, params) => {
-      if (text.includes(`INSERT INTO ${table}`)) return Promise.reject(failure);
-      return base.query(text, params);
+    query: (text, params) =>
+      shouldFail(text) ? Promise.reject(failure) : base.query(text, params),
+    // A write that runs inside `withMemoryTransaction` never touches the pool's
+    // own `query` -- it goes through the connection. Wrapping only `query` would
+    // leave that path silently unexercised while the test still passed, because
+    // the insert would simply succeed.
+    connect: async () => {
+      const connection = await base.connect();
+      return {
+        query: (text, params) =>
+          shouldFail(text)
+            ? Promise.reject(failure)
+            : connection.query(text, params),
+        release: () => connection.release()
+      };
     },
-    connect: () => base.connect(),
     end: () => base.end()
   };
 }
@@ -498,4 +518,65 @@ test("a non-collision use-report insert failure surfaces as itself", async () =>
     (error: unknown) => error === failure
   );
   assert.equal(pool.tables.memory_injection_use_reports.size, 0);
+});
+
+// The remaining three writes use the same catch shape -- one `isUniqueViolation`
+// discriminator, then `throw error` -- and their re-throws were the last
+// unexecuted statements in the repository. The claim is identical, so it is
+// asserted identically: a failure the discriminator does not own reaches the
+// caller as itself, not as "already exists".
+
+test("a non-collision experience insert failure surfaces as itself", async () => {
+  const pool = new FakeMemoryPool();
+  const failure = driverFailure("08006", "connection terminated unexpectedly");
+  const repository = new PostgresMemoryRepository({
+    pool: failingInsertPool(pool, "memory_experiences", failure)
+  });
+
+  await assert.rejects(
+    repository.appendExperience(makeExperience()),
+    (error: unknown) => error === failure
+  );
+  assert.equal(pool.tables.memory_experiences.size, 0);
+});
+
+test("a non-collision memory-record insert failure surfaces as itself", async () => {
+  const pool = new FakeMemoryPool();
+  // The record cites `exp-1`, and `proposeMemory` locks and verifies cited
+  // experience rows before it inserts. So the cited experience has to exist, and
+  // it is seeded on the base pool first -- the failing wrapper only intercepts
+  // the `memory_records` insert. Without the seed the call refuses on
+  // `MemoryProvenanceError` ("unknown experience ids") before ever attempting
+  // the insert, and the test would assert a provenance refusal against an
+  // identity check.
+  await new PostgresMemoryRepository({ pool }).appendExperience(makeExperience());
+
+  const failure = driverFailure("08006", "connection terminated unexpectedly");
+  const repository = new PostgresMemoryRepository({
+    pool: failingInsertPool(pool, "memory_records", failure)
+  });
+
+  await assert.rejects(
+    repository.proposeMemory(makeMemoryRecord(), makeLifecycleEvent()),
+    (error: unknown) => error === failure
+  );
+  assert.equal(pool.tables.memory_records.size, 0);
+});
+
+test("a non-collision injection-event insert failure surfaces as itself", async () => {
+  const pool = new FakeMemoryPool();
+  const failure = driverFailure("08006", "connection terminated unexpectedly");
+  const repository = new PostgresMemoryRepository({
+    pool: failingInsertPool(pool, "memory_injection_events", failure)
+  });
+
+  await assert.rejects(
+    repository.recordInjectionEvent({
+      event: injectionEvent(),
+      actor: { id: "system", authority: "system" },
+      context: sessionContext
+    }),
+    (error: unknown) => error === failure
+  );
+  assert.equal(pool.tables.memory_injection_events.size, 0);
 });
