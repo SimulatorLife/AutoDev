@@ -5647,7 +5647,7 @@ test("what the view could not include is stated under the filter bar", () => {
 
   assert.match(
     html,
-    /1 run reports no readable run time and cannot be placed in this window/
+    /1 run reports no readable run time and cannot be placed in this time window/
   );
   assert.match(
     html,
@@ -5765,6 +5765,7 @@ test("a window older than the bounded read is not an empty history", () => {
     /this view is empty because it was not read, not because nothing ran/
   );
 });
+
 test("a run a link asked for and the page cannot show says so", () => {
   // The trace selection has five named states for every way a lookup can come
   // back empty. The run selection had none: a `?result=` that resolved to nothing
@@ -5844,6 +5845,7 @@ test("a run a link asked for and the page cannot show says so", () => {
     /not in this view/
   );
 });
+
 test("the retained-results card counts the store, not the window and not the filter", () => {
   // The card used to read `evaluations.length` under the title "Total
   // Evaluations" -- the same lie the filter bar sentence was rewritten to stop
@@ -6180,6 +6182,93 @@ test("the section tabs keep the filters and the open section keeps its own links
   assert.match(
     narrowedResults,
     /href="\/evaluations\?outcome=failed&amp;role=worker&amp;spanId=4bf92f3577b34da6"/
+  );
+});
+
+test("a comparison names the rows it is comparing, not the whole store", () => {
+  // The blurb above the role table read "Every retained run grouped by the
+  // agent role it evaluated" whatever the filters selected, so
+  // `?prompt=release-notes` described its 35 rows as every run the retained
+  // history holds. One page cannot describe its own contents two ways, and the
+  // rule for naming them already exists here: "in this view", and "retained"
+  // only when nothing has narrowed it.
+  const rows = [
+    {
+      id: "a",
+      agentRole: "architect",
+      promptName: "release-notes",
+      model: "opus",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-05T09:00:00Z"
+    },
+    {
+      id: "b",
+      agentRole: "architect",
+      promptName: "smoke-check",
+      model: "opus",
+      metrics: [],
+      passed: false,
+      timestamp: "2026-10-05T10:00:00Z"
+    }
+  ];
+  const filters = (over: Partial<EvaluationsFilters>): EvaluationsFilters => ({
+    outcome: "all",
+    role: "",
+    model: "",
+    prompt: "",
+    from: "",
+    until: "",
+    ...over
+  });
+  const narrowed = filterEvaluations(
+    rows,
+    filters({ prompt: "release-notes" })
+  );
+
+  const filtered = renderEvaluations({
+    evaluations: narrowed.results,
+    availableCount: 2,
+    totalCount: 5000,
+    truncated: true,
+    tab: "comparisons",
+    filters: filters({ prompt: "release-notes" })
+  });
+  assert.match(filtered, /Every run in this view grouped by the agent role/);
+  assert.doesNotMatch(
+    filtered,
+    /Every retained run/,
+    "a narrowed view is not every run the retained history holds"
+  );
+
+  const whole = renderEvaluations({
+    evaluations: rows,
+    availableCount: 2,
+    totalCount: 5000,
+    truncated: true,
+    tab: "comparisons",
+    filters: filters({})
+  });
+  assert.match(whole, /Every retained run grouped by the agent role/);
+
+  // "This window" was the leftover from before the page settled on "this view",
+  // and on a page that also uses "window" for the capped read it read as the
+  // read rather than the filters that actually emptied the table.
+  assert.match(
+    renderEvaluations({
+      evaluations: [],
+      tab: "comparisons",
+      filters: filters({ role: "nobody" })
+    }),
+    /No evaluation targets were observed in this view/
+  );
+  assert.doesNotMatch(
+    renderEvaluations({
+      evaluations: [],
+      tab: "comparisons",
+      filters: filters({ role: "nobody" })
+    }),
+    /in this window/
   );
 });
 
@@ -11614,9 +11703,7 @@ test("Memory revise reaches the Runtime only with a replacement claim", async ()
     // refuses any other key, so a reason is neither collected nor forwarded --
     // and `workspaceId` is the Console's scope, carried in the path instead.
     assert.deepEqual(sent.experienceIds, ["exp-1", "exp-2"]);
-    assert.deepEqual(sent.evidence, [
-      { kind: "trace", uri: "runs/42" }
-    ]);
+    assert.deepEqual(sent.evidence, [{ kind: "trace", uri: "runs/42" }]);
     assert.equal("reason" in sent, false, "a revision has no reason to record");
     assert.equal("workspaceId" in sent, false, "the scope is in the path");
   });
@@ -11644,7 +11731,11 @@ test("a revision of a record citing no experiences is refused for that, not for 
       /refusal=provenance_required$/u,
       "the refusal must name the missing experiences, not the evidence that was given"
     );
-    assert.equal(requests.length, 0, "a revision with no sources is not a request");
+    assert.equal(
+      requests.length,
+      0,
+      "a revision with no sources is not a request"
+    );
   });
 });
 
@@ -12557,17 +12648,79 @@ test("Memory reports reach the Runtime bound to one injection, or not at all", a
 
   // An action this route does not implement has no subject, no tab, and no cause
   // to report, so there is nothing a redirect could name. It answers the caller
-  // instead of redirecting to a list the operator never asked about.
+  // instead of redirecting to a list the operator never asked about. `supersede`
+  // used to be the example here; it is implemented now, so the boundary is
+  // exercised with an action that genuinely does not exist.
   await withMemoryRoute(async () => {
     const response = await memoryRoute.POST(
       memoryPurgeRequest({
-        action: "supersede",
+        action: "reticulate",
         recordId: "rec-1",
         workspaceId: "SimulatorLife/AutoDev"
       })
     );
     assert.equal(response.status, 400);
     assert.equal(response.headers.get("location"), null);
+  });
+});
+
+test("a supersession reaches the Runtime naming the record it retires", async () => {
+  await withMemoryRoute(async (requests) => {
+    const response = await memoryRoute.POST(
+      memoryPurgeRequest({
+        action: "supersede",
+        recordId: "mem-new",
+        workspaceId: "SimulatorLife/AutoDev",
+        priorId: "mem-old",
+        reason: "The budget is now measured in attempts, not minutes."
+      })
+    );
+    assert.equal(response.status, 303);
+    assert.match(
+      response.headers.get("location") ?? "",
+      /[?&]tab=records&recordId=mem-new/u,
+      "a supersession returns to the proposal that was made on"
+    );
+    assert.doesNotMatch(response.headers.get("location") ?? "", /refusal=/u);
+    assert.equal(requests.length, 1);
+
+    const sent = JSON.parse(requests[0]?.body ?? "{}") as Record<
+      string,
+      unknown
+    >;
+    // `priorId` is the Runtime's key for this. `supersededBy` reads more
+    // naturally and is not accepted, so sending it was a malformed request.
+    assert.equal(sent.priorId, "mem-old");
+    assert.equal(sent.task, sent.query);
+    assert.equal(
+      "workspaceId" in sent,
+      false,
+      "the scope is in the path and the query, never the body"
+    );
+  });
+});
+
+test("a supersession with no prior named is refused for that, not for its evidence", async () => {
+  await withMemoryRoute(async (requests) => {
+    const response = await memoryRoute.POST(
+      memoryPurgeRequest({
+        action: "supersede",
+        recordId: "mem-new",
+        workspaceId: "SimulatorLife/AutoDev",
+        reason: "The budget is now measured in attempts."
+      })
+    );
+    assert.equal(response.status, 303);
+    assert.match(
+      response.headers.get("location") ?? "",
+      /refusal=prior_required$/u,
+      "the refusal must name the missing selection, not a field that was filled"
+    );
+    assert.equal(
+      requests.length,
+      0,
+      "a supersession naming nothing is not a request"
+    );
   });
 });
 
