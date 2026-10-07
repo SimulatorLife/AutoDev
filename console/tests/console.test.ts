@@ -5479,6 +5479,125 @@ test("EvaluationsPage loads the linked trace through the Usage token and keeps p
   }
 });
 
+test("the trace table marks the span the trace was opened for, and only that one", async () => {
+  // The panel is opened *for* one span: `?spanId=` names it, the reader carries
+  // it back as `selectedSpanId`, and the table then rendered every span of the
+  // trace with nothing saying which one was asked about. Harmless over three
+  // spans; a hunt through 200 with no fold mark.
+  //
+  // The shape below is chosen so the obvious wrong answers fail rather than
+  // pass. The selected span is the LAST of four, so a marker that simply marked
+  // the first row is wrong; and the three children all link to it from the
+  // Parent column, so the selected id appears four times in the table while only
+  // one of those links is the cell that is selected. A marker that fell on a
+  // parent link would satisfy "marked once" while pointing at the wrong cell.
+  const previousFetch = globalThis.fetch;
+  const previousEnv = saveConsolePageEnvironment();
+  const isolatedHome = mkdtempSync(
+    join(tmpdir(), "autodev-evaluations-selection-")
+  );
+  const root = "4444444444444444";
+  const spans = [
+    { spanId: "1111111111111111", parentSpanId: root },
+    { spanId: "2222222222222222", parentSpanId: root },
+    { spanId: "3333333333333333", parentSpanId: root },
+    { spanId: root, parentSpanId: null }
+  ].map((span, index) => ({
+    spanId: span.spanId,
+    parentSpanId: span.parentSpanId,
+    spanName: `gen_ai.client_operation.step_${index}`,
+    serviceName: "autodev-router",
+    timestamp: "2026-10-05T12:00:00.000Z",
+    durationNs: 1_000_000 + index,
+    statusCode: "OK"
+  }));
+  try {
+    process.env.HOME = isolatedHome;
+    process.env.CODEX_HOME = isolatedHome;
+    process.env.AUTODEV_OPENLIT_SECRET_FILE = join(isolatedHome, "missing.env");
+    process.env.AUTODEV_CONTROL_API_TOKEN = "evaluation-control-test-token";
+    process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+    process.env.AUTODEV_OPENLIT_USAGE_TOKEN = "evaluation-usage-test-token";
+    process.env.AUTODEV_OPENLIT_USAGE_URL = "http://127.0.0.1:3000";
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/control/evaluations")) {
+        return Response.json({
+          schema: "autodev-control-evaluations-v1",
+          source: "openlit_evaluation",
+          readOnly: true,
+          totalEvaluations: 0,
+          truncated: false,
+          evaluations: []
+        });
+      }
+      return Response.json({
+        schema: "autodev-openlit-trace-detail-v1",
+        traceId: "0123456789abcdef0123456789abcdef",
+        selectedSpanId: root,
+        partial: false,
+        spans
+      });
+    };
+
+    const markup = renderToStaticMarkup(
+      await EvaluationsPage({ searchParams: Promise.resolve({ spanId: root }) })
+    );
+
+    // One marker, on the span that was asked for, and not on the three parent
+    // links that also name it.
+    assert.equal(
+      markup.match(/data-trace-selected="true"/g)?.length,
+      1,
+      "exactly one span in the trace is the selected one"
+    );
+    assert.equal(
+      markup.match(new RegExp(`data-trace-span-id="${root}"`, "g"))?.length,
+      4,
+      "the fixture really does name the selected span four times"
+    );
+    // Which row the marker landed on. The selected span is the trace's root, so
+    // its own row is the one whose Parent cell says "Root span"; the other three
+    // rows merely *link* to it. A marker on one of those would still be "marked
+    // once", so the row is read rather than counted.
+    const markedRow = markup
+      .split("</tr>")
+      .find((row) => row.includes('data-trace-selected="true"'));
+    assert.ok(markedRow, "exactly one row carries the selection");
+    assert.match(
+      markedRow,
+      /Root span/,
+      "the marker is on the selected span's own row, not on a row that links to it"
+    );
+    assert.equal(
+      markup.match(/aria-current="true"/g)?.length,
+      1,
+      "one element in the page claims to be the current one"
+    );
+    assert.match(
+      markup,
+      />Selected</,
+      "the marked span carries a visible marker, not colour alone"
+    );
+    assert.equal(
+      markup.match(/aria-label="Open span \d{16}, the selected span"/g)?.length,
+      1,
+      "no other span claims the selection in its accessible name"
+    );
+
+    // The id in full, because the cells only show an eight-character prefix.
+    assert.match(
+      markup,
+      /data-trace-selected-span="4444444444444444"/,
+      "the meta line names the span the table marked"
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreConsolePageEnvironment(previousEnv);
+    rmSync(isolatedHome, { recursive: true, force: true });
+  }
+});
+
 test("EvaluationsPage rejects malformed trace query IDs without calling the Usage endpoint", async () => {
   const previousFetch = globalThis.fetch;
   const previousEnv = saveConsolePageEnvironment();

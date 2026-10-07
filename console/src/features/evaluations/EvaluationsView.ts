@@ -454,36 +454,81 @@ function traceReference(
   );
 }
 
-function spanLink(spanId: string, nav: EvaluationsNav): React.JSX.Element {
-  return React.createElement(
+function spanLink(
+  spanId: string,
+  nav: EvaluationsNav,
+  selected: boolean
+): React.JSX.Element {
+  const link = React.createElement(
     "a",
     {
       href: evaluationTraceHref(nav.filters, spanId, nav.tab),
       className:
         "font-mono text-xs text-accent underline-offset-4 hover:underline",
-      "aria-label": `Open span ${spanId}`,
-      "data-trace-span-id": spanId
+      // `aria-current` is what makes the row findable rather than merely
+      // different: colour alone is not something a screen reader reports, and
+      // the page is server-rendered with no script to scroll it into view.
+      "aria-label": selected
+        ? `Open span ${spanId}, the selected span`
+        : `Open span ${spanId}`,
+      "data-trace-span-id": spanId,
+      ...(selected
+        ? { "aria-current": "true", "data-trace-selected": "true" }
+        : {})
     },
     spanId.slice(0, 8)
   );
+  return selected
+    ? React.createElement(
+        "span",
+        { className: "inline-flex flex-wrap items-baseline gap-1.5" },
+        link,
+        React.createElement(
+          "span",
+          {
+            className:
+              "text-[10px] font-medium uppercase tracking-wider text-fg-muted"
+          },
+          "Selected"
+        )
+      )
+    : link;
 }
 
+/**
+ * The trace table's columns, told which span the trace was opened for.
+ *
+ * The selected id comes from `detail.selectedSpanId` -- the reader's answer --
+ * and never from `nav.spanId`, the id in the URL. They are usually the same
+ * string, and where they are not the reader is the authority: `queryTrace`
+ * sends the URL's id to the Usage service and trusts the `selectedSpanId` that
+ * comes back, since a service holding a partial trace may legitimately answer
+ * about a span it retained. Marking the URL's id instead would point the marker
+ * at a row the trace does not contain -- at the 200-span cap, marking nothing
+ * at all, which is the state this exists to remove.
+ */
 function traceColumns(
-  nav: EvaluationsNav
+  nav: EvaluationsNav,
+  selectedSpanId: string
 ): readonly ColumnDef<UsageTraceSpan>[] {
   return [
     {
       id: "span",
       header: "Span",
       weight: 110,
-      cell: (span) => spanLink(span.spanId, nav)
+      cell: (span) => spanLink(span.spanId, nav, span.spanId === selectedSpanId)
     },
     {
       id: "parent",
       header: "Parent span",
       weight: 110,
+      // Deliberately never the selected span. This is a link to *another* span,
+      // so marking it would put `aria-current` on a second element in the same
+      // document and claim two things are current.
       cell: (span) =>
-        span.parentSpanId ? spanLink(span.parentSpanId, nav) : "Root span"
+        span.parentSpanId
+          ? spanLink(span.parentSpanId, nav, false)
+          : "Root span"
     },
     {
       id: "name",
@@ -749,6 +794,24 @@ function renderTraceLookup(
         )
       ),
       React.createElement("span", null, `${detail.spans.length} spans shown`),
+      // The selection in full. Every span cell shows an eight-character prefix
+      // to fit the column, so the id the URL was opened with -- the one an
+      // operator pastes into a telemetry query -- is otherwise only ever
+      // visible by reading `?spanId=`. Naming it here is also what lets the
+      // marker in the table be an assertion rather than a hope: the reader
+      // refuses a detail whose `selectedSpanId` is not among its own spans
+      // (`parseOpenLITTraceDetail`), so an observed trace always contains the
+      // selected span and exactly one row is marked.
+      React.createElement(
+        "span",
+        { "data-trace-selected-span": detail.selectedSpanId },
+        "Selected span: ",
+        React.createElement(
+          "code",
+          { className: "font-mono text-fg" },
+          detail.selectedSpanId
+        )
+      ),
       detail.partial
         ? React.createElement(
             "span",
@@ -759,7 +822,7 @@ function renderTraceLookup(
     ),
     React.createElement<DataTableProps<UsageTraceSpan>>(DataTable, {
       data: detail.spans,
-      columns: traceColumns(nav),
+      columns: traceColumns(nav, detail.selectedSpanId),
       keyExtractor: (span) => span.spanId,
       emptyMessage: "No trace spans were observed."
     })
