@@ -34,6 +34,7 @@ import {
   fetchMemoryCohorts,
   fetchMemoryExperienceDetail,
   fetchMemoryExperienceOutcomes,
+  fetchMemoryExperienceSessionOutcome,
   fetchMemoryExperiences,
   fetchMemoryExperienceUseAssessments,
   fetchMemoryHistory,
@@ -290,6 +291,11 @@ type MemoryWhyResult = Awaited<ReturnType<typeof fetchMemoryWhy>>;
 type MemoryUseAssessmentsResult = Awaited<
   ReturnType<typeof fetchMemoryExperienceUseAssessments>
 >;
+/** The report itself, once the read has succeeded — never the failure union. */
+type MemorySessionOutcomeResult = Extract<
+  Awaited<ReturnType<typeof fetchMemoryExperienceSessionOutcome>>,
+  { readonly kind: "ok" }
+>["data"]["report"];
 type MemoryRecordsFailure = Exclude<
   MemoryRecordsResult,
   { readonly kind: "ok" }
@@ -309,6 +315,12 @@ interface MemoryReadResults {
    */
   readonly outcomes: MemoryOutcomesResult | null;
   readonly useAssessments: MemoryUseAssessmentsResult | null;
+  /**
+   * The reporter-supplied session outcome. Three states, kept apart on purpose:
+   * undefined is "not asked for, or the read failed", null is "read, and the
+   * Runtime says this session has none", and a report is the claim itself.
+   */
+  readonly sessionOutcome: MemorySessionOutcomeResult | null | undefined;
 }
 
 interface MemoryPageReadData extends MemoryReadResults {
@@ -430,7 +442,8 @@ async function fetchMemoryPageData(
     cohorts,
     useCohorts,
     outcomes,
-    useAssessments
+    useAssessments,
+    sessionOutcomeResult
   ] = await Promise.all([
     params.activeTab === "records" && params.recordId
       ? fetchMemoryRecord(params.recordId, workspaceId, config)
@@ -511,8 +524,29 @@ async function fetchMemoryPageData(
           workspaceId,
           config
         )
+      : Promise.resolve(null),
+    params.activeTab === "experiences" && params.experienceId
+      ? fetchMemoryExperienceSessionOutcome(
+          params.experienceId,
+          workspaceId,
+          config
+        )
       : Promise.resolve(null)
   ]);
+
+  // The Runtime answers "this session has no outcome report" as not_found, which
+  // is an observed fact about the session rather than a failed read. Only a read
+  // that failed some other way leaves the panel unable to say anything, and a
+  // reader must never confuse the two.
+  const sessionOutcome =
+    sessionOutcomeResult === null
+      ? undefined
+      : sessionOutcomeResult.kind === "ok"
+        ? sessionOutcomeResult.data.report
+        : "code" in sessionOutcomeResult &&
+            sessionOutcomeResult.code === "autodev_memory_not_found"
+          ? null
+          : undefined;
 
   return {
     kind: "ok",
@@ -527,6 +561,7 @@ async function fetchMemoryPageData(
       useCohorts,
       outcomes,
       useAssessments,
+      sessionOutcome,
       status
     }
   };
@@ -747,6 +782,7 @@ export default async function MemoryPage(
         data.useAssessments?.kind === "ok"
           ? data.useAssessments.data.items
           : null,
+      sessionOutcome: data.sessionOutcome,
       selectedUseAssessmentTotal:
         data.useAssessments?.kind === "ok"
           ? data.useAssessments.data.total

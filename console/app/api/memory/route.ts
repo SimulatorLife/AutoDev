@@ -17,6 +17,7 @@ import {
   purgeMemoryExperience,
   readControlApiConfig,
   reportMemoryExperienceOutcome,
+  reportMemoryExperienceSessionOutcome,
   reportMemoryInjectionUse,
   transitionMemoryRecord
 } from "../../../src/lib/server/control-api.ts";
@@ -183,6 +184,14 @@ const MEMORY_ACTION_TARGETS: Readonly<
     tab: "experiences",
     subjectField: "experienceId",
     required: ["experienceId", "injectionEventId"]
+  },
+  // The session-level outcome acts on the experience alone: it is about the
+  // session, not about one injected packet, so unlike the two reports above it
+  // carries no per-injection identifier to require.
+  "report-session-outcome": {
+    tab: "experiences",
+    subjectField: "experienceId",
+    required: ["experienceId"]
   }
 };
 
@@ -578,6 +587,30 @@ function executeAction(
           injectionEventId,
           useKind,
           usedMemoryIds,
+          evidence
+        },
+        config
+      );
+    }
+    case "report-session-outcome": {
+      // How the session as a whole went, as distinct from what an individual
+      // injected packet was judged to have done. The Runtime binds one report
+      // per session key, so the form is withheld once one exists rather than
+      // inviting a submission that will come back a conflict.
+      //
+      // Evidence is checked here for the same reason as the injection outcome:
+      // a non-`unknown` outcome with none is refused by the Runtime, and saying
+      // so here is true — the request never reached it, so the session outcome
+      // is unrecorded rather than rejected.
+      if (outcomeKind !== "unknown" && evidence.length === 0) {
+        return "evidence_required";
+      }
+      return reportMemoryExperienceSessionOutcome(
+        experienceId,
+        {
+          workspaceId,
+          outcomeKind,
+          reportKind,
           evidence
         },
         config

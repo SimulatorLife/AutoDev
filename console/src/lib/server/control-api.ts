@@ -2651,6 +2651,84 @@ export async function fetchMemoryExperienceUseAssessments(
   );
 }
 
+/**
+ * The reporter-supplied outcome for one session, if there is one.
+ *
+ * A session outcome is a separate claim from the per-injection outcome report:
+ * it says how the session as a whole went, and the Runtime binds at most one to
+ * a session key. The target state asks the Console to present observed injection
+ * evidence *and* reporter-supplied task/session outcomes side by side, which it
+ * cannot do while this is unread — the session outcome was written and kept but
+ * had no read path here at all.
+ *
+ * The read asks for task history explicitly, because the Runtime gates it the
+ * same way it gates the outcome reports: a session outcome is a statement about
+ * one session, so a caller that cannot see that session's history must not get
+ * it.
+ */
+export interface ControlApiMemorySessionOutcomeProjection {
+  readonly schema: "autodev-memory-session-outcome-report-v1";
+  readonly experienceId: string;
+  readonly report: {
+    readonly outcomeKind: string;
+    readonly reportKind: string;
+    readonly reporterId: string;
+    readonly reportedAt: string;
+    readonly reasonCode: string;
+    readonly evidence: readonly { readonly kind: string; readonly uri: string }[];
+  };
+}
+
+function isMemorySessionOutcomeResponse(
+  value: unknown,
+  experienceId: string
+): value is ControlApiMemorySessionOutcomeProjection {
+  if (
+    !isRecord(value) ||
+    value.schema !== "autodev-memory-session-outcome-report-v1" ||
+    // Compared, not merely present: a response naming a different experience is
+    // not "no outcome yet" for this one, it is the wrong answer.
+    value.experienceId !== experienceId ||
+    !isRecord(value.report)
+  ) {
+    return false;
+  }
+  const report = value.report;
+  return (
+    typeof report.outcomeKind === "string" &&
+    typeof report.reportKind === "string" &&
+    typeof report.reporterId === "string" &&
+    typeof report.reportedAt === "string" &&
+    typeof report.reasonCode === "string" &&
+    Array.isArray(report.evidence) &&
+    report.evidence.every(
+      (entry) => isRecord(entry) && typeof entry.kind === "string" && typeof entry.uri === "string"
+    )
+  );
+}
+
+export async function fetchMemoryExperienceSessionOutcome(
+  id: string,
+  workspaceId: string,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiMemorySessionOutcomeProjection>> {
+  const search = new URLSearchParams({
+    workspaceId,
+    includeTaskHistory: "true"
+  });
+  const path = `${CONTROL_API_PATHS.memoryExperiences}/${encodeURIComponent(id)}/session-outcomes?${search.toString()}`;
+  const result = await fetchControlApi<unknown>(path, config, options);
+  if (result.kind !== "ok") return result;
+  if (isMemorySessionOutcomeResponse(result.data, id)) {
+    return { kind: "ok", data: result.data };
+  }
+  return invalidMemoryPageResponse(
+    "session outcome report",
+    "autodev-memory-session-outcome-report-v1"
+  );
+}
+
 export async function fetchMemoryCohorts(
   params: {
     readonly workspaceId: string;
@@ -2869,6 +2947,54 @@ export function reportMemoryExperienceOutcome(
     path,
     {
       correlationToken: payload.correlationToken,
+      outcomeKind: payload.outcomeKind,
+      reportKind: payload.reportKind,
+      evidence: payload.evidence
+    },
+    config,
+    options
+  );
+}
+
+/**
+ * Report how one session as a whole went.
+ *
+ * A different claim from the injection outcome above, with a different body: the
+ * Runtime binds a session outcome to the session rather than to one injected
+ * packet, so there is no correlation token to name, and it takes `exactKeys` on
+ * `{outcomeKind, reportKind, evidence}`. The session identity comes from the
+ * captured experience, never from the request, so a caller cannot report an
+ * outcome against a session it did not run.
+ *
+ * Exactly one report may exist per session, and filing a *different* one for a
+ * session that already has an outcome is a conflict rather than a replacement:
+ * the Runtime treats the first report as the record and refuses the second. The
+ * Console therefore does not offer this form for a session that already has an
+ * outcome, rather than inviting a submission that will come back 409.
+ */
+export function reportMemoryExperienceSessionOutcome(
+  id: string,
+  payload: {
+    readonly workspaceId: string;
+    readonly outcomeKind: string;
+    readonly reportKind: string;
+    readonly evidence: readonly {
+      readonly kind: string;
+      readonly uri: string;
+      readonly revision?: string;
+    }[];
+  },
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<unknown>> {
+  const query = new URLSearchParams({
+    workspaceId: payload.workspaceId,
+    includeTaskHistory: "true"
+  });
+  const path = `${CONTROL_API_PATHS.memoryExperiences}/${encodeURIComponent(id)}/session-outcome?${query.toString()}`;
+  return postControlApi<unknown>(
+    path,
+    {
       outcomeKind: payload.outcomeKind,
       reportKind: payload.reportKind,
       evidence: payload.evidence

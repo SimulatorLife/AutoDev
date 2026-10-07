@@ -29,6 +29,7 @@ import {
   type MemoryTab
 } from "./memory-list-url.ts";
 import { MEMORY_STATUS_LABEL, MEMORY_STATUS_ORDER } from "./memory-status.ts";
+import type { ControlApiMemorySessionOutcomeProjection } from "../../lib/server/control-api.ts";
 import { MemoryCohortsView } from "./MemoryCohortsView.ts";
 import { MemoryExperiencesView } from "./MemoryExperiencesView.ts";
 import {
@@ -96,6 +97,18 @@ export interface MemoryViewProps {
   readonly selectedUseAssessments?:
     readonly ControlApiMemoryInjectionUseAssessment[] | null;
   readonly selectedUseAssessmentTotal?: number | null | undefined;
+  /**
+   * The reporter's statement about the selected session as a whole.
+   *
+   * Undefined is "not asked for, or the read failed"; null is "read, and this
+   * session has none". The two must not merge — offering a report form against a
+   * read that failed would invite a second outcome the Runtime would conflict
+   * with.
+   */
+  readonly sessionOutcome?:
+    | ControlApiMemorySessionOutcomeProjection["report"]
+    | null
+    | undefined;
   /** The cohort reads are scoped by repository as well as workspace. */
   readonly repositoryId: string;
   readonly workspaces: readonly WorkspaceEntry[];
@@ -142,6 +155,7 @@ export function MemoryView({
   selectedOutcomeTotal,
   selectedUseAssessments,
   selectedUseAssessmentTotal,
+  sessionOutcome,
   repositoryId,
   workspaces,
   controlFailed,
@@ -337,6 +351,7 @@ export function MemoryView({
               outcomeTotal: selectedOutcomeTotal,
               useAssessments: selectedUseAssessments,
               useAssessmentTotal: selectedUseAssessmentTotal,
+              sessionOutcome,
               listScope
             })
         : activeTab === "cohorts"

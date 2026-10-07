@@ -49,6 +49,8 @@ import {
   MEMORY_VALIDATION_VARIANT
 } from "./memory-status.ts";
 import { InjectionReports } from "./MemoryInjectionReports.ts";
+import { MemorySessionOutcome } from "./MemorySessionOutcome.ts";
+import type { ControlApiMemorySessionOutcomeProjection } from "../../lib/server/control-api.ts";
 
 /**
  * The only reasons the Runtime's purge endpoint accepts. Offering anything else
@@ -77,6 +79,12 @@ export interface MemoryExperiencesViewProps {
   readonly useAssessments?:
     readonly ControlApiMemoryInjectionUseAssessment[] | null | undefined;
   readonly useAssessmentTotal?: number | null | undefined;
+  /**
+   * The reporter's statement about the session as a whole. Undefined is "the
+   * read did not succeed", null is "read, and none exists", and a report is the
+   * claim itself. See MemorySessionOutcome for why the three stay apart.
+   */
+  readonly sessionOutcome?: ControlApiMemorySessionOutcomeProjection["report"] | null | undefined;
   /** The address of the list these rows came from. See MemoryRecordsView. */
   readonly listScope: MemoryListScope;
 }
@@ -98,6 +106,7 @@ export function MemoryExperiencesView({
   outcomeTotal,
   useAssessments,
   useAssessmentTotal,
+  sessionOutcome,
   listScope
 }: MemoryExperiencesViewProps): React.JSX.Element {
   const columns: ColumnDef<ExperienceEnvelope>[] = [
@@ -261,6 +270,7 @@ export function MemoryExperiencesView({
           outcomeTotal,
           useAssessments,
           useAssessmentTotal,
+          sessionOutcome,
           listScope
         })
       : null
@@ -275,6 +285,7 @@ interface ExperienceDetailPanelProps {
   readonly useAssessments?:
     readonly ControlApiMemoryInjectionUseAssessment[] | null | undefined;
   readonly useAssessmentTotal?: number | null | undefined;
+  readonly sessionOutcome?: ControlApiMemorySessionOutcomeProjection["report"] | null | undefined;
   readonly listScope: MemoryListScope;
 }
 
@@ -284,6 +295,7 @@ function ExperienceDetailPanel({
   outcomeTotal,
   useAssessments,
   useAssessmentTotal,
+  sessionOutcome,
   listScope
 }: ExperienceDetailPanelProps): React.JSX.Element {
   return React.createElement(
@@ -527,6 +539,14 @@ function ExperienceDetailPanel({
           )
         )
       ),
+
+      // The session-level claim first, because it is the wider one: it is about
+      // the session the packets below were attached to, not about any of them.
+      React.createElement(MemorySessionOutcome, {
+        report: sessionOutcome,
+        listScope,
+        experienceId: experience.id
+      }),
 
       // Observed evidence, and the claims made about it, as separate classes.
       React.createElement(ExperienceEvidence, {
