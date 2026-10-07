@@ -43,6 +43,7 @@ import {
   type MemoryInjectionResult,
   type MemoryOutcomeReport,
   type MemoryOutcomeReportKind,
+  type MemoryUseKind,
   type MemoryPacket,
   type MemoryReadContext,
   type MemoryRecord,
@@ -4851,4 +4852,147 @@ test("an experience strips credentials from its trajectory, task and plan locato
   assert.equal(stored?.evidence[0]?.uri.includes("frag"), false);
   // The locators survive; only the credentials are gone.
   assert.equal(stored?.planReference?.uri, "https://example.test/plan");
+});
+
+/**
+ * The curator's use-assessment write path. Three guards decide whether an
+ * assessment can be attributed to an experience at all, and none was covered.
+ */
+function workspaceScopedExperience(
+  id: string,
+  repositoryId: string | undefined
+): ExperienceEnvelope {
+  // `exactOptionalPropertyTypes` makes an absent key and an explicit undefined
+  // different, so a scope that names no repository has to drop the field.
+  const { repositoryId: _dropped, ...withoutRepository } = experience(id);
+  return repositoryId === undefined
+    ? { ...withoutRepository, scope: { kind: "workspace", workspaceId: "workspace-a" } }
+    : {
+        ...withoutRepository,
+        repositoryId,
+        scope: { kind: "workspace", workspaceId: "workspace-a" }
+      };
+}
+
+async function useReportHarness(
+  envelope: ExperienceEnvelope = experience()
+): Promise<{
+  readonly repository: FakeMemoryRepository;
+  readonly service: MemoryService;
+}> {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  // Appended under the envelope's own repository: the read that follows is
+  // what has to notice the caller is somewhere else.
+  await service.appendExperience(envelope, worker, {
+    ...context,
+    ...(envelope.repositoryId ? { repositoryId: envelope.repositoryId } : {}),
+    taskId: envelope.taskId,
+    runId: envelope.runId
+  });
+  return { repository, service };
+}
+
+function useReportInput(
+  envelope: ExperienceEnvelope,
+  overrides: {
+    readonly useKind?: string;
+    readonly context?: MemoryReadContext;
+  } = {}
+): {
+  readonly experienceId: string;
+  readonly injectionEventId: string;
+  readonly useKind: MemoryUseKind;
+  readonly usedMemoryIds: readonly string[];
+  readonly evidence: readonly EvidenceReference[];
+  readonly actor: MemoryActor;
+  readonly context: MemoryReadContext;
+} {
+  return {
+    experienceId: envelope.id,
+    injectionEventId: "private-injection-id",
+    useKind: "used" as MemoryUseKind,
+    usedMemoryIds: ["mem-use-1", "mem-use-2"],
+    evidence: [{ kind: "trajectory", uri: envelope.trajectory.uri }],
+    actor: root,
+    context: { ...context, canReadTaskHistory: true },
+    ...(overrides.useKind === undefined
+      ? {}
+      : { useKind: overrides.useKind as MemoryUseKind }),
+    ...(overrides.context ? { context: overrides.context } : {})
+  };
+}
+
+test("a use report needs a use kind from the vocabulary", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+
+  await assert.rejects(
+    service.recordInjectionUseReport(
+      useReportInput(experience(), { useKind: "not-a-kind" })
+    ),
+    /useKind is invalid/u
+  );
+
+  // A valid kind gets past this guard and fails on the missing experience
+  // instead, which is what shows the two refusals are different.
+  await assert.rejects(
+    service.recordInjectionUseReport(useReportInput(experience())),
+    /visible repository-scoped experience/u
+  );
+});
+
+test("a use report needs a visible experience that names a repository", async () => {
+  // Workspace-visible, but it never says which repository the run belonged to,
+  // so there is nothing for the use report to be attributed to.
+  const { service } = await useReportHarness(
+    workspaceScopedExperience("experience-1", undefined)
+  );
+
+  await assert.rejects(
+    service.recordInjectionUseReport(useReportInput(workspaceScopedExperience("experience-1", undefined))),
+    /visible repository-scoped experience/u
+  );
+
+  // An experience the caller cannot see at all is refused the same way, rather
+  // than leaking that the id exists.
+  const foreign: ExperienceEnvelope = {
+    ...experience("experience-foreign"),
+    repositoryId: "repo-b",
+    scope: {
+      kind: "repository",
+      workspaceId: "workspace-a",
+      repositoryId: "repo-b"
+    }
+  };
+  const { service: otherService, repository } = await useReportHarness();
+  repository.experiences.set(foreign.id, foreign);
+  await assert.rejects(
+    otherService.recordInjectionUseReport(useReportInput(foreign)),
+    /visible repository-scoped experience/u
+  );
+});
+
+test("a use report is refused for an experience outside the caller's repository", async () => {
+  // Workspace scope makes this visible from any repository in the workspace,
+  // which is exactly why the service has to re-check the repository itself.
+  const { service } = await useReportHarness(
+    workspaceScopedExperience("experience-1", "repo-b")
+  );
+
+  await assert.rejects(
+    service.recordInjectionUseReport(
+      useReportInput(workspaceScopedExperience("experience-1", "repo-b"))
+    ),
+    MemoryAuthorizationError
+  );
+
+  // Same shape, matching repository: the guard is satisfied and the read moves
+  // on to resolving the injection event.
+  const matchingEnvelope = workspaceScopedExperience("experience-1", "repo-a");
+  const { service: matchingService } = await useReportHarness(matchingEnvelope);
+  await assert.rejects(
+    matchingService.recordInjectionUseReport(useReportInput(matchingEnvelope)),
+    /outside the captured session/u
+  );
 });
