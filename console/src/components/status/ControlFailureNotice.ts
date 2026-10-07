@@ -25,7 +25,9 @@ const REFUSAL_DETAIL: Record<ControlRefusalReason, string> = {
   content_required:
     "A skill promotion needs the procedure body to write. Nothing was sent to the Runtime.",
   evidence_required:
-    "An outcome other than Not observed has to name the evidence for it — a kind and where it lives. Nothing was sent to the Runtime, so no outcome was recorded.",
+    "This action needs the evidence it rests on — a kind and where it lives. Nothing was sent to the Runtime.",
+  provenance_required:
+    "A revision has to name the experiences it derives from, and this record cites none. Nothing was sent to the Runtime.",
   runtime_refused:
     "The Runtime refused the change. It may still be citing this record, in which case the action cannot proceed."
 };

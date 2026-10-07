@@ -443,7 +443,12 @@ function executeAction(
       // record's own provenance already names them — citing the record's
       // sources is honest, where inventing a set would not be.
       const experienceIds = [...new Set(sourceExperienceIds)];
-      if (experienceIds.length === 0) return "evidence_required";
+      // A record whose provenance cites no experiences cannot be revised from
+      // here at all: there is nothing to re-derive the claim from, and the form
+      // has no way to supply them. Reporting that as missing evidence blamed a
+      // field the operator had filled in correctly, which sends them to fix
+      // something that was never wrong.
+      if (experienceIds.length === 0) return "provenance_required";
       return transitionMemoryRecord(
         recordId,
         "revise",

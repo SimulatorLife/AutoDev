@@ -816,7 +816,7 @@ function RecordDetailPanel({
             label: "Verify & Promote",
             variant: "primary",
             testId: "memory-verify",
-            withReason: true
+            withResearchContext: true
           })
         : null,
 
@@ -845,7 +845,12 @@ function RecordDetailPanel({
               action: "promote-skill",
               label: "Promote to RuleSync Skill",
               variant: "secondary",
-              testId: "memory-promote-skill"
+              testId: "memory-promote-skill",
+              // The Runtime re-derives a promotion from a research request, so
+              // the form asks what the procedure is for. Without this box the
+              // route refuses every promotion as `reason_required`, which made
+              // this button impossible to press successfully.
+              withResearchContext: true
             }),
             // What the button will produce, before it is pressed. The promotion
             // creates the RuleSync skill but does not assign it: role assignment
@@ -867,18 +872,35 @@ function RecordDetailPanel({
     // Revise lives outside the action row because it is the one lifecycle
     // action that is not a single click: the operator has to write the new
     // claim, and the route refuses `revise` without one.
+    //
+    // It is also the one action with no reason box, which used to be a field
+    // that went nowhere. The Runtime reads a revision as claim, the experiences
+    // it derives from and its evidence -- the route forwards exactly those, so a
+    // reason typed here was discarded on submit. An audit box the Runtime cannot
+    // record is worse than none: it reads as though the transition were
+    // attributable when the history holds only the action.
+    //
+    // A record citing no experiences has nothing to re-derive a claim from, and
+    // the form cannot supply them -- it offers what the record's own provenance
+    // holds. Offering the button there would be an action guaranteed to be
+    // refused, so the reason is stated where the button would have been.
     record.status === "active" || record.status === "uncertain"
-      ? React.createElement(RecordActionForm, {
-          record,
-          listScope,
-          action: "revise",
-          label: "Revise Claim",
-          variant: "secondary",
-          testId: "memory-revise",
-          withReason: true,
-          withEvidence: true,
-          claim: record.claim
-        })
+      ? (record.provenance?.experienceIds ?? []).length === 0
+        ? React.createElement(
+            "p",
+            { className: `${MUTED_META_CLASS} w-full` },
+            "This record cites no experiences, so there is nothing to revise it from. Record its sources first."
+          )
+        : React.createElement(RecordActionForm, {
+            record,
+            listScope,
+            action: "revise",
+            label: "Revise Claim",
+            variant: "secondary",
+            testId: "memory-revise",
+            withEvidence: true,
+            claim: record.claim
+          })
       : null
   );
 }
@@ -901,15 +923,16 @@ interface RecordActionFormProps {
   readonly variant: "primary" | "secondary" | "destructive";
   readonly testId: string;
   /**
-   * Offer an audit-reason box.
+   * Ask for the task this claim should be checked against.
    *
-   * Every lifecycle transition records an append-only reason, and the route
-   * substituted a canned sentence when the form sent none -- so the audit trail
-   * could not distinguish "verified against the passing suite" from "verified
-   * because it looked right". Leaving it blank is allowed and falls back to that
-   * sentence; it just stops being the only option.
+   * Deliberately not an audit-reason box, because it is not one. `verify` and
+   * `promote-skill` are the two actions the Runtime re-derives rather than takes
+   * on trust, and it reads this text as the research request's `task` and
+   * `query` -- the work the procedure is supposed to serve. Both refuse without
+   * it, so a form that omits the box cannot succeed at all, and a box labelled
+   * "why" would be collecting a question the Runtime never receives.
    */
-  readonly withReason?: boolean | undefined;
+  readonly withResearchContext?: boolean | undefined;
   /**
    * Collect an evidence reference — a kind and where it lives.
    *
@@ -937,7 +960,7 @@ function RecordActionForm({
   label,
   variant,
   testId,
-  withReason,
+  withResearchContext,
   withEvidence,
   withReasonCode,
   claim
@@ -985,15 +1008,17 @@ function RecordActionForm({
           className: "basis-64 grow",
           testId: "memory-revise-claim"
         }),
-    withReason === true
+    withResearchContext === true
       ? React.createElement(TextField, {
           name: "reason",
-          id: `memory-${action}-reason-${record.id}`,
-          label: `Reason for ${label.toLowerCase()}`,
+          id: `memory-${action}-research-context-${record.id}`,
+          // The route reads this one field as both `task` and `query`, so the
+          // label has to describe a piece of work rather than a motive.
+          label: "Task this claim should be checked against",
           hideLabel: true,
-          placeholder: "Why this transition?",
+          placeholder: "the task this claim serves",
           className: "basis-56 grow",
-          testId: `memory-${action}-reason`
+          testId: `memory-${action}-research-context`
         })
       : null,
     // A bounded code rather than prose: the Runtime refuses any reason outside

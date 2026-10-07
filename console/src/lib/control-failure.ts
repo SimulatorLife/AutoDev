@@ -43,6 +43,7 @@ export const CONTROL_REFUSAL_REASONS = [
   "claim_required",
   "content_required",
   "evidence_required",
+  "provenance_required",
   "runtime_refused"
 ] as const;
 export type ControlRefusalReason = (typeof CONTROL_REFUSAL_REASONS)[number];
