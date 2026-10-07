@@ -2014,10 +2014,16 @@ test("Agent detail renders the reconciliation its own response requires of it", 
         history: [
           {
             action: "apply",
+            resource: "agent/orchestrator",
             timestamp: "2026-10-07T00:00:00Z",
+            actor: "henrykirk",
             outcome: "ok",
-            reason: "operator save",
-            actor: "henrykirk"
+            reason: null,
+            changes: {
+              desiredGeneration: "gen-7",
+              observedGeneration: "gen-7",
+              restartRequired: false
+            }
           }
         ]
       }
