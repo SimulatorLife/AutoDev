@@ -8766,7 +8766,7 @@ test("MemoryCohortsView renders session outcome cohorts preserving explicit unre
   );
 
   assert.match(markup, /data-feature="memory-cohorts"/);
-  assert.match(markup, /Observed Sessions/);
+  assert.match(markup, /Mode-Isolated Sessions/);
   assert.match(markup, /Unreported Sessions/);
   assert.match(markup, /Mixed-Mode Sessions/);
   assert.match(markup, /Conflicting Reports/);
@@ -8797,7 +8797,7 @@ test("MemoryCohortsView does not render unavailable session data as an empty coh
   assert.match(markup, /data-status="unavailable"/);
   assert.match(markup, /Session outcome cohort data is unavailable/);
   assert.equal(markup.includes("No session outcome cohort data found"), false);
-  assert.equal(markup.includes("Observed Sessions"), false);
+  assert.equal(markup.includes("Mode-Isolated Sessions"), false);
 });
 
 test("MemoryCohortsView distinguishes an observed empty cohort from unavailable data", () => {
@@ -8825,7 +8825,7 @@ test("MemoryCohortsView distinguishes an observed empty cohort from unavailable 
     })
   );
   assert.match(markup, /data-memory-session-cohorts-state="observed"/);
-  assert.match(markup, /Observed Sessions/);
+  assert.match(markup, /Mode-Isolated Sessions/);
   assert.match(markup, /No session outcome cohort data found/);
   assert.doesNotMatch(markup, /Session outcome cohort data is unavailable/);
 });
@@ -9251,7 +9251,7 @@ test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace
   assert.match(markup, /data-memory-experiences-observed="false"/);
   assert.match(markup, /data-memory-session-cohorts-observed="false"/);
   const experiencesLabel = markup.indexOf(">Experiences</span>");
-  const cohortSessionsLabel = markup.indexOf(">Cohort Sessions</span>");
+  const cohortSessionsLabel = markup.indexOf(">Mode-Isolated Sessions</span>");
   const tabsStart = markup.indexOf("<nav", cohortSessionsLabel);
   assert.notEqual(experiencesLabel, -1);
   assert.ok(cohortSessionsLabel > experiencesLabel);

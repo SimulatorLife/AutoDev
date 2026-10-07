@@ -171,7 +171,7 @@ export function MemoryView({
   const statusCounts = recordsStatusCounts ?? emptyRecordStatusCounts();
   const hasLifecycleRollup = recordsStatusCounts !== null;
   const activeRecordsCount = statusCounts.active;
-  const totalObservedSessions = sessionCohorts?.sessionCount ?? null;
+  const modeIsolatedSessions = sessionCohorts?.sessionCount ?? null;
 
   const tabButtons: { readonly id: MemoryTab; readonly label: string }[] = [
     { id: "records", label: "Durable Records" },
@@ -276,10 +276,13 @@ export function MemoryView({
             : `${experiences.length} in scope`
       }),
       React.createElement(StatCard, {
-        title: "Cohort Sessions",
-        value: totalObservedSessions ?? NOT_OBSERVED_LABEL,
+        // Named for what the Runtime counts, not for what it read. This is the
+        // same number the Cohorts tab breaks down: eligible single-mode
+        // sessions only, excluding mixed-mode and all-invalid/unknown sessions.
+        title: "Mode-Isolated Sessions",
+        value: modeIsolatedSessions ?? NOT_OBSERVED_LABEL,
         subtitle:
-          totalObservedSessions === null ? NOT_OBSERVED_LABEL : "In window"
+          modeIsolatedSessions === null ? NOT_OBSERVED_LABEL : "In window"
       })
     ),
 

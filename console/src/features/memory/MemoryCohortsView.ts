@@ -482,8 +482,19 @@ export function MemoryCohortsView({
           StatGrid,
           { columns: 5 },
           React.createElement(StatCard, {
-            title: "Observed Sessions",
-            value: sessionCohorts.sessionCount
+            // Not "observed sessions". `sessionCount` sums only the eligible
+            // single-assigned-mode cells: mixed-mode sessions are counted in
+            // the card beside this one, and sessions whose injections are all
+            // invalid or unknown mode appear in no card at all. Labelling this
+            // the sessions we observed invites an operator to add the mixed
+            // count to it for a denominator the response never computed — the
+            // same move the spec forbids at line 426, inferring a cohort from
+            // telemetry that was never classified.
+            // "Mode-isolated" is this table's own word; the card below already
+            // describes the excluded sessions as such.
+            title: "Mode-Isolated Sessions",
+            value: sessionCohorts.sessionCount,
+            subtitle: "Reported plus unreported"
           }),
           React.createElement(StatCard, {
             title: "Reported Sessions",
