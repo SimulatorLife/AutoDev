@@ -208,7 +208,21 @@ function SkillAssignmentForm({
     React.createElement(
       "span",
       {
-        className: `${MONO_ID_CLASS} truncate min-w-0 max-w-full`,
+        // `w-56 shrink-0` is what makes this a matrix rather than fourteen
+        // unrelated rows. The name was a flex item sized by its own content, so
+        // `ccc` left the form starting 250px further left than
+        // `autodev-codex-request-capture` did, and every role column drifted by
+        // that same 250px between rows -- measured across all fourteen rows at
+        // both 1440px and 1920px. Reading a column therefore meant finding the
+        // seventh checkbox in a row whose left edge moved with the name above
+        // it. Fixing the name's width fixes every column at once, because each
+        // row then renders the same eight labels at the same offsets from the
+        // same left edge.
+        //
+        // `truncate` and the `title` below are the recovery for a name longer
+        // than the column; the name stays the row's key and stays readable for
+        // all but the longest of the fourteen.
+        className: `${MONO_ID_CLASS} w-56 shrink-0 truncate`,
         title: skill.name
       },
       skill.name
