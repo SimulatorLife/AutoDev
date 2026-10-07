@@ -53,14 +53,82 @@ export interface EvaluationsFilters {
    * by existing links rather than chosen here.
    */
   readonly prompt: string;
+  /**
+   * First UTC day of runs to include, as `YYYY-MM-DD`.
+   *
+   * The read is capped, so a table of five thousand is only ever fetched as its
+   * most recent thousand and the four thousand before that are unreachable from
+   * the page. Every other axis on this resource is categorical -- outcome, role,
+   * model, prompt -- so "which failures happened on Tuesday" had no answer at
+   * all: the only way to reach it was to page through twenty pages of runs and
+   * read their timestamps. This is the axis that makes a bounded history usable.
+   */
+  readonly from: string;
+  /** Last UTC day of runs to include, inclusive, as `YYYY-MM-DD`. */
+  readonly until: string;
 }
 
 export const EMPTY_EVALUATIONS_FILTERS: EvaluationsFilters = {
   outcome: "all",
   role: "",
   model: "",
-  prompt: ""
+  prompt: "",
+  from: "",
+  until: ""
 };
+
+/**
+ * A UTC calendar date, as a shape and then as a real one.
+ *
+ * `bounded()` accepts any short string, and a filter that silently narrows
+ * nothing is better than one that narrows by a date the operator did not mean.
+ * `2026-02-31` matches the shape and is not a date, so the parsed value has to
+ * be compared back to the text it came from -- otherwise `new Date` rolls it to
+ * March 3rd and the window quietly starts three days late.
+ */
+const UTC_DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/u;
+
+/**
+ * The UTC day a parameter names, or nothing.
+ *
+ * Returns the epoch milliseconds of midnight UTC, which is what a comparison
+ * against an ISO timestamp wants; `undefined` means "not set", and an
+ * unreadable value is treated the same way rather than being guessed at.
+ */
+/**
+ * The UTC midnight a parameter names, or nothing.
+ *
+ * One exit, because a function that answers "no bound" on some paths and a
+ * number on others is the shape `consistent-return` is configured here to
+ * reject -- and the single exit is also the clearer statement of the rule: a
+ * parameter is a bound only when it is a real UTC day that survives being
+ * parsed back into the same text.
+ */
+export function resolveUtcDayBound(value: RawQueryValue): number | undefined {
+  const raw = singleValue(value);
+  const text = raw === undefined ? "" : raw.trim();
+  const parsed = UTC_DATE.test(text)
+    ? Date.parse(`${text}T00:00:00Z`)
+    : Number.NaN;
+  return Number.isNaN(parsed) ||
+    new Date(parsed).toISOString().slice(0, 10) !== text
+    ? undefined
+    : parsed;
+}
+
+/**
+ * The last millisecond of the UTC day a parameter names.
+ *
+ * `until` names a day, not an instant: "to 2026-10-05" has to include every run
+ * on the fifth, and comparing against midnight of the fifth excluded all but the
+ * first second of it. The bound is therefore exclusive at the start of the next
+ * day, which also makes an adjacent window (`from` the sixth, `until` the fifth)
+ * cover every instant exactly once rather than leaving or repeating a boundary.
+ */
+export function resolveUtcDayEnd(value: RawQueryValue): number | undefined {
+  const start = resolveUtcDayBound(value);
+  return start === undefined ? undefined : start + 86_400_000;
+}
 
 /** Query keys that carry a selection rather than a filter. */
 export const EVALUATION_RESULT_PARAM = "result";
@@ -138,8 +206,23 @@ export function parseEvaluationsFilters(
     outcome: resolveOutcomeFilter(params.outcome),
     role: bounded(singleValue(params.role)),
     model: bounded(singleValue(params.model)),
-    prompt: bounded(singleValue(params.prompt))
+    prompt: bounded(singleValue(params.prompt)),
+    from: utcDayText(params.from),
+    until: utcDayText(params.until)
   };
+}
+
+/**
+ * A day parameter as the text a date input needs back, or "".
+ *
+ * The bound is computed from the parsed value rather than echoed, so what the
+ * control displays is always something the filter will actually accept -- a
+ * hand-edited `?from=2026-02-31` renders as an empty control instead of a date
+ * the window does not honour.
+ */
+function utcDayText(value: RawQueryValue): string {
+  const bound = resolveUtcDayBound(value);
+  return bound === undefined ? "" : new Date(bound).toISOString().slice(0, 10);
 }
 
 /** True when nothing is narrowed, which is what the "clear" affordance checks. */
@@ -148,7 +231,9 @@ export function hasActiveFilters(filters: EvaluationsFilters): boolean {
     filters.outcome !== "all" ||
     filters.role !== "" ||
     filters.model !== "" ||
-    filters.prompt !== ""
+    filters.prompt !== "" ||
+    filters.from !== "" ||
+    filters.until !== ""
   );
 }
 
@@ -158,6 +243,8 @@ function filtersParams(filters: EvaluationsFilters): URLSearchParams {
   if (filters.role !== "") params.set("role", filters.role);
   if (filters.model !== "") params.set("model", filters.model);
   if (filters.prompt !== "") params.set("prompt", filters.prompt);
+  if (filters.from !== "") params.set("from", filters.from);
+  if (filters.until !== "") params.set("until", filters.until);
   return params;
 }
 
@@ -369,6 +456,21 @@ function matchesOutcome(
 }
 
 /**
+ * A filtered result, and the runs a bounded window could not place.
+ *
+ * `unplaceable` is reported rather than absorbed. A row whose run time is not a
+ * readable instant cannot be inside or outside a window, and the target state is
+ * explicit that a row must not be "silently dropped ... and bias[ing] displayed
+ * totals or pass-rate denominators" -- so it is excluded from the match and
+ * counted for the page to state. It is zero unless a time bound is set, because
+ * without one no row has to be placed at all.
+ */
+export interface PlacedEvaluations {
+  readonly results: readonly EvaluationResult[];
+  readonly unplaceable: number;
+}
+
+/**
  * Narrow already-fetched results by the parsed filters.
  *
  * This runs on the page, after the single bounded Control API read, rather than
@@ -377,20 +479,78 @@ function matchesOutcome(
  * without making the total any more honest. The trade is stated here because it
  * is a real one -- the pass rate and the totals describe the fetched window,
  * not the whole store.
+ *
+ * Returns the matches *and* the count of rows a time bound could not place,
+ * rather than only the matches: the caller has to be able to say so.
  */
 export function filterEvaluations(
   evaluations: readonly EvaluationResult[],
   filters: EvaluationsFilters
-): readonly EvaluationResult[] {
-  return evaluations.filter(
-    (evaluation) =>
-      matchesOutcome(evaluation, filters.outcome) &&
-      (filters.role === "" || evaluation.agentRole === filters.role) &&
-      (filters.model === "" || evaluation.model === filters.model) &&
-      (filters.prompt === "" ||
-        evaluation.promptName === undefined ||
-        evaluation.promptName === filters.prompt)
+): PlacedEvaluations {
+  const from = resolveUtcDayBound(filters.from);
+  const until = resolveUtcDayEnd(filters.until);
+
+  const results: EvaluationResult[] = [];
+  let unplaceable = 0;
+  for (const evaluation of evaluations) {
+    if (!matchesTarget(evaluation, filters)) continue;
+    const verdict = runTimeVerdict(evaluation, from, until);
+    if (verdict === RUN_UNPLACEABLE) {
+      unplaceable += 1;
+      continue;
+    }
+    if (verdict === RUN_OUTSIDE) continue;
+    results.push(evaluation);
+  }
+  return { results, unplaceable };
+}
+
+/**
+ * Every categorical axis at once: what the run evaluated, and how it came out.
+ *
+ * A prompt-less row still matches a prompt filter. `promptName` is optional on
+ * the wire, and a row that reports no prompt is not evidence that it ran under
+ * some other prompt, so dropping it from a filtered view would report a smaller
+ * history than the source holds.
+ */
+function matchesTarget(
+  evaluation: EvaluationResult,
+  filters: EvaluationsFilters
+): boolean {
+  if (!matchesOutcome(evaluation, filters.outcome)) return false;
+  if (filters.role !== "" && evaluation.agentRole !== filters.role)
+    return false;
+  if (filters.model !== "" && evaluation.model !== filters.model) return false;
+  return (
+    filters.prompt === "" ||
+    evaluation.promptName === undefined ||
+    evaluation.promptName === filters.prompt
   );
+}
+
+/** Where a run sits relative to the window, or that it cannot be placed. */
+type RunVerdict = "inside" | "outside" | "unplaceable";
+const RUN_OUTSIDE = "outside";
+const RUN_UNPLACEABLE = "unplaceable";
+
+/**
+ * Whether a run falls inside the window.
+ *
+ * Three answers rather than two, because "no readable run time" and "outside
+ * the window" are different facts and collapsing them would drop a row from
+ * every count on the page without saying so.
+ */
+function runTimeVerdict(
+  evaluation: EvaluationResult,
+  from: number | undefined,
+  until: number | undefined
+): RunVerdict {
+  if (from === undefined && until === undefined) return "inside";
+  const at = Date.parse(evaluation.timestamp);
+  if (Number.isNaN(at)) return RUN_UNPLACEABLE;
+  if (from !== undefined && at < from) return RUN_OUTSIDE;
+  if (until !== undefined && at >= until) return RUN_OUTSIDE;
+  return "inside";
 }
 
 /**

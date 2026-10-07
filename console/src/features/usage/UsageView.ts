@@ -8,15 +8,16 @@ import React from "react";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { BarChart } from "../../components/charts/BarChart.ts";
 import { FilterBar } from "../../components/filters/FilterBar.ts";
-import {
-  FIELD_CONTROL_CLASS,
-  SelectField
-} from "../../components/forms/SelectField.ts";
+import { SelectField } from "../../components/forms/SelectField.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { gridRowClass, StatGrid } from "../../components/panels/DetailGrid.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
+import {
+  FIELD_CONTROL_CLASS,
+  FIELD_GROUP_CLASS
+} from "../../components/ui/field-classes.ts";
 
 /**
  * Observability Usage view.
@@ -48,9 +49,6 @@ const TOKEN_FORMATTER = new Intl.NumberFormat("en-US", {
 const DURATION_FORMATTER = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1
 });
-
-const FILTER_GROUP_CLASS =
-  "flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-fg-muted";
 
 export function formatTokenCount(value: number | null): string {
   if (value === null) return NOT_OBSERVED_LABEL;
@@ -102,7 +100,7 @@ function renderFilterSelect(
   if (options === null) {
     return React.createElement(
       "div",
-      { className: FILTER_GROUP_CLASS },
+      { className: FIELD_GROUP_CLASS },
       React.createElement(SelectField, {
         name: `${name}-unobserved`,
         label: `${label}:`,
@@ -129,7 +127,7 @@ function renderFilterSelect(
   const selectedValues = selected.length === 0 ? [""] : selected;
   return React.createElement(
     "div",
-    { className: FILTER_GROUP_CLASS },
+    { className: FIELD_GROUP_CLASS },
     React.createElement(SelectField, {
       name,
       label: `${label}:`,
@@ -178,7 +176,7 @@ export function UsageView({
         { className: "flex min-w-0 flex-wrap gap-3 items-center" },
         React.createElement(
           "div",
-          { className: FILTER_GROUP_CLASS },
+          { className: FIELD_GROUP_CLASS },
           React.createElement(SelectField, {
             name: "range",
             label: "Time range:",
@@ -206,7 +204,7 @@ export function UsageView({
           ),
           React.createElement(
             "label",
-            { className: FILTER_GROUP_CLASS },
+            { className: FIELD_GROUP_CLASS },
             React.createElement("span", null, "From (UTC):"),
             React.createElement("input", {
               type: "date",
@@ -219,7 +217,7 @@ export function UsageView({
           ),
           React.createElement(
             "label",
-            { className: FILTER_GROUP_CLASS },
+            { className: FIELD_GROUP_CLASS },
             React.createElement("span", null, "To (UTC):"),
             React.createElement("input", {
               type: "date",

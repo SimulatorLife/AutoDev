@@ -1,6 +1,7 @@
 import React from "react";
 
 import { Icon } from "../icons/Icon.ts";
+import { FIELD_CONTROL_CLASS } from "../ui/field-classes.ts";
 import { MUTED_META_CLASS } from "../ui/text-classes.ts";
 
 /**
@@ -15,23 +16,10 @@ import { MUTED_META_CLASS } from "../ui/text-classes.ts";
  * The dropdown list itself is themed by the document-level
  * `color-scheme: dark` in `app/globals.css`, so the opened list matches the
  * closed control.
- */
-
-/**
- * Shared control chrome for form inputs and selects.
  *
- * Exported so a date or text input in the same filter bar matches a select
- * beside it; a filter row with two different control weights reads as two
- * different products.
- *
- * `max-w-full min-w-0` makes every control shrinkable. A native select's
- * intrinsic width comes from its widest option, so a select labelled with a
- * long workspace id or model name used to push its row past the viewport and
- * take the Apply button with it. The constraints apply only when the control
- * would otherwise be wider than the space it is given.
+ * The control chrome itself lives in `ui/field-classes.ts`, because it is shared
+ * with the controls that have no component -- a text input, a date input.
  */
-export const FIELD_CONTROL_CLASS =
-  "appearance-none rounded border border-border-strong bg-input pl-3 pr-8 py-1.5 text-sm text-fg-secondary transition-colors hover:border-fg-muted disabled:cursor-not-allowed disabled:opacity-60 max-w-full min-w-0";
 
 const CONTROL_CLASS = FIELD_CONTROL_CLASS;
 

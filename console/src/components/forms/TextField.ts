@@ -1,6 +1,6 @@
 import React from "react";
 
-import { FIELD_CONTROL_CLASS } from "./SelectField.ts";
+import { FIELD_CONTROL_CLASS } from "../ui/field-classes.ts";
 
 /**
  * The Console's free-text form control.

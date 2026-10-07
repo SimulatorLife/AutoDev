@@ -118,7 +118,8 @@ export default async function EvaluationsPage({
   }
 
   const available = result.data.evaluations;
-  const evaluations = filterEvaluations(available, filters);
+  const placed = filterEvaluations(available, filters);
+  const evaluations = placed.results;
 
   let traceLookup: EvaluationTraceLookup | null = null;
   if (spanIdValues !== undefined) {
@@ -142,6 +143,7 @@ export default async function EvaluationsPage({
       filterOptions: filterOptionsFor(available),
       tab,
       page,
+      ...(placed.unplaceable === 0 ? {} : { unplaceable: placed.unplaceable }),
       ...(selectedResult === undefined ? {} : { selection: selectedResult }),
       ...(traceLookup ? { traceLookup } : {})
     })
