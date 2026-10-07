@@ -9,7 +9,7 @@ import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { Tag } from "../../components/status/Tag.ts";
-import { chipList } from "../../components/tables/Chips.ts";
+import { CHIP_TONE_CLASS, chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable,
@@ -66,7 +66,7 @@ export function PermissionsView({
       weight: 160,
       cell: (r) =>
         React.createElement(Tag, {
-          className: "border-border-strong bg-surface-raised text-fg-secondary",
+          className: CHIP_TONE_CLASS,
           dataAttributes: {
             "data-permission-mode": r.readOnly ? "read-only" : "workspace-write"
           },

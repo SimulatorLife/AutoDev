@@ -16,6 +16,7 @@ import {
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
+import { CHIP_TONE_CLASS } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable,
@@ -119,8 +120,7 @@ export function GithubView({
               ...workflow.events.map((event) =>
                 React.createElement(Tag, {
                   key: event,
-                  className:
-                    "border-border-strong bg-surface-raised font-mono text-fg-secondary",
+                  className: `${CHIP_TONE_CLASS} font-mono`,
                   children: event
                 })
               )
@@ -299,8 +299,7 @@ export function GithubView({
       header: "Event",
       cell: (run) =>
         React.createElement(Tag, {
-          className:
-            "border-border-strong bg-surface-raised font-mono text-fg-secondary",
+          className: `${CHIP_TONE_CLASS} font-mono`,
           children: run.event
         })
     },

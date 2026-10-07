@@ -27,7 +27,7 @@ import {
   NOT_OBSERVED_LABEL,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
-import { TAG_SHAPE } from "../../components/status/Tag.ts";
+import { Chip } from "../../components/tables/Chips.ts";
 import {
   MONO_META_CLASS,
   MUTED_META_CLASS
@@ -290,18 +290,17 @@ function roleExposure(tool: ToolCatalogItem): React.JSX.Element {
     "div",
     { className: "flex flex-wrap gap-1" },
     tool.exposedRoles.map((role) =>
-      // An anchor, so it cannot be a Tag. Titles itself for the same reason:
-      // a role name is unbounded and the column truncates.
-      React.createElement(
-        "a",
-        {
-          key: role,
-          href: `/tools?role=${encodeURIComponent(role)}`,
-          title: role,
-          className: `${TAG_SHAPE} border-border-strong bg-surface-raised text-fg-secondary hover:text-accent`
-        },
-        role
-      )
+      // `Chip` renders an anchor when handed an `href`, so this is a linkable
+      // chip rather than a Tag with a hand-assembled shape: that is what it was
+      // before, and the copy carried the link treatment minus
+      // `hover:underline`, so these were the only chip links on the Console that
+      // did not underline on hover. The chip titles itself from its own text,
+      // which covers the same truncation the old explicit `title` did.
+      React.createElement(Chip, {
+        key: role,
+        href: `/tools?role=${encodeURIComponent(role)}`,
+        children: role
+      })
     )
   );
 }

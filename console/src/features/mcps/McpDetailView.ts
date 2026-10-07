@@ -25,6 +25,7 @@ import {
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
+import { CHIP_TONE_CLASS } from "../../components/tables/Chips.ts";
 import {
   resolveActiveTabId,
   type TabDefinition,
@@ -201,8 +202,7 @@ function ConfiguredToolAllowlist({
             : tool.exposedRoles.map((role) =>
                 React.createElement(Tag, {
                   key: role,
-                  className:
-                    "border-border-strong bg-surface-raised text-fg-secondary",
+                  className: CHIP_TONE_CLASS,
                   children: role
                 })
               )

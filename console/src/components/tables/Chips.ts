@@ -12,7 +12,25 @@ import { MUTED_META_CLASS } from "../ui/text-classes.ts";
  * triples row height and destroys the density an operator table depends on.
  */
 
-export const CHIP_CLASS = `${TAG_SHAPE} border-border-strong bg-surface-raised text-fg-secondary`;
+/**
+ * The colour and typography half of `CHIP_CLASS`.
+ *
+ * `Tag` already applies `TAG_SHAPE`, so handing it these three utilities renders
+ * exactly `CHIP_CLASS` -- which is why so many `Tag` call sites used to spell
+ * the trio out by hand: they were reconstructing `CHIP_CLASS` around a shape
+ * they were never asked for. Naming it states the relationship, so a chip that
+ * changes colour changes in one place instead of at every site that copied the
+ * three utilities.
+ *
+ * Typography rides along here because `Tag` documents colour *and* typography as
+ * the caller's to set; `font-mono` appended by a caller composes with this
+ * without conflicting, since these set border colour, background, and text
+ * colour only.
+ */
+export const CHIP_TONE_CLASS =
+  "border-border-strong bg-surface-raised text-fg-secondary";
+
+export const CHIP_CLASS = `${TAG_SHAPE} ${CHIP_TONE_CLASS}`;
 
 export interface ChipProps {
   /**
