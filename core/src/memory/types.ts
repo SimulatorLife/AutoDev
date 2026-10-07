@@ -265,28 +265,6 @@ export function isMemoryInjectionSessionCardinality(
   );
 }
 
-export function isMemoryInjectionEventReasonCode(
-  value: unknown
-): value is MemoryInjectionEventReasonCode {
-  return (
-    typeof value === "string" &&
-    MEMORY_INJECTION_EVENT_REASON_CODES.includes(
-      value as MemoryInjectionEventReasonCode
-    )
-  );
-}
-
-export function isMemoryOutcomeReportReasonCode(
-  value: unknown
-): value is MemoryOutcomeReportReasonCode {
-  return (
-    typeof value === "string" &&
-    MEMORY_OUTCOME_REPORT_REASON_CODES.includes(
-      value as MemoryOutcomeReportReasonCode
-    )
-  );
-}
-
 export const MEMORY_USE_KINDS = [
   "used",
   "partially_used",
