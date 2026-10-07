@@ -72,6 +72,53 @@ test("retention configuration computes a bounded cutoff and repository scope", (
   });
 });
 
+test("retention refuses an actor id that would not survive the audit trail", () => {
+  // The actor id is recorded on every purge event, and retention is the one
+  // operation whose records cannot be taken back. An id carrying whitespace, a
+  // quote, or a newline would land in that record verbatim; an over-long one
+  // bloats every event it appears on.
+  const accepted = memoryRetentionConfiguration(
+    {
+      ...environment,
+      AUTODEV_MEMORY_RETENTION_ACTOR_ID: "retention@ops:nightly"
+    },
+    now
+  );
+  assert.equal(accepted.actor.id, "retention@ops:nightly");
+
+  for (const actorId of [
+    // Internal whitespace survives the trim, so the fallback never rescues it.
+    "retention bot",
+    'retention"; DROP',
+    "retention\nforged",
+    // Over the 128-character bound the pattern allows.
+    "r".repeat(129)
+  ]) {
+    assert.throws(
+      () =>
+        memoryRetentionConfiguration(
+          { ...environment, AUTODEV_MEMORY_RETENTION_ACTOR_ID: actorId },
+          now
+        ),
+      /actor id is invalid/u,
+      `must refuse ${JSON.stringify(actorId)}`
+    );
+  }
+});
+
+test("retention refuses a clock it cannot turn into a cutoff", () => {
+  // Without the guard this surfaces later as `RangeError: Invalid time value`
+  // from `toISOString`, which names neither the clock nor the fact that the
+  // cutoff is what could not be computed. Asserting the type as well as the
+  // message is what separates the two: RangeError is not a TypeError.
+  assert.throws(
+    () => memoryRetentionConfiguration(environment, new Date(Number.NaN)),
+    (error: unknown) =>
+      error instanceof TypeError &&
+      /Memory retention clock is invalid/u.test(error.message)
+  );
+});
+
 test("retention runner delegates one bounded curator batch to MemoryService", async () => {
   const configuration = memoryRetentionConfiguration(environment, now);
   let observed: {
