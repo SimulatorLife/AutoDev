@@ -2807,31 +2807,6 @@ export async function fetchMemoryUseCohorts(
       );
 }
 
-export function proposeMemoryRecord(
-  payload: {
-    readonly workspaceId: string;
-    readonly proposal: {
-      readonly kind: string;
-      readonly claim: string;
-      readonly scope: Record<string, unknown>;
-      readonly evidence?: readonly Record<string, unknown>[];
-      readonly sourceExperienceIds?: readonly string[];
-      readonly reasonCode?: string;
-    };
-  },
-  config: ControlApiConfig,
-  options: FetchControlApiOptions = {}
-): Promise<ControlApiResult<{ readonly memory: unknown }>> {
-  const search = new URLSearchParams({ workspaceId: payload.workspaceId });
-  const path = `${CONTROL_API_PATHS.memoryRecords}?${search.toString()}`;
-  return postControlApi<{ readonly memory: unknown }>(
-    path,
-    payload.proposal,
-    config,
-    options
-  );
-}
-
 /**
  * Apply one lifecycle transition to a durable record.
  *
