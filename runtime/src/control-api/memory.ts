@@ -55,6 +55,8 @@ import {
   type MemoryAssessmentCohortReader,
   type MemoryAssessmentReader,
   type MemoryAssessmentRecorder,
+  MAX_CLAIM_LENGTH,
+  MAX_QUERY_LENGTH,
   MemoryAuthorizationError,
   MemoryConflictError,
   type MemoryExperienceCaptureInput,
@@ -100,7 +102,18 @@ const MAX_PAGE_SIZE = 100;
 const MAX_PAGE_OFFSET = 100_000;
 const MAX_EVIDENCE_REFERENCES = 64;
 const MAX_EXPERIENCE_IDS = 64;
-const MAX_CLAIM_CHARACTERS = 4000;
+/**
+ * The longest task an operator may put in a research body.
+ *
+ * Deliberately its own constant rather than a restatement of the claim or query
+ * bounds it once sat between: `MemoryService.research` requires only a non-empty
+ * task and bounds no other field at this boundary, so this is a limit on what
+ * this API will accept rather than one it is forwarding. The claim and query
+ * bounds it used to serve are owned by the service and imported from there,
+ * because the service is what refuses them and a local copy could be edited
+ * without the rule that enforces it noticing.
+ */
+const MAX_RESEARCH_TASK_CHARACTERS = 4000;
 const MEMORY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const MEMORY_RECORDS_ROUTE = "records" as const;
 const MEMORY_EXPERIENCES_ROUTE = "experiences" as const;
@@ -364,11 +377,18 @@ function pagination(params: URLSearchParams): {
   return { limit, offset };
 }
 
+/**
+ * The list `query` filter.
+ *
+ * Carries no length check of its own: `oneFilter` has already bounded every
+ * filter value at `MAX_FILTER_VALUE`, so a comparison against the service's
+ * much larger query bound could only ever be false. There was one here, and it
+ * made this function read as though the search filter were bounded at 4000
+ * characters when the number an operator actually meets is 256 -- the query
+ * bound belongs to the research body's query, which is validated separately.
+ */
 function queryText(params: URLSearchParams): string | undefined {
-  const query = oneFilter(params, "query");
-  if (query && query.length > MAX_CLAIM_CHARACTERS)
-    throw new TypeError("'query' exceeds its character bound.");
-  return query;
+  return oneFilter(params, "query");
 }
 
 /**
@@ -704,7 +724,7 @@ function proposalInput(
   exactKeys(value, ["kind", "scope", "claim", "experienceIds", "evidence"]);
   if (!MEMORY_KINDS.includes(value.kind as MemoryKind))
     throw new MemoryValidationError("Memory kind is invalid.");
-  const claim = requiredString(value, "claim", MAX_CLAIM_CHARACTERS);
+  const claim = requiredString(value, "claim", MAX_CLAIM_LENGTH);
   const experienceIds = stringList(
     value.experienceIds,
     "experienceIds",
@@ -727,8 +747,8 @@ function researchRequest(
   exactKeys(body, ["task", "query", "taskId", "relevantPaths"]);
   const taskId =
     body.taskId === undefined ? defaultTaskId : requiredString(body, "taskId");
-  const task = requiredString(body, "task", MAX_CLAIM_CHARACTERS);
-  const query = requiredString(body, "query", MAX_CLAIM_CHARACTERS);
+  const task = requiredString(body, "task", MAX_RESEARCH_TASK_CHARACTERS);
+  const query = requiredString(body, "query", MAX_QUERY_LENGTH);
   let relevantPaths: readonly string[] | undefined;
   if (body.relevantPaths !== undefined) {
     relevantPaths = stringList(
@@ -1533,7 +1553,7 @@ async function mutateMemory(
     switch (route.action) {
       case "revise": {
         exactKeys(body, ["claim", "experienceIds", "evidence"]);
-        const claim = requiredString(body, "claim", MAX_CLAIM_CHARACTERS);
+        const claim = requiredString(body, "claim", MAX_CLAIM_LENGTH);
         const experienceIds = stringList(
           body.experienceIds,
           "experienceIds",
