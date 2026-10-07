@@ -244,7 +244,14 @@ function formatScopeString(scope: MemoryScope): string {
       return `agent:${scope.agentId}`;
     }
     default: {
-      return "unknown";
+      // Unreachable while `MemoryScope` is exactly the six kinds handled above,
+      // which is what this branch relied on and never checked. It returned the
+      // literal "unknown", colliding with the Console's word for missing
+      // evidence, so an unnameable scope would have read as an unobserved one.
+      // Typed as `never` instead: adding a seventh kind to Core becomes a
+      // compile error here rather than a wrong word in the table.
+      const exhaustive: never = scope;
+      return exhaustive;
     }
   }
 }
