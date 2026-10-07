@@ -2066,6 +2066,120 @@ test("evidence locators remove credentials before persistence or injection", () 
   assert.doesNotMatch(sanitized.uri, /password|secret|fragment/);
 });
 
+/**
+ * The test above proves the helper works. It cannot prove anything arrives at
+ * the repository sanitized -- the helper is called on every write path whether
+ * or not the call survives, and a test that only invokes it stays green when
+ * the call is deleted. Deleting `sanitizeEvidence` from `propose`,
+ * `appendExperience` and `recordInjectionEvent` each left this file fully
+ * green, which left "secrets and unnecessary sensitive payloads are not
+ * persisted by default" -- an acceptance criterion in the memory spec, not an
+ * implementation detail -- unenforced on the evidence path. Claim redaction
+ * and the canonical-skill refusal were both pinned; these three were not.
+ *
+ * So the assertion is on what crosses into the repository, never on the
+ * helper. The markers are deliberately distinctive: `hunter2` and
+ * `tok-LIVE-9f3a` appear nowhere else in the fixtures, so any surviving
+ * occurrence in a stored row is a leak by definition and cannot be confused
+ * with unrelated content.
+ */
+const CREDENTIALED_URI =
+  "https://deploy:hunter2@ci.example.test/memory?token=tok-LIVE-9f3a&ref=main#frag";
+const SANITIZED_URI = "https://ci.example.test/memory?ref=main";
+
+function credentialedEvidence(): EvidenceReference {
+  return { kind: "document", uri: CREDENTIALED_URI };
+}
+
+function assertNothingCredentialReachedStorage(stored: unknown): void {
+  const serialized = JSON.stringify(stored);
+  assert.doesNotMatch(
+    serialized,
+    /hunter2/u,
+    "a basic-auth password reached storage"
+  );
+  assert.doesNotMatch(serialized, /tok-LIVE-9f3a/u, "an access token reached storage");
+}
+
+test("an experience's credentialed evidence and trajectory are sanitized before storage", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+
+  await service.appendExperience(
+    {
+      ...experience(),
+      // The trajectory locator is sanitized on a separate path from the
+      // evidence array, so it carries its own credentials: dropping either
+      // sanitization leaves one of the two markers behind.
+      trajectory: {
+        ...experience().trajectory,
+        uri: "https://deploy:hunter2@ci.example.test/trajectory.jsonl?token=tok-LIVE-9f3a"
+      },
+      evidence: [credentialedEvidence()]
+    },
+    worker,
+    { ...context, taskId: "task-old", runId: "run-old" }
+  );
+
+  const stored = repository.experiences.get("experience-1");
+  assert.ok(stored, "the experience should have been stored");
+  assertNothingCredentialReachedStorage(stored);
+  assert.equal(stored.evidence[0]?.uri, SANITIZED_URI);
+});
+
+test("a proposed memory's credentialed evidence is sanitized before storage", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  await service.appendExperience(experience(), worker, {
+    ...context,
+    taskId: "task-old",
+    runId: "run-old"
+  });
+
+  const proposal = await service.propose(
+    {
+      kind: "semantic",
+      scope: {
+        kind: "repository",
+        workspaceId: "workspace-a",
+        repositoryId: "repo-a"
+      },
+      claim: "The CI deploy target is configured by the release job.",
+      experienceIds: ["experience-1"],
+      evidence: [credentialedEvidence()]
+    },
+    worker,
+    context
+  );
+
+  const stored = repository.memories.get(proposal.id);
+  assert.ok(stored, "the proposal should have been stored");
+  assertNothingCredentialReachedStorage(stored);
+  assert.equal(stored.provenance.evidence[0]?.uri, SANITIZED_URI);
+});
+
+test("a recorded injection event's credentialed evidence is sanitized before storage", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const event = outcomeInjectionEvent({ evidence: [credentialedEvidence()] });
+
+  await service.recordInjectionEvent({
+    event,
+    actor: root,
+    context: {
+      ...context,
+      taskId: event.taskId,
+      runId: event.runId,
+      agentId: event.agentId
+    }
+  });
+
+  const stored = repository.injectionEvents.get(event.correlationToken);
+  assert.ok(stored, "the injection event should have been stored");
+  assertNothingCredentialReachedStorage(stored);
+  assert.equal(stored.evidence[0]?.uri, SANITIZED_URI);
+});
+
 test("embedding vectors are optional retrieval signals and never become record content", async () => {
   const repository = new FakeMemoryRepository();
   const embedded = makeService(repository, {
