@@ -307,6 +307,25 @@ function splitInstant(timestamp: string): {
 }
 
 /**
+ * Whether a machine can read this value back as an instant.
+ *
+ * `splitInstant` answers whether the value can be *cut into parts*, which is a
+ * narrower question: `2026-10-05 09:47:58` cannot be cut, and is still a date.
+ * The two have to stay separate, because `time[datetime]` is the page's claim
+ * that its content is a time, and that claim needs the second question.
+ *
+ * The evaluator accepts any string here -- it checks that the field is one and
+ * nothing more -- so a value whose writer failed reaches the view intact, and
+ * stamping it into `datetime` asserted that the token was a date. Rendered as
+ * the text it is, it claims nothing and still shows the operator what the store
+ * holds. `Date.parse` is the test because it is the question being asked: can
+ * this be read back as the moment it names?
+ */
+function isReadableInstant(timestamp: string): boolean {
+  return Number.isFinite(Date.parse(timestamp));
+}
+
+/**
  * A timestamp, split so it can break between its parts, and never stamped with
  * an offset it did not read.
  *
@@ -339,16 +358,21 @@ function splitInstant(timestamp: string): {
  */
 function timestampCell(timestamp: string): React.JSX.Element {
   const { date, clock, offset } = splitInstant(timestamp);
+  const readable = isReadableInstant(timestamp);
   return React.createElement(
     "span",
     {
       className: "flex flex-wrap items-baseline gap-x-1.5",
-      title: timestamp
+      // A tooltip that repeats the only text in the cell says nothing, and the
+      // whole value is what the readable case is hiding.
+      ...(readable
+        ? { title: timestamp }
+        : { "data-evaluations-unreadable-time": "true" })
     },
     React.createElement(
-      "time",
+      readable ? "time" : "span",
       {
-        dateTime: timestamp,
+        ...(readable ? { dateTime: timestamp } : {}),
         className: `${MONO_META_CLASS} min-w-0 break-words`
       },
       date
@@ -377,12 +401,20 @@ function timestampCell(timestamp: string): React.JSX.Element {
  * 390px the raw token broke mid-date as `2026-10-` / `05T12:20:05.000Z`. It also
  * carried no `dateTime`, so the one place showing this run's time was the one
  * place a machine could not read it.
+ *
+ * The drawer asked the same question `timestampCell` does and answers it the
+ * same way, because "is this a time" cannot have two answers on one screen.
  */
 function runTimeInstant(timestamp: string): React.JSX.Element {
   const { date, clock, offset } = splitInstant(timestamp);
+  const readable = isReadableInstant(timestamp);
   return React.createElement(
-    "time",
-    { dateTime: timestamp, title: timestamp },
+    readable ? "time" : "span",
+    {
+      ...(readable
+        ? { dateTime: timestamp, title: timestamp }
+        : { "data-evaluations-unreadable-time": "true" })
+    },
     `${date}${clock === undefined ? "" : ` ${clock}${offset ?? ""}`}`
   );
 }

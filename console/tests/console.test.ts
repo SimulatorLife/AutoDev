@@ -2751,6 +2751,39 @@ test("one instant is rendered one way, including in the drawer", () => {
     /text-fg-muted font-mono"[^>]*><time dateTime="2026-10-05 09:47:58"[^>]*>2026-10-05 09:47:58</,
     "a space-separated value is shown whole, not sliced"
   );
+
+  // A value that is not a date at all is the other half of "shown whole". The
+  // evaluator checks only that `timestamp` is a string, so a writer that failed
+  // reaches the view intact -- and stamping it into `time[datetime]` claimed it
+  // was a date. It is still shown, because the operator needs to see what the
+  // store holds, and it is still not a time, because it is not one.
+  const brokenRow = { ...row, timestamp: "not a timestamp the source ever wrote" };
+  const brokenMarkup = renderEvaluations({
+    evaluations: [brokenRow],
+    selection: brokenRow.id
+  });
+  const brokenDrawer = brokenMarkup.slice(
+    brokenMarkup.indexOf('data-feature="evaluation-detail"')
+  );
+  assert.ok(brokenDrawer.length > 0, "the run is still opened");
+  assert.match(
+    brokenDrawer,
+    /<span data-evaluations-unreadable-time="true">not a timestamp the source ever wrote</,
+    "an unreadable run time is shown as the text it is"
+  );
+  assert.doesNotMatch(
+    brokenDrawer,
+    /<time/u,
+    "and it is not stamped as an instant a machine can read back"
+  );
+
+  // Both halves of the same cell, because the row and the subtitle have to agree
+  // about which of the two a value is -- that is the claim this test opened on.
+  assert.equal(
+    brokenMarkup.includes("data-evaluations-unreadable-time"),
+    true,
+    "the history row marks it too, not only the drawer"
+  );
 });
 
 test("an opened run leads the page, so opening it shows something at any width", () => {
