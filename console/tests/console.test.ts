@@ -4736,6 +4736,58 @@ test("the sidebar counts the resource, not the filter that emptied it", async ()
   }
 });
 
+test("an unconfigured Control API says which results it would have read", async () => {
+  // Every sibling page names what its own page reads when the credential is
+  // missing. This one said "evaluation definitions" -- a surface the Runtime does
+  // not have, behind the same token: `/control/evaluations` is a single GET
+  // returning retained results. An operator who set the token and then went
+  // looking for definitions was looking for something the credential was never
+  // going to produce, and the one line that was supposed to tell them what the
+  // token buys sent them the wrong way.
+  //
+  // This branch had no test at all on any page, so the message was free to name
+  // the wrong resource for as long as it existed.
+  const previousEnv = saveConsolePageEnvironment();
+  const isolatedHome = mkdtempSync(
+    join(tmpdir(), "autodev-evaluations-unset-")
+  );
+  process.env.HOME = isolatedHome;
+  process.env.CODEX_HOME = isolatedHome;
+  delete process.env.AUTODEV_CONTROL_API_TOKEN;
+  delete process.env.AUTODEV_OPENLIT_SECRET_FILE;
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    throw new Error(
+      `An unconfigured read must not reach the network: ${String(input)}`
+    );
+  }) as typeof fetch;
+
+  try {
+    const markup = renderToStaticMarkup(await EvaluationsPage({}));
+    assert.match(markup, /data-status="unavailable"/);
+    assert.match(markup, /data-error-code="autodev_control_api_disabled"/);
+    assert.match(
+      markup,
+      /to read evaluation results/,
+      "the message names what this page reads"
+    );
+    assert.doesNotMatch(
+      markup,
+      /evaluation definitions/,
+      "and not a surface the Runtime does not expose"
+    );
+    // The credential being unset is not an empty store, so nothing that reads as
+    // a successful result may render beside the failure.
+    assert.doesNotMatch(markup, /Retained results/);
+    assert.doesNotMatch(markup, /No evaluation results match these filters/);
+    assert.doesNotMatch(markup, /Pass Rate/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreConsolePageEnvironment(previousEnv);
+    rmSync(isolatedHome, { recursive: true, force: true });
+  }
+});
+
 test("EvaluationsPage loads the linked trace through the Usage token and keeps prompt scope", async () => {
   const previousFetch = globalThis.fetch;
   const previousEnv = saveConsolePageEnvironment();
