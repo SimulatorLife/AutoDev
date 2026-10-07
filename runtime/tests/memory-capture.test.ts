@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
+  chmod,
   mkdir,
   mkdtemp,
+  readFile,
   realpath,
   rm,
   symlink,
+  truncate,
   writeFile
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -35,6 +38,7 @@ import {
   type MemoryService
 } from "../src/memory/service.ts";
 import {
+  MAX_NATIVE_TRAJECTORY_BYTES,
   NATIVE_TRAJECTORY_SOURCES,
   normalizeNativeTrajectory
 } from "../src/memory/trajectory.ts";
@@ -412,4 +416,197 @@ test("manual native capture rejects disabled, unsupported, and symlink-escaped i
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
+});
+
+/**
+ * The transcript source is read from a path an operator configures, and every
+ * bound on it is the only thing between a hostile or merely broken transcript
+ * and durable memory. The symlink escape above was the one covered case; the
+ * remaining refusals had no failing test at all, so each could be deleted with
+ * the suite green.
+ */
+test("a native transcript must be a bounded, readable file beneath its configured root", async () => {
+  const temporaryRoot = await mkdtemp(
+    join(tmpdir(), "autodev-memory-capture-source-")
+  );
+  try {
+    const repositoryRoot = join(temporaryRoot, "repo");
+    const transcriptRoot = join(temporaryRoot, "history");
+    await mkdir(repositoryRoot);
+    await mkdir(transcriptRoot);
+    const configurationAt = (capturePath: string) =>
+      memoryCaptureConfiguration({
+        ...enabledEnvironment,
+        AUTODEV_MEMORY_REPOSITORY_ROOT: repositoryRoot,
+        AUTODEV_MEMORY_CAPTURE_ROOT: transcriptRoot,
+        AUTODEV_MEMORY_CAPTURE_PATH: capturePath
+      });
+    const { service, calls } = captureServiceStub();
+
+    // `..` leaves the configured root with no symlink involved at all, so the
+    // check on the configured path and the check on the resolved file are two
+    // separate refusals rather than one.
+    await writeFile(join(temporaryRoot, "outside.jsonl"), claudeTranscript());
+    await assert.rejects(
+      runMemoryCapture(service, configurationAt("../outside.jsonl")),
+      /must remain beneath its configured root/u,
+      "a relative path must not walk out of the configured root"
+    );
+
+    await mkdir(join(transcriptRoot, "nested"));
+    await assert.rejects(
+      runMemoryCapture(service, configurationAt("nested")),
+      /must be a non-empty regular file/u,
+      "a directory is not a transcript"
+    );
+
+    await writeFile(join(transcriptRoot, "empty.jsonl"), "");
+    await assert.rejects(
+      runMemoryCapture(service, configurationAt("empty.jsonl")),
+      /must be a non-empty regular file/u,
+      "a transcript with no records is refused rather than stored as empty"
+    );
+
+    // Oversized on disk *and* unreadable, so the refusal can only name the
+    // size: if the bound were checked after the read, this would fail with the
+    // read error instead. Runs as root the chmod does not bite, and the second
+    // byte check below covers the bound on its own.
+    const oversized = join(transcriptRoot, "oversized.jsonl");
+    await writeFile(oversized, "");
+    // A sparse file, so the fixture costs no real disk.
+    await truncate(oversized, MAX_NATIVE_TRAJECTORY_BYTES + 1);
+    await chmod(oversized, 0o000);
+    await assert.rejects(
+      runMemoryCapture(service, configurationAt("oversized.jsonl")),
+      /exceeds the 32 MiB capture limit/u,
+      "an oversized transcript is refused on its size, without being read"
+    );
+
+    // Bytes that are not valid UTF-8 each decode to U+FFFD, three bytes each,
+    // so a transcript well inside the on-disk bound can still exceed the bound
+    // on the string everything downstream actually holds and hashes.
+    const expansion = join(transcriptRoot, "expansion.jsonl");
+    const invalidByteCount = Math.floor(MAX_NATIVE_TRAJECTORY_BYTES / 3) + 1;
+    await writeFile(expansion, Buffer.alloc(invalidByteCount, 0xff));
+    assert.ok(
+      invalidByteCount < MAX_NATIVE_TRAJECTORY_BYTES,
+      "the fixture must stay inside the on-disk bound, or it proves nothing"
+    );
+    assert.ok(
+      Buffer.byteLength(await readFile(expansion, "utf8"), "utf8") >
+        MAX_NATIVE_TRAJECTORY_BYTES,
+      "the fixture must decode past the bound, or it proves nothing"
+    );
+    await assert.rejects(
+      runMemoryCapture(service, configurationAt("expansion.jsonl")),
+      /exceeds the 32 MiB capture limit/u,
+      "the bound applies to the decoded transcript, not only to the file"
+    );
+
+    assert.equal(
+      calls.length,
+      0,
+      "no refused transcript reached the memory service"
+    );
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Validation evidence arrives as an operator-supplied JSON string and becomes
+ * an evidence reference on a durable record. Every bound on it -- the array
+ * shape, the count, the size, and each field of each reference -- had no
+ * failing test, so each was deletable with the suite green.
+ */
+test("native capture validation evidence is a bounded array of well-formed references", () => {
+  const withEvidence = (evidence: string) =>
+    memoryCaptureConfiguration({
+      ...enabledEnvironment,
+      AUTODEV_MEMORY_CAPTURE_VALIDATION_STATE: "passed",
+      AUTODEV_MEMORY_CAPTURE_VALIDATION_EVIDENCE: evidence
+    });
+  const reference = {
+    kind: "file",
+    uri: "runs/42/result.json"
+  } as const;
+
+  // Evidence with no state at all. The state is what qualifies the evidence,
+  // so an array on its own is not a validation claim and must not become one.
+  assert.throws(
+    () =>
+      memoryCaptureConfiguration({
+        ...enabledEnvironment,
+        AUTODEV_MEMORY_CAPTURE_VALIDATION_EVIDENCE: JSON.stringify([reference])
+      }),
+    /validation state is missing or unsupported/u
+  );
+
+  assert.throws(
+    () =>
+      withEvidence(
+        JSON.stringify([{ ...reference, uri: `runs/${"a".repeat(40_000)}` }])
+      ),
+    /validation evidence exceeds its size bound/u
+  );
+  assert.throws(
+    () => withEvidence(JSON.stringify(reference)),
+    /must be a bounded JSON array/u,
+    "a single object is not an array of references"
+  );
+  assert.throws(
+    () =>
+      withEvidence(
+        JSON.stringify(
+          Array.from({ length: 65 }, (_, index) => ({
+            ...reference,
+            uri: `runs/${index}/result.json`
+          }))
+        )
+      ),
+    /must be a bounded JSON array/u,
+    "the reference count is bounded, not merely the array"
+  );
+
+  for (const [label, invalid] of [
+    ["an unknown field", { ...reference, note: "not part of a reference" }],
+    [
+      "a uri past its length bound",
+      { ...reference, uri: `runs/${"a".repeat(2000)}` }
+    ],
+    [
+      "a revision past its length bound",
+      { ...reference, revision: "a".repeat(301) }
+    ],
+    [
+      "an observedAt that is not a date",
+      { ...reference, observedAt: "not-a-timestamp" }
+    ]
+  ] as const) {
+    assert.throws(
+      () => withEvidence(JSON.stringify([invalid])),
+      /contains an invalid reference/u,
+      `${label} is refused`
+    );
+  }
+
+  // The positive control: a well-formed reference carrying every optional field
+  // is still accepted, so the cases above refuse the field rather than the shape.
+  const accepted = withEvidence(
+    JSON.stringify([
+      {
+        ...reference,
+        revision: "abc123",
+        observedAt: "2026-10-01T10:00:00.000Z"
+      }
+    ])
+  );
+  assert.deepEqual(accepted.validation?.evidence, [
+    {
+      kind: "file",
+      uri: "runs/42/result.json",
+      revision: "abc123",
+      observedAt: "2026-10-01T10:00:00.000Z"
+    }
+  ]);
 });
