@@ -47,9 +47,9 @@ function mutation(fields: Record<string, string>): NextRequest {
 const SUPERSEDE = {
   action: "supersede",
   recordId: "mem-1",
+  priorId: "mem-0",
   workspaceId: "SimulatorLife/AutoDev",
-  replacementClaim: "A narrower claim.",
-  confirm: "supersede"
+  reason: "A research task justifying the supersession."
 } as const;
 
 async function refusalForCode(
