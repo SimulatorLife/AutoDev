@@ -1101,6 +1101,27 @@ test("GitHub CLI resolver queries same-repository merge, review, and check state
         );
         assert.equal(truncatedThreads.compatibility, "unknown");
 
+        // More threads than the query asked for is a response the curation
+        // cannot reason about, and it is refused rather than measured -- which
+        // is the same `unknown` verdict, arrived at for the opposite reason: a
+        // short page means AutoDev is missing threads, while a long one means
+        // the answer is not the one it asked for. Nothing tested the second.
+        const overlongThreads = await verifyThreadState(
+          {
+            totalCount: 101,
+            nodes: Array.from({ length: 101 }, () => ({
+              isResolved: true,
+              isOutdated: false
+            }))
+          },
+          "overlong-review-threads"
+        );
+        assert.equal(
+          overlongThreads.compatibility,
+          "unknown",
+          "a response carrying more review threads than were requested must not be read"
+        );
+
         await writeFile(
           pullRequestPath,
           JSON.stringify({

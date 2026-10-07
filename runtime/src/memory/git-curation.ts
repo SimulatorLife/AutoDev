@@ -37,6 +37,16 @@ const GITHUB_PULL_REQUEST_CLOSER = "PullRequest";
 const GIT_TIMEOUT_MS = 2000;
 const GIT_MAX_BUFFER_BYTES = 512 * 1024;
 const GITHUB_LOOKUPS_PER_CONTEXT = 1;
+/**
+ * GitHub's page size for `reviewThreads`, and the bound the response is
+ * measured against.
+ *
+ * One owner for both because they describe the same fact: asking for more than
+ * GitHub will return and refusing a response that somehow contains more than
+ * were asked for. They were three separate `100`s -- the query, the parser's
+ * reject, and a third clause in the parser that could never be false.
+ */
+const MAX_GITHUB_REVIEW_THREADS = 100;
 
 interface GitHubPullRequestLocator {
   readonly owner: string;
@@ -772,7 +782,7 @@ async function githubReferenceState(
       mergeCommit { oid }
       reviewDecision
       statusCheckRollup { state }
-      reviewThreads(first: 100) {
+      reviewThreads(first: ${MAX_GITHUB_REVIEW_THREADS}) {
         totalCount
         nodes { isResolved isOutdated }
       }
@@ -1027,7 +1037,7 @@ function parseGitHubReviewThreadSummary(
     !Number.isSafeInteger(summary.totalCount) ||
     (summary.totalCount as number) < 0 ||
     !Array.isArray(summary.nodes) ||
-    summary.nodes.length > 100
+    summary.nodes.length > MAX_GITHUB_REVIEW_THREADS
   ) {
     return null;
   }
@@ -1043,7 +1053,13 @@ function parseGitHubReviewThreadSummary(
     return null;
   }
   return {
-    complete: summary.totalCount === threads.length && threads.length <= 100,
+    // `complete` answers "did we see every thread?", so it compares against the
+    // count GitHub reports rather than the count we happened to receive. It
+    // carried a second `threads.length <= 100` clause that could not be false --
+    // the guard above has already returned for a longer page, and `.map`
+    // preserves length -- so it only restated the bound beside a check that
+    // already enforced it.
+    complete: summary.totalCount === threads.length,
     unresolvedCount: threads.filter(
       (thread) => !thread!.isResolved && !thread!.isOutdated
     ).length
