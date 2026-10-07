@@ -2603,41 +2603,51 @@ function authorizeRequest(
   return null;
 }
 
-const READ_ONLY_COLLECTIONS: ReadonlyMap<
-  string,
-  (
-    actor: ControlApiActor
-  ) => Record<string, unknown> | Promise<Record<string, unknown>>
-> = new Map<
-  string,
-  (
-    actor: ControlApiActor
-  ) => Record<string, unknown> | Promise<Record<string, unknown>>
->([
-  [CONTROL_API_PATHS.agents, () => agentsView()],
-  [CONTROL_API_PATHS.providers, () => providersView(Date.now())],
-  [CONTROL_API_PATHS.models, () => modelsView()],
-  [CONTROL_API_PATHS.mcps, () => mcpsView()],
-  [
-    CONTROL_API_PATHS.tools,
-    () => toolsView() as unknown as Record<string, unknown>
-  ],
-  [CONTROL_API_PATHS.skills, () => skillsView()],
-  [CONTROL_API_PATHS.hooks, () => hooksView()],
-  [CONTROL_API_PATHS.permissions, () => permissionsView()],
-  [CONTROL_API_PATHS.prompts, () => promptsView()],
-  [CONTROL_API_PATHS.workspaces, () => workspacesView()],
-  [CONTROL_API_PATHS.routing, () => routingView(Date.now())],
-  [CONTROL_API_PATHS.runtime, () => runtimeView(Date.now())],
-  [CONTROL_API_PATHS.evaluations, () => evaluationsView()],
-  [CONTROL_API_PATHS.github, () => githubWorkflowsView(DEFAULT_REPO_ROOT)]
-]);
+/**
+ * One read-only collection.
+ *
+ * The renderer is handed the configured repository root, not just the actor,
+ * because the detail routes already read `options.repositoryRoot` while these
+ * fell back to the default. A caller that pointed the Control API at another
+ * repository therefore got a collection from one root and a detail from
+ * another -- and the test that reads a collection to check a write against that
+ * same root was quietly reading the wrong repository.
+ */
+type ReadOnlyCollectionRenderer = (
+  actor: ControlApiActor,
+  repositoryRoot: string | undefined
+) => Record<string, unknown> | Promise<Record<string, unknown>>;
+
+const READ_ONLY_COLLECTIONS: ReadonlyMap<string, ReadOnlyCollectionRenderer> =
+  new Map<string, ReadOnlyCollectionRenderer>([
+    [CONTROL_API_PATHS.agents, () => agentsView()],
+    [CONTROL_API_PATHS.providers, () => providersView(Date.now())],
+    [CONTROL_API_PATHS.models, () => modelsView()],
+    [CONTROL_API_PATHS.mcps, () => mcpsView()],
+    [
+      CONTROL_API_PATHS.tools,
+      () => toolsView() as unknown as Record<string, unknown>
+    ],
+    [CONTROL_API_PATHS.skills, (_actor, root) => skillsView(root)],
+    [CONTROL_API_PATHS.hooks, (_actor, root) => hooksView(root)],
+    [CONTROL_API_PATHS.permissions, () => permissionsView()],
+    [CONTROL_API_PATHS.prompts, (_actor, root) => promptsView(root)],
+    [CONTROL_API_PATHS.workspaces, (_actor, root) => workspacesView(root)],
+    [CONTROL_API_PATHS.routing, () => routingView(Date.now())],
+    [CONTROL_API_PATHS.runtime, () => runtimeView(Date.now())],
+    [CONTROL_API_PATHS.evaluations, () => evaluationsView()],
+    [
+      CONTROL_API_PATHS.github,
+      (_actor, root) => githubWorkflowsView(root ?? DEFAULT_REPO_ROOT)
+    ]
+  ]);
 
 async function readOnlyCollection(
   pathname: string,
   method: string,
   response: ServerResponse,
-  actor: ControlApiActor
+  actor: ControlApiActor,
+  options: ControlApiRequestOptions
 ): Promise<boolean> {
   const renderCollection = READ_ONLY_COLLECTIONS.get(pathname);
   if (!renderCollection) return false;
@@ -2663,7 +2673,7 @@ async function readOnlyCollection(
   }
   let body: Record<string, unknown>;
   try {
-    body = await renderCollection(actor);
+    body = await renderCollection(actor, options.repositoryRoot);
   } catch (error) {
     if (!(error instanceof EvaluationSourceUnavailableError)) throw error;
     sendControlError(
@@ -3336,16 +3346,8 @@ async function skillDetailRoute(
     options.repositoryRoot ?? DEFAULT_REPO_ROOT
   ).loadSkills();
   const skill = catalog.skills.find((entry) => entry.name === name);
-  const assignment = configuredRoleExposure("skills").find(
-    (entry) => entry.name === name
-  );
-  const contractFile = executionContractFile();
-  const revision =
-    contractFile === null
-      ? null
-      : executionContractRevision(readContract(contractFile));
-  // A GET on a skill that is not there is a wrong answer, not an empty one: the
-  // Console would render a detail panel for a skill that does not exist.
+  // A request for a skill that is not there is a wrong answer, not an empty
+  // one: the caller would render a panel for a skill that does not exist.
   if (!skill) {
     sendControlError(
       response,
@@ -3357,33 +3359,22 @@ async function skillDetailRoute(
     );
     return true;
   }
-  if (method === "GET") {
-    sendJson(response, 200, {
-      schema: "autodev-control-skill-detail-v1",
-      skill: {
-        ...skill,
-        // Absent rather than empty only when exposure could not be computed at
-        // all, which happens when the catalog is invalid. With a valid catalog
-        // and no role listing this skill, "assigned to nothing" is an observed
-        // fact rather than a missing one -- and the Console's State column draws
-        // a different badge for each.
-        ...(catalog.valid === true ? { roles: assignment?.roles ?? [] } : {}),
-        executionContractRevision: revision
-      }
-    });
-    return true;
-  }
+  // PATCH only. There was a GET here answering `autodev-control-skill-detail-v1`
+  // for one skill, and nothing consumed it: no Console view reads a skill by id,
+  // the documented read is the `/control/skills` collection, and the response
+  // had no contract declared in Core at all. Every field it returned is already
+  // on the collection row, so keeping it was a second way to read one thing.
   if (method === "PATCH") {
     await patchSkillRoles(request, response, actor, name, options);
     return true;
   }
   auditRejectedRequest(request, method, pathname, "method_not_allowed", actor);
-  response.setHeader("allow", "GET, PATCH");
+  response.setHeader("allow", "PATCH");
   sendControlError(
     response,
     405,
     "autodev_control_api_method_not_allowed",
-    "Skill routes accept GET and PATCH."
+    "Skill routes accept PATCH. Read a skill from /control/skills."
   );
   return true;
 }
@@ -3576,7 +3567,8 @@ export async function handleControlApiRequest(
       promptMatch[1]!,
       options
     );
-  if (await readOnlyCollection(pathname, method, response, actor)) return true;
+  if (await readOnlyCollection(pathname, method, response, actor, options))
+    return true;
   auditRejectedRequest(
     request,
     method,

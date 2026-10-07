@@ -96,7 +96,11 @@ interface Harness {
     pathname: string,
     body?: Record<string, unknown>,
     role?: "viewer" | "operator"
-  ) => Promise<{ status: number; body: Record<string, unknown> | null }>;
+  ) => Promise<{
+    status: number;
+    body: Record<string, unknown> | null;
+    headers: Record<string, string | number>;
+  }>;
 }
 
 /**
@@ -107,7 +111,12 @@ interface Harness {
 function harness(): Harness {
   const root = mkdtempSync(join(tmpdir(), "autodev-skill-assign-"));
   const repositoryRoot = join(root, "repo");
-  const skillDir = join(repositoryRoot, ".rulesync", "skills", "release-checklist");
+  const skillDir = join(
+    repositoryRoot,
+    ".rulesync",
+    "skills",
+    "release-checklist"
+  );
   mkdirSync(skillDir, { recursive: true });
   writeFileSync(
     join(skillDir, "SKILL.md"),
@@ -146,7 +155,8 @@ function harness(): Harness {
   return {
     repositoryRoot,
     contractPath,
-    revision: () => executionContractRevision(readFileSync(contractPath, "utf8")),
+    revision: () =>
+      executionContractRevision(readFileSync(contractPath, "utf8")),
     skillRoles: (role) => {
       const parsed = JSON.parse(readFileSync(contractPath, "utf8")) as {
         roles: Record<string, { skills: string[] }>;
@@ -185,23 +195,41 @@ function harness(): Harness {
           parsed = null;
         }
       }
-      return { status: response.statusCode, body: parsed };
+      return {
+        status: response.statusCode,
+        body: parsed,
+        headers: response.headers
+      };
     }
   };
 }
 
 test("a promoted skill can be assigned to a role, and the read reflects it", async () => {
   const h = harness();
+  // Read through the collection both times, because that is the path the
+  // Console actually takes: it has no skill-by-id view. The old per-skill GET
+  // was read only by this test, and a test that proves a write by reading a
+  // path no product surface uses proves the write reached the wrong place.
+  const rolesFromCatalog = (body: unknown): unknown[] | undefined => {
+    const row = (
+      body as { skills?: { name: string; roles?: unknown[] }[] }
+    ).skills?.find((entry) => entry.name === "release-checklist");
+    return row?.roles;
+  };
   try {
-    const before = await h.call("GET", "/control/skills/release-checklist");
+    const before = await h.call("GET", "/control/skills");
     assert.equal(before.status, 200);
-    assert.deepEqual((before.body?.skill as Record<string, unknown>).roles, []);
+    assert.deepEqual(rolesFromCatalog(before.body), []);
 
-    const assigned = await h.call("PATCH", "/control/skills/release-checklist", {
-      expectedRevision: (before.body?.skill as Record<string, unknown>)
-        .executionContractRevision as string,
-      roles: ["worker"]
-    });
+    const assigned = await h.call(
+      "PATCH",
+      "/control/skills/release-checklist",
+      {
+        expectedRevision: (before.body as Record<string, unknown>)
+          .executionContractRevision as string,
+        roles: ["worker"]
+      }
+    );
     assert.equal(assigned.status, 200);
     assert.deepEqual(assigned.body?.roles, ["worker"]);
     assert.deepEqual(h.skillRoles("worker"), ["release-checklist"]);
@@ -210,10 +238,28 @@ test("a promoted skill can be assigned to a role, and the read reflects it", asy
     // The catalog read is what the Console renders, and it goes through the
     // contract cache. Without the reload after the write this would still say
     // "no roles", and the assignment would appear to have done nothing.
-    const after = await h.call("GET", "/control/skills/release-checklist");
-    assert.deepEqual(
-      (after.body?.skill as Record<string, unknown>).roles,
-      ["worker"]
+    const after = await h.call("GET", "/control/skills");
+    assert.deepEqual(rolesFromCatalog(after.body), ["worker"]);
+  } finally {
+    h.restore();
+  }
+});
+
+test("a skill is read from the catalog, not from a per-skill route", async () => {
+  const h = harness();
+  try {
+    // There was a GET here returning `autodev-control-skill-detail-v1` that no
+    // Console view read and no contract declared. Rather than leave a second
+    // way to read one skill, the route refuses the method and says where the
+    // read lives.
+    const response = await h.call("GET", "/control/skills/release-checklist");
+    assert.equal(response.status, 405);
+    assert.equal(response.headers.allow, "PATCH");
+    assert.match(
+      String(
+        (response.body as { error?: { message?: string } })?.error?.message
+      ),
+      /Read a skill from \/control\/skills\./u
     );
   } finally {
     h.restore();
@@ -288,10 +334,14 @@ test("a skill that is not in the catalog cannot be assigned", async () => {
 test("a stale execution-contract revision is refused", async () => {
   const h = harness();
   try {
-    const response = await h.call("PATCH", "/control/skills/release-checklist", {
-      expectedRevision: "0".repeat(64),
-      roles: ["worker"]
-    });
+    const response = await h.call(
+      "PATCH",
+      "/control/skills/release-checklist",
+      {
+        expectedRevision: "0".repeat(64),
+        roles: ["worker"]
+      }
+    );
     assert.equal(response.status, 409);
     assert.deepEqual(h.skillRoles("worker"), []);
   } finally {
