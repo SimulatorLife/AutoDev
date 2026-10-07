@@ -76,9 +76,7 @@ test(
         "AUTODEV_MEMORY_READ_TASK_HISTORY"
       ].map((key) => [key, process.env[key]])
     );
-    const migrationPool = createPgMemoryPool({
-      connectionString: databaseUrl!
-    });
+    const migrationPool = createPgMemoryPool(databaseUrl!);
 
     try {
       await mkdir(join(repositoryRoot, "src"));

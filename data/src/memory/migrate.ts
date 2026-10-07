@@ -11,7 +11,7 @@ export async function migrateMemoryDatabase(
       "AUTODEV_MEMORY_DATABASE_URL is required to migrate memory storage."
     );
   }
-  const pool = createPgMemoryPool({ connectionString: databaseUrl });
+  const pool = createPgMemoryPool(databaseUrl);
   try {
     await applyMemoryMigrations(pool);
   } finally {

@@ -38,10 +38,10 @@ test(
     // connection that ever issues DROP SCHEMA, scoped to this test's own
     // schema so it never touches the shared public schema other
     // integration tests in this suite depend on.
-    const bootstrapPool = createPgMemoryPool({ connectionString: databaseUrl });
+    const bootstrapPool = createPgMemoryPool(databaseUrl!);
     const racingPools = Array.from({ length: CONCURRENT_POOL_COUNT }, () =>
-      createPgMemoryPool({
-        connectionString: databaseUrl,
+      createPgMemoryPool(
+        databaseUrl!,
         // Each pool is an independent connection-options-level search_path
         // override: every connection it opens starts a session scoped to
         // this test's isolated schema (with public retained afterward so
@@ -50,8 +50,8 @@ test(
         // "Independent pools" here means distinct connection pools racing
         // against the same empty schema, exactly like distinct OS
         // processes would.
-        options: `-c search_path=${schemaName},public`
-      })
+        `-c search_path=${schemaName},public`
+      )
     );
     try {
       await bootstrapPool.query(`CREATE SCHEMA "${schemaName}"`);

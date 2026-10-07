@@ -19,7 +19,7 @@ test(
   "live PostgreSQL groups session outcome cohorts, computes consensus, and excludes conflicts and mixed modes",
   { skip: !databaseUrl },
   async () => {
-    const pool = createPgMemoryPool({ connectionString: databaseUrl! });
+    const pool = createPgMemoryPool(databaseUrl!);
     const repository = new PostgresMemoryRepository({ pool });
     const suffix = randomUUID();
     const workspaceId = `sess-cohort-ws-${suffix}`;

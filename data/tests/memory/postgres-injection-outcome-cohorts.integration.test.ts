@@ -19,7 +19,7 @@ test(
   "live PostgreSQL groups scoped injection/outcome rows and preserves an unreported cell",
   { skip: !databaseUrl },
   async () => {
-    const pool = createPgMemoryPool({ connectionString: databaseUrl! });
+    const pool = createPgMemoryPool(databaseUrl!);
     const repository = new PostgresMemoryRepository({ pool });
     const suffix = randomUUID();
     const workspaceId = `cohort-workspace-${suffix}`;
@@ -203,7 +203,7 @@ test(
   "live PostgreSQL derives sessionCardinality and sessionInjectionCount from the identical canonical (workspace, repository, task) session key",
   { skip: !databaseUrl },
   async () => {
-    const pool = createPgMemoryPool({ connectionString: databaseUrl! });
+    const pool = createPgMemoryPool(databaseUrl!);
     const repository = new PostgresMemoryRepository({ pool });
     const suffix = randomUUID();
     const workspaceId = `cardinality-workspace-${suffix}`;
@@ -349,7 +349,7 @@ test(
   "live PostgreSQL counts nullable repository session keys without conflating them with a repository value",
   { skip: !databaseUrl },
   async () => {
-    const pool = createPgMemoryPool({ connectionString: databaseUrl! });
+    const pool = createPgMemoryPool(databaseUrl!);
     const repository = new PostgresMemoryRepository({ pool });
     const suffix = randomUUID();
     const workspaceId = `nullable-cardinality-workspace-${suffix}`;

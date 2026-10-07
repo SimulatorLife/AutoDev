@@ -36,19 +36,15 @@ export interface PostgresMemoryRuntimeOptions extends PostgresMemoryHostOptions 
 }
 
 /**
- * How long a connect attempt may hold a connection open.
- *
- * Longer than the health probe's own deadline on purpose: the probe must be the
- * thing that decides `unreachable`, not a connect error that arrives first and
- * makes "we could not reach it" indistinguishable from "we never tried".
- */
-const MEMORY_CONNECT_TIMEOUT_MS = 5000;
-
-/**
  * How long a health read may take before it reports `unreachable`.
  *
  * Short enough that an operator opening `/memory` gets an answer rather than a
  * spinner, and long enough that a loaded database is not misreported as down.
+ *
+ * The pool's connect bound is deliberately longer than this, so the probe is
+ * the thing that decides `unreachable` rather than a connect error arriving
+ * first and making "we could not reach it" indistinguishable from "we never
+ * tried". `runtime/tests/memory-pool-policy.test.ts` pins that ordering.
  */
 export const MEMORY_STORAGE_PROBE_TIMEOUT_MS = 1500;
 
@@ -92,17 +88,7 @@ export function createPostgresMemoryHost(
 ): PostgresMemoryHost {
   if (!options.databaseUrl.trim())
     throw new TypeError("A PostgreSQL memory database URL is required.");
-  const pool = createPgMemoryPool({
-    connectionString: options.databaseUrl,
-    max: 2,
-    idleTimeoutMillis: 5000,
-    allowExitOnIdle: true,
-    // A database that is down must fail a connect rather than hold one open for
-    // the operating system's TCP timeout. Without this the health read below is
-    // bounded but every ordinary read still is not, and an operator sees the
-    // Console hang instead of seeing "unreachable".
-    connectionTimeoutMillis: MEMORY_CONNECT_TIMEOUT_MS
-  });
+  const pool = createPgMemoryPool(options.databaseUrl);
   const repository = new PostgresMemoryRepository({
     pool,
     vectorSupport: { dimensions: MEMORY_EMBEDDING_DIMENSIONS }

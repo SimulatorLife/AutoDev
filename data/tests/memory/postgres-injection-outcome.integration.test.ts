@@ -20,7 +20,7 @@ test(
   "live PostgreSQL migrations 8-9, injection/outcome persistence, session-scoped join, and append-only history",
   { skip: !databaseUrl },
   async () => {
-    const pool = createPgMemoryPool({ connectionString: databaseUrl });
+    const pool = createPgMemoryPool(databaseUrl!);
     const identity = randomUUID();
     const workspaceId = `memory-io-test-${identity}`;
     const repositoryId = `repo-${identity}`;

@@ -24,7 +24,7 @@ test(
   "live PostgreSQL/pgvector migration, path/evidence search, governed persistence, and append-only history",
   { skip: !databaseUrl },
   async () => {
-    const pool = createPgMemoryPool({ connectionString: databaseUrl });
+    const pool = createPgMemoryPool(databaseUrl!);
     const identity = randomUUID();
     const workspaceId = `memory-test-${identity}`;
     const repositoryId = `repo-${identity}`;

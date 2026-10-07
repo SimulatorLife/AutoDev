@@ -160,7 +160,7 @@ test(
     const auditRecords: Array<Record<string, unknown>> = [];
 
     try {
-      migrationPool = createPgMemoryPool({ connectionString: databaseUrl! });
+      migrationPool = createPgMemoryPool(databaseUrl!);
       await applyMemoryMigrations(migrationPool);
 
       host = createPostgresMemoryHost({ databaseUrl: databaseUrl! });

@@ -23,7 +23,7 @@ test(
   "live PostgreSQL migration 11, curator injection-use invariants, idempotency, joins, append-only history, and exposure cohorts",
   { skip: !databaseUrl },
   async () => {
-    const pool = createPgMemoryPool({ connectionString: databaseUrl });
+    const pool = createPgMemoryPool(databaseUrl!);
     const identity = randomUUID();
     const workspaceId = `memory-use-test-${identity}`;
     const repositoryId = `repo-${identity}`;
@@ -383,7 +383,7 @@ test(
   "purgeExperience erases only the raw experience envelope; append-only curator use reports and their bounded aggregate survive the purge",
   { skip: !databaseUrl },
   async () => {
-    const pool = createPgMemoryPool({ connectionString: databaseUrl });
+    const pool = createPgMemoryPool(databaseUrl!);
     const identity = randomUUID();
     const workspaceId = `memory-purge-use-test-${identity}`;
     const repositoryId = `repo-${identity}`;

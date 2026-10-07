@@ -91,7 +91,7 @@ test(
       };
       const evidence = [commitReference, fileReference];
 
-      const pool = createPgMemoryPool({ connectionString: databaseUrl! });
+      const pool = createPgMemoryPool(databaseUrl!);
       try {
         await applyMemoryMigrations(pool);
       } finally {

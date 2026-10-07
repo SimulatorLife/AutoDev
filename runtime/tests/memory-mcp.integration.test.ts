@@ -15,9 +15,7 @@ test(
   "official stdio MCP launch binds an external client to the configured worker scope",
   { skip: !databaseUrl },
   async () => {
-    const migrationPool = createPgMemoryPool({
-      connectionString: databaseUrl!
-    });
+    const migrationPool = createPgMemoryPool(databaseUrl!);
     await applyMemoryMigrations(migrationPool);
     await migrationPool.end();
 
