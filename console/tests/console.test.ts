@@ -5765,6 +5765,85 @@ test("a window older than the bounded read is not an empty history", () => {
     /this view is empty because it was not read, not because nothing ran/
   );
 });
+test("a run a link asked for and the page cannot show says so", () => {
+  // The trace selection has five named states for every way a lookup can come
+  // back empty. The run selection had none: a `?result=` that resolved to nothing
+  // rendered the same page as no selection at all, so a link silently did
+  // nothing. The lookup is over the narrowed window, which makes a filter the
+  // commonest cause -- a bookmarked run plus a filter that excludes it used to
+  // render an ordinary-looking list, as if the run had never been asked for.
+  const rows = [
+    {
+      id: "run-1",
+      agentRole: "worker",
+      model: "m-1",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-05T09:00:00Z"
+    }
+  ];
+  const filters = (over: Partial<EvaluationsFilters>): EvaluationsFilters => ({
+    outcome: "all",
+    role: "",
+    model: "",
+    prompt: "",
+    from: "",
+    until: "",
+    ...over
+  });
+
+  // Filtered out: named as such, with the one-click way out.
+  const narrowed = renderEvaluations({
+    evaluations: [],
+    availableCount: 120,
+    totalCount: 5000,
+    truncated: true,
+    filters: filters({ outcome: "failed" }),
+    selection: "run-1"
+  });
+  assert.match(narrowed, /data-detail-state="not-found"/);
+  assert.match(narrowed, /Run run-1 is not in this view/);
+  assert.match(narrowed, /The filters in this view exclude it/);
+  assert.match(
+    narrowed,
+    /The read holds the most recent 120 of 5000 retained results/,
+    "the capped read is named too, because it is a second reason the run is absent"
+  );
+  assert.match(
+    narrowed,
+    /href="\/evaluations"[^>]*>Clear the filters and look for it in the whole retained history/,
+    "the way out is one click"
+  );
+
+  // No filters and an untruncated read: there is exactly one reason left to give.
+  const plain = renderEvaluations({
+    evaluations: rows,
+    filters: filters({}),
+    selection: "nope"
+  });
+  assert.match(plain, /The retained history holds no run with that id/);
+  assert.doesNotMatch(
+    plain,
+    /Clear the filters and look for it/,
+    "nothing was filtered, so there is nothing to clear"
+  );
+  assert.doesNotMatch(plain, /The read holds the most recent/);
+
+  // The run the link names still opens, and still keeps the filters.
+  const found = renderEvaluations({
+    evaluations: rows,
+    filters: filters({ outcome: "passed" }),
+    selection: "run-1"
+  });
+  assert.doesNotMatch(found, /not in this view/);
+  assert.match(found, /run-1/);
+
+  // No selection, no complaint: an ordinary list is not a missing run.
+  assert.doesNotMatch(
+    renderEvaluations({ evaluations: rows, filters: filters({}) }),
+    /not in this view/
+  );
+});
 test("the retained-results card counts the store, not the window and not the filter", () => {
   // The card used to read `evaluations.length` under the title "Total
   // Evaluations" -- the same lie the filter bar sentence was rewritten to stop

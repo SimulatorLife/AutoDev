@@ -501,6 +501,69 @@ const TRACE_UNAVAILABLE_MESSAGES: Readonly<
   }
 };
 
+/**
+ * The run a link asked for, and the page could not show.
+ *
+ * The trace selection above has five named states for every way a lookup can
+ * come back empty; the run selection had none, and a `?result=` that resolved to
+ * nothing rendered the same page as no selection at all. That is a link silently
+ * doing nothing, in a table whose whole job is to say what each row is -- and it
+ * has three ordinary causes here, each of which the view can name rather than
+ * leave the operator to guess: a filter excluded the run, the bounded read never
+ * fetched it, or the retained history holds no such id.
+ *
+ * The lookup is over the *narrowed* window, so a filter is the commonest cause
+ * by far: a bookmarked run plus a filter that excludes it used to render an
+ * ordinary-looking list, as if the run had never been asked for. The way out is
+ * one click, and the callout offers it.
+ */
+function renderMissingResult(
+  selection: string,
+  resultCounts: ResultCounts
+): React.JSX.Element {
+  const reasons: string[] = [];
+  if (resultCounts.narrowed) {
+    reasons.push("The filters in this view exclude it.");
+  }
+  if (resultCounts.truncated) {
+    reasons.push(
+      `The read holds the most recent ${resultCounts.window} of ${resultCounts.total} retained results, so an older run is not here either.`
+    );
+  }
+  if (reasons.length === 0) {
+    reasons.push("The retained history holds no run with that id.");
+  }
+
+  return React.createElement(
+    "div",
+    {
+      role: "alert",
+      className: CALLOUT_WARNING_CLASS,
+      "data-feature": "evaluation-detail",
+      "data-detail-state": "not-found",
+      "data-evaluation-missing-id": selection
+    },
+    React.createElement(
+      "p",
+      null,
+      `Run ${selection} is not in this view.`,
+      " ",
+      reasons.join(" ")
+    ),
+    resultCounts.narrowed
+      ? React.createElement(
+          "a",
+          {
+            href: evaluationsUnfilteredHref(),
+            className: "text-xs text-accent underline-offset-4 hover:underline",
+            "data-evaluations-clear": "true"
+          },
+          "Clear the filters and look for it in the whole retained history"
+        )
+      : null
+  );
+}
+
 function renderTraceLookup(
   traceLookup: EvaluationTraceLookup,
   nav: EvaluationsNav
@@ -1454,7 +1517,9 @@ export function EvaluationsView({
       })
     ),
     selectedEvaluation === null
-      ? null
+      ? selection === null
+        ? null
+        : renderMissingResult(selection, resultCounts)
       : renderResultDetail(selectedEvaluation, nav),
     traceLookup ? renderTraceLookup(traceLookup, nav) : null,
     tab === "results"
