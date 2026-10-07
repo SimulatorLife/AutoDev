@@ -1,14 +1,29 @@
 import assert from "node:assert/strict";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  rm,
+  symlink,
+  truncate,
+  writeFile
+} from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 
 import { handleMemoryControlApiRequest } from "../src/control-api/memory.ts";
 import {
+  clearTrustedMemoryContextsForTest,
+  injectOrchestratorMemory
+} from "../src/router/memory-injection.ts";
+import {
   makeRequest,
+  type RecordedResponse,
   responseBody,
-  responseRecorder,
-  type RecordedResponse
+  responseRecorder
 } from "./support/control-api-harness.ts";
 
 /**
@@ -20,15 +35,21 @@ import {
  * has to come from somewhere the caller does not control — the router's record
  * of sessions it actually observed. It had no route-level test at all.
  *
- * The accepted path needs a session the router really saw, registered from a
- * workspace the store knows about and not reachable from a unit test. Every
- * refusal does not need any of that, and the refusals are the whole boundary.
+ * The refusals before the trust lookup are reachable without any of that: they
+ * are decided from the body alone. The refusals *after* it — whether the named
+ * transcript is really inside the Codex sessions directory, and whether it is a
+ * bounded regular file at all — needed a session the router had observed, and
+ * were written off as unreachable until it became clear that the router
+ * registers a session while proxying, before it consults any database. The
+ * tests below drive that path directly rather than around it.
  *
  * Note what is *not* observable here: this handler builds its service with
  * `createOrchestratorMemoryService()` directly, never the injectable dependency,
  * so no stub can observe it being called. The equivalent guarantee — that a
  * refusal wrote nothing — comes from the audit trail instead, where `outcome:
- * "ok"` is emitted only after the envelope has been stored.
+ * "ok"` is emitted only after the envelope has been stored, and where a
+ * request that clears every guard is answered with the 503 of an unconfigured
+ * store rather than a refusal.
  */
 
 const CAPTURE = "/control/memory/capture";
@@ -85,7 +106,7 @@ function errorField(
   body: Record<string, unknown> | null,
   field: "code" | "message"
 ): unknown {
-  const envelope = body?.["error"];
+  const envelope = body?.error;
   return typeof envelope === "object" && envelope !== null
     ? (envelope as Record<string, unknown>)[field]
     : undefined;
@@ -147,10 +168,16 @@ test("a session the router has not observed cannot be captured", async () => {
   // entry from the router — which saw that session in a workspace it was told
   // about — there is no authority to attribute the envelope to, and an operator
   // with a plausible body is refused all the same.
-  const { status, body, audits } = await captureRequest(WELL_FORMED, "operator");
+  const { status, body, audits } = await captureRequest(
+    WELL_FORMED,
+    "operator"
+  );
 
   assert.equal(status, 403);
-  assert.equal(errorField(body, "code"), "autodev_memory_capture_scope_forbidden");
+  assert.equal(
+    errorField(body, "code"),
+    "autodev_memory_capture_scope_forbidden"
+  );
   assert.equal(audits.at(-1)?.reason, "session_scope_not_observed");
   assert.equal(audits.at(-1)?.outcome, "denied");
 });
@@ -248,7 +275,10 @@ test("no refusal is audited as a success", async () => {
     await captureRequest(WELL_FORMED, "operator"),
     await captureRequest({ ...WELL_FORMED, extra: "field" }, "operator"),
     await captureRequest({ ...WELL_FORMED, cwd: "relative/path" }, "operator"),
-    await captureRequest({ ...WELL_FORMED, sessionId: "no/slashes" }, "operator")
+    await captureRequest(
+      { ...WELL_FORMED, sessionId: "no/slashes" },
+      "operator"
+    )
   ];
 
   for (const result of results) {
@@ -272,6 +302,188 @@ test("capture accepts POST and nothing else", async () => {
       errorField(result.body, "code"),
       "autodev_memory_method_not_allowed"
     );
-    assert.equal(String(result.headers["allow"]).toUpperCase(), "POST");
+    assert.equal(String(result.headers.allow).toUpperCase(), "POST");
   }
+});
+
+/**
+ * Everything below the trust lookup. The router remembers a session while it is
+ * proxying a request — before it decides whether memory is even enabled, and
+ * before it resolves a database — so a test can make a session trusted by
+ * making the request the router would have made. No store, no host.
+ */
+const OBSERVED_SESSION = "session-abc123";
+const MAX_TRANSCRIPT_BYTES = 32 * 1024 * 1024;
+
+interface ObservedFixture {
+  readonly workspaceCwd: string;
+  readonly sessionsRoot: string;
+  readonly capture: (transcriptPath: string) => Promise<{
+    readonly status: number;
+    readonly body: Record<string, unknown> | null;
+    readonly audits: AuditEntry[];
+  }>;
+}
+
+/**
+ * A workspace the router has observed, and a `CODEX_HOME` whose `sessions`
+ * directory exists. Returns a capture helper bound to that session.
+ */
+async function withObservedSession(
+  run: (fixture: ObservedFixture) => Promise<void>
+): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "autodev-codex-capture-"));
+  const workspaceCwd = join(root, "repo");
+  const codexHome = join(root, "codex");
+  const sessionsRoot = join(codexHome, "sessions");
+  await mkdir(workspaceCwd, { recursive: true });
+  await mkdir(sessionsRoot, { recursive: true });
+  const previousCodexHome = process.env.CODEX_HOME;
+  const previousMode = process.env.AUTODEV_MEMORY_MODE;
+  process.env.CODEX_HOME = codexHome;
+  process.env.AUTODEV_MEMORY_MODE = "jit";
+  clearTrustedMemoryContextsForTest();
+  try {
+    // A `null` host makes the injection return immediately; the session is
+    // already recorded by then, which is the whole point of doing it this way.
+    await injectOrchestratorMemory(
+      {
+        payload: {
+          model: "autodev/orchestrator",
+          instructions: "Authoritative root policy.",
+          input: [{ type: "message", role: "user", content: "Do the task." }]
+        },
+        requestId: "request-current",
+        sessionKey: OBSERVED_SESSION,
+        sessionScope: "identified",
+        threadId: "root-thread",
+        workspace: {
+          key: "owner/repo",
+          cwd: workspaceCwd,
+          workspace_id: "workspace-a"
+        }
+      },
+      null
+    );
+    await run({
+      workspaceCwd,
+      sessionsRoot,
+      capture: async (transcriptPath: string) => {
+        const { status, body, audits } = await captureRequest(
+          { sessionId: OBSERVED_SESSION, transcriptPath, cwd: workspaceCwd },
+          "operator"
+        );
+        return { status, body, audits };
+      }
+    });
+  } finally {
+    clearTrustedMemoryContextsForTest();
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+    if (previousMode === undefined) delete process.env.AUTODEV_MEMORY_MODE;
+    else process.env.AUTODEV_MEMORY_MODE = previousMode;
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test("a transcript outside the Codex sessions directory is refused", async () => {
+  // The session is trusted here — it really was observed — so this is the only
+  // thing left standing between the route and any file on the disk. A valid,
+  // non-empty, small transcript placed one directory away has nothing else that
+  // could refuse it.
+  await withObservedSession(async ({ workspaceCwd, capture }) => {
+    const outside = join(workspaceCwd, "not-a-session.jsonl");
+    await writeFile(outside, '{"type":"assistant"}\n');
+
+    const { status, body, audits } = await capture(outside);
+
+    assert.equal(status, 400);
+    assert.equal(errorField(body, "code"), "autodev_memory_capture_invalid");
+    assert.equal(audits.at(-1)?.outcome, "error");
+    assert.notEqual(audits.at(-1)?.outcome, "ok");
+  });
+});
+
+test("a symlink inside the sessions directory that points outside it is refused", async () => {
+  // The same boundary reached the other way. `realpath` resolves the link before
+  // the containment check, so a link that *looks* like it is in the sessions
+  // directory is refused on where it actually lands.
+  await withObservedSession(async ({ workspaceCwd, sessionsRoot, capture }) => {
+    const outside = join(workspaceCwd, "elsewhere.jsonl");
+    await writeFile(outside, '{"type":"assistant"}\n');
+    await symlink(outside, join(sessionsRoot, "rollout.jsonl"));
+
+    const { status, body } = await capture(join(sessionsRoot, "rollout.jsonl"));
+
+    assert.equal(status, 400);
+    assert.equal(errorField(body, "code"), "autodev_memory_capture_invalid");
+  });
+});
+
+test("a transcript that is not a non-empty regular file is refused", async () => {
+  await withObservedSession(async ({ sessionsRoot, capture }) => {
+    await mkdir(join(sessionsRoot, "a-directory"));
+    await writeFile(join(sessionsRoot, "empty.jsonl"), "");
+
+    for (const name of ["a-directory", "empty.jsonl"]) {
+      const { status, body, audits } = await capture(join(sessionsRoot, name));
+      assert.equal(status, 400, `${name} is refused as a transcript`);
+      assert.equal(errorField(body, "code"), "autodev_memory_capture_invalid");
+      assert.notEqual(audits.at(-1)?.outcome, "ok");
+    }
+  });
+});
+
+test("an oversized transcript is refused on its size, without being read", async () => {
+  await withObservedSession(async ({ sessionsRoot, capture }) => {
+    // Oversized *and* unreadable, so the refusal can only name the size: if the
+    // bound were checked after the read, this would fail on the read instead.
+    const oversized = join(sessionsRoot, "oversized.jsonl");
+    await writeFile(oversized, "");
+    await truncate(oversized, MAX_TRANSCRIPT_BYTES + 1);
+    await chmod(oversized, 0o000);
+
+    const { status, body } = await capture(oversized);
+
+    assert.equal(status, 400);
+    assert.equal(errorField(body, "code"), "autodev_memory_capture_invalid");
+  });
+});
+
+test("the transcript bound applies to the decoded text, not only to the file", async () => {
+  // Bytes that are not valid UTF-8 each decode to U+FFFD, three bytes each, so a
+  // transcript well inside the on-disk bound can still exceed the bound on the
+  // string everything downstream holds. The size check above cannot catch this:
+  // it sees a file that fits.
+  await withObservedSession(async ({ sessionsRoot, capture }) => {
+    const expansion = join(sessionsRoot, "expansion.jsonl");
+    const invalidByteCount = Math.floor(MAX_TRANSCRIPT_BYTES / 3) + 1;
+    await writeFile(expansion, Buffer.alloc(invalidByteCount, 0xff));
+    assert.ok(
+      invalidByteCount < MAX_TRANSCRIPT_BYTES,
+      "the fixture must stay inside the on-disk bound, or it proves nothing"
+    );
+
+    const { status, body } = await capture(expansion);
+
+    assert.equal(status, 400);
+    assert.equal(errorField(body, "code"), "autodev_memory_capture_invalid");
+  });
+});
+
+test("a transcript that clears every guard is refused by the store, not by a guard", async () => {
+  // The positive control for all five cases above. This one is a real, non-empty,
+  // in-bounds transcript inside the sessions directory, so nothing on the path
+  // may refuse it: what answers is the unconfigured store. If a guard fired
+  // instead, the refusals above would be indistinguishable from each other.
+  await withObservedSession(async ({ sessionsRoot, capture }) => {
+    const good = join(sessionsRoot, "rollout.jsonl");
+    await writeFile(good, '{"type":"assistant"}\n');
+
+    const { status, body, audits } = await capture(good);
+
+    assert.equal(status, 503);
+    assert.equal(errorField(body, "code"), "autodev_memory_unavailable");
+    assert.equal(audits.at(-1)?.reason, "memory_unavailable");
+  });
 });
