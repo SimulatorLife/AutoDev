@@ -10,7 +10,8 @@ import {
   parseEvaluationsFilters,
   resolveEvaluationsPage,
   resolveEvaluationsTab,
-  singleValue
+  singleValue,
+  unreadWindow
 } from "../../src/features/evaluations/evaluations-url.ts";
 import {
   EvaluationsView,
@@ -120,6 +121,11 @@ export default async function EvaluationsPage({
   const available = result.data.evaluations;
   const placed = filterEvaluations(available, filters);
   const evaluations = placed.results;
+  // The read is capped, so a window older than everything it returned was never
+  // read. Only this page knows both halves of that fact -- what it asked for and
+  // what it got back -- so it answers the question here rather than leaving the
+  // view to render an unread window as an empty history.
+  const unread = unreadWindow(available, filters, result.data.truncated);
 
   let traceLookup: EvaluationTraceLookup | null = null;
   if (spanIdValues !== undefined) {
@@ -145,6 +151,7 @@ export default async function EvaluationsPage({
       page,
       ...(placed.unplaceable === 0 ? {} : { unplaceable: placed.unplaceable }),
       ...(placed.promptless === 0 ? {} : { promptless: placed.promptless }),
+      ...(unread === undefined ? {} : { oldestReadAt: unread.oldestReadAt }),
       ...(selectedResult === undefined ? {} : { selection: selectedResult }),
       ...(traceLookup ? { traceLookup } : {})
     })

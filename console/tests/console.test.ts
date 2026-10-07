@@ -85,7 +85,8 @@ import {
   filterOptionsFor,
   hasActiveFilters,
   parseEvaluationsFilters,
-  resolveEvaluationsPage
+  resolveEvaluationsPage,
+  unreadWindow
 } from "../src/features/evaluations/evaluations-url.ts";
 import {
   AgentDetailView,
@@ -5658,6 +5659,112 @@ test("what the view could not include is stated under the filter bar", () => {
   );
 });
 
+test("a window older than the bounded read is not an empty history", () => {
+  // Measured in Chromium: `?from=2020-01-01&until=2020-12-31` rendered "No
+  // evaluation results match these filters" against a store holding five
+  // thousand rows, because the read is capped and only ever fetched the most
+  // recent slice. That is the target state's "must not be represented as a
+  // successful empty result set" in the form it forbids: an incomplete read
+  // answering a question it never read. The time window made it reachable, so
+  // the time window is where it gets answered.
+  const rows = [
+    {
+      id: "recent",
+      agentRole: "worker",
+      model: "m-1",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-05T09:31:00Z"
+    },
+    {
+      id: "newest",
+      agentRole: "worker",
+      model: "m-1",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-05T11:02:00Z"
+    },
+    {
+      // No readable run time, so it cannot date the read.
+      id: "unreadable",
+      agentRole: "worker",
+      model: "m-1",
+      metrics: [],
+      passed: true,
+      timestamp: "whenever it was"
+    }
+  ];
+  const filters = (over: Partial<EvaluationsFilters>): EvaluationsFilters => ({
+    outcome: "all",
+    role: "",
+    model: "",
+    prompt: "",
+    from: "",
+    until: "",
+    ...over
+  });
+
+  // Older than everything the read holds, and the read was capped: the window
+  // is outside what the page ever saw. `until` is exclusive at the next day's
+  // midnight, so the fourth is the last day the window can name without
+  // reaching the oldest run the read holds.
+  const gap = unreadWindow(rows, filters({ until: "2026-10-04" }), true);
+  assert.deepEqual(gap, { oldestReadAt: Date.parse("2026-10-05T09:31:00Z") });
+  assert.deepEqual(
+    filterEvaluations(rows, filters({ until: "2026-10-04" })).results,
+    [],
+    "which is exactly why the empty result was misleading"
+  );
+
+  // Three ways this must stay quiet, or the page cries wolf on a window it did
+  // read: an untruncated read is the whole store, a window with no end may span
+  // the boundary, and a window in the future passes over the read entirely.
+  assert.equal(
+    unreadWindow(rows, filters({ until: "2026-10-04" }), false),
+    undefined,
+    "an untruncated read is the whole store, so an empty window really is empty"
+  );
+  assert.equal(
+    unreadWindow(rows, filters({ from: "2020-01-01" }), true),
+    undefined,
+    "a window with no end may still reach into the read"
+  );
+  assert.equal(
+    unreadWindow(rows, filters({ from: "2030-01-01" }), true),
+    undefined,
+    "a future window is honestly empty: the read covered it"
+  );
+  // The boundary itself: a window whose last day is the day the oldest read run
+  // falls in reaches that run.
+  assert.equal(
+    unreadWindow(rows, filters({ until: "2026-10-05" }), true),
+    undefined,
+    "a window that reaches the oldest run the read holds was read"
+  );
+
+  const html = renderEvaluations({
+    evaluations: [],
+    availableCount: 3,
+    totalCount: 5000,
+    truncated: true,
+    filters: filters({ until: "2026-10-04" }),
+    oldestReadAt: gap?.oldestReadAt
+  });
+  assert.match(html, /data-evaluations-unread-window="\d+"/);
+  assert.match(
+    html,
+    /runs before 2026-10-05 09:31:00Z were never read/,
+    "the boundary is the oldest run the read holds, in the Run Time column's own format"
+  );
+  assert.match(
+    html,
+    /the read holds the most recent 3 of 5000 retained results/
+  );
+  assert.match(
+    html,
+    /this view is empty because it was not read, not because nothing ran/
+  );
+});
 test("the retained-results card counts the store, not the window and not the filter", () => {
   // The card used to read `evaluations.length` under the title "Total
   // Evaluations" -- the same lie the filter bar sentence was rewritten to stop

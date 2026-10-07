@@ -540,6 +540,72 @@ export function filterEvaluations(
 }
 
 /**
+ * A window the bounded read never reached.
+ */
+export interface UnreadWindow {
+  /**
+   * The oldest run the read did fetch, as epoch milliseconds.
+   *
+   * Stated rather than summarised because it is the one figure that settles the
+   * question: a window ending before this instant is outside the read, and a
+   * window ending after it is inside what the page actually holds.
+   */
+  readonly oldestReadAt: number;
+}
+
+/**
+ * Whether the operator's window ends before anything the bounded read holds.
+ *
+ * The read is capped, so the history the page can speak about stops at some run.
+ * Asking for a window older than that is a question the page has not read the
+ * answer to, and it used to answer it anyway: `?from=2020-01-01&until=2020-12-31`
+ * rendered "No evaluation results match these filters" against a store holding
+ * five thousand rows, which is the target state's "must not be represented as a
+ * successful empty result set" in exactly the form it forbids -- an incomplete
+ * read presented as a complete answer. The time window is what made it
+ * reachable, so the time window is where it has to be answered.
+ *
+ * Three conditions, and dropping any of them would make the page cry wolf:
+ *
+ * - The read must have been truncated. An untruncated read *is* the whole store,
+ *   so an empty window really is empty.
+ * - The window must have an end. Without one it may span the boundary, reaching
+ *   both into the read and past it.
+ * - The window's exclusive end must be at or before the oldest run the read
+ *   holds. A window in the future passes over the read entirely and is honestly
+ *   empty, so it is not this case.
+ *
+ * Rows whose run time is not a readable instant are skipped rather than
+ * compared: they cannot date the read, and a row that cannot be placed cannot be
+ * evidence that the window was reached either.
+ */
+export function unreadWindow(
+  evaluations: readonly EvaluationResult[],
+  filters: EvaluationsFilters,
+  truncated: boolean
+): UnreadWindow | undefined {
+  // One exit, for the reason `resolveUtcDayBound` has one: a function that
+  // answers "the read reached it" on some paths and a figure on others is the
+  // shape `consistent-return` is configured here to reject, and the single
+  // comparison at the end states the rule in full -- truncated, ended, and older
+  // than everything the read holds, or nothing to say.
+  const until = truncated ? resolveUtcDayEnd(filters.until) : undefined;
+  let oldestReadAt: number | undefined;
+  if (until !== undefined) {
+    for (const evaluation of evaluations) {
+      const at = Date.parse(evaluation.timestamp);
+      if (Number.isNaN(at)) continue;
+      if (oldestReadAt === undefined || at < oldestReadAt) oldestReadAt = at;
+    }
+  }
+  return until !== undefined &&
+    oldestReadAt !== undefined &&
+    oldestReadAt >= until
+    ? { oldestReadAt }
+    : undefined;
+}
+
+/**
  * Every categorical axis at once: what the run evaluated, and how it came out.
  *
  * A prompt-less row still matches a prompt filter. `promptName` is optional on

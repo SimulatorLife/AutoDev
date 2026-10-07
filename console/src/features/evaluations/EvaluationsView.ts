@@ -128,6 +128,15 @@ export interface EvaluationsViewProps {
    * contradiction.
    */
   readonly promptless?: number | undefined;
+  /**
+   * Oldest run the bounded read holds, when the operator's window ends before
+   * it -- which means the window was never read, not that it is empty.
+   *
+   * Epoch milliseconds, straight from `unreadWindow`; the page owns the read and
+   * this is a fact about it, so the view takes the answer rather than
+   * re-deriving it from rows it was never given.
+   */
+  readonly oldestReadAt?: number | undefined;
   /** Result id opened in the detail drawer, or `null`. */
   readonly selection?: string | null | undefined;
   readonly traceLookup?: EvaluationTraceLookup | null | undefined;
@@ -1016,26 +1025,40 @@ function runTimeBound(
   );
 }
 
+/** The three things a view can hold back, as one value rather than a tuple. */
+interface ViewCaveats {
+  readonly unplaceable: number;
+  readonly promptless: number;
+  /** Oldest run the bounded read holds, when the window ends before it. */
+  readonly oldestReadAt?: number | undefined;
+  readonly readRows: number;
+  readonly storeTotal: number;
+}
+
 /**
  * What this view could not include, said next to the controls that decided it.
  *
- * Two filters can match rows the operator did not ask for, and both are stated
- * rather than absorbed. A run the window cannot place is excluded from every
- * count; a run that reports no prompt matches any prompt filter, because a row
- * that named no prompt is not evidence that it ran under some other one and
- * dropping it would under-report the history. The second used to be invisible,
- * which put rows reading "No prompt" directly under a bar reading
- * "Prompt: release-notes" -- a contradiction in one viewport, in a table whose
- * whole job is to say what each row is.
+ * Three ways a filter can fail to show what the operator asked for, and all
+ * three are stated rather than absorbed. A run the window cannot place is
+ * excluded from every count. A run that reports no prompt matches any prompt
+ * filter, because a row that named no prompt is not evidence that it ran under
+ * some other one and dropping it would under-report the history -- which used
+ * to be invisible, putting rows reading "No prompt" directly under a bar reading
+ * "Prompt: release-notes", a contradiction in one viewport. And a window older
+ * than the bounded read was never read at all, which used to render as an empty
+ * history against a store holding five thousand rows.
  *
  * Grouped immediately under the filter bar rather than beside the counts,
  * because each sentence explains a control the operator just used, and a caveat
  * about a filter belongs where the filter is.
  */
-function renderViewCaveats(
-  unplaceable: number,
-  promptless: number
-): React.JSX.Element | null {
+function renderViewCaveats({
+  unplaceable,
+  promptless,
+  oldestReadAt,
+  readRows,
+  storeTotal
+}: ViewCaveats): React.JSX.Element | null {
   const lines: string[] = [];
   if (unplaceable > 0) {
     lines.push(
@@ -1045,6 +1068,11 @@ function renderViewCaveats(
   if (promptless > 0) {
     lines.push(
       `${promptless} ${promptless === 1 ? "run reports" : "runs report"} no prompt and therefore match any prompt filter`
+    );
+  }
+  if (oldestReadAt !== undefined) {
+    lines.push(
+      `runs before ${runTimeText(oldestReadAt)} were never read — the read holds the most recent ${readRows} of ${storeTotal} retained results — so this view is empty because it was not read, not because nothing ran`
     );
   }
   if (lines.length === 0) return null;
@@ -1059,10 +1087,25 @@ function renderViewCaveats(
         : {}),
       ...(promptless > 0
         ? { "data-evaluations-promptless": String(promptless) }
-        : {})
+        : {}),
+      ...(oldestReadAt === undefined
+        ? {}
+        : { "data-evaluations-unread-window": String(oldestReadAt) })
     },
     ...lines.map((line) => React.createElement("p", { key: line }, `${line}.`))
   );
+}
+
+/**
+ * One instant, in the same shape the Run Time column renders it.
+ *
+ * A caveat quoting a timestamp in a different format from the column it is
+ * explaining is one more thing to translate before the two can be compared, and
+ * the comparison is the whole reason the timestamp is there.
+ */
+function runTimeText(at: number): string {
+  const iso = new Date(at).toISOString();
+  return `${iso.slice(0, 10)} ${iso.slice(11, 19)}Z`;
 }
 
 function filterSelect(
@@ -1175,6 +1218,7 @@ export function EvaluationsView({
   page = 1,
   unplaceable = 0,
   promptless = 0,
+  oldestReadAt,
   selection = null,
   traceLookup = null
 }: EvaluationsViewProps): React.JSX.Element {
@@ -1356,7 +1400,13 @@ export function EvaluationsView({
       runTimeBound("from", "From", filters.from, filters.until),
       runTimeBound("until", "To", filters.until, filters.from)
     ),
-    renderViewCaveats(unplaceable, promptless),
+    renderViewCaveats({
+      unplaceable,
+      promptless,
+      oldestReadAt,
+      readRows: availableCount,
+      storeTotal: totalCount ?? availableCount
+    }),
     React.createElement(
       "div",
       { className: "flex flex-wrap items-center justify-between gap-3" },
