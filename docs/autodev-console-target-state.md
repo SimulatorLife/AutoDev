@@ -613,6 +613,45 @@ Prompt/context contents, request/session IDs, raw paths, and other high-cardinal
 
 Target Usage may show count/time-series and bounded breakdowns by workspace, provider, requested model, and agent/role where those dimensions are source-confirmed. A per-request compaction rate is valid only when the compaction numerator and logical-request denominator are defined for the **same scope and time range**. Unsupported/unobserved signals remain unavailable, never zero.
 
+### Git change metrics
+
+Git change-output telemetry is a target requirement for Usage and for bounded per-resource aggregate views. It answers "what did the work actually produce" next to "what did it cost".
+
+Emit one bounded source-owned observation per commit the Runtime actually creates, recorded at the producer that can establish it. Recommended instruments follow the existing `autodev.*` shape and bounded-unit style of `autodev.context.compactions`:
+
+- `autodev.git.commits`, unit `{commit}`
+- `autodev.git.files_changed`, unit `{file}`
+- `autodev.git.files_added`, unit `{file}`
+- `autodev.git.files_deleted`, unit `{file}`
+- `autodev.git.lines_added`, unit `{line}`
+- `autodev.git.lines_removed`, unit `{line}`
+
+Definitions must be exact, because these words are otherwise used loosely:
+
+- a **commit** is counted once for the commit object actually created. An amend, rebase, cherry-pick, or revert is a distinct commit and counts as one; re-reporting an already observed commit does not count again.
+- **files changed** is the count of distinct paths whose status in that commit's diff is added, modified, deleted, or renamed. Files added and files deleted are **subsets** of files changed, not additions to it — a displayed total must never sum all three and double-count.
+- **lines added** and **lines removed** are the insertions and deletions reported for that commit's diff.
+
+Only report a measurement the source actually observed:
+
+- do not infer commits, files, or lines from tool-call counts, task success, edit counts, session end, or diff-size heuristics;
+- do not attribute a change to a provider/model/agent/role the producing source did not know at commit time. Git records that a commit exists; it does not record which model wrote it. Correlation with session, requested model, agent/role, provider, and workspace is valid only where the owning Runtime source actually knows those values, under the same bounded-dimension and allowlist/`other` rules as other `autodev.*` producers;
+- merge commits, binary files, and diffs the source cannot summarize are either measured or explicitly excluded with a stated reason. They are never silently folded into a total, and a partial measurement is reported as partial rather than as a complete, smaller number;
+- where diff statistics are unavailable, the value is unavailable, never zero.
+
+Privacy and cardinality are stricter here than for most signals:
+
+- file paths, repository URLs, branch names, and commit metadata never become metric dimensions — aggregate counts only;
+- per-file and per-commit detail belongs in traces/events with bounded redacted identifiers, never in metric labels;
+- commit SHAs and session/request identifiers stay out of dimensions, consistent with the semantic conventions and privacy rules above.
+
+Deduplication and scope:
+
+- the same commit must not be counted twice when more than one producer can observe it, for example a session producer and a later workspace reconciliation pass;
+- a rate or ratio — commits per logical request, lines per commit, files per session — is valid only when numerator and denominator are defined for the **same scope and time range**. Otherwise it renders unavailable.
+
+Target Usage may show counts, time series, and bounded breakdowns by workspace, provider, requested model, and agent/role where those dimensions are source-confirmed, plus a per-session view where session identity is source-confirmed. This telemetry observes change output; it does not become a second Git, workspace, or GitHub authority, and it grants the Console no Git mutation path.
+
 ### MCP
 
 The AutoDev Codex-tools MCP shim owns its server-side tools/call round trip. Its span duration is the shim round trip, not assumed downstream execution duration. Preserve W3C context where available and export bounded categorical/error metadata only.
@@ -655,9 +694,11 @@ Target views include logical requests, attempts/provider reliability, input/outp
 
 ### Active Sessions
 
-The Usage Time Range selector gains an **Active Sessions** option that scopes the page to sessions running right now, instead of to a historical interval.
+The Usage scope selector gains an **Active Sessions** option that scopes the page to sessions running right now, instead of to a historical interval.
 
-It is a scope over live runtime state, not a temporal window. It is deliberately not a retained OpenLIT time-range value, because every retained value maps to a bounded historical query while this one has no window at all. Implementations must not approximate it as a shortened or derived range, and must not synthesize an active-session set from span recency: **absence of telemetry is not evidence that a session is inactive.**
+It is presented in the same control as the time ranges, because that is where an operator looks when changing what Usage shows, and moving it to a second control would trade that discoverability for a distinction the label can already carry. The control's label must therefore name both kinds of selection and must not keep reading **Time range**: label the control **Usage scope**, and list Active Sessions alongside Last 24 hours / 7 days / 30 days / 90 days / Custom range.
+
+That is a presentation requirement, not a semantic one. Behind the control, Active Sessions is a scope over live runtime state, not a temporal window, and the selection must be represented as such end to end. It is deliberately not a retained OpenLIT time-range value, because every retained value maps to a bounded historical query while this one has no window at all. Implementations must not approximate it as a shortened or derived range, and must not synthesize an active-session set from span recency: **absence of telemetry is not evidence that a session is inactive.**
 
 "Active" is defined solely by the Runtime's own live session/concurrency state published on the authenticated read-only Control API runtime projection — the same authority behind the Agents runtime panel. There is no second session registry and no Console-side session cache that could disagree with it.
 
@@ -781,7 +822,8 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 - attribution comes from owning producers;
 - MCP/skill/memory observations are asserted only from real evidence;
 - compactions are emitted only for actual/reported source events and never synthesized;
-- the Usage Active Sessions option scopes to Runtime-reported live sessions rather than a derived or shortened time range, renders `unavailable`/`not observed` instead of a synthesized `0` when runtime session evidence is absent, distinguishes a measured `0` from missing evidence, fails closed on unsupported widget/filter combinations, and adds no second session authority.
+- the Usage Active Sessions option is presented in the same scope control as the time ranges under a label that names both kinds of selection and no longer reads "Time range"; it scopes to Runtime-reported live sessions rather than a derived or shortened time range, renders `unavailable`/`not observed` instead of a synthesized `0` when runtime session evidence is absent, distinguishes a measured `0` from missing evidence, fails closed on unsupported widget/filter combinations, and adds no second session authority;
+- git change metrics (`commits`, `files changed`, `files added`, `files deleted`, `lines added`, `lines removed`) are emitted only for commits the Runtime actually creates, count each commit once across producers, keep files-added/deleted as subsets of files-changed so totals never double-count, carry no file paths, repository URLs, branch names, or commit SHAs as metric dimensions, report partial measurements as partial, and render unavailable rather than zero when diff statistics are missing.
 
 ### RuleSync/configuration
 

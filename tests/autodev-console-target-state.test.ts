@@ -560,6 +560,13 @@ test("Usage Active Sessions is a runtime-scoped selection, not a time range", ()
     /absence of telemetry is not evidence that a session is inactive/u
   );
 
+  // Sharing the control with the time ranges is a presentation decision, so
+  // the label must be renamed off "Time range" -- otherwise one control
+  // advertises a window it does not always apply.
+  assert.match(body, /same control as the time ranges/u);
+  assert.match(body, /must not keep reading \*\*Time range\*\*/u);
+  assert.match(body, /label the control \*\*Usage scope\*\*/u);
+
   // Missing evidence must stay explicit and must never become a synthesized
   // zero, while a measured zero stays a valid reading.
   assert.match(body, /must never render a synthesized `0` active sessions/u);
@@ -581,6 +588,71 @@ test("Usage Active Sessions is a runtime-scoped selection, not a time range", ()
   // Per the §1 docs contract, the observed gap belongs to the migration
   // tracker, which must record that the option is not implemented and why.
   assert.match(migration, /Active Sessions/u);
+  assert.match(migration, /not implemented/u);
+});
+
+test("git change metrics are defined with exact counting and cardinality rules", () => {
+  const target = readFileSync(targetStatePath, "utf8");
+  const migration = readFileSync(migrationPath, "utf8");
+
+  const section =
+    /###\s+Git change metrics\b([\s\S]*?)(?=\n##\s|\n###\s)/u.exec(target);
+  assert.ok(section, "the git change metrics requirement must be defined");
+  const body = section?.[1] ?? "";
+
+  // All six requested signals are named as instruments. Checking each one
+  // individually matters: a doc that described the family in prose but
+  // omitted, say, files_deleted would satisfy a family-level assertion.
+  for (const instrument of [
+    "autodev.git.commits",
+    "autodev.git.files_changed",
+    "autodev.git.files_added",
+    "autodev.git.files_deleted",
+    "autodev.git.lines_added",
+    "autodev.git.lines_removed"
+  ]) {
+    assert.ok(
+      body.includes(instrument),
+      `${instrument} must be a named instrument`
+    );
+  }
+
+  // Counting semantics: once per commit, across producers.
+  assert.match(body, /counted once for the commit object actually created/u);
+  assert.match(body, /must not be counted twice/u);
+
+  // files_added/files_deleted are subsets of files_changed -- the double-count
+  // trap when the three are summed into one total.
+  assert.match(body, /subsets?\*\* of files changed/u);
+  assert.match(body, /never sum all three and double-count/u);
+
+  // Not inferred from proxies, and attribution only where the source knows it.
+  assert.match(body, /do not infer commits, files, or lines/u);
+  assert.match(body, /only where the owning Runtime source actually knows/u);
+
+  // Cardinality/privacy: no paths, URLs, branch names, or SHAs as dimensions.
+  assert.match(
+    body,
+    /file paths, repository URLs, branch names, and commit metadata never become metric dimensions/u
+  );
+
+  // Partial measurement stays partial; missing stats are unavailable.
+  assert.match(body, /reported as partial/u);
+  assert.match(body, /unavailable, never zero/u);
+
+  // Rates require a shared scope/range.
+  assert.match(body, /same scope and time range/u);
+
+  // Observes change output; does not fork Git authority or grant mutation.
+  assert.match(
+    body,
+    /does not become a second Git, workspace, or GitHub authority/u
+  );
+  assert.match(body, /no Git mutation path/u);
+
+  // Per the §1 docs contract the observed gap is tracked in the migration
+  // tracker, which must record that nothing is emitted yet.
+  assert.match(migration, /Git change metrics/u);
   assert.match(migration, /not implemented/u);
 });
 
