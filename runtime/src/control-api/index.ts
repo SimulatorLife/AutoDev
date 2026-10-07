@@ -7,18 +7,31 @@ import path from "node:path";
 import { SpanStatusCode } from "@opentelemetry/api";
 import {
   buildReconciliationView,
+  type ControlApiAgentDetailResponse,
   type ControlApiAgentRecord,
   type ControlApiAgentsResponse,
+  type ControlApiEvaluationsResponse,
+  type ControlApiGithubResponse,
   type ControlApiHooksResponse,
+  type ControlApiProviderEnabledPatchResponse,
+  type ControlApiProviderRolePatchResponse,
   type ControlApiMcpsResponse,
   type ControlApiModelsResponse,
+  type ControlApiModelPatchResponse,
   type ControlApiPermissionsResponse,
+  type ControlApiPromptCommandPatchResponse,
+  type ControlApiPromptDetailResponse,
+  type ControlApiPromptVersionResponse,
+  type ControlApiPromptVersionsResponse,
   type ControlApiPromptsResponse,
   type ControlApiProviderHealth,
   type ControlApiProviderRoleAssignment,
+  type ControlApiProviderLimitsPatchResponse,
   type ControlApiProvidersResponse,
   type ControlApiRuntimeResponse,
+  type ControlApiSkillRolesPatchResponse,
   type ControlApiSkillsResponse,
+  type ControlApiToolsResponse,
   type ControlApiWorkspacesResponse,
   type GithubActionsRuntimeStatus,
   type GithubWorkflowDefinition,
@@ -878,7 +891,7 @@ function toolsView(): ToolCatalogView {
       totalTools: 0,
       tools: [],
       usageLink: "/usage"
-    };
+    } satisfies ControlApiToolsResponse;
   }
 
   for (const [role, contract] of roles) {
@@ -901,7 +914,7 @@ function toolsView(): ToolCatalogView {
     totalTools: tools.length,
     tools,
     usageLink: "/usage"
-  };
+  } satisfies ControlApiToolsResponse;
 }
 
 function skillsView(
@@ -1260,7 +1273,7 @@ export async function githubWorkflowsView(
       repository: binding.repository,
       stats: snapshot.stats,
       recentRuns: snapshot.runs
-    };
+    } satisfies ControlApiGithubResponse;
   } catch (error: unknown) {
     const rawMessage = error instanceof Error ? error.message : String(error);
     const isAuthFailure =
@@ -1291,7 +1304,7 @@ async function evaluationsView(): Promise<Record<string, unknown>> {
     totalEvaluations: page.total,
     truncated: page.total > page.results.length,
     evaluations: page.results
-  };
+  } satisfies ControlApiEvaluationsResponse;
 }
 
 function agentsView(
@@ -1375,9 +1388,14 @@ function agentDetailView(
   const raw = roles[role] as Record<string, unknown> | undefined;
   if (!raw) return null;
   const isOrchestrator = role === "orchestrator";
-  const kind =
-    typeof raw?.kind === "string"
-      ? raw.kind
+  // Normalised for the same reason as in `agentsView`, and the two must agree:
+  // a role whose `kind` is a typo has to read one way on the list and the same way
+  // on its own detail page, or the Console rejects the detail as unrecognised
+  // while the list rendered it without complaint.
+  const declaredKind = raw.kind;
+  const kind: ControlApiAgentRecord["kind"] =
+    declaredKind === "orchestrator" || declaredKind === "leaf"
+      ? declaredKind
       : isOrchestrator
         ? "orchestrator"
         : "leaf";
@@ -1435,7 +1453,7 @@ function agentDetailView(
         .update(systemPrompt, "utf8")
         .digest("hex")
     })
-  };
+  } satisfies ControlApiAgentDetailResponse;
 }
 
 /** Display names from the Codex model catalog; absent names stay null. */
@@ -1859,7 +1877,7 @@ function promptDetailView(
           codexHome: defaultCodexHomeForReconciliation(),
           expectedRevision: revision
         })
-      };
+      } satisfies ControlApiPromptDetailResponse;
     } catch {
       return null;
     }
@@ -1881,7 +1899,7 @@ function promptVersionsView(
     status: history.status,
     versions: history.versions,
     hasMore: history.hasMore
-  };
+  } satisfies ControlApiPromptVersionsResponse;
 }
 
 function promptVersionView(
@@ -1901,7 +1919,7 @@ function promptVersionView(
     updatedAt: version.updatedAt,
     content: version.content,
     diff: version.diff
-  };
+  } satisfies ControlApiPromptVersionResponse;
 }
 
 function routingView(now: number): Record<string, unknown> {
@@ -2001,10 +2019,15 @@ interface EnablementMutation {
   readonly unknownMessage: string;
   readonly current: () => boolean;
   readonly apply: (enabled: boolean) => void;
+  /**
+   * The body minus `actor`, which `patchEnablement` stamps from the verified
+   * caller. Modelled as `Omit` rather than a bare record so the spread below can
+   * be checked against the contract it actually goes out on the wire as.
+   */
   readonly result: (
     enabled: boolean,
     previous: boolean
-  ) => Record<string, unknown>;
+  ) => Omit<ControlApiModelPatchResponse, "actor">;
 }
 
 async function patchEnablement(
@@ -2105,7 +2128,7 @@ async function patchEnablement(
   sendJson(
     response,
     200,
-    { ...result, actor: actor.actor },
+    { ...result, actor: actor.actor } satisfies ControlApiModelPatchResponse,
     {
       "cache-control": "no-store",
       vary: CONTROL_VARY_HEADER
@@ -2284,7 +2307,7 @@ async function patchProviderRole(
       previous,
       actor: actor.actor,
       reconciliation
-    },
+    } satisfies ControlApiProviderRolePatchResponse,
     { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
   );
 }
@@ -2443,7 +2466,7 @@ async function patchProviderEnabled(
       previous,
       actor: actor.actor,
       reconciliation: reconciliation.view
-    },
+    } satisfies ControlApiProviderEnabledPatchResponse,
     { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
   );
 }
@@ -2567,11 +2590,16 @@ async function patchProviderLimits(
     {
       schema: "autodev-control-provider-limits-v1",
       provider,
-      agentLimits: applied,
+      // `applied` alone is `null` once the policy holds no record, which is what
+      // clearing every limit produces -- and `null` says "no idea" where the
+      // truth is "no limit on either axis". Reporting `next` in that case keeps
+      // a cleared provider distinguishable from one whose limits were never
+      // read, and it is the state the write just put there.
+      agentLimits: applied ?? next,
       previous,
       actor: actor.actor,
       reconciliation: reconciliation.view
-    },
+    } satisfies ControlApiProviderLimitsPatchResponse,
     { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
   );
 }
@@ -3054,7 +3082,7 @@ async function patchPromptCommand(
       changed: updated.revision !== body.expectedRevision,
       diff,
       reconciliation
-    },
+    } satisfies ControlApiPromptCommandPatchResponse,
     { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
   );
 }
@@ -3389,7 +3417,7 @@ async function patchSkillRoles(
     skill: assigned.skill,
     roles: observed?.roles ?? [],
     revision: assigned.revision
-  });
+  } satisfies ControlApiSkillRolesPatchResponse);
 }
 
 async function skillDetailRoute(

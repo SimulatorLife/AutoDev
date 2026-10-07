@@ -28,6 +28,7 @@ import type {
 } from "../reconciliation/types.ts";
 import type {
   ProviderRole,
+  ProviderRoleAssignment,
   ProviderRolePriority,
   RoutingPolicyState
 } from "../routing/types.ts";
@@ -196,8 +197,16 @@ export interface ControlApiProviderRolePatchResponse {
   readonly role: ProviderRole;
   readonly priority: ProviderRolePriority;
   readonly model: string | null;
-  /** The assignment replaced, or null when the role had never been configured. */
-  readonly previous: ControlApiProviderRoleAssignment | null;
+  /**
+   * The assignment replaced, or null when the role had never been configured.
+   *
+   * The routing policy's own assignment rather than
+   * `ControlApiProviderRoleAssignment`: `mutable` and `convergence` describe how
+   * the current view should treat a role, and a past assignment is neither
+   * mutable now nor converging. Reading them off `previous` would have required
+   * the route to invent them.
+   */
+  readonly previous: ProviderRoleAssignment | null;
   readonly actor: string;
   /** Reusable reconciliation view shared with read paths. */
   readonly reconciliation: {
@@ -543,11 +552,11 @@ export interface ControlApiConcurrencyStatus {
   /**
    * `null` means no per-session limit is configured, which is the default.
    *
-   * Nullable rather than merely optional because "unlimited" is an observed
-   * fact about this deployment, not a missing field: the Runtime's own status
-   * CLI prints it as `unlimited`, and collapsing it to `undefined` here would
-   * make a router that deliberately runs without a limit indistinguishable from
-   * one whose limit was never read.
+   * Not optional-and-not-nullable because "unlimited" is an observed fact about
+   * this deployment, not a missing field: the Runtime's own status CLI prints it
+   * as `unlimited`, and collapsing it to `undefined` here would make a router
+   * that deliberately runs without a limit indistinguishable from one whose
+   * limit was never read.
    */
   readonly maxConcurrentThreadsPerSession?: number | null;
   readonly effectivePerSessionLimit?: number | null;

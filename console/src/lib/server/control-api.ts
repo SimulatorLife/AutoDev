@@ -1689,8 +1689,8 @@ function isOptionalNumber(value: unknown): value is number | undefined {
  * default for per-session concurrency. Treating it as unreadable made the whole
  * Runtime response fail closed on an ordinary deployment: `/control/runtime`
  * answers `maxConcurrentThreadsPerSession: null` unless an operator configured a
- * limit, and this guard rejected it, so the Runtime page reported an
- * incompatible contract precisely when nothing was wrong.
+ * limit, and this guard rejected it, so the Runtime page reported an incompatible
+ * contract precisely when nothing was wrong.
  */
 function isOptionalNullableNumber(
   value: unknown
