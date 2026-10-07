@@ -15,7 +15,11 @@ import {
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
-import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
+import {
+  DetailGrid,
+  DetailValue,
+  gridRowClass
+} from "../../components/panels/DetailGrid.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import {
   NOT_OBSERVED_LABEL,
@@ -134,7 +138,7 @@ export function AgentDetailView({
       ),
       React.createElement(
         "div",
-        { className: "grid grid-cols-1 gap-4 sm:grid-cols-2" },
+        { className: gridRowClass(2, "gap-4") },
         React.createElement(StatusValue, {
           label: "Readiness",
           status: readiness

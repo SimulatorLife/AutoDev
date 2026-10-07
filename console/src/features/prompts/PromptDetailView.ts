@@ -28,6 +28,7 @@ import {
   NESTED_PANEL_CLASS
 } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { gridRowClass } from "../../components/panels/DetailGrid.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
@@ -534,7 +535,7 @@ export function PromptDetailView({
     React.createElement(
       "section",
       {
-        className: "grid gap-4 md:grid-cols-3",
+        className: gridRowClass(3, "gap-4"),
         "aria-label": "Prompt metadata and linkage",
         "data-section": "prompt-linkage"
       },

@@ -22,18 +22,36 @@ import { SECTION_LABEL_CLASS } from "../ui/text-classes.ts";
  * | 4       | 1          | 2    | 4    | 4    |
  * | 5       | 1          | 2    | 3    | 5    |
  *
- * Three cards deliberately reach three at `lg` rather than at `sm`: a three-up
- * row at 640px is roughly 170px per card, which wraps the uppercase titles onto
- * three lines and stops reading as a summary row. Five reaches five only at
- * `xl`, because by then the sidebar is its full 256px and the content column is
- * the widest it ever gets.
+ * Three cards deliberately reach three at `lg` rather than at `sm`, and five
+ * reaches five only at `xl`.
  *
- * The wider steps start at `lg` rather than `md` because the sidebar is a 56px
- * rail until `xl`, so a four-card row at 768px was measuring about 158px per
- * card against `StatCard`'s `p-5` padding and `text-2xl` value. That is
- * arithmetic on declared classes rather than a measurement: these widths have
- * not been confirmed in a browser, which is why the ladder lives in one table
- * instead of being tuned per page.
+ * This paragraph previously gave arithmetic for both steps and flagged itself
+ * as unmeasured: a three-up row at 640px "is roughly 170px per card, which
+ * wraps the uppercase titles onto three lines", and a four-card row at 768px
+ * "was measuring about 158px per card". Both were wrong. Measured in a browser
+ * against the three-up rows this ladder governs (`/mcps/[name]`'s state row and
+ * `/prompts/[name]`'s card row, which until recently hand-rolled
+ * `grid gap-4 md:grid-cols-3` instead of coming through here):
+ *
+ * | viewport | columns | card width | title lines |
+ * | -------- | ------- | ---------- | ----------- |
+ * | 640px    | 2       | 268px      | 1           |
+ * | 768px    | 2       | 332px      | 1           |
+ * | 900px    | 2       | 398px      | 1           |
+ * | 1024px   | 3       | 301px      | 1           |
+ * | 1440px   | 3       | 363px      | 1           |
+ *
+ * The card is 268px at 640px rather than 170px -- the 56px rail, the page
+ * gutter and the `gap-4` were not all subtracted in the original estimate -- and
+ * the uppercase titles never wrapped, at any width, including the narrowest
+ * three-up step. So the stated reason for deferring to `lg` does not hold.
+ *
+ * The ladder is left as it is anyway. Two-up between `md` and `lg` costs
+ * nothing that was measured: the titles fit either way, and a 398px card is not
+ * worse to read than a 260px one. Changing a shared ladder because its
+ * justification turned out to be false would trade a documented decision for an
+ * undocumented one; the honest fix is to record that the claim was false, which
+ * is what this does.
  */
 export type GridColumns = 2 | 3 | 4 | 5;
 

@@ -17,7 +17,8 @@ import {
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import {
   FIELD_BOX_CLASS,
-  FieldBox
+  FieldBox,
+  gridRowClass
 } from "../../components/panels/DetailGrid.ts";
 import {
   NOT_OBSERVED_LABEL,
@@ -264,7 +265,7 @@ export function McpDetailView({
     overview: React.createElement(
       "section",
       {
-        className: "grid gap-4 md:grid-cols-3",
+        className: gridRowClass(3, "gap-4"),
         "aria-label": "MCP state",
         "data-section": "mcp-overview"
       },
@@ -331,7 +332,7 @@ export function McpDetailView({
       ),
       React.createElement(
         "dl",
-        { className: "grid gap-3 sm:grid-cols-2" },
+        { className: gridRowClass(2, "gap-3") },
         React.createElement(
           FieldBox,
           {
