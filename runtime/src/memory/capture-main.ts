@@ -8,10 +8,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   type EvidenceReference,
+  EXPERIENCE_OUTCOMES,
   type ExperienceEnvelope,
   type ExperienceOutcome,
+  EXPERIENCE_VALIDATION_STATES,
   type MemoryActor,
   type MemoryExecutionMode,
+  MEMORY_EVIDENCE_KINDS,
   type MemoryReadContext,
   parseMemoryExecutionMode
 } from "@simulatorlife/autodev-core";
@@ -37,26 +40,17 @@ const MAX_CAPTURE_VALIDATION_BYTES = 32 * 1024;
 const MAX_CAPTURE_VALIDATION_EVIDENCE = 64;
 const MAX_EVIDENCE_URI_LENGTH = 2000;
 const MAX_EVIDENCE_REVISION_LENGTH = 300;
-const EXPERIENCE_OUTCOMES = new Set<ExperienceOutcome>([
-  "success",
-  "partial",
-  "failure",
-  "cancelled",
-  "unknown"
-]);
-const VALIDATION_STATES = new Set(["passed", "failed", "partial", "not_run"]);
-const EVIDENCE_KINDS = new Set<EvidenceReference["kind"]>([
-  "trajectory",
-  "trace",
-  "file",
-  "commit",
-  "pull_request",
-  "issue",
-  "rule",
-  "skill",
-  "document",
-  "other"
-]);
+// The vocabularies come from Core rather than being spelled here, because this
+// is the boundary a capture crosses into memory: the three lists below decided
+// what a capture may say about its own execution, and a capture that rejected a
+// state the Console could display is a silent disagreement about what exists.
+// Two of the three were typed by Core's unions, so a change to them failed the
+// build here; the validation set was a bare `Set<string>` and drifted quietly.
+const OUTCOMES = new Set<ExperienceOutcome>(EXPERIENCE_OUTCOMES);
+const VALIDATION_STATES = new Set<string>(EXPERIENCE_VALIDATION_STATES);
+const EVIDENCE_KINDS = new Set<EvidenceReference["kind"]>(
+  MEMORY_EVIDENCE_KINDS
+);
 
 export interface MemoryCaptureConfiguration {
   readonly databaseUrl: string;
@@ -508,7 +502,7 @@ function captureExperienceId(input: {
 
 function captureOutcome(value: string | undefined): ExperienceOutcome {
   const outcome = value?.trim() || "unknown";
-  if (!EXPERIENCE_OUTCOMES.has(outcome as ExperienceOutcome)) {
+  if (!OUTCOMES.has(outcome as ExperienceOutcome)) {
     throw new MemoryCaptureConfigurationError(
       "Native capture outcome must be a supported historical outcome label."
     );

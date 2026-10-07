@@ -828,8 +828,23 @@ export interface EvidenceReference {
  * makes the next state the Runtime adds a typecheck failure nobody sees until it
  * ships.
  */
+export const EXPERIENCE_VALIDATION_STATES = [
+  "passed",
+  "failed",
+  "partial",
+  "not_run"
+] as const;
 export type ExperienceValidationState =
-  "passed" | "failed" | "partial" | "not_run";
+  (typeof EXPERIENCE_VALIDATION_STATES)[number];
+
+export function isExperienceValidationState(
+  value: unknown
+): value is ExperienceValidationState {
+  return (
+    typeof value === "string" &&
+    (EXPERIENCE_VALIDATION_STATES as readonly string[]).includes(value)
+  );
+}
 
 /**
  * An append-only envelope around a normalized native transcript. It retains

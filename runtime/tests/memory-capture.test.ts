@@ -18,6 +18,11 @@ import type {
   MemoryActor,
   MemoryReadContext
 } from "@simulatorlife/autodev-core";
+import {
+  EXPERIENCE_OUTCOMES,
+  EXPERIENCE_VALIDATION_STATES,
+  MEMORY_EVIDENCE_KINDS
+} from "@simulatorlife/autodev-core";
 
 import {
   memoryCaptureConfiguration,
@@ -132,6 +137,69 @@ test("manual native capture configuration accepts every supported transcript ada
     assert.equal(configuration.source, source);
     assert.equal(configuration.outcome, "unknown");
     assert.equal(configuration.memoryMode, "unknown");
+  }
+});
+
+test("capture accepts every vocabulary the Console can display", () => {
+  // Capture used to carry its own list of acceptable validation states, as a
+  // bare `Set<string>` that nothing tied to Core's union. A state added to Core
+  // would then be displayable in the Console and silently refused here — a
+  // disagreement about what exists, between the two sides of the same product.
+  for (const state of EXPERIENCE_VALIDATION_STATES) {
+    const configuration = memoryCaptureConfiguration({
+      ...enabledEnvironment,
+      AUTODEV_MEMORY_CAPTURE_VALIDATION_STATE: state,
+      AUTODEV_MEMORY_CAPTURE_VALIDATION_EVIDENCE: JSON.stringify([
+        { kind: "file", uri: "runs/42/result.json" }
+      ])
+    });
+    assert.equal(
+      configuration.validation?.state,
+      state,
+      `${state} is declared in Core and must be accepted here`
+    );
+  }
+
+  assert.throws(
+    () =>
+      memoryCaptureConfiguration({
+        ...enabledEnvironment,
+        AUTODEV_MEMORY_CAPTURE_VALIDATION_STATE: "mostly-passed",
+        AUTODEV_MEMORY_CAPTURE_VALIDATION_EVIDENCE: JSON.stringify([
+          { kind: "file", uri: "runs/42/result.json" }
+        ])
+      }),
+    /missing or unsupported/u,
+    "a state Core does not declare is still refused"
+  );
+
+  // The same disagreement for the other two vocabularies capture decided on.
+  // These were typed by Core's unions, so they could not drift silently; this
+  // pins the direction that matters instead — nothing in Core is refused here.
+  for (const outcome of EXPERIENCE_OUTCOMES) {
+    assert.equal(
+      memoryCaptureConfiguration({
+        ...enabledEnvironment,
+        AUTODEV_MEMORY_CAPTURE_OUTCOME: outcome
+      }).outcome,
+      outcome,
+      `${outcome} is declared in Core and must be accepted here`
+    );
+  }
+
+  for (const kind of MEMORY_EVIDENCE_KINDS) {
+    const configuration = memoryCaptureConfiguration({
+      ...enabledEnvironment,
+      AUTODEV_MEMORY_CAPTURE_VALIDATION_STATE: "passed",
+      AUTODEV_MEMORY_CAPTURE_VALIDATION_EVIDENCE: JSON.stringify([
+        { kind, uri: "runs/42/evidence" }
+      ])
+    });
+    assert.deepEqual(
+      configuration.validation?.evidence.map((reference) => reference.kind),
+      [kind],
+      `${kind} is declared in Core and must be accepted here`
+    );
   }
 });
 
