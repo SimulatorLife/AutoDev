@@ -45,6 +45,40 @@ export interface UnavailableProps {
   readonly hint?: string;
 }
 
+/** Trailing sentence punctuation, which a heading may omit and a message may not. */
+const TRAILING_PUNCTUATION = /[.!?:;]+$/;
+
+/**
+ * Normalised for the comparison below: case-folded, trimmed, and stripped of
+ * trailing punctuation.
+ */
+function normaliseClaim(value: string): string {
+  return value.trim().toLowerCase().replace(TRAILING_PUNCTUATION, "");
+}
+
+/**
+ * Whether the message says what the heading already said.
+ *
+ * The heading and the message are authored independently -- the title by the
+ * route that caught the failure, the message by the Runtime that raised it --
+ * so they can land on the same sentence. `/memory` does: both read "Memory
+ * storage is not configured", and the panel printed it twice, once as an `h2`
+ * and once as the paragraph under it.
+ *
+ * `/evaluations` shows the panel working as intended, with a heading and a
+ * message that say different things, so this is not the shell always
+ * duplicating -- it is two writers agreeing by coincidence, which no reviewer
+ * sees in the markup because neither string is wrong on its own.
+ *
+ * Compared case-insensitively and ignoring trailing punctuation, since a title
+ * written without a full stop and a sentence written with one are the same
+ * claim. The hint is left alone: it is the part that says what to do, and it is
+ * the part most worth keeping even when it restates.
+ */
+function repeatsTheTitle(title: string, message: string): boolean {
+  return normaliseClaim(title) === normaliseClaim(message);
+}
+
 /**
  * Give a machine token line-break opportunities at its own separators.
  *
@@ -130,7 +164,7 @@ export function ResourceUnavailable({
     React.createElement(
       "p",
       { className: "text-sm text-fg-secondary leading-relaxed" },
-      message
+      repeatsTheTitle(title, message) ? null : message
     ),
     React.createElement(
       "p",
