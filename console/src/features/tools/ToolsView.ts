@@ -165,40 +165,47 @@ function coverageBannerClasses(variant: "info" | "warning" | "error"): string {
   return CALLOUT_ACCENT_CLASS;
 }
 
-function EditSurfaceLink({
-  surface,
-  tool
-}: {
-  readonly surface: NonNullable<ToolCatalogItem["canonicalEditSurface"]>;
-  readonly tool: ToolCatalogItem;
-}): React.JSX.Element {
-  if (surface.section === "mcps" && tool.server) {
-    return React.createElement(
-      "a",
-      {
-        href: `/mcps/${encodeURIComponent(tool.server)}`,
-        className: "text-accent hover:underline font-mono text-xs"
-      },
-      surface.label ?? `MCP ${tool.server}`
-    );
+/**
+ * The compact accent link that names a tool's canonical edit surface.
+ *
+ * Mono because the label is usually an identifier -- an MCP server name, a
+ * command, a prompt -- and an identifier that falls back to the body face reads
+ * as a different kind of value from the tool names beside it.
+ */
+const EDIT_SURFACE_LINK_CLASS = "text-accent hover:underline font-mono text-xs";
+
+/**
+ * Where a tool's canonical source is edited, and what to call the link when the
+ * catalog does not name the surface.
+ *
+ * The three sections differ only in these two values, so the link is one element
+ * and the branch is a lookup, rather than three copies of the same anchor.
+ */
+function editSurfaceTarget(
+  surface: NonNullable<ToolCatalogItem["canonicalEditSurface"]>
+): { readonly href: string; readonly fallbackLabel: string } {
+  if (surface.section === "mcps") {
+    return {
+      href: `/mcps/${encodeURIComponent(surface.identifier)}`,
+      fallbackLabel: `MCP ${surface.identifier}`
+    };
   }
   if (surface.section === "agents") {
-    return React.createElement(
-      "a",
-      {
-        href: "/agents",
-        className: "text-accent hover:underline font-mono text-xs"
-      },
-      surface.label ?? "Provider role exposure"
-    );
+    return { href: "/agents", fallbackLabel: "Provider role exposure" };
   }
+  return { href: "/prompts", fallbackLabel: "Prompt catalog" };
+}
+
+function EditSurfaceLink({
+  surface
+}: {
+  readonly surface: NonNullable<ToolCatalogItem["canonicalEditSurface"]>;
+}): React.JSX.Element {
+  const target = editSurfaceTarget(surface);
   return React.createElement(
     "a",
-    {
-      href: "/prompts",
-      className: "text-accent hover:underline font-mono text-xs"
-    },
-    surface.label ?? "Prompt catalog"
+    { href: target.href, className: EDIT_SURFACE_LINK_CLASS },
+    surface.label ?? target.fallbackLabel
   );
 }
 
@@ -388,8 +395,7 @@ export function ToolsView({
       cell: (tool) =>
         tool.canonicalEditSurface
           ? React.createElement(EditSurfaceLink, {
-              surface: tool.canonicalEditSurface,
-              tool
+              surface: tool.canonicalEditSurface
             })
           : React.createElement(
               "span",
