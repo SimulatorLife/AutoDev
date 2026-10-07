@@ -208,8 +208,9 @@ function SkillAssignmentForm({
     React.createElement(
       "span",
       {
-        // `w-56 shrink-0` is what makes this a matrix rather than fourteen
-        // unrelated rows. The name was a flex item sized by its own content, so
+        // A fixed width on the name (`w-72`, below) is what makes this a matrix rather
+        // than fourteen unrelated rows. The name was a flex item sized by its own
+        // content, so
         // `ccc` left the form starting 250px further left than
         // `autodev-codex-request-capture` did, and every role column drifted by
         // that same 250px between rows -- measured across all fourteen rows at
@@ -220,14 +221,14 @@ function SkillAssignmentForm({
         // same left edge.
         //
         // `truncate` and the `title` below are the recovery for a name longer
-        // than the column. The width is sized to the longest of the fourteen
-        // *at semibold*: `MONO_ID_CLASS` spells its weight `font-semibold`
-        // (`text-semibold` emits no rule at all), and the wider glyphs pushed
-        // five names -- `autodev-codex-request-capture` and
-        // `improve-codebase-architecture` both need 279px -- past 224px, so
-        // `w-56` began cutting names it used to show whole. `w-72` is 288px,
-        // which fits all fourteen with margin. Measured at 390/768/1440/1920:
-        // no truncating name, 0px column drift, 0px document overflow.
+        // than the column. The width is sized to the longest of the fourteen at
+        // its rendered weight: `MONO_ID_CLASS` spells that weight
+        // `font-semibold` (`text-semibold` emits no rule at all), and the wider
+        // glyphs pushed five names past the old 224px -- `w-72` is 288px, which
+        // fits all fourteen with margin. Column drift and document overflow
+        // measured at 390/768/1440/1920 (0px and 0px); cut names measured at
+        // 390 and 1440, 390 being the worst case for a truncation that only
+        // lessens as the viewport grows.
         className: `${MONO_ID_CLASS} w-72 shrink-0 truncate`,
         title: skill.name
       },
