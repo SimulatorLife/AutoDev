@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+
 import type {
+  EvidenceReference,
   MemoryExpiredExperienceRequest,
   MemoryPacket,
   MemoryReadContext,
@@ -140,6 +142,268 @@ test("non-string instructions leave the provider payload unchanged", () => {
   assert.equal(appendMemoryPacket(payload, packet), payload);
 });
 
+/**
+ * A repository whose only interesting behaviour is the hits `search` returns.
+ *
+ * Extracted from the JIT test that first needed it: the injection path's bounds
+ * need several different hit sets, and ninety duplicated lines per fixture would
+ * make the bounds -- the part worth reviewing -- the part nobody reads twice.
+ */
+function memoryRepository(
+  hits: readonly MemorySearchHit[],
+  memory: MemoryRecord | null = null
+): MemoryRepository {
+  return {
+    appendExperience: async () => undefined,
+    getExperience: async () => null,
+    searchExperiences: async () => [],
+    listExperiences: async () => ({ items: [], total: 0, limit: 50, offset: 0 }),
+    listExpiredExperiences: async () => [],
+    purgeExperience: async () => "not_visible",
+    proposeMemory: async () => undefined,
+    getMemory: async () => memory,
+    // A real repository honours the limit, and so must this one: without the
+    // slice, raising the ablation's search limit would change nothing here and
+    // the limit would read as enforced while never being applied.
+    searchMemories: async (request) =>
+      request.limit === undefined ? hits : hits.slice(0, request.limit),
+    listMemories: async () => ({
+      items: memory === null ? [] : [memory],
+      total: memory === null ? 0 : 1,
+      limit: 50,
+      offset: 0,
+      statusCounts: {
+        proposed: 0,
+        active: memory === null ? 0 : 1,
+        superseded: 0,
+        invalidated: 0,
+        uncertain: 0
+      }
+    }),
+    getMemoryHistory: async () => null,
+    transitionMemories: async () => true,
+    recordInjectionEvent: async () => ({ appended: false, id: "" }),
+    recordOutcomeReport: async () => ({ appended: false, id: "" }),
+    findInjectionEventByTokenForSession: async () => null,
+    listInjectionOutcomeJoins: async () => ({
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0
+    }),
+    aggregateInjectionOutcomeCohorts: async (request) => ({
+      schema: "autodev-memory-injection-outcome-cohorts-v1",
+      workspaceId: request.context.workspaceId,
+      repositoryId: request.context.repositoryId ?? "",
+      occurredFrom: request.occurredFrom,
+      occurredUntil: request.occurredUntil,
+      cells: [],
+      exposureCount: 0,
+      reportCount: 0
+    }),
+    recordSessionOutcomeReport: async () => ({ appended: false, id: "" }),
+    getSessionOutcomeReport: async () => null,
+    aggregateSessionOutcomeCohorts: async (request) => ({
+      schema: "autodev-memory-session-outcome-cohorts-v1",
+      workspaceId: request.context.workspaceId,
+      repositoryId: request.context.repositoryId ?? "",
+      occurredFrom: request.occurredFrom,
+      occurredUntil: request.occurredUntil,
+      cells: [],
+      sessionCount: 0,
+      reportedSessionCount: 0,
+      unreportedSessionCount: 0,
+      exposureCount: 0,
+      conflictingOutcomeSessionCount: 0,
+      mixedModeSessionCount: 0
+    }),
+    getInjectionEventByIdForSession: async () => null,
+    recordInjectionUseReport: async () => ({ appended: false, id: "" }),
+    getInjectionUseReport: async () => null,
+    listInjectionUseJoins: async () => ({
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0
+    }),
+    aggregateInjectionUseCohorts: async (request) => ({
+      schema: "autodev-memory-injection-use-cohorts-v1",
+      workspaceId: request.context.workspaceId,
+      repositoryId: request.context.repositoryId ?? "",
+      occurredFrom: request.occurredFrom,
+      occurredUntil: request.occurredUntil,
+      cells: [],
+      exposureCount: 0
+    })
+  };
+}
+
+const ABLATION_TIME = "2026-09-30T12:00:00.000Z";
+
+/** One eligible hit, so only the bound under test can refuse it. */
+function ablationHit(overrides: Partial<MemoryRecord> = {}): MemorySearchHit {
+  const evidence = { kind: "file" as const, uri: "file:///repo/src/feature.ts" };
+  return {
+    memory: {
+      id: "memory-ablation",
+      kind: "semantic",
+      scope: {
+        kind: "repository",
+        workspaceId: "workspace-a",
+        repositoryId: "repo-a"
+      },
+      claim: "The feature defaults to enabled.",
+      status: "active",
+      provenance: {
+        experienceIds: ["experience-a"],
+        evidence: [evidence],
+        createdBy: "root",
+        createdAt: ABLATION_TIME,
+        lastVerifiedAt: ABLATION_TIME,
+        verificationSource: "git-current-state"
+      },
+      validity: {
+        state: "verified",
+        checkedAt: ABLATION_TIME,
+        evidence: [evidence]
+      },
+      createdAt: ABLATION_TIME,
+      updatedAt: ABLATION_TIME,
+      ...overrides
+    },
+    score: 1,
+    matchedSignals: ["lexical"]
+  };
+}
+
+function ablationService(hits: readonly MemorySearchHit[]): MemoryService {
+  return new MemoryService({
+    repository: memoryRepository(hits),
+    now: () => ABLATION_TIME,
+    // The ablation reads through `search` and never validates or reconstructs.
+    // Both are still required by the options type, so they are stubs that would
+    // fail loudly rather than answer -- a test that accidentally reaches for
+    // validation would then fail instead of quietly measuring the wrong thing.
+    verifier: {
+      verify: async () => {
+        throw new Error("the ablation must not validate current state");
+      }
+    },
+    reconstructor: {
+      reconstruct: async () => {
+        throw new Error("the ablation must not reconstruct guidance");
+      }
+    }
+  });
+}
+
+const ABLATION_CONTEXT = {
+  taskId: "task-a",
+  runId: "run-a",
+  task: "Update the feature setting.",
+  context: {
+    workspaceId: "workspace-a",
+    repositoryId: "repo-a",
+    role: "orchestrator",
+    taskId: "task-a",
+    runId: "run-a",
+    agentId: "agent-root",
+    canReadGlobal: false
+  } satisfies MemoryReadContext
+};
+
+test("the ablation packet is bounded by characters, not only by how many it retrieved", async () => {
+  // The ablation deliberately skips current-state validation, so its bounds are
+  // the only things standing between a caller and a packet of unvalidated claims.
+  // Two hits is exactly what the search limit allows back, so if the second is
+  // missing it is the character bound that dropped it -- and that bound is what
+  // keeps a handful of long claims from becoming an unbounded payload.
+  const service = ablationService([
+    ablationHit({ id: "first", claim: `FIRST-LONG-CLAIM-${"a".repeat(2500)}` }),
+    ablationHit({ id: "second", claim: `SECOND-LONG-CLAIM-${"b".repeat(2500)}` }),
+    ablationHit({ id: "third", claim: "THIRD-CLAIM-never-retrieved" })
+  ]);
+
+  const injected = await injectRetrievalOnlyMemoryContext(
+    service,
+    { instructions: "Root role instructions." },
+    ABLATION_CONTEXT
+  );
+  const text = String(injected.instructions);
+
+  assert.match(text, /FIRST-LONG-CLAIM/u, "the first entry fits and must be kept");
+  assert.doesNotMatch(
+    text,
+    /SECOND-LONG-CLAIM/u,
+    "the second pushes the packet past the character bound"
+  );
+  assert.doesNotMatch(
+    text,
+    /THIRD-CLAIM/u,
+    "the ablation retrieves only what its search limit allows, whatever fits"
+  );
+  // Only the entries are asserted, because only the entries are rendered:
+  // `appendMemoryPacket` stringifies `packet.entries` and nothing else, so
+  // `omittedCount` never reaches the caller. Whether that is right is a product
+  // question about telling a model its memory was truncated; it is not a
+  // property of the bound this test is about.
+});
+
+test("the ablation packet bounds what each entry may carry", async () => {
+  // Two independent bounds on operator-supplied locator text: how many, and how
+  // long. They are tested separately because one can hide the other -- a cap on
+  // count alone leaves an over-long locator in, and a length filter alone leaves
+  // an unbounded list of short ones in.
+  const short = (name: string): EvidenceReference => ({
+    kind: "file",
+    uri: `file:///repo/src/${name}.ts`
+  });
+  const service = ablationService([
+    ablationHit({
+      id: "count-capped",
+      provenance: {
+        experienceIds: ["experience-a"],
+        evidence: [1, 2, 3, 4, 5].map((n) => short(`locator-${n}`)),
+        createdBy: "root",
+        createdAt: ABLATION_TIME
+      }
+    }),
+    ablationHit({
+      id: "length-capped",
+      provenance: {
+        experienceIds: ["experience-a"],
+        evidence: [
+          { kind: "file" as const, uri: `file:///repo/src/${"u".repeat(600)}.ts` },
+          {
+            kind: "commit" as const,
+            uri: "git://repo/short",
+            revision: "r".repeat(200)
+          },
+          short("kept")
+        ],
+        createdBy: "root",
+        createdAt: ABLATION_TIME
+      }
+    })
+  ]);
+
+  const injected = await injectRetrievalOnlyMemoryContext(
+    service,
+    { instructions: "Root role instructions." },
+    ABLATION_CONTEXT
+  );
+  const text = String(injected.instructions);
+
+  assert.match(text, /The feature defaults to enabled\./u, "the claims still reach the caller");
+  // How many: the fifth locator is past the cap.
+  assert.match(text, /locator-4\.ts/u);
+  assert.doesNotMatch(text, /locator-5\.ts/u);
+  // How long: an over-long URI or revision is not evidence of anything.
+  assert.match(text, /kept\.ts/u, "a locator within every bound survives");
+  assert.doesNotMatch(text, /uuuu/u);
+  assert.doesNotMatch(text, /rrrr/u);
+});
+
 test("injectMemoryContext performs JIT research and attaches the advisory packet", async () => {
   const time = "2026-09-30T12:00:00.000Z";
   const evidence = {
@@ -180,93 +444,7 @@ test("injectMemoryContext performs JIT research and attaches the advisory packet
   const hits: readonly MemorySearchHit[] = [
     { memory, score: 1, matchedSignals: ["lexical"] }
   ];
-  const repository: MemoryRepository = {
-    appendExperience: async () => undefined,
-    getExperience: async () => null,
-    searchExperiences: async () => [],
-    listExperiences: async () => ({
-      items: [],
-      total: 0,
-      limit: 50,
-      offset: 0
-    }),
-    listExpiredExperiences: async (
-      _request: MemoryExpiredExperienceRequest
-    ) => [],
-    purgeExperience: async () => "not_visible",
-    proposeMemory: async () => undefined,
-    getMemory: async () => memory,
-    searchMemories: async (_request: MemorySearchRequest) => hits,
-    listMemories: async () => ({
-      items: [memory],
-      total: 1,
-      limit: 50,
-      offset: 0,
-      statusCounts: {
-        proposed: 0,
-        active: 1,
-        superseded: 0,
-        invalidated: 0,
-        uncertain: 0
-      }
-    }),
-    getMemoryHistory: async () => null,
-    transitionMemories: async (_changes: readonly MemoryVersionedUpdate[]) =>
-      true,
-    recordInjectionEvent: async () => ({ appended: false, id: "" }),
-    recordOutcomeReport: async () => ({ appended: false, id: "" }),
-    findInjectionEventByTokenForSession: async () => null,
-    listInjectionOutcomeJoins: async () => ({
-      items: [],
-      total: 0,
-      limit: 50,
-      offset: 0
-    }),
-    aggregateInjectionOutcomeCohorts: async (request) => ({
-      schema: "autodev-memory-injection-outcome-cohorts-v1",
-      workspaceId: request.context.workspaceId,
-      repositoryId: request.context.repositoryId!,
-      occurredFrom: request.occurredFrom,
-      occurredUntil: request.occurredUntil,
-      cells: [],
-      exposureCount: 0,
-      reportCount: 0
-    }),
-    recordSessionOutcomeReport: async () => ({ appended: false, id: "" }),
-    getSessionOutcomeReport: async () => null,
-    aggregateSessionOutcomeCohorts: async (request) => ({
-      schema: "autodev-memory-session-outcome-cohorts-v1",
-      workspaceId: request.context.workspaceId,
-      repositoryId: request.context.repositoryId!,
-      occurredFrom: request.occurredFrom,
-      occurredUntil: request.occurredUntil,
-      cells: [],
-      sessionCount: 0,
-      reportedSessionCount: 0,
-      unreportedSessionCount: 0,
-      exposureCount: 0,
-      conflictingOutcomeSessionCount: 0,
-      mixedModeSessionCount: 0
-    }),
-    getInjectionEventByIdForSession: async () => null,
-    recordInjectionUseReport: async () => ({ appended: false, id: "" }),
-    getInjectionUseReport: async () => null,
-    listInjectionUseJoins: async () => ({
-      items: [],
-      total: 0,
-      limit: 50,
-      offset: 0
-    }),
-    aggregateInjectionUseCohorts: async (request) => ({
-      schema: "autodev-memory-injection-use-cohorts-v1",
-      workspaceId: request.context.workspaceId,
-      repositoryId: request.context.repositoryId ?? "",
-      occurredFrom: request.occurredFrom,
-      occurredUntil: request.occurredUntil,
-      cells: [],
-      exposureCount: 0
-    })
-  };
+  const repository = memoryRepository(hits, memory);
   let validationCalls = 0;
   let reconstructionCalls = 0;
   const service = new MemoryService({
