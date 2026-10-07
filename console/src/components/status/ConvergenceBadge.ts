@@ -57,7 +57,12 @@ export function ConvergenceBadge({
   if (lastError !== null) lines.push(`Last error: ${lastError}`);
   return React.createElement(StatusBadge, {
     status: convergenceBadgeVariant(convergence),
-    label: convergence === "not-observed" ? NOT_OBSERVED_LABEL : convergence,
+    // No `label`: the badge already names the state in the shared vocabulary.
+    // Passing `convergence` through as the label rendered the raw wire key, so a
+    // verdict read "converged" in lowercase here while every other badge read
+    // "Converged" — and the one value that genuinely needed mapping,
+    // `not-observed`, needed a hand-written special case that existed only
+    // because this label was handed a string it should never have been given.
     ...(lines.length === 1 ? {} : { title: lines.join("\n") })
   });
 }

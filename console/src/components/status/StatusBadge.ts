@@ -72,6 +72,34 @@ const DEFAULT_STYLE = NEUTRAL_TONE_CLASS;
 export const NOT_OBSERVED_LABEL = "Not observed";
 
 /**
+ * The word each variant renders when the caller supplies no `label` of its own.
+ *
+ * This used to be derived from the variant key at render time
+ * (`status.charAt(0).toUpperCase() + status.slice(1)`), which silently made the
+ * spelling of a status a property of the *call site*. `not-observed` is the only
+ * hyphenated variant, so that one expression rendered "Not observed" wherever a
+ * view remembered to pass `NOT_OBSERVED_LABEL` and "Not-observed" everywhere
+ * else — the same drift the constant above exists to prevent, reintroduced one
+ * layer down by the default it was supposed to be safe behind. Two spellings of
+ * the product's load-bearing word were both live on `/agents` at once.
+ *
+ * A `Record` over the variant union also makes the table exhaustive: adding a
+ * variant without deciding its word is a typecheck failure rather than a
+ * surprise on a page.
+ */
+const VARIANT_LABEL: Record<StatusBadgeVariant, string> = {
+  configured: "Configured",
+  valid: "Valid",
+  invalid: "Invalid",
+  ready: "Ready",
+  unavailable: "Unavailable",
+  converged: "Converged",
+  pending: "Pending",
+  error: "Error",
+  "not-observed": NOT_OBSERVED_LABEL
+};
+
+/**
  * Foreground token per status variant, for places that carry the status as a
  * mark rather than a word (a dot beside a compact chip). Keeps one vocabulary:
  * a status never renders green in one component and success-green in another.
@@ -120,8 +148,7 @@ export function StatusBadge({
   title
 }: StatusBadgeProps): React.JSX.Element {
   const style = BADGE_STYLES[status] ?? DEFAULT_STYLE;
-  const displayLabel =
-    label ?? status.charAt(0).toUpperCase() + status.slice(1);
+  const displayLabel = label ?? VARIANT_LABEL[status];
 
   return React.createElement(
     "span",

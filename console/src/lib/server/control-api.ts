@@ -1586,6 +1586,18 @@ function isOptionalNumber(value: unknown): value is number | undefined {
   return value === undefined || typeof value === "number";
 }
 
+/**
+ * The router's lifecycle states, mirroring `RouterLifecycleState`.
+ *
+ * A membership check rather than `typeof === "string"`, because the Console
+ * renders this value as a status word: accepting any string would let a state
+ * this build has no word for reach an operator unread, and — worse — would let
+ * the compiler keep believing the field is one of the two it knows.
+ */
+function isRouterLifecycleState(value: unknown): boolean {
+  return value === "ready" || value === "draining";
+}
+
 function isConcurrencyStatus(
   value: unknown
 ): value is ControlApiConcurrencyStatus {
@@ -1624,7 +1636,7 @@ function isControlApiRuntimeResponse(
     value.schema === "autodev-control-runtime-v1" &&
     typeof value.routerInstanceId === "string" &&
     isRecord(value.lifecycle) &&
-    typeof value.lifecycle.state === "string" &&
+    isRouterLifecycleState(value.lifecycle.state) &&
     typeof value.lifecycle.draining === "boolean" &&
     typeof value.lifecycle.changedAt === "string" &&
     typeof value.lifecycle.activeResponseRequests === "number" &&
@@ -2281,7 +2293,10 @@ export async function fetchMemoryRecords(
     result.data,
     "autodev-memory-records-v1",
     isMemoryRecordRow
-  ) && isMemoryStatusCounts((result.data as { statusCounts?: unknown }).statusCounts)
+  ) &&
+    isMemoryStatusCounts(
+      (result.data as { statusCounts?: unknown }).statusCounts
+    )
     ? { kind: "ok", data: result.data }
     : invalidMemoryPageResponse("Records", "autodev-memory-records-v1");
 }

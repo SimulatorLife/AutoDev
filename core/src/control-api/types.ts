@@ -526,7 +526,16 @@ export interface ControlApiRuntimeResponse {
    * it, which is how a required field quietly became a guess.
    */
   readonly lifecycle: {
-    readonly state: string;
+    /**
+     * The Runtime's own `RouterLifecycleState`. Declared here as the union it
+     * already is, rather than as the `string` it used to be: the Console renders
+     * this value as the operator-facing word on a status badge, so widening it
+     * to `string` let any new state appear verbatim — which is how `/agents`
+     * came to read a lowercase `ready` beside a `Ready` three rows away. A
+     * closed union is what forces the Runtime and the Console to agree on the
+     * vocabulary rather than leaving the reader to spot the drift.
+     */
+    readonly state: "ready" | "draining";
     readonly draining: boolean;
     readonly changedAt: string;
     readonly activeResponseRequests: number;
@@ -601,9 +610,7 @@ export type ControlApiMemoryExperiencesResponse =
  * sends the reader to the wrong place.
  */
 export type ControlApiMemoryStorageState =
-  | "not_configured"
-  | "unreachable"
-  | "reachable";
+  "not_configured" | "unreachable" | "reachable";
 
 export interface ControlApiMemoryStatusResponse {
   readonly schema: "autodev-memory-status-v1";

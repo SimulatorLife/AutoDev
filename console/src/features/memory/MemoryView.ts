@@ -6,7 +6,6 @@ import type {
   MemoryInjectionUseCohortPage,
   MemoryRecord,
   MemorySessionOutcomeCohortPage,
-  MemoryStatus,
   MemoryStatusCounts,
   WorkspaceEntry
 } from "@simulatorlife/autodev-core";
@@ -29,37 +28,13 @@ import {
   memoryPageHref,
   type MemoryTab
 } from "./memory-list-url.ts";
+import { MEMORY_STATUS_LABEL, MEMORY_STATUS_ORDER } from "./memory-status.ts";
 import { MemoryCohortsView } from "./MemoryCohortsView.ts";
 import { MemoryExperiencesView } from "./MemoryExperiencesView.ts";
 import {
   type MemoryRecordHistory,
   MemoryRecordsView
 } from "./MemoryRecordsView.ts";
-
-/**
- * Lifecycle statuses in an order a reader can act on, with the one-word labels
- * the status vocabulary is filtered by elsewhere on this page.
- *
- * The order is the argument rather than the vocabulary's: proposed is what a
- * curator still has work to do, active is the healthy middle, and the three
- * terminal states are what a reader is looking for when they ask whether memory
- * is any good. An alphabetical list would put `invalidated` between them.
- */
-const MEMORY_STATUS_LABEL: Record<MemoryStatus, string> = {
-  proposed: "Proposed",
-  active: "Active",
-  uncertain: "Uncertain",
-  superseded: "Superseded",
-  invalidated: "Invalidated"
-};
-
-const MEMORY_STATUS_ORDER: readonly MemoryStatus[] = [
-  "proposed",
-  "active",
-  "uncertain",
-  "superseded",
-  "invalidated"
-];
 
 /**
  * A zero for every lifecycle status, for when the Runtime published no rollup.

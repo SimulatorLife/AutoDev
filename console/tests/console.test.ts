@@ -91,6 +91,7 @@ import {
   CODE_SNIPPET_CLASS,
   CodeBlock,
   CodeEditor,
+  ConvergenceBadge,
   DataTable,
   type DataTableProps,
   DEFAULT_MEMORY_PAGE_SIZE,
@@ -116,6 +117,9 @@ import {
   MCP_DETAIL_TABS,
   McpDetailView,
   McpsView,
+  MEMORY_STATUS_LABEL,
+  MEMORY_STATUS_ORDER,
+  MEMORY_STATUS_VARIANT,
   MemoryCohortsView,
   memoryDetailHref,
   MemoryExperiencesView,
@@ -185,11 +189,11 @@ import {
   fetchPromptVersion,
   fetchPromptVersions,
   fetchProviders,
-  patchSkillRoles,
   fetchRuntime,
   fetchSkills,
   fetchTools,
   fetchWorkspaces,
+  patchSkillRoles,
   readControlApiConfig
 } from "../src/lib/server/control-api.ts";
 import {
@@ -1516,6 +1520,21 @@ test("a truncating chip keeps its full text reachable instead of only its ellips
 });
 
 test("StatusBadge renders valid variants", () => {
+  // The word is asserted, not just the variant. `data-status` was the only thing
+  // this checked, which is why two spellings of `not-observed` were both live:
+  // the badge derived its label from the variant key, so `not-observed` came out
+  // hyphenated wherever a caller did not happen to pass `NOT_OBSERVED_LABEL`.
+  const WORDS: Record<string, string> = {
+    configured: "Configured",
+    valid: "Valid",
+    invalid: "Invalid",
+    ready: "Ready",
+    unavailable: "Unavailable",
+    converged: "Converged",
+    pending: "Pending",
+    error: "Error",
+    "not-observed": NOT_OBSERVED_LABEL
+  };
   for (const status of [
     "configured",
     "valid",
@@ -1531,6 +1550,55 @@ test("StatusBadge renders valid variants", () => {
       React.createElement(StatusBadge, { status })
     );
     assert.ok(markup.includes(`data-status="${status}"`));
+    assert.ok(
+      markup.includes(`>${WORDS[status]}<`),
+      `${status} should read "${WORDS[status]}", got: ${markup}`
+    );
+  }
+});
+
+test("a status word is never spelled from its own variant key", () => {
+  // `charAt(0).toUpperCase() + slice(1)` is a default that looks safe and is
+  // not: it passes through whatever punctuation the key happens to use. The one
+  // hyphenated variant therefore rendered "Not-observed", which is a different
+  // word from the product's "Not observed" and appeared on `/agents` beside
+  // badges reading the canonical spelling.
+  const markup = renderToStaticMarkup(
+    React.createElement(StatusBadge, { status: "not-observed" })
+  );
+  assert.ok(!markup.includes("Not-observed"));
+  assert.ok(markup.includes(NOT_OBSERVED_LABEL));
+
+  // A caller's explicit label still wins; the table is a default, not a lock.
+  const overridden = renderToStaticMarkup(
+    React.createElement(StatusBadge, { status: "ready", label: "Assigned" })
+  );
+  assert.ok(overridden.includes(">Assigned<"));
+});
+
+test("ConvergenceBadge names a verdict in the shared vocabulary", () => {
+  // It used to hand the raw wire key to the badge as its label, so a converged
+  // resource read "converged" in lowercase on `/providers/[id]/models/[model]`
+  // while every other badge on the Console read "Converged".
+  for (const [convergence, word] of [
+    ["converged", "Converged"],
+    ["pending", "Pending"],
+    ["error", "Error"],
+    ["not-observed", NOT_OBSERVED_LABEL]
+  ] as const) {
+    const markup = renderToStaticMarkup(
+      React.createElement(ConvergenceBadge, {
+        convergence,
+        explanation: "Observed by the Runtime.",
+        desiredGeneration: null,
+        observedGeneration: null,
+        lastError: null
+      })
+    );
+    assert.ok(
+      markup.includes(`>${word}<`),
+      `${convergence} should read "${word}", got: ${markup}`
+    );
   }
 });
 
@@ -2859,7 +2927,8 @@ test("Skills fetcher validates the v2 catalog contract and rejects stale respons
   // refused on every submission.
   for (const executionContractRevision of [undefined, "not-a-digest", 17]) {
     const malformedRevision = await fetchSkills(config, {
-      fetchImpl: async () => Response.json({ ...payload, executionContractRevision })
+      fetchImpl: async () =>
+        Response.json({ ...payload, executionContractRevision })
     });
     assert.equal(
       malformedRevision.kind,
@@ -5500,6 +5569,60 @@ function memoryListScope(
   };
 }
 
+test("the Memory lifecycle vocabulary has one owner", () => {
+  // These were three declarations split across two files — labels and order in
+  // `MemoryView`, the tone map in `MemoryRecordsView` — plus a per-row label that
+  // capitalized the wire key. Adding a sixth status could have updated one and
+  // missed the other, and the rollup chart and the records table would then
+  // disagree about the same record. `Record<MemoryStatus, …>` makes the gap a
+  // typecheck failure; this asserts the tables agree and are actually used.
+  assert.deepEqual(
+    [...MEMORY_STATUS_ORDER].sort(),
+    Object.keys(MEMORY_STATUS_LABEL).sort()
+  );
+  assert.deepEqual(
+    [...MEMORY_STATUS_ORDER].sort(),
+    Object.keys(MEMORY_STATUS_VARIANT).sort()
+  );
+
+  const recordFor = (status: MemoryRecord["status"]): MemoryRecord => ({
+    id: "mem-vocab",
+    kind: "procedural",
+    status,
+    scope: { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+    claim: "Vocabulary probe.",
+    validity: { state: "verified", evidence: [] },
+    provenance: {
+      experienceIds: [],
+      evidence: [],
+      createdBy: "operator",
+      createdAt: "2026-10-01T00:00:00Z"
+    },
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-02T00:00:00Z"
+  });
+
+  for (const status of MEMORY_STATUS_ORDER) {
+    const markup = renderToStaticMarkup(
+      React.createElement(MemoryRecordsView, {
+        records: [recordFor(status)],
+        total: 1,
+        listScope: memoryListScope()
+      })
+    );
+    // The word the table prints is the shared one, and the tone it wears is the
+    // shared one — not a fresh capitalization of the key.
+    assert.ok(
+      markup.includes(`>${MEMORY_STATUS_LABEL[status]}<`),
+      `${status} should read "${MEMORY_STATUS_LABEL[status]}", got: ${markup}`
+    );
+    assert.ok(
+      markup.includes(`data-status="${MEMORY_STATUS_VARIANT[status]}"`),
+      `${status} should wear the ${MEMORY_STATUS_VARIANT[status]} tone`
+    );
+  }
+});
+
 test("MemoryRecordsView renders records, lifecycle status badges, and claim text", () => {
   const sampleRecord: MemoryRecord = {
     id: "mem-001",
@@ -5813,7 +5936,11 @@ test("MemoryCohortsView answers how much of what was injected was ever judged", 
   // Every judgement category is its own bar, with the absence of a judgement as
   // a fifth rather than folded into any of the four.
   for (const label of ["Used", "Partially used", "Not used", "Unobservable"]) {
-    assert.match(markup, new RegExp(`>${label}<`), `${label} keeps its own bar`);
+    assert.match(
+      markup,
+      new RegExp(`>${label}<`),
+      `${label} keeps its own bar`
+    );
   }
   assert.match(markup, />Not assessed</);
 
@@ -5900,9 +6027,7 @@ test("MemoryView reports lifecycle counts for the whole collection, not for the 
       updatedAt: "2026-10-02T00:00:00Z"
     }
   ];
-  const render = (
-    statusCounts: MemoryStatusCounts | null
-  ): string =>
+  const render = (statusCounts: MemoryStatusCounts | null): string =>
     renderToStaticMarkup(
       React.createElement(MemoryView, {
         listScope: memoryListScope({ tab: "records" }),
@@ -5932,7 +6057,13 @@ test("MemoryView reports lifecycle counts for the whole collection, not for the 
   assert.match(measured, />900</);
   assert.match(measured, /Durable records by lifecycle status/);
   // Every lifecycle state is shown, not just the one the card counts.
-  for (const label of ["Proposed", "Active", "Uncertain", "Superseded", "Invalidated"]) {
+  for (const label of [
+    "Proposed",
+    "Active",
+    "Uncertain",
+    "Superseded",
+    "Invalidated"
+  ]) {
     assert.match(measured, new RegExp(`>${label}<`));
   }
 
@@ -5951,7 +6082,10 @@ test("a records page without a lifecycle rollup is refused, not rendered as zero
     try {
       return (
         (
-          await fetchMemoryRecords({ workspaceId: "SimulatorLife/AutoDev" }, config)
+          await fetchMemoryRecords(
+            { workspaceId: "SimulatorLife/AutoDev" },
+            config
+          )
         ).kind === "ok"
       );
     } finally {
@@ -5999,9 +6133,7 @@ test("an expired validity window is stated, because the Runtime will not inject 
   // agent. The detail panel showed the state and the check date and said nothing
   // about the window, so the one question this panel is opened to answer — "is
   // this claim actually in use?" — rendered as a healthy claim.
-  const renderWith = (
-    validity: Partial<MemoryRecord["validity"]>
-  ): string => {
+  const renderWith = (validity: Partial<MemoryRecord["validity"]>): string => {
     const record: MemoryRecord = {
       id: "mem-expired",
       kind: "procedural",
@@ -6070,9 +6202,7 @@ test("a skill that reached the catalog but reached no agent says so", () => {
   // the Console can give it one. The promotion reports success. The State column
   // used to badge every row "Configured" without reading the row, so this skill
   // sat beside "No roles assigned" under a green badge claiming it was fine.
-  const renderWith = (
-    eligibility: SkillEligibility[]
-  ): string =>
+  const renderWith = (eligibility: SkillEligibility[]): string =>
     renderToStaticMarkup(
       React.createElement(SkillsView, {
         skills: [
@@ -6090,9 +6220,7 @@ test("a skill that reached the catalog but reached no agent says so", () => {
       })
     );
 
-  const unassigned = renderWith([
-    { skill: "release-checklist", roles: [] }
-  ]);
+  const unassigned = renderWith([{ skill: "release-checklist", roles: [] }]);
   assert.match(unassigned, /Not assigned/);
   assert.match(
     unassigned,
@@ -8498,6 +8626,11 @@ test("Console rejects a runtime response that does not match the v1 contract", a
     { ...valid, schema: "autodev-control-runtime-v0" },
     { ...valid, routerInstanceId: 7 },
     { ...valid, lifecycle: { state: 1 } },
+    // A string that is not a state this build has a word for. `typeof === "string"`
+    // accepted it, and the Console renders this value as the operator-facing word
+    // on a status badge — so an unknown state reached a reader verbatim instead of
+    // failing closed. The Runtime only ever emits `ready` or `draining`.
+    { ...valid, lifecycle: { ...valid.lifecycle, state: "restarting" } },
     { ...valid, lifecycle: { state: "ready", draining: "yes" } },
     { ...valid, concurrency: { effectivePerSessionLimit: "two" } },
     { ...valid, concurrency: { denialsByReason: { cap: "many" } } },
@@ -9029,8 +9162,10 @@ test("storage status is read for what it observed, not inferred from the failure
   const read = async (storage: Record<string, unknown>): Promise<boolean> => {
     const previousFetch = globalThis.fetch;
     globalThis.fetch = (async () =>
-      Response.json({ schema: "autodev-memory-status-v1", storage })) as
-      typeof fetch;
+      Response.json({
+        schema: "autodev-memory-status-v1",
+        storage
+      })) as typeof fetch;
     try {
       return (await fetchMemoryStatus(config)).kind === "ok";
     } finally {
@@ -9129,7 +9264,10 @@ test("the Memory page names why storage failed, from the status read rather than
     try {
       process.env.HOME = isolatedHome;
       process.env.CODEX_HOME = isolatedHome;
-      process.env.AUTODEV_OPENLIT_SECRET_FILE = join(isolatedHome, "missing.env");
+      process.env.AUTODEV_OPENLIT_SECRET_FILE = join(
+        isolatedHome,
+        "missing.env"
+      );
       process.env.AUTODEV_CONTROL_API_TOKEN = "status-page-test-token";
       process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
       return renderToStaticMarkup(
@@ -10168,7 +10306,10 @@ test("Memory reports reach the Runtime bound to one injection, or not at all", a
       })
     );
     assert.equal(response.status, 303);
-    assert.doesNotMatch(response.headers.get("location") ?? "", /control=failed/);
+    assert.doesNotMatch(
+      response.headers.get("location") ?? "",
+      /control=failed/
+    );
     assert.equal(requests.length, 1);
   });
 
@@ -12561,13 +12702,17 @@ function submittedAssignmentFields(
   const actionAt = markup.indexOf(`action="/api/skills/${skillName}"`);
   assert.notEqual(actionAt, -1, `no assignment form for ${skillName}`);
   const formStart = markup.lastIndexOf("<form", actionAt);
-  assert.notEqual(formStart, -1, `assignment form for ${skillName} has no start`);
+  assert.notEqual(
+    formStart,
+    -1,
+    `assignment form for ${skillName} has no start`
+  );
   const formEnd = markup.indexOf("</form>", actionAt);
   assert.notEqual(formEnd, -1, `assignment form for ${skillName} never closes`);
   const body = markup.slice(formStart, formEnd);
   const fields = new Map<string, string[]>();
   for (const [, attributes] of body.matchAll(/<input\b([^>]*?)\/?>/gu)) {
-    const withoutClass = (attributes ?? "").replace(/\sclass="[^"]*"/gu, "");
+    const withoutClass = (attributes ?? "").replaceAll(/\sclass="[^"]*"/gu, "");
     // A browser omits a disabled control from the submission entirely, so a
     // hidden input standing in for one would submit nothing.
     if (/(?:^|\s)disabled(?=[\s/>=]|$)/u.test(withoutClass)) continue;
@@ -12575,10 +12720,7 @@ function submittedAssignmentFields(
     if (name === undefined || name === "") continue;
     const type = /\stype="([^"]*)"/u.exec(withoutClass)?.[1] ?? "text";
     // An unchecked checkbox is not a successful control and submits nothing.
-    if (
-      type === "checkbox" &&
-      !/\schecked(?=[\s/>=]|$)/u.test(withoutClass)
-    ) {
+    if (type === "checkbox" && !/\schecked(?=[\s/>=]|$)/u.test(withoutClass)) {
       continue;
     }
     const fieldValue =

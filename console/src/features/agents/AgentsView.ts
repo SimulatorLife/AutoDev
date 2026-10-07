@@ -250,13 +250,13 @@ export function AgentsView({
                 valueClassName: null
               },
               React.createElement(StatusBadge, {
+                // Draining is a state in its own right, not a flavour of
+                // "not ready", and it is already the badge's own word. Handing
+                // the badge the raw `lifecycle.state` instead made this the one
+                // row on the page that spelled the vocabulary differently from
+                // every other badge on it.
                 status:
-                  runtime.lifecycle.state === "ready"
-                    ? "ready"
-                    : runtime.lifecycle.state
-                      ? "unavailable"
-                      : NOT_OBSERVED_STATUS,
-                label: runtime.lifecycle.state ?? NOT_OBSERVED_LABEL
+                  runtime.lifecycle.state === "draining" ? "pending" : "ready"
               })
             ),
             // Draining is an operational state of its own: the router stops

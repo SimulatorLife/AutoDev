@@ -22,10 +22,7 @@ import { PageBody } from "../../components/layout/PageBody.ts";
 import { Pagination } from "../../components/navigation/Pagination.ts";
 import { DetailDrawer } from "../../components/panels/DetailDrawer.ts";
 import { gridRowClass } from "../../components/panels/DetailGrid.ts";
-import {
-  StatusBadge,
-  type StatusBadgeVariant
-} from "../../components/status/StatusBadge.ts";
+import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import { Chip } from "../../components/tables/Chips.ts";
 import {
@@ -47,6 +44,7 @@ import {
   type MemoryListScope,
   memoryPageHref
 } from "./memory-list-url.ts";
+import { MEMORY_STATUS_VARIANT, NOT_OBSERVED_STATUS } from "./memory-status.ts";
 
 export interface MemoryRecordTransition {
   readonly fromStatus?: MemoryStatus;
@@ -100,9 +98,7 @@ function nowIso(): string {
  * claim one of those. Each shape is its own string rather than an assembled
  * phrase, so a half-written window cannot read as a complete sentence.
  */
-function validityWindowLabel(
-  validity: MemoryValidity
-): string | null {
+function validityWindowLabel(validity: MemoryValidity): string | null {
   const from = validity.validFrom;
   const to = validity.validTo;
   if (from !== undefined && to !== undefined) {
@@ -202,18 +198,8 @@ export interface MemoryRecordsViewProps {
   readonly listScope: MemoryListScope;
 }
 
-const NOT_OBSERVED_STATUS = "not-observed" as const;
-
 /** Names the transition-history list for assistive technology. */
 const TRANSITION_HISTORY_HEADING_ID = "memory-transition-history";
-
-const STATUS_VARIANT_MAP: Record<MemoryStatus, StatusBadgeVariant> = {
-  active: "ready",
-  proposed: "pending",
-  invalidated: "invalid",
-  superseded: "unavailable",
-  uncertain: NOT_OBSERVED_STATUS
-};
 
 const KIND_COLORS: Record<MemoryKind, string> = {
   episodic: "bg-chart-4/15 text-chart-4 border-chart-4/40",
@@ -293,8 +279,7 @@ export function MemoryRecordsView({
       weight: 140,
       cell: (record) =>
         React.createElement(StatusBadge, {
-          status: STATUS_VARIANT_MAP[record.status] ?? NOT_OBSERVED_STATUS,
-          label: record.status.charAt(0).toUpperCase() + record.status.slice(1)
+          status: MEMORY_STATUS_VARIANT[record.status] ?? NOT_OBSERVED_STATUS
         })
     },
     {
@@ -554,7 +539,7 @@ function RecordDetailPanel({
         }),
         React.createElement(StatusBadge, {
           key: "status",
-          status: STATUS_VARIANT_MAP[record.status] ?? NOT_OBSERVED_STATUS,
+          status: MEMORY_STATUS_VARIANT[record.status] ?? NOT_OBSERVED_STATUS,
           label: record.status.toUpperCase()
         })
       ]
@@ -748,7 +733,7 @@ function RecordDetailPanel({
                   { className: "flex items-center gap-2" },
                   React.createElement(StatusBadge, {
                     status:
-                      STATUS_VARIANT_MAP[t.toStatus] ?? NOT_OBSERVED_STATUS,
+                      MEMORY_STATUS_VARIANT[t.toStatus] ?? NOT_OBSERVED_STATUS,
                     label: `${t.fromStatus ?? "none"} → ${t.toStatus}`
                   }),
                   t.reason
