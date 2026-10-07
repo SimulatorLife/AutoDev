@@ -15,9 +15,8 @@ import test from "node:test";
 
 import { handleMemoryControlApiRequest } from "../src/control-api/memory.ts";
 import {
-  makeRequest,
-  responseBody,
   type RecordedResponse,
+  responseBody,
   responseRecorder
 } from "./support/control-api-harness.ts";
 
@@ -59,16 +58,16 @@ interface CallResult {
 }
 
 function errorCode(body: Record<string, unknown> | null): unknown {
-  const envelope = body?.["error"];
+  const envelope = body?.error;
   return typeof envelope === "object" && envelope !== null
-    ? (envelope as Record<string, unknown>)["code"]
+    ? (envelope as Record<string, unknown>).code
     : undefined;
 }
 
 function errorMessage(body: Record<string, unknown> | null): string {
-  const envelope = body?.["error"];
+  const envelope = body?.error;
   return typeof envelope === "object" && envelope !== null
-    ? String((envelope as Record<string, unknown>)["message"])
+    ? String((envelope as Record<string, unknown>).message)
     : "";
 }
 
@@ -87,7 +86,10 @@ function workspaceFixture(options: { readonly optIn?: boolean } = {}) {
   const repoReal = realpathSync(repo);
   const transcriptsReal = realpathSync(transcripts);
   const transcript = path.join(transcriptsReal, `${SESSION_ID}.jsonl`);
-  writeFileSync(transcript, '{"type":"assistant","message":{"content":"done"}}\n');
+  writeFileSync(
+    transcript,
+    '{"type":"assistant","message":{"content":"done"}}\n'
+  );
   const bindingPath = path.join(home, "claude-code-memory.toml");
   writeFileSync(
     bindingPath,
@@ -162,10 +164,10 @@ test("a viewer is refused before the binding file is opened", async () => {
   // capture is unconfigured.
   const fixture = workspaceFixture();
   try {
-    const { status, body, audits } = await capture(
-      WELL_FORMED(fixture),
-      { bindingPath: path.join(fixture.home, "missing.toml"), role: "viewer" }
-    );
+    const { status, body, audits } = await capture(WELL_FORMED(fixture), {
+      bindingPath: path.join(fixture.home, "missing.toml"),
+      role: "viewer"
+    });
 
     assert.equal(status, 403);
     assert.equal(errorCode(body), "autodev_memory_capture_forbidden");
@@ -270,8 +272,14 @@ test("a transcript that is a symlink out of the bound root is refused", async ()
   const fixture = workspaceFixture();
   try {
     const secret = path.join(fixture.home, "outside.jsonl");
-    writeFileSync(secret, '{"type":"assistant","message":{"content":"secret"}}\n');
-    const link = path.join(path.dirname(fixture.transcript), `${SESSION_ID}.jsonl`);
+    writeFileSync(
+      secret,
+      '{"type":"assistant","message":{"content":"secret"}}\n'
+    );
+    const link = path.join(
+      path.dirname(fixture.transcript),
+      `${SESSION_ID}.jsonl`
+    );
     // Replace the fixture's own transcript with a symlink to a file outside the
     // bound root, keeping the basename that ties it to the session.
     rmSync(link, { force: true });
@@ -485,6 +493,129 @@ test("no refusal is audited as a success", async () => {
         `a refusal reported success: ${JSON.stringify(result.audits.at(-1))}`
       );
     }
+  } finally {
+    rmSync(fixture.home, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Two configurations the single-workspace fixture cannot express, each of which
+ * makes the authorized workspace ambiguous. Both were unenforced.
+ */
+function ambiguousBinding(home: string, entries: readonly WorkspaceEntry[]) {
+  const bindingPath = path.join(home, "claude-code-memory.toml");
+  writeFileSync(
+    bindingPath,
+    `optIn = true\n${entries
+      .map(
+        (entry) => `
+[[workspace]]
+root = "${entry.root}"
+workspaceId = "${entry.workspaceId}"
+repositoryId = "${entry.repositoryId}"
+transcriptRoot = "${entry.transcriptRoot}"
+`
+      )
+      .join("")}`,
+    "utf8"
+  );
+  return bindingPath;
+}
+
+interface WorkspaceEntry {
+  readonly root: string;
+  readonly workspaceId: string;
+  readonly repositoryId: string;
+  readonly transcriptRoot: string;
+}
+
+test("a cwd that matches one authorized root exactly but is a subdirectory of another is refused", async () => {
+  // The workspace resolver checks every entry, not just the first, so a binding
+  // that authorizes both a repository and a subdirectory of it still refuses
+  // the subdirectory. The inner entry matches exactly and is pushed; the outer
+  // one is what refuses. Both orderings are pinned because the loop does not
+  // stop at the first match — if it ever did, only one of these would hold, and
+  // the answer would depend on the order the operator happened to write them in.
+  const fixture = workspaceFixture();
+  try {
+    const nested = path.join(realpathSync(fixture.cwd), "nested");
+    const elsewhere = fixture.otherTranscriptRoot;
+    mkdirSync(nested, { recursive: true });
+    mkdirSync(elsewhere, { recursive: true });
+    const nestedReal = realpathSync(nested);
+    const elsewhereReal = realpathSync(elsewhere);
+
+    const outer = {
+      root: fixture.cwd,
+      workspaceId: "ws_outer",
+      repositoryId: "repo_outer",
+      transcriptRoot: elsewhereReal
+    };
+    const inner = {
+      root: nestedReal,
+      workspaceId: "ws_inner",
+      repositoryId: "repo_inner",
+      transcriptRoot: path.dirname(fixture.transcript)
+    };
+
+    for (const [label, entries] of [
+      ["outer listed first", [outer, inner]],
+      ["inner listed first", [inner, outer]]
+    ] as const) {
+      const { status, body, audits } = await capture(
+        WELL_FORMED({ cwd: nestedReal, transcript: fixture.transcript }),
+        { bindingPath: ambiguousBinding(fixture.home, entries) }
+      );
+
+      assert.equal(status, 400, `${label} is refused`);
+      assert.equal(errorCode(body), "autodev_memory_capture_invalid");
+      assert.equal(
+        audits.at(-1)?.reason,
+        "workspace_unauthorized",
+        `${label} refuses for the nesting, not for an unmatched cwd`
+      );
+    }
+  } finally {
+    rmSync(fixture.home, { recursive: true, force: true });
+  }
+});
+
+test("two authorized entries sharing one canonical root are refused when the binding loads", async () => {
+  // The binding loader already refuses a duplicate canonical root, before any
+  // request is looked at. The resolver repeats the check for entries it is
+  // handed directly, so it is defence in depth rather than the layer that
+  // actually answers here — this test says which one fires, and pins the
+  // refusal as an operator configuration error rather than a first-match.
+  const fixture = workspaceFixture();
+  try {
+    const elsewhere = fixture.otherTranscriptRoot;
+    mkdirSync(elsewhere, { recursive: true });
+    const elsewhereReal = realpathSync(elsewhere);
+
+    const { status, body, audits } = await capture(WELL_FORMED(fixture), {
+      bindingPath: ambiguousBinding(fixture.home, [
+        {
+          root: fixture.cwd,
+          workspaceId: "ws_one",
+          repositoryId: "repo_one",
+          transcriptRoot: elsewhereReal
+        },
+        {
+          root: fixture.cwd,
+          workspaceId: "ws_two",
+          repositoryId: "repo_two",
+          transcriptRoot: path.dirname(fixture.transcript)
+        }
+      ])
+    });
+
+    assert.equal(status, 400);
+    assert.equal(errorCode(body), "autodev_memory_capture_invalid");
+    assert.equal(
+      audits.at(-1)?.reason,
+      "workspace_ambiguous",
+      "two entries for one root is an operator configuration error, not a first-match"
+    );
   } finally {
     rmSync(fixture.home, { recursive: true, force: true });
   }
