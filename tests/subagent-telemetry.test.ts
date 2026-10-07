@@ -1013,10 +1013,19 @@ test("the Antigravity bridge delegates through Codex when the turn can reach it"
     /function agyEnvironment\(spawnSession: string \| null, isolatedHome: string \| null = null\)/
   );
   assert.match(source, /AUTODEV_SPAWN_SESSION: spawnSession \?\? ""/);
+  // The spawned child's environment must still be built by agyEnvironment and
+  // passed through withAutoDevOtelResourceContext with the workspace and role.
+  // The argument is now an object literal because the agent also carries a
+  // bounded git committer identity, so this pins the surrounding contract --
+  // agyEnvironment's call inside it, and workspaceKey/agentRole outside it --
+  // rather than one exact parenthesisation.
   assert.match(
     source,
-    /env: withAutoDevOtelResourceContext\(\s*agyEnvironment\(spawnSession, isolatedState\.isolatedHome\),\s*workspaceKey,\s*agentRole\s*\)/
+    /env: withAutoDevOtelResourceContext\(\s*\{[\s\S]{0,600}?agyEnvironment\(spawnSession, isolatedState\.isolatedHome\)[\s\S]{0,600}?\},\s*workspaceKey,\s*agentRole\s*\)/
   );
+  // The identity is environment-only: setting it must not write repository
+  // configuration, which would persist into a read-only workspace.
+  assert.match(source, /\.\.\.gitCommitIdentityEnv\(\{\s*role: agentRole,/u);
   assert.match(
     source,
     /mcpServers\.autodev_spawn = bridgeSpawnMcpEntry\(options\)/
