@@ -19,6 +19,8 @@ import {
   type ExperienceEnvelope,
   isMemoryExperienceVisibleTo,
   type MemoryActor,
+  type ExperienceListRequest,
+  type ExperienceSearchRequest,
   type ExperienceOutcome,
   type MemoryExperiencePurgeRequest,
   type MemoryExperiencePurgeResult,
@@ -110,6 +112,8 @@ class FakeMemoryRepository implements MemoryRepository {
   }[] = [];
   readonly outcomeReports = new Map<string, MemoryOutcomeReport>();
   readonly outcomeJoinRequests: MemoryInjectionOutcomeJoinRequest[] = [];
+  readonly experienceListRequests: ExperienceListRequest[] = [];
+  readonly experienceSearchRequests: ExperienceSearchRequest[] = [];
   readonly sessionOutcomeReports = new Map<
     string,
     MemorySessionOutcomeReport
@@ -145,16 +149,22 @@ class FakeMemoryRepository implements MemoryRepository {
     return this.experiences.get(id) ?? null;
   }
 
-  async searchExperiences(): Promise<readonly ExperienceEnvelope[]> {
+  async searchExperiences(
+    request: ExperienceSearchRequest
+  ): Promise<readonly ExperienceEnvelope[]> {
+    this.experienceSearchRequests.push(request);
     return [...this.experiences.values()];
   }
 
-  async listExperiences(): Promise<{
+  async listExperiences(
+    request: ExperienceListRequest
+  ): Promise<{
     items: readonly ExperienceEnvelope[];
     total: number;
     limit: number;
     offset: number;
   }> {
+    this.experienceListRequests.push(request);
     const items = [...this.experiences.values()];
     return { items, total: items.length, limit: 50, offset: 0 };
   }
@@ -4012,4 +4022,327 @@ test("an outcome recorded against another session is dropped from the join", asy
   const page = await service.listInjectionOutcomeJoins(outcomeJoinRequest());
 
   assert.equal(page.items.length, 0);
+});
+
+/**
+ * The two experience list reads the Console's experiences table depends on,
+ * and the scope key that decides which memory may supersede which. Both were
+ * reachable from production and covered by no service-level test: the
+ * repository double ignored every request, so the service's own validation,
+ * pagination clamping and post-read visibility filter never ran.
+ */
+function experienceSearchRequest(
+  overrides: Partial<ExperienceSearchRequest> = {}
+): ExperienceSearchRequest {
+  return { query: "memory repository", context, ...overrides };
+}
+
+test("experience search refuses an empty or unbounded query", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+
+  await assert.rejects(
+    service.searchExperiences(experienceSearchRequest({ query: "   " })),
+    MemoryValidationError
+  );
+  await assert.rejects(
+    service.searchExperiences(
+      experienceSearchRequest({ query: "x".repeat(4001) })
+    ),
+    MemoryValidationError
+  );
+  assert.equal(repository.experienceSearchRequests.length, 0);
+});
+
+test("experience search bounds the hit count it asks storage for and returns", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  for (let index = 0; index < 45; index += 1)
+    repository.experiences.set(`experience-${index}`, experience(`experience-${index}`));
+
+  const page = await service.searchExperiences(
+    experienceSearchRequest({ limit: 1000 })
+  );
+
+  // Forty is the cap; a caller asking for a thousand must not widen the query
+  // storage runs, nor the payload it sends back.
+  assert.equal(repository.experienceSearchRequests[0]?.limit, 40);
+  assert.equal(page.length, 40);
+
+  const defaulted = await service.searchExperiences(experienceSearchRequest());
+  assert.equal(repository.experienceSearchRequests[1]?.limit, 10);
+  assert.equal(defaulted.length, 45 > 10 ? 10 : 45);
+});
+
+test("experience search hides another run's raw trajectory from an ordinary reader", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  repository.experiences.set(
+    "run-private",
+    experience("run-private")
+  );
+  const runPrivate = repository.experiences.get("run-private")!;
+  repository.experiences.set("run-private", {
+    ...runPrivate,
+    scope: { kind: "task", workspaceId: "workspace-a", taskId: "task-old", runId: "run-old" },
+    taskId: "task-old",
+    runId: "run-old"
+  });
+
+  const ordinary = await service.searchExperiences(experienceSearchRequest());
+  assert.equal(ordinary.length, 0);
+
+  // Only the explicit curator grant reaches another run's trajectory.
+  const curator = await service.searchExperiences(
+    experienceSearchRequest({
+      context: { ...context, canReadTaskHistory: true }
+    })
+  );
+  assert.equal(curator.length, 1);
+  assert.equal(curator[0]?.id, "run-private");
+});
+
+test("experience search hides a repository the reader cannot see", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const foreign = experience("foreign-repo");
+  repository.experiences.set("foreign-repo", {
+    ...foreign,
+    repositoryId: "repo-b",
+    scope: { kind: "repository", workspaceId: "workspace-a", repositoryId: "repo-b" }
+  });
+
+  const page = await service.searchExperiences(experienceSearchRequest());
+  assert.equal(page.length, 0);
+});
+
+test("the experience list refuses filters and page bounds it cannot honour", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+
+  await assert.rejects(
+    service.listExperiences({
+      context,
+      memoryModes: ["not-a-mode"] as unknown as MemoryExecutionMode[]
+    }),
+    MemoryValidationError
+  );
+  await assert.rejects(
+    service.listExperiences({
+      context,
+      outcomes: ["not-an-outcome"] as unknown as ExperienceOutcome[]
+    }),
+    MemoryValidationError
+  );
+  await assert.rejects(
+    service.listExperiences({ context, limit: 101 }),
+    MemoryValidationError
+  );
+  await assert.rejects(
+    service.listExperiences({ context, offset: -1 }),
+    MemoryValidationError
+  );
+  assert.equal(repository.experienceListRequests.length, 0);
+});
+
+test("the experience list reports the pagination it applied and hides invisible rows", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const visible = experience("visible");
+  repository.experiences.set("visible", visible);
+  const foreign = experience("foreign-repo");
+  repository.experiences.set("foreign-repo", {
+    ...foreign,
+    repositoryId: "repo-b",
+    scope: { kind: "repository", workspaceId: "workspace-a", repositoryId: "repo-b" }
+  });
+
+  const page = await service.listExperiences({ context });
+
+  // The service owns the page bounds it reports, not the ones storage echoes.
+  assert.equal(page.limit, 50);
+  assert.equal(page.offset, 0);
+  assert.equal(repository.experienceListRequests[0]?.limit, 50);
+  assert.deepEqual(
+    page.items.map((item) => item.id),
+    ["visible"]
+  );
+
+  const paged = await service.listExperiences({ context, limit: 25, offset: 10 });
+  assert.equal(paged.limit, 25);
+  assert.equal(paged.offset, 10);
+  assert.equal(repository.experienceListRequests[1]?.offset, 10);
+});
+
+test("a task-scoped memory cannot supersede an agent-scoped one", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  // Both are visible to this context, so the scope key is the only thing that
+  // can refuse the pair.
+  const prior = record("prior", {
+    scope: {
+      kind: "task",
+      workspaceId: "workspace-a",
+      taskId: "task-current",
+      runId: "run-current"
+    }
+  });
+  const replacement = record("replacement", {
+    status: "proposed",
+    validity: { state: "unverified", evidence: [] },
+    scope: {
+      kind: "agent",
+      workspaceId: "workspace-a",
+      taskId: "task-current",
+      runId: "run-current",
+      agentId: "agent-current"
+    }
+  });
+  repository.memories.set(prior.id, prior);
+  repository.memories.set(replacement.id, replacement);
+
+  await assert.rejects(
+    service.supersede(replacement.id, prior.id, root, researchRequest()),
+    /same kind and exact scope/u
+  );
+  assert.equal(repository.memories.get(prior.id)?.status, "active");
+});
+
+test("a workspace-wide role memory cannot supersede a repository-scoped role memory", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  // Both are visible: a role scope with no repository is visible from anywhere
+  // in the workspace. Only the exact scope differs.
+  const prior = record("prior", {
+    scope: { kind: "role", workspaceId: "workspace-a", role: "worker" }
+  });
+  const replacement = record("replacement", {
+    status: "proposed",
+    validity: { state: "unverified", evidence: [] },
+    scope: {
+      kind: "role",
+      workspaceId: "workspace-a",
+      role: "worker",
+      repositoryId: "repo-a"
+    }
+  });
+  repository.memories.set(prior.id, prior);
+  repository.memories.set(replacement.id, replacement);
+
+  await assert.rejects(
+    service.supersede(replacement.id, prior.id, root, researchRequest()),
+    /same kind and exact scope/u
+  );
+});
+
+test("two memories in the exact same role scope do supersede", async () => {
+  const repository = new FakeMemoryRepository();
+  let eventId = 0;
+  const service = makeService(repository, {
+    makeId: () => `event-${++eventId}`
+  });
+  const scope = {
+    kind: "role" as const,
+    workspaceId: "workspace-a",
+    role: "worker"
+  };
+  const prior = record("prior", { scope });
+  const replacement = record("replacement", {
+    status: "proposed",
+    validity: { state: "unverified", evidence: [] },
+    scope
+  });
+  repository.memories.set(prior.id, prior);
+  repository.memories.set(replacement.id, replacement);
+
+  const active = await service.supersede(
+    replacement.id,
+    prior.id,
+    root,
+    researchRequest()
+  );
+
+  assert.equal(active.status, "active");
+  assert.equal(repository.memories.get(prior.id)?.status, "superseded");
+});
+
+test("a global-scoped memory supersedes only under an explicit global grant", async () => {
+  const repository = new FakeMemoryRepository();
+  let eventId = 0;
+  const service = makeService(repository, {
+    makeId: () => `event-${++eventId}`
+  });
+  const globalScope = { kind: "global" as const };
+  const prior = record("prior", { scope: globalScope });
+  const replacement = record("replacement", {
+    status: "proposed",
+    validity: { state: "unverified", evidence: [] },
+    scope: globalScope
+  });
+  repository.memories.set(prior.id, prior);
+  repository.memories.set(replacement.id, replacement);
+
+  // A missing global grant is not implied by absent scope metadata.
+  await assert.rejects(
+    service.supersede(replacement.id, prior.id, root, researchRequest()),
+    /must be visible to supersede/u
+  );
+
+  const active = await service.supersede(
+    replacement.id,
+    prior.id,
+    root,
+    researchRequest({ context: { ...context, canReadGlobal: true } })
+  );
+  assert.equal(active.status, "active");
+});
+
+test("a global-scoped memory cannot supersede a repository-scoped one", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const prior = record("prior");
+  const replacement = record("replacement", {
+    status: "proposed",
+    validity: { state: "unverified", evidence: [] },
+    scope: { kind: "global" }
+  });
+  repository.memories.set(prior.id, prior);
+  repository.memories.set(replacement.id, replacement);
+
+  await assert.rejects(
+    service.supersede(
+      replacement.id,
+      prior.id,
+      root,
+      researchRequest({ context: { ...context, canReadGlobal: true } })
+    ),
+    /same kind and exact scope/u
+  );
+});
+
+test("a workspace-scoped memory supersedes another workspace-scoped one", async () => {
+  const repository = new FakeMemoryRepository();
+  let eventId = 0;
+  const service = makeService(repository, {
+    makeId: () => `event-${++eventId}`
+  });
+  const workspaceScope = { kind: "workspace" as const, workspaceId: "workspace-a" };
+  const prior = record("prior", { scope: workspaceScope });
+  const replacement = record("replacement", {
+    status: "proposed",
+    validity: { state: "unverified", evidence: [] },
+    scope: workspaceScope
+  });
+  repository.memories.set(prior.id, prior);
+  repository.memories.set(replacement.id, replacement);
+
+  const active = await service.supersede(
+    replacement.id,
+    prior.id,
+    root,
+    researchRequest()
+  );
+
+  assert.equal(active.status, "active");
+  assert.equal(repository.memories.get(prior.id)?.status, "superseded");
 });
