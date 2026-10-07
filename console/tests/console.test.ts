@@ -2618,6 +2618,70 @@ function renderEvaluations(
   );
 }
 
+test("an opened run leads the page, so opening it shows something at any width", () => {
+  // The drawer used to render between the stat cards and the run history, which
+  // put the filter bar, the tab nav and five stat cards above it. At 390px those
+  // cards stack one per row, and the detail began 1,161px down a 900px viewport:
+  // opening a run produced a page indistinguishable from the one before it, with
+  // not one pixel of the opened run on screen. Measured in Chromium at 1280, 768
+  // and 390, cold load and after clicking a row -- the navigation returns the
+  // viewport to the top either way.
+  //
+  // The drawer's whole reason for being a disclosure reached by a plain link is
+  // that the selected run stays addressable and shareable. That promise is only
+  // kept if opening the URL shows the run, so the selection has to lead.
+  //
+  // This asserts document order, which is what the promise rests on, rather than
+  // a pixel offset: the offset follows from the order plus the page's own
+  // vertical rhythm, and pinning the number would break on any spacing change
+  // while the defect -- a detail below the fold -- would stay covered.
+  const row = {
+    id: "eval-order-1",
+    agentRole: "orchestrator",
+    promptName: "dry",
+    model: "gpt-5.6-terra",
+    metrics: [{ name: "quality", value: 1, pass: true }],
+    passed: true,
+    timestamp: "2026-10-05T12:00:00.000Z"
+  };
+  const opened = renderEvaluations({
+    evaluations: [row],
+    selection: row.id,
+    totalCount: 1
+  });
+  const drawer = opened.indexOf('data-feature="evaluation-detail"');
+  const filterBar = opened.indexOf('aria-label="Evaluation filters"');
+  const statCards = opened.indexOf('data-stat-grid="5"');
+
+  assert.ok(drawer > -1, "the run's detail is rendered");
+  assert.ok(
+    drawer < filterBar,
+    "the opened run comes before the filters, not after five stat cards"
+  );
+  assert.ok(drawer < statCards, "and before the stat cards");
+
+  // Unopened, nothing is prepended: the page still starts with its filters.
+  const unopened = renderEvaluations({ evaluations: [row] });
+  assert.equal(unopened.includes('data-feature="evaluation-detail"'), false);
+  assert.ok(
+    unopened.indexOf('aria-label="Evaluation filters"') <
+      unopened.indexOf('data-stat-grid="5"')
+  );
+
+  // A run the URL named but the view cannot show leads the page for the same
+  // reason: the operator who arrived at that URL needs the explanation first,
+  // not after a screenful of cards.
+  const missing = renderEvaluations({
+    evaluations: [row],
+    selection: "no-such-run"
+  });
+  assert.ok(
+    missing.indexOf('data-detail-state="not-found"') <
+      missing.indexOf('aria-label="Evaluation filters"'),
+    "a run the page cannot show is explained above the fold too"
+  );
+});
+
 test("no column is narrower than its own header", () => {
   // A column header is a label. The target state is explicit that "a column's
   // weight must be large enough for its own header: a header that renders as an

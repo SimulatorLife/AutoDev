@@ -1548,6 +1548,25 @@ export function EvaluationsView({
         "data-evaluations-truncated": truncated ? "true" : "false"
       }
     },
+    // Whatever the URL opened -- a run, or the fact that the run it named is not
+    // showable -- leads the page.
+    //
+    // It used to sit between the stat cards and the run history, which put the
+    // filter bar, the tab nav and five stat cards above it. At 390px those cards
+    // stack one per row, and the detail began 1,161px down a 900px viewport:
+    // opening a run rendered a page indistinguishable from the one before it,
+    // with not one pixel of the opened run on screen. That held for the click
+    // too, because the navigation returns the viewport to the top.
+    //
+    // The drawer's design is a disclosure reached by a plain link precisely so
+    // the selected run stays addressable and shareable, and that promise is only
+    // kept if opening the URL actually shows the run. Leading the page is what
+    // makes it true at every width and with no script at all.
+    selectedEvaluation === null
+      ? selection === null
+        ? null
+        : renderMissingResult(selection, resultCounts)
+      : renderResultDetail(selectedEvaluation, nav),
     React.createElement(
       FilterBar,
       {
@@ -1654,11 +1673,6 @@ export function EvaluationsView({
         subtitle: `${observedOutcomes} of ${evaluations.length} with explicit verdicts`
       })
     ),
-    selectedEvaluation === null
-      ? selection === null
-        ? null
-        : renderMissingResult(selection, resultCounts)
-      : renderResultDetail(selectedEvaluation, nav),
     traceLookup ? renderTraceLookup(traceLookup, nav) : null,
     tab === "results"
       ? React.createElement(
