@@ -1580,6 +1580,19 @@ interface ResultCounts {
   readonly truncated: boolean;
 }
 
+/**
+ * "1 retained result", "N retained results".
+ *
+ * A store holding exactly one evaluation is not an exotic state -- it is what a
+ * workspace looks like the first time anything is evaluated, and it is the first
+ * sentence a new operator reads. Every branch that ends in the noun goes through
+ * this, including the capped one: `truncated` is the driver's own flag, so the
+ * Console cannot claim that a cap implies a store of two or more.
+ */
+function retainedResultCount(count: number): string {
+  return `${count} retained result${count === 1 ? "" : "s"}`;
+}
+
 function resultSummary({
   shown,
   window,
@@ -1589,8 +1602,8 @@ function resultSummary({
 }: ResultCounts): string {
   if (!truncated) {
     return narrowed
-      ? `${shown} of ${total} retained results`
-      : `${total} retained results`;
+      ? `${shown} of ${retainedResultCount(total)}`
+      : retainedResultCount(total);
   }
   // Narrowing must not drop the size of the store. "3 of 6 in the most recent 6"
   // reads as "3 of everything" to anyone who did not already have the
@@ -1599,7 +1612,7 @@ function resultSummary({
   // whether that is a small problem or a window too small to see the problem.
   return narrowed
     ? `${shown} of the most recent ${window} · ${total} retained`
-    : `Most recent ${window} of ${total} retained results`;
+    : `Most recent ${window} of ${retainedResultCount(total)}`;
 }
 
 /**

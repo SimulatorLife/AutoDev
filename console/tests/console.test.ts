@@ -5915,6 +5915,66 @@ test("a duration that rounds into its next minute says how many minutes", () => 
   );
 });
 
+test("the filter bar's leading sentence agrees with itself when there is one result", () => {
+  // The sentence the filter bar leads with ends in a noun, and it has four
+  // shapes. Three of them were reachable with the wrong plural: a store holding
+  // exactly one evaluation rendered "1 retained results", which is the first
+  // thing a workspace that has evaluated anything once shows its operator.
+  //
+  // The capped branch is in scope for the same reason even though a cap implies
+  // more than one result in practice: `truncated` is the driver's flag, and the
+  // Console does not get to decide what it implies.
+  const sentence = (
+    props: Partial<React.ComponentProps<typeof EvaluationsView>> &
+      Pick<React.ComponentProps<typeof EvaluationsView>, "evaluations">
+  ): string => {
+    const markup = renderEvaluations(props);
+    const found = />([^<]*retained[^<]*)</.exec(markup);
+    assert.ok(found !== null, "the filter bar states a result count");
+    return (found[1] ?? "").trim();
+  };
+  const oneRow = {
+    id: "run-1",
+    agentRole: "implementer",
+    promptName: "dry",
+    model: "gpt-5.6-terra",
+    metrics: [],
+    passed: null,
+    timestamp: "2026-10-05T12:00:00.000Z"
+  };
+  const twoRows = [oneRow, { ...oneRow, id: "run-2" }];
+
+  assert.equal(
+    sentence({ evaluations: [oneRow], totalCount: 1 }),
+    "1 retained result",
+    "one result in the store reads as one"
+  );
+  assert.equal(
+    sentence({ evaluations: twoRows, totalCount: 2 }),
+    "2 retained results",
+    "two still read as two"
+  );
+  assert.equal(
+    sentence({
+      evaluations: [oneRow],
+      totalCount: 1,
+      filters: evaluationsFilters({ role: "implementer" })
+    }),
+    "1 of 1 retained result",
+    "and so does a narrowed one-result view"
+  );
+  assert.equal(
+    sentence({ evaluations: [oneRow], totalCount: 1, truncated: true }),
+    "Most recent 1 of 1 retained result",
+    "the capped branch agrees when the store it names holds one"
+  );
+  assert.equal(
+    sentence({ evaluations: [oneRow], totalCount: 5000, truncated: true }),
+    "Most recent 1 of 5000 retained results",
+    "and still says results when the store holds many"
+  );
+});
+
 test("closing a run leaves the trace open, and leaving the trace closes neither", () => {
   // The two selections are alternatives, so a link that opens one closes the
   // other. That rule does not settle this pair: closing a run and closing a
