@@ -81,6 +81,17 @@ import {
 } from "../src/memory/service.ts";
 import { RuleSyncMemorySkillPromoter } from "../src/memory/skill-promotion.ts";
 
+/**
+ * The reconstructor contract the service declares, which is narrower than
+ * `MemoryReviewDisposition`: "not_evaluated" is not a reconstruction result
+ * the service accepts back.
+ */
+type ReconstructionOutcome = {
+  readonly disposition: "retain" | "revise" | "reject" | "uncertain";
+  readonly guidance?: string;
+  readonly rationale: string;
+};
+
 const context: MemoryReadContext = {
   workspaceId: "workspace-a",
   repositoryId: "repo-a",
@@ -689,6 +700,12 @@ function makeService(
     readonly meter?: Meter;
     readonly maxResearchCandidates?: number;
     readonly skillPromotionWriter?: MemorySkillPromotionWriter;
+    /**
+     * The reconstructor contract the service declares, which is narrower than
+     * `MemoryReviewDisposition`: "not_evaluated" is not a reconstruction
+     * result the service will accept back.
+     */
+    readonly reconstruct?: (memory: MemoryRecord) => ReconstructionOutcome;
   } = {}
 ): MemoryService {
   let id = 0;
@@ -699,11 +716,12 @@ function makeService(
         options.assessment?.(memory) ?? compatibleAssessment()
     },
     reconstructor: {
-      reconstruct: async ({ memory }) => ({
-        disposition: "retain",
-        guidance: `For this task, follow ${memory.claim}`,
-        rationale: "Current state confirms the cited procedure."
-      })
+      reconstruct: async ({ memory }) =>
+        options.reconstruct?.(memory) ?? {
+          disposition: "retain",
+          guidance: `For this task, follow ${memory.claim}`,
+          rationale: "Current state confirms the cited procedure."
+        }
     },
     now: () => "2026-09-30T10:00:00.000Z",
     createId: options.makeId ?? (() => `generated-${++id}`),
@@ -5445,7 +5463,7 @@ function sessionReportKey(
   repositoryId: string,
   taskId: string
 ): string {
-  return `${workspaceId} ${repositoryId} ${taskId}`;
+  return `${workspaceId}\u0000${repositoryId}\u0000${taskId}`;
 }
 
 test("reading a session outcome report is scoped to the caller's repository", async () => {
@@ -5561,4 +5579,132 @@ test("one session accepts one report: a retry is a no-op, a different body is a 
   );
   // The first report is still the one on record.
   assert.equal(repository.sessionOutcomeReports.get(key)?.outcomeKind, "success");
+});
+
+/**
+ * Why a candidate was dropped. `research` is the only producer of injected
+ * packets, so this taxonomy is the answer to "why is memory not reaching the
+ * model" -- and the reason is a metric dimension operators actually read.
+ */
+const DISPOSITIONS: Readonly<
+  Record<string, ReconstructionOutcome["disposition"]>
+> = {
+  kept: "retain",
+  "dropped-low-relevance": "reject",
+  "dropped-uncertain": "uncertain",
+  "dropped-retain-no-guidance": "retain",
+  "dropped-revise-no-guidance": "revise"
+};
+const NO_GUIDANCE_IDS: ReadonlySet<string> = new Set([
+  "dropped-retain-no-guidance",
+  "dropped-revise-no-guidance"
+]);
+
+function rejectionHarness(): {
+  readonly service: MemoryService;
+  readonly provider: MeterProvider;
+  readonly exporter: InMemoryMetricExporter;
+} {
+  const repository = new FakeMemoryRepository();
+  const exporter = new InMemoryMetricExporter(
+    AggregationTemporality.CUMULATIVE
+  );
+  const provider = new MeterProvider({
+    readers: [
+      new PeriodicExportingMetricReader({
+        exporter,
+        exportIntervalMillis: 60_000
+      })
+    ]
+  });
+
+  // One memory per rejection shape, so both the disposition and the current
+  // state answer are decided per record.
+  const service = makeService(repository, {
+    meter: provider.getMeter("autodev.memory.research-test"),
+    reconstruct: (memory) => ({
+      memoryId: memory.id,
+      disposition: DISPOSITIONS[memory.id] ?? "retain",
+      // An approved disposition that produced nothing usable is the case worth
+      // naming: the reviewer liked the memory, and there is still no entry.
+      ...(NO_GUIDANCE_IDS.has(memory.id)
+        ? { guidance: "   " }
+        : { guidance: `For this task, follow ${memory.claim}` }),
+      rationale: "Current state confirms the cited procedure.",
+      evidence: []
+    }),
+    assessment: (memory) => ({
+      ...compatibleAssessment(),
+      ...(memory.id === "dropped-contradicted"
+        ? { compatibility: "contradicted" as const }
+        : memory.id === "dropped-unknown"
+          ? { compatibility: "unknown" as const }
+          : memory.id === "dropped-no-evidence"
+            ? { evidence: [] }
+            : {})
+    })
+  });
+
+  for (const id of [
+    "kept",
+    "dropped-contradicted",
+    "dropped-unknown",
+    "dropped-no-evidence",
+    "dropped-low-relevance",
+    "dropped-uncertain",
+    "dropped-retain-no-guidance",
+    "dropped-revise-no-guidance"
+  ]) {
+    repository.hits = [
+      ...repository.hits,
+      { memory: record(id), score: 1, matchedSignals: ["lexical"] }
+    ];
+  }
+  return { service, provider, exporter };
+}
+
+function rejectionReasonCounts(
+  exporter: InMemoryMetricExporter
+): Map<string, number> {
+  const metric = exporter
+    .getMetrics()
+    .flatMap((resource) => resource.scopeMetrics)
+    .flatMap((scope) => scope.metrics)
+    .find((item) => item.descriptor.name === "autodev.memory.candidates");
+  assert.ok(metric, "candidate metric should be exported");
+  const counts = new Map<string, number>();
+  for (const point of metric.dataPoints) {
+    if (point.attributes["autodev.memory.candidate.stage"] !== "rejected")
+      continue;
+    const reason = String(point.attributes["autodev.memory.reason"]);
+    counts.set(reason, (counts.get(reason) ?? 0) + Number(point.value));
+  }
+  return counts;
+}
+
+test("every way research drops a candidate reports a distinct reason", async () => {
+  const { service, provider, exporter } = rejectionHarness();
+
+  const packet = await service.research(researchRequest());
+  await provider.forceFlush();
+
+  // Only the memory that passed both stages reaches the packet.
+  assert.deepEqual(
+    packet.entries.map((entry) => entry.memoryId),
+    ["kept"]
+  );
+
+  const counts = rejectionReasonCounts(exporter);
+  assert.equal(counts.get("contradicted"), 1);
+  // An unknown compatibility, a compatible one with no citation, and an
+  // explicitly uncertain disposition all mean the same thing: unconfirmed.
+  assert.equal(counts.get("uncertain"), 3);
+  assert.equal(counts.get("low_relevance"), 1);
+  // An approved "retain" or "revise" that yielded no usable guidance is
+  // "nothing to inject", not a judgement about the memory's relevance.
+  assert.equal(counts.get("rejected"), 2);
+  assert.equal(
+    [...counts.values()].reduce((total, value) => total + value, 0),
+    7
+  );
 });
