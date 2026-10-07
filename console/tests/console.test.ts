@@ -6272,6 +6272,92 @@ test("a comparison names the rows it is comparing, not the whole store", () => {
   );
 });
 
+test("a comparison names the rows it is comparing, not the whole store", () => {
+  // The blurb above the role table read "Every retained run grouped by the
+  // agent role it evaluated" whatever the filters selected, so
+  // `?prompt=release-notes` described its 35 rows as every run the retained
+  // history holds. One page cannot describe its own contents two ways, and the
+  // rule for naming them already exists here: "in this view", and "retained"
+  // only when nothing has narrowed it.
+  const rows = [
+    {
+      id: "a",
+      agentRole: "architect",
+      promptName: "release-notes",
+      model: "opus",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-05T09:00:00Z"
+    },
+    {
+      id: "b",
+      agentRole: "architect",
+      promptName: "smoke-check",
+      model: "opus",
+      metrics: [],
+      passed: false,
+      timestamp: "2026-10-05T10:00:00Z"
+    }
+  ];
+  const filters = (over: Partial<EvaluationsFilters>): EvaluationsFilters => ({
+    outcome: "all",
+    role: "",
+    model: "",
+    prompt: "",
+    from: "",
+    until: "",
+    ...over
+  });
+  const narrowed = filterEvaluations(
+    rows,
+    filters({ prompt: "release-notes" })
+  );
+
+  const filtered = renderEvaluations({
+    evaluations: narrowed.results,
+    availableCount: 2,
+    totalCount: 5000,
+    truncated: true,
+    tab: "comparisons",
+    filters: filters({ prompt: "release-notes" })
+  });
+  assert.match(filtered, /Every run in this view grouped by the agent role/);
+  assert.doesNotMatch(
+    filtered,
+    /Every retained run/,
+    "a narrowed view is not every run the retained history holds"
+  );
+
+  const whole = renderEvaluations({
+    evaluations: rows,
+    availableCount: 2,
+    totalCount: 5000,
+    truncated: true,
+    tab: "comparisons",
+    filters: filters({})
+  });
+  assert.match(whole, /Every retained run grouped by the agent role/);
+
+  // "This window" was the leftover from before the page settled on "this view",
+  // and on a page that also uses "window" for the capped read it read as the
+  // read rather than the filters that actually emptied the table.
+  assert.match(
+    renderEvaluations({
+      evaluations: [],
+      tab: "comparisons",
+      filters: filters({ role: "nobody" })
+    }),
+    /No evaluation targets were observed in this view/
+  );
+  assert.doesNotMatch(
+    renderEvaluations({
+      evaluations: [],
+      tab: "comparisons",
+      filters: filters({ role: "nobody" })
+    }),
+    /in this window/
+  );
+});
 test("comparisons report a pass rate over supplied verdicts only", () => {
   // A target whose runs all report no verdict must not score 0%, and one whose
   // runs all failed must. Both are readings of the same runs, so they can only

@@ -938,7 +938,7 @@ function renderComparison(
         data: rows,
         columns: comparisonColumns(label),
         keyExtractor: ([name]) => name,
-        emptyMessage: `No evaluation targets were observed in this window, so there is nothing to compare by ${label.toLowerCase()}.`
+        emptyMessage: `No evaluation targets were observed in this view, so there is nothing to compare by ${label.toLowerCase()}.`
       }
     )
   );
@@ -1125,7 +1125,7 @@ function renderViewCaveats({
   const lines: string[] = [];
   if (unplaceable > 0) {
     lines.push(
-      `${unplaceable} ${unplaceable === 1 ? "run reports" : "runs report"} no readable run time and cannot be placed in this window`
+      `${unplaceable} ${unplaceable === 1 ? "run reports" : "runs report"} no readable run time and cannot be placed in this time window`
     );
   }
   if (promptless > 0) {
@@ -1296,6 +1296,12 @@ export function EvaluationsView({
     truncated
   };
   const retained = retainedResults(resultCounts);
+  // Which rows the two comparison tables are talking about, named the same way
+  // the pager and the cards name them, so one page cannot describe its own
+  // contents two different ways.
+  const comparedRuns = narrowed
+    ? "Every run in this view"
+    : "Every retained run";
   const nav: EvaluationsNav = { filters, tab, page };
   const selectedEvaluation =
     selection === null
@@ -1550,7 +1556,13 @@ export function EvaluationsView({
           { className: "flex flex-col gap-6" },
           renderComparison(
             "Outcomes by target role",
-            "Every retained run grouped by the agent role it evaluated. Pass rate is computed over the runs that supplied an explicit verdict.",
+            // "Every retained run" was a claim about the whole store, printed
+            // beside a table of whatever the filters selected -- so
+            // `?prompt=release-notes` described 35 rows as every run the
+            // retained history holds. The set is named by the same rule the
+            // pager, the summary and the retained card already use: the view,
+            // and "retained" only when nothing has narrowed it.
+            `${comparedRuns} grouped by the agent role it evaluated. Pass rate is computed over the runs that supplied an explicit verdict.`,
             "Target role",
             evaluations,
             (evaluation) => evaluation.agentRole
