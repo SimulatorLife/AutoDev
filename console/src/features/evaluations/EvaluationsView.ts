@@ -53,6 +53,7 @@ import {
   evaluationResultHref,
   EVALUATIONS_PAGE_SIZE,
   EVALUATIONS_TABS,
+  type EvaluationsFilterOptions,
   type EvaluationsFilters,
   evaluationsListHref,
   evaluationsPageCount,
@@ -84,13 +85,6 @@ export type EvaluationTraceLookup =
   | { readonly kind: "http-error"; readonly status: number }
   | { readonly kind: "unavailable" }
   | { readonly kind: "observed"; readonly detail: UsageTraceDetail };
-
-/** The distinct values each filter axis can narrow on. */
-export interface EvaluationsFilterOptions {
-  readonly roles: readonly string[];
-  readonly models: readonly string[];
-  readonly prompts: readonly string[];
-}
 
 export interface EvaluationsViewProps {
   /** Already narrowed by `filters`; the page owns the read, the view owns the shape. */

@@ -80,9 +80,11 @@ import {
   type EvaluationsFilters,
   evaluationsHref,
   filterEvaluations,
+  filterOptionsFor,
   hasActiveFilters,
   parseEvaluationsFilters,
-  resolveEvaluationsPage} from "../src/features/evaluations/evaluations-url.ts";
+  resolveEvaluationsPage
+} from "../src/features/evaluations/evaluations-url.ts";
 import {
   AgentDetailView,
   AgentsView,
@@ -5346,6 +5348,125 @@ test("a window the operator cannot have meant narrows nothing", () => {
     true,
     "a window alone is a narrowed view, so the clear affordance offers itself"
   );
+});
+
+test("the filter bar only offers combinations that exist", () => {
+  // The options were computed once over the whole fetched window with the
+  // filters ignored, and the measured consequence was that they never moved:
+  // narrowing to one role still offered every model, so a quarter of the offered
+  // combinations produced no rows. On a window that excluded everything the bar
+  // offered fifteen values that each led to the same empty page -- and then the
+  // page reported "No results in this view" for a combination it had just
+  // invited the operator to pick.
+  const rows = [
+    {
+      id: "a",
+      agentRole: "architect",
+      promptName: "migration-plan",
+      model: "opus",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-05T09:00:00Z"
+    },
+    {
+      id: "b",
+      agentRole: "architect",
+      promptName: "migration-plan",
+      model: "opus",
+      metrics: [],
+      passed: false,
+      timestamp: "2026-10-05T10:00:00Z"
+    },
+    {
+      id: "c",
+      agentRole: "browser-tester",
+      promptName: "smoke-check",
+      model: "sonnet",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-05T11:00:00Z"
+    },
+    {
+      id: "d",
+      agentRole: "planner",
+      model: "opus",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-04T11:00:00Z"
+    }
+  ];
+  const filters = (over: Partial<EvaluationsFilters>): EvaluationsFilters => ({
+    outcome: "all",
+    role: "",
+    model: "",
+    prompt: "",
+    from: "",
+    until: "",
+    ...over
+  });
+
+  // Every offered value must lead somewhere: re-filter with each option and
+  // require rows.
+  for (const scope of [
+    filters({}),
+    filters({ role: "architect" }),
+    filters({ role: "architect", prompt: "migration-plan" }),
+    filters({ model: "sonnet" })
+  ]) {
+    const options = filterOptionsFor(rows, scope);
+    const combinations: readonly (readonly [string, string])[] = [
+      ...options.roles.map((role) => ["role", role] as const),
+      ...options.models.map((model) => ["model", model] as const),
+      ...options.prompts.map((prompt) => ["prompt", prompt] as const)
+    ];
+    for (const [axis, value] of combinations) {
+      const narrowed = filterEvaluations(
+        rows,
+        filters({ ...scope, [axis]: value })
+      );
+      assert.ok(
+        narrowed.results.length > 0,
+        `${axis}=${value} under ${JSON.stringify(scope)} offers no rows`
+      );
+    }
+  }
+
+  // Narrowing one axis must narrow the others' offers: an architect never ran on
+  // sonnet, so offering it would be offering an empty result.
+  assert.deepEqual(
+    filterOptionsFor(rows, filters({ role: "architect" })).models,
+    ["opus"]
+  );
+  assert.deepEqual(filterOptionsFor(rows, filters({ model: "sonnet" })).roles, [
+    "browser-tester"
+  ]);
+
+  // The window is an axis like any other.
+  assert.deepEqual(
+    filterOptionsFor(rows, filters({ from: "2026-10-05" })).roles,
+    ["architect", "browser-tester"],
+    "a window that excludes a day excludes that day's roles from the offers"
+  );
+
+  // An empty view offers nothing, because there is nothing to narrow on.
+  const empty = filterOptionsFor(rows, filters({ from: "2030-01-01" }));
+  assert.deepEqual(empty.roles, []);
+  assert.deepEqual(empty.models, []);
+  assert.deepEqual(empty.prompts, []);
+
+  // The axis's own selection survives, so changing another axis cannot silently
+  // change the one already chosen.
+  const stranded = filterOptionsFor(
+    rows,
+    filters({ role: "architect", prompt: "does-not-exist" })
+  );
+  assert.ok(
+    stranded.roles.includes("architect"),
+    "the selected role stays offered even when nothing matches it"
+  );
+
+  // A prompt-less row matches any prompt filter but contributes no prompt option.
+  assert.equal(filterOptionsFor(rows, filters({})).prompts.includes(""), false);
 });
 
 test("the retained-results card counts the store, not the window and not the filter", () => {

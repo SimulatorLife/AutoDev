@@ -554,18 +554,6 @@ function runTimeVerdict(
 }
 
 /**
- * The distinct values a filter axis can narrow on, for the filter options.
- *
- * Taken from the results actually on the page. An option the operator can pick
- * but that no row matches is a control that reports an empty history it
- * manufactured, so the axis offers exactly the values that occur.
- *
- * A prompt-less row matches any prompt filter. `promptName` is optional on the
- * wire, and a row that reports no prompt is not evidence that it ran under some
- * other prompt, so dropping it from a filtered view would report a smaller
- * history than the source holds.
- */
-export /**
  * One collator for every ordering here.
  *
  * `localeCompare` constructs an `Intl.Collator` on each call, and these sorts run
@@ -574,28 +562,89 @@ export /**
  */
 const OPTION_COLLATOR = new Intl.Collator("en");
 
-export function filterOptionsFor(
-  evaluations: readonly EvaluationResult[]
-): Readonly<{
-  roles: readonly string[];
-  models: readonly string[];
-  prompts: readonly string[];
-}> {
-  const roles = new Set<string>();
-  const models = new Set<string>();
-  const prompts = new Set<string>();
-  for (const evaluation of evaluations) {
-    roles.add(evaluation.agentRole);
-    models.add(evaluation.model);
-    if (evaluation.promptName !== undefined && evaluation.promptName !== "") {
-      prompts.add(evaluation.promptName);
-    }
-  }
-  const sorted = (values: Set<string>): readonly string[] =>
-    [...values].sort((left, right) => OPTION_COLLATOR.compare(left, right));
+/** The axes whose options are computed, each from the others' narrowing. */
+type OptionAxis = "role" | "model" | "prompt";
+
+/** The distinct values each filter axis can narrow on. */
+export interface EvaluationsFilterOptions {
+  readonly roles: readonly string[];
+  readonly models: readonly string[];
+  readonly prompts: readonly string[];
+}
+
+/** The filter state with one axis released, so its own options can be read. */
+function withoutAxis(
+  filters: EvaluationsFilters,
+  skip: OptionAxis
+): EvaluationsFilters {
   return {
-    roles: sorted(roles),
-    models: sorted(models),
-    prompts: sorted(prompts)
+    ...filters,
+    ...(skip === "role" ? { role: "" } : {}),
+    ...(skip === "model" ? { model: "" } : {}),
+    ...(skip === "prompt" ? { prompt: "" } : {})
+  };
+}
+
+/**
+ * The distinct values each filter axis can narrow on, given the rest of the
+ * narrowing.
+ *
+ * Computed per axis over the rows that match *every other* axis, which is what
+ * makes every offered option lead somewhere. This used to be computed once over
+ * the whole fetched window with the filters ignored entirely, and the measured
+ * consequence was that the lists never moved: narrowing to one role still
+ * offered every model, so a quarter of the offered combinations produced no rows
+ * at all. A control that can manufacture an empty history is a control lying
+ * about what exists -- the page then reports "No results in this view" for a
+ * combination it had just invited the operator to pick. On a view with no rows
+ * at all it offered every value it had ever seen.
+ *
+ * The time window is applied here like any other axis, and it is the axis that
+ * made this visible: a window that excluded everything left the bar offering
+ * fifteen values that each led to the same empty page.
+ *
+ * The axis's own current selection is always kept in its list. Dropping it would
+ * leave the `<select>` showing a value the page did not offer, and changing
+ * another axis would then silently change the one already chosen.
+ *
+ * A prompt-less row matches any prompt filter -- `promptName` is optional on the
+ * wire, and a row that reports no prompt is not evidence that it ran under some
+ * other prompt. It contributes no prompt *option*, though, because there is no
+ * value to offer for a row that reported none.
+ */
+export function filterOptionsFor(
+  evaluations: readonly EvaluationResult[],
+  filters: EvaluationsFilters = EMPTY_EVALUATIONS_FILTERS
+): EvaluationsFilterOptions {
+  const from = resolveUtcDayBound(filters.from);
+  const until = resolveUtcDayEnd(filters.until);
+
+  const offered = (
+    axis: OptionAxis,
+    selected: string,
+    value: (evaluation: EvaluationResult) => string | undefined
+  ): readonly string[] => {
+    const scope = withoutAxis(filters, axis);
+    const values = new Set<string>();
+    for (const evaluation of evaluations) {
+      if (!matchesTarget(evaluation, scope)) continue;
+      if (runTimeVerdict(evaluation, from, until) !== "inside") continue;
+      const candidate = value(evaluation);
+      if (candidate !== undefined && candidate !== "") values.add(candidate);
+    }
+    if (selected !== "") values.add(selected);
+    return [...values].sort((left, right) =>
+      OPTION_COLLATOR.compare(left, right)
+    );
+  };
+
+  return {
+    roles: offered("role", filters.role, (evaluation) => evaluation.agentRole),
+    models: offered("model", filters.model, (evaluation) => evaluation.model),
+    prompts: offered(
+      "prompt",
+      filters.prompt,
+      (evaluation) => evaluation.promptName
+    )
   };
 }

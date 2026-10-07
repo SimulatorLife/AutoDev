@@ -140,7 +140,7 @@ export default async function EvaluationsPage({
       totalCount: result.data.totalEvaluations,
       truncated: result.data.truncated,
       filters,
-      filterOptions: filterOptionsFor(available),
+      filterOptions: filterOptionsFor(available, filters),
       tab,
       page,
       ...(placed.unplaceable === 0 ? {} : { unplaceable: placed.unplaceable }),
