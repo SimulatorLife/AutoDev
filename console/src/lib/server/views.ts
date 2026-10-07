@@ -187,6 +187,7 @@ export function permissionsFromControlApi(
         readOnly: entry.readOnly,
         sandboxMode,
         allowedMcpServers: entry.mcp,
+        allowedMcpTools: entry.mcpTools,
         allowedSkills: entry.skills
       };
     })

@@ -5543,6 +5543,7 @@ test("View adapters translate Control API responses without inventing data", () 
         networkAccess: true,
         approvals: "never",
         mcp: ["cocoindex-code", "lsp"],
+        mcpTools: { lsp: ["lsp_find_symbol", "lsp_goto_definition"] },
         skills: ["autodev-session-diagnostics", "ccc"]
       }
     }
@@ -5576,6 +5577,7 @@ test("the capability matrix lists the fixed roles in the one order the app uses"
     networkAccess: true,
     approvals: "user",
     mcp: [],
+    mcpTools: {},
     skills: []
   });
   const ordered = permissionsFromControlApi({
@@ -13034,6 +13036,156 @@ test("patchSkillRoles PATCHes the skill resource and validates the assignment it
     assert.equal(
       lying.code,
       "autodev_control_api_invalid_skill_assignment_response"
+    );
+  }
+});
+
+test("the permissions page answers which tools a role may call, not only which servers it reaches", () => {
+  const { policy, roleMatrices } = permissionsFromControlApi({
+    schema: "autodev-control-permissions-v1",
+    source: "test",
+    readOnly: true,
+    policy: {
+      approvalPolicy: "never",
+      sandboxMode: "workspace-write",
+      approvalsReviewer: "user",
+      networkAccess: true,
+      webSearch: true,
+      defaultToolsApprovalMode: "approve"
+    },
+    rolePermissions: {
+      worker: {
+        readOnly: false,
+        sandbox: "workspace-write",
+        networkAccess: true,
+        approvals: "never",
+        mcp: ["lsp"],
+        mcpTools: { lsp: ["lsp_find_symbol", "lsp_goto_definition"] },
+        skills: []
+      },
+      validator: {
+        readOnly: true,
+        sandbox: "read-only",
+        networkAccess: true,
+        approvals: "never",
+        // Reaches an MCP server with no tool grants. That is a real state, and
+        // it must not read the same as a role whose grants were never reported.
+        mcp: ["lsp"],
+        mcpTools: { lsp: [] },
+        skills: []
+      },
+      orchestrator: {
+        readOnly: false,
+        sandbox: "workspace-write",
+        networkAccess: true,
+        approvals: "never",
+        mcp: [],
+        mcpTools: {},
+        skills: []
+      }
+    }
+  });
+
+  const markup = renderToStaticMarkup(
+    React.createElement(PermissionsView, { policy, roleMatrices })
+  );
+
+  // The server list alone used to be the whole answer, and a role named
+  // against `lsp` read as a role that may call all of it.
+  assert.match(markup, /Role Tool Exposure/u);
+  assert.match(markup, /data-tool-role="worker"/u);
+  assert.match(markup, /lsp_find_symbol/u);
+  assert.match(markup, /lsp_goto_definition/u);
+  // A server named with an empty grant is shown as such, not omitted.
+  assert.match(markup, /No tools on this server/u);
+  // A role with no grants at all is absent from the section rather than listed
+  // with nothing, and the section says so when no role has one.
+  assert.doesNotMatch(markup, /data-tool-role="orchestrator"/u);
+});
+
+test("a permissions page where no role has a tool grant says so instead of rendering an empty list", () => {
+  const { policy, roleMatrices } = permissionsFromControlApi({
+    schema: "autodev-control-permissions-v1",
+    source: "test",
+    readOnly: true,
+    policy: {
+      approvalPolicy: "never",
+      sandboxMode: "workspace-write",
+      approvalsReviewer: "user",
+      networkAccess: true,
+      webSearch: true,
+      defaultToolsApprovalMode: "approve"
+    },
+    rolePermissions: {
+      default: {
+        readOnly: false,
+        sandbox: "workspace-write",
+        networkAccess: true,
+        approvals: "never",
+        mcp: ["lsp"],
+        mcpTools: {},
+        skills: []
+      }
+    }
+  });
+
+  const markup = renderToStaticMarkup(
+    React.createElement(PermissionsView, { policy, roleMatrices })
+  );
+  assert.match(markup, /No role has an MCP tool grant recorded/u);
+  // Reaching a server is still reported: this role does reach `lsp`, and the
+  // page must not hide that in order to be consistent about the tools.
+  assert.match(markup, /lsp/u);
+});
+
+test("a permissions payload whose tool grants are unreadable fails closed", async () => {
+  const config = {
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "server-only"
+  };
+  const payload = {
+    schema: "autodev-control-permissions-v1",
+    source: "test",
+    readOnly: true,
+    policy: {
+      approvalPolicy: "never",
+      sandboxMode: "workspace-write",
+      approvalsReviewer: "user",
+      networkAccess: true,
+      webSearch: true,
+      defaultToolsApprovalMode: "approve"
+    },
+    rolePermissions: {
+      default: {
+        readOnly: false,
+        sandbox: "workspace-write",
+        networkAccess: true,
+        approvals: "never",
+        mcp: ["lsp"],
+        mcpTools: {},
+        skills: []
+      }
+    }
+  };
+  const rolePermissions = payload.rolePermissions.default;
+
+  const ok = await fetchPermissions(config, {
+    fetchImpl: async () => Response.json(payload)
+  });
+  assert.equal(ok.kind, "ok");
+
+  for (const mcpTools of [undefined, null, "lsp", { lsp: "find" }, { lsp: [7] }]) {
+    const malformed = await fetchPermissions(config, {
+      fetchImpl: async () =>
+        Response.json({
+          ...payload,
+          rolePermissions: { default: { ...rolePermissions, mcpTools } }
+        })
+    });
+    assert.equal(
+      malformed.kind,
+      "invalid-response",
+      `mcpTools ${JSON.stringify(mcpTools)} must not be accepted`
     );
   }
 });

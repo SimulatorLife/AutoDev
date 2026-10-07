@@ -43,4 +43,18 @@ export interface RoleCapabilityMatrix {
   readonly sandboxMode: SandboxMode;
   readonly allowedMcpServers: readonly string[];
   readonly allowedSkills: readonly string[];
+  /**
+   * Which tools of which MCP server this role may call.
+   *
+   * Server exposure alone does not answer the question an operator actually
+   * asks. The execution contract names the servers a role may reach *and*, per
+   * server, the tools it may call within them, and the projection used to drop
+   * the second half -- so the page could say a role reaches `lsp` and not which
+   * of its tools. Reaching a server is not the same as being permitted to call
+   * everything on it, and the page implied the latter by omission.
+   *
+   * A role with no entry here reaches no MCP tools. That is the same
+   * distinction the servers column makes: absent is not "everything".
+   */
+  readonly allowedMcpTools: Readonly<Record<string, readonly string[]>>;
 }

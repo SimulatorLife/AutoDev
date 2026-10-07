@@ -15,7 +15,11 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
-import { MONO_ID_CLASS } from "../../components/ui/text-classes.ts";
+import {
+  MONO_ID_CLASS,
+  MONO_META_CLASS,
+  MUTED_TEXT_CLASS
+} from "../../components/ui/text-classes.ts";
 
 export interface PermissionsViewProps {
   readonly policy: PermissionPolicy;
@@ -137,6 +141,91 @@ export function PermissionsView({
         // rather than a generic "nothing to show".
         emptyMessage: "No role capability matrices were observed."
       })
-    )
+    ),
+    // Below the matrix rather than as a fifth column: a role's tool grants run
+    // to a dozen names per server, and the Console measures every table header
+    // against a browser-measured minimum that cannot be produced here. The
+    // question this section answers -- may this role call *this* tool -- needs
+    // the vertical room anyway.
+    React.createElement(RoleToolExposure, { roleMatrices })
+  );
+}
+
+/**
+ * Which tools each role may call on each server it can reach.
+ *
+ * The matrix above names the servers; this names the tools inside them.
+ * Omitting the second half did not read as "not reported" -- it read as
+ * unrestricted, because a role listed against `lsp` looked like a role that may
+ * call all of it.
+ *
+ * A role with no grants gets an explicit line rather than a missing entry,
+ * because "reaches no MCP tools" and "its grants were not reported" must not
+ * look alike.
+ */
+function RoleToolExposure({
+  roleMatrices
+}: {
+  readonly roleMatrices: readonly RoleCapabilityMatrix[];
+}): React.JSX.Element {
+  const granted = roleMatrices.filter(
+    (role) => Object.keys(role.allowedMcpTools).length > 0
+  );
+  return React.createElement(
+    "section",
+    { className: "mt-6 flex flex-col gap-3", "data-testid": "role-tool-exposure" },
+    React.createElement("h2", { className: SECTION_HEADING_CLASS }, "Role Tool Exposure"),
+    granted.length === 0
+      ? React.createElement(
+          "p",
+          { className: MUTED_TEXT_CLASS },
+          "No role has an MCP tool grant recorded in the execution contract."
+        )
+      : React.createElement(
+          "ul",
+          { className: "flex flex-col gap-3" },
+          granted.map((role) =>
+            React.createElement(
+              "li",
+              {
+                key: role.role,
+                className: "flex flex-col gap-2",
+                "data-tool-role": role.role
+              },
+              React.createElement(
+                "span",
+                { className: MONO_ID_CLASS },
+                role.role
+              ),
+              React.createElement(
+                "div",
+                { className: "flex flex-col gap-1.5" },
+                Object.entries(role.allowedMcpTools).map(([server, names]) =>
+                  React.createElement(
+                    "div",
+                    {
+                      key: server,
+                      className: "flex flex-wrap items-baseline gap-x-3 gap-y-1",
+                      "data-tool-server": server
+                    },
+                    React.createElement(
+                      "span",
+                      { className: MONO_META_CLASS },
+                      server
+                    ),
+                    chipList({
+                      items: names,
+                      // Empty is a real grant state: the contract named this
+                      // server for the role with no tools on it.
+                      emptyLabel: "No tools on this server",
+                      testId: "role-mcp-tools",
+                      className: "font-mono text-accent"
+                    })
+                  )
+                )
+              )
+            )
+          )
+        )
   );
 }

@@ -1835,7 +1835,26 @@ function isControlApiPermissionsResponse(
       // missing evidence, not "no MCP servers", so it fails closed instead of
       // letting the Console print a fabricated `None`.
       isStringList(entry.mcp) &&
-      isStringList(entry.skills)
+      isStringList(entry.skills) &&
+      // Same reasoning for the tool grants, one level down: a role's reach into
+      // an MCP server is not permission to call everything on it, so the page
+      // needs the per-server lists and cannot infer them from the server names.
+      isMcpToolGrants(entry.mcpTools)
+  );
+}
+
+/**
+ * Per-server tool allowlists: an object whose values are all string lists.
+ *
+ * An empty object is valid and means the role reaches no MCP tools. It is not
+ * the same as a missing field, which fails closed, because a role with no tool
+ * grants and a role whose grants the Runtime could not report are different
+ * states and only one of them is a permission claim.
+ */
+function isMcpToolGrants(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    Object.values(value).every((names) => isStringList(names))
   );
 }
 

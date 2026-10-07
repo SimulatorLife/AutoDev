@@ -401,6 +401,15 @@ export interface ControlApiPermissionsResponse {
          * value the Console has to guess.
          */
         readonly mcp: readonly string[];
+        /**
+         * Which tools of which MCP server this role may call.
+         *
+         * Kept alongside the server list rather than folded into it: the
+         * execution contract grants both separately, and a projection that
+         * carried only the servers would say a role reaches `lsp` without
+         * saying which of its tools, which reads as unrestricted.
+         */
+        readonly mcpTools: Readonly<Record<string, readonly string[]>>;
         /** Skills this role is eligible for, from the execution contract. */
         readonly skills: readonly string[];
       }

@@ -1464,6 +1464,37 @@ function hooksView(
   };
 }
 
+/**
+ * The per-server tool grants of one role, narrowed to what can be projected.
+ *
+ * A server whose value is not an array of strings is dropped rather than
+ * reported as an empty list. An empty list would say "this role may call no
+ * tools on this server", which is a permission claim; dropping it says the
+ * grant could not be read, which is what actually happened. Same distinction the
+ * servers column makes, where an absent entry is not "all servers".
+ */
+function contractMcpTools(
+  value: unknown
+): Record<string, readonly string[]> {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    return {};
+  }
+  const tools: Record<string, readonly string[]> = {};
+  for (const [server, names] of Object.entries(value)) {
+    if (
+      Array.isArray(names) &&
+      names.every((name): name is string => typeof name === "string")
+    ) {
+      tools[server] = names;
+    }
+  }
+  return tools;
+}
+
 function permissionsView(
   _repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> {
@@ -1480,6 +1511,10 @@ function permissionsView(
       // Same execution-contract join `/control/agents` uses, so the effective
       // capability matrix never contradicts the Agents surface.
       mcp: Array.isArray(entry.mcp) ? entry.mcp : [],
+      // The per-server tool grants are projected too. Server exposure without
+      // them answers "may this role reach lsp?" and not "may it call
+      // lsp_goto_definition", which is the question the matrix exists to answer.
+      mcpTools: contractMcpTools(entry.mcpTools),
       skills: Array.isArray(entry.skills) ? entry.skills : []
     };
   }
