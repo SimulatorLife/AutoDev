@@ -17,6 +17,7 @@ import {
   type ControlApiProviderHealth,
   type ControlApiProviderRoleAssignment,
   type ControlApiProvidersResponse,
+  type ControlApiRuntimeResponse,
   type ControlApiSkillsResponse,
   type ControlApiWorkspacesResponse,
   type GithubActionsRuntimeStatus,
@@ -947,7 +948,7 @@ function runtimeView(now: number): Record<string, unknown> {
     lifecycle: runtime.getLifecycleStatus(),
     concurrency: getDefaultConcurrencyManager().concurrencyStatus(now),
     inFlightRequestCount: runtime.activeRequestCount
-  };
+  } satisfies ControlApiRuntimeResponse;
 }
 
 const DEFAULT_REPO_ROOT = resolveRuntimeSourceRoot(
@@ -1922,6 +1923,14 @@ function routingView(now: number): Record<string, unknown> {
     cooldowns: activeCooldowns,
     concurrency: getDefaultConcurrencyManager().concurrencyStatus(now)
   };
+  // Deliberately unannotated. `ControlApiRoutingResponse.runtime` declares
+  // `RoutingPolicyState`, whose per-provider role assignments require all four
+  // roles, while the Runtime publishes `RoutingRuntimeState`, whose are partial
+  // -- it drops a provider with no assignments at all and merges the rest one
+  // role at a time. Annotating this forces a decision about which of those two
+  // the wire means, and that is a question about Core's routing contract rather
+  // than about this view. No Console surface reads `roleAssignments` today, so
+  // nothing depends on the answer yet.
 }
 
 async function persistRoutingPolicy(): Promise<void> {

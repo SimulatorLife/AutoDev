@@ -10,6 +10,7 @@ import {
   assertMemoryInjectionUseCohortFilter,
   assertMemorySessionOutcomeCohortFilter,
   type ControlApiMemoryCohortsResponse,
+  type ControlApiMemoryExperienceDetailResponse,
   type ControlApiMemoryExperiencesResponse,
   type ControlApiMemoryHistoryResponse,
   type ControlApiMemoryInjectionOutcomesResponse,
@@ -781,7 +782,10 @@ async function serveExperience(
     sendJson(
       response,
       200,
-      { schema: "autodev-memory-experience-v1", experience },
+      {
+        schema: "autodev-memory-experience-v1",
+        experience
+      } satisfies ControlApiMemoryExperienceDetailResponse,
       { "cache-control": "no-store" }
     );
     return;
