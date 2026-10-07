@@ -2436,13 +2436,14 @@ function allowedMethod(
   if (method === "GET" && mutatingAction) return "POST";
   if (method === "POST" && !canPost) return "GET";
   if (method !== "GET" && method !== "POST")
-    return experienceOutcomes ||
-      experienceSessionOutcomes ||
-      experienceUseAssessments
-      ? "GET, POST"
-      : mutatingAction
-        ? "POST"
-        : "GET";
+    // A mutating action is POST-only, so `mutatingAction` answers before
+    // `canPost` is consulted — otherwise a POST-only route would advertise GET
+    // alongside the POST it does accept. Every remaining route that accepts POST
+    // is enumerated by `canPost`, which is why the per-action list this used to
+    // repeat is gone: `POST /control/memory/records` proposes a memory, so the
+    // records collection accepts it without being a mutating action, and the
+    // explicit list did not mention it.
+    return mutatingAction ? "POST" : canPost ? "GET, POST" : "GET";
   return null;
 }
 
@@ -2461,10 +2462,14 @@ function rejectUnsupportedOrUnauthorizedMethod(
         resource: "/control/memory",
         outcome: "denied",
         changes: null,
-        reason:
-          actor.role === "viewer"
-            ? "viewer_cannot_mutate"
-            : "unsupported_memory_method"
+        // The verb is the reason, whoever sent it. A viewer gets the identical
+        // 405 and the identical `Allow` an operator does, so recording this as
+        // `viewer_cannot_mutate` named a cause that was not the cause — and sent
+        // an operator auditing it looking for a permissions fault that an
+        // operator would have hit identically. The viewer's own refusal is the
+        // one below, which is reached when the method is fine and the caller is
+        // not.
+        reason: "unsupported_memory_method"
       });
     }
     response.setHeader("allow", allow);
