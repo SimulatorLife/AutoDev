@@ -369,3 +369,170 @@ test("the evaluation hydrators refuse a row whose reason code is not its own voc
     MemoryHydrationError
   );
 });
+
+/**
+ * The row-hydration primitives, rather than the policies layered over them.
+ *
+ * `hydration.ts` is seven public hydrators over five shared primitives --
+ * `requireString`, `optionalString`, `requireJson`, `parseIdArray` and
+ * `requireNonNegativeInteger` -- and every one of those five had a refusal
+ * branch no test could reach. Each hydrator test here builds a row with the
+ * real serializer, so every column is well-formed by construction; the ones
+ * above corrupt a *policy* field (an unknown status, a bad scope kind, an
+ * unrecognised evidence kind) while the primitive that reads an ordinary
+ * column had never been handed anything but a good one.
+ *
+ * That is the gap this closes: a version of `requireString` that returned the
+ * value unchecked, or of `requireNonNegativeInteger` that dropped its screen,
+ * would have passed every case in this file.
+ */
+
+test("a required column that is missing or empty is refused", () => {
+  const row = experienceToRow(makeExperience());
+  for (const [label, column] of [
+    ["an empty id", "id"],
+    ["an empty workspace id", "workspace_id"],
+    ["an empty task id", "task_id"],
+    ["an empty run id", "run_id"],
+    ["an empty agent id", "agent_id"]
+  ] as const) {
+    assert.throws(
+      () => hydrateExperienceRow({ ...row, [column]: "" }),
+      MemoryHydrationError,
+      `${label} must be refused rather than hydrated as an empty string`
+    );
+    assert.throws(
+      () => hydrateExperienceRow({ ...row, [column]: undefined }),
+      MemoryHydrationError,
+      `${label} must be refused when absent`
+    );
+  }
+});
+
+test("a nullable string column holding a non-string is refused, not coerced", () => {
+  const row = experienceToRow(makeExperience({ repositoryId: "repo-1" }));
+  // These columns are nullable, which is exactly why the guard exists: without
+  // it a NULL-or-typed value would pass straight through as a number or an
+  // object into an enumerated field the rest of the system treats as a string.
+  for (const column of [
+    "repository_id",
+    "task_kind",
+    "agent_role",
+    "provider",
+    "model",
+    "branch"
+  ] as const) {
+    assert.throws(
+      () => hydrateExperienceRow({ ...row, [column]: 42 }),
+      MemoryHydrationError,
+      `${column} must be refused when it holds a number`
+    );
+    assert.doesNotThrow(
+      () => hydrateExperienceRow({ ...row, [column]: null }),
+      `${column} must still accept null, which is what the column is for`
+    );
+  }
+});
+
+test("an id column that is not a JSON array of strings is refused", () => {
+  const row = memoryRecordToRow(makeMemoryRecord());
+  for (const [label, value] of [
+    ["a non-array", '"experience-a"'],
+    ["an array holding a number", '["experience-a", 7]'],
+    ["an array holding null", '["experience-a", null]'],
+    ["malformed JSON", "[unclosed"]
+  ] as const) {
+    for (const column of ["supersedes", "superseded_by"] as const) {
+      assert.throws(
+        () => hydrateMemoryRecordRow({ ...row, [column]: value }),
+        MemoryHydrationError,
+        `${label} in ${column} must be refused`
+      );
+    }
+  }
+  // The positive control: an absent column is an empty list, and the record
+  // then omits the key rather than carrying `[]` -- an optional field that is
+  // present and empty is a different thing from one that is absent.
+  assert.equal(
+    hydrateMemoryRecordRow({ ...row, supersedes: null }).supersedes,
+    undefined,
+    "an absent supersedes list must leave the key off the record"
+  );
+  assert.equal(
+    hydrateMemoryRecordRow({ ...row, supersedes: "[]" }).supersedes,
+    undefined,
+    "an empty supersedes list must leave the key off the record"
+  );
+  assert.deepEqual(
+    hydrateMemoryRecordRow({ ...row, supersedes: '["experience-a"]' })
+      .supersedes,
+    ["experience-a"]
+  );
+});
+
+test("a packet count is refused unless it is a non-negative integer", () => {
+  const event: MemoryInjectionEvent = {
+    id: "inj-1",
+    workspaceId: "ws-1",
+    repositoryId: "owner/repo",
+    scope: { kind: "workspace", workspaceId: "ws-1" },
+    taskId: "task-1",
+    runId: "run-1",
+    agentId: "agent-1",
+    agentRole: "orchestrator",
+    correlationToken: "corr-1",
+    memoryMode: "jit",
+    injectionResult: "injected",
+    packetCharacterCount: 12,
+    packetTokenCount: 3,
+    memoryIds: ["mem-1"],
+    occurredAt: "2026-10-01T00:00:00.000Z",
+    reasonCode: "packet_attached",
+    evidence: [],
+    recordedBy: "router"
+  };
+  const row = injectionEventToRow(event);
+  for (const [label, value] of [
+    ["a negative count", -1],
+    ["a fractional count", 1.5],
+    ["a non-numeric string", "seven"],
+    ["an exponent string", "1e3"],
+    ["a null", null],
+    ["a boolean", true]
+  ] as const) {
+    assert.throws(
+      () => hydrateInjectionEventRow({ ...row, packet_character_count: value }),
+      MemoryHydrationError,
+      `${label} must be refused`
+    );
+  }
+
+  // The driver hands `int` columns back as numbers, and `0` is a real count of
+  // an empty packet rather than a missing one, so both must survive.
+  assert.equal(
+    hydrateInjectionEventRow({ ...row, packet_character_count: 0 })
+      .packetCharacterCount,
+    0
+  );
+  // The string branch exists for a driver that reports counts as text; it has
+  // to accept the integer form and refuse the rest, or it is dead code that
+  // looks like validation.
+  assert.equal(
+    hydrateInjectionEventRow({ ...row, packet_character_count: "42" })
+      .packetCharacterCount,
+    42
+  );
+});
+
+test("a provenance column that is null is refused rather than read as empty", () => {
+  const row = memoryRecordToRow(makeMemoryRecord());
+  assert.throws(
+    () => hydrateMemoryRecordRow({ ...row, provenance: null }),
+    MemoryHydrationError,
+    "a null provenance must be refused, not treated as an empty object"
+  );
+  assert.throws(
+    () => hydrateMemoryRecordRow({ ...row, provenance: undefined }),
+    MemoryHydrationError
+  );
+});
