@@ -13,22 +13,22 @@ import {
   type ControlApiEvaluationsResponse,
   type ControlApiGithubResponse,
   type ControlApiHooksResponse,
-  type ControlApiProviderEnabledPatchResponse,
-  type ControlApiProviderRolePatchResponse,
-  type ControlApiRoutingResponse,
   type ControlApiMcpsResponse,
-  type ControlApiModelsResponse,
   type ControlApiModelPatchResponse,
+  type ControlApiModelsResponse,
   type ControlApiPermissionsResponse,
   type ControlApiPromptCommandPatchResponse,
   type ControlApiPromptDetailResponse,
+  type ControlApiPromptsResponse,
   type ControlApiPromptVersionResponse,
   type ControlApiPromptVersionsResponse,
-  type ControlApiPromptsResponse,
+  type ControlApiProviderEnabledPatchResponse,
   type ControlApiProviderHealth,
-  type ControlApiProviderRoleAssignment,
   type ControlApiProviderLimitsPatchResponse,
+  type ControlApiProviderRoleAssignment,
+  type ControlApiProviderRolePatchResponse,
   type ControlApiProvidersResponse,
+  type ControlApiRoutingResponse,
   type ControlApiRuntimeResponse,
   type ControlApiSkillRolesPatchResponse,
   type ControlApiSkillsResponse,
@@ -1049,7 +1049,7 @@ type GithubRuntimeBindingResolution =
       readonly owner: string;
       readonly repo: string;
       readonly repository: string;
-      readonly token: string;
+      readonly token: string | undefined;
       readonly unavailableWorkflows: readonly GithubWorkflowDefinition[];
     }
   | {
@@ -1063,7 +1063,8 @@ function resolveGithubRuntimeBinding(
   options: GithubWorkflowsViewOptions
 ): GithubRuntimeBindingResolution {
   const unavailableWorkflows = unavailableWorkflowDefinitions(workflows);
-  const token = options.token ?? process.env.AUTODEV_GITHUB_TOKEN;
+  const configuredToken = options.token ?? process.env.AUTODEV_GITHUB_TOKEN;
+  const token = configuredToken?.trim() ? configuredToken.trim() : undefined;
   const repository =
     options.repository ??
     process.env.AUTODEV_GITHUB_REPOSITORY ??
@@ -1108,13 +1109,6 @@ function resolveGithubRuntimeBinding(
     return unavailable(
       "invalid",
       `Configured workspace "${repository}" is disabled in config/workspaces.json.`
-    );
-  }
-
-  if (!token || token.trim().length === 0) {
-    return unavailable(
-      "unavailable",
-      "AUTODEV_GITHUB_TOKEN is not configured on the server."
     );
   }
 
@@ -1216,10 +1210,12 @@ function projectGithubWorkflows(
  * `.github/workflows/*.yml` along with authoritative read-only GitHub Actions
  * runtime state and bounded recent run statistics.
  *
- * Runtime Control API owns authentication and validates explicit server-side
- * AUTODEV_GITHUB_TOKEN and configured AUTODEV_GITHUB_REPOSITORY (or standard
- * runner GITHUB_REPOSITORY). Returns an explicit unavailable/invalid state when
- * credentials, configuration, or API are absent/invalid.
+ * Runtime Control API owns authentication and validates configured
+ * AUTODEV_GITHUB_REPOSITORY (or standard runner GITHUB_REPOSITORY). Public
+ * repositories may be read without a GitHub token; private repositories need
+ * a server-side AUTODEV_GITHUB_TOKEN with read-only Actions permission.
+ * Returns an explicit unavailable/invalid state when configuration or API
+ * access is absent/invalid.
  */
 export async function githubWorkflowsView(
   repositoryRoot?: string,
@@ -1278,8 +1274,7 @@ export async function githubWorkflowsView(
   } catch (error: unknown) {
     const rawMessage = error instanceof Error ? error.message : String(error);
     const isAuthFailure =
-      error instanceof GithubActionsApiError &&
-      (error.status === 401 || error.status === 403);
+      error instanceof GithubActionsApiError && error.status === 401;
 
     return unavailableGithubResponse({
       catalogStatus: "valid",

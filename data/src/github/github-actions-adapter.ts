@@ -83,7 +83,7 @@ function assertRequestWithinTimeout(
 
 async function readBoundedJson(
   response: Response,
-  token: string,
+  token: string | undefined,
   controller: AbortController,
   startedAt: number,
   timeoutMs: number
@@ -325,7 +325,7 @@ function parseWorkflowRun(item: unknown, index: number): GithubWorkflowRun {
 function throwHttpError(
   response: Response,
   data: unknown,
-  token: string
+  token: string | undefined
 ): never {
   const errorDetail =
     isRecord(data) && typeof data.message === "string"
@@ -365,7 +365,7 @@ function rethrowRequestError(
   controller: AbortController,
   timedOut: boolean,
   timeoutMs: number,
-  token: string
+  token: string | undefined
 ): never {
   if (error instanceof GithubActionsApiError) throw error;
   const errorName =
@@ -425,7 +425,10 @@ export class GithubActionsApiError extends Error {
   }
 }
 
-function sanitizeErrorMessage(message: string, token: string): string {
+function sanitizeErrorMessage(
+  message: string,
+  token: string | undefined
+): string {
   if (!token || token.trim().length === 0) return message;
   return message.replaceAll(token, "[REDACTED]");
 }
@@ -525,16 +528,8 @@ export class GithubActionsAdapter {
 
   private async request(
     endpoint: string,
-    token: string
+    token: string | undefined
   ): Promise<Record<string, unknown>> {
-    if (!token || typeof token !== "string" || token.trim().length === 0) {
-      throw new GithubActionsApiError(
-        "GitHub Actions API token is missing or empty",
-        401,
-        "token_missing"
-      );
-    }
-
     // Origin is fixed to GITHUB_API_ORIGIN; caller-supplied hosts are forbidden.
     const url = `${GITHUB_API_ORIGIN}${endpoint}`;
     const controller = new AbortController();
@@ -549,10 +544,10 @@ export class GithubActionsAdapter {
     try {
       const headers: Record<string, string> = {
         Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`,
         "X-GitHub-Api-Version": GITHUB_API_VERSION,
         "User-Agent": "AutoDev-Control-API"
       };
+      if (token?.trim()) headers.Authorization = `Bearer ${token.trim()}`;
       const response = await this.fetchFn(url, {
         method: "GET",
         headers,
@@ -610,7 +605,7 @@ export class GithubActionsAdapter {
   async listWorkflows(
     owner: string,
     repo: string,
-    token: string
+    token?: string
   ): Promise<readonly GithubApiWorkflow[]> {
     this.validateRepository(owner, repo);
     const endpoint = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows?per_page=100`;
@@ -629,7 +624,7 @@ export class GithubActionsAdapter {
   async listRecentRuns(
     owner: string,
     repo: string,
-    token: string,
+    token?: string,
     options: { limit?: number } = {}
   ): Promise<readonly GithubWorkflowRun[]> {
     this.validateRepository(owner, repo);
@@ -650,7 +645,7 @@ export class GithubActionsAdapter {
   async fetchRuntimeSnapshot(
     owner: string,
     repo: string,
-    token: string,
+    token?: string,
     options: { limit?: number } = {}
   ): Promise<GithubActionsRuntimeSnapshot> {
     const [workflows, rawRuns] = await Promise.all([

@@ -2380,12 +2380,103 @@ test("GitHub runtime state rejects disabled workspaces before calling GitHub", a
   }
 });
 
-test("Control API /control/github returns explicit unavailable state without synthesizing health when token is missing", async () => {
+test("Control API /control/github reads public repository Actions data without a token", async () => {
   const saved = saveEnv();
+  const authorizationHeaders: (string | null)[] = [];
   try {
     configure();
     delete process.env.AUTODEV_GITHUB_TOKEN;
     process.env.AUTODEV_GITHUB_REPOSITORY = "SimulatorLife/AutoDev";
+
+    const mockFetch: typeof fetch = async (input, init) => {
+      authorizationHeaders.push(
+        new Headers(init?.headers).get("authorization")
+      );
+      const url = String(input);
+      if (url.includes("/actions/workflows")) {
+        return Response.json({
+          total_count: 1,
+          workflows: [
+            {
+              id: 101,
+              name: "scheduler",
+              path: ".github/workflows/_scheduler.yml",
+              state: "active",
+              html_url:
+                "https://github.com/SimulatorLife/AutoDev/actions/workflows/_scheduler.yml",
+              created_at: "2026-01-01T00:00:00Z",
+              updated_at: "2026-02-01T00:00:00Z"
+            }
+          ]
+        });
+      }
+      return Response.json({
+        total_count: 1,
+        workflow_runs: [
+          {
+            id: 5001,
+            name: "Scheduler",
+            workflow_id: 101,
+            path: ".github/workflows/_scheduler.yml",
+            head_branch: "main",
+            head_sha: "abc123",
+            event: "schedule",
+            status: "completed",
+            conclusion: "success",
+            html_url:
+              "https://github.com/SimulatorLife/AutoDev/actions/runs/5001",
+            created_at: "2026-10-04T04:45:00Z",
+            updated_at: "2026-10-04T04:50:00Z",
+            run_attempt: 1
+          }
+        ]
+      });
+    };
+
+    setGithubActionsAdapterForTests(
+      new GithubActionsAdapter({ fetchFn: mockFetch })
+    );
+
+    const res = await call("GET", CONTROL_API_PATHS.github, {
+      actor: "viewer-a"
+    });
+    assert.equal(res.response.statusCode, 200);
+    assert.equal(res.body.runtimeFactsAvailable, true);
+    assert.equal(res.body.runtimeStatus, "available");
+    assert.equal(res.body.repository, "SimulatorLife/AutoDev");
+    assert.equal(res.body.stats.totalRuns, 1);
+    assert.equal(res.body.stats.successfulRuns, 1);
+    assert.equal(res.body.recentRuns.length, 1);
+    assert.deepEqual(authorizationHeaders, [null, null]);
+    const scheduler = res.body.workflows.find(
+      (workflow: { id: string }) => workflow.id === "_scheduler.yml"
+    );
+    assert.ok(scheduler);
+    assert.equal(scheduler.actionsState, "active");
+    assert.equal(scheduler.recentRunsCount, 1);
+    assert.equal(scheduler.lastRunStatus, "completed");
+  } finally {
+    setGithubActionsAdapterForTests(null);
+    restoreEnv(saved);
+  }
+});
+
+test("Control API /control/github remains unavailable when no repository is bound", async () => {
+  const saved = saveEnv();
+  let fetchCalls = 0;
+  try {
+    configure();
+    delete process.env.AUTODEV_GITHUB_TOKEN;
+    delete process.env.AUTODEV_GITHUB_REPOSITORY;
+    delete process.env.GITHUB_REPOSITORY;
+    setGithubActionsAdapterForTests(
+      new GithubActionsAdapter({
+        fetchFn: async () => {
+          fetchCalls++;
+          return Response.json({});
+        }
+      })
+    );
 
     const res = await call("GET", CONTROL_API_PATHS.github, {
       actor: "viewer-a"
@@ -2393,15 +2484,37 @@ test("Control API /control/github returns explicit unavailable state without syn
     assert.equal(res.response.statusCode, 200);
     assert.equal(res.body.runtimeFactsAvailable, false);
     assert.equal(res.body.runtimeStatus, "unavailable");
-    assert.equal(res.body.repository, "SimulatorLife/AutoDev");
-    assert.equal(res.body.stats, null);
-    assert.deepEqual(res.body.recentRuns, []);
-    assert.ok(
-      res.body.runtimeMessage.includes(
-        "AUTODEV_GITHUB_TOKEN is not configured on the server"
-      )
-    );
+    assert.equal(res.body.repository, null);
+    assert.match(String(res.body.runtimeMessage), /no repository is bound/u);
+    assert.equal(fetchCalls, 0);
   } finally {
+    setGithubActionsAdapterForTests(null);
+    restoreEnv(saved);
+  }
+});
+
+test("Control API /control/github treats a GitHub 403 as unavailable, not invalid", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    delete process.env.AUTODEV_GITHUB_TOKEN;
+    process.env.AUTODEV_GITHUB_REPOSITORY = "SimulatorLife/AutoDev";
+    setGithubActionsAdapterForTests(
+      new GithubActionsAdapter({
+        fetchFn: async () =>
+          Response.json({ message: "API rate limit exceeded" }, { status: 403 })
+      })
+    );
+
+    const res = await call("GET", CONTROL_API_PATHS.github, {
+      actor: "viewer-a"
+    });
+    assert.equal(res.response.statusCode, 200);
+    assert.equal(res.body.runtimeFactsAvailable, false);
+    assert.equal(res.body.runtimeStatus, "unavailable");
+    assert.match(String(res.body.runtimeMessage), /403 Forbidden/u);
+  } finally {
+    setGithubActionsAdapterForTests(null);
     restoreEnv(saved);
   }
 });

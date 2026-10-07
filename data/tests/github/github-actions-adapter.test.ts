@@ -71,6 +71,19 @@ test("GithubActionsAdapter uses fixed https://api.github.com origin and sends st
   assert.equal(capturedRedirect, "error");
 });
 
+test("GithubActionsAdapter omits authorization when reading a public repository without a token", async () => {
+  let capturedHeaders: HeadersInit | undefined;
+  const adapter = new GithubActionsAdapter({
+    fetchFn: async (_input, init) => {
+      capturedHeaders = init?.headers;
+      return Response.json({ total_count: 0, workflows: [] });
+    }
+  });
+
+  assert.deepEqual(await adapter.listWorkflows("SimulatorLife", "AutoDev"), []);
+  assert.equal(new Headers(capturedHeaders).has("Authorization"), false);
+});
+
 test("GithubActionsAdapter rejects dot path segments before any fetch", async () => {
   let fetchCalls = 0;
   const adapter = new GithubActionsAdapter({
@@ -690,12 +703,19 @@ test("GithubActionsAdapter handles errors without leaking secrets or tokens", as
     }
   );
 
-  // Case 3: Empty token is rejected immediately
-  const adapterEmpty = new GithubActionsAdapter();
-  await assert.rejects(
-    async () => adapterEmpty.listWorkflows("SimulatorLife", "AutoDev", ""),
-    { code: "token_missing" }
+  // Case 3: An empty token is treated as anonymous public-repository access.
+  let emptyTokenAuth: string | null = null;
+  const adapterEmpty = new GithubActionsAdapter({
+    fetchFn: async (_input, init) => {
+      emptyTokenAuth = new Headers(init?.headers).get("authorization");
+      return Response.json({ total_count: 0, workflows: [] });
+    }
+  });
+  assert.deepEqual(
+    await adapterEmpty.listWorkflows("SimulatorLife", "AutoDev", ""),
+    []
   );
+  assert.equal(emptyTokenAuth, null);
 
   // Case 4: Invalid repo coordinates are rejected immediately
   await assert.rejects(

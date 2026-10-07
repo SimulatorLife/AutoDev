@@ -782,25 +782,34 @@ read-only Control API route `/control/github`, which issues only `GET`
 requests for the repository's Actions workflows and runs. That route runs
 inside the model router process: the `com.codex.model-router` LaunchAgent
 starts `scripts/run-codex-model-router.sh`, which loads `$CODEX_HOME/.env`
-before starting `runtime/src/router/server.ts`. To enable runtime facts, add
-two entries to that private file:
+before starting `runtime/src/router/server.ts`. To configure runtime facts, set
+the following in that private file:
 
-- `AUTODEV_GITHUB_TOKEN`: a server-side, least-privilege token. Use a
-  fine-grained personal access token scoped only to the bound repository,
-  with read-only **Actions** permission (plus the read-only **Metadata**
-  permission that GitHub always adds), and a short expiry.
-- `AUTODEV_GITHUB_REPOSITORY`: the `owner/repo` identifier. It must exactly
-  match an enabled workspace `id` in `config/workspaces.json`. An unknown or
-  disabled id shows as `invalid`, and a missing token shows as
-  `unavailable`. In each case the page still shows the workflow definitions.
+- `AUTODEV_GITHUB_REPOSITORY`: the `owner/repo` identifier. It must still
+  resolve to an enabled workspace `id` in `config/workspaces.json` (`enabled: true`).
+  An unknown or disabled workspace id shows as `invalid`.
+- `AUTODEV_GITHUB_TOKEN`: a server-side, least-privilege token. This token is
+  optional for public repositories because GitHub REST workflow and run GET
+  endpoints are reachable anonymously, but authenticated requests are preferable
+  for stable rate limits (avoiding GitHub's 60 req/hr unauthenticated limit).
+  Private repositories still require this token, configured as a fine-grained
+  personal access token scoped only to the bound repository, with read-only
+  **Actions** permission (plus the read-only **Metadata** permission that GitHub
+  always adds), and a short expiry.
+
+When querying private repositories without a token, when requests return 403
+Forbidden, or when unauthenticated or authenticated requests are rate-limited
+(HTTP 403/429), runtime facts surface as `unavailable` with a redacted diagnostic
+message. Invalid credentials (HTTP 401) surface as `invalid`. The page still
+shows the workflow definitions in either case.
 
 Keep `$CODEX_HOME/.env` at mode `0600`. Never commit the token, never put it
 in `console/.env.local` or any `NEXT_PUBLIC_*` variable, and never pass it to
 browser code. The Console launcher ignores `*TOKEN*` keys in
-`$CODEX_HOME/.env`, and the adapter redacts the token from error messages.
-Restart the router with the normal installer when no active task depends on it
-(`--materialize-only` does not restart services). The new values apply only
-after the restart.
+`$CODEX_HOME/.env`, and the adapter redacts the token (`[REDACTED]`) from error
+messages. Restart the router with the normal installer when no active task
+depends on it (`--materialize-only` does not restart services). The new values
+apply only after the restart.
 
 ### Transitional OpenLIT projections
 
