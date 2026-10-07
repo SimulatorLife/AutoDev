@@ -16690,37 +16690,57 @@ test("one page rhythm: every view body stacks its sections through the shared cl
   );
 });
 
-test("no Console source names a font size as a raw pixel value", () => {
-  // The theme defines two label steps below `text-xs` and gives them names
-  // precisely so call sites stop spelling the numbers: `text-micro` (10px) and
-  // `text-meta` (11px). Seven call sites used the names; two still wrote
-  // `text-[10px]`. Both rendered the same size, so nothing looked wrong -- but a
-  // raw value is the one form that cannot follow the token, and the theme is
-  // where a design decision about label sizes belongs.
+test("Console source names values only through the theme", () => {
+  // Two rules, one principle: a raw value cannot follow a token, so the theme
+  // is the only place a size or a colour may be written down.
   //
-  // This matches the *shape*, not a list of sizes, and for the reason the page
-  // rhythm guard above records: a guard that names the values it has seen today
-  // passes the first value nobody thought of. An arbitrary font size is the
-  // defect by construction, whatever number is inside the brackets.
+  // The theme defines two label steps below `text-xs` and gives them names for
+  // exactly this reason: `text-micro` (10px) and `text-meta` (11px). Seven call
+  // sites used the names; two still wrote `text-[10px]`. Both rendered the same
+  // size, so nothing looked wrong.
   //
-  // Scoped to font sizes on purpose. A fixed `w-[180px]` control width or a
-  // `h-[32rem]` code block is a measurement, not a bypass of the type scale, and
-  // a guard that swept those in would be wrong rather than strict.
+  // And it requires colour utilities to be the semantic ones -- `bg-surface`,
+  // `text-fg-muted`, `text-success` -- rather than a numbered palette shade.
+  // Nothing in the Console did that when this was checked; the risk is that one
+  // does later, because a raw shade looks correct against the dark canvas until
+  // a token moves.
+  //
+  // Both match the *shape*, not a list of values, for the reason the page rhythm
+  // guard above records: a guard naming the values it has seen today passes the
+  // first value nobody thought of. An arbitrary font size is the defect whatever
+  // number is in the brackets, and a numbered shade is the defect whatever hue.
+  //
+  // Deliberately not caught, because they are not bypasses of the theme:
+  //   - `w-[180px]`, `h-[32rem]` -- a control's measurement, not a type step.
+  //   - `bg-neutral/15` -- `neutral` is this theme's own `--color-neutral`, which
+  //     is why it is usable bare. A sweep that flagged it would be wrong, not
+  //     strict, so the rule requires the *numbered* shade the raw palettes use.
   const srcDir = join(import.meta.dirname, "..", "src");
-  const offenders: string[] = [];
+  const rawSizes: string[] = [];
+  const rawShades: string[] = [];
+  const numberedShade =
+    /\b(?:bg|text|border|ring|outline|divide|from|to|via|fill|stroke|shadow|accent|caret|decoration|placeholder)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|white|black)-[0-9]/gu;
   for (const relative of readdirSync(srcDir, { recursive: true })) {
     const name = relative.toString();
     const file = join(srcDir, name);
     if (!/\.tsx?$/u.test(file) || !statSync(file).isFile()) continue;
     const source = readFileSync(file, "utf8");
     for (const match of source.matchAll(/text-\[([^\]]+)\]/gu)) {
-      offenders.push(`${name}: text-[${match[1]}]`);
+      rawSizes.push(`${name}: text-[${match[1]}]`);
+    }
+    for (const match of source.matchAll(numberedShade)) {
+      rawShades.push(`${name}: ${match[0]}`);
     }
   }
   assert.deepEqual(
-    offenders,
+    rawSizes,
     [],
-    `These call sites name a font size instead of using the theme's steps:\n${offenders.join("\n")}`
+    `These call sites name a font size instead of using the theme's steps:\n${rawSizes.join("\n")}`
+  );
+  assert.deepEqual(
+    rawShades,
+    [],
+    `These call sites use a numbered palette shade instead of a semantic colour:\n${rawShades.join("\n")}`
   );
 });
 test("the monospace family has one spelling per role", () => {
