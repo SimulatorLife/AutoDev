@@ -220,9 +220,15 @@ function SkillAssignmentForm({
         // same left edge.
         //
         // `truncate` and the `title` below are the recovery for a name longer
-        // than the column; the name stays the row's key and stays readable for
-        // all but the longest of the fourteen.
-        className: `${MONO_ID_CLASS} w-56 shrink-0 truncate`,
+        // than the column. The width is sized to the longest of the fourteen
+        // *at semibold*: `MONO_ID_CLASS` spells its weight `font-semibold`
+        // (`text-semibold` emits no rule at all), and the wider glyphs pushed
+        // five names -- `autodev-codex-request-capture` and
+        // `improve-codebase-architecture` both need 279px -- past 224px, so
+        // `w-56` began cutting names it used to show whole. `w-72` is 288px,
+        // which fits all fourteen with margin. Measured at 390/768/1440/1920:
+        // no truncating name, 0px column drift, 0px document overflow.
+        className: `${MONO_ID_CLASS} w-72 shrink-0 truncate`,
         title: skill.name
       },
       skill.name

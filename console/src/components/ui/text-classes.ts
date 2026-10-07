@@ -54,7 +54,17 @@ export const SECTION_LABEL_CLASS =
  * not attribute order -- but a diff between two pages should not turn on
  * whether someone happened to type the font first.
  */
-export const MONO_ID_CLASS = "font-mono text-semibold text-fg";
+/**
+ * `MONO_ID` is the only one of the three that carries a weight, and it is
+ * spelled `font-semibold`. It was `text-semibold`, which is not a Tailwind
+ * class at all -- the font-weight scale is `font-*` -- so it emitted no rule and
+ * the identifier rendered at whatever weight it inherited, across all five call
+ * sites. The weight is what separates this role from its two siblings: they are
+ * de-emphasised by colour (`text-fg-secondary`, `text-fg-muted`) where this one
+ * is the row's subject at `text-fg`, and without the weight the three differed
+ * only in greyness.
+ */
+export const MONO_ID_CLASS = "font-mono font-semibold text-fg";
 
 export const MONO_VALUE_CLASS = "font-mono text-xs text-fg-secondary";
 
