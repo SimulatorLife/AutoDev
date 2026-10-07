@@ -467,7 +467,11 @@ test("operator PATCH validates fields, persists provider state, and audits the a
     assert.equal(audit.actor, "operator-a");
     assert.equal(audit.actorRole, "operator");
     assert.equal(audit.outcome, "ok");
-    assert.deepEqual(audit.changes, { priority: "disabled", model: null, previous });
+    assert.deepEqual(audit.changes, {
+      priority: "disabled",
+      model: null,
+      previous
+    });
     assert.equal(audit.desiredGeneration, "subagent:disabled/none");
     assert.equal(audit.observedGeneration, audit.desiredGeneration);
     assert.equal(audit.restartRequired, false);
@@ -497,7 +501,8 @@ test("operator PATCH validates fields, persists provider state, and audits the a
     );
   } finally {
     resetTelemetryExporter();
-    if (previous) ROUTING_POLICY.setProviderAssignment("claude", "subagent", previous);
+    if (previous)
+      ROUTING_POLICY.setProviderAssignment("claude", "subagent", previous);
     else ROUTING_POLICY.clearProviderAssignment("claude", "subagent");
     setDefaultPersistenceManager(originalPersistence);
     restoreEnv(saved);
@@ -521,7 +526,8 @@ test("failed persistence rolls back the in-memory provider policy", async () => 
       {
         actor: "operator-a",
         body: {
-          priority: previous?.priority === "disabled" ? 1 : ("disabled" as const),
+          priority:
+            previous?.priority === "disabled" ? 1 : ("disabled" as const),
           model: null
         }
       }
@@ -532,7 +538,8 @@ test("failed persistence rolls back the in-memory provider policy", async () => 
       previous ?? null
     );
   } finally {
-    if (previous) ROUTING_POLICY.setProviderAssignment("claude", "subagent", previous);
+    if (previous)
+      ROUTING_POLICY.setProviderAssignment("claude", "subagent", previous);
     else ROUTING_POLICY.clearProviderAssignment("claude", "subagent");
     setDefaultPersistenceManager(originalPersistence);
     restoreEnv(saved);
@@ -550,7 +557,10 @@ test("provider enablement disables globally while preserving its roles and limit
   try {
     configure();
     const path = CONTROL_API_PATHS.providers + "/claude";
-    ROUTING_POLICY.setProviderLimits("claude", { perSession: 4, acrossSessions: 9 });
+    ROUTING_POLICY.setProviderLimits("claude", {
+      perSession: 4,
+      acrossSessions: 9
+    });
     ROUTING_POLICY.setProviderAssignment("claude", "orchestrator", {
       priority: 2,
       model: "claude-opus-5-5"
@@ -572,10 +582,14 @@ test("provider enablement disables globally while preserving its roles and limit
     });
     assert.equal(extraField.response.statusCode, 400);
 
-    const unknown = await call("PATCH", CONTROL_API_PATHS.providers + "/nope_xyz", {
-      actor: "operator-a",
-      body: { disabled: true }
-    });
+    const unknown = await call(
+      "PATCH",
+      CONTROL_API_PATHS.providers + "/nope_xyz",
+      {
+        actor: "operator-a",
+        body: { disabled: true }
+      }
+    );
     assert.equal(unknown.response.statusCode, 404);
 
     const viewer = await call("PATCH", path, {
@@ -596,7 +610,10 @@ test("provider enablement disables globally while preserving its roles and limit
     // Disabling is provider-wide, so no role may serve a request -- but the
     // configuration the operator set must survive so re-enabling restores it.
     for (const role of PROVIDER_ROLES) {
-      assert.equal(ROUTING_POLICY.isProviderEnabledForRole("claude", role), false);
+      assert.equal(
+        ROUTING_POLICY.isProviderEnabledForRole("claude", role),
+        false
+      );
     }
     assert.deepEqual(ROUTING_POLICY.limitsFor("claude"), {
       perSession: 4,
@@ -1982,23 +1999,6 @@ test("Memory Control API bounds the records and experiences time window", async 
   }
 });
 
-        }
-      )
-    );
-    assert.equal(viewerPurge.result.response.statusCode, 403);
-    assert.equal(viewerPurge.lines.length, 1);
-    const purgeAudit = JSON.parse(viewerPurge.lines[0] ?? "null") as {
-      action: string;
-      outcome: string;
-      resource: string;
-      reason: string;
-    };
-    assert.equal(purgeAudit.action, "purge");
-    assert.equal(purgeAudit.outcome, "denied");
-    assert.equal(purgeAudit.resource, "/control/memory/experiences");
-    assert.equal(purgeAudit.reason, "viewer_cannot_mutate");
-
-    const unavailablePurge = await captureAudit(() =>
 test("Memory Control API audits denied lifecycle writes and gates global reads", async () => {
   const saved = saveEnv();
   try {
@@ -2037,6 +2037,23 @@ test("Memory Control API audits denied lifecycle writes and gates global reads",
         {
           actor: "viewer-a",
           body: { reason: "privacy_request" }
+        }
+      )
+    );
+    assert.equal(viewerPurge.result.response.statusCode, 403);
+    assert.equal(viewerPurge.lines.length, 1);
+    const purgeAudit = JSON.parse(viewerPurge.lines[0] ?? "null") as {
+      action: string;
+      outcome: string;
+      resource: string;
+      reason: string;
+    };
+    assert.equal(purgeAudit.action, "purge");
+    assert.equal(purgeAudit.outcome, "denied");
+    assert.equal(purgeAudit.resource, "/control/memory/experiences");
+    assert.equal(purgeAudit.reason, "viewer_cannot_mutate");
+
+    const unavailablePurge = await captureAudit(() =>
       call(
         "POST",
         "/control/memory/experiences/experience-a/purge?workspaceId=workspace-a&repositoryId=owner%2Frepo",
