@@ -215,6 +215,7 @@ import {
   fetchTools,
   fetchWorkspaces,
   patchSkillRoles,
+  postControlApi,
   readControlApiConfig
 } from "../src/lib/server/control-api.ts";
 import {
@@ -5446,6 +5447,184 @@ test("a Control API that is reachable but slow is not reported as unreachable", 
       refused,
       /Configure the required server-side integration/,
       "and it keeps the shared advice, which is the right advice for this one"
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a refused connection says what was refused without printing the address", async () => {
+  // Every transport failure reaches this reader as `TypeError: fetch failed`,
+  // which says that something failed and nothing about what. What separates them
+  // is `cause.code`, and each code points somewhere different: `ECONNREFUSED` at
+  // a Control API that is not running, `ENOTFOUND` at a host that does not
+  // resolve, `ECONNRESET` at one that accepted the connection and dropped it.
+  //
+  // The cause's own message is the trap. It reads
+  // "connect ECONNREFUSED 127.0.0.1:4101", which would put the configured
+  // Control API address into a panel the browser renders. So the reader names the
+  // errno and not the message, and that is asserted here rather than trusted.
+  const originalFetch = globalThis.fetch;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "evaluation-refused-test-token";
+  process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+
+  const failWith = (code: string): void => {
+    const cause = Object.assign(new Error(`connect ${code} 127.0.0.1:4101`), {
+      code
+    });
+    const error = Object.assign(new TypeError("fetch failed"), { cause });
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/control/evaluations")) throw error;
+      throw new Error(`Unexpected Evaluations page request: ${url}`);
+    }) as typeof globalThis.fetch;
+  };
+
+  try {
+    failWith("ECONNREFUSED");
+    const refusedMarkup = renderToStaticMarkup(
+      await EvaluationsPage({ searchParams: Promise.resolve({}) })
+    );
+    assert.match(
+      refusedMarkup,
+      /Nothing is listening at the configured AutoDev Control API address\./,
+      "a refused connection names the one thing to check: " + refusedMarkup.slice(0, 500)
+    );
+    assert.doesNotMatch(
+      refusedMarkup,
+      /fetch failed/,
+      "the platform's generic message is not a diagnostic"
+    );
+
+    // The privacy property, and the reason the cause message is not forwarded:
+    // the configured address must not reach a browser-rendered panel.
+    assert.doesNotMatch(
+      refusedMarkup,
+      /127\.0\.0\.1/,
+      "the configured Control API address must not be printed into the page"
+    );
+    assert.doesNotMatch(
+      refusedMarkup,
+      /4101/,
+      "nor its port, which appears in the cause message this reader discards"
+    );
+
+    // A cause the Console has never seen is still named rather than flattened
+    // into a sentence that claims to be the whole story.
+    failWith("EPROTO");
+    const unknownMarkup = renderToStaticMarkup(
+      await EvaluationsPage({ searchParams: Promise.resolve({}) })
+    );
+    assert.match(
+      unknownMarkup,
+      /EPROTO/,
+      "an unrecognised errno is still reported: " + unknownMarkup.slice(0, 500)
+    );
+
+    // And the failure remains an honest one, not a rendered empty result set.
+    assert.doesNotMatch(refusedMarkup, /<table/);
+    assert.doesNotMatch(refusedMarkup, /data-stat-grid/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a write abandoned at the deadline reads the same as a read that was", async () => {
+  // Two functions catch a failed request in this reader -- the GET and the POST
+  // -- and they answered differently. The GET grew a deadline branch; the POST
+  // kept forwarding `error.message`, so a write abandoned at the Console's own 5s
+  // reported "This operation was aborted" where a read reported a timeout. Two
+  // answers to one question, decided by which verb the request used.
+  //
+  // Asserted here rather than left to the read path because the read path's test
+  // cannot see it: reverting only the POST branch leaves every GET assertion
+  // green, which is the shape of a guard that covers one of two siblings and
+  // reads as though it covers both.
+  const cause = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:4101"), {
+    code: "ECONNREFUSED"
+  });
+  const abort = Object.assign(new TypeError("fetch failed"), { cause });
+
+  const hang = (): void => {
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) return;
+        const abortError = new Error("This operation was aborted");
+        abortError.name = "AbortError";
+        signal.addEventListener("abort", () => reject(abortError), { once: true });
+        // Never settles on its own: only the reader's own deadline ends it, which
+        // is the thing under test.
+      })) as typeof globalThis.fetch;
+  };
+  const refuse = (): void => {
+    globalThis.fetch = (async () => {
+      throw abort;
+    }) as typeof globalThis.fetch;
+  };
+
+  const originalFetch = globalThis.fetch;
+  const config = {
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "post-classifier-test-token"
+  };
+  type PostResult = Awaited<ReturnType<typeof postControlApi>>;
+  function assertUnreachable(result: PostResult): asserts result is Extract<
+    PostResult,
+    { readonly kind: "unreachable" }
+  > {
+    assert.equal(
+      result.kind,
+      "unreachable",
+      "expected a transport failure, got " + JSON.stringify(result)
+    );
+  }
+
+  try {
+    hang();
+    const writeTimedOut = await postControlApi(
+      "/control/evaluations/anything",
+      { anything: true },
+      config,
+      { timeoutMs: 60 }
+    );
+    assertUnreachable(writeTimedOut);
+    assert.equal(
+      writeTimedOut.timedOut,
+      true,
+      "a write abandoned at the deadline is a timeout too: " +
+        JSON.stringify(writeTimedOut)
+    );
+    assert.match(
+      writeTimedOut.message,
+      /did not answer within/,
+      "and names the deadline rather than the platform's abort text"
+    );
+
+    refuse();
+    const writeRefused = await postControlApi(
+      "/control/evaluations/anything",
+      { anything: true },
+      config
+    );
+    assertUnreachable(writeRefused);
+    assert.equal(
+      writeRefused.timedOut,
+      undefined,
+      "a refused write is not a timeout: " + JSON.stringify(writeRefused)
+    );
+    assert.match(
+      writeRefused.message,
+      /Nothing is listening at the configured AutoDev Control API address\./,
+      "and classifies the cause the same way the read does"
+    );
+
+    // The two answers must actually be the same. Asserted as an equality rather
+    // than as two separate expectations, because "both mention a problem" is what
+    // the drift looked like when both messages happened to be `fetch failed`.
+    assert.equal(
+      writeRefused.message,
+      "Nothing is listening at the configured AutoDev Control API address."
     );
   } finally {
     globalThis.fetch = originalFetch;

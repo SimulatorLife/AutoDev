@@ -188,6 +188,80 @@ export interface FetchControlApiOptions {
  * service credential and the canonical local actor identity. No browser header
  * is ever forwarded.
  */
+/**
+ * Transport failures as a sentence an operator can act on, keyed by the standard
+ * cause code the platform reports.
+ *
+ * `fetch` itself is no use as a diagnostic: every one of these arrives as
+ * `TypeError: fetch failed`, which says that something failed and nothing about
+ * what. What separates them is `error.cause.code` -- `ECONNREFUSED` against a
+ * Control API that is not running, `ENOTFOUND` against a host that does not
+ * resolve, `ECONNRESET` against one that accepted the connection and dropped it
+ * -- and each points at a different thing to check.
+ *
+ * `cause.message` is deliberately not forwarded. It reads
+ * "connect ECONNREFUSED 127.0.0.1:4101", which puts the configured Control API
+ * address into a browser-rendered panel. The errno name is a stable standard
+ * identifier and carries the same diagnostic value without the address.
+ *
+ * An unrecognised code is still named rather than dropped: a cause the Console
+ * has not seen before is more informative than a sentence that claims to be the
+ * whole story.
+ */
+const TRANSPORT_FAILURE_MESSAGES: Readonly<Record<string, string>> = {
+  ECONNREFUSED:
+    "Nothing is listening at the configured AutoDev Control API address.",
+  ENOTFOUND:
+    "The configured AutoDev Control API host could not be resolved.",
+  EAI_AGAIN:
+    "The configured AutoDev Control API host could not be resolved right now.",
+  ECONNRESET:
+    "The AutoDev Control API closed the connection before answering.",
+  EHOSTUNREACH:
+    "The configured AutoDev Control API address could not be reached.",
+  ETIMEDOUT:
+    "The connection to the AutoDev Control API did not open in time."
+};
+
+function describeTransportFailure(error: unknown): string {
+  const cause = (error as { readonly cause?: unknown } | null | undefined)?.cause;
+  const code = (cause as { readonly code?: unknown } | null | undefined)?.code;
+  if (typeof code !== "string") {
+    return "The Console could not open a connection to the AutoDev Control API.";
+  }
+  return (
+    TRANSPORT_FAILURE_MESSAGES[code] ??
+    `The Console could not reach the AutoDev Control API (${code}).`
+  );
+}
+
+/**
+ * The one place a read or a write that never completed is turned into a result.
+ *
+ * Two functions catch here and they used to answer differently -- the GET grew a
+ * deadline branch and the POST kept forwarding `error.message` -- which is the
+ * drift this removes. One classifier, so a timeout reads the same whichever
+ * request it was.
+ */
+function transportFailure(
+  error: unknown,
+  abortedByDeadline: boolean,
+  timeoutMs: number
+): {
+  readonly kind: "unreachable";
+  readonly message: string;
+  readonly timedOut?: boolean;
+} {
+  if (abortedByDeadline) {
+    return {
+      kind: "unreachable",
+      timedOut: true,
+      message: `The AutoDev Control API did not answer within ${Math.round(timeoutMs / 1000)}s.`
+    };
+  }
+  return { kind: "unreachable", message: describeTransportFailure(error) };
+}
+
 export async function fetchControlApi<T>(
   path: string,
   config: ControlApiConfig,
@@ -218,20 +292,7 @@ export async function fetchControlApi<T>(
     // than `signal` because a caller may supply its own signal, in which case
     // this controller aborting means nothing -- the caller gave up, which is not
     // the Console's deadline.
-    if (controller.signal.aborted) {
-      return {
-        kind: "unreachable",
-        timedOut: true,
-        message: `The AutoDev Control API did not answer within ${Math.round(timeoutMs / 1000)}s.`
-      };
-    }
-    return {
-      kind: "unreachable",
-      message:
-        error instanceof Error
-          ? error.message
-          : "AutoDev Control API is unreachable."
-    };
+    return transportFailure(error, controller.signal.aborted, timeoutMs);
   } finally {
     clearTimeout(timer);
   }
@@ -288,10 +349,8 @@ async function mutateControlApi<T>(
 ): Promise<ControlApiResult<T>> {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const controller = new AbortController();
-  const timer = setTimeout(
-    () => controller.abort(),
-    options.timeoutMs ?? CONTROL_API_TIMEOUT_MS
-  );
+  const timeoutMs = options.timeoutMs ?? CONTROL_API_TIMEOUT_MS;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const signal = options.signal ?? controller.signal;
 
   let response: Response;
@@ -308,13 +367,11 @@ async function mutateControlApi<T>(
       signal
     });
   } catch (error) {
-    return {
-      kind: "unreachable",
-      message:
-        error instanceof Error
-          ? error.message
-          : "AutoDev Control API is unreachable."
-    };
+    // The same classifier as the read, because this used to answer differently:
+    // it forwarded `error.message`, so a write abandoned at the deadline reported
+    // "This operation was aborted" where a read reported a timeout. Two answers to
+    // one question, decided by which verb the request used.
+    return transportFailure(error, controller.signal.aborted, timeoutMs);
   } finally {
     clearTimeout(timer);
   }
