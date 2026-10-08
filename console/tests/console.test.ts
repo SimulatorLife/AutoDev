@@ -6549,6 +6549,341 @@ test("page links keep the filters and the section and drop the open run", () => 
   );
 });
 
+/**
+ * Nests the HTML parser rewrites, which is what breaks hydration.
+ *
+ * Deliberately not a general content-model check. A content model is stricter
+ * than the parser: `<dl><div>` is conforming and `<ul><div>` is not, yet the
+ * parser preserves both, so both are safe. React's #418 is the parser producing
+ * a *different tree* than React built, and only these rules do that.
+ *
+ * Derived by measuring it rather than by reading a spec: each rule below was
+ * confirmed against Chromium's own parser to move an element, and each one is
+ * pinned by the self-check at the end of the test below. A rule that cannot be
+ * shown to move something is not in this table.
+ */
+const PARSER_REWRITES = new Map<string, ReadonlySet<string>>([
+  // A block element closes an open <p> and becomes its sibling.
+  [
+    "p",
+    new Set([
+      "address", "article", "aside", "blockquote", "details", "div", "dl",
+      "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3",
+      "h4", "h5", "h6", "header", "hgroup", "hr", "main", "nav", "ol", "p",
+      "pre", "search", "section", "table", "ul"
+    ])
+  ],
+  // A second link or button is not nested; the inner one is taken out.
+  ["a", new Set(["a", "button", "input", "select", "textarea"])],
+  ["button", new Set(["a", "button", "input", "select", "textarea"])],
+  ["select", new Set(["div", "p", "span", "table", "ul"])],
+  // A label cannot contain another label.
+  ["label", new Set(["label"])]
+]);
+
+/**
+ * The same, for table structure, which behaves differently and is the reason
+ * these two tables are not one.
+ *
+ * Content that is not table structure is foster-parented out only when the parser
+ * meets it as a DIRECT child of the table, thead, tbody, tfoot or tr. The same tag
+ * one level deeper is ordinary content: a `<span>` inside a `<th>` inside a `<tr>`
+ * is exactly how a column header is built, and a rule that reached through the
+ * `<th>` to the `<tr>` would report every such header as a hydration bug.
+ */
+const TABLE_STRUCTURE_REWRITES = new Map<string, ReadonlySet<string>>([
+  ["table", new Set(["div", "p", "span", "a", "ul", "ol", "section", "img", "h1", "h2"])],
+  ["thead", new Set(["div", "p", "span", "a"])],
+  ["tbody", new Set(["div", "p", "span", "a"])],
+  ["tfoot", new Set(["div", "p", "span", "a"])],
+  ["tr", new Set(["div", "p", "span", "a", "ul", "table"])]
+]);
+
+/** Fragment and strict-mode emit nothing, so they occupy no index or path. */
+const TRANSPARENT_TYPES: ReadonlySet<symbol> = new Set([
+  Symbol.for("react.fragment"),
+  Symbol.for("react.strict_mode")
+]);
+
+/**
+ * React 19 renamed the element tag from `react.element` to
+ * `react.transitional.element`. Checking only the old name makes every node look
+ * like a non-element, so the walk sees nothing and reports a clean page.
+ */
+const ELEMENT_TYPES: ReadonlySet<symbol> = new Set([
+  Symbol.for("react.element"),
+  Symbol.for("react.transitional.element")
+]);
+
+interface ElementLike {
+  readonly $$typeof: symbol;
+  readonly type?: unknown;
+  readonly props?: { readonly children?: React.ReactNode };
+}
+
+function isReactElement(node: unknown): node is React.JSX.Element {
+  if (node === null || typeof node !== "object") return false;
+  const tag = (node as { $$typeof?: unknown }).$$typeof;
+  return typeof tag === "symbol" && ELEMENT_TYPES.has(tag);
+}
+
+function elementChildrenOf(node: React.JSX.Element): React.JSX.Element[] {
+  const flat: React.JSX.Element[] = [];
+  const push = (child: React.ReactNode): void => {
+    if (Array.isArray(child)) {
+      child.forEach(push);
+      return;
+    }
+    if (typeof child === "function") return;
+    if (child === null || child === undefined || typeof child === "boolean") return;
+    if (typeof child === "string" || typeof child === "number") return;
+    const resolved = resolveForNesting(child);
+    if (resolved === null) return;
+    if (TRANSPARENT_TYPES.has((resolved as ElementLike).$$typeof)) {
+      elementChildrenOf(resolved).forEach((c) => flat.push(c));
+      return;
+    }
+    flat.push(resolved);
+  };
+  push(node.props.children);
+  return flat;
+}
+
+/**
+ * Render a component far enough to see the elements it emits.
+ *
+ * The Console is server-rendered, so a component is a function call with no hooks
+ * to run and no state to lose. Without this the walk would never see the table
+ * inside `DataTable` or the form inside `FilterBar`, and would report a clean
+ * page having looked at almost none of it.
+ */
+function resolveForNesting(node: React.ReactNode): React.ReactNode {
+  if (!isReactElement(node)) return null;
+  const type = node.type;
+  if (typeof type !== "function") return node;
+  try {
+    return (type as (props: unknown) => React.ReactNode)(node.props);
+  } catch {
+    return null;
+  }
+}
+
+interface NestingOffence {
+  readonly parent: string;
+  readonly child: string;
+  readonly chain: string;
+}
+
+/**
+ * The nestings the parser rewrites, anywhere below `node`.
+ *
+ * `ancestors` is the chain of enclosing tags and the entry point seeds it with the
+ * node's own tag, because the root is a parent like any other. Seeding inside the
+ * recursive function instead adds the root twice per level, and the doubled chain
+ * reports nonsense like `tr > span` for a `<span>` inside a `<th>` -- a false
+ * positive produced entirely by the walk, not by the markup.
+ */
+function nestingsBelow(node: React.JSX.Element, ancestors: readonly string[]): NestingOffence[] {
+  const found: NestingOffence[] = [];
+  for (const child of elementChildrenOf(node)) {
+    const tag = typeof child.type === "string" ? child.type : null;
+    if (tag === null) {
+      found.push(...nestingsBelow(child, ancestors));
+      continue;
+    }
+    const here = [...ancestors, tag];
+    // Any open ancestor counts for these: the parser closes a `<p>` on meeting a
+    // block start tag however deep the parser is inside it.
+    const openAncestor = ancestors.findLast((parentTag) =>
+      PARSER_REWRITES.get(parentTag)?.has(tag)
+    );
+    // Only the immediate parent counts for table structure.
+    const directParent = ancestors.at(-1);
+    const hoisted = TABLE_STRUCTURE_REWRITES.get(directParent)?.has(tag)
+      ? directParent
+      : undefined;
+    const offender = openAncestor ?? hoisted;
+    if (offender !== undefined) {
+      found.push({ parent: offender, child: tag, chain: here.join(" > ") });
+      continue;
+    }
+    found.push(...nestingsBelow(child, here));
+  }
+  return found;
+}
+
+function parserRewritesIn(node: React.ReactNode): NestingOffence[] {
+  if (!isReactElement(node)) return [];
+  const rootTag = typeof node.type === "string" ? node.type : null;
+  return nestingsBelow(node, rootTag === null ? [] : [rootTag]);
+}
+
+test("nothing on this page nests in a way the HTML parser rewrites", () => {
+  // React #418 is "the server rendered HTML didn't match the client", which is
+  // defined as the parser building a different tree than React did. That makes
+  // it checkable without reproducing a hydration error: compare what React
+  // builds against what the parser builds from the same markup.
+  //
+  // It is checkable, and it was checked. Chromium's DOMParser builds the tree
+  // React built for all fourteen states of this page -- results and comparisons,
+  // a run open, a trace open, a partial trace, every failed trace state, an
+  // empty window and unreadable timestamps -- at 183 to 315 host elements each.
+  // Invalid nesting is not what fires here.
+  //
+  // What this test keeps is that answer true. It walks the same tree with the
+  // same fragment and text handling the comparison used, so a nesting the parser
+  // would rewrite is caught before it ships rather than by a hydration warning
+  // that says nothing about where.
+
+  // The rules have to be able to fail this test, so they are shown to, on the
+  // five nestings measured to be rewritten. A table of rules nothing exercises
+  // is a comment that looks like a check.
+  const element = (
+    type: string,
+    children: React.ReactNode
+  ): React.JSX.Element =>
+    React.createElement(type, null, children) as React.JSX.Element;
+  const rewrites = [
+    { parent: "p", child: "div", tree: element("p", element("div", "x")) },
+    {
+      parent: "p",
+      child: "p",
+      tree: element("p", ["a", element("p", "b")])
+    },
+    {
+      parent: "table",
+      child: "div",
+      tree: element("table", element("div", "x"))
+    },
+    {
+      parent: "tr",
+      child: "div",
+      tree: element(
+        "table",
+        element("tbody", element("tr", element("div", "x")))
+      )
+    },
+    {
+      parent: "a",
+      child: "a",
+      tree: element("a", element("a", "z"))
+    }
+  ];
+  for (const sample of rewrites) {
+    const hits = parserRewritesIn(sample.tree);
+    assert.ok(
+      hits.some((h) => h.parent === sample.parent && h.child === sample.child),
+      `the rules must catch ${sample.parent} > ${sample.child}, or they catch nothing`
+    );
+  }
+  // And the other direction: nesting the parser preserves is not a finding, even
+  // where it breaks the content model. `<ul><div>` is not conforming and cannot
+  // cause a mismatch; a rule that flagged it would be reported as a defect.
+  for (const tree of [
+    element("ul", element("li", "x")),
+    element("dl", element("div", element("dt", "x"))),
+    element("div", element("p", element("span", "x"))),
+    element("table", element("tbody", element("tr", element("td", "x"))))
+  ]) {
+    assert.deepEqual(
+      parserRewritesIn(tree),
+      [],
+      "markup the parser preserves must not be reported"
+    );
+  }
+
+  const rows = Array.from({ length: 3 }, (_, index) => ({
+    id: `run-${index}`,
+    agentRole: "docs-researcher",
+    promptName: "release-notes",
+    model: "gemini-3.8-flash-high",
+    metrics: [{ name: "tool_calls", value: 4, pass: true }],
+    passed: true,
+    timestamp: "2026-10-04T12:00:00.000Z",
+    spanId: "4bf92f3577b34da6"
+  }));
+  const filters = evaluationsFilters();
+  const span = {
+    spanId: "4bf92f3577b34da6",
+    parentSpanId: null,
+    spanName: "gen_ai.client_operation",
+    serviceName: "autodev-router",
+    timestamp: "2026-10-04T12:00:00.000Z",
+    durationNs: 1_000_000,
+    statusCode: "OK"
+  } as const;
+  const observed = {
+    kind: "observed",
+    detail: {
+      schema: "autodev-openlit-trace-detail-v1",
+      traceId: "4bf92f3577b34da64bf92f3577b34da6",
+      selectedSpanId: "4bf92f3577b34da6",
+      partial: false,
+      spans: [span]
+    }
+  } as const;
+
+  const states: Readonly<
+    Record<string, Partial<React.ComponentProps<typeof EvaluationsView>>>
+  > = {
+    "results, no selection": {},
+    "results, run open": { selection: "run-0" },
+    "results, page 2": { page: 2 },
+    "results, filtered": { filters: { ...filters, outcome: "passed" } },
+    "results, empty": { evaluations: [] },
+    "results, unreadable times": {
+      evaluations: rows.map((row) => ({ ...row, timestamp: "not-a-time" }))
+    },
+    comparisons: { tab: "comparisons" },
+    "missing run": { selection: "run-absent" },
+    "trace open": { spanId: "4bf92f3577b34da6", traceLookup: observed },
+    "trace + run open": {
+      selection: "run-0",
+      spanId: "4bf92f3577b34da6",
+      traceLookup: observed
+    },
+    "trace partial": {
+      spanId: "4bf92f3577b34da6",
+      traceLookup: {
+        kind: "observed",
+        detail: { ...observed.detail, partial: true }
+      }
+    },
+    "trace not found": {
+      spanId: "4bf92f3577b34da6",
+      traceLookup: { kind: "not-found" }
+    },
+    "trace unauthorized": {
+      spanId: "4bf92f3577b34da6",
+      traceLookup: { kind: "unauthorized" }
+    }
+  };
+
+  for (const [label, over] of Object.entries(states)) {
+    const offences = parserRewritesIn(
+      EvaluationsView({
+        evaluations: rows,
+        availableCount: 120,
+        totalCount: 5000,
+        truncated: true,
+        filters,
+        filterOptions: {
+          roles: ["docs-researcher"],
+          models: ["gemini-3.8-flash-high"],
+          prompts: ["release-notes"]
+        },
+        tab: "results",
+        page: 1,
+        ...over
+      })
+    );
+    assert.deepEqual(
+      offences,
+      [],
+      `${label}: the parser would move ${offences[0]?.parent ?? ""} > ${offences[0]?.child ?? ""} (${offences[0]?.chain ?? ""})`
+    );
+  }
+});
 test("every link whose destination is the history table names an element that is on the page", () => {
   // A fragment that matches nothing is a link that scrolls nowhere and moves the
   // keyboard nowhere, so it fails in the way that is hardest to notice: the page
