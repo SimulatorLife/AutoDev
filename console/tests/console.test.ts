@@ -7785,7 +7785,7 @@ test("every link whose destination is the history table names an element that is
     );
   }
   const sectionHrefs = captured(
-    /<a href="([^"]*)"[^>]*data-tab-item=/g,
+    /<a\b(?=[^>]*data-tab-item=)[^>]*href="([^"]*)"/g,
     narrowedPage
   );
   assert.ok(sectionHrefs.length > 0, "the section links are on this page");
@@ -9386,10 +9386,13 @@ test("the section tabs keep the filters and the open section keeps its own links
   assert.match(comparisons, /Outcomes by target role/);
   assert.match(comparisons, /Outcomes by model/);
   assert.equal(comparisons.includes("Evaluation history"), false);
-  assert.match(comparisons, /href="\/evaluations"[^>]*data-tab-item="results"/);
   assert.match(
     comparisons,
-    /href="\/evaluations\?tab=comparisons"[^>]*data-tab-item="comparisons"/
+    /<a\b(?=[^>]*href="\/evaluations")(?=[^>]*data-tab-item="results")[^>]*>/
+  );
+  assert.match(
+    comparisons,
+    /<a\b(?=[^>]*href="\/evaluations\?tab=comparisons")(?=[^>]*data-tab-item="comparisons")[^>]*>/
   );
 
   // Narrowed, the section links carry the narrowing, and a row link opened from
@@ -9409,7 +9412,7 @@ test("the section tabs keep the filters and the open section keeps its own links
   });
   assert.match(
     narrowed,
-    /href="\/evaluations\?outcome=failed&amp;role=worker"[^>]*data-tab-item="results"/
+    /<a\b(?=[^>]*href="\/evaluations\?outcome=failed&amp;role=worker")(?=[^>]*data-tab-item="results")[^>]*>/
   );
 
   const narrowedResults = renderEvaluations({ evaluations, filters });
@@ -19154,6 +19157,10 @@ test("client behavior stays in explicitly approved interaction islands", () => {
     [
       join("src", "components", "navigation", "AppNav.ts"),
       "Persists the interactive sidebar preference without moving page data client-side."
+    ],
+    [
+      join("src", "components", "navigation", "NavigationLink.ts"),
+      "Prefetches one dynamic destination on user intent instead of every visible view."
     ]
   ]);
   const approvedServerHandlerModules = new Map<string, string>();

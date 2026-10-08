@@ -1,5 +1,7 @@
 import React from "react";
 
+import { NavigationLink } from "../navigation/NavigationLink.ts";
+
 export interface TabDefinition {
   readonly id: string;
   readonly label: string;
@@ -19,6 +21,9 @@ export interface TabNavProps {
 }
 
 const DEFAULT_TAB_PARAM = "tab";
+type TabLinkProps = React.ComponentProps<typeof NavigationLink> & {
+  readonly "data-tab-item": string;
+};
 
 /**
  * Builds a deterministic, server-addressable URL for a tab: `basePath?tab=id`.
@@ -54,11 +59,10 @@ export function resolveActiveTabId(
 /**
  * Shared, server-rendered tab navigation primitive.
  *
- * Renders a real `<nav>` landmark containing native `<a href>` links, one
- * per tab, with `aria-current="page"` marking the active tab. There is no
- * client-side hydration or state: navigating between tabs is a normal
- * full-URL navigation (`?tab=<id>`), so every tab is independently
- * addressable, bookmarkable, and shareable.
+ * Renders a real `<nav>` landmark containing Next.js links (server-rendered as
+ * ordinary `<a href>` elements), one per tab, with `aria-current="page"`
+ * marking the active tab. Next.js handles in-place route transitions while
+ * preserving each tab's addressable, bookmarkable `?tab=<id>` URL.
  *
  * This intentionally does NOT use the ARIA `tablist`/`tab`/`tabpanel` widget
  * roles, because those roles carry a contract of arrow-key roving-tabindex
@@ -85,25 +89,20 @@ export function TabNav({
       { className: "flex flex-wrap gap-1 list-none p-0 m-0" },
       ...tabs.map((tab) => {
         const isActive = tab.id === activeTabId;
+        const linkProps: TabLinkProps = {
+          href: hrefFor ? hrefFor(tab.id) : tabHref(basePath, tab.id, tabParam),
+          "aria-current": isActive ? "page" : undefined,
+          "data-tab-item": tab.id,
+          className: `inline-block px-4 py-2.5 text-sm font-medium border-b-2 transition-colors no-underline  ${
+            isActive
+              ? "border-accent text-accent bg-surface/40"
+              : "border-transparent text-fg-muted hover:text-fg hover:border-border-strong"
+          }`
+        };
         return React.createElement(
           "li",
           { key: tab.id },
-          React.createElement(
-            "a",
-            {
-              href: hrefFor
-                ? hrefFor(tab.id)
-                : tabHref(basePath, tab.id, tabParam),
-              "aria-current": isActive ? "page" : undefined,
-              "data-tab-item": tab.id,
-              className: `inline-block px-4 py-2.5 text-sm font-medium border-b-2 transition-colors no-underline  ${
-                isActive
-                  ? "border-accent text-accent bg-surface/40"
-                  : "border-transparent text-fg-muted hover:text-fg hover:border-border-strong"
-              }`
-            },
-            tab.label
-          )
+          React.createElement(NavigationLink, linkProps, tab.label)
         );
       })
     )

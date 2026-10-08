@@ -11,6 +11,7 @@ import React from "react";
 import { canonicalNavPath } from "../../lib/routes.ts";
 import { Button } from "../forms/Button.ts";
 import { Icon, navIcon } from "../icons/Icon.ts";
+import { NavigationLink } from "./NavigationLink.ts";
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "autodev.console.sidebar.collapsed";
 
@@ -19,7 +20,7 @@ export interface AppNavProps {
   readonly counts?: Partial<Record<CanonicalNavSection, number>> | undefined;
 }
 
-type NavigationLinkProps = React.AnchorHTMLAttributes<HTMLAnchorElement> & {
+type NavigationLinkProps = React.ComponentProps<typeof NavigationLink> & {
   readonly "data-nav-brand"?: string;
   readonly "data-nav-item"?: string;
 };
@@ -30,9 +31,10 @@ type GroupSectionProps = React.HTMLAttributes<HTMLElement> & {
 
 /**
  * URL-addressable navigation grouped by Configure / Observe / Operate. Each
- * item remains a real link. At every width the circular OpenLIT-style button
- * toggles between the full sidebar and its clickable icon rail; the preference
- * survives route changes. Narrow viewports default to the rail; expanding there
+ * item remains a real anchor while Next.js handles in-place route transitions.
+ * At every width the circular OpenLIT-style button toggles between the full
+ * sidebar and its clickable icon rail; the preference survives route changes.
+ * Narrow viewports default to the rail; expanding there
  * overlays the page instead of squeezing its content. Icon-only links retain
  * their accessible names and titles.
  */
@@ -104,7 +106,7 @@ export function AppNav({
           (isCollapsed ? "justify-center" : "justify-start")
       },
       React.createElement(
-        "a",
+        NavigationLink,
         brandLinkProps,
         React.createElement(
           "span",
@@ -232,7 +234,7 @@ function renderNavItem(
     "li",
     { key: section },
     React.createElement(
-      "a",
+      NavigationLink,
       labelProps,
       icon === null
         ? null

@@ -180,6 +180,7 @@ Configuration does not prove runtime availability. Eligibility/exposure does not
 - Preserve WCAG 2.1 AA contrast (>= 4.5:1 for text, >= 3:1 for large text and UI component boundaries) in the dark-only palette; enforced by the `contrastRatio` assertions in [`tests/autodev-console-target-state.test.ts`](../tests/autodev-console-target-state.test.ts) (test: "Console semantic text and status surfaces meet WCAG AA contrast").
 - Use the same status vocabulary, icon sizing, spacing, table density, dialog behavior, and destructive-action confirmation patterns across features.
 - URL-addressable list/detail/filter state is preferred when it improves operator navigation and debugging.
+- Internal resource and tab links use Next.js in-place navigation, not full-document reloads; they remain ordinary URL-addressable anchors for keyboard access, bookmarking, sharing, and browser history. Full dynamic-route prefetch starts only on pointer, touch, or keyboard intent, never for every visible view or tab.
 
 ## 4. Repository and module architecture
 
