@@ -17,7 +17,7 @@ import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { ConvergenceBadge } from "../../components/status/ConvergenceBadge.ts";
 import {
-  NOT_OBSERVED_LABEL,
+  NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
 import { ModelToggle } from "./ModelToggle.ts";
@@ -38,8 +38,7 @@ function ProviderRoleState({
 }): React.JSX.Element {
   if (provider === null) {
     return React.createElement(StatusBadge, {
-      status: "not-observed",
-      label: NOT_OBSERVED_LABEL
+      status: NOT_OBSERVED_STATUS
     });
   }
   return React.createElement(

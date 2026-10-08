@@ -22,6 +22,7 @@ import {
 } from "../../components/panels/DetailGrid.ts";
 import {
   NOT_OBSERVED_LABEL,
+  NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
@@ -37,7 +38,6 @@ import {
 } from "../../components/ui/text-classes.ts";
 
 const CONFIGURED_STATUS = "configured" as const;
-const NOT_OBSERVED_STATUS = "not-observed" as const;
 const FLEX_COLUMN_DETAILS_CLASS = "flex flex-col gap-2";
 
 /**
@@ -126,8 +126,7 @@ function ConfiguredToolAllowlist({
         className: FLEX_COLUMN_DETAILS_CLASS
       },
       React.createElement(StatusBadge, {
-        status: NOT_OBSERVED_STATUS,
-        label: NOT_OBSERVED_LABEL
+        status: NOT_OBSERVED_STATUS
       }),
       React.createElement(
         "p",
@@ -293,8 +292,7 @@ export function McpDetailView({
           "Runtime connection"
         ),
         React.createElement(StatusBadge, {
-          status: NOT_OBSERVED_STATUS,
-          label: NOT_OBSERVED_LABEL
+          status: NOT_OBSERVED_STATUS
         }),
         React.createElement(
           "p",

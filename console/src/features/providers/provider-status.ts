@@ -6,8 +6,10 @@ import React from "react";
 
 import {
   NOT_OBSERVED_LABEL,
+  NOT_OBSERVED_STATUS,
   StatusBadge,
-  type StatusBadgeVariant} from "../../components/status/StatusBadge.ts";
+  type StatusBadgeVariant
+} from "../../components/status/StatusBadge.ts";
 
 /**
  * One provider's overall usability, as a single verdict.
@@ -151,8 +153,7 @@ export function ProviderHealthBadge({
 }): React.JSX.Element {
   if (health === null) {
     return React.createElement(StatusBadge, {
-      status: "not-observed",
-      label: NOT_OBSERVED_LABEL
+      status: NOT_OBSERVED_STATUS
     });
   }
   if (health.cooldown !== null) {

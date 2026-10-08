@@ -72,6 +72,31 @@ const DEFAULT_STYLE = NEUTRAL_TONE_CLASS;
 export const NOT_OBSERVED_LABEL = "Not observed";
 
 /**
+ * The variant that encodes "nothing reported back".
+ *
+ * This is the same defect the label above already had, one layer over, and it
+ * was never collected. `NOT_OBSERVED_LABEL` was declared locally in eight
+ * feature files before it moved here; the variant beside it was declared
+ * locally in seven more -- `as const` in four of them, unannotated in three --
+ * and written as a bare `"not-observed"` literal at six further call sites, in
+ * files that import `NOT_OBSERVED_LABEL` from this module but not the variant
+ * that decides what it renders. The one export in the tree sat in
+ * `features/memory/memory-status.ts`, so the shared component's own closed
+ * union was declared in a memory feature.
+ *
+ * Nothing was misspelled while it stood, and that is not the argument for
+ * leaving it: `status` is typed `StatusBadgeVariant`, so the compiler catches a
+ * wrong key and the value could not drift silently. What it could do was make
+ * the union thirteen spellings wide, so the day `not-observed` needs a tone of
+ * its own or the key is renamed, thirteen edits across seven files stand between
+ * the change and the component -- six of them bare literals that a grep for
+ * `NOT_OBSERVED_STATUS` does not find. `satisfies` keeps the literal type for
+ * callers that compare against it while still checking the key against the
+ * union, so the constant cannot drift from the table it indexes.
+ */
+export const NOT_OBSERVED_STATUS = "not-observed" satisfies StatusBadgeVariant;
+
+/**
  * The word each variant renders when the caller supplies no `label` of its own.
  *
  * This used to be derived from the variant key at render time

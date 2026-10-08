@@ -26,7 +26,10 @@ import { PageBody } from "../../components/layout/PageBody.ts";
 import { Pagination } from "../../components/navigation/Pagination.ts";
 import { DetailDrawer } from "../../components/panels/DetailDrawer.ts";
 import { gridRowClass } from "../../components/panels/DetailGrid.ts";
-import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_STATUS,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import { Chip } from "../../components/tables/Chips.ts";
 import {
@@ -54,8 +57,7 @@ import {
   MEMORY_EVIDENCE_KIND_LABEL,
   MEMORY_REASON_LABEL,
   MEMORY_STATUS_LABEL,
-  MEMORY_STATUS_VARIANT,
-  NOT_OBSERVED_STATUS
+  MEMORY_STATUS_VARIANT
 } from "./memory-status.ts";
 
 /**

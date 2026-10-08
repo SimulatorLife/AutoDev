@@ -11,6 +11,7 @@ import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { SourceValidationIssues } from "../../components/status/SourceValidationIssues.ts";
 import {
   NOT_OBSERVED_LABEL,
+  NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
 import { chipList, StatusChip } from "../../components/tables/Chips.ts";
@@ -20,8 +21,6 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { MONO_ID_LINK_CLASS } from "../../components/ui/text-classes.ts";
-
-const NOT_OBSERVED_STATUS = "not-observed" as const;
 
 /**
  * MCP servers resource view.
@@ -192,8 +191,7 @@ export function McpsView({
       weight: 190,
       cell: () =>
         React.createElement(StatusBadge, {
-          status: NOT_OBSERVED_STATUS,
-          label: NOT_OBSERVED_LABEL
+          status: NOT_OBSERVED_STATUS
         })
     }
   ];

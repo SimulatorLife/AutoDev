@@ -6,7 +6,7 @@ import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import {
-  NOT_OBSERVED_LABEL,
+  NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
@@ -101,8 +101,7 @@ export function WorkspacesView({
       weight: 160,
       cell: () =>
         React.createElement(StatusBadge, {
-          status: "not-observed",
-          label: NOT_OBSERVED_LABEL
+          status: NOT_OBSERVED_STATUS
         })
     }
   ];

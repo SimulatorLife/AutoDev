@@ -19,6 +19,7 @@ import { PageBody } from "../../components/layout/PageBody.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import {
   NOT_OBSERVED_LABEL,
+  NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
@@ -59,7 +60,6 @@ const SOURCE_FILTERS: readonly (ToolSource | "all")[] = [
   ...SOURCE_VALUES
 ];
 const COLLATOR = new Intl.Collator();
-const NOT_OBSERVED_STATUS = "not-observed" as const;
 
 export interface ToolsViewFilters {
   readonly source: string;
@@ -94,8 +94,7 @@ function availabilityBadge(availability: ToolAvailability): React.JSX.Element {
     }
     default: {
       return React.createElement(StatusBadge, {
-        status: NOT_OBSERVED_STATUS,
-        label: NOT_OBSERVED_LABEL
+        status: NOT_OBSERVED_STATUS
       });
     }
   }

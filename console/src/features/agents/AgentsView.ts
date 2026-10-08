@@ -16,6 +16,7 @@ import {
 } from "../../components/panels/DetailGrid.ts";
 import {
   NOT_OBSERVED_LABEL,
+  NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
 import {
@@ -28,8 +29,6 @@ import {
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
 import { AgentProviderSummary } from "./AgentProviderSummary.ts";
-
-const NOT_OBSERVED_STATUS = "not-observed";
 
 export interface AgentsViewProps {
   readonly agents: readonly AgentDefinition[];

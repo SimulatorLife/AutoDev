@@ -25,6 +25,7 @@ import {
 import { EmptyState } from "../../components/status/EmptyState.ts";
 import {
   NOT_OBSERVED_LABEL,
+  NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
 import { Chip } from "../../components/tables/Chips.ts";
@@ -57,7 +58,6 @@ export interface ToolDetailViewProps {
   readonly usageUnavailable: boolean;
 }
 
-const NOT_OBSERVED_STATUS = "not-observed" as const;
 const UNCONFIGURED_LABEL = "Not configured";
 
 function sourceAuthorityLabel(
@@ -100,8 +100,7 @@ function availabilityBadge(
     }
     default: {
       return React.createElement(StatusBadge, {
-        status: NOT_OBSERVED_STATUS,
-        label: NOT_OBSERVED_LABEL
+        status: NOT_OBSERVED_STATUS
       });
     }
   }
@@ -191,7 +190,7 @@ function usageSection(
       "div",
       { className: "flex flex-col gap-2" },
       React.createElement(StatusBadge, {
-        status: "not-observed",
+        status: NOT_OBSERVED_STATUS,
         label: "No recorded tool calls"
       }),
       React.createElement(
@@ -267,7 +266,7 @@ function roleExposure(tool: ToolCatalogItem): React.JSX.Element {
       "div",
       { className: "flex items-center gap-2" },
       React.createElement(StatusBadge, {
-        status: "not-observed",
+        status: NOT_OBSERVED_STATUS,
         label: UNCONFIGURED_LABEL
       }),
       React.createElement(

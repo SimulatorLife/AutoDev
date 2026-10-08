@@ -16,6 +16,7 @@ import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { SourceValidationIssues } from "../../components/status/SourceValidationIssues.ts";
 import {
   NOT_OBSERVED_LABEL,
+  NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
 import { chipList } from "../../components/tables/Chips.ts";
@@ -187,8 +188,7 @@ export function SkillsView({
         const item = eligibility.find((e) => e.skill === skill.name);
         if (item === undefined) {
           return React.createElement(StatusBadge, {
-            status: "not-observed",
-            label: NOT_OBSERVED_LABEL
+            status: NOT_OBSERVED_STATUS
           });
         }
         if (item.roles.length === 0) {

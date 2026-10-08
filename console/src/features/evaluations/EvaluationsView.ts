@@ -22,6 +22,7 @@ import {
 } from "../../components/panels/DetailGrid.ts";
 import {
   NOT_OBSERVED_LABEL,
+  NOT_OBSERVED_STATUS,
   StatusBadge,
   type StatusBadgeVariant
 } from "../../components/status/StatusBadge.ts";
@@ -171,7 +172,6 @@ interface EvaluationsViewProps {
  */
 const PASSED_LABEL = "Passed";
 const FAILED_LABEL = "Failed";
-const NOT_OBSERVED_STATUS: StatusBadgeVariant = "not-observed";
 
 /**
  * A verdict's status and its word, derived together.

@@ -11,7 +11,10 @@ import type {
   MemoryUseKind
 } from "@simulatorlife/autodev-core";
 
-import type { StatusBadgeVariant } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_STATUS,
+  type StatusBadgeVariant
+} from "../../components/status/StatusBadge.ts";
 
 /**
  * The Memory lifecycle vocabulary, in one place.
@@ -27,8 +30,6 @@ import type { StatusBadgeVariant } from "../../components/status/StatusBadge.ts"
  * adding a status without deciding its word, its tone and its place in the order
  * is a typecheck failure rather than a blank cell or a missing bar.
  */
-
-export const NOT_OBSERVED_STATUS = "not-observed" as const;
 
 /**
  * Lifecycle statuses in an order a reader can act on.
