@@ -124,6 +124,7 @@ import {
   EMPTY_INLINE_CLASS,
   EmptyState,
   ENTITY_TITLE_CLASS,
+  type EvaluationTraceLookup,
   EvaluationsView,
   FilterBar,
   FilterSearchField,
@@ -7434,7 +7435,17 @@ test("every link whose destination is the history table names an element that is
   //
   // The href is read with the module's own parsers, so the guard and the product
   // cannot disagree about what a URL means.
-  const idsReachableBy = (href: string): Set<string> => {
+  const UNAVAILABLE_TRACE_LOOKUPS: ReadonlyArray<
+    readonly [string, EvaluationTraceLookup]
+  > = [
+    ["not-configured", { kind: "not-configured" }],
+    ["not-found", { kind: "not-found" }],
+    ["unauthorized", { kind: "unauthorized" }],
+    ["http-error", { kind: "http-error", status: 404 }],
+    ["unavailable", { kind: "unavailable" }]
+  ];
+
+  const idsPerState = (href: string): Map<string, Set<string>> => {
     // The fragment comes off first: a link to the bare list carries no `?`, so
     // splitting on that alone leaves `#evaluation-history` glued to the path and
     // every such link reports as leaving the resource.
@@ -7446,25 +7457,41 @@ test("every link whose destination is the history table names an element that is
     );
     const selection = singleValue(params[EVALUATION_RESULT_PARAM]);
     const requestedSpan = singleValue(params[EVALUATION_SPAN_PARAM]);
-    const markup = renderEvaluations({
+    const shape = {
       evaluations: rows,
       filters: parseEvaluationsFilters(params),
       tab: resolveEvaluationsTab(params.tab),
       page: resolveEvaluationsPage(params[EVALUATIONS_PAGE_PARAM]),
-      ...(selection === undefined ? {} : { selection }),
-      ...(requestedSpan === undefined
-        ? {}
-        : { spanId: requestedSpan, traceLookup: observedTrace(requestedSpan) })
-    });
-    return new Set(captured(/id="([^"]+)"/g, markup));
+      ...(selection === undefined ? {} : { selection })
+    };
+
+    const byState = new Map<string, Set<string>>();
+    const collect = (label: string, props: Record<string, unknown>): void => {
+      const markup = renderEvaluations({ ...shape, ...props });
+      byState.set(label, new Set(captured(/id="([^"]+)"/g, markup)));
+    };
+
+    if (requestedSpan === undefined) {
+      collect("no trace", {});
+      return byState;
+    }
+    for (const [label, lookup] of [
+      ["observed", observedTrace(requestedSpan)] as const,
+      ...UNAVAILABLE_TRACE_LOOKUPS
+    ]) {
+      collect(label, { spanId: requestedSpan, traceLookup: lookup });
+    }
+    return byState;
   };
 
   for (const { href, fragment } of fragments) {
     assert.notEqual(fragment, "", `the link ${href} names no element`);
-    assert.ok(
-      idsReachableBy(href).has(fragment),
-      `${href} names id="${fragment}", which the page it reaches does not carry`
-    );
+    for (const [label, ids] of idsPerState(href)) {
+      assert.ok(
+        ids.has(fragment),
+        `${href} names id="${fragment}", which the page does not carry in its ${label} state`
+      );
+    }
   }
 
   // The named element must be able to take focus, or the keyboard half of the

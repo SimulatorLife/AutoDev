@@ -587,27 +587,12 @@ function spanLink(
     ? React.createElement(
         "span",
         {
-          // `scroll-mt-6` is not decoration. The browser aligns the anchor with
-          // the top of the scrollport -- which here is `<main>`, because the
-          // shell is `h-screen overflow-hidden` and never scrolls the window --
-          // and the anchor is the cell's first child, so the row's own 12px of
-          // padding sits above it. Measured without the margin: the selected row
-          // arrives at top -15 and the ascenders of the span id are shaved off by
-          // the viewport edge. The margin buys back the padding the anchor sits
-          // inside, plus a little air so the row reads as the destination rather
-          // than as a row the page happened to stop on.
-          className: "inline-flex flex-wrap items-baseline gap-1.5 scroll-mt-6",
-          // The anchor `evaluationTraceHref` points its fragment at. This is the
-          // only element in the panel that carries it, so a link scrolls to
-          // exactly one place and `document.getElementById` finds exactly one.
-          id: traceSpanAnchorId(spanId),
-          // The fragment moves the viewport, not the keyboard: measured, arrival
-          // leaves `document.activeElement` on `<body>`, so a keyboard user
-          // scrolled to row 150 would resume tabbing from the top of the page and
-          // have to cross the whole document again to reach what they just
-          // landed on. `tabIndex: -1` takes focus without adding a tab stop, so
-          // the arrow keys do not get 200 extra stops in the sequence.
-          tabIndex: -1
+          // This chip used to carry `traceSpanAnchorId` itself, which made the
+          // fragment's target exist only in the observed state. It is now the
+          // panel that is named, in every state -- see `tracePanelProps` -- so
+          // the chip is a marker and nothing more, and one id in the document
+          // still resolves to exactly one element.
+          className: "inline-flex flex-wrap items-baseline gap-1.5"
         },
         link,
         React.createElement(
@@ -843,9 +828,45 @@ function renderMissingResult(
   );
 }
 
+/**
+ * The attributes every trace panel carries, whatever state it is in.
+ *
+ * A row's "View trace" link names `#evaluation-trace-span-<spanId>`, and the
+ * panel is the thing that link is trying to reach. The anchor used to sit on the
+ * "Selected" chip inside the *observed* panel, so it existed only when the trace
+ * loaded: with the source answering 404 the panel rendered its alert, carried no
+ * id at all, and the fragment resolved to nothing. Measured in Chromium the
+ * browser then stayed at `scrollY` 0 with the failure callout 487px below at
+ * 1280 and 1137px below at 390 -- the operator lands at the top of the page and
+ * is never shown the one sentence that explains the failure.
+ *
+ * So the anchor belongs to the panel rather than to one state of it. Whether a
+ * lookup succeeds is the one thing about arriving here that the operator does not
+ * get to choose, and it must not decide where they land.
+ *
+ * `tabIndex: -1` moves the keyboard with the viewport, the same arrangement the
+ * history heading and the drawer already use. Absent for an invalid span id,
+ * because a URL the page has declared unreadable names no element to land on.
+ */
+function tracePanelProps(
+  state: EvaluationTraceLookup["kind"],
+  spanId: string | undefined
+): Record<string, unknown> {
+  return {
+    // One owner for the panel's identity and its arrival point, so a state
+    // added later cannot render a panel that is neither marked nor reachable.
+    "data-feature": "evaluation-trace-detail",
+    "data-trace-state": state,
+    ...(spanId === undefined
+      ? {}
+      : { id: traceSpanAnchorId(spanId), tabIndex: -1 })
+  };
+}
+
 function renderTraceLookup(
   traceLookup: EvaluationTraceLookup,
-  nav: EvaluationsNav
+  nav: EvaluationsNav,
+  spanId: string | undefined
 ): React.JSX.Element {
   if (traceLookup.kind !== "observed") {
     const { status, message } = TRACE_UNAVAILABLE_MESSAGES[traceLookup.kind];
@@ -856,9 +877,12 @@ function renderTraceLookup(
         "div",
         {
           role: "alert",
-          className: CALLOUT_WARNING_CLASS,
-          "data-feature": "evaluation-trace-detail",
-          "data-trace-state": traceLookup.kind,
+          // `scroll-mt-4` for the same reason the history heading carries one:
+          // the scrollport is `<main>` -- the shell is `h-screen overflow-hidden`
+          // and never scrolls the window -- so without the margin the panel
+          // arrives flush against its top edge with its own padding shaved.
+          className: `${CALLOUT_WARNING_CLASS} scroll-mt-4`,
+          ...tracePanelProps(traceLookup.kind, spanId),
           "data-status": status
         },
         message
@@ -889,10 +913,9 @@ function renderTraceLookup(
   return React.createElement(
     "section",
     {
-      className: `flex flex-col gap-4 ${LIST_PANEL_CLASS}`,
+      className: `flex flex-col gap-4 ${LIST_PANEL_CLASS} scroll-mt-4`,
       "aria-labelledby": EVALUATIONS_TRACE_HEADING_ID,
-      "data-feature": "evaluation-trace-detail",
-      "data-trace-state": "observed",
+      ...tracePanelProps(traceLookup.kind, spanId),
       "data-trace-partial": detail.partial ? "true" : "false"
     },
     React.createElement(
@@ -1973,7 +1996,7 @@ export function EvaluationsView({
         subtitle: `${observedOutcomes} of ${evaluations.length} with explicit verdicts`
       })
     ),
-    traceLookup ? renderTraceLookup(traceLookup, nav) : null,
+    traceLookup ? renderTraceLookup(traceLookup, nav, spanId) : null,
     tab === "results"
       ? React.createElement(
           "div",
