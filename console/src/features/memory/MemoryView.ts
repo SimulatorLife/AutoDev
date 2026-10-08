@@ -249,7 +249,14 @@ export function MemoryView({
       React.createElement(StatCard, {
         title: "Durable Records",
         value: totalRecords,
-        subtitle: `${records.length} in scope`
+        // The page, named as the page. `totalRecords` is the Runtime's own
+        // count of records matching the current filters, and `records` is the
+        // slice of them on this page -- so "N in scope" under a total of 1,204
+        // was not a loose label but the inverse of the truth: it claimed 50 of
+        // the matching records were in scope, when all 1,204 were and 50 were
+        // merely how many this page holds. The same confusion was already
+        // fixed one card below for the lifecycle counts.
+        subtitle: `${records.length} on this page`
       }),
       React.createElement(StatCard, {
         // A collection-scoped count, published by the Runtime's own rollup.
@@ -270,10 +277,11 @@ export function MemoryView({
         value: totalExperiences ?? NOT_OBSERVED_LABEL,
         // Both headline and subtitle follow the same observed/unobserved
         // branch, so the card can never pair "Not observed" with a count.
+        // The subtitle names the page, for the reason given on Durable Records.
         subtitle:
           totalExperiences === null
             ? NOT_OBSERVED_LABEL
-            : `${experiences.length} in scope`
+            : `${experiences.length} on this page`
       }),
       React.createElement(StatCard, {
         // Named for what the Runtime counts, not for what it read. This is the
