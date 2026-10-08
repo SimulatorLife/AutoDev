@@ -393,12 +393,44 @@ export function evaluationsHref(
     : `${EVALUATIONS_ROUTE}?${params.toString()}`;
 }
 
+/**
+ * The element every link whose destination is the history table points at.
+ *
+ * Three links mean "take me back to the list": the pager's Previous/Next, the
+ * drawer's "Close evaluation detail", and the trace panel's "Back to
+ * evaluations". Every one of them is a plain link, so every one of them is a full
+ * server-rendered navigation, and the browser's answer to a navigation with no
+ * fragment is "scroll to the top, focus `<body>`".
+ *
+ * Measured, that is wrong twice over on this page. The keyboard half is the one
+ * this anchor exists for: after activating Next with Enter, `document
+ * .activeElement` is `<body>`, so a keyboard user resumes from the top of the
+ * document rather than from the list they just moved along. It is the same defect
+ * `traceSpanAnchorId` already answers, on the other half of the page.
+ *
+ * The viewport half is worse than a lost tab stop. At 390px the operator has to
+ * scroll to the bottom of a 120-row history to reach the pager at all, and
+ * arriving back at `scrollTop` 0 puts "Evaluation history" 1,185px below the fold
+ * and the first row of the new page 1,262px below it -- so the rows they just
+ * asked for are not on screen at all, and nothing that did change is. At 1280 the
+ * heading is already in view, so the fragment costs no scroll there and fixes the
+ * focus. The heading is the target rather than the first row because it is what
+ * focus should announce, and it sits immediately above the table.
+ *
+ * Declared here, beside the href builders that emit it, for the reason
+ * `traceSpanAnchorId` gives: a fragment that does not match an id in the rendered
+ * page is a link that silently goes nowhere, and the two drifting apart is
+ * invisible until someone clicks. Nothing derives the element from the href, so
+ * one literal used by both sides is the whole mechanism.
+ */
+export const EVALUATIONS_HISTORY_ANCHOR_ID = "evaluation-history";
+
 /** The list for a filter state, with whatever is currently open still open. */
 export function evaluationsListHref(
   filters: EvaluationsFilters,
   selection: Partial<EvaluationsSelection> = {}
 ): string {
-  return evaluationsHref(filters, { ...NO_SELECTION, ...selection });
+  return `${evaluationsHref(filters, { ...NO_SELECTION, ...selection })}#${EVALUATIONS_HISTORY_ANCHOR_ID}`;
 }
 
 /**
@@ -476,6 +508,17 @@ export function evaluationResultHref(
  * is a link that silently goes nowhere, and the two drifting apart is invisible
  * until someone clicks.
  */
+/**
+ * The trace panel's own heading id, which its `aria-labelledby` names.
+ *
+ * The panel and its heading each spelled this literal, in the same file, forty
+ * lines apart. That is the same two-halves-drift risk `traceSpanAnchorId` is
+ * written against, and it fails more quietly: a panel whose `aria-labelledby`
+ * points at an id the heading does not carry is simply an unnamed region, with
+ * nothing to see and no error to notice.
+ */
+export const EVALUATIONS_TRACE_HEADING_ID = "evaluation-trace-heading";
+
 export function traceSpanAnchorId(spanId: string): string {
   return `evaluation-trace-span-${spanId}`;
 }
@@ -536,13 +579,20 @@ export function evaluationsTabHref(
  * Page links deliberately carry no open run or open trace. A page link is a move
  * along the list, and carrying the drawer across it would reopen a detail for a
  * run that is no longer on screen.
+ *
+ * The fragment is `EVALUATIONS_HISTORY_ANCHOR_ID` for the same reason
+ * `evaluationsListHref` carries it: a page link's destination is the history
+ * table, so the browser should put the operator in front of it and the keyboard
+ * should be able to continue from it. The pager is the worst case for arriving at
+ * the top of the document, because reaching it means scrolling to the bottom of
+ * the whole history first.
  */
 export function evaluationsPageHref(
   filters: EvaluationsFilters,
   page: number,
   tab: EvaluationsTabId = DEFAULT_EVALUATIONS_TAB
 ): string {
-  return evaluationsHref(filters, { tab, page });
+  return `${evaluationsHref(filters, { tab, page })}#${EVALUATIONS_HISTORY_ANCHOR_ID}`;
 }
 
 /** Whether one evaluation carries an explicit verdict, in either direction. */

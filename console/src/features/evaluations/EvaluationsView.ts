@@ -54,8 +54,10 @@ import {
   contradictoryWindow,
   DEFAULT_EVALUATIONS_TAB,
   evaluationResultHref,
+  EVALUATIONS_HISTORY_ANCHOR_ID,
   EVALUATIONS_PAGE_SIZE,
   EVALUATIONS_TABS,
+  EVALUATIONS_TRACE_HEADING_ID,
   evaluationsClearedHref,
   type EvaluationsFilterOptions,
   type EvaluationsFilters,
@@ -887,7 +889,7 @@ function renderTraceLookup(
     "section",
     {
       className: `flex flex-col gap-4 ${LIST_PANEL_CLASS}`,
-      "aria-labelledby": "evaluation-trace-heading",
+      "aria-labelledby": EVALUATIONS_TRACE_HEADING_ID,
       "data-feature": "evaluation-trace-detail",
       "data-trace-state": "observed",
       "data-trace-partial": detail.partial ? "true" : "false"
@@ -897,7 +899,7 @@ function renderTraceLookup(
       { className: "flex flex-wrap items-center justify-between gap-3" },
       React.createElement(
         "h2",
-        { id: "evaluation-trace-heading", className: SECTION_HEADING_CLASS },
+        { id: EVALUATIONS_TRACE_HEADING_ID, className: SECTION_HEADING_CLASS },
         "Trace detail"
       ),
       React.createElement(
@@ -1963,7 +1965,29 @@ export function EvaluationsView({
           { className: "flex flex-col gap-3" },
           React.createElement(
             "h2",
-            { className: SECTION_HEADING_CLASS },
+            {
+              id: EVALUATIONS_HISTORY_ANCHOR_ID,
+              className: `${SECTION_HEADING_CLASS} scroll-mt-4`,
+              // Where every link whose destination is this table lands, and why
+              // it can take focus. `EVALUATIONS_HISTORY_ANCHOR_ID` is named by
+              // the pager's Previous/Next, the drawer's close link and the trace
+              // panel's "Back to evaluations"; the browser moves the viewport to
+              // this element and, because it is focusable, moves the keyboard
+              // there too.
+              //
+              // `tabIndex: -1` rather than a natural stop: the heading is not
+              // something an operator tabs to in order to tab onward, so a tab
+              // stop here would insert one more press between the pager and the
+              // first row for everyone. Taking focus programmatically is the
+              // only reason for it.
+              //
+              // `scroll-mt-4` is the same debt `traceSpanAnchorId`'s anchor pays.
+              // The scrollport is `<main>` -- the shell is `h-screen
+              // overflow-hidden` and never scrolls the window -- and without the
+              // margin the heading arrives flush against its top edge, its own
+              // line box shaved by the boundary rather than sitting below it.
+              tabIndex: -1
+            },
             "Evaluation history"
           ),
           React.createElement<DataTableProps<EvaluationResult>>(DataTable, {

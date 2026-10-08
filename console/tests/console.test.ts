@@ -5420,7 +5420,7 @@ test("a trace lookup that failed says what failed and offers the way back", asyn
       );
       assert.match(
         markup,
-        /<a href="\/evaluations"[^>]*>Back to evaluations<\/a>/,
+        /<a href="\/evaluations#evaluation-history"[^>]*>Back to evaluations<\/a>/,
         "a failed lookup is not a dead end"
       );
     }
@@ -6031,7 +6031,7 @@ test("closing a run leaves the trace open, and leaving the trace closes neither"
   assert.match(
     both.slice(drawerStart, both.indexOf("</main>")),
     new RegExp(
-      String.raw`href="/evaluations\?role=worker&amp;spanId=${spanId}&amp;page=2"`
+      String.raw`href="/evaluations\?role=worker&amp;spanId=${spanId}&amp;page=2#evaluation-history"`
     ),
     "closing the run keeps the span, the filters and the page"
   );
@@ -6040,14 +6040,14 @@ test("closing a run leaves the trace open, and leaving the trace closes neither"
   // "back to evaluations" says.
   assert.match(
     both.slice(both.indexOf('data-feature="evaluation-trace-detail"')),
-    /href="\/evaluations\?role=worker&amp;page=2"/,
+    /href="\/evaluations\?role=worker&amp;page=2#evaluation-history"/,
     "leaving the trace leaves the list with neither selection"
   );
 
   // With no span open, closing a run is the plain list.
   assert.match(
     renderEvaluations({ evaluations: [run], selection: run.id }),
-    /href="\/evaluations"/,
+    /href="\/evaluations#evaluation-history"/,
     "a page with one selection still closes to the plain list"
   );
 });
@@ -6497,13 +6497,13 @@ test("page links keep the filters and the section and drop the open run", () => 
   );
   assert.match(
     pager,
-    /href="\/evaluations\?outcome=passed&amp;role=implementer&amp;page=3"/
+    /href="\/evaluations\?outcome=passed&amp;role=implementer&amp;page=3#evaluation-history"/
   );
   // The first page is what a link without the parameter already means, so
   // Previous drops it rather than writing `page=1`.
   assert.match(
     pager,
-    /href="\/evaluations\?outcome=passed&amp;role=implementer"/
+    /href="\/evaluations\?outcome=passed&amp;role=implementer#evaluation-history"/
   );
   assert.equal(
     pager.includes("page=1"),
@@ -6547,6 +6547,151 @@ test("page links keep the filters and the section and drop the open run", () => 
     />120<\/span>/,
     "the group counts every run in the window"
   );
+});
+
+test("every link whose destination is the history table names an element that is on the page", () => {
+  // A fragment that matches nothing is a link that scrolls nowhere and moves the
+  // keyboard nowhere, so it fails in the way that is hardest to notice: the page
+  // still renders, the link still works, and the operator simply arrives at the
+  // top of the document every time. Nothing in the markup says the destination
+  // was missing.
+  //
+  // The invariant is per destination, not per link: a fragment has to name an
+  // element on the page that link *reaches*. Two of them reach a page that is not
+  // the one rendered here -- the drawer's trace link adds a span, and the anchor
+  // it names exists only once the trace panel is open -- so the ids are collected
+  // from both states and every fragment is required to name one of them. That
+  // avoids having to classify links, which is where this would otherwise go
+  // wrong: an earlier attempt excluded anything carrying a span id, which also
+  // excluded the drawer's close link, because that link keeps the span on
+  // purpose. A mis-scoped assertion gets weakened until it cannot fail.
+  const spanId = "0123456789abcdef";
+  const rows = Array.from({ length: 120 }, (_, index) => ({
+    id: `run-${index}`,
+    agentRole: "implementer",
+    model: "m-1",
+    metrics: [],
+    passed: true,
+    timestamp: "2026-10-04T12:00:00Z",
+    spanId
+  }));
+  // A capture group is `string | undefined` under `noUncheckedIndexedAccess`, so
+  // reading one needs a narrowing step rather than a cast: a cast would also
+  // silence the case where the group simply did not participate, which is a
+  // selector that stopped matching and not a value.
+  const captured = (re: RegExp, markup: string): string[] =>
+    [...markup.matchAll(re)].flatMap((match) =>
+      match[1] === undefined ? [] : [match[1]]
+    );
+
+  const listPage = renderEvaluations({
+    evaluations: rows,
+    page: 2,
+    tab: "results",
+    selection: "run-60",
+    spanId,
+    filters: evaluationsFilters()
+  });
+  const tracePage = renderEvaluations({
+    evaluations: rows,
+    tab: "results",
+    spanId,
+    traceLookup: {
+      kind: "observed",
+      detail: {
+        schema: "autodev-openlit-trace-detail-v1",
+        traceId: `${spanId}${spanId}`,
+        selectedSpanId: spanId,
+        partial: false,
+        spans: [
+          {
+            spanId,
+            parentSpanId: null,
+            spanName: "gen_ai.client_operation",
+            serviceName: "autodev-router",
+            timestamp: "2026-10-05T12:00:00.000Z",
+            durationNs: 1_000_000,
+            statusCode: "OK"
+          }
+        ]
+      }
+    },
+    filters: evaluationsFilters()
+  });
+
+  const known = new Set([
+    ...captured(/id="([^"]+)"/g, listPage),
+    ...captured(/id="([^"]+)"/g, tracePage)
+  ]);
+
+  // An href holds at most one `#`, so the split is done in code rather than with
+  // `/([^"]*#[^"]*)/`: the two quantifiers there can exchange characters with each
+  // other, which is both polynomial backtracking on a long attribute and a rule
+  // the linter refuses. One capture over the whole value has neither problem.
+  const fragmentHrefs = (markup: string): string[] =>
+    captured(/href="([^"]*)"/g, markup).filter((href) => href.includes("#"));
+  const fragments = [...fragmentHrefs(listPage), ...fragmentHrefs(tracePage)].map(
+    (href) => ({
+      href,
+      fragment: href.slice(href.indexOf("#") + 1)
+    })
+  );
+  assert.ok(
+    fragments.length >= 4,
+    `expected the pager, close, back and trace links; got ${fragments.length}`
+  );
+  for (const { href, fragment } of fragments) {
+    assert.notEqual(fragment, "", `the link ${href} names no element`);
+    assert.ok(
+      known.has(fragment),
+      `${href} names id="${fragment}", which neither state of this page carries`
+    );
+  }
+
+  // The named element must be able to take focus, or the keyboard half of the
+  // fix is absent while the viewport half still measures correct.
+  assert.match(
+    listPage,
+    /<h2 id="evaluation-history"[^>]*tabindex="-1"/,
+    "the history heading is the arrival point, and takes focus"
+  );
+
+  // The links that mean "the top of the page" must not claim the history anchor.
+  // Clearing filters changes the row set but puts the reader in front of the
+  // stat cards that just changed; changing section does not move along the list
+  // at all. Steering either past those would trade one wrong landing for another.
+  // Rendered with a filter applied, because that is the only state in which the
+  // clear link exists -- checking it on an unfiltered page would assert nothing.
+  const narrowedPage = renderEvaluations({
+    evaluations: rows,
+    page: 2,
+    tab: "results",
+    filters: evaluationsFilters({ outcome: "passed" })
+  });
+  const clearHrefs = captured(
+    /<a href="([^"]*)"[^>]*data-evaluations-clear="true/g,
+    narrowedPage
+  );
+  assert.ok(clearHrefs.length > 0, "the clear link has an href to read");
+  for (const href of clearHrefs) {
+    assert.equal(
+      href.includes("#"),
+      false,
+      "clearing filters lands at the top of the page, where the counts are"
+    );
+  }
+  const sectionHrefs = captured(
+    /<a href="([^"]*)"[^>]*data-tab-item=/g,
+    narrowedPage
+  );
+  assert.ok(sectionHrefs.length > 0, "the section links are on this page");
+  for (const href of sectionHrefs) {
+    assert.equal(
+      href.includes("#"),
+      false,
+      `changing section is not moving along the list, so ${href} names no anchor`
+    );
+  }
 });
 
 test("a page past the end clamps to the last page, however far past it is", async () => {
