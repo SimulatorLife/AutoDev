@@ -9,6 +9,7 @@ import type {
 
 import { MemoryVectorError } from "../../src/memory/errors.ts";
 import { PostgresMemoryRepository } from "../../src/memory/postgres-memory-repository.ts";
+import type { MemoryConnectionPool } from "../../src/memory/query-client.ts";
 import { MEMORY_EMBEDDING_DIMENSIONS } from "../../src/memory/schema.ts";
 import { makeContext, makeExperience } from "./fixtures/builders.ts";
 import { FakeMemoryPool } from "./fixtures/fake-memory-pool.ts";
@@ -694,4 +695,167 @@ test("the repository refuses a vector width that does not match the migrated wid
       })
   );
   assert.doesNotThrow(() => new PostgresMemoryRepository({ pool }));
+});
+
+/**
+ * A pool that records the statements it is asked to run.
+ *
+ * The point of the test below is that a lookup *refuses* a session it cannot
+ * search with, and refusing is only observable as the absence of a query.
+ * Asserting the return value cannot see it: a blank workspaceId builds
+ * `scope_workspace_id = '   '`, which matches no row, so the unguarded lookup
+ * returns `null` too. Six mutations that deleted the guard all passed a
+ * return-value-only version of this test.
+ */
+function recordingPool(base: FakeMemoryPool): MemoryConnectionPool & {
+  readonly statements: string[];
+} {
+  const statements: string[] = [];
+  return {
+    statements,
+    query: (text, params) => {
+      statements.push(text);
+      return base.query(text, params);
+    },
+    connect: async () => {
+      const connection = await base.connect();
+      return {
+        query: (text, params) => {
+          statements.push(text);
+          return connection.query(text, params);
+        },
+        release: () => connection.release()
+      };
+    },
+    end: () => base.end()
+  };
+}
+
+/**
+ * The two session lookups, side by side.
+ *
+ * Both build a WHERE clause out of nothing but the caller's own session
+ * identifiers, so both have to decide what a usable session context is. These
+ * assert that decision from both sides for every identifier, because the two
+ * methods' guards did not agree -- the token lookup checked the token alone
+ * while the id lookup checked all four -- and neither guard had a failing test:
+ * every fixture in the tree supplied a well-formed session.
+ *
+ * Each refusal is asserted as *no query was sent*, not as a `null` return.
+ * See `recordingPool`.
+ *
+ * The repository identifier is the one genuinely different case and is asserted
+ * rather than assumed. The token lookup's repository clause is optional, because
+ * a workspace-scoped session has no repository; the id lookup binds
+ * `repository_id` outright and cannot query without one. What both share is that
+ * a repository which is *present but blank* is refused -- otherwise the clause
+ * is built from whitespace and asks about a repository nobody has.
+ */
+test("both session lookups refuse a session context they cannot search with", async () => {
+  const pool = recordingPool(new FakeMemoryPool());
+  const repository = new PostgresMemoryRepository({ pool });
+  const event = injectionEvent();
+  await appendInjection(repository, event);
+
+  const trusted = {
+    workspaceId: event.workspaceId,
+    repositoryId: event.repositoryId!,
+    taskId: event.taskId,
+    canReadGlobal: false
+  };
+
+  /**
+   * Asserts a lookup both refuses (no statement reached the database) and says
+   * nothing found. The count is read before the call, because a guard that ran
+   * the query anyway and matched nothing leaves the return value unchanged.
+   */
+  const refuses = async (
+    label: string,
+    lookup: () => Promise<unknown>
+  ): Promise<void> => {
+    const before = pool.statements.length;
+    assert.equal(await lookup(), null, `${label} must resolve to nothing`);
+    assert.equal(
+      pool.statements.length,
+      before,
+      `${label} must be refused before any query runs -- searching for an event whose workspace or task is whitespace is not a narrower search, it is a different one`
+    );
+  };
+
+  // Positive control, in both halves. A well-formed session must resolve *and*
+  // must have queried; without the query half, a repository that refused
+  // everything would pass every refusal below.
+  const byToken = await repository.findInjectionEventByTokenForSession(
+    trusted,
+    event.correlationToken
+  );
+  assert.equal(byToken?.id, event.id, "the trusted session must resolve by token");
+  const byId = await repository.getInjectionEventByIdForSession(trusted, event.id);
+  assert.equal(byId?.id, event.id, "the trusted session must resolve by id");
+  assert.ok(
+    pool.statements.length > 0,
+    "a well-formed session must actually reach the database, or the refusals below prove nothing"
+  );
+
+  await refuses("an empty correlation token", () =>
+    repository.findInjectionEventByTokenForSession(trusted, "  ")
+  );
+  await refuses("a blank event id", () =>
+    repository.getInjectionEventByIdForSession(trusted, "   ")
+  );
+
+  // Every blank-session-field case, on both lookups, with the identifier left
+  // valid -- so what fails is the session context and not the token or the id.
+  const blankContextCases: readonly [string, Partial<typeof trusted>][] = [
+    ["a blank workspaceId", { workspaceId: "   " }],
+    ["a blank taskId", { taskId: "  " }],
+    ["a blank repositoryId", { repositoryId: " " }]
+  ];
+  for (const [label, overrides] of blankContextCases) {
+    const context = { ...trusted, ...overrides };
+    await refuses(`the token lookup refusing ${label}`, () =>
+      repository.findInjectionEventByTokenForSession(
+        context,
+        event.correlationToken
+      )
+    );
+    await refuses(`the id lookup refusing ${label}`, () =>
+      repository.getInjectionEventByIdForSession(context, event.id)
+    );
+  }
+
+  // A missing repository is only refused by the lookup that binds one. This is
+  // asserted positively rather than by refusal, because both outcomes here are
+  // "no query", which no count can separate.
+  const { repositoryId: _omitted, ...withoutRepository } = trusted;
+  const beforeWorkspaceLookup = pool.statements.length;
+  assert.equal(
+    (
+      await repository.findInjectionEventByTokenForSession(
+        withoutRepository,
+        event.correlationToken
+      )
+    )?.id,
+    event.id,
+    "a workspace-scoped session has no repository, and the token lookup must still resolve it"
+  );
+  assert.equal(
+    pool.statements.length,
+    beforeWorkspaceLookup + 1,
+    "the workspace-scoped lookup must have run its query without the repository clause"
+  );
+  const beforeIdLookup = pool.statements.length;
+  assert.equal(
+    await repository.getInjectionEventByIdForSession(
+      withoutRepository,
+      event.id
+    ),
+    null,
+    "the id lookup binds repository_id outright and cannot resolve without one"
+  );
+  assert.equal(
+    pool.statements.length,
+    beforeIdLookup,
+    "the id lookup must refuse a session with no repository before querying"
+  );
 });

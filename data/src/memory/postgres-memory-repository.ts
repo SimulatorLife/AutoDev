@@ -129,6 +129,42 @@ export interface PostgresMemoryRepositoryOptions {
 
 const UNIQUE_VIOLATION = "23505";
 
+/**
+ * Whether a session lookup has identifiers worth running a query with.
+ *
+ * Both session lookups -- by correlation token and by event id -- build a WHERE
+ * clause out of nothing but the caller's own session identifiers. A blank one
+ * there is not a narrower search, it is a search for an event whose workspace or
+ * task is the empty string, which is a different question from the one asked.
+ * Left to the database, that question silently returns "nothing found" and the
+ * caller cannot tell it apart from a genuine miss.
+ *
+ * The two lookups disagree about whether a repository is required, and that is
+ * not an oversight to be tidied away: the token lookup's repository clause is
+ * optional, because a workspace-scoped session has no repository, while the id
+ * lookup binds `repository_id` outright. The shared rule is therefore "every
+ * identifier this query binds must be a non-blank string" -- not "all four must
+ * be present" -- so a repository is refused when it is present-but-blank either
+ * way, and demanded only by the lookup that cannot query without it.
+ */
+function sessionLookupIsUsable(
+  context: MemoryInjectionEventSessionLookup,
+  identifier: string,
+  options: { readonly requiresRepository: boolean }
+): boolean {
+  if (
+    !identifier.trim() ||
+    !context.workspaceId.trim() ||
+    !context.taskId.trim()
+  ) {
+    return false;
+  }
+  return options.requiresRepository
+    ? Boolean(context.repositoryId?.trim())
+    : context.repositoryId === undefined ||
+        context.repositoryId.trim().length > 0;
+}
+
 function isUniqueViolation(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -928,7 +964,13 @@ export class PostgresMemoryRepository implements MemoryRepository {
     context: MemoryInjectionEventSessionLookup,
     correlationToken: string
   ): Promise<MemoryInjectionEvent | null> {
-    if (!correlationToken.trim()) return null;
+    if (
+      !sessionLookupIsUsable(context, correlationToken, {
+        requiresRepository: false
+      })
+    ) {
+      return null;
+    }
     const params = new SqlParams();
     const tokenParam = params.add(correlationToken);
     const workspaceId = params.add(context.workspaceId);
@@ -952,10 +994,9 @@ export class PostgresMemoryRepository implements MemoryRepository {
     injectionEventId: string
   ): Promise<MemoryInjectionEvent | null> {
     if (
-      !injectionEventId.trim() ||
-      !context.workspaceId.trim() ||
-      !context.repositoryId?.trim() ||
-      !context.taskId.trim()
+      !sessionLookupIsUsable(context, injectionEventId, {
+        requiresRepository: true
+      })
     ) {
       return null;
     }
