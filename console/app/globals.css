@@ -81,8 +81,26 @@ html {
  * which is not a Console token and does not sit correctly against the slate
  * canvas. `:where` keeps this at zero specificity so a deliberate component
  * override can still win.
+ *
+ * `:focus-within` is on the form controls only, and it is load-bearing rather
+ * than belt-and-braces. A `type="date"` input does not take focus itself: Chromium
+ * delegates it to the control's internal fields, so a date field is four keyboard
+ * stops — month, day, year, and the calendar picker — that all report the same
+ * `document.activeElement`. Measured in Chromium on this Console, tabbing onto the
+ * picker drops the ring entirely: the host's `:focus-visible` is false at that
+ * stop, `outline` computes to `none`, and nothing is drawn. The operator is left
+ * on a focused control with no indicator, which is WCAG 2.4.7. `:focus-within`
+ * stays true through every internal stop and restores it.
+ *
+ * The selector is deliberately not extended to `a`, `button`, `summary` or
+ * `[tabindex]`. Those can hold focusable descendants in the light DOM, and
+ * `:focus-within` on a container draws the ring around the *container*: the run
+ * drawer carries `tabindex="-1"` and holds its own close link and trace link, so
+ * the broad form would put a ring around the whole panel whenever either was
+ * focused. Only the three form controls delegate focus, so only they need it.
  */
-:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible,
+:where(input, select, textarea):focus-within {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }

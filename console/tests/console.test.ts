@@ -894,9 +894,15 @@ test("the shell lets a keyboard user reach the page body without walking the nav
     join(import.meta.dirname, "..", "app", "globals.css"),
     "utf8"
   );
+  // `[^{]*` rather than `\s*` between `:focus-visible` and the brace, because
+  // the rule's selector list continues with the form controls' `:focus-within`
+  // clause. The assertion is that anchors are covered, not that the rule has
+  // exactly one selector, so it has to read past the comma. Tightening it back to
+  // `\s*` would not fail on a Console missing the indicator -- it fails on a
+  // Console that has it, which is the wrong direction to fail in.
   assert.match(
     globals,
-    /:where\([^)]*\ba\b[^)]*\):focus-visible\s*\{[^}]*outline:/,
+    /:where\([^)]*\ba\b[^)]*\):focus-visible[^{]*\{[^}]*outline:/,
     "the shared focus-visible rule must still cover anchors, or the revealed " +
       "skip link has no focus ring"
   );
@@ -1397,16 +1403,100 @@ test("AppNav renders Configure/Observe/Operate groups with canonical membership,
  * outline at zero specificity, so a component may omit the utility without
  * losing the indicator. Tests assert the rule exists instead of demanding every
  * anchor re-declare it.
+ *
+ * The rule carries a second selector clause for the form controls, and both are
+ * required. `:focus-visible` alone leaves the calendar picker inside a
+ * `type="date"` input with no indicator at all, because Chromium delegates focus
+ * to the control's internal fields and reports the host as not focus-visible at
+ * that stop -- so a check that only looks for `:focus-visible` passes on a Console
+ * where a keyboard user loses the indicator mid-field.
+ *
+ * The gap between `:focus-visible` and `{` is matched by `[^{]*` rather than
+ * `\s*` because the two clauses are comma-separated in one block. Without it this
+ * helper goes red on a rule that is correct.
  */
 function globalFocusRingIsDeclared(): boolean {
   const css = readFileSync(
     join(import.meta.dirname, "..", "app", "globals.css"),
     "utf8"
   );
-  return /:where\([^)]*\):focus-visible\s*\{[^}]*outline:\s*2px solid var\(--color-accent\)/u.test(
-    css
+  return (
+    /:where\([^)]*\ba\b[^)]*\):focus-visible[^{]*\{[^}]*outline:\s*2px solid var\(--color-accent\)/u.test(
+      css
+    ) &&
+    /:where\([^)]*\binput\b[^)]*\):focus-within[^{]*\{[^}]*outline:\s*2px solid var\(--color-accent\)/u.test(
+      css
+    )
   );
 }
+
+test("a date field keeps its focus ring on every stop inside the control", () => {
+  // The Console's only delegating focus controls are the UTC date bounds on this
+  // resource and on `/usage`. Chromium splits a `type="date"` input into four
+  // keyboard stops -- month, day, year, calendar picker -- that all report the
+  // same `document.activeElement`, and at the picker the host stops matching
+  // `:focus-visible`. Measured in Chromium on this Console: `outline` computed to
+  // `none` there, the canonical ring vanished, and the only thing left focused
+  // was the control itself. WCAG 2.4.7 is about a visible indicator on the
+  // focused thing, and there was none.
+  //
+  // Asserted as the shape of the rule rather than the pixels, because a stylesheet
+  // is what ships: the `:focus-within` clause on the form controls is the fix, and
+  // the browser's segment behaviour cannot be reproduced in `node --test`.
+  const css = readFileSync(
+    join(import.meta.dirname, "..", "app", "globals.css"),
+    "utf8"
+  );
+  assert.ok(
+    globalFocusRingIsDeclared(),
+    "the canonical ring must cover both :focus-visible and the form controls' :focus-within"
+  );
+
+  // And the clause must stay narrow. `:focus-within` on a *container* draws the
+  // ring around the container: the run drawer carries `tabindex="-1"` and holds
+  // its own close link and trace link, so widening this to `a`, `button`, `summary`
+  // or `[tabindex]` would put a ring around the whole panel whenever either link
+  // was focused. The other direction is the same fact -- the selectors that can
+  // hold focusable light-DOM descendants are exactly the ones that must not gain
+  // this clause, so a mutation that moves `input` into them has to fail.
+  const delegationClause = css.match(
+    /:where\(([^)]*\binput\b[^)]*)\):focus-within/u
+  );
+  assert.ok(
+    delegationClause,
+    "the form controls must carry the :focus-within clause: " + css.slice(0, 200)
+  );
+  const selectors = (delegationClause[1] ?? "").split(",").map((part) => part.trim());
+  for (const forbidden of ["a", "button", "summary", "[tabindex]"]) {
+    assert.equal(
+      selectors.includes(forbidden),
+      false,
+      `${forbidden} can hold focusable descendants, so :focus-within would ring the container`
+    );
+  }
+  for (const required of ["input", "select", "textarea"]) {
+    assert.equal(
+      selectors.includes(required),
+      true,
+      `${required} delegates focus into its own control and must keep the ring`
+    );
+  }
+
+  // The page under test must actually own a delegating control, or the rule above
+  // is guarding nothing on this resource.
+  const markup = renderEvaluations({
+    evaluations: Array.from({ length: 3 }, (_, index) => ({
+      id: `run-${index}`,
+      agentRole: "implementer",
+      model: "m-1",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-05T12:00:00Z"
+    })),
+    filters: evaluationsFilters()
+  });
+  assert.match(markup, /type="date"/u, "the run-time bounds are date inputs");
+});
 
 test("AppNav brand link has visible keyboard focus and no unsupported status pulse", () => {
   const markup = renderToStaticMarkup(
