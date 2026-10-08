@@ -1590,3 +1590,165 @@ test("a memory citing no pull request is unaffected by supersession state", asyn
     assert.equal(assessment.reasonCode, "verified_current_state");
   });
 });
+
+/**
+ * What "the cited commit is not in this repository's history" means.
+ *
+ * The verifier asks `git merge-base --is-ancestor <cited> <current>`, and the
+ * answer has three outcomes, not two. Exit 0 means the citation is still in the
+ * current history. Exit 1 means git answered, and the answer is *no* -- which is
+ * a contradiction of the memory, not an absence of information. Any other
+ * non-zero exit means git itself could not answer, which is inconclusive.
+ *
+ * Only the first was exercised. Every test in this file cites a commit that is
+ * genuinely ancestral, so the other two branches -- the contradicted verdict and
+ * the fail-closed unknown -- could have been deleted with the file staying
+ * green, and the distinction between "the repository disagrees" and "the
+ * repository would not say" is the whole point of the question.
+ */
+test("a cited commit outside the current history contradicts; a git that cannot answer stays unknown", async () => {
+  // Two branches from one root: `sourceCommit` is on the history branch and
+  // `divergentCommit` is not an ancestor of it, which is what git exit 1 means.
+  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    execGit(root, ["checkout", "-q", "-b", "divergent"]);
+    await writeFile(
+      join(root, "src", "feature.ts"),
+      "export const feature = false;\n"
+    );
+    execGit(root, ["add", "src/feature.ts"]);
+    execGit(root, ["commit", "-q", "-m", "Divergent change"]);
+    const divergentCommit = execGit(root, ["rev-parse", "HEAD"]);
+    execGit(root, ["checkout", "-q", "-"]);
+
+    const verifier = new GitWorkingTreeMemoryVerifier({
+      repositories: { resolve: async () => root },
+      now: () => "2026-10-01T12:00:00.000Z"
+    });
+    const divergingEvidence: readonly EvidenceReference[] = [
+      {
+        kind: "commit",
+        uri: `git://${encodeURIComponent(context.repositoryId!)}/commit/${divergentCommit}`,
+        revision: divergentCommit
+      },
+      {
+        kind: "file",
+        uri: pathToFileURL(filePath).href,
+        revision: divergentCommit
+      }
+    ];
+
+    const contradicted = await verifier.verify({
+      memory: recordWithEvidence(divergingEvidence),
+      task: "Change the feature flag.",
+      context,
+      asOf: "2026-10-01T12:00:00.000Z"
+    });
+
+    assert.equal(
+      contradicted.compatibility,
+      "contradicted",
+      "a cited commit that is not in the current history is a contradiction of the memory, not a gap in what we know"
+    );
+    assert.equal(contradicted.reasonCode, "current_state_conflict");
+    assert.ok(
+      contradicted.evidence.some(
+        (reference) => reference.revision === sourceCommit
+      ),
+      "the contradiction cites the commit the repository is actually at, so an operator can see what replaced the cited one"
+    );
+  });
+
+  // Git cannot answer: the repository is perfectly good, but the cited revision
+  // is an object this clone has never seen -- a shallow clone, a rebase, or a
+  // force-push. `merge-base` exits 128 on a name it cannot resolve, which is
+  // neither 0 nor 1, and that has to read as inconclusive rather than as a
+  // contradiction: reporting "contradicted" here would let a misconfigured clone
+  // silently retire every memory in the workspace.
+  //
+  // A root that is not a repository at all would not do. The verifier resolves
+  // the current commit before it reaches the ancestry question, so that is
+  // refused earlier and never arrives here -- the first version of this test used
+  // it, the assertion passed for the wrong reason, and the branch stayed dark.
+  await withGitRepository(async ({ root, filePath }) => {
+    const verifier = new GitWorkingTreeMemoryVerifier({
+      repositories: { resolve: async () => root },
+      now: () => "2026-10-01T12:00:00.000Z"
+    });
+    const absentCommit = "0123456789abcdef0123456789abcdef01234567";
+    const assessment = await verifier.verify({
+      memory: recordWithEvidence([
+        {
+          kind: "commit",
+          uri: `git://${encodeURIComponent(context.repositoryId!)}/commit/${absentCommit}`,
+          revision: absentCommit
+        },
+        {
+          kind: "file",
+          uri: pathToFileURL(filePath).href,
+          revision: absentCommit
+        }
+      ]),
+      task: "Change the feature flag.",
+      context,
+      asOf: "2026-10-01T12:00:00.000Z"
+    });
+
+    assert.equal(
+      assessment.compatibility,
+      "unknown",
+      "a git invocation that fails for any reason other than a clean answer is not evidence against the memory"
+    );
+    assert.equal(assessment.reasonCode, "verification_inconclusive");
+  });
+});
+
+/**
+ * A memory that did not verify compatible must not reach the model as usable.
+ *
+ * The reconstructor decides what an injection carries, so its answer for an
+ * unverified memory is the last thing between "we could not check" and "the
+ * model was told this is still true". It had no failing test, and a memory that
+ * could not be verified could have reconstructed as retained guidance.
+ */
+test("an unverified memory reconstructs as uncertain, not as usable guidance", async () => {
+  const reconstructor = new VerifiedMemoryReconstructor();
+  const cases = [
+    { compatibility: "contradicted", reasonCode: "current_state_conflict" },
+    { compatibility: "unknown", reasonCode: "verification_inconclusive" }
+  ] as const;
+
+  for (const { compatibility, reasonCode } of cases) {
+    const reconstruction = await reconstructor.reconstruct({
+      memory: recordWithEvidence([
+        {
+          kind: "file",
+          uri: "file:///workspace/repo/src/feature.ts",
+          revision: "abc"
+        }
+      ]),
+      task: "Change the feature flag.",
+      assessment: {
+        compatibility,
+        checkedAt: "2026-10-01T12:00:00.000Z",
+        reasonCode,
+        source: "git_commit_and_file_identity",
+        evidence: []
+      }
+    });
+
+    assert.equal(
+      reconstruction.disposition,
+      "uncertain",
+      `a ${compatibility} assessment must not reconstruct as usable`
+    );
+    assert.equal(
+      reconstruction.guidance,
+      undefined,
+      `a ${compatibility} assessment must not carry guidance into the prompt`
+    );
+    assert.equal(
+      reconstruction.rationale,
+      "Current authoritative state did not verify this memory."
+    );
+  }
+});
