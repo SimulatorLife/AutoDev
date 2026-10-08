@@ -412,10 +412,23 @@ export function evaluationsHref(
  * scroll to the bottom of a 120-row history to reach the pager at all, and
  * arriving back at `scrollTop` 0 puts "Evaluation history" 1,185px below the fold
  * and the first row of the new page 1,262px below it -- so the rows they just
- * asked for are not on screen at all, and nothing that did change is. At 1280 the
- * heading is already in view, so the fragment costs no scroll there and fixes the
- * focus. The heading is the target rather than the first row because it is what
- * focus should announce, and it sits immediately above the table.
+ * asked for are not on screen at all, and nothing that did change is. With the
+ * fragment the arrival is `scrollTop` 1169 at 390 and 471 at 1280, the heading at
+ * the top of the scrollport and the first row of the new page visible below it at
+ * both.
+ *
+ * 1280 scrolls rather than sitting where it already was, which is worth stating
+ * because it is not what the numbers looked like: the heading sits at 487 there,
+ * inside a 900px scrollport, and the reasonable expectation is that a target
+ * already in view is left alone. It is not -- the browser still aligns the
+ * fragment target to the top and focuses it, four runs out of four. An earlier
+ * note here claimed no scroll at 1280 on the reasoning that the heading was
+ * visible; that was an inference from geometry rather than a measurement, and one
+ * browser run appeared to confirm it because the probe read the document before
+ * the fragment scroll had been applied.
+ *
+ * The heading is the target rather than the first row because it is what focus
+ * should announce, and it sits immediately above the table.
  *
  * Declared here, beside the href builders that emit it, for the reason
  * `traceSpanAnchorId` gives: a fragment that does not match an id in the rendered

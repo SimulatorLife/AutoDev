@@ -1926,6 +1926,12 @@ export function EvaluationsView({
         // Filters and the page travel with the tab, so narrowing the history
         // does not throw the operator out of the comparison they were reading,
         // and the way back to Results is the page they left.
+        //
+        // The open trace deliberately does not. The panel renders above both
+        // tabs, so carrying the span would have shown the same trace twice, and
+        // the section links' rule is that one selection closes the other. It
+        // also means the trace panel only ever exists on Results: switching to
+        // Comparisons reads as "put the trace away and compare", and it does.
         hrefFor: (tabId: string) =>
           evaluationsTabHref(filters, tabId as EvaluationsTabId, page)
       }),
