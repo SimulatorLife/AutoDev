@@ -17869,8 +17869,8 @@ test("the Console stays server-rendered: no client directive, no hooks, no handl
     if (/^\s*(["'])use client\1/mu.test(source)) clientDirective.push(relative);
     if (hookPattern.test(source)) hooks.push(relative);
     // An event handler prop means the element only does something with
-    // scripting on. DataTable's row click is the single allowed exception and
-    // is asserted separately, because it is opt-in and off by default.
+    // scripting on. There is no exception left to allow: the table's opt-in row
+    // click is gone, because a `<tr onClick>` had no keyboard equivalent.
     if (/\bon(Change|Submit|Input|KeyDown|Blur|Focus):/u.test(source)) {
       handlers.push(relative);
     }
@@ -17881,11 +17881,18 @@ test("the Console stays server-rendered: no client directive, no hooks, no handl
   assert.deepEqual(handlers, [], "inline event handlers found");
 });
 
-test("DataTable's row click is opt-in and off unless a caller asks for it", () => {
-  // The one handler the Console accepts is a table row click, and it must stay
-  // opt-in: rendering an onClick that does nothing would put a no-op handler on
-  // every row of every table purely to support a feature nobody uses.
-  const withoutClick = renderToStaticMarkup(
+test("DataTable renders no row-level handler, and has no way to ask for one", () => {
+  // `onRowClick` is gone, and this is why the absence is still asserted rather
+  // than simply no longer interesting: a `<tr onClick>` is a mouse-only target.
+  // It takes no focus, has no role, and offers no keyboard activation, so the
+  // next view to pass such a prop would ship an interaction no keyboard user can
+  // reach -- and the only test covering it asserted the hover affordance and
+  // called it correct.
+  //
+  // The target state asks for no clickable rows, and no view passed one. A
+  // resource is opened through its own link, not by making its whole row an
+  // unlabelled control.
+  const markup = renderToStaticMarkup(
     React.createElement<DataTableProps<{ id: string }>>(DataTable, {
       data: [{ id: "a" }, { id: "b" }],
       columns: [
@@ -17900,25 +17907,7 @@ test("DataTable's row click is opt-in and off unless a caller asks for it", () =
       emptyMessage: "No rows."
     })
   );
-  assert.doesNotMatch(withoutClick, /onclick|onClick|cursor-pointer/);
-
-  const withClick = renderToStaticMarkup(
-    React.createElement<DataTableProps<{ id: string }>>(DataTable, {
-      data: [{ id: "a" }],
-      columns: [
-        {
-          id: "id",
-          header: "ID",
-          weight: 100,
-          cell: (r) => r.id
-        }
-      ],
-      keyExtractor: (r) => r.id,
-      emptyMessage: "No rows.",
-      onRowClick: () => undefined
-    })
-  );
-  assert.match(withClick, /cursor-pointer/);
+  assert.doesNotMatch(markup, /onclick|onClick|cursor-pointer/);
 });
 
 /**
