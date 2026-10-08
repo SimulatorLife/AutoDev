@@ -9,7 +9,11 @@ import {
 } from "../../src/memory/errors.ts";
 import { PostgresMemoryRepository } from "../../src/memory/postgres-memory-repository.ts";
 import type { MemoryConnectionPool } from "../../src/memory/query-client.ts";
-import type { MemoryExpiredExperienceRequest } from "@simulatorlife/autodev-core";
+import type {
+  MemoryExpiredExperienceRequest,
+  MemoryLifecycleEvent,
+  MemoryRecord
+} from "@simulatorlife/autodev-core";
 import { MEMORY_EMBEDDING_DIMENSIONS } from "../../src/memory/schema.ts";
 import {
   makeContext,
@@ -1538,4 +1542,286 @@ test("searchExperiences bounds the page by the requested limit and defaults to t
     limit: 3
   });
   assert.equal(bounded.length, 3, "an explicit limit must reach the query");
+});
+
+/**
+ * A revision proposal's invariants.
+ *
+ * `proposeMemory` refuses a record that is not entering storage as an unverified
+ * proposal, refuses a *new* proposal that names a revision target, refuses a
+ * revision that does not name exactly one, and then -- inside the transaction --
+ * refuses a target that is missing, that is not in a revisable state, or whose
+ * kind or scope differs from the revision's.
+ *
+ * None of that had a failing test. Every caller in the suite proposed a
+ * well-formed first draft, so the whole revision path was unreachable: the
+ * guards could all have been deleted and the file would have stayed green.
+ *
+ * These are asserted one clause at a time rather than as a group, because the
+ * point of each is which *specific* invariant it is. A single "some lifecycle
+ * error" assertion over a table of cases would pass on the first guard that
+ * fires and prove nothing about the ones after it.
+ */
+test("a revision proposal is only accepted when it is a revision of one same-scope record", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+
+  // The prior record a revision is measured against: active, semantic,
+  // workspace-scoped in ws-1.
+  const prior = makeMemoryRecord({ id: "mem-prior" });
+  await repo.proposeMemory(prior, makeLifecycleEvent({ memoryId: "mem-prior" }));
+  await repo.transitionMemories(
+    [
+      {
+        expectedUpdatedAt: prior.updatedAt,
+        next: {
+          ...prior,
+          status: "active",
+          validity: { state: "verified", evidence: [] },
+          updatedAt: "2026-01-03T00:00:00.000Z"
+        }
+      }
+    ],
+    [
+      makeLifecycleEvent({
+        id: "evt-prior-active",
+        memoryId: "mem-prior",
+        action: "verified",
+        fromStatus: "proposed",
+        toStatus: "active",
+        reasonCode: "verified_current_state"
+      })
+    ]
+  );
+
+  // Two priors in states a revision is *not* allowed to touch. The one above is
+  // active; these stay proposed and are moved to superseded, and each is refused
+  // for a different reason than the others -- a check that only asked "is it
+  // active" would pass the superseded case and miss the boundary.
+  await repo.proposeMemory(
+    makeMemoryRecord({ id: "mem-prior-proposed" }),
+    makeLifecycleEvent({ id: "evt-prior-proposed", memoryId: "mem-prior-proposed" })
+  );
+
+  const superseded = makeMemoryRecord({ id: "mem-superseded" });
+  await repo.proposeMemory(
+    superseded,
+    makeLifecycleEvent({ id: "evt-superseded", memoryId: "mem-superseded" })
+  );
+  await repo.transitionMemories(
+    [
+      {
+        expectedUpdatedAt: superseded.updatedAt,
+        next: {
+          ...superseded,
+          status: "superseded",
+          validity: { state: "verified", evidence: [] },
+          updatedAt: "2026-01-04T00:00:00.000Z"
+        }
+      }
+    ],
+    [
+      makeLifecycleEvent({
+        id: "evt-superseded-transition",
+        memoryId: "mem-superseded",
+        action: "invalidated",
+        fromStatus: "proposed",
+        toStatus: "superseded",
+        reasonCode: "superseded_by_newer_evidence"
+      })
+    ]
+  );
+
+  const revisionEvent = (overrides: Partial<MemoryLifecycleEvent> = {}) =>
+    makeLifecycleEvent({
+      id: "evt-revision",
+      memoryId: "mem-revision",
+      action: "revised",
+      reasonCode: "revised_after_review",
+      relatedMemoryIds: ["mem-prior"],
+      ...overrides
+    });
+
+  // A well-formed revision of the prior record is accepted, and it lands. This
+  // is the positive control: without it, a set of refusals proves nothing about
+  // which guard refused, only that something did.
+  await repo.proposeMemory(
+    makeMemoryRecord({ id: "mem-revision" }),
+    revisionEvent()
+  );
+  assert.equal(
+    pool.tables.memory_records.get("mem-revision")?.id,
+    "mem-revision",
+    "a revision of an active, same-kind, same-scope record must be accepted"
+  );
+
+  const refusals: readonly {
+    readonly why: string;
+    readonly candidate: Partial<MemoryRecord>;
+    readonly event: Partial<MemoryLifecycleEvent>;
+    readonly error: unknown;
+  }[] = [
+    {
+      why: "the record enters storage as active",
+      candidate: { status: "active" },
+      event: { toStatus: "active" },
+      error: MemoryLifecycleError
+    },
+    {
+      why: "the record enters storage already verified",
+      candidate: { validity: { state: "verified", evidence: [] } },
+      event: {},
+      error: MemoryLifecycleError
+    },
+    {
+      why: "a new proposal names a revision target",
+      candidate: { id: "mem-bad-new" },
+      event: {
+        id: "evt-bad-new",
+        memoryId: "mem-bad-new",
+        action: "proposed",
+        reasonCode: "candidate_submitted",
+        relatedMemoryIds: ["mem-prior"]
+      },
+      error: MemoryLifecycleError
+    },
+    {
+      why: "a revision names no target",
+      candidate: { id: "mem-bad-none" },
+      event: { id: "evt-bad-none", memoryId: "mem-bad-none", relatedMemoryIds: [] },
+      error: MemoryLifecycleError
+    },
+    {
+      why: "a revision names two targets",
+      candidate: { id: "mem-bad-two" },
+      event: {
+        id: "evt-bad-two",
+        memoryId: "mem-bad-two",
+        relatedMemoryIds: ["mem-prior", "mem-other"]
+      },
+      error: MemoryLifecycleError
+    },
+    {
+      why: "the revision target does not exist",
+      candidate: { id: "mem-bad-target" },
+      event: {
+        id: "evt-bad-target",
+        memoryId: "mem-bad-target",
+        relatedMemoryIds: ["mem-does-not-exist"]
+      },
+      error: MemoryProvenanceError
+    },
+    {
+      why: "the revision target is still a proposal",
+      candidate: { id: "mem-bad-prior-proposed" },
+      event: {
+        id: "evt-bad-prior-proposed",
+        relatedMemoryIds: ["mem-prior-proposed"]
+      },
+      error: MemoryLifecycleError
+    },
+    {
+      why: "the revision target is superseded",
+      candidate: { id: "mem-bad-prior-superseded" },
+      event: {
+        id: "evt-bad-prior-superseded",
+        relatedMemoryIds: ["mem-superseded"]
+      },
+      error: MemoryLifecycleError
+    },
+    {
+      why: "the revision changes the record's kind",
+      candidate: { id: "mem-bad-kind", kind: "episodic" },
+      event: {
+        id: "evt-bad-kind",
+        memoryId: "mem-bad-kind",
+        relatedMemoryIds: ["mem-prior"]
+      },
+      error: MemoryLifecycleError
+    },
+    {
+      why: "the revision changes the record's scope",
+      candidate: {
+        id: "mem-bad-scope",
+        scope: { kind: "workspace", workspaceId: "ws-2" }
+      },
+      event: {
+        id: "evt-bad-scope",
+        memoryId: "mem-bad-scope",
+        relatedMemoryIds: ["mem-prior"]
+      },
+      error: MemoryLifecycleError
+    }
+  ];
+
+  for (const { why, candidate: candidateOverrides, event, error } of refusals) {
+    const before = pool.tables.memory_records.size;
+    const candidate = makeMemoryRecord(candidateOverrides);
+    await assert.rejects(
+      () =>
+        repo.proposeMemory(
+          candidate,
+          revisionEvent({ memoryId: candidate.id, ...event })
+        ),
+      error as new () => Error,
+      `${why} must be refused`
+    );
+    assert.equal(
+      pool.tables.memory_records.size,
+      before,
+      `${why} must leave no record behind`
+    );
+  }
+});
+
+/**
+ * An experience that is not in the store cannot be cited as provenance.
+ *
+ * The test above this one looked like it covered this and did not: its
+ * candidate also had empty `evidence`, so the earlier "a durable memory
+ * requires source experience and evidence references" guard fired first and the
+ * unknown-experience check was never reached. It passed for a reason that had
+ * nothing to do with what it was named after.
+ *
+ * The distinction is the difference between a memory that cites nothing and one
+ * that cites something that does not exist. The first is missing evidence; the
+ * second is a claim about provenance that the store can contradict, and only
+ * the second is what this check is for.
+ */
+test("a memory citing an experience the store does not hold is refused", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(makeExperience());
+
+  const cited = makeMemoryRecord({
+    id: "mem-cites-missing",
+    provenance: {
+      experienceIds: ["exp-not-in-the-store"],
+      evidence: [{ kind: "trace", uri: "file://config-repository.ts" }],
+      createdBy: "agent-1",
+      createdAt: "2026-01-01T00:05:00.000Z"
+    }
+  });
+
+  await assert.rejects(
+    () => repo.proposeMemory(cited, makeLifecycleEvent({ memoryId: "mem-cites-missing" })),
+    /references unknown experience ids: exp-not-in-the-store/u,
+    "provenance that names an experience the store cannot produce is not provenance"
+  );
+  assert.equal(pool.tables.memory_records.size, 0, "no record row should be left behind");
+  assert.equal(
+    pool.tables.memory_lifecycle_events.length,
+    0,
+    "no lifecycle event should be left behind"
+  );
+
+  // The positive control for the same query: an experience the store does hold
+  // is accepted, so the refusal above is the missing row and not the lookup.
+  const present = makeMemoryRecord({ id: "mem-cites-present" });
+  await repo.proposeMemory(
+    present,
+    makeLifecycleEvent({ id: "evt-present", memoryId: "mem-cites-present" })
+  );
+  assert.equal(pool.tables.memory_records.size, 1);
 });
