@@ -5344,6 +5344,114 @@ test("the sidebar counts the resource, not the filter that emptied it", async ()
   }
 });
 
+test("a Control API that is reachable but slow is not reported as unreachable", async () => {
+  // The Console gives up on a read at 5s, and the abort was caught as
+  // `unreachable` carrying the browser's own error text. Measured in Chromium
+  // against a fixture that accepts the request and never answers, this page
+  // rendered three untrue things at once: the code `autodev_unreachable`, the
+  // message "This operation was aborted", and the shared advice to configure the
+  // server-side integration and restart. The service was reachable -- it was
+  // holding the connection open -- and the credential was working.
+  //
+  // The deadline is the Console's own, so the fact is knowable at the one place
+  // that raises it. Asserted at both levels that can express it: the reader
+  // records it, and the page reports it. A reader-only test would pass while the
+  // page still said "unreachable", which is the half an operator reads.
+  const originalFetch = globalThis.fetch;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "evaluation-timeout-test-token";
+  process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+
+  // A fetch that never settles, so the Console's own deadline is what ends it.
+  let hungRead = true;
+  globalThis.fetch = ((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/control/evaluations") && hungRead) {
+      return new Promise<Response>((_resolve, reject) => {
+        // Reject on abort, exactly as the platform fetch does, so the reader's
+        // catch is reached the way it is in production rather than by a stub
+        // that throws synchronously.
+        const timer = setTimeout(() => {
+          const error = new Error("This operation was aborted");
+          error.name = "AbortError";
+          reject(error);
+        }, 5000);
+        void timer;
+      });
+    }
+    throw new Error(`Unexpected Evaluations page request: ${url}`);
+  }) as typeof globalThis.fetch;
+
+  try {
+    const timedOut = await EvaluationsPage({ searchParams: Promise.resolve({}) });
+    const timedOutMarkup = renderToStaticMarkup(timedOut);
+
+    assert.match(
+      timedOutMarkup,
+      /autodev_control_api_timeout/,
+      "a read abandoned at the Console's deadline has its own code: " +
+        timedOutMarkup.slice(0, 400)
+    );
+    assert.doesNotMatch(
+      timedOutMarkup,
+      /autodev_unreachable/,
+      "the service is reachable and merely slow, so the unreachable code is false"
+    );
+    assert.match(
+      timedOutMarkup,
+      /did not answer within 5s/,
+      "the message names the deadline rather than forwarding the browser's AbortError"
+    );
+    assert.doesNotMatch(
+      timedOutMarkup,
+      /This operation was aborted/,
+      "a browser implementation detail is not a diagnostic for an operator"
+    );
+    assert.doesNotMatch(
+      timedOutMarkup,
+      /Configure the required server-side integration/,
+      "a slow read is not a misconfigured integration, so the shared default advice " +
+        "would send the operator to reconfigure a credential that is working"
+    );
+    // The page must still be an honest empty-of-results state, not a rendered
+    // list: no table, no rows, no stat cards.
+    assert.doesNotMatch(timedOutMarkup, /<table/);
+    assert.doesNotMatch(timedOutMarkup, /data-stat-grid/);
+
+    // The other direction, which is the one that would be easy to break by
+    // treating every read failure as a timeout. A read that fails immediately is
+    // the service not being there, and it must keep saying so.
+    hungRead = false;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/control/evaluations")) {
+        throw new TypeError("fetch failed");
+      }
+      throw new Error(`Unexpected Evaluations page request: ${url}`);
+    }) as typeof globalThis.fetch;
+
+    const refused = renderToStaticMarkup(
+      await EvaluationsPage({ searchParams: Promise.resolve({}) })
+    );
+    assert.match(
+      refused,
+      /autodev_unreachable/,
+      "a transport failure is still the unreachable state: " + refused.slice(0, 400)
+    );
+    assert.doesNotMatch(
+      refused,
+      /autodev_control_api_timeout/,
+      "a connection that never opened was not abandoned at a deadline"
+    );
+    assert.match(
+      refused,
+      /Configure the required server-side integration/,
+      "and it keeps the shared advice, which is the right advice for this one"
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("an unconfigured Control API says which results it would have read", async () => {
   // Every sibling page names what its own page reads when the credential is
   // missing. This one said "evaluation definitions" -- a surface the Runtime does

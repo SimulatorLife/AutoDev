@@ -88,7 +88,26 @@ export type ControlApiResult<T> =
       readonly code: string;
       readonly message: string;
     }
-  | { readonly kind: "unreachable"; readonly message: string }
+  | {
+      readonly kind: "unreachable";
+      readonly message: string;
+      /**
+       * The read was abandoned at the Console's own deadline rather than refused
+       * by the service.
+       *
+       * Additive and optional, so every consumer that branches on
+       * `kind === "unreachable"` is unaffected -- but it is the difference
+       * between two materially different facts. Measured in Chromium against a
+       * Control API fixture that accepts the request and never answers: the page
+       * settled on `autodev_unreachable` carrying the browser's own `AbortError`
+       * text, "This operation was aborted", followed by the advice to configure
+       * the server-side integration. None of which is true. The service was
+       * reachable -- it is holding the connection open -- and the operator's
+       * next move is to look at why the query is slow, not to reconfigure a
+       * credential that is working.
+       */
+      readonly timedOut?: boolean;
+    }
   | {
       readonly kind: typeof INVALID_RESPONSE_KIND;
       readonly code: string;
@@ -176,10 +195,8 @@ export async function fetchControlApi<T>(
 ): Promise<ControlApiResult<T>> {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const controller = new AbortController();
-  const timer = setTimeout(
-    () => controller.abort(),
-    options.timeoutMs ?? CONTROL_API_TIMEOUT_MS
-  );
+  const timeoutMs = options.timeoutMs ?? CONTROL_API_TIMEOUT_MS;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const signal = options.signal ?? controller.signal;
   let response: Response;
   try {
@@ -194,6 +211,20 @@ export async function fetchControlApi<T>(
     });
   } catch (error) {
     clearTimeout(timer);
+    // Our own deadline, read off the controller rather than off the error: the
+    // abort surfaces as a `DOMException` whose message is a browser
+    // implementation detail ("This operation was aborted"), and forwarding that
+    // to an operator says nothing about their system. `controller.signal` rather
+    // than `signal` because a caller may supply its own signal, in which case
+    // this controller aborting means nothing -- the caller gave up, which is not
+    // the Console's deadline.
+    if (controller.signal.aborted) {
+      return {
+        kind: "unreachable",
+        timedOut: true,
+        message: `The AutoDev Control API did not answer within ${Math.round(timeoutMs / 1000)}s.`
+      };
+    }
     return {
       kind: "unreachable",
       message:
@@ -368,7 +399,13 @@ export const CONTROL_API_PATHS = {
 export function controlApiFailureCode(
   result: Exclude<ControlApiResult<unknown>, { readonly kind: "ok" }>
 ): string {
-  return result.kind === "unreachable" ? "autodev_unreachable" : result.code;
+  if (result.kind !== "unreachable") return result.code;
+  // A read abandoned at the Console's own deadline is not the service being
+  // unreachable -- the service is holding the connection open and not
+  // answering. Reporting it under `autodev_unreachable` tells an operator their
+  // Control API is down when it is merely slow, and every dashboard that reads
+  // this code would file the two together.
+  return result.timedOut === true ? "autodev_control_api_timeout" : "autodev_unreachable";
 }
 
 export async function fetchAgents(

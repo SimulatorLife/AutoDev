@@ -122,9 +122,24 @@ export default async function EvaluationsPage({
       ConsolePageShell,
       { section },
       React.createElement(ResourceUnavailable, {
-        title: "Evaluations could not be loaded",
+        title:
+          result.kind === "unreachable" && result.timedOut === true
+            ? "Evaluations timed out"
+            : "Evaluations could not be loaded",
         code: controlApiFailureCode(result),
-        message: result.message
+        message: result.message,
+        // The shared default tells an operator to configure the server-side
+        // integration and restart, which is the right advice for a Control API
+        // that is not there and the wrong one for a Control API that is there and
+        // not answering in time -- measured against a fixture that accepts the
+        // read and never replies, this page was told to reconfigure a credential
+        // that was working. A timeout is a slow query or an overloaded store, and
+        // that is what the operator is pointed at instead.
+        ...(result.kind === "unreachable" && result.timedOut === true
+          ? {
+              hint: "The Control API accepted the read and did not answer before the Console gave up. Check whether the evaluations query is slow against the telemetry store."
+            }
+          : {})
       })
     );
   }
