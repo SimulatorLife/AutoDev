@@ -7586,6 +7586,85 @@ test("every link whose destination is the history table names an element that is
   }
 });
 
+test("a row link's arrival point survives the run not being in the view", () => {
+  // The reachability sweep above cannot reach this state, and saying so is the
+  // point of the test rather than a caveat on it. Every fragment it checks comes
+  // from a link some page rendered, and a link only names a run that page found
+  // -- so the destination it reconstructs always contains the run, always draws
+  // the drawer, and the not-found callout is never rendered by the sweep at all.
+  //
+  // That is the state the defect lived in. A filter or the read's window can
+  // exclude the very run a row link names, the page then answers with a callout
+  // naming which of the reasons applied, and the link's fragment
+  // `#evaluation-detail-drawer` resolved to nothing: measured in Chromium,
+  // `main.scrollTop` 0 and `document.activeElement` on `<body>`, at 390 and at
+  // 1280. The viewport happened to be roughly right because the callout renders
+  // near the top -- which is exactly why the screenshot looked fine and the
+  // measurement did not.
+  //
+  // So the sweep is left as it is and this asserts the one thing it cannot.
+  const rows = [
+    {
+      id: "run-in-view",
+      spanId: "4bf92f3577b34da6",
+      agentRole: "implementer",
+      promptName: "dry",
+      model: "m-1",
+      metrics: [],
+      passed: true,
+      timestamp: "2026-10-05T09:48:00Z"
+    }
+  ];
+
+  const notInView = renderEvaluations({
+    evaluations: rows,
+    tab: "results",
+    selection: "run-not-in-view",
+    filters: evaluationsFilters({ role: "architect" })
+  });
+
+  // The callout does render, and says which reason applied -- this is not a page
+  // that silently ignored the request.
+  assert.match(notInView, /Run run-not-in-view is not in this view\./);
+  assert.match(notInView, /The filters in this view exclude it\./);
+  assert.match(notInView, /data-detail-state="not-found"/);
+
+  // The assertion that matters: the arrival point is there, and it takes focus.
+  assert.match(
+    notInView,
+    /id="evaluation-detail-drawer"[^>]*tabindex="-1"/,
+    "the callout is the row link's arrival point when there is no run to open"
+  );
+
+  // Still one element, not two. The drawer and the callout are chosen by one
+  // ternary, so sharing the id cannot make `getElementById` ambiguous -- and an
+  // id that resolved to two elements would break the arrival just as surely.
+  assert.equal(
+    (notInView.match(/id="evaluation-detail-drawer"/g) ?? []).length,
+    1,
+    "exactly one element carries the arrival id"
+  );
+
+  // And the drawer, in the state that draws it, still carries it -- the two are
+  // alternatives, so one appearing must not be at the other's expense.
+  const inView = renderEvaluations({
+    evaluations: rows,
+    tab: "results",
+    selection: "run-in-view",
+    filters: evaluationsFilters()
+  });
+  assert.equal(
+    (inView.match(/id="evaluation-detail-drawer"/g) ?? []).length,
+    1,
+    "the drawer carries the same arrival id when the run is in view"
+  );
+  assert.match(
+    inView,
+    /data-feature="evaluation-detail"/,
+    "the drawer is what renders in this state"
+  );
+});
+
 test("a page past the end clamps to the last page, however far past it is", async () => {
   // The defect this pins was between two layers that are each correct alone: the
   // URL layer resolved a well-formed page number, and the view clamped it to a

@@ -447,19 +447,33 @@ export function evaluationsHref(
 export const EVALUATIONS_HISTORY_ANCHOR_ID = "evaluation-history";
 
 /**
- * The element a row link lands on: the drawer for the run it opened.
+ * The element a row link lands on: whatever answered the request for that run.
  *
- * The third of this page's arrival points, and the one that was still missing.
- * The other two are links whose destination is the history table; this one is the
- * link whose destination is the drawer, so it names the drawer instead and is
- * deliberately a different element -- pointing it at the history heading would
- * scroll the operator past the panel they just opened.
+ * The third of this page's arrival points. The other two are links whose
+ * destination is the history table; this one is the link whose destination is
+ * the detail for a specific run, so it names that and is deliberately a
+ * different element -- pointing it at the history heading would scroll the
+ * operator past the panel they just opened.
  *
- * Named distinctly from the `data-feature="evaluation-detail"` the callout for a
- * run outside the window also carries. The two are mutually exclusive, but they
- * answer different questions -- one is "this run has no metrics", the other is
- * "this run is not in the window you are looking at" -- and an id that reused the
- * flag would make the anchor's meaning depend on which of them rendered.
+ * Two elements carry it: the drawer when the run is in view, and the
+ * not-found callout when a filter or the read's window means there is no run to
+ * open. They are mutually exclusive -- one ternary picks between them -- so the
+ * id still resolves to exactly one element in the document.
+ *
+ * It used to be the drawer's alone, on the reasoning that reusing one id for two
+ * different elements would "make the anchor's meaning depend on which of them
+ * rendered". True, and it is the wrong thing to avoid: a row link cannot know
+ * which one the data will allow, so an id that only exists in one of them is a
+ * fragment that goes nowhere exactly when the operator has least idea why.
+ * Measured with the callout rendering: `main.scrollTop` 0 and
+ * `document.activeElement` on `<body>`, at 390 and at 1280. What the id names
+ * is the request, not the element's role, and the answer to a request is
+ * whichever of the two the data produced.
+ *
+ * Distinct from `data-feature="evaluation-detail"`, which both carry. That is a
+ * flag saying "this page is answering for a run"; this is the arrival point for
+ * the link that asked. The flag is a question about the render, the id is a
+ * question about the link, and they are allowed to disagree.
  */
 export const EVALUATIONS_DETAIL_ANCHOR_ID = "evaluation-detail-drawer";
 

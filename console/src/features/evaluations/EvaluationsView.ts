@@ -801,8 +801,23 @@ function renderMissingResult(
   return React.createElement(
     "div",
     {
-      role: "alert",
-      className: CALLOUT_WARNING_CLASS,
+      // The same arrival point the drawer is, for the same reason. A row link
+      // names `#evaluation-detail-drawer` because the drawer is what it expects
+      // to open; when a filter or the read's window means there is no run to
+      // open, this callout is what answers instead, and without the anchor the
+      // fragment resolved to nothing. Measured: `main.scrollTop` stayed at 0 and
+      // `document.activeElement` stayed on `<body>` for both miss reasons, at
+      // 390 and at 1280.
+      //
+      // The two elements are mutually exclusive -- one ternary picks between
+      // them -- so this id still resolves to exactly one element in the
+      // document. What it names is the *answer to the request*, not the
+      // element's role, which is what makes it safe to share: the callout and
+      // the drawer are both correct places for the link to land, and which one
+      // renders is a fact about the data rather than about the link.
+      id: EVALUATIONS_DETAIL_ANCHOR_ID,
+      tabIndex: -1,
+      className: `${CALLOUT_WARNING_CLASS} scroll-mt-4`,
       "data-feature": "evaluation-detail",
       "data-detail-state": "not-found",
       "data-evaluation-missing-id": selection
