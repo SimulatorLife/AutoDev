@@ -43,9 +43,9 @@ export interface ColumnDef<T> {
   readonly cell: (row: T) => React.ReactNode;
   /**
    * Relative share of the table's width. Weights are resolved to
-   * percentages of the table's own width. Their sum is also the table's
-   * minimum width: below the content budget the table region scrolls rather
-   * than compressing every column and clipping its contents.
+   * percentages of the table's own width, so a table always fills its
+   * container and a column set that is too wide shrinks proportionally
+   * instead of pushing the table into a horizontal scroll.
    *
    * Absolute lengths cannot work here: with `table-layout: fixed` the browser
    * treats a declared `width` as a hard minimum and grows the table past its
@@ -93,16 +93,45 @@ const TOKENS_COLUMN_WEIGHT = 170;
 const DEFAULT_COLUMN_WEIGHT = 100;
 
 /**
-/**
- * Minimum width for the table, derived from the weights this table declares.
+ * Highest floor any table may demand.
  *
- * The shared Console contract treats declared widths as a content budget, not
- * a preference: when the viewport is narrower than that budget, the table
- * keeps its column proportions and its wrapper scrolls. Capping the sum made
- * controls and values spill across their own cells before scrolling began.
+ * A floor is a legibility limit, not a target: it exists so a table scrolls
+ * when the window genuinely cannot give its columns room. Deriving the floor
+ * from the weight sum alone made it the table's *natural* width, so any table
+ * whose columns wanted even a little more than the page offered scrolled at
+ * full desktop width — a 26px scroll on a 1440px window, with no small-screen
+ * cause.
+ *
+ * The cap sits below the tightest layout the Console actually produces, which
+ * is not the narrowest viewport: at 1280 the sidebar is still expanded, so the
+ * content column measures about 901px, and at 1024 the rail leaves about 877px.
+ * A cap under both keeps every table scroll-free at those widths; below them the
+ * region scrolls as intended.
+ */
+const TABLE_FLOOR_CEILING_PX = 54 * 16;
+
+/**
+ * Floor for the table itself, derived from the weights this table declares.
+ *
+ * The table takes the full width of its wrapper but never squeezes below the
+ * budget its own columns were measured for. Below it the table region scrolls
+ * horizontally instead of shrinking every column: badges truncate, chips wrap
+ * one per line, and headers break mid-word long before they are legible.
+ * Scrolling keeps every cell readable; crushing it does not.
+ *
+ * The floor is per table rather than one constant for the whole Console
+ * because the columns differ: a four-column table declares far less total
+ * weight than the eight-column MCP table, so a shared floor would give the
+ * narrow one a scrollbar at desktop widths for twelve pixels of nothing while
+ * the wide one still needed it. Weights are authored on roughly a pixel-per-unit
+ * scale, so their sum is the width the columns were measured at.
  */
 function tableMinWidthPx(columns: readonly ColumnDef<never>[]): number {
-  return columns.reduce((sum, column) => sum + columnWeight(column), 0);
+  const natural = columns.reduce(
+    (sum, column) => sum + columnWeight(column),
+    0
+  );
+  return Math.min(natural, TABLE_FLOOR_CEILING_PX);
 }
 
 function cellClassName(column: ColumnDef<never>): string {
@@ -240,10 +269,10 @@ function nodeText(node: React.ReactNode): string {
 }
 
 /**
- * Resolve every column to a percentage of the table width. Percentages keep
- * their declared ratios as the table fills wider containers; below the sum of
- * those weights, the wrapper scrolls instead of shrinking columns under their
- * authored content budget.
+ * Resolve every column to a percentage of the table width. Percentages are
+ * relative, so the table keeps filling its container at any viewport size and
+ * a column set that needs more room than is available shrinks proportionally
+ * rather than overflowing.
  */
 function columnWidths(columns: readonly ColumnDef<never>[]): string[] {
   const weights = columns.map((column) => columnWeight(column));
@@ -287,9 +316,11 @@ export function DataTable<T>({
     React.createElement(
       "table",
       {
-        // Fixed layout plus percentage widths keeps columns in their declared
-        // ratio. The minimum width is the sum of those weights, so the wrapper
-        // scrolls when the viewport cannot provide the full content budget.
+        // Fixed layout plus percentage widths keeps the table inside its
+        // container at every viewport: columns hold their declared ratio and
+        // shrink proportionally when the set needs more room than is
+        // available. The inline floor is derived from this table's own weights
+        // rather than authored, so it stays correct when a view rebalances.
         className:
           "w-full table-fixed divide-y divide-border text-left text-sm",
         style: {
@@ -368,10 +399,7 @@ export function DataTable<T>({
           const key = keyExtractor(row);
           return React.createElement(
             "tr",
-            {
-              key,
-              className: "transition-colors"
-            },
+            { key, className: "transition-colors" },
             columns.map((col, index) => {
               const content = col.cell(row);
               const clamp = clamps[index];
