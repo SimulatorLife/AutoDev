@@ -25,6 +25,7 @@ import {
 import { loadOpenLITTrace } from "../../src/lib/server/openlit-usage.ts";
 import {
   ConsolePageShell,
+  controlApiCredentialUnavailable,
   readNodeContext,
   ResourceUnavailable
 } from "../_console.ts";
@@ -101,18 +102,13 @@ export default async function EvaluationsPage({
     return React.createElement(
       ConsolePageShell,
       { section },
-      React.createElement(ResourceUnavailable, {
-        title: "Control API credential is not configured",
-        code: "autodev_control_api_disabled",
-        // Results, not definitions. Every sibling page names what its own page
-        // reads, and this one named a surface that does not exist: the Runtime
-        // exposes a single `GET /control/evaluations` returning retained results,
-        // with no definitions read behind it. An operator who set the token and
-        // then went looking for evaluation definitions was looking for a thing
-        // the credential was never going to produce.
-        message:
-          "Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read evaluation results."
-      })
+      // Results, not definitions. Every sibling page names what its own page
+      // reads, and this one named a surface that does not exist: the Runtime
+      // exposes a single `GET /control/evaluations` returning retained results,
+      // with no definitions read behind it. An operator who set the token and
+      // then went looking for evaluation definitions was looking for a thing
+      // the credential was never going to produce.
+      controlApiCredentialUnavailable("evaluation results")
     );
   }
 

@@ -176,6 +176,37 @@ export function ResourceUnavailable({
 }
 
 /**
+ * The failure shell for a page whose Control API credential is missing.
+ *
+ * Eighteen pages open with this guard, and each one used to spell all three
+ * parts itself: the title, the machine code, and the sentence naming the
+ * environment variable. Only the noun varied — "agent configuration",
+ * "governed memory", "tool catalog data" — and that part is genuinely per page.
+ * `/evaluations` names evaluation *results*, because the Runtime exposes one
+ * `GET /control/evaluations` returning retained results and no definitions read
+ * behind it; a page that sent an operator looking for a surface it does not read
+ * would point them at a thing the credential was never going to produce.
+ *
+ * The other two parts are not per page, and they are the parts that go stale.
+ * Renaming `AUTODEV_CONTROL_API_TOKEN` or retitling the shell meant eighteen
+ * edits, and the seventeen nobody remembered would have kept pointing at a
+ * variable that no longer exists. The code is load-bearing past the page
+ * too — tests assert on `data-error-code` and logs match on it — so it belongs
+ * in one definition rather than eighteen.
+ *
+ * `reads` is the noun phrase only; the sentence around it is fixed.
+ */
+export function controlApiCredentialUnavailable(
+  reads: string
+): React.JSX.Element {
+  return React.createElement(ResourceUnavailable, {
+    title: "Control API credential is not configured",
+    code: "autodev_control_api_disabled",
+    message: `Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read ${reads}.`
+  });
+}
+
+/**
  * Render a Console page with the shared AppShell using the canonical section
  * for navigation highlighting. Counts are surfaced from the props when known
  * so the sidebar reflects the loaded resource state.
