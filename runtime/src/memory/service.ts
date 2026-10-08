@@ -442,7 +442,12 @@ function assertInjectionUseReportAccess(
       "Task-history access is required to report injection use."
     );
   }
-  if (!context.repositoryId) {
+  // `.trim()`, not a truthiness check: `"  "` is a truthy string, so the plain
+  // form let a blank repository through a gate whose stated reason is that a
+  // repository is required. The write was still refused further down, by the
+  // experience-scope check -- with a different error and a different reason, so
+  // this gate was not doing what it claims.
+  if (!context.repositoryId?.trim()) {
     throw new MemoryAuthorizationError(
       "Repository scope is required to report injection use."
     );

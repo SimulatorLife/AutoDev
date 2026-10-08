@@ -6383,3 +6383,67 @@ test("no MCP read tool returns an object belonging to another workspace", async 
     );
   });
 });
+
+/**
+ * A repository scope that is whitespace is not a repository scope.
+ *
+ * `assertInjectionUseReportAccess` is the authorization gate on recording an
+ * injection-use report, and the test above already exercises all three of its
+ * clauses -- authority, task-history grant, and an *absent* repository. What it
+ * does not exercise is a repository that is present but blank, because the
+ * clause is `!context.repositoryId`, which is a truthiness check rather than a
+ * blankness one. `"  "` is a truthy string, so it passes a gate whose stated
+ * reason is "Repository scope is required to report injection use."
+ *
+ * Not currently reachable: the only production caller is the Control API, and
+ * its `oneFilter` trims every filter value, so a whitespace repository arrives
+ * there as absent. That is a property of the caller, not of the guard, and the
+ * guard is the thing that says what a repository scope is. The downstream
+ * trusted-scope comparison would refuse the write anyway -- so this is a
+ * precondition that does not yet do what it claims, not a leak.
+ */
+test("MemoryService recordInjectionUseReport refuses a blank repository scope", async () => {
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const env = experience();
+  await service.appendExperience(env, worker, {
+    ...context,
+    taskId: env.taskId,
+    runId: env.runId
+  });
+  await persistOutcomeInjection(repository, service, useInjectionEvent());
+
+  const blankContext: MemoryReadContext = {
+    ...context,
+    repositoryId: "   ",
+    canReadTaskHistory: true
+  };
+
+  await assert.rejects(
+    service.recordInjectionUseReport({
+      experienceId: env.id,
+      injectionEventId: "private-injection-id",
+      useKind: "used",
+      usedMemoryIds: ["mem-use-1", "mem-use-2"],
+      evidence: [{ kind: "trajectory", uri: env.trajectory.uri }],
+      actor: root,
+      context: blankContext
+    }),
+    { message: /repository scope/i },
+    "a whitespace repository is not a repository scope"
+  );
+
+  // The other side of the same rule: a real repository passes this gate and
+  // reaches the write, so the refusal above is the blank and not the whole
+  // precondition.
+  const accepted = await service.recordInjectionUseReport({
+    experienceId: env.id,
+    injectionEventId: "private-injection-id",
+    useKind: "used",
+    usedMemoryIds: ["mem-use-1", "mem-use-2"],
+    evidence: [{ kind: "trajectory", uri: env.trajectory.uri }],
+    actor: root,
+    context: { ...context, canReadTaskHistory: true }
+  });
+  assert.equal(accepted.appended, true);
+});
