@@ -7,7 +7,10 @@ import type {
   MemoryUseReport
 } from "@simulatorlife/autodev-core";
 
-import { MemoryVectorError } from "../../src/memory/errors.ts";
+import {
+  MemoryConflictError,
+  MemoryVectorError
+} from "../../src/memory/errors.ts";
 import { PostgresMemoryRepository } from "../../src/memory/postgres-memory-repository.ts";
 import type { MemoryConnectionPool } from "../../src/memory/query-client.ts";
 import { MEMORY_EMBEDDING_DIMENSIONS } from "../../src/memory/schema.ts";
@@ -857,5 +860,156 @@ test("both session lookups refuse a session context they cannot search with", as
     pool.statements.length,
     beforeIdLookup,
     "the id lookup must refuse a session with no repository before querying"
+  );
+});
+
+/**
+ * An injection event's scope must be the trusted session's scope.
+ *
+ * The event a caller hands `recordInjectionEvent` carries its own workspace,
+ * repository and task, and the row that is persisted is what every later
+ * session-scoped read is filtered by. The guard is the only thing standing
+ * between a caller and a row filed against someone else's session, and it is
+ * five independent clauses -- none of which had a failing test, because every
+ * caller in the suite built the event with `context: { ...requestContext,
+ * taskId: event.taskId }`, which makes the task clause match by construction.
+ *
+ * Each clause is varied on its own here. A single assertion that the method
+ * "rejects a mis-scoped event" would pass on whichever clause fired first and
+ * prove nothing about the rest.
+ */
+test("recordInjectionEvent refuses an event whose scope is not the trusted session", async () => {
+  const repository = repo();
+  const trusted = requestContext;
+
+  // Positive control, and the first case's other side: an event with no
+  // repository at all is a workspace-scoped injection, which is legitimate and
+  // must not be caught by the repository clause. The key is *omitted* rather
+  // than set to undefined -- `exactOptionalPropertyTypes` is on, and an absent
+  // repository is the state under test.
+  const workspaceScoped: Partial<MemoryInjectionEvent> = {
+    id: "inj-workspace-scoped",
+    correlationToken: "token-workspace-scoped",
+    scope: {
+      kind: "workspace",
+      workspaceId: "ws-use"
+    },
+    taskId: "session-use",
+    runId: "request-run"
+  };
+  await assert.doesNotReject(
+    repository.recordInjectionEvent({
+      event: injectionEvent(workspaceScoped),
+      actor: { id: "runtime", authority: "system" },
+      context: trusted
+    }),
+    "an injection with no repository belongs to the workspace, not to a forged repository"
+  );
+
+  const refusals: readonly {
+    readonly why: string;
+    readonly event: Partial<MemoryInjectionEvent>;
+  }[] = [
+    {
+      why: "the event names another workspace",
+      event: { id: "inj-ws", correlationToken: "t-ws", workspaceId: "ws-other" }
+    },
+    {
+      why: "the event names another repository",
+      event: {
+        id: "inj-repo",
+        correlationToken: "t-repo",
+        repositoryId: "repo-other"
+      }
+    },
+    {
+      // Not a case of its own: `MemoryScope`'s "global" variant carries no
+      // `workspaceId` at all, while the event's own is required, so this is
+      // refused by the scope-workspace clause below whatever the global clause
+      // does. It is kept because an injection event should never be global, not
+      // because the guard here is what stops it -- see the finding reported
+      // alongside this commit.
+      why: "the event claims global scope",
+      event: {
+        id: "inj-global",
+        correlationToken: "t-global",
+        scope: { kind: "global" }
+      }
+    },
+    {
+      why: "the event's scope workspace disagrees with its own workspace",
+      event: {
+        id: "inj-split",
+        correlationToken: "t-split",
+        scope: {
+          kind: "workspace",
+          workspaceId: "ws-other"
+        }
+      }
+    },
+    {
+      why: "the event names another session's task",
+      event: {
+        id: "inj-task",
+        correlationToken: "t-task",
+        taskId: "other-session",
+        scope: {
+          kind: "task",
+          workspaceId: "ws-use",
+          taskId: "other-session",
+          runId: "request-run"
+        }
+      }
+    }
+  ];
+
+  for (const { why, event } of refusals) {
+    await assert.rejects(
+      repository.recordInjectionEvent({
+        event: injectionEvent(event),
+        actor: { id: "runtime", authority: "system" },
+        context: trusted
+      }),
+      MemoryConflictError,
+      `${why} must be refused`
+    );
+  }
+});
+
+/**
+ * A correlation token already recorded against a different event is a collision.
+ *
+ * The retry path returns `appended: false` only when the stored row is the very
+ * event being written again. Two different ids under one token means the token
+ * has been reused for a different execution, which is the case where a caller
+ * could otherwise be told "already recorded, nothing to do" while its evidence
+ * was silently dropped.
+ */
+test("recordInjectionEvent reports a correlation token already claimed by another event", async () => {
+  const repository = repo();
+  const first = injectionEvent();
+  await repository.recordInjectionEvent({
+    event: first,
+    actor: { id: "runtime", authority: "system" },
+    context: { ...requestContext, taskId: first.taskId }
+  });
+
+  // The exact retry is the accepted case, and it is what the refusal below has
+  // to be distinguished from -- both find a stored row under the same token.
+  const retried = await repository.recordInjectionEvent({
+    event: first,
+    actor: { id: "runtime", authority: "system" },
+    context: { ...requestContext, taskId: first.taskId }
+  });
+  assert.deepEqual(retried, { appended: false, id: first.id });
+
+  await assert.rejects(
+    repository.recordInjectionEvent({
+      event: injectionEvent({ id: "inj-a-different-event" }),
+      actor: { id: "runtime", authority: "system" },
+      context: { ...requestContext, taskId: first.taskId }
+    }),
+    /correlationToken is already recorded with a different id/u,
+    "one token cannot stand for two different injection events"
   );
 });
