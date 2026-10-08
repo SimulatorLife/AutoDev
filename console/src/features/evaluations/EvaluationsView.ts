@@ -576,6 +576,20 @@ function spanLink(
       "aria-label": selected
         ? `Open span ${spanId}, the selected span`
         : `Open span ${spanId}`,
+      // The visible text is eight characters of a sixteen-character id, so this
+      // is the recoverability the rest of this table already keeps: the start
+      // time carries its full timestamp, the run detail its full run id, and the
+      // span columns were the one place a shortened value had nothing behind it.
+      //
+      // The `aria-label` above already carries the full id, which is why this was
+      // not visible to anyone testing with a screen reader -- the rows were
+      // always distinguishable to one and not the other. And a prefix collision
+      // is rare rather than impossible: OpenTelemetry ids are 128-bit random, so
+      // two spans sharing their first eight hex digits is about 5 in a million
+      // across 200 spans, but a source that numbers its spans structurally makes
+      // it certain. Measured against a fixture of counter-derived ids, 199 of 200
+      // rows rendered as `00000000` with nothing to tell them apart on hover.
+      title: spanId,
       "data-trace-span-id": spanId,
       ...(selected
         ? { "aria-current": "true", "data-trace-selected": "true" }

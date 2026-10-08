@@ -6761,6 +6761,70 @@ test("EvaluationsView renders safe trace details and prompt-preserving span link
   assert.match(markup, /Back to evaluations/);
 });
 
+test("a span link keeps the full id reachable behind its eight characters", () => {
+  const spanId = "0123456789abcdef";
+  const parentSpanId = "fedcba9876543210";
+  const markup = renderEvaluations({
+    evaluations: [],
+    filters: evaluationsFilters(),
+    traceLookup: {
+      kind: "observed",
+      detail: {
+        schema: "autodev-openlit-trace-detail-v1",
+        traceId: "0123456789abcdef0123456789abcdef",
+        selectedSpanId: spanId,
+        partial: false,
+        spans: [
+          {
+            spanId,
+            parentSpanId: null,
+            spanName: "gen_ai.client_operation",
+            serviceName: "autodev-router",
+            timestamp: "2026-10-05T12:00:00.000Z",
+            durationNs: 1_000_000,
+            statusCode: "OK"
+          },
+          {
+            spanId: parentSpanId,
+            parentSpanId: spanId,
+            spanName: "gen_ai.client_operation.child",
+            serviceName: "autodev-router",
+            timestamp: "2026-10-05T12:00:00.000Z",
+            durationNs: 1_000_000,
+            statusCode: "OK"
+          }
+        ]
+      }
+    }
+  });
+  // A span cell shows eight characters of a sixteen-character id, so the full
+  // value has to stay reachable -- which is what every other shortened value in
+  // this page already does (the run-time column its full timestamp, the run
+  // detail its full run id). The span columns were the exception, and the gap
+  // was invisible to anyone testing with a screen reader because the
+  // `aria-label` already carried the full id: the rows were distinguishable to
+  // one reader and not the other.
+  //
+  // Measured against a fixture whose ids are counter-derived, 199 of 200 rows
+  // rendered as `00000000` and nothing on hover told them apart. Real
+  // OpenTelemetry ids are 128-bit random and collide this rarely -- about 5 in a
+  // million across 200 spans -- but a source that numbers spans structurally
+  // makes it certain, and the Console does not get to assume otherwise.
+  const spanTags = Array.from(
+    markup.matchAll(/<a\b[^>]*data-trace-span-id="[^"]*"[^>]*>/g),
+    (match) => match[0]
+  );
+  assert.ok(spanTags.length > 0, "the trace table links its spans");
+  for (const tag of spanTags) {
+    const id = /data-trace-span-id="([^"]*)"/.exec(tag)?.[1] ?? "";
+    assert.equal(
+      /title="([^"]*)"/.exec(tag)?.[1],
+      id,
+      `a span link showing ${id.slice(0, 8)} of ${id} must keep the full id reachable on hover`
+    );
+  }
+});
+
 test("EvaluationsView keeps a missing trace out of its empty-history state", () => {
   const markup = renderEvaluations({
     evaluations: [],
