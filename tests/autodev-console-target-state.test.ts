@@ -191,6 +191,11 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
     /OpenLIT\s+(?:Go )?Controller(?: daemon)? is not shipped/u
   );
 
+  assert.match(
+    target,
+    /retained OpenLIT server renders URL-filtered telemetry pages at request time/u
+  );
+
   // RuleSync is the source of truth for losslessly-representable surfaces.
   assert.match(target, /RuleSync tool as the source of truth/u);
 
@@ -215,6 +220,139 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
   assert.match(
     target,
     /\| Per-role priority and model assignment for Default\/Smart\/Orchestrator\/Subagent, provider-wide agent limits, provider enable\/disable, model enablement, priority\/fallback groups, per-tier models, routing \| Providers \(Providers and Models tabs\) \|/u
+  );
+  assert.match(
+    target,
+    /Provider rows are not globally draggable: routing precedence is per-role and per-tier/u
+  );
+  assert.ok(
+    target.includes(
+      "A safe, reversible single-choice setting applies as soon as the operator changes its select."
+    )
+  );
+  assert.ok(
+    target.includes(
+      "Keep explicit Apply/Save only when the operator is deliberately staging a coherent group"
+    )
+  );
+  assert.ok(
+    target.includes(
+      "Do not place a second Apply/Save control beside one selection; submit the complete owning form through its existing route."
+    ),
+    "direct-apply policy must prohibit a second Apply/Save control beside a single safe selection"
+  );
+  assert.ok(
+    target.includes(
+      "Visual hierarchy is explicit per interaction group: within any toolbar, form, row, or dialog that offers more than one action, exactly one renders with the highest-emphasis style; secondary and destructive actions use lower-emphasis or outline styles, and heading levels track page > section > item nesting rather than decorative sizing. A page is not required to carry a primary action merely because it has content."
+    ),
+    "UI policy must codify visual hierarchy per interaction group (not one primary action per page) and heading levels tracking page/section/item nesting"
+  );
+  assert.ok(
+    target.includes(
+      "multiple filter axes applied as one URL state, a multi-select/checkbox set, a preview/validation step, or a consequential action that needs review or confirmation"
+    ),
+    "staged-submit policy must enumerate the justified exceptions requiring explicit Apply/Save"
+  );
+  assert.ok(
+    target.includes("do not stage a lone workspace/scope choice"),
+    "staged-submit policy must rule out staging a single scope/workspace choice"
+  );
+  assert.ok(
+    target.includes(
+      "Immediate mutations stay server-authoritative: do not claim success optimistically."
+    ),
+    "immediate single-choice applies must be server-confirmed, not optimistic"
+  );
+  assert.ok(
+    target.includes(
+      "The refreshed control value is the confirmed state, and an unconfirmed or failed write must produce an accessible, actionable notice."
+    ),
+    "a failed or unconfirmed immediate write must surface an accessible, actionable notice"
+  );
+  assert.ok(
+    target.includes(
+      "Asynchronous actions that remain in place show a visible pending state and announce it accessibly until completion."
+    ),
+    "UI policy must require visible and announced pending state for async actions that remain in place"
+  );
+  assert.ok(
+    target.includes(
+      "Changing or submitting any Console form or control must not cause a full document reload: safe single-choice controls auto-apply and explicit grouped Apply/Save where intentional are kept, but all GET filters and POST mutations use in-place client navigation/update while preserving URL state and server-confirmed feedback."
+    ),
+    "UI policy must require in-place client navigation/update without full document reloads for all form submissions"
+  );
+  assert.ok(
+    target.includes(
+      "In-place requests provide visible pending feedback during execution, preserve keyboard focus and visible focus states, and show Runtime-confirmed values or an accessible, actionable failure notice when confirmation fails."
+    ),
+    "UI policy must require visible pending feedback, keyboard focus preservation, and confirmed or error status for in-place requests"
+  );
+  assert.doesNotMatch(
+    target,
+    /navigate(?:s)? normally/u,
+    "target state must not allow form submissions or filter changes to navigate normally"
+  );
+  assert.doesNotMatch(
+    target,
+    /do not require an in-place pending indicator for the navigation/u,
+    "target state must not exempt form navigation from in-place pending indicators"
+  );
+  assert.ok(
+    target.includes(
+      "System status is shown adjacent to the control or resource it describes, not centralized on an unrelated page."
+    ),
+    "UI policy must keep system status adjacent to its owning control/resource rather than requiring an unowned nav-wide badge"
+  );
+  assert.ok(
+    target.includes(
+      "Every control keeps a persistent accessible name, keyboard operation, visible focus, and a reason when disabled."
+    ),
+    "direct-apply controls must keep standard accessible-name/keyboard/focus/disabled-reason guarantees"
+  );
+  assert.ok(
+    target.includes(
+      "Auto-submit must work for keyboard selection as well as pointer input; never rely on color, hover text, or position alone."
+    ),
+    "auto-submit on a direct-apply control must work via keyboard, not just pointer/visual cues"
+  );
+  assert.ok(
+    target.includes(
+      "Prefer recognition over recall: operators choose from visible, labeled, searchable lists, dropdowns, and breadcrumbs instead of memorizing resource IDs, slugs, or command syntax, and a form shows the currently effective or previously entered value rather than requiring the operator to recall it from elsewhere."
+    ),
+    "UI policy must codify recognition over recall: visible searchable choices and prefilled effective values instead of memorized IDs"
+  );
+  assert.ok(
+    target.includes(
+      "Keep labels, controls, and their state feedback in one aligned group."
+    ),
+    "a direct-apply control's label, control, and feedback must stay visually and structurally grouped"
+  );
+  assert.ok(
+    target.includes(
+      "At phone widths, controls wrap or scroll within their owning region rather than hiding the action or breaking the relationship between a label and its value."
+    ),
+    "phone-width layout must keep the control reachable and its label/value relationship intact, never hidden"
+  );
+  assert.ok(
+    target.includes(
+      "Core workflows must be operable at both phone and desktop widths. Navigation and primary content may reflow into a single scrollable column, and secondary detail may progressively disclose into drawers or tabs, but all controls needed for core workflows remain reachable without hover- or pointer-only access."
+    ),
+    "UI policy must state core workflows work at phone and desktop widths, may reflow and progressively disclose secondary detail, keep core controls reachable, and avoid hover-/pointer-only access"
+  );
+  assert.ok(
+    target.includes(
+      'Preserve WCAG 2.1 AA contrast (>= 4.5:1 for text, >= 3:1 for large text and UI component boundaries) in the dark-only palette; enforced by the `contrastRatio` assertions in [`tests/autodev-console-target-state.test.ts`](../tests/autodev-console-target-state.test.ts) (test: "Console semantic text and status surfaces meet WCAG AA contrast").'
+    ),
+    "UI policy must name the WCAG 2.1 AA contrast standard, its numeric thresholds, and the existing contrast test that enforces them"
+  );
+  assert.match(
+    target,
+    /Safe single-choice settings apply on selection without a second Apply control; multi-axis filters, multi-select sets, and reviewed transactions retain an explicit submit boundary with its purpose made clear\./u
+  );
+  assert.match(
+    target,
+    /Changing or submitting any Console form or control does not cause a full document reload, executing via in-place client navigation and updates while preserving URL state, native form semantics, keyboard focus, accessible pending feedback, and server-confirmed state\./u,
+    "acceptance contract must guard no-document-reload invariant for all Console form submissions"
   );
   // The Providers table is a single four-column configuration surface, so the
   // guard pins those columns rather than accepting any Providers layout.
@@ -585,10 +723,43 @@ test("Usage Active Sessions is a runtime-scoped selection, not a time range", ()
   // Session identifiers stay out of metric dimensions.
   assert.match(body, /stay out of metric dimensions/u);
 
-  // Per the §1 docs contract, the observed gap belongs to the migration
-  // tracker, which must record that the option is not implemented and why.
-  assert.match(migration, /Active Sessions/u);
-  assert.match(migration, /not implemented/u);
+  // The migration tracker records that the option now has a Runtime-backed
+  // implementation while keeping the missing identity evidence explicit.
+  assert.match(
+    migration,
+    /Active Sessions is implemented as a distinct scope over the Runtime read-only/u
+  );
+  assert.match(migration, /per-session identity remains unavailable/u);
+});
+
+test("Usage cost and unavailable evidence remain honest", () => {
+  const target = readFileSync(targetStatePath, "utf8");
+  const migration = readFileSync(migrationPath, "utf8");
+  const usage =
+    /###\s+Usage dashboard\b([\s\S]*?)(?=\n###\s+Active Sessions)/u.exec(
+      target
+    );
+  assert.ok(usage, "the Usage dashboard contract must be present");
+  const body = usage?.[1] ?? "";
+  assert.match(body, /`autodev-openlit-usage-v3`/u);
+  assert.match(body, /bounded recent-attempt list/u);
+  assert.match(body, /Core owns the canonical `USAGE_VARIABLE_IDS` tuple/u);
+  assert.match(body, /fixed OpenLIT endpoint mirrors this bounded list/u);
+  assert.match(body, /gen_ai\.usage\.cost/u);
+  assert.match(body, /estimate, not a provider bill/u);
+  assert.match(body, /empty aggregate is not a measured `\$0`/u);
+  assert.match(body, /one shared unavailable state/u);
+  assert.match(
+    body,
+    /Provider-attempt spans carry only validated `autodev\.workspace` and `autodev\.agent\.role` context/u
+  );
+  assert.match(migration, /provider attempt\/error breakdowns/u);
+  assert.match(migration, /Runtime-confirmed compaction counts/u);
+  assert.match(migration, /skill event breakdowns filtered/u);
+  assert.match(
+    migration,
+    /Full trace search\/exploration beyond the bounded recent-attempt list remains/u
+  );
 });
 
 test("git change metrics are defined with exact counting and cardinality rules", () => {
@@ -1120,5 +1291,68 @@ test("Console semantic text and status surfaces meet WCAG AA contrast", () => {
     [],
     "WCAG AA contrast failures in console/app/globals.css:\n" +
       failures.join("\n")
+  );
+});
+
+test("Console form interactions forbid document reload while preserving intentional staged submits", () => {
+  const target = readFileSync(targetStatePath, "utf8");
+
+  // Invariant: Changing or submitting any Console form/control must not cause a full document reload.
+  assert.ok(
+    target.includes(
+      "Changing or submitting any Console form or control must not cause a full document reload"
+    ),
+    "target state must enforce that form/control interaction causes no full document reload"
+  );
+  assert.ok(
+    target.includes(
+      "all GET filters and POST mutations use in-place client navigation/update while preserving URL state and server-confirmed feedback"
+    ),
+    "GET filters and POST mutations must use in-place client navigation/update preserving URL and server state"
+  );
+
+  // Intentional staged-submit exception: safe single-choice auto-applies vs explicit grouped Apply/Save
+  assert.ok(
+    target.includes(
+      "safe single-choice controls auto-apply and explicit grouped Apply/Save where intentional are kept"
+    ),
+    "safe single-choice auto-apply and intentional grouped Apply/Save must be preserved"
+  );
+  assert.ok(
+    target.includes(
+      "Keep explicit Apply/Save only when the operator is deliberately staging a coherent group: multiple filter axes applied as one URL state, a multi-select/checkbox set, a preview/validation step, or a consequential action that needs review or confirmation."
+    ),
+    "explicit Apply/Save must be guarded for intentional staged submit scenarios"
+  );
+  assert.ok(
+    target.includes("do not stage a lone workspace/scope choice"),
+    "single workspace/scope selection must not be staged"
+  );
+
+  // Accessible pending feedback and focus behavior during in-place requests
+  assert.ok(
+    target.includes(
+      "In-place requests provide visible pending feedback during execution, preserve keyboard focus and visible focus states, and show Runtime-confirmed values or an accessible, actionable failure notice when confirmation fails."
+    ),
+    "in-place form submissions must provide visible pending feedback, focus preservation, and confirmed or error status"
+  );
+
+  // Outdated normal navigation and pending indicator exemptions must stay absent
+  assert.doesNotMatch(
+    target,
+    /navigate(?:s)? normally/u,
+    "form submissions and filter changes must not navigate normally"
+  );
+  assert.doesNotMatch(
+    target,
+    /do not require an in-place pending indicator/u,
+    "target state must not exempt form submissions from in-place pending indicators"
+  );
+
+  // Acceptance contract reflection
+  assert.match(
+    target,
+    /Changing or submitting any Console form or control does not cause a full document reload/u,
+    "acceptance contract must guard no-document-reload invariant"
   );
 });

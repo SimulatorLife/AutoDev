@@ -91,7 +91,8 @@ test("every page shares one guard, and names its own surface in it", () => {
     const calls = [...src.matchAll(/controlApiCredentialUnavailable\(\s*"([^"]*)"\s*\)/gu)];
     if (calls.length > 0) {
       using.push(at);
-      for (const [, noun] of calls) {
+      for (const match of calls) {
+        const noun = match[1] ?? "";
         assert.notEqual(noun.trim(), "", `${at} names no surface`);
         // Render through the real helper, so a page that passed a noun the
         // sentence cannot hold fails here rather than on a page nobody visits.

@@ -159,9 +159,9 @@ test("a purge offers only the reasons the Runtime accepts", async () => {
 test("a purge is confirmed explicitly, because it cannot be undone", async () => {
   const form = formFor(render(), "purge-experience");
 
-  // The Console ships no client JavaScript, so an unchecked box is not a UI
-  // guard at all — it is a request the route refuses. The confirmation is what
-  // makes the click mean it, and it has to be a control the operator operates.
+  // The Memory form is server-rendered, so an unchecked box is not a UI-only
+  // guard — it is a request the route refuses. The confirmation is what makes
+  // the click mean it, and it has to be a control the operator operates.
   assert.match(
     form,
     /type="checkbox"[^>]*name="confirm"[^>]*value="purge"/u,

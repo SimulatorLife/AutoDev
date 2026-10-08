@@ -3,6 +3,8 @@ import "./globals.css";
 import type { Metadata } from "next";
 import React from "react";
 
+import { FormNavigationOwner } from "../src/components/navigation/FormNavigationOwner.ts";
+
 export const metadata: Metadata = {
   // `template` is what makes the per-route titles worth declaring: a route
   // says "worker · Agents" and the product name is appended here rather than
@@ -30,7 +32,8 @@ export default function RootLayout({
       {
         className: "bg-background text-fg antialiased"
       },
-      children
+      children,
+      React.createElement(FormNavigationOwner)
     )
   );
 }

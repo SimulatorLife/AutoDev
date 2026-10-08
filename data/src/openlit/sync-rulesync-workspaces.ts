@@ -34,7 +34,7 @@ export function loadRulesyncWorkspaces(
   return catalog.workspaces;
 }
 
-function buildPrismaSyncScript(workspaceIds: readonly string[]): string {
+export function buildPrismaSyncScript(workspaceIds: readonly string[]): string {
   return `
 const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
@@ -184,10 +184,7 @@ async function run() {
         data: {
           userId: user.id,
           databaseConfigId: db.id,
-          isCurrent: true,
-          canEdit: true,
-          canShare: true,
-          canDelete: true
+          isCurrent: true
         }
       });
     }

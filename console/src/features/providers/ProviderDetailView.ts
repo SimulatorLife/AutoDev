@@ -62,10 +62,11 @@ function RolesPanel({
   return React.createElement(
     "section",
     { className: DETAIL_PANEL_CLASS, "data-section": "provider-roles" },
+    React.createElement("h3", { className: SECTION_HEADING_CLASS }, "Roles"),
     React.createElement(
-      "h3",
-      { className: SECTION_HEADING_CLASS },
-      "Roles"
+      "p",
+      { className: "mb-3 " + MUTED_META_CLASS },
+      "Selecting a priority or model applies immediately. Values refresh from the Runtime after submission."
     ),
     React.createElement(ProviderRoleControls, { provider, returnTo })
   );

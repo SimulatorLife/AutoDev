@@ -760,6 +760,10 @@ Control API base defaults to `http://127.0.0.1:4101` and can be configured with
 separately generated value in `$CODEX_HOME/openlit-secrets.env`;
 `AUTODEV_OPENLIT_USAGE_URL` defaults to `http://127.0.0.1:3000`. The Console is the only Memory operator surface: durable records, experiences, and outcome cohorts are read through the Control API in `console/app/memory`. The transitional external Memory portal is gone, so `AUTODEV_OPENLIT_UI_URL` no longer has a consumer — delete it from `$CODEX_HOME/.env` and do not reintroduce it. The Console launcher forwards only the two URL variables the server actually reads (`AUTODEV_CONTROL_API_BASE_URL`, `AUTODEV_OPENLIT_USAGE_URL`). Do not source or expose the full secret file to browser code.
 
+If `/usage` reports `autodev_openlit_usage_unreachable`, check that OpenLIT is running and that `AUTODEV_OPENLIT_USAGE_URL` points to an address reachable from the Console server. The local default is port 3000; start the OpenLIT stack with `scripts/openlit/up.sh` when Docker is available. A successful HTTP response with an invalid Usage schema is reported separately as `autodev_openlit_usage_invalid_response`; neither failure state renders metric panels or substitutes sample values.
+
+The AutoDev summary response is `autodev-openlit-usage-v3`, including validated widget data, filter options, and the bounded recent-attempt list. After changing the Usage patch set, rebuild and restart the patched OpenLIT stack with `scripts/openlit/up.sh`; the Console deliberately rejects older response contracts instead of silently dropping data.
+
 The two Console server-only tokens are seeded into the server environment by
 exactly one writer: `scripts/openlit/bootstrap-secrets.sh`, which is the same
 script that populates `$CODEX_HOME/openlit-secrets.env` and is invoked from

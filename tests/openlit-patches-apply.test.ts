@@ -1070,7 +1070,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     // the connector is unreachable is correct; hiding the evidence that nothing
     // can be read is not.
     "components/(playground)/context/header.tsx",
-    "components/(playground)/prompt-hub/header.tsx",
+    "components/(playground)/prompt-hub/header.tsx"
   ]);
   const gatedReads = modules.filter((rel) => {
     const body = readFileSync(join(clientSrc, rel), "utf8");
@@ -1260,19 +1260,13 @@ test(
       /export type \{[\s\S]*?AttributeScope,[\s\S]*?Signal[\s\S]*?\} from "@\/lib\/platform\/connectors\/datasource\/types"/
     );
     const expected = [
-      // 01-generic-dashboard-variables
+      // 01-generic-dashboard-variables leaves query/parameter utilities for
+      // the fixed AutoDev Usage route; patches 33-34 remove generic authoring.
       "src/client/src/lib/platform/dashboard-variables/translate.ts",
       "src/client/src/lib/platform/dashboard-variables/types.ts",
       "src/client/src/lib/platform/dashboard-variables/index.ts",
       "src/client/src/lib/platform/dashboard-variables/distinct-values.ts",
       "src/client/src/lib/platform/connectors/datasource/clickhouse/parameterized-query.ts",
-      "src/client/src/app/api/manage-dashboard/variables/distinct-values/route.ts",
-      "src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/selector.tsx",
-      "src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/editor.tsx",
-      "src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/widget-opt-in-editor.tsx",
-      "src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/use-dashboard-variables.ts",
-      "src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/index.ts",
-      "src/client/src/clickhouse/migrations/add-board-variables-column-migration.ts",
       "src/client/src/__tests__/lib/platform/dashboard-variables/translate.test.ts",
       "src/client/src/__tests__/lib/platform/dashboard-variables/distinct-values.test.ts",
       "src/client/src/__tests__/lib/platform/datasource/parameterized-trace-query.test.ts",
@@ -1280,23 +1274,9 @@ test(
       "src/client/src/lib/autodev/control-api.ts",
       "src/client/src/lib/autodev/index.ts",
       "src/client/src/__tests__/lib/autodev/control-api.test.ts",
-      "src/client/src/app/(playground)/autodev/layout.tsx",
-      "src/client/src/app/(playground)/autodev/page.tsx",
-      "src/client/src/app/(playground)/autodev/providers/page.tsx",
-      "src/client/src/app/(playground)/autodev/mcps/page.tsx",
-      "src/client/src/app/(playground)/autodev/skills/page.tsx",
-      "src/client/src/app/(playground)/autodev/runtime/page.tsx",
-      "src/client/src/app/(playground)/autodev/api/providers/route.ts",
-      "src/client/src/app/(playground)/autodev/api/mcps/route.ts",
-      "src/client/src/app/(playground)/autodev/api/skills/route.ts",
-      "src/client/src/app/(playground)/autodev/api/runtime/route.ts",
-      // canonical contract: PATCH route
-      "src/client/src/app/(playground)/autodev/api/providers/[provider]/roles/[role]/route.ts",
       // 04-autodev-usage-dashboard
       "src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json",
-      "src/client/src/lib/platform/manage-dashboard/derived-value.ts",
       "src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts",
-      "src/client/src/__tests__/lib/platform/manage-dashboard/derived-value.test.ts",
       // 07-autodev-usage-api
       "src/client/src/lib/autodev/usage-api.ts",
       "src/client/src/app/api/autodev/usage/route.ts",
@@ -1330,6 +1310,45 @@ test(
       "src/client/src/components/(playground)/memory/memory-injection-use-report-form.tsx",
       "src/client/src/__tests__/components/memory-injection-use-report-form.test.tsx"
     ];
+    const removedAutoDevProductFiles = [
+      "src/client/src/app/(playground)/autodev/layout.tsx",
+      "src/client/src/app/(playground)/autodev/page.tsx",
+      "src/client/src/app/(playground)/autodev/providers/page.tsx",
+      "src/client/src/app/(playground)/autodev/mcps/page.tsx",
+      "src/client/src/app/(playground)/autodev/skills/page.tsx",
+      "src/client/src/app/(playground)/autodev/runtime/page.tsx",
+      "src/client/src/app/(playground)/autodev/api/providers/route.ts",
+      "src/client/src/app/(playground)/autodev/api/mcps/route.ts",
+      "src/client/src/app/(playground)/autodev/api/skills/route.ts",
+      "src/client/src/app/(playground)/autodev/api/runtime/route.ts",
+      "src/client/src/app/(playground)/autodev/api/providers/[provider]/roles/[role]/route.ts"
+    ];
+    for (const rel of removedAutoDevProductFiles) {
+      assert.equal(
+        existsSync(join(dir, rel)),
+        false,
+        `patch 28 removes the temporary OpenLIT AutoDev surface: ${rel}`
+      );
+    }
+
+    const removedDashboardAuthoringFiles = [
+      "src/client/src/app/api/manage-dashboard/variables/distinct-values/route.ts",
+      "src/client/src/lib/platform/manage-dashboard/derived-value.ts",
+      "src/client/src/__tests__/lib/platform/manage-dashboard/derived-value.test.ts",
+      "src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/selector.tsx",
+      "src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/editor.tsx",
+      "src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/widget-opt-in-editor.tsx",
+      "src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/use-dashboard-variables.ts",
+      "src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/index.ts",
+      "src/client/src/clickhouse/migrations/add-board-variables-column-migration.ts"
+    ];
+    for (const rel of removedDashboardAuthoringFiles) {
+      assert.equal(
+        existsSync(join(dir, rel)),
+        false,
+        `patches 33-34 remove generic dashboard authoring: ${rel}`
+      );
+    }
     for (const rel of expected) {
       const full = join(dir, rel);
       assert.ok(statSync(full).isFile(), `expected file after patch: ${rel}`);
@@ -1473,7 +1492,7 @@ test(
     assert.equal(usageDashboard.title, "Usage");
     assert.deepEqual(
       usageDashboard.variables.map(({ id }) => id),
-      ["workspace", "provider", "model", "agent"]
+      ["workspace", "provider", "model", "agent", "skill"]
     );
     const requestedModelVariable = usageDashboard.variables.find(
       ({ id }) => id === "model"
@@ -1726,17 +1745,32 @@ test(
     );
 
     assertRemovedOpenlitAdminSurfaces(dir);
-    // Verify the autodev sidebar entry is discoverable. A nested
-    // /autodev layout without a top-level entry would not be reachable
-    // from the OpenLIT left nav.
+    const seedLib = readFileSync(
+      join(dir, "src/client/prisma/seed-lib.js"),
+      "utf8"
+    );
+    const databaseConfigUserUpsertStart = seedLib.indexOf(
+      "await prisma.databaseConfigUser.upsert("
+    );
+    assert.notEqual(databaseConfigUserUpsertStart, -1);
+    const databaseConfigUserUpsertEnd = seedLib.indexOf(
+      "\n\t});",
+      databaseConfigUserUpsertStart
+    );
+    assert.notEqual(databaseConfigUserUpsertEnd, -1);
+    assert.doesNotMatch(
+      seedLib.slice(databaseConfigUserUpsertStart, databaseConfigUserUpsertEnd),
+      /can(?:Edit|Delete|Share):/u,
+      "patch 39 removes deleted permission columns from the seed upsert"
+    );
     const sidebar = readFileSync(
       join(dir, "src/client/src/constants/sidebar.tsx"),
       "utf8"
     );
-    assert.match(
+    assert.doesNotMatch(
       sidebar,
-      /link: "\/autodev"/u,
-      "sidebar.tsx must add an /autodev entry to make the surface discoverable"
+      /link:\s*["']\/autodev(?:["']|\/)/u,
+      "the final OpenLIT sidebar must not link to the retired AutoDev shell"
     );
 
     // Verify the proxy honours the canonical contract:
@@ -1783,117 +1817,32 @@ test(
       "proxy must enforce Origin for state-changing methods"
     );
 
-    // Verify the page schema matches the upstream AutoDev Control API:
-    // providers: { providers: [{ id, roles: { orchestrator: { enabled,
-    // mutable }, subagent: { enabled, mutable } } }] }, MCPs:
-    // { readOnly, servers: [{ name, roles }] }, Skills:
-    // { readOnly, skills: [{ name, roles }] }, Runtime:
-    // { routerInstanceId, lifecycle, concurrency, inFlightRequestCount }.
-    const providersPage = readFileSync(
-      join(dir, "src/client/src/app/(playground)/autodev/providers/page.tsx"),
-      "utf8"
-    );
-    assert.match(
-      providersPage,
-      /ProviderRoles/,
-      "providers page must read the typed roles map"
-    );
-    assert.match(
-      providersPage,
-      /disabledOrchestratorProviders|disabledSubagentProviders/u,
-      "providers page must read the runtime disabled lists"
-    );
-    assert.doesNotMatch(
-      providersPage,
-      /tools:|transport:|exposed:|available:|displayName:/u,
-      "providers page must not invent fields the upstream API does not return"
-    );
-    const mcpsPage = readFileSync(
-      join(dir, "src/client/src/app/(playground)/autodev/mcps/page.tsx"),
-      "utf8"
-    );
-    assert.match(
-      mcpsPage,
-      /readOnly|roles/,
-      "mcps page must read the upstream schema"
-    );
-    assert.doesNotMatch(
-      mcpsPage,
-      /tools:|transport:|exposed:|available:/u,
-      "mcps page must not invent fields the upstream API does not return"
-    );
-    const skillsPage = readFileSync(
-      join(dir, "src/client/src/app/(playground)/autodev/skills/page.tsx"),
-      "utf8"
-    );
-    assert.match(
-      skillsPage,
-      /readOnly|roles/,
-      "skills page must read the upstream schema"
-    );
-    assert.doesNotMatch(
-      skillsPage,
-      /enabled:|available:/u,
-      "skills page must not invent enabled/available fields the upstream API does not return"
-    );
-    const runtimePage = readFileSync(
-      join(dir, "src/client/src/app/(playground)/autodev/runtime/page.tsx"),
-      "utf8"
-    );
-    assert.match(
-      runtimePage,
-      /routerInstanceId|inFlightRequestCount|lifecycle/,
-      "runtime page must read the upstream schema"
-    );
-    assert.doesNotMatch(
-      runtimePage,
-      /version:|startedAt:|collectors:|queues:/u,
-      "runtime page must not invent version/startedAt/collectors/queues fields the upstream API does not return"
-    );
-
-    // Verify the PATCH route enforces the typed body shape and forwards
-    // to the canonical PATCH /control/providers/{provider}/roles/{role}.
-    const patchRoute = readFileSync(
-      join(
-        dir,
-        "src/client/src/app/(playground)/autodev/api/providers/[provider]/roles/[role]/route.ts"
-      ),
-      "utf8"
-    );
-    assert.match(patchRoute, /enabled:\s*boolean/u);
-    assert.match(
-      patchRoute,
-      /PATCH/u,
-      "PATCH route handler must declare the PATCH verb"
-    );
-    assert.match(
-      patchRoute,
-      /providers\/\$\{[^}]*safeProvider[^}]*\}\/roles/u,
-      "PATCH route must forward to /control/providers/{provider}/roles/{role}"
-    );
-
-    // Verify the /autodev matcher is registered so the CSRF + auth
-    // stack runs in front of the proxy.
+    // The AutoDev page and same-origin control proxy were transitional. The
+    // final UI uses the root Console and OpenLIT retains only fixed Usage reads.
     const middleware = readFileSync(
       join(dir, "src/client/src/middleware.ts"),
       "utf8"
     );
-    assert.match(middleware, /"\/autodev/u);
-    assert.match(middleware, /"\/autodev\/:path\*"/u);
+    assert.doesNotMatch(
+      middleware,
+      /"\/autodev(?:\/|"|$)/u,
+      "the final middleware must not retain the retired /autodev UI matcher"
+    );
 
-    // Verify patch 05 completely removes login/signup and redirects to /home:
+    // The final product has no interactive auth forms; patch 33 updates the
+    // old /home redirect to the surviving OpenLIT dashboard route.
     const loginPage = readFileSync(
       join(dir, "src/client/src/app/(auth)/login/page.tsx"),
       "utf8"
     );
-    assert.match(loginPage, /redirect\(["']\/home["']\)/u);
+    assert.match(loginPage, /redirect\(["']\/dashboard["']\)/u);
     assert.doesNotMatch(loginPage, /AuthForm/u);
 
     const registerPage = readFileSync(
       join(dir, "src/client/src/app/(auth)/register/page.tsx"),
       "utf8"
     );
-    assert.match(registerPage, /redirect\(["']\/home["']\)/u);
+    assert.match(registerPage, /redirect\(["']\/dashboard["']\)/u);
     assert.doesNotMatch(registerPage, /AuthForm/u);
 
     const userActions = readFileSync(
@@ -1941,6 +1890,11 @@ test(
       /OpenLIT/u,
       "layout.tsx must not contain user-facing 'OpenLIT'"
     );
+    assert.match(
+      layout,
+      /export const dynamic = "force-dynamic"/u,
+      "URL-driven OpenLIT telemetry pages must render per request, not during image prerendering"
+    );
 
     const sidebarBrand = readFileSync(
       join(dir, "src/client/src/components/(playground)/sidebar-brand.tsx"),
@@ -1962,14 +1916,12 @@ test(
       "sidebar search placeholder must use 'AutoDev'"
     );
 
-    const versionInfo = readFileSync(
-      join(dir, "src/client/src/components/(playground)/version-Info.tsx"),
-      "utf8"
-    );
-    assert.match(
-      versionInfo,
-      /AutoDev:/u,
-      "version-Info.tsx must display 'AutoDev:' label"
+    assert.equal(
+      existsSync(
+        join(dir, "src/client/src/components/(playground)/version-Info.tsx")
+      ),
+      false,
+      "patch 36 removes the dead version-info surface instead of retaining a branded shell"
     );
 
     const messagesEn = readFileSync(
@@ -2280,17 +2232,20 @@ test(
     }
 
     if (patches.some((p) => p.startsWith("20-"))) {
-      for (const locale of ["en", "hi"]) {
-        const messages = readFileSync(
-          join(dir, "src/client/src/constants/messages/" + locale + ".ts"),
-          "utf8"
-        );
-        assert.doesNotMatch(
-          messages,
-          /^export const AGENTS_(?:SOURCE_CONTROLLER|SOURCE_BOTH|COLUMN_CONTROLLER|STATUS_INSTRUMENTED|LLM_OBSERVABILITY_DESCRIPTION|AGENT_USE_NOTE|AGENT_TOGGLE_CONTROLLER_UPGRADE|CONTROLLER_DEFAULT_TITLE|STAT_INSTRUMENTED|CONFIG_SAVED)\\b/mu,
-          "patch 20 must remove stale Controller constants from " + locale
-        );
-      }
+      const messages = readFileSync(
+        join(dir, "src/client/src/constants/messages/en.ts"),
+        "utf8"
+      );
+      assert.doesNotMatch(
+        messages,
+        /^export const AGENTS_(?:SOURCE_CONTROLLER|SOURCE_BOTH|COLUMN_CONTROLLER|STATUS_INSTRUMENTED|LLM_OBSERVABILITY_DESCRIPTION|AGENT_USE_NOTE|AGENT_TOGGLE_CONTROLLER_UPGRADE|CONTROLLER_DEFAULT_TITLE|STAT_INSTRUMENTED|CONFIG_SAVED)\b/mu,
+        "patch 20 must remove stale Controller constants from en.ts"
+      );
+      assert.equal(
+        existsSync(join(dir, "src/client/src/constants/messages/hi.ts")),
+        false,
+        "patch 27 removes the unused Hindi locale"
+      );
     }
   }
 );
@@ -2482,19 +2437,23 @@ test(
         );
       }
       if (patches.some((p) => p.startsWith("20-"))) {
-        for (const locale of ["en", "hi"]) {
-          const messages = readFileSync(
-            join(
-              workDirectory,
-              "src/client/src/constants/messages/" + locale + ".ts"
-            ),
-            "utf8"
-          );
-          assert.doesNotMatch(
-            messages,
-            /^export const AGENTS_(?:SOURCE_CONTROLLER|SOURCE_BOTH|COLUMN_CONTROLLER|STATUS_INSTRUMENTED|LLM_OBSERVABILITY_DESCRIPTION|AGENT_USE_NOTE|AGENT_TOGGLE_CONTROLLER_UPGRADE|CONTROLLER_DEFAULT_TITLE|STAT_INSTRUMENTED|CONFIG_SAVED)\\b/mu
-          );
-        }
+        const messages = readFileSync(
+          join(workDirectory, "src/client/src/constants/messages/en.ts"),
+          "utf8"
+        );
+        assert.doesNotMatch(
+          messages,
+          /^export const AGENTS_(?:SOURCE_CONTROLLER|SOURCE_BOTH|COLUMN_CONTROLLER|STATUS_INSTRUMENTED|LLM_OBSERVABILITY_DESCRIPTION|AGENT_USE_NOTE|AGENT_TOGGLE_CONTROLLER_UPGRADE|CONTROLLER_DEFAULT_TITLE|STAT_INSTRUMENTED|CONFIG_SAVED)\b/mu
+        );
+      }
+      if (patches.some((p) => p.startsWith("27-"))) {
+        assert.equal(
+          existsSync(
+            join(workDirectory, "src/client/src/constants/messages/hi.ts")
+          ),
+          false,
+          "patch 27 removes the unused Hindi locale with the retired product chrome"
+        );
       }
 
       if (patches.some((p) => p.startsWith("21-"))) {
@@ -2681,6 +2640,20 @@ test("27-remove-otter-chat-docs-onboarding-chrome removes Otter/chat/docs/onboar
   }
   const dir = freshClone();
   try {
+    // Patch 27 is an ordered migration step, not an upstream-only patch. Its
+    // hunks intentionally build on the AutoDev/OpenLIT changes from 01-26.
+    const predecessors = ls.stdout
+      .trim()
+      .split("\n")
+      .filter((file) => file.endsWith(".patch") && file < patch);
+    for (const predecessor of predecessors) {
+      const apply = run("git", ["apply", join(PATCHES_DIR, predecessor)], dir);
+      assert.equal(
+        apply.status,
+        0,
+        `predecessor ${predecessor} failed before patch 27: ${apply.stderr}`
+      );
+    }
     const check = run("git", ["apply", "--check", patchPath], dir);
     assert.equal(check.status, 0, "git apply --check failed: " + check.stderr);
     const apply = run("git", ["apply", patchPath], dir);

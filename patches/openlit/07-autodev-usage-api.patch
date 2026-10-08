@@ -1,9 +1,9 @@
 diff --git a/src/client/src/__tests__/lib/autodev/usage-api.test.ts b/src/client/src/__tests__/lib/autodev/usage-api.test.ts
 new file mode 100644
-index 0000000..741e826
+index 0000000..f0bd13d9
 --- /dev/null
 +++ b/src/client/src/__tests__/lib/autodev/usage-api.test.ts
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,101 @@
 +import {
 +	isUsageServiceRequestAuthorized,
 +	parseUsageSelection,
@@ -33,9 +33,14 @@ index 0000000..741e826
 +				customRange,
 +			}),
 +		).toEqual({ range: "7D", values: { provider: ["openai"] }, customRange });
-+		expect(
-+			parseUsageSelection({ range: "7D", values: { skill: ["agent-skill"] } }),
-+		).toBeNull();
++		const skillSelection = parseUsageSelection({
++			range: "7D",
++			values: { skill: ["agent-skill"] },
++		});
++		expect(skillSelection).toEqual({
++			range: "7D",
++			values: { skill: ["agent-skill"] },
++		});
 +		expect(parseUsageSelection({ range: "all", values: {} })).toBeNull();
 +		expect(
 +			parseUsageSelection({
@@ -102,13 +107,14 @@ index 0000000..741e826
 +});
 diff --git a/src/client/src/app/api/autodev/usage/route.ts b/src/client/src/app/api/autodev/usage/route.ts
 new file mode 100644
-index 0000000..a6d18b9
+index 0000000..be3cac91
 --- /dev/null
 +++ b/src/client/src/app/api/autodev/usage/route.ts
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,358 @@
 +import { NextRequest } from "next/server";
 +import usageDashboard from "@/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json";
 +import type { MetricParams } from "@/lib/platform/common";
++import type { NormalizedSpan, OpenLITQuery } from "@/lib/platform/connectors/datasource/types";
 +import {
 +	getTelemetryAdapter,
 +	resolveTelemetrySourceDescriptor,
@@ -119,9 +125,12 @@ index 0000000..a6d18b9
 +import type { Widget } from "@/types/manage-dashboard";
 +import {
 +	isUsageServiceRequestAuthorized,
++	isUsageTraceId,
++	parseUsageTraceSpanId,
 +	parseUsageSelection,
 +	usageTimeRange,
 +	USAGE_VARIABLE_IDS,
++	type UsageSelection,
 +	type UsageVariableId,
 +} from "@/lib/autodev/usage-api";
 +
@@ -140,6 +149,10 @@ index 0000000..a6d18b9
 +	"mcp-duration": "47c52af8-0c4a-4e85-8a9e-a8f85745b202",
 +	"mcp-errors": "47c52af8-0c4a-4e85-8a9e-a8f85745b203",
 +	"mcp-by-tool": "47c52af8-0c4a-4e85-8a9e-a8f85745b204",
++	"attempt-errors-by-provider": "47c52af8-0c4a-4e85-8a9e-a8f85745b108",
++	"context-compactions": "47c52af8-0c4a-4e85-8a9e-a8f85745b109",
++	"skill-events-by-event": "47c52af8-0c4a-4e85-8a9e-a8f85745b110",
++	"estimated-cost": "47c52af8-0c4a-4e85-8a9e-a8f85745b111",
 +} as const;
 +
 +type UsageWidgetId = keyof typeof USAGE_WIDGET_IDS;
@@ -148,6 +161,28 @@ index 0000000..a6d18b9
 +	readonly properties: Readonly<Record<string, unknown>>;
 +	readonly config: Widget["config"];
 +};
++
++type UsageTraceStatus = "OK" | "ERROR" | "UNSET" | "UNKNOWN";
++interface UsageTraceAttempt {
++	readonly spanId: string;
++	readonly timestamp: string;
++	readonly durationNs: number;
++	readonly statusCode: UsageTraceStatus;
++	readonly provider: string | null;
++	readonly model: string | null;
++	readonly role: string | null;
++}
++type UsageTraceListResponse =
++	| { readonly kind: "unavailable" }
++	| { readonly kind: "not-applicable"; readonly reason: "skill-filter" | "unsupported-filter" }
++	| { readonly kind: "observed"; readonly attempts: readonly UsageTraceAttempt[]; readonly partial: boolean };
++const RECENT_ATTEMPT_LIMIT = 25;
++const RECENT_ATTEMPT_FILTERS = [
++	["workspace", "autodev.workspace"],
++	["provider", "gen_ai.provider.name"],
++	["model", "autodev.requested_model"],
++	["agent", "autodev.agent.role"]
++] as const satisfies readonly (readonly [UsageVariableId, string])[];
 +
 +const WIDGETS = usageDashboard.widgets as Record<string, SeedWidget>;
 +const DASHBOARD_VARIABLES =
@@ -220,8 +255,8 @@ index 0000000..a6d18b9
 +	const selectedValues = Object.fromEntries(
 +		USAGE_VARIABLE_IDS.map((id) => [id, [...(selection.values[id] ?? [])]]),
 +	);
-+	const filterOptions = await fetchFilterOptions(adapter, timeRange);
-+	const widgets = await Promise.all(
++	const filterOptionsPromise = fetchFilterOptions(adapter, timeRange);
++	const widgetQueries = Promise.all(
 +		(Object.entries(USAGE_WIDGET_IDS) as [UsageWidgetId, string][]).map(
 +			async ([key, widgetId]) => {
 +				const seedWidget = WIDGETS[widgetId];
@@ -249,7 +284,10 @@ index 0000000..a6d18b9
 +				const rows = Array.isArray(data) ? data : [];
 +				return {
 +					key,
-+					observed: !err && Array.isArray(data),
++					observed:
++						!err &&
++						Array.isArray(data) &&
++						isObservedCountPresent(rows, properties.observationCountPath),
 +					rows,
 +					...(typeof properties.value === "string"
 +						? { valuePath: properties.value }
@@ -265,11 +303,18 @@ index 0000000..a6d18b9
 +			},
 +		),
 +	);
++	const traceListPromise = readRecentAttempts(adapter, selection, timeRange);
++	const [filterOptions, widgets, traceList] = await Promise.all([
++		filterOptionsPromise,
++		widgetQueries,
++		traceListPromise,
++	]);
 +
 +	return Response.json({
-+		schema: "autodev-openlit-usage-v1",
++		schema: "autodev-openlit-usage-v3",
 +		widgets,
 +		filterOptions,
++		traceList,
 +	});
 +}
 +
@@ -309,15 +354,127 @@ index 0000000..a6d18b9
 +	>;
 +}
 +
++
++async function readRecentAttempts(
++	adapter: Awaited<ReturnType<typeof getTelemetryAdapter>>,
++	selection: UsageSelection,
++	timeRange: { readonly start: Date; readonly end: Date; readonly type: string },
++): Promise<UsageTraceListResponse> {
++	// Skill spans are a different operation than provider attempts. Returning
++	// all attempts under a selected skill filter would imply a relationship the
++	// source does not report.
++	if (selection.values.skill?.length) {
++		return { kind: "not-applicable", reason: "skill-filter" };
++	}
++	const filters: NonNullable<OpenLITQuery["filters"]> = [
++		{
++			target: "attribute",
++			scope: "resource",
++			key: "service.name",
++			op: "eq",
++			value: "autodev-router",
++		},
++		{ target: "spanName", op: "eq", value: "gen_ai.client_operation" },
++	];
++	for (const [id, key] of RECENT_ATTEMPT_FILTERS) {
++		const values = selection.values[id] ?? [];
++		if (values.length > 0) {
++			filters.push({ target: "attribute", scope: "span", key, op: "in", value: [...values] });
++		}
++	}
++
++	try {
++		const frame = await adapter.listSpans({
++			signal: "traces",
++			timeRange: { start: timeRange.start, end: timeRange.end },
++			filters,
++			sort: [{ field: "Timestamp", direction: "desc" }],
++			limit: RECENT_ATTEMPT_LIMIT,
++			offset: 0,
++			aiSelector: false,
++		});
++		const sourceRows = Array.isArray(frame.rows) ? frame.rows : [];
++		let partial = Boolean(frame.meta?.truncated) || sourceRows.length >= RECENT_ATTEMPT_LIMIT;
++		const attempts: UsageTraceAttempt[] = [];
++		const seenSpanIds = new Set<string>();
++		for (const span of sourceRows.slice(0, RECENT_ATTEMPT_LIMIT)) {
++			const attempt = safeUsageTraceAttempt(span);
++			if (!attempt || seenSpanIds.has(attempt.spanId)) {
++				partial = true;
++				continue;
++			}
++			seenSpanIds.add(attempt.spanId);
++			attempts.push(attempt);
++		}
++		return { kind: "observed", attempts, partial };
++	} catch {
++		return { kind: "unavailable" };
++	}
++}
++
++function safeUsageTraceAttempt(span: NormalizedSpan): UsageTraceAttempt | null {
++	const spanId = parseUsageTraceSpanId(span.spanId);
++	const timestamp = new Date(span.timestamp);
++	if (
++		span.serviceName !== "autodev-router" ||
++		span.name !== "gen_ai.client_operation" ||
++		!spanId ||
++		!isUsageTraceId(span.traceId) ||
++		!Number.isSafeInteger(span.durationNs) ||
++		span.durationNs < 0 ||
++		!Number.isFinite(timestamp.getTime())
++	) {
++		return null;
++	}
++	const sourceStatus = span.statusCode.toUpperCase().replace(/^STATUS_CODE_/u, "");
++	const statusCode: UsageTraceStatus =
++		sourceStatus === "OK" || sourceStatus === "ERROR" || sourceStatus === "UNSET"
++			? sourceStatus
++			: "UNKNOWN";
++	return {
++		spanId: spanId.toLowerCase(),
++		timestamp: timestamp.toISOString(),
++		durationNs: span.durationNs,
++		statusCode,
++		provider: safeTraceLabel(span.spanAttributes["gen_ai.provider.name"]),
++		model: safeTraceLabel(span.spanAttributes["autodev.requested_model"]),
++		role: safeTraceLabel(span.spanAttributes["autodev.agent.role"]),
++	};
++}
++
++function safeTraceLabel(value: unknown): string | null {
++	if (typeof value !== "string") return null;
++	const trimmed = value.trim();
++	if (!trimmed || trimmed.length > 128 || trimmed !== value || /[\u0000-\u001f]/u.test(trimmed)) return null;
++	return trimmed;
++}
++
++function isObservedCountPresent(rows: readonly unknown[], path: unknown): boolean {
++	if (path === undefined) return true;
++	if (typeof path !== "string") return false;
++	const match = /^(0|[1-9]\d*)\.([A-Za-z_][A-Za-z0-9_]*)$/u.exec(path);
++	if (!match) return false;
++	const row = rows[Number(match[1])];
++	if (!isRecord(row)) return false;
++	const rawCount = row[match[2]!];
++	const count =
++		typeof rawCount === "number"
++			? rawCount
++			: typeof rawCount === "string" && rawCount.trim() !== ""
++				? Number(rawCount)
++				: Number.NaN;
++	return Number.isSafeInteger(count) && count > 0;
++}
++
 +function isRecord(value: unknown): value is Record<string, unknown> {
 +	return value !== null && typeof value === "object" && !Array.isArray(value);
 +}
 diff --git a/src/client/src/lib/autodev/usage-api.ts b/src/client/src/lib/autodev/usage-api.ts
 new file mode 100644
-index 0000000..1ef321b
+index 0000000..604f49c2
 --- /dev/null
 +++ b/src/client/src/lib/autodev/usage-api.ts
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,164 @@
 +import { timingSafeEqual } from "node:crypto";
 +
 +export const USAGE_VARIABLE_IDS = [
@@ -325,6 +482,7 @@ index 0000000..1ef321b
 +	"provider",
 +	"model",
 +	"agent",
++	"skill",
 +] as const;
 +
 +export type UsageVariableId = (typeof USAGE_VARIABLE_IDS)[number];

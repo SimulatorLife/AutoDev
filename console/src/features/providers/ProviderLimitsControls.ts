@@ -1,12 +1,8 @@
 import type { ControlApiProviderRecord } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import {
-  Button,
-  SECONDARY_BUTTON_CLASS
-} from "../../components/forms/Button.ts";
-import { EmptyState } from "../../components/status/EmptyState.ts";
-import { MUTED_TEXT_CLASS } from "../../components/ui/text-classes.ts";
+import { Button } from "../../components/forms/Button.ts";
+import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 
 /**
  * The Agent Limits column: provider-wide concurrent-agent limits.
@@ -64,14 +60,13 @@ function axisValue(
   provider: ControlApiProviderRecord,
   axis: LimitAxis
 ): AxisValue {
-  // A never-configured record is null, which is not the same as Unlimited: null
-  // means the operator chose no limit, unconfigured means they never chose. Both
-  // render as Unlimited-shaped, and the cell says which it is rather than
-  // inventing a number nobody picked.
+  // A null limits record represents the explicit Unlimited choice per the
+  // core contract. Both axes render as Unlimited (∞) in that state.
   return provider.agentLimits === null ? null : provider.agentLimits[axis.name];
 }
 
-const STEP_BUTTON_CLASS = "h-7 w-7 shrink-0 px-0 py-0 text-sm";
+const STEP_BUTTON_CLASS =
+  "inline-flex shrink-0 items-center justify-center leading-none";
 
 /** One `− n +` stepper row. */
 function LimitStepper({
@@ -86,19 +81,13 @@ function LimitStepper({
   return React.createElement(
     "div",
     {
-      className: "flex min-w-0 items-center gap-1.5",
+      className: "flex min-w-0 flex-col items-start gap-1",
       "data-limit-stepper": `${provider}-${axis.name}`
     },
     React.createElement(
       "span",
       {
-        // `w-24` rather than anything narrower: measured in Chromium at 1440 the axis
-        // label is the widest fixed part of the row and truncates at 5.5rem --
-        // "Across sessio…" is not a name an operator can act on. The stepper
-        // itself cannot shrink, so the label is what gives, and it carries a
-        // `title` so the full name stays reachable either way.
-        className: `w-24 shrink-0 truncate text-xs ${MUTED_TEXT_CLASS}`,
-        title: axis.label
+        className: `${MUTED_META_CLASS} shrink-0`
       },
       axis.label
     ),
@@ -111,6 +100,7 @@ function LimitStepper({
           type: "submit",
           name: `set${axis.name.charAt(0).toUpperCase()}${axis.name.slice(1)}`,
           value: String(stepped(value, -1)),
+          size: "icon",
           className: STEP_BUTTON_CLASS,
           ariaLabel: `Decrease ${axis.label.toLowerCase()} for ${provider}`,
           title: `Decrease ${axis.label.toLowerCase()}`,
@@ -122,7 +112,7 @@ function LimitStepper({
         "span",
         {
           className:
-            "w-10 shrink-0 text-center font-mono text-xs tabular-nums text-fg",
+            "inline-flex h-7 w-8 shrink-0 items-center justify-center text-center font-mono text-xs tabular-nums text-fg",
           "data-limit-value": `${provider}-${axis.name}`,
           ...(value === null ? { title: "Unlimited" } : {})
         },
@@ -134,6 +124,7 @@ function LimitStepper({
           type: "submit",
           name: `set${axis.name.charAt(0).toUpperCase()}${axis.name.slice(1)}`,
           value: String(stepped(value, 1)),
+          size: "icon",
           className: STEP_BUTTON_CLASS,
           ariaLabel: `Increase ${axis.label.toLowerCase()} for ${provider}`,
           title: `Increase ${axis.label.toLowerCase()}`,
@@ -165,7 +156,7 @@ function ProviderDisabledToggle({
     {
       action: `/api/providers/${encodeURIComponent(provider.id)}`,
       method: "POST",
-      className: "flex min-w-0 items-center gap-2",
+      className: "flex min-w-0 flex-col items-start gap-1",
       "data-provider-toggle-form": provider.id
     },
     React.createElement("input", {
@@ -184,8 +175,12 @@ function ProviderDisabledToggle({
         type: "submit",
         name: "disabled",
         value: provider.disabled ? "false" : "true",
-        className: "shrink-0 px-2 py-1 text-xs",
-        ariaLabel: `Disable provider ${provider.id}`,
+        variant: provider.disabled ? "outline" : "secondary",
+        size: "compact",
+        className: "inline-flex shrink-0 items-center gap-1.5",
+        ariaLabel: provider.disabled
+          ? "Enable provider " + provider.id
+          : "Disable provider " + provider.id,
         title: provider.disabled
           ? "Enable this provider again, restoring its roles, models and limits."
           : "Disable this provider entirely, preserving its roles, models and limits.",
@@ -194,22 +189,42 @@ function ProviderDisabledToggle({
           "data-checked": provider.disabled ? "true" : "false"
         }
       },
+      React.createElement(
+        "span",
+        {
+          className: `inline-flex h-3.5 w-6 shrink-0 items-center rounded-full border transition-colors p-0.5 ${
+            provider.disabled
+              ? "border-accent/60 bg-accent/15 justify-end"
+              : "border-border-strong bg-surface justify-start"
+          }`,
+          "aria-hidden": "true"
+        },
+        React.createElement("span", {
+          className: `h-2 w-2 rounded-full transition-transform ${
+            provider.disabled ? "bg-accent" : "bg-fg-muted"
+          }`
+        })
+      ),
       provider.disabled ? "Enable" : "Disable"
     ),
-    React.createElement(
-      "span",
-      { className: `shrink-0 text-xs ${MUTED_TEXT_CLASS}` },
-      "Provider disabled"
-    )
+    provider.disabled
+      ? React.createElement(
+          "span",
+          {
+            className: `min-w-0 max-w-full break-words ${MUTED_META_CLASS} text-warning font-medium`
+          },
+          "Provider disabled"
+        )
+      : null
   );
 }
 
 /**
  * The Agent Limits cell for one provider.
  *
- * The cell says whether limits were ever configured. A provider with no limits
- * record renders an explicit "No limits configured" rather than showing zeros,
- * because a rendered zero would claim a limit the operator never set.
+ * Sized and structured to fit the narrow Agent Limits column: each stepper
+ * keeps its full label above its controls, and the two independent actions
+ * stack instead of competing for half-width cells.
  */
 export function ProviderLimitsControls({
   provider,
@@ -218,11 +233,15 @@ export function ProviderLimitsControls({
   readonly provider: ControlApiProviderRecord;
   readonly returnTo: string;
 }): React.JSX.Element {
-  const configured = provider.agentLimits !== null;
+  const isUnlimited =
+    provider.agentLimits === null ||
+    (provider.agentLimits.perSession === null &&
+      provider.agentLimits.acrossSessions === null);
+
   return React.createElement(
     "div",
     {
-      className: "flex flex-col gap-1.5",
+      className: "flex min-w-0 flex-col gap-2",
       "data-provider-limits": provider.id
     },
     React.createElement(
@@ -230,7 +249,7 @@ export function ProviderLimitsControls({
       {
         action: `/api/providers/${encodeURIComponent(provider.id)}/limits`,
         method: "POST",
-        className: "flex flex-col gap-1.5",
+        className: "flex min-w-0 flex-col gap-2",
         "data-limit-form": provider.id
       },
       React.createElement("input", {
@@ -261,26 +280,46 @@ export function ProviderLimitsControls({
           provider: provider.id
         })
       ),
-      configured
-        ? null
-        : React.createElement(EmptyState, {
-            variant: "inline",
-            message: "No limits configured",
-            testId: `limits-unconfigured-${provider.id}`
-          }),
       React.createElement(
-        Button,
-        {
-          type: "submit",
-          name: "setUnlimited",
-          value: "true",
-          className: `${SECONDARY_BUTTON_CLASS} w-fit shrink-0 px-2 py-1 text-xs`,
-          ariaLabel: `Set agent limits to Unlimited for ${provider.id}`,
-          title:
-            "Unlimited means no operator-set ceiling. This is not the same as a provider that was never configured.",
-          dataAttributes: { "data-limit-unlimited": provider.id }
-        },
-        "Unlimited"
+        "div",
+        { className: "flex min-w-0 items-center" },
+        React.createElement(
+          Button,
+          {
+            type: "submit",
+            name: "setUnlimited",
+            value: "true",
+            size: "compact",
+            variant: "secondary",
+            className: "inline-flex shrink-0 items-center gap-1.5",
+            ariaLabel: `Set agent limits to Unlimited for ${provider.id}`,
+            title:
+              "Unlimited means no operator-set ceiling. This is not the same as a provider that was never configured.",
+            dataAttributes: {
+              "data-limit-unlimited": provider.id,
+              "data-checked": isUnlimited ? "true" : "false"
+            }
+          },
+          React.createElement(
+            "span",
+            {
+              className: `inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors ${
+                isUnlimited
+                  ? "border-accent bg-accent text-fg-inverse"
+                  : "border-border-strong bg-surface"
+              }`,
+              "aria-hidden": "true"
+            },
+            isUnlimited
+              ? React.createElement(
+                  "span",
+                  { className: "text-micro font-bold leading-none" },
+                  "✓"
+                )
+              : null
+          ),
+          "Unlimited"
+        )
       )
     ),
     React.createElement(ProviderDisabledToggle, { provider, returnTo })

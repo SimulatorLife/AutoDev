@@ -121,15 +121,22 @@ authorization boundary and mutation audit rules.
 The patched OpenLIT server exposes a read-only `POST /api/autodev/usage`
 contract for the unified Console. It uses the existing typed `runWidgetQuery`,
 board variable specs, and datasource `distinctValues` adapter. Request input is
-limited to the seeded time range and workspace/provider/model/agent values;
-there is no raw SQL or arbitrary widget selector. The endpoint has a dedicated
+limited to the seeded time range and bounded workspace/provider/model/agent/skill
+values; skill filtering is exposed only where source semantics support it. The
+`autodev-openlit-usage-v3` response carries validated fixed-widget data, filter
+options, and a privacy-filtered list of at most 25 recent provider attempts; it
+accepts no raw SQL or arbitrary widget selector. The endpoint has a dedicated
 `AUTODEV_OPENLIT_USAGE_TOKEN` and does not accept OpenLIT sessions or API keys.
 The standalone Console reads the same secret from its server environment as
 `AUTODEV_OPENLIT_USAGE_TOKEN`; it must never be forwarded to browser code.
 
 The endpoint only reports metrics for successful individual widget queries.
 Query errors remain explicitly unobserved, and unsupported distinct-value
-capabilities produce unavailable filters rather than fabricated options.
+capabilities produce unavailable filters rather than fabricated options. Trace
+attempts are bounded observations; selecting one resolves detail through the
+fixed read-only span route. The retained OpenLIT app is configured for
+request-time rendering because its telemetry pages consume URL search state;
+image builds must not prerender those pages.
 
 ## Memory outcome cohorts
 

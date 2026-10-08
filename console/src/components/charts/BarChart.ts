@@ -6,8 +6,8 @@ import { EMPTY_INLINE_CLASS, EmptyState } from "../status/EmptyState.ts";
  * Console horizontal bar chart.
  *
  * The target state requires a charts primitive and says charts belong on
- * usage, history and observability surfaces. It also forbids client JavaScript,
- * so a chart has to be something the server can finish.
+ * usage, history and observability surfaces. This chart needs no client island:
+ * the server can render its values and proportional bar geometry directly.
  *
  * The bars are elements rather than SVG paths, which is what makes that
  * possible: the value encoding is a percentage width, and the label and the

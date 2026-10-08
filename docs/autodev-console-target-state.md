@@ -8,7 +8,7 @@
 >
 > **Focused Memory design:** [memory-target-state.md](memory-target-state.md) and [memory-injection-outcome-evaluation.md](memory-injection-outcome-evaluation.md).
 >
-> **Last reviewed:** 2026-10-05 (top-level Providers resource and contextual controls; RuleSync skill catalog and role-eligibility contract).
+> **Last reviewed:** 2026-10-08 (Usage trace drill-down, canonical filter axes, and request-time OpenLIT rendering).
 
 ## 1. Canonical-document contract
 
@@ -167,10 +167,18 @@ Configuration does not prove runtime availability. Eligibility/exposure does not
 
 ### Accessibility and interaction consistency
 
+- A safe, reversible single-choice setting applies as soon as the operator changes its select. Do not place a second Apply/Save control beside one selection; submit the complete owning form through its existing route.
+- Keep explicit Apply/Save only when the operator is deliberately staging a coherent group: multiple filter axes applied as one URL state, a multi-select/checkbox set, a preview/validation step, or a consequential action that needs review or confirmation. Make the staged boundary clear; do not stage a lone workspace/scope choice.
+- Visual hierarchy is explicit per interaction group: within any toolbar, form, row, or dialog that offers more than one action, exactly one renders with the highest-emphasis style; secondary and destructive actions use lower-emphasis or outline styles, and heading levels track page > section > item nesting rather than decorative sizing. A page is not required to carry a primary action merely because it has content.
+- Immediate mutations stay server-authoritative: do not claim success optimistically. The refreshed control value is the confirmed state, and an unconfirmed or failed write must produce an accessible, actionable notice.
+- System status is shown adjacent to the control or resource it describes, not centralized on an unrelated page. Asynchronous actions that remain in place show a visible pending state and announce it accessibly until completion. Changing or submitting any Console form or control must not cause a full document reload: safe single-choice controls auto-apply and explicit grouped Apply/Save where intentional are kept, but all GET filters and POST mutations use in-place client navigation/update while preserving URL state and server-confirmed feedback. In-place requests provide visible pending feedback during execution, preserve keyboard focus and visible focus states, and show Runtime-confirmed values or an accessible, actionable failure notice when confirmation fails.
+- Every control keeps a persistent accessible name, keyboard operation, visible focus, and a reason when disabled. Auto-submit must work for keyboard selection as well as pointer input; never rely on color, hover text, or position alone.
+- Prefer recognition over recall: operators choose from visible, labeled, searchable lists, dropdowns, and breadcrumbs instead of memorizing resource IDs, slugs, or command syntax, and a form shows the currently effective or previously entered value rather than requiring the operator to recall it from elsewhere.
+- Keep labels, controls, and their state feedback in one aligned group. At phone widths, controls wrap or scroll within their owning region rather than hiding the action or breaking the relationship between a label and its value.
+- Core workflows must be operable at both phone and desktop widths. Navigation and primary content may reflow into a single scrollable column, and secondary detail may progressively disclose into drawers or tabs, but all controls needed for core workflows remain reachable without hover- or pointer-only access.
 - Use consistent keyboard/focus behavior and visible focus states.
-- Preserve readable contrast in the dark-only palette.
+- Preserve WCAG 2.1 AA contrast (>= 4.5:1 for text, >= 3:1 for large text and UI component boundaries) in the dark-only palette; enforced by the `contrastRatio` assertions in [`tests/autodev-console-target-state.test.ts`](../tests/autodev-console-target-state.test.ts) (test: "Console semantic text and status surfaces meet WCAG AA contrast").
 - Use the same status vocabulary, icon sizing, spacing, table density, dialog behavior, and destructive-action confirmation patterns across features.
-- Core workflows must remain usable at typical desktop widths; secondary details may collapse into drawers/tabs rather than creating alternate mobile product structures.
 - URL-addressable list/detail/filter state is preferred when it improves operator navigation and debugging.
 
 ## 4. Repository and module architecture
@@ -343,7 +351,7 @@ Lossless RuleSync subagent/permission parity is a migration gate, not an assumpt
 
 ## 7. OpenLIT fork boundary
 
-OpenLIT is retained as infrastructure and a source of useful components/patterns. Do not preserve generic OpenLIT product features merely because they already exist.
+OpenLIT is retained as infrastructure and a source of useful components/patterns. Do not preserve generic OpenLIT product features merely because they already exist. The retained OpenLIT server renders URL-filtered telemetry pages at request time; its image build must not statically prerender routes that consume search state.
 
 ### Keep/adapt
 
@@ -684,7 +692,7 @@ Detailed stage/metric definitions remain in memory-target-state.md so this share
 
 Keep one **Usage** product surface; do not add a redundant Analytics page.
 
-Use the retained OpenLIT time-range control. Typed single/multi-select + All variables should support URL persistence where applicable:
+Use the retained OpenLIT time-range control. Core owns the canonical `USAGE_VARIABLE_IDS` tuple shared by Console and Data; the fixed OpenLIT endpoint mirrors this bounded list at its service boundary and accepts no arbitrary variable IDs. Typed single/multi-select + All variables should support URL persistence where applicable:
 
 - workspace;
 - provider;
@@ -692,11 +700,15 @@ Use the retained OpenLIT time-range control. Typed single/multi-select + All var
 - agent/role;
 - skill only where safely present.
 
-Widgets opt in only to variables whose semantics apply. Unsupported signal/filter combinations fail closed rather than silently changing semantics. Bind selections through typed parameterized inputs; never concatenate browser-controlled SQL.
+Widgets opt in only to variables whose semantics apply. Unsupported signal/filter combinations fail closed rather than silently changing semantics. Bind selections through typed parameterized inputs; never concatenate browser-controlled SQL. Provider-attempt spans carry only validated `autodev.workspace` and `autodev.agent.role` context from the logical request so those filters work without a cross-span join; these remain span attributes, never metric dimensions.
 
-The Console's same-origin server calls only fixed read-only Usage telemetry endpoints with a dedicated server-to-server credential. The Usage summary endpoint accepts bounded time/filter selections, not raw SQL or arbitrary widget IDs; the trace-detail endpoint accepts only a validated OpenTelemetry SpanId and resolves its TraceId server-side. Both use the dedicated Usage credential and never reuse mutation credentials.
+The Console's same-origin server calls only fixed read-only Usage telemetry endpoints with a dedicated server-to-server credential. The summary endpoint is `POST /api/autodev/usage` (`autodev-openlit-usage-v3`): it accepts bounded time/filter selections, not raw SQL or arbitrary widget IDs, and returns fixed validated widget data, supported filter values, and a bounded recent-attempt list. The trace-detail endpoint accepts only a validated OpenTelemetry SpanId and resolves its TraceId server-side. Both use the dedicated Usage credential and never reuse mutation credentials.
 
-Target views include logical requests, attempts/provider reliability, input/output/cache tokens, cost, latency, failures, MCP activity, relevant skill evidence, traces, and source-confirmed context compactions. Current verified widgets/evidence belong in the migration tracker. Evaluation-to-trace navigation uses the fixed read-only `GET /api/autodev/usage/span/:spanId` endpoint with the dedicated Usage service credential. It accepts only a validated OpenTelemetry SpanId, resolves its TraceId server-side, and returns at most 200 privacy-filtered span summaries (IDs/parent, operation/service, timestamp, duration, status) without span attributes, events, prompts, responses, tool arguments, SQL, or tenant context.
+Target views include logical requests, attempts/provider reliability, input/output/cache tokens, cost, latency, failures, MCP activity, relevant skill evidence, traces, and source-confirmed context compactions. Usage presents a bounded recent-attempt list; selecting a span opens its privacy-filtered trace detail. Current verified widgets/evidence belong in the migration tracker. Evaluation-to-trace navigation uses the same fixed read-only `GET /api/autodev/usage/span/:spanId` endpoint with the dedicated Usage service credential. It accepts only a validated OpenTelemetry SpanId, resolves its TraceId server-side, and returns at most 200 privacy-filtered span summaries (IDs/parent, operation/service, timestamp, duration, status) without span attributes, events, prompts, responses, tool arguments, SQL, or tenant context.
+
+Use OpenLIT's compact time-scope, summary, and breakdown-chart patterns ([Costs analytics](https://docs.openlit.io/latest/openlit/costs/analytics)) inside the AutoDev-owned dark Console; do not import its generic shell, dashboard builder, or tenant model. If the Usage request is unreachable, unauthorized, fails HTTP, or returns an invalid schema, keep the shared scope/filter controls and show one shared unavailable state, but do not render metric cards or charts as if a validated snapshot had been read. Distinguish transport failure from invalid response. A valid partial snapshot may still show its observed metrics alongside per-signal `Not observed` states.
+
+Cost is read only from OpenLIT's `gen_ai.usage.cost` attribute and is labeled as an estimate, not a provider bill: stock OpenLIT may compute it from a pricing catalog when no provider-reported amount exists. If no attempt carries a cost value, the Console reports `Not observed`; an empty aggregate is not a measured `$0`.
 
 ### Active Sessions
 
@@ -807,6 +819,7 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 - console/ is the sole final user-facing application.
 - Canonical resource navigation contains exactly the intended 13 resources, grouped consistently; no duplicate generic Home/Analytics/Settings product is required.
 - The Providers tab is a single compact configuration table with exactly four primary columns — Provider, Status, Roles, Agent Limits — and the separate Role Enablement, Health, Credential, Available Models and Tier Priority columns do not exist. Status reads Ready only when the provider is healthy and fully configured, and otherwise names the specific blocking state (for example Missing CODEX_ROUTE). Roles shows the four fixed roles (Default, Smart, Orchestrator, Subagent) with a consistent white-outline icon, a priority dropdown of exactly P1/P2/P3/Disabled, and a model dropdown populated from that provider's models, where Disabled dims that role's model selector. Roles carry a consistent white-outline icon per role with no crown for Default; P1, P2 and P3 share one neutral dropdown style, and the Disabled priority is the one highlighted state. Agent Limits exposes Per session and Across sessions numeric controls plus Unlimited, beside a provider-level Disabled toggle that disables the provider while preserving its configured priorities, models and limits.
+- Provider rows are not globally draggable: routing precedence is per-role and per-tier, edited through the role priority controls rather than a separate row-order setting.
 - Item-scoped controls are contextual: each appears on the item's list row and in its detail view inside the owning resource (provider toggles on Providers rows and provider detail; model toggles on Models rows, model detail, and the provider detail's model list), backed by one typed operation; other resources show read-only state with a link.
 - Dark-only operation is enforced; there is no light/system theme or theme selector.
 - Otter/chat is absent.
@@ -814,6 +827,7 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 - Accounts/profile/logout, organization/project/environment selectors, generic onboarding, generic dashboard builder, Rule Engine, OpenGround, GPU, discovery/instrumentation UX, and removed product surfaces are absent.
 - Memory, Evaluations, Agents, Prompts, Usage, and other retained functionality appears inside the shared AutoDev shell rather than opening a second operator application.
 - Shared tables/tabs/forms/status/dialog/filter/chart primitives produce consistent spacing, density, keyboard/focus behavior, and status vocabulary.
+- Safe single-choice settings apply on selection without a second Apply control; multi-axis filters, multi-select sets, and reviewed transactions retain an explicit submit boundary with its purpose made clear. Changing or submitting any Console form or control does not cause a full document reload, executing via in-place client navigation and updates while preserving URL state, native form semantics, keyboard focus, accessible pending feedback, and server-confirmed state.
 - Each concern has one canonical editable surface; cross-resource summaries are read-only/linking.
 - Core routes handle loading, empty, unavailable, error, and normal states without demo/fallback data.
 - Useful filters/detail routes are URL-addressable where appropriate.

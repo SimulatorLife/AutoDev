@@ -1,11 +1,14 @@
 import {
   isOpenTelemetrySpanId,
   isOpenTelemetryTraceId,
+  USAGE_VARIABLE_IDS,
   type UsageFilterOptions,
   type UsageFilterSelection,
   type UsageMetricsData,
   type UsageSnapshot,
+  type UsageTraceAttempt,
   type UsageTraceDetail,
+  type UsageTraceList,
   type UsageTraceSpan,
   type UsageTraceStatus,
   type UsageVariableId,
@@ -17,20 +20,13 @@ const USAGE_API_PATH = "/api/autodev/usage";
 const TRACE_DETAIL_API_PATH = "/api/autodev/usage/span";
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_TRACE_SPANS = 200;
+const MAX_USAGE_TRACE_ATTEMPTS = 25;
 const TRACE_STATUS_CODES = new Set<UsageTraceStatus>([
   "OK",
   "ERROR",
   "UNSET",
   "UNKNOWN"
 ]);
-type SupportedUsageVariableId = Exclude<UsageVariableId, "skill">;
-
-const USAGE_VARIABLE_IDS: readonly SupportedUsageVariableId[] = [
-  "workspace",
-  "provider",
-  "model",
-  "agent"
-];
 const USAGE_WIDGET_IDS: readonly UsageWidgetId[] = [
   "logical-requests",
   "requests-by-agent",
@@ -42,7 +38,11 @@ const USAGE_WIDGET_IDS: readonly UsageWidgetId[] = [
   "mcp-calls",
   "mcp-duration",
   "mcp-errors",
-  "mcp-by-tool"
+  "mcp-by-tool",
+  "attempt-errors-by-provider",
+  "context-compactions",
+  "skill-events-by-event",
+  "estimated-cost"
 ];
 const USAGE_WIDGET_ID_SET = new Set<string>(USAGE_WIDGET_IDS);
 
@@ -63,14 +63,15 @@ interface OpenLITWidgetResult {
 }
 
 interface OpenLITUsageResponse {
-  readonly schema: "autodev-openlit-usage-v1";
+  readonly schema: "autodev-openlit-usage-v3";
   readonly widgets: readonly OpenLITWidgetResult[];
   readonly filterOptions: Readonly<
     Record<
-      SupportedUsageVariableId,
+      UsageVariableId,
       { readonly supported: boolean; readonly values: readonly string[] }
     >
   >;
+  readonly traceList: UsageTraceList;
 }
 
 export interface OpenLITUsageClientConfig {
@@ -81,6 +82,7 @@ export interface OpenLITUsageClientConfig {
 
 export type OpenLITUsageResult =
   | { readonly kind: "ok"; readonly data: UsageSnapshot }
+  | { readonly kind: "invalid-response" }
   | { readonly kind: "unauthorized"; readonly status: number }
   | { readonly kind: "http-error"; readonly status: number }
   | { readonly kind: "unreachable" };
@@ -172,8 +174,14 @@ export class OpenLITUsageClient {
         return { kind: "unauthorized", status: response.status };
       if (!response.ok) return { kind: "http-error", status: response.status };
 
-      const parsed = parseOpenLITUsageResponse(await response.json());
-      if (!parsed) return { kind: "unreachable" };
+      let body: unknown;
+      try {
+        body = await response.json();
+      } catch {
+        return { kind: "invalid-response" };
+      }
+      const parsed = parseOpenLITUsageResponse(body);
+      if (!parsed) return { kind: "invalid-response" };
       return { kind: "ok", data: toUsageSnapshot(parsed) };
     } catch {
       return { kind: "unreachable" };
@@ -254,7 +262,7 @@ function parseOpenLITTraceDetail(value: unknown): UsageTraceDetail | null {
 function parseOpenLITUsageResponse(
   value: unknown
 ): OpenLITUsageResponse | null {
-  if (!isRecord(value) || value.schema !== "autodev-openlit-usage-v1") {
+  if (!isRecord(value) || value.schema !== "autodev-openlit-usage-v3") {
     return null;
   }
   if (!Array.isArray(value.widgets)) return null;
@@ -270,7 +278,77 @@ function parseOpenLITUsageResponse(
 
   const filterOptions = parseFilterOptions(value.filterOptions);
   if (!filterOptions) return null;
-  return { schema: "autodev-openlit-usage-v1", widgets, filterOptions };
+  const traceList = parseOpenLITTraceList(value.traceList);
+  if (!traceList) return null;
+  return {
+    schema: "autodev-openlit-usage-v3",
+    widgets,
+    filterOptions,
+    traceList
+  };
+}
+
+function parseOpenLITTraceList(value: unknown): UsageTraceList | null {
+  if (!isRecord(value) || typeof value.kind !== "string") return null;
+  if (value.kind === "unavailable") return { kind: "unavailable" };
+  if (
+    value.kind === "not-applicable" &&
+    (value.reason === "skill-filter" || value.reason === "unsupported-filter")
+  ) {
+    return { kind: "not-applicable", reason: value.reason };
+  }
+  if (
+    value.kind !== "observed" ||
+    typeof value.partial !== "boolean" ||
+    !Array.isArray(value.attempts) ||
+    value.attempts.length > MAX_USAGE_TRACE_ATTEMPTS
+  ) {
+    return null;
+  }
+
+  const attempts: UsageTraceAttempt[] = [];
+  const spanIds = new Set<string>();
+  for (const candidate of value.attempts) {
+    if (
+      !isRecord(candidate) ||
+      typeof candidate.spanId !== "string" ||
+      !isOpenTelemetrySpanId(candidate.spanId) ||
+      spanIds.has(candidate.spanId) ||
+      typeof candidate.timestamp !== "string" ||
+      !Number.isFinite(Date.parse(candidate.timestamp)) ||
+      typeof candidate.durationNs !== "number" ||
+      !Number.isSafeInteger(candidate.durationNs) ||
+      candidate.durationNs < 0 ||
+      typeof candidate.statusCode !== "string" ||
+      !TRACE_STATUS_CODES.has(candidate.statusCode as UsageTraceStatus) ||
+      !isNullableLabel(candidate.provider) ||
+      !isNullableLabel(candidate.model) ||
+      !isNullableLabel(candidate.role)
+    ) {
+      return null;
+    }
+    spanIds.add(candidate.spanId);
+    attempts.push({
+      spanId: candidate.spanId,
+      timestamp: candidate.timestamp,
+      durationNs: candidate.durationNs,
+      statusCode: candidate.statusCode as UsageTraceStatus,
+      provider: candidate.provider as string | null,
+      model: candidate.model as string | null,
+      role: candidate.role as string | null
+    });
+  }
+  return { kind: "observed", attempts, partial: value.partial };
+}
+
+function isNullableLabel(value: unknown): value is string | null {
+  return (
+    value === null ||
+    (typeof value === "string" &&
+      value.length > 0 &&
+      value.length <= 256 &&
+      value.trim() === value)
+  );
 }
 
 function parseWidgetResult(candidate: unknown): OpenLITWidgetResult | null {
@@ -328,7 +406,7 @@ function parseFilterOptions(
 ): OpenLITUsageResponse["filterOptions"] | null {
   if (!isRecord(value)) return null;
   const filterOptions = {} as Record<
-    SupportedUsageVariableId,
+    UsageVariableId,
     { readonly supported: boolean; readonly values: readonly string[] }
   >;
   for (const id of USAGE_VARIABLE_IDS) {
@@ -406,14 +484,17 @@ function toUsageSnapshot(response: OpenLITUsageResponse): UsageSnapshot {
     response.widgets.map((widget) => [widget.key, widget])
   );
   const attempts = groupedRows(widgets.get("attempts-by-provider"));
+  const attemptErrors = groupedRows(widgets.get("attempt-errors-by-provider"));
   const requests = groupedRows(widgets.get("requests-by-agent"));
   const calls = groupedRows(widgets.get("mcp-by-tool"));
+  const skillEvents = groupedRows(widgets.get("skill-events-by-event"));
   const metrics: UsageMetricsData = {
     logicalRequests: observedMetric(widgets.get("logical-requests")),
     totalInputTokens: observedMetric(widgets.get("input-tokens")),
     totalOutputTokens: observedMetric(widgets.get("output-tokens")),
     cacheReadRate: ratioMetric(widgets.get("cache-rate")),
     p95LatencyMs: milliseconds(observedMetric(widgets.get("p95-latency"))),
+    estimatedCostUsd: observedMetric(widgets.get("estimated-cost")),
     physicalAttempts:
       attempts === null
         ? null
@@ -421,6 +502,19 @@ function toUsageSnapshot(response: OpenLITUsageResponse): UsageSnapshot {
     mcpCalls: observedMetric(widgets.get("mcp-calls")),
     p95McpDurationMs: milliseconds(observedMetric(widgets.get("mcp-duration"))),
     mcpErrors: observedMetric(widgets.get("mcp-errors")),
+    failedAttempts:
+      attemptErrors === null
+        ? null
+        : attemptErrors.reduce((total, row) => total + row.count, 0),
+    attemptErrorsByProvider:
+      attemptErrors === null
+        ? null
+        : attemptErrors.map(({ name, count }) => ({ provider: name, count })),
+    contextCompactions: observedMetric(widgets.get("context-compactions")),
+    skillEventsByEvent:
+      skillEvents === null
+        ? null
+        : skillEvents.map(({ name, count }) => ({ event: name, count })),
     requestsByRole:
       requests === null
         ? null
@@ -439,14 +533,14 @@ function toUsageSnapshot(response: OpenLITUsageResponse): UsageSnapshot {
     provider: observedFilterOptions(response, "provider"),
     model: observedFilterOptions(response, "model"),
     agent: observedFilterOptions(response, "agent"),
-    skill: null
+    skill: observedFilterOptions(response, "skill")
   };
-  return { metrics, filterOptions };
+  return { metrics, filterOptions, traceList: response.traceList };
 }
 
 function observedFilterOptions(
   response: OpenLITUsageResponse,
-  id: SupportedUsageVariableId
+  id: UsageVariableId
 ): readonly string[] | null {
   const option = response.filterOptions[id];
   return option.supported ? option.values : null;

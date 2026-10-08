@@ -497,8 +497,8 @@ function ExperienceDetailPanel({
         }),
         // Purge erases the raw envelope irreversibly, so the operator states a
         // reason the Runtime accepts and confirms explicitly. Both are enforced
-        // server-side: the Console ships no client JavaScript, so an unchecked
-        // box is not a UI-only guard, it is a request the route refuses.
+        // server-side: an unchecked box is not a UI-only guard, it is a request
+        // the route refuses. The sidebar's client toggle does not touch this form.
         React.createElement(SelectField, {
           name: "reason",
           label: "Purge reason",

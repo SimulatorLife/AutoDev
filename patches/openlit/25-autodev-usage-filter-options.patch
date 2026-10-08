@@ -1,9 +1,9 @@
 diff --git a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
 new file mode 100644
-index 00000000..94bb1170
+index 00000000..0b977e4f
 --- /dev/null
 +++ b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,207 @@
 +/** @jest-environment node */
 +
 +import { NextRequest } from "next/server";
@@ -11,6 +11,7 @@ index 00000000..94bb1170
 +const mockFetchVariableAllowedValues = jest.fn();
 +const mockResolveTelemetrySourceDescriptor = jest.fn();
 +const mockGetTelemetryAdapter = jest.fn();
++const mockListSpans = jest.fn();
 +const mockRunWidgetQuery = jest.fn();
 +
 +jest.mock("@/lib/platform/dashboard-variables", () => ({
@@ -51,6 +52,8 @@ index 00000000..94bb1170
 +    mockResolveTelemetrySourceDescriptor.mockResolvedValue({ id: "source-1" });
 +    mockGetTelemetryAdapter.mockReset();
 +    mockGetTelemetryAdapter.mockResolvedValue({});
++    mockListSpans.mockReset();
++    mockListSpans.mockResolvedValue({ rows: [], meta: {} });
 +    mockRunWidgetQuery.mockReset();
 +    mockRunWidgetQuery.mockResolvedValue({ data: [] });
 +  });
@@ -62,17 +65,151 @@ index 00000000..94bb1170
 +        authorization: "Bearer server-only-usage-test-token",
 +        "content-type": "application/json"
 +      },
-+      body: JSON.stringify({ selection: { range: "24H", values: {} } })
++      body: JSON.stringify({ selection: { range: "24H", values: { skill: ["agent-skill"] } } })
 +    });
 +
 +    const response = await POST(request);
 +
 +    expect(response.status).toBe(200);
-+    expect(mockFetchVariableAllowedValues).toHaveBeenCalledTimes(4);
++    const body = await response.json();
++    expect(body.schema).toBe("autodev-openlit-usage-v3");
++    expect(body.traceList).toEqual({ kind: "not-applicable", reason: "skill-filter" });
++    expect(body.widgets.map((widget: { key: string }) => widget.key)).toEqual(
++      expect.arrayContaining([
++        "attempt-errors-by-provider",
++        "context-compactions",
++        "skill-events-by-event",
++        "estimated-cost"
++      ])
++    );
++    expect(body.filterOptions.skill).toEqual({ supported: true, values: [] });
++    const skillWidgetCall = mockRunWidgetQuery.mock.calls.find(
++      ([widgetId]) => widgetId === "47c52af8-0c4a-4e85-8a9e-a8f85745b110"
++    );
++    expect(skillWidgetCall?.[1].dashboardVariables.state.values.skill).toEqual([
++      "agent-skill"
++    ]);
++    const estimatedCost = body.widgets.find(
++      (widget: { key: string; observed: boolean }) =>
++        widget.key === "estimated-cost"
++    );
++    expect(estimatedCost?.observed).toBe(false);
++    expect(mockFetchVariableAllowedValues).toHaveBeenCalledTimes(5);
 +    for (const [requestOptions] of mockFetchVariableAllowedValues.mock.calls) {
 +      expect(requestOptions.aiSelector).toBe(false);
 +    }
 +  });
++
++  it("returns bounded, privacy-filtered recent provider attempts in the v3 response", async () => {
++    mockGetTelemetryAdapter.mockResolvedValue({ listSpans: mockListSpans });
++    mockListSpans.mockResolvedValue({
++      rows: [
++        {
++          spanId: "0123456789abcdef",
++          traceId: "0123456789abcdef0123456789abcdef",
++          name: "gen_ai.client_operation",
++          serviceName: "autodev-router",
++          timestamp: "2026-10-07T12:00:00.000Z",
++          durationNs: 1250000,
++          statusCode: "STATUS_CODE_ERROR",
++          spanAttributes: {
++            "gen_ai.provider.name": "openai",
++            "autodev.requested_model": "gpt-6-luna",
++            "autodev.agent.role": "orchestrator",
++            "gen_ai.input.messages": "must not leave the trace source"
++          }
++        }
++      ],
++      meta: { truncated: false }
++    });
++    const request = new NextRequest("http://localhost/api/autodev/usage", {
++      method: "POST",
++      headers: {
++        authorization: "Bearer server-only-usage-test-token",
++        "content-type": "application/json"
++      },
++      body: JSON.stringify({
++        selection: { range: "24H", values: { provider: ["openai"] } }
++      })
++    });
++
++    const response = await POST(request);
++    const body = await response.json();
++
++    expect(response.status).toBe(200);
++    expect(body.schema).toBe("autodev-openlit-usage-v3");
++    expect(body.traceList).toEqual({
++      kind: "observed",
++      partial: false,
++      attempts: [
++        {
++          spanId: "0123456789abcdef",
++          timestamp: "2026-10-07T12:00:00.000Z",
++          durationNs: 1250000,
++          statusCode: "ERROR",
++          provider: "openai",
++          model: "gpt-6-luna",
++          role: "orchestrator"
++        }
++      ]
++    });
++    expect(JSON.stringify(body.traceList)).not.toContain(
++      "must not leave the trace source"
++    );
++    expect(mockListSpans).toHaveBeenCalledWith(
++      expect.objectContaining({
++        limit: 25,
++        offset: 0,
++        aiSelector: false,
++        filters: expect.arrayContaining([
++          expect.objectContaining({
++            key: "gen_ai.provider.name",
++            op: "in",
++            value: ["openai"]
++          })
++        ])
++      })
++    );
++  });
++
++  it("keeps an empty estimated-cost sum unobserved but accepts measured zero", async () => {
++    const makeRequest = () => new NextRequest("http://localhost/api/autodev/usage", {
++      method: "POST",
++      headers: {
++        authorization: "Bearer server-only-usage-test-token",
++        "content-type": "application/json"
++      },
++      body: JSON.stringify({ selection: { range: "24H", values: {} } })
++    });
++    const costWidgetId = "47c52af8-0c4a-4e85-8a9e-a8f85745b111";
++    mockRunWidgetQuery.mockImplementation(async (widgetId: string) => ({
++      data:
++        widgetId === costWidgetId
++          ? [{ estimated_cost: 0, costed_attempts: 0 }]
++          : []
++    }));
++
++    const emptyResponse = await POST(makeRequest());
++    const emptyBody = await emptyResponse.json();
++    const emptyCost = emptyBody.widgets.find(
++      (widget: { key: string }) => widget.key === "estimated-cost"
++    );
++    expect(emptyCost.observed).toBe(false);
++
++    mockRunWidgetQuery.mockImplementation(async (widgetId: string) => ({
++      data:
++        widgetId === costWidgetId
++          ? [{ estimated_cost: 0, costed_attempts: 2 }]
++          : []
++    }));
++    const measuredResponse = await POST(makeRequest());
++    const measuredBody = await measuredResponse.json();
++    const measuredCost = measuredBody.widgets.find(
++      (widget: { key: string }) => widget.key === "estimated-cost"
++    );
++    expect(measuredCost.observed).toBe(true);
++  });
++
 +});
 diff --git a/src/client/src/__tests__/lib/platform/dashboard-variables/distinct-values.test.ts b/src/client/src/__tests__/lib/platform/dashboard-variables/distinct-values.test.ts
 index 5fcbdc9..bb9851f 100644

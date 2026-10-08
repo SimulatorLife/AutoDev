@@ -1,3 +1,5 @@
+"use client";
+
 import {
   CANONICAL_NAV_GROUPS,
   type CanonicalNavGroup,
@@ -7,7 +9,10 @@ import {
 import React from "react";
 
 import { canonicalNavPath } from "../../lib/routes.ts";
+import { Button } from "../forms/Button.ts";
 import { Icon, navIcon } from "../icons/Icon.ts";
+
+const SIDEBAR_COLLAPSED_STORAGE_KEY = "autodev.console.sidebar.collapsed";
 
 export interface AppNavProps {
   readonly activeSection: CanonicalNavSection;
@@ -25,22 +30,50 @@ type GroupSectionProps = React.HTMLAttributes<HTMLElement> & {
 
 /**
  * URL-addressable navigation grouped by Configure / Observe / Operate. Each
- * item still renders a real `<a href="/section">` link, so navigating
- * updates the address bar and is reflected in the route. Group headings
- * label the presentation buckets without changing first-class routes.
- *
- * Below `xl` the sidebar collapses to an icon rail. Every resource has an icon,
- * so the rail carries the same navigation in a fraction of the width and gives
- * the dense tables back the horizontal room they need. Each collapsed link
- * keeps its section name as an accessible name and hover title, so the rail is
- * never icon-only to a user.
+ * item remains a real link. At every width the circular OpenLIT-style button
+ * toggles between the full sidebar and its clickable icon rail; the preference
+ * survives route changes. Narrow viewports default to the rail; expanding there
+ * overlays the page instead of squeezing its content. Icon-only links retain
+ * their accessible names and titles.
  */
 export function AppNav({
   activeSection,
   counts
 }: AppNavProps): React.JSX.Element {
+  const [isCollapsed, setIsCollapsed] = React.useState(false);
+
+  React.useEffect(() => {
+    try {
+      const storedPreference = globalThis.localStorage.getItem(
+        SIDEBAR_COLLAPSED_STORAGE_KEY
+      );
+      setIsCollapsed(
+        storedPreference === null
+          ? globalThis.matchMedia("(max-width: 1279px)").matches
+          : storedPreference === "true"
+      );
+    } catch {
+      // Keep the narrow-screen rail as the default when storage is unavailable.
+      setIsCollapsed(globalThis.matchMedia("(max-width: 1279px)").matches);
+    }
+  }, []);
+
+  const toggleSidebar = (): void => {
+    const nextIsCollapsed = !isCollapsed;
+    setIsCollapsed(nextIsCollapsed);
+    try {
+      globalThis.localStorage.setItem(
+        SIDEBAR_COLLAPSED_STORAGE_KEY,
+        String(nextIsCollapsed)
+      );
+    } catch {
+      // Persistence is optional; the current page still reflects the toggle.
+    }
+  };
+  const expandedLabelClass = isCollapsed ? "hidden" : "inline";
   const brandLinkProps: NavigationLinkProps = {
     href: "/agents",
+    "aria-label": "AutoDev Console",
     "data-nav-brand": "autodev",
     className: "flex items-center gap-2 text-inherit no-underline rounded-sm "
   };
@@ -48,14 +81,21 @@ export function AppNav({
   return React.createElement(
     "nav",
     {
+      id: "autodev-console-navigation",
       "aria-label": "AutoDev Console Navigation",
       className:
-        "autodev-nav flex shrink-0 flex-col h-full w-14 xl:w-64 bg-surface text-fg p-2 xl:p-4 border-r border-border"
+        "autodev-nav flex shrink-0 flex-col h-full " +
+        (isCollapsed
+          ? "relative w-14 p-2"
+          : "absolute inset-y-0 left-0 z-30 w-64 p-4 shadow-xl xl:relative xl:z-auto xl:shadow-none") +
+        " bg-surface text-fg border-r border-border"
     },
     React.createElement(
       "div",
       {
-        className: "mb-6 flex items-center px-2 justify-center xl:justify-start"
+        className:
+          "mb-6 flex items-center px-2 " +
+          (isCollapsed ? "justify-center" : "justify-start")
       },
       React.createElement(
         "a",
@@ -64,12 +104,37 @@ export function AppNav({
           "span",
           {
             className:
-              "font-semibold text-base tracking-tight xl:text-lg hidden xl:inline whitespace-nowrap"
+              "font-semibold text-base tracking-tight xl:text-lg " +
+              expandedLabelClass +
+              " whitespace-nowrap"
           },
           "AutoDev Console"
         ),
-        React.createElement("span", { className: "xl:hidden" }, "AC")
+        React.createElement(
+          "span",
+          { className: isCollapsed ? "" : "hidden" },
+          "AC"
+        )
       )
+    ),
+    React.createElement(
+      Button,
+      {
+        type: "button",
+        variant: "outline",
+        size: "icon",
+        className:
+          "absolute right-0 top-4 z-20 inline-grid translate-x-1/2 place-items-center",
+        ariaLabel: isCollapsed ? "Expand sidebar" : "Collapse sidebar",
+        ariaControls: "autodev-console-navigation",
+        ariaExpanded: !isCollapsed,
+        title: isCollapsed ? "Expand sidebar" : "Collapse sidebar",
+        onClick: toggleSidebar,
+        testId: "sidebar-toggle"
+      },
+      isCollapsed
+        ? React.createElement(Icon, { name: "chevronsRight", size: 16 })
+        : React.createElement(Icon, { name: "chevronsLeft", size: 16 })
     ),
     React.createElement(
       "ul",
@@ -77,7 +142,7 @@ export function AppNav({
         className: "flex flex-col gap-4 list-none p-0 m-0"
       },
       CANONICAL_NAV_GROUPS.map((group, index) =>
-        renderGroup(group, activeSection, counts, index === 0)
+        renderGroup(group, activeSection, counts, index === 0, isCollapsed)
       )
     )
   );
@@ -87,19 +152,21 @@ function renderGroup(
   group: CanonicalNavGroup<CanonicalNavSection>,
   activeSection: CanonicalNavSection,
   counts: Partial<Record<CanonicalNavSection, number>> | undefined,
-  isFirst: boolean
+  isFirst: boolean,
+  isCollapsed: boolean
 ): React.JSX.Element {
+  let groupSpacingClass = "";
+  if (!isFirst) {
+    groupSpacingClass = isCollapsed
+      ? "mt-1 border-t border-border pt-3"
+      : "mt-1";
+  }
   const groupSectionProps: GroupSectionProps = {
-    // Group headings disappear in the collapsed rail, so the boundary between
-    // Configure / Observe / Operate has to stay visible some other way.
-    className: `flex flex-col gap-1 ${
-      isFirst
-        ? ""
-        : "mt-1 border-t border-border pt-3 xl:mt-0 xl:border-t-0 xl:pt-0"
-    }`,
+    // The separators distinguish groups when their headings are hidden.
+    className: "flex flex-col gap-1 " + groupSpacingClass,
     "data-nav-group": group.id
   };
-  const headingId = `autodev-nav-group-${group.id.toLowerCase()}`;
+  const headingId = "autodev-nav-group-" + group.id.toLowerCase();
   return React.createElement(
     "li",
     { key: group.id },
@@ -111,7 +178,8 @@ function renderGroup(
         {
           id: headingId,
           className:
-            "hidden xl:block px-3 text-meta font-semibold uppercase tracking-wider text-fg-muted"
+            (isCollapsed ? "hidden" : "block") +
+            " px-3 text-meta font-semibold uppercase tracking-wider text-fg-muted"
         },
         group.id
       ),
@@ -119,10 +187,10 @@ function renderGroup(
         "ul",
         {
           className: "flex flex-col gap-1 list-none p-0 m-0",
-          "aria-label": `${group.label} navigation`
+          "aria-label": group.label + " navigation"
         },
         group.sections.map((section) =>
-          renderNavItem(section, activeSection, counts)
+          renderNavItem(section, activeSection, counts, isCollapsed)
         )
       )
     )
@@ -132,7 +200,8 @@ function renderGroup(
 function renderNavItem(
   section: CanonicalNavSection,
   activeSection: CanonicalNavSection,
-  counts: Partial<Record<CanonicalNavSection, number>> | undefined
+  counts: Partial<Record<CanonicalNavSection, number>> | undefined,
+  isCollapsed: boolean
 ): React.JSX.Element {
   const isActive = activeSection === section;
   const count = counts?.[section];
@@ -140,17 +209,18 @@ function renderNavItem(
   const icon = navIcon(section);
   const labelProps: NavigationLinkProps = {
     href,
-    // The section name stays the link's accessible name in both the expanded
-    // sidebar and the collapsed rail; the rail only hides it visually.
+    // The section name stays the link's accessible name in both modes.
     "aria-label": section,
     "aria-current": isActive ? "page" : undefined,
     "data-nav-item": section.toLowerCase(),
-    title: count === undefined ? section : `${section} (${count})`,
-    className: `w-full flex items-center gap-3 px-0 xl:px-3 py-2 rounded-md text-sm font-medium transition-colors no-underline justify-center xl:justify-start ${
-      isActive
+    title: count === undefined ? section : section + " (" + count + ")",
+    className:
+      "w-full flex items-center gap-3 " +
+      (isCollapsed ? "px-0 justify-center" : "px-3 justify-start") +
+      " py-2 rounded-md text-sm font-medium transition-colors no-underline " +
+      (isActive
         ? "bg-surface-raised text-accent font-semibold shadow-sm"
-        : "text-fg-secondary hover:bg-surface-raised/60 hover:text-fg"
-    }`
+        : "text-fg-secondary hover:bg-surface-raised/60 hover:text-fg")
   };
   return React.createElement(
     "li",
@@ -168,7 +238,7 @@ function renderNavItem(
       React.createElement(
         "span",
         {
-          className: "hidden xl:inline flex-1 truncate",
+          className: expandedOnlyClass(isCollapsed) + " flex-1 truncate",
           title: section
         },
         section
@@ -179,10 +249,15 @@ function renderNavItem(
             "span",
             {
               className:
-                "hidden xl:inline text-xs bg-surface-raised px-2 py-0.5 rounded-full text-fg-muted border border-border-strong tabular-nums"
+                expandedOnlyClass(isCollapsed) +
+                " text-xs bg-surface-raised px-2 py-0.5 rounded-full text-fg-muted border border-border-strong tabular-nums"
             },
             count
           )
     )
   );
+}
+
+function expandedOnlyClass(isCollapsed: boolean): string {
+  return isCollapsed ? "hidden" : "inline";
 }

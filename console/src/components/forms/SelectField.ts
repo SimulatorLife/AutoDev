@@ -85,6 +85,9 @@ export interface SelectFieldProps {
    * inputs, because a `multiple` select serializes as repeated names.
    */
   readonly multiple?: boolean | undefined;
+  /** Called when a single selection changes in a client-rendered form. */
+  readonly onChange?:
+    ((event: React.ChangeEvent<HTMLSelectElement>) => void) | undefined;
   readonly className?: string | undefined;
   /** Marks the control for tests and stable browser assertions. */
   readonly testId?: string | undefined;
@@ -102,6 +105,7 @@ export function SelectField({
   disabled,
   disabledReason,
   multiple,
+  onChange,
   className,
   testId,
   dataAttributes
@@ -154,6 +158,7 @@ export function SelectField({
           // A multi-select collapses to a single row so it reads like a
           // dropdown while still accepting several values.
           ...(multiple === true ? { multiple: true, size: 1 } : {}),
+          ...(onChange === undefined ? {} : { onChange }),
           className: CONTROL_CLASS,
           ...(testId === undefined ? {} : { "data-select": testId }),
           ...dataAttributes

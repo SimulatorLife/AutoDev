@@ -12,9 +12,9 @@ import React from "react";
  *
  * These components own the chrome so a block of source looks the same wherever
  * it appears. They stay plain `<pre>` and `<textarea>` elements: the Console
- * ships no client JavaScript, so there is no syntax highlighter, no line
- * numbers, and no editor widget to install, and faking one would cost the
- * content its selectability and its accessibility.
+ * ships no client-side code editor or syntax highlighter, so there are no line
+ * numbers or editor widget to install, and faking one would cost the content
+ * its selectability and its accessibility.
  */
 
 /**

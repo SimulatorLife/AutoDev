@@ -16,9 +16,7 @@ import {
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
-import {
-  NOT_OBSERVED_LABEL
-} from "../../components/status/StatusBadge.ts";
+import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
@@ -31,6 +29,7 @@ import {
   TabNav
 } from "../../components/tabs/Tabs.ts";
 import {
+  MONO_ID_LINK_CLASS,
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
@@ -47,18 +46,6 @@ import {
 } from "./provider-status.ts";
 import { ProviderLimitsControls } from "./ProviderLimitsControls.ts";
 import { ProviderRoleControls } from "./ProviderRoleControls.ts";
-
-const LINK_CLASS =
-  "font-mono font-semibold text-fg underline-offset-4 hover:underline";
-
-/**
- * Why the row grip does nothing today.
- *
- * Stated once and rendered on every row so the affordance explains itself
- * instead of looking like a control that failed to respond.
- */
-const PROVIDER_ORDER_UNAVAILABLE =
-  "Reordering providers is not settable yet: the routing configuration owns provider order.";
 
 export const PROVIDERS_VIEW_TABS: readonly TabDefinition[] = [
   { id: "providers", label: "Providers" },
@@ -87,34 +74,10 @@ function ProviderLink({
     "a",
     {
       href: providerPath(provider),
-      className: LINK_CLASS,
+      className: MONO_ID_LINK_CLASS,
       "aria-label": `Open provider ${provider}`
     },
     provider
-  );
-}
-
-/** A Providers row's provider cell: the grip, then the id. */
-function ProviderCell({ provider }: {
-  readonly provider: string;
-}): React.JSX.Element {
-  return React.createElement(
-    "div",
-    { className: "flex min-w-0 items-center gap-2" },
-    // The grip is the target state's row-drag affordance. Provider ordering has
-    // no mutation to call yet, so it is rendered disabled with that reason
-    // rather than as a handle that silently does nothing -- a draggable-looking
-    // control that cannot drag is worse than no affordance at all.
-    React.createElement(
-      "span",
-      {
-        className: "shrink-0 select-none text-fg-muted",
-        "aria-hidden": "true",
-        title: PROVIDER_ORDER_UNAVAILABLE
-      },
-      "⠿"
-    ),
-    React.createElement(ProviderLink, { provider })
   );
 }
 
@@ -133,12 +96,11 @@ function providerColumns(
     {
       id: "provider",
       header: "Provider",
-      // The provider id is the row's primary identifier, so this column is
-      // sized to never truncate it (longest observed id renders ~92px) and to
-      // afford the grip beside it.
+      // The provider id is the row's primary identifier. Its full declared
+      // share is preserved by DataTable; narrow viewports scroll the table.
       weight: 130,
       cell: (provider) =>
-        React.createElement(ProviderCell, { provider: provider.id })
+        React.createElement(ProviderLink, { provider: provider.id })
     },
     {
       id: "status",
@@ -146,8 +108,7 @@ function providerColumns(
       // Sized against the widest pill the column can produce, which is a named
       // environment variable ("Missing LITELLM_API_KEY"), not the word Ready.
       weight: 210,
-      cell: (provider) =>
-        React.createElement(ProviderStatusBadge, { provider })
+      cell: (provider) => React.createElement(ProviderStatusBadge, { provider })
     },
     {
       id: "roles",
@@ -156,20 +117,10 @@ function providerColumns(
       // `Disabled` priority that dims its model selector is not self-evident
       // from the row. The contract asks for a help affordance on this header.
       headerHelp:
-        "Each fixed role takes a priority (P1, P2, P3 or Disabled) and a model. Disabled dims its model selector but keeps the chosen model, so re-enabling restores it.",
-      // Measured in the browser against the committed Runtime's own providers,
-      // not against a fixture. The widest of the four role forms is
-      // `orchestrator` at 486px — its label is nine characters against
-      // `default`'s seven — and the cell has to hold that plus 32px of padding,
-      // so 518px is the floor. At 460 the cell rendered 488px: `default` (455)
-      // and `smart` (448) just fit, `orchestrator` (486) and `subagent` (468)
-      // did not, and each of those two pushed its Apply button onto a second
-      // line. That is worse than uniform wrapping, because within one column
-      // the same control appeared inline on two rows and wrapped on the other
-      // two, and the row grew to 255px to hold it. 490 puts every role on one
-      // line at 1440; the difference comes off Agent Limits, whose widest
-      // content is the 120px "Provider disabled" caption.
-      weight: 490,
+        "Each fixed role takes a priority (P1, P2, P3 or Disabled) and a model. Changing either selection submits the complete role assignment immediately; refreshed values are Runtime-confirmed. Disabled dims its model selector but keeps the chosen model.",
+      // The label and two selects use a 416px aligned grid; the table cell adds
+      // 32px of shared inset. The 448px budget keeps fields aligned.
+      weight: 448,
       align: "tokens",
       cell: (provider) =>
         React.createElement(ProviderRoleControls, {
@@ -182,10 +133,8 @@ function providerColumns(
       header: "Agent Limits",
       headerHelp:
         "Provider-wide concurrent-agent limits. Unlimited has no ceiling; disabling the provider turns it off entirely while preserving its priorities, models and limits.",
-      // Sized by its widest single content, the 120px "Provider disabled"
-      // caption, rather than by its stack. It gave 30 to Roles so every role's
-      // Apply button stays on one line; the column still holds its widest
-      // content with room to spare.
+      // Both stepper labels sit above their button groups, so the 184px budget
+      // leaves room for controls and lets the optional disabled caption wrap.
       weight: 184,
       align: "tokens",
       cell: (provider) =>

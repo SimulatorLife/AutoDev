@@ -1,25 +1,26 @@
 diff --git a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
-index 94bb1170..c542b428 100644
+index 4c02bfc8..81703796 100644
 --- a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
 +++ b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
-@@ -1,6 +1,7 @@
- /** @jest-environment node */
- 
- import { NextRequest } from "next/server";
+@@ -4,4 +4,5 @@
+-
+-const mockFetchVariableAllowedValues = jest.fn();
+-const mockResolveTelemetrySourceDescriptor = jest.fn();
 +import usageDashboard from "@/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json";
- 
- const mockFetchVariableAllowedValues = jest.fn();
- const mockResolveTelemetrySourceDescriptor = jest.fn();
-@@ -67,4 +68,28 @@ describe("AutoDev Usage endpoint filter lookup", () => {
-       expect(requestOptions.aiSelector).toBe(false);
-     }
++
++const mockFetchVariableAllowedValues = jest.fn();
++const mockResolveTelemetrySourceDescriptor = jest.fn();
+ const mockGetTelemetryAdapter = jest.fn();
+@@ -76,3 +77,3 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+     const skillWidgetCall = mockRunWidgetQuery.mock.calls.find(
+-      ([widgetId]) => widgetId === "47c52af8-0c4a-4e85-8a9e-a8f85745b110"
++      ([widget]) => widget.id === "47c52af8-0c4a-4e85-8a9e-a8f85745b110"
+     );
+@@ -130,3 +131,22 @@ describe("AutoDev Usage endpoint filter lookup", () => {
    });
+-
 +
 +  it("hands runWidgetQuery the seeded widget definitions, not stored widget ids", async () => {
-+    // The widget catalog was owned by the removed board-authoring product, so
-+    // there is no ClickHouse row to look a widget up by any more. Passing an id
-+    // instead of the definition silently fails every panel at run time, so pin
-+    // the seed as the runner's input.
 +    const request = new NextRequest("http://localhost/api/autodev/usage", {
 +      method: "POST",
 +      headers: {
@@ -30,7 +31,6 @@ index 94bb1170..c542b428 100644
 +    });
 +
 +    const response = await POST(request);
-+
 +    expect(response.status).toBe(200);
 +    const seedWidgets = Object.values(usageDashboard.widgets);
 +    expect(mockRunWidgetQuery).toHaveBeenCalledTimes(seedWidgets.length);
@@ -38,6 +38,7 @@ index 94bb1170..c542b428 100644
 +      expect(seedWidgets).toContain(widget);
 +    }
 +  });
++
  });
 diff --git a/src/client/src/__tests__/clickhouse/seed/dashboards.test.ts b/src/client/src/__tests__/clickhouse/seed/dashboards.test.ts
 deleted file mode 100644

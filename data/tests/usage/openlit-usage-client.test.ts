@@ -7,7 +7,7 @@ import { OpenLITUsageClient } from "../../src/usage/openlit-usage-client.ts";
 
 const selection: UsageFilterSelection = {
   range: "7D",
-  values: { provider: ["openai"] }
+  values: { provider: ["openai"], skill: ["agent-skill"] }
 };
 
 function response(body: unknown, status = 200): Response {
@@ -18,7 +18,7 @@ function response(body: unknown, status = 200): Response {
 }
 
 const partialPayload = {
-  schema: "autodev-openlit-usage-v1",
+  schema: "autodev-openlit-usage-v3",
   widgets: [
     {
       key: "logical-requests",
@@ -56,14 +56,42 @@ const partialPayload = {
       observed: true,
       rows: [{ p95_seconds: "0.042" }],
       valuePath: "0.p95_seconds"
+    },
+    {
+      key: "attempt-errors-by-provider",
+      observed: true,
+      rows: [{ provider: "openai", failures: "2" }],
+      xAxis: "provider",
+      yAxis: "failures"
+    },
+    {
+      key: "context-compactions",
+      observed: true,
+      rows: [{ compactions: "3" }],
+      valuePath: "0.compactions"
+    },
+    {
+      key: "skill-events-by-event",
+      observed: true,
+      rows: [{ event: "used", events: "4" }],
+      xAxis: "event",
+      yAxis: "events"
+    },
+    {
+      key: "estimated-cost",
+      observed: true,
+      rows: [{ estimated_cost: "0.0081", costed_attempts: "2" }],
+      valuePath: "0.estimated_cost"
     }
   ],
   filterOptions: {
     workspace: { supported: true, values: ["repo-a"] },
     provider: { supported: true, values: ["openai"] },
     model: { supported: false, values: [] },
-    agent: { supported: true, values: [] }
-  }
+    agent: { supported: true, values: [] },
+    skill: { supported: true, values: ["agent-skill"] }
+  },
+  traceList: { kind: "not-applicable", reason: "skill-filter" }
 };
 
 test("OpenLITUsageClient sends typed URL filter state with server credentials", async () => {
@@ -94,14 +122,74 @@ test("OpenLITUsageClient sends typed URL filter state with server credentials", 
   assert.equal(result.data.metrics.totalInputTokens, null);
   assert.equal(result.data.metrics.p95LatencyMs, 1425);
   assert.equal(result.data.metrics.p95McpDurationMs, 42);
+  assert.equal(result.data.metrics.failedAttempts, 2);
+  assert.deepEqual(result.data.metrics.attemptErrorsByProvider, [
+    { provider: "openai", count: 2 }
+  ]);
+  assert.equal(result.data.metrics.contextCompactions, 3);
+  assert.deepEqual(result.data.metrics.skillEventsByEvent, [
+    { event: "used", count: 4 }
+  ]);
+  assert.equal(result.data.metrics.estimatedCostUsd, 0.0081);
   assert.deepEqual(result.data.metrics.requestsByRole, []);
   assert.deepEqual(result.data.filterOptions.workspace, ["repo-a"]);
   assert.equal(result.data.filterOptions.model, null);
   assert.deepEqual(result.data.filterOptions.agent, []);
-  assert.equal(result.data.filterOptions.skill, null);
+  assert.deepEqual(result.data.filterOptions.skill, ["agent-skill"]);
+  assert.deepEqual(result.data.traceList, {
+    kind: "not-applicable",
+    reason: "skill-filter"
+  });
 });
 
-test("OpenLITUsageClient keeps authentication and transport failures explicit", async () => {
+test("OpenLITUsageClient keeps the recent trace list bounded and privacy-filtered", async () => {
+  const payload = {
+    ...partialPayload,
+    traceList: {
+      kind: "observed",
+      partial: true,
+      attempts: [
+        {
+          spanId: "0123456789abcdef",
+          timestamp: "2026-10-07T12:00:00.000Z",
+          durationNs: 1_250_000,
+          statusCode: "ERROR",
+          provider: "openai",
+          model: "gpt-6-luna",
+          role: "orchestrator",
+          spanAttributes: { prompt: "must not reach the Usage page" }
+        }
+      ]
+    }
+  };
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(payload)
+  });
+
+  const result = await client.query({ range: "24H", values: {} });
+  assert.equal(result.kind, "ok");
+  if (result.kind !== "ok") return;
+  assert.deepEqual(result.data.traceList, {
+    kind: "observed",
+    partial: true,
+    attempts: [
+      {
+        spanId: "0123456789abcdef",
+        timestamp: "2026-10-07T12:00:00.000Z",
+        durationNs: 1_250_000,
+        statusCode: "ERROR",
+        provider: "openai",
+        model: "gpt-6-luna",
+        role: "orchestrator"
+      }
+    ]
+  });
+  assert.equal(JSON.stringify(result.data.traceList).includes("must not reach"), false);
+});
+
+test("OpenLITUsageClient keeps authentication and HTTP failures explicit", async () => {
   const unauthorized = new OpenLITUsageClient({
     baseUrl: "http://openlit.local",
     serviceToken: "secret",
@@ -112,12 +200,42 @@ test("OpenLITUsageClient keeps authentication and transport failures explicit", 
     status: 401
   });
 
-  const unavailable = new OpenLITUsageClient({
+  const unreachable = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => {
+      throw new TypeError("connection refused");
+    }
+  });
+  assert.deepEqual(await unreachable.query(selection), { kind: "unreachable" });
+
+  const invalidSchema = new OpenLITUsageClient({
     baseUrl: "http://openlit.local",
     serviceToken: "secret",
     fetchImpl: async () => response({ schema: "wrong" })
   });
-  assert.deepEqual(await unavailable.query(selection), { kind: "unreachable" });
+  assert.deepEqual(await invalidSchema.query(selection), {
+    kind: "invalid-response"
+  });
+
+  const previousSchema = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () =>
+      response({ ...partialPayload, schema: "autodev-openlit-usage-v1" })
+  });
+  assert.deepEqual(await previousSchema.query(selection), {
+    kind: "invalid-response"
+  });
+
+  const invalidJson = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => new Response("upstream html")
+  });
+  assert.deepEqual(await invalidJson.query(selection), {
+    kind: "invalid-response"
+  });
 });
 
 test("OpenLITUsageClient rejects duplicate widgets and keeps invalid ratios unavailable", async () => {
@@ -129,7 +247,7 @@ test("OpenLITUsageClient rejects duplicate widgets and keeps invalid ratios unav
     fetchImpl: async () => response(duplicate)
   });
   assert.deepEqual(await duplicateClient.query(selection), {
-    kind: "unreachable"
+    kind: "invalid-response"
   });
 
   const invalidRatio = structuredClone(partialPayload);
@@ -159,6 +277,45 @@ test("OpenLITUsageClient rejects malformed metric rows without fabricating value
   if (result.kind !== "ok") return;
   assert.equal(result.data.metrics.logicalRequests, null);
   assert.equal(result.data.metrics.physicalAttempts, null);
+});
+
+test("OpenLITUsageClient distinguishes an unpriced empty cost sum from observed zero cost", async () => {
+  const emptyCost = structuredClone(partialPayload);
+  const emptyWidget = emptyCost.widgets.find(
+    (widget) => widget.key === "estimated-cost"
+  );
+  assert.ok(emptyWidget);
+  emptyWidget.observed = false;
+  emptyWidget.rows = [{ estimated_cost: "0", costed_attempts: "0" }];
+
+  const emptyClient = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(emptyCost)
+  });
+  const emptyResult = await emptyClient.query(selection);
+  assert.equal(emptyResult.kind, "ok");
+  if (emptyResult.kind === "ok") {
+    assert.equal(emptyResult.data.metrics.estimatedCostUsd, null);
+  }
+
+  const freeCost = structuredClone(emptyCost);
+  const freeWidget = freeCost.widgets.find(
+    (widget) => widget.key === "estimated-cost"
+  );
+  assert.ok(freeWidget);
+  freeWidget.observed = true;
+  freeWidget.rows = [{ estimated_cost: "0", costed_attempts: "2" }];
+  const freeClient = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(freeCost)
+  });
+  const freeResult = await freeClient.query(selection);
+  assert.equal(freeResult.kind, "ok");
+  if (freeResult.kind === "ok") {
+    assert.equal(freeResult.data.metrics.estimatedCostUsd, 0);
+  }
 });
 
 test("OpenLITUsageClient fetches a bounded, typed trace summary with server credentials", async () => {

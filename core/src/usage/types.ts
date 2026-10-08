@@ -1,5 +1,13 @@
-export type UsageVariableId =
-  "workspace" | "provider" | "model" | "agent" | "skill";
+/** Canonical, bounded filter axes shared by Console and Data adapters. */
+export const USAGE_VARIABLE_IDS = [
+  "workspace",
+  "provider",
+  "model",
+  "agent",
+  "skill"
+] as const;
+
+export type UsageVariableId = (typeof USAGE_VARIABLE_IDS)[number];
 
 export interface UsageVariable {
   readonly id: UsageVariableId;
@@ -23,7 +31,11 @@ export type UsageWidgetId =
   | "mcp-calls"
   | "mcp-duration"
   | "mcp-errors"
-  | "mcp-by-tool";
+  | "mcp-by-tool"
+  | "attempt-errors-by-provider"
+  | "context-compactions"
+  | "skill-events-by-event"
+  | "estimated-cost";
 
 export interface UsageWidgetConfig {
   readonly id: UsageWidgetId;
@@ -133,17 +145,25 @@ export function isHistoricalUsageSelection(
   return selection.range !== "ACTIVE_SESSIONS";
 }
 
-/** Logical-request, physical-attempt, and MCP observations from the Usage board. */
+/** Historical request, pricing, reliability, skill, and MCP Usage evidence. */
 export interface UsageMetricsData {
   readonly logicalRequests: number | null;
   readonly totalInputTokens: number | null;
   readonly totalOutputTokens: number | null;
   readonly cacheReadRate: number | null;
   readonly p95LatencyMs: number | null;
+  /** OpenLIT's pricing-catalog estimate; not a provider billing statement. */
+  readonly estimatedCostUsd: number | null;
   readonly physicalAttempts: number | null;
   readonly mcpCalls: number | null;
   readonly p95McpDurationMs: number | null;
   readonly mcpErrors: number | null;
+  readonly failedAttempts: number | null;
+  readonly attemptErrorsByProvider:
+    readonly { readonly provider: string; readonly count: number }[] | null;
+  readonly contextCompactions: number | null;
+  readonly skillEventsByEvent:
+    readonly { readonly event: string; readonly count: number }[] | null;
   readonly requestsByRole:
     readonly { readonly role: string; readonly count: number }[] | null;
   readonly attemptsByProvider:
@@ -155,6 +175,7 @@ export interface UsageMetricsData {
 export interface UsageSnapshot {
   readonly metrics: UsageMetricsData;
   readonly filterOptions: UsageFilterOptions;
+  readonly traceList: UsageTraceList;
 }
 const TRACE_ID_PATTERN = /^[0-9a-f]{32}$/iu;
 const SPAN_ID_PATTERN = /^[0-9a-f]{16}$/iu;
@@ -179,6 +200,29 @@ export function isOpenTelemetrySpanId(value: unknown): value is string {
 }
 
 export type UsageTraceStatus = "OK" | "ERROR" | "UNSET" | "UNKNOWN";
+
+/** Safe, bounded trace activity for the Usage history table. */
+export interface UsageTraceAttempt {
+  readonly spanId: string;
+  readonly timestamp: string;
+  readonly durationNs: number;
+  readonly statusCode: UsageTraceStatus;
+  readonly provider: string | null;
+  readonly model: string | null;
+  readonly role: string | null;
+}
+
+export type UsageTraceList =
+  | { readonly kind: "unavailable" }
+  | {
+      readonly kind: "not-applicable";
+      readonly reason: "skill-filter" | "unsupported-filter";
+    }
+  | {
+      readonly kind: "observed";
+      readonly attempts: readonly UsageTraceAttempt[];
+      readonly partial: boolean;
+    };
 
 /** Privacy-filtered span metadata returned by the fixed Usage trace reader. */
 export interface UsageTraceSpan {

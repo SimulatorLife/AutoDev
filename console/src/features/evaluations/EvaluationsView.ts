@@ -33,6 +33,7 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
+import { TraceStatus } from "../../components/traces/TraceStatus.ts";
 import {
   FIELD_CONTROL_CLASS,
   FIELD_GROUP_CLASS
@@ -42,7 +43,6 @@ import {
   MONO_META_CLASS,
   MONO_VALUE_CLASS,
   MUTED_META_CLASS,
-  MUTED_TEXT_CLASS,
   SECTION_LABEL_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
@@ -682,19 +682,8 @@ function traceColumns(
       id: "status",
       header: "Span status",
       weight: 120,
-      cell: (span) => {
-        const style =
-          span.statusCode === "ERROR"
-            ? "text-error"
-            : span.statusCode === "OK"
-              ? "text-success"
-              : MUTED_TEXT_CLASS;
-        return React.createElement(
-          "span",
-          { className: `font-mono text-xs ${style}` },
-          span.statusCode === "UNSET" ? NOT_OBSERVED_LABEL : span.statusCode
-        );
-      }
+      cell: (span) =>
+        React.createElement(TraceStatus, { statusCode: span.statusCode })
     }
   ];
 }
@@ -801,6 +790,7 @@ function renderMissingResult(
   return React.createElement(
     "div",
     {
+      role: "alert",
       // The same arrival point the drawer is, for the same reason. A row link
       // names `#evaluation-detail-drawer` because the drawer is what it expects
       // to open; when a filter or the read's window means there is no run to

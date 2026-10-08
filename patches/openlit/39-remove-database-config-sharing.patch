@@ -1929,3 +1929,16 @@ index 0be1de73..8e153c9a 100644
  	{
  		regex: /^\/settings\/api-keys$/,
  		getTitle: () => "Api Keys",
+diff --git a/src/client/prisma/seed-lib.js b/src/client/prisma/seed-lib.js
+index 794b8d7c..e9e7d85d 100644
+--- a/src/client/prisma/seed-lib.js
++++ b/src/client/prisma/seed-lib.js
+@@ -183,8 +183,5 @@ async function upsertDefaultDatabaseConfig(prisma, { userId, projectId, initDb }
+ 			userId,
+ 			databaseConfigId: dbConfig.id,
+ 			isCurrent: true,
+-			canEdit: true,
+-			canDelete: true,
+-			canShare: true,
+ 		},
+ 	});

@@ -1,9 +1,9 @@
 diff --git a/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
 new file mode 100644
-index 00000000..2efcb21e
+index 00000000..f6326cec
 --- /dev/null
 +++ b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
-@@ -0,0 +1,289 @@
+@@ -0,0 +1,369 @@
 +import dashboard from "@/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json";
 +
 +type SeedWidget = {
@@ -43,6 +43,7 @@ index 00000000..2efcb21e
 +			"provider",
 +			"model",
 +			"agent",
++			"skill",
 +		]);
 +		expect(
 +			dashboard.variables?.find((variable) => variable.id === "model"),
@@ -292,6 +293,85 @@ index 00000000..2efcb21e
 +			},
 +		]);
 +	});
++
++	it("counts provider errors from failed physical attempt spans", () => {
++		const widget = widgets.find(
++			(candidate) => candidate.title === "Failed attempts by provider",
++		);
++		expect(widget).toBeDefined();
++		expect(widget?.properties.optInVariables).toEqual([
++			"workspace",
++			"provider",
++			"model",
++			"agent",
++		]);
++		const query = widget?.config.structuredQuery?.query;
++		expect(query?.filters).toEqual(
++			expect.arrayContaining([
++				expect.objectContaining({ key: "service.name", value: "autodev-router" }),
++				expect.objectContaining({ target: "spanName", value: "gen_ai.client_operation" }),
++				{ target: "status", op: "eq", value: "ERROR" },
++			]),
++		);
++		expect(query?.groupBy).toEqual(["gen_ai.provider.name"]);
++		expect(query?.aggregations).toEqual([{ fn: "count", as: "failures" }]);
++		expect(query?.limit).toBe(20);
++	});
++
++	it("counts only logical requests carrying a source-confirmed compaction signal", () => {
++		const widget = widgets.find((candidate) => candidate.title === "Context compactions");
++		expect(widget).toBeDefined();
++		expect(widget?.properties.optInVariables).toEqual(["workspace", "model", "agent"]);
++		const query = widget?.config.structuredQuery?.query;
++		expect(query?.filters).toEqual(
++			expect.arrayContaining([
++				expect.objectContaining({ key: "service.name", value: "autodev-router" }),
++				expect.objectContaining({ target: "spanName", value: "autodev.routed_request" }),
++				{ target: "attribute", scope: "span", key: "autodev.request_kind", op: "eq", value: "compaction" },
++				{ target: "status", op: "eq", value: "OK" },
++			]),
++		);
++		expect(query?.aggregations).toEqual([{ fn: "count", as: "compactions" }]);
++	});
++
++	it("groups skill observations by event and filters by bounded skill name", () => {
++		const widget = widgets.find((candidate) => candidate.title === "Skill events by event");
++		expect(widget).toBeDefined();
++		expect(widget?.properties.optInVariables).toEqual(["workspace", "agent", "skill"]);
++		const query = widget?.config.structuredQuery?.query;
++		expect(query?.filters).toEqual(
++			expect.arrayContaining([
++				expect.objectContaining({ key: "service.name", value: "autodev-router" }),
++				expect.objectContaining({ target: "spanName", value: "autodev.skill" }),
++			]),
++		);
++		expect(query?.groupBy).toEqual(["autodev.skill.event"]);
++		expect(query?.aggregations).toEqual([{ fn: "count", as: "events" }]);
++		expect(query?.limit).toBe(10);
++	});
++
++	it("labels OpenLIT pricing attributes as an estimate rather than billed cost", () => {
++		const widget = widgets.find((candidate) => candidate.title === "Estimated GenAI cost");
++		expect(widget).toBeDefined();
++		expect(widget?.description).toMatch(/pricing estimate/i);
++		expect(widget?.description).toMatch(/not a provider billing statement/i);
++		expect(widget?.properties.value).toBe("0.estimated_cost");
++		expect(widget?.properties.prefix).toBe("$");
++		expect(widget?.properties.observationCountPath).toBe("0.costed_attempts");
++		const query = widget?.config.structuredQuery?.query;
++		expect(query?.filters).toEqual(
++			expect.arrayContaining([
++				expect.objectContaining({ key: "service.name", value: "autodev-router" }),
++				expect.objectContaining({ target: "spanName", value: "gen_ai.client_operation" }),
++				expect.objectContaining({ key: "gen_ai.usage.cost", op: "exists" }),
++			]),
++		);
++		expect(query?.aggregations).toEqual([
++			{ fn: "sum", field: "gen_ai.usage.cost", as: "estimated_cost" },
++			{ fn: "count", as: "costed_attempts" },
++		]);
++	});
++
 +});
 diff --git a/src/client/src/__tests__/lib/platform/manage-dashboard/derived-value.test.ts b/src/client/src/__tests__/lib/platform/manage-dashboard/derived-value.test.ts
 new file mode 100644
@@ -338,10 +418,10 @@ index 00000000..fed110ec
 +});
 diff --git a/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json b/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
 new file mode 100644
-index 00000000..4f18924d
+index 00000000..d8ec8252
 --- /dev/null
 +++ b/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
-@@ -0,0 +1,717 @@
+@@ -0,0 +1,977 @@
 +{
 +  "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b001",
 +  "title": "Usage",
@@ -388,6 +468,16 @@ index 00000000..4f18924d
 +      "signal": "traces",
 +      "scope": "span",
 +      "key": "autodev.agent.role",
++      "multi": true,
++      "supportsAll": true,
++      "defaultValues": []
++    },
++    {
++      "id": "skill",
++      "label": "Skill",
++      "signal": "traces",
++      "scope": "span",
++      "key": "autodev.skill.name",
 +      "multi": true,
 +      "supportsAll": true,
 +      "defaultValues": []
@@ -974,6 +1064,228 @@ index 00000000..4f18924d
 +          }
 +        }
 +      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b108": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b108",
++      "title": "Failed attempts by provider",
++      "description": "Count of physical provider/model attempt spans (service.name=autodev-router, gen_ai.client_operation) whose span status is ERROR, grouped by gen_ai.provider.name. This counts failed attempts, not failed logical requests; a logical request that falls back across providers can contribute more than one failed attempt.",
++      "type": "BAR_CHART",
++      "properties": {
++        "xAxis": "g0",
++        "yAxis": "failures",
++        "color": "#dc2626",
++        "optInVariables": [
++          "workspace",
++          "provider",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "gen_ai.client_operation"
++              },
++              {
++                "target": "status",
++                "op": "eq",
++                "value": "ERROR"
++              }
++            ],
++            "groupBy": [
++              "gen_ai.provider.name"
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "failures"
++              }
++            ],
++            "limit": 20
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b109": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b109",
++      "title": "Context compactions",
++      "description": "Count of successfully completed logical routed-request spans (service.name=autodev-router, autodev.routed_request) whose autodev.request_kind attribute is compaction, a value the router only attaches after parsing a source-confirmed compaction signal. Provider is intentionally not an opt-in filter because the signal is attached to the logical request, not to a physical provider attempt.",
++      "type": "STAT_CARD",
++      "properties": {
++        "value": "0.compactions",
++        "color": "#0ea5e9",
++        "optInVariables": [
++          "workspace",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "autodev.routed_request"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "autodev.request_kind",
++                "op": "eq",
++                "value": "compaction"
++              },
++              {
++                "target": "status",
++                "op": "eq",
++                "value": "OK"
++              }
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "compactions"
++              }
++            ]
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b110": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b110",
++      "title": "Skill events by event",
++      "description": "Count of autodev.skill spans (service.name=autodev-router) grouped by the accepted autodev.skill.event enum (exposed, used, unavailable, error). Skill names are intentionally excluded from this grouping and from every metric dimension; the skill opt-in variable filters span-for-span on the bounded autodev.skill.name attribute instead of appearing as a chart axis. Provider and requested-model are not opt-in filters because skill spans do not carry those attributes.",
++      "type": "BAR_CHART",
++      "properties": {
++        "xAxis": "g0",
++        "yAxis": "events",
++        "color": "#F36C06",
++        "optInVariables": [
++          "workspace",
++          "agent",
++          "skill"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "autodev.skill"
++              }
++            ],
++            "groupBy": [
++              "autodev.skill.event"
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "events"
++              }
++            ],
++            "limit": 10
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b111": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b111",
++      "title": "Estimated GenAI cost",
++      "description": "OpenLIT's gen_ai.usage.cost value is a pricing-catalog estimate for AutoDev router attempts, not a provider billing statement. The value is observed only when a costed attempt exists.",
++      "type": "STAT_CARD",
++      "properties": {
++        "value": "0.estimated_cost",
++        "prefix": "$",
++        "color": "#0ea5e9",
++        "optInVariables": [
++          "workspace",
++          "provider",
++          "model",
++          "agent"
++        ],
++        "observationCountPath": "0.costed_attempts"
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "gen_ai.client_operation"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "gen_ai.usage.cost",
++                "op": "exists"
++              }
++            ],
++            "aggregations": [
++              {
++                "fn": "sum",
++                "field": "gen_ai.usage.cost",
++                "as": "estimated_cost"
++              },
++              {
++                "fn": "count",
++                "as": "costed_attempts"
++              }
++            ]
++          }
++        }
++      }
 +    }
 +  },
 +  "tags": "[\"autodev\",\"usage\"]",
@@ -1055,6 +1367,34 @@ index 00000000..4f18924d
 +        "y": 6,
 +        "w": 4,
 +        "h": 2
++      },
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b108",
++        "x": 0,
++        "y": 8,
++        "w": 4,
++        "h": 2
++      },
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b109",
++        "x": 0,
++        "y": 10,
++        "w": 1,
++        "h": 1
++      },
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b110",
++        "x": 0,
++        "y": 11,
++        "w": 4,
++        "h": 2
++      },
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b111",
++        "x": 1,
++        "y": 10,
++        "w": 1,
++        "h": 1
 +      }
 +    ]
 +  }

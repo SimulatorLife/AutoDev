@@ -1,0 +1,17 @@
+diff --git a/src/client/src/app/layout.tsx b/src/client/src/app/layout.tsx
+--- a/src/client/src/app/layout.tsx
++++ b/src/client/src/app/layout.tsx
+@@ -14,9 +14,13 @@
+ export const metadata: Metadata = {
+ 	title: "AutoDev | Observability and Control Console",
+ 	description:
+ 		"Unified control and observability console for AutoDev.",
+ };
+ 
++// Retained telemetry pages read request-scoped search parameters.
++// Render them at request time rather than prerendering into the image.
++export const dynamic = "force-dynamic";
++
+ export default function RootLayout({
+ 	children,
+ }: {

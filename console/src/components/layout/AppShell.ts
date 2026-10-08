@@ -34,7 +34,7 @@ export function AppShell({
         // scrollbar gutter, so `w-screen` made the shell wider than the space
         // the document actually had and gave every page a 15px horizontal
         // scroll at widths where a scrollbar is shown.
-        "flex h-screen w-full bg-background text-fg overflow-hidden font-sans"
+        "relative flex h-screen w-full bg-background text-fg overflow-hidden font-sans"
     },
     // Before the nav, so it is the first stop in the tab order rather than the
     // fifteenth.

@@ -72,16 +72,14 @@ export const ICON_PATHS = {
     "M18 9a9 9 0 0 1-9 9"
   ],
   chevronDown: ["M6 9l6 6 6-6"],
+  chevronsLeft: ["M11 17l-5-5 5-5", "M18 17l-5-5 5-5"],
+  chevronsRight: ["M13 17l5-5-5-5", "M6 17l5-5-5-5"],
   // Role identity is carried by shape, not hue: the target state requires a
   // consistent white-outline icon on every provider role so a reader tells roles
   // apart without relying on colour. There is deliberately no crown for the
   // Default role -- a crown would make one role a special case in the same
   // column where the other three are peers.
-  roleDefault: [
-    "M4 4h16v12H4z",
-    "M9 20h6",
-    "M12 16v4"
-  ],
+  roleDefault: ["M4 4h16v12H4z", "M9 20h6", "M12 16v4"],
   roleSmart: ["M13 2 3 14h9l-1 8 10-12h-9l1-8z"],
   roleOrchestrator: [
     "M18 2a3 3 0 1 0 0 6 3 3 0 0 0 0-6",

@@ -16,7 +16,7 @@ import { BarChart } from "../../components/charts/BarChart.ts";
 import { FilterBar } from "../../components/filters/FilterBar.ts";
 import { FilterNotice } from "../../components/filters/FilterNotice.ts";
 import type { UnappliedFilter } from "../../components/filters/resolve-filter.ts";
-import { SelectField } from "../../components/forms/SelectField.ts";
+import { AutoSubmitSelectField } from "../../components/forms/AutoSubmitSelectField.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
@@ -29,9 +29,11 @@ import {
   type MemoryTab
 } from "./memory-list-url.ts";
 import { MEMORY_STATUS_LABEL, MEMORY_STATUS_ORDER } from "./memory-status.ts";
-import type { ControlApiMemorySessionOutcomeProjection } from "../../lib/server/control-api.ts";
 import { MemoryCohortsView } from "./MemoryCohortsView.ts";
-import { MemoryExperiencesView } from "./MemoryExperiencesView.ts";
+import {
+  MemoryExperiencesView,
+  type MemoryExperiencesViewProps
+} from "./MemoryExperiencesView.ts";
 import {
   type MemoryRecordHistory,
   MemoryRecordsView
@@ -105,10 +107,7 @@ export interface MemoryViewProps {
    * read that failed would invite a second outcome the Runtime would conflict
    * with.
    */
-  readonly sessionOutcome?:
-    | ControlApiMemorySessionOutcomeProjection["report"]
-    | null
-    | undefined;
+  readonly sessionOutcome?: MemoryExperiencesViewProps["sessionOutcome"];
   /** The cohort reads are scoped by repository as well as workspace. */
   readonly repositoryId: string;
   readonly workspaces: readonly WorkspaceEntry[];
@@ -224,11 +223,10 @@ export function MemoryView({
                 { name: "until", value: listScope.until },
                 { name: "limit", value: String(listScope.limit) }
               ],
-              submitLabel: "Apply scope",
-              submitTestId: "memory-workspace-apply",
+              submitMode: "on-change",
               dataAttributes: { "data-memory-workspace-form": "true" }
             },
-            React.createElement(SelectField, {
+            React.createElement(AutoSubmitSelectField, {
               name: "workspaceId",
               label: "Workspace:",
               defaultValue: listScope.workspaceId,

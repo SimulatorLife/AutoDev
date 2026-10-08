@@ -24,16 +24,18 @@ import { FIELD_CONTROL_CLASS } from "../ui/field-classes.ts";
  * - an accessible name, so the form is a named landmark rather than an
  *   anonymous one;
  * - the query state that must survive the submit (`tab`, workspace scope);
- * - the submit button, from the shared `Button` vocabulary;
+ * - the explicit submit button from the shared Button vocabulary, or no
+ *   button when a single-choice child owns immediate submission;
  * - the result-count summary, aligned to the trailing edge.
  *
  * It deliberately does NOT own the controls themselves. A filter bar holds
  * selects, a free-text query, and occasionally a custom range, and those are
  * real form controls that belong to the feature. Callers pass them as children.
  *
- * There is no client-side filtering and no JS: filtering is a normal GET
+ * Filtering is never performed client-side: both modes are normal GET
  * navigation, so every filtered view stays URL-addressable, bookmarkable, and
- * shareable.
+ * shareable. Explicit-submit mode is the default; on-change mode is reserved
+ * for one safe single-choice control.
  */
 
 /**
@@ -71,8 +73,13 @@ export interface FilterBarProps {
    */
   readonly summary?: React.ReactNode | undefined;
   /**
-   * Submit label. The vocabulary is shared deliberately: one primary action
-   * per bar, named the same way on every surface.
+   * Explicit submit is the default for grouped filters. Use on-change only
+   * when a single-choice child submits the complete GET form immediately.
+   */
+  readonly submitMode?: "explicit" | "on-change" | undefined;
+  /**
+   * Label for the explicit submit button. The vocabulary is shared deliberately:
+   * one primary action per bar, named the same way on every surface.
    */
   readonly submitLabel?: string | undefined;
   /** Marks the submit control for tests and stable browser assertions. */
@@ -96,6 +103,7 @@ export function FilterBar({
   preserved,
   children,
   summary,
+  submitMode = "explicit",
   submitLabel = "Apply filters",
   submitTestId,
   dataAttributes
@@ -107,6 +115,9 @@ export function FilterBar({
       ...(action === undefined ? {} : { action }),
       "aria-label": label,
       className: FILTER_BAR_CLASS,
+      ...(submitMode === "on-change"
+        ? { "data-submit-mode": "on-change" }
+        : {}),
       ...dataAttributes
     },
     ...(preserved ?? []).map((field) =>
@@ -118,11 +129,13 @@ export function FilterBar({
       })
     ),
     children,
-    React.createElement(
-      Button,
-      { type: "submit", variant: "primary", testId: submitTestId },
-      submitLabel
-    ),
+    submitMode === "explicit"
+      ? React.createElement(
+          Button,
+          { type: "submit", variant: "primary", testId: submitTestId },
+          submitLabel
+        )
+      : null,
     summary === undefined
       ? null
       : React.createElement(

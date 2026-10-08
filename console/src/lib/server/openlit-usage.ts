@@ -3,12 +3,13 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import type {
-  UsageCustomRange,
-  UsageFilterSelection,
-  UsageHistoricalTimeRange,
-  UsageTimeRange,
-  UsageVariableId
+import {
+  USAGE_VARIABLE_IDS,
+  type UsageCustomRange,
+  type UsageFilterSelection,
+  type UsageHistoricalTimeRange,
+  type UsageTimeRange,
+  type UsageVariableId
 } from "@simulatorlife/autodev-core";
 import {
   type OpenLITTraceResult,
@@ -27,12 +28,6 @@ const VALID_RANGES = new Set<UsageTimeRange>([
   "CUSTOM",
   "ACTIVE_SESSIONS"
 ]);
-const FILTER_IDS: readonly UsageVariableId[] = [
-  "workspace",
-  "provider",
-  "model",
-  "agent"
-];
 
 export interface OpenLITUsageConfig {
   readonly baseUrl: string;
@@ -128,7 +123,7 @@ export function usageSelectionFromSearchParams(
     ? (rawRange as UsageTimeRange)
     : "24H";
   const values: Partial<Record<UsageVariableId, readonly string[]>> = {};
-  for (const id of FILTER_IDS) {
+  for (const id of USAGE_VARIABLE_IDS) {
     const raw = searchParams[id];
     const entries = Array.isArray(raw) ? raw : raw === undefined ? [] : [raw];
     const normalized = [

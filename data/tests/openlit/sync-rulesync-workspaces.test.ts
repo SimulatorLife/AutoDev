@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { ConfigRepository } from "../../src/config/config-repository.ts";
 import {
+  buildPrismaSyncScript,
   loadRulesyncWorkspaces,
   syncRulesyncWorkspaces
 } from "../../src/openlit/sync-rulesync-workspaces.ts";
@@ -38,6 +39,17 @@ test("Data's workspace catalog is the single workspace identity and branch sourc
   assert.ok(
     catalog.workspaces.every((workspace) => workspace.agentRoles === null)
   );
+});
+
+test("OpenLIT workspace sync writes only the current DatabaseConfigUser schema", () => {
+  const script = buildPrismaSyncScript(expectedWorkspaceIds);
+  const linkStart = script.indexOf("await prisma.databaseConfigUser.create(");
+  assert.notEqual(linkStart, -1);
+  const linkEnd = script.indexOf("\n      });", linkStart);
+  assert.notEqual(linkEnd, -1);
+  const databaseConfigUserCreate = script.slice(linkStart, linkEnd);
+  assert.match(databaseConfigUserCreate, /isCurrent: true/u);
+  assert.doesNotMatch(databaseConfigUserCreate, /can(?:Edit|Share|Delete):/u);
 });
 
 test("OpenLIT workspace projection consumes Data's canonical workspace ids", () => {

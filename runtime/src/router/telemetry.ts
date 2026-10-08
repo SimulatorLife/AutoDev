@@ -982,6 +982,26 @@ export interface LogicalRequestSpanOptions {
 
 type LogicalSpanAttributes = Record<string, string | number | boolean>;
 
+/**
+ * Copy the bounded request context onto each operation that Usage may query
+ * independently. The logical request remains the authority; child attempts
+ * carry the same safe workspace/role span attributes so a provider breakdown
+ * can honor those filters without joining across spans or widening metric
+ * dimensions.
+ */
+function addAutoDevSpanContext(
+  attributes: LogicalSpanAttributes,
+  context: {
+    readonly workspace?: { readonly key?: string | null } | null | undefined;
+    readonly role?: string | null | undefined;
+  }
+): void {
+  const workspace = safeAutoDevWorkspaceKey(context.workspace?.key);
+  if (workspace) attributes[ATTR_AUTODEV_WORKSPACE] = workspace;
+  const role = safeAutoDevAgentRole(context.role);
+  if (role) attributes[ATTR_AUTODEV_AGENT_ROLE] = role;
+}
+
 function addCompactionSpanAttributes(
   attributes: LogicalSpanAttributes,
   signal: ParsedCompactionSignal
@@ -1012,10 +1032,7 @@ function logicalRequestSpanData(options: LogicalRequestSpanOptions): {
     "autodev.router.subject": safeTrim(options.subject) ?? "request",
     "autodev.router.provider_role": options.providerRole
   };
-  const workspaceKey = safeAutoDevWorkspaceKey(options.workspace?.key);
-  if (workspaceKey) attributes["autodev.workspace"] = workspaceKey;
-  const role = safeAutoDevAgentRole(options.role);
-  if (role) attributes["autodev.agent.role"] = role;
+  addAutoDevSpanContext(attributes, options);
   const model = safeModelName(options.requestedModel);
   if (model) attributes["autodev.requested_model"] = model;
   if (options.memoryMode) {
@@ -1204,6 +1221,7 @@ export function startAttemptSpan(options: AttemptSpanOptions): Span {
     "autodev.router.selection": safeTrim(options.selection) ?? "primary",
     "autodev.router.attempt_number": options.attemptNumber
   };
+  addAutoDevSpanContext(attributes, options);
   const provider = safeProviderName(options.provider);
   if (provider) attributes[ATTR_GEN_AI_PROVIDER_NAME] = provider;
   const model = safeModelName(options.model);

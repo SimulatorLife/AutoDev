@@ -9,8 +9,8 @@
  *
  * So these tests read the markup: which `<form>` a given button submits, what
  * that form will send, and what each select offers. Parsing strings rather than
- * mounting a DOM is deliberate — the Console ships no client JavaScript, so the
- * markup *is* the contract, and there is no behaviour for a browser to add.
+ * mounting a DOM is deliberate — these Memory views are server-rendered, so
+ * the markup *is* the form contract, and no browser behavior is needed here.
  *
  * One copy, because three files grew their own. A helper that finds options in
  * one form and the same helper that finds options in a whole page are the same

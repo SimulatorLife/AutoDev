@@ -6,10 +6,9 @@ import {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import { Button } from "../../components/forms/Button.ts";
-import { SelectField } from "../../components/forms/SelectField.ts";
+import { AutoSubmitSelectField } from "../../components/forms/AutoSubmitSelectField.ts";
 import { Icon, type IconName } from "../../components/icons/Icon.ts";
-import { MUTED_TEXT_CLASS } from "../../components/ui/text-classes.ts";
+import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 
 /**
  * The Roles column: the four fixed roles, each with its priority and its model.
@@ -20,8 +19,9 @@ import { MUTED_TEXT_CLASS } from "../../components/ui/text-classes.ts";
  * so splitting them across two forms would let one save while the other
  * silently failed, leaving a row that claims a combination nobody chose.
  *
- * The Console is server-rendered, so each control is a native element inside a
- * form with its own submit button rather than a control that applies on change.
+ * Both selections submit this complete native form immediately. The Runtime
+ * remains authoritative: the redirect renders the confirmed assignment, and
+ * the shared failure notice explains an unconfirmed write.
  */
 
 const ROLE_LABELS: Readonly<Record<ProviderRole, string>> = {
@@ -42,7 +42,9 @@ const ROLE_ICONS = {
   smart: { name: "roleSmart" },
   orchestrator: { name: "roleOrchestrator" },
   subagent: { name: "roleSubagent" }
-} as const satisfies Readonly<Record<ProviderRole, { readonly name: IconName }>>;
+} as const satisfies Readonly<
+  Record<ProviderRole, { readonly name: IconName }>
+>;
 
 /**
  * Priority is a member of the enum rather than a separate enablement flag, so
@@ -51,8 +53,7 @@ const ROLE_ICONS = {
  * should be visible at a glance, while P1, P2 and P3 share one neutral style so
  * they are not read as different kinds of thing.
  */
-const DISABLED_STYLE_CLASS =
-  "border-warning/50 bg-warning/15 text-warning";
+const DISABLED_STYLE_CLASS = "border-warning/50 bg-warning/15 text-warning";
 
 /**
  * The models a role may be set to, deduplicated and ordered.
@@ -84,9 +85,9 @@ function priorityOptionSelected(
 function availableModels(
   provider: ControlApiProviderRecord
 ): readonly string[] {
-  return [
-    ...new Set(provider.models.map(({ model }) => model.trim()))
-  ].sort((left, right) => MODEL_COLLATOR.compare(left, right));
+  return [...new Set(provider.models.map(({ model }) => model.trim()))].sort(
+    (left, right) => MODEL_COLLATOR.compare(left, right)
+  );
 }
 
 /**
@@ -111,7 +112,7 @@ function RoleModelSelect({
   readonly disabledReason: string | undefined;
 }): React.JSX.Element {
   const roleDisabled = assignment.priority === "disabled";
-  return React.createElement(SelectField, {
+  return React.createElement(AutoSubmitSelectField, {
     // Scoped per role: four role forms submit `model` from the same page, so
     // sharing the default id would leave every label pointing at whichever
     // control the DOM resolved first.
@@ -119,12 +120,9 @@ function RoleModelSelect({
     name: "model",
     label: `${ROLE_LABELS[role]} model`,
     hideLabel: true,
-    // A fixed width rather than `flex-1`: the model names the Runtime reports
-    // are short enough to fit, and letting this select grow pushed the Roles
-    // column out to roughly 450px so that Agent Limits was cramped against the
-    // right edge. The table's own floor then exceeded the widest layout the
-    // Console produces, which is what makes a table scroll at full desktop
-    // width. `min-w-0` still lets it shrink on a narrow viewport.
+    // The width matches the model track in RoleRow's aligned grid. The shared
+    // table preserves this budget at narrow viewports and scrolls rather than
+    // letting the select push its row out of alignment.
     className: "min-w-0 w-52",
     testId: `role-model-${provider}-${role}`,
     dataAttributes: {
@@ -171,7 +169,7 @@ function RoleRow({
     {
       action: `/api/providers/${encodeURIComponent(provider)}/roles/${encodeURIComponent(role)}`,
       method: "POST",
-      className: "flex min-w-0 flex-wrap items-center gap-2",
+      className: "grid min-w-0 grid-cols-[6rem_6rem_13rem] items-center gap-2",
       "data-role-form": `${provider}-${role}`
     },
     React.createElement("input", {
@@ -192,7 +190,7 @@ function RoleRow({
     React.createElement(
       "span",
       {
-        className: `flex shrink-0 items-center gap-1.5 text-xs ${MUTED_TEXT_CLASS}`,
+        className: "flex min-w-0 items-center gap-1.5 " + MUTED_META_CLASS,
         "data-role-label": role
       },
       React.createElement(Icon, {
@@ -202,12 +200,12 @@ function RoleRow({
       }),
       ROLE_LABELS[role]
     ),
-    React.createElement(SelectField, {
+    React.createElement(AutoSubmitSelectField, {
       id: `select-priority-${provider}-${role}`,
       name: "priority",
       label: `${ROLE_LABELS[role]} priority`,
       hideLabel: true,
-      className: "shrink-0",
+      className: "min-w-0 w-24",
       testId: `role-priority-${provider}-${role}`,
       dataAttributes: {
         "data-role-priority": role,
@@ -263,31 +261,7 @@ function RoleRow({
                 ? assignment.model
                 : ""
           })
-        ]),
-    React.createElement(
-      Button,
-      {
-        type: "submit",
-        className: "shrink-0 px-2 py-1 text-xs",
-        // A globally disabled provider disables this select too, so the
-        // submission would carry neither `priority` nor `model` and the route
-        // would refuse it. A button that can only ever fail is not an
-        // affordance; it renders disabled with the reason instead, the same
-        // rule the row grip follows.
-        ...(blockedReason === undefined
-          ? {}
-          : { disabled: true }),
-        ariaLabel: `Apply ${ROLE_LABELS[role]} settings for ${provider}`,
-        // `Button` has no `disabledReason` prop, so a disabled Apply carries
-        // its reason the way the provider Disable control does: on the title,
-        // which is also the accessible name a screen reader announces.
-        title:
-          blockedReason ??
-          `Apply ${ROLE_LABELS[role]} settings for ${provider}`,
-        dataAttributes: { "data-apply-role": `${provider}-${role}` }
-      },
-      "Apply"
-    )
+        ])
   );
 }
 

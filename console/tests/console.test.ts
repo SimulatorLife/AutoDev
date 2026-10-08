@@ -16,15 +16,16 @@ import {
   CANONICAL_NAV_GROUPS,
   CANONICAL_NAVIGATION,
   type CanonicalNavSection,
+  type ControlApiAgentDetailResponse,
   type ControlApiMemoryWhyResponse,
   type ControlApiModelsResponse,
-  type ControlApiAgentDetailResponse,
   type ControlApiPromptDetailResponse,
   type ControlApiProviderRecord,
   type ControlApiProvidersResponse,
   type ControlApiRuntimeResponse,
   type ExperienceEnvelope,
   type GithubWorkflowDefinition,
+  isHistoricalUsageSelection,
   LOCAL_CONTROL_API_ACTOR,
   type McpServerResource,
   type MemoryInjectionUseCohortCell,
@@ -37,8 +38,7 @@ import {
   SANDBOX_MODES,
   type SkillEligibility,
   type ToolCatalogItem,
-  type UsageMetricsData,
-  isHistoricalUsageSelection
+  type UsageMetricsData
 } from "@simulatorlife/autodev-core";
 import {
   PHASE_DEVELOPMENT_SERVER,
@@ -64,6 +64,17 @@ import {
   resolveFilter
 } from "../src/components/filters/resolve-filter.ts";
 import {
+  AutoSubmitSelectField,
+  type AutoSubmitSelectFieldProps
+} from "../src/components/forms/AutoSubmitSelectField.ts";
+import {
+  type FormElementLike,
+  type FormLike,
+  type FormSubmissionEvent,
+  handleFormSubmission
+} from "../src/components/navigation/FormNavigationOwner.ts";
+import type { SelectFieldProps } from "../src/components/forms/SelectField.ts";
+import {
   ICON_PATHS,
   NAV_ICONS,
   navIcon
@@ -78,7 +89,11 @@ import { ControlFailureNotice } from "../src/components/status/ControlFailureNot
 import {
   MONO_ID_CLASS,
   MONO_META_CLASS,
-  MONO_VALUE_CLASS
+  MONO_VALUE_CLASS,
+  MUTED_BODY_CLASS,
+  MUTED_META_CLASS,
+  MUTED_TEXT_CLASS,
+  SECTION_LABEL_CLASS
 } from "../src/components/ui/text-classes.ts";
 import {
   type EvaluationsFilters,
@@ -95,6 +110,8 @@ import {
   singleValue,
   unreadWindow
 } from "../src/features/evaluations/evaluations-url.ts";
+import { ProviderLimitsControls } from "../src/features/providers/ProviderLimitsControls.ts";
+import { ProviderRoleControls } from "../src/features/providers/ProviderRoleControls.ts";
 import {
   AgentDetailView,
   AgentsView,
@@ -1037,7 +1054,7 @@ test("a disabled control states why it is disabled", () => {
         provider: ["antigravity"],
         model: ["gemini-3.8-flash-high"],
         agent: ["orchestrator"],
-        skill: null
+        skill: ["debug"]
       },
       selection: { range: "24H", values: {} }
     })
@@ -1391,7 +1408,17 @@ test("AppNav renders Configure/Observe/Operate groups with canonical membership,
       `AppNav must expose a URL link for ${section} (${href})`
     );
   }
-  assert.equal(markup.includes("<button"), false);
+  const toggleTag = markup.match(
+    /<button\b[^>]*data-button="sidebar-toggle"[^>]*>/u
+  )?.[0];
+  assert.ok(toggleTag, "AppNav must render the sidebar collapse control");
+  assert.match(toggleTag, /type="button"/u);
+  assert.match(toggleTag, /aria-label="Collapse sidebar"/u);
+  assert.match(toggleTag, /aria-controls="autodev-console-navigation"/u);
+  assert.match(toggleTag, /aria-expanded="true"/u);
+  assert.match(toggleTag, /rounded-full/u);
+  assert.match(toggleTag, /h-6 w-6/u);
+  assert.equal((markup.match(/<button\b/gu) ?? []).length, 1);
   assert.equal(markup.includes("Projects"), false);
   assert.equal(markup.includes("Organizations"), false);
   assert.equal(markup.includes("Environments"), false);
@@ -1512,6 +1539,7 @@ test("AppNav brand link has visible keyboard focus and no unsupported status pul
   const brandTagStart = markup.lastIndexOf("<a", brandStart);
   const brandTagEnd = markup.indexOf(">", brandStart);
   const brandTag = markup.slice(brandTagStart, brandTagEnd + 1);
+  assert.match(brandTag, /aria-label="AutoDev Console"/u);
 
   // The brand link must not silently remove the keyboard focus indicator
   // without providing a replacement; a visible focus-visible style must be
@@ -2123,7 +2151,10 @@ test("Agent detail renders the reconciliation its own response requires of it", 
   assert.match(unobserved, /data-feature="reconciliation"/);
   assert.match(unobserved, /aria-label="Reconciliation state"/);
   // Absent evidence is an absence, not an empty value that reads as "none".
-  assert.match(unobserved, /The Runtime has not observed this agent&#x27;s applied state/);
+  assert.match(
+    unobserved,
+    /The Runtime has not observed this agent&#x27;s applied state/
+  );
   assert.match(
     unobserved,
     /data-field="desired-generation">Not observed</,
@@ -2176,7 +2207,10 @@ test("Agent detail renders the reconciliation its own response requires of it", 
     /data-history-outcome="ok"/,
     "the bounded operation history must reach the page"
   );
-  assert.match(converged, /The applied configuration matches the desired state/);
+  assert.match(
+    converged,
+    /The applied configuration matches the desired state/
+  );
 });
 
 test("Agent detail exposes the shared breadcrumbs landmark with /agents parent and current-page aria state", () => {
@@ -2854,7 +2888,10 @@ test("one instant is rendered one way, including in the drawer", () => {
   // reaches the view intact -- and stamping it into `time[datetime]` claimed it
   // was a date. It is still shown, because the operator needs to see what the
   // store holds, and it is still not a time, because it is not one.
-  const brokenRow = { ...row, timestamp: "not a timestamp the source ever wrote" };
+  const brokenRow = {
+    ...row,
+    timestamp: "not a timestamp the source ever wrote"
+  };
   const brokenMarkup = renderEvaluations({
     evaluations: [brokenRow],
     selection: brokenRow.id
@@ -2918,7 +2955,7 @@ test("an opened run leads the page, so opening it shows something at any width",
   const filterBar = opened.indexOf('aria-label="Evaluation filters"');
   const statCards = opened.indexOf('data-stat-grid="5"');
 
-  assert.ok(drawer > -1, "the run's detail is rendered");
+  assert.ok(drawer !== -1, "the run's detail is rendered");
   assert.ok(
     drawer < filterBar,
     "the opened run comes before the filters, not after five stat cards"
@@ -3751,10 +3788,15 @@ test("Usage role and provider breakdowns use distinct semantic chart series", ()
     totalOutputTokens: 2000,
     cacheReadRate: 50,
     p95LatencyMs: 100,
+    estimatedCostUsd: 0.003,
     physicalAttempts: 5,
     mcpCalls: 1,
     p95McpDurationMs: 10,
     mcpErrors: 0,
+    failedAttempts: 1,
+    attemptErrorsByProvider: [{ provider: "codex", count: 1 }],
+    contextCompactions: 1,
+    skillEventsByEvent: [{ event: "used", count: 1 }],
     requestsByRole: [{ role: "orchestrator", count: 3 }],
     attemptsByProvider: [{ provider: "codex", count: 5 }],
     callsByTool: []
@@ -3823,10 +3865,15 @@ test("Usage values stay readable at large scales and keep unattributed groups ex
         totalOutputTokens: 3_561_000,
         cacheReadRate: null,
         p95LatencyMs: 42_364.660_695_649_996,
+        estimatedCostUsd: 0.01,
         physicalAttempts: 8320,
         mcpCalls: 6,
         p95McpDurationMs: 84.313_416_499_999_99,
         mcpErrors: 0,
+        failedAttempts: 0,
+        attemptErrorsByProvider: [],
+        contextCompactions: 0,
+        skillEventsByEvent: [],
         requestsByRole: [{ role: "", count: 126 }],
         attemptsByProvider: [{ provider: "codex", count: 3419 }],
         callsByTool: [{ tool: "", count: 1234 }]
@@ -3995,7 +4042,7 @@ test("Usage URL filters preserve stock time ranges, custom dates, and server-onl
         range: "7D",
         workspace: ["repo-a", "repo-b", "repo-a", ""],
         provider: "openai",
-        skill: "unbound",
+        skill: "python-docs",
         startDate: "2026-09-20",
         endDate: "2026-10-01"
       },
@@ -4003,7 +4050,11 @@ test("Usage URL filters preserve stock time ranges, custom dates, and server-onl
     ),
     {
       range: "7D",
-      values: { workspace: ["repo-a", "repo-b"], provider: ["openai"] },
+      values: {
+        workspace: ["repo-a", "repo-b"],
+        provider: ["openai"],
+        skill: ["python-docs"]
+      },
       customRange: { startDate: "2026-09-20", endDate: "2026-10-01" }
     }
   );
@@ -4037,7 +4088,7 @@ test("UsageView persists selected filters in GET controls without defaults", () 
     React.createElement(UsageView, {
       selection: {
         range: "7D",
-        values: { provider: ["openai"] },
+        values: { provider: ["openai"], skill: ["python-docs"] },
         customRange: { startDate: "2026-09-20", endDate: "2026-10-01" }
       },
       filterOptions: {
@@ -4045,7 +4096,7 @@ test("UsageView persists selected filters in GET controls without defaults", () 
         provider: ["openai", "anthropic"],
         model: null,
         agent: [],
-        skill: null
+        skill: ["python-docs"]
       }
     })
   );
@@ -4061,8 +4112,47 @@ test("UsageView persists selected filters in GET controls without defaults", () 
   assert.match(markup, /name="startDate"/);
   assert.match(markup, /name="endDate"/);
   assert.match(markup, /value="openai" selected/);
+  assert.match(markup, /name="skill"/);
+  assert.match(markup, /value="python-docs" selected/);
   assert.match(markup, /data-filter-options-observed="false"/);
   assert.match(markup, /data-usage-observed="false"/);
+});
+
+test("UsageView auto-submits the single Active Sessions scope and stages historical filters", () => {
+  const activeSessions = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      selection: { range: "ACTIVE_SESSIONS", values: {} }
+    })
+  );
+  assert.match(activeSessions, /data-submit-mode="on-change"/);
+  assert.match(activeSessions, /name="range"/);
+  assert.match(activeSessions, /data-submit-on-change="true"/);
+  assert.doesNotMatch(activeSessions, /<button\b/);
+  assert.match(
+    activeSessions,
+    /Workspace, provider, model, role, and skill filters do not narrow live session state\./
+  );
+
+  const historical = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      selection: { range: "7D", values: {} },
+      filterOptions: {
+        workspace: ["workspace-a"],
+        provider: ["provider-a"],
+        model: ["model-a"],
+        agent: ["agent-a"],
+        skill: ["skill-a"]
+      }
+    })
+  );
+  assert.doesNotMatch(historical, /data-submit-mode="on-change"/);
+  assert.doesNotMatch(historical, /data-submit-on-change="true"/);
+  assert.match(historical, /name="workspace"/);
+  assert.match(historical, /name="provider"/);
+  assert.match(historical, /name="model"/);
+  assert.match(historical, /name="agent"/);
+  assert.match(historical, /name="skill"/);
+  assert.match(historical, />Apply filters<\/button>/);
 });
 
 test("UsageView exposes custom-range controls with UTC date state", () => {
@@ -4095,10 +4185,15 @@ test("UsageView with empty arrays still reports no synthetic counts", () => {
         totalOutputTokens: null,
         cacheReadRate: null,
         p95LatencyMs: null,
+        estimatedCostUsd: null,
         physicalAttempts: null,
         mcpCalls: null,
         p95McpDurationMs: null,
         mcpErrors: null,
+        failedAttempts: null,
+        attemptErrorsByProvider: null,
+        contextCompactions: null,
+        skillEventsByEvent: null,
         requestsByRole: [],
         attemptsByProvider: [],
         callsByTool: []
@@ -6448,9 +6543,9 @@ test("clearing the filters keeps the section and the run being looked for", () =
     let at = markup.indexOf('data-evaluations-clear="true"');
     while (at !== -1) {
       const open = markup.lastIndexOf("<a", at);
-      // The capture group is what is wanted, not the match: `exec` reports
-      // the group as `string | undefined` under `noUncheckedIndexedAccess`, so
-      // a truthy match is not evidence the group is there.
+      // The capture group is what is wanted, not the match: `exec` returns the
+      // group as `string | undefined` under `noUncheckedIndexedAccess`, so a
+      // truthy match is not evidence the group is there.
       const captured = /href="([^"]+)"/.exec(markup.slice(open, at))?.[1];
       if (captured !== undefined) found.push(captured);
       at = markup.indexOf('data-evaluations-clear="true"', at + 1);
@@ -6950,10 +7045,36 @@ const PARSER_REWRITES = new Map<string, ReadonlySet<string>>([
   [
     "p",
     new Set([
-      "address", "article", "aside", "blockquote", "details", "div", "dl",
-      "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3",
-      "h4", "h5", "h6", "header", "hgroup", "hr", "main", "nav", "ol", "p",
-      "pre", "search", "section", "table", "ul"
+      "address",
+      "article",
+      "aside",
+      "blockquote",
+      "details",
+      "div",
+      "dl",
+      "fieldset",
+      "figcaption",
+      "figure",
+      "footer",
+      "form",
+      "h1",
+      "h2",
+      "h3",
+      "h4",
+      "h5",
+      "h6",
+      "header",
+      "hgroup",
+      "hr",
+      "main",
+      "nav",
+      "ol",
+      "p",
+      "pre",
+      "search",
+      "section",
+      "table",
+      "ul"
     ])
   ],
   // A second link or button is not nested; the inner one is taken out.
@@ -6975,7 +7096,10 @@ const PARSER_REWRITES = new Map<string, ReadonlySet<string>>([
  * `<th>` to the `<tr>` would report every such header as a hydration bug.
  */
 const TABLE_STRUCTURE_REWRITES = new Map<string, ReadonlySet<string>>([
-  ["table", new Set(["div", "p", "span", "a", "ul", "ol", "section", "img", "h1", "h2"])],
+  [
+    "table",
+    new Set(["div", "p", "span", "a", "ul", "ol", "section", "img", "h1", "h2"])
+  ],
   ["thead", new Set(["div", "p", "span", "a"])],
   ["tbody", new Set(["div", "p", "span", "a"])],
   ["tfoot", new Set(["div", "p", "span", "a"])],
@@ -7026,7 +7150,8 @@ function elementChildrenOf(node: React.JSX.Element): React.JSX.Element[] {
       return;
     }
     if (typeof child === "function") return;
-    if (child === null || child === undefined || typeof child === "boolean") return;
+    if (child === null || child === undefined || typeof child === "boolean")
+      return;
     if (typeof child === "string" || typeof child === "number") return;
     const resolved = resolveForNesting(child);
     if (resolved === null) return;
@@ -7081,7 +7206,10 @@ interface NestingOffence {
  * reports nonsense like `tr > span` for a `<span>` inside a `<th>` -- a false
  * positive produced entirely by the walk, not by the markup.
  */
-function nestingsBelow(node: React.JSX.Element, ancestors: readonly string[]): NestingOffence[] {
+function nestingsBelow(
+  node: React.JSX.Element,
+  ancestors: readonly string[]
+): NestingOffence[] {
   const found: NestingOffence[] = [];
   for (const child of elementChildrenOf(node)) {
     const tag = typeof child.type === "string" ? child.type : null;
@@ -7284,6 +7412,7 @@ test("nothing on this page nests in a way the HTML parser rewrites", () => {
     );
   }
 });
+
 test("every link whose destination is the history table names an element that is on the page", () => {
   // A fragment that matches nothing is a link that scrolls nowhere and moves the
   // keyboard nowhere, so it fails in the way that is hardest to notice: the page
@@ -7435,6 +7564,25 @@ test("every link whose destination is the history table names an element that is
   //
   // The href is read with the module's own parsers, so the guard and the product
   // cannot disagree about what a URL means.
+  //
+  // The result is one id set *per state the destination can be in*, not a union
+  // across them. This used to render `observedTrace(requestedSpan)` alone and
+  // return its ids -- the same mistake as the union of states this guard
+  // replaced, one level in, and it hid a defect of the same shape.
+  //
+  // The anchor used to sit on the "Selected" chip inside the *observed* panel,
+  // so it existed only when the trace loaded. With the source answering 404 the
+  // panel rendered its alert, carried no id at all, the fragment resolved to
+  // nothing, and this guard passed -- because it only ever looked at the one
+  // state where the id was present. Measured in Chromium: the browser stayed at
+  // scrollY 0 with the failure callout 487px below at 1280 and 1137px below at
+  // 390, so the operator landed at the top of the page and never saw the one
+  // sentence explaining the failure.
+  //
+  // Unioning the states would hide it again -- the observed state supplies the
+  // id for every state. So each state is checked on its own, and the anchor has
+  // to be there in all of them: which state an operator lands in is the
+  // *source's* decision, not theirs.
   const UNAVAILABLE_TRACE_LOOKUPS: ReadonlyArray<
     readonly [string, EvaluationTraceLookup]
   > = [
@@ -8312,7 +8460,7 @@ test("every section heading on this page sits one level below the page title", (
   const outlineOf = (html: string) =>
     Array.from(html.matchAll(/<h([1-6])\b[^>]*>(.*?)<\/h\1>/gu), (match) => ({
       level: Number(match[1]),
-      text: (match[2] ?? "").replace(/<[^>]*>/gu, "").trim()
+      text: (match[2] ?? "").replaceAll(/<[^>]*>/gu, "").trim()
     }));
 
   for (const [label, query] of [
@@ -9163,7 +9311,10 @@ test("the section tabs keep the filters and the open section keeps its own links
     results,
     /href="\/evaluations\?spanId=4bf92f3577b34da6#evaluation-trace-span-4bf92f3577b34da6"[^>]*data-evaluation-trace-span-id/
   );
-  assert.match(results, /href="\/evaluations\?result=run-1#evaluation-detail-drawer"/);
+  assert.match(
+    results,
+    /href="\/evaluations\?result=run-1#evaluation-detail-drawer"/
+  );
   assert.match(results, /Evaluation history/);
 
   // Unfiltered, the two sections are one parameter apart.
@@ -10845,8 +10996,8 @@ test("MemoryExperiencesView requires a Runtime-accepted reason and explicit conf
   assert.match(markup, /name="experienceId" value="exp-002"/);
   assert.match(markup, /name="action" value="purge"/);
 
-  // The Console ships no client JavaScript, so the confirmation is a real form
-  // field the route refuses to act without rather than a click handler.
+  // Purge remains a server-rendered form action, so confirmation is a real
+  // field the route refuses to act without rather than a client-only guard.
   assert.match(markup, /type="checkbox"[^>]*name="confirm"[^>]*value="purge"/);
   // Only reasons the Runtime accepts may be composed into a request.
   assert.match(markup, /value="privacy_request"/);
@@ -11586,6 +11737,9 @@ test("MemoryView renders top-level tabs, stat counts, and a URL-driven workspace
   const workspaceForm = markup.slice(formStart, formEnd);
   assert.match(workspaceForm, /method="GET"/);
   assert.match(workspaceForm, /action="\/memory"/);
+  assert.match(workspaceForm, /data-submit-mode="on-change"/u);
+  assert.match(workspaceForm, /data-submit-on-change="true"/u);
+  assert.doesNotMatch(workspaceForm, /<button\b/u);
   assert.match(workspaceForm, /name="workspaceId"/);
   assert.match(workspaceForm, /name="tab" value="records"/);
   assert.match(workspaceForm, /name="query" value="fallback"/);
@@ -12534,6 +12688,46 @@ test("Memory detail and the workspace catalog fail closed on unreadable response
   assert.equal(unavailable.kind, "ok");
 });
 
+test("Provider limits keep their labels readable and describe disabled state truthfully", () => {
+  const enabledProvider = PROVIDERS_FIXTURE.providers.find(
+    (provider) => !provider.disabled
+  );
+  const disabledProvider = PROVIDERS_FIXTURE.providers.find(
+    (provider) => provider.disabled
+  );
+  assert.ok(enabledProvider, "fixture includes an enabled provider");
+  assert.ok(disabledProvider, "fixture includes a disabled provider");
+
+  const enabledMarkup = renderToStaticMarkup(
+    React.createElement(ProviderLimitsControls, {
+      provider: enabledProvider,
+      returnTo: "/providers"
+    })
+  );
+  const disabledMarkup = renderToStaticMarkup(
+    React.createElement(ProviderLimitsControls, {
+      provider: disabledProvider,
+      returnTo: "/providers"
+    })
+  );
+
+  assert.equal(enabledMarkup.includes("Provider disabled"), false);
+  assert.ok(disabledMarkup.includes("Provider disabled"));
+  assert.ok(
+    enabledMarkup.includes(
+      'aria-label="Disable provider ' + enabledProvider.id + '"'
+    )
+  );
+  assert.ok(
+    disabledMarkup.includes(
+      'aria-label="Enable provider ' + disabledProvider.id + '"'
+    )
+  );
+  assert.match(enabledMarkup, /Per session/u);
+  assert.match(enabledMarkup, /Across sessions/u);
+  assert.match(enabledMarkup, /flex-col items-start gap-1/u);
+});
+
 test("ProvidersView renders the four configuration columns with per-role controls", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProvidersView, {
@@ -12617,6 +12811,26 @@ test("ProvidersView renders the four configuration columns with per-role control
       assert.equal(hiddenValue(markup, form, "role"), role);
     }
   }
+
+  // No global row-order handle is presented: routing order is per role/tier.
+  assert.equal(markup.includes("⠿"), false);
+  assert.doesNotMatch(markup, /draggable=/u);
+
+  // Every role form shares one grid so labels and selects stay aligned.
+  const roleForms = forms.filter((form) => form.includes("data-role-form="));
+  assert.equal(roleForms.length, PROVIDERS_FIXTURE.providers.length * 4);
+  for (const roleForm of roleForms) {
+    assert.match(roleForm, /grid-cols-\[6rem_6rem_13rem\]/u);
+    assert.doesNotMatch(roleForm, /flex-wrap/u);
+  }
+  assert.doesNotMatch(markup, /data-apply-role|>Apply<\/button>/u);
+  const autoSubmitSelects =
+    markup.match(/<select\b[^>]*data-submit-on-change="true"[^>]*>/gu) ?? [];
+  assert.equal(
+    autoSubmitSelects.length,
+    PROVIDERS_FIXTURE.providers.length * 4 * 2,
+    "priority and model selections both apply immediately for every role"
+  );
 
   // The read-only codex provider keeps all four roles' controls in place,
   // disabled, with the reason. Its configuration is preserved, not hidden.
@@ -12734,9 +12948,8 @@ test("a Disabled role's rendered form still submits the five fields its route re
   );
   assert.equal(hiddenValue(markup, formTag, "model"), "");
 
-  // A globally disabled provider disables the priority select as well, so its
-  // Apply button could only ever produce a submission the route refuses. It
-  // renders disabled with the reason rather than looking actionable.
+  // A globally disabled provider keeps both fields disabled with their reason.
+  // There is no redundant submit control that could only trigger a refused write.
   const immutableTag = formTags(markup).find((tag) =>
     /data-role-form="codex-subagent"/u.test(tag)
   );
@@ -12746,26 +12959,19 @@ test("a Disabled role's rendered form still submits the five fields its route re
     immutableStart,
     markup.indexOf("</form>", immutableStart)
   );
-  assert.match(immutableBody, /data-apply-role="codex-subagent"/u);
-  // Inspect the button's own tag, with the class attribute removed first:
-  // Tailwind's `disabled:` variant sits in every Button's class list, so a
-  // `disabled` search over the raw tag matches the stylesheet rather than the
-  // attribute and would pass with the control left enabled.
-  const applyTag = /<button\b[^>]*data-apply-role="codex-subagent"[^>]*>/u.exec(
-    immutableBody
-  )?.[0];
-  assert.ok(applyTag, "the Apply control must still be present");
-  const applyAttributes = applyTag.replaceAll(/\sclass="[^"]*"/gu, "");
-  assert.match(
-    applyAttributes,
-    /(?:^|\s)disabled(?=[\s/>=]|>)/u,
-    "Apply must render disabled for a globally disabled provider"
+  const immutableSelects = Array.from(
+    immutableBody.matchAll(/<select\b([^>]*)>/gu),
+    (match) => match[1] ?? ""
   );
-  assert.match(
-    applyTag,
-    /title="This provider is disabled\. Enable it to change its roles\."/u,
-    "the disabled Apply must carry its own reason, not borrow the select's"
-  );
+  assert.equal(immutableSelects.length, 2);
+  for (const attributes of immutableSelects) {
+    assert.match(attributes, /(?:^|\s)disabled(?=[\s/>=]|$)/u);
+    assert.match(
+      attributes,
+      /title="This provider is disabled\. Enable it to change its roles\."/u
+    );
+  }
+  assert.doesNotMatch(immutableBody, /data-apply-role|>Apply<\/button>/u);
 });
 
 test("a Disabled role whose model is no longer configured still submits a re-enable the Runtime accepts", () => {
@@ -12890,6 +13096,7 @@ test("ProviderDetailView keeps the provider's role and model toggles on its page
   assert.match(markup, /data-feature="provider-detail"/);
   assert.match(markup, /<a href="\/providers"[^>]*>Providers<\/a>/);
   assert.match(markup, /aria-current="page"[^>]*>claude</);
+  assert.match(markup, /Selecting a priority or model applies immediately\./u);
 
   const forms = formTags(markup);
   // All four roles get the same controls the Providers row offers, because the
@@ -14316,11 +14523,12 @@ test("ToolDetailView surfaces observed historical use and falls back to Unavaila
 });
 
 /**
- * Purge erases a raw experience envelope irreversibly. The Console ships no
- * client JavaScript, so the confirmation cannot be a `window.confirm` or a
- * disabled-until-checked button: it has to be a field the route refuses to act
- * without. These tests pin that the route only forwards a purge that carries an
- * experience id, a Runtime-accepted reason, and explicit confirmation.
+ * Purge erases a raw experience envelope irreversibly. Even with the
+ * allowlisted AppNav island, purge remains a server-rendered form action: the
+ * confirmation cannot depend on window.confirm or a disabled-until-checked
+ * button; it has to be a field the route refuses to act without. These tests pin
+ * that the route only forwards a purge with an experience id, a Runtime-accepted
+ * reason, and explicit confirmation.
  */
 function memoryPurgeRequest(fields: Record<string, string>): NextRequest {
   return new NextRequest("http://console.test/api/memory", {
@@ -16073,7 +16281,7 @@ test("ClosePanelLink renders the shared close mark and keeps its accessible name
     React.createElement(ClosePanelLink, { href: "/memory?tab=records" })
   );
 
-  // A real link: the panel must be dismissible without client JavaScript.
+  // A real link: following it dismisses the panel, with or without scripting.
   assert.match(markup, /^<a href="\/memory\?tab=records"/);
   // The mark comes from the shared icon set, not a raw glyph typed into the
   // view, so it shares the product's grid, stroke, and currentColor behaviour.
@@ -16085,14 +16293,13 @@ test("ClosePanelLink renders the shared close mark and keeps its accessible name
   assert.match(markup, />Close<\/a>$/);
 });
 
-test("DataTable caps its scroll floor so a table never scrolls at desktop width", () => {
+test("DataTable preserves each table's full declared minimum width", () => {
   interface TestRow {
     readonly id: string;
   }
-  // Weights authored at their measured pixel widths: this set sums to 1300,
-  // wider than the ~1060px content column at 1440. The floor must not become
-  // that natural width, or the table region scrolls 240px on a desktop window
-  // for no small-screen reason.
+  // The target contract treats column weights as a content budget. A table
+  // narrower than their sum scrolls its own region instead of compressing
+  // controls and values until they collide or clip.
   const wide = renderToStaticMarkup(
     DataTable<TestRow>({
       data: [{ id: "1" }],
@@ -16111,12 +16318,12 @@ test("DataTable caps its scroll floor so a table never scrolls at desktop width"
   assert.ok(wideFloor > 0, "a table must still declare a floor");
   assert.equal(
     wideFloor,
-    54 * 16,
-    "the floor must be capped, not the natural sum"
+    1300,
+    "the floor must equal the declared column-weight sum"
   );
+  assert.match(wide, /overflow-x-auto/u);
 
-  // A narrow table still gets its own smaller floor, so it is never handed a
-  // scrollbar it does not need.
+  // Each table derives its own floor rather than inheriting another table's.
   const narrow = renderToStaticMarkup(
     DataTable<TestRow>({
       data: [{ id: "1" }],
@@ -16134,9 +16341,9 @@ test("DataTable caps its scroll floor so a table never scrolls at desktop width"
   assert.equal(
     narrowFloor,
     240,
-    "a narrow table keeps the floor its columns need"
+    "the table floor equals this table's declared column-weight sum"
   );
-  assert.ok(narrowFloor < wideFloor, "narrow tables must floor below the cap");
+  assert.ok(narrowFloor < wideFloor, "each table keeps its own width budget");
 });
 
 test("the resource failure shell breaks an error code only at its own separators", () => {
@@ -17031,6 +17238,445 @@ test("BarChart keeps unobserved, empty and observed data three distinct things",
   assert.match(withZero, />0<\/span>/);
 });
 
+test("AutoSubmitSelectField submits its containing form on change", () => {
+  let submissions = 0;
+  const field = AutoSubmitSelectField({
+    name: "workspaceId",
+    label: "Workspace",
+    options: [{ value: "workspace-a", label: "workspace-a" }]
+  });
+  const onChange = (field as React.ReactElement<SelectFieldProps>).props
+    .onChange;
+  assert.ok(onChange, "the shared select must own the auto-submit event");
+  onChange({
+    currentTarget: {
+      form: { requestSubmit: () => submissions++ }
+    }
+  } as unknown as React.ChangeEvent<HTMLSelectElement>);
+  assert.equal(submissions, 1);
+
+  assert.doesNotThrow(() =>
+    onChange({
+      currentTarget: { form: null }
+    } as unknown as React.ChangeEvent<HTMLSelectElement>)
+  );
+  const markup = renderToStaticMarkup(
+    React.createElement(AutoSubmitSelectField, {
+      name: "workspaceId",
+      label: "Workspace",
+      options: [{ value: "workspace-a", label: "workspace-a" }]
+    })
+  );
+  assert.match(markup, /data-submit-on-change="true"/u);
+});
+
+test("AutoSubmitSelectFieldProps rejects a multi-select at the type level", () => {
+  // A multi-select commits one option at a time while the rest of the set
+  // stays unconfirmed, so auto-submitting on every change would submit a
+  // partial, unintended selection. The shared SelectField keeps "multiple"
+  // (it has its own coverage); this component's props must not.
+  const props: AutoSubmitSelectFieldProps = {
+    name: "workspaceId",
+    label: "Workspace",
+    options: [{ value: "workspace-a", label: "workspace-a" }],
+    // @ts-expect-error "multiple" is excluded from AutoSubmitSelectFieldProps.
+    multiple: true
+  };
+  assert.ok(props);
+});
+
+test("FilterBar omits its button for a single auto-submitting choice", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      FilterBar,
+      { label: "Workspace scope", action: "/memory", submitMode: "on-change" },
+      React.createElement(AutoSubmitSelectField, {
+        name: "workspaceId",
+        label: "Workspace",
+        options: [{ value: "workspace-a", label: "workspace-a" }]
+      })
+    )
+  );
+  assert.match(markup, /data-submit-mode="on-change"/u);
+  assert.match(markup, /data-submit-on-change="true"/u);
+  assert.doesNotMatch(markup, /<button\b/u);
+});
+
+test("GET FilterBar submit cancels native document navigation", async () => {
+  const filterForm = FilterBar({
+    label: "Regression filters",
+    action: "/usage",
+    preserved: [{ name: "tab", value: "activity" }],
+    children: React.createElement("input", {
+      type: "search",
+      name: "query",
+      defaultValue: "agent"
+    })
+  });
+  const markup = renderToStaticMarkup(filterForm);
+  assert.match(markup, /<form[^>]*method="GET"/u);
+  assert.match(markup, /action="\/usage"/u);
+
+  const fields = React.Children.toArray(filterForm.props.children).flatMap(
+    (child): FormElementLike[] => {
+      if (!React.isValidElement(child) || child.type !== "input") return [];
+      const props = child.props as React.InputHTMLAttributes<HTMLInputElement>;
+      if (typeof props.name !== "string") return [];
+      return [
+        {
+          tagName: "INPUT",
+          type: props.type ?? "text",
+          name: props.name,
+          value: String(props.value ?? props.defaultValue ?? ""),
+          disabled: props.disabled
+        }
+      ];
+    }
+  );
+  const form: FormLike = {
+    action: "/usage",
+    method: "GET",
+    elements: fields
+  };
+  const nativeEvent = new Event("submit", { cancelable: true });
+  const submitEvent: FormSubmissionEvent = {
+    get defaultPrevented() {
+      return nativeEvent.defaultPrevented;
+    },
+    preventDefault: () => nativeEvent.preventDefault(),
+    target: form,
+    submitter: null
+  };
+  const pushes: string[] = [];
+  let refreshes = 0;
+  const result = await handleFormSubmission(submitEvent, {
+    currentUrl: "http://console.test/usage?old=1",
+    router: {
+      push: (href) => pushes.push(href),
+      replace: () => assert.fail("a filter uses push, not replace"),
+      refresh: () => refreshes++
+    }
+  });
+
+  // The browser performs its native GET document navigation only when the
+  // cancelable submit event is not prevented. Assert that platform event state
+  // directly, rather than treating the handler's return value as proof.
+  assert.equal(nativeEvent.defaultPrevented, true);
+  assert.deepEqual(pushes, ["/usage?tab=activity&query=agent"]);
+  assert.equal(refreshes, 0);
+  assert.equal(result.intercepted, true);
+});
+
+test("POST mutation submit cancels native navigation and preserves FormData", async () => {
+  const form: FormLike = {
+    action: "/api/skills/release-checklist",
+    method: "POST",
+    elements: [
+      {
+        tagName: "INPUT",
+        type: "hidden",
+        name: "expectedRevision",
+        value: "revision-17"
+      },
+      {
+        tagName: "INPUT",
+        type: "checkbox",
+        name: "roles",
+        value: "orchestrator",
+        checked: true
+      },
+      {
+        tagName: "INPUT",
+        type: "checkbox",
+        name: "roles",
+        value: "worker",
+        checked: true
+      },
+      {
+        tagName: "INPUT",
+        type: "checkbox",
+        name: "roles",
+        value: "validator",
+        checked: false
+      },
+      {
+        tagName: "INPUT",
+        type: "hidden",
+        name: "returnTo",
+        value: "/skills"
+      }
+    ]
+  };
+  const submitter: FormElementLike = {
+    tagName: "BUTTON",
+    type: "submit",
+    name: "intent",
+    value: "save-assignment"
+  };
+  const nativeEvent = new Event("submit", { cancelable: true });
+  const submitEvent: FormSubmissionEvent = {
+    get defaultPrevented() {
+      return nativeEvent.defaultPrevented;
+    },
+    preventDefault: () => nativeEvent.preventDefault(),
+    target: form,
+    submitter
+  };
+
+  let submittedUrl = "";
+  let submittedInit: RequestInit | undefined;
+  const finalUrl = "http://console.test/skills?notice=saved";
+  const fetchImpl: typeof fetch = async (input, init) => {
+    submittedUrl = String(input);
+    submittedInit = init;
+    // Safe local response representing fetch-follow of the route's 303 return
+    // URL; this test never posts to a live mutation service.
+    return {
+      ok: true,
+      status: 200,
+      redirected: true,
+      url: finalUrl,
+      headers: new Headers()
+    } as Response;
+  };
+  const replacements: string[] = [];
+  let refreshes = 0;
+  const result = await handleFormSubmission(submitEvent, {
+    currentUrl: "http://console.test/skills",
+    fetch: fetchImpl,
+    router: {
+      push: () => assert.fail("a mutation return uses replace, not push"),
+      replace: (href) => replacements.push(href),
+      refresh: () => refreshes++
+    }
+  });
+
+  // Cancellation is the browser-level guard against the POST's native
+  // document navigation. FormData must still carry repeated checkbox names,
+  // hidden state, and the activated submit button's name/value.
+  assert.equal(nativeEvent.defaultPrevented, true);
+  assert.equal(submittedUrl, "http://console.test/api/skills/release-checklist");
+  assert.equal(submittedInit?.method, "POST");
+  assert.equal(submittedInit?.redirect, "follow");
+  assert.equal(
+    submittedInit?.body,
+    "expectedRevision=revision-17&roles=orchestrator&roles=worker&returnTo=%2Fskills&intent=save-assignment"
+  );
+  assert.deepEqual(replacements, ["/skills?notice=saved"]);
+  assert.equal(refreshes, 1);
+  assert.equal(result.intercepted, true);
+});
+
+test("ProviderRoleControls wires role priority and model dropdowns to auto-submit on change", () => {
+  const provider = PROVIDERS_FIXTURE.providers[0]!;
+  const controls = ProviderRoleControls({
+    provider,
+    returnTo: "/providers"
+  });
+
+  const listItems = React.Children.toArray(
+    controls.props.children
+  ) as React.ReactElement<{ readonly children?: React.ReactNode }>[];
+  assert.equal(listItems.length, 4);
+
+  for (const item of listItems) {
+    const roleRowElement = item.props.children as React.ReactElement<{
+      readonly action?: string;
+      readonly method?: string;
+      readonly children?: React.ReactNode;
+    }>;
+    const roleRow = (
+      roleRowElement.type as (
+        props: typeof roleRowElement.props
+      ) => React.ReactElement<{
+        readonly action?: string;
+        readonly method?: string;
+        readonly children?: React.ReactNode;
+      }>
+    )(roleRowElement.props);
+    assert.equal(roleRow.type, "form");
+    assert.equal(roleRow.props.method, "POST");
+    assert.match(
+      roleRow.props.action ?? "",
+      /^\/api\/providers\/[^/]+\/roles\/[^/]+$/u
+    );
+
+    const formChildren = React.Children.toArray(
+      roleRow.props.children
+    ) as React.ReactElement<{
+      readonly name?: string;
+      readonly role?: string;
+    }>[];
+
+    const prioritySelectElement = formChildren.find(
+      (child) => child.props?.name === "priority"
+    ) as
+      | React.ReactElement<React.ComponentProps<typeof AutoSubmitSelectField>>
+      | undefined;
+    assert.ok(prioritySelectElement, "Role row must render priority select");
+    assert.equal(prioritySelectElement.type, AutoSubmitSelectField);
+
+    const renderedPriority = AutoSubmitSelectField(prioritySelectElement.props);
+    let prioritySubmissions = 0;
+    renderedPriority.props.onChange?.({
+      currentTarget: {
+        form: { requestSubmit: () => prioritySubmissions++ }
+      }
+    } as unknown as React.ChangeEvent<HTMLSelectElement>);
+    assert.equal(
+      prioritySubmissions,
+      1,
+      "priority change must trigger form requestSubmit"
+    );
+
+    const roleModelElement = formChildren.find(
+      (child) =>
+        typeof child.type === "function" && child.props?.role !== undefined
+    ) as React.ReactElement<{ readonly role?: string }> | undefined;
+    assert.ok(roleModelElement, "Role row must render RoleModelSelect");
+    const modelSelectFn = roleModelElement.type as (
+      props: unknown
+    ) => React.ReactElement<React.ComponentProps<typeof AutoSubmitSelectField>>;
+    const modelSelectElement = modelSelectFn(roleModelElement.props);
+    assert.equal(modelSelectElement.type, AutoSubmitSelectField);
+
+    const renderedModel = AutoSubmitSelectField(modelSelectElement.props);
+    let modelSubmissions = 0;
+    renderedModel.props.onChange?.({
+      currentTarget: {
+        form: { requestSubmit: () => modelSubmissions++ }
+      }
+    } as unknown as React.ChangeEvent<HTMLSelectElement>);
+    assert.equal(
+      modelSubmissions,
+      1,
+      "model change must trigger form requestSubmit"
+    );
+  }
+
+  const markup = renderToStaticMarkup(
+    React.createElement(ProviderRoleControls, {
+      provider,
+      returnTo: "/providers"
+    })
+  );
+  assert.doesNotMatch(markup, />Apply<\/button>/u);
+  assert.doesNotMatch(markup, /data-apply-role/u);
+});
+
+test("MemoryView wires single workspace selector to auto-submit GET on change without Apply button", () => {
+  const view = MemoryView({
+    listScope: {
+      workspaceId: "SimulatorLife/AutoDev",
+      tab: "records",
+      query: "auth",
+      kind: "procedure",
+      status: "active",
+      from: "2026-09-01T00:00:00Z",
+      until: "2026-10-01T00:00:00Z",
+      limit: 50,
+      offset: 0
+    },
+    records: [],
+    totalRecords: 0,
+    experiences: [],
+    totalExperiences: null,
+    sessionCohorts: null,
+    useCohorts: null,
+    repositoryId: "repo-autodev",
+    workspaces: [
+      {
+        id: "SimulatorLife/AutoDev",
+        baseBranch: "main",
+        enabled: true,
+        agentRoles: null
+      },
+      {
+        id: "SimulatorLife/Other",
+        baseBranch: "main",
+        enabled: true,
+        agentRoles: null
+      }
+    ]
+  });
+
+  const markup = renderToStaticMarkup(view);
+  const selectorStart = markup.indexOf('data-memory-workspace-form="true"');
+  assert.notEqual(selectorStart, -1);
+  const formStart = markup.lastIndexOf("<form", selectorStart);
+  const formEnd = markup.indexOf("</form>", formStart);
+  const workspaceForm = markup.slice(formStart, formEnd);
+
+  assert.match(workspaceForm, /method="GET"/u);
+  assert.match(workspaceForm, /action="\/memory"/u);
+  assert.match(workspaceForm, /data-submit-mode="on-change"/u);
+  assert.match(workspaceForm, /data-submit-on-change="true"/u);
+  assert.doesNotMatch(workspaceForm, /<button\b/u);
+  assert.doesNotMatch(workspaceForm, /Apply/u);
+
+  assert.match(workspaceForm, /name="workspaceId"/u);
+  assert.match(workspaceForm, /name="tab" value="records"/u);
+  assert.match(workspaceForm, /name="query" value="auth"/u);
+  assert.match(workspaceForm, /name="kind" value="procedure"/u);
+  assert.match(workspaceForm, /name="status" value="active"/u);
+  assert.match(workspaceForm, /name="from" value="2026-09-01T00:00:00Z"/u);
+  assert.match(workspaceForm, /name="until" value="2026-10-01T00:00:00Z"/u);
+  assert.match(workspaceForm, /name="limit" value="50"/u);
+
+  const pageChildren = React.Children.toArray(
+    view.props.children
+  ) as React.ReactElement<{
+    readonly className?: string;
+    readonly children?: React.ReactNode;
+  }>[];
+  const scopeDiv = pageChildren.find(
+    (child) => child.props?.className === "flex flex-col gap-2"
+  );
+  assert.ok(scopeDiv);
+  const filterBar = scopeDiv.props.children as React.ReactElement<
+    React.ComponentProps<typeof FilterBar>
+  >;
+  assert.equal(filterBar.type, FilterBar);
+  assert.equal(filterBar.props.submitMode, "on-change");
+
+  const workspaceSelect = filterBar.props.children as React.ReactElement<
+    React.ComponentProps<typeof AutoSubmitSelectField>
+  >;
+  assert.equal(workspaceSelect.type, AutoSubmitSelectField);
+  const renderedSelect = AutoSubmitSelectField(workspaceSelect.props);
+  let submissions = 0;
+  renderedSelect.props.onChange?.({
+    currentTarget: {
+      form: { requestSubmit: () => submissions++ }
+    }
+  } as unknown as React.ChangeEvent<HTMLSelectElement>);
+  assert.equal(
+    submissions,
+    1,
+    "workspace selection change must call requestSubmit"
+  );
+});
+
+test("disabled role retains preserved model hidden input and disabled reasons without Apply button", () => {
+  const codex = PROVIDERS_FIXTURE.providers.find((p) => p.id === "codex")!;
+  const markup = renderToStaticMarkup(
+    React.createElement(ProviderRoleControls, {
+      provider: codex,
+      returnTo: "/providers"
+    })
+  );
+  assert.match(
+    markup,
+    /title="This provider is disabled\. Enable it to change its roles\."/u
+  );
+  assert.match(markup, /name="model"/u);
+  assert.match(markup, /name="priority"/u);
+  assert.match(markup, /name="provider" value="codex"/u);
+  assert.match(markup, /name="returnTo" value="\/providers"/u);
+  assert.doesNotMatch(markup, />Apply<\/button>/u);
+  assert.doesNotMatch(markup, /data-apply-role/u);
+});
+
 test("FilterBar owns the form, the submit action and the state a filter must preserve", () => {
   const markup = renderToStaticMarkup(
     React.createElement(
@@ -17246,8 +17892,8 @@ test("governed record actions read as one primary, one destructive, one secondar
   assert.match(buttonTag(active, "memory-promote-skill"), /bg-surface-raised/);
   assert.doesNotMatch(proposed + active, /bg-chart-3 hover:brightness-110/);
 
-  // Each action is a real submit button inside its own form, so every one of
-  // them posts without a client-side handler.
+  // Each action is a native submit button inside its own form, so the selected
+  // action is submitted by the browser rather than an event handler.
   const combined = proposed + active;
   assert.equal(
     combined.match(/data-button="memory-/g)?.length,
@@ -17906,6 +18552,7 @@ test("Console source names values only through the theme", () => {
     `These call sites spell a shared text treatment instead of importing it:\n${inlineRoles.join("\n")}`
   );
 });
+
 test("the monospace family has one spelling per role", () => {
   // Almost every value the Console shows is a canonical name rather than prose,
   // and those want a different treatment from muted copy. The family was
@@ -18413,19 +19060,11 @@ test("transition history is an ordered, named list rather than a stack of divs",
   );
 });
 
-test("the Console stays server-rendered: no client directive, no hooks, no handlers", () => {
-  // The target state forbids client JavaScript, and the Console honours it by
-  // construction today: every component is a server component, every control is
-  // a native form element, and every action is a normal navigation or a form
-  // post. Measured in a browser against a production build, the ~100kB the page
-  // downloads is entirely React and Next runtime -- no Console source reaches
-  // the client bundle at all, so that claim is currently true rather than
-  // aspirational.
-  //
-  // These three guards keep it true. Each is cheap, and each fails loudly the
-  // moment a convenient "use client" is added to a leaf component, which is
-  // how a fully server-rendered product usually starts shipping behaviour that
-  // only works with scripting on.
+test("client behavior stays in explicitly approved interaction islands", () => {
+  // Server components remain the default. A small client island is appropriate
+  // when an interaction needs immediate browser state, but each one must be
+  // registered here with its reason; tests must cover its real interaction.
+  const consoleRoot = join(import.meta.dirname, "..");
   const roots = ["app", "src"];
   const files: string[] = [];
   const collect = (dir: string): void => {
@@ -18439,29 +19078,67 @@ test("the Console stays server-rendered: no client directive, no hooks, no handl
     collect(join(import.meta.dirname, "..", root));
   }
 
+  const approvedClientModules = new Map<string, string>([
+    [
+      join("src", "components", "forms", "AutoSubmitSelectField.ts"),
+      "Submits a single-choice form on change while keeping filtering and mutations server-authoritative."
+    ],
+    [
+      join("src", "components", "navigation", "FormNavigationOwner.ts"),
+      "Owns same-origin form navigation so filters and mutations do not reload the document."
+    ],
+    [
+      join("src", "components", "navigation", "AppNav.ts"),
+      "Persists the interactive sidebar preference without moving page data client-side."
+    ]
+  ]);
+  const approvedServerHandlerModules = new Map<string, string>();
   const clientDirective: string[] = [];
   const hooks: string[] = [];
   const handlers: string[] = [];
-  // Hooks that are illegal in a server component. `use` is deliberately absent:
-  // it is legal in RSC payloads and is not evidence of a client boundary.
+  // Hooks that are illegal in a server component. The React use API is
+  // deliberately absent: it is legal in RSC payloads and is not a client hook.
   const hookPattern =
     /\buse(State|Effect|Reducer|Ref|Context|SyncExternalStore)\b/u;
   for (const file of files) {
-    const relative = file.slice(import.meta.dirname.length);
+    const relative = file.slice(consoleRoot.length + 1);
     const source = readFileSync(file, "utf8");
     if (/^\s*(["'])use client\1/mu.test(source)) clientDirective.push(relative);
     if (hookPattern.test(source)) hooks.push(relative);
-    // An event handler prop means the element only does something with
-    // scripting on. There is no exception left to allow: the table's opt-in row
-    // click is gone, because a `<tr onClick>` had no keyboard equivalent.
-    if (/\bon(Change|Submit|Input|KeyDown|Blur|Focus):/u.test(source)) {
+    // Event handlers stay in approved client islands or an explicitly
+    // documented server-rendered exception.
+    if (/\bon(Click|Change|Submit|Input|KeyDown|Blur|Focus):/u.test(source)) {
       handlers.push(relative);
     }
   }
 
-  assert.deepEqual(clientDirective, [], "client directives found");
-  assert.deepEqual(hooks, [], "React hooks found in a server component");
-  assert.deepEqual(handlers, [], "inline event handlers found");
+  const approvedClientPaths = [...approvedClientModules.keys()].sort();
+  assert.deepEqual(
+    clientDirective.sort(),
+    approvedClientPaths,
+    "every client boundary must be registered, and every registration must exist"
+  );
+  assert.deepEqual(
+    hooks.filter((file) => !approvedClientModules.has(file)),
+    [],
+    "React hooks must stay in an approved client module"
+  );
+  assert.deepEqual(
+    handlers.filter(
+      (file) =>
+        !approvedClientModules.has(file) &&
+        !approvedServerHandlerModules.has(file)
+    ),
+    [],
+    "event handlers must stay in an approved client module or documented server exception"
+  );
+  assert.ok(
+    [
+      ...approvedClientModules.values(),
+      ...approvedServerHandlerModules.values()
+    ].every((reason) => reason.trim().length > 0),
+    "every client island and server handler exception needs a rationale"
+  );
 });
 
 test("DataTable renders no row-level handler, and has no way to ask for one", () => {
@@ -18469,12 +19146,12 @@ test("DataTable renders no row-level handler, and has no way to ask for one", ()
   // than simply no longer interesting: a `<tr onClick>` is a mouse-only target.
   // It takes no focus, has no role, and offers no keyboard activation, so the
   // next view to pass such a prop would ship an interaction no keyboard user can
-  // reach -- and the only test covering it asserted the hover affordance and
-  // called it correct.
+  // reach -- and the only test in the file would have asserted the hover
+  // affordance and called it correct.
   //
-  // The target state asks for no clickable rows, and no view passed one. A
-  // resource is opened through its own link, not by making its whole row an
-  // unlabelled control.
+  // The target state asks for no clickable rows, and no view passed one. The
+  // spec's own rule stands: a resource is opened through its own link, not by
+  // making its whole row an unlabelled control.
   const markup = renderToStaticMarkup(
     React.createElement<DataTableProps<{ id: string }>>(DataTable, {
       data: [{ id: "a" }, { id: "b" }],
