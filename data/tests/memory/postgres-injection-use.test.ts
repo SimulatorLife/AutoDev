@@ -1013,3 +1013,116 @@ test("recordInjectionEvent reports a correlation token already claimed by anothe
     "one token cannot stand for two different injection events"
   );
 });
+
+/**
+ * The exposure list's own filters, and the context it refuses to list without.
+ *
+ * Three things this list decides were not asserted by the test above: the
+ * `memoryModes` and `useKinds` narrowings, and the early return when the
+ * context carries no repository or task.
+ *
+ * That last one needs the recording pool rather than an empty result. A context
+ * with no repositoryId builds `i.repository_id = NULL`, which matches no row --
+ * so the unguarded query returns an empty page too, and an assertion on the
+ * returned page passes against a list that ran a query it had no business
+ * running. What is observable is that no statement was sent.
+ */
+test("the exposure list applies its own filters and refuses a context without a session", async () => {
+  const pool = recordingPool(new FakeMemoryPool());
+  const repository = new PostgresMemoryRepository({ pool });
+  const jit = injectionEvent({ id: "inj-mode-jit", correlationToken: "t-jit" });
+  const retrieval = injectionEvent({
+    id: "inj-mode-retrieval",
+    correlationToken: "t-retrieval",
+    memoryMode: "retrieval-only",
+    runId: "request-run-2",
+    agentId: "request-agent-2"
+  });
+  for (const event of [jit, retrieval]) await appendInjection(repository, event);
+  await repository.recordInjectionUseReport({
+    report: useReport(jit, { useKind: "partially_used" }),
+    actor: { id: "curator", authority: "curator" },
+    context: sessionContext
+  });
+  await repository.recordInjectionUseReport({
+    report: useReport(retrieval, { useKind: "not_used" }),
+    actor: { id: "curator", authority: "curator" },
+    context: sessionContext
+  });
+
+  const beforeFilter = await repository.listInjectionUseJoins({
+    context: sessionContext
+  });
+  assert.equal(beforeFilter.total, 2, "both eligible modes are listed unfiltered");
+
+  const jitOnly = await repository.listInjectionUseJoins({
+    context: sessionContext,
+    memoryModes: ["jit"]
+  });
+  assert.equal(jitOnly.total, 1);
+  assert.equal(
+    jitOnly.items[0]?.injection.id,
+    jit.id,
+    "memoryModes must narrow the list, not describe it"
+  );
+
+  const retrievalOnly = await repository.listInjectionUseJoins({
+    context: sessionContext,
+    memoryModes: ["retrieval-only"]
+  });
+  assert.equal(retrievalOnly.total, 1);
+  assert.equal(
+    retrievalOnly.items[0]?.injection.id,
+    retrieval.id,
+    "the other eligible mode is reachable through its own value"
+  );
+
+  const notUsed = await repository.listInjectionUseJoins({
+    context: sessionContext,
+    useKinds: ["not_used"]
+  });
+  assert.equal(notUsed.total, 1);
+  assert.equal(
+    notUsed.items[0]?.injection.id,
+    retrieval.id,
+    "useKinds narrows by the reported kind"
+  );
+  assert.equal(
+    (
+      await repository.listInjectionUseJoins({
+        context: sessionContext,
+        useKinds: ["used"]
+      })
+    ).total,
+    0,
+    "a use kind no report carries selects nothing"
+  );
+
+  // The contexts that cannot name a session at all. Each returns an empty page
+  // *and* sends nothing, which is the part an empty-page assertion cannot see.
+  // Keys are *omitted* rather than set to undefined -- `exactOptionalPropertyTypes`
+  // is on, and "absent" is the state under test, distinct from "present and
+  // empty".
+  const { repositoryId: _noRepository, ...withoutRepository } = sessionContext;
+  const { taskId: _noTask, ...withoutTask } = sessionContext;
+  const unscoped: readonly [string, MemoryReadContext][] = [
+    ["no repository", withoutRepository],
+    ["no task", withoutTask],
+    ["a blank repository", { ...sessionContext, repositoryId: "   " }],
+    ["a blank task", { ...sessionContext, taskId: "  " }]
+  ];
+  for (const [why, context] of unscoped) {
+    const before = pool.statements.length;
+    const page = await repository.listInjectionUseJoins({ context });
+    assert.deepEqual(
+      { items: page.items, total: page.total },
+      { items: [], total: 0 },
+      `${why} must list nothing`
+    );
+    assert.equal(
+      pool.statements.length,
+      before,
+      `${why} must be refused before any query runs -- an exposure list scoped to no repository is a query against every workspace it can reach`
+    );
+  }
+});
