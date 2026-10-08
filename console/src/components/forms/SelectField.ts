@@ -61,6 +61,8 @@ export interface SelectFieldProps {
   /** One value, or several when the control is a `multiple` select. */
   readonly defaultValue?: string | readonly string[] | undefined;
   readonly disabled?: boolean | undefined;
+  /** An additive semantic color treatment; it never replaces the shared chrome. */
+  readonly tone?: "warning" | undefined;
   /**
    * Why the control is disabled, in one sentence.
    *
@@ -91,8 +93,9 @@ export interface SelectFieldProps {
   readonly className?: string | undefined;
   /** Marks the control for tests and stable browser assertions. */
   readonly testId?: string | undefined;
-  /** Extra attributes, for state flags the Console asserts on. */
-  readonly dataAttributes?: Readonly<Record<string, string>> | undefined;
+  /** Extra data-* state flags. Visual styling belongs to `tone` or the shared control class. */
+  readonly dataAttributes?:
+    Readonly<Record<`data-${string}`, string>> | undefined;
 }
 
 export function SelectField({
@@ -103,6 +106,7 @@ export function SelectField({
   options,
   defaultValue,
   disabled,
+  tone,
   disabledReason,
   multiple,
   onChange,
@@ -159,9 +163,16 @@ export function SelectField({
           // dropdown while still accepting several values.
           ...(multiple === true ? { multiple: true, size: 1 } : {}),
           ...(onChange === undefined ? {} : { onChange }),
-          className: CONTROL_CLASS,
+          // `tone` only adds color variants; the shared border, dimensions,
+          // padding, chevron space and disabled behavior remain on every select.
+          className: `${CONTROL_CLASS}${
+            tone === "warning"
+              ? " data-[tone=warning]:border-warning/50 data-[tone=warning]:bg-warning/15 data-[tone=warning]:text-warning"
+              : ""
+          }`,
           ...(testId === undefined ? {} : { "data-select": testId }),
-          ...dataAttributes
+          ...dataAttributes,
+          ...(tone === undefined ? {} : { "data-tone": tone })
         },
         ...options.map((option) =>
           React.createElement(

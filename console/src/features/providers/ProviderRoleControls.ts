@@ -47,15 +47,6 @@ const ROLE_ICONS = {
 >;
 
 /**
- * Priority is a member of the enum rather than a separate enablement flag, so
- * `Disabled` is one option among four rather than a fifth control beside them.
- * It is the only option that is highlighted: "this role will not be used"
- * should be visible at a glance, while P1, P2 and P3 share one neutral style so
- * they are not read as different kinds of thing.
- */
-const DISABLED_STYLE_CLASS = "border-warning/50 bg-warning/15 text-warning";
-
-/**
  * The models a role may be set to, deduplicated and ordered.
  *
  * A provider maps several tiers to the same model, so the raw list repeats; the
@@ -207,13 +198,8 @@ function RoleRow({
       hideLabel: true,
       className: "min-w-0 w-24",
       testId: `role-priority-${provider}-${role}`,
-      dataAttributes: {
-        "data-role-priority": role,
-        // `className`, not `class`: React drops an unknown `class` prop with a
-        // warning rather than applying it, so the highlight would silently not
-        // render. `SelectField` puts these onto the `<select>` itself.
-        ...(roleDisabled ? { className: DISABLED_STYLE_CLASS } : {})
-      },
+      tone: roleDisabled ? "warning" : undefined,
+      dataAttributes: { "data-role-priority": role },
       defaultValue: priorityOptionSelected(assignment),
       ...(blockedReason === undefined
         ? {}

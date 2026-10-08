@@ -12917,6 +12917,51 @@ test("ProvidersView renders the four configuration columns with per-role control
     markup,
     /class="[^"]*warning[^"]*"[^>]*data-role-priority="orchestrator"/
   );
+  const disabledPrioritySelect =
+    markup.match(
+      /<select\b(?=[^>]*data-select="role-priority-codex-orchestrator")[^>]*>/u
+    )?.[0] ?? "";
+  const activePrioritySelect =
+    markup.match(
+      /<select\b(?=[^>]*data-select="role-priority-claude-default")[^>]*>/u
+    )?.[0] ?? "";
+  assert.ok(disabledPrioritySelect);
+  assert.ok(activePrioritySelect);
+  for (const sharedClass of [
+    "appearance-none",
+    "rounded",
+    "border-border-strong",
+    "bg-input",
+    "pl-3",
+    "pr-8",
+    "py-1.5",
+    "text-sm",
+    "min-w-0",
+    "max-w-full"
+  ]) {
+    assert.ok(
+      disabledPrioritySelect.includes(sharedClass),
+      `Disabled keeps shared select style ${sharedClass}`
+    );
+    assert.ok(
+      activePrioritySelect.includes(sharedClass),
+      `P1 uses shared select style ${sharedClass}`
+    );
+  }
+  assert.match(disabledPrioritySelect, /data-tone="warning"/u);
+  assert.match(
+    disabledPrioritySelect,
+    /data-\[tone=warning\]:border-warning\/50/u
+  );
+  assert.match(
+    disabledPrioritySelect,
+    /data-\[tone=warning\]:bg-warning\/15/u
+  );
+  assert.match(
+    disabledPrioritySelect,
+    /data-\[tone=warning\]:text-warning/u
+  );
+  assert.doesNotMatch(activePrioritySelect, /data-tone="warning"/u);
 
   // Each role control carries a distinct id: four role forms submit `priority`
   // from one page, so a shared id would leave every label ambiguous.
