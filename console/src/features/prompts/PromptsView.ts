@@ -4,6 +4,10 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import {
+  CALLOUT_ERROR_CLASS,
+  CALLOUT_WARNING_CLASS
+} from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
@@ -225,7 +229,8 @@ export function PromptsView({
     React.createElement(
       "section",
       {
-        className: LIST_PANEL_CLASS
+        className: LIST_PANEL_CLASS,
+        "data-section": "prompts-catalog"
       },
       React.createElement(
         "h2",
@@ -238,10 +243,19 @@ export function PromptsView({
         ? React.createElement(
             "p",
             {
+              // These were quoted as `` "`${CALLOUT_ERROR_CLASS} mb-3`" `` --
+              // a template literal wrapped in a plain string, with the
+              // constants never imported at all. The notice rendered its text
+              // and its role, and a class attribute reading
+              // `class="${CALLOUT_ERROR_CLASS} mb-3"`, so an operator looking
+              // at an invalid RuleSync command source saw unstyled prose where
+              // every other failure state on the Console is a toned callout.
+              // Nothing caught it because the branch only runs when the command
+              // source is invalid or unobserved, and this page is valid.
               className:
                 commandSourceValidity === false
-                  ? "`${CALLOUT_ERROR_CLASS} mb-3`"
-                  : "`${CALLOUT_WARNING_CLASS} mb-3`",
+                  ? `${CALLOUT_ERROR_CLASS} mb-3`
+                  : `${CALLOUT_WARNING_CLASS} mb-3`,
               role: commandSourceValidity === false ? "alert" : "status",
               "data-prompt-source-validity":
                 commandSourceValidity === false ? "invalid" : "not-observed"
