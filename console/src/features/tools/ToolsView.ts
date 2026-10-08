@@ -174,7 +174,13 @@ function coverageBannerClasses(variant: "info" | "warning" | "error"): string {
  * command, a prompt -- and an identifier that falls back to the body face reads
  * as a different kind of value from the tool names beside it.
  */
-const EDIT_SURFACE_LINK_CLASS = "text-accent hover:underline font-mono text-xs";
+const EDIT_SURFACE_LINK_CLASS =
+  // `block min-h-6` for WCAG 2.5.8, for the same two reasons as elsewhere: the
+  // box was 14px against a 24px floor with the spacing exception unavailable,
+  // and `min-height` would be inert on an inline box anyway, so the `block` is
+  // part of the fix rather than cosmetic. It sits alone in its cell, so nothing
+  // reflows around it.
+  "block min-h-6 text-accent hover:underline font-mono text-xs";
 
 /**
  * Where a tool's canonical source is edited, and what to call the link when the

@@ -78,7 +78,7 @@ export function AgentsView({
           {
             href: `/agents/${encodeURIComponent(agent.id)}`,
             className:
-              "font-semibold text-fg underline-offset-4 hover:underline",
+              "block min-h-6 font-semibold text-fg underline-offset-4 hover:underline",
             "aria-label": `Open agent ${agent.role}`,
             title: `${agent.role} (${agent.kind})`
           },

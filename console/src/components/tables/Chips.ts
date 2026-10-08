@@ -67,7 +67,19 @@ export function Chip({
       "a",
       {
         href,
-        className: `${classes} underline-offset-4 hover:text-accent hover:underline`,
+        // `min-h-6` is on the anchor and not on `TAG_SHAPE`, because 2.5.8 is a
+        // rule about *targets*, not about how a chip looks. The span below is not
+        // focusable and is not measured by it, so giving the shape a minimum
+        // height would add two pixels to every non-interactive chip on every
+        // page to fix nothing. The anchor is 22px tall as `TAG_SHAPE` composes
+        // it -- 16px of line box, 2px of padding each side, 1px of border each
+        // side -- and the surrounding chips are close enough that the criterion's
+        // spacing exception does not cover the shortfall, so a link chip was 2px
+        // under the 24px minimum on `/tools`, `/prompts` and `/agents`.
+        //
+        // A minimum rather than more padding: a chip carrying a longer value
+        // still grows past it instead of being squeezed to a fixed height.
+        className: `${classes} min-h-6 underline-offset-4 hover:text-accent hover:underline`,
         // `aria-label` only when it says something the text does not; a link
         // whose text is already the label must not have its name replaced.
         ...(label === undefined ? {} : { "aria-label": label }),

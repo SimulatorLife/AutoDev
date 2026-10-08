@@ -87,7 +87,7 @@ export function PromptsView({
           {
             href: `/prompts/${encodeURIComponent(prompt.name)}`,
             className:
-              "font-mono font-semibold text-fg underline-offset-4 hover:underline",
+              "block min-h-6 font-mono font-semibold text-fg underline-offset-4 hover:underline",
             "aria-label": `Open prompt ${prompt.name}`
           },
           prompt.kind === "role" || prompt.path.includes("roles")

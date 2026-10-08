@@ -86,4 +86,11 @@ export const MONO_META_CLASS = "font-mono text-xs text-fg-muted";
  * display, overflow, and a hover colour beside font family, weight, and colour.
  */
 export const MONO_ID_LINK_CLASS =
-  `${MONO_ID_CLASS} block truncate hover:text-accent`;
+  // `min-h-6` for the same reason `Chip` carries it on its anchor: this class is
+  // only ever a link, so the target-size floor belongs to it rather than to
+  // `MONO_ID_CLASS`, which the non-link `/permissions` and `/workspaces` rows
+  // share. As composed the link was 20px tall -- 18px of line box and a 1px
+  // border each side -- against a 24px minimum, with adjacent rows close enough
+  // that the spacing exception did not cover it. The row is already far taller
+  // than 24px, so nothing on the page moves.
+  `${MONO_ID_CLASS} block min-h-6 truncate hover:text-accent`;
