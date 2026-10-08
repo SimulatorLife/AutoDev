@@ -142,6 +142,22 @@ function isUniqueViolation(error: unknown): boolean {
  * Parses a `COUNT(...)::bigint` aggregate as a non-negative safe integer,
  * failing closed on malformed driver output instead of silently coercing
  * it (the pg driver returns bigint columns as strings).
+ *
+ * The one owner for every aggregate count in this file. The four other places
+ * that read a `COUNT(*)` used to call `Number(x ?? 0)` directly, which has two
+ * distinct failures this does not:
+ *
+ *   - it coerces rather than refuses -- `null`, `""` and `"   "` all become `0`,
+ *     so a missing measurement reads as a real one; and
+ *   - at `recordSessionOutcomeReport` it is a *guard*, where `Number(NaN) <= 0`
+ *     is `false`, so a malformed count let the write through instead of
+ *     stopping it.
+ *
+ * Unreachable while every one of these stays a `COUNT(*)::bigint`, which
+ * Postgres never returns as NULL or as text that is not a number. They matter
+ * because these are the numbers a page total, a rollup cell and a session
+ * guard are built from, and a silently-wrong total is what the cohort guards
+ * in this same file exist to prevent.
  */
 function parseCohortCount(value: unknown, column: string): number {
   // Screened before conversion, not after: `Number()` does not turn malformed
@@ -326,7 +342,7 @@ export class PostgresMemoryRepository implements MemoryRepository {
     ]);
     return {
       items: rows.rows.map((row) => hydrateExperienceRow(row)),
-      total: Number(count.rows[0]?.total ?? 0),
+      total: parseCohortCount(count.rows[0]?.total, "total"),
       limit: request.limit ?? 50,
       offset: request.offset ?? 0
     };
@@ -601,7 +617,7 @@ export class PostgresMemoryRepository implements MemoryRepository {
     let total = 0;
     for (const row of rollup.rows) {
       if (!isMemoryStatus(row.status)) continue;
-      const count = Number(row.status_total ?? 0);
+      const count = parseCohortCount(row.status_total, "status_total");
       measured[row.status] = count;
       total += count;
     }
@@ -1211,7 +1227,7 @@ export class PostgresMemoryRepository implements MemoryRepository {
     });
     return {
       items,
-      total: Number(count.rows[0]?.total ?? 0),
+      total: parseCohortCount(count.rows[0]?.total, "total"),
       limit,
       offset
     };
@@ -1511,7 +1527,7 @@ export class PostgresMemoryRepository implements MemoryRepository {
     });
     return {
       items,
-      total: Number(countResult.rows[0]?.total ?? 0),
+      total: parseCohortCount(countResult.rows[0]?.total, "total"),
       limit,
       offset
     };
@@ -1716,7 +1732,10 @@ export class PostgresMemoryRepository implements MemoryRepository {
        LIMIT 1`,
       [workspaceId, repositoryId, taskId]
     );
-    if (!injectionCheck.rows[0] || Number(injectionCheck.rows[0].count) <= 0) {
+    if (
+      !injectionCheck.rows[0] ||
+      parseCohortCount(injectionCheck.rows[0].count, "count") <= 0
+    ) {
       throw new MemoryConflictError(
         "Session outcome report requires at least one recorded injection event for this session key."
       );

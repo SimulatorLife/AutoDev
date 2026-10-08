@@ -9,7 +9,10 @@ import type {
   MemoryUseReport
 } from "@simulatorlife/autodev-core";
 
-import { MemoryConflictError } from "../../src/memory/errors.ts";
+import {
+  MemoryConflictError,
+  MemoryHydrationError
+} from "../../src/memory/errors.ts";
 import { PostgresMemoryRepository } from "../../src/memory/postgres-memory-repository.ts";
 import type { MemoryConnectionPool } from "../../src/memory/query-client.ts";
 import {
@@ -639,4 +642,84 @@ test("a session outcome report must match the trusted identity and carry a sessi
   // write being impossible.
   const accepted = await record(sessionReport(), sessionContext);
   assert.equal(accepted.appended, true);
+});
+
+/**
+ * The "at least one injection event for this session" guard.
+ *
+ * It is written `Number(count) <= 0`, and that comparison is not what it looks
+ * like: `Number(NaN) <= 0` is `false`. A malformed count therefore satisfied
+ * the guard rather than stopping the write, which is the opposite of every
+ * other aggregate in this file and the reason it now reads its count through
+ * `parseCohortCount`.
+ *
+ * Unreachable while the query stays a `COUNT(*)::bigint` — which is why it is
+ * tested by feeding the guard a malformed aggregate rather than by running
+ * Postgres: the point is what the guard does when the number it is handed is
+ * not a number.
+ */
+test("a malformed injection-event count refuses the report instead of passing the guard", async () => {
+  const base = await poolWithInjection();
+
+  for (const [label, count] of [
+    ["a non-numeric string", "not-a-number"],
+    ["an empty string", ""],
+    ["a boolean", true],
+    ["a missing value", undefined]
+  ] as const) {
+    // Only the guard's own COUNT is intercepted; everything else, including the
+    // insert the report would otherwise perform, still runs against the fake.
+    const pool: MemoryConnectionPool = {
+      query: (text, params) =>
+        text.includes("COUNT(*)::bigint AS count")
+          ? Promise.resolve({ rows: [{ count }], rowCount: 1 } as never)
+          : base.query(text, params),
+      connect: () => base.connect(),
+      end: () => base.end()
+    };
+
+    await assert.rejects(
+      () =>
+        new PostgresMemoryRepository({ pool }).recordSessionOutcomeReport({
+          report: sessionReport(),
+          actor: { id: "op-1", authority: "curator" },
+          context: sessionContext
+        }),
+      (error: unknown) =>
+        error instanceof MemoryHydrationError &&
+        /expected a non-negative safe integer/u.test(error.message),
+      `${label} must refuse the report rather than satisfy the guard`
+    );
+  }
+
+  // The positive control: a real count of one still lets the report through,
+  // so the cases above are about the value rather than the write being
+  // impossible.
+  const allowed = await new PostgresMemoryRepository({ pool: base });
+  const result = await allowed.recordSessionOutcomeReport({
+    report: sessionReport(),
+    actor: { id: "op-1", authority: "curator" },
+    context: sessionContext
+  });
+  assert.equal(result.appended, true, "a well-formed count must still be recorded");
+
+  // And a well-formed zero is the refusal the guard was written for.
+  const empty: MemoryConnectionPool = {
+    query: (text, params) =>
+      text.includes("COUNT(*)::bigint AS count")
+        ? Promise.resolve({ rows: [{ count: "0" }], rowCount: 1 } as never)
+        : base.query(text, params),
+    connect: () => base.connect(),
+    end: () => base.end()
+  };
+  await assert.rejects(
+    () =>
+      new PostgresMemoryRepository({ pool: empty }).recordSessionOutcomeReport({
+        report: sessionReport({ id: "srep-empty" }),
+        actor: { id: "op-1", authority: "curator" },
+        context: sessionContext
+      }),
+    /requires at least one recorded injection event/u,
+    "a real zero is still the refusal this guard exists for"
+  );
 });
