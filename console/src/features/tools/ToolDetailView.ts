@@ -341,7 +341,7 @@ export function ToolDetailView({
       },
       React.createElement(
         "section",
-        { className: DETAIL_PANEL_CLASS },
+        { className: DETAIL_PANEL_CLASS, "data-section": "tool-source-authority" },
         React.createElement(
           "h3",
           { className: SECTION_HEADING_CLASS },
@@ -375,7 +375,7 @@ export function ToolDetailView({
       ),
       React.createElement(
         "section",
-        { className: DETAIL_PANEL_CLASS },
+        { className: DETAIL_PANEL_CLASS, "data-section": "tool-role-exposure" },
         React.createElement(
           "h3",
           { className: SECTION_HEADING_CLASS },
@@ -386,7 +386,7 @@ export function ToolDetailView({
     ),
     React.createElement(
       "section",
-      { className: DETAIL_PANEL_CLASS },
+      { className: DETAIL_PANEL_CLASS, "data-section": "tool-description" },
       React.createElement(
         "h3",
         { className: SECTION_HEADING_CLASS },
@@ -406,7 +406,7 @@ export function ToolDetailView({
     ),
     React.createElement(
       "section",
-      { className: DETAIL_PANEL_CLASS },
+      { className: DETAIL_PANEL_CLASS, "data-section": "tool-historical-use" },
       React.createElement(
         "h3",
         { className: SECTION_HEADING_CLASS },
