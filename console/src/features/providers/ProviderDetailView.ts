@@ -23,6 +23,7 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import {
+  ENTITY_LINK_CLASS,
   MONO_VALUE_CLASS,
   MUTED_BODY_CLASS,
   MUTED_META_CLASS,
@@ -117,8 +118,7 @@ function ModelsPanel({
           "a",
           {
             href: modelPath(provider.id, model.id),
-            className:
-              "font-mono text-xs text-fg underline-offset-4 hover:underline",
+            className: `font-mono text-xs text-fg ${ENTITY_LINK_CLASS}`,
             "aria-label": `Open model ${model.id}`
           },
           model.id
@@ -217,8 +217,7 @@ function RoutingPanel({
                           {
                             key: peer,
                             href: providerPath(peer),
-                            className:
-                              "font-mono text-fg underline-offset-4 hover:underline"
+                            className: `font-mono text-fg ${ENTITY_LINK_CLASS}`
                           },
                           peer
                         )

@@ -85,6 +85,29 @@ export const MONO_META_CLASS = "font-mono text-xs text-fg-muted";
  * where it is not a link. The extra tokens conflict with nothing in the base --
  * display, overflow, and a hover colour beside font family, weight, and colour.
  */
+/**
+ * The Console's link treatment for a named entity — a provider, model, agent,
+ * prompt or server an operator can open.
+ *
+ * This is the same interactive role everywhere it appears: the thing in a cell
+ * that leads to that thing's own page. It had two live treatments. `/agents` and
+ * `/prompts` signalled the link by underlining on hover; `/mcps` and `/tools`
+ * signalled it by shifting to the accent colour; `/github`'s provider summary
+ * had already done both. So the same gesture meant three different things
+ * depending on which page the operator had come from.
+ *
+ * Both signals, not a choice between them: the underline is the one that works
+ * without perceiving the hue shift, and the colour is what ties the link to the
+ * rest of the Console's accent vocabulary. `Chip` has carried exactly this pair
+ * all along, which is what settled it.
+ *
+ * Callers compose this with whatever typeface and size the surrounding column
+ * uses — a mono identifier in a dense table, the body face where the name is
+ * also prose. What they do not do is choose their own hover.
+ */
+export const ENTITY_LINK_CLASS =
+  "underline-offset-4 hover:text-accent hover:underline";
+
 export const MONO_ID_LINK_CLASS =
   // `min-h-6` for the same reason `Chip` carries it on its anchor: this class is
   // only ever a link, so the target-size floor belongs to it rather than to
@@ -93,4 +116,4 @@ export const MONO_ID_LINK_CLASS =
   // border each side -- against a 24px minimum, with adjacent rows close enough
   // that the spacing exception did not cover it. The row is already far taller
   // than 24px, so nothing on the page moves.
-  `${MONO_ID_CLASS} block min-h-6 truncate hover:text-accent`;
+  `${MONO_ID_CLASS} block min-h-6 truncate ${ENTITY_LINK_CLASS}`;

@@ -20,7 +20,10 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { PathText } from "../../components/tables/PathText.ts";
-import { MUTED_TEXT_CLASS } from "../../components/ui/text-classes.ts";
+import {
+  ENTITY_LINK_CLASS,
+  MUTED_TEXT_CLASS
+} from "../../components/ui/text-classes.ts";
 
 export interface PromptsViewProps {
   readonly commands: readonly PromptAsset[];
@@ -86,8 +89,7 @@ export function PromptsView({
           "a",
           {
             href: `/prompts/${encodeURIComponent(prompt.name)}`,
-            className:
-              "block min-h-6 font-mono font-semibold text-fg underline-offset-4 hover:underline",
+            className: `block min-h-6 font-mono font-semibold text-fg ${ENTITY_LINK_CLASS}`,
             "aria-label": `Open prompt ${prompt.name}`
           },
           prompt.kind === "role" || prompt.path.includes("roles")

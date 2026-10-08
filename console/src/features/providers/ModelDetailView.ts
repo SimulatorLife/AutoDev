@@ -20,6 +20,7 @@ import {
   NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
+import { ENTITY_LINK_CLASS } from "../../components/ui/text-classes.ts";
 import { ModelToggle } from "./ModelToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 
@@ -162,7 +163,7 @@ export function ModelDetailView({
             "a",
             {
               href: providerPath(model.provider),
-              className: "text-fg underline-offset-4 hover:underline"
+              className: `text-fg ${ENTITY_LINK_CLASS}`
             },
             model.provider
           )

@@ -25,6 +25,7 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import {
+  ENTITY_LINK_CLASS,
   MONO_VALUE_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
@@ -77,8 +78,7 @@ export function AgentsView({
           "a",
           {
             href: `/agents/${encodeURIComponent(agent.id)}`,
-            className:
-              "block min-h-6 font-semibold text-fg underline-offset-4 hover:underline",
+            className: `block min-h-6 font-semibold text-fg ${ENTITY_LINK_CLASS}`,
             "aria-label": `Open agent ${agent.role}`,
             title: `${agent.role} (${agent.kind})`
           },
