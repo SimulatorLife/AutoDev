@@ -428,6 +428,23 @@ function recordOutcomeReportCohortAttributes(
   };
 }
 
+/**
+ * Whether an identifier names something a query can be built from.
+ *
+ * Three session-scoped gates independently re-derive "the session must name a
+ * workspace / repository", and they drift: two compared `.trim()` and one
+ * compared truthiness, so a whitespace repository reached a write path whose
+ * stated reason was that a repository is required. Truthiness is the wrong
+ * test everywhere. A blank identifier is not a narrower search, it is a search
+ * for the row whose repository *is* the blank string.
+ *
+ * One predicate, so the next gate added to this cluster cannot pick its own
+ * spelling of the rule.
+ */
+function isUsableScopeIdentifier(value: string | undefined): boolean {
+  return value !== undefined && value.trim().length > 0;
+}
+
 function assertInjectionUseReportAccess(
   actor: MemoryActor,
   context: MemoryReadContext
@@ -442,12 +459,7 @@ function assertInjectionUseReportAccess(
       "Task-history access is required to report injection use."
     );
   }
-  // `.trim()`, not a truthiness check: `"  "` is a truthy string, so the plain
-  // form let a blank repository through a gate whose stated reason is that a
-  // repository is required. The write was still refused further down, by the
-  // experience-scope check -- with a different error and a different reason, so
-  // this gate was not doing what it claims.
-  if (!context.repositoryId?.trim()) {
+  if (!isUsableScopeIdentifier(context.repositoryId)) {
     throw new MemoryAuthorizationError(
       "Repository scope is required to report injection use."
     );
@@ -1275,7 +1287,7 @@ export class MemoryService
         const storedAuthority: MemoryAuthority = input.actor.authority;
         if (
           report.workspaceId !== input.context.workspaceId ||
-          !input.context.repositoryId ||
+          !isUsableScopeIdentifier(input.context.repositoryId) ||
           report.repositoryId !== input.context.repositoryId ||
           report.taskId !== input.context.taskId
         ) {
@@ -1782,8 +1794,8 @@ export class MemoryService
       async (span) => {
         this.assertCurator(input.actor);
         if (
-          !input.context.workspaceId.trim() ||
-          !input.context.repositoryId?.trim()
+          !isUsableScopeIdentifier(input.context.workspaceId) ||
+          !isUsableScopeIdentifier(input.context.repositoryId)
         ) {
           throw new MemoryValidationError(
             "Memory retention requires an explicit workspace and repository."

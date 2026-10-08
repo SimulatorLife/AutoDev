@@ -4498,6 +4498,73 @@ test("an outcome report outside the trusted session scope is refused", async () 
   assert.equal(repository.outcomeReports.size, 0);
 });
 
+test("each outcome-report identity clause refuses on its own disagreement", async () => {
+  // The scope gate is four independent refusals in one condition, and the test
+  // above only reaches two of them. Every `scope` variant it tries also fails
+  // `isMemoryScopeVisibleTo`, so it never isolates the workspace/task
+  // equality clauses -- and no fixture anywhere disagreed on
+  // `report.workspaceId` or `report.repositoryId` at all. A clause no
+  // fixture can reach is a clause nothing proves, so each gets a report that
+  // agrees with the session on every field except the one under test.
+  //
+  // Worth recording why these need fixtures at all: the Control API's only
+  // caller builds its "trusted session" context *from the experience being
+  // reported on*, so all four clauses agree by construction and the gate
+  // never refuses in production. What actually holds that endpoint down is
+  // `requireTaskHistoryOperator` plus the repository's session-scoped token
+  // lookup. The gate is what keeps a second, independently-scoped caller
+  // safe, so it is tested directly here rather than left as an assumption.
+  const harness = await outcomeReportHarness();
+  const cases: readonly {
+    readonly clause: string;
+    readonly report: MemoryOutcomeReport;
+  }[] = [
+    {
+      clause: "workspaceId",
+      // Scope still names workspace-a, so visibility holds; only the report's
+      // own workspaceId is foreign.
+      report: outcomeReport({ workspaceId: "workspace-other" })
+    },
+    {
+      clause: "repositoryId",
+      // Scope still names repo-a, so visibility holds, and the workspace and
+      // task still match; only the report's own repositoryId is foreign.
+      report: outcomeReport({ repositoryId: "repo-b" })
+    }
+  ];
+  for (const { clause, report } of cases) {
+    await assert.rejects(
+      harness.service.recordOutcomeReport({ report, actor: root, context }),
+      MemoryAuthorizationError,
+      `a report disagreeing only on ${clause} must be refused`
+    );
+  }
+  assert.equal(harness.repository.outcomeReports.size, 0);
+});
+
+test("an outcome report may omit the repository the session carries", async () => {
+  // The repository clause is deliberately one-sided -- it compares only when
+  // the report has a repository -- so a workspace-scoped session with no
+  // repository is not required to supply one. Asserting only the refusal
+  // direction would let a mutation that tightens this to a plain equality
+  // check pass unnoticed.
+  const { repository, service } = await outcomeReportHarness();
+  const { repositoryId: _sessionRepository, ...report } = outcomeReport();
+
+  const result = await service.recordOutcomeReport({
+    report,
+    actor: root,
+    context
+  });
+
+  assert.equal(result.id, "private-outcome-report-id");
+  assert.equal(repository.outcomeReports.size, 1);
+  assert.equal(
+    repository.outcomeReports.get("private-correlation-token")?.repositoryId,
+    undefined
+  );
+});
+
 test("an outcome report needs a correlation token and evidence for a decided outcome", async () => {
   const { repository, service } = await outcomeReportHarness();
 
@@ -5575,6 +5642,40 @@ test("a session outcome report is refused outside the trusted session", async ()
       context
     }),
     MemoryValidationError
+  );
+  assert.equal(repository.sessionOutcomeReports.size, 0);
+});
+
+test("a session whose repository is blank cannot record a session outcome report", async () => {
+  // The test above only ever disagreed on the *report's* identity; every one of
+  // its fixtures also carried the session's own repository. This gate's fourth
+  // clause is about the session context, and it is the one that was wrong:
+  // `!input.context.repositoryId` is a truthiness check, so a repository of
+  // `"   "` satisfied it and then matched a report carrying the same blank
+  // string -- a write keyed to a repository named by whitespace.
+  //
+  // Both sides are asserted because either alone is consistent with a correct
+  // gate: a session blank on its own must be refused, and a blank report
+  // repository under a real session must be refused too.
+  const repository = new FakeMemoryRepository();
+  const service = makeService(repository);
+  const blankSession: MemoryReadContext = { ...context, repositoryId: "   " };
+
+  await assert.rejects(
+    service.recordSessionOutcomeReport({
+      report: sessionOutcomeReportHelper({ repositoryId: "   " }),
+      actor: root,
+      context: blankSession
+    }),
+    MemoryAuthorizationError
+  );
+  await assert.rejects(
+    service.recordSessionOutcomeReport({
+      report: sessionOutcomeReportHelper({ repositoryId: "   " }),
+      actor: root,
+      context
+    }),
+    MemoryAuthorizationError
   );
   assert.equal(repository.sessionOutcomeReports.size, 0);
 });
