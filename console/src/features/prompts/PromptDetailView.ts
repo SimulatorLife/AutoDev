@@ -411,7 +411,11 @@ function renderPromptHistory(
       ? React.createElement(
           "p",
           {
-            className: "`${CALLOUT_WARNING_CLASS} mb-4`",
+            // Quoted as a string rather than interpolated, so this rendered
+            // `class="${CALLOUT_WARNING_CLASS} mb-4"` -- the literal source
+            // text -- while line 91 uses the same constant correctly. The error
+            // element below it has always been toned; this one was not.
+            className: `${CALLOUT_WARNING_CLASS} mb-4`,
             role: "status",
             "data-prompt-version-error": "true"
           },
