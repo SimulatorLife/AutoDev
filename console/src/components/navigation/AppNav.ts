@@ -84,7 +84,13 @@ export function AppNav({
       id: "autodev-console-navigation",
       "aria-label": "AutoDev Console Navigation",
       className:
-        "autodev-nav flex shrink-0 flex-col h-full " +
+        // No `autodev-nav` here any more. It had no rule in the stylesheet, no
+        // test naming it, and no other reference in the tree, so on every page
+        // it rendered as a class the browser matched nothing against. A dead
+        // class reads as a hook someone intended to style later, which is worse
+        // than its absence: the nav looks unstyled by choice when in fact there
+        // was never anything behind it.
+        "flex shrink-0 flex-col h-full " +
         (isCollapsed
           ? "relative w-14 p-2"
           : "absolute inset-y-0 left-0 z-30 w-64 p-4 shadow-xl xl:relative xl:z-auto xl:shadow-none") +
