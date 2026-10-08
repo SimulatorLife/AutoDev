@@ -9,6 +9,7 @@ import {
 } from "../../src/memory/errors.ts";
 import { PostgresMemoryRepository } from "../../src/memory/postgres-memory-repository.ts";
 import type { MemoryConnectionPool } from "../../src/memory/query-client.ts";
+import type { MemoryExpiredExperienceRequest } from "@simulatorlife/autodev-core";
 import { MEMORY_EMBEDDING_DIMENSIONS } from "../../src/memory/schema.ts";
 import {
   makeContext,
@@ -1305,4 +1306,74 @@ test("purgeExperience refuses to break memory provenance and denies invisible ru
     }),
     "not_visible"
   );
+});
+
+/**
+ * The retention scan's bounds.
+ *
+ * `listExpiredExperiences` feeds the retention path in the Runtime's service,
+ * and its happy path is covered above -- but the guard that decides whether the
+ * scan is allowed to run had no failing test. Every caller in the suite passed
+ * a well-formed `{ limit, completedBefore }`, so the guard could have been
+ * deleted outright and the file would have stayed green.
+ *
+ * These bounds are the only thing between a configured retention window and a
+ * scan over the wrong slice of the collection: `limit` bounds how many
+ * candidates one pass claims, and `completedBefore` is the instant before which
+ * an experience counts as finished. An unparseable instant is not a point in
+ * time at all -- `Date.parse("not-a-date")` is `NaN`, which compares false
+ * against everything, so without this guard the scan would quietly select
+ * nothing rather than reporting a misconfigured window.
+ *
+ * Asserted with `rejects`, not `throws`: the method is `async`, so an invalid
+ * bound arrives as a rejection. `assert.throws` on an async method sees a
+ * function that returns a rejected promise and no synchronous exception, which
+ * is how the first version of this test passed a guard it never exercised.
+ */
+test("the retention scan refuses bounds it cannot act on", async () => {
+  const repo = repoWith(new FakeMemoryPool());
+  const context = makeContext({ workspaceId: "ws-1" });
+  const scan = (
+    overrides: Partial<MemoryExpiredExperienceRequest>
+  ): Promise<unknown> =>
+    repo.listExpiredExperiences({
+      context,
+      completedBefore: "2026-01-01T00:00:00.000Z",
+      limit: 50,
+      ...overrides
+    });
+
+  for (const [label, overrides] of [
+    ["a zero limit", { limit: 0 }],
+    ["a negative limit", { limit: -1 }],
+    ["a limit above the scan bound", { limit: 1001 }],
+    ["a fractional limit", { limit: 1.5 }],
+    ["a NaN limit", { limit: Number.NaN }],
+    ["an unparseable completedBefore", { completedBefore: "not-a-date" }],
+    ["an empty completedBefore", { completedBefore: "" }]
+  ] as const) {
+    await assert.rejects(
+      scan(overrides),
+      RangeError,
+      `${label} must be refused before any query runs`
+    );
+  }
+
+  // Both sides of the limit bound. "One is allowed" and "one thousand is
+  // allowed" are the claims the guard makes, and neither is exercised by the
+  // refusals above -- which is how a guard loosened to `< 2` would still pass
+  // every one of them.
+  for (const limit of [1, 1000]) {
+    await assert.doesNotReject(
+      scan({ limit }),
+      `a limit of ${limit} is inside the bound and must be accepted`
+    );
+  }
+  for (const limit of [0, 1001]) {
+    await assert.rejects(
+      scan({ limit }),
+      RangeError,
+      `a limit of ${limit} is one step outside the bound and must be refused`
+    );
+  }
 });
