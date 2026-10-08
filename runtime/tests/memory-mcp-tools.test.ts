@@ -11,6 +11,7 @@ import {
   type MemoryMcpSession
 } from "../src/memory/mcp.ts";
 import {
+  MemoryConflictError,
   MemoryValidationError,
   type MemoryService
 } from "../src/memory/service.ts";
@@ -483,3 +484,197 @@ async function connectWithFailingService(): Promise<{
     }
   };
 }
+/**
+ * A service whose append always conflicts, and whose lookup is answerable.
+ *
+ * The recording Proxy cannot express this: it answers every method with
+ * `{ accepted: true }`, so nothing ever conflicts and the reconciliation branch
+ * in `experience_append` is unreachable through it.
+ */
+function conflictingService(
+  calls: RecordedCall[],
+  existing: unknown,
+  thrown: Error = new MemoryConflictError("Experience exp-conflict already exists")
+): MemoryService {
+  return {
+    appendExperience: async (...args: unknown[]) => {
+      calls.push({ method: "appendExperience", args });
+      throw thrown;
+    },
+    getExperience: async (...args: unknown[]) => {
+      calls.push({ method: "getExperience", args });
+      return existing;
+    }
+  } as unknown as MemoryService;
+}
+
+/** Connects a server built over `service` and calls `experience_append` once. */
+async function callAppend(
+  service: MemoryService
+): Promise<{ readonly isError: unknown; readonly text: string }> {
+  const server = createMemoryMcpServer(service, {
+    current: () => BOUND_SESSION
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client(
+    { name: "memory-mcp-append-test", version: "1.0.0" },
+    { capabilities: {} }
+  );
+  await Promise.all([
+    server.connect(serverTransport),
+    client.connect(clientTransport)
+  ]);
+  try {
+    const response = await client.callTool({
+      name: "experience_append",
+      arguments: APPEND_ARGS
+    });
+    return {
+      isError: response.isError,
+      text: String((response.content as readonly { text: string }[])[0]?.text)
+    };
+  } finally {
+    await client.close();
+    await server.close();
+  }
+}
+
+/** The stored experience a conflict is reconciled against. */
+function storedExperience(
+  overrides: {
+    readonly uri: string;
+    readonly digest: string;
+  }
+): unknown {
+  return {
+    id: "exp-conflict",
+    workspaceId: BOUND_SESSION.context.workspaceId,
+    scope: { kind: "workspace", workspaceId: BOUND_SESSION.context.workspaceId },
+    taskId: "task-from-host",
+    runId: "run-from-host",
+    agentId: "agent-a",
+    startedAt: "2026-09-30T10:00:00.000Z",
+    outcome: "success",
+    trajectory: {
+      format: "letta-trajectory-v1",
+      uri: overrides.uri,
+      digest: overrides.digest
+    },
+    evidence: []
+  };
+}
+
+/**
+ * A conflicting append is only a retry when it really is the same experience.
+ *
+ * `appendExperience` refusing a duplicate id is what makes an agent's retry
+ * safe, but "refused" and "this is the same experience" are different facts.
+ * The tool re-reads the stored row and reports `appended: false` only when the
+ * trajectory uri *and* digest both match. Every other conflict is re-thrown,
+ * and that re-throw had no test: the success branch was reached, the refusal
+ * branch was not.
+ *
+ * The case that matters most is the last one. A row this session cannot see is
+ * not evidence that the append was a harmless repeat of its own -- it is
+ * evidence of nothing -- so reporting `appended: false` there would tell a
+ * caller its execution evidence was stored when it may never have been.
+ */
+test("a conflicting experience append is a retry only when it is the same experience", async () => {
+  const uri = APPEND_ARGS.trajectory.uri;
+  const digest = APPEND_ARGS.trajectory.digest;
+
+  const cases: readonly {
+    readonly why: string;
+    readonly stored: unknown;
+    readonly isRetry: boolean;
+  }[] = [
+    {
+      why: "the same trajectory at the same digest",
+      stored: storedExperience({ uri, digest }),
+      isRetry: true
+    },
+    {
+      why: "the same trajectory uri at a different digest",
+      stored: storedExperience({ uri, digest: "b".repeat(64) }),
+      isRetry: false
+    },
+    {
+      why: "a different trajectory uri",
+      stored: storedExperience({ uri: "file:///workspace/other.jsonl", digest }),
+      isRetry: false
+    },
+    {
+      why: "a conflicting row this session cannot see",
+      stored: null,
+      isRetry: false
+    }
+  ];
+
+  for (const { why, stored, isRetry } of cases) {
+    const calls: RecordedCall[] = [];
+    const response = await callAppend(conflictingService(calls, stored));
+    assert.deepEqual(
+      calls.map(({ method }) => method),
+      ["appendExperience", "getExperience"],
+      `${why}: the tool must re-read the stored row before deciding`
+    );
+    if (isRetry) {
+      assert.notEqual(
+        response.isError,
+        true,
+        `${why}: an exact retry is not a failure`
+      );
+      const attemptedId = (calls[0]!.args[0] as { readonly id: string }).id;
+      assert.deepEqual(JSON.parse(response.text) as unknown, {
+        id: attemptedId,
+        appended: false
+      });
+    } else {
+      assert.equal(
+        response.isError,
+        true,
+        `${why}: a conflict that is not an exact retry must not be reported as a stored append`
+      );
+    }
+  }
+});
+
+/**
+ * Only a duplicate is something to reconcile.
+ *
+ * `appendExperience` failing is not by itself evidence that this is a retry. The
+ * tool re-reads the stored row only when the failure was a conflict, because
+ * that is the one failure where a matching row proves the work already
+ * happened. Any other failure -- a transport error, a rejected write, a closed
+ * connection -- has no such row behind it, and answering `appended: false` would
+ * tell the agent its execution evidence is stored when it may never have been.
+ */
+test("an experience append that fails for any reason but a conflict is not a retry", async () => {
+  const calls: RecordedCall[] = [];
+  const response = await callAppend(
+    conflictingService(
+      calls,
+      storedExperience({
+        uri: APPEND_ARGS.trajectory.uri,
+        digest: APPEND_ARGS.trajectory.digest
+      }),
+      new Error("the memory store is unreachable")
+    )
+  );
+
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    ["appendExperience"],
+    "a non-conflict failure must not be reconciled against a stored row"
+  );
+  assert.equal(
+    response.isError,
+    true,
+    "a failure that is not a conflict must not be reported as a stored append"
+  );
+  assert.doesNotMatch(
+    response.text,
+    /unreachable/u,
+    "the failure's own detail must not reach the caller"
+  );
+});
