@@ -254,7 +254,15 @@ function filtersParams(filters: EvaluationsFilters): URLSearchParams {
   return params;
 }
 
-/** One selection at a time: an open run, or the trace it links to. */
+/**
+ * The two open selections, which are independent of each other.
+ *
+ * A URL can name a run and a span at once, and the page renders both: closing a
+ * drawer drops only the run, so an operator who put the two side by side keeps
+ * the trace they were reading. What the page never *emits* is a link that opens
+ * one while the other is open -- the row links and the trace links each name one,
+ * and the section links name neither.
+ */
 interface EvaluationsSelection {
   readonly tab: EvaluationsTabId;
   readonly resultId?: string | undefined;
@@ -455,12 +463,42 @@ export const EVALUATIONS_HISTORY_ANCHOR_ID = "evaluation-history";
  */
 export const EVALUATIONS_DETAIL_ANCHOR_ID = "evaluation-detail-drawer";
 
+/**
+ * The arrival anchor for a link whose destination is a list, or nothing.
+ *
+ * `EVALUATIONS_HISTORY_ANCHOR_ID` is the history table's own heading, and only
+ * the Results tab renders one -- so a link that stays on Comparisons and carries
+ * the fragment names an id that page does not have. Measured across all eight
+ * combinations of tab and the two selections, the drawer's close link and the
+ * trace panel's "Back to evaluations" both emitted
+ * `/evaluations?tab=comparisons#evaluation-history` on a page holding no such
+ * element: the browser scrolled nowhere and left `document.activeElement` on
+ * `<body>`. That is the silent arrival the fragment was added to remove,
+ * reproduced one tab over, and no link on the page reaches those two states by
+ * clicking -- only a hand-edited or shared URL does -- which is why only a sweep
+ * over the tab/selection matrix found it.
+ *
+ * No fragment is the right answer there rather than a second anchor for the
+ * comparisons, because the destination is the top of that tab. That is the rule
+ * the section links and "Clear filters" already follow, and the reason they
+ * carry none. Measured after the change, at 1280 and 390: the drawer closes and
+ * the trace panel goes away, the comparison table is on screen at 1280, and
+ * focus is on `<body>` -- which is where the section links leave it too, and
+ * where a dangling fragment left it before. The Results tab is unchanged: the
+ * fragment is kept, `scrollTop` lands at 471 and 1169 with the history heading
+ * focused and in view.
+ */
+function listArrivalAnchor(tab: EvaluationsTabId): string {
+  return tab === DEFAULT_EVALUATIONS_TAB ? `#${EVALUATIONS_HISTORY_ANCHOR_ID}` : "";
+}
+
 /** The list for a filter state, with whatever is currently open still open. */
 export function evaluationsListHref(
   filters: EvaluationsFilters,
   selection: Partial<EvaluationsSelection> = {}
 ): string {
-  return `${evaluationsHref(filters, { ...NO_SELECTION, ...selection })}#${EVALUATIONS_HISTORY_ANCHOR_ID}`;
+  const resolved: EvaluationsSelection = { ...NO_SELECTION, ...selection };
+  return `${evaluationsHref(filters, resolved)}${listArrivalAnchor(resolved.tab)}`;
 }
 
 /**
@@ -623,19 +661,20 @@ export function evaluationsTabHref(
  * along the list, and carrying the drawer across it would reopen a detail for a
  * run that is no longer on screen.
  *
- * The fragment is `EVALUATIONS_HISTORY_ANCHOR_ID` for the same reason
- * `evaluationsListHref` carries it: a page link's destination is the history
- * table, so the browser should put the operator in front of it and the keyboard
- * should be able to continue from it. The pager is the worst case for arriving at
- * the top of the document, because reaching it means scrolling to the bottom of
- * the whole history first.
+ * The fragment is the history table's own heading, for the reason
+ * `evaluationsListHref` carries it on the Results tab: a page link's destination
+ * is the history table, so the browser should put the operator in front of it and
+ * the keyboard should be able to continue from it. The pager is the worst case for
+ * arriving at the top of the document, because reaching it means scrolling to the
+ * bottom of the whole history first. `listArrivalAnchor` decides it, so this and
+ * the list link cannot disagree about a tab that has no history table.
  */
 export function evaluationsPageHref(
   filters: EvaluationsFilters,
   page: number,
   tab: EvaluationsTabId = DEFAULT_EVALUATIONS_TAB
 ): string {
-  return `${evaluationsHref(filters, { tab, page })}#${EVALUATIONS_HISTORY_ANCHOR_ID}`;
+  return `${evaluationsHref(filters, { tab, page })}${listArrivalAnchor(tab)}`;
 }
 
 /** Whether one evaluation carries an explicit verdict, in either direction. */

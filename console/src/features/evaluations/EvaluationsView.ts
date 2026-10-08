@@ -1930,8 +1930,13 @@ export function EvaluationsView({
         // The open trace deliberately does not. The panel renders above both
         // tabs, so carrying the span would have shown the same trace twice, and
         // the section links' rule is that one selection closes the other. It
-        // also means the trace panel only ever exists on Results: switching to
-        // Comparisons reads as "put the trace away and compare", and it does.
+        // also means no link on this page reaches Comparisons with a trace open:
+        // switching section reads as "put the trace away and compare", and it
+        // does. A URL that names both still renders both -- the panel is above
+        // the tab branch, so the trace follows the operator to whichever section
+        // they asked for rather than being silently dropped -- and on that state
+        // the panel's own link leaves the trace without a fragment, because the
+        // history heading it would have named is not on the Comparisons tab.
         hrefFor: (tabId: string) =>
           evaluationsTabHref(filters, tabId as EvaluationsTabId, page)
       }),

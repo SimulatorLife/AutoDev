@@ -82,12 +82,17 @@ import {
 } from "../src/components/ui/text-classes.ts";
 import {
   type EvaluationsFilters,
+  EVALUATION_RESULT_PARAM,
+  EVALUATION_SPAN_PARAM,
+  EVALUATIONS_PAGE_PARAM,
   evaluationsHref,
   filterEvaluations,
   filterOptionsFor,
   hasActiveFilters,
   parseEvaluationsFilters,
   resolveEvaluationsPage,
+  resolveEvaluationsTab,
+  singleValue,
   unreadWindow
 } from "../src/features/evaluations/evaluations-url.ts";
 import {
@@ -6615,16 +6620,24 @@ const ELEMENT_TYPES: ReadonlySet<symbol> = new Set([
   Symbol.for("react.transitional.element")
 ]);
 
-interface ElementLike {
-  readonly $$typeof: symbol;
-  readonly type?: unknown;
-  readonly props?: { readonly children?: React.ReactNode };
+/**
+ * The element's `$$typeof` tag, which React 19 renamed but kept the shape of.
+ *
+ * `React.JSX.Element` does not declare `$$typeof`, so this is read through a
+ * narrow structural type from `unknown` rather than cast from the element. A cast
+ * from `React.JSX.Element` to a shape carrying `$$typeof` is rejected outright,
+ * and widening the argument to `ReactNode` instead -- which does cast -- throws
+ * away the narrowing the walk depends on and puts the error somewhere else.
+ */
+function elementTagOf(node: unknown): symbol | undefined {
+  if (node === null || typeof node !== "object") return undefined;
+  const tag = (node as { $$typeof?: unknown }).$$typeof;
+  return typeof tag === "symbol" ? tag : undefined;
 }
 
 function isReactElement(node: unknown): node is React.JSX.Element {
-  if (node === null || typeof node !== "object") return false;
-  const tag = (node as { $$typeof?: unknown }).$$typeof;
-  return typeof tag === "symbol" && ELEMENT_TYPES.has(tag);
+  const tag = elementTagOf(node);
+  return tag !== undefined && ELEMENT_TYPES.has(tag);
 }
 
 function elementChildrenOf(node: React.JSX.Element): React.JSX.Element[] {
@@ -6639,7 +6652,8 @@ function elementChildrenOf(node: React.JSX.Element): React.JSX.Element[] {
     if (typeof child === "string" || typeof child === "number") return;
     const resolved = resolveForNesting(child);
     if (resolved === null) return;
-    if (TRANSPARENT_TYPES.has((resolved as ElementLike).$$typeof)) {
+    const tag = elementTagOf(resolved);
+    if (tag !== undefined && TRANSPARENT_TYPES.has(tag)) {
       elementChildrenOf(resolved).forEach((c) => flat.push(c));
       return;
     }
@@ -6657,12 +6671,18 @@ function elementChildrenOf(node: React.JSX.Element): React.JSX.Element[] {
  * inside `DataTable` or the form inside `FilterBar`, and would report a clean
  * page having looked at almost none of it.
  */
-function resolveForNesting(node: React.ReactNode): React.ReactNode {
+function resolveForNesting(node: React.ReactNode): React.JSX.Element | null {
   if (!isReactElement(node)) return null;
   const type = node.type;
   if (typeof type !== "function") return node;
   try {
-    return (type as (props: unknown) => React.ReactNode)(node.props);
+    const rendered = (type as (props: unknown) => React.ReactNode)(node.props);
+    // Narrowed here rather than widened at the call site. A component that
+    // returned an array or a primitive used to be pushed as though it were an
+    // element, and the walk then read `.props` off it; every component in this
+    // tree returns one element or a fragment, so skipping the rest is both the
+    // honest answer and the one that cannot throw.
+    return isReactElement(rendered) ? rendered : null;
   } catch {
     return null;
   }
@@ -6699,9 +6719,11 @@ function nestingsBelow(node: React.JSX.Element, ancestors: readonly string[]): N
     );
     // Only the immediate parent counts for table structure.
     const directParent = ancestors.at(-1);
-    const hoisted = TABLE_STRUCTURE_REWRITES.get(directParent)?.has(tag)
-      ? directParent
-      : undefined;
+    const hoisted =
+      directParent !== undefined &&
+      TABLE_STRUCTURE_REWRITES.get(directParent)?.has(tag)
+        ? directParent
+        : undefined;
     const offender = openAncestor ?? hoisted;
     if (offender !== undefined) {
       found.push({ parent: offender, child: tag, chain: here.join(" > ") });
@@ -6891,17 +6913,14 @@ test("every link whose destination is the history table names an element that is
   // top of the document every time. Nothing in the markup says the destination
   // was missing.
   //
-  // The invariant is per destination, not per link: a fragment has to name an
-  // element on the page that link *reaches*. Three of them reach a state that is
-  // not the one rendered here -- a row link's fragment is the drawer, which only
-  // exists once a run is open, and the trace link's is a span row, which only
-  // exists once the trace is -- so the ids are collected from every state this
-  // page can be in and each fragment must name one of them.
-  //
-  // Taking the union is what avoids classifying links, which is where this would
-  // otherwise go wrong: an earlier attempt excluded anything carrying a span id,
-  // which also excluded the drawer's close link, because that link keeps the span
-  // on purpose. A mis-scoped assertion gets weakened until it cannot fail.
+  // The invariant is per link: a fragment has to name an element on the page
+  // that link *reaches*, read from the link's own query string. Checking against
+  // the union of every state this page can be in is weaker than it looks and was
+  // the defect this replaced -- see the note where the sweep runs. Three of the
+  // links reach a state that is not the one rendered beside them -- a row link's
+  // fragment is the drawer, which only exists once a run is open, and the trace
+  // link's is a span row, which only exists once the trace is -- so each is
+  // checked by rendering the state its href names.
   const spanId = "0123456789abcdef";
   const rows = Array.from({ length: 120 }, (_, index) => ({
     id: `run-${index}`,
@@ -6929,11 +6948,13 @@ test("every link whose destination is the history table names an element that is
     spanId,
     filters: evaluationsFilters()
   });
-  const tracePage = renderEvaluations({
-    evaluations: rows,
-    tab: "results",
-    spanId,
-    traceLookup: {
+  // An observed trace for a given span, so a link that opens one is checked
+  // against the state it asks for rather than against a failure it may or may
+  // not have reached: the reader refuses a detail that does not contain the span
+  // the URL names, so a link's fragment is only promised on the state where the
+  // lookup came back.
+  const observedTrace = (spanId: string) =>
+    ({
       kind: "observed",
       detail: {
         schema: "autodev-openlit-trace-detail-v1",
@@ -6952,28 +6973,63 @@ test("every link whose destination is the history table names an element that is
           }
         ]
       }
-    },
+    }) as const;
+
+  const tracePage = renderEvaluations({
+    evaluations: rows,
+    tab: "results",
+    spanId,
+    traceLookup: observedTrace(spanId),
     filters: evaluationsFilters()
   });
 
-  // The three states, in the order an operator meets them: the bare list, the
-  // list with a run open, and the trace panel. A fragment only has to name an
-  // element in one of them.
+  // The states an operator reaches by clicking, then the two that only a
+  // hand-edited or shared URL reaches: the Comparisons tab with a run open and
+  // with a trace open.
   const barePage = renderEvaluations({
     evaluations: rows,
     page: 2,
     tab: "results",
     filters: evaluationsFilters()
   });
-  const states = [barePage, listPage, tracePage];
-  const known = new Set(states.flatMap((markup) => captured(/id="([^"]+)"/g, markup)));
+  const comparisonsPage = renderEvaluations({
+    evaluations: rows,
+    tab: "comparisons",
+    filters: evaluationsFilters()
+  });
+  const comparisonsSelectionsPage = renderEvaluations({
+    evaluations: rows,
+    tab: "comparisons",
+    selection: "run-60",
+    spanId,
+    traceLookup: observedTrace(spanId),
+    filters: evaluationsFilters()
+  });
+  const states = [
+    barePage,
+    listPage,
+    tracePage,
+    comparisonsPage,
+    comparisonsSelectionsPage
+  ];
 
   // An href holds at most one `#`, so the split is done in code rather than with
   // `/([^"]*#[^"]*)/`: the two quantifiers there can exchange characters with each
   // other, which is both polynomial backtracking on a long attribute and a rule
   // the linter refuses. One capture over the whole value has neither problem.
+  //
+  // `&amp;` is decoded first because this sweep reads the hrefs out of markup
+  // rather than off the page. Left escaped, `URLSearchParams` reads
+  // `?tab=comparisons&amp;spanId=x` as a parameter named `amp;spanId`, so the
+  // state a link reaches resolves with no span in it -- and the fragment check
+  // then reports a dangling anchor for a link whose anchor is perfectly present.
+  // That is not a hypothetical: it is what this sweep reported on its first run
+  // over a link that was fine. Every href with two or more parameters carries the
+  // escape, so only single-parameter links were ever read correctly.
   const fragmentHrefs = (markup: string): string[] =>
-    captured(/href="([^"]*)"/g, markup).filter((href) => href.includes("#"));
+    captured(/href="([^"]*)"/g, markup)
+      .map((href) => href.replaceAll("&amp;", "&"))
+      .filter((href) => href.includes("#"));
   const fragments = states.flatMap(fragmentHrefs).map((href) => ({
     href,
     fragment: href.slice(href.indexOf("#") + 1)
@@ -6982,11 +7038,55 @@ test("every link whose destination is the history table names an element that is
     fragments.length >= 4,
     `expected the row, pager, close, back and trace links; got ${fragments.length}`
   );
+
+  // Every fragment is checked against the state its own href names -- not against
+  // the union of every state this page can be in, which is what this used to do
+  // and which is exactly what hid the defect.
+  //
+  // The union could not have caught it. Every Results state carries
+  // `evaluation-history`, so a link emitted on the *Comparisons* tab passed by
+  // naming it, on a page that renders no such element. Measured in the browser
+  // across all eight combinations of tab and the two selections, the drawer's
+  // close link and the trace panel's back link both emitted
+  // `/evaluations?tab=comparisons#evaluation-history` there: the browser scrolled
+  // nowhere and left `document.activeElement` on `<body>`. That is the silent
+  // arrival the fragment was added to remove, reproduced one tab over, and no
+  // link on the page reaches those states by clicking -- which is why only a
+  // sweep over the tab/selection matrix found it and three rounds of Results-only
+  // states did not.
+  //
+  // The href is read with the module's own parsers, so the guard and the product
+  // cannot disagree about what a URL means.
+  const idsReachableBy = (href: string): Set<string> => {
+    // The fragment comes off first: a link to the bare list carries no `?`, so
+    // splitting on that alone leaves `#evaluation-history` glued to the path and
+    // every such link reports as leaving the resource.
+    const [withoutFragment = href] = href.split("#");
+    const [path, query] = withoutFragment.split("?");
+    assert.equal(path, "/evaluations", `the link ${href} leaves this resource`);
+    const params: Record<string, string> = Object.fromEntries(
+      new URLSearchParams(query ?? "").entries()
+    );
+    const selection = singleValue(params[EVALUATION_RESULT_PARAM]);
+    const requestedSpan = singleValue(params[EVALUATION_SPAN_PARAM]);
+    const markup = renderEvaluations({
+      evaluations: rows,
+      filters: parseEvaluationsFilters(params),
+      tab: resolveEvaluationsTab(params.tab),
+      page: resolveEvaluationsPage(params[EVALUATIONS_PAGE_PARAM]),
+      ...(selection === undefined ? {} : { selection }),
+      ...(requestedSpan === undefined
+        ? {}
+        : { spanId: requestedSpan, traceLookup: observedTrace(requestedSpan) })
+    });
+    return new Set(captured(/id="([^"]+)"/g, markup));
+  };
+
   for (const { href, fragment } of fragments) {
     assert.notEqual(fragment, "", `the link ${href} names no element`);
     assert.ok(
-      known.has(fragment),
-      `${href} names id="${fragment}", which neither state of this page carries`
+      idsReachableBy(href).has(fragment),
+      `${href} names id="${fragment}", which the page it reaches does not carry`
     );
   }
 
