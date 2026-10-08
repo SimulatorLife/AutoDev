@@ -130,39 +130,46 @@ export interface PostgresMemoryRepositoryOptions {
 const UNIQUE_VIOLATION = "23505";
 
 /**
- * Whether a session lookup has identifiers worth running a query with.
+ * Whether a session's identifiers are worth building a WHERE clause from.
  *
- * Both session lookups -- by correlation token and by event id -- build a WHERE
- * clause out of nothing but the caller's own session identifiers. A blank one
- * there is not a narrower search, it is a search for an event whose workspace or
- * task is the empty string, which is a different question from the one asked.
- * Left to the database, that question silently returns "nothing found" and the
- * caller cannot tell it apart from a genuine miss.
+ * Every read scoped to one session -- the two event lookups and the outcome
+ * join list -- builds its filter out of nothing but the caller's own session
+ * identifiers. A blank one there is not a narrower search, it is a search for a
+ * row whose workspace or task is the empty string, which is a different question
+ * from the one asked. Left to the database, that question returns "nothing
+ * found" and the caller cannot tell it apart from a genuine miss.
  *
- * The two lookups disagree about whether a repository is required, and that is
- * not an oversight to be tidied away: the token lookup's repository clause is
- * optional, because a workspace-scoped session has no repository, while the id
- * lookup binds `repository_id` outright. The shared rule is therefore "every
- * identifier this query binds must be a non-blank string" -- not "all four must
- * be present" -- so a repository is refused when it is present-but-blank either
- * way, and demanded only by the lookup that cannot query without it.
+ * The three disagree about whether a repository is required, and that is not an
+ * oversight to be tidied away: a token lookup's repository clause is optional,
+ * because a workspace-scoped session has no repository, while the id lookup
+ * binds `repository_id` outright. The shared rule is therefore "every
+ * identifier this query binds must be a non-blank string" -- not "all three
+ * must be present" -- so a repository is refused when it is present-but-blank
+ * either way, and demanded only by the read that cannot query without it.
+ *
+ * `taskId ?? ""` followed by a truthiness check is not this rule. A whitespace
+ * task id is a truthy string, so it reached the database and the query ran.
  */
-function sessionLookupIsUsable(
+function sessionContextIsUsable(
   context: MemoryInjectionEventSessionLookup,
-  identifier: string,
   options: { readonly requiresRepository: boolean }
 ): boolean {
-  if (
-    !identifier.trim() ||
-    !context.workspaceId.trim() ||
-    !context.taskId.trim()
-  ) {
+  if (!context.workspaceId.trim() || !context.taskId.trim()) {
     return false;
   }
   return options.requiresRepository
     ? Boolean(context.repositoryId?.trim())
     : context.repositoryId === undefined ||
         context.repositoryId.trim().length > 0;
+}
+
+/** The same rule, plus the identifier one of the event lookups was handed. */
+function sessionLookupIsUsable(
+  context: MemoryInjectionEventSessionLookup,
+  identifier: string,
+  options: { readonly requiresRepository: boolean }
+): boolean {
+  return identifier.trim().length > 0 && sessionContextIsUsable(context, options);
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -1427,7 +1434,9 @@ export class PostgresMemoryRepository implements MemoryRepository {
       taskId: request.context.taskId ?? "",
       canReadGlobal: false
     };
-    if (!sessionLookup.taskId) {
+    if (
+      !sessionContextIsUsable(sessionLookup, { requiresRepository: false })
+    ) {
       return { items: [], total: 0, limit, offset };
     }
     const filterParams = new SqlParams();

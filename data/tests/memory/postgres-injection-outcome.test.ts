@@ -495,3 +495,158 @@ test("listInjectionOutcomeJoins sessionInjectionCount is not reduced by memory-m
     "the session's full event set has two injections even though the memoryMode filter only surfaces one row"
   );
 });
+
+/**
+ * The outcome list's own filters, and the session it refuses to list without.
+ *
+ * `listInjectionOutcomeJoins` narrows on injection result, outcome kind and
+ * report kind, and this file exercised none of the three -- `includeUnreported`
+ * and `memoryModes` were covered, these were not. They are the filters an
+ * operator drives from the evaluations tab, so a list that ignored them would
+ * show every row and look correct.
+ *
+ * The missing-task guard is asserted as *no query*, not as an empty page: a
+ * context with no taskId builds `scope_task_id = ''`, which matches no row, so
+ * the unguarded query returns the same empty page and an assertion on the page
+ * proves nothing about whether the guard fired.
+ */
+test("the outcome list applies its own filters and refuses a context without a session", async () => {
+  const statements: string[] = [];
+  const base = new FakeMemoryPool();
+  const pool = {
+    query: <Row extends Record<string, unknown>>(
+      text: string,
+      params: readonly unknown[]
+    ) => {
+      statements.push(text);
+      return base.query<Row>(text, params);
+    },
+    connect: () => base.connect(),
+    end: () => base.end()
+  };
+  const repository = new PostgresMemoryRepository({ pool });
+
+  const injected = injectionEvent({ id: "inj-injected", correlationToken: "token-injected" });
+  const empty = injectionEvent({
+    id: "inj-empty",
+    correlationToken: "token-empty",
+    injectionResult: "empty",
+    memoryIds: [],
+    packetCharacterCount: 0,
+    reasonCode: "no_packet_research_returned_empty"
+  });
+  const reported = injectionEvent({
+    id: "inj-reported",
+    correlationToken: "token-reported",
+    runId: "req-2",
+    agentId: "thread-2"
+  });
+  for (const event of [injected, empty, reported]) {
+    await repository.recordInjectionEvent({
+      event,
+      actor: { id: "test-runner", authority: "system" },
+      context: { ...requestContext, taskId: event.taskId }
+    });
+  }
+  console.log("EVENT ROWS", JSON.stringify([...base.tables.memory_injection_events.values()].map((r) => ({ id: r.id, token: r.correlation_token, ws: r.scope_workspace_id, repo: r.repository_id, task: r.scope_task_id })), null, 1));
+  await repository.recordOutcomeReport({
+    report: outcomeReport({
+      correlationToken: injected.correlationToken,
+      outcomeKind: "success",
+      reportKind: "task"
+    }),
+    actor: { id: "op-1", authority: "root" },
+    context: sessionContext
+  });
+  await repository.recordOutcomeReport({
+    report: outcomeReport({
+      id: "rep-2",
+      correlationToken: "token-reported",
+      outcomeKind: "failure",
+      reportKind: "pull_request"
+    }),
+    actor: { id: "op-1", authority: "root" },
+    context: sessionContext
+  });
+
+  assert.equal(
+    (await repository.listInjectionOutcomeJoins({ context: sessionContext })).total,
+    2,
+    "only the two reported exposures are listed by default"
+  );
+
+  const byResult = await repository.listInjectionOutcomeJoins({
+    context: sessionContext,
+    injectionResults: ["empty"],
+    includeUnreported: true
+  });
+  assert.equal(byResult.total, 1);
+  assert.equal(
+    byResult.items[0]?.injection.id,
+    empty.id,
+    "injectionResults must narrow the list"
+  );
+
+  const byOutcome = await repository.listInjectionOutcomeJoins({
+    context: sessionContext,
+    outcomeKinds: ["failure"]
+  });
+  assert.equal(byOutcome.total, 1);
+  assert.equal(
+    byOutcome.items[0]?.injection.id,
+    reported.id,
+    "outcomeKinds narrows by the reporter-supplied outcome"
+  );
+  assert.equal(
+    (
+      await repository.listInjectionOutcomeJoins({
+        context: sessionContext,
+        outcomeKinds: ["unknown"]
+      })
+    ).total,
+    0,
+    "an outcome kind no report carries selects nothing"
+  );
+
+  const byReportKind = await repository.listInjectionOutcomeJoins({
+    context: sessionContext,
+    reportKinds: ["pull_request"]
+  });
+  assert.equal(byReportKind.total, 1);
+  assert.equal(
+    byReportKind.items[0]?.injection.id,
+    reported.id,
+    "reportKinds narrows by the kind of evidence the report cites"
+  );
+  assert.equal(
+    (
+      await repository.listInjectionOutcomeJoins({
+        context: sessionContext,
+        reportKinds: ["issue"]
+      })
+    ).total,
+    0,
+    "a report kind no report carries selects nothing"
+  );
+
+  // The context that cannot name a session. The repository is optional here --
+  // only the task id is required -- so that is the one field broken.
+  const { taskId: _noTask, ...withoutTask } = sessionContext;
+  for (const [why, context] of [
+    ["no task", withoutTask],
+    ["a blank task", { ...sessionContext, taskId: "  " }]
+  ] as const) {
+    const before = statements.length;
+    const page = await repository.listInjectionOutcomeJoins({ context });
+    assert.deepEqual(
+      { items: page.items, total: page.total },
+      { items: [], total: 0 },
+      `${why} must list nothing`
+    );
+    assert.equal(
+      statements.length,
+      before,
+      `${why} must be refused before any query runs -- an outcome list scoped to no task is a query over every task in the workspace`
+    );
+  }
+});
