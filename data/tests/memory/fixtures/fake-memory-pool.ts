@@ -140,6 +140,58 @@ function normalizeSql(sql: string): string {
   return sql.replaceAll(WHITESPACE_RUN_PATTERN, " ").trim();
 }
 
+/**
+ * The text an experience row's generated `search_vector` is built from.
+ *
+ * `buildExperienceSearchQuery` ranks with `ts_rank(search_vector, ...)` and
+ * `search_vector` is a GENERATED column over exactly these columns (see the
+ * `ALTER TABLE memory_experiences ... ADD COLUMN search_vector` migration in
+ * `src/memory/schema.ts`). The list is spelled out here rather than reused from
+ * anywhere else on purpose: this fake stands in for Postgres's *index*, and the
+ * migration is the definition of what went into that index.
+ *
+ * Scoring these rows off `row.claim` -- which is what the memory_records branch
+ * below does, because `memory_records` really does carry a claim -- silently
+ * scores every experience zero, because there is no such column. Keep this in
+ * step with the migration: a column added to `search_vector` belongs here.
+ */
+function experienceSearchText(row: Record<string, unknown>): string {
+  return [
+    "repository_id",
+    "task_kind",
+    "agent_role",
+    "provider",
+    "model",
+    "branch",
+    "outcome",
+    "base_commit",
+    "head_commit",
+    "trajectory_uri",
+    "task_reference",
+    "plan_reference",
+    "validation_evidence",
+    "evidence"
+  ]
+    .map((column) => row[column])
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+}
+
+/**
+ * One scored row from `readRankedRows`.
+ *
+ * The memory-record and experience searches emit different score columns --
+ * only `buildMemorySearchQuery` has path, task-kind and vector terms -- so the
+ * memory-only ones are optional here rather than faked onto experience rows.
+ */
+type ScoredRow = Record<string, unknown> & {
+  lexical_score: number;
+  score: number;
+  path_score?: number;
+  task_kind_score?: number;
+  has_embedding?: boolean;
+};
+
 function memoryPathScore(
   row: Record<string, unknown>,
   requestedPaths: readonly string[]
@@ -1577,11 +1629,30 @@ export class FakeMemoryPool implements MemoryConnectionPool {
       ? params[queryParamIndex - 1]
       : undefined;
     const vectorSearch = sql.includes("::vector");
-    const rows = source
+    const isExperienceSearch = table === "memory_experiences";
+    const scored = source
       .filter(predicate)
-      .map((row, index) => {
+      .map((row, index): ScoredRow => {
+        const lexicalScore = hasLexicalMatch(
+          isExperienceSearch ? experienceSearchText(row) : row.claim,
+          searchQuery
+        )
+          ? 1
+          : 0;
+        if (isExperienceSearch) {
+          // `buildExperienceSearchQuery` has exactly one ranking signal and no
+          // path, task-kind or vector term -- it selects every scoped row and
+          // orders them by the single `ts_rank` score. Emitting the other
+          // columns here would make the fake look richer than the query it
+          // stands in for, which is how an experience search came to be scored
+          // off `claim` and filtered down to nothing.
+          return {
+            ...row,
+            lexical_score: lexicalScore,
+            score: lexicalScore
+          };
+        }
         const pathScore = memoryPathScore(row, requestedPaths);
-        const lexicalScore = hasLexicalMatch(row.claim, searchQuery) ? 1 : 0;
         return {
           ...row,
           path_score: pathScore,
@@ -1594,13 +1665,24 @@ export class FakeMemoryPool implements MemoryConnectionPool {
           has_embedding: row.embedding !== null && row.embedding !== undefined,
           score: source.length - index
         };
-      })
-      .filter(
-        (row) =>
-          row.lexical_score > 0 ||
-          row.path_score > 0 ||
-          (vectorSearch && row.has_embedding)
-      );
+      });
+    if (isExperienceSearch) {
+      // `ORDER BY score DESC` and nothing else: no `WHERE score > 0`. Postgres
+      // would return non-matching scoped rows ranked last, and this fake has to
+      // return them too or a test written here asserts fiction. Array#sort is
+      // stable, which is what leaves tied scores in insertion order.
+      const rows = [...scored].sort((left, right) => right.score - left.score);
+      return {
+        rows: rows.slice(0, limit),
+        rowCount: Math.min(rows.length, limit)
+      };
+    }
+    const rows = scored.filter(
+      (row) =>
+        row.lexical_score > 0 ||
+        (row.path_score ?? 0) > 0 ||
+        (vectorSearch && row.has_embedding === true)
+    );
     return {
       rows: rows.slice(0, limit),
       rowCount: Math.min(rows.length, limit)

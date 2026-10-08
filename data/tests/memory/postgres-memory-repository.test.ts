@@ -1377,3 +1377,165 @@ test("the retention scan refuses bounds it cannot act on", async () => {
     );
   }
 });
+
+/**
+ * A read context that can see `makeExperience`'s task-scoped envelope.
+ *
+ * The default `makeContext({ workspaceId })` cannot: the scope filter binds
+ * task/run/agent to NULL, `scope_task_id = NULL` is never true, and a search
+ * returns nothing for a reason that has nothing to do with ranking.
+ */
+const visibleTaskContext = makeContext({
+  workspaceId: "ws-1",
+  taskId: "task-1",
+  runId: "run-1",
+  agentId: "agent-1"
+});
+
+/**
+ * `searchExperiences` reads the generated `search_vector`, which indexes
+ * repository, branch/commit, trajectory, task/plan, validation and evidence
+ * metadata -- and no prose. An experience is found by the metadata it carries,
+ * so that is what this asserts.
+ *
+ * Three rows, inserted noise-first, and neither query's expected winner is
+ * inserted first. That ordering is the whole point. `FakeMemoryPool` ranks with
+ * a boolean lexical match, so a fixture that scores every experience zero -- the
+ * state `searchExperiences` was in until this was found -- leaves insertion
+ * order to decide, and an assertion whose expected winner happens to be the
+ * first row inserted then passes against a fixture that matches nothing at all.
+ * Keeping every expected winner behind an insertion-earlier row is what makes
+ * the claim "this metadata is ranked" rather than "this row came back".
+ */
+test("searchExperiences ranks by the execution metadata the experience carries", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(
+    makeExperience({
+      id: "exp-noise",
+      trajectory: { format: "codex-v1", uri: "trajectory://alpha" },
+      evidence: [{ kind: "file", uri: "file:///workspace/repo-1/README.md" }]
+    })
+  );
+  await repo.appendExperience(
+    makeExperience({
+      id: "exp-evidence",
+      trajectory: { format: "codex-v1", uri: "trajectory://beta" },
+      evidence: [
+        {
+          kind: "file",
+          uri: "file:///workspace/repo-1/src/memory/service.ts",
+          revision: "commit-a"
+        }
+      ]
+    })
+  );
+  await repo.appendExperience(
+    makeExperience({
+      id: "exp-branch",
+      branch: "hotfix-ledger",
+      trajectory: { format: "codex-v1", uri: "trajectory://gamma" },
+      evidence: [{ kind: "file", uri: "file:///workspace/repo-1/docs/CHANGELOG.md" }]
+    })
+  );
+
+  // Ranked first, not asserted as the only hit: whether a non-matching scoped
+  // experience belongs on the page is an open question about the query, and
+  // nothing decided yet should be frozen into this test.
+  const byEvidence = await repo.searchExperiences({
+    query: "service",
+    context: visibleTaskContext
+  });
+  assert.equal(
+    byEvidence[0]?.id,
+    "exp-evidence",
+    "search_vector indexes evidence references, so a cited file must outrank rows that do not cite it"
+  );
+
+  // Each term appears on exactly one row. `search_vector` is ranked by
+  // `ts_rank`, which is graded, and this fake's `hasLexicalMatch` is a boolean
+  // approximation of it -- a shared term would tie the rows and leave the
+  // order to insertion, so the assertion would be measuring the fixture.
+  const byBranch = await repo.searchExperiences({
+    query: "hotfix",
+    context: visibleTaskContext
+  });
+  assert.equal(
+    byBranch[0]?.id,
+    "exp-branch",
+    "search_vector indexes branch, so the branch-matching experience must outrank the other two"
+  );
+});
+
+test("searchExperiences applies the caller's scope before ranking", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  await repo.appendExperience(
+    makeExperience({
+      id: "exp-elsewhere",
+      workspaceId: "ws-2",
+      scope: { kind: "workspace", workspaceId: "ws-2" },
+      trajectory: { format: "codex-v1", uri: "trajectory://elsewhere" }
+    })
+  );
+  await repo.appendExperience(
+    makeExperience({
+      id: "exp-visible",
+      trajectory: { format: "codex-v1", uri: "trajectory://visible" }
+    })
+  );
+
+  const hits = await repo.searchExperiences({
+    query: "trajectory",
+    context: makeContext({ workspaceId: "ws-1" })
+  });
+
+  assert.deepEqual(
+    hits.map(({ id }) => id),
+    [],
+    "a workspace-only context cannot see this task-scoped envelope"
+  );
+
+  const visibleHits = await repo.searchExperiences({
+    query: "trajectory",
+    context: visibleTaskContext
+  });
+  assert.ok(
+    visibleHits.some(({ id }) => id === "exp-visible"),
+    "the caller's own scope is searchable"
+  );
+  assert.ok(
+    !visibleHits.some(({ id }) => id === "exp-elsewhere"),
+    "another workspace's experience must never be ranked, however well it matches"
+  );
+});
+
+test("searchExperiences bounds the page by the requested limit and defaults to twenty", async () => {
+  const pool = new FakeMemoryPool();
+  const repo = repoWith(pool);
+  for (let index = 0; index < 25; index += 1) {
+    await repo.appendExperience(
+      makeExperience({
+        id: `exp-${String(index).padStart(2, "0")}`,
+        trajectory: { format: "codex-v1", uri: "trajectory://bulk" }
+      })
+    );
+  }
+
+  const defaults = await repo.searchExperiences({
+    query: "bulk",
+    context: visibleTaskContext
+  });
+  assert.equal(
+    defaults.length,
+    20,
+    "the query builder's DEFAULT_LIMIT is 20, and it must apply without an explicit limit"
+  );
+
+  const bounded = await repo.searchExperiences({
+    query: "bulk",
+    context: visibleTaskContext,
+    limit: 3
+  });
+  assert.equal(bounded.length, 3, "an explicit limit must reach the query");
+});
