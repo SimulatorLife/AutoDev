@@ -5753,7 +5753,7 @@ test("opening a run keeps the page of the history it was opened from", () => {
 
   assert.match(
     renderEvaluations({ evaluations: [row], page: 3 }),
-    /href="\/evaluations\?result=run-page-3&amp;page=3"/,
+    /href="\/evaluations\?result=run-page-3&amp;page=3#evaluation-detail-drawer"/,
     "a row on page 3 opens a run without leaving page 3"
   );
   // Scoped to the drawer, because the pager on the same page links to page 3 as
@@ -5776,7 +5776,7 @@ test("opening a run keeps the page of the history it was opened from", () => {
   // the page must not start putting it on every row's link.
   assert.match(
     renderEvaluations({ evaluations: [row], page: 1 }),
-    /href="\/evaluations\?result=run-page-3"/
+    /href="\/evaluations\?result=run-page-3#evaluation-detail-drawer"/
   );
   assert.doesNotMatch(
     renderEvaluations({ evaluations: [row], page: 1 }),
@@ -6557,14 +6557,16 @@ test("every link whose destination is the history table names an element that is
   // was missing.
   //
   // The invariant is per destination, not per link: a fragment has to name an
-  // element on the page that link *reaches*. Two of them reach a page that is not
-  // the one rendered here -- the drawer's trace link adds a span, and the anchor
-  // it names exists only once the trace panel is open -- so the ids are collected
-  // from both states and every fragment is required to name one of them. That
-  // avoids having to classify links, which is where this would otherwise go
-  // wrong: an earlier attempt excluded anything carrying a span id, which also
-  // excluded the drawer's close link, because that link keeps the span on
-  // purpose. A mis-scoped assertion gets weakened until it cannot fail.
+  // element on the page that link *reaches*. Three of them reach a state that is
+  // not the one rendered here -- a row link's fragment is the drawer, which only
+  // exists once a run is open, and the trace link's is a span row, which only
+  // exists once the trace is -- so the ids are collected from every state this
+  // page can be in and each fragment must name one of them.
+  //
+  // Taking the union is what avoids classifying links, which is where this would
+  // otherwise go wrong: an earlier attempt excluded anything carrying a span id,
+  // which also excluded the drawer's close link, because that link keeps the span
+  // on purpose. A mis-scoped assertion gets weakened until it cannot fail.
   const spanId = "0123456789abcdef";
   const rows = Array.from({ length: 120 }, (_, index) => ({
     id: `run-${index}`,
@@ -6619,10 +6621,17 @@ test("every link whose destination is the history table names an element that is
     filters: evaluationsFilters()
   });
 
-  const known = new Set([
-    ...captured(/id="([^"]+)"/g, listPage),
-    ...captured(/id="([^"]+)"/g, tracePage)
-  ]);
+  // The three states, in the order an operator meets them: the bare list, the
+  // list with a run open, and the trace panel. A fragment only has to name an
+  // element in one of them.
+  const barePage = renderEvaluations({
+    evaluations: rows,
+    page: 2,
+    tab: "results",
+    filters: evaluationsFilters()
+  });
+  const states = [barePage, listPage, tracePage];
+  const known = new Set(states.flatMap((markup) => captured(/id="([^"]+)"/g, markup)));
 
   // An href holds at most one `#`, so the split is done in code rather than with
   // `/([^"]*#[^"]*)/`: the two quantifiers there can exchange characters with each
@@ -6630,15 +6639,13 @@ test("every link whose destination is the history table names an element that is
   // the linter refuses. One capture over the whole value has neither problem.
   const fragmentHrefs = (markup: string): string[] =>
     captured(/href="([^"]*)"/g, markup).filter((href) => href.includes("#"));
-  const fragments = [...fragmentHrefs(listPage), ...fragmentHrefs(tracePage)].map(
-    (href) => ({
-      href,
-      fragment: href.slice(href.indexOf("#") + 1)
-    })
-  );
+  const fragments = states.flatMap(fragmentHrefs).map((href) => ({
+    href,
+    fragment: href.slice(href.indexOf("#") + 1)
+  }));
   assert.ok(
     fragments.length >= 4,
-    `expected the pager, close, back and trace links; got ${fragments.length}`
+    `expected the row, pager, close, back and trace links; got ${fragments.length}`
   );
   for (const { href, fragment } of fragments) {
     assert.notEqual(fragment, "", `the link ${href} names no element`);
@@ -6655,6 +6662,52 @@ test("every link whose destination is the history table names an element that is
     /<h2 id="evaluation-history"[^>]*tabindex="-1"/,
     "the history heading is the arrival point, and takes focus"
   );
+
+  // The drawer is a different arrival point to a different element: naming it the
+  // history heading would scroll the operator past the panel they just opened.
+  assert.match(
+    listPage,
+    /id="evaluation-detail-drawer"[^>]*tabindex="-1"/,
+    "the drawer is the row link's arrival point, and takes focus"
+  );
+  assert.equal(
+    listPage.includes('id="evaluation-history"') &&
+      listPage.includes('id="evaluation-detail-drawer"'),
+    true,
+    "the two anchors are distinct elements, not one id used twice"
+  );
+
+  // Direction, not just membership. Both ids exist either way, so every check
+  // above is satisfied by wiring every link at the history heading -- which
+  // scrolls the operator past the panel they just opened, the exact mistake the
+  // constant's own comment describes. Mutation: pointing the row link at
+  // `EVALUATIONS_HISTORY_ANCHOR_ID` passed all of it.
+  // Read each link's whole opening tag rather than assuming `href` comes first.
+  // The pager emits `aria-label` before `href`, so `/<a href="/` matches its
+  // steps never and reports zero of them -- which reads as "the pager is gone"
+  // rather than as a selector that is wrong.
+  const hrefsOnLinks = (markup: string, wanted: RegExp): string[] =>
+    Array.from(markup.matchAll(/<a\b[^>]*>/g), (match) => match[0])
+      .filter((tag) => wanted.test(tag))
+      .flatMap((tag) => captured(/href="([^"]*)"/g, tag));
+
+  const rowLinks = hrefsOnLinks(listPage, /\?result=/);
+  assert.ok(rowLinks.length > 0, "the history table links to its rows");
+  for (const href of rowLinks) {
+    assert.ok(
+      href.endsWith("#evaluation-detail-drawer"),
+      `${href} opens a run, so it names the drawer rather than the history heading`
+    );
+  }
+  // And the other way round: a step along the list is not the drawer.
+  const steps = hrefsOnLinks(listPage, /data-evaluations-page-step=/);
+  assert.ok(steps.length > 0, "the pager's steps are on this page");
+  for (const href of steps) {
+    assert.ok(
+      href.endsWith("#evaluation-history"),
+      `${href} moves along the list, so it names the history heading`
+    );
+  }
 
   // The links that mean "the top of the page" must not claim the history anchor.
   // Clearing filters changes the row set but puts the reader in front of the
@@ -8159,7 +8212,7 @@ test("every filter axis is offered and every link states what it keeps", () => {
   // is the failed `worker` run, which is id "2".
   assert.match(
     markup,
-    /href="\/evaluations\?outcome=failed&amp;role=worker&amp;result=2"/
+    /href="\/evaluations\?outcome=failed&amp;role=worker&amp;result=2#evaluation-detail-drawer"/
   );
   assert.match(
     markup,
@@ -8192,7 +8245,7 @@ test("the section tabs keep the filters and the open section keeps its own links
     results,
     /href="\/evaluations\?spanId=4bf92f3577b34da6#evaluation-trace-span-4bf92f3577b34da6"[^>]*data-evaluation-trace-span-id/
   );
-  assert.match(results, /href="\/evaluations\?result=run-1"/);
+  assert.match(results, /href="\/evaluations\?result=run-1#evaluation-detail-drawer"/);
   assert.match(results, /Evaluation history/);
 
   // Unfiltered, the two sections are one parameter apart.
@@ -8229,7 +8282,7 @@ test("the section tabs keep the filters and the open section keeps its own links
   const narrowedResults = renderEvaluations({ evaluations, filters });
   assert.match(
     narrowedResults,
-    /href="\/evaluations\?outcome=failed&amp;role=worker&amp;result=run-1"/
+    /href="\/evaluations\?outcome=failed&amp;role=worker&amp;result=run-1#evaluation-detail-drawer"/
   );
   assert.match(
     narrowedResults,
@@ -16317,6 +16370,27 @@ test("DetailDrawer is the shared selected-item panel, not a per-feature copy", (
   assert.match(drawer, />Close<\/a>/);
   assert.doesNotMatch(drawer, /<dialog/);
   assert.doesNotMatch(drawer, /onClick/);
+
+  // The anchor is opt-in, and a drawer no link opens has nothing to land on, so
+  // a caller that does not ask for one must get exactly what it got before the
+  // prop existed. Asserted as "no id at all" rather than "not this id", because
+  // an id the caller did not ask for would put an unowned anchor in the document
+  // that two panels could collide on.
+  assert.doesNotMatch(drawer, /\sid="/);
+  assert.doesNotMatch(drawer, /tabindex/);
+
+  // Asked for, it is both halves: the id for the link to name and the focus the
+  // browser gives it. `tabindex="-1"` rather than `0` so it takes focus without
+  // joining the tab sequence.
+  const anchored = renderToStaticMarkup(
+    React.createElement(
+      DetailDrawer,
+      { title: "mem-1", closeHref: "/memory", anchorId: "memory-record" },
+      React.createElement("p", null, "Body")
+    )
+  );
+  assert.match(anchored, /id="memory-record"/);
+  assert.match(anchored, /tabindex="-1"/);
 });
 
 test("no feature view re-copies the selected-item drawer surface", () => {

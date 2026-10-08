@@ -54,6 +54,7 @@ import {
   contradictoryWindow,
   DEFAULT_EVALUATIONS_TAB,
   evaluationResultHref,
+  EVALUATIONS_DETAIL_ANCHOR_ID,
   EVALUATIONS_HISTORY_ANCHOR_ID,
   EVALUATIONS_PAGE_SIZE,
   EVALUATIONS_TABS,
@@ -1027,6 +1028,9 @@ function renderResultDetail(
       subtitle: runTimeInstant(evaluation.timestamp),
       closeHref: navCloseResultHref(nav),
       closeLabel: "Close evaluation detail",
+      // What `evaluationResultHref` names, so the row link that opened this
+      // drawer lands on it rather than at the top of the document above it.
+      anchorId: EVALUATIONS_DETAIL_ANCHOR_ID,
       dataAttributes: { "data-feature": "evaluation-detail" }
     },
     React.createElement(

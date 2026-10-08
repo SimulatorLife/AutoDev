@@ -425,6 +425,23 @@ export function evaluationsHref(
  */
 export const EVALUATIONS_HISTORY_ANCHOR_ID = "evaluation-history";
 
+/**
+ * The element a row link lands on: the drawer for the run it opened.
+ *
+ * The third of this page's arrival points, and the one that was still missing.
+ * The other two are links whose destination is the history table; this one is the
+ * link whose destination is the drawer, so it names the drawer instead and is
+ * deliberately a different element -- pointing it at the history heading would
+ * scroll the operator past the panel they just opened.
+ *
+ * Named distinctly from the `data-feature="evaluation-detail"` the callout for a
+ * run outside the window also carries. The two are mutually exclusive, but they
+ * answer different questions -- one is "this run has no metrics", the other is
+ * "this run is not in the window you are looking at" -- and an id that reused the
+ * flag would make the anchor's meaning depend on which of them rendered.
+ */
+export const EVALUATIONS_DETAIL_ANCHOR_ID = "evaluation-detail-drawer";
+
 /** The list for a filter state, with whatever is currently open still open. */
 export function evaluationsListHref(
   filters: EvaluationsFilters,
@@ -478,6 +495,19 @@ export function evaluationsClearedHref(
  *
  * `evaluationsClearedHref` is the same rule on the other link: it drops the
  * page too, because clearing a filter changes which rows exist.
+ *
+ * The fragment names the drawer, which is this link's destination and the thing
+ * that appears when it arrives. The drawer leads the page precisely so that
+ * opening a run shows something at every width, and it is on screen at all of
+ * them -- but the keyboard was still left at the top of the document: measured,
+ * after opening a run `document.activeElement` is `<body>` while the drawer sits
+ * in view, so a keyboard user has to cross the whole navigation to reach the
+ * panel they are already looking at.
+ *
+ * A `?result=` the page cannot show renders the "not in this view" callout
+ * instead of the drawer, so this fragment goes nowhere in that one case. That is
+ * the documented degradation and not a broken link: the operator still lands on
+ * the callout about the run they asked for, which is the whole answer.
  */
 export function evaluationResultHref(
   filters: EvaluationsFilters,
@@ -485,7 +515,7 @@ export function evaluationResultHref(
   tab: EvaluationsTabId = DEFAULT_EVALUATIONS_TAB,
   page?: number | undefined
 ): string {
-  return evaluationsHref(filters, { tab, resultId, page });
+  return `${evaluationsHref(filters, { tab, resultId, page })}#${EVALUATIONS_DETAIL_ANCHOR_ID}`;
 }
 
 /**

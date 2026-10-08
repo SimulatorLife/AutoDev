@@ -97,6 +97,22 @@ export interface DetailDrawerProps {
   /** URL of the list without this selection; the close link's destination. */
   readonly closeHref: string;
   readonly closeLabel?: string | undefined;
+  /**
+   * Anchor id for the drawer, for the link that opens it to name.
+   *
+   * The drawer is reached by a normal link carrying the selected id in the URL,
+   * and that link is a full page load: without a fragment the browser arrives at
+   * the top of the document with `document.activeElement` on `<body>`, so a
+   * keyboard user who just opened a panel has to cross the whole navigation again
+   * to reach the panel they can see. Naming it here is what lets that link land
+   * on the panel rather than above it.
+   *
+   * Opt-in because a fragment is only worth carrying if the id exists on the page
+   * the link reaches, and a drawer that no link opens has nothing to land on.
+   * `tabIndex: -1` takes focus without adding a stop, so this does not put one
+   * more press between the operator and the rest of the page.
+   */
+  readonly anchorId?: string | undefined;
   /** Extra attributes, for the state flags the Console asserts on. */
   readonly dataAttributes?: Readonly<Record<string, string>> | undefined;
   /** Optional here so callers can pass the body as `createElement`'s child. */
@@ -109,12 +125,17 @@ export function DetailDrawer({
   subtitle,
   closeHref,
   closeLabel,
+  anchorId,
   dataAttributes,
   children
 }: DetailDrawerProps): React.JSX.Element {
   return React.createElement(
     "div",
-    { className: DETAIL_DRAWER_CLASS, ...dataAttributes },
+    {
+      className: DETAIL_DRAWER_CLASS,
+      ...(anchorId === undefined ? {} : { id: anchorId, tabIndex: -1 }),
+      ...dataAttributes
+    },
     React.createElement(
       "div",
       { className: DETAIL_DRAWER_HEADER_CLASS },
