@@ -9,8 +9,12 @@ import {
 } from "@simulatorlife/autodev-core";
 
 import type { MemoryMcpSessionProvider } from "./mcp.ts";
-import { createPostgresMemoryHost } from "./postgres.ts";
-import type { MemoryEmbeddingProvider } from "./service.ts";
+import {
+  createPostgresMemoryHost,
+  type PostgresMemoryHost,
+  type PostgresMemoryHostOptions
+} from "./postgres.ts";
+import type { MemoryEmbeddingProvider, MemoryService } from "./service.ts";
 import { serveMemoryMcpStdio } from "./stdio.ts";
 
 export interface MemoryStdioConfiguration {
@@ -96,11 +100,51 @@ export function memoryMcpSessionProvider(
   };
 }
 
+/**
+ * The process facts startup reads and the shutdown hooks it registers.
+ *
+ * All of it used to be a direct `process` reach, which is why the only two
+ * branches in this file that actually own a resource -- closing the host when
+ * the transport fails to serve, and the close-once chain behind a signal --
+ * had never run outside a real process. A leaked Postgres pool is exactly the
+ * failure that only shows up under load, long after the process that made it
+ * is gone.
+ *
+ * `serve` is typed on what this file calls, not on the SDK's `McpServer`, so a
+ * test can substitute a double without reimplementing the SDK surface.
+ */
+export interface MemoryMcpRuntime {
+  readonly env: NodeJS.ProcessEnv;
+  readonly pid: number;
+  readonly createHost: (
+    options: PostgresMemoryHostOptions
+  ) => PostgresMemoryHost;
+  readonly serve: (
+    service: MemoryService,
+    sessionProvider: MemoryMcpSessionProvider
+  ) => Promise<{ close(): Promise<void> }>;
+  readonly onShutdown: (handler: () => void) => void;
+}
+
+const nodeRuntime: MemoryMcpRuntime = {
+  env: process.env,
+  pid: process.pid,
+  createHost: createPostgresMemoryHost,
+  serve: serveMemoryMcpStdio,
+  onShutdown: (handler) => {
+    process.once("SIGINT", handler);
+    process.once("SIGTERM", handler);
+    process.stdin.once("end", handler);
+    process.stdin.once("error", handler);
+  }
+};
+
 export async function startMemoryMcpFromEnvironment(
-  embedder?: MemoryEmbeddingProvider
+  embedder?: MemoryEmbeddingProvider,
+  runtime: MemoryMcpRuntime = nodeRuntime
 ): Promise<void> {
-  const configuration = memoryStdioConfiguration(process.env, process.pid);
-  const host = createPostgresMemoryHost({
+  const configuration = memoryStdioConfiguration(runtime.env, runtime.pid);
+  const host = runtime.createHost({
     databaseUrl: configuration.databaseUrl,
     ...(embedder ? { embedder } : {})
   });
@@ -112,9 +156,9 @@ export async function startMemoryMcpFromEnvironment(
         ? configuration.repositoryRoot
         : null
   });
-  let server: Awaited<ReturnType<typeof serveMemoryMcpStdio>>;
+  let server: { close(): Promise<void> };
   try {
-    server = await serveMemoryMcpStdio(
+    server = await runtime.serve(
       service,
       memoryMcpSessionProvider(configuration)
     );
@@ -131,10 +175,7 @@ export async function startMemoryMcpFromEnvironment(
       .then(() => host.close());
     return closePromise;
   };
-  process.once("SIGINT", () => void close());
-  process.once("SIGTERM", () => void close());
-  process.stdin.once("end", () => void close());
-  process.stdin.once("error", () => void close());
+  runtime.onShutdown(() => void close());
 }
 
 function required(value: string | undefined, name: string): string {
