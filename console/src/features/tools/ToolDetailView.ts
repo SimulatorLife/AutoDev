@@ -158,6 +158,18 @@ function usageSection(
   usageLink: string,
   usageUnavailable: boolean
 ): React.JSX.Element {
+  // All three outcomes end with the same way through to the Usage telemetry
+  // surface -- that is the one thing an operator can do about all of them -- so
+  // the link is built once instead of being re-spelled per branch, where three
+  // copies could drift and two of them would be wrong without anything saying so.
+  const openUsage = React.createElement(
+    "a",
+    {
+      href: usageLink,
+      className: "text-accent hover:underline text-xs"
+    },
+    "Open Usage →"
+  );
   if (usageUnavailable) {
     return React.createElement(
       "div",
@@ -171,14 +183,7 @@ function usageSection(
         { className: MUTED_META_CLASS },
         "The dedicated read-only Usage telemetry path returned an error; per-tool use/error evidence stays unobserved."
       ),
-      React.createElement(
-        "a",
-        {
-          href: usageLink,
-          className: "text-accent hover:underline text-xs"
-        },
-        "Open Usage →"
-      )
+      openUsage
     );
   }
   if (!usage.observed) {
@@ -194,14 +199,7 @@ function usageSection(
         { className: MUTED_META_CLASS },
         "No calls were observed for this tool through the dedicated read-only Usage path; the count is not rendered as zero."
       ),
-      React.createElement(
-        "a",
-        {
-          href: usageLink,
-          className: "text-accent hover:underline text-xs"
-        },
-        "Open Usage →"
-      )
+      openUsage
     );
   }
   return React.createElement(
@@ -226,14 +224,7 @@ function usageSection(
       { className: MUTED_META_CLASS },
       "Errors are reported only when the canonical Usage telemetry path exposes per-tool error counts. The Tools catalog never invents a value."
     ),
-    React.createElement(
-      "a",
-      {
-        href: usageLink,
-        className: "text-accent hover:underline text-xs"
-      },
-      "Open Usage →"
-    )
+    openUsage
   );
 }
 
