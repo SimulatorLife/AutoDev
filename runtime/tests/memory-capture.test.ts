@@ -731,3 +731,138 @@ test("capture configuration refuses an omitted, oversized, or relative value", (
     "an omitted optional value is left off the configuration, not refused and not empty"
   );
 });
+
+/**
+ * The transcript path is the one configured path that must be *relative*.
+ *
+ * `AUTODEV_MEMORY_CAPTURE_ROOT` and `AUTODEV_MEMORY_REPOSITORY_ROOT` are the
+ * inverse -- they are refused unless absolute -- and both directions are
+ * already asserted. The relative-path half of the same idea had no test, so the
+ * check could have been deleted with the file staying green.
+ *
+ * It is not redundant with the containment checks at read time, and the message
+ * is what says so. `path.resolve(root, "/etc/passwd")` is `/etc/passwd`, which
+ * `isWithin` then refuses -- so the capture still fails closed. But that refusal
+ * arrives at read time, after the root has been opened, and says "must remain
+ * beneath its configured root". This one refuses while the configuration is
+ * still being parsed, before any filesystem call, and names the actual mistake:
+ * an absolute path was supplied where a relative one was required. An operator
+ * reading the two messages learns different things.
+ */
+test("capture configuration refuses an absolute transcript path, and says why", () => {
+  for (const supplied of [
+    "/etc/passwd",
+    "/workspace/transcripts/../secrets.jsonl",
+    `${process.platform === "win32" ? "C:\\" : "/"}${"a".repeat(1)}/session.jsonl`
+  ]) {
+    assert.throws(
+      () =>
+        memoryCaptureConfiguration({
+          ...enabledEnvironment,
+          AUTODEV_MEMORY_CAPTURE_PATH: supplied
+        }),
+      /must be relative to its configured root/u,
+      `${supplied} names a file directly rather than one beneath the root`
+    );
+  }
+
+  // Both sides of the rule, so "everything is refused" cannot pass it: a
+  // relative path is accepted, including one that climbs and is caught later by
+  // the containment check rather than here.
+  const relative = memoryCaptureConfiguration(enabledEnvironment);
+  assert.equal(
+    relative.transcriptRelativePath,
+    "project/session.jsonl"
+  );
+  assert.equal(
+    memoryCaptureConfiguration({
+      ...enabledEnvironment,
+      AUTODEV_MEMORY_CAPTURE_PATH: "../elsewhere/session.jsonl"
+    }).transcriptRelativePath,
+    "../elsewhere/session.jsonl",
+    "a traversal is a relative path, so this guard accepts it -- `isWithin` is what refuses it, at read time"
+  );
+});
+
+/**
+ * A conflicting capture is only deduplicated when the stored row is the same one.
+ *
+ * The capture id is a hash of the trajectory uri and digest, so through an
+ * honest store a conflict always means "this exact transcript is already
+ * captured" -- and the reconciliation is never actually load-bearing. It becomes
+ * load-bearing when the stored row under that id is *not* the transcript being
+ * written: a row left by an older normalizer whose digest derivation has since
+ * changed, or one inserted out of band.
+ *
+ * In that case reporting `appended: false` would tell the operator this
+ * transcript is stored when what is stored is something else. The conflict has
+ * to reach them instead. Deleting the `throw error` at the end of the catch does
+ * not even produce a wrong answer -- it produces no answer at all, falling out
+ * of the function with `undefined` where a `MemoryCaptureResult` is declared.
+ */
+test("a capture that conflicts with a different stored row reports the conflict", async () => {
+  const temporaryRoot = await mkdtemp(
+    join(tmpdir(), "autodev-memory-capture-conflict-")
+  );
+  try {
+    const repositoryRoot = join(temporaryRoot, "repo");
+    const transcriptRoot = join(temporaryRoot, "provider-history");
+    await mkdir(repositoryRoot);
+    await mkdir(join(transcriptRoot, "project"), { recursive: true });
+    await writeFile(
+      join(transcriptRoot, "project", "session.jsonl"),
+      claudeTranscript()
+    );
+    const configuration = memoryCaptureConfiguration({
+      ...enabledEnvironment,
+      AUTODEV_MEMORY_REPOSITORY_ROOT: repositoryRoot,
+      AUTODEV_MEMORY_CAPTURE_ROOT: transcriptRoot,
+      AUTODEV_MEMORY_CAPTURE_PATH: "project/session.jsonl"
+    });
+    const { service, experiences } = captureServiceStub();
+
+    const first = await runMemoryCapture(service, configuration);
+    assert.equal(first.appended, true);
+
+    const stored = experiences.get(first.id);
+    assert.ok(stored, "the first capture must be in the store");
+
+    // Same id, different contents -- and both ways of differing, because a
+    // check that only compares the digest would pass the first case while a
+    // check that only compares the uri passes the second. The transcript is
+    // re-read from disk each run, so the id it computes is stable either way.
+    const disagreements: readonly {
+      readonly why: string;
+      readonly row: ExperienceEnvelope;
+    }[] = [
+      {
+        why: "the stored row has a different digest",
+        row: {
+          ...stored,
+          trajectory: { ...stored.trajectory, digest: "f".repeat(64) }
+        }
+      },
+      {
+        why: "the stored row has a different trajectory uri",
+        row: {
+          ...stored,
+          trajectory: {
+            ...stored.trajectory,
+            uri: "file:///somewhere/else/session.jsonl"
+          }
+        }
+      }
+    ];
+
+    for (const { why, row } of disagreements) {
+      experiences.set(first.id, row);
+      await assert.rejects(
+        runMemoryCapture(service, configuration),
+        MemoryConflictError,
+        `a conflict against a row where ${why} must be reported, not deduplicated`
+      );
+    }
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
