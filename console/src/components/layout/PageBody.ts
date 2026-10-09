@@ -11,6 +11,9 @@ import React from "react";
  * places means twenty-one chances to miss one, and a page whose sections sit
  * closer together than its neighbour's reads as a different product.
  *
+ * Related content groups inside a section reuse this token when their sibling
+ * blocks need the same separation as top-level sections.
+ *
  * `gap-6` rather than something tighter because the sections are bordered
  * panels, not a paragraph flow: the panel's own border and padding carry the
  * separation, and a smaller gap makes a stack of boxes read as one box.

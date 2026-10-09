@@ -46,6 +46,28 @@ test("Usage cost formatting keeps catalog estimates explicit and unobserved dist
   assert.equal(formatEstimatedCost(null), "Not observed");
 });
 
+test("Usage active-session stats and detail use the shared section spacing", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      selection: { range: "ACTIVE_SESSIONS", values: {} },
+      activeSessions: {
+        schema: "autodev-usage-active-sessions-v1",
+        lifecycle: "ready",
+        lifecycleChangedAt: "2026-10-01T12:00:00.000Z",
+        activeSessions: 2,
+        activeSubagentThreads: 1,
+        inFlightRequests: 0,
+        perSessionIdentityAvailable: false
+      }
+    })
+  );
+
+  assert.match(
+    markup,
+    /Active Sessions<\/h3><div class="flex flex-col gap-6"><div class="[^"]*" data-stat-grid="4">/u
+  );
+});
+
 test("UsageView keeps scope filters but omits metrics until a snapshot is validated", () => {
   const markup = renderToStaticMarkup(
     React.createElement(UsageView, { selection })
@@ -82,6 +104,14 @@ test("UsageView groups validated request, reliability, skill, and MCP metrics wi
   assert.match(markup, /Skill observations by event/);
   assert.doesNotMatch(markup, /Shim-owned/);
   assert.match(markup, /data-usage-observed="true"/);
+
+  const reliabilityStart = markup.indexOf("Reliability &amp; context");
+  const skillActivityStart = markup.indexOf("Skill activity", reliabilityStart);
+  const reliabilitySection = markup.slice(reliabilityStart, skillActivityStart);
+  assert.match(
+    reliabilitySection,
+    /<\/h3><div class="flex flex-col gap-6"><div class="[^"]*" data-stat-grid="3">[\s\S]*Failed attempts by provider/u
+  );
 });
 
 test("UsageView shows the bounded recent-attempt table and preserves filters when opening a trace", () => {

@@ -17,7 +17,10 @@ import { FilterBar } from "../../components/filters/FilterBar.ts";
 import { AutoSubmitSelectField } from "../../components/forms/AutoSubmitSelectField.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
-import { PageBody } from "../../components/layout/PageBody.ts";
+import {
+  PAGE_SECTION_STACK_CLASS,
+  PageBody
+} from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { gridRowClass, StatGrid } from "../../components/panels/DetailGrid.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
@@ -181,38 +184,42 @@ function renderActiveSessionsScope(
       "Active Sessions"
     ),
     React.createElement(
-      StatGrid,
-      { columns: 4 },
-      React.createElement(StatCard, {
-        title: "Active Sessions",
-        value: formatCount(active.activeSessions),
-        subtitle: "Runtime-reported live sessions"
-      }),
-      React.createElement(StatCard, {
-        title: "Active Subagent Threads",
-        value: formatCount(active.activeSubagentThreads),
-        subtitle: "Runtime-reported live threads"
-      }),
-      React.createElement(StatCard, {
-        title: "In-flight Requests",
-        value: formatCount(active.inFlightRequests),
-        subtitle: "Runtime-reported provider requests"
-      }),
-      React.createElement(StatCard, {
-        title: "Router Lifecycle",
-        value: formatLifecycle(active.lifecycle, active.lifecycleChangedAt),
-        subtitle: "Runtime lifecycle state"
-      })
-    ),
-    React.createElement(
       "div",
-      { className: LIST_PANEL_CLASS },
+      { className: PAGE_SECTION_STACK_CLASS },
       React.createElement(
-        "p",
-        { className: MUTED_BODY_CLASS },
-        active.perSessionIdentityAvailable
-          ? "Per-session detail is reported below."
-          : "The Runtime reports a live session count but no per-session identity yet, so no session list is shown. Absence of a list is not an absence of sessions."
+        StatGrid,
+        { columns: 4 },
+        React.createElement(StatCard, {
+          title: "Active Sessions",
+          value: formatCount(active.activeSessions),
+          subtitle: "Runtime-reported live sessions"
+        }),
+        React.createElement(StatCard, {
+          title: "Active Subagent Threads",
+          value: formatCount(active.activeSubagentThreads),
+          subtitle: "Runtime-reported live threads"
+        }),
+        React.createElement(StatCard, {
+          title: "In-flight Requests",
+          value: formatCount(active.inFlightRequests),
+          subtitle: "Runtime-reported provider requests"
+        }),
+        React.createElement(StatCard, {
+          title: "Router Lifecycle",
+          value: formatLifecycle(active.lifecycle, active.lifecycleChangedAt),
+          subtitle: "Runtime lifecycle state"
+        })
+      ),
+      React.createElement(
+        "div",
+        { className: LIST_PANEL_CLASS },
+        React.createElement(
+          "p",
+          { className: MUTED_BODY_CLASS },
+          active.perSessionIdentityAvailable
+            ? "Per-session detail is reported below."
+            : "The Runtime reports a live session count but no per-session identity yet, so no session list is shown. Absence of a list is not an absence of sessions."
+        )
       )
     )
   );
@@ -500,8 +507,7 @@ function traceAttemptColumns(
           "a",
           {
             href: usageHref(selection, attempt.spanId),
-            className:
-              `font-mono text-xs ${ACTION_LINK_CLASS}`,
+            className: `font-mono text-xs ${ACTION_LINK_CLASS}`,
             "aria-label": `Inspect trace for span ${attempt.spanId}`,
             "data-usage-trace-span-id": attempt.spanId
           },
@@ -526,8 +532,7 @@ function traceSpanColumns(
           "a",
           {
             href: usageHref(selection, span.spanId),
-            className:
-              `font-mono text-xs ${ACTION_LINK_CLASS}`,
+            className: `font-mono text-xs ${ACTION_LINK_CLASS}`,
             "aria-label": `Inspect span ${span.spanId}${span.spanId === selectedSpanId ? ", selected" : ""}`,
             ...(span.spanId === selectedSpanId
               ? { "aria-current": "true", "data-trace-selected": "true" }
@@ -547,8 +552,7 @@ function traceSpanColumns(
               "a",
               {
                 href: usageHref(selection, span.parentSpanId),
-                className:
-                  `font-mono text-xs ${ACTION_LINK_CLASS}`,
+                className: `font-mono text-xs ${ACTION_LINK_CLASS}`,
                 "aria-label": `Inspect parent span ${span.parentSpanId}`
               },
               span.parentSpanId
@@ -701,8 +705,7 @@ function renderTraceLookup(
         "a",
         {
           href: usageHref(selection),
-          className:
-            `w-fit text-xs ${ACTION_LINK_CLASS}`
+          className: `w-fit text-xs ${ACTION_LINK_CLASS}`
         },
         "Back to recent attempts"
       )
@@ -905,51 +908,55 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
         "Reliability & context"
       ),
       React.createElement(
-        StatGrid,
-        { columns: 3 },
-        React.createElement(StatCard, {
-          title: "Physical Attempts",
-          value: formatCount(metrics.physicalAttempts),
-          subtitle: "Provider/model attempt spans"
-        }),
-        React.createElement(StatCard, {
-          title: "Failed Provider Attempts",
-          value: formatCount(metrics.failedAttempts),
-          subtitle: "GenAI attempt spans with error status"
-        }),
-        React.createElement(StatCard, {
-          title: "Context Compactions",
-          value: formatCount(metrics.contextCompactions),
-          subtitle: "Runtime-confirmed compactions"
-        })
-      ),
-      React.createElement(
         "div",
-        { className: LIST_PANEL_CLASS },
+        { className: PAGE_SECTION_STACK_CLASS },
         React.createElement(
-          "h4",
-          {
-            className: SECTION_HEADING_CLASS
-          },
-          "Failed attempts by provider"
+          StatGrid,
+          { columns: 3 },
+          React.createElement(StatCard, {
+            title: "Physical Attempts",
+            value: formatCount(metrics.physicalAttempts),
+            subtitle: "Provider/model attempt spans"
+          }),
+          React.createElement(StatCard, {
+            title: "Failed Provider Attempts",
+            value: formatCount(metrics.failedAttempts),
+            subtitle: "GenAI attempt spans with error status"
+          }),
+          React.createElement(StatCard, {
+            title: "Context Compactions",
+            value: formatCount(metrics.contextCompactions),
+            subtitle: "Runtime-confirmed compactions"
+          })
         ),
-        React.createElement(BarChart, {
-          data:
-            attemptErrorsByProvider === null ||
-            attemptErrorsByProvider === undefined
-              ? null
-              : attemptErrorsByProvider.map((item) => ({
-                  label: formatDimension(item.provider),
-                  value: item.count,
-                  valueText: formatCount(item.count)
-                })),
-          label: "Failed provider attempts",
-          notObservedMessage: "Provider failure telemetry not observed.",
-          emptyMessage:
-            "No failed provider attempts were observed in this time range.",
-          barClass: "bg-chart-5",
-          valueClass: "text-chart-5"
-        })
+        React.createElement(
+          "div",
+          { className: LIST_PANEL_CLASS },
+          React.createElement(
+            "h4",
+            {
+              className: SECTION_HEADING_CLASS
+            },
+            "Failed attempts by provider"
+          ),
+          React.createElement(BarChart, {
+            data:
+              attemptErrorsByProvider === null ||
+              attemptErrorsByProvider === undefined
+                ? null
+                : attemptErrorsByProvider.map((item) => ({
+                    label: formatDimension(item.provider),
+                    value: item.count,
+                    valueText: formatCount(item.count)
+                  })),
+            label: "Failed provider attempts",
+            notObservedMessage: "Provider failure telemetry not observed.",
+            emptyMessage:
+              "No failed provider attempts were observed in this time range.",
+            barClass: "bg-chart-5",
+            valueClass: "text-chart-5"
+          })
+        )
       )
     ),
     React.createElement(
