@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { rename, writeFile } from "node:fs/promises";
 
+import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 export const PERSISTED_STATE_SCHEMA = "autodev-router-persisted-state";
@@ -226,7 +227,7 @@ export class RouterPersistence {
       return true;
     } catch (error) {
       writeErrorLine(
-        `Warning: could not load router state from ${targetFile}: ${error instanceof Error ? error.message : String(error)}`
+        `Warning: could not load router state from ${targetFile}: ${errorMessage(error)}`
       );
       return false;
     }
@@ -257,7 +258,7 @@ export class RouterPersistence {
           "Warning: could not persist router state to " +
             targetFile +
             ": " +
-            (error instanceof Error ? error.message : String(error))
+            errorMessage(error)
         );
         return false;
       });

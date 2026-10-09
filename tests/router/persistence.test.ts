@@ -13,6 +13,13 @@ import {
   serializeRouterState,
   setDefaultPersistenceManager
 } from "@simulatorlife/autodev-runtime/router/persistence";
+import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
+
+test("shared error formatting preserves Error and non-Error details", () => {
+  assert.equal(errorMessage(new Error("disk failure")), "disk failure");
+  assert.equal(errorMessage("disk failure"), "disk failure");
+  assert.equal(errorMessage({ code: "EIO" }), "[object Object]");
+});
 
 test("effectiveStateFile resolves custom, environment, or default path", () => {
   assert.equal(effectiveStateFile("/custom/file.json"), "/custom/file.json");
