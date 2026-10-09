@@ -130,8 +130,6 @@ async function withGitRepository(
     const filePath = join(root, "src", "feature.ts");
     await writeFile(filePath, "export const feature = true;\n");
     execGit(root, ["init", "-q"]);
-    execGit(root, ["config", "user.name", "AutoDev Memory Tests"]);
-    execGit(root, ["config", "user.email", "memory-tests@example.invalid"]);
     execGit(root, ["add", "src/feature.ts"]);
     execGit(root, ["commit", "-q", "-m", "Add feature"]);
     const sourceCommit = execGit(root, ["rev-parse", "HEAD"]);
@@ -142,9 +140,20 @@ async function withGitRepository(
 }
 
 function execGit(root: string, args: readonly string[]): string {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("GIT_")) delete env[key];
+  }
+  Object.assign(env, {
+    GIT_AUTHOR_NAME: "AutoDev Memory Tests",
+    GIT_AUTHOR_EMAIL: "memory-tests@example.invalid",
+    GIT_COMMITTER_NAME: "AutoDev Memory Tests",
+    GIT_COMMITTER_EMAIL: "memory-tests@example.invalid"
+  });
   return execFileSync("git", ["-C", root, ...args], {
     encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"]
+    stdio: ["ignore", "pipe", "pipe"],
+    env
   }).trim();
 }
 
