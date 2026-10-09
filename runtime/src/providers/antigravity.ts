@@ -1139,124 +1139,117 @@ function createToolObserver(agentEvents: AgentReporter | null) {
  * not depend on the dispatch step (which closes on `DONE`, long before its
  * children do) being the only signal of delegation in flight.
  */
+interface TrackedSpawn {
+  readonly tool: string;
+  readonly children: SpawnedChild[];
+  readonly startedAt: number;
+}
+
+interface SpawnTrackerState {
+  readonly agentEvents: AgentReporter | null;
+  readonly reportedSpawns: Set<number>;
+  readonly openSpawns: Map<number | string, TrackedSpawn>;
+}
+
 function createSpawnTracker(agentEvents: AgentReporter | null) {
-  const reportedSpawns = new Set<number>();
-  // Spawn steps whose children are still running.
-  //
-  // `invoke_subagent` is fire-and-forget: measured directly from agy's
-  // stream-json, the dispatch step reports `state: DONE` with
-  // `duration_seconds: 0.043` inside a turn that ran 45s while the child
-  // actually did the work. Its terminal state says the dispatch finished, not
-  // the child, and agy emits no later step when a child completes -- the
-  // child's result reaches the parent as context, invisibly. So the child's
-  // true runtime is not observable from this stream at all.
-  //
-  // Closing on that DONE therefore reported ~40ms for children that ran for
-  // minutes, which is worse than reporting nothing: it fills the usage tables
-  // with a number that looks like a measurement. These stay open instead and
-  // are closed with the parent turn, which bounds the child honestly -- it ran
-  // somewhere inside that window.
-  const openSpawns = new Map<
-    number | string,
-    {
-      tool: string;
-      children: SpawnedChild[];
-      startedAt: number;
-    }
-  >();
-  // Count a spawn once, when the step opens. A step reports ACTIVE then DONE
-  // for the same step_index, and a run may end without a DONE at all, so the
-  // opening transition is the only one that appears exactly once per
-  // invocation. A step that carries no index cannot be de-duplicated that way,
-  // and keying every such step under `undefined` would drop every spawn after
-  // the first; ACTIVE alone still keeps those from being counted twice.
-  const reportSpawns = (update: JsonValue) => {
-    if (!isStepUpdate(update)) return;
-    const toolInfo = isToolInfo(update.tool_info) ? update.tool_info : null;
-    const toolName = String(update.tool_name ?? toolInfo?.name ?? "");
-    if (!isSpawnToolName(agentEvents, toolName)) return;
-    if (String(update.state ?? "").toUpperCase() !== "ACTIVE") return;
-    const stepIndex = stepIndexOf(update);
-    if (stepIndex !== null) {
-      if (reportedSpawns.has(stepIndex)) return;
-      reportedSpawns.add(stepIndex);
-    }
-    if (LOG_SPAWN_STEPS)
-      writeErrorLine(`agy spawn step ${JSON.stringify(shapeOnly(update))}`);
-    const children = spawnedChildren(update);
-    writeErrorLine(
-      `agy spawn tool=${toolName} children=${children.length} roles=${children.map(({ role }: SpawnedChild) => role ?? "unattributed").join(",")}`
-    );
-    const key: number | string = stepIndex ?? children[0]?.id ?? "anonymous";
-    openSpawns.set(key, {
-      tool: toolName,
-      children,
-      startedAt: Date.now()
-    });
-    // Telemetry needs a reporter the router actually authorized; pending-child
-    // tracking above does not, and must happen whether or not one exists.
-    if (agentEvents)
-      void agentEvents.reportSpawns({ tool: toolName, children });
-    if (typeof agentEvents?.reportActivity === "function") {
-      void agentEvents.reportActivity({
-        state: "subagent_wait",
-        childIds: children.map((c: SpawnedChild) => c.id)
-      });
-    }
-  };
-  // Deleting the map entry is what makes a close idempotent: a key already
-  // closed (by this or the flush path) has nothing left to delete, so a
-  // second attempt to close the same spawn -- from a stray duplicate event,
-  // or from flushSpawns running after an individual close already ran -- is a
-  // no-op rather than a second telemetry post or a second decrement.
-  const closeSpawn = (key: number | string, outcome: string) => {
-    const open = openSpawns.get(key);
-    if (!open) return;
-    openSpawns.delete(key);
-    if (agentEvents)
-      void agentEvents.reportResults({
-        tool: open.tool,
-        children: open.children,
-        outcome,
-        durationMs: Date.now() - open.startedAt
-      });
-    if (
-      openSpawns.size === 0 &&
-      typeof agentEvents?.reportActivity === "function"
-    ) {
-      void agentEvents.reportActivity({ state: "resumed" });
-    }
-  };
-  // A dispatch step reaching a terminal state settles the *dispatch*, not the
-  // children. `DONE` means agy handed the work off successfully and the child
-  // is now running, so the child stays open and is closed with the parent turn.
-  // Any other terminal state means the hand-off itself failed, and a child that
-  // was never dispatched has no runtime to bound -- that one closes here.
-  const reportSpawnResults = (update: JsonValue) => {
-    if (!isStepUpdate(update)) return;
-    const toolInfo = isToolInfo(update.tool_info) ? update.tool_info : null;
-    const toolName = String(update.tool_name ?? toolInfo?.name ?? "");
-    if (!isSpawnToolName(agentEvents, toolName)) return;
-    const state = String(update.state ?? "").toUpperCase();
-    const stepIndex = stepIndexOf(update);
-    if (!state || state === "ACTIVE" || state === "DONE" || stepIndex === null)
-      return;
-    closeSpawn(stepIndex, "failure");
-  };
-  // Every child still open when the turn ends closes with it. That is the
-  // normal path for a successful dispatch, not an edge case.
-  const flushSpawns = (outcome: string) => {
-    for (const key of openSpawns.keys()) closeSpawn(key, outcome);
+  const state: SpawnTrackerState = {
+    agentEvents,
+    reportedSpawns: new Set<number>(),
+    openSpawns: new Map()
   };
   const observeSpawnStep = (update: JsonValue) => {
-    reportSpawns(update);
-    reportSpawnResults(update);
+    reportSpawns(state, update);
+    reportSpawnResults(state, update);
   };
+  const flushSpawns = (outcome: string) => flushOpenSpawns(state, outcome);
   return {
     observeSpawnStep,
     flushSpawns,
-    openSpawnCount: () => openSpawns.size
+    openSpawnCount: () => state.openSpawns.size
   };
+}
+
+// Count a spawn once, when its dispatch step opens, and record the pending
+// child independently of whether telemetry was authorized for this turn.
+function reportSpawns(state: SpawnTrackerState, update: JsonValue): void {
+  const { agentEvents, reportedSpawns, openSpawns } = state;
+  if (!isStepUpdate(update)) return;
+  const toolInfo = isToolInfo(update.tool_info) ? update.tool_info : null;
+  const toolName = String(update.tool_name ?? toolInfo?.name ?? "");
+  if (!isSpawnToolName(agentEvents, toolName)) return;
+  if (String(update.state ?? "").toUpperCase() !== "ACTIVE") return;
+  const stepIndex = stepIndexOf(update);
+  if (stepIndex !== null) {
+    if (reportedSpawns.has(stepIndex)) return;
+    reportedSpawns.add(stepIndex);
+  }
+  if (LOG_SPAWN_STEPS)
+    writeErrorLine(`agy spawn step ${JSON.stringify(shapeOnly(update))}`);
+  const children = spawnedChildren(update);
+  writeErrorLine(
+    `agy spawn tool=${toolName} children=${children.length} roles=${children.map(({ role }: SpawnedChild) => role ?? "unattributed").join(",")}`
+  );
+  const key: number | string = stepIndex ?? children[0]?.id ?? "anonymous";
+  openSpawns.set(key, {
+    tool: toolName,
+    children,
+    startedAt: Date.now()
+  });
+  // `invoke_subagent` is fire-and-forget: its DONE step closes the dispatch,
+  // not the child. Pending state therefore remains open until the parent turn.
+  if (agentEvents) void agentEvents.reportSpawns({ tool: toolName, children });
+  if (typeof agentEvents?.reportActivity === "function") {
+    void agentEvents.reportActivity({
+      state: "subagent_wait",
+      childIds: children.map((child) => child.id)
+    });
+  }
+}
+
+// Close one pending child group once; deleting first makes duplicate terminal
+// events and a later parent flush harmless.
+function closeSpawn(
+  state: SpawnTrackerState,
+  key: number | string,
+  outcome: string
+): void {
+  const { agentEvents, openSpawns } = state;
+  const open = openSpawns.get(key);
+  if (!open) return;
+  openSpawns.delete(key);
+  if (agentEvents)
+    void agentEvents.reportResults({
+      tool: open.tool,
+      children: open.children,
+      outcome,
+      durationMs: Date.now() - open.startedAt
+    });
+  if (
+    openSpawns.size === 0 &&
+    typeof agentEvents?.reportActivity === "function"
+  ) {
+    void agentEvents.reportActivity({ state: "resumed" });
+  }
+}
+
+// Only failed hand-offs close immediately; DONE settles dispatch, not the child.
+function reportSpawnResults(state: SpawnTrackerState, update: JsonValue): void {
+  const { agentEvents } = state;
+  if (!isStepUpdate(update)) return;
+  const toolInfo = isToolInfo(update.tool_info) ? update.tool_info : null;
+  const toolName = String(update.tool_name ?? toolInfo?.name ?? "");
+  if (!isSpawnToolName(agentEvents, toolName)) return;
+  const status = String(update.state ?? "").toUpperCase();
+  const stepIndex = stepIndexOf(update);
+  if (!status || status === "ACTIVE" || status === "DONE" || stepIndex === null)
+    return;
+  closeSpawn(state, stepIndex, "failure");
+}
+
+// The parent turn bounds any child whose completion is not observable in agy's
+// stream, so flush every still-open child with the parent's outcome.
+function flushOpenSpawns(state: SpawnTrackerState, outcome: string): void {
+  for (const key of state.openSpawns.keys()) closeSpawn(state, key, outcome);
 }
 
 /**
