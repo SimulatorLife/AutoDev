@@ -1478,8 +1478,9 @@ export function resolveTurnMetadataHeader(
  * falling back to the process-wide anonymous bucket. The legacy
  * `x-codex-session-id`/`x-session-id`/`x-conversation-id` aliases remain in
  * the precedence list so already-remembered workspace metadata continues to
- * resolve for older callers. The thread header is resolved the same way
- * (`thread-id` first, then `x-codex-thread-id` as the legacy alias).
+ * resolve for older callers. Thread identity accepts Codex's canonical
+ * `thread-id` header, `client_metadata.thread_id`, or turn metadata; the former
+ * `x-codex-thread-id` header is no longer accepted.
  */
 export function requestSession(
   request: IncomingMessage,
@@ -1510,8 +1511,7 @@ export function requestSession(
     (metadata?.conversation_id as string | undefined) ??
     (turnMetadata?.session_id as string | undefined) ??
     (turnMetadata?.conversation_id as string | undefined);
-  const threadHeader =
-    request.headers["thread-id"] ?? request.headers["x-codex-thread-id"];
+  const threadHeader = request.headers["thread-id"];
   const clientMetadata = payload?.client_metadata as
     Record<string, unknown> | undefined;
   const threadValue =

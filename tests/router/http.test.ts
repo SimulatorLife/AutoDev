@@ -290,6 +290,15 @@ test("Codex thread-id header identifies metadata-less continuation and restores 
       thread: threadId
     });
 
+    // The pre-0.154 x-codex-thread-id alias is retired; use the canonical
+    // thread-id header rather than preserving a compatibility path.
+    const legacySession = requestSession(
+      { headers: { "x-codex-thread-id": threadId } } as any,
+      {}
+    );
+    assert.equal(legacySession.scope, "process-fallback");
+    assert.equal(legacySession.thread, null);
+
     assert.ok(getWorkspaceMetadata(session.key));
 
     // Goal continuation: turn-metadata arrives with empty workspaces or omitted workspaces

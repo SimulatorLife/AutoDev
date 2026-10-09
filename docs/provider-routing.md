@@ -123,9 +123,10 @@ following cascade:
 
 One agent is one Codex thread. A subagent shares its root's session key, so
 its requests use a distinct `thread:<threadId>` activity subject, taken from
-the `thread-id` header, `client_metadata.thread_id`, or the turn metadata
-Codex sends on every request, and tagged with the parent's session key. They
-refresh the parent's TTL without overwriting its provider or role, and all of
+the canonical `thread-id` header, `client_metadata.thread_id`, or the turn
+metadata Codex sends on every request, and tagged with the parent's session key.
+The former `x-codex-thread-id` header is retired. Those requests refresh the
+parent's TTL without overwriting its provider or role, and all of
 one child's requests are one live agent: keying each request separately once
 counted a child making 45 tool calls as dozens of live agents, each parked in
 `tool_wait` until the TTL. The root's thread id equals its session key, so the
