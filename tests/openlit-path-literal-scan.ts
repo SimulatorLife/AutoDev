@@ -56,6 +56,11 @@ function walk(dir: string, out: string[] = []): string[] {
 
 const normalise = (r: string) => (r === "/" ? "/" : r.replace(/\/$/u, ""));
 
+function beforeDelimiter(value: string, delimiter: string): string {
+  const index = value.indexOf(delimiter);
+  return index === -1 ? value : value.slice(0, index);
+}
+
 function toRoute(app: string, file: string): string {
   const stripped = relative(app, file).replace(/\/(page|route)\.tsx?$/u, "");
   const withoutFile =
@@ -97,9 +102,10 @@ function stripMatcher(token: string): string {
  * runtime, so the target is truncated at the first `${` and wildcard-matched.
  */
 function matches(target: string, routes: Set<string>): boolean {
-  const base = normalise(
-    target.split("?")[0]!.split("#")[0]!.split("${")[0]!.replace(/\/$/u, "")
-  );
+  const withoutQuery = beforeDelimiter(target, "?");
+  const withoutFragment = beforeDelimiter(withoutQuery, "#");
+  const withoutInterpolation = beforeDelimiter(withoutFragment, "${");
+  const base = normalise(withoutInterpolation.replace(/\/$/u, ""));
   if (routes.has(base)) return true;
   const segs = base.split("/").filter(Boolean);
   for (const route of routes) {
@@ -151,9 +157,9 @@ function matchesAsMatcherPrefix(target: string, routes: Set<string>): boolean {
  * that is only a prefix of another page (e.g. `/agents`) is a dead link.
  */
 function matchesApi(target: string, routes: Set<string>): boolean {
-  const base = normalise(
-    target.split("?")[0]!.split("${")[0]!.replace(/\/$/u, "")
-  );
+  const withoutQuery = beforeDelimiter(target, "?");
+  const withoutInterpolation = beforeDelimiter(withoutQuery, "${");
+  const base = normalise(withoutInterpolation.replace(/\/$/u, ""));
   if (routes.has(base)) return true;
   const segs = base.split("/").filter(Boolean);
   for (const route of routes) {

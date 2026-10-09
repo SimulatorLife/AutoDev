@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -1207,6 +1208,39 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     );
   }
 }
+
+test("path literal matching preserves route and API suffix rules", () => {
+  const client = mkdtempSync(join(tmpdir(), "autodev-openlit-path-scan-"));
+  try {
+    const app = join(client, "src", "app");
+    mkdirSync(join(app, "literal"), { recursive: true });
+    mkdirSync(join(app, "api", "items"), { recursive: true });
+    writeFileSync(join(app, "literal", "page.tsx"), "");
+    writeFileSync(join(app, "api", "items", "route.ts"), "");
+    writeFileSync(
+      join(client, "src", "links.ts"),
+      [
+        "const links = [",
+        '  "/literal",',
+        '  "/literal?tab=records#summary",',
+        '  "/literal#summary?tab=records",',
+        "  `/literal/${slug}`,",
+        '  "/api/items",',
+        '  "/api/items?limit=1",',
+        // Pin the API matcher's current rule: a fragment remains in the path.
+        '  "/api/items#fragment",',
+        "  `/api/items/${slug}`",
+        "];"
+      ].join("\n")
+    );
+
+    assert.deepEqual(deadPathLiterals(client), [
+      "links.ts -> /api/items#fragment"
+    ]);
+  } finally {
+    rmSync(client, { recursive: true, force: true });
+  }
+});
 
 test(
   "openlit patch set applies cleanly to pinned commit",
