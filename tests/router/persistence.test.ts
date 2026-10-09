@@ -28,6 +28,11 @@ test("effectiveStateFile resolves custom, environment, or default path", () => {
   try {
     process.env.CODEX_ROUTER_STATE_FILE = "/env/path.json";
     assert.equal(effectiveStateFile(), "/env/path.json");
+    assert.equal(new RouterPersistence().getStateFile(), "/env/path.json");
+    assert.equal(
+      new RouterPersistence({ stateFile: "   " }).getStateFile(),
+      "/env/path.json"
+    );
   } finally {
     if (origEnv === undefined) {
       delete process.env.CODEX_ROUTER_STATE_FILE;
@@ -35,6 +40,35 @@ test("effectiveStateFile resolves custom, environment, or default path", () => {
       process.env.CODEX_ROUTER_STATE_FILE = origEnv;
     }
   }
+});
+
+test("RouterPersistence resolves explicit, configured, and dynamic state files", () => {
+  const configured = new RouterPersistence({
+    stateFile: "  /configured/state.json  "
+  });
+  assert.equal(configured.getStateFile(), "/configured/state.json");
+  assert.equal(
+    configured.getStateFile("  /override/state.json  "),
+    "/override/state.json"
+  );
+  assert.equal(configured.getStateFile("   "), "/configured/state.json");
+
+  let callbackCalls = 0;
+  const dynamic = new RouterPersistence({
+    stateFile: () => `/configured/state-${++callbackCalls}.json`
+  });
+  assert.equal(dynamic.getStateFile(), "/configured/state-1.json");
+  assert.equal(
+    dynamic.getStateFile("/override/state.json"),
+    "/override/state.json"
+  );
+  assert.equal(callbackCalls, 1);
+
+  assert.equal(
+    new RouterPersistence({ stateFile: () => "" }).getStateFile(),
+    "",
+    "a configured callback's result is returned verbatim"
+  );
 });
 
 test("RouterPersistence serialize produces valid envelope with schema and timestamp", () => {

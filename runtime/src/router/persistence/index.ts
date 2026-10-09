@@ -180,13 +180,7 @@ export class RouterPersistence {
     if (typeof this.stateFileOption === "function") {
       return this.stateFileOption();
     }
-    if (
-      typeof this.stateFileOption === "string" &&
-      this.stateFileOption.trim()
-    ) {
-      return this.stateFileOption.trim();
-    }
-    return effectiveStateFile();
+    return effectiveStateFile(this.stateFileOption);
   }
 
   serialize(customSnapshot?: Record<string, unknown>): string {
