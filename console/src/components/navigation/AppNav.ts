@@ -14,6 +14,7 @@ import { Icon, navIcon } from "../icons/Icon.ts";
 import { NavigationLink } from "./NavigationLink.ts";
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "autodev.console.sidebar.collapsed";
+const SIDEBAR_COMPACT_QUERY = "(max-width: 1279px)";
 
 export interface AppNavProps {
   readonly activeSection: CanonicalNavSection;
@@ -32,10 +33,9 @@ type GroupSectionProps = React.HTMLAttributes<HTMLElement> & {
 /**
  * URL-addressable navigation grouped by Configure / Observe / Operate. Each
  * item remains a real anchor while Next.js handles in-place route transitions.
- * At every width the circular OpenLIT-style button toggles between the full
- * sidebar and its clickable icon rail; the preference survives route changes.
- * Narrow viewports default to the rail; expanding there
- * overlays the page instead of squeezing its content. Icon-only links retain
+ * The sidebar preference is persisted. Narrow viewports default to the rail;
+ * expanding there overlays the page instead of squeezing its content, and a
+ * resource selection or Escape returns it to the rail. Icon-only links retain
  * their accessible names and titles.
  */
 export function AppNav({
@@ -51,26 +51,37 @@ export function AppNav({
       );
       setIsCollapsed(
         storedPreference === null
-          ? globalThis.matchMedia("(max-width: 1279px)").matches
+          ? globalThis.matchMedia(SIDEBAR_COMPACT_QUERY).matches
           : storedPreference === "true"
       );
     } catch {
       // Keep the narrow-screen rail as the default when storage is unavailable.
-      setIsCollapsed(globalThis.matchMedia("(max-width: 1279px)").matches);
+      setIsCollapsed(globalThis.matchMedia(SIDEBAR_COMPACT_QUERY).matches);
     }
   }, []);
+
+  const collapseSidebar = (): void => {
+    setIsCollapsed(true);
+    persistSidebarPreference(true);
+  };
+
+  const handleNavigationClick = (
+    event: React.MouseEvent<HTMLAnchorElement>
+  ): void => {
+    if (
+      shouldCloseSidebarOnNavigation(
+        event,
+        globalThis.matchMedia(SIDEBAR_COMPACT_QUERY).matches
+      )
+    ) {
+      collapseSidebar();
+    }
+  };
 
   const toggleSidebar = (): void => {
     const nextIsCollapsed = !isCollapsed;
     setIsCollapsed(nextIsCollapsed);
-    try {
-      globalThis.localStorage.setItem(
-        SIDEBAR_COLLAPSED_STORAGE_KEY,
-        String(nextIsCollapsed)
-      );
-    } catch {
-      // Persistence is optional; the current page still reflects the toggle.
-    }
+    persistSidebarPreference(nextIsCollapsed);
   };
   const expandedLabelClass = isCollapsed ? "hidden" : "inline";
   const brandLinkProps: NavigationLinkProps = {
@@ -85,6 +96,17 @@ export function AppNav({
     {
       id: "autodev-console-navigation",
       "aria-label": "AutoDev Console Navigation",
+      onKeyDown: (event: React.KeyboardEvent<HTMLElement>): void => {
+        if (
+          !isCollapsed &&
+          shouldCloseSidebarOnEscape(
+            event.key,
+            globalThis.matchMedia(SIDEBAR_COMPACT_QUERY).matches
+          )
+        ) {
+          collapseSidebar();
+        }
+      },
       className:
         // No `autodev-nav` here any more. It had no rule in the stylesheet, no
         // test naming it, and no other reference in the tree, so on every page
@@ -150,7 +172,14 @@ export function AppNav({
         className: "flex flex-col gap-4 list-none p-0 m-0"
       },
       CANONICAL_NAV_GROUPS.map((group, index) =>
-        renderGroup(group, activeSection, counts, index === 0, isCollapsed)
+        renderGroup(
+          group,
+          activeSection,
+          counts,
+          index === 0,
+          isCollapsed,
+          handleNavigationClick
+        )
       )
     )
   );
@@ -161,7 +190,8 @@ function renderGroup(
   activeSection: CanonicalNavSection,
   counts: Partial<Record<CanonicalNavSection, number>> | undefined,
   isFirst: boolean,
-  isCollapsed: boolean
+  isCollapsed: boolean,
+  onNavigationClick: React.MouseEventHandler<HTMLAnchorElement>
 ): React.JSX.Element {
   let groupSpacingClass = "";
   if (!isFirst) {
@@ -198,7 +228,13 @@ function renderGroup(
           "aria-label": group.label + " navigation"
         },
         group.sections.map((section) =>
-          renderNavItem(section, activeSection, counts, isCollapsed)
+          renderNavItem(
+            section,
+            activeSection,
+            counts,
+            isCollapsed,
+            onNavigationClick
+          )
         )
       )
     )
@@ -209,7 +245,8 @@ function renderNavItem(
   section: CanonicalNavSection,
   activeSection: CanonicalNavSection,
   counts: Partial<Record<CanonicalNavSection, number>> | undefined,
-  isCollapsed: boolean
+  isCollapsed: boolean,
+  onNavigationClick: React.MouseEventHandler<HTMLAnchorElement>
 ): React.JSX.Element {
   const isActive = activeSection === section;
   const count = counts?.[section];
@@ -222,6 +259,7 @@ function renderNavItem(
     "aria-current": isActive ? "page" : undefined,
     "data-nav-item": section.toLowerCase(),
     title: count === undefined ? section : section + " (" + count + ")",
+    onClick: onNavigationClick,
     className:
       "w-full flex items-center gap-3 " +
       (isCollapsed ? "px-0 justify-center" : "px-3 justify-start") +
@@ -268,4 +306,42 @@ function renderNavItem(
 
 function expandedOnlyClass(isCollapsed: boolean): string {
   return isCollapsed ? "hidden" : "inline";
+}
+
+function persistSidebarPreference(isCollapsed: boolean): void {
+  try {
+    globalThis.localStorage.setItem(
+      SIDEBAR_COLLAPSED_STORAGE_KEY,
+      String(isCollapsed)
+    );
+  } catch {
+    // Persistence is optional; the current page still reflects the toggle.
+  }
+}
+
+type NavigationClick = Pick<
+  React.MouseEvent<HTMLAnchorElement>,
+  "altKey" | "button" | "ctrlKey" | "metaKey" | "shiftKey"
+>;
+
+/** Keep browser-native open-in-new-tab gestures from collapsing this sidebar. */
+export function shouldCloseSidebarOnNavigation(
+  event: NavigationClick,
+  isCompactViewport: boolean
+): boolean {
+  return (
+    isCompactViewport &&
+    event.button === 0 &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.shiftKey
+  );
+}
+
+export function shouldCloseSidebarOnEscape(
+  key: string,
+  isCompactViewport: boolean
+): boolean {
+  return isCompactViewport && key === "Escape";
 }

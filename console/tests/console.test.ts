@@ -67,12 +67,6 @@ import {
   AutoSubmitSelectField,
   type AutoSubmitSelectFieldProps
 } from "../src/components/forms/AutoSubmitSelectField.ts";
-import {
-  type FormElementLike,
-  type FormLike,
-  type FormSubmissionEvent,
-  handleFormSubmission
-} from "../src/components/navigation/FormNavigationOwner.ts";
 import type { SelectFieldProps } from "../src/components/forms/SelectField.ts";
 import {
   ICON_PATHS,
@@ -81,6 +75,16 @@ import {
 } from "../src/components/icons/Icon.ts";
 import { AppShell } from "../src/components/layout/AppShell.ts";
 import { PAGE_SECTION_STACK_CLASS } from "../src/components/layout/PageBody.ts";
+import {
+  shouldCloseSidebarOnEscape,
+  shouldCloseSidebarOnNavigation
+} from "../src/components/navigation/AppNav.ts";
+import {
+  type FormElementLike,
+  type FormLike,
+  type FormSubmissionEvent,
+  handleFormSubmission
+} from "../src/components/navigation/FormNavigationOwner.ts";
 import {
   pageRangeLabel,
   Pagination
@@ -96,10 +100,10 @@ import {
   SECTION_LABEL_CLASS
 } from "../src/components/ui/text-classes.ts";
 import {
-  type EvaluationsFilters,
   EVALUATION_RESULT_PARAM,
   EVALUATION_SPAN_PARAM,
   EVALUATIONS_PAGE_PARAM,
+  type EvaluationsFilters,
   evaluationsHref,
   filterEvaluations,
   filterOptionsFor,
@@ -141,8 +145,8 @@ import {
   EMPTY_INLINE_CLASS,
   EmptyState,
   ENTITY_TITLE_CLASS,
-  type EvaluationTraceLookup,
   EvaluationsView,
+  type EvaluationTraceLookup,
   FilterBar,
   FilterSearchField,
   formatCount,
@@ -1543,6 +1547,43 @@ test("AppNav renders Configure/Observe/Operate groups with canonical membership,
   assert.equal(markup.includes("Environments"), false);
   assert.equal(markup.includes("Rule Engine"), false);
   assert.equal(markup.includes("OpenGround"), false);
+});
+
+test("compact navigation dismissal policy handles primary clicks and Escape", () => {
+  const primaryClick = {
+    altKey: false,
+    button: 0,
+    ctrlKey: false,
+    defaultPrevented: false,
+    metaKey: false,
+    shiftKey: false
+  };
+
+  assert.equal(shouldCloseSidebarOnNavigation(primaryClick, true), true);
+  assert.equal(shouldCloseSidebarOnNavigation(primaryClick, false), false);
+  for (const modifier of [
+    "altKey",
+    "ctrlKey",
+    "metaKey",
+    "shiftKey"
+  ] as const) {
+    assert.equal(
+      shouldCloseSidebarOnNavigation(
+        { ...primaryClick, [modifier]: true },
+        true
+      ),
+      false,
+      `${modifier} keeps the current navigation state`
+    );
+  }
+  assert.equal(
+    shouldCloseSidebarOnNavigation({ ...primaryClick, button: 1 }, true),
+    false,
+    "middle-click does not collapse the current sidebar"
+  );
+  assert.equal(shouldCloseSidebarOnEscape("Escape", true), true);
+  assert.equal(shouldCloseSidebarOnEscape("Escape", false), false);
+  assert.equal(shouldCloseSidebarOnEscape("Enter", true), false);
 });
 
 /**

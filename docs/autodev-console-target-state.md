@@ -8,7 +8,7 @@
 >
 > **Focused Memory design:** [memory-target-state.md](memory-target-state.md) and [memory-injection-outcome-evaluation.md](memory-injection-outcome-evaluation.md).
 >
-> **Last reviewed:** 2026-10-08 (Usage trace drill-down, canonical filter axes, and request-time OpenLIT rendering).
+> **Last reviewed:** 2026-10-09 (Usage trace drill-down, canonical filter axes, request-time OpenLIT rendering, and compact-navigation dismissal behavior).
 
 ## 1. Canonical-document contract
 
@@ -114,6 +114,8 @@ Prefer dense tables, compact status summaries, tabs, drawers/sheets, and inline 
 Advanced diagnostics belong in secondary tabs/drawers unless they are the page's primary purpose. Charts belong primarily on Usage/history/observability surfaces; inventory/configuration pages should not become mini dashboards merely because telemetry exists.
 
 Shared primitives must cover at least navigation, page headers, breadcrumbs/context where needed, filters, tables, tabs, stat summaries, charts, status badges, forms, dialogs/drawers, empty/loading/error/unavailable states, permission matrices, activity/history, and code/config editors.
+
+At narrow widths, navigation defaults to the compact rail; expanding it overlays rather than compresses page content. Selecting a destination or pressing Escape collapses the expanded navigation, while modified link-open gestures leave the current view state unchanged.
 
 Table columns declare a relative width weight, never an absolute CSS length. The shared table resolves weights to percentages of its own width, so a table fills its container instead of overflowing the page. The table keeps a minimum width equal to the widest declared weight total: below it the table region scrolls horizontally rather than shrinking columns under the budget their content was measured for. Column headers wrap at word boundaries rather than truncating, and a single-word header that still cannot fit breaks rather than hiding which column it labels. A column's weight must be large enough for its own header: a header that renders as an ellipsis is a layout defect, not acceptable truncation. Discrete cell content (chips, badges, model ids, environment variable names) stays atomic and wraps between items, never mid-token; flowing prose wraps on word boundaries and is clamped; single-value cells truncate with the full value reachable on hover.
 
