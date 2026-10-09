@@ -162,27 +162,23 @@ export function buildSpawnScript(
     recoverParentId = null
   }: SpawnScriptOptions = {}
 ): string {
-  const tasks = children.map((child) => {
+  const taskPayloads = children.map((child) => {
     const agentType =
       typeof child.agentType === "string" && child.agentType.trim()
         ? child.agentType.trim()
         : null;
     const message = typeof child.message === "string" ? child.message : "";
-    // JSON.stringify is the escaping here: the script is source text, and a
-    // prompt containing quotes, newlines or a `*/` would otherwise end the
-    // string or the script.
-    return agentType
-      ? `{ agent_type: ${JSON.stringify(agentType)}, message: ${JSON.stringify(message)} }`
-      : `{ message: ${JSON.stringify(message)} }`;
+    return agentType ? { agent_type: agentType, message } : { message };
   });
-  if (tasks.length === 0)
+  if (taskPayloads.length === 0)
     throw new Error("buildSpawnScript requires at least one child");
   const recovery =
     recoverParentId === null ? "" : buildRecoveryScript(recoverParentId);
   return [
     `// @exec: ${JSON.stringify({ yield_time_ms: yieldTimeMs })}`,
     ...(recovery ? [recovery] : []),
-    `const tasks = [${tasks.join(", ")}];`,
+    // Keep caller text as JSON data instead of hand-building JavaScript source.
+    `const tasks = ${JSON.stringify(taskPayloads)};`,
     `const out = await Promise.allSettled(tasks.map((t) => tools.${MULTI_AGENT_SPAWN_TOOL}(t)));`,
     `out.forEach((result) => text(JSON.stringify(result.status === "fulfilled" ? { spawn_status: "created", ...(result.value && typeof result.value === "object" ? result.value : {}) } : { spawn_status: "rejected", agent_id: null, error: String(result.reason?.message ?? result.reason) })));`,
     ""

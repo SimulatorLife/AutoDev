@@ -16,6 +16,17 @@ import {
   MULTI_AGENT_SPAWN_TOOL
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
+type ScriptTask = {
+  agent_type?: string;
+  message: string;
+};
+
+function scriptTasks(source: string): ScriptTask[] {
+  const match = source.match(/^const tasks = (.+);$/m);
+  assert.ok(match, "spawn script contains a serialized task array");
+  return JSON.parse(match[1]!) as ScriptTask[];
+}
+
 // The literals below are not style choices -- each was read off a live Codex
 // 0.153.1 or a recorded rollout of a GPT-served turn that spawned successfully.
 // A change here is a change to what Codex accepts, so pin them.
@@ -94,6 +105,10 @@ test("a batch settles through one Promise.allSettled so one rejection preserves 
     { agentType: "explorer", message: "audit the catalogue" },
     { agentType: "validator", message: "run the focused tests" }
   ]);
+  assert.deepEqual(scriptTasks(source), [
+    { agent_type: "explorer", message: "audit the catalogue" },
+    { agent_type: "validator", message: "run the focused tests" }
+  ]);
   assert.match(source, /^\/\/ @exec: \{"yield_time_ms":60000\}\n/);
   assert.match(
     source,
@@ -105,8 +120,6 @@ test("a batch settles through one Promise.allSettled so one rejection preserves 
   // One `tasks` array, not one call per child: a twelve-way fan-out must stay a
   // single tool call.
   assert.equal(source.match(/tools\.multi_agent_v1__spawn_agent/g)?.length, 1);
-  assert.match(source, /agent_type: "explorer"/);
-  assert.match(source, /agent_type: "validator"/);
 });
 
 test("a rejected child is reported without hiding successfully created siblings", async () => {
@@ -135,25 +148,23 @@ test("a rejected child is reported without hiding successfully created siblings"
 
 test("the role travels as agent_type, because `agent` is silently ignored by Codex", () => {
   const source = buildSpawnScript([{ agentType: "explorer", message: "x" }]);
-  assert.match(source, /agent_type: "explorer"/);
-  assert.doesNotMatch(source, /\bagent:/);
-  assert.doesNotMatch(source, /items:/);
+  assert.deepEqual(scriptTasks(source), [
+    { agent_type: "explorer", message: "x" }
+  ]);
 });
 
 test("the role TOML is the child capability selector, not per-call skill metadata", () => {
   for (const agentType of ["worker", "browser-tester", "docs-researcher"]) {
     const source = buildSpawnScript([{ agentType, message: "x" }]);
-    assert.match(source, new RegExp(`agent_type: "${agentType}"`));
-    assert.doesNotMatch(source, /items:/);
-    assert.doesNotMatch(source, /type: "skill"/);
-    assert.doesNotMatch(source, /mcp_servers/);
+    assert.deepEqual(scriptTasks(source), [
+      { agent_type: agentType, message: "x" }
+    ]);
   }
 });
 
 test("a child with no role spawns without one rather than inventing a default", () => {
   const source = buildSpawnScript([{ message: "just do it" }]);
-  assert.doesNotMatch(source, /agent_type/);
-  assert.match(source, /\{ message: "just do it" \}/);
+  assert.deepEqual(scriptTasks(source), [{ message: "just do it" }]);
 });
 
 test("a prompt cannot break out of the generated script", () => {
@@ -169,11 +180,7 @@ test("a prompt cannot break out of the generated script", () => {
     { agentType: "validator", message: "benign" }
   ]);
 
-  const literalMatch = source.match(/^const tasks = (\[.*\]);$/m);
-  assert.ok(literalMatch);
-  const literal = literalMatch[1]!;
-  // A pure data literal: no calls, no references, nothing to execute.
-  const tasks = new Function(`return ${literal};`)();
+  const tasks = scriptTasks(source);
   assert.deepEqual(tasks, [
     { agent_type: "explorer", message: nasty },
     { agent_type: "validator", message: "benign" }
