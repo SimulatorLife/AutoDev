@@ -675,6 +675,125 @@ test("an unrecognised URL filter is named, never resolved into a default", async
   }
 });
 
+test("MemoryPage starts its independent status and records reads together", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousEnv = saveConsolePageEnvironment();
+  const isolatedHome = mkdtempSync(join(tmpdir(), "autodev-memory-parallel-"));
+  const initialReadsStarted = new Set<string>();
+  const pendingReads = new Map<string, () => void>();
+  let releaseInitialReads = false;
+  let resolveBothReads: (() => void) | undefined;
+  const bothReadsStarted = new Promise<void>((resolve) => {
+    resolveBothReads = resolve;
+  });
+
+  const initialReadResponse = (kind: string): Response =>
+    kind === "status"
+      ? Response.json({
+          schema: "autodev-memory-status-v1",
+          storage: {
+            state: "reachable",
+            backend: "postgresql",
+            embeddings: "configured",
+            probeTimeoutMs: 100
+          }
+        })
+      : Response.json({
+          schema: "autodev-memory-records-v1",
+          items: [],
+          total: 0,
+          limit: 50,
+          statusCounts: {
+            proposed: 0,
+            active: 0,
+            superseded: 0,
+            invalidated: 0,
+            uncertain: 0
+          },
+          offset: 0,
+          hasMore: false
+        });
+
+  try {
+    process.env.HOME = isolatedHome;
+    process.env.CODEX_HOME = isolatedHome;
+    process.env.AUTODEV_OPENLIT_SECRET_FILE = join(isolatedHome, "missing.env");
+    process.env.AUTODEV_CONTROL_API_TOKEN = "memory-page-test-token";
+    process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/control/workspaces")) {
+        return Response.json({
+          schema: "autodev-control-workspaces-v1",
+          source: "config/workspaces.json",
+          readOnly: true,
+          catalogStatus: "valid",
+          totalWorkspaces: 1,
+          workspaces: [
+            {
+              id: "SimulatorLife/AutoDev",
+              baseBranch: "main",
+              enabled: true,
+              agentRoles: null
+            }
+          ]
+        });
+      }
+
+      const kind = url.endsWith("/control/memory/status")
+        ? "status"
+        : url.includes("/control/memory/records?")
+          ? "records"
+          : null;
+      if (kind) {
+        initialReadsStarted.add(kind);
+        if (initialReadsStarted.size === 2) resolveBothReads?.();
+        const response = initialReadResponse(kind);
+        if (releaseInitialReads) return response;
+        return new Promise<Response>((resolve) => {
+          pendingReads.set(kind, () => resolve(response));
+        });
+      }
+
+      return Response.json(
+        { error: { code: "test_unavailable", message: "Not in this fixture." } },
+        { status: 503 }
+      );
+    };
+
+    const page = MemoryPage({ searchParams: Promise.resolve({ tab: "records" }) })
+      .then(renderToStaticMarkup);
+    let startTimeout: ReturnType<typeof setTimeout> | undefined;
+    const startedTogether = await Promise.race([
+      bothReadsStarted.then(() => true),
+      new Promise<boolean>((resolve) => {
+        startTimeout = setTimeout(() => resolve(false), 250);
+      })
+    ]);
+    if (startTimeout) clearTimeout(startTimeout);
+
+    // Always release the mock responses so a failed concurrency assertion does
+    // not leave an unresolved render or an open timer behind.
+    releaseInitialReads = true;
+    for (const release of pendingReads.values()) release();
+    const markup = await page;
+
+    assert.match(markup, /Durable Records/);
+    assert.equal(
+      startedTogether,
+      true,
+      "workspace scope is resolved first, then independent status and records reads must overlap"
+    );
+  } finally {
+    releaseInitialReads = true;
+    for (const release of pendingReads.values()) release();
+    globalThis.fetch = previousFetch;
+    restoreConsolePageEnvironment(previousEnv);
+    rmSync(isolatedHome, { recursive: true, force: true });
+  }
+});
+
 test("MemoryPage asks the Runtime for the page the URL names", async () => {
   // The two halves of browsing have to agree: the views render links that carry
   // a `limit`/`offset`, and the read has to request them. Asserting on the links

@@ -426,31 +426,34 @@ async function fetchMemoryPageData(
   workspaceId: string,
   config: ControlApiConfig
 ): Promise<MemoryPageReadResult> {
-  // Read before the records, and independently of it. This is the read that has
-  // to work when the read below does not, so folding it in after would leave it
-  // unreachable in the one case it exists for.
-  const status = await fetchMemoryStatus(config);
-  const recordsResult = await fetchMemoryRecords(
-    {
-      workspaceId,
-      ...(params.query ? { query: params.query } : {}),
-      ...(params.kind === "all" ? {} : { kind: params.kind }),
-      ...(params.status === "all" ? {} : { status: params.status }),
-      // The window this page resolved and every filter bar has been carrying
-      // since it was added. Records and experiences read `occurred_at` bounds
-      // from the Runtime; before this they accepted the filter, preserved it
-      // across every navigation, and then ignored it -- the page reported a
-      // bounded filter as applied on two of its three tabs.
-      occurredFrom: params.occurredFrom,
-      occurredUntil: params.occurredUntil,
-      // The paged reads ask for the page the URL names. Without these the
-      // Runtime applied its own default of 50 and the Console reported a
-      // `total` it had no way to walk past.
-      limit: params.limit,
-      offset: params.offset
-    },
-    config
-  );
+  // Both reads are independent once the workspace scope is known. Start them
+  // together to save one upstream round trip on every tab. Keep the status
+  // result even if records fail: it distinguishes unconfigured storage from a
+  // failing records operation on the failure shell below.
+  const [status, recordsResult] = await Promise.all([
+    fetchMemoryStatus(config),
+    fetchMemoryRecords(
+      {
+        workspaceId,
+        ...(params.query ? { query: params.query } : {}),
+        ...(params.kind === "all" ? {} : { kind: params.kind }),
+        ...(params.status === "all" ? {} : { status: params.status }),
+        // The window this page resolved and every filter bar has been carrying
+        // since it was added. Records and experiences read `occurred_at` bounds
+        // from the Runtime; before this they accepted the filter, preserved it
+        // across every navigation, and then ignored it -- the page reported a
+        // bounded filter as applied on two of its three tabs.
+        occurredFrom: params.occurredFrom,
+        occurredUntil: params.occurredUntil,
+        // The paged reads ask for the page the URL names. Without these the
+        // Runtime applied its own default of 50 and the Console reported a
+        // `total` it had no way to walk past.
+        limit: params.limit,
+        offset: params.offset
+      },
+      config
+    )
+  ]);
   if (recordsResult.kind !== "ok") {
     return { kind: "records-unavailable", result: recordsResult, status };
   }
