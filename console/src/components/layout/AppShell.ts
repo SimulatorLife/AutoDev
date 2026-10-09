@@ -1,6 +1,10 @@
+"use client";
+
 import type { CanonicalNavSection } from "@simulatorlife/autodev-core";
+import { usePathname } from "next/navigation.js";
 import React from "react";
 
+import { canonicalSectionFromPath } from "../../lib/routes.ts";
 import { AppNav } from "../navigation/AppNav.ts";
 import { MUTED_TEXT_CLASS } from "../ui/text-classes.ts";
 import { SkipLink } from "./SkipLink.ts";
@@ -123,6 +127,62 @@ export function AppShell({
         { className: "flex-1 p-4 xl:p-8 min-w-0" },
         children
       )
+    )
+  );
+}
+
+/**
+ * The route-level loading boundary keeps the same navigation and page frame
+ * visible while a dynamic page waits for its server-owned data.
+ */
+export function ConsoleLoadingShell(): React.JSX.Element {
+  const pathname = usePathname();
+  const activeSection = canonicalSectionFromPath(pathname ?? "") ?? "Agents";
+  return React.createElement(ConsoleLoadingPage, { activeSection });
+}
+
+/** Accessible fallback used while the Console page's server data is pending. */
+export function ConsoleLoadingPage({
+  activeSection
+}: {
+  readonly activeSection: CanonicalNavSection;
+}): React.JSX.Element {
+  return React.createElement(
+    AppShell,
+    { activeSection },
+    React.createElement(
+      "div",
+      {
+        "data-console-loading": activeSection,
+        "aria-busy": true,
+        className: "flex flex-col gap-4"
+      },
+      React.createElement(
+        "p",
+        {
+          role: "status",
+          "aria-live": "polite",
+          className: MUTED_TEXT_CLASS
+        },
+        `Loading ${activeSection.toLowerCase()}…`
+      ),
+      React.createElement(
+        "div",
+        {
+          "aria-hidden": true,
+          className: "grid grid-cols-1 gap-4 sm:grid-cols-3"
+        },
+        ...Array.from({ length: 3 }, (_, index) =>
+          React.createElement("div", {
+            key: index,
+            className: "h-24 rounded-lg border border-border bg-surface/60"
+          })
+        )
+      ),
+      React.createElement("div", {
+        "aria-hidden": true,
+        className: "h-80 rounded-lg border border-border bg-surface/60"
+      })
     )
   );
 }

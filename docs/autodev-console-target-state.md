@@ -181,6 +181,7 @@ Configuration does not prove runtime availability. Eligibility/exposure does not
 - Use the same status vocabulary, icon sizing, spacing, table density, dialog behavior, and destructive-action confirmation patterns across features.
 - URL-addressable list/detail/filter state is preferred when it improves operator navigation and debugging.
 - Internal resource and tab links use Next.js in-place navigation, not full-document reloads; they remain ordinary URL-addressable anchors for keyboard access, bookmarking, sharing, and browser history. Full dynamic-route prefetch starts only on pointer, touch, or keyboard intent, never for every visible view or tab.
+- Dynamic routes show the active Console shell and an accessible loading placeholder while server-owned page data is pending; the final page replaces it with Runtime-confirmed content and counts.
 
 ## 4. Repository and module architecture
 

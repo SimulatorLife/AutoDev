@@ -19205,6 +19205,10 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Persists the interactive sidebar preference without moving page data client-side."
     ],
     [
+      join("src", "components", "layout", "AppShell.ts"),
+      "Keeps the shared Console frame and active section visible while route data streams."
+    ],
+    [
       join("src", "components", "navigation", "NavigationLink.ts"),
       "Prefetches one dynamic destination on user intent instead of every visible view."
     ]
