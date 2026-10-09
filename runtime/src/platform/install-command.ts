@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import { ConfigError } from "@simulatorlife/autodev-runtime/config";
+import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   resolveRuntimeSourcePath,
@@ -82,9 +83,7 @@ function runNodeModule(
       stdio: "inherit"
     });
   } catch (error) {
-    throw new ConfigError(
-      `${modulePath} failed: ${error instanceof Error ? error.message : String(error)}`
-    );
+    throw new ConfigError(`${modulePath} failed: ${errorMessage(error)}`);
   }
 }
 
@@ -132,7 +131,7 @@ export function createCodexMcpSource(repositoryRoot: string): {
     rmSync(root, { recursive: true, force: true });
     if (error instanceof ConfigError) throw error;
     throw new ConfigError(
-      `could not generate Codex MCP projection: ${error instanceof Error ? error.message : String(error)}`
+      `could not generate Codex MCP projection: ${errorMessage(error)}`
     );
   }
 }

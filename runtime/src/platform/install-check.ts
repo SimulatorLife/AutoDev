@@ -18,6 +18,7 @@ import {
   runCompose,
   runModelCatalog
 } from "@simulatorlife/autodev-runtime/config";
+import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
   writeErrorLine,
   writeLine
@@ -506,9 +507,7 @@ function checkCommands(
     checkStaleCommandPrompts(paths.prompts, catalog, failures);
   } catch (error) {
     writeLine(
-      `missing-or-drifted commands check failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`
+      `missing-or-drifted commands check failed: ${errorMessage(error)}`
     );
     failures.value = 1;
   } finally {
@@ -1054,9 +1053,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   try {
     process.exitCode = runInstallCheck();
   } catch (error) {
-    writeErrorLine(
-      `install-check: ${error instanceof Error ? error.message : String(error)}`
-    );
+    writeErrorLine(`install-check: ${errorMessage(error)}`);
     process.exitCode = 1;
   }
 }

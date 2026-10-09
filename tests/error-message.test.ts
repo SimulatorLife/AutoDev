@@ -60,13 +60,14 @@ test("the Runtime has exactly one errorMessage definition", () => {
 });
 
 test("modules converted to the shared owner do not re-inline the ternary", () => {
-  // `spawn-shim.ts` and the CLI renderers were converted off the inline
-  // `error instanceof Error ? error.message : ...` spelling so there is one
-  // named decision rather than three interchangeable ones.
+  // Runtime, provider, install, and config paths share one decision rather
+  // than repeating `error instanceof Error ? error.message : ...`.
   const converted = [
     "runtime/src/router/proxy.ts",
     "runtime/src/router/state-collector.ts",
     "runtime/src/providers/antigravity.ts",
+    "runtime/src/platform/install-check.ts",
+    "runtime/src/platform/install-command.ts",
     ...[
       "render-bridge-mcp-catalogue",
       "render-execution-contract",
