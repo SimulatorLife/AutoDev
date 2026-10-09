@@ -37,13 +37,10 @@
 export const CALLOUT_CLASS = "rounded border p-3 text-sm";
 
 /** Neutral information: what the Console is showing and where it came from. */
-export const CALLOUT_ACCENT_CLASS =
-  `${CALLOUT_CLASS} border-accent/40 bg-accent/10 text-accent`;
+export const CALLOUT_ACCENT_CLASS = `${CALLOUT_CLASS} border-accent/40 bg-accent/10 text-accent`;
 
 /** A condition the operator should check, but which is not a failure. */
-export const CALLOUT_WARNING_CLASS =
-  `${CALLOUT_CLASS} border-warning/40 bg-warning/10 text-warning`;
+export const CALLOUT_WARNING_CLASS = `${CALLOUT_CLASS} border-warning/40 bg-warning/10 text-warning`;
 
 /** Something could not be loaded, confirmed or applied. */
-export const CALLOUT_ERROR_CLASS =
-  `${CALLOUT_CLASS} border-error/40 bg-error/10 text-error`;
+export const CALLOUT_ERROR_CLASS = `${CALLOUT_CLASS} border-error/40 bg-error/10 text-error`;
