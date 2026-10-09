@@ -30,6 +30,7 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import {
+  ACTION_LINK_CLASS,
   MONO_ID_LINK_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
@@ -180,7 +181,7 @@ const EDIT_SURFACE_LINK_CLASS =
   // and `min-height` would be inert on an inline box anyway, so the `block` is
   // part of the fix rather than cosmetic. It sits alone in its cell, so nothing
   // reflows around it.
-  "block min-h-6 text-accent hover:underline font-mono text-xs";
+  `block min-h-6 font-mono text-xs ${ACTION_LINK_CLASS}`;
 
 /**
  * Where a tool's canonical source is edited, and what to call the link when the
@@ -547,7 +548,7 @@ export function ToolsView({
         "a",
         {
           href: usageLink,
-          className: "text-accent hover:underline"
+          className: ACTION_LINK_CLASS
         },
         "View tool-call usage →"
       )

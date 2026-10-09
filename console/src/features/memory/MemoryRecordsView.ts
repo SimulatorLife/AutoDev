@@ -39,6 +39,7 @@ import {
 } from "../../components/tables/DataTable.ts";
 import { PathText } from "../../components/tables/PathText.ts";
 import {
+  ACTION_LINK_CLASS,
   MONO_META_CLASS,
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
@@ -282,7 +283,7 @@ export function MemoryRecordsView({
           {
             href: memoryDetailHref(listScope, "recordId", record.id),
             className:
-              "font-mono text-xs font-semibold text-accent hover:brightness-110 hover:underline",
+              `font-mono text-xs font-semibold ${ACTION_LINK_CLASS}`,
             "data-memory-record-id": record.id
           },
           record.id
@@ -518,7 +519,7 @@ function ProvenanceSources({
         {
           key: id,
           href: memoryExperienceHref(listScope, id),
-          className: "font-mono text-accent hover:underline",
+          className: `font-mono ${ACTION_LINK_CLASS}`,
           "data-provenance-experience": id
         },
         id
@@ -734,7 +735,7 @@ function RecordDetailPanel({
                     {
                       key: id,
                       href: memoryDetailHref(listScope, "recordId", id),
-                      className: "font-mono text-accent hover:underline"
+                      className: `font-mono ${ACTION_LINK_CLASS}`
                     },
                     id
                   )
@@ -756,7 +757,7 @@ function RecordDetailPanel({
                     {
                       key: id,
                       href: memoryDetailHref(listScope, "recordId", id),
-                      className: "font-mono text-accent hover:underline"
+                      className: `font-mono ${ACTION_LINK_CLASS}`
                     },
                     id
                   )

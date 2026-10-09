@@ -30,6 +30,7 @@ import {
 } from "../../components/status/StatusBadge.ts";
 import { Chip } from "../../components/tables/Chips.ts";
 import {
+  ACTION_LINK_CLASS,
   MONO_META_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
@@ -120,7 +121,7 @@ function EditSurfaceLink({
   const link = (href: string, text: string): React.JSX.Element =>
     React.createElement(
       "a",
-      { href, className: "text-accent hover:underline font-mono" },
+      { href, className: `font-mono ${ACTION_LINK_CLASS}` },
       text
     );
 
@@ -165,7 +166,7 @@ function usageSection(
     "a",
     {
       href: usageLink,
-      className: "text-accent hover:underline text-xs"
+      className: `text-xs ${ACTION_LINK_CLASS}`
     },
     "Open Usage →"
   );

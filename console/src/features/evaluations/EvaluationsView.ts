@@ -39,6 +39,7 @@ import {
   FIELD_GROUP_CLASS
 } from "../../components/ui/field-classes.ts";
 import {
+  ACTION_LINK_CLASS,
   MONO_ID_CLASS,
   MONO_META_CLASS,
   MONO_VALUE_CLASS,
@@ -551,7 +552,7 @@ function traceReference(
         nav.page
       ),
       className:
-        "font-mono text-xs font-medium text-accent underline-offset-4 hover:underline",
+        `font-mono text-xs font-medium ${ACTION_LINK_CLASS}`,
       "aria-label": `View trace for evaluation ${evaluation.id}`,
       "data-evaluation-trace-span-id": reference.spanId
     },
@@ -569,7 +570,7 @@ function spanLink(
     {
       href: evaluationTraceHref(nav.filters, spanId, nav.tab, nav.page),
       className:
-        "font-mono text-xs text-accent underline-offset-4 hover:underline",
+        `font-mono text-xs ${ACTION_LINK_CLASS}`,
       // `aria-current` is what makes the row findable rather than merely
       // different: colour alone is not something a screen reader reports, and
       // the page is server-rendered with no script to scroll it into view.
@@ -838,7 +839,7 @@ function renderMissingResult(
           "a",
           {
             href: evaluationsClearedHref({ resultId: selection }),
-            className: "text-xs text-accent underline-offset-4 hover:underline",
+            className: `text-xs ${ACTION_LINK_CLASS}`,
             "data-evaluations-clear": "true"
           },
           "Clear the filters and look for it in the whole retained history"
@@ -920,7 +921,7 @@ function renderTraceLookup(
           "a",
           {
             href: navListHref(nav),
-            className: "text-accent underline-offset-4 hover:underline"
+            className: ACTION_LINK_CLASS
           },
           "Back to evaluations"
         )
@@ -949,7 +950,7 @@ function renderTraceLookup(
         "a",
         {
           href: navListHref(nav),
-          className: "text-xs text-accent underline-offset-4 hover:underline"
+          className: `text-xs ${ACTION_LINK_CLASS}`
         },
         "Back to evaluations"
       )
@@ -1042,7 +1043,7 @@ function drawerTraceValue(
         nav.tab,
         nav.page
       ),
-      className: `${MONO_VALUE_CLASS} text-accent underline-offset-4 hover:underline`,
+      className: `${MONO_VALUE_CLASS} ${ACTION_LINK_CLASS}`,
       "aria-label": `View trace for evaluation ${evaluation.id}`,
       "data-evaluation-trace-span-id": reference.spanId
     },
@@ -1395,7 +1396,7 @@ function renderPager(
           ? {
               href: evaluationsPageHref(filters, target, tab),
               className:
-                "rounded border border-border px-3 py-1 text-xs text-accent underline-offset-4 hover:underline",
+                `rounded border border-border px-3 py-1 text-xs ${ACTION_LINK_CLASS}`,
               "data-evaluations-page-step": target
             }
           : {
@@ -1771,7 +1772,7 @@ export function EvaluationsView({
             {
               href: evaluationResultHref(filters, evaluation.id, tab, page),
               className:
-                "font-mono text-xs font-semibold text-accent underline-offset-4 hover:underline",
+                `font-mono text-xs font-semibold ${ACTION_LINK_CLASS}`,
               // The visible text is the role, and roles repeat: a fifty-row page
               // over six roles announced six words fifty times, with nothing to
               // tell a non-sighted operator which run they were on. The trace
@@ -1988,7 +1989,7 @@ export function EvaluationsView({
             {
               href: evaluationsClearedHref({ tab }),
               className:
-                "text-xs text-accent underline-offset-4 hover:underline",
+                `text-xs ${ACTION_LINK_CLASS}`,
               "data-evaluations-clear": "true"
             },
             "Clear filters"

@@ -29,6 +29,7 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import {
+  ACTION_LINK_CLASS,
   MONO_VALUE_CLASS,
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
@@ -120,7 +121,7 @@ export function MemoryExperiencesView({
           {
             href: memoryDetailHref(listScope, "experienceId", exp.id),
             className:
-              "font-mono text-xs font-semibold text-accent hover:brightness-110 hover:underline",
+              `font-mono text-xs font-semibold ${ACTION_LINK_CLASS}`,
             "data-memory-experience-id": exp.id
           },
           exp.id

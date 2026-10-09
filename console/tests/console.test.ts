@@ -6761,6 +6761,7 @@ test("EvaluationsView renders safe trace details and prompt-preserving span link
   assert.match(markup, /Back to evaluations/);
 });
 
+
 test("a span link keeps the full id reachable behind its eight characters", () => {
   const spanId = "0123456789abcdef";
   const parentSpanId = "fedcba9876543210";

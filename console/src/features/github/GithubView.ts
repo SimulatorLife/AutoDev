@@ -24,6 +24,8 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import {
+  ACTION_LINK_CLASS,
+  ENTITY_LINK_CLASS,
   MONO_META_CLASS,
   MONO_VALUE_CLASS,
   MUTED_META_CLASS,
@@ -250,7 +252,7 @@ export function GithubView({
                   href: workflow.lastRunHtmlUrl,
                   target: "_blank",
                   rel: "noopener noreferrer",
-                  className: "text-xs text-accent hover:underline font-mono"
+                  className: `text-xs font-mono ${ACTION_LINK_CLASS}`
                 },
                 "View ↗"
               )
@@ -276,7 +278,7 @@ export function GithubView({
                   target: "_blank",
                   rel: "noopener noreferrer",
                   className:
-                    "font-semibold text-fg hover:text-accent hover:underline font-mono text-xs"
+                    `font-mono text-xs font-semibold text-fg ${ENTITY_LINK_CLASS}`
                 },
                 `#${run.id} ${run.name ?? ""}`.trim()
               )

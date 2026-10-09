@@ -33,6 +33,7 @@ import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import {
+  ACTION_LINK_CLASS,
   MONO_META_CLASS,
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
@@ -330,7 +331,7 @@ function renderPromptHistory(
             "a",
             {
               href: promptUrl,
-              className: "text-xs font-medium text-accent hover:underline "
+              className: `text-xs font-medium ${ACTION_LINK_CLASS}`
             },
             "Return to current source"
           )
@@ -575,7 +576,7 @@ export function PromptDetailView({
               {
                 href: `/agents/${encodeURIComponent(prompt.name)}`,
                 className:
-                  "text-xs font-semibold text-accent hover:underline block mb-1"
+                  `text-xs font-semibold ${ACTION_LINK_CLASS} block mb-1`
               },
               `Agent: ${prompt.name} →`
             )
@@ -615,7 +616,7 @@ export function PromptDetailView({
             "a",
             {
               href: `/evaluations?prompt=${encodeURIComponent(prompt.name)}`,
-              className: "text-accent hover:underline"
+              className: ACTION_LINK_CLASS
             },
             "Evaluations results →"
           ),
@@ -623,7 +624,7 @@ export function PromptDetailView({
             "a",
             {
               href: `/usage?role=${encodeURIComponent(prompt.name)}`,
-              className: "text-fg-secondary hover:underline"
+              className: ACTION_LINK_CLASS
             },
             "Token & request usage →"
           )

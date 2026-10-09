@@ -2,7 +2,7 @@ import React from "react";
 
 import { type StatusBadgeVariant, StatusDot } from "../status/StatusBadge.ts";
 import { TAG_SHAPE } from "../status/Tag.ts";
-import { MUTED_META_CLASS } from "../ui/text-classes.ts";
+import { ENTITY_LINK_CLASS, MUTED_META_CLASS } from "../ui/text-classes.ts";
 /**
  * Shared presentation primitives for the repeated "a cell holds a list of
  * short labels" pattern (role assignments, MCP servers, tier priorities).
@@ -79,7 +79,10 @@ export function Chip({
         //
         // A minimum rather than more padding: a chip carrying a longer value
         // still grows past it instead of being squeezed to a fixed height.
-        className: `${classes} min-h-6 underline-offset-4 hover:text-accent hover:underline`,
+        // A chip that links names an entity, so it takes the entity link's own
+        // treatment rather than restating the pair — that string was the last
+        // hand-copy of `ENTITY_LINK_CLASS` in the Console.
+        className: `${classes} min-h-6 ${ENTITY_LINK_CLASS}`,
         // `aria-label` only when it says something the text does not; a link
         // whose text is already the label must not have its name replaced.
         ...(label === undefined ? {} : { "aria-label": label }),

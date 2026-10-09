@@ -1,5 +1,7 @@
 import React from "react";
 
+import { ACTION_LINK_CLASS } from "../ui/text-classes.ts";
+
 /**
  * A single breadcrumb trail item. Items with an `href` render as native
  * anchor links; items without an `href` render as non-link spans. The last
@@ -36,7 +38,7 @@ export interface BreadcrumbsProps {
  * reachable on hover and the text stays selectable for copy.
  */
 const ITEM_LINK_CLASS =
-  "min-w-0 truncate rounded-sm text-accent hover:brightness-110 hover:underline";
+  `min-w-0 truncate rounded-sm ${ACTION_LINK_CLASS}`;
 const ITEM_PLAIN_CLASS = "min-w-0 truncate rounded-sm text-fg font-medium";
 const SEPARATOR_CLASS = "mx-2 select-none text-fg-muted";
 

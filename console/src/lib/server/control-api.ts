@@ -1612,11 +1612,63 @@ function isControlApiHooksResponse(
 }
 
 /**
+ * Narrows one metric, which nothing narrowed before.
+ *
+ * `isEvaluationRow` checked that `metrics` was an array and stopped there, so a
+ * read whose measurements were unreadable passed the whole envelope's validation
+ * and reached the view. Measured against the six shapes that produces, on one
+ * read each:
+ *
+ * - `metrics: [null]` returned **HTTP 500**. The table's `keyExtractor` reads
+ *   `metric.name` on every element, so a null threw inside the server render and
+ *   took the resource down with no failure shell, no table and no sentence. The
+ *   named code for exactly this, `autodev_control_api_invalid_evaluations_response`,
+ *   never ran -- and every well-formed run in the same read went with it.
+ * - `metrics: [{}]` rendered the chip `undefined: undefined · Not observed` and
+ *   the drawer's Metric cell as an *empty* box, so one unreadable measurement
+ *   said two different things depending on which panel the operator opened.
+ * - `metrics: [{ name, value: null, pass: true }]` rendered
+ *   `latency_ms: null · Passed`: a verdict attached to a measurement that does
+ *   not exist, on a run whose own `passed` agreed with it, so the row looked
+ *   healthy end to end. JSON is also where a `NaN` or an `Infinity` arrives, so
+ *   this is the shape a non-finite measurement takes on the wire.
+ * - `metrics: [{ name, value: "12" }]` rendered `tool_calls: 12 · Passed`, so a
+ *   quoted number was read as a measurement.
+ *
+ * `Number.isFinite` rather than `typeof === "number"` because a float beyond the
+ * double range parses from JSON to `Infinity` -- a number by every other test.
+ *
+ * The rule cannot reject a response this Runtime produced, which is the same
+ * standard the envelope's `truncated` check is held to. `parseEvaluationRow`
+ * already throws `EvaluationSourceUnavailableError` for a score that is not a
+ * finite number, `verdictPass` returns `boolean | null` and nothing else, and the
+ * metrics are built from `Object.entries(scores)`, so a name is a string and
+ * names are unique by construction.
+ */
+function isEvaluationMetric(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.name === "string" &&
+    typeof value.value === "number" &&
+    Number.isFinite(value.value) &&
+    (value.pass === null || typeof value.pass === "boolean") &&
+    // Optional and never sent by this Runtime, so it is checked only when
+    // present -- but present-and-wrong is the same unreadable evidence.
+    (value.threshold === undefined ||
+      (typeof value.threshold === "number" && Number.isFinite(value.threshold)))
+  );
+}
+
+/**
  * Narrows one evaluation row. `passed` is the verdict the table renders, and
  * `boolean | null` is three states: a missing `passed` reads as `undefined`,
  * which every verdict comparison in the view treats as a failure. A row without
  * it would therefore synthesize "did not pass" out of unreadable evidence, so
  * the check requires it alongside the rest of the required record.
+ *
+ * The metrics are checked with `isEvaluationMetric` for the same reason as the
+ * fields above it: an unreadable measurement invalidates its sample, exactly as
+ * an unreadable `passed` does, and the two rules must not disagree inside one row.
  */
 function isEvaluationRow(value: unknown): boolean {
   return (
@@ -1625,6 +1677,7 @@ function isEvaluationRow(value: unknown): boolean {
     typeof value.agentRole === "string" &&
     typeof value.model === "string" &&
     Array.isArray(value.metrics) &&
+    value.metrics.every(isEvaluationMetric) &&
     (value.passed === null || typeof value.passed === "boolean") &&
     typeof value.timestamp === "string"
   );

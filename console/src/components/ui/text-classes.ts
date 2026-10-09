@@ -117,3 +117,31 @@ export const MONO_ID_LINK_CLASS =
   // that the spacing exception did not cover it. The row is already far taller
   // than 24px, so nothing on the page moves.
   `${MONO_ID_CLASS} block min-h-6 truncate ${ENTITY_LINK_CLASS}`;
+
+/**
+ * The Console's link treatment for an action — a way out of the current view or
+ * a control that changes it: "Back to evaluations", "View trace", "Clear
+ * filters", a page step, the breadcrumb trail.
+ *
+ * This is the second link role and it is not the entity link. The distinction is
+ * what the link *is*, and it is visible before you hover: an entity link is a
+ * name in the `text-fg` that lights up as accent on hover, an action link is
+ * already accent at rest and only underlines on hover. Both underline at the
+ * same offset, so the two read as siblings rather than as two vocabularies.
+ *
+ * There is deliberately no colour half here. `ENTITY_LINK_CLASS` gets
+ * `hover:text-accent` because it rests in `text-fg` and has somewhere to go; this
+ * one is already there, and `hover:text-accent` over `text-accent` renders as
+ * nothing at all. The underline is the whole signal, which is why the role is
+ * written as two tokens and not as a cut-down copy of the other constant.
+ *
+ * It was spelled nineteen ways across eight files -- `font-mono` before
+ * `text-xs` in one and after it in another, one string with a trailing space,
+ * one whose tokens ran the other way round -- so two adjacent links could carry
+ * the same treatment with different markup, and nothing said which was canonical.
+ * Three of them also carried a `hover:brightness-110` that the other twenty-six
+ * did not. Underline alone is the signal the majority already used, and a
+ * brightness bump on top of it is not information an operator can act on, so
+ * that one was dropped rather than spread.
+ */
+export const ACTION_LINK_CLASS = "text-accent underline-offset-4 hover:underline";

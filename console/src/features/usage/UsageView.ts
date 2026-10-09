@@ -32,6 +32,7 @@ import {
   FIELD_GROUP_CLASS
 } from "../../components/ui/field-classes.ts";
 import {
+  ACTION_LINK_CLASS,
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
@@ -500,7 +501,7 @@ function traceAttemptColumns(
           {
             href: usageHref(selection, attempt.spanId),
             className:
-              "font-mono text-xs text-accent underline-offset-4 hover:underline",
+              `font-mono text-xs ${ACTION_LINK_CLASS}`,
             "aria-label": `Inspect trace for span ${attempt.spanId}`,
             "data-usage-trace-span-id": attempt.spanId
           },
@@ -526,7 +527,7 @@ function traceSpanColumns(
           {
             href: usageHref(selection, span.spanId),
             className:
-              "font-mono text-xs text-accent underline-offset-4 hover:underline",
+              `font-mono text-xs ${ACTION_LINK_CLASS}`,
             "aria-label": `Inspect span ${span.spanId}${span.spanId === selectedSpanId ? ", selected" : ""}`,
             ...(span.spanId === selectedSpanId
               ? { "aria-current": "true", "data-trace-selected": "true" }
@@ -547,7 +548,7 @@ function traceSpanColumns(
               {
                 href: usageHref(selection, span.parentSpanId),
                 className:
-                  "font-mono text-xs text-accent underline-offset-4 hover:underline",
+                  `font-mono text-xs ${ACTION_LINK_CLASS}`,
                 "aria-label": `Inspect parent span ${span.parentSpanId}`
               },
               span.parentSpanId
@@ -701,7 +702,7 @@ function renderTraceLookup(
         {
           href: usageHref(selection),
           className:
-            "w-fit text-xs text-accent underline-offset-4 hover:underline"
+            `w-fit text-xs ${ACTION_LINK_CLASS}`
         },
         "Back to recent attempts"
       )
@@ -730,7 +731,7 @@ function renderTraceLookup(
         "a",
         {
           href: usageHref(selection),
-          className: "text-xs text-accent underline-offset-4 hover:underline"
+          className: `text-xs ${ACTION_LINK_CLASS}`
         },
         "Close trace detail"
       )
