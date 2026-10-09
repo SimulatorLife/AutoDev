@@ -9,6 +9,8 @@ import {
   assertMemoryInjectionOutcomeCohortFilter,
   assertMemoryInjectionUseCohortFilter,
   assertMemorySessionOutcomeCohortFilter,
+  CONTROL_API_MEMORY_RECORD_ACTION_BODY_KEYS,
+  CONTROL_API_MEMORY_RESEARCH_BODY_KEYS,
   type ControlApiMemoryCohortsResponse,
   type ControlApiMemoryExperienceDetailResponse,
   type ControlApiMemoryExperiencesResponse,
@@ -21,11 +23,11 @@ import {
   type ControlApiMemoryUseCohortsResponse,
   type ControlApiMemoryWhyResponse,
   type EvidenceReference,
-  MEMORY_EVIDENCE_KINDS,
   EXPERIENCE_OUTCOMES,
   type ExperienceEnvelope,
-  MEMORY_EXECUTION_MODES,
   isMemoryExperiencePurgeReason,
+  MEMORY_EVIDENCE_KINDS,
+  MEMORY_EXECUTION_MODES,
   MEMORY_INJECTION_RESULTS,
   MEMORY_KINDS,
   MEMORY_MAX_TIME_WINDOW_MS,
@@ -52,13 +54,13 @@ import {
   type MemoryUseKind
 } from "@simulatorlife/autodev-core";
 import {
-  type MemoryAssessmentCohortReader,
-  type MemoryAssessmentReader,
-  type MemoryAssessmentRecorder,
   MAX_CLAIM_LENGTH,
   MAX_EVIDENCE_REVISION_CHARACTERS,
   MAX_EVIDENCE_URI_CHARACTERS,
   MAX_QUERY_LENGTH,
+  type MemoryAssessmentCohortReader,
+  type MemoryAssessmentReader,
+  type MemoryAssessmentRecorder,
   MemoryAuthorizationError,
   MemoryConflictError,
   type MemoryExperienceCaptureInput,
@@ -756,7 +758,7 @@ function researchRequest(
   context: MemoryReadContext,
   defaultTaskId: string
 ) {
-  exactKeys(body, ["task", "query", "taskId", "relevantPaths"]);
+  exactKeys(body, CONTROL_API_MEMORY_RESEARCH_BODY_KEYS);
   const taskId =
     body.taskId === undefined ? defaultTaskId : requiredString(body, "taskId");
   const task = requiredString(body, "task", MAX_RESEARCH_TASK_CHARACTERS);
@@ -1564,7 +1566,7 @@ async function mutateMemory(
       throw new MemoryValidationError("A memory record id is required.");
     switch (route.action) {
       case "revise": {
-        exactKeys(body, ["claim", "experienceIds", "evidence"]);
+        exactKeys(body, CONTROL_API_MEMORY_RECORD_ACTION_BODY_KEYS.revise);
         const claim = requiredString(body, "claim", MAX_CLAIM_LENGTH);
         const experienceIds = stringList(
           body.experienceIds,
@@ -1597,7 +1599,7 @@ async function mutateMemory(
         break;
       }
       case "invalidate": {
-        exactKeys(body, ["evidence", "reasonCode"]);
+        exactKeys(body, CONTROL_API_MEMORY_RECORD_ACTION_BODY_KEYS.invalidate);
         const evidence = evidenceReferences(body.evidence);
         const reasonCode =
           body.reasonCode === undefined
@@ -1624,13 +1626,7 @@ async function mutateMemory(
         break;
       }
       case "supersede": {
-        exactKeys(body, [
-          "priorId",
-          "task",
-          "query",
-          "taskId",
-          "relevantPaths"
-        ]);
+        exactKeys(body, CONTROL_API_MEMORY_RECORD_ACTION_BODY_KEYS.supersede);
         const priorId = requiredString(body, "priorId");
         const verification = researchRequest(
           {
@@ -1654,15 +1650,10 @@ async function mutateMemory(
         break;
       }
       case MEMORY_PROMOTE_SKILL_ACTION: {
-        exactKeys(body, [
-          "skillName",
-          "description",
-          "content",
-          "task",
-          "query",
-          "taskId",
-          "relevantPaths"
-        ]);
+        exactKeys(
+          body,
+          CONTROL_API_MEMORY_RECORD_ACTION_BODY_KEYS["promote-skill"]
+        );
         const skillName = requiredString(body, "skillName");
         const description = requiredString(body, "description", 512);
         const content = requiredString(body, "content", 20_000, true);

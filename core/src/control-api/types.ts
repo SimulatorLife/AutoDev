@@ -659,6 +659,76 @@ export interface ControlApiMemoryPage<T> {
   readonly offset: number;
 }
 
+/**
+ * The Memory record action request contract shared by Runtime and Console.
+ * Runtime enforces these key sets; Console shapes requests from the same types.
+ */
+/** Field value types used by the accepted Memory action-body key sets below. */
+interface ControlApiMemoryRecordActionFields {
+  readonly task: string;
+  readonly query: string;
+  readonly taskId?: string;
+  readonly relevantPaths?: readonly string[];
+  readonly evidence: readonly {
+    readonly kind: string;
+    readonly uri: string;
+    readonly revision?: string;
+  }[];
+  readonly reasonCode?: string;
+  readonly claim: string;
+  readonly experienceIds: readonly string[];
+  readonly priorId: string;
+  readonly skillName: string;
+  readonly description: string;
+  readonly content: string;
+}
+
+export const CONTROL_API_MEMORY_RESEARCH_BODY_KEYS = [
+  "task",
+  "query",
+  "taskId",
+  "relevantPaths"
+] as const;
+
+export const CONTROL_API_MEMORY_RECORD_ACTION_BODY_KEYS = {
+  verify: CONTROL_API_MEMORY_RESEARCH_BODY_KEYS,
+  invalidate: ["evidence", "reasonCode"],
+  revise: ["claim", "experienceIds", "evidence"],
+  supersede: ["priorId", ...CONTROL_API_MEMORY_RESEARCH_BODY_KEYS],
+  "promote-skill": [
+    "skillName",
+    "description",
+    "content",
+    ...CONTROL_API_MEMORY_RESEARCH_BODY_KEYS
+  ]
+} as const satisfies Readonly<
+  Record<string, readonly (keyof ControlApiMemoryRecordActionFields)[]>
+>;
+
+export type ControlApiMemoryRecordAction =
+  keyof typeof CONTROL_API_MEMORY_RECORD_ACTION_BODY_KEYS;
+
+export type ControlApiMemoryRecordTransitionAction = Exclude<
+  ControlApiMemoryRecordAction,
+  "promote-skill"
+>;
+
+export type ControlApiMemoryRecordActionBody<
+  Action extends ControlApiMemoryRecordAction
+> = Action extends ControlApiMemoryRecordAction
+  ? Pick<
+      ControlApiMemoryRecordActionFields,
+      (typeof CONTROL_API_MEMORY_RECORD_ACTION_BODY_KEYS)[Action][number]
+    >
+  : never;
+
+/** Console client input; workspaceId is encoded in the query, not the JSON body. */
+export type ControlApiMemoryRecordActionPayload<
+  Action extends ControlApiMemoryRecordAction = ControlApiMemoryRecordAction
+> = Action extends ControlApiMemoryRecordAction
+  ? { readonly workspaceId: string } & ControlApiMemoryRecordActionBody<Action>
+  : never;
+
 export type ControlApiMemoryRecordsResponse =
   ControlApiMemoryPage<MemoryRecord> & {
     readonly schema: "autodev-memory-records-v1";

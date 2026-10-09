@@ -36,8 +36,10 @@ import {
   type ControlApiMemoryInjectionOutcomesResponse,
   type ControlApiMemoryInjectionUseAssessment,
   type ControlApiMemoryInjectionUseAssessmentsResponse,
+  type ControlApiMemoryRecordActionPayload,
   type ControlApiMemoryRecordDetailResponse,
   type ControlApiMemoryRecordsResponse,
+  type ControlApiMemoryRecordTransitionAction,
   type ControlApiMemoryStatusResponse,
   type ControlApiMemoryUseCohortsResponse,
   type ControlApiMemoryWhyResponse,
@@ -2971,33 +2973,12 @@ export async function fetchMemoryUseCohorts(
  * derives from, and evidence. The names are per-action so a caller cannot
  * assemble a body that is valid for a different one.
  */
-export function transitionMemoryRecord(
+export function transitionMemoryRecord<
+  Action extends ControlApiMemoryRecordTransitionAction
+>(
   id: string,
-  action: "verify" | "revise" | "invalidate" | "supersede",
-  payload: {
-    readonly workspaceId: string;
-    /** The research context a verification or supersession is justified by. */
-    readonly task?: string;
-    readonly query?: string;
-    readonly claim?: string;
-    readonly experienceIds?: readonly string[];
-    readonly evidence?: readonly {
-      readonly kind: string;
-      readonly uri: string;
-      readonly revision?: string;
-    }[];
-    /** Bounded by the Runtime's reason-code list; free text is refused there. */
-    readonly reasonCode?: string;
-    /**
-     * The record a supersession retires.
-     *
-     * Spelled `priorId` because that is the Runtime's key: it wrote
-     * `supersededBy` here, which reads naturally and is not accepted —
-     * `exactKeys` on the supersede action takes `priorId`, and sending the
-     * other spelling was a malformed request rather than a thin one.
-     */
-    readonly priorId?: string;
-  },
+  action: Action,
+  payload: ControlApiMemoryRecordActionPayload<Action>,
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<{ readonly memory: unknown }>> {
@@ -3166,16 +3147,7 @@ export function reportMemoryInjectionUse(
 }
 
 export function promoteMemoryProcedureToSkill(
-  payload: {
-    readonly workspaceId: string;
-    readonly skillName: string;
-    readonly description: string;
-    /** The procedure body. The Runtime refuses a promotion without one. */
-    readonly content: string;
-    /** The research context the promotion is justified by. */
-    readonly task: string;
-    readonly query: string;
-  },
+  payload: ControlApiMemoryRecordActionPayload<"promote-skill">,
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<{ readonly skill: unknown }>> {

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { MEMORY_EVIDENCE_KINDS } from "@simulatorlife/autodev-core";
+import {
+  CONTROL_API_MEMORY_RECORD_ACTION_BODY_KEYS,
+  type ControlApiMemoryRecordAction,
+  MEMORY_EVIDENCE_KINDS
+} from "@simulatorlife/autodev-core";
 
 import {
   promoteMemoryProcedureToSkill,
@@ -9,40 +13,10 @@ import {
 } from "../src/lib/server/control-api.ts";
 
 /**
- * The keys each lifecycle transition's body may carry.
- *
- * This is the Runtime's `exactKeys` list, transcribed. The Runtime cannot be
- * imported from here — it is a different package — so the list is restated
- * deliberately, and the test below is what keeps the restatement honest: every
- * action in the Console is exercised and its forwarded body checked against
- * these keys.
- *
- * Why this test exists: every record transition used to send the caller's whole
- * payload, which carried `workspaceId` (already in the query string) and a
- * free-text `reason` that no action reads. The Runtime rejects an unexpected
- * key, so verify, invalidate and revise all answered
- * `400 autodev_memory_invalid_request` — the Memory page's governance buttons
- * could not succeed at all, and nothing in either package noticed because each
- * side was correct about its own half.
+ * Runtime and Console share this contract from Core. Runtime enforces the key
+ * sets and the tests below keep the Console's serialized bodies within them.
  */
-const ACCEPTED_KEYS: Record<string, readonly string[]> = {
-  // `researchRequest`: the task and query the change is justified by.
-  verify: ["task", "query", "taskId", "relevantPaths"],
-  // Bounded reason code plus at least one evidence reference.
-  invalidate: ["evidence", "reasonCode"],
-  // The replacement text, the experiences it derives from, and evidence.
-  revise: ["claim", "experienceIds", "evidence"],
-  supersede: ["priorId", "task", "query", "taskId", "relevantPaths"],
-  "promote-skill": [
-    "skillName",
-    "description",
-    "content",
-    "task",
-    "query",
-    "taskId",
-    "relevantPaths"
-  ]
-};
+const ACCEPTED_KEYS = CONTROL_API_MEMORY_RECORD_ACTION_BODY_KEYS;
 
 const CONFIG = {
   baseUrl: "http://127.0.0.1:0",
@@ -55,11 +29,11 @@ const CONFIG = {
  * rename from quietly dropping a field the route needs.
  */
 function assertAccepted(
-  action: string,
+  action: ControlApiMemoryRecordAction,
   body: Record<string, unknown>,
   required: readonly string[]
 ): void {
-  const accepted = new Set(ACCEPTED_KEYS[action] ?? []);
+  const accepted = new Set<string>(ACCEPTED_KEYS[action]);
   for (const key of Object.keys(body)) {
     assert.ok(
       accepted.has(key),
@@ -67,10 +41,7 @@ function assertAccepted(
     );
   }
   for (const key of required) {
-    assert.ok(
-      key in body,
-      `${action} did not forward the required "${key}"`
-    );
+    assert.ok(key in body, `${action} did not forward the required "${key}"`);
   }
 }
 
@@ -80,14 +51,12 @@ async function forwardedBody(
 ): Promise<Record<string, unknown>> {
   const original = globalThis.fetch;
   let sent: Record<string, unknown> = {};
-  globalThis.fetch = (async (
-    _url: unknown,
-    init?: { body?: unknown }
-  ) => {
+  globalThis.fetch = (async (_url: unknown, init?: { body?: unknown }) => {
     sent = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
-    return new Response(JSON.stringify({ memory: {} }), {
-      headers: { "content-type": "application/json" }
-    });
+    return Response.json(
+      { memory: {} },
+      { headers: { "content-type": "application/json" } }
+    );
   }) as typeof globalThis.fetch;
   try {
     await run();
@@ -201,22 +170,41 @@ test("no transition forwards workspaceId in the body", async () => {
   // It travels in the query string. Forwarding it as well is the single defect
   // that made all four actions unrunnable, so it is asserted on its own rather
   // than only as part of each action's key set.
-  for (const [action, payload] of [
-    ["verify", { task: "t", query: "q" }],
-    ["invalidate", { reasonCode: "stale", evidence: EVIDENCE }],
-    [
-      "revise",
-      { claim: "c", experienceIds: ["exp-1"], evidence: EVIDENCE }
-    ],
-    ["supersede", { priorId: "mem-1", task: "t", query: "q" }]
-  ] as Array<[string, Record<string, unknown>]>) {
+  const transitions = [
+    {
+      action: "verify",
+      payload: { workspaceId: "ws-1", task: "t", query: "q" }
+    },
+    {
+      action: "invalidate",
+      payload: {
+        workspaceId: "ws-1",
+        reasonCode: "stale",
+        evidence: EVIDENCE
+      }
+    },
+    {
+      action: "revise",
+      payload: {
+        workspaceId: "ws-1",
+        claim: "c",
+        experienceIds: ["exp-1"],
+        evidence: EVIDENCE
+      }
+    },
+    {
+      action: "supersede",
+      payload: {
+        workspaceId: "ws-1",
+        priorId: "mem-1",
+        task: "t",
+        query: "q"
+      }
+    }
+  ] as const;
+  for (const { action, payload } of transitions) {
     const body = await forwardedBody(() =>
-      transitionMemoryRecord(
-        "mem-1",
-        action as "verify",
-        { workspaceId: "ws-1", ...payload },
-        CONFIG
-      )
+      transitionMemoryRecord("mem-1", action, payload, CONFIG)
     );
     assert.equal(
       "workspaceId" in body,

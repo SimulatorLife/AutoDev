@@ -235,6 +235,8 @@ core ──> no AutoDev module
 Rules:
 
 - core/ remains infrastructure-independent.
+- core/ owns shared Control API request contracts used by Runtime and Console; each boundary
+  retains its own validation, authorization, and transport.
 - data/ adapts external/canonical sources; it does not become another source of truth.
 - runtime/ is the mutation/reconciliation authority.
 - console/ never bypasses the Control API to mutate canonical/runtime state.
