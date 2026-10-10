@@ -51,6 +51,7 @@ Configure
 Observe
 ├── Usage
 ├── Evaluations
+├── Playtesting
 └── Memory
 
 Operate
@@ -58,9 +59,9 @@ Operate
 └── GitHub
 ~~~
 
-The grouping is presentation only; the 13 resources remain first-class routes.
+The grouping is presentation only; the **14 resources** remain first-class routes. **Playtesting** is an independent Observe item at `/playtesting`, not a tab under Evaluations. Its detailed [target state](playtesting-target-state.md) is proposed; current runtime/navigation code still implements the earlier 13-item surface until an implementation PR updates it.
 
-There is no required generic Home/Dashboard page. The root route should redirect to a useful canonical resource rather than introduce a fourteenth surface that duplicates Usage, runtime status, or GitHub activity.
+There is no required generic Home/Dashboard page. The root route should redirect to a useful canonical resource rather than introduce an additional generic surface that duplicates Usage, runtime status, or GitHub activity.
 
 Use **Workspaces**, not OpenLIT Projects, for AutoDev repositories/workspaces. OpenLIT project/environment/organization/account tenancy must not reappear under different names.
 
@@ -134,7 +135,8 @@ Every domain concept has one canonical editable surface. Other pages may show a 
 | Permission policy | Permissions | effective matrices/summaries |
 | Tool configuration | originating MCP/runtime/plugin owner | Tools is a composite catalog |
 | Memory lifecycle/configuration | Memory | read-only links/summaries elsewhere |
-| Evaluation definitions/actions | Evaluations | related result summaries elsewhere |
+| Evaluation definitions/actions and source-owned verdict history | Evaluations | related result summaries elsewhere |
+| Gameplay playtest execution, episode evidence, session analysis, comparative findings, human-validation results | **Playtesting** | derived batch-level evaluation assertions in Evaluations when explicitly emitted; trace/cost links in Usage |
 | Workspace configuration | Workspaces | workspace badges/scope links |
 | GitHub workflow catalog and Actions runtime state | GitHub (read-only; workflow definitions remain repository-owned) | read-only workflow/run links elsewhere |
 | Historical telemetry | Usage | small scoped summaries with links to Usage |
@@ -459,7 +461,8 @@ The Console remains one application/package. A lightweight typed feature registr
 | **Permissions** | RuleSync + effective Runtime | canonical policy, role/tool/MCP matrices, target differences/validation |
 | **Tools** | composite effective catalog + OTel | native/MCP/plugin/app capabilities, exposure, availability, historical use/error; no duplicate authority |
 | **Usage** | OTel/OpenLIT | cross-workspace/provider/model/agent/skill/MCP requests, tokens, cost, latency, failures, traces |
-| **Evaluations** | evaluation definitions/storage + OTel | definitions, runs/results/history, targets, comparisons, trace linkage |
+| **Evaluations** | evaluation definitions/storage + OTel | definitions, runs/results/history, targets, comparisons, trace linkage; links to Playtesting only for source-authored batch-level evaluation assertions |
+| **Playtesting** | game-owned adapter and rubric + typed AutoDev playtest runner/evidence store | workspace-scoped batches, episodes, replay, result/quality metrics, independent critic analysis, findings, verified experiments, matched-cohort comparisons and optional human feedback |
 | **Memory** | MemoryService/Data; OpenLIT-adapted connector capabilities | browse/search/detail/provenance/lifecycle/actions/effectiveness through AutoDev Console |
 | **Workspaces** | AutoDev configuration + OTel | repository catalog, enablement/scope, configuration/runtime health, aggregate usage |
 | **GitHub** | workflow YAML (definitions/cron) + config/workspaces.json (workspace identity/scope) + observed GitHub Actions API (runtime state/stats) | parsed workflow definitions + cron schedules, workspace-bound observed workflow state (active vs disabled), bounded recent run sample, bounded run statistics; allowlisted operator controls (dispatch/cancel/rerun/schedule) deferred |
@@ -562,6 +565,16 @@ Memory governance, telemetry, retrieval, evaluation, and provenance details are 
 ### Evaluations
 
 Retain useful evaluation definitions/results/history and trace linkage without Rule Engine or OpenGround prerequisites. Evaluations target explicit AutoDev resources/telemetry. A result is passed/failed only when its source supplies an explicit verdict; missing verdicts, missing metrics, or unknown verdict values remain **Not observed**, never inferred from an arbitrary score threshold. An unavailable or malformed evaluation source must not be represented as a successful empty result set. A malformed row invalidates that query sample rather than silently dropping the row and biasing displayed totals or pass-rate denominators.
+
+### Playtesting
+
+**Playtesting** is an independent, top-level **Observe** resource under `/playtesting`, next to Evaluations. It uses the same AutoDev dark React/Next.js Console, navigation, shared filters/tables/cards/drawers/charts and server-authoritative control conventions—not a second dashboard or a third Evaluations tab. The [focused Playtesting target state](playtesting-target-state.md) owns its detailed adapter, AI playtester/analyst, episode, scoring, reusable-code and UI-reuse contract; this document remains authoritative for Console layout, navigation, component ownership, data-source semantics and security. No gameplay or Playtesting UI implementation is claimed by this target-state change.
+
+**Distinct data ownership:** Playtesting owns workspace-scoped test batches, episode/decision timelines, replay and media evidence, factual game outcomes, critic scoring and hypotheses, findings, replay experiments, matched comparisons and optional consented human-study aggregates. Its typed `core/src/playtesting/` contracts, `data/src/playtesting/` indexed read model and `runtime/src/playtesting/` execution/evidence gateway should use existing infrastructure without converting individual episodes or step-level artifacts into flat OpenLIT evaluation rows or OTLP spans. Existing Evaluations remains the authority for explicitly emitted evaluation results and pass/fail verdicts; optionally link a genuine batch-level evaluation result back to its Playtesting batch. Usage/OpenLIT remains the telemetry, latency/cost and trace owner. **Do not merge runner failures, gameplay losses, provisional enjoyment scores or formal evaluator verdicts into a single status.**
+
+**Route and view contract:** The new Console feature lives in `console/src/features/playtesting/` with the top-level page `/playtesting` (Overview plus Sessions, Findings and Compare views), a full-page synchronized episode inspector at `/playtesting/sessions/[id]`, and optional finding deep links `/playtesting/findings/[id]`. Use `core/src/navigation.ts` to register the **Playtesting** Observe item and highlight it for child routes. Its own URL helpers and source-backed server filters/pagination preserve selected workspace, build, scenario, cohort and cited step on refresh/back. Existing `/evaluations` Results/Comparisons and all their filters/readers remain unchanged; do not extend `EvaluationsView.ts` or its 1,000-row read window to cover 10,000+ gameplay episodes. Reuse the common Console UI primitives and, where appropriate, verified JevHarness/NanoJev/PlayJev visual logic through small accessible TypeScript adaptations rather than integrating foreign app shells.
+
+**Control boundaries:** Workspaces owns game adapter approval, repository selection, enablement and budgets; Providers and Permissions own their existing configuration and access controls; Playtesting owns authorized run/replay requests and finding investigations; GitHub owns external issue state. Expose typed, workspace-checked read operations and explicitly permissioned/bounded run/replay actions through established Control API conventions (the Playtesting route family is proposed, not currently implemented). The developer sees honest missing/partial evidence, measured denominators, replay integrity, uncalibrated vs human-validated scores and links to original episode/frame facts. New charts/views conform to dark tokens, accessibility and in-place navigation standards, with lazy indexed detail fetching rather than loading entire traces on list pages.
 
 ### GitHub
 
@@ -766,6 +779,7 @@ Target resource families include:
 /control/tools
 /control/memory
 /control/evaluations
+/control/playtesting   # proposed, typed workspace-scoped playtest operations (not implemented)
 /control/github
 ~~~
 
@@ -824,7 +838,7 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 ### Console UI/product
 
 - console/ is the sole final user-facing application.
-- Canonical resource navigation contains exactly the intended 13 resources, grouped consistently; no duplicate generic Home/Analytics/Settings product is required.
+- Canonical resource navigation targets exactly **14 resources** including top-level **Playtesting** under Observe, grouped consistently; no duplicate generic Home/Analytics/Settings product is required.
 - The Providers tab is a single compact configuration table with exactly four primary columns — Provider, Status, Roles, Agent Limits — and the separate Role Enablement, Health, Credential, Available Models and Tier Priority columns do not exist. Status reads Ready only when the provider is healthy and fully configured, and otherwise names the specific blocking state (for example Missing CODEX_ROUTE). Roles shows the four fixed roles (Default, Smart, Orchestrator, Subagent) with a consistent white-outline icon, a priority dropdown of exactly P1/P2/P3/Disabled, and a model dropdown populated from that provider's models, where Disabled dims that role's model selector. Roles carry a consistent white-outline icon per role with no crown for Default; P1, P2 and P3 share one neutral dropdown style, and the Disabled priority is the one highlighted state. Agent Limits exposes Per session and Across sessions numeric controls plus Unlimited, beside a provider-level Disabled toggle that disables the provider while preserving its configured priorities, models and limits.
 - Provider rows are not globally draggable: routing precedence is per-role and per-tier, edited through the role priority controls rather than a separate row-order setting.
 - Item-scoped controls are contextual: each appears on the item's list row and in its detail view inside the owning resource (provider toggles on Providers rows and provider detail; model toggles on Models rows, model detail, and the provider detail's model list), backed by one typed operation; other resources show read-only state with a link.
@@ -832,7 +846,8 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 - Otter/chat is absent.
 - Documentation/Community/blog/marketing navigation is absent.
 - Accounts/profile/logout, organization/project/environment selectors, generic onboarding, generic dashboard builder, Rule Engine, OpenGround, GPU, discovery/instrumentation UX, and removed product surfaces are absent.
-- Memory, Evaluations, Agents, Prompts, Usage, and other retained functionality appears inside the shared AutoDev shell rather than opening a second operator application.
+- Memory, Evaluations, **Playtesting**, Agents, Prompts, Usage, and other retained functionality appears inside the shared AutoDev shell rather than opening a second operator application.
+- **Playtesting** has its own active sidebar identity, Overview/Sessions/Findings/Compare, typed indexed workspace-filtered evidence and a full-page episode replay; Evaluations' Results/Comparisons, bounded read, and verdict semantics remain unchanged. Evidence links, absent media, human data privacy, run authorization, in-place navigation and large-history pagination are validated without loading entire traces in the overview.
 - Shared tables/tabs/forms/status/dialog/filter/chart primitives produce consistent spacing, density, keyboard/focus behavior, and status vocabulary.
 - Safe single-choice settings apply on selection without a second Apply control; multi-axis filters, multi-select sets, and reviewed transactions retain an explicit submit boundary with its purpose made clear. Changing or submitting any Console form or control does not cause a full document reload, executing via in-place client navigation and updates while preserving URL state, native form semantics, keyboard focus, accessible pending feedback, and server-confirmed state.
 - Each concern has one canonical editable surface; cross-resource summaries are read-only/linking.
@@ -908,6 +923,7 @@ Do not remove an incumbent path until its replacement has end-to-end evidence. D
 - autodev-console-migration.md owns current migration status/evidence and should stay concise/current rather than accumulating patch history.
 - local-setup.md owns operational commands, ports, environment variables, and local secret/bootstrap details.
 - memory-target-state.md owns detailed Memory architecture/telemetry/governance while deferring to this document on shared Console/OpenLIT UI rules.
+- [playtesting-target-state.md](playtesting-target-state.md) owns Playtesting's runner/adapter, analysis, human-calibration, session UI and source-reuse details while deferring here on navigation, Console design, resource ownership, evaluator semantics and controls.
 - Focused docs such as provider routing, prompt ownership, and codebase context may document subsystem behavior but explicitly defer here on shared ownership/target-state questions.
 - Reusable skills should link here for AutoDev-specific decisions rather than copying them.
 - Completed ledgers and superseded target-state documents should be deleted rather than retained as active competing guidance.
