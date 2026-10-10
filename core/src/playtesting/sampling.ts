@@ -15,7 +15,8 @@ import {
   PLAYTESTS_SAMPLING_SCHEMA,
   type PlaytestSamplingPlan,
   type PlaytestStratumAllocation,
-  type PlaytestSurveillanceSample} from "./types.ts";
+  type PlaytestSurveillanceSample
+} from "./types.ts";
 
 /** One population unit (an episode id) assigned to exactly one stratum. */
 export interface PlaytestStratumMember {
@@ -101,13 +102,26 @@ export function allocatePlaytestSurveillanceStrata(
     throw new TypeError("Surveillance budget must be a non-negative integer.");
   }
   const seenStrata = new Set<string>();
+  const seenEpisodeIds = new Set<string>();
   for (const group of groups) {
-    if (!group.stratumKey || seenStrata.has(group.stratumKey)) {
+    if (!group.stratumKey.trim() || seenStrata.has(group.stratumKey)) {
       throw new TypeError(
         "Surveillance strata must have unique non-empty keys."
       );
     }
     seenStrata.add(group.stratumKey);
+    for (const member of group.members) {
+      if (
+        !member.id.trim() ||
+        member.stratumKey !== group.stratumKey ||
+        seenEpisodeIds.has(member.id)
+      ) {
+        throw new TypeError(
+          "Surveillance strata must contain each identified episode exactly once under its declared key."
+        );
+      }
+      seenEpisodeIds.add(member.id);
+    }
   }
   const nonEmpty = groups.filter((group) => group.members.length > 0);
   if (nonEmpty.length === 0) {

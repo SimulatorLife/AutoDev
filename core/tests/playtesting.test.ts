@@ -32,7 +32,8 @@ import {
   samplePlaytestDiscovery,
   samplePlaytestSurveillance,
   scorePlaytestDimensionAnchor,
-  verifyPlaytestClaim} from "../src/playtesting/index.ts";
+  verifyPlaytestClaim
+} from "../src/playtesting/index.ts";
 
 const WORKSPACE_ID = "fixture-game";
 const MEASUREMENT_VERSION = "fixture-v1";
@@ -72,7 +73,8 @@ function buildFixtureRegistryInput() {
         metricId: "competitive-choice-share",
         version: 1,
         mechanicKey: "strategic-choice",
-        exposurePredicate: "decision-with-complete-approved-alternative-evaluation-v1",
+        exposurePredicate:
+          "decision-with-complete-approved-alternative-evaluation-v1",
         eventFields: [
           "branch.decisionId",
           "branch.actionId",
@@ -81,8 +83,10 @@ function buildFixtureRegistryInput() {
           "branch.continuationPolicyHash"
         ],
         evaluatorRef: "fixture/competitive-options-v1",
-        numerator: "eligible decisions with at least two actions within 0.05 of best expected reward",
-        denominator: "decisions with all legal alternatives evaluated under frozen continuation and RNG plan",
+        numerator:
+          "eligible decisions with at least two actions within 0.05 of best expected reward",
+        denominator:
+          "decisions with all legal alternatives evaluated under frozen continuation and RNG plan",
         unit: "proportion",
         polarity: "higher" as const,
         targetBand: [0.5, 1] as const,
@@ -106,7 +110,8 @@ function buildFixtureRegistryInput() {
           "feedback.visible"
         ],
         evaluatorRef: "fixture/repeated-error-v1",
-        numerator: "wrong preregistered deterministic consequence predictions after visible feedback",
+        numerator:
+          "wrong preregistered deterministic consequence predictions after visible feedback",
         denominator: "eligible revisits after visible feedback",
         unit: "proportion",
         analysisUnit: "learner-identity" as const,
@@ -173,7 +178,10 @@ test("expandPlaytestRegistry fills defaults by shallow replacement and rejects a
 
   const learning = lookupPlaytestMetric(registry, "repeat-forecast-error");
   assert.equal(learning.analysisUnit, "learner-identity");
-  assert.equal(learning.severityRule, "model-learning-signal-only".length > 0 ? learning.severityRule : "");
+  assert.equal(
+    learning.severityRule,
+    "model-learning-signal-only".length > 0 ? learning.severityRule : ""
+  );
 });
 
 test("expandPlaytestRegistry rejects a metric missing a required field after expansion", () => {
@@ -196,7 +204,10 @@ test("expandPlaytestRegistry rejects duplicate metric ids", () => {
     ...input,
     metricDefinitions: [input.metricDefinitions[0], input.metricDefinitions[0]]
   };
-  assert.throws(() => expandPlaytestRegistry(duplicated), /duplicate metricId/u);
+  assert.throws(
+    () => expandPlaytestRegistry(duplicated),
+    /duplicate metricId/u
+  );
 });
 
 test("expandPlaytestRegistry rejects an unknown dimension-rubric field", () => {
@@ -215,10 +226,16 @@ test("expandPlaytestRegistry rejects a dimension rubric missing a score band", (
   const broken = {
     ...input,
     dimensionRubrics: [
-      { ...rubric, scoreBands: rubric.scoreBands.filter((band) => band.score !== 2) }
+      {
+        ...rubric,
+        scoreBands: rubric.scoreBands.filter((band) => band.score !== 2)
+      }
     ]
   };
-  assert.throws(() => expandPlaytestRegistry(broken), /must declare a band for score 2/u);
+  assert.throws(
+    () => expandPlaytestRegistry(broken),
+    /must declare a band for score 2/u
+  );
 });
 
 // --- §1 deterministic fixture evaluators ------------------------------------
@@ -236,7 +253,11 @@ test("evaluateLegalActionRejection: 2 rejected among 10 fresh requests is 0.20",
     ...Array.from({ length: 2 }, () => fresh(true)),
     ...Array.from({ length: 8 }, () => fresh(false))
   ];
-  const result = evaluateLegalActionRejection(WORKSPACE_ID, MEASUREMENT_VERSION, events);
+  const result = evaluateLegalActionRejection(
+    WORKSPACE_ID,
+    MEASUREMENT_VERSION,
+    events
+  );
   assert.equal(result.numerator, 2);
   assert.equal(result.denominator, 10);
   assert.equal(result.estimate, 0.2);
@@ -263,7 +284,11 @@ test("evaluateLegalActionRejection excludes stale-revision requests from both nu
       rejected: false
     }
   ];
-  const result = evaluateLegalActionRejection(WORKSPACE_ID, MEASUREMENT_VERSION, events);
+  const result = evaluateLegalActionRejection(
+    WORKSPACE_ID,
+    MEASUREMENT_VERSION,
+    events
+  );
   assert.equal(result.denominator, 1);
   assert.equal(result.numerator, 0);
   assert.equal(result.coverage, 0.5);
@@ -276,7 +301,11 @@ test("evaluateCompetitiveChoiceShare: fixture reward arrays yield 2/3 on 3/4 cov
     { decisionId: "d3", rewards: [0.4, 0.38], complete: true },
     { decisionId: "d4", rewards: null, complete: false }
   ];
-  const result = evaluateCompetitiveChoiceShare(WORKSPACE_ID, MEASUREMENT_VERSION, decisions);
+  const result = evaluateCompetitiveChoiceShare(
+    WORKSPACE_ID,
+    MEASUREMENT_VERSION,
+    decisions
+  );
   assert.equal(result.denominator, 3);
   assert.equal(result.numerator, 2);
   assert.equal(result.estimate, 2 / 3);
@@ -286,10 +315,12 @@ test("evaluateCompetitiveChoiceShare: fixture reward arrays yield 2/3 on 3/4 cov
 });
 
 test("evaluateCompetitiveChoiceShare treats a dominated second action as not competitive", () => {
-  const decisions = [
-    { decisionId: "d1", rewards: [0.9, 0.1], complete: true }
-  ];
-  const result = evaluateCompetitiveChoiceShare(WORKSPACE_ID, MEASUREMENT_VERSION, decisions);
+  const decisions = [{ decisionId: "d1", rewards: [0.9, 0.1], complete: true }];
+  const result = evaluateCompetitiveChoiceShare(
+    WORKSPACE_ID,
+    MEASUREMENT_VERSION,
+    decisions
+  );
   assert.equal(result.numerator, 0);
   assert.equal(result.denominator, 1);
   assert.equal(result.estimate, 0);
@@ -297,7 +328,11 @@ test("evaluateCompetitiveChoiceShare treats a dominated second action as not com
 
 test("evaluateCompetitiveChoiceShare reports fork-unsupported for a single-rewarded decision", () => {
   const decisions = [{ decisionId: "d1", rewards: [0.9], complete: true }];
-  const result = evaluateCompetitiveChoiceShare(WORKSPACE_ID, MEASUREMENT_VERSION, decisions);
+  const result = evaluateCompetitiveChoiceShare(
+    WORKSPACE_ID,
+    MEASUREMENT_VERSION,
+    decisions
+  );
   assert.equal(result.denominator, 0);
   assert.equal(result.estimate, null);
   assert.deepEqual(result.missingReasons, ["fork-unsupported"]);
@@ -311,7 +346,11 @@ test("evaluateRepeatForecastError: 1 wrong among 4 eligible revisits is 1/4", ()
     { ...base, expected: "single-dnf", actual: "single-dnf" },
     { ...base, expected: "single-dnf", actual: "single-dnf" }
   ];
-  const result = evaluateRepeatForecastError(WORKSPACE_ID, MEASUREMENT_VERSION, probes);
+  const result = evaluateRepeatForecastError(
+    WORKSPACE_ID,
+    MEASUREMENT_VERSION,
+    probes
+  );
   assert.equal(result.numerator, 1);
   assert.equal(result.denominator, 4);
   assert.equal(result.estimate, 0.25);
@@ -319,8 +358,20 @@ test("evaluateRepeatForecastError: 1 wrong among 4 eligible revisits is 1/4", ()
 
 test("evaluateRepeatForecastError excludes missing-before-action, missing-feedback, and untargeted-stochastic probes", () => {
   const probes = [
-    { ruleId: "r1", expected: 1, actual: 1, beforeAction: false, feedbackVisible: true },
-    { ruleId: "r2", expected: 1, actual: 1, beforeAction: true, feedbackVisible: false },
+    {
+      ruleId: "r1",
+      expected: 1,
+      actual: 1,
+      beforeAction: false,
+      feedbackVisible: true
+    },
+    {
+      ruleId: "r2",
+      expected: 1,
+      actual: 1,
+      beforeAction: true,
+      feedbackVisible: false
+    },
     {
       ruleId: "r3",
       expected: 1,
@@ -330,7 +381,11 @@ test("evaluateRepeatForecastError excludes missing-before-action, missing-feedba
       stochasticWithoutTarget: true
     }
   ];
-  const result = evaluateRepeatForecastError(WORKSPACE_ID, MEASUREMENT_VERSION, probes);
+  const result = evaluateRepeatForecastError(
+    WORKSPACE_ID,
+    MEASUREMENT_VERSION,
+    probes
+  );
   assert.equal(result.denominator, 0);
   assert.equal(result.estimate, null);
   assert.equal(result.missing, 3);
@@ -346,9 +401,17 @@ test("aggregateMiniPxiEnj: [2,1,-1,null] gives native mean 2/3 with 3 respondent
     { respondentId: "p1", nativeValue: 2 },
     { respondentId: "p2", nativeValue: 1 },
     { respondentId: "p3", nativeValue: -1 },
-    { respondentId: "p4", nativeValue: null, missingReason: "missing-ENJ" as const }
+    {
+      respondentId: "p4",
+      nativeValue: null,
+      missingReason: "missing-ENJ" as const
+    }
   ];
-  const result = aggregateMiniPxiEnj(WORKSPACE_ID, MEASUREMENT_VERSION, responses);
+  const result = aggregateMiniPxiEnj(
+    WORKSPACE_ID,
+    MEASUREMENT_VERSION,
+    responses
+  );
   assert.equal(result.respondentCount, 3);
   assert.equal(result.missingCount, 1);
   assert.equal(result.mean, 2 / 3);
@@ -485,7 +548,10 @@ test("allocatePlaytestSurveillanceStrata allocates at least one per stratum then
     { id: "e10", stratumKey: "b" }
   ]);
   const allocations = allocatePlaytestSurveillanceStrata(groups, 4);
-  const total = allocations.reduce((sum, allocation) => sum + allocation.allocated, 0);
+  const total = allocations.reduce(
+    (sum, allocation) => sum + allocation.allocated,
+    0
+  );
   assert.equal(total, 4);
   for (const allocation of allocations) {
     assert.ok(allocation.allocated >= 1);
@@ -516,6 +582,41 @@ test("samplePlaytestSurveillance selects without replacement and is deterministi
   assert.equal(first.totalAllocated, 10);
 });
 
+test("samplePlaytestSurveillance caps the actual sample at population size", () => {
+  const members = [
+    { id: "only-1", stratumKey: "tutorial" },
+    { id: "only-2", stratumKey: "standard" }
+  ];
+  const sample = samplePlaytestSurveillance(members, 40, "fixed-seed");
+  assert.equal(sample.budget, 40);
+  assert.equal(sample.totalAllocated, 2);
+  assert.equal(sample.selected.length, 2);
+  assert.ok(
+    sample.allocations.every(
+      (allocation) => allocation.inclusionProbability === 1
+    )
+  );
+});
+
+test("samplePlaytestSurveillance rejects duplicate episode identities and absent seeds", () => {
+  assert.throws(
+    () =>
+      samplePlaytestSurveillance(
+        [
+          { id: "same", stratumKey: "tutorial" },
+          { id: "same", stratumKey: "standard" }
+        ],
+        2,
+        "seed"
+      ),
+    /Duplicate surveillance episode id/u
+  );
+  assert.throws(
+    () => samplePlaytestSurveillance([], 0, " "),
+    /seed must be non-empty/u
+  );
+});
+
 test("samplePlaytestSurveillance with a different seed yields a different selection", () => {
   const members = Array.from({ length: 20 }, (_, index) => ({
     id: `e${String(index)}`,
@@ -524,6 +625,32 @@ test("samplePlaytestSurveillance with a different seed yields a different select
   const first = samplePlaytestSurveillance(members, 10, "seed-a");
   const second = samplePlaytestSurveillance(members, 10, "seed-b");
   assert.notDeepEqual(first.selected, second.selected);
+});
+
+test("samplePlaytestDiscovery rejects duplicate IDs and non-finite ranking scores", () => {
+  assert.throws(
+    () =>
+      samplePlaytestDiscovery(
+        [
+          { id: "same", anomalyScore: 0.1 },
+          { id: "same", anomalyScore: 0.2 }
+        ],
+        1,
+        "seed",
+        "anomaly-v1"
+      ),
+    /Duplicate discovery episode id/u
+  );
+  assert.throws(
+    () =>
+      samplePlaytestDiscovery(
+        [{ id: "invalid", anomalyScore: Number.NaN }],
+        1,
+        "seed",
+        "anomaly-v1"
+      ),
+    /finite anomaly score/u
+  );
 });
 
 test("samplePlaytestDiscovery ranks by anomaly score with seeded, reproducible tie-breaks", () => {
@@ -822,7 +949,10 @@ test("decidePlaytestComparisonStatus: hold-not-comparable takes precedence over 
     candidate: makeArmSummary("candidate")
   });
   assert.equal(
-    decidePlaytestComparisonStatus({ metrics: [primary, other], primaryMetricId: "primary" }),
+    decidePlaytestComparisonStatus({
+      metrics: [primary, other],
+      primaryMetricId: "primary"
+    }),
     "hold-not-comparable"
   );
 });
@@ -840,7 +970,11 @@ test("decidePlaytestComparisonStatus throws when the primary metric is not among
     candidate: makeArmSummary("candidate")
   });
   assert.throws(
-    () => decidePlaytestComparisonStatus({ metrics: [other], primaryMetricId: "missing" }),
+    () =>
+      decidePlaytestComparisonStatus({
+        metrics: [other],
+        primaryMetricId: "missing"
+      }),
     /not found/u
   );
 });
@@ -867,11 +1001,22 @@ test("recordPlaytestOwnerDecision returns a new immutable revision and rejects a
     },
     notes: ""
   };
-  const revised = recordPlaytestOwnerDecision(base, "2026-01-02T00:00:00.000Z", "holding for guardrail");
+  const revised = recordPlaytestOwnerDecision(
+    base,
+    "2026-01-02T00:00:00.000Z",
+    "holding for guardrail"
+  );
   assert.equal(revised.ownerDecisionAt, "2026-01-02T00:00:00.000Z");
   assert.equal(revised.ownerDecisionReason, "holding for guardrail");
-  assert.equal(base.ownerDecisionAt, null, "original comparison must remain unmutated");
-  assert.throws(() => recordPlaytestOwnerDecision(base, "2026-01-02T00:00:00.000Z", ""), /non-empty reason/u);
+  assert.equal(
+    base.ownerDecisionAt,
+    null,
+    "original comparison must remain unmutated"
+  );
+  assert.throws(
+    () => recordPlaytestOwnerDecision(base, "2026-01-02T00:00:00.000Z", ""),
+    /non-empty reason/u
+  );
 });
 
 // --- §6 evidence locator/review/finding validation ---------------------------
@@ -917,7 +1062,9 @@ test("verifyPlaytestClaim: nonexistent event locator is insufficient, never veri
     index
   );
   assert.equal(verdict.verdict, "contradicted");
-  assert.ok(verdict.reasons.some((reason) => reason.includes("does not exist")));
+  assert.ok(
+    verdict.reasons.some((reason) => reason.includes("does not exist"))
+  );
 });
 
 test("verifyPlaytestClaim: existing but irrelevant event is insufficient, not verified", () => {
@@ -934,7 +1081,9 @@ test("verifyPlaytestClaim: existing but irrelevant event is insufficient, not ve
     index
   );
   assert.equal(verdict.verdict, "contradicted");
-  assert.ok(verdict.reasons.some((reason) => reason.includes("relevant to rule")));
+  assert.ok(
+    verdict.reasons.some((reason) => reason.includes("relevant to rule"))
+  );
 });
 
 test("verifyPlaytestClaim: correct event but wrong episode is insufficient", () => {
@@ -949,13 +1098,20 @@ test("verifyPlaytestClaim: correct event but wrong episode is insufficient", () 
     index
   );
   assert.equal(verdict.verdict, "contradicted");
-  assert.ok(verdict.reasons.some((reason) => reason.includes("belongs to episode")));
+  assert.ok(
+    verdict.reasons.some((reason) => reason.includes("belongs to episode"))
+  );
 });
 
 test("verifyPlaytestClaim: a claim with zero evidence locators is insufficient", () => {
   const index = buildEvidenceIndex();
   const verdict = verifyPlaytestClaim(
-    { claimId: "c5", relevantRule: "heat-warning", episodeId: "ep-1", evidenceRefs: [] },
+    {
+      claimId: "c5",
+      relevantRule: "heat-warning",
+      episodeId: "ep-1",
+      evidenceRefs: []
+    },
     index
   );
   assert.equal(verdict.verdict, "insufficient");
@@ -983,7 +1139,9 @@ test("assertNoContradictingLocator: a claimed-absent action present in the actua
     () => assertNoContradictingLocator("brake-early", ["brake-early", "draft"]),
     /is present in the actual offered\/legal action list/u
   );
-  assert.doesNotThrow(() => assertNoContradictingLocator("brake-early", ["draft"]));
+  assert.doesNotThrow(() =>
+    assertNoContradictingLocator("brake-early", ["draft"])
+  );
 });
 
 test("assertPlaytestReviewHasEvidence rejects a review with zero evidence locators, even if findings have evidence", () => {
@@ -1089,7 +1247,11 @@ test("assertPlaytestJsonRpcRequest accepts a valid request and rejects an unknow
 
 test("assertPlaytestJsonRpcSuccess and assertPlaytestJsonRpcError validate the two response shapes", () => {
   assert.doesNotThrow(() =>
-    assertPlaytestJsonRpcSuccess({ jsonrpc: "2.0", id: 1, result: { ok: true } })
+    assertPlaytestJsonRpcSuccess({
+      jsonrpc: "2.0",
+      id: 1,
+      result: { ok: true }
+    })
   );
   assert.doesNotThrow(() =>
     assertPlaytestJsonRpcError({
@@ -1176,7 +1338,8 @@ test("assertPlaytestEvidenceLocator rejects an unknown kind and a negative step"
     /locator kind must be one of/u
   );
   assert.throws(
-    () => assertPlaytestEvidenceLocator({ kind: "event", id: "evt-1", step: -1 }),
+    () =>
+      assertPlaytestEvidenceLocator({ kind: "event", id: "evt-1", step: -1 }),
     /step must be a non-negative integer/u
   );
 });

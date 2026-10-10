@@ -94,6 +94,7 @@
     },
     "minimax": {
       "models": {
+        "smart": "MiniMax-M3.1-Flash-Preview",
         "default": "MiniMax-M3"
       }
     },
