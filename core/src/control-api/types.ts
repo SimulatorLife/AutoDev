@@ -748,6 +748,23 @@ export type ControlApiMemoryExperiencesResponse =
     readonly schema: "autodev-memory-experiences-v1";
   };
 
+/** The Control API projection for a reporter-supplied session outcome. */
+export interface ControlApiMemorySessionOutcomeReportResponse {
+  readonly schema: "autodev-memory-session-outcome-report-v1";
+  readonly experienceId: string;
+  readonly report: {
+    readonly outcomeKind: string;
+    readonly reportKind: string;
+    readonly reporterId: string;
+    readonly reportedAt: string;
+    readonly reasonCode: string;
+    readonly evidence: readonly {
+      readonly kind: string;
+      readonly uri: string;
+    }[];
+  };
+}
+
 /**
  * Whether durable memory storage is connected on this Runtime.
  *

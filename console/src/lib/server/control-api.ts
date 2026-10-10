@@ -40,6 +40,7 @@ import {
   type ControlApiMemoryRecordDetailResponse,
   type ControlApiMemoryRecordsResponse,
   type ControlApiMemoryRecordTransitionAction,
+  type ControlApiMemorySessionOutcomeReportResponse,
   type ControlApiMemoryStatusResponse,
   type ControlApiMemoryUseCohortsResponse,
   type ControlApiMemoryWhyResponse,
@@ -2800,38 +2801,10 @@ export async function fetchMemoryExperienceUseAssessments(
   );
 }
 
-/**
- * The reporter-supplied outcome for one session, if there is one.
- *
- * A session outcome is a separate claim from the per-injection outcome report:
- * it says how the session as a whole went, and the Runtime binds at most one to
- * a session key. The target state asks the Console to present observed injection
- * evidence *and* reporter-supplied task/session outcomes side by side, which it
- * cannot do while this is unread — the session outcome was written and kept but
- * had no read path here at all.
- *
- * The read asks for task history explicitly, because the Runtime gates it the
- * same way it gates the outcome reports: a session outcome is a statement about
- * one session, so a caller that cannot see that session's history must not get
- * it.
- */
-export interface ControlApiMemorySessionOutcomeProjection {
-  readonly schema: "autodev-memory-session-outcome-report-v1";
-  readonly experienceId: string;
-  readonly report: {
-    readonly outcomeKind: string;
-    readonly reportKind: string;
-    readonly reporterId: string;
-    readonly reportedAt: string;
-    readonly reasonCode: string;
-    readonly evidence: readonly { readonly kind: string; readonly uri: string }[];
-  };
-}
-
 function isMemorySessionOutcomeResponse(
   value: unknown,
   experienceId: string
-): value is ControlApiMemorySessionOutcomeProjection {
+): value is ControlApiMemorySessionOutcomeReportResponse {
   if (
     !isRecord(value) ||
     value.schema !== "autodev-memory-session-outcome-report-v1" ||
@@ -2861,7 +2834,7 @@ export async function fetchMemoryExperienceSessionOutcome(
   workspaceId: string,
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
-): Promise<ControlApiResult<ControlApiMemorySessionOutcomeProjection>> {
+): Promise<ControlApiResult<ControlApiMemorySessionOutcomeReportResponse>> {
   const search = new URLSearchParams({
     workspaceId,
     includeTaskHistory: "true"

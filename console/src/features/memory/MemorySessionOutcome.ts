@@ -1,4 +1,5 @@
 import {
+  type ControlApiMemorySessionOutcomeReportResponse,
   EXPERIENCE_OUTCOMES,
   MEMORY_EVIDENCE_KINDS,
   MEMORY_OUTCOME_REPORT_KINDS
@@ -8,19 +9,18 @@ import React from "react";
 import { Button } from "../../components/forms/Button.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
 import { TextField } from "../../components/forms/TextField.ts";
-import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
+import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { MUTED_TEXT_CLASS } from "../../components/ui/text-classes.ts";
-import type { ControlApiMemorySessionOutcomeProjection } from "../../lib/server/control-api.ts";
 import { codeOptions } from "./memory-code-options.ts";
+import { memoryListQuery, type MemoryListScope } from "./memory-list-url.ts";
 import {
   MEMORY_EVIDENCE_KIND_LABEL,
   MEMORY_OUTCOME_LABEL,
   MEMORY_REPORT_KIND_LABEL
 } from "./memory-status.ts";
-import { memoryListQuery, type MemoryListScope } from "./memory-list-url.ts";
 
-type SessionOutcome = ControlApiMemorySessionOutcomeProjection["report"];
+type SessionOutcome = ControlApiMemorySessionOutcomeReportResponse["report"];
 
 /**
  * What a reporter stated about the session as a whole.

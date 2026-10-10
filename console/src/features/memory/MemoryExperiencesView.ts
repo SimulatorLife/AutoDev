@@ -1,10 +1,11 @@
-import type {
-  ControlApiMemoryInjectionOutcomeJoin,
-  ControlApiMemoryInjectionUseAssessment,
-  ExperienceEnvelope,
-  ExperienceValidationState
+import {
+  type ControlApiMemoryInjectionOutcomeJoin,
+  type ControlApiMemoryInjectionUseAssessment,
+  type ControlApiMemorySessionOutcomeReportResponse,
+  type ExperienceEnvelope,
+  type ExperienceValidationState,
+  MEMORY_EXPERIENCE_PURGE_REASONS
 } from "@simulatorlife/autodev-core";
-import { MEMORY_EXPERIENCE_PURGE_REASONS } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import {
@@ -51,8 +52,6 @@ import {
 } from "./memory-status.ts";
 import { InjectionReports } from "./MemoryInjectionReports.ts";
 import { MemorySessionOutcome } from "./MemorySessionOutcome.ts";
-import type { ControlApiMemorySessionOutcomeProjection } from "../../lib/server/control-api.ts";
-
 /**
  * The only reasons the Runtime's purge endpoint accepts. Offering anything else
  * would let an operator compose a request that is guaranteed to be rejected, so
@@ -87,7 +86,8 @@ export interface MemoryExperiencesViewProps {
    * read did not succeed", null is "read, and none exists", and a report is the
    * claim itself. See MemorySessionOutcome for why the three stay apart.
    */
-  readonly sessionOutcome?: ControlApiMemorySessionOutcomeProjection["report"] | null | undefined;
+  readonly sessionOutcome?:
+    ControlApiMemorySessionOutcomeReportResponse["report"] | null | undefined;
   /** The address of the list these rows came from. See MemoryRecordsView. */
   readonly listScope: MemoryListScope;
 }
@@ -288,7 +288,8 @@ interface ExperienceDetailPanelProps {
   readonly useAssessments?:
     readonly ControlApiMemoryInjectionUseAssessment[] | null | undefined;
   readonly useAssessmentTotal?: number | null | undefined;
-  readonly sessionOutcome?: ControlApiMemorySessionOutcomeProjection["report"] | null | undefined;
+  readonly sessionOutcome?:
+    ControlApiMemorySessionOutcomeReportResponse["report"] | null | undefined;
   readonly listScope: MemoryListScope;
 }
 
