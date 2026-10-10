@@ -37,6 +37,7 @@
       "codex"
     ],
     "smart": [
+      "minimax",
       "antigravity",
       "claude",
       "codex"
@@ -79,6 +80,10 @@
       }
     ],
     "smart": [
+      {
+        "provider": "minimax",
+        "model": "MiniMax-M3.1-Flash-Preview"
+      },
       {
         "provider": "antigravity",
         "model": "gemini-3.8-flash-high"

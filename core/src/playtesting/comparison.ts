@@ -23,7 +23,8 @@ import {
   type PlaytestProvenance,
   PLAYTESTS_COMPARISON_SCHEMA,
   PLAYTESTS_NOT_COMPARABLE_MODE,
-  type PlaytestVersionedRef} from "./types.ts";
+  type PlaytestVersionedRef
+} from "./types.ts";
 
 /** Is this a finite, non-degenerate (lower <= upper) numeric interval? */
 export function isValidPlaytestInterval(
@@ -197,6 +198,10 @@ export function buildPlaytestComparison(args: {
   readonly experimentId: string | null;
   readonly baseline: PlaytestVersionedRef;
   readonly candidate: PlaytestVersionedRef;
+  readonly freezeStatus: "frozen" | "spent" | "not-comparable";
+  readonly pairing: PlaytestComparison["pairing"];
+  readonly sourceFindingIds: readonly string[];
+  readonly episodeRefs: PlaytestComparison["episodeRefs"];
   readonly measurementVersion: string;
   readonly metrics: readonly PlaytestMetricComparison[];
   readonly primaryMetricId: string;
@@ -219,6 +224,10 @@ export function buildPlaytestComparison(args: {
     experimentId: args.experimentId,
     baseline: args.baseline,
     candidate: args.candidate,
+    freezeStatus: args.freezeStatus,
+    pairing: args.pairing,
+    sourceFindingIds: args.sourceFindingIds,
+    episodeRefs: args.episodeRefs,
     measurementVersion: args.measurementVersion,
     metrics: args.metrics,
     decision,

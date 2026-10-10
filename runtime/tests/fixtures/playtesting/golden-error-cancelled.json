@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req-0003",
+  "error": {
+    "code": -32006,
+    "message": "request cancelled",
+    "data": {
+      "category": "cancelled",
+      "retryable": false,
+      "episodeDisposition": "unknown"
+    }
+  }
+}

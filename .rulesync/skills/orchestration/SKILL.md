@@ -16,15 +16,15 @@ For repository changes, follow `references/development-lifecycle.md`. For spawni
 
 ## Capability/subagent roles
 
-| Role | Use for | Sandbox |
-| --- | --- | --- |
-| `default` | General-purpose development | workspace-write |
-| `docs-researcher` | Authoritative, version-aware external research | read-only |
-| `browser-tester` | Browser and runtime evidence | read-only |
-| `explorer` | Architecture, dependencies, and current-state discovery | read-only |
-| `worker` | Bounded implementation | workspace-write |
-| `validator` | Independent review and validation | workspace-write |
-| `smart` | Work requiring broader capability than normal roles | workspace-write |
+| Role              | Use for                                                 | Sandbox         |
+| ----------------- | ------------------------------------------------------- | --------------- |
+| `default`         | General-purpose development                             | workspace-write |
+| `docs-researcher` | Authoritative, version-aware external research          | read-only       |
+| `browser-tester`  | Browser and runtime evidence                            | read-only       |
+| `explorer`        | Architecture, dependencies, and current-state discovery | read-only       |
+| `worker`          | Bounded implementation                                  | workspace-write |
+| `validator`       | Independent review and validation                       | workspace-write |
+| `smart`           | Work requiring broader capability than normal roles     | workspace-write |
 
 Choose by capability first, then required sandbox. Prefer the smallest capable role and configured `autodev/<role>` aliases over hard-coded providers or models.
 
@@ -32,11 +32,11 @@ Choose by capability first, then required sandbox. Prefer the smallest capable r
 
 Classify work by semantic impact, uncertainty, and regression risk—not line count.
 
-| Complexity | Planning | Execution | Validation |
-| --- | --- | --- | --- |
-| **Trivial/atomic** | Root may plan directly; keep planning proportional to the task | Root may execute directly when delegation adds little value | Direct verification may suffice |
-| **Standard** | Root performs discovery and normally delegates at least one complementary discovery scope; reconcile findings into a single approach before implementation | Root participates in implementation and normally delegates at least one useful, bounded portion that can proceed independently or in parallel | Root validates the integrated result and normally uses at least one independent validator or tester |
-| **High-risk/cross-cutting** | Maintain one canonical Markdown plan with scope, decisions, dependencies, risks, and a checklist. Delegate discovery across relevant perspectives; the root owns synthesis, reconciliation, sequencing, and checklist state, integrating agent evidence and proposed changes into the plan. Refine it across execution and validation waves as new evidence emerges; it may be temporary when it has no lasting repository value | Decompose into bounded scopes; parallelize independent work and use multiple waves when useful | At least two complementary independent validation perspectives; use additional waves when useful |
+| Complexity                  | Planning                                                                                                                                                                                                                                                                                                                                                                                                                         | Execution                                                                                                                                     | Validation                                                                                          |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| **Trivial/atomic**          | Root may plan directly; keep planning proportional to the task                                                                                                                                                                                                                                                                                                                                                                   | Root may execute directly when delegation adds little value                                                                                   | Direct verification may suffice                                                                     |
+| **Standard**                | Root performs discovery and normally delegates at least one complementary discovery scope; reconcile findings into a single approach before implementation                                                                                                                                                                                                                                                                       | Root participates in implementation and normally delegates at least one useful, bounded portion that can proceed independently or in parallel | Root validates the integrated result and normally uses at least one independent validator or tester |
+| **High-risk/cross-cutting** | Maintain one canonical Markdown plan with scope, decisions, dependencies, risks, and a checklist. Delegate discovery across relevant perspectives; the root owns synthesis, reconciliation, sequencing, and checklist state, integrating agent evidence and proposed changes into the plan. Refine it across execution and validation waves as new evidence emerges; it may be temporary when it has no lasting repository value | Decompose into bounded scopes; parallelize independent work and use multiple waves when useful                                                | At least two complementary independent validation perspectives; use additional waves when useful    |
 
 ## Delegation rules
 
@@ -80,3 +80,15 @@ The root:
 6. repeats refinement and validation waves until evidence is sufficient
 7. advances lifecycle gates when evidence is sufficient
 8. reports unavailable evidence and unresolved risk
+
+## Playtesting handoffs
+
+For game-playtesting tasks, keep execution, interpretation, verification and publication separate:
+
+- Delegate an explicitly requested, operator-authorized run to `playtester`; require the exact workspace/build approval and bounded budget first. Workspace enablement alone is not run approval. If there is no exact approval, do not run a game or substitute a fixture; report the missing gate.
+- Delegate review of completed, workspace-scoped evidence to `playtest-analyst`. Give it immutable episode/window references and the game-owned rubric; it is read-only and cannot run, branch, modify code, or publish issues.
+- Ask the existing `validator` to independently inspect consequential claims from the cited evidence before treating them as verified; do not prime it with the analyst's conclusion.
+- Use `browser-tester` only for an explicitly relevant rendered-UI check, against an authorized target and real captured interface. It does not replace the game adapter or infer human outcomes.
+- The root retains workspace approval, experiment authorization, issue publication, and owner-promotion decisions. Preserve incomplete, negative, contradictory and unavailable evidence.
+
+These handoffs reuse the existing orchestrator and roles; they do not create another scheduler or grant a role capabilities it does not already have.

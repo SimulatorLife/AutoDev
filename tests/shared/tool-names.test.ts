@@ -23,6 +23,7 @@ import {
   MCP_SERVER_CONTEXT7,
   MCP_SERVER_LSP,
   MCP_SERVER_OPENAI_DEVELOPER_DOCS,
+  MCP_SERVER_PLAYTEST,
   MCP_SERVER_PLAYWRIGHT,
   mcpToolName,
   MULTI_AGENT_CLOSE_TOOL,
@@ -53,6 +54,7 @@ test("MCP server names and the bridge-injected spawn shim are pinned", () => {
   assert.equal(MCP_SERVER_COCOINDEX, "cocoindex-code");
   assert.equal(MCP_SERVER_CODEGRAPHCONTEXT, "codegraphcontext");
   assert.equal(MCP_SERVER_PLAYWRIGHT, "playwright");
+  assert.equal(MCP_SERVER_PLAYTEST, "playtest");
   assert.equal(MCP_SERVER_OPENAI_DEVELOPER_DOCS, "openaiDeveloperDocs");
   assert.equal(MCP_SERVER_CONTEXT7, "context7");
   assert.equal(MCP_SERVER_CODEX_APP, "codex_app");

@@ -26,7 +26,9 @@ import type { MemoryRecord } from "@simulatorlife/autodev-core";
  * subtitle drifts back to describing something other than the page.
  */
 
-function listScope(tab: "records" | "experiences" | "cohorts"): MemoryListScope {
+function listScope(
+  tab: "records" | "experiences" | "cohorts"
+): MemoryListScope {
   return {
     tab,
     workspaceId: "SimulatorLife/AutoDev",
@@ -97,8 +99,16 @@ test("a stat card's subtitle names the page, not a subset of the collection", ()
   });
 
   // The numbers the operator narrowed to, and the numbers these pages hold.
-  assert.match(markup, />1,?204</u, "the records total must still be the headline");
-  assert.match(markup, />1,?207</u, "the experiences total must still be the headline");
+  assert.match(
+    markup,
+    />1,?204</u,
+    "the records total must still be the headline"
+  );
+  assert.match(
+    markup,
+    />1,?207</u,
+    "the experiences total must still be the headline"
+  );
   assert.match(
     markup,
     /2 on this page/u,

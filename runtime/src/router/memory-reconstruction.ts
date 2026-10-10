@@ -145,7 +145,12 @@ function buildReviewRequest(
       kind: reference.kind,
       uri: reference.uri.slice(0, MAX_PACKET_EVIDENCE_URI_CHARACTERS),
       ...(reference.revision
-        ? { revision: reference.revision.slice(0, MAX_PACKET_EVIDENCE_REVISION_CHARACTERS) }
+        ? {
+            revision: reference.revision.slice(
+              0,
+              MAX_PACKET_EVIDENCE_REVISION_CHARACTERS
+            )
+          }
         : {})
     }));
   const issueObservations = (assessment.issueObservations ?? [])

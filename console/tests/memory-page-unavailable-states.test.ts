@@ -73,7 +73,9 @@ function recordsResponse(): Record<string, unknown> {
   };
 }
 
-function statusResponse(storage: Record<string, unknown>): Record<string, unknown> {
+function statusResponse(
+  storage: Record<string, unknown>
+): Record<string, unknown> {
   return {
     schema: "autodev-memory-status-v1",
     storage: { backend: "postgresql", probeTimeoutMs: 2500, ...storage }
@@ -163,7 +165,11 @@ function route(path: string, options: RouteOptions): Response | null {
             transitions: [],
             relatedMemories: []
           }
-        : { schema: "autodev-memory-why-v1", memory: recordResponse().memory, reasons: [] },
+        : {
+            schema: "autodev-memory-why-v1",
+            memory: recordResponse().memory,
+            reasons: []
+          },
       { status: 200 }
     );
   }
@@ -194,7 +200,8 @@ async function renderMemoryPage(
     process.env.HOME = isolatedHome;
     process.env.CODEX_HOME = isolatedHome;
     process.env.AUTODEV_OPENLIT_SECRET_FILE = join(isolatedHome, "missing.env");
-    process.env.AUTODEV_CONTROL_API_TOKEN = options.token ?? "memory-states-token";
+    process.env.AUTODEV_CONTROL_API_TOKEN =
+      options.token ?? "memory-states-token";
     process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
     globalThis.fetch = (async (input: unknown) => {
       const url = String(input);
@@ -242,7 +249,10 @@ test("a workspace catalog that is unreadable fails closed before any memory read
     }
   );
 
-  assert.match(markup, /data-error-code="autodev_workspace_catalog_unavailable"/u);
+  assert.match(
+    markup,
+    /data-error-code="autodev_workspace_catalog_unavailable"/u
+  );
   assert.match(markup, /no Memory scope is inferred/u);
   assert.equal(
     paths.some((path) => path.startsWith("/control/memory/")),
@@ -305,7 +315,10 @@ test("memory connected with no embedding provider is announced, because no read 
   );
 
   assert.match(markup, /no embedding provider configured/u);
-  assert.match(markup, /Configure an embedding provider to make retrieval work\./u);
+  assert.match(
+    markup,
+    /Configure an embedding provider to make retrieval work\./u
+  );
 });
 
 test("a healthy store and an unobserved status both render no storage banner", async () => {
@@ -329,8 +342,7 @@ test("a failed detail read is reported even though the list beside it succeeded"
     { tab: "records", recordId: "mem-missing" },
     {
       status: statusResponse(HEALTHY_STORAGE),
-      fail: (path) =>
-        /^\/control\/memory\/records\/mem-missing\?/u.test(path)
+      fail: (path) => /^\/control\/memory\/records\/mem-missing\?/u.test(path)
     }
   );
 

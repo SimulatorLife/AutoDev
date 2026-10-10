@@ -29,7 +29,9 @@ function redirectToSkills(
   name: string,
   saveOutcome?: "conflict" | "validation" | "not-found" | "failed"
 ): NextResponse {
-  const query = saveOutcome ? `?save=${saveOutcome}&skill=${encodeURIComponent(name)}` : "";
+  const query = saveOutcome
+    ? `?save=${saveOutcome}&skill=${encodeURIComponent(name)}`
+    : "";
   return new NextResponse(null, {
     status: 303,
     headers: { location: `/skills${query}` }

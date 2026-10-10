@@ -153,13 +153,19 @@ async function call(
     readonly grant?: Grant;
   }
 ): Promise<CallResult> {
-  const grants: Record<Grant, { readonly role: "viewer" | "operator"; readonly ask: boolean; readonly env: string | null }> =
+  const grants: Record<
+    Grant,
     {
-      granted: { role: "operator", ask: true, env: "1" },
-      "not-asked": { role: "operator", ask: false, env: "1" },
-      "asked-but-denied": { role: "operator", ask: true, env: null },
-      viewer: { role: "viewer", ask: true, env: "1" }
-    };
+      readonly role: "viewer" | "operator";
+      readonly ask: boolean;
+      readonly env: string | null;
+    }
+  > = {
+    granted: { role: "operator", ask: true, env: "1" },
+    "not-asked": { role: "operator", ask: false, env: "1" },
+    "asked-but-denied": { role: "operator", ask: true, env: null },
+    viewer: { role: "viewer", ask: true, env: "1" }
+  };
   const grant = grants[options.grant ?? "granted"];
   const audits: AuditEntry[] = [];
   const response: RecordedResponse = responseRecorder();
@@ -167,7 +173,9 @@ async function call(
     workspaceId: "ws-1",
     // Use-assessment reads are repository-scoped by design; without a repository
     // their filter refuses before the route is reached at all.
-    ...(options.path.endsWith("/use-assessments") ? { repositoryId: "repo-1" } : {}),
+    ...(options.path.endsWith("/use-assessments")
+      ? { repositoryId: "repo-1" }
+      : {}),
     ...(grant.ask ? { includeTaskHistory: "true" } : {}),
     ...(options.query ?? {})
   });
@@ -189,7 +197,8 @@ async function call(
       { createMemoryService: () => service }
     );
   } finally {
-    if (previous === undefined) delete process.env.AUTODEV_MEMORY_READ_TASK_HISTORY;
+    if (previous === undefined)
+      delete process.env.AUTODEV_MEMORY_READ_TASK_HISTORY;
     else process.env.AUTODEV_MEMORY_READ_TASK_HISTORY = previous;
   }
   return {
@@ -227,7 +236,12 @@ interface RouteCase {
 
 const READ_ROUTES: readonly RouteCase[] = [
   { label: "detail", path: EXP, method: "GET", ownTaskHistoryGate: false },
-  { label: "outcomes", path: `${EXP}/outcomes`, method: "GET", ownTaskHistoryGate: true },
+  {
+    label: "outcomes",
+    path: `${EXP}/outcomes`,
+    method: "GET",
+    ownTaskHistoryGate: true
+  },
   {
     label: "use assessments",
     path: `${EXP}/use-assessments`,
@@ -413,10 +427,13 @@ test("a malformed filter is an error, not an authorization refusal", async () =>
   // The other side of the branch above. Two different problems — "you may not
   // read that window" and "that filter is malformed" — and collapsing them would
   // send an operator looking for a permissions fault they do not have.
-  const { status, body, audits } = await call(stubService(experience()).service, {
-    path: `${EXP}/outcomes`,
-    query: { includeTaskHistory: "maybe" }
-  });
+  const { status, body, audits } = await call(
+    stubService(experience()).service,
+    {
+      path: `${EXP}/outcomes`,
+      query: { includeTaskHistory: "maybe" }
+    }
+  );
 
   assert.equal(status, 400);
   assert.equal(errorCode(body), "autodev_memory_invalid_filter");
@@ -483,7 +500,11 @@ test("a granted operator reaches the experience on the routes that have a body t
       200,
       `${route.label}: a granted operator was refused ${JSON.stringify(body)}`
     );
-    assert.equal(reads.length, 1, `${route.label}: expected one experience read`);
+    assert.equal(
+      reads.length,
+      1,
+      `${route.label}: expected one experience read`
+    );
     assert.match(
       String(body?.schema ?? ""),
       /^autodev-memory-/u,
@@ -498,11 +519,14 @@ test("a granted operator with no report recorded gets 'no report', not a refusal
   // exists. Collapsing the middle one into the 403 case would tell an operator
   // their access was revoked when their session simply has not been reported on.
   for (const route of READ_ROUTES.filter(isSessionOutcomeRead)) {
-    const { status, body, audits } = await call(stubService(experience()).service, {
-      method: route.method,
-      path: route.path,
-      grant: "granted"
-    });
+    const { status, body, audits } = await call(
+      stubService(experience()).service,
+      {
+        method: route.method,
+        path: route.path,
+        grant: "granted"
+      }
+    );
 
     assert.equal(
       status,
@@ -575,10 +599,7 @@ test("use-assessment reads are repository-scoped and refuse before the route", a
     grant: "not-asked"
   });
   assert.equal(notAsked.status, 403);
-  assert.equal(
-    errorCode(notAsked.body),
-    "autodev_memory_scope_forbidden"
-  );
+  assert.equal(errorCode(notAsked.body), "autodev_memory_scope_forbidden");
   assert.equal(notAsked.audits.at(-1)?.reason, "scope_filter_forbidden");
   assert.equal(notAsked.audits.at(-1)?.outcome, "denied");
 });

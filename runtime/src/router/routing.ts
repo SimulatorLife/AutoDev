@@ -38,8 +38,15 @@ export interface ProviderRoute {
   envKey?: string | null;
 }
 
+/** External operator links for one provider; each is an absolute https URL. */
+export interface ProviderLinksConfig {
+  usage?: string;
+  documentation?: string;
+}
+
 export interface ProviderModelsConfig {
   models: Record<string, string>;
+  links?: ProviderLinksConfig;
   [key: string]: unknown;
 }
 
@@ -162,7 +169,12 @@ function nonEmptyString(value: unknown): value is string {
 function readRoleAssignment(value: unknown): ProviderRoleAssignment | null {
   if (!isRecord(value)) return null;
   const { priority } = value;
-  if (priority !== 1 && priority !== 2 && priority !== 3 && priority !== "disabled")
+  if (
+    priority !== 1 &&
+    priority !== 2 &&
+    priority !== 3 &&
+    priority !== "disabled"
+  )
     return null;
   return {
     priority,
@@ -278,6 +290,35 @@ function validateProviderModelRoutes(
   }
 }
 
+const PROVIDER_LINK_KINDS = ["usage", "documentation"] as const;
+
+function isHttpsUrl(value: unknown): boolean {
+  if (!nonEmptyString(value)) return false;
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function validateProviderLinks(provider: string, links: unknown): void {
+  if (links === undefined) return;
+  if (!isRecord(links))
+    throw new Error(
+      `Routing config provider ${provider} links must be an object.`
+    );
+  for (const key of Object.keys(links)) {
+    if (!(PROVIDER_LINK_KINDS as readonly string[]).includes(key))
+      throw new Error(
+        `Routing config provider ${provider} has unknown link ${key}.`
+      );
+    if (!isHttpsUrl(links[key]))
+      throw new Error(
+        `Routing config provider ${provider} link ${key} must be an https URL.`
+      );
+  }
+}
+
 function validateProvidersBlock(
   providers: Record<string, unknown>
 ): Record<string, ProviderModelsEntry> {
@@ -291,6 +332,7 @@ function validateProvidersBlock(
       throw new Error(
         `Routing config provider ${provider} must define a default model.`
       );
+    validateProviderLinks(provider, info.links);
     validated[provider] = info;
   }
   return validated;

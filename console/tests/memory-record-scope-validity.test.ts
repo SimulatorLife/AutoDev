@@ -3,7 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 import test from "node:test";
 
-import type { MemoryRecord, MemoryScope, MemoryValidity } from "@simulatorlife/autodev-core";
+import type {
+  MemoryRecord,
+  MemoryScope,
+  MemoryValidity
+} from "@simulatorlife/autodev-core";
 
 import { MemoryRecordsView } from "../src/features/memory/MemoryRecordsView.ts";
 import type { MemoryListScope } from "../src/features/memory/memory-list-url.ts";
@@ -59,7 +63,10 @@ function record(
   };
 }
 
-function render(records: readonly MemoryRecord[], selected?: MemoryRecord): string {
+function render(
+  records: readonly MemoryRecord[],
+  selected?: MemoryRecord
+): string {
   return renderToStaticMarkup(
     React.createElement(MemoryRecordsView, {
       records,
@@ -85,7 +92,10 @@ test("every scope Core defines is named, and each says which scope it is", () =>
   // claim. It is the scope label that must never fall back to it.
   const cases: readonly [MemoryScope, string][] = [
     [{ kind: "global" }, "global"],
-    [{ kind: "workspace", workspaceId: "SimulatorLife/AutoDev" }, "SimulatorLife/AutoDev"],
+    [
+      { kind: "workspace", workspaceId: "SimulatorLife/AutoDev" },
+      "SimulatorLife/AutoDev"
+    ],
     [
       {
         kind: "repository",
@@ -174,13 +184,22 @@ test("a half-open validity window is named, not left blank", () => {
   ];
 
   for (const [label, validity, expected] of cases) {
-    const rendered = windowText(render([], record("mem-window", { kind: "global" }, validity)));
+    const rendered = windowText(
+      render([], record("mem-window", { kind: "global" }, validity))
+    );
     assert.ok(rendered, `a ${label} validity window was not rendered at all`);
     assert.match(rendered, expected, `a ${label} validity window was misnamed`);
   }
 
   const openEnded = windowText(
-    render([], record("mem-open", { kind: "global" }, { state: "verified", evidence: [] }))
+    render(
+      [],
+      record(
+        "mem-open",
+        { kind: "global" },
+        { state: "verified", evidence: [] }
+      )
+    )
   );
   assert.equal(
     openEnded,

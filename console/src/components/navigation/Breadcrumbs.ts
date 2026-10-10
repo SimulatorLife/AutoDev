@@ -37,8 +37,7 @@ export interface BreadcrumbsProps {
  * container rather than push the page sideways; `title` keeps the full label
  * reachable on hover and the text stays selectable for copy.
  */
-const ITEM_LINK_CLASS =
-  `min-w-0 truncate rounded-sm ${ACTION_LINK_CLASS}`;
+const ITEM_LINK_CLASS = `min-w-0 truncate rounded-sm ${ACTION_LINK_CLASS}`;
 const ITEM_PLAIN_CLASS = "min-w-0 truncate rounded-sm text-fg font-medium";
 const SEPARATOR_CLASS = "mx-2 select-none text-fg-muted";
 

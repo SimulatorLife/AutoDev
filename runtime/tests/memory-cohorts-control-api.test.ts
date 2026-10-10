@@ -196,11 +196,7 @@ test("GET /control/memory/cohorts reports a bounded empty cohort as a page, not 
     reportCount: 0
   }));
 
-  const { response, body } = await callCohortRoute(
-    service,
-    [],
-    DEFAULT_QUERY
-  );
+  const { response, body } = await callCohortRoute(service, [], DEFAULT_QUERY);
 
   assert.equal(response.statusCode, 200);
   // No entries is an empty, valid cohort — not "unavailable", and not a zero
@@ -327,10 +323,15 @@ test("GET /control/memory/cohorts rejects an inverted or unbounded time window w
 });
 
 test("POST /control/memory/cohorts returns 405 Method Not Allowed", async () => {
-  const { response } = await callCohortRoute(mockMemoryService(), [], {}, {
-    method: "POST",
-    disableTaskHistoryEnv: true
-  });
+  const { response } = await callCohortRoute(
+    mockMemoryService(),
+    [],
+    {},
+    {
+      method: "POST",
+      disableTaskHistoryEnv: true
+    }
+  );
 
   assert.equal(response.statusCode, 405);
 });

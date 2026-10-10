@@ -2341,29 +2341,29 @@ async function handlePreflightRoutes(
     "/v1/metrics": "metrics"
   };
   if (request.method === "POST" && otelSignals[pathname]) {
-      const signal = otelSignals[pathname]!;
-      let payload: unknown;
-      try {
-        payload = JSON.parse(await requestBody(request));
-      } catch {
-        getDefaultOtelTracker().recordInvalidOtelSignal();
-        sendJson(response, 400, errorBody("OTLP request must be valid JSON"));
-        return true;
-      }
-      // Distinguished from a JSON syntax failure: a body that parses but is not
-      // an OTLP payload was being reported as invalid JSON, which sends an
-      // operator to debug bytes that were always well-formed.
-      const checked = checkOtelPayload(signal, payload);
-      if (!checked.ok) {
-        getDefaultOtelTracker().recordInvalidOtelSignal();
-        sendJson(response, 400, errorBody(checked.message));
-        return true;
-      }
-      recordOtelLiveFeed(signal, checked.payload);
-      ingestOtelSignal(signal, checked.payload);
-      sendJson(response, 200, {});
+    const signal = otelSignals[pathname]!;
+    let payload: unknown;
+    try {
+      payload = JSON.parse(await requestBody(request));
+    } catch {
+      getDefaultOtelTracker().recordInvalidOtelSignal();
+      sendJson(response, 400, errorBody("OTLP request must be valid JSON"));
       return true;
     }
+    // Distinguished from a JSON syntax failure: a body that parses but is not
+    // an OTLP payload was being reported as invalid JSON, which sends an
+    // operator to debug bytes that were always well-formed.
+    const checked = checkOtelPayload(signal, payload);
+    if (!checked.ok) {
+      getDefaultOtelTracker().recordInvalidOtelSignal();
+      sendJson(response, 400, errorBody(checked.message));
+      return true;
+    }
+    recordOtelLiveFeed(signal, checked.payload);
+    ingestOtelSignal(signal, checked.payload);
+    sendJson(response, 200, {});
+    return true;
+  }
   return false;
 }
 

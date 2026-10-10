@@ -340,11 +340,7 @@ export function McpDetailView({
           server.transport
         ),
         server.command
-          ? React.createElement(
-              FieldBox,
-              { label: "Command" },
-              server.command
-            )
+          ? React.createElement(FieldBox, { label: "Command" }, server.command)
           : null,
         server.args && server.args.length > 0
           ? React.createElement(
@@ -354,11 +350,7 @@ export function McpDetailView({
             )
           : null,
         server.url
-          ? React.createElement(
-              FieldBox,
-              { label: "Endpoint URL" },
-              server.url
-            )
+          ? React.createElement(FieldBox, { label: "Endpoint URL" }, server.url)
           : null,
         server.cwd
           ? React.createElement(

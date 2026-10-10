@@ -4,6 +4,7 @@ import { createServer, type Server } from "node:http";
 import test from "node:test";
 
 import { codexState } from "@simulatorlife/autodev-runtime/router/http";
+import { getDefaultPlaytestRunControl } from "@simulatorlife/autodev-runtime/playtesting";
 
 test("control-only listener exposes only authenticated Control API routes", async () => {
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
@@ -110,6 +111,38 @@ test("OpenLIT mode starts a separate listener that cannot serve model routes", a
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+  }
+});
+
+test("router listener close shuts down the shared Playtest run owner exactly once", async () => {
+  const { startRouterServer } =
+    await import("@simulatorlife/autodev-runtime/router/server");
+  const owner = getDefaultPlaytestRunControl();
+  const originalShutdown = owner.shutdown;
+  let shutdownCount = 0;
+  owner.shutdown = async () => {
+    shutdownCount += 1;
+  };
+  let server: Server | undefined;
+  try {
+    server = startRouterServer(0, "127.0.0.1");
+    await once(server, "listening");
+    const closed = once(server, "close");
+    server.close();
+    await closed;
+    for (let attempt = 0; attempt < 50 && shutdownCount === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    assert.equal(shutdownCount, 1);
+  } finally {
+    owner.shutdown = originalShutdown;
+    if (server?.listening) {
+      const closed = once(server, "close");
+      server.close();
+      await closed;
+    }
+    codexState.collector.stopLivePoll();
+    codexState.livePollStarted = false;
   }
 });
 

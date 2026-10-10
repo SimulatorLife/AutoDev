@@ -6,7 +6,9 @@ import React from "react";
 type NavigationLinkProps = Omit<
   React.ComponentProps<typeof Link>,
   "onFocus" | "onMouseEnter" | "onTouchStart" | "prefetch"
->;
+> & {
+  readonly dataAttributes?: Readonly<Record<`data-${string}`, string>>;
+};
 
 /** Intent events that authorize one dynamic-route prefetch. */
 export interface NavigationIntentHandlers {
@@ -27,6 +29,7 @@ export function navigationIntentHandlers(
  */
 export function NavigationLink({
   href,
+  dataAttributes,
   ...props
 }: NavigationLinkProps): React.JSX.Element {
   const [prefetchOnIntent, setPrefetchOnIntent] = React.useState(false);
@@ -35,6 +38,7 @@ export function NavigationLink({
   return React.createElement(Link, {
     ...props,
     href,
+    ...dataAttributes,
     prefetch: prefetchOnIntent,
     ...navigationIntentHandlers(prefetch)
   });

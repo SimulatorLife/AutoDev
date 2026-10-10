@@ -29,7 +29,8 @@
     "smart": [
       [
         "claude",
-        "antigravity"
+        "antigravity",
+        "minimax"
       ],
       [
         "codex"
@@ -83,6 +84,10 @@
         "smart": "gemini-3.8-flash-high",
         "orchestrator": "gemini-3.8-flash-high",
         "default": "gemini-3.8-flash-medium"
+      },
+      "links": {
+        "usage": "https://gemini.google.com/u/1/usage?pli=1",
+        "documentation": "https://ai.google.dev/gemini-api/docs"
       }
     },
     "claude": {
@@ -90,18 +95,30 @@
         "smart": "claude-opus-5-5",
         "orchestrator": "claude-opus-5-5",
         "default": "sonnet"
+      },
+      "links": {
+        "usage": "https://claude.ai/new#settings/usage",
+        "documentation": "https://docs.anthropic.com/en/docs/welcome"
       }
     },
     "minimax": {
       "models": {
         "smart": "MiniMax-M3.1-Flash-Preview",
         "default": "MiniMax-M3"
+      },
+      "links": {
+        "usage": "https://platform.minimax.io/console/usage",
+        "documentation": "https://platform.minimax.io/docs/guides/text-generation"
       }
     },
     "copilot": {
       "models": {
         "default": "copilot",
         "orchestrator": "copilot"
+      },
+      "links": {
+        "usage": "https://github.com/settings/billing/ai_usage",
+        "documentation": "https://docs.github.com/en/copilot"
       }
     },
     "codex": {
@@ -109,6 +126,10 @@
         "smart": "gpt-6-sol",
         "orchestrator": "gpt-6-luna",
         "default": "gpt-6-luna"
+      },
+      "links": {
+        "usage": "https://chatgpt.com/settings/usage?tab=overview",
+        "documentation": "https://developers.openai.com/codex"
       }
     }
   },

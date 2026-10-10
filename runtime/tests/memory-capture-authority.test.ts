@@ -142,7 +142,11 @@ test("a root that resolves to the trusted directory is trusted", async () => {
         context,
         `"${root}" resolves to the trusted root but was refused`
       );
-      assert.equal(context.root, WORKSPACE.cwd, "the recorded root was rewritten");
+      assert.equal(
+        context.root,
+        WORKSPACE.cwd,
+        "the recorded root was rewritten"
+      );
     }
   });
 });
@@ -265,11 +269,17 @@ test("the map is bounded, and what it drops is the oldest", async () => {
 
     const oldestRetained = total - bound;
     assert.ok(
-      trustedMemoryContextForSession(`session-lru-${oldestRetained}`, WORKSPACE.cwd),
+      trustedMemoryContextForSession(
+        `session-lru-${oldestRetained}`,
+        WORKSPACE.cwd
+      ),
       `the map dropped session ${oldestRetained}, which it still had room for`
     );
     assert.equal(
-      trustedMemoryContextForSession(`session-lru-${oldestRetained - 1}`, WORKSPACE.cwd),
+      trustedMemoryContextForSession(
+        `session-lru-${oldestRetained - 1}`,
+        WORKSPACE.cwd
+      ),
       null,
       "a session past the bound was kept, so the oldest is not what gets dropped"
     );

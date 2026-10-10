@@ -1,0 +1,16 @@
+[project]
+name = "autodev-playtest-statistics"
+version = "0.1.0"
+description = "Runtime-owned, hash-locked Playtesting statistical analysis (measurement contract §4-5)."
+requires-python = ">=3.12,<3.14"
+readme = "PYTHON_README.md"
+dependencies = [
+    # Pin exact versions per docs/playtesting-measurement-contract.md §4 "Statistics reuse".
+    "numpy==2.3.5",
+    "scipy==1.17.0",
+    "statsmodels==0.14.6",
+]
+
+[tool.uv]
+managed = true
+package = false

@@ -28,7 +28,10 @@ async function callHistoryRoute(history: MemoryHistory | null): Promise<{
   } as unknown as MemoryService;
   const response = responseRecorder();
   await handleMemoryControlApiRequest(
-    makeRequest("GET", "/control/memory/records/mem-1/history?workspaceId=ws-1"),
+    makeRequest(
+      "GET",
+      "/control/memory/records/mem-1/history?workspaceId=ws-1"
+    ),
     response,
     "/control/memory/records/mem-1/history",
     { actor: "test-operator", role: "operator" },

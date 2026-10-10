@@ -162,12 +162,18 @@ test("history withholds a global-scoped memory from a context that cannot read g
   const service = serviceFor(stub);
 
   assert.equal(
-    await service.history("mem-1", { ...workspaceContext, canReadGlobal: false }),
+    await service.history("mem-1", {
+      ...workspaceContext,
+      canReadGlobal: false
+    }),
     null,
     "global provenance is not readable without the grant"
   );
   assert.equal(
-    await service.history("mem-1", { ...workspaceContext, canReadGlobal: true }),
+    await service.history("mem-1", {
+      ...workspaceContext,
+      canReadGlobal: true
+    }),
     globalHistory,
     "the same memory is readable once the grant is present"
   );

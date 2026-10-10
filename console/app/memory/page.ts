@@ -623,9 +623,7 @@ async function fetchMemoryPageData(
  * a guess that is right most of the time is exactly what makes a wrong one
  * expensive.
  */
-function memoryStorageNotice(
-  status: MemoryStatusResult
-): {
+function memoryStorageNotice(status: MemoryStatusResult): {
   readonly title: string;
   readonly hint?: string;
 } {
@@ -809,11 +807,13 @@ export default async function MemoryPage(
       sessionCohorts,
       useCohorts,
       selectedRecord:
-        data.selectedRecord.requested && data.selectedRecord.record.kind === "ok"
+        data.selectedRecord.requested &&
+        data.selectedRecord.record.kind === "ok"
           ? data.selectedRecord.record.data.memory
           : null,
       selectedHistory:
-        data.selectedRecord.requested && data.selectedRecord.history.kind === "ok"
+        data.selectedRecord.requested &&
+        data.selectedRecord.history.kind === "ok"
           ? data.selectedRecord.history.data
           : null,
       // Read above, and worth saying why it reaches the drawer: without it the

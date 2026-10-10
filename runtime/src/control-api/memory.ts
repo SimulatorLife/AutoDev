@@ -138,7 +138,6 @@ const MEMORY_FILTERS_INVALID = "Memory filters are invalid or incomplete.";
 const MEMORY_CONTROL_API_ORIGIN = "http://127.0.0.1";
 const PAGE_NUMBER_PATTERN = /^(0|[1-9]\d{0,8})$/u;
 
-
 type MemoryControlRoute = {
   readonly resource:
     | typeof MEMORY_RECORDS_ROUTE
@@ -571,7 +570,10 @@ function evidenceReferences(value: unknown): readonly EvidenceReference[] {
     throw new MemoryValidationError("Memory evidence references are invalid.");
   }
   return value.map((entry) => {
-    if (!isObject(entry) || !MEMORY_EVIDENCE_KINDS.includes(entry.kind as never))
+    if (
+      !isObject(entry) ||
+      !MEMORY_EVIDENCE_KINDS.includes(entry.kind as never)
+    )
       throw new MemoryValidationError("Memory evidence reference is invalid.");
     // Every other object this file reads is checked for unsupported keys --
     // the body, the scope, each cohort filter -- and this one was not, so an
@@ -3267,13 +3269,13 @@ export async function handleMemoryControlApiRequest(
   if (!pathname.startsWith(MEMORY_PATH_PREFIX)) return false;
   if (
     await servePathWithoutStorage(
-    pathname,
-    request,
-    response,
-    actor,
-    audit,
-    dependencies
-  )
+      pathname,
+      request,
+      response,
+      actor,
+      audit,
+      dependencies
+    )
   ) {
     return true;
   }
@@ -3379,7 +3381,12 @@ export async function handleMemoryControlApiRequest(
       error instanceof MemoryAuthorizationError ||
       error instanceof MemoryScopeAccessError
     ) {
-      auditMemoryFailure(audit, route, "denied", "scope_or_authority_forbidden");
+      auditMemoryFailure(
+        audit,
+        route,
+        "denied",
+        "scope_or_authority_forbidden"
+      );
       sendMemoryError(
         response,
         403,

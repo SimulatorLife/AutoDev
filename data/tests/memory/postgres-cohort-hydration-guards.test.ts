@@ -113,9 +113,7 @@ test("a cell claiming more reports than exposures is refused", async () => {
 
 test("a cell with an unknown session cardinality is refused", async () => {
   const repository = new PostgresMemoryRepository({
-    pool: poolReturning([
-      wellFormedCell({ session_cardinality: "many" })
-    ])
+    pool: poolReturning([wellFormedCell({ session_cardinality: "many" })])
   });
 
   await assert.rejects(
@@ -242,7 +240,8 @@ test("a bigint string and a zero count are both legal, so the guard is not 'reje
       ])
     });
 
-    const page = await repository.aggregateInjectionOutcomeCohorts(cohortFilterBase);
+    const page =
+      await repository.aggregateInjectionOutcomeCohorts(cohortFilterBase);
     assert.equal(
       page.cells[0]?.exposureCount,
       Number(value),
@@ -274,7 +273,8 @@ test("a use-cohort cell with an unknown use kind is refused", async () => {
   const unreported = new PostgresMemoryRepository({
     pool: poolReturning([useCell({ use_kind: null })])
   });
-  const page = await unreported.aggregateInjectionUseCohorts(useCohortFilterBase);
+  const page =
+    await unreported.aggregateInjectionUseCohorts(useCohortFilterBase);
   assert.equal(
     page.cells[0]?.useKind,
     null,

@@ -761,13 +761,16 @@ test("MemoryPage starts its independent status and records reads together", asyn
       }
 
       return Response.json(
-        { error: { code: "test_unavailable", message: "Not in this fixture." } },
+        {
+          error: { code: "test_unavailable", message: "Not in this fixture." }
+        },
         { status: 503 }
       );
     };
 
-    const page = MemoryPage({ searchParams: Promise.resolve({ tab: "records" }) })
-      .then(renderToStaticMarkup);
+    const page = MemoryPage({
+      searchParams: Promise.resolve({ tab: "records" })
+    }).then(renderToStaticMarkup);
     let startTimeout: ReturnType<typeof setTimeout> | undefined;
     const startedTogether = await Promise.race([
       bothReadsStarted.then(() => true),
@@ -1653,9 +1656,12 @@ test("a date field keeps its focus ring on every stop inside the control", () =>
   );
   assert.ok(
     delegationClause,
-    "the form controls must carry the :focus-within clause: " + css.slice(0, 200)
+    "the form controls must carry the :focus-within clause: " +
+      css.slice(0, 200)
   );
-  const selectors = (delegationClause[1] ?? "").split(",").map((part) => part.trim());
+  const selectors = (delegationClause[1] ?? "")
+    .split(",")
+    .map((part) => part.trim());
   for (const forbidden of ["a", "button", "summary", "[tabindex]"]) {
     assert.equal(
       selectors.includes(forbidden),
@@ -2081,7 +2087,8 @@ test("a path wraps between its segments and never inside one", () => {
           enabled: true,
           agentRoles: null
         }
-      ]
+      ],
+      approvals: new Map()
     })
   );
   assert.ok(
@@ -3221,6 +3228,7 @@ test("no column is narrower than its own header", () => {
     Description: 123,
     Availability: 124,
     Convergence: 133,
+    "Playtesting Approval": 199,
     // Measured in Chromium against the Providers table rendered with the longest
     // names the product shows ("gemini-3.8-flash-high"), as the width of each
     // header's own text. These are header widths, which is what this guard asks:
@@ -3336,7 +3344,8 @@ test("no column is narrower than its own header", () => {
             enabled: true,
             agentRoles: null
           }
-        ]
+        ],
+        approvals: new Map()
       })
     ),
     renderToStaticMarkup(
@@ -5061,7 +5070,8 @@ test("WorkspacesView keeps availability and unconfigured role scope explicit", (
           enabled: false,
           agentRoles: []
         }
-      ]
+      ],
+      approvals: new Map()
     })
   );
   assert.equal(markup.includes("Available"), false);
@@ -5639,7 +5649,9 @@ test("a Control API that is reachable but slow is not reported as unreachable", 
   }) as typeof globalThis.fetch;
 
   try {
-    const timedOut = await EvaluationsPage({ searchParams: Promise.resolve({}) });
+    const timedOut = await EvaluationsPage({
+      searchParams: Promise.resolve({})
+    });
     const timedOutMarkup = renderToStaticMarkup(timedOut);
 
     assert.match(
@@ -5692,7 +5704,8 @@ test("a Control API that is reachable but slow is not reported as unreachable", 
     assert.match(
       refused,
       /autodev_unreachable/,
-      "a transport failure is still the unreachable state: " + refused.slice(0, 400)
+      "a transport failure is still the unreachable state: " +
+        refused.slice(0, 400)
     );
     assert.doesNotMatch(
       refused,
@@ -5744,7 +5757,8 @@ test("a refused connection says what was refused without printing the address", 
     assert.match(
       refusedMarkup,
       /Nothing is listening at the configured AutoDev Control API address\./,
-      "a refused connection names the one thing to check: " + refusedMarkup.slice(0, 500)
+      "a refused connection names the one thing to check: " +
+        refusedMarkup.slice(0, 500)
     );
     assert.doesNotMatch(
       refusedMarkup,
@@ -5796,9 +5810,12 @@ test("a write abandoned at the deadline reads the same as a read that was", asyn
   // cannot see it: reverting only the POST branch leaves every GET assertion
   // green, which is the shape of a guard that covers one of two siblings and
   // reads as though it covers both.
-  const cause = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:4101"), {
-    code: "ECONNREFUSED"
-  });
+  const cause = Object.assign(
+    new Error("connect ECONNREFUSED 127.0.0.1:4101"),
+    {
+      code: "ECONNREFUSED"
+    }
+  );
   const abort = Object.assign(new TypeError("fetch failed"), { cause });
 
   const hang = (): void => {
@@ -5808,7 +5825,9 @@ test("a write abandoned at the deadline reads the same as a read that was", asyn
         if (!signal) return;
         const abortError = new Error("This operation was aborted");
         abortError.name = "AbortError";
-        signal.addEventListener("abort", () => reject(abortError), { once: true });
+        signal.addEventListener("abort", () => reject(abortError), {
+          once: true
+        });
         // Never settles on its own: only the reader's own deadline ends it, which
         // is the thing under test.
       })) as typeof globalThis.fetch;
@@ -5825,10 +5844,9 @@ test("a write abandoned at the deadline reads the same as a read that was", asyn
     serviceToken: "post-classifier-test-token"
   };
   type PostResult = Awaited<ReturnType<typeof postControlApi>>;
-  function assertUnreachable(result: PostResult): asserts result is Extract<
-    PostResult,
-    { readonly kind: "unreachable" }
-  > {
+  function assertUnreachable(
+    result: PostResult
+  ): asserts result is Extract<PostResult, { readonly kind: "unreachable" }> {
     assert.equal(
       result.kind,
       "unreachable",
@@ -6920,7 +6938,6 @@ test("EvaluationsView renders safe trace details and prompt-preserving span link
   );
   assert.match(markup, /Back to evaluations/);
 });
-
 
 test("a span link keeps the full id reachable behind its eight characters", () => {
   const spanId = "0123456789abcdef";
@@ -10018,6 +10035,10 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
   providers: [
     {
       id: "claude",
+      links: {
+        usage: "https://usage.example.test/claude",
+        documentation: "https://docs.example.test/claude"
+      },
       disabled: false,
       agentLimits: { perSession: 3, acrossSessions: 8 },
       route: {
@@ -10118,6 +10139,8 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
     },
     {
       id: "codex",
+      // A provider may configure one page and not the other.
+      links: { usage: "https://usage.example.test/codex", documentation: null },
       disabled: true,
       agentLimits: { perSession: null, acrossSessions: null },
       route: {
@@ -13048,14 +13071,8 @@ test("ProvidersView renders the four configuration columns with per-role control
     disabledPrioritySelect,
     /data-\[tone=warning\]:border-warning\/50/u
   );
-  assert.match(
-    disabledPrioritySelect,
-    /data-\[tone=warning\]:bg-warning\/15/u
-  );
-  assert.match(
-    disabledPrioritySelect,
-    /data-\[tone=warning\]:text-warning/u
-  );
+  assert.match(disabledPrioritySelect, /data-\[tone=warning\]:bg-warning\/15/u);
+  assert.match(disabledPrioritySelect, /data-\[tone=warning\]:text-warning/u);
   assert.doesNotMatch(activePrioritySelect, /data-tone="warning"/u);
 
   // Each role control carries a distinct id: four role forms submit `priority`
@@ -13334,6 +13351,16 @@ test("ProviderDetailView keeps the provider's role and model toggles on its page
   assert.match(markup, /2026-10-05T16:00:00.000Z/);
   assert.match(markup, /session_limit · HTTP 429/);
   assert.match(markup, /href="\/usage\?provider=claude"/);
+  // The provider's own pages come from its record and open outside the Console.
+  for (const [kind, href] of Object.entries(claude.links)) {
+    assert.match(
+      markup,
+      new RegExp(
+        `<a href="${href}" target="_blank" rel="noopener noreferrer"[^>]*data-provider-link="${kind}"`
+      ),
+      `provider detail links to the provider's ${kind} page`
+    );
+  }
   assert.match(markup, /Orchestrator reasoning effort/);
   assert.match(markup, /Missing LITELLM_API_KEY/);
   assert.equal(markup.includes("gpt-6-luna"), false);
@@ -13347,6 +13374,12 @@ test("ProviderDetailView keeps the provider's role and model toggles on its page
     })
   );
   assert.equal(withoutModels.includes('data-enablement-form="model"'), false);
+  // An unconfigured page renders no link rather than a dead one.
+  assert.match(withoutModels, /data-provider-link="usage"/);
+  assert.equal(
+    withoutModels.includes('data-provider-link="documentation"'),
+    false
+  );
   assert.match(withoutModels, /Model enablement could not be loaded/);
   assert.match(withoutModels, /has not reported live evidence/);
 });
@@ -17010,6 +17043,7 @@ test("a catalog row missing the fields its view reads fails closed instead of th
   });
   const providerRow = {
     id: "anthropic",
+    links: { usage: null, documentation: null },
     disabled: false,
     agentLimits: { perSession: 2, acrossSessions: null },
     route: null,
@@ -17037,6 +17071,7 @@ test("a catalog row missing the fields its view reads fails closed instead of th
   );
   assert.equal(providersAccept.kind, "ok");
   for (const dropped of [
+    "links",
     "health",
     "credential",
     "models",
@@ -17662,7 +17697,10 @@ test("POST mutation submit cancels native navigation and preserves FormData", as
   // document navigation. FormData must still carry repeated checkbox names,
   // hidden state, and the activated submit button's name/value.
   assert.equal(nativeEvent.defaultPrevented, true);
-  assert.equal(submittedUrl, "http://console.test/api/skills/release-checklist");
+  assert.equal(
+    submittedUrl,
+    "http://console.test/api/skills/release-checklist"
+  );
   assert.equal(submittedInit?.method, "POST");
   assert.equal(submittedInit?.redirect, "follow");
   assert.equal(
@@ -19305,6 +19343,18 @@ test("client behavior stays in explicitly approved interaction islands", () => {
     [
       join("src", "components", "navigation", "NavigationLink.ts"),
       "Prefetches one dynamic destination on user intent instead of every visible view."
+    ],
+    [
+      join("src", "features", "workspaces", "WorkspaceDetailView.ts"),
+      "Submits exact-build approval and revocation through same-origin routes in place, then renders only the server-confirmed approval state."
+    ],
+    [
+      join("src", "features", "workspaces", "WorkspacePlaytestApprovalForm.ts"),
+      "Provides labelled exact-build fields and submits through the in-place workspace mutation handler."
+    ],
+    [
+      join("src", "features", "workspaces", "WorkspacePlaytestRevokeForm.ts"),
+      "Provides revision-bound revocation fields and submits through the in-place workspace mutation handler."
     ]
   ]);
   const approvedServerHandlerModules = new Map<string, string>();

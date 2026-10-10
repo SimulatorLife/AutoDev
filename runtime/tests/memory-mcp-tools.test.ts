@@ -67,10 +67,12 @@ function recordingService(calls: RecordedCall[]): MemoryService {
   return new Proxy(
     {},
     {
-      get: (_target, property) => async (...args: unknown[]) => {
-        calls.push({ method: String(property), args });
-        return { accepted: true };
-      }
+      get:
+        (_target, property) =>
+        async (...args: unknown[]) => {
+          calls.push({ method: String(property), args });
+          return { accepted: true };
+        }
     }
   ) as unknown as MemoryService;
 }
@@ -110,7 +112,11 @@ async function connectAs(
 
 /** The single call the tool made, so a wrong method cannot pass unnoticed. */
 function onlyCall(calls: readonly RecordedCall[]): RecordedCall {
-  assert.equal(calls.length, 1, `expected one service call, saw ${calls.length}`);
+  assert.equal(
+    calls.length,
+    1,
+    `expected one service call, saw ${calls.length}`
+  );
   return calls[0]!;
 }
 
@@ -170,7 +176,10 @@ test("experience append refuses a host session that has not bound the run", asyn
         context: { ...BOUND_SESSION.context, workspaceId: "" }
       }
     },
-    { why: "no task in the read context", session: { ...BOUND_SESSION, context: withoutTaskId } },
+    {
+      why: "no task in the read context",
+      session: { ...BOUND_SESSION, context: withoutTaskId }
+    },
     {
       why: "the session names a task the context does not",
       session: { ...BOUND_SESSION, taskId: "task-the-host-did-not-select" }
@@ -262,7 +271,11 @@ test("the evidence cap counts the trajectory reference too, and lands on 64", as
       true,
       "65 deduplicated references is over the cap"
     );
-    assert.equal(refused.length, 0, "nothing may reach the service past the cap");
+    assert.equal(
+      refused.length,
+      0,
+      "nothing may reach the service past the cap"
+    );
   } finally {
     await second.close();
   }
@@ -292,17 +305,14 @@ test("every registered memory tool is callable with the session's authority", as
       arguments: { query: "what does memory say about retries?" }
     });
 
-    assert.deepEqual(
-      calls.map((call) => call.method).sort(),
-      ["propose", "research"]
-    );
+    assert.deepEqual(calls.map((call) => call.method).sort(), [
+      "propose",
+      "research"
+    ]);
     // The actor is the host's, never an argument: a model that could name its
     // own authority would be able to write as anyone.
     const propose = calls.find((call) => call.method === "propose")!;
-    assert.equal(
-      (propose.args[1] as { id: string }).id,
-      SESSION.actor.id
-    );
+    assert.equal((propose.args[1] as { id: string }).id, SESSION.actor.id);
     assert.deepEqual(propose.args[2], CONTEXT);
   } finally {
     await close();
@@ -314,15 +324,26 @@ test("each scope the tool accepts becomes a Core scope", async () => {
   // A branch that produced a malformed scope would not corrupt memory — the
   // service would refuse it — but the refusal would be unexplainable to whoever
   // filed the proposal, so the translation is worth pinning in both directions.
-  const expected: readonly [Record<string, unknown>, Record<string, unknown>][] = [
+  const expected: readonly [
+    Record<string, unknown>,
+    Record<string, unknown>
+  ][] = [
     [{ kind: "global" }, { kind: "global" }],
     [
       { kind: "workspace", workspaceId: "workspace-a" },
       { kind: "workspace", workspaceId: "workspace-a" }
     ],
     [
-      { kind: "repository", workspaceId: "workspace-a", repositoryId: "owner/repo" },
-      { kind: "repository", workspaceId: "workspace-a", repositoryId: "owner/repo" }
+      {
+        kind: "repository",
+        workspaceId: "workspace-a",
+        repositoryId: "owner/repo"
+      },
+      {
+        kind: "repository",
+        workspaceId: "workspace-a",
+        repositoryId: "owner/repo"
+      }
     ],
     [
       {
@@ -370,7 +391,11 @@ test("each scope the tool accepts becomes a Core scope", async () => {
           evidence: [{ kind: "document", uri: "https://example.invalid/a" }]
         }
       });
-      assert.equal(response.isError, undefined, `${String(supplied.kind)} rejected`);
+      assert.equal(
+        response.isError,
+        undefined,
+        `${String(supplied.kind)} rejected`
+      );
       const propose = onlyCall(calls);
       assert.deepEqual(
         (propose.args[0] as { scope: unknown }).scope,
@@ -494,7 +519,9 @@ async function connectWithFailingService(): Promise<{
 function conflictingService(
   calls: RecordedCall[],
   existing: unknown,
-  thrown: Error = new MemoryConflictError("Experience exp-conflict already exists")
+  thrown: Error = new MemoryConflictError(
+    "Experience exp-conflict already exists"
+  )
 ): MemoryService {
   return {
     appendExperience: async (...args: unknown[]) => {
@@ -515,7 +542,8 @@ async function callAppend(
   const server = createMemoryMcpServer(service, {
     current: () => BOUND_SESSION
   });
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
   const client = new Client(
     { name: "memory-mcp-append-test", version: "1.0.0" },
     { capabilities: {} }
@@ -540,16 +568,17 @@ async function callAppend(
 }
 
 /** The stored experience a conflict is reconciled against. */
-function storedExperience(
-  overrides: {
-    readonly uri: string;
-    readonly digest: string;
-  }
-): unknown {
+function storedExperience(overrides: {
+  readonly uri: string;
+  readonly digest: string;
+}): unknown {
   return {
     id: "exp-conflict",
     workspaceId: BOUND_SESSION.context.workspaceId,
-    scope: { kind: "workspace", workspaceId: BOUND_SESSION.context.workspaceId },
+    scope: {
+      kind: "workspace",
+      workspaceId: BOUND_SESSION.context.workspaceId
+    },
     taskId: "task-from-host",
     runId: "run-from-host",
     agentId: "agent-a",
@@ -600,7 +629,10 @@ test("a conflicting experience append is a retry only when it is the same experi
     },
     {
       why: "a different trajectory uri",
-      stored: storedExperience({ uri: "file:///workspace/other.jsonl", digest }),
+      stored: storedExperience({
+        uri: "file:///workspace/other.jsonl",
+        digest
+      }),
       isRetry: false
     },
     {

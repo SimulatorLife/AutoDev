@@ -39,11 +39,41 @@ test("every secret form redacts to the same text wherever it appears", () => {
   // at offset zero. If position ever leaks again the two sides stop matching,
   // and the failure names which family regressed.
   const cases = [
-    { label: "bearer", prefix: "prefix text ", suffix: "", secret: "Bearer abcdefgh12345", expected: "[REDACTED]" },
-    { label: "vendor key", prefix: "token starts with ", suffix: "", secret: "sk-abcdefghijklmnopqrstuvwx", expected: "[REDACTED]" },
-    { label: "github token", prefix: "the credential was ", suffix: "", secret: "ghp_abcdefghijklmnopqrstuvwxyz0123", expected: "[REDACTED]" },
-    { label: "keyed assignment", prefix: "the value was ", suffix: "", secret: "password: hunter2", expected: "password=[REDACTED]" },
-    { label: "private key block", prefix: "here it is\n", suffix: "\nend", secret: PEM_SECRET, expected: "[REDACTED]" }
+    {
+      label: "bearer",
+      prefix: "prefix text ",
+      suffix: "",
+      secret: "Bearer abcdefgh12345",
+      expected: "[REDACTED]"
+    },
+    {
+      label: "vendor key",
+      prefix: "token starts with ",
+      suffix: "",
+      secret: "sk-abcdefghijklmnopqrstuvwx",
+      expected: "[REDACTED]"
+    },
+    {
+      label: "github token",
+      prefix: "the credential was ",
+      suffix: "",
+      secret: "ghp_abcdefghijklmnopqrstuvwxyz0123",
+      expected: "[REDACTED]"
+    },
+    {
+      label: "keyed assignment",
+      prefix: "the value was ",
+      suffix: "",
+      secret: "password: hunter2",
+      expected: "password=[REDACTED]"
+    },
+    {
+      label: "private key block",
+      prefix: "here it is\n",
+      suffix: "\nend",
+      secret: PEM_SECRET,
+      expected: "[REDACTED]"
+    }
   ] as const;
 
   for (const { label, prefix, secret, expected, suffix = "" } of cases) {
@@ -82,7 +112,10 @@ test("a keyed assignment keeps the name and drops only the value", () => {
   // The one pattern with a real capture, and the reason the replacer has a
   // "named" branch at all. The name is not the secret; the value is.
   assert.equal(redactSensitiveText("password: hunter2"), "password=[REDACTED]");
-  assert.equal(redactSensitiveText("api_key=AKIA1234567890ABCD"), "api_key=[REDACTED]");
+  assert.equal(
+    redactSensitiveText("api_key=AKIA1234567890ABCD"),
+    "api_key=[REDACTED]"
+  );
   assert.equal(
     redactSensitiveText("the refresh_token=abc123 and then prose"),
     "the refresh_token=[REDACTED] and then prose"
@@ -119,8 +152,16 @@ test("several secrets in one claim are all removed", () => {
     "password: hunter2 then Bearer abcdefgh12345 and sk-abcdefghijklmnopqrstuvwx"
   );
 
-  for (const secret of ["hunter2", "abcdefgh12345", "sk-abcdefghijklmnopqrstuvwx"]) {
-    assert.doesNotMatch(redacted, new RegExp(secret, "u"), `a secret survived: ${secret}`);
+  for (const secret of [
+    "hunter2",
+    "abcdefgh12345",
+    "sk-abcdefghijklmnopqrstuvwx"
+  ]) {
+    assert.doesNotMatch(
+      redacted,
+      new RegExp(secret, "u"),
+      `a secret survived: ${secret}`
+    );
   }
   assert.doesNotMatch(redacted, /\d=\[REDACTED\]/u);
 });
@@ -138,8 +179,16 @@ test("a locator's credentials are removed without losing the reference", () => {
     "https://example.com/repo/pull/7?page=2",
     "the locator was not reduced to a credential-free form"
   );
-  assert.equal(sanitized.kind, "other", "the reference's other fields were lost");
-  assert.equal(reference.uri.includes("hunter2"), true, "the input was mutated");
+  assert.equal(
+    sanitized.kind,
+    "other",
+    "the reference's other fields were lost"
+  );
+  assert.equal(
+    reference.uri.includes("hunter2"),
+    true,
+    "the input was mutated"
+  );
 });
 
 test("a locator that is not a URL still has its secrets stripped", () => {

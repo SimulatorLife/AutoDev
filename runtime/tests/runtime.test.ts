@@ -7,6 +7,7 @@ import {
   getDefaultExecutionContract,
   getDefaultPersistenceManager,
   getDefaultRouterLifecycle,
+  playtesting,
   ROUTES,
   ROUTING_POLICY
 } from "../src/index.ts";
@@ -24,6 +25,9 @@ test("runtime exports canonical Control API paths", () => {
   assert.equal(CONTROL_API_PATHS.routing, "/control/routing");
   assert.equal(CONTROL_API_PATHS.runtime, "/control/runtime");
   assert.equal(CONTROL_API_PATHS.evaluations, "/control/evaluations");
+  assert.equal(CONTROL_API_PATHS.playtesting, "/control/playtesting");
+  assert.equal(typeof playtesting.runPlaytestEpisode, "function");
+  assert.equal(typeof playtesting.RuntimePlaytestStatAnalysis, "function");
 });
 
 test("runtime router exports policy and routes", () => {

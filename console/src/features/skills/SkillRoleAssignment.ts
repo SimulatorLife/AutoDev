@@ -10,7 +10,10 @@ import {
   CALLOUT_WARNING_CLASS
 } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
-import { MONO_ID_CLASS,MONO_META_CLASS } from "../../components/ui/text-classes.ts";
+import {
+  MONO_ID_CLASS,
+  MONO_META_CLASS
+} from "../../components/ui/text-classes.ts";
 
 /**
  * The write half of the skill catalog.
@@ -36,10 +39,7 @@ import { MONO_ID_CLASS,MONO_META_CLASS } from "../../components/ui/text-classes.
  * refusal rather than a silently discarded first write.
  */
 export type SkillAssignmentSaveOutcome =
-  | "conflict"
-  | "validation"
-  | "not-found"
-  | "failed";
+  "conflict" | "validation" | "not-found" | "failed";
 
 export function skillSaveOutcome(
   value: string | readonly string[] | undefined
@@ -164,8 +164,8 @@ export function SkillRoleAssignment({
               // still renders: it posts the complete set either way, and an
               // operator replacing an unresolved assignment is the case this
               // page exists for.
-              roles: eligibility.find((e) => e.skill === skill.name)?.roles ??
-                [],
+              roles:
+                eligibility.find((e) => e.skill === skill.name)?.roles ?? [],
               assignmentRoles,
               executionContractRevision
             })
@@ -262,7 +262,8 @@ function SkillAssignmentForm({
             // it by a third. Four pixels of padding brings the target to 24
             // without changing the type size or the gap between options, and
             // the form already carries `gap-y-2` so the rows stay apart.
-            className: "flex items-center gap-1.5 py-1 text-xs text-fg-secondary",
+            className:
+              "flex items-center gap-1.5 py-1 text-xs text-fg-secondary",
             "data-skill-role-option": role
           },
           React.createElement("input", {

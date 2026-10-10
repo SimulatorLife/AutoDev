@@ -48,6 +48,11 @@ test("MCP launcher resolves pinned AutoDev binaries without shell commands", () 
       pathPrepend: []
     }
   );
+  assert.deepEqual(resolveMcpCommand("playtest", "/repo"), {
+    binary: process.execPath,
+    args: ["/repo/runtime/src/playtesting/mcp-main.ts"],
+    pathPrepend: []
+  });
 });
 
 test("MCP launcher fails clearly when codegraphcontext is missing", () => {

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { PromptAsset, RuleSyncValidationIssue } from "@simulatorlife/autodev-core";
+import type {
+  PromptAsset,
+  RuleSyncValidationIssue
+} from "@simulatorlife/autodev-core";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -44,10 +47,16 @@ test("an invalid command source renders a toned error callout, not a literal", (
   const markup = render(false);
   assert.match(
     markup,
-    new RegExp(`class="${CALLOUT_ERROR_CLASS.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)}`),
+    new RegExp(
+      `class="${CALLOUT_ERROR_CLASS.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)}`
+    ),
     "the error tone must be applied; a literal ${...} means the template was quoted"
   );
-  assert.doesNotMatch(markup, /\$\{CALLOUT_/u, "no template source may leak into class");
+  assert.doesNotMatch(
+    markup,
+    /\$\{CALLOUT_/u,
+    "no template source may leak into class"
+  );
   assert.match(markup, /role="alert"/u);
   assert.match(markup, /data-prompt-source-validity="invalid"/u);
   assert.match(markup, /RuleSync `.rulesync\/commands\/` is invalid/u);
@@ -57,7 +66,9 @@ test("an unobserved command source renders a toned warning callout", () => {
   const markup = render(null);
   assert.match(
     markup,
-    new RegExp(`class="${CALLOUT_WARNING_CLASS.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)}`)
+    new RegExp(
+      `class="${CALLOUT_WARNING_CLASS.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)}`
+    )
   );
   assert.doesNotMatch(markup, /\$\{CALLOUT_/u);
   assert.match(markup, /role="status"/u);

@@ -1,6 +1,6 @@
 # Playtesting measurement and improvement contract
 
-This is the normative measurement companion to [Playtesting Target State](playtesting-target-state.md). It specifies proposed contracts and acceptance fixtures, **not implemented functionality or measured game results**. The target state owns architecture and integration; this file owns metric semantics, sampling, comparisons, human labels and the repeatable improvement loop. Shared Console requirements remain in [Console Target State](autodev-console-target-state.md).
+This is the normative measurement companion to [Playtesting Target State](playtesting-target-state.md). The target state owns architecture and integration; this file owns metric semantics, sampling, comparisons, human labels and the repeatable improvement loop. Its worked values and acceptance fixtures are synthetic, not measured game or human results; partial implementation of a contract is not evidence that its acceptance gate has passed. Shared Console requirements remain in [Console Target State](autodev-console-target-state.md).
 
 All numeric examples below are **synthetic fixtures**. Their thresholds test behavior; they are not validated defaults for a real game. A production benchmark must replace them with game-owned goals and a prospectively justified sample/precision plan before confirmatory claims.
 

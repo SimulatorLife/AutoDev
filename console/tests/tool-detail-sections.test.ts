@@ -52,7 +52,10 @@ test("every tools detail section carries a stable hook and some content", () => 
     })
   );
 
-  const found = Array.from(markup.matchAll(/data-section="([^"]+)"/g), (m) => m[1]);
+  const found = Array.from(
+    markup.matchAll(/data-section="([^"]+)"/g),
+    (m) => m[1]
+  );
   assert.deepEqual(
     [...found].sort(),
     [...SECTIONS].sort(),
@@ -66,10 +69,16 @@ test("every tools detail section carries a stable hook and some content", () => 
     // wrapper is the failure this is meant to catch.
     const start = markup.lastIndexOf("<section", open);
     const end = markup.indexOf("</section>", open);
-    assert.ok(start !== -1 && end > open, `data-section="${name}" is not a section`);
+    assert.ok(
+      start !== -1 && end > open,
+      `data-section="${name}" is not a section`
+    );
     const body = markup.slice(open, end);
     assert.ok(
-      body.replaceAll(/<[^>]*>/g, "").replaceAll(/\s+/g, " ").trim().length > 0,
+      body
+        .replaceAll(/<[^>]*>/g, "")
+        .replaceAll(/\s+/g, " ")
+        .trim().length > 0,
       `data-section="${name}" rendered no text`
     );
   }

@@ -99,11 +99,17 @@ function record(overrides: Partial<MemoryRecord> = {}): MemoryRecord {
  * a revision that cannot be traced back to what justified it is not auditable.
  */
 const EVIDENCE = [
-  { kind: "file", uri: "config/runtime.json", observedAt: "2026-10-02T10:00:00.000Z" }
+  {
+    kind: "file",
+    uri: "config/runtime.json",
+    observedAt: "2026-10-02T10:00:00.000Z"
+  }
 ];
 
 /** A service that records which mutation was called, and returns a known result. */
-function mockService(overrides: Partial<Record<keyof MemoryService, unknown>> = {}) {
+function mockService(
+  overrides: Partial<Record<keyof MemoryService, unknown>> = {}
+) {
   return {
     verifyAndPromote: async () => record({ status: "active" }),
     invalidate: async () => record({ status: "invalidated" }),
@@ -142,21 +148,18 @@ test("POST /control/memory/records/:id/verify promotes and audits the action", a
 });
 
 test("POST /control/memory/records/:id/invalidate requires a bounded reason code", async () => {
-  const good = await callRoute(
-    mockService(),
-    `${RECORDS}/mem-1/invalidate`,
-    { reasonCode: "contradicted", evidence: EVIDENCE }
-  );
+  const good = await callRoute(mockService(), `${RECORDS}/mem-1/invalidate`, {
+    reasonCode: "contradicted",
+    evidence: EVIDENCE
+  });
   assert.equal(good.response.statusCode, 200);
   assert.equal((good.body?.memory as MemoryRecord).status, "invalidated");
 
   // An unrecognised reason must not be stored as one: invalidation is
   // permanent, and a free-text code nobody can count on later is not a reason.
-  const bad = await callRoute(
-    mockService(),
-    `${RECORDS}/mem-1/invalidate`,
-    { reasonCode: "felt-wrong" }
-  );
+  const bad = await callRoute(mockService(), `${RECORDS}/mem-1/invalidate`, {
+    reasonCode: "felt-wrong"
+  });
   assert.equal(bad.response.statusCode, 400);
 });
 
@@ -165,10 +168,7 @@ test("POST /control/memory/records/:id/revise replaces the claim", async () => {
   const service = mockService({
     // Echoes what the route forwarded, so the assertion proves the claim
     // reached the service rather than that a fixed fixture came back.
-    revise: async (
-      _id: string,
-      input: { claim?: string }
-    ) => {
+    revise: async (_id: string, input: { claim?: string }) => {
       submittedClaim = input.claim;
       return record({ claim: input.claim ?? "" });
     }
@@ -185,7 +185,10 @@ test("POST /control/memory/records/:id/revise replaces the claim", async () => {
   );
 
   assert.equal(response.statusCode, 200);
-  assert.equal(submittedClaim, "The retry budget lives in config/runtime.yaml.");
+  assert.equal(
+    submittedClaim,
+    "The retry budget lives in config/runtime.yaml."
+  );
   assert.equal(
     (body?.memory as MemoryRecord).claim,
     "The retry budget lives in config/runtime.yaml."
@@ -207,22 +210,22 @@ test("POST /control/memory/records/:id/revise requires traceable evidence", asyn
 test("POST /control/memory/records/:id/supersede points at the prior record", async () => {
   let capturedPrior: unknown;
   const service = mockService({
-    supersede: async (
-      _id: string,
-      priorId: string,
-      ...rest: unknown[]
-    ) => {
+    supersede: async (_id: string, priorId: string, ...rest: unknown[]) => {
       capturedPrior = priorId;
       void rest;
       return record({ status: "superseded" });
     }
   });
 
-  const { response, body } = await callRoute(service, `${RECORDS}/mem-1/supersede`, {
-    priorId: "mem-0",
-    task: "raise the retry budget",
-    query: "retry budget config"
-  });
+  const { response, body } = await callRoute(
+    service,
+    `${RECORDS}/mem-1/supersede`,
+    {
+      priorId: "mem-0",
+      task: "raise the retry budget",
+      query: "retry budget config"
+    }
+  );
 
   assert.equal(response.statusCode, 200);
   assert.equal(capturedPrior, "mem-0");

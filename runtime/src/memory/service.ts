@@ -878,7 +878,8 @@ export class MemoryService
       }
       if (
         !event.correlationToken.trim() ||
-        event.correlationToken.length > MAX_INJECTION_CORRELATION_TOKEN_CHARACTERS
+        event.correlationToken.length >
+          MAX_INJECTION_CORRELATION_TOKEN_CHARACTERS
       ) {
         throw new MemoryValidationError(
           "Injection event correlationToken is required and bounded."
@@ -1412,7 +1413,9 @@ export class MemoryService
         this.assertMemoryModes(request.memoryModes);
         if (
           request.injectionResults !== undefined &&
-          request.injectionResults.some((value) => !isMemoryInjectionResult(value))
+          request.injectionResults.some(
+            (value) => !isMemoryInjectionResult(value)
+          )
         ) {
           throw new MemoryValidationError(
             "Injection/outcome join injection result filter is invalid."
@@ -1767,9 +1770,7 @@ export class MemoryService
     };
   }
 
-  async listMemories(
-    request: MemoryListRequest
-  ): Promise<MemoryRecordPage> {
+  async listMemories(request: MemoryListRequest): Promise<MemoryRecordPage> {
     this.assertOptionalQuery(request.query);
     const pagination = this.pageRequest(request.limit, request.offset);
     const page = await this.repository.listMemories({

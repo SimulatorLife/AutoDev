@@ -89,21 +89,22 @@ function mockService(
 ): MemoryService {
   return {
     getExperience: async () => experience(),
-    listInjectionOutcomeJoins: async () => ({
-      items: [
-        {
-          injectionId: "inj-1",
-          memoryMode: "jit",
-          injected: true,
-          reported: true,
-          reportKind: "task",
-          outcomeKind: "success"
-        }
-      ],
-      total: 1,
-      limit: 25,
-      offset: 0
-    }) as unknown as MemoryInjectionOutcomeJoinPage,
+    listInjectionOutcomeJoins: async () =>
+      ({
+        items: [
+          {
+            injectionId: "inj-1",
+            memoryMode: "jit",
+            injected: true,
+            reported: true,
+            reportKind: "task",
+            outcomeKind: "success"
+          }
+        ],
+        total: 1,
+        limit: 25,
+        offset: 0
+      }) as unknown as MemoryInjectionOutcomeJoinPage,
     purgeExperience: async () => ({ purged: true }),
     ...overrides
   } as unknown as MemoryService;

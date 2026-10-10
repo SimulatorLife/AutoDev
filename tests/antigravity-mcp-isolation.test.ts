@@ -1163,12 +1163,18 @@ test("read-only Antigravity permission scope limits read_file to validated works
       );
 
       // The read_file rules must include literal root grants and exclude recursive globs.
-      const readGrants = allowList.filter((entry) => entry.startsWith("read_file("));
+      const readGrants = allowList.filter((entry) =>
+        entry.startsWith("read_file(")
+      );
       assert.ok(readGrants.includes(`read_file(${targetWorkspace})`));
       assert.ok(!readGrants.includes(`read_file(${targetWorkspace}/**)`));
-      assert.ok(readGrants.includes(`read_file(${join(env.userHome, ".agents")})`));
+      assert.ok(
+        readGrants.includes(`read_file(${join(env.userHome, ".agents")})`)
+      );
       assert.ok(readGrants.includes(`read_file(${env.codexHome})`));
-      assert.ok(readGrants.includes(`read_file(${join(env.userHome, ".gemini")})`));
+      assert.ok(
+        readGrants.includes(`read_file(${join(env.userHome, ".gemini")})`)
+      );
       assert.ok(!readGrants.some((entry) => entry.includes("/**")));
 
       // 5. Explicit denies remain intact and take precedence

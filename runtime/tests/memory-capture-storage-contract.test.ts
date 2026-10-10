@@ -210,9 +210,7 @@ function digestOf(input: { readonly transcript: string }): string {
   // The route hashes the transcript it read. Recomputing it here keeps the double
   // honest: a duplicate is "the same bytes were captured before", not "the route
   // asked for the same id twice".
-  return createHash("sha256")
-    .update(input.transcript, "utf8")
-    .digest("hex");
+  return createHash("sha256").update(input.transcript, "utf8").digest("hex");
 }
 
 async function call(
@@ -356,7 +354,10 @@ test("a cleared capture stores an envelope scoped by the router, not the request
       taskId: OBSERVED_SESSION,
       runId: OBSERVED_SESSION
     });
-    assert.equal(envelope.trajectory.digest, digestOf({ transcript: transcriptBody }));
+    assert.equal(
+      envelope.trajectory.digest,
+      digestOf({ transcript: transcriptBody })
+    );
   });
 });
 
@@ -381,7 +382,11 @@ test("the same session captured twice is answered as a duplicate and stores noth
       source: "codex",
       duplicate: true
     });
-    assert.equal(store.captures.length, 1, "the replay wrote a second envelope");
+    assert.equal(
+      store.captures.length,
+      1,
+      "the replay wrote a second envelope"
+    );
   });
 });
 
@@ -446,7 +451,11 @@ test("a capture that loses the write race to the same transcript is a duplicate"
       duplicate: true
     });
     // Two reads: one before the write, one to see who won it.
-    assert.equal(store.reads.length, 2, "the race was not re-read after losing");
+    assert.equal(
+      store.reads.length,
+      2,
+      "the race was not re-read after losing"
+    );
   });
 });
 
@@ -529,7 +538,11 @@ test("a store that fails outright is a 503, not a validation error", async () =>
     assert.equal(errorCode(body), "autodev_memory_capture_failed");
     assert.equal(audits.at(-1)?.reason, "capture_failed");
     assert.equal(audits.at(-1)?.outcome, "error");
-    assert.equal(store.captures.length, 0, "a failed store still recorded a write");
+    assert.equal(
+      store.captures.length,
+      0,
+      "a failed store still recorded a write"
+    );
   });
 });
 
@@ -605,7 +618,11 @@ transcriptRoot = "${transcriptRoot}"
       { createMemoryService: () => store?.service ?? null }
     );
     assert.equal(handled, true, "the Claude capture route was not handled");
-    return { status: response.statusCode, body: responseBody(response), audits };
+    return {
+      status: response.statusCode,
+      body: responseBody(response),
+      audits
+    };
   };
   try {
     await run({
@@ -673,7 +690,11 @@ test("a repeated Claude capture is answered as a duplicate and stores nothing", 
       source: "claude-code",
       duplicate: true
     });
-    assert.equal(store.captures.length, 1, "the replay wrote a second envelope");
+    assert.equal(
+      store.captures.length,
+      1,
+      "the replay wrote a second envelope"
+    );
   });
 });
 
@@ -788,7 +809,11 @@ test("an oversized Claude transcript is refused on its size", async () => {
     assert.equal(audits.at(-1)?.reason, "invalid_capture");
     // Refused, not truncated-and-stored: a 32MiB envelope is not the outcome the
     // bound exists to prevent.
-    assert.equal(store.captures.length, 0, "an oversized transcript was stored");
+    assert.equal(
+      store.captures.length,
+      0,
+      "an oversized transcript was stored"
+    );
   });
 });
 
@@ -809,6 +834,10 @@ test("an unreadable Claude transcript is refused by the open, not the size", asy
     assert.equal(status, 400, JSON.stringify({ body, audits }));
     assert.equal(errorCode(body), "autodev_memory_capture_invalid");
     assert.notEqual(audits.at(-1)?.outcome, "ok");
-    assert.equal(store.captures.length, 0, "an unreadable transcript was stored");
+    assert.equal(
+      store.captures.length,
+      0,
+      "an unreadable transcript was stored"
+    );
   });
 });

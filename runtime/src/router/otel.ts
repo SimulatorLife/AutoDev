@@ -6033,10 +6033,7 @@ export function ingestOtelMetrics(payload: OtelPayload): void {
   defaultOtelTracker.ingestOtelMetrics(payload);
 }
 
-export function ingestOtelSignal(
-  signal: OtelSignal,
-  payload: unknown
-): void {
+export function ingestOtelSignal(signal: OtelSignal, payload: unknown): void {
   defaultOtelTracker.ingestOtelSignal(signal, payload);
 }
 

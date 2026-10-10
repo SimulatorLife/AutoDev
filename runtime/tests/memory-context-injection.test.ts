@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-
 import type {
   EvidenceReference,
   MemoryExpiredExperienceRequest,
@@ -179,7 +178,12 @@ function memoryRepository(
     appendExperience: async () => undefined,
     getExperience: async () => null,
     searchExperiences: async () => [],
-    listExperiences: async () => ({ items: [], total: 0, limit: 50, offset: 0 }),
+    listExperiences: async () => ({
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0
+    }),
     listExpiredExperiences: async () => [],
     purgeExperience: async () => "not_visible",
     proposeMemory: async () => undefined,
@@ -264,7 +268,10 @@ const ABLATION_TIME = "2026-09-30T12:00:00.000Z";
 
 /** One eligible hit, so only the bound under test can refuse it. */
 function ablationHit(overrides: Partial<MemoryRecord> = {}): MemorySearchHit {
-  const evidence = { kind: "file" as const, uri: "file:///repo/src/feature.ts" };
+  const evidence = {
+    kind: "file" as const,
+    uri: "file:///repo/src/feature.ts"
+  };
   return {
     memory: {
       id: "memory-ablation",
@@ -342,7 +349,10 @@ test("the ablation packet is bounded by characters, not only by how many it retr
   // keeps a handful of long claims from becoming an unbounded payload.
   const service = ablationService([
     ablationHit({ id: "first", claim: `FIRST-LONG-CLAIM-${"a".repeat(2500)}` }),
-    ablationHit({ id: "second", claim: `SECOND-LONG-CLAIM-${"b".repeat(2500)}` }),
+    ablationHit({
+      id: "second",
+      claim: `SECOND-LONG-CLAIM-${"b".repeat(2500)}`
+    }),
     ablationHit({ id: "third", claim: "THIRD-CLAIM-never-retrieved" })
   ]);
 
@@ -353,7 +363,11 @@ test("the ablation packet is bounded by characters, not only by how many it retr
   );
   const text = String(injected.instructions);
 
-  assert.match(text, /FIRST-LONG-CLAIM/u, "the first entry fits and must be kept");
+  assert.match(
+    text,
+    /FIRST-LONG-CLAIM/u,
+    "the first entry fits and must be kept"
+  );
   assert.doesNotMatch(
     text,
     /SECOND-LONG-CLAIM/u,
@@ -395,7 +409,10 @@ test("the ablation packet bounds what each entry may carry", async () => {
       provenance: {
         experienceIds: ["experience-a"],
         evidence: [
-          { kind: "file" as const, uri: `file:///repo/src/${"u".repeat(600)}.ts` },
+          {
+            kind: "file" as const,
+            uri: `file:///repo/src/${"u".repeat(600)}.ts`
+          },
           {
             kind: "commit" as const,
             uri: "git://repo/short",
@@ -416,7 +433,11 @@ test("the ablation packet bounds what each entry may carry", async () => {
   );
   const text = String(injected.instructions);
 
-  assert.match(text, /The feature defaults to enabled\./u, "the claims still reach the caller");
+  assert.match(
+    text,
+    /The feature defaults to enabled\./u,
+    "the claims still reach the caller"
+  );
   // How many: the fifth locator is past the cap.
   assert.match(text, /locator-4\.ts/u);
   assert.doesNotMatch(text, /locator-5\.ts/u);

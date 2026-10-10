@@ -9,6 +9,8 @@ import {
   resolveMiniMaxEnsureOptions
 } from "@simulatorlife/autodev-runtime/platform/minimax-ensure";
 
+const MINIMAX_TEST_MODEL = "MiniMax-test-model";
+
 function options(
   overrides: Partial<MiniMaxEnsureOptions> = {}
 ): MiniMaxEnsureOptions {
@@ -44,8 +46,10 @@ function deps(overrides: Partial<MiniMaxEnsureDeps> = {}): MiniMaxEnsureDeps {
 }
 
 test("MiniMax model gate claims every MiniMax model and no other provider", () => {
-  assert.equal(isMiniMaxModel('{"model":"MiniMax-M3"}'), true);
-  assert.equal(isMiniMaxModel('{"model":"MiniMax-M3.1-Flash-Preview"}'), true);
+  assert.equal(
+    isMiniMaxModel(JSON.stringify({ model: MINIMAX_TEST_MODEL })),
+    true
+  );
   assert.equal(isMiniMaxModel('{"model":"minimax-m3"}'), false);
   assert.equal(isMiniMaxModel('{"model":"sonnet"}'), false);
 });
@@ -87,7 +91,7 @@ test("non-MiniMax subagents do not start the compatibility proxy", async () => {
 test("MiniMax proxy is started through the typed fallback boundary", async () => {
   let seen: MiniMaxEnsureOptions | undefined;
   const result = await ensureMiniMaxProxy(
-    '{"model":"MiniMax-M3"}',
+    JSON.stringify({ model: MINIMAX_TEST_MODEL }),
     options(),
     deps({
       startFallback: (value) => {
@@ -106,7 +110,7 @@ test("MiniMax proxy is started through the typed fallback boundary", async () =>
 test("every MiniMax model starts the compatibility proxy", async () => {
   let starts = 0;
   const result = await ensureMiniMaxProxy(
-    '{"model":"MiniMax-M3.1-Flash-Preview"}',
+    JSON.stringify({ model: MINIMAX_TEST_MODEL }),
     options(),
     deps({
       startFallback: () => {
@@ -125,7 +129,7 @@ test("every MiniMax model starts the compatibility proxy", async () => {
 test("MiniMax does not use a fallback when launchd owns a configured plist", async () => {
   let started = false;
   const result = await ensureMiniMaxProxy(
-    '{"model":"MiniMax-M3"}',
+    JSON.stringify({ model: MINIMAX_TEST_MODEL }),
     options(),
     deps({
       plistExists: () => true,

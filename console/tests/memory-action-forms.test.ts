@@ -128,7 +128,10 @@ test("a revision submits the claim, its source experiences and its evidence", as
   // name them, and the page is already showing them, so the form states them
   // rather than asking the operator to retype what is on screen.
   assert.equal(fieldValue(form, "experienceIds"), "exp-1,exp-2");
-  assert.equal(fieldValue(form, "claim"), "Raise the retry budget when a run times out.");
+  assert.equal(
+    fieldValue(form, "claim"),
+    "Raise the retry budget when a run times out."
+  );
   assert.deepEqual(selectOptions(form, "evidenceKind"), [
     ...MEMORY_EVIDENCE_KINDS
   ]);
@@ -159,7 +162,9 @@ test("an invalidation offers the Runtime's own reason codes and an evidence refe
     [...MEMORY_REASON_CODES],
     "the invalidation reason must be the Runtime's vocabulary, not free text"
   );
-  assert.deepEqual(selectOptions(form, "evidenceKind"), [...MEMORY_EVIDENCE_KINDS]);
+  assert.deepEqual(selectOptions(form, "evidenceKind"), [
+    ...MEMORY_EVIDENCE_KINDS
+  ]);
   assert.ok(fieldNames(form).includes("evidenceUri"));
 });
 
@@ -266,9 +271,10 @@ test("supersession offers only records the Runtime would admit", async () => {
     record({ id: "mem-proposed-too", status: "proposed" })
   ]);
 
-  assert.deepEqual(selectOptions(actionForm(markup, "memory-supersede"), "priorId"), [
-    "mem-old"
-  ]);
+  assert.deepEqual(
+    selectOptions(actionForm(markup, "memory-supersede"), "priorId"),
+    ["mem-old"]
+  );
 });
 
 test("a proposal with no active record to supersede says so", async () => {
@@ -302,7 +308,7 @@ test("a proposal says the filters are hiding the record it would supersede", asy
     /Clear the filters to choose the record this one replaces/u,
     "the drawer must name the filters as the reason, not imply there is nothing"
   );
-  assert.ok(!markup.includes("data-button=\"memory-supersede\""));
+  assert.ok(!markup.includes('data-button="memory-supersede"'));
 });
 
 test("an unfiltered list says plainly that no record is eligible", async () => {
@@ -318,7 +324,10 @@ test("an unfiltered list says plainly that no record is eligible", async () => {
 test("an active record is not offered supersession", async () => {
   // Only a proposal can supersede, and only an active record can be superseded;
   // an active record is the subject of neither.
-  const markup = render([record({ status: "active" }), record({ id: "mem-old" })]);
+  const markup = render([
+    record({ status: "active" }),
+    record({ id: "mem-old" })
+  ]);
 
   assert.ok(!markup.includes('data-button="memory-supersede"'));
   assert.ok(!markup.includes('name="priorId"'));
@@ -332,7 +341,11 @@ test("every action form names its record, its workspace and where to return to",
     "memory-promote-skill"
   ]) {
     const form = formFor(testId);
-    assert.equal(fieldValue(form, "recordId"), "mem-1", `${testId} must name its record`);
+    assert.equal(
+      fieldValue(form, "recordId"),
+      "mem-1",
+      `${testId} must name its record`
+    );
     assert.equal(
       fieldValue(form, "workspaceId"),
       "SimulatorLife/AutoDev",

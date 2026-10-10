@@ -16,6 +16,7 @@ import {
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { handleControlApiRequest } from "../control-api/index.ts";
+import { shutdownDefaultPlaytestRunControl } from "../playtesting/run-control-service.ts";
 import { codexState, handle, HOST, PORT, refreshCodexState } from "./http.ts";
 import { closeOrchestratorMemoryHost } from "./memory-injection.ts";
 import {
@@ -143,10 +144,19 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   let livePollStarted = false;
   let controlServer: Server | null = null;
   let cleanedUp = false;
+  let playtestingShutdown: Promise<void> | null = null;
+  const closePlaytestingSafely = (): Promise<void> => {
+    if (playtestingShutdown !== null) return playtestingShutdown;
+    playtestingShutdown = shutdownDefaultPlaytestRunControl().catch(() => {
+      writeErrorLine("playtest-run-control: shutdown cancellation failed.");
+    });
+    return playtestingShutdown;
+  };
 
   const sigtermHandler = (signal: string) => {
     void beginShutdown(signal, server, persistRouterStateNow).then(async () => {
       cleanup();
+      await closePlaytestingSafely();
       await closeMemoryHostSafely();
       process.exit(0);
     });
@@ -159,13 +169,15 @@ export function startRouterServer(port = PORT, host = HOST): Server {
       handleFatalProcessError("uncaught_exception", error);
       return;
     }
-    await closeMemoryHostSafely();
     cleanup();
+    await closePlaytestingSafely();
+    await closeMemoryHostSafely();
     handleFatalProcessError("uncaught_exception", error);
   };
   const onUnhandledRejection = async (reason: unknown) => {
-    await closeMemoryHostSafely();
     cleanup();
+    await closePlaytestingSafely();
+    await closeMemoryHostSafely();
     handleFatalProcessError("unhandled_rejection", reason);
   };
   const cleanup = () => {
@@ -176,6 +188,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
       codexState.livePollStarted = false;
     }
     if (controlServer?.listening) controlServer.close();
+    void closePlaytestingSafely();
     void closeMemoryHostSafely();
     process.off("uncaughtException", onUncaughtException);
     process.off("unhandledRejection", onUnhandledRejection);

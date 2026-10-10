@@ -1,6 +1,9 @@
 import React from "react";
 
-import type { ControlRefusalReason } from "../../lib/control-failure.ts";
+import {
+  CONTROL_REFUSAL_REASONS,
+  type ControlRefusalReason
+} from "../../lib/control-failure.ts";
 import { CALLOUT_WARNING_CLASS } from "../layout/Callout.ts";
 
 /**
@@ -13,6 +16,15 @@ import { CALLOUT_WARNING_CLASS } from "../layout/Callout.ts";
  * next. `confirmation_missing` in particular is the one case where the obvious
  * next action is simply to do what the form asked.
  */
+export function isControlRefusalReason(
+  value: unknown
+): value is ControlRefusalReason {
+  return (
+    typeof value === "string" &&
+    (CONTROL_REFUSAL_REASONS as readonly string[]).includes(value)
+  );
+}
+
 const REFUSAL_DETAIL: Record<ControlRefusalReason, string> = {
   confirmation_missing:
     "This action needs the confirmation box ticked before it can run; nothing was sent to the Runtime.",
@@ -38,12 +50,9 @@ const REFUSAL_DETAIL: Record<ControlRefusalReason, string> = {
     "A durable memory still cites this raw experience, so erasing it would leave a claim with no source. It cannot be purged while it is cited.",
   conflicted:
     "This changed since the list you acted on was read. Reload it and decide again.",
-  not_found:
-    "This is no longer there. The list you acted on was stale.",
-  forbidden:
-    "Your reader is not permitted to do this. Nothing was changed.",
-  unavailable:
-    "The Runtime could not be reached, so nothing was changed.",
+  not_found: "This is no longer there. The list you acted on was stale.",
+  forbidden: "Your reader is not permitted to do this. Nothing was changed.",
+  unavailable: "The Runtime could not be reached, so nothing was changed.",
   operation_failed:
     "The Runtime accepted this change and then could not complete it, so nothing was changed. Unlike a refusal, this can succeed on a second attempt."
 };
@@ -57,11 +66,10 @@ const REFUSAL_DETAIL: Record<ControlRefusalReason, string> = {
  * the authoritative answer, so the notice must not invent a more specific
  * outcome it cannot know.
  *
- * `refusal` adds one line *only* where the route observed a reason, as a code
- * carried in the redirect rather than a message the Console chose. Every other
- * mutation surface renders exactly the notice it always did, so the shared
- * pattern is unchanged -- this widens what a reader is told, not how the notice
- * looks or when it appears.
+ * `refusal` adds one line *only* where the route observed a reason, passed as a
+ * bounded code in an in-place result or fallback redirect rather than as a
+ * message the Console chose. Every other mutation surface can continue to use
+ * the generic notice without inventing a more specific outcome.
  *
  * It carries the shared warning callout rather than its own geometry, so a
  * mutation that could not be confirmed looks like every other warning the

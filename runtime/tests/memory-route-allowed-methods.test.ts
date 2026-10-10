@@ -126,7 +126,8 @@ async function ask(
       { createMemoryService: () => permissiveService() }
     );
   } finally {
-    if (previous === undefined) delete process.env.AUTODEV_MEMORY_READ_TASK_HISTORY;
+    if (previous === undefined)
+      delete process.env.AUTODEV_MEMORY_READ_TASK_HISTORY;
     else process.env.AUTODEV_MEMORY_READ_TASK_HISTORY = previous;
   }
   return {
@@ -146,9 +147,10 @@ async function ask(
  * wrong, a 403 means a gate refused, a 200 means it worked. Only a 405 means the
  * method itself is not supported, which is what `Allow` has to describe.
  */
-async function acceptedMethods(
-  route: string
-): Promise<{ readonly methods: string[]; readonly statuses: Map<string, number> }> {
+async function acceptedMethods(route: string): Promise<{
+  readonly methods: string[];
+  readonly statuses: Map<string, number>;
+}> {
   const statuses = new Map<string, number>();
   const methods: string[] = [];
   for (const method of ["GET", "POST"]) {
@@ -245,11 +247,7 @@ test("a GET-only route does not advertise POST", async () => {
     const post = await ask(route, "POST", PROPOSAL);
     const refused = await ask(route, "PUT");
 
-    assert.equal(
-      post.status,
-      405,
-      `${route}: POST was not refused`
-    );
+    assert.equal(post.status, 405, `${route}: POST was not refused`);
     assert.equal(refused.status, 405, `${route}: PUT was not refused`);
     assert.equal(
       refused.allow,

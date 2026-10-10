@@ -195,3 +195,64 @@ export async function removeStaleRows<Row>(
   );
   return staleRows.map(projection.labelOf);
 }
+
+/**
+ * A single bound ClickHouse query parameter value.
+ *
+ * Every caller that needs a user-, filter- or cursor-derived value inside a
+ * SQL statement binds it through `param_<name>` on the request and
+ * `{<name>:<Type>}` inside the query text instead of splicing the value into
+ * the query string. That is the one path "no user values in SQL text" can be
+ * verified against; a second ad hoc interpolation site would reopen the gap
+ * this helper exists to close.
+ */
+export type ClickHouseParamValue = string | number | boolean;
+
+function clickHouseParamLiteral(value: ClickHouseParamValue): string {
+  if (typeof value === "boolean") return value ? "1" : "0";
+  return String(value);
+}
+
+/** Raised when a parameterized ClickHouse statement itself fails. */
+export class ClickHouseStatementError extends Error {
+  readonly status: number;
+
+  constructor(status: number, body: string) {
+    super(`ClickHouse statement failed (${status}): ${body}`);
+    this.name = "ClickHouseStatementError";
+    this.status = status;
+  }
+}
+
+/**
+ * Run one parameterized ClickHouse statement (DDL, SELECT, INSERT or ALTER)
+ * and return the raw response body.
+ *
+ * `query` must be a fixed string built only from this module's own table and
+ * column identifiers; every value that varies by caller or request travels as
+ * a named `params` entry bound through ClickHouse's native `{name:Type}`
+ * placeholder syntax, never through string interpolation into `query`.
+ */
+export async function runParameterizedClickHouseStatement(
+  endpoint: string,
+  query: string,
+  params: Readonly<Record<string, ClickHouseParamValue>> = {},
+  options: { readonly fetchImpl?: typeof fetch; readonly body?: string } = {}
+): Promise<string> {
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const url = new URL(endpoint);
+  url.searchParams.set("query", query);
+  for (const [name, value] of Object.entries(params)) {
+    url.searchParams.set(`param_${name}`, clickHouseParamLiteral(value));
+  }
+  const res = await fetchImpl(url.toString(), {
+    method: "POST",
+    ...(options.body === undefined
+      ? {}
+      : { headers: { "Content-Type": "application/json" }, body: options.body })
+  });
+  if (!res.ok) {
+    throw new ClickHouseStatementError(res.status, await res.text());
+  }
+  return res.text();
+}

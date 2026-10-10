@@ -4,14 +4,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import {
-  ROLES,
-  PROMPT_ROLES
-} from "../src/platform/install-materializer.ts";
-import {
-  ROLE_NAMES,
-  ROUTING_POLICY
-} from "../src/router/routing.ts";
+import { PROMPT_ROLES, ROLES } from "../src/platform/install-materializer.ts";
+import { ROLE_NAMES, ROUTING_POLICY } from "../src/router/routing.ts";
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -41,10 +35,7 @@ test("router resolves playtest role names, aliases, and tier model assignments",
     "ROLE_NAMES must include playtest-analyst"
   );
 
-  assert.equal(
-    ROUTING_POLICY.roleForModel("autodev/playtester"),
-    "playtester"
-  );
+  assert.equal(ROUTING_POLICY.roleForModel("autodev/playtester"), "playtester");
   assert.equal(
     ROUTING_POLICY.roleForModel("autodev/playtest-analyst"),
     "playtest-analyst"
@@ -91,6 +82,9 @@ test("execution contract defines read-only playtest roles with scoped tools", ()
   assert.deepEqual(playtester.mcpTools?.playtest, [
     "playtest.capabilities",
     "playtest.run",
+    "playtest.wait",
+    "playtest.activeRuns",
+    "playtest.cancel",
     "playtest.listEpisodes",
     "playtest.readEpisode",
     "playtest.readWindow"

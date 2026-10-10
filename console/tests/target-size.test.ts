@@ -43,7 +43,9 @@ test("a link chip is a block box with a 24px minimum", () => {
 });
 
 test("a chip that is not a link does not carry the target-size floor", () => {
-  const markup = renderToStaticMarkup(React.createElement(Chip, null, "claude"));
+  const markup = renderToStaticMarkup(
+    React.createElement(Chip, null, "claude")
+  );
   assert.match(markup, /<span /u);
   assert.doesNotMatch(
     markup,

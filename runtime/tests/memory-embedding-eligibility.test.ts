@@ -55,13 +55,17 @@ test("a usable timeout override is returned and an unusable one is not", () => {
   // Ignoring a bad value is the point: forwarding garbage would switch vector
   // retrieval off entirely rather than leaving the adapter on its default.
   assert.equal(
-    embeddingTimeoutMs({ AUTODEV_MEMORY_EMBEDDING_TIMEOUT_MS: "5000" } as NodeJS.ProcessEnv),
+    embeddingTimeoutMs({
+      AUTODEV_MEMORY_EMBEDDING_TIMEOUT_MS: "5000"
+    } as NodeJS.ProcessEnv),
     5000
   );
   // The boundaries themselves are inside the range.
   for (const value of [String(MIN_MS), String(MAX_MS)]) {
     assert.equal(
-      embeddingTimeoutMs({ AUTODEV_MEMORY_EMBEDDING_TIMEOUT_MS: value } as NodeJS.ProcessEnv),
+      embeddingTimeoutMs({
+        AUTODEV_MEMORY_EMBEDDING_TIMEOUT_MS: value
+      } as NodeJS.ProcessEnv),
       Number(value),
       `${value} is inside the range and must be honoured`
     );
@@ -78,9 +82,9 @@ test("a usable timeout override is returned and an unusable one is not", () => {
     "NaN"
   ]) {
     assert.equal(
-      embeddingTimeoutMs(
-        { AUTODEV_MEMORY_EMBEDDING_TIMEOUT_MS: value } as NodeJS.ProcessEnv
-      ),
+      embeddingTimeoutMs({
+        AUTODEV_MEMORY_EMBEDDING_TIMEOUT_MS: value
+      } as NodeJS.ProcessEnv),
       undefined,
       `${JSON.stringify(value)} must leave the adapter on its default`
     );
@@ -105,16 +109,18 @@ test("an embedding model has to be declared before anything is eligible", () => 
   // in. The policy below resolves *any* model, so only the absence of the
   // declaration can make this ineligible.
   assert.equal(
-    configuredMemoryEmbeddingProvider(
-      {} as NodeJS.ProcessEnv,
-      { routeForModel: () => route({ baseUrl: "http://127.0.0.1:8080/v1", envKey: null }) }
-    ),
+    configuredMemoryEmbeddingProvider({} as NodeJS.ProcessEnv, {
+      routeForModel: () =>
+        route({ baseUrl: "http://127.0.0.1:8080/v1", envKey: null })
+    }),
     undefined,
     "an undeclared model must not inherit a default and become eligible"
   );
   assert.equal(
     configuredMemoryEmbeddingProvider(
-      { AUTODEV_MEMORY_EMBEDDING_MODEL: "text-embedding-3-small" } as NodeJS.ProcessEnv,
+      {
+        AUTODEV_MEMORY_EMBEDDING_MODEL: "text-embedding-3-small"
+      } as NodeJS.ProcessEnv,
       routingFor({})
     ),
     undefined,
@@ -155,7 +161,9 @@ test("a remote route needs a credential, and a local one does not", () => {
 
   // The rule this whole function turns on.
   const withoutKey = configuredMemoryEmbeddingProvider(
-    { AUTODEV_MEMORY_EMBEDDING_MODEL: "text-embedding-3-small" } as NodeJS.ProcessEnv,
+    {
+      AUTODEV_MEMORY_EMBEDDING_MODEL: "text-embedding-3-small"
+    } as NodeJS.ProcessEnv,
     REMOTE_WITH_KEY
   );
   assert.equal(
@@ -254,12 +262,18 @@ test("only the three local spellings count as loopback", () => {
 test("a route that declares a credential must actually have one in the environment", () => {
   // `envKey: null` means the route needs none; a named key means it does.
   const policy = routingFor({
-    "embed-keyed": route({ baseUrl: "http://127.0.0.1:8080/v1", envKey: "MY_KEY" })
+    "embed-keyed": route({
+      baseUrl: "http://127.0.0.1:8080/v1",
+      envKey: "MY_KEY"
+    })
   });
 
   assert.ok(
     configuredMemoryEmbeddingProvider(
-      { AUTODEV_MEMORY_EMBEDDING_MODEL: "embed-keyed", MY_KEY: "k" } as NodeJS.ProcessEnv,
+      {
+        AUTODEV_MEMORY_EMBEDDING_MODEL: "embed-keyed",
+        MY_KEY: "k"
+      } as NodeJS.ProcessEnv,
       policy
     ),
     "a named key that is present makes a local route eligible"

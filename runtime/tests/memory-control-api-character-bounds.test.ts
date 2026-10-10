@@ -86,7 +86,8 @@ function call(
   query: Record<string, string> = {}
 ): Promise<CallResult> {
   let calls = 0;
-  const counting = <T>(value: T) =>
+  const counting =
+    <T>(value: T) =>
     async (...args: unknown[]) => {
       calls += 1;
       return typeof value === "function"
@@ -117,9 +118,11 @@ function call(
       serviceCalls: () => calls
     }))
     .finally(() => {
-      if (previousHistory === undefined) delete process.env.AUTODEV_MEMORY_READ_TASK_HISTORY;
+      if (previousHistory === undefined)
+        delete process.env.AUTODEV_MEMORY_READ_TASK_HISTORY;
       else process.env.AUTODEV_MEMORY_READ_TASK_HISTORY = previousHistory;
-      if (previousGlobal === undefined) delete process.env.AUTODEV_MEMORY_READ_GLOBAL;
+      if (previousGlobal === undefined)
+        delete process.env.AUTODEV_MEMORY_READ_GLOBAL;
       else process.env.AUTODEV_MEMORY_READ_GLOBAL = previousGlobal;
     });
 }
@@ -160,7 +163,11 @@ test("the records query filter is bounded by the filter bound, not the query bou
     { query: "a".repeat(256) }
   );
   assert.equal(atBound.response.statusCode, 200);
-  assert.equal(atBound.serviceCalls(), 1, "a query at the bound must reach the service");
+  assert.equal(
+    atBound.serviceCalls(),
+    1,
+    "a query at the bound must reach the service"
+  );
   assert.equal(captured.query, "a".repeat(256));
 
   captured.query = undefined;
@@ -244,9 +251,7 @@ test("proposal evidence is bounded on both the uri and the revision", async () =
     "POST",
     "/control/memory/records",
     proposeService(),
-    proposalBody("A durable claim.", [
-      { kind: "file", uri: "u".repeat(2048) }
-    ])
+    proposalBody("A durable claim.", [{ kind: "file", uri: "u".repeat(2048) }])
   );
   assert.equal(
     uriAtBound.response.statusCode,
@@ -259,9 +264,7 @@ test("proposal evidence is bounded on both the uri and the revision", async () =
     "POST",
     "/control/memory/records",
     proposeService(),
-    proposalBody("A durable claim.", [
-      { kind: "file", uri: "u".repeat(2049) }
-    ])
+    proposalBody("A durable claim.", [{ kind: "file", uri: "u".repeat(2049) }])
   );
   assert.equal(
     uriPastBound.response.statusCode,

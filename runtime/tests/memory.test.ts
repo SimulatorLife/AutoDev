@@ -173,9 +173,7 @@ class FakeMemoryRepository implements MemoryRepository {
     return [...this.experiences.values()];
   }
 
-  async listExperiences(
-    request: ExperienceListRequest
-  ): Promise<{
+  async listExperiences(request: ExperienceListRequest): Promise<{
     items: readonly ExperienceEnvelope[];
     total: number;
     limit: number;
@@ -1887,7 +1885,9 @@ test("every write path that publishes an active claim also verifies it", async (
     const unverifiedButActive = [...repository.memories.values()]
       .filter((memory) => memory.status === "active")
       .filter((memory) => memory.validity.state !== "verified")
-      .map((memory) => `${memory.id}:${memory.status}/${memory.validity.state}`);
+      .map(
+        (memory) => `${memory.id}:${memory.status}/${memory.validity.state}`
+      );
     assert.deepEqual(
       unverifiedButActive,
       [],
@@ -2592,7 +2592,11 @@ function assertNothingCredentialReachedStorage(stored: unknown): void {
     /hunter2/u,
     "a basic-auth password reached storage"
   );
-  assert.doesNotMatch(serialized, /tok-LIVE-9f3a/u, "an access token reached storage");
+  assert.doesNotMatch(
+    serialized,
+    /tok-LIVE-9f3a/u,
+    "an access token reached storage"
+  );
 }
 
 test("an experience's credentialed evidence and trajectory are sanitized before storage", async () => {
@@ -4024,9 +4028,7 @@ test("the injection/outcome join refuses an injection result and a report kind o
   await assert.rejects(
     service.listInjectionOutcomeJoins(
       outcomeJoinRequest({
-        injectionResults: [
-          "not-a-result"
-        ] as unknown as MemoryInjectionResult[]
+        injectionResults: ["not-a-result"] as unknown as MemoryInjectionResult[]
       })
     ),
     MemoryValidationError
@@ -4073,7 +4075,10 @@ test("the injection/outcome join accepts every stored vocabulary and returns the
   assert.equal(page.total, 1);
   assert.equal(page.items.length, 1);
   assert.equal(page.items[0]?.outcome?.outcomeKind, "success");
-  assert.equal(page.items[0]?.injection.correlationToken, "private-correlation-token");
+  assert.equal(
+    page.items[0]?.injection.correlationToken,
+    "private-correlation-token"
+  );
   assert.equal(repository.outcomeJoinRequests.length, 1);
 });
 
@@ -4082,9 +4087,8 @@ test("includeUnreported surfaces a stored injection that has no outcome yet", as
   const service = makeService(repository);
   await persistOutcomeInjection(repository, service);
 
-  const reportedOnly = await service.listInjectionOutcomeJoins(
-    outcomeJoinRequest()
-  );
+  const reportedOnly =
+    await service.listInjectionOutcomeJoins(outcomeJoinRequest());
   assert.equal(reportedOnly.total, 0);
 
   const unreported = await service.listInjectionOutcomeJoins(
@@ -4127,7 +4131,10 @@ test("a row belonging to another session never appears in the join", async () =>
   // that re-check is not what this assertion exercises.
   assert.equal(page.total, 1);
   assert.equal(page.items.length, 1);
-  assert.equal(page.items[0]?.injection.correlationToken, "private-correlation-token");
+  assert.equal(
+    page.items[0]?.injection.correlationToken,
+    "private-correlation-token"
+  );
 });
 
 test("an outcome recorded against another session is dropped from the join", async () => {
@@ -4182,7 +4189,10 @@ test("experience search bounds the hit count it asks storage for and returns", a
   const repository = new FakeMemoryRepository();
   const service = makeService(repository);
   for (let index = 0; index < 45; index += 1)
-    repository.experiences.set(`experience-${index}`, experience(`experience-${index}`));
+    repository.experiences.set(
+      `experience-${index}`,
+      experience(`experience-${index}`)
+    );
 
   const page = await service.searchExperiences(
     experienceSearchRequest({ limit: 1000 })
@@ -4201,14 +4211,16 @@ test("experience search bounds the hit count it asks storage for and returns", a
 test("experience search hides another run's raw trajectory from an ordinary reader", async () => {
   const repository = new FakeMemoryRepository();
   const service = makeService(repository);
-  repository.experiences.set(
-    "run-private",
-    experience("run-private")
-  );
+  repository.experiences.set("run-private", experience("run-private"));
   const runPrivate = repository.experiences.get("run-private")!;
   repository.experiences.set("run-private", {
     ...runPrivate,
-    scope: { kind: "task", workspaceId: "workspace-a", taskId: "task-old", runId: "run-old" },
+    scope: {
+      kind: "task",
+      workspaceId: "workspace-a",
+      taskId: "task-old",
+      runId: "run-old"
+    },
     taskId: "task-old",
     runId: "run-old"
   });
@@ -4233,7 +4245,11 @@ test("experience search hides a repository the reader cannot see", async () => {
   repository.experiences.set("foreign-repo", {
     ...foreign,
     repositoryId: "repo-b",
-    scope: { kind: "repository", workspaceId: "workspace-a", repositoryId: "repo-b" }
+    scope: {
+      kind: "repository",
+      workspaceId: "workspace-a",
+      repositoryId: "repo-b"
+    }
   });
 
   const page = await service.searchExperiences(experienceSearchRequest());
@@ -4278,7 +4294,11 @@ test("the experience list reports the pagination it applied and hides invisible 
   repository.experiences.set("foreign-repo", {
     ...foreign,
     repositoryId: "repo-b",
-    scope: { kind: "repository", workspaceId: "workspace-a", repositoryId: "repo-b" }
+    scope: {
+      kind: "repository",
+      workspaceId: "workspace-a",
+      repositoryId: "repo-b"
+    }
   });
 
   const page = await service.listExperiences({ context });
@@ -4292,7 +4312,11 @@ test("the experience list reports the pagination it applied and hides invisible 
     ["visible"]
   );
 
-  const paged = await service.listExperiences({ context, limit: 25, offset: 10 });
+  const paged = await service.listExperiences({
+    context,
+    limit: 25,
+    offset: 10
+  });
   assert.equal(paged.limit, 25);
   assert.equal(paged.offset, 10);
   assert.equal(repository.experienceListRequests[1]?.offset, 10);
@@ -4450,7 +4474,10 @@ test("a workspace-scoped memory supersedes another workspace-scoped one", async 
   const service = makeService(repository, {
     makeId: () => `event-${++eventId}`
   });
-  const workspaceScope = { kind: "workspace" as const, workspaceId: "workspace-a" };
+  const workspaceScope = {
+    kind: "workspace" as const,
+    workspaceId: "workspace-a"
+  };
   const prior = record("prior", { scope: workspaceScope });
   const replacement = record("replacement", {
     status: "proposed",
@@ -4515,7 +4542,8 @@ test("only root or curator authorities may record an outcome, and the actor supp
     context
   });
   assert.equal(
-    repository.outcomeReports.get("private-correlation-token")?.reporterAuthority,
+    repository.outcomeReports.get("private-correlation-token")
+      ?.reporterAuthority,
     "root"
   );
 });
@@ -4745,9 +4773,7 @@ async function makeOutcomeHarnessAcrossRequests(): Promise<{
  * what keep one event from smuggling an unbounded token, id list, packet size
  * or credentialed locator into the append-only store.
  */
-function injectionEventRequest(
-  overrides: Partial<MemoryInjectionEvent> = {}
-): {
+function injectionEventRequest(overrides: Partial<MemoryInjectionEvent> = {}): {
   readonly event: MemoryInjectionEvent;
   readonly context: MemoryReadContext;
 } {
@@ -4768,7 +4794,11 @@ async function recordInjectionEvent(
   overrides: Partial<MemoryInjectionEvent> = {}
 ): Promise<{ readonly appended: boolean; readonly id: string }> {
   const { event, context: eventContext } = injectionEventRequest(overrides);
-  return service.recordInjectionEvent({ event, actor: root, context: eventContext });
+  return service.recordInjectionEvent({
+    event,
+    actor: root,
+    context: eventContext
+  });
 }
 
 test("an injection event is restricted to the trusted session's workspace, task, run and agent", async () => {
@@ -4826,7 +4856,10 @@ test("an injection event bounds the memory ids it references", async () => {
 
   await assert.rejects(
     recordInjectionEvent(service, {
-      memoryIds: Array.from({ length: 65 }, (_unused, index) => `memory-${index}`)
+      memoryIds: Array.from(
+        { length: 65 },
+        (_unused, index) => `memory-${index}`
+      )
     }),
     MemoryValidationError
   );
@@ -4887,12 +4920,20 @@ test("an injection event bounds its evidence references", async () => {
   );
   await assert.rejects(
     recordInjectionEvent(service, {
-      evidence: [{ kind: "commit", uri: "https://example.test/x", revision: "r".repeat(257) }]
+      evidence: [
+        {
+          kind: "commit",
+          uri: "https://example.test/x",
+          revision: "r".repeat(257)
+        }
+      ]
     }),
     MemoryValidationError
   );
   await assert.rejects(
-    recordInjectionEvent(service, { evidence: [{ kind: "document", uri: "" }] }),
+    recordInjectionEvent(service, {
+      evidence: [{ kind: "document", uri: "" }]
+    }),
     MemoryValidationError
   );
   assert.equal(repository.injectionEvents.size, 0);
@@ -5040,7 +5081,10 @@ function workspaceScopedExperience(
   // different, so a scope that names no repository has to drop the field.
   const { repositoryId: _dropped, ...withoutRepository } = experience(id);
   return repositoryId === undefined
-    ? { ...withoutRepository, scope: { kind: "workspace", workspaceId: "workspace-a" } }
+    ? {
+        ...withoutRepository,
+        scope: { kind: "workspace", workspaceId: "workspace-a" }
+      }
     : {
         ...withoutRepository,
         repositoryId,
@@ -5124,7 +5168,9 @@ test("a use report needs a visible experience that names a repository", async ()
   );
 
   await assert.rejects(
-    service.recordInjectionUseReport(useReportInput(workspaceScopedExperience("experience-1", undefined))),
+    service.recordInjectionUseReport(
+      useReportInput(workspaceScopedExperience("experience-1", undefined))
+    ),
     /visible repository-scoped experience/u
   );
 
@@ -5221,12 +5267,7 @@ test("a canonical skill that drifted from its recorded revision is a conflict, n
   // that reports a different revision: the artifact moved under us.
   const first = await makeService(repository, {
     skillPromotionWriter: SKILL_WRITER
-  }).promoteProcedureToSkill(
-    current.id,
-    SKILL_INPUT,
-    root,
-    researchRequest()
-  );
+  }).promoteProcedureToSkill(current.id, SKILL_INPUT, root, researchRequest());
   assert.equal(first.skill.revision, "c".repeat(64));
 
   await assert.rejects(
@@ -5513,9 +5554,8 @@ test("retention erases only expired, unreferenced, visible experiences", async (
   });
   // A run that never completed has no completedAt at all; an absent key and an
   // explicit undefined are different under exactOptionalPropertyTypes.
-  const { completedAt: _stillRunning, ...stillRunning } = experience(
-    "still-running"
-  );
+  const { completedAt: _stillRunning, ...stillRunning } =
+    experience("still-running");
   await repository.appendExperience(stillRunning);
   await repository.appendExperience({
     ...experience("referenced-one"),
@@ -5534,7 +5574,11 @@ test("retention erases only expired, unreferenced, visible experiences", async (
     ...experience("foreign-repo"),
     completedAt: "2026-09-01T00:00:00.000Z",
     repositoryId: "repo-b",
-    scope: { kind: "repository", workspaceId: "workspace-a", repositoryId: "repo-b" }
+    scope: {
+      kind: "repository",
+      workspaceId: "workspace-a",
+      repositoryId: "repo-b"
+    }
   });
 
   const report = await service.purgeExpiredExperiences({
@@ -5568,12 +5612,7 @@ test("purging an experience needs a bounded id and a known reason", async () => 
   const service = makeService(repository);
 
   await assert.rejects(
-    service.purgeExperience(
-      "   ",
-      "privacy_request",
-      root,
-      retentionContext()
-    ),
+    service.purgeExperience("   ", "privacy_request", root, retentionContext()),
     /experience id is invalid/u
   );
   await assert.rejects(
@@ -5767,7 +5806,10 @@ test("one session accepts one report: a retry is a no-op, a different body is a 
     MemoryConflictError
   );
   // The first report is still the one on record.
-  assert.equal(repository.sessionOutcomeReports.get(key)?.outcomeKind, "success");
+  assert.equal(
+    repository.sessionOutcomeReports.get(key)?.outcomeKind,
+    "success"
+  );
 });
 
 /**
@@ -5922,7 +5964,11 @@ function proposalInput(
 } {
   return {
     kind: "semantic",
-    scope: { kind: "repository", workspaceId: "workspace-a", repositoryId: "repo-a" },
+    scope: {
+      kind: "repository",
+      workspaceId: "workspace-a",
+      repositoryId: "repo-a"
+    },
     claim: "A claim whose evidence must be visible.",
     experienceIds: ["source-experience"],
     evidence: [source],
@@ -5948,11 +5994,7 @@ test("a proposal needs a claim that survives as text and stays bounded", async (
     /must be concise and non-empty/u
   );
   await assert.rejects(
-    service.propose(
-      proposalInput({ claim: "c".repeat(4001) }),
-      root,
-      context
-    ),
+    service.propose(proposalInput({ claim: "c".repeat(4001) }), root, context),
     /must be concise and non-empty/u
   );
   assert.equal(repository.memories.size, 0);
@@ -5976,7 +6018,10 @@ test("a proposal needs a bounded set of source experiences it can actually cite"
   await assert.rejects(
     service.propose(
       proposalInput({
-        experienceIds: Array.from({ length: 65 }, (_unused, index) => `e-${index}`)
+        experienceIds: Array.from(
+          { length: 65 },
+          (_unused, index) => `e-${index}`
+        )
       }),
       root,
       context
@@ -5999,7 +6044,9 @@ test("a proposal needs a bounded set of source experiences it can actually cite"
 
   // A duplicate citation is bounded too: the stored list is deduplicated.
   const accepted = await service.propose(
-    proposalInput({ experienceIds: ["source-experience", "source-experience"] }),
+    proposalInput({
+      experienceIds: ["source-experience", "source-experience"]
+    }),
     root,
     context
   );
@@ -6021,17 +6068,17 @@ test("only a live memory can be revised", async () => {
   const service = makeService(repository);
   await repository.appendExperience(experience("source-experience"));
 
-  for (const status of [
-    "proposed",
-    "invalidated",
-    "superseded"
-  ] as const) {
+  for (const status of ["proposed", "invalidated", "superseded"] as const) {
     const target = record(`target-${status}`, { status });
     repository.memories.set(target.id, target);
     await assert.rejects(
       service.revise(
         target.id,
-        { claim: "A revised claim.", experienceIds: ["source-experience"], evidence: [source] },
+        {
+          claim: "A revised claim.",
+          experienceIds: ["source-experience"],
+          evidence: [source]
+        },
         root,
         context
       ),
@@ -6042,7 +6089,11 @@ test("only a live memory can be revised", async () => {
   await assert.rejects(
     service.revise(
       "no-such-record",
-      { claim: "A revised claim.", experienceIds: ["source-experience"], evidence: [source] },
+      {
+        claim: "A revised claim.",
+        experienceIds: ["source-experience"],
+        evidence: [source]
+      },
       root,
       context
     ),
@@ -6055,7 +6106,11 @@ test("only a live memory can be revised", async () => {
   repository.memories.set(uncertain.id, uncertain);
   const revised = await service.revise(
     uncertain.id,
-    { claim: "A revised claim.", experienceIds: ["source-experience"], evidence: [source] },
+    {
+      claim: "A revised claim.",
+      experienceIds: ["source-experience"],
+      evidence: [source]
+    },
     root,
     context
   );
@@ -6130,7 +6185,10 @@ test("a use report bounds the memory ids and evidence it carries", async () => {
   // The bounds sit after the event lookup, so the session has to be there.
   for (const [override, message] of [
     [{ usedMemoryIds: tooMany(65) }, /too many memory ids/u],
-    [{ evidence: manyEvidence }, /[Tt]oo many injection-use evidence references/u]
+    [
+      { evidence: manyEvidence },
+      /[Tt]oo many injection-use evidence references/u
+    ]
   ] as const) {
     const { repository, service } = await useReportHarness();
     await persistOutcomeInjection(repository, service, useInjectionEvent());
@@ -6194,7 +6252,9 @@ function recordingTracer(attributes: Map<string, unknown>): Tracer {
 
 /** A memory whose reconstruction is long enough to overflow a small packet. */
 function bulkyRecord(id: string): MemoryRecord {
-  return record(id, { claim: `${id}: a claim long enough to occupy real space in the packet body.` });
+  return record(id, {
+    claim: `${id}: a claim long enough to occupy real space in the packet body.`
+  });
 }
 
 test("a packet that had to drop entries reports how many it dropped", async () => {
@@ -6219,7 +6279,9 @@ test("a packet that had to drop entries reports how many it dropped", async () =
     })
   });
 
-  const packet = await service.research(researchRequest({ maxPacketCharacters: 600 }));
+  const packet = await service.research(
+    researchRequest({ maxPacketCharacters: 600 })
+  );
 
   assert.ok(
     packet.entries.length < ids.length,
@@ -6257,7 +6319,11 @@ test("a packet that dropped nothing reports zero, not an absent attribute", asyn
 
   const packet = await service.research(researchRequest());
 
-  assert.equal(packet.entries.length, 1, "the fixture did not fit; nothing to test");
+  assert.equal(
+    packet.entries.length,
+    1,
+    "the fixture did not fit; nothing to test"
+  );
   assert.equal(
     attributes.get("memory.packet.omitted"),
     0,
@@ -6284,7 +6350,9 @@ test("the omissions are the entries that did not fit, not an arbitrary subset", 
     })
   });
 
-  const packet = await service.research(researchRequest({ maxPacketCharacters: 900 }));
+  const packet = await service.research(
+    researchRequest({ maxPacketCharacters: 900 })
+  );
   const kept = packet.entries.map((entry) => entry.memoryId);
 
   // At least two must fit, or the ordering claim below is vacuous: a prefix of
@@ -6381,7 +6449,9 @@ test("every MCP read tool runs against the host session and ignores a caller-sel
       return {
         // The SDK types `isError` as unknown, so narrow it here rather than
         // asserting against a value the client has not promised is boolean.
-        ...(typeof result.isError === "boolean" ? { isError: result.isError } : {}),
+        ...(typeof result.isError === "boolean"
+          ? { isError: result.isError }
+          : {}),
         text: first?.text ?? ""
       };
     };
@@ -6444,7 +6514,11 @@ test("every MCP read tool runs against the host session and ignores a caller-sel
       evidence: [source],
       workspaceId: "attacker-selected-workspace"
     });
-    assert.equal(revised.isError, undefined, `memory_revise failed: ${revised.text}`);
+    assert.equal(
+      revised.isError,
+      undefined,
+      `memory_revise failed: ${revised.text}`
+    );
   });
 });
 

@@ -526,7 +526,10 @@ test("the outcome list applies its own filters and refuses a context without a s
   };
   const repository = new PostgresMemoryRepository({ pool });
 
-  const injected = injectionEvent({ id: "inj-injected", correlationToken: "token-injected" });
+  const injected = injectionEvent({
+    id: "inj-injected",
+    correlationToken: "token-injected"
+  });
   const empty = injectionEvent({
     id: "inj-empty",
     correlationToken: "token-empty",
@@ -548,7 +551,20 @@ test("the outcome list applies its own filters and refuses a context without a s
       context: { ...requestContext, taskId: event.taskId }
     });
   }
-  console.log("EVENT ROWS", JSON.stringify([...base.tables.memory_injection_events.values()].map((r) => ({ id: r.id, token: r.correlation_token, ws: r.scope_workspace_id, repo: r.repository_id, task: r.scope_task_id })), null, 1));
+  console.log(
+    "EVENT ROWS",
+    JSON.stringify(
+      [...base.tables.memory_injection_events.values()].map((r) => ({
+        id: r.id,
+        token: r.correlation_token,
+        ws: r.scope_workspace_id,
+        repo: r.repository_id,
+        task: r.scope_task_id
+      })),
+      null,
+      1
+    )
+  );
   await repository.recordOutcomeReport({
     report: outcomeReport({
       correlationToken: injected.correlationToken,
@@ -570,7 +586,8 @@ test("the outcome list applies its own filters and refuses a context without a s
   });
 
   assert.equal(
-    (await repository.listInjectionOutcomeJoins({ context: sessionContext })).total,
+    (await repository.listInjectionOutcomeJoins({ context: sessionContext }))
+      .total,
     2,
     "only the two reported exposures are listed by default"
   );

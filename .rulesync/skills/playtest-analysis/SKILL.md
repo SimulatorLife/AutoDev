@@ -18,11 +18,23 @@ Do not use this skill for:
 - Fixing code, game logic, metrics, or configuration -- ordinary coding skills apply instead; this skill never rewrites evaluation rules or source.
 - Creating or publishing a GitHub issue -- publication goes through the root orchestrator's existing GitHub integration, never this skill directly.
 
+### Negative trigger examples
+
+Do not trigger for requests such as:
+- "play ten episodes of the target game" (execution/simulation task, use game-playtesting)
+- "run a playtest batch" (execution/simulation task, use game-playtesting)
+- "fix this code so the build passes" (source code repair, use standard engineering skills)
+- "file a GitHub issue for this bug" (root issue publication)
+
 ## Non-goals
 
 - No single-number 0-100 "fun" score, and no substituting model confidence or win rate for an experience score.
 - No running, branching, or modifying gameplay; use only the evidence the runner already produced.
 - No GitHub issue creation -- propose findings/hypotheses only.
+
+## Workspace and build authorization gate
+
+Enforce the authorized workspace and build gate: inspect only evidence originating from explicitly authorized workspaces and verified checkout/build SHAs. Reject cross-workspace data access, unapproved game builds, or unverified traces.
 
 ## The 8-step review procedure
 
@@ -56,4 +68,3 @@ Human judge/validation data is an optional input, not a separate skill. Read ref
 - Never cite an event/step/episode ID you did not actually retrieve; a nonexistent or irrelevant citation invalidates the claim, not just the score.
 - A dominant-strategy win or a bot's poor play is not automatically a design flaw -- rule out policy competence first.
 - Do not equate surprise with confusion, loss with frustration, or predictability with boredom.
-

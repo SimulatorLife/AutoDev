@@ -1,9 +1,14 @@
 import type { Metadata } from "next";
 import React from "react";
 
-import { WorkspacesView } from "../../src/features/workspaces/WorkspacesView.ts";
 import {
+  type WorkspaceApprovalLookup,
+  WorkspacesView
+} from "../../src/features/workspaces/WorkspacesView.ts";
+import {
+  type ControlApiConfig,
   controlApiFailureCode,
+  fetchWorkspacePlaytestApproval,
   fetchWorkspaces
 } from "../../src/lib/server/control-api.ts";
 import {
@@ -18,6 +23,30 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
   title: "Workspaces"
 };
+
+/**
+ * Each configured workspace's most recent playtesting approval, read
+ * independently per workspace because the Control API answers this fact
+ * per workspace rather than embedding it in the catalog read above. A
+ * workspace whose read failed is kept distinct (`"unavailable"`) from one
+ * the Control API confirmed has no approval (`null`): one is missing
+ * evidence, the other is an observed absence.
+ */
+async function readApprovals(
+  workspaceIds: readonly string[],
+  config: ControlApiConfig
+): Promise<WorkspaceApprovalLookup> {
+  const entries = await Promise.all(
+    workspaceIds.map(async (workspaceId) => {
+      const result = await fetchWorkspacePlaytestApproval(workspaceId, config);
+      return [
+        workspaceId,
+        result.kind === "ok" ? result.data.approval : ("unavailable" as const)
+      ] as const;
+    })
+  );
+  return new Map(entries);
+}
 
 export default async function WorkspacesPage(): Promise<React.JSX.Element> {
   const { section, config } = readNodeContext("/workspaces");
@@ -61,9 +90,13 @@ export default async function WorkspacesPage(): Promise<React.JSX.Element> {
     );
   }
   const workspaces = result.data.workspaces;
+  const approvals = await readApprovals(
+    workspaces.map((workspace) => workspace.id),
+    config
+  );
   return React.createElement(
     ConsolePageShell,
     { section, counts: { Workspaces: workspaces.length } },
-    React.createElement(WorkspacesView, { workspaces })
+    React.createElement(WorkspacesView, { workspaces, approvals })
   );
 }

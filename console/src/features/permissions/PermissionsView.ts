@@ -173,8 +173,15 @@ function RoleToolExposure({
   );
   return React.createElement(
     "section",
-    { className: "mt-6 flex flex-col gap-3", "data-testid": "role-tool-exposure" },
-    React.createElement("h2", { className: SECTION_HEADING_CLASS }, "Role Tool Exposure"),
+    {
+      className: "mt-6 flex flex-col gap-3",
+      "data-testid": "role-tool-exposure"
+    },
+    React.createElement(
+      "h2",
+      { className: SECTION_HEADING_CLASS },
+      "Role Tool Exposure"
+    ),
     granted.length === 0
       ? React.createElement(
           "p",
@@ -205,7 +212,8 @@ function RoleToolExposure({
                     "div",
                     {
                       key: server,
-                      className: "flex flex-wrap items-baseline gap-x-3 gap-y-1",
+                      className:
+                        "flex flex-wrap items-baseline gap-x-3 gap-y-1",
                       "data-tool-server": server
                     },
                     React.createElement(

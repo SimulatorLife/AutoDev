@@ -97,16 +97,17 @@ function render(
     {
       injection: injection(),
       sessionInjectionCount: 1,
-      outcome: options.reported === true
-        ? {
-            outcomeKind: "success",
-            reportKind: "task",
-            reportedAt: "2026-09-20T10:00:00.000Z",
-            reporterId: "operator",
-            reporterAuthority: "operator",
-            reasonCode: "verified_current_state"
-          }
-        : null
+      outcome:
+        options.reported === true
+          ? {
+              outcomeKind: "success",
+              reportKind: "task",
+              reportedAt: "2026-09-20T10:00:00.000Z",
+              reporterId: "operator",
+              reporterAuthority: "operator",
+              reasonCode: "verified_current_state"
+            }
+          : null
     }
   ];
   const assessments: ControlApiMemoryInjectionUseAssessment[] = [
@@ -175,14 +176,19 @@ test("an outcome report submits the token it binds to and the Runtime's own voca
   // The token binds the report to this injection; the Runtime re-resolves it
   // against the reporter's scope, so a wrong one fails closed.
   assert.equal(fieldValue(form, "correlationToken"), "corr-1");
-  assert.deepEqual(selectOptions(form, "outcomeKind"), [...EXPERIENCE_OUTCOMES]);
+  assert.deepEqual(selectOptions(form, "outcomeKind"), [
+    ...EXPERIENCE_OUTCOMES
+  ]);
   assert.deepEqual(selectOptions(form, "reportKind"), [
     ...MEMORY_OUTCOME_REPORT_KINDS
   ]);
   assert.deepEqual(selectOptions(form, "evidenceKind"), [
     ...MEMORY_EVIDENCE_KINDS
   ]);
-  assert.ok(form.includes('name="evidenceUri"'), "a report needs where its evidence lives");
+  assert.ok(
+    form.includes('name="evidenceUri"'),
+    "a report needs where its evidence lives"
+  );
 });
 
 test("a use assessment submits the injection it judges and the Runtime's use kinds", async () => {
@@ -201,7 +207,10 @@ test("every evidence-kind select on the page offers one identical list", async (
   // vocabulary from two hand-written lists, which agree until one is edited.
   const lists = allOptions(render(), "evidenceKind");
 
-  assert.ok(lists.length >= 2, "expected several evidence selects on one drawer");
+  assert.ok(
+    lists.length >= 2,
+    "expected several evidence selects on one drawer"
+  );
   for (const list of lists) {
     assert.deepEqual(
       list.map((entry) => entry.value),

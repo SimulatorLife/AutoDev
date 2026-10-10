@@ -4,9 +4,7 @@
     "browser-tester": {
       "kind": "leaf",
       "readOnly": true,
-      "mcp": [
-        "playwright"
-      ],
+      "mcp": ["playwright"],
       "skills": [],
       "mcpTools": {
         "playwright": [
@@ -34,11 +32,7 @@
     "default": {
       "kind": "leaf",
       "readOnly": false,
-      "mcp": [
-        "lsp",
-        "cocoindex-code",
-        "codegraphcontext"
-      ],
+      "mcp": ["lsp", "cocoindex-code", "codegraphcontext"],
       "skills": [
         "ccc",
         "lsp-mcp-server",
@@ -78,13 +72,8 @@
     "docs-researcher": {
       "kind": "leaf",
       "readOnly": true,
-      "mcp": [
-        "openaiDeveloperDocs",
-        "context7"
-      ],
-      "skills": [
-        "source-driven-development"
-      ],
+      "mcp": ["openaiDeveloperDocs", "context7"],
+      "skills": ["source-driven-development"],
       "webResearch": {
         "search": true,
         "fetch": true,
@@ -94,16 +83,8 @@
     "explorer": {
       "kind": "leaf",
       "readOnly": true,
-      "mcp": [
-        "lsp",
-        "cocoindex-code",
-        "codegraphcontext",
-        "context7"
-      ],
-      "skills": [
-        "ccc",
-        "lsp-mcp-server"
-      ],
+      "mcp": ["lsp", "cocoindex-code", "codegraphcontext", "context7"],
+      "skills": ["ccc", "lsp-mcp-server"],
       "mcpTools": {
         "codegraphcontext": [
           "list_indexed_repositories",
@@ -123,11 +104,7 @@
         "autodev_spawn",
         "codex_app"
       ],
-      "skills": [
-        "orchestration",
-        "ccc",
-        "lsp-mcp-server"
-      ],
+      "skills": ["orchestration", "ccc", "lsp-mcp-server"],
       "mcpTools": {
         "codegraphcontext": [
           "list_indexed_repositories",
@@ -135,9 +112,7 @@
           "analyze_code_relationships",
           "get_repository_stats"
         ],
-        "codex_app": [
-          "request_user_input"
-        ]
+        "codex_app": ["request_user_input"]
       },
       "webResearch": {
         "search": true,
@@ -148,12 +123,8 @@
     "playtest-analyst": {
       "kind": "leaf",
       "readOnly": true,
-      "mcp": [
-        "playtest"
-      ],
-      "skills": [
-        "playtest-analysis"
-      ],
+      "mcp": ["playtest"],
+      "skills": ["playtest-analysis"],
       "mcpTools": {
         "playtest": [
           "playtest.listEpisodes",
@@ -168,16 +139,15 @@
     "playtester": {
       "kind": "leaf",
       "readOnly": true,
-      "mcp": [
-        "playtest"
-      ],
-      "skills": [
-        "game-playtesting"
-      ],
+      "mcp": ["playtest"],
+      "skills": ["game-playtesting"],
       "mcpTools": {
         "playtest": [
           "playtest.capabilities",
           "playtest.run",
+          "playtest.wait",
+          "playtest.activeRuns",
+          "playtest.cancel",
           "playtest.listEpisodes",
           "playtest.readEpisode",
           "playtest.readWindow"
@@ -234,19 +204,13 @@
       "webResearch": {
         "search": true,
         "fetch": true,
-        "optionalMcp": [
-          "playwright"
-        ]
+        "optionalMcp": ["playwright"]
       }
     },
     "validator": {
       "kind": "leaf",
       "readOnly": false,
-      "mcp": [
-        "lsp",
-        "cocoindex-code",
-        "codegraphcontext"
-      ],
+      "mcp": ["lsp", "cocoindex-code", "codegraphcontext"],
       "skills": [
         "ccc",
         "lsp-mcp-server",
@@ -265,11 +229,7 @@
     "worker": {
       "kind": "leaf",
       "readOnly": false,
-      "mcp": [
-        "lsp",
-        "cocoindex-code",
-        "codegraphcontext"
-      ],
+      "mcp": ["lsp", "cocoindex-code", "codegraphcontext"],
       "skills": [
         "ccc",
         "lsp-mcp-server",
@@ -315,9 +275,7 @@
       "delegation": "native"
     },
     "antigravity": {
-      "spawnTools": [
-        "invoke_subagent"
-      ],
+      "spawnTools": ["invoke_subagent"],
       "permissionMode": "configured",
       "delegation": "codex-shim"
     },

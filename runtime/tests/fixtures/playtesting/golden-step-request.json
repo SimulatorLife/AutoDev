@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req-0002",
+  "method": "game.step",
+  "params": {
+    "episodeId": "fixture-episode-1",
+    "actionId": "advance",
+    "expectedRevision": 0
+  }
+}

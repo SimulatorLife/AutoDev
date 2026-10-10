@@ -8,7 +8,7 @@
 >
 > **Focused Memory design:** [memory-target-state.md](memory-target-state.md) and [memory-injection-outcome-evaluation.md](memory-injection-outcome-evaluation.md).
 >
-> **Last reviewed:** 2026-10-09 (Usage trace drill-down, canonical filter axes, request-time OpenLIT rendering, and compact-navigation dismissal behavior).
+> **Last reviewed:** 2026-10-10 (Usage trace drill-down, canonical filter axes, request-time OpenLIT rendering, compact-navigation dismissal behavior, and the black/charcoal neutral background-surface hierarchy).
 
 ## 1. Canonical-document contract
 
@@ -37,7 +37,7 @@ The product should look and behave like a small purpose-built AutoDev operator c
 
 The canonical top-level resources are:
 
-~~~text
+```text
 Configure
 ├── Agents
 ├── Providers
@@ -57,7 +57,7 @@ Observe
 Operate
 ├── Workspaces
 └── GitHub
-~~~
+```
 
 The grouping is presentation only; all **14 resources** have first-class routes. **Playtesting** is the Observe resource at `/playtesting`; its detailed requirements are in [Playtesting Target State](playtesting-target-state.md).
 
@@ -99,6 +99,8 @@ Do not ship a theme feature:
 
 Use a small semantic dark token set for background, elevated surface, input/card surface, hover/selected surface, border, primary/secondary text, accent, success, warning, error, and chart series.
 
+The background/surface hierarchy (background, surface, surface-raised, input, hover, selected, border, border-strong) is **black/neutral-charcoal, like OpenLIT's dark surfaces**: each token's red, green, and blue channels stay within a narrow tolerance of each other so the surface reads as true near-black gray, not a purple- or blue-tinted dark gray. Accent, success, warning, error, and the chart-series tokens keep their own distinct semantic hues; moving the background/surface hierarchy to neutral charcoal must not desaturate or collapse those status/accent/chart roles into each other. WCAG 2.1 AA contrast thresholds (>= 4.5:1 for text, >= 3:1 for large text and UI component boundaries) are unchanged by this palette shift and continue to be enforced by the `contrastRatio` assertions in [`tests/autodev-console-target-state.test.ts`](../tests/autodev-console-target-state.test.ts).
+
 Prefer adapting OpenLIT's useful dark styling/components where they fit. Remove dead light-theme assets/tokens after dependency verification. A third-party primitive may internally carry unused theme code, but AutoDev must not expose or maintain light mode as a product capability.
 
 ### Page structure and density
@@ -124,23 +126,24 @@ Table columns declare a relative width weight, never an absolute CSS length. The
 
 Every domain concept has one canonical editable surface. Other pages may show a compact read-only summary and link to that surface.
 
-| Concern | Canonical edit surface | Other surfaces |
-| --- | --- | --- |
-| Agent definition | Agents | scoped effective summaries |
-| Per-role priority and model assignment for Default/Smart/Orchestrator/Subagent, provider-wide agent limits, provider enable/disable, model enablement, priority/fallback groups, per-tier models, routing | Providers (Providers and Models tabs) | read-only effective provider/model summaries on Agents |
-| MCP configuration | MCPs | read-only role/tool summaries |
-| Skill definition/enablement | Skills | read-only assignments/evidence |
-| Hook configuration | Hooks | read-only effective status |
-| Prompt/command content | Prompts | read-only assignment/version summary |
-| Permission policy | Permissions | effective matrices/summaries |
-| Tool configuration | originating MCP/runtime/plugin owner | Tools is a composite catalog |
-| Memory lifecycle/configuration | Memory | read-only links/summaries elsewhere |
-| Evaluation definitions/actions and source-owned verdict history | Evaluations | related result summaries elsewhere |
-| Gameplay playtest execution, episode evidence, session analysis, comparative findings, human-validation results | **Playtesting** | derived batch-level evaluation assertions in Evaluations when explicitly emitted; trace/cost links in Usage |
-| Workspace configuration | Workspaces | workspace badges/scope links |
-| GitHub workflow catalog and Actions runtime state | GitHub (read-only; workflow definitions remain repository-owned) | read-only workflow/run links elsewhere |
-| Historical telemetry | Usage | small scoped summaries with links to Usage |
+| Concern                                                                                                                                                                                                   | Canonical edit surface                                           | Other surfaces                                                                                              |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Agent definition                                                                                                                                                                                          | Agents                                                           | scoped effective summaries                                                                                  |
+| Per-role priority and model assignment for Default/Smart/Orchestrator/Subagent, provider-wide agent limits, provider enable/disable, model enablement, priority/fallback groups, per-tier models, routing | Providers (Providers and Models tabs)                            | read-only effective provider/model summaries on Agents                                                      |
+| MCP configuration                                                                                                                                                                                         | MCPs                                                             | read-only role/tool summaries                                                                               |
+| Skill definition/enablement                                                                                                                                                                               | Skills                                                           | read-only assignments/evidence                                                                              |
+| Hook configuration                                                                                                                                                                                        | Hooks                                                            | read-only effective status                                                                                  |
+| Prompt/command content                                                                                                                                                                                    | Prompts                                                          | read-only assignment/version summary                                                                        |
+| Permission policy                                                                                                                                                                                         | Permissions                                                      | effective matrices/summaries                                                                                |
+| Tool configuration                                                                                                                                                                                        | originating MCP/runtime/plugin owner                             | Tools is a composite catalog                                                                                |
+| Memory lifecycle/configuration                                                                                                                                                                            | Memory                                                           | read-only links/summaries elsewhere                                                                         |
+| Evaluation definitions/actions and source-owned verdict history                                                                                                                                           | Evaluations                                                      | related result summaries elsewhere                                                                          |
+| Gameplay playtest execution, episode evidence, session analysis, comparative findings, human-validation results                                                                                           | **Playtesting**                                                  | derived batch-level evaluation assertions in Evaluations when explicitly emitted; trace/cost links in Usage |
+| Workspace configuration                                                                                                                                                                                   | Workspaces                                                       | workspace badges/scope links                                                                                |
+| GitHub workflow catalog and Actions runtime state                                                                                                                                                         | GitHub (read-only; workflow definitions remain repository-owned) | read-only workflow/run links elsewhere                                                                      |
+| Historical telemetry                                                                                                                                                                                      | Usage                                                            | small scoped summaries with links to Usage                                                                  |
 
+Workspace detail routes use separate owner/repository URL segments (`/workspaces/{owner}/{repository}`), rather than relying on a percent-encoded slash inside one dynamic segment. The Workspaces list links each workspace's approval status to its detail view, where the operator manages exact-build playtesting approval and revision-bound revocation through same-origin server routes with in-place server-confirmed updates; Control API credentials never enter browser markup.
 Do not duplicate provider, routing, permission, prompt, MCP, tool, skill, or workspace controls across several resources for convenience. Showing an item's control on its own list row and in its own detail view inside the owning resource is required by the contextual-controls rule below; it is not duplication.
 
 ### Contextual controls
@@ -157,13 +160,13 @@ Controls live with the item they act on. There is no separate settings, admin, o
 
 Missing evidence must remain explicit:
 
-~~~text
+```text
 unknown
 not observed
 unavailable
 pending
 error
-~~~
+```
 
 Never synthesize ready, converged, healthy, connected, zero, or success merely because configuration exists or telemetry is absent.
 
@@ -192,7 +195,7 @@ Configuration does not prove runtime availability. Eligibility/exposure does not
 
 AutoDev is a **small, flat pnpm TypeScript monorepo**. Do not introduce apps/, packages/, or modules/ wrappers merely to classify code, and do not create a package per navigation resource.
 
-~~~text
+```text
 AutoDev/
 ├── console/                 # unified Next.js AutoDev UI
 ├── runtime/                 # router, providers, agents, MCP runtime, hooks, Control API
@@ -207,22 +210,22 @@ AutoDev/
 ├── package.json
 ├── pnpm-workspace.yaml
 └── rulesync.jsonc
-~~~
+```
 
 The four code workspaces are the intended durable boundaries:
 
-| Module | Owns |
-| --- | --- |
-| console/ | the single AutoDev UI, shared design system, navigation, and feature folders |
-| runtime/ | long-running execution, provider/router behavior, agents, MCPs, hooks, runtime health, reconciliation, Control API |
-| core/ | infrastructure-independent domain types/contracts and pure rules |
-| data/ | typed adapters/repositories for RuleSync, OpenLIT/ClickHouse, Memory, evaluations, workspace/configuration, and other persistent/external boundaries |
+| Module   | Owns                                                                                                                                                 |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| console/ | the single AutoDev UI, shared design system, navigation, and feature folders                                                                         |
+| runtime/ | long-running execution, provider/router behavior, agents, MCPs, hooks, runtime health, reconciliation, Control API                                   |
+| core/    | infrastructure-independent domain types/contracts and pure rules                                                                                     |
+| data/    | typed adapters/repositories for RuleSync, OpenLIT/ClickHouse, Memory, evaluations, workspace/configuration, and other persistent/external boundaries |
 
 Inside console/, keep navigation resources as feature folders, including github/. Do not create agents/, skills/, mcps/, prompts/, etc. as separate packages merely because they are top-level UI resources.
 
 Dependency direction:
 
-~~~text
+```text
 console ───────┐
                ├──> core
 runtime ───────┤
@@ -232,7 +235,7 @@ console ───────┐
 runtime ───────┘
 
 core ──> no AutoDev module
-~~~
+```
 
 Rules:
 
@@ -251,7 +254,7 @@ Rules:
 
 ### Observability plane
 
-~~~text
+```text
 AutoDev producers
       │ standard OTLP
       ▼
@@ -265,7 +268,7 @@ OpenLIT storage/query layer
       ├── logs
       ├── Usage
       └── resource-level historical analysis
-~~~
+```
 
 Use standard OpenTelemetry traces, metrics, and logs. Prefer official GenAI/MCP semantic conventions. Add a minimal autodev.* namespace only where no suitable standard exists.
 
@@ -273,7 +276,7 @@ Do not restore an AutoDev-owned historical aggregation database, general-purpose
 
 ### Control plane
 
-~~~text
+```text
 AutoDev Console
       │ same-origin server path
       ▼
@@ -283,13 +286,13 @@ AutoDev Control API
       ├── validation/generation/apply
       ├── desired-state reconciliation
       └── runtime/status reads
-~~~
+```
 
 OTLP and telemetry queries are observation-only. Never use telemetry as a command/configuration channel.
 
 Mutable resources expose desired and actual state separately:
 
-~~~text
+```text
 canonical desired configuration
           ↓
 validated apply / queued action
@@ -299,7 +302,7 @@ runtime/controller
 observed actual state
           ↓
 converged | pending | error
-~~~
+```
 
 The reusable reconciliation contract should include desired state, actual state, desired generation, observed generation, diff, convergence status, last apply, last observation, last error, and operation history.
 
@@ -325,7 +328,7 @@ OpenLIT Prompt/Agent/MCP/Skill views are read models, not configuration database
 
 For a RuleSync-owned mutation:
 
-~~~text
+```text
 Console
   ↓
 Control API
@@ -341,7 +344,7 @@ apply
 observe runtime
   ↓
 converged | pending | error
-~~~
+```
 
 Preserve target-specific overrides. Do not invent another AutoDev configuration schema merely to force unsupported semantics into RuleSync.
 
@@ -349,12 +352,12 @@ AutoDev-specific runtime state that RuleSync does not model—provider credentia
 
 Conceptually:
 
-~~~text
+```text
 Desired agent configuration  ← RuleSync sources
 Generated provider configs   ← RuleSync projections
 Actual runtime state         ← Runtime / Control API
 Historical behavior          ← OpenTelemetry / OpenLIT
-~~~
+```
 
 Lossless RuleSync subagent/permission parity is a migration gate, not an assumption. Current parity details belong in the migration tracker.
 
@@ -433,39 +436,39 @@ Prefer in this order:
 
 Before copying third-party code, verify the source revision, license/attribution requirements, dependency cost, and compatibility. Normalize reused components to AutoDev tokens, status vocabulary, accessibility, and APIs. Do not vendor an entire frontend framework/application to obtain a few controls.
 
-| Reference | Reuse/adapt | Do not inherit |
-| --- | --- | --- |
-| **OpenLIT** | dark styling where useful; tables, filters, time range, charts/widgets, trace/detail patterns, Memory/Evaluation/Prompt/Agent components | generic product shell, Otter, docs/community chrome, auth/tenancy, generic dashboards, light theme, onboarding, removed modules |
-| **Langfuse** | dense list/detail UX, trace inspection, filters, prompt version/diff interaction, compact observability patterns | organization/project/account SaaS hierarchy |
-| **LangWatch** | composing configuration, runtime evidence, usage, failures, latency, and recent traces on one resource surface | a separate embedded observability application |
-| **Helicone** | semantic visual tokens, consistent typography/layout, compact request/log detail patterns | gateway/business-account product model |
-| **MCPJam Inspector** | MCP Tools/Resources/Prompts inspection, schemas, test/probe diagnostics, logs | playground/emulator shell |
-| **LiteLLM** | provider/model/routing semantics: priority, fallback, concurrency, limits, cooldown/circuit state | inconsistent or duplicate dashboard styling; use as control-semantics reference, not the visual source of truth |
-| **Agno Agent UI** | compact tool-call/activity/status presentation patterns where useful | chat-first application shell |
-| **Argo CD** | desired/live diff, health, sync/convergence, operation history | Kubernetes/product IA |
-| **Unleash** | scoped capability targeting/constraints/effective-state interaction | feature-flag product model |
-| **Backstage** | lightweight feature/route registry idea if central routing becomes unwieldy | full plugin/platform framework |
+| Reference            | Reuse/adapt                                                                                                                              | Do not inherit                                                                                                                  |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **OpenLIT**          | dark styling where useful; tables, filters, time range, charts/widgets, trace/detail patterns, Memory/Evaluation/Prompt/Agent components | generic product shell, Otter, docs/community chrome, auth/tenancy, generic dashboards, light theme, onboarding, removed modules |
+| **Langfuse**         | dense list/detail UX, trace inspection, filters, prompt version/diff interaction, compact observability patterns                         | organization/project/account SaaS hierarchy                                                                                     |
+| **LangWatch**        | composing configuration, runtime evidence, usage, failures, latency, and recent traces on one resource surface                           | a separate embedded observability application                                                                                   |
+| **Helicone**         | semantic visual tokens, consistent typography/layout, compact request/log detail patterns                                                | gateway/business-account product model                                                                                          |
+| **MCPJam Inspector** | MCP Tools/Resources/Prompts inspection, schemas, test/probe diagnostics, logs                                                            | playground/emulator shell                                                                                                       |
+| **LiteLLM**          | provider/model/routing semantics: priority, fallback, concurrency, limits, cooldown/circuit state                                        | inconsistent or duplicate dashboard styling; use as control-semantics reference, not the visual source of truth                 |
+| **Agno Agent UI**    | compact tool-call/activity/status presentation patterns where useful                                                                     | chat-first application shell                                                                                                    |
+| **Argo CD**          | desired/live diff, health, sync/convergence, operation history                                                                           | Kubernetes/product IA                                                                                                           |
+| **Unleash**          | scoped capability targeting/constraints/effective-state interaction                                                                      | feature-flag product model                                                                                                      |
+| **Backstage**        | lightweight feature/route registry idea if central routing becomes unwieldy                                                              | full plugin/platform framework                                                                                                  |
 
 The Console remains one application/package. A lightweight typed feature registry may organize routes/nav/components, but each feature does not become a package.
 
 ## 9. Resource contract
 
-| Resource | Primary authority | Target surface |
-| --- | --- | --- |
-| **Agents** | RuleSync + Runtime | role definition, read-only effective provider/model eligibility, desired/actual state, health, activity |
-| **Providers** | typed AutoDev routing configuration + Runtime + OTel | provider and model catalogs; a single four-column configuration table (Provider, Status, Roles, Agent Limits); per-role priority/model assignment across Default, Smart, Orchestrator, Subagent; provider-wide agent limits with Unlimited; provider-level disable preserving configuration; model enablement, priority/fallback groups, per-tier models, credential presence (never values), readiness/health, cooldown/failure state, in-flight load, links to Usage |
-| **MCPs** | RuleSync + Runtime + OTel | server configuration, role exposure, Tools/Resources/Prompts, connection health, usage/errors |
-| **Skills** | RuleSync + OTel | canonical definitions, role/workspace eligibility, observed exposure/use/error |
-| **Hooks** | RuleSync + Runtime evidence | event/matcher/action, target projections, validation/effective status, observed executions/errors |
-| **Prompts** | RuleSync | canonical prompts/commands, edit/validate/version/diff/preview, usage/evaluation linkage |
-| **Permissions** | RuleSync + effective Runtime | canonical policy, role/tool/MCP matrices, target differences/validation |
-| **Tools** | composite effective catalog + OTel | native/MCP/plugin/app capabilities, exposure, availability, historical use/error; no duplicate authority |
-| **Usage** | OTel/OpenLIT | cross-workspace/provider/model/agent/skill/MCP requests, tokens, cost, latency, failures, traces |
-| **Evaluations** | evaluation definitions/storage + OTel | definitions, runs/results/history, targets, comparisons, trace linkage; links to Playtesting only for source-authored batch-level evaluation assertions |
-| **Playtesting** | game-owned adapter and rubric + typed AutoDev playtest runner/evidence store | workspace-scoped batches, episodes, replay, result/quality metrics, independent critic analysis, findings, verified experiments, matched-cohort comparisons and optional human feedback |
-| **Memory** | MemoryService/Data; OpenLIT-adapted connector capabilities | browse/search/detail/provenance/lifecycle/actions/effectiveness through AutoDev Console |
-| **Workspaces** | AutoDev configuration + OTel | repository catalog, enablement/scope, configuration/runtime health, aggregate usage |
-| **GitHub** | workflow YAML (definitions/cron) + config/workspaces.json (workspace identity/scope) + observed GitHub Actions API (runtime state/stats) | parsed workflow definitions + cron schedules, workspace-bound observed workflow state (active vs disabled), bounded recent run sample, bounded run statistics; allowlisted operator controls (dispatch/cancel/rerun/schedule) deferred |
+| Resource        | Primary authority                                                                                                                        | Target surface                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agents**      | RuleSync + Runtime                                                                                                                       | role definition, read-only effective provider/model eligibility, desired/actual state, health, activity                                                                                                                                                                                                                                                                                                                                                                |
+| **Providers**   | typed AutoDev routing configuration + Runtime + OTel                                                                                     | provider and model catalogs; a single four-column configuration table (Provider, Status, Roles, Agent Limits); per-role priority/model assignment across Default, Smart, Orchestrator, Subagent; provider-wide agent limits with Unlimited; provider-level disable preserving configuration; model enablement, priority/fallback groups, per-tier models, credential presence (never values), readiness/health, cooldown/failure state, in-flight load, links to Usage |
+| **MCPs**        | RuleSync + Runtime + OTel                                                                                                                | server configuration, role exposure, Tools/Resources/Prompts, connection health, usage/errors                                                                                                                                                                                                                                                                                                                                                                          |
+| **Skills**      | RuleSync + OTel                                                                                                                          | canonical definitions, role/workspace eligibility, observed exposure/use/error                                                                                                                                                                                                                                                                                                                                                                                         |
+| **Hooks**       | RuleSync + Runtime evidence                                                                                                              | event/matcher/action, target projections, validation/effective status, observed executions/errors                                                                                                                                                                                                                                                                                                                                                                      |
+| **Prompts**     | RuleSync                                                                                                                                 | canonical prompts/commands, edit/validate/version/diff/preview, usage/evaluation linkage                                                                                                                                                                                                                                                                                                                                                                               |
+| **Permissions** | RuleSync + effective Runtime                                                                                                             | canonical policy, role/tool/MCP matrices, target differences/validation                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Tools**       | composite effective catalog + OTel                                                                                                       | native/MCP/plugin/app capabilities, exposure, availability, historical use/error; no duplicate authority                                                                                                                                                                                                                                                                                                                                                               |
+| **Usage**       | OTel/OpenLIT                                                                                                                             | cross-workspace/provider/model/agent/skill/MCP requests, tokens, cost, latency, failures, traces                                                                                                                                                                                                                                                                                                                                                                       |
+| **Evaluations** | evaluation definitions/storage + OTel                                                                                                    | definitions, runs/results/history, targets, comparisons, trace linkage; links to Playtesting only for source-authored batch-level evaluation assertions                                                                                                                                                                                                                                                                                                                |
+| **Playtesting** | game-owned adapter and rubric + typed AutoDev playtest runner/evidence store                                                             | workspace-scoped batches, episodes, replay, result/quality metrics, independent critic analysis, findings, verified experiments, matched-cohort comparisons and optional human feedback                                                                                                                                                                                                                                                                                |
+| **Memory**      | MemoryService/Data; OpenLIT-adapted connector capabilities                                                                               | browse/search/detail/provenance/lifecycle/actions/effectiveness through AutoDev Console                                                                                                                                                                                                                                                                                                                                                                                |
+| **Workspaces**  | AutoDev configuration + OTel                                                                                                             | repository catalog, enablement/scope, configuration/runtime health, aggregate usage                                                                                                                                                                                                                                                                                                                                                                                    |
+| **GitHub**      | workflow YAML (definitions/cron) + config/workspaces.json (workspace identity/scope) + observed GitHub Actions API (runtime state/stats) | parsed workflow definitions + cron schedules, workspace-bound observed workflow state (active vs disabled), bounded recent run sample, bounded run statistics; allowlisted operator controls (dispatch/cancel/rerun/schedule) deferred                                                                                                                                                                                                                                 |
 
 ### Agents
 
@@ -473,13 +476,13 @@ Agents are configuration-defined, not discovered/instrumented applications.
 
 Useful states include:
 
-~~~text
+```text
 Configured
 Valid / Invalid
 Ready / Unavailable
 Converged / Pending / Error
 Last activity
-~~~
+```
 
 Agent detail may combine canonical role/prompt, assigned capabilities, a read-only effective provider/model summary linking to Providers, generated projections, actual readiness/health, and scoped activity/usage.
 
@@ -487,16 +490,16 @@ Agent detail may combine canonical role/prompt, assigned capabilities, a read-on
 
 Providers is the one place an operator decides which model providers may serve the fixed agent roles, in what priority order, with which model, and under which concurrency limits. Its **Providers** tab is a single compact configuration table with exactly **four primary columns**:
 
-| Column | Contract |
-|---|---|
-| **Provider** | Provider ID linked to its detail view, displayed without truncation. |
-| **Status** | Overall provider usability, see below. Rendered as a status pill: `Ready` in the healthy style, a blocking state in the blocking style. |
-| **Roles** | The four fixed roles — **Default, Smart, Orchestrator, Subagent** — each with a white-outline icon plus two controls: a priority dropdown containing exactly `P1`, `P2`, `P3`, `Disabled`, and a model dropdown populated from that provider's available models. The column header carries a help affordance. |
-| **Agent Limits** | Provider-wide concurrent-agent limits for **Per session** and **Across sessions**, each a compact `− n +` stepper, plus an **Unlimited** control and a provider-level **Disabled** control. The column header carries a help affordance. |
+| Column           | Contract                                                                                                                                                                                                                                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Provider**     | Provider ID linked to its detail view, displayed without truncation, with the provider's external **Usage ↗** and **Docs ↗** links beneath it.                                                                                                                                                                |
+| **Status**       | Overall provider usability, see below. Rendered as a status pill: `Ready` in the healthy style, a blocking state in the blocking style.                                                                                                                                                                       |
+| **Roles**        | The four fixed roles — **Default, Smart, Orchestrator, Subagent** — each with a white-outline icon plus two controls: a priority dropdown containing exactly `P1`, `P2`, `P3`, `Disabled`, and a model dropdown populated from that provider's available models. The column header carries a help affordance. |
+| **Agent Limits** | Provider-wide concurrent-agent limits for **Per session** and **Across sessions**, each a compact `− n +` stepper, plus an **Unlimited** control and a provider-level **Disabled** control. The column header carries a help affordance.                                                                      |
 
-The page header names the surface and states its purpose — *Configure which providers to use, which models to use for each role, and agent spawn limits.* — and offers **Reset to defaults** and **Add provider**.
+The page header names the surface and states its purpose — _Configure which providers to use, which models to use for each role, and agent spawn limits._ — and offers **Reset to defaults** and **Add provider**.
 
-**Status is a single verdict, not a summary of parts.** It reads `Ready` only when the provider is healthy *and* all required configuration and credentials are present. Otherwise it names the specific blocking state rather than degrading to a generic warning — for example `Missing CODEX_ROUTE`, `Missing credential`, `Disabled`, or the live health state (`Cooling down`, `Unavailable`). A provider whose parts are individually fine but which cannot currently serve a request must not read `Ready`.
+**Status is a single verdict, not a summary of parts.** It reads `Ready` only when the provider is healthy _and_ all required configuration and credentials are present. Otherwise it names the specific blocking state rather than degrading to a generic warning — for example `Missing CODEX_ROUTE`, `Missing credential`, `Disabled`, or the live health state (`Cooling down`, `Unavailable`). A provider whose parts are individually fine but which cannot currently serve a request must not read `Ready`.
 
 **Roles are the four fixed roles, not a capability set.** Default, Smart, Orchestrator and Subagent are the canonical roles; a provider's participation in each is expressed by its priority rather than by a separate enablement flag. Selecting `Disabled` for a role disables and **dims that role's model selector** — the control stays present so the previously chosen model is visible and recoverable, but it can no longer be changed into an active selection.
 
@@ -510,19 +513,19 @@ The Providers tab has four columns: **Provider, Status, Roles, Agent Limits**. *
 
 Useful states include:
 
-~~~text
+```text
 Status:   Ready / Disabled / Missing CODEX_ROUTE / Missing credential / Cooling down / Unavailable
 Priority: P1 / P2 / P3 / Disabled
 Limits:   Per session, Across sessions, Unlimited
-~~~
+```
 
-Provider detail may combine its enable/disable controls, configured routes, its models with their own toggles, per-tier models, the tier priority/fallback groups the provider appears in, live readiness/cooldown/failure evidence, and small scoped Usage summaries that link to Usage. Mutations go through typed Control API provider/routing operations. Credentials are shown only as configured/missing status, never as values, and Providers must not become a second credential or model-catalog authority.
+Provider detail may combine its enable/disable controls, configured routes, its models with their own toggles, per-tier models, the tier priority/fallback groups the provider appears in, live readiness/cooldown/failure evidence, small scoped Usage summaries that link to Usage, and the provider's external Usage and Documentation links. Those two links are focused contextual links: each provider's URLs live once in its `providers.<id>.links` routing-config entry, reach the Console through the providers Control API record, open in a new tab, and are omitted when unconfigured; the Console keeps no URL list of its own. Mutations go through typed Control API provider/routing operations. Credentials are shown only as configured/missing status, never as values, and Providers must not become a second credential or model-catalog authority.
 
 ### MCPs
 
 MCP detail should use a consistent tab set:
 
-~~~text
+```text
 Overview
 Configuration
 Connection / Health
@@ -532,7 +535,7 @@ Prompts
 Role Access
 Activity
 Errors / Logs
-~~~
+```
 
 Useful operations include ping/test, list tools, inspect schemas, list/read resources, list/preview prompts, inspect effective authorization/configuration, and view recent calls/errors.
 
@@ -540,7 +543,7 @@ Useful operations include ping/test, list tools, inspect schemas, list/read reso
 
 Keep stages distinct:
 
-~~~text
+```text
 Configured/Enabled
       ↓
 Eligible
@@ -550,7 +553,7 @@ Selected / Exposed
 Injected
       ↓
 Used
-~~~
+```
 
 Canonical skill definitions and descriptive metadata come from `.rulesync/skills`; role eligibility is joined from the execution contract by skill name. The Console lists the complete canonical skill catalog, including skills with no assigned roles, and explicitly surfaces role references with no canonical source. A missing or invalid RuleSync catalog is not a successful empty catalog. Only an owning producer may assert observed exposure/use/error. Do not infer later stages from configuration or eligibility.
 
@@ -576,13 +579,15 @@ Retain useful evaluation definitions/results/history and trace linkage without R
 
 **Control boundaries:** Workspaces owns game adapter approval, pinned checkout, execution sandbox, resource budgets and revocation; Providers and Permissions own model routing and effective access controls; Playtesting owns bounded, authenticated run/replay requests and findings, and GitHub owns external issue state. The Playtesting tool surface reuses [Runtime's Memory MCP pattern](../runtime/src/memory/mcp.ts), [MCP tool filtering](../runtime/src/mcp/tool-filter.ts) and the existing Control API, with server-bound workspace/role authorization. Expose typed, permissioned, budget-bounded operations; no arbitrary shell runner endpoint. The developer sees honest missing/partial evidence, measured denominators, replay integrity, uncalibrated vs human-validated scores and links to original episode/frame facts. New charts/views conform to dark tokens, accessibility and in-place navigation standards, with lazy indexed detail fetching rather than loading entire traces on list pages.
 
+**Playtesting read API and actions:** Console reads use the authenticated, GET-only `/control/playtesting/{batches|episodes|findings|comparisons|benchmarks|experiments|human-studies}` resources with a required canonical `workspaceId`, validated filters, and Data-owned keyset `limit`/`cursor` pagination. Each page carries `rows`, the full matching `total`, and `nextCursor`; unavailable catalogs/data are typed HTTP failures, never an empty page or synthetic zero. `/control/playtesting/episodes/{id}?workspaceId=...` returns only the selected workspace-scoped episode and its newest immutable review; `/episodes/{id}/windows/{artifactId}` returns an integrity-verified, bounded step range only when the artifact is linked to that episode. `/episodes/{id}/media/{artifactId}` serves only linked, bounded PNG/JPEG/WebP frames with `nosniff`; the Console's same-origin image proxy keeps Control API credentials server-side. Typed run operations use `POST /control/playtesting/runs` (operator-only, exact approved workspace/scenario/policy/seed/budget request), `GET /control/playtesting/runs?workspaceId=...`, `GET /control/playtesting/runs/{batchId}?workspaceId=...&waitMs=...`, and operator-only `POST /control/playtesting/runs/{batchId}/cancel?workspaceId=...`. They delegate to the singleton Runtime `PlaytestRunControl` owner used by the MCP facade through a loopback-only client. The MCP receives a separate Playtesting-scoped credential accepted only on those run routes; it never receives the general Control API token, and the game sandbox receives neither token. The process-bound session carries the role/task/run identity to the shared owner. No arbitrary command endpoint exists. No raw participant responses or identifiers are exposed by these reads.
+
 **Measurement and progress:** [Playtesting measurement and improvement contract](playtesting-measurement-contract.md) owns metric/exposure semantics, frozen benchmark and approved experiment manifests, surveillance versus discovery samples, missingness, RNG pairing and source-authored comparison decisions. Overview shows pinned-reference and previous-build progress with stable cohort weights, compatible measurement versions, coverage/uncertainty and new/fixed/recurrent findings. Compare renders one `PlaytestComparison` with primary outcomes, guardrails, improved/regressed/no-material-change/inconclusive/not-comparable per metric, decision/reason and exact experiment/replay links; no overall fun verdict. Ordinal quality distributions, human native-scale outcomes and evidence confidence remain separate.
 
 **Continuous verification:** Existing orchestration/CI/schedules own opted-in run cadence and bounded retries; Playtesting adds no scheduler or release authority. Findings link experiments, authorized change PRs/builds, witness/control/fresh retests, owner decisions and recurrence. Closing a GitHub issue does not prove a fix. Human labels enter through consent-checked CSV/JSON import from existing survey tooling; instrument identity, missingness and withdrawal are enforced. Judge changes require reference-corpus checks and common-evaluator bridge results or a trend break. Immutable aggregate snapshots may outlive replay media with explicit evidence-expired labels; human consent/deletion rules override retention.
 
 ### GitHub
 
-Workflow files (`.github/workflows/*.yml`) remain authoritative for workflow *definitions* and configured cron triggers. `config/workspaces.json` is the target owner for workspace identity, enablement, and resource scope. Scheduler weights/policy remain in the scheduler's canonical policy. The Console must not fork any of these into a second schedule/configuration authority, and the GitHub page must never expose raw provider credentials, arbitrary workflow IDs, or arbitrary workflow inputs to the browser.
+Workflow files (`.github/workflows/*.yml`) remain authoritative for workflow _definitions_ and configured cron triggers. `config/workspaces.json` is the target owner for workspace identity, enablement, and resource scope. Scheduler weights/policy remain in the scheduler's canonical policy. The Console must not fork any of these into a second schedule/configuration authority, and the GitHub page must never expose raw provider credentials, arbitrary workflow IDs, or arbitrary workflow inputs to the browser.
 
 The Console `/github` resource and the Control API `GET /control/github` are an authenticated, read-only path that pairs parsed workflow definitions with the corresponding observed GitHub Actions runtime state:
 
@@ -610,11 +615,11 @@ The Console `/github` resource and the Control API `GET /control/github` are an 
 
 A logical routed request and physical provider attempts are distinct:
 
-~~~text
+```text
 AutoDev logical routed request
 ├── provider/model attempt 1
 └── provider/model attempt 2 (fallback/retry)
-~~~
+```
 
 A failed OpenAI attempt followed by a successful Anthropic fallback is one logical request and two physical attempts.
 
@@ -768,7 +773,7 @@ The Control API is the only AutoDev mutation/action boundary.
 
 Target resource families include:
 
-~~~text
+```text
 /control/agents
 /control/providers
 /control/models
@@ -783,9 +788,9 @@ Target resource families include:
 /control/tools
 /control/memory
 /control/evaluations
-/control/playtesting   # proposed, typed workspace-scoped playtest operations (not implemented)
+/control/playtesting   # indexed reads plus typed run/status/cancel operations
 /control/github
-~~~
+```
 
 Use named typed operations only; no arbitrary command endpoint.
 
@@ -844,7 +849,7 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 - console/ is the sole final user-facing application.
 - Canonical resource navigation exposes **14 resources**, with **Playtesting** under Observe.
 - The Providers tab uses four columns — **Provider, Status, Roles, Agent Limits**. Status reads `Ready` only when the provider is healthy and fully configured, otherwise naming the blocking state. Roles shows **Default, Smart, Orchestrator, Subagent** with distinct white-outline icons, `P1/P2/P3/Disabled` priority dropdowns and model selectors that dim when disabled. The Disabled priority is highlighted; P1–P3 use a neutral style. Agent Limits provides **Per session** and **Across sessions** steppers, an **Unlimited** button and a **Disable / Enable** button that preserves configured models, priorities and limits.
-- Provider routing precedence is configured through **per-role priorities** and **per-tier routing settings**.
+- Provider rows are not globally draggable: routing precedence is per-role and per-tier, edited through the role priority controls rather than a separate row-order setting.
 - Item-scoped controls are contextual: each appears on the item's list row and in its detail view inside the owning resource (provider toggles on Providers rows and provider detail; model toggles on Models rows, model detail, and the provider detail's model list), backed by one typed operation; other resources show read-only state with a link.
 - Dark-only operation is enforced; there is no light/system theme or theme selector.
 - Otter/chat is absent.

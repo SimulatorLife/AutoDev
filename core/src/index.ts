@@ -16,3 +16,4 @@ export * from "./skills/types.ts";
 export * from "./tools/types.ts";
 export * from "./usage/types.ts";
 export * from "./workspaces/types.ts";
+export * from "./workspaces/playtesting.ts";

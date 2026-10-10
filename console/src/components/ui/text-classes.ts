@@ -144,4 +144,5 @@ export const MONO_ID_LINK_CLASS =
  * brightness bump on top of it is not information an operator can act on, so
  * that one was dropped rather than spread.
  */
-export const ACTION_LINK_CLASS = "text-accent underline-offset-4 hover:underline";
+export const ACTION_LINK_CLASS =
+  "text-accent underline-offset-4 hover:underline";

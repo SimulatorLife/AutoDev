@@ -43,11 +43,17 @@ const ENV_KEYS = [
  * trajectory's normalizer, digest and diagnostic codes — the members whose
  * blocks nothing had ever executed.
  */
-function experience(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function experience(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
   return {
     id: EXPERIENCE_ID,
     workspaceId: WORKSPACE,
-    scope: { kind: "repository", workspaceId: WORKSPACE, repositoryId: WORKSPACE },
+    scope: {
+      kind: "repository",
+      workspaceId: WORKSPACE,
+      repositoryId: WORKSPACE
+    },
     taskId: "task-1",
     runId: "run-1",
     agentId: "agent-1",
@@ -202,8 +208,10 @@ function route(path: string, wire: Wire): unknown {
   }
   // Sub-resources are matched before the bare detail, which is the order the
   // Runtime nests them in.
-  if (/\/experiences\/[^/?]+\/session-outcomes\b/u.test(path)) return SESSION_OUTCOME;
-  if (/\/experiences\/[^/?]+\/use-assessments\b/u.test(path)) return USE_ASSESSMENTS_PAGE;
+  if (/\/experiences\/[^/?]+\/session-outcomes\b/u.test(path))
+    return SESSION_OUTCOME;
+  if (/\/experiences\/[^/?]+\/use-assessments\b/u.test(path))
+    return USE_ASSESSMENTS_PAGE;
   if (/\/experiences\/[^/?]+\/outcomes\b/u.test(path)) return OUTCOMES_PAGE;
   if (/\/experiences\/[^/?]+\?/u.test(path)) {
     return { schema: "autodev-memory-experience-v1", experience: experience() };
@@ -231,7 +239,9 @@ async function renderExperiencePage(
   // `HOME` is redirected because the Control API credential otherwise falls back
   // to a real `~/.codex/openlit-secrets.env`, which would make this file's
   // hermetic-ness a property of the machine it runs on.
-  const isolatedHome = mkdtempSync(join(tmpdir(), "autodev-memory-experience-"));
+  const isolatedHome = mkdtempSync(
+    join(tmpdir(), "autodev-memory-experience-")
+  );
   const paths: string[] = [];
   try {
     process.env.HOME = isolatedHome;
@@ -305,7 +315,10 @@ test("an opened experience renders all four of its reads, not the unread state",
   assert.match(markup, /used \(1\/1 memories cited\)/u);
 
   // The reporter's session outcome, by the panel's own marker.
-  assert.match(markup, new RegExp(`data-session-outcome="${EXPERIENCE_ID}"`, "u"));
+  assert.match(
+    markup,
+    new RegExp(`data-session-outcome="${EXPERIENCE_ID}"`, "u")
+  );
   assert.match(markup, /operator@example/u);
 });
 
@@ -351,7 +364,8 @@ test("an evidence page for another experience is not drawn as evidence for this 
   // ever looked.
   const { markup } = await renderExperiencePage({
     override: (path) => {
-      if (!/\/experiences\/[^/?]+\/use-assessments\b/u.test(path)) return undefined;
+      if (!/\/experiences\/[^/?]+\/use-assessments\b/u.test(path))
+        return undefined;
       return { ...USE_ASSESSMENTS_PAGE, experienceId: "exp-2" };
     }
   });

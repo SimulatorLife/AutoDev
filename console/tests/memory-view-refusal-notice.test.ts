@@ -24,7 +24,9 @@ import type { MemoryListScope } from "../src/features/memory/memory-list-url.ts"
  * experience drawer must not land on a page that renders nothing.
  */
 
-function listScope(tab: "records" | "experiences" | "cohorts"): MemoryListScope {
+function listScope(
+  tab: "records" | "experiences" | "cohorts"
+): MemoryListScope {
   return {
     tab,
     workspaceId: "SimulatorLife/AutoDev",
@@ -83,7 +85,10 @@ test("the memory page reports the reason the route observed", () => {
   // The reason rides in the redirect as a code the route chose, so the sentence
   // on screen is the route's claim rather than the Console's guess. This is the
   // end of that chain: route, redirect, page, sentence.
-  const markup = render({ controlFailed: true, controlRefusal: "request_invalid" });
+  const markup = render({
+    controlFailed: true,
+    controlRefusal: "request_invalid"
+  });
 
   assert.match(
     markup,

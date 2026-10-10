@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -79,9 +85,11 @@ function errorMessage(body: Record<string, unknown> | null): string {
  * `makeTranscript` writes whatever the transcript should be, so a test can put
  * an empty file, a directory, or a real transcript at the same canonical path.
  */
-function workspaceFixture(
-  makeTranscript: (transcriptPath: string) => void
-): { readonly home: string; readonly bindingPath: string; readonly cwd: string } {
+function workspaceFixture(makeTranscript: (transcriptPath: string) => void): {
+  readonly home: string;
+  readonly bindingPath: string;
+  readonly cwd: string;
+} {
   const home = mkdtempSync(path.join(tmpdir(), "claude-transcript-"));
   const repo = path.join(home, "repo");
   const transcripts = path.join(home, "transcripts");
@@ -123,9 +131,11 @@ function request(body: Record<string, unknown>): IncomingMessage {
  * host from also building a routed reconstructor, which is not what these tests
  * are about.
  */
-async function capture(
-  fixture: { readonly bindingPath: string; readonly cwd: string; readonly transcriptPath: string }
-): Promise<CallResult> {
+async function capture(fixture: {
+  readonly bindingPath: string;
+  readonly cwd: string;
+  readonly transcriptPath: string;
+}): Promise<CallResult> {
   const response: RecordedResponse = responseRecorder();
   const previousBinding = process.env[BINDING_ENV];
   const previousDatabase = process.env[DATABASE_ENV];
@@ -159,11 +169,15 @@ async function capture(
 }
 
 test("an empty transcript is refused on size, not read as an empty experience", async () => {
-  const fixture = workspaceFixture((transcriptPath) => writeFileSync(transcriptPath, ""));
+  const fixture = workspaceFixture((transcriptPath) =>
+    writeFileSync(transcriptPath, "")
+  );
   try {
     const { status, body } = await capture({
       ...fixture,
-      transcriptPath: realpathSync(path.join(fixture.home, "transcripts", `${SESSION_ID}.jsonl`))
+      transcriptPath: realpathSync(
+        path.join(fixture.home, "transcripts", `${SESSION_ID}.jsonl`)
+      )
     });
 
     // `capture_invalid` is what a read-side guard produces; `capture_failed`
@@ -191,7 +205,9 @@ test("a transcript path that is not a file is refused on size", async () => {
   try {
     const { status, body } = await capture({
       ...fixture,
-      transcriptPath: realpathSync(path.join(fixture.home, "transcripts", `${SESSION_ID}.jsonl`))
+      transcriptPath: realpathSync(
+        path.join(fixture.home, "transcripts", `${SESSION_ID}.jsonl`)
+      )
     });
 
     assert.equal(status, 400);
@@ -211,12 +227,17 @@ test("a readable transcript is read, and the failure that follows is downstream"
   // must be the write failing against the host that does not exist -- and
   // demonstrably not a size refusal.
   const fixture = workspaceFixture((transcriptPath) =>
-    writeFileSync(transcriptPath, '{"type":"assistant","message":{"content":"done"}}\n')
+    writeFileSync(
+      transcriptPath,
+      '{"type":"assistant","message":{"content":"done"}}\n'
+    )
   );
   try {
     const { body } = await capture({
       ...fixture,
-      transcriptPath: realpathSync(path.join(fixture.home, "transcripts", `${SESSION_ID}.jsonl`))
+      transcriptPath: realpathSync(
+        path.join(fixture.home, "transcripts", `${SESSION_ID}.jsonl`)
+      )
     });
 
     // The positive half, and the reason the other two mean something. A real

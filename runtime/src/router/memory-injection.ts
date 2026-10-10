@@ -829,7 +829,8 @@ export async function observeMemoryStorageStatus(
     ? ("configured" as const)
     : ("not_configured" as const);
   const host = configuredMemoryHost();
-  if (!host) return { state: "not_configured", embeddings, probeTimeoutMs: timeoutMs };
+  if (!host)
+    return { state: "not_configured", embeddings, probeTimeoutMs: timeoutMs };
   return {
     state: await host.probe(timeoutMs),
     embeddings,

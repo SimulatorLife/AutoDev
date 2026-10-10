@@ -12,7 +12,7 @@
  * refreshed provider state is authoritative.
  */
 
-import { type NextRequest,NextResponse } from "next/server.js";
+import { type NextRequest, NextResponse } from "next/server.js";
 
 import {
   isProvidersReturnPath,

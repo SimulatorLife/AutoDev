@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req-0002",
+  "result": {
+    "episodeId": "fixture-episode-1",
+    "revision": 1,
+    "acceptedActionId": "advance",
+    "terminal": false,
+    "eventIds": ["evt-1"]
+  }
+}

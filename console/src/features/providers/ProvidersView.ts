@@ -44,6 +44,7 @@ import {
   ProviderStatusBadge,
   resolveProviderStatus
 } from "./provider-status.ts";
+import { ProviderExternalLinks } from "./ProviderExternalLinks.ts";
 import { ProviderLimitsControls } from "./ProviderLimitsControls.ts";
 import { ProviderRoleControls } from "./ProviderRoleControls.ts";
 
@@ -99,8 +100,17 @@ function providerColumns(
       // The provider id is the row's primary identifier. Its full declared
       // share is preserved by DataTable; narrow viewports scroll the table.
       weight: 130,
+      align: "tokens",
       cell: (provider) =>
-        React.createElement(ProviderLink, { provider: provider.id })
+        React.createElement(
+          "div",
+          { className: "flex flex-col gap-1" },
+          React.createElement(ProviderLink, { provider: provider.id }),
+          React.createElement(ProviderExternalLinks, {
+            provider: provider.id,
+            links: provider.links
+          })
+        )
     },
     {
       id: "status",

@@ -117,12 +117,14 @@ test("catalog loading returns the public models/data envelope", async () => {
   const file = join(directory, "catalog.json");
   await writeFile(
     file,
-    JSON.stringify({ models: [{ slug: "sonnet" }, { slug: "MiniMax-M3" }] })
+    JSON.stringify({
+      models: [{ slug: "sonnet" }, { slug: "MiniMax-test-model" }]
+    })
   );
   const catalog = await loadCatalog(file);
   assert.deepEqual(catalog.models, [
     { slug: "sonnet" },
-    { slug: "MiniMax-M3" }
+    { slug: "MiniMax-test-model" }
   ]);
   assert.equal(catalog.data.length, 2);
   assert.equal((catalog.data[0] as any).id, "sonnet");

@@ -18,10 +18,7 @@ import {
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
-import {
-  FieldBox,
-  gridRowClass
-} from "../../components/panels/DetailGrid.ts";
+import { FieldBox, gridRowClass } from "../../components/panels/DetailGrid.ts";
 import { EmptyState } from "../../components/status/EmptyState.ts";
 import {
   NOT_OBSERVED_LABEL,
@@ -342,7 +339,10 @@ export function ToolDetailView({
       },
       React.createElement(
         "section",
-        { className: DETAIL_PANEL_CLASS, "data-section": "tool-source-authority" },
+        {
+          className: DETAIL_PANEL_CLASS,
+          "data-section": "tool-source-authority"
+        },
         React.createElement(
           "h3",
           { className: SECTION_HEADING_CLASS },

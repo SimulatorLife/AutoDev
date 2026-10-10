@@ -33,9 +33,9 @@ function status(storage: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
-async function read(body: unknown): Promise<
-  Awaited<ReturnType<typeof fetchMemoryStatus>>
-> {
+async function read(
+  body: unknown
+): Promise<Awaited<ReturnType<typeof fetchMemoryStatus>>> {
   return fetchMemoryStatus(CONFIG, {
     fetchImpl: (async () =>
       Response.json(body as never, {
@@ -69,12 +69,37 @@ for (const [state, embeddings] of STATES) {
  * and each must be refused rather than read as one of the three states.
  */
 const REFUSALS: ReadonlyArray<readonly [string, unknown]> = [
-  ["a state outside the contract's own list", status({ state: "degraded", embeddings: "configured" })],
-  ["an embeddings word outside the contract", status({ state: "reachable", embeddings: "pending" })],
-  ["a backend other than the one this Console speaks", status({ state: "reachable", embeddings: "configured", backend: "sqlite" })],
-  ["a probe timeout that is not a number", status({ state: "reachable", embeddings: "configured", probeTimeoutMs: "2500" })],
-  ["a storage block that is not an object", { schema: "autodev-memory-status-v1", storage: null }],
-  ["a different schema", { ...status({ state: "reachable", embeddings: "configured" }), schema: "autodev-memory-status-v2" }],
+  [
+    "a state outside the contract's own list",
+    status({ state: "degraded", embeddings: "configured" })
+  ],
+  [
+    "an embeddings word outside the contract",
+    status({ state: "reachable", embeddings: "pending" })
+  ],
+  [
+    "a backend other than the one this Console speaks",
+    status({ state: "reachable", embeddings: "configured", backend: "sqlite" })
+  ],
+  [
+    "a probe timeout that is not a number",
+    status({
+      state: "reachable",
+      embeddings: "configured",
+      probeTimeoutMs: "2500"
+    })
+  ],
+  [
+    "a storage block that is not an object",
+    { schema: "autodev-memory-status-v1", storage: null }
+  ],
+  [
+    "a different schema",
+    {
+      ...status({ state: "reachable", embeddings: "configured" }),
+      schema: "autodev-memory-status-v2"
+    }
+  ],
   ["a body that is not an object", null]
 ];
 

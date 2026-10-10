@@ -18,9 +18,20 @@ import type { AgentRole } from "../agents/types.ts";
 
 /** Current Core schema version for the playtesting artifact family. */
 export const PLAYTESTS_SCHEMA_VERSION = 1 as const;
+/** Version of the normative measurement rules applied to new artifacts. */
+export const PLAYTESTS_MEASUREMENT_VERSION = "playtesting-measurement-v1" as const;
 
-/** Identifier for the v1 JSON-RPC game-adapter envelope family. */
-export const PLAYTESTS_PROTOCOL = "autodev-playtest-adapter-v1" as const;
+/** Version negotiated by `game.capabilities` before any episode reset. */
+export const PLAYTESTS_PROTOCOL_VERSION = 1 as const;
+
+/** Hard v1 JSON-RPC transport ceilings; adapters may advertise lower limits. */
+export const PLAYTESTS_ADAPTER_DEFAULT_QUOTAS = {
+  maxMessageBytes: 1_048_576,
+  maxQueuedRequests: 32,
+  ordinaryCallTimeoutMs: 10_000,
+  resetReplayTimeoutMs: 60_000,
+  cancelGraceMs: 2000
+} as const;
 
 /** Identifier for the v1 metric-registry family. */
 export const PLAYTESTS_REGISTRY_SCHEMA =
@@ -38,51 +49,96 @@ export const PLAYTESTS_COMPARISON_SCHEMA =
 export const PLAYTESTS_HUMAN_STUDY_SCHEMA =
   "autodev-playtest-human-study-v1" as const;
 
-/** Single source of truth for the supported JSON-RPC error codes. */
+export const PLAYTESTS_BATCH_SCHEMA = "autodev-playtest-batch-v1" as const;
+export const PLAYTESTS_EPISODE_SCHEMA = "autodev-playtest-episode-v1" as const;
+export const PLAYTESTS_EXPERIMENT_SCHEMA =
+  "autodev-playtest-experiment-v1" as const;
+export const PLAYTESTS_SESSION_REVIEW_SCHEMA =
+  "autodev-playtest-session-review-v1" as const;
+
+/** Standard JSON-RPC error codes are preserved verbatim. */
+export const PLAYTESTS_JSON_RPC_STANDARD_ERROR_CODES = {
+  parseError: -32_700,
+  invalidRequest: -32_600,
+  methodNotFound: -32_601,
+  invalidParams: -32_602,
+  internalError: -32_603
+} as const;
+
+/** Version-1 game-adapter application errors and their specified codes. */
+export const PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES = {
+  unsupportedScenario: -32_001,
+  staleRevision: -32_002,
+  illegalAction: -32_003,
+  unsupportedCapability: -32_004,
+  quota: -32_005,
+  cancelled: -32_006,
+  engineFailure: -32_007
+} as const;
+
+/** Single source of truth for every permitted JSON-RPC error code. */
 export const PLAYTESTS_ADAPTER_ERROR_CODES = [
-  "invalid_request",
-  "method_not_found",
-  "invalid_params",
-  "internal_error",
-  "revision_conflict",
-  "cancelled",
-  "step_indeterminate",
-  "policy_unavailable",
-  "unsupported_modality",
-  "rate_limited",
-  "transport_eof"
+  ...Object.values(PLAYTESTS_JSON_RPC_STANDARD_ERROR_CODES),
+  ...Object.values(PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES)
 ] as const;
 
 export type PlaytestAdapterErrorCode =
   (typeof PLAYTESTS_ADAPTER_ERROR_CODES)[number];
 
-/** Capabilities the adapter may advertise to Runtime; closed vocabulary. */
-export const PLAYTESTS_ADAPTER_CAPABILITIES = [
+/** Game modes explicitly supported by a negotiated adapter. */
+export const PLAYTESTS_GAME_MODES = [
   "headless",
   "browser",
-  "native-visual",
-  "deterministic-seed",
-  "snapshot-replay",
-  "counterfactual-branch",
-  "human-instrument-import",
-  "pxi-import"
+  "native-visual"
 ] as const;
 
-export type PlaytestAdapterCapability =
-  (typeof PLAYTESTS_ADAPTER_CAPABILITIES)[number];
+export type PlaytestGameMode = (typeof PLAYTESTS_GAME_MODES)[number];
 
-/** JSON-RPC methods the Core protocol currently supports. */
+export const PLAYTESTS_COVERAGE_MODALITIES = [
+  ...PLAYTESTS_GAME_MODES,
+  "human-post-play"
+] as const;
+
+export type PlaytestCoverageModality =
+  (typeof PLAYTESTS_COVERAGE_MODALITIES)[number];
+
+/** JSON-RPC methods in the documented game-adapter protocol v1. */
 export const PLAYTESTS_ADAPTER_METHODS = [
-  "initialize",
-  "advertise_capabilities",
-  "describe_observation",
-  "request_action",
-  "submit_step",
-  "cancel_episode",
-  "finalize_episode"
+  "game.capabilities",
+  "game.reset",
+  "game.observe",
+  "game.legalActions",
+  "game.step",
+  "game.outcome",
+  "game.invariants",
+  "game.snapshot",
+  "game.replay",
+  "game.fork",
+  "game.captureEvents",
+  "game.captureFrame",
+  "game.cancel"
 ] as const;
 
 export type PlaytestAdapterMethod = (typeof PLAYTESTS_ADAPTER_METHODS)[number];
+
+/** Notifications have params but deliberately have no JSON-RPC response id. */
+export const PLAYTESTS_ADAPTER_NOTIFICATIONS = [
+  "game.event",
+  "game.progress"
+] as const;
+
+export type PlaytestAdapterNotification =
+  (typeof PLAYTESTS_ADAPTER_NOTIFICATIONS)[number];
+
+/** Optional methods are advertised only when the target adapter implements them. */
+export const PLAYTESTS_OPTIONAL_ADAPTER_METHODS = [
+  "game.invariants",
+  "game.snapshot",
+  "game.replay",
+  "game.fork",
+  "game.captureEvents",
+  "game.captureFrame"
+] as const satisfies readonly PlaytestAdapterMethod[];
 
 /** Polarity of a metric: lower is better, higher is better, or descriptive. */
 export const PLAYTESTS_POLARITIES = [
@@ -130,21 +186,18 @@ export const PLAYTESTS_MISSING_REASONS = [
 
 export type PlaytestMissingReason = (typeof PLAYTESTS_MISSING_REASONS)[number];
 
-/** Outcome categories a single episode/attempt may end in. */
-export const PLAYTESTS_EPISODE_OUTCOMES = [
+/** Execution states for a single assigned episode; review/eligibility are counters, not outcomes. */
+export const PLAYTESTS_EPISODE_STATES = [
   "assigned",
   "started",
   "completed",
   "crashed",
   "infrastructure-failed",
   "cancelled",
-  "budget-truncated",
-  "reviewed",
-  "eligible"
+  "budget-truncated"
 ] as const;
 
-export type PlaytestEpisodeOutcome =
-  (typeof PLAYTESTS_EPISODE_OUTCOMES)[number];
+export type PlaytestEpisodeState = (typeof PLAYTESTS_EPISODE_STATES)[number];
 
 /** One incompatible semantic quantity disables every statistical delta rule. */
 export const PLAYTESTS_NOT_COMPARABLE_MODE = "not-comparable" as const;
@@ -227,9 +280,15 @@ export const PLAYTESTS_SEVERITIES = [
 
 export type PlaytestSeverity = (typeof PLAYTESTS_SEVERITIES)[number];
 
-/** Fix lineage status: how the finding was raised. */
-export type PlaytestFindingStatus =
-  "open" | "fixed" | "regressed" | "withdrawn" | "stale";
+/** Fix-lineage lifecycle states; shared by validators, Data and Control API. */
+export const PLAYTESTS_FINDING_STATUSES = [
+  "open",
+  "fixed",
+  "regressed",
+  "withdrawn",
+  "stale"
+] as const;
+export type PlaytestFindingStatus = (typeof PLAYTESTS_FINDING_STATUSES)[number];
 
 /** Schema-allowed change-detection answer sources. */
 export type PlaytestPreferenceAnswer = "A" | "B" | "tie" | "unable-to-judge";
@@ -238,30 +297,25 @@ export type PlaytestPreferenceAnswer = "A" | "B" | "tie" | "unable-to-judge";
 export const PLAYTESTS_MINIPXI_ENJ_MIN = -3;
 export const PLAYTESTS_MINIPXI_ENJ_MAX = 3;
 
-/** Native Likert items for full miniPXI instruments; ENJ is exposed alone. */
+/** The 11 official miniPXI item codes; ENJ remains a distinct construct. */
 export const PLAYTESTS_MINIPXI_ITEMS = [
-  "ENJ",
-  "AUT",
-  "GR",
+  "AA",
   "CH",
-  "AE",
-  "ME",
-  "NA",
-  "PUX",
-  "PBP",
-  "RP"
+  "EC",
+  "GR",
+  "PF",
+  "AUT",
+  "CUR",
+  "IMM",
+  "MAS",
+  "MEA",
+  "ENJ"
 ] as const;
 
 export type PlaytestMiniPxiItem = (typeof PLAYTESTS_MINIPXI_ITEMS)[number];
 
-/** Native category codes for each miniPXI Likert response. */
-export const PLAYTESTS_MINIPXI_CATEGORIES = [
-  "low",
-  "medium-low",
-  "neutral",
-  "medium-high",
-  "high"
-] as const;
+/** Native -3..+3 Likert response categories; no display recoding is implied. */
+export const PLAYTESTS_MINIPXI_CATEGORIES = [-3, -2, -1, 0, 1, 2, 3] as const;
 
 export type PlaytestMiniPxiCategory =
   (typeof PLAYTESTS_MINIPXI_CATEGORIES)[number];
@@ -352,25 +406,6 @@ export interface PlaytestDimensionRubric {
   readonly evidenceChecklist: readonly string[];
   readonly insufficient: "null";
   readonly humanOutcomeMapping: string | null;
-}
-
-/** A native miniPXI response record before aggregation. */
-export interface PlaytestMiniPxiResponse {
-  readonly studyId: string;
-  readonly responseId: string;
-  readonly pseudonymousParticipantId: string;
-  readonly consentVersion: string;
-  readonly instrumentVersion: string;
-  readonly instrumentHash: string;
-  readonly buildSha: string;
-  readonly episodeId: string;
-  readonly exposureStartedAt: string;
-  readonly exposureEndedAt: string;
-  readonly order: "A-first" | "B-first";
-  readonly submittedAt: string;
-  readonly itemId: PlaytestMiniPxiItem;
-  readonly nativeValue: number | null;
-  readonly missingReason?: PlaytestMissingReason;
 }
 
 /** Counters for one stratum inside the sampling budget. */
@@ -470,6 +505,17 @@ export interface PlaytestComparison {
   readonly experimentId: string | null;
   readonly baseline: PlaytestVersionedRef;
   readonly candidate: PlaytestVersionedRef;
+  readonly freezeStatus: "frozen" | "spent" | "not-comparable";
+  readonly pairing: {
+    readonly mode: PlaytestCompatibilityMode;
+    readonly pairMap: Readonly<Record<string, string>>;
+    readonly rngAlgorithm: string | null;
+    readonly rngStreamVersion: string | null;
+    readonly couplingDiagnostics: readonly string[];
+    readonly exclusions: readonly string[];
+  };
+  readonly sourceFindingIds: readonly string[];
+  readonly episodeRefs: readonly PlaytestEvidenceLocator[];
   readonly measurementVersion: string;
   readonly metrics: readonly PlaytestMetricComparison[];
   readonly decision: PlaytestDecisionStatus;
@@ -480,24 +526,6 @@ export interface PlaytestComparison {
     readonly interval: PlaytestNumericInterval | null;
   };
   readonly provenance: PlaytestProvenance;
-  readonly notes: string;
-}
-
-/** A review submission; the canonical artifact for analyst output. */
-export interface PlaytestReview {
-  readonly schema: typeof PLAYTESTS_COMPARISON_SCHEMA;
-  readonly reviewId: string;
-  readonly version: number;
-  readonly episodeId: string;
-  readonly supersedes: string | null;
-  readonly authorRole: PlaytestAnalysisRole;
-  readonly authorId: string;
-  readonly rubricHash: string;
-  readonly measurementVersion: string;
-  readonly anchors: readonly PlaytestDimensionAnchor[];
-  readonly findings: readonly PlaytestFinding[];
-  readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
-  readonly createdAt: string;
   readonly notes: string;
 }
 
@@ -524,51 +552,78 @@ export interface PlaytestFinding {
   readonly nextReviewAt: string | null;
 }
 
-/** JSON-RPC v1 request envelope. */
+/** JSON-RPC v1 request envelope; protocol request IDs are unique strings. */
 export interface PlaytestJsonRpcRequest {
   readonly jsonrpc: "2.0";
-  readonly id: number | string;
+  readonly id: string;
   readonly method: PlaytestAdapterMethod;
+  readonly params: Readonly<Record<string, unknown>>;
+}
+
+/** JSON-RPC notification; no `id` means no response may be emitted. */
+export interface PlaytestJsonRpcNotification {
+  readonly jsonrpc: "2.0";
+  readonly method: PlaytestAdapterNotification;
   readonly params: Readonly<Record<string, unknown>>;
 }
 
 /** JSON-RPC v1 success response envelope. */
 export interface PlaytestJsonRpcSuccess {
   readonly jsonrpc: "2.0";
-  readonly id: number | string;
+  readonly id: string;
   readonly result: unknown;
+}
+
+export interface PlaytestAdapterErrorData {
+  readonly category: string;
+  readonly retryable: boolean;
+  readonly episodeDisposition: "unchanged" | "aborted" | "unknown";
 }
 
 /** JSON-RPC v1 error response envelope. */
 export interface PlaytestJsonRpcError {
   readonly jsonrpc: "2.0";
-  readonly id: number | string | null;
+  readonly id: string | null;
   readonly error: {
-    readonly code: PlaytestAdapterErrorCode | number;
+    readonly code: PlaytestAdapterErrorCode;
     readonly message: string;
-    readonly data?: unknown;
+    readonly data?: PlaytestAdapterErrorData;
   };
 }
 
 export type PlaytestJsonRpcResponse =
   PlaytestJsonRpcSuccess | PlaytestJsonRpcError;
 
-/** Capability advertisement returned by `advertise_capabilities`. */
-export interface PlaytestCapabilityAdvertisement {
-  readonly protocol: typeof PLAYTESTS_PROTOCOL;
-  readonly capabilities: readonly PlaytestAdapterCapability[];
-  readonly supportedMethods: readonly PlaytestAdapterMethod[];
-  readonly eventSchemaHash: string;
-  readonly observationSchemaHash: string;
-  readonly maxStep: number | null;
+/** Adapter quotas are negotiated before reset and may not exceed v1 defaults. */
+export interface PlaytestAdapterQuotas {
+  readonly maxMessageBytes: number;
+  readonly maxQueuedRequests: number;
+  readonly ordinaryCallTimeoutMs: number;
+  readonly resetReplayTimeoutMs: number;
 }
 
-/** Observation descriptor returned by `describe_observation`. */
-export interface PlaytestObservationDescriptor {
-  readonly schemaHash: string;
-  readonly fields: readonly string[];
-  readonly visibilityMode: "structured" | "visual-only";
-  readonly supportsReplay: boolean;
+/** Capability advertisement returned by the first `game.capabilities` call. */
+export type PlaytestJsonSchema = Readonly<Record<string, unknown>>;
+
+export interface PlaytestCapabilityAdvertisement {
+  readonly protocolVersion: typeof PLAYTESTS_PROTOCOL_VERSION;
+  readonly schemaHashAlgorithm: "sha256-canonical-json-v1";
+  readonly engineBuild: string;
+  readonly modes: readonly PlaytestGameMode[];
+  readonly scenarioIds: readonly string[];
+  readonly observationSchema: PlaytestJsonSchema;
+  readonly actionSchema: PlaytestJsonSchema;
+  readonly eventSchema: PlaytestJsonSchema;
+  readonly observationSchemaHash: string;
+  readonly actionSchemaHash: string;
+  readonly eventSchemaHash: string;
+  readonly optionalOperations: readonly (typeof PLAYTESTS_OPTIONAL_ADAPTER_METHODS)[number][];
+  readonly quotas: PlaytestAdapterQuotas;
+  readonly deterministic: {
+    readonly seededRuns: boolean;
+    readonly rngVersion: string | null;
+    readonly traceReplayable: boolean;
+  };
 }
 
 /** Action request issued by Runtime; bound to the lowest-Revision call. */
@@ -579,36 +634,6 @@ export interface PlaytestActionRequest {
   readonly observationHash: string;
   readonly offeredActionIds: readonly string[];
   readonly deadlineAt: string;
-}
-
-/** The legal, deterministic step result returned by `submit_step`. */
-export interface PlaytestStepResult {
-  readonly episodeId: string;
-  readonly step: number;
-  readonly revision: number;
-  readonly executedActionId: string;
-  readonly rejected: boolean;
-  readonly observedStateHash: string;
-  readonly eventIds: readonly string[];
-  readonly observationLocator: PlaytestEvidenceLocator;
-  readonly timestamp: string;
-}
-
-/** Episode record input expected by finalize/finalize_episode. */
-export interface PlaytestEpisodeInput {
-  readonly episodeId: string;
-  readonly workspaceId: string;
-  readonly scenario: string;
-  readonly policy: string;
-  readonly cohort: string;
-  readonly seed: string;
-  readonly startedAt: string;
-  readonly endedAt: string;
-  readonly outcome: PlaytestEpisodeOutcome;
-  readonly steps: readonly PlaytestStepResult[];
-  readonly buildSha: string;
-  readonly measurementVersion: string;
-  readonly completionCounts: PlaytestCompletionCounts;
 }
 
 /** Bare-bones numeric scoring result; common denominator across evaluators. */

@@ -12,6 +12,7 @@ function createMockProvider(
 ): ControlApiProviderRecord {
   return {
     id: "anthropic",
+    links: { usage: null, documentation: null },
     disabled: false,
     agentLimits: { perSession: 4, acrossSessions: 12 },
     route: {

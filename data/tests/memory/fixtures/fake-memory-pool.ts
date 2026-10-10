@@ -1520,7 +1520,9 @@ export class FakeMemoryPool implements MemoryConnectionPool {
     if (!match) return null;
     const predicate = compileCondition(match[1] as string, params);
     const counts = new Map<string, number>();
-    for (const row of [...this.tables.memory_records.values()].filter(predicate)) {
+    for (const row of [...this.tables.memory_records.values()].filter(
+      predicate
+    )) {
       const status = String(row.status ?? "");
       counts.set(status, (counts.get(status) ?? 0) + 1);
     }
@@ -1630,42 +1632,40 @@ export class FakeMemoryPool implements MemoryConnectionPool {
       : undefined;
     const vectorSearch = sql.includes("::vector");
     const isExperienceSearch = table === "memory_experiences";
-    const scored = source
-      .filter(predicate)
-      .map((row, index): ScoredRow => {
-        const lexicalScore = hasLexicalMatch(
-          isExperienceSearch ? experienceSearchText(row) : row.claim,
-          searchQuery
-        )
-          ? 1
-          : 0;
-        if (isExperienceSearch) {
-          // `buildExperienceSearchQuery` has exactly one ranking signal and no
-          // path, task-kind or vector term -- it selects every scoped row and
-          // orders them by the single `ts_rank` score. Emitting the other
-          // columns here would make the fake look richer than the query it
-          // stands in for, which is how an experience search came to be scored
-          // off `claim` and filtered down to nothing.
-          return {
-            ...row,
-            lexical_score: lexicalScore,
-            score: lexicalScore
-          };
-        }
-        const pathScore = memoryPathScore(row, requestedPaths);
+    const scored = source.filter(predicate).map((row, index): ScoredRow => {
+      const lexicalScore = hasLexicalMatch(
+        isExperienceSearch ? experienceSearchText(row) : row.claim,
+        searchQuery
+      )
+        ? 1
+        : 0;
+      if (isExperienceSearch) {
+        // `buildExperienceSearchQuery` has exactly one ranking signal and no
+        // path, task-kind or vector term -- it selects every scoped row and
+        // orders them by the single `ts_rank` score. Emitting the other
+        // columns here would make the fake look richer than the query it
+        // stands in for, which is how an experience search came to be scored
+        // off `claim` and filtered down to nothing.
         return {
           ...row,
-          path_score: pathScore,
-          task_kind_score: memoryTaskKindScore(
-            row,
-            requestedTaskKind,
-            this.tables.memory_experiences
-          ),
           lexical_score: lexicalScore,
-          has_embedding: row.embedding !== null && row.embedding !== undefined,
-          score: source.length - index
+          score: lexicalScore
         };
-      });
+      }
+      const pathScore = memoryPathScore(row, requestedPaths);
+      return {
+        ...row,
+        path_score: pathScore,
+        task_kind_score: memoryTaskKindScore(
+          row,
+          requestedTaskKind,
+          this.tables.memory_experiences
+        ),
+        lexical_score: lexicalScore,
+        has_embedding: row.embedding !== null && row.embedding !== undefined,
+        score: source.length - index
+      };
+    });
     if (isExperienceSearch) {
       // `ORDER BY score DESC` and nothing else: no `WHERE score > 0`. Postgres
       // would return non-matching scoped rows ranked last, and this fake has to

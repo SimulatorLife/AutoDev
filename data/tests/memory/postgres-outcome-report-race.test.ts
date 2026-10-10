@@ -221,7 +221,8 @@ test("a concurrent outcome report with a different body still conflicts", async 
       context: sessionContext
     }),
     (error: unknown) =>
-      error instanceof MemoryConflictError && /already exists/u.test(error.message)
+      error instanceof MemoryConflictError &&
+      /already exists/u.test(error.message)
   );
 });
 
@@ -275,7 +276,8 @@ test("a concurrent session outcome report with a different body still conflicts"
       context: sessionContext
     }),
     (error: unknown) =>
-      error instanceof MemoryConflictError && /already exists/u.test(error.message)
+      error instanceof MemoryConflictError &&
+      /already exists/u.test(error.message)
   );
 });
 
@@ -408,7 +410,8 @@ test("a concurrent use report with a different body still conflicts", async () =
       context: useContext
     }),
     (error: unknown) =>
-      error instanceof MemoryConflictError && /already exists/u.test(error.message)
+      error instanceof MemoryConflictError &&
+      /already exists/u.test(error.message)
   );
 });
 
@@ -435,7 +438,10 @@ test("a concurrent use report with a different body still conflicts", async () =
  * `typeof`/`in` guards above it — and `08006` is a real pg
  * `connection_failure`, not a value invented to pass.
  */
-function driverFailure(code: string, message: string): Error & { code: string } {
+function driverFailure(
+  code: string,
+  message: string
+): Error & { code: string } {
   return Object.assign(new Error(message), { code });
 }
 
@@ -552,7 +558,9 @@ test("a non-collision memory-record insert failure surfaces as itself", async ()
   // `MemoryProvenanceError` ("unknown experience ids") before ever attempting
   // the insert, and the test would assert a provenance refusal against an
   // identity check.
-  await new PostgresMemoryRepository({ pool }).appendExperience(makeExperience());
+  await new PostgresMemoryRepository({ pool }).appendExperience(
+    makeExperience()
+  );
 
   const failure = driverFailure("08006", "connection terminated unexpectedly");
   const repository = new PostgresMemoryRepository({
@@ -628,10 +636,10 @@ test("a session outcome report must match the trusted identity and carry a sessi
   for (const taskId of ["", "   "] as const) {
     await assert.rejects(
       () =>
-        record(
-          sessionReport({ taskId }),
-          { ...sessionContext, taskId } as MemoryReadContext
-        ),
+        record(sessionReport({ taskId }), {
+          ...sessionContext,
+          taskId
+        } as MemoryReadContext),
       /requires a trusted session task context/u,
       `a blank session task on both sides (${JSON.stringify(taskId)}) must be refused`
     );
@@ -701,7 +709,11 @@ test("a malformed injection-event count refuses the report instead of passing th
     actor: { id: "op-1", authority: "curator" },
     context: sessionContext
   });
-  assert.equal(result.appended, true, "a well-formed count must still be recorded");
+  assert.equal(
+    result.appended,
+    true,
+    "a well-formed count must still be recorded"
+  );
 
   // And a well-formed zero is the refusal the guard was written for.
   const empty: MemoryConnectionPool = {

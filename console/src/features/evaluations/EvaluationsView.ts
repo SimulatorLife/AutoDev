@@ -551,8 +551,7 @@ function traceReference(
         nav.tab,
         nav.page
       ),
-      className:
-        `font-mono text-xs font-medium ${ACTION_LINK_CLASS}`,
+      className: `font-mono text-xs font-medium ${ACTION_LINK_CLASS}`,
       "aria-label": `View trace for evaluation ${evaluation.id}`,
       "data-evaluation-trace-span-id": reference.spanId
     },
@@ -569,8 +568,7 @@ function spanLink(
     "a",
     {
       href: evaluationTraceHref(nav.filters, spanId, nav.tab, nav.page),
-      className:
-        `font-mono text-xs ${ACTION_LINK_CLASS}`,
+      className: `font-mono text-xs ${ACTION_LINK_CLASS}`,
       // `aria-current` is what makes the row findable rather than merely
       // different: colour alone is not something a screen reader reports, and
       // the page is server-rendered with no script to scroll it into view.
@@ -1395,8 +1393,7 @@ function renderPager(
         ...(enabled
           ? {
               href: evaluationsPageHref(filters, target, tab),
-              className:
-                `rounded border border-border px-3 py-1 text-xs ${ACTION_LINK_CLASS}`,
+              className: `rounded border border-border px-3 py-1 text-xs ${ACTION_LINK_CLASS}`,
               "data-evaluations-page-step": target
             }
           : {
@@ -1771,8 +1768,7 @@ export function EvaluationsView({
             "a",
             {
               href: evaluationResultHref(filters, evaluation.id, tab, page),
-              className:
-                `font-mono text-xs font-semibold ${ACTION_LINK_CLASS}`,
+              className: `font-mono text-xs font-semibold ${ACTION_LINK_CLASS}`,
               // The visible text is the role, and roles repeat: a fifty-row page
               // over six roles announced six words fifty times, with nothing to
               // tell a non-sighted operator which run they were on. The trace
@@ -1988,8 +1984,7 @@ export function EvaluationsView({
             "a",
             {
               href: evaluationsClearedHref({ tab }),
-              className:
-                `text-xs ${ACTION_LINK_CLASS}`,
+              className: `text-xs ${ACTION_LINK_CLASS}`,
               "data-evaluations-clear": "true"
             },
             "Clear filters"

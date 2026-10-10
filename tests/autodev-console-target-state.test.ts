@@ -33,7 +33,7 @@ function canonicalNavSurface(doc: string): {
       Observe: [],
       Operate: []
     };
-  const fencePattern = /~~~(?:text)?\n([\s\S]*?)\n~~~/gu;
+  const fencePattern = /(?:~~~|```)(?:text)?\n([\s\S]*?)\n(?:~~~|```)/gu;
   for (const fence of doc.matchAll(fencePattern)) {
     const block = fence[1] ?? "";
     if (!/\bConfigure\b/.test(block)) continue;
@@ -136,8 +136,8 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
   );
   assert.deepEqual(
     groups.Observe.slice().sort(),
-    ["Evaluations", "Memory", "Usage"],
-    "Observe must list exactly its three canonical nav resources"
+    ["Evaluations", "Memory", "Playtesting", "Usage"],
+    "Observe must list exactly its four canonical nav resources"
   );
   assert.deepEqual(
     groups.Operate.slice().sort(),
@@ -219,7 +219,7 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
   );
   assert.match(
     target,
-    /\| Per-role priority and model assignment for Default\/Smart\/Orchestrator\/Subagent, provider-wide agent limits, provider enable\/disable, model enablement, priority\/fallback groups, per-tier models, routing \| Providers \(Providers and Models tabs\) \|/u
+    /\| Per-role priority and model assignment for Default\/Smart\/Orchestrator\/Subagent, provider-wide agent limits, provider enable\/disable, model enablement, priority\/fallback groups, per-tier models, routing \|\s*Providers \(Providers and Models tabs\)\s*\|/u
   );
   assert.match(
     target,
@@ -1135,6 +1135,125 @@ test("Console globals.css defines the required dark-only semantic token set", ()
     chartTokens.length >= 5,
     "globals.css must define at least five chart-series tokens"
   );
+});
+
+// Background/surface hierarchy must read as black/neutral-charcoal (per
+// docs/autodev-console-target-state.md §3's dark-only visual system
+// requirements), not the purple/blue-tinted dark gray the Console
+// previously shipped. Semantic accent/success/warning/error/chart roles
+// keep their own distinct hues; only the background/surface hierarchy is
+// constrained to near-black neutral gray.
+const BACKGROUND_SURFACE_HIERARCHY_TOKENS = [
+  "background",
+  "surface",
+  "surface-raised",
+  "input",
+  "hover",
+  "selected",
+  "border",
+  "border-strong"
+] as const;
+
+function channelSpread(hex: string): {
+  maxDelta: number;
+  blueBias: number;
+  purpleBias: number;
+} {
+  const r = Number.parseInt(hex.slice(1, 3), 16);
+  const g = Number.parseInt(hex.slice(3, 5), 16);
+  const b = Number.parseInt(hex.slice(5, 7), 16);
+  const maxDelta = Math.max(Math.abs(r - g), Math.abs(g - b), Math.abs(r - b));
+  // A blue tint lifts the blue channel above red/green; a purple tint lifts
+  // red and blue together above green. A true neutral charcoal keeps all
+  // three channels within a hairline of each other.
+  const blueBias = b - Math.max(r, g);
+  const purpleBias = Math.min(r, b) - g;
+  return { maxDelta, blueBias, purpleBias };
+}
+
+test("Console background/surface hierarchy is black/neutral-charcoal, not purple/blue-tinted", () => {
+  const css = readFileSync(globalsCssPath, "utf8");
+  const tokens = parseThemeColorTokens(css);
+  const failures: string[] = [];
+
+  for (const name of BACKGROUND_SURFACE_HIERARCHY_TOKENS) {
+    const hex = tokens[name];
+    if (!hex) {
+      failures.push(`missing --color-${name}`);
+      continue;
+    }
+    const { maxDelta, blueBias, purpleBias } = channelSpread(hex);
+    const luminance = relativeLuminance(hex);
+    if (luminance > 0.03) {
+      failures.push(
+        `--color-${name} (${hex}) is too light for a near-black charcoal surface (relative luminance ${luminance.toFixed(3)}, maximum 0.03)`
+      );
+    }
+    if (maxDelta > 1) {
+      failures.push(
+        `--color-${name} (${hex}) has channel spread ${maxDelta}, must be <= 1 for neutral charcoal`
+      );
+    }
+    if (blueBias > 1) {
+      failures.push(
+        `--color-${name} (${hex}) is blue-tinted: blue channel exceeds red/green by ${blueBias}`
+      );
+    }
+    if (purpleBias > 1) {
+      failures.push(
+        `--color-${name} (${hex}) is purple-tinted: red and blue both exceed green by ${purpleBias}`
+      );
+    }
+  }
+
+  assert.deepEqual(
+    failures,
+    [],
+    "background/surface hierarchy must be black/neutral-charcoal, not purple/blue-tinted:\n" +
+      failures.join("\n")
+  );
+
+  // The shift to neutral charcoal must not desaturate or collapse the
+  // semantic accent/success/warning/error/chart roles into each other or
+  // into gray: they keep their own distinct hues.
+  const semanticRoleTokens = [
+    "accent",
+    "success",
+    "warning",
+    "error",
+    ...Object.keys(tokens).filter((name) => name.startsWith("chart-"))
+  ];
+  const seenHexValues = new Set<string>();
+  for (const name of semanticRoleTokens) {
+    const hex = tokens[name];
+    assert.ok(hex, `--color-${name} must be defined`);
+    assert.ok(
+      !seenHexValues.has(hex),
+      `--color-${name} (${hex}) must remain visually distinct from other semantic accent/status/chart roles`
+    );
+    seenHexValues.add(hex);
+    const { maxDelta } = channelSpread(hex);
+    assert.ok(
+      maxDelta > 1,
+      `--color-${name} (${hex}) must keep a distinct hue, not collapse into neutral charcoal`
+    );
+  }
+});
+
+test("Console favicon stays aligned with the canonical dark theme tokens", () => {
+  const tokens = parseThemeColorTokens(readFileSync(globalsCssPath, "utf8"));
+  const icon = readFileSync(
+    new URL("console/app/icon.svg", repositoryRoot),
+    "utf8"
+  );
+
+  assert.ok(tokens.surface);
+  assert.ok(tokens["border-strong"]);
+  assert.ok(tokens.accent);
+  assert.ok(icon.includes(`fill="${tokens.surface}"`));
+  assert.ok(icon.includes(`stroke="${tokens["border-strong"]}"`));
+  assert.ok(icon.includes(`stroke="${tokens.accent}"`));
+  assert.ok(icon.includes(`fill="${tokens.accent}"`));
 });
 
 test("Console app/src source contains no raw Tailwind palette utilities", () => {

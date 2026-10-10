@@ -122,14 +122,21 @@ async function drive(options: DriveOptions = {}): Promise<{
 }> {
   const roots: (string | null)[] = [];
   const events: unknown[] = [];
-  const saved = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+  const saved = Object.fromEntries(
+    ENV_KEYS.map((key) => [key, process.env[key]])
+  );
   let resolver: MemoryRepositoryRootResolver | undefined;
 
   const repository: MemoryRepository = {
     appendExperience: async () => undefined,
     getExperience: async () => null,
     searchExperiences: async () => [],
-    listExperiences: async () => ({ items: [], total: 0, limit: 50, offset: 0 }),
+    listExperiences: async () => ({
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0
+    }),
     listExpiredExperiences: async () => [],
     purgeExperience: async () => "not_visible",
     proposeMemory: async () => undefined,
@@ -259,7 +266,8 @@ async function drive(options: DriveOptions = {}): Promise<{
 
   try {
     for (const key of ENV_KEYS) delete process.env[key];
-    if (options.mode !== undefined) process.env.AUTODEV_MEMORY_MODE = options.mode;
+    if (options.mode !== undefined)
+      process.env.AUTODEV_MEMORY_MODE = options.mode;
     if (options.experimentId !== undefined) {
       process.env.AUTODEV_MEMORY_EXPERIMENT_ID = options.experimentId;
     }
@@ -320,7 +328,11 @@ test("a workspace the router cannot place is handed straight back", async () => 
       /AUTODEV MEMORY PACKET/u,
       `${label}: memory was attached to a workspace the router cannot place`
     );
-    assert.equal(events.length, 0, `${label}: an observation was recorded anyway`);
+    assert.equal(
+      events.length,
+      0,
+      `${label}: an observation was recorded anyway`
+    );
   }
 });
 
@@ -344,7 +356,9 @@ test("instructions the router cannot read as text stop the turn before enrichmen
     // that and passed against a source with the guard deleted.
     const payload = {
       instructions,
-      input: [{ type: "message", role: "user", content: "Raise the retry budget." }]
+      input: [
+        { type: "message", role: "user", content: "Raise the retry budget." }
+      ]
     };
     const { result, events } = await drive({
       mode: "jit",
@@ -356,7 +370,11 @@ test("instructions the router cannot read as text stop the turn before enrichmen
       instructions,
       "the unreadable instructions were replaced rather than passed through"
     );
-    assert.equal(events.length, 0, "an observation was recorded for a turn that never ran");
+    assert.equal(
+      events.length,
+      0,
+      "an observation was recorded for a turn that never ran"
+    );
 
     const skipped = await drive({
       mode: "disabled",
@@ -374,7 +392,10 @@ test("a memory read that fails leaves the caller's turn intact", async () => {
   // "Historical memory is advisory; a database/curation failure must not fail
   // the task." The catch that says so had never been taken, so nothing held the
   // promise: a database outage could have surfaced as a failed model request.
-  const { result, payload, events } = await drive({ mode: "jit", failSearch: true });
+  const { result, payload, events } = await drive({
+    mode: "jit",
+    failSearch: true
+  });
 
   assert.equal(
     result,
@@ -406,7 +427,10 @@ test("a scope naming another workspace resolves to no root at all", async () => 
   // to verify them at all, and it is the failure a test that only checks the
   // happy path would never see.
   const { resolver } = await drive({ mode: "jit" });
-  assert.ok(resolver, "the host was never given a resolver to refuse anything with");
+  assert.ok(
+    resolver,
+    "the host was never given a resolver to refuse anything with"
+  );
 
   const scope = (over: Partial<MemoryReadContext>): MemoryReadContext => ({
     workspaceId: "SimulatorLife/AutoDev",
@@ -493,7 +517,11 @@ test("an unplaceable workspace is recorded no skip either", async () => {
     mode: "disabled",
     workspace: { key: "SimulatorLife/AutoDev", cwd: "relative/path" }
   });
-  assert.equal(unplaceable.events.length, 0, "a skip was recorded with no repository");
+  assert.equal(
+    unplaceable.events.length,
+    0,
+    "a skip was recorded with no repository"
+  );
 
   const placeable = await drive({ mode: "disabled" });
   assert.equal(

@@ -13,26 +13,29 @@
  */
 
 import {
-  type PlaytestAdapterCapability,
   type PlaytestAdapterErrorCode,
   type PlaytestAdapterMethod,
   type PlaytestCapabilityAdvertisement,
   type PlaytestEvidenceLocator,
   type PlaytestJsonRpcError,
+  type PlaytestJsonRpcNotification,
   type PlaytestJsonRpcRequest,
   type PlaytestJsonRpcResponse,
   type PlaytestJsonRpcSuccess,
   type PlaytestLocatorKind,
   type PlaytestMiniPxiItem,
-  type PlaytestObservationDescriptor,
-  PLAYTESTS_ADAPTER_CAPABILITIES,
+  PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES,
+  PLAYTESTS_ADAPTER_DEFAULT_QUOTAS,
   PLAYTESTS_ADAPTER_ERROR_CODES,
   PLAYTESTS_ADAPTER_METHODS,
+  PLAYTESTS_ADAPTER_NOTIFICATIONS,
+  PLAYTESTS_GAME_MODES,
   PLAYTESTS_LOCATOR_KINDS,
   PLAYTESTS_MINIPXI_ENJ_MAX,
   PLAYTESTS_MINIPXI_ENJ_MIN,
   PLAYTESTS_MINIPXI_ITEMS,
-  PLAYTESTS_PROTOCOL
+  PLAYTESTS_OPTIONAL_ADAPTER_METHODS,
+  PLAYTESTS_PROTOCOL_VERSION
 } from "./types.ts";
 
 /** Is `value` one of the documented JSON-RPC error codes? */
@@ -40,8 +43,9 @@ export function isPlaytestAdapterErrorCode(
   value: unknown
 ): value is PlaytestAdapterErrorCode {
   return (
-    typeof value === "string" &&
-    (PLAYTESTS_ADAPTER_ERROR_CODES as readonly string[]).includes(value)
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    (PLAYTESTS_ADAPTER_ERROR_CODES as readonly number[]).includes(value)
   );
 }
 
@@ -55,13 +59,20 @@ export function isPlaytestAdapterMethod(
   );
 }
 
-/** Is `value` one of the documented adapter capabilities? */
-export function isPlaytestAdapterCapability(
-  value: unknown
-): value is PlaytestAdapterCapability {
+/** Is `value` one of the documented wire modes? */
+function isPlaytestGameMode(value: unknown): boolean {
   return (
     typeof value === "string" &&
-    (PLAYTESTS_ADAPTER_CAPABILITIES as readonly string[]).includes(value)
+    (PLAYTESTS_GAME_MODES as readonly string[]).includes(value)
+  );
+}
+
+function isOptionalAdapterMethod(
+  value: unknown
+): value is (typeof PLAYTESTS_OPTIONAL_ADAPTER_METHODS)[number] {
+  return (
+    typeof value === "string" &&
+    (PLAYTESTS_OPTIONAL_ADAPTER_METHODS as readonly string[]).includes(value)
   );
 }
 
@@ -104,34 +115,49 @@ function isNonNegativeInteger(value: unknown): value is number {
   );
 }
 
-function isStringArray(value: unknown): value is readonly string[] {
-  return (
-    Array.isArray(value) && value.every((entry) => typeof entry === "string")
-  );
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+
+function isRequestId(value: unknown): value is string {
+  return typeof value === "string" && REQUEST_ID_PATTERN.test(value);
 }
 
-/** A request id must be either a non-negative integer or a non-empty string. */
-function isRequestId(value: unknown): value is number | string {
-  if (typeof value === "string") return value.length > 0;
-  if (typeof value === "number") {
-    return Number.isFinite(value) && Number.isInteger(value);
-  }
-  return false;
+function hasOnlyKeys(
+  value: Readonly<Record<string, unknown>>,
+  allowed: readonly string[]
+): boolean {
+  const keys = new Set(allowed);
+  return Object.keys(value).every((key) => keys.has(key));
 }
 
-/** Validate a JSON-RPC v1 request envelope. */
+const APPLICATION_ERROR_CODE_SET = new Set<number>(
+  Object.values(PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES)
+);
+const SHA256_HEX_PATTERN = /^[a-f\d]{64}$/iu;
+
+function isApplicationErrorCode(value: number): boolean {
+  return APPLICATION_ERROR_CODE_SET.has(value);
+}
+
+/** Validate a strict, single JSON-RPC v1 request envelope (never a batch). */
 export function assertPlaytestJsonRpcRequest(
   value: unknown
 ): asserts value is PlaytestJsonRpcRequest {
   if (!isPlainObject(value)) {
-    throw new TypeError("JSON-RPC request must be a plain object.");
+    throw new TypeError(
+      "JSON-RPC request must be a plain object; batch arrays are unsupported."
+    );
+  }
+  if (!hasOnlyKeys(value, ["jsonrpc", "id", "method", "params"])) {
+    throw new TypeError(
+      "JSON-RPC request contains an unsupported envelope field."
+    );
   }
   if (value.jsonrpc !== "2.0") {
     throw new TypeError('JSON-RPC request must carry jsonrpc === "2.0".');
   }
   if (!isRequestId(value.id)) {
     throw new TypeError(
-      "JSON-RPC request id must be a non-empty string or integer."
+      "JSON-RPC request id must be a bounded non-empty string."
     );
   }
   if (!isPlaytestAdapterMethod(value.method)) {
@@ -144,74 +170,144 @@ export function assertPlaytestJsonRpcRequest(
   }
 }
 
+/** Validate a JSON-RPC notification with no id and no response. */
+export function assertPlaytestJsonRpcNotification(
+  value: unknown
+): asserts value is PlaytestJsonRpcNotification {
+  if (!isPlainObject(value)) {
+    throw new TypeError("JSON-RPC notification must be a plain object.");
+  }
+  if (!hasOnlyKeys(value, ["jsonrpc", "method", "params"])) {
+    throw new TypeError(
+      "JSON-RPC notification must not carry an id or unknown field."
+    );
+  }
+  if (value.jsonrpc !== "2.0") {
+    throw new TypeError('JSON-RPC notification must carry jsonrpc === "2.0".');
+  }
+  if (
+    typeof value.method !== "string" ||
+    !(PLAYTESTS_ADAPTER_NOTIFICATIONS as readonly string[]).includes(
+      value.method
+    )
+  ) {
+    throw new TypeError(
+      "JSON-RPC notification method must be game.event or game.progress."
+    );
+  }
+  if (!isPlainObject(value.params)) {
+    throw new TypeError("JSON-RPC notification params must be a plain object.");
+  }
+}
+
 /** Validate a JSON-RPC v1 success response envelope. */
 export function assertPlaytestJsonRpcSuccess(
   value: unknown
 ): asserts value is PlaytestJsonRpcSuccess {
-  if (!isPlainObject(value)) {
-    throw new TypeError("JSON-RPC success must be a plain object.");
+  if (
+    !isPlainObject(value) ||
+    !hasOnlyKeys(value, ["jsonrpc", "id", "result"])
+  ) {
+    throw new TypeError(
+      "JSON-RPC success must contain only jsonrpc, id, and result."
+    );
   }
   if (value.jsonrpc !== "2.0") {
     throw new TypeError('JSON-RPC success must carry jsonrpc === "2.0".');
   }
   if (!isRequestId(value.id)) {
     throw new TypeError(
-      "JSON-RPC success id must be a non-empty string or integer."
+      "JSON-RPC success id must be a bounded non-empty string."
     );
   }
-  // The result is intentionally untyped: protocol validators do not know
-  // which method it belongs to. Method-level validators handle that.
   if (!("result" in value)) {
     throw new TypeError("JSON-RPC success must include a `result` field.");
   }
 }
 
-/** Validate a JSON-RPC v1 error response envelope. */
+/** Validate a JSON-RPC v1 error response envelope and application disposition. */
 export function assertPlaytestJsonRpcError(
   value: unknown
 ): asserts value is PlaytestJsonRpcError {
-  if (!isPlainObject(value)) {
-    throw new TypeError("JSON-RPC error must be a plain object.");
+  if (
+    !isPlainObject(value) ||
+    !hasOnlyKeys(value, ["jsonrpc", "id", "error"])
+  ) {
+    throw new TypeError(
+      "JSON-RPC error must contain only jsonrpc, id, and error."
+    );
   }
   if (value.jsonrpc !== "2.0") {
     throw new TypeError('JSON-RPC error must carry jsonrpc === "2.0".');
   }
-  // Per JSON-RPC 2.0, an id may be null in an error envelope when the request
-  // could not be parsed. Anything else is invalid.
   if (value.id !== null && !isRequestId(value.id)) {
-    throw new TypeError(
-      "JSON-RPC error id must be a non-empty string, integer, or null."
-    );
+    throw new TypeError("JSON-RPC error id must be a bounded string or null.");
   }
   const error = value.error;
-  if (!isPlainObject(error)) {
+  if (
+    !isPlainObject(error) ||
+    !hasOnlyKeys(error, ["code", "message", "data"])
+  ) {
     throw new TypeError(
-      "JSON-RPC error envelope must include an `error` object."
+      "JSON-RPC error envelope must contain code, message, and optional data."
     );
   }
   if (
-    typeof error.code !== "number" &&
-    !isPlaytestAdapterErrorCode(error.code)
+    typeof error.code !== "number" ||
+    !Number.isInteger(error.code) ||
+    !(PLAYTESTS_ADAPTER_ERROR_CODES as readonly number[]).includes(error.code)
   ) {
     throw new TypeError(
-      `JSON-RPC error code must be a number or one of ${PLAYTESTS_ADAPTER_ERROR_CODES.join(", ")}.`
+      `JSON-RPC error code must be one of ${PLAYTESTS_ADAPTER_ERROR_CODES.join(", ")}.`
     );
   }
   if (!isNonEmptyString(error.message)) {
     throw new TypeError("JSON-RPC error message must be a non-empty string.");
   }
-  // `data` is allowed but optional; no shape contract.
+  if (isApplicationErrorCode(error.code)) {
+    if (value.id === null) {
+      throw new TypeError(
+        "Game-adapter application errors must retain their request id."
+      );
+    }
+    const data = error.data;
+    if (
+      !isPlainObject(data) ||
+      !hasOnlyKeys(data, ["category", "retryable", "episodeDisposition"])
+    ) {
+      throw new TypeError(
+        "Application error data must declare category, retryable, and episodeDisposition."
+      );
+    }
+    if (
+      !isNonEmptyString(data.category) ||
+      typeof data.retryable !== "boolean"
+    ) {
+      throw new TypeError(
+        "Application error category and retryable fields are invalid."
+      );
+    }
+    if (
+      data.episodeDisposition !== "unchanged" &&
+      data.episodeDisposition !== "aborted" &&
+      data.episodeDisposition !== "unknown"
+    ) {
+      throw new TypeError("Application error episodeDisposition is invalid.");
+    }
+  }
 }
 
-/** Validate any JSON-RPC v1 response envelope. */
+/** Validate exactly one JSON-RPC v1 result or error response. */
 export function assertPlaytestJsonRpcResponse(
   value: unknown
 ): asserts value is PlaytestJsonRpcResponse {
   if (!isPlainObject(value)) {
     throw new TypeError("JSON-RPC response must be a plain object.");
   }
-  if (value.jsonrpc !== "2.0") {
-    throw new TypeError('JSON-RPC response must carry jsonrpc === "2.0".');
+  if ("result" in value && "error" in value) {
+    throw new TypeError(
+      "JSON-RPC response must not contain both result and error."
+    );
   }
   if ("error" in value) {
     assertPlaytestJsonRpcError(value);
@@ -220,88 +316,154 @@ export function assertPlaytestJsonRpcResponse(
   assertPlaytestJsonRpcSuccess(value);
 }
 
-/** Validate a capability advertisement returned by an adapter. */
-export function assertPlaytestCapabilityAdvertisement(
-  value: unknown
-): asserts value is PlaytestCapabilityAdvertisement {
-  if (!isPlainObject(value)) {
-    throw new TypeError("Capability advertisement must be a plain object.");
-  }
-  if (value.protocol !== PLAYTESTS_PROTOCOL) {
+function assertUniqueStringArray(
+  value: unknown,
+  field: string,
+  predicate: (entry: unknown) => boolean
+): asserts value is readonly string[] {
+  if (!Array.isArray(value) || value.length === 0 || !value.every(predicate)) {
     throw new TypeError(
-      `Capability advertisement protocol must be "${PLAYTESTS_PROTOCOL}"; received ${String(value.protocol)}.`
+      `Capability advertisement ${field} must be a non-empty valid array.`
     );
   }
-  if (!Array.isArray(value.capabilities)) {
+  if (new Set(value).size !== value.length) {
     throw new TypeError(
-      "Capability advertisement must list `capabilities` as an array."
-    );
-  }
-  for (const cap of value.capabilities) {
-    if (!isPlaytestAdapterCapability(cap)) {
-      throw new TypeError(
-        `Capability advertisement contains unknown capability ${String(cap)}.`
-      );
-    }
-  }
-  if (!Array.isArray(value.supportedMethods)) {
-    throw new TypeError(
-      "Capability advertisement must list `supportedMethods` as an array."
-    );
-  }
-  for (const method of value.supportedMethods) {
-    if (!isPlaytestAdapterMethod(method)) {
-      throw new TypeError(
-        `Capability advertisement contains unknown method ${String(method)}.`
-      );
-    }
-  }
-  if (!isNonEmptyString(value.eventSchemaHash)) {
-    throw new TypeError(
-      "Capability advertisement must include a non-empty `eventSchemaHash`."
-    );
-  }
-  if (!isNonEmptyString(value.observationSchemaHash)) {
-    throw new TypeError(
-      "Capability advertisement must include a non-empty `observationSchemaHash`."
-    );
-  }
-  if (value.maxStep !== null && !isNonNegativeInteger(value.maxStep)) {
-    throw new TypeError(
-      "Capability advertisement `maxStep` must be a non-negative integer or null."
+      `Capability advertisement ${field} must not contain duplicates.`
     );
   }
 }
 
-/** Validate an observation descriptor returned by an adapter. */
-export function assertPlaytestObservationDescriptor(
-  value: unknown
-): asserts value is PlaytestObservationDescriptor {
-  if (!isPlainObject(value)) {
-    throw new TypeError("Observation descriptor must be a plain object.");
-  }
-  if (!isNonEmptyString(value.schemaHash)) {
+function assertSchemaHash(value: unknown, field: string): void {
+  if (typeof value !== "string" || !SHA256_HEX_PATTERN.test(value)) {
     throw new TypeError(
-      "Observation descriptor must include a non-empty `schemaHash`."
+      `Capability advertisement ${field} must be a SHA-256 hex digest.`
     );
   }
-  if (!isStringArray(value.fields)) {
+}
+
+/** Validate the complete, exact v1 capability negotiation payload. */
+export function assertPlaytestCapabilityAdvertisement(
+  value: unknown
+): asserts value is PlaytestCapabilityAdvertisement {
+  const allowedKeys = [
+    "protocolVersion",
+    "schemaHashAlgorithm",
+    "engineBuild",
+    "modes",
+    "scenarioIds",
+    "observationSchema",
+    "actionSchema",
+    "eventSchema",
+    "observationSchemaHash",
+    "actionSchemaHash",
+    "eventSchemaHash",
+    "optionalOperations",
+    "quotas",
+    "deterministic"
+  ];
+  if (!isPlainObject(value) || !hasOnlyKeys(value, allowedKeys)) {
     throw new TypeError(
-      "Observation descriptor `fields` must be an array of strings."
+      "Capability advertisement must match the complete v1 schema."
+    );
+  }
+  if (value.protocolVersion !== PLAYTESTS_PROTOCOL_VERSION) {
+    throw new TypeError(
+      "Capability advertisement protocolVersion must be exactly 1."
+    );
+  }
+  if (!isNonEmptyString(value.engineBuild)) {
+    throw new TypeError(
+      "Capability advertisement engineBuild must be non-empty."
+    );
+  }
+  assertUniqueStringArray(value.modes, "modes", isPlaytestGameMode);
+  assertUniqueStringArray(value.scenarioIds, "scenarioIds", isNonEmptyString);
+  for (const schemaField of [
+    "observationSchema",
+    "actionSchema",
+    "eventSchema"
+  ] as const) {
+    if (!isPlainObject(value[schemaField])) {
+      throw new TypeError(
+        `Capability advertisement ${schemaField} must be a JSON Schema object.`
+      );
+    }
+  }
+  assertSchemaHash(value.observationSchemaHash, "observationSchemaHash");
+  assertSchemaHash(value.actionSchemaHash, "actionSchemaHash");
+  assertSchemaHash(value.eventSchemaHash, "eventSchemaHash");
+  if (!Array.isArray(value.optionalOperations)) {
+    throw new TypeError(
+      "Capability advertisement optionalOperations must be an array."
+    );
+  }
+  if (!value.optionalOperations.every(isOptionalAdapterMethod)) {
+    throw new TypeError(
+      "Capability advertisement lists an unknown optional operation."
     );
   }
   if (
-    value.visibilityMode !== "structured" &&
-    value.visibilityMode !== "visual-only"
+    new Set(value.optionalOperations).size !== value.optionalOperations.length
   ) {
     throw new TypeError(
-      "Observation descriptor `visibilityMode` must be 'structured' or 'visual-only'."
+      "Capability advertisement optionalOperations must not contain duplicates."
     );
   }
-  if (typeof value.supportsReplay !== "boolean") {
+  if (
+    !isPlainObject(value.quotas) ||
+    !hasOnlyKeys(value.quotas, [
+      "maxMessageBytes",
+      "maxQueuedRequests",
+      "ordinaryCallTimeoutMs",
+      "resetReplayTimeoutMs"
+    ])
+  ) {
     throw new TypeError(
-      "Observation descriptor `supportsReplay` must be a boolean."
+      "Capability advertisement quotas must match the v1 quota schema."
     );
+  }
+  const quotaBounds = {
+    maxMessageBytes: PLAYTESTS_ADAPTER_DEFAULT_QUOTAS.maxMessageBytes,
+    maxQueuedRequests: PLAYTESTS_ADAPTER_DEFAULT_QUOTAS.maxQueuedRequests,
+    ordinaryCallTimeoutMs:
+      PLAYTESTS_ADAPTER_DEFAULT_QUOTAS.ordinaryCallTimeoutMs,
+    resetReplayTimeoutMs: PLAYTESTS_ADAPTER_DEFAULT_QUOTAS.resetReplayTimeoutMs
+  } as const;
+  for (const [key, maximum] of Object.entries(quotaBounds)) {
+    const quota = value.quotas[key];
+    if (!isNonNegativeInteger(quota) || quota < 1 || quota > maximum) {
+      throw new TypeError(
+        `Capability advertisement quota ${key} must be between 1 and ${String(maximum)}.`
+      );
+    }
+  }
+  if (
+    !isPlainObject(value.deterministic) ||
+    !hasOnlyKeys(value.deterministic, [
+      "seededRuns",
+      "rngVersion",
+      "traceReplayable"
+    ])
+  ) {
+    throw new TypeError(
+      "Capability advertisement deterministic guarantees are invalid."
+    );
+  }
+  if (
+    typeof value.deterministic.seededRuns !== "boolean" ||
+    typeof value.deterministic.traceReplayable !== "boolean" ||
+    (value.deterministic.rngVersion !== null &&
+      !isNonEmptyString(value.deterministic.rngVersion))
+  ) {
+    throw new TypeError(
+      "Capability advertisement deterministic guarantee values are invalid."
+    );
+  }
+  if (
+    value.deterministic.seededRuns &&
+    value.deterministic.rngVersion === null
+  ) {
+    throw new TypeError("Seeded deterministic runs must name the RNG version.");
   }
 }
 

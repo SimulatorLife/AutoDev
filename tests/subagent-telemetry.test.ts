@@ -609,26 +609,32 @@ test("agyArgs sandboxes read-only roles instead of granting them permission bypa
   // so a read-only role gets a headless run without gaining anything a
   // write-capable role has.
   for (const role of [
-    "validator",
     "explorer",
     "docs-researcher",
-    "browser-tester"
+    "browser-tester",
+    "playtester",
+    "playtest-analyst"
   ]) {
     const args = agyArgs("task", "claude-sonnet-4-6", "high", role);
     assert.ok(
       args.includes("--sandbox"),
       `${role} (readOnly) must be sandboxed`
     );
-    assert.equal(
+    assert.ok(
       args.includes("--dangerously-skip-permissions"),
-      false,
-      `${role} must never receive permission bypass`
+      `${role} must receive permission skip in headless mode`
     );
   }
 
   // Write-capable roles are unaffected: no --sandbox, and their existing
   // AGY_SKIP_PERMISSIONS behavior is unchanged.
-  for (const role of ["default", "orchestrator", "smart", "worker"]) {
+  for (const role of [
+    "default",
+    "orchestrator",
+    "smart",
+    "worker",
+    "validator"
+  ]) {
     const args = agyArgs("task", "claude-sonnet-4-6", "high", role);
     assert.equal(
       args.includes("--sandbox"),

@@ -88,7 +88,9 @@ test("every page shares one guard, and names its own surface in it", () => {
     const src = readFileSync(file, "utf8");
     const at = relative(APP, file);
     if (src.includes("autodev_control_api_disabled")) spelling.push(at);
-    const calls = [...src.matchAll(/controlApiCredentialUnavailable\(\s*"([^"]*)"\s*\)/gu)];
+    const calls = [
+      ...src.matchAll(/controlApiCredentialUnavailable\(\s*"([^"]*)"\s*\)/gu)
+    ];
     if (calls.length > 0) {
       using.push(at);
       for (const match of calls) {
@@ -109,8 +111,15 @@ test("every page shares one guard, and names its own surface in it", () => {
     }
   }
 
-  assert.deepEqual(spelling, [], `pages still spelling the guard inline:\n${spelling.join("\n")}`);
+  assert.deepEqual(
+    spelling,
+    [],
+    `pages still spelling the guard inline:\n${spelling.join("\n")}`
+  );
   // Guard against the sweep quietly finding nothing: the pages that used to
   // carry an inline copy are the ones that must now call the helper.
-  assert.ok(using.length >= 18, `expected 18+ pages using the helper, found ${using.length}`);
+  assert.ok(
+    using.length >= 18,
+    `expected 18+ pages using the helper, found ${using.length}`
+  );
 });

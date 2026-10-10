@@ -32,13 +32,21 @@ function migrate(databaseUrl: string | undefined): {
   const env: NodeJS.ProcessEnv = { ...process.env };
   if (databaseUrl === undefined) delete env.AUTODEV_MEMORY_DATABASE_URL;
   else env.AUTODEV_MEMORY_DATABASE_URL = databaseUrl;
-  const result = spawnSync(process.execPath, [join(PACKAGE_ROOT, "src/memory/migrate.ts")], {
-    encoding: "utf8",
-    timeout: 30_000,
-    input: "",
-    env
-  });
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  const result = spawnSync(
+    process.execPath,
+    [join(PACKAGE_ROOT, "src/memory/migrate.ts")],
+    {
+      encoding: "utf8",
+      timeout: 30_000,
+      input: "",
+      env
+    }
+  );
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr
+  };
 }
 
 test("a missing database URL is one line naming the variable, and exits non-zero", () => {
@@ -66,7 +74,11 @@ test("a missing database URL is one line naming the variable, and exits non-zero
     "printed a stack frame where an operator wants a sentence"
   );
   assert.doesNotMatch(stderr, /file:\/\/\/|\.ts:\d+/u);
-  assert.equal(stdout, "", "a failed migration wrote to stdout as if it had run");
+  assert.equal(
+    stdout,
+    "",
+    "a failed migration wrote to stdout as if it had run"
+  );
 });
 
 test("a blank database URL is treated as missing, not as a connection string", () => {
@@ -84,7 +96,9 @@ test("an unusable database URL fails through the same one-line report", () => {
   // A URL that parses but names nothing listening. The connection attempt is
   // where this fails, so it exercises the catch rather than the guard — and the
   // two must not report differently, or the shape is only half a contract.
-  const { status, stderr } = migrate("postgres://memory:memory@127.0.0.1:1/memory");
+  const { status, stderr } = migrate(
+    "postgres://memory:memory@127.0.0.1:1/memory"
+  );
 
   assert.equal(status, 1, "an unreachable database must fail the migration");
   const lines = stderr.trim().split("\n").filter(Boolean);

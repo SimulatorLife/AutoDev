@@ -770,10 +770,7 @@ test("capture configuration refuses an absolute transcript path, and says why", 
   // relative path is accepted, including one that climbs and is caught later by
   // the containment check rather than here.
   const relative = memoryCaptureConfiguration(enabledEnvironment);
-  assert.equal(
-    relative.transcriptRelativePath,
-    "project/session.jsonl"
-  );
+  assert.equal(relative.transcriptRelativePath, "project/session.jsonl");
   assert.equal(
     memoryCaptureConfiguration({
       ...enabledEnvironment,

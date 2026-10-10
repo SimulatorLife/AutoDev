@@ -124,10 +124,7 @@ test("a half-supplied window is refused", async () => {
   // Both messages are deliberately generic on the wire, so there is nothing in
   // the response that could tell them apart.
   for (const route of READS) {
-    for (const query of [
-      { occurredFrom: FROM },
-      { occurredUntil: UNTIL }
-    ]) {
+    for (const query of [{ occurredFrom: FROM }, { occurredUntil: UNTIL }]) {
       const { status, body } = await call(route, query);
 
       assert.equal(
@@ -168,7 +165,11 @@ test("an inverted window is refused", async () => {
       occurredUntil: FROM
     });
 
-    assert.equal(status, 400, `${route.label}: an inverted window was accepted`);
+    assert.equal(
+      status,
+      400,
+      `${route.label}: an inverted window was accepted`
+    );
     assert.equal(errorCode(body), "autodev_memory_invalid_filter");
   }
 });
@@ -314,7 +315,10 @@ test("a repeated window bound is refused rather than one of the two winning", as
       400,
       `${route.label}: a repeated bound was accepted`
     );
-    assert.equal(errorCode(responseBody(response)), "autodev_memory_invalid_filter");
+    assert.equal(
+      errorCode(responseBody(response)),
+      "autodev_memory_invalid_filter"
+    );
   }
 });
 

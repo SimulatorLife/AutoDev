@@ -168,6 +168,7 @@
     ],
     "smart_seed_coffee_first_eight": [
       [
+        "minimax",
         "antigravity",
         "claude",
         "codex"
@@ -175,9 +176,29 @@
       [
         "claude",
         "antigravity",
+        "minimax",
         "codex"
       ],
       [
+        "minimax",
+        "antigravity",
+        "claude",
+        "codex"
+      ],
+      [
+        "antigravity",
+        "minimax",
+        "claude",
+        "codex"
+      ],
+      [
+        "antigravity",
+        "claude",
+        "minimax",
+        "codex"
+      ],
+      [
+        "minimax",
         "claude",
         "antigravity",
         "codex"
@@ -185,25 +206,12 @@
       [
         "claude",
         "antigravity",
+        "minimax",
         "codex"
       ],
       [
         "antigravity",
-        "claude",
-        "codex"
-      ],
-      [
-        "claude",
-        "antigravity",
-        "codex"
-      ],
-      [
-        "antigravity",
-        "claude",
-        "codex"
-      ],
-      [
-        "antigravity",
+        "minimax",
         "claude",
         "codex"
       ]
@@ -229,6 +237,7 @@
     "smart": [
       "claude",
       "antigravity",
+      "minimax",
       "codex"
     ]
   }

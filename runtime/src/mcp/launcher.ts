@@ -10,10 +10,17 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/executables";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
-import { MCP_SERVER_CODEGRAPHCONTEXT } from "@simulatorlife/autodev-runtime/shared/tool-names";
+import {
+  MCP_SERVER_CODEGRAPHCONTEXT,
+  MCP_SERVER_PLAYTEST
+} from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 export type McpName =
-  "lsp" | "playwright" | "cocoindex-code" | typeof MCP_SERVER_CODEGRAPHCONTEXT;
+  | "lsp"
+  | "playwright"
+  | "cocoindex-code"
+  | typeof MCP_SERVER_CODEGRAPHCONTEXT
+  | typeof MCP_SERVER_PLAYTEST;
 /**
  * `pathPrepend` holds directories the server needs ahead of the caller's PATH.
  * lsp-mcp-server spawns its language servers (`typescript-language-server`)
@@ -64,6 +71,13 @@ export function resolveMcpCommand(
         "AutoDev CodeGraphContext MCP binary is missing; install codegraphcontext or set AUTODEV_CODEGRAPHCONTEXT_BIN"
       );
     return { binary, args: ["mcp", "start"], pathPrepend: [] };
+  }
+  if (tool === MCP_SERVER_PLAYTEST || tool === "playtest") {
+    return {
+      binary: process.execPath,
+      args: [path.join(repoRoot, "runtime/src/playtesting/mcp-main.ts")],
+      pathPrepend: []
+    };
   }
   throw new Error(`unsupported AutoDev MCP: ${name || "<missing>"}`);
 }

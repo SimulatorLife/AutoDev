@@ -2027,7 +2027,9 @@ function buildReadOnlyInvocationSettings({
     ? realpathSync(resolvedCodexHome)
     : resolvedCodexHome;
   const geminiRoot = pathApi.join(home, ".gemini");
-  const geminiReal = existsSync(geminiRoot) ? realpathSync(geminiRoot) : geminiRoot;
+  const geminiReal = existsSync(geminiRoot)
+    ? realpathSync(geminiRoot)
+    : geminiRoot;
 
   const sharedReadGrants = [
     `read_file(${agentRoot})`,
@@ -2245,7 +2247,11 @@ function createIsolatedAntigravityHome(
     tempHome = mkdtempSync(pathApi.join(tmpdir(), "autodev-agy-home-"));
     chmodSync(tempHome, 0o700);
 
-    const mcpConfig = buildInvocationMcpConfig(agentRole, spawnSession, options);
+    const mcpConfig = buildInvocationMcpConfig(
+      agentRole,
+      spawnSession,
+      options
+    );
     const settings = buildInvocationSettings(
       agentRole,
       mcpConfig,
@@ -2334,9 +2340,7 @@ function agyArgs(
   // Read-only turns are restricted by settings.json permissions scoping and
   // agy's --sandbox terminal restrictions.
   const permissionArgs =
-    AGY_SKIP_PERMISSIONS === "true"
-      ? ["--dangerously-skip-permissions"]
-      : [];
+    AGY_SKIP_PERMISSIONS === "true" ? ["--dangerously-skip-permissions"] : [];
   const sandboxArgs = readOnly ? ["--sandbox"] : [];
   // Only pass --effort when the model id does not already fix it; see
   // MODEL_EFFORT_SUFFIX.

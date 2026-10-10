@@ -18,21 +18,21 @@
  */
 @theme static {
   /* Background / surface hierarchy */
-  --color-background: #020617;
-  --color-surface: #0f172a;
-  --color-surface-raised: #1e293b;
+  --color-background: #090909;
+  --color-surface: #111111;
+  --color-surface-raised: #181818;
   --color-input: var(--color-surface-raised);
-  --color-hover: #334155;
-  --color-selected: #123244;
+  --color-hover: #2a2a2a;
+  --color-selected: #252525;
 
   /* Borders */
   --color-border: var(--color-surface-raised);
   --color-border-strong: var(--color-hover);
 
   /* Text */
-  --color-fg: #f1f5f9;
-  --color-fg-secondary: #cbd5e1;
-  --color-fg-muted: #94a3b8;
+  --color-fg: #f4f4f5;
+  --color-fg-secondary: #d4d4d8;
+  --color-fg-muted: #a1a1aa;
   --color-fg-inverse: var(--color-background);
 
   /* Accent and status */
@@ -43,11 +43,11 @@
   --color-neutral: var(--color-fg-secondary);
 
   /* Chart series (categorical/data-visualization palette) */
-  --color-chart-1: #909afa;
+  --color-chart-1: #e4e4e7;
   --color-chart-2: #2dd4bf;
-  --color-chart-3: #c084fc;
+  --color-chart-3: #fbbf24;
   --color-chart-4: #60a5fa;
-  --color-chart-5: #38bdf8;
+  --color-chart-5: #fb7185;
 
   /*
    * Micro type scale.
@@ -78,7 +78,7 @@ html {
  * once here. Components must not re-declare this. Without the rule, every
  * focusable element that never declared a focus style — navigation links, table
  * links, chips, and most controls — falls back to the user agent's blue ring,
- * which is not a Console token and does not sit correctly against the slate
+ * which is not a Console token and does not sit correctly against the charcoal
  * canvas. `:where` keeps this at zero specificity so a deliberate component
  * override can still win.
  *

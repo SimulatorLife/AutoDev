@@ -52,14 +52,16 @@ export function resolveProviderStatus(
     return {
       tone: "invalid",
       label: "Disabled",
-      title: "This provider is disabled. Its priorities, models and limits are preserved and return when it is enabled again."
+      title:
+        "This provider is disabled. Its priorities, models and limits are preserved and return when it is enabled again."
     };
   }
   if (provider.route === null) {
     return {
       tone: "invalid",
       label: "Missing CODEX_ROUTE",
-      title: "No route is configured for this provider, so no request can reach it."
+      title:
+        "No route is configured for this provider, so no request can reach it."
     };
   }
   if (provider.credential.envKey !== null && !provider.credential.configured) {
@@ -83,14 +85,19 @@ export function resolveProviderStatus(
     const failureClass = provider.health.cooldown.failureClass;
     return {
       tone: "unavailable",
-      label: failureClass === null ? "Cooling down" : `Cooling down (${failureClass})`,
-      title: "This provider is in cooldown and will not serve requests until it passes."
+      label:
+        failureClass === null
+          ? "Cooling down"
+          : `Cooling down (${failureClass})`,
+      title:
+        "This provider is in cooldown and will not serve requests until it passes."
     };
   }
   return {
     tone: "ready",
     label: "Ready",
-    title: "Healthy, routed and credentialed: this provider can serve requests now."
+    title:
+      "Healthy, routed and credentialed: this provider can serve requests now."
   };
 }
 

@@ -190,7 +190,8 @@ under `$CODEX_HOME/agents/` before Codex loads them; provider identity remains c
 profiles/catalogs, while role names stay stable and codebase-agnostic. Agent
 configurations do not hardcode `model_reasoning_effort` so child
 agents inherit their configured model reasoning effort; this ensures compatibility
-with models like MiniMax-M3 that only support `none` or `high` reasoning. A
+with MiniMax-M3, which supports `none` or `high`, and MiniMax-M3.1-Flash-Preview,
+which supports `low` through `max` but rejects `none`. A
 role's `[mcp_servers.<name>]` tables declare only per-role settings (`enabled`,
 `default_tools_approval_mode`, `enabled_tools`). The renderer copies each
 server's launch keys from the Codex projection of `.rulesync/mcp.jsonc`:
@@ -782,7 +783,19 @@ types. The dev server's `console/.next-dev/types` stay out of the type-check.
 The Console defaults to port 3300 (`AUTODEV_CONSOLE_PORT` overrides it). Set
 `AUTODEV_CONTROL_API_TOKEN` only in the Console server environment; the
 Control API base defaults to `http://127.0.0.1:4101` and can be configured with
-`AUTODEV_CONTROL_API_BASE_URL`. To query Usage, set
+`AUTODEV_CONTROL_API_BASE_URL`. The Playtesting MCP uses a **separate,
+Playtesting-only** `AUTODEV_PLAYTEST_CONTROL_API_TOKEN` provisioned in the
+Runtime and the Playtest MCP process, plus the trusted
+`AUTODEV_PLAYTEST_CONTROL_API_ACTOR`, and the exact
+`AUTODEV_PLAYTEST_CONTROL_API_ROLE` (`playtester`, `playtest-analyst`, or
+`validator`); the configured role must match the MCP role. The Runtime accepts that credential
+only on typed `/control/playtesting/runs` start/list/status/cancel routes and
+rejects missing or role-escalated session context. Configure
+`AUTODEV_CONTROL_API_BASE_URL` in the MCP process as a loopback URL, and set
+`AUTODEV_CONTROL_API_LISTEN_HOST`/`AUTODEV_CONTROL_API_LISTEN_PORT` on Runtime
+when enabling the private listener. Never pass the general Control API token
+into the Playtesting MCP or game adapter. The scoped Playtesting credential is
+not inherited by the game container. To query Usage, set
 `AUTODEV_OPENLIT_USAGE_TOKEN` in the Console server environment to the
 separately generated value in `$CODEX_HOME/openlit-secrets.env`;
 `AUTODEV_OPENLIT_USAGE_URL` defaults to `http://127.0.0.1:3000`. The Console is the only Memory operator surface: durable records, experiences, and outcome cohorts are read through the Control API in `console/app/memory`. The transitional external Memory portal is gone, so `AUTODEV_OPENLIT_UI_URL` no longer has a consumer — delete it from `$CODEX_HOME/.env` and do not reintroduce it. The Console launcher forwards only the two URL variables the server actually reads (`AUTODEV_CONTROL_API_BASE_URL`, `AUTODEV_OPENLIT_USAGE_URL`). Do not source or expose the full secret file to browser code.

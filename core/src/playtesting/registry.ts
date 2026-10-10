@@ -21,7 +21,8 @@ import {
   type PlaytestProvenance,
   PLAYTESTS_POLARITIES,
   PLAYTESTS_REGISTRY_SCHEMA,
-  type PlaytestScoreBand} from "./types.ts";
+  type PlaytestScoreBand
+} from "./types.ts";
 
 /** Fields every metric definition must surface after default expansion. */
 export const PLAYTESTS_METRIC_REQUIRED_FIELDS = [

@@ -524,7 +524,11 @@ test("purging the raw experience envelope leaves the use reports and their bound
     occurredUntil: "2026-10-04T00:00:00.000Z"
   };
   const before = await repository.aggregateInjectionUseCohorts(cohortRequest);
-  assert.equal(before.exposureCount, 1, "the exposure is counted before the purge");
+  assert.equal(
+    before.exposureCount,
+    1,
+    "the exposure is counted before the purge"
+  );
 
   assert.equal(
     await repository.purgeExperience({
@@ -792,8 +796,15 @@ test("both session lookups refuse a session context they cannot search with", as
     trusted,
     event.correlationToken
   );
-  assert.equal(byToken?.id, event.id, "the trusted session must resolve by token");
-  const byId = await repository.getInjectionEventByIdForSession(trusted, event.id);
+  assert.equal(
+    byToken?.id,
+    event.id,
+    "the trusted session must resolve by token"
+  );
+  const byId = await repository.getInjectionEventByIdForSession(
+    trusted,
+    event.id
+  );
   assert.equal(byId?.id, event.id, "the trusted session must resolve by id");
   assert.ok(
     pool.statements.length > 0,
@@ -1038,7 +1049,8 @@ test("the exposure list applies its own filters and refuses a context without a 
     runId: "request-run-2",
     agentId: "request-agent-2"
   });
-  for (const event of [jit, retrieval]) await appendInjection(repository, event);
+  for (const event of [jit, retrieval])
+    await appendInjection(repository, event);
   await repository.recordInjectionUseReport({
     report: useReport(jit, { useKind: "partially_used" }),
     actor: { id: "curator", authority: "curator" },
@@ -1053,7 +1065,11 @@ test("the exposure list applies its own filters and refuses a context without a 
   const beforeFilter = await repository.listInjectionUseJoins({
     context: sessionContext
   });
-  assert.equal(beforeFilter.total, 2, "both eligible modes are listed unfiltered");
+  assert.equal(
+    beforeFilter.total,
+    2,
+    "both eligible modes are listed unfiltered"
+  );
 
   const jitOnly = await repository.listInjectionUseJoins({
     context: sessionContext,

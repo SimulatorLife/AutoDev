@@ -111,10 +111,18 @@ test("a well-formed SessionEnd payload yields the identifiers the capture API ne
 });
 
 test("only a SessionEnd event is a capture", () => {
-  for (const hookEventName of ["SessionStart", "PreToolUse", "", "sessionend"]) {
+  for (const hookEventName of [
+    "SessionStart",
+    "PreToolUse",
+    "",
+    "sessionend"
+  ]) {
     assert.equal(
       sessionEndCapture(
-        { ...sessionEndPayload("/codex/sessions/a.jsonl", "/repo"), hook_event_name: hookEventName },
+        {
+          ...sessionEndPayload("/codex/sessions/a.jsonl", "/repo"),
+          hook_event_name: hookEventName
+        },
         {} as NodeJS.ProcessEnv
       ),
       null,
@@ -136,13 +144,16 @@ test("a session id outside the pattern is refused", () => {
     "has/slash",
     "has\\backslash",
     "has space",
-    "quote\"injection",
+    'quote"injection',
     42,
     null
   ]) {
     assert.equal(
       sessionEndCapture(
-        { ...sessionEndPayload("/codex/sessions/a.jsonl", "/repo"), session_id: sessionId },
+        {
+          ...sessionEndPayload("/codex/sessions/a.jsonl", "/repo"),
+          session_id: sessionId
+        },
         {} as NodeJS.ProcessEnv
       ),
       null,
@@ -161,7 +172,10 @@ test("a transcript path that is not an absolute, bounded path is refused", () =>
     null
   ]) {
     assert.equal(
-      sessionEndCapture({ ...base, transcript_path: transcriptPath }, {} as NodeJS.ProcessEnv),
+      sessionEndCapture(
+        { ...base, transcript_path: transcriptPath },
+        {} as NodeJS.ProcessEnv
+      ),
       null,
       `transcript path ${JSON.stringify(transcriptPath)} must be refused`
     );
@@ -180,23 +194,28 @@ test("the provider is operator-controlled, and the payload cannot choose it", ()
   const base = sessionEndPayload("/codex/sessions/a.jsonl", "/repo/app");
 
   assert.equal(
-    sessionEndCapture(base, { AUTODEV_MEMORY_HOOK_PROVIDER: "claude-code" } as NodeJS.ProcessEnv)
-      ?.provider,
+    sessionEndCapture(base, {
+      AUTODEV_MEMORY_HOOK_PROVIDER: "claude-code"
+    } as NodeJS.ProcessEnv)?.provider,
     "claude-code"
   );
   // Anything else falls back to Codex rather than erroring: a typo in the
   // operator's env must not silently route a Claude Code session elsewhere.
   for (const value of ["codex", "Claude-Code", "", "claude_code"]) {
     assert.equal(
-      sessionEndCapture(base, { AUTODEV_MEMORY_HOOK_PROVIDER: value } as NodeJS.ProcessEnv)
-        ?.provider,
+      sessionEndCapture(base, {
+        AUTODEV_MEMORY_HOOK_PROVIDER: value
+      } as NodeJS.ProcessEnv)?.provider,
       "codex",
       `${JSON.stringify(value)} must not select a provider`
     );
   }
   // A provider named by the payload is not read at all.
   assert.equal(
-    sessionEndCapture({ ...base, provider: "claude-code" }, {} as NodeJS.ProcessEnv)?.provider,
+    sessionEndCapture(
+      { ...base, provider: "claude-code" },
+      {} as NodeJS.ProcessEnv
+    )?.provider,
     "codex",
     "the payload's own provider field must be ignored"
   );
@@ -220,7 +239,10 @@ test("a Codex transcript inside CODEX_HOME/sessions is captured", async () => {
 
     assert.equal(code, 0);
     assert.equal(requests.length, 1, "the capture must actually be posted");
-    assert.equal(requests[0]?.url, "http://127.0.0.1:4101/control/memory/capture");
+    assert.equal(
+      requests[0]?.url,
+      "http://127.0.0.1:4101/control/memory/capture"
+    );
   });
 });
 
@@ -269,13 +291,23 @@ test("CODEX_HOME defaults to ~/.codex when unset", async () => {
     );
 
     const inside = await capture({
-      env: { HOME: home, AUTODEV_CONTROL_API_TOKEN: TOKEN } as NodeJS.ProcessEnv,
+      env: {
+        HOME: home,
+        AUTODEV_CONTROL_API_TOKEN: TOKEN
+      } as NodeJS.ProcessEnv,
       payload: sessionEndPayload(join(codexHome, "sessions", "r.jsonl"), home)
     });
-    assert.equal(inside.requests.length, 1, "the default CODEX_HOME must be honoured");
+    assert.equal(
+      inside.requests.length,
+      1,
+      "the default CODEX_HOME must be honoured"
+    );
 
     const outside = await capture({
-      env: { HOME: home, AUTODEV_CONTROL_API_TOKEN: TOKEN } as NodeJS.ProcessEnv,
+      env: {
+        HOME: home,
+        AUTODEV_CONTROL_API_TOKEN: TOKEN
+      } as NodeJS.ProcessEnv,
       payload: sessionEndPayload(join(home, "elsewhere", "r.jsonl"), home)
     });
     assert.equal(outside.requests.length, 0);
@@ -311,7 +343,10 @@ test("a Claude Code capture is routed to its own endpoint and skips the hook-sid
         AUTODEV_CONTROL_API_TOKEN: TOKEN,
         AUTODEV_MEMORY_HOOK_PROVIDER: "claude-code"
       } as NodeJS.ProcessEnv,
-      payload: sessionEndPayload(join(home, "projects", "session.jsonl"), join(home, "repo"))
+      payload: sessionEndPayload(
+        join(home, "projects", "session.jsonl"),
+        join(home, "repo")
+      )
     });
 
     assert.equal(requests.length, 1);
@@ -330,12 +365,26 @@ test("the capture posts only the three fields the API reads", async () => {
     const cwd = join(home, "repo");
 
     const { requests } = await capture({
-      env: { HOME: home, AUTODEV_CONTROL_API_TOKEN: TOKEN, CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
-      payload: { ...sessionEndPayload(transcriptPath, cwd), extra: "must not be forwarded" }
+      env: {
+        HOME: home,
+        AUTODEV_CONTROL_API_TOKEN: TOKEN,
+        CODEX_HOME: codexHome
+      } as NodeJS.ProcessEnv,
+      payload: {
+        ...sessionEndPayload(transcriptPath, cwd),
+        extra: "must not be forwarded"
+      }
     });
 
-    const body = JSON.parse(String(requests[0]?.init.body)) as Record<string, unknown>;
-    assert.deepEqual(Object.keys(body).sort(), ["cwd", "sessionId", "transcriptPath"]);
+    const body = JSON.parse(String(requests[0]?.init.body)) as Record<
+      string,
+      unknown
+    >;
+    assert.deepEqual(Object.keys(body).sort(), [
+      "cwd",
+      "sessionId",
+      "transcriptPath"
+    ]);
     const init = requests[0]?.init;
     assert.equal(init?.method, "POST");
     const headers = init?.headers as Record<string, string>;
@@ -350,7 +399,10 @@ test("the environment token wins over any credential file", async () => {
   await withTempHome(async (home) => {
     const codexHome = join(home, ".codex");
     mkdirSync(join(codexHome, "sessions"), { recursive: true });
-    writeFileSync(join(codexHome, "openlit-secrets.env"), `AUTODEV_CONTROL_API_TOKEN=file-token\n`);
+    writeFileSync(
+      join(codexHome, "openlit-secrets.env"),
+      `AUTODEV_CONTROL_API_TOKEN=file-token\n`
+    );
 
     const { requests } = await capture({
       env: {
@@ -358,7 +410,10 @@ test("the environment token wins over any credential file", async () => {
         CODEX_HOME: codexHome,
         AUTODEV_CONTROL_API_TOKEN: TOKEN
       } as NodeJS.ProcessEnv,
-      payload: sessionEndPayload(join(codexHome, "sessions", "r.jsonl"), join(home, "repo"))
+      payload: sessionEndPayload(
+        join(codexHome, "sessions", "r.jsonl"),
+        join(home, "repo")
+      )
     });
 
     const headers = requests[0]?.init.headers as Record<string, string>;
@@ -372,15 +427,29 @@ test("a credential file is read in the order the active provider implies", async
     const claudeHome = join(home, ".claude");
     mkdirSync(join(codexHome, "sessions"), { recursive: true });
     mkdirSync(claudeHome, { recursive: true });
-    writeFileSync(join(codexHome, "openlit-secrets.env"), `AUTODEV_CONTROL_API_TOKEN=codex-token\n`);
-    writeFileSync(join(claudeHome, "openlit-secrets.env"), `AUTODEV_CONTROL_API_TOKEN=claude-token\n`);
+    writeFileSync(
+      join(codexHome, "openlit-secrets.env"),
+      `AUTODEV_CONTROL_API_TOKEN=codex-token\n`
+    );
+    writeFileSync(
+      join(claudeHome, "openlit-secrets.env"),
+      `AUTODEV_CONTROL_API_TOKEN=claude-token\n`
+    );
 
     const asCodex = await capture({
-      env: { HOME: home, CODEX_HOME: codexHome, CLAUDE_HOME: claudeHome } as NodeJS.ProcessEnv,
-      payload: sessionEndPayload(join(codexHome, "sessions", "r.jsonl"), join(home, "repo"))
+      env: {
+        HOME: home,
+        CODEX_HOME: codexHome,
+        CLAUDE_HOME: claudeHome
+      } as NodeJS.ProcessEnv,
+      payload: sessionEndPayload(
+        join(codexHome, "sessions", "r.jsonl"),
+        join(home, "repo")
+      )
     });
     assert.equal(
-      (asCodex.requests[0]?.init.headers as Record<string, string>).Authorization,
+      (asCodex.requests[0]?.init.headers as Record<string, string>)
+        .Authorization,
       "Bearer codex-token"
     );
 
@@ -391,10 +460,14 @@ test("a credential file is read in the order the active provider implies", async
         CLAUDE_HOME: claudeHome,
         AUTODEV_MEMORY_HOOK_PROVIDER: "claude-code"
       } as NodeJS.ProcessEnv,
-      payload: sessionEndPayload(join(claudeHome, "projects", "r.jsonl"), join(home, "repo"))
+      payload: sessionEndPayload(
+        join(claudeHome, "projects", "r.jsonl"),
+        join(home, "repo")
+      )
     });
     assert.equal(
-      (asClaude.requests[0]?.init.headers as Record<string, string>).Authorization,
+      (asClaude.requests[0]?.init.headers as Record<string, string>)
+        .Authorization,
       "Bearer claude-token"
     );
   });
@@ -419,10 +492,17 @@ test("only a line that really carries a token counts as a credential", async () 
 
     const { requests } = await capture({
       env: { HOME: home, CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
-      payload: sessionEndPayload(join(codexHome, "sessions", "r.jsonl"), join(home, "repo"))
+      payload: sessionEndPayload(
+        join(codexHome, "sessions", "r.jsonl"),
+        join(home, "repo")
+      )
     });
 
-    assert.equal(requests.length, 1, "the exported, quoted token must be found");
+    assert.equal(
+      requests.length,
+      1,
+      "the exported, quoted token must be found"
+    );
     assert.equal(
       (requests[0]?.init.headers as Record<string, string>).Authorization,
       `Bearer ${TOKEN}`
@@ -442,9 +522,18 @@ test("a torn quote in the credential file does not shadow a valid token", async 
   // "torn line last" is what rules out the tempting fix, because switching to
   // dotenv's last-wins would have fixed the first and broken the second.
   for (const [label, lines] of [
-    ["torn line first", ['AUTODEV_CONTROL_API_TOKEN="', `AUTODEV_CONTROL_API_TOKEN=${TOKEN}`]],
-    ["torn line last", [`AUTODEV_CONTROL_API_TOKEN=${TOKEN}`, 'AUTODEV_CONTROL_API_TOKEN="']],
-    ["torn mid-value", ['AUTODEV_CONTROL_API_TOKEN="abc', `AUTODEV_CONTROL_API_TOKEN=${TOKEN}`]],
+    [
+      "torn line first",
+      ['AUTODEV_CONTROL_API_TOKEN="', `AUTODEV_CONTROL_API_TOKEN=${TOKEN}`]
+    ],
+    [
+      "torn line last",
+      [`AUTODEV_CONTROL_API_TOKEN=${TOKEN}`, 'AUTODEV_CONTROL_API_TOKEN="']
+    ],
+    [
+      "torn mid-value",
+      ['AUTODEV_CONTROL_API_TOKEN="abc', `AUTODEV_CONTROL_API_TOKEN=${TOKEN}`]
+    ],
     ["mismatched quotes", [`AUTODEV_CONTROL_API_TOKEN="${TOKEN}'`]]
   ] as const) {
     await withTempHome(async (home) => {
@@ -500,7 +589,11 @@ test("a balanced quote is still stripped, in both quote styles", async () => {
         )
       });
 
-      assert.equal(requests.length, 1, `${label}: a well-formed token must be used`);
+      assert.equal(
+        requests.length,
+        1,
+        `${label}: a well-formed token must be used`
+      );
       assert.equal(
         (requests[0]?.init.headers as Record<string, string>).Authorization,
         `Bearer ${TOKEN}`,
@@ -517,10 +610,17 @@ test("with no credential anywhere the hook posts nothing and still succeeds", as
 
     const { requests, code } = await capture({
       env: { HOME: home, CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
-      payload: sessionEndPayload(join(codexHome, "sessions", "r.jsonl"), join(home, "repo"))
+      payload: sessionEndPayload(
+        join(codexHome, "sessions", "r.jsonl"),
+        join(home, "repo")
+      )
     });
 
-    assert.equal(requests.length, 0, "an unauthenticated capture must not be attempted");
+    assert.equal(
+      requests.length,
+      0,
+      "an unauthenticated capture must not be attempted"
+    );
     assert.equal(code, 0, "the ended session must not fail");
   });
 });
@@ -529,18 +629,34 @@ test("the listen port comes from the environment and rejects anything else", asy
   await withTempHome(async (home) => {
     const codexHome = join(home, ".codex");
     mkdirSync(join(codexHome, "sessions"), { recursive: true });
-    const payload = sessionEndPayload(join(codexHome, "sessions", "r.jsonl"), join(home, "repo"));
-    const base = { HOME: home, CODEX_HOME: codexHome, AUTODEV_CONTROL_API_TOKEN: TOKEN } as NodeJS.ProcessEnv;
+    const payload = sessionEndPayload(
+      join(codexHome, "sessions", "r.jsonl"),
+      join(home, "repo")
+    );
+    const base = {
+      HOME: home,
+      CODEX_HOME: codexHome,
+      AUTODEV_CONTROL_API_TOKEN: TOKEN
+    } as NodeJS.ProcessEnv;
 
     const custom = await capture({
-      env: { ...base, AUTODEV_CONTROL_API_LISTEN_PORT: "5999" } as NodeJS.ProcessEnv,
+      env: {
+        ...base,
+        AUTODEV_CONTROL_API_LISTEN_PORT: "5999"
+      } as NodeJS.ProcessEnv,
       payload
     });
-    assert.equal(custom.requests[0]?.url, "http://127.0.0.1:5999/control/memory/capture");
+    assert.equal(
+      custom.requests[0]?.url,
+      "http://127.0.0.1:5999/control/memory/capture"
+    );
 
     for (const port of ["", "abc", "-1", "70000", "123456", "4101.5"]) {
       const fallback = await capture({
-        env: { ...base, AUTODEV_CONTROL_API_LISTEN_PORT: port } as NodeJS.ProcessEnv,
+        env: {
+          ...base,
+          AUTODEV_CONTROL_API_LISTEN_PORT: port
+        } as NodeJS.ProcessEnv,
         payload
       });
       assert.equal(
@@ -580,7 +696,11 @@ test("input the hook cannot read is declined, and the session still succeeds", a
       })
     ]) {
       const { requests, code } = await capture({ env, raw });
-      assert.equal(requests.length, 0, `${JSON.stringify(raw.slice(0, 24))} must not be posted`);
+      assert.equal(
+        requests.length,
+        0,
+        `${JSON.stringify(raw.slice(0, 24))} must not be posted`
+      );
       assert.equal(code, 0);
     }
   });
@@ -610,11 +730,18 @@ test("a Runtime that cannot be reached is reported on stderr, never thrown", asy
       });
       const code = await handler(
         JSON.stringify(
-          sessionEndPayload(join(codexHome, "sessions", "r.jsonl"), join(home, "repo"))
+          sessionEndPayload(
+            join(codexHome, "sessions", "r.jsonl"),
+            join(home, "repo")
+          )
         )
       );
 
-      assert.equal(code, 0, "an unreachable Runtime must not fail the ended session");
+      assert.equal(
+        code,
+        0,
+        "an unreachable Runtime must not fail the ended session"
+      );
       // Failing open still has to be visible: this hook's whole contract is to
       // succeed quietly, so a silent decline is indistinguishable from a
       // working capture.

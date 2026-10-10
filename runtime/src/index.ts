@@ -6,6 +6,7 @@ export * as hooks from "./hooks/index.ts";
 export * as mcp from "./mcp/index.ts";
 export * as memory from "./memory/index.ts";
 export * as platform from "./platform/index.ts";
+export * as playtesting from "./playtesting/index.ts";
 export * as providers from "./providers/index.ts";
 export * as router from "./router/index.ts";
 export {

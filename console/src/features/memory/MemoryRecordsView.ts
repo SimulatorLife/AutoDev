@@ -282,8 +282,7 @@ export function MemoryRecordsView({
           "a",
           {
             href: memoryDetailHref(listScope, "recordId", record.id),
-            className:
-              `font-mono text-xs font-semibold ${ACTION_LINK_CLASS}`,
+            className: `font-mono text-xs font-semibold ${ACTION_LINK_CLASS}`,
             "data-memory-record-id": record.id
           },
           record.id
@@ -1004,11 +1003,7 @@ interface RecordActionFormProps {
   readonly record: MemoryRecord;
   readonly listScope: MemoryListScope;
   readonly action:
-    | "verify"
-    | "invalidate"
-    | "revise"
-    | "promote-skill"
-    | "supersede";
+    "verify" | "invalidate" | "revise" | "promote-skill" | "supersede";
   readonly label: string;
   readonly variant: "primary" | "secondary" | "destructive";
   readonly testId: string;
@@ -1088,10 +1083,7 @@ function RecordActionForm({
     // and a promotion to carry the procedure body. Both are already on the
     // record, so the form states them rather than asking the operator to retype
     // what the page is showing them.
-    hidden(
-      "experienceIds",
-      (record.provenance?.experienceIds ?? []).join(",")
-    ),
+    hidden("experienceIds", (record.provenance?.experienceIds ?? []).join(",")),
     // A MemoryRecord carries a `claim`, not a separate procedure body, so the
     // promotion writes what the record actually asserts rather than a document
     // the form had to ask for. A record that is not procedural never renders
@@ -1161,7 +1153,10 @@ function RecordActionForm({
             hideLabel: true,
             className: "basis-32",
             testId: `memory-${action}-evidence-kind`,
-            options: codeOptions(MEMORY_EVIDENCE_KINDS, MEMORY_EVIDENCE_KIND_LABEL)
+            options: codeOptions(
+              MEMORY_EVIDENCE_KINDS,
+              MEMORY_EVIDENCE_KIND_LABEL
+            )
           }),
           React.createElement(TextField, {
             key: "evidence-uri",

@@ -10,6 +10,10 @@ import {
 } from "@simulatorlife/autodev-runtime/router/routing";
 
 const DISABLED_ASSIGNMENT = { priority: "disabled" as const, model: null };
+const MINIMAX_TEST_MODEL = "MiniMax-test-model";
+const CLAUDE_DEFAULT_TEST_MODEL = "claude-default-test-model";
+const CLAUDE_SMART_TEST_MODEL = "claude-smart-test-model";
+const MINIMAX_DEFAULT_TEST_MODEL = "MiniMax-default-test-model";
 
 function seeded(seed: number): () => number {
   let state = seed >>> 0;
@@ -23,27 +27,30 @@ function seeded(seed: number): () => number {
 }
 
 test("typed routing policy resolves aliases, concrete models, credentials, and catalog ids", () => {
+  const minimaxModels = new Set(
+    Object.values(ROUTING_POLICY.config.providers.minimax?.models ?? {})
+  );
+  assert.ok(minimaxModels.size > 0);
   assert.equal(ROUTING_POLICY.roleForModel("autodev/explorer"), "explorer");
   assert.equal(
     ROUTING_POLICY.roleForModel(CONFIGURED_ORCHESTRATOR_MODEL),
     null
   );
-  assert.equal(ROUTING_POLICY.routeForModel("MiniMax-M3")?.provider, "minimax");
-  assert.equal(
-    ROUTING_POLICY.routeForModel("MiniMax-M3.1-Flash-Preview")?.provider,
-    "minimax"
-  );
+  for (const model of minimaxModels) {
+    assert.equal(ROUTING_POLICY.routeForModel(model)?.provider, "minimax");
+  }
   assert.equal(ROUTING_POLICY.routeForModel("unknown-model"), null);
+  const minimaxModel = minimaxModels.values().next().value as string;
   assert.equal(
     ROUTING_POLICY.routeCredentialAvailable(
-      ROUTING_POLICY.routeForModel("MiniMax-M3"),
+      ROUTING_POLICY.routeForModel(minimaxModel),
       { MINIMAX_API_KEY: "key" }
     ),
     true
   );
   assert.equal(
     ROUTING_POLICY.routeCredentialAvailable(
-      ROUTING_POLICY.routeForModel("MiniMax-M3"),
+      ROUTING_POLICY.routeForModel(minimaxModel),
       {}
     ),
     false
@@ -58,6 +65,17 @@ test("typed routing policy resolves aliases, concrete models, credentials, and c
     ),
     [CONFIGURED_ORCHESTRATOR_MODEL, "autodev/explorer"]
   );
+});
+
+test("MiniMax's configured smart assignment is reachable for the smart role", () => {
+  const configuredModel = ROUTING_POLICY.configuredModel("minimax", "smart");
+  assert.ok(configuredModel);
+
+  const candidate = ROUTING_POLICY.roleCandidates("smart", seeded(1)).find(
+    ({ provider }) => provider === "minimax"
+  );
+  assert.ok(candidate);
+  assert.equal(candidate.model, configuredModel);
 });
 
 test("typed routing validation rejects malformed tiers and unknown providers", () => {
@@ -78,6 +96,45 @@ test("typed routing validation rejects malformed tiers and unknown providers", (
         roles: { ...valid.roles, explorer: { tier: "" } }
       }),
     /role explorer must define a tier/
+  );
+});
+
+test("every configured provider link is an https URL and malformed links are rejected", () => {
+  const valid = structuredClone(ROUTING_POLICY.config);
+  for (const [provider, { links }] of Object.entries(valid.providers)) {
+    for (const [kind, href] of Object.entries(links ?? {})) {
+      assert.equal(
+        new URL(String(href)).protocol,
+        "https:",
+        `${provider} ${kind} link must be https`
+      );
+    }
+  }
+  const claude = valid.providers.claude;
+  assert.ok(claude);
+  const withLinks = (links: unknown) => ({
+    ...valid,
+    providers: { ...valid.providers, claude: { ...claude, links } }
+  });
+  assert.doesNotThrow(() =>
+    validateRoutingConfig(withLinks({ usage: "https://example.test/usage" }))
+  );
+  assert.throws(
+    () => validateRoutingConfig(withLinks("https://example.test")),
+    /provider claude links must be an object/
+  );
+  assert.throws(
+    () =>
+      validateRoutingConfig(withLinks({ usage: "http://example.test/usage" })),
+    /provider claude link usage must be an https URL/
+  );
+  assert.throws(
+    () => validateRoutingConfig(withLinks({ documentation: "not a url" })),
+    /provider claude link documentation must be an https URL/
+  );
+  assert.throws(
+    () => validateRoutingConfig(withLinks({ status: "https://example.test" })),
+    /provider claude has unknown link status/
   );
 });
 
@@ -107,11 +164,16 @@ test("typed routing validation narrows providers, routes, and orchestrator block
           ...valid.providers,
           claude: {
             ...claudeProvider,
-            models: { ...claudeProvider.models, default: "MiniMax-M3" }
+            models: {
+              ...claudeProvider.models,
+              default: MINIMAX_TEST_MODEL
+            }
           }
         }
       }),
-    /provider claude default model "MiniMax-M3" routes to minimax/
+    new RegExp(
+      `provider claude default model "${MINIMAX_TEST_MODEL}" routes to minimax`
+    )
   );
 
   assert.throws(
@@ -268,12 +330,12 @@ test("model enablement removes a model from every tier it serves and survives re
     providers: {
       claude: {
         models: {
-          default: "sonnet",
-          orchestrator: "claude-opus-5-5",
-          smart: "claude-opus-5-5"
+          default: CLAUDE_DEFAULT_TEST_MODEL,
+          orchestrator: CLAUDE_SMART_TEST_MODEL,
+          smart: CLAUDE_SMART_TEST_MODEL
         }
       },
-      minimax: { models: { default: "MiniMax-M3" } }
+      minimax: { models: { default: MINIMAX_DEFAULT_TEST_MODEL } }
     },
     roles: {
       default: { tier: "default" },
@@ -282,48 +344,59 @@ test("model enablement removes a model from every tier it serves and survives re
       explorer: { tier: "default" },
       worker: { tier: "default" },
       validator: { tier: "default" },
-      smart: { tier: "smart" }
+      smart: { tier: "smart" },
+      playtester: { tier: "default" },
+      "playtest-analyst": { tier: "default" }
     },
     orchestrator: { alias: "autodev/orchestrator", tier: "orchestrator" }
   });
   const policy = new RoutingPolicy(config, "model-routing.json", {});
 
   assert.deepEqual(policy.configuredModels(), [
-    { model: "sonnet", provider: "claude", tiers: ["default"] },
     {
-      model: "claude-opus-5-5",
+      model: CLAUDE_DEFAULT_TEST_MODEL,
+      provider: "claude",
+      tiers: ["default"]
+    },
+    {
+      model: CLAUDE_SMART_TEST_MODEL,
       provider: "claude",
       tiers: ["orchestrator", "smart"]
     },
-    { model: "MiniMax-M3", provider: "minimax", tiers: ["default"] }
+    {
+      model: MINIMAX_DEFAULT_TEST_MODEL,
+      provider: "minimax",
+      tiers: ["default"]
+    }
   ]);
 
-  policy.setModelEnabled("claude-opus-5-5", false);
-  assert.equal(policy.isModelEnabled("claude-opus-5-5"), false);
+  policy.setModelEnabled(CLAUDE_SMART_TEST_MODEL, false);
+  assert.equal(policy.isModelEnabled(CLAUDE_SMART_TEST_MODEL), false);
   assert.deepEqual(
     policy
       .orchestratorCandidates(seeded(3))
       .map(({ provider, model }) => [provider, model]),
-    [["minimax", "MiniMax-M3"]]
+    [["minimax", MINIMAX_DEFAULT_TEST_MODEL]]
   );
   assert.deepEqual(policy.roleCandidates("smart", seeded(3)), []);
   assert.ok(
     policy
       .roleCandidates("default", seeded(3))
       .some(
-        ({ provider, model }) => provider === "claude" && model === "sonnet"
+        ({ provider, model }) =>
+          provider === "claude" && model === CLAUDE_DEFAULT_TEST_MODEL
       )
   );
   assert.equal(
     policy.routeDisabledReason(
-      { provider: "claude", model: "claude-opus-5-5" },
+      { provider: "claude", model: CLAUDE_SMART_TEST_MODEL },
       "orchestrator"
     ),
     "model_disabled"
   );
   assert.equal(
     policy.routeDisabledReason(
-      { provider: "claude", model: "sonnet" },
+      { provider: "claude", model: CLAUDE_DEFAULT_TEST_MODEL },
       "subagent"
     ),
     null
@@ -331,7 +404,7 @@ test("model enablement removes a model from every tier it serves and survives re
   policy.setProviderAssignment("claude", "orchestrator", DISABLED_ASSIGNMENT);
   assert.equal(
     policy.routeDisabledReason(
-      { provider: "claude", model: "claude-opus-5-5" },
+      { provider: "claude", model: CLAUDE_SMART_TEST_MODEL },
       "orchestrator"
     ),
     "provider_disabled",
@@ -341,18 +414,20 @@ test("model enablement removes a model from every tier it serves and survives re
   // Only configured models can be disabled or restored.
   policy.setModelEnabled("gpt-unconfigured", false);
   assert.equal(policy.isModelEnabled("gpt-unconfigured"), true);
-  assert.deepEqual(policy.runtimeState().disabledModels, ["claude-opus-5-5"]);
+  assert.deepEqual(policy.runtimeState().disabledModels, [
+    CLAUDE_SMART_TEST_MODEL
+  ]);
   policy.restoreRuntimeState({
     roleAssignments: {},
     disabledProviders: [],
-    disabledModels: ["sonnet", "gpt-unconfigured", 7],
+    disabledModels: [CLAUDE_DEFAULT_TEST_MODEL, "gpt-unconfigured", 7],
     providerLimits: {}
   });
   assert.deepEqual(policy.runtimeState(), {
     roleAssignments: {},
     disabledProviders: [],
-    disabledModels: ["sonnet"],
+    disabledModels: [CLAUDE_DEFAULT_TEST_MODEL],
     providerLimits: {}
   });
-  assert.equal(policy.isModelEnabled("claude-opus-5-5"), true);
+  assert.equal(policy.isModelEnabled(CLAUDE_SMART_TEST_MODEL), true);
 });

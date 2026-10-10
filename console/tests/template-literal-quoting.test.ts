@@ -58,6 +58,6 @@ test("the scan would notice a quoted template literal if one appeared", () => {
   // regex and the pattern agree.
   const PATTERN = /"`[^"`]*\$\{/;
   assert.match('className: "`${CALLOUT_ERROR_CLASS} mb-3`"', PATTERN);
-  assert.doesNotMatch('className: `${CALLOUT_ERROR_CLASS} mb-3`', PATTERN);
+  assert.doesNotMatch("className: `${CALLOUT_ERROR_CLASS} mb-3`", PATTERN);
   assert.doesNotMatch("className: CALLOUT_ERROR_CLASS", PATTERN);
 });

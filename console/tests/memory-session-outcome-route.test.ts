@@ -46,10 +46,10 @@ async function submit(
   respond: () => Response = () =>
     Response.json({ schema: "autodev-memory-capture-v1" }, { status: 200 })
 ): Promise<{
-    readonly sent: Sent[];
-    readonly status: number;
-    readonly location: string;
-  }> {
+  readonly sent: Sent[];
+  readonly status: number;
+  readonly location: string;
+}> {
   const previousFetch = globalThis.fetch;
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   process.env.AUTODEV_CONTROL_API_TOKEN = "p".repeat(64);
@@ -138,7 +138,12 @@ test("the session identity rides in the path, never the body", async () => {
   assert.equal(sent.length, 1, "nothing was sent, so the body proves nothing");
   const body = JSON.parse(sent[0]?.body ?? "{}") as Record<string, unknown>;
 
-  for (const forbidden of ["workspaceId", "taskId", "correlationToken", "experienceId"]) {
+  for (const forbidden of [
+    "workspaceId",
+    "taskId",
+    "correlationToken",
+    "experienceId"
+  ]) {
     assert.equal(
       body[forbidden],
       undefined,

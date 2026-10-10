@@ -8,7 +8,8 @@ import {
   assignSkillRoles,
   ExecutionContractConflictError,
   executionContractRevision,
-  ExecutionContractValidationError} from "@simulatorlife/autodev-data";
+  ExecutionContractValidationError
+} from "@simulatorlife/autodev-data";
 
 /**
  * The assignment is the operation the memory system needed to finish a
@@ -50,11 +51,17 @@ test("assigning a skill puts it in exactly the roles named", async () => {
   });
 
   assert.deepEqual([...result.roles], ["orchestrator", "worker"]);
-  assert.deepEqual(rolesOf(file.path, "orchestrator"), ["ccc", "release-checklist"]);
+  assert.deepEqual(rolesOf(file.path, "orchestrator"), [
+    "ccc",
+    "release-checklist"
+  ]);
   assert.deepEqual(rolesOf(file.path, "worker"), ["release-checklist"]);
   // Untouched, including the role it was already in.
   assert.deepEqual(rolesOf(file.path, "reviewer"), ["ccc"]);
-  assert.equal(result.revision, executionContractRevision(readFileSync(file.path, "utf8")));
+  assert.equal(
+    result.revision,
+    executionContractRevision(readFileSync(file.path, "utf8"))
+  );
 });
 
 test("the roles list is the whole desired set, so unassigning is the same call", async () => {

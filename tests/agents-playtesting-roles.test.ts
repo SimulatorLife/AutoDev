@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+
 import { parse } from "smol-toml";
 
 const repositoryRoot = new URL("../", import.meta.url);
@@ -42,7 +43,10 @@ function enabledTools(
     `expected [mcp_servers.${name}] to be declared`
   );
   const tools = (server as Record<string, unknown>).enabled_tools;
-  assert.ok(Array.isArray(tools), `[mcp_servers.${name}].enabled_tools must be an array`);
+  assert.ok(
+    Array.isArray(tools),
+    `[mcp_servers.${name}].enabled_tools must be an array`
+  );
   return tools as string[];
 }
 
@@ -50,7 +54,8 @@ function skillEnabled(
   role: Record<string, unknown>,
   skillName: string
 ): boolean | undefined {
-  const skills = role.skills as { config?: Array<Record<string, unknown>> } | undefined;
+  const skills = role.skills as
+    { config?: Array<Record<string, unknown>> } | undefined;
   const entry = skills?.config?.find((cfg) => cfg.name === skillName);
   return entry?.enabled as boolean | undefined;
 }
@@ -88,11 +93,14 @@ test("playtester.toml is sandboxed read-only, leaf-only, and run/read-scoped", (
   assert.deepEqual(
     [...tools].sort(),
     [
+      "playtest.activeRuns",
+      "playtest.cancel",
       "playtest.capabilities",
       "playtest.listEpisodes",
       "playtest.readEpisode",
       "playtest.readWindow",
-      "playtest.run"
+      "playtest.run",
+      "playtest.wait"
     ].sort()
   );
   // Run-only/result-read authority: never evidence-review, compare, or
@@ -173,4 +181,3 @@ test("playtest-analyst prompt forbids run/branch authority and direct issue crea
   assert.match(prompt, /Do not create, comment on, or close a GitHub issue/i);
   assert.match(prompt, /read-only for source code/i);
 });
-

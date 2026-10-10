@@ -64,7 +64,8 @@ trace.setGlobalTracerProvider(provider);
 
 let activeSpan: Span | undefined;
 const stickySpanManager: ContextManager = {
-  active: () => (activeSpan ? trace.setSpan(ROOT_CONTEXT, activeSpan) : ROOT_CONTEXT),
+  active: () =>
+    activeSpan ? trace.setSpan(ROOT_CONTEXT, activeSpan) : ROOT_CONTEXT,
   // The real manager restores the previous context around the call. Here the
   // span is meant to outlive the call — that is the point — so `with` is
   // transparent and `active` reports whatever `activeSpan` currently is.
@@ -81,13 +82,21 @@ context.setGlobalContextManager(stickySpanManager);
  * the events it added to the active span.
  */
 async function observeFailure(throwable: () => Error): Promise<
-  readonly { readonly name: string; readonly attributes: Record<string, unknown> }[]
+  readonly {
+    readonly name: string;
+    readonly attributes: Record<string, unknown>;
+  }[]
 > {
   const repository = {
     appendExperience: async () => undefined,
     getExperience: async () => null,
     searchExperiences: async () => [],
-    listExperiences: async () => ({ items: [], total: 0, limit: 50, offset: 0 }),
+    listExperiences: async () => ({
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0
+    }),
     listExpiredExperiences: async () => [],
     purgeExperience: async () => "not_visible",
     proposeMemory: async () => undefined,
@@ -122,10 +131,20 @@ async function observeFailure(throwable: () => Error): Promise<
       offset: 0
     }),
     aggregateInjectionOutcomeCohorts: async () => ({ items: [], total: 0 }),
-    listInjectionUseJoins: async () => ({ items: [], total: 0, limit: 50, offset: 0 }),
+    listInjectionUseJoins: async () => ({
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0
+    }),
     aggregateInjectionUseCohorts: async () => ({ items: [], total: 0 }),
     getSessionOutcomeReport: async () => null,
-    listSessionOutcomeJoins: async () => ({ items: [], total: 0, limit: 50, offset: 0 }),
+    listSessionOutcomeJoins: async () => ({
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0
+    }),
     aggregateSessionOutcomeCohorts: async () => ({ items: [], total: 0 }),
     purgeExpiredExperiences: async () => ({
       selected: 0,
@@ -213,16 +232,24 @@ async function observeFailure(throwable: () => Error): Promise<
 
 /** The one event this file is about. */
 function onlyEmissionFailure(
-  events: readonly { readonly name: string; readonly attributes: Record<string, unknown> }[]
+  events: readonly {
+    readonly name: string;
+    readonly attributes: Record<string, unknown>;
+  }[]
 ): { readonly name: string; readonly attributes: Record<string, unknown> } {
-  const failures = events.filter((event) => event.name === "memory_injection_emit_failed");
+  const failures = events.filter(
+    (event) => event.name === "memory_injection_emit_failed"
+  );
   assert.equal(
     failures.length,
     1,
     `expected exactly one emission failure, saw ${JSON.stringify(events.map((e) => e.name))}`
   );
   const failure = failures[0];
-  assert.ok(failure, "the emission failure disappeared between the two assertions");
+  assert.ok(
+    failure,
+    "the emission failure disappeared between the two assertions"
+  );
   return failure;
 }
 
@@ -279,7 +306,8 @@ test("a raw error message never reaches the emitted event", async () => {
   // The message used here is shaped like a real driver's: a constraint name and
   // the failing value. If the classification were ever derived from
   // `error.message`, this string would appear in every exported span.
-  const secret = "duplicate key value violates unique constraint \"memory_experiences_pkey\"";
+  const secret =
+    'duplicate key value violates unique constraint "memory_experiences_pkey"';
   const failure = onlyEmissionFailure(
     await observeFailure(() => new MemoryConflictError(secret))
   );
@@ -325,7 +353,12 @@ test("every recorded category is one of the four the taxonomy defines", async ()
   // Closed set. A category invented here — or, more plausibly, an error's class
   // name leaking through a future `return error.constructor.name` — would
   // otherwise be a new, unbounded dimension on a metric the product groups by.
-  const allowed = new Set(["conflict", "validation", "authorization", "unknown"]);
+  const allowed = new Set([
+    "conflict",
+    "validation",
+    "authorization",
+    "unknown"
+  ]);
 
   for (const throwable of [
     () => new MemoryConflictError("c"),

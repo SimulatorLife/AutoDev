@@ -7,10 +7,17 @@
  * module implements.
  */
 
+export * from "./artifacts.ts";
 export * from "./comparison.ts";
+export * from "./configuration.ts";
 export * from "./evaluators.ts";
 export * from "./evidence.ts";
+export * from "./human-study-aggregation.ts";
+export * from "./human-study-import.ts";
+export * from "./observability.ts";
+export * from "./operation-validation.ts";
 export * from "./protocol.ts";
+export * from "./protocol-types.ts";
 export * from "./registry.ts";
 export * from "./sampling.ts";
 export * from "./scoring.ts";

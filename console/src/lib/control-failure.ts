@@ -1,16 +1,14 @@
 /**
  * One vocabulary for "this mutation did not land".
  *
- * Every Console mutation is a server-rendered form POST, so the browser is
- * navigated to whatever the route returns. A route that answers a failed
- * submission with a JSON body therefore dumps `{"error": ...}` into the
- * operator's browser, outside the Console shell and with no way back. Instead a
- * route redirects to the page it came from carrying this flag, and that page
- * renders a notice.
+ * Mutation routes may be used by a progressively enhanced native form or by
+ * an in-place client submission. In-place callers receive the same bounded
+ * refusal vocabulary as JSON; a no-JavaScript form fallback redirects to the
+ * owning page with these query flags so it can render the shared notice.
+ * Neither path reflects an arbitrary Runtime message into the UI.
  *
- * The flag deliberately says only "could not be confirmed". A mutation route
- * cannot claim what happened: the refreshed value it redirects to is the
- * authoritative answer, so the notice must not invent a more specific outcome.
+ * A failed mutation is never presented as success: the re-read authoritative
+ * value or the bounded failure state tells the operator what to do next.
  */
 
 /** Query flag a mutation route sets when a change could not be confirmed. */

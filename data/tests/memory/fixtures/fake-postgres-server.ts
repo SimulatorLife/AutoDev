@@ -36,7 +36,10 @@ export interface FakeQueryResult {
 export interface FakePostgresServer {
   readonly url: string;
   /** Statements the driver actually sent, in order, with their bound parameters. */
-  readonly statements: readonly { readonly sql: string; readonly params: readonly string[] }[];
+  readonly statements: readonly {
+    readonly sql: string;
+    readonly params: readonly string[];
+  }[];
   /** How many connections are currently open, for the pool-concurrency tests. */
   readonly openConnections: () => number;
   /** How many connections have been opened in total. */
@@ -89,13 +92,20 @@ function rowDescription(columns: readonly string[]): Buffer {
   );
 }
 
-function dataRow(values: readonly (string | number | boolean | null)[]): Buffer {
+function dataRow(
+  values: readonly (string | number | boolean | null)[]
+): Buffer {
   return framed(
     "D",
     Buffer.concat([
       int16(values.length),
       ...values.map((value) =>
-        value === null ? int32(-1) : Buffer.concat([int32(Buffer.byteLength(String(value))), Buffer.from(String(value), "utf8")])
+        value === null
+          ? int32(-1)
+          : Buffer.concat([
+              int32(Buffer.byteLength(String(value))),
+              Buffer.from(String(value), "utf8")
+            ])
       )
     ])
   );
@@ -150,7 +160,9 @@ function buildResponder(
       }
     }
     if (!best) {
-      throw new Error(`FakePostgresServer received an unexpected statement: ${flat}`);
+      throw new Error(
+        `FakePostgresServer received an unexpected statement: ${flat}`
+      );
     }
     return best;
   };
@@ -166,7 +178,10 @@ function startupResponse(): Buffer {
     framed("S", Buffer.concat([cstring("DateStyle"), cstring("ISO, MDY")])),
     framed("S", Buffer.concat([cstring("TimeZone"), cstring("UTC")])),
     framed("S", Buffer.concat([cstring("integer_datetimes"), cstring("on")])),
-    framed("S", Buffer.concat([cstring("standard_conforming_strings"), cstring("on")])),
+    framed(
+      "S",
+      Buffer.concat([cstring("standard_conforming_strings"), cstring("on")])
+    ),
     framed("K", Buffer.concat([int32(1), int32(2)])), // BackendKeyData
     framed("Z", Buffer.from("I", "ascii")) // ReadyForQuery, idle
   ]);
@@ -226,7 +241,9 @@ export async function startFakePostgresServer(
             // Simple query: every semicolon-separated statement, each followed
             // by its own result and a ReadyForQuery.
             const sql = body.subarray(0, body.length - 1).toString("utf8");
-            const pieces = sql.split(";").filter((piece) => piece.trim() !== "");
+            const pieces = sql
+              .split(";")
+              .filter((piece) => piece.trim() !== "");
             for (const piece of pieces) {
               statements.push({ sql: piece, params: [] });
               const result = respond(piece);
@@ -234,7 +251,12 @@ export async function startFakePostgresServer(
                 Buffer.concat([
                   rowDescription(result.columns),
                   ...result.rows.map(dataRow),
-                  framed("C", cstring(result.commandComplete ?? `SELECT ${result.rows.length}`)),
+                  framed(
+                    "C",
+                    cstring(
+                      result.commandComplete ?? `SELECT ${result.rows.length}`
+                    )
+                  ),
                   framed("Z", Buffer.from("I", "ascii"))
                 ])
               );
@@ -272,7 +294,9 @@ export async function startFakePostgresServer(
               if (size === -1) {
                 boundParams.push("NULL");
               } else {
-                boundParams.push(body.subarray(offset, offset + size).toString("utf8"));
+                boundParams.push(
+                  body.subarray(offset, offset + size).toString("utf8")
+                );
                 offset += size;
               }
             }
@@ -294,7 +318,12 @@ export async function startFakePostgresServer(
               Buffer.concat([
                 rowDescription(result.columns),
                 ...result.rows.map(dataRow),
-                framed("C", cstring(result.commandComplete ?? `SELECT ${result.rows.length}`)),
+                framed(
+                  "C",
+                  cstring(
+                    result.commandComplete ?? `SELECT ${result.rows.length}`
+                  )
+                ),
                 framed("Z", Buffer.from("I", "ascii"))
               ])
             );

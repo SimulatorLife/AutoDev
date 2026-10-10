@@ -68,7 +68,8 @@ async function refusalForCode(
     const response = await memoryRoute.POST(mutation({ ...SUPERSEDE }));
     const location = response.headers.get("location") ?? "";
     return readControlRefusal(
-      new URL(location, "http://console.test").searchParams.get("refusal") ?? undefined
+      new URL(location, "http://console.test").searchParams.get("refusal") ??
+        undefined
     );
   } finally {
     globalThis.fetch = previousFetch;
@@ -118,10 +119,7 @@ test("a failed operation is not reported as a refusal with no reason", async () 
   // why — the operation failed — and the fallback's sentence denies that it
   // said anything, which sends the operator to re-examine a form that was
   // correct.
-  const refusal = await refusalForCode(
-    503,
-    "autodev_memory_operation_failed"
-  );
+  const refusal = await refusalForCode(503, "autodev_memory_operation_failed");
 
   assert.equal(refusal, "operation_failed");
   assert.notEqual(refusal, "runtime_refused");
@@ -142,7 +140,10 @@ test("an unreachable Runtime is not confused with a failed operation", async () 
   // Both arrive as a 5xx and both mean nothing changed, but they ask opposite
   // questions: one is about this machine's network, the other about work that
   // started and failed. Only the second is worth retrying immediately.
-  assert.equal(await refusalForCode(503, "autodev_memory_unavailable"), "unavailable");
+  assert.equal(
+    await refusalForCode(503, "autodev_memory_unavailable"),
+    "unavailable"
+  );
   assert.equal(
     await refusalForCode(503, "autodev_memory_operation_failed"),
     "operation_failed"

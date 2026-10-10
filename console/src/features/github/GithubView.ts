@@ -277,8 +277,7 @@ export function GithubView({
                   href: run.htmlUrl,
                   target: "_blank",
                   rel: "noopener noreferrer",
-                  className:
-                    `font-mono text-xs font-semibold text-fg ${ENTITY_LINK_CLASS}`
+                  className: `font-mono text-xs font-semibold text-fg ${ENTITY_LINK_CLASS}`
                 },
                 `#${run.id} ${run.name ?? ""}`.trim()
               )

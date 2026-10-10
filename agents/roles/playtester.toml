@@ -35,16 +35,21 @@ enabled = false
 [mcp_servers.codex_app]
 enabled = false
 
-# Planned Runtime-hosted playtesting MCP server (runtime/src/playtesting/mcp.ts,
-# registered in .rulesync/mcp.jsonc by the owning change). This role allowlists
-# only the run/result-read commands; it never gets evidence-review, compare, or
-# findings-write commands, which belong to playtest-analyst and root.
+[tools]
+web_search = false
+
+# Runtime-hosted playtesting MCP server. This role gets approved run/status,
+# cancellation, and result-read commands; evidence review/compare/findings write
+# operations remain restricted to playtest-analyst and root.
 [mcp_servers.playtest]
 enabled = true
 default_tools_approval_mode = "approve"
 enabled_tools = [
   "playtest.capabilities",
   "playtest.run",
+  "playtest.wait",
+  "playtest.activeRuns",
+  "playtest.cancel",
   "playtest.listEpisodes",
   "playtest.readEpisode",
   "playtest.readWindow",

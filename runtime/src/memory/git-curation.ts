@@ -942,9 +942,7 @@ const UNREADABLE_SUPERSESSION: SupersessionParse = { readable: false };
  * request has no close event, so an empty node list is a readable "nothing did"
  * -- and the review and check gate rejects the open pull request on its own.
  */
-function parseGitHubPullRequestSupersession(
-  value: unknown
-): SupersessionParse {
+function parseGitHubPullRequestSupersession(value: unknown): SupersessionParse {
   const timeline = asRecord(value);
   if (!timeline) return UNREADABLE_SUPERSESSION;
   const nodes = timeline.nodes;
@@ -959,8 +957,7 @@ function parseGitHubPullRequestSupersession(
     return UNREADABLE_SUPERSESSION;
   // A node that is not a close event is not a supersession finding, but it is
   // also not a response that answered the question, so it stays unreadable.
-  if (event.__typename !== GITHUB_CLOSED_EVENT)
-    return UNREADABLE_SUPERSESSION;
+  if (event.__typename !== GITHUB_CLOSED_EVENT) return UNREADABLE_SUPERSESSION;
   const closer = event.closer;
   if (closer === null) return { readable: true, supersession: null };
   const closerRecord = asRecord(closer);
@@ -968,8 +965,7 @@ function parseGitHubPullRequestSupersession(
   const typeName = closerRecord.__typename;
   if (typeName === GITHUB_COMMIT_CLOSER)
     return { readable: true, supersession: { byPullRequest: null } };
-  if (typeName !== GITHUB_PULL_REQUEST_CLOSER)
-    return UNREADABLE_SUPERSESSION;
+  if (typeName !== GITHUB_PULL_REQUEST_CLOSER) return UNREADABLE_SUPERSESSION;
   if (
     typeof closerRecord.merged !== "boolean" ||
     typeof closerRecord.url !== "string" ||

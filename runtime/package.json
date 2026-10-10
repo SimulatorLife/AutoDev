@@ -19,6 +19,8 @@
     "./mcp/process-registry": "./src/mcp/process-registry.ts",
     "./memory": "./src/memory/index.ts",
     "./platform": "./src/platform/index.ts",
+    "./playtesting": "./src/playtesting/index.ts",
+    "./playtesting/statistics": "./src/playtesting/statistics/index.ts",
     "./platform/antigravity-ensure": "./src/platform/antigravity-ensure.ts",
     "./platform/antigravity-settings": "./src/platform/antigravity-settings.ts",
     "./platform/claude-ensure": "./src/platform/claude-ensure.ts",

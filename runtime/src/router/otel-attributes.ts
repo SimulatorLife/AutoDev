@@ -246,10 +246,12 @@ function otelPayloadShapeError(
   signal: OtelSignal,
   value: unknown
 ): string | null {
-  if (!isOtelRecord(value))
-    return `OTLP ${signal} body must be a JSON object.`;
-  const { batch: batchField, scopes: scopeField, records: recordField } =
-    OTEL_SIGNAL_FIELDS[signal];
+  if (!isOtelRecord(value)) return `OTLP ${signal} body must be a JSON object.`;
+  const {
+    batch: batchField,
+    scopes: scopeField,
+    records: recordField
+  } = OTEL_SIGNAL_FIELDS[signal];
 
   const batches = otelRecordArray(value, batchField, batchField);
   if (typeof batches === "string") return `OTLP ${signal} ${batches}`;

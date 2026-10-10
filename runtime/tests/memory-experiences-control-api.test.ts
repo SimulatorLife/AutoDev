@@ -210,11 +210,15 @@ test("GET /control/memory/experiences refuses a record-only filter with 400", as
 
 test("GET /control/memory/records still refuses an experience-only filter with 400", async () => {
   // The mirror of the case above, kept here so the pair cannot drift apart.
-  const { response } = await callRoute(mockService(), "/control/memory/records", {
-    workspaceId: "ws-1",
-    repositoryId: "repo-1",
-    outcome: "success"
-  });
+  const { response } = await callRoute(
+    mockService(),
+    "/control/memory/records",
+    {
+      workspaceId: "ws-1",
+      repositoryId: "repo-1",
+      outcome: "success"
+    }
+  );
 
   assert.equal(response.statusCode, 400);
 });

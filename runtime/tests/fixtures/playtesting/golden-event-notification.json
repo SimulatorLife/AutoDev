@@ -1,0 +1,18 @@
+{
+  "jsonrpc": "2.0",
+  "method": "game.event",
+  "params": {
+    "episodeId": "fixture-episode-1",
+    "revision": 1,
+    "eventSequence": 1,
+    "event": {
+      "eventId": "evt-1",
+      "type": "step-applied",
+      "phaseId": "race",
+      "step": 1,
+      "revision": 1,
+      "actor": "player",
+      "fields": {"actionId": "advance"}
+    }
+  }
+}

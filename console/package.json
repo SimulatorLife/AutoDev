@@ -10,6 +10,7 @@
     "build": "next build",
     "start": "next start -p ${AUTODEV_CONSOLE_PORT:-3300}",
     "test": "node --test",
+    "test:playtesting:browser": "pnpm build && playwright test --config=playwright.config.ts",
     "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {
@@ -21,6 +22,7 @@
     "react-markdown": "10.1.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0-alpha-2026-08-31",
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "24.13.5",
     "@types/react": "19.3.0",

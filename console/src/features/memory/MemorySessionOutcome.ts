@@ -57,8 +57,15 @@ export function MemorySessionOutcome({
   if (report === undefined) {
     return React.createElement(
       "div",
-      { className: "flex flex-col gap-2", "data-session-outcome": experienceId },
-      React.createElement("h3", { className: SECTION_HEADING_CLASS }, "Session outcome"),
+      {
+        className: "flex flex-col gap-2",
+        "data-session-outcome": experienceId
+      },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "Session outcome"
+      ),
       React.createElement(
         "p",
         { className: MUTED_TEXT_CLASS, "data-status": "unavailable" },
@@ -70,8 +77,15 @@ export function MemorySessionOutcome({
   if (report !== null) {
     return React.createElement(
       "div",
-      { className: "flex flex-col gap-2", "data-session-outcome": experienceId },
-      React.createElement("h3", { className: SECTION_HEADING_CLASS }, "Session outcome"),
+      {
+        className: "flex flex-col gap-2",
+        "data-session-outcome": experienceId
+      },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "Session outcome"
+      ),
       React.createElement(
         "p",
         { className: "text-sm" },
@@ -123,7 +137,11 @@ export function MemorySessionOutcome({
   return React.createElement(
     "div",
     { className: "flex flex-col gap-2", "data-session-outcome": experienceId },
-    React.createElement("h3", { className: SECTION_HEADING_CLASS }, "Session outcome"),
+    React.createElement(
+      "h3",
+      { className: SECTION_HEADING_CLASS },
+      "Session outcome"
+    ),
     React.createElement(
       "p",
       { className: MUTED_TEXT_CLASS },
@@ -214,7 +232,9 @@ const DETAIL_LABEL_CLASS = "text-fg-muted mr-2";
 
 /** The same labels the packet-level outcomes use, so one code reads the same everywhere. */
 function outcomeLabel(code: string): string {
-  return MEMORY_OUTCOME_LABEL[code as keyof typeof MEMORY_OUTCOME_LABEL] ?? code;
+  return (
+    MEMORY_OUTCOME_LABEL[code as keyof typeof MEMORY_OUTCOME_LABEL] ?? code
+  );
 }
 
 /**
@@ -225,6 +245,7 @@ function outcomeLabel(code: string): string {
  */
 function reportKindLabel(code: string): string {
   return (
-    MEMORY_REPORT_KIND_LABEL[code as keyof typeof MEMORY_REPORT_KIND_LABEL] ?? code
+    MEMORY_REPORT_KIND_LABEL[code as keyof typeof MEMORY_REPORT_KIND_LABEL] ??
+    code
   );
 }

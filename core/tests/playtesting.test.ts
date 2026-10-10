@@ -3,17 +3,25 @@ import test from "node:test";
 
 import {
   aggregateMiniPxiEnj,
+  allocatePlaytestExperimentArms,
   allocatePlaytestSurveillanceStrata,
   assertNoContradictingLocator,
+  assertPlaytestAdapterParams,
+  assertPlaytestAdapterResult,
   assertPlaytestCapabilityAdvertisement,
+  assertPlaytestEventTaxonomy,
   assertPlaytestEvidenceLocator,
   assertPlaytestFindingEvidenceStatusConsistent,
+  assertPlaytestGameConfiguration,
   assertPlaytestJsonRpcError,
+  assertPlaytestJsonRpcNotification,
   assertPlaytestJsonRpcRequest,
+  assertPlaytestJsonRpcResponse,
   assertPlaytestJsonRpcSuccess,
-  assertPlaytestObservationDescriptor,
-  assertPlaytestReviewHasEvidence,
+  assertPlaytestObservationContract,
+  assertPlaytestSessionReviewHasEvidence,
   buildPlaytestComparison,
+  buildPlaytestCoverageManifest,
   categorizeMiniPxiEnjValue,
   classifyPlaytestMetricComparison,
   decidePlaytestComparisonStatus,
@@ -34,6 +42,7 @@ import {
   scorePlaytestDimensionAnchor,
   verifyPlaytestClaim
 } from "../src/playtesting/index.ts";
+import { assertWorkspacePlaytestApproval } from "../src/workspaces/playtesting.ts";
 
 const WORKSPACE_ID = "fixture-game";
 const MEASUREMENT_VERSION = "fixture-v1";
@@ -415,11 +424,12 @@ test("aggregateMiniPxiEnj: [2,1,-1,null] gives native mean 2/3 with 3 respondent
   assert.equal(result.respondentCount, 3);
   assert.equal(result.missingCount, 1);
   assert.equal(result.mean, 2 / 3);
-  // Native values 1 and 2 both bucket to "medium-high" under the 5-way
-  // category split; -1 is the sole "medium-low" response.
-  assert.equal(result.categoryCounts["medium-high"], 2);
-  assert.equal(result.categoryCounts["medium-low"], 1);
-  assert.equal(result.categoryCounts.neutral, 0);
+  // Category counts preserve native -3..+3 values exactly; no rescaling or
+  // midpoint grouping is applied.
+  assert.equal(result.categoryCounts[2], 1);
+  assert.equal(result.categoryCounts[1], 1);
+  assert.equal(result.categoryCounts[-1], 1);
+  assert.equal(result.categoryCounts[0], 0);
   assert.deepEqual(result.missingReasons, ["missing-ENJ"]);
 });
 
@@ -444,14 +454,12 @@ test("aggregateMiniPxiEnj rejects a duplicate respondent id", () => {
   );
 });
 
-test("categorizeMiniPxiEnjValue maps the full native range to the closed category vocabulary", () => {
-  assert.equal(categorizeMiniPxiEnjValue(-3), "low");
-  assert.equal(categorizeMiniPxiEnjValue(-2), "low");
-  assert.equal(categorizeMiniPxiEnjValue(-1), "medium-low");
-  assert.equal(categorizeMiniPxiEnjValue(0), "neutral");
-  assert.equal(categorizeMiniPxiEnjValue(1), "medium-high");
-  assert.equal(categorizeMiniPxiEnjValue(2), "medium-high");
-  assert.equal(categorizeMiniPxiEnjValue(3), "high");
+test("categorizeMiniPxiEnjValue preserves each official native Likert value", () => {
+  assert.deepEqual(
+    [-3, -2, -1, 0, 1, 2, 3].map(categorizeMiniPxiEnjValue),
+    [-3, -2, -1, 0, 1, 2, 3]
+  );
+  assert.throws(() => categorizeMiniPxiEnjValue(4), /integer in \[-3,3\]/u);
 });
 
 // --- §2 null-safe dimension anchor scoring -----------------------------------
@@ -627,6 +635,49 @@ test("samplePlaytestSurveillance with a different seed yields a different select
   assert.notDeepEqual(first.selected, second.selected);
 });
 
+test("approved experiment allocation fixes independent units to predeclared arm quotas", () => {
+  const units = Array.from(
+    { length: 20 },
+    (_, index) => "learner-" + String(index)
+  );
+  const arms = [
+    { armId: "A", assignments: 10 },
+    { armId: "B", assignments: 10 }
+  ];
+  const first = allocatePlaytestExperimentArms(
+    units,
+    arms,
+    "allocation-seed-v1"
+  );
+  const replay = allocatePlaytestExperimentArms(
+    [...units].reverse(),
+    arms,
+    "allocation-seed-v1"
+  );
+  assert.deepEqual(
+    Object.fromEntries(
+      first.map((item) => [item.independentUnitId, item.armId])
+    ),
+    Object.fromEntries(
+      replay.map((item) => [item.independentUnitId, item.armId])
+    )
+  );
+  assert.equal(first.filter((item) => item.armId === "A").length, 10);
+  assert.equal(first.filter((item) => item.armId === "B").length, 10);
+  assert.throws(
+    () =>
+      allocatePlaytestExperimentArms(
+        units,
+        [
+          { armId: "A", assignments: 10 },
+          { armId: "B", assignments: 9 }
+        ],
+        "seed"
+      ),
+    /quotas must equal/u
+  );
+});
+
 test("samplePlaytestDiscovery rejects duplicate IDs and non-finite ranking scores", () => {
   assert.throws(
     () =>
@@ -786,6 +837,17 @@ test("§4 worked fixture: completion improved + clarity breached yields hold-reg
     experimentId: null,
     baseline: { id: "build-a", version: 1 },
     candidate: { id: "build-b", version: 1 },
+    freezeStatus: "frozen",
+    pairing: {
+      mode: "paired-initial-condition",
+      pairMap: { episodeA: "episodeB" },
+      rngAlgorithm: "pcg",
+      rngStreamVersion: "v1",
+      couplingDiagnostics: [],
+      exclusions: []
+    },
+    sourceFindingIds: ["finding-1"],
+    episodeRefs: [{ kind: "episode", id: "episode-a" }],
     measurementVersion: MEASUREMENT_VERSION,
     metrics: [completion, clarity],
     primaryMetricId: "completion",
@@ -988,6 +1050,17 @@ test("recordPlaytestOwnerDecision returns a new immutable revision and rejects a
     experimentId: null,
     baseline: { id: "a", version: 1 },
     candidate: { id: "b", version: 1 },
+    freezeStatus: "frozen" as const,
+    pairing: {
+      mode: "observational" as const,
+      pairMap: {},
+      rngAlgorithm: null,
+      rngStreamVersion: null,
+      couplingDiagnostics: [],
+      exclusions: []
+    },
+    sourceFindingIds: [],
+    episodeRefs: [],
     measurementVersion: MEASUREMENT_VERSION,
     metrics: [],
     decision: "hold-inconclusive" as const,
@@ -1144,10 +1217,10 @@ test("assertNoContradictingLocator: a claimed-absent action present in the actua
   );
 });
 
-test("assertPlaytestReviewHasEvidence rejects a review with zero evidence locators, even if findings have evidence", () => {
+test("assertPlaytestSessionReviewHasEvidence rejects a review with zero evidence locators, even if findings have evidence", () => {
   assert.throws(
     () =>
-      assertPlaytestReviewHasEvidence({
+      assertPlaytestSessionReviewHasEvidence({
         reviewId: "rev-1",
         evidenceRefs: [],
         findings: []
@@ -1156,10 +1229,10 @@ test("assertPlaytestReviewHasEvidence rejects a review with zero evidence locato
   );
 });
 
-test("assertPlaytestReviewHasEvidence rejects a finding with zero evidence locators", () => {
+test("assertPlaytestSessionReviewHasEvidence rejects a finding with zero evidence locators", () => {
   assert.throws(
     () =>
-      assertPlaytestReviewHasEvidence({
+      assertPlaytestSessionReviewHasEvidence({
         reviewId: "rev-2",
         evidenceRefs: [{ kind: "episode", id: "ep-1" }],
         findings: [
@@ -1222,15 +1295,219 @@ test("assertPlaytestFindingEvidenceStatusConsistent rejects 'not observed' carry
   );
 });
 
+// --- §1 event taxonomy and full mechanic/phase coverage --------------------
+
+test("event taxonomy accepts authoritative game events and versioned detector provenance", () => {
+  const taxonomy = {
+    schemaVersion: 1,
+    workspaceId: WORKSPACE_ID,
+    taxonomyVersion: "fixture-events-v1",
+    eventSchemaHash: "a".repeat(64),
+    events: [
+      {
+        eventId: "near-miss",
+        eventType: "near-miss",
+        mechanicKey: "positioning",
+        phaseId: "race",
+        stepField: "step",
+        revisionField: "revision",
+        actorField: "playerId",
+        eligibilityFlags: ["eligible-for-agency"],
+        source: { kind: "game", emitterId: "engine.race-events" },
+        thresholds: { distance: 0.1 },
+        severity: "minor",
+        expectedOccurrenceRange: { minimum: 0, maximum: 2 }
+      },
+      {
+        eventId: "stalled-loop",
+        eventType: "stalled-loop",
+        mechanicKey: "turn-progression",
+        phaseId: "any",
+        stepField: "step",
+        revisionField: "revision",
+        actorField: null,
+        eligibilityFlags: [],
+        source: {
+          kind: "detector",
+          detectorRef: "detectors/repeated-state-v1",
+          codeHash: "b".repeat(64)
+        },
+        thresholds: { repeats: 3 },
+        severity: "major",
+        expectedOccurrenceRange: null
+      }
+    ]
+  };
+  assert.doesNotThrow(() => assertPlaytestEventTaxonomy(taxonomy));
+  assert.throws(
+    () =>
+      assertPlaytestEventTaxonomy({
+        ...taxonomy,
+        events: [
+          {
+            ...taxonomy.events[1]!,
+            source: { kind: "detector", detectorRef: "unversioned" }
+          }
+        ]
+      }),
+    /detectorRef and a SHA-256 codeHash/u
+  );
+});
+
+test("coverage distinguishes missing critical cells from a large easy-scenario sample", () => {
+  const coverage = buildPlaytestCoverageManifest({
+    workspaceId: WORKSPACE_ID,
+    batchId: "batch-coverage",
+    buildSha: "a".repeat(64),
+    measurementVersion: MEASUREMENT_VERSION,
+    generatedAt: "2026-10-09T12:00:00.000Z",
+    cells: [
+      {
+        mechanicKey: "pit-strategy",
+        phaseId: "race",
+        scenarioFamily: "easy",
+        cohort: "heuristic",
+        policy: "deterministic-baseline",
+        modality: "headless",
+        requiredOpportunities: 10,
+        requiredIndependentUnits: 1,
+        observedOpportunities: 1000,
+        observedIndependentUnits: 1000,
+        unsupportedReason: null
+      },
+      {
+        mechanicKey: "pit-strategy",
+        phaseId: "race",
+        scenarioFamily: "hard",
+        cohort: "novice",
+        policy: "limited-information",
+        modality: "headless",
+        requiredOpportunities: 10,
+        requiredIndependentUnits: 1,
+        observedOpportunities: 0,
+        observedIndependentUnits: 0,
+        unsupportedReason: null
+      },
+      {
+        mechanicKey: "warning-clarity",
+        phaseId: "race",
+        scenarioFamily: "standard",
+        cohort: "visual-only",
+        policy: "visual-observer",
+        modality: "native-visual",
+        requiredOpportunities: 1,
+        requiredIndependentUnits: 1,
+        observedOpportunities: 0,
+        observedIndependentUnits: 0,
+        unsupportedReason: "native renderer is not approved"
+      }
+    ]
+  });
+  assert.equal(coverage.coveredCells, 1);
+  assert.equal(coverage.notObservedCells, 1);
+  assert.equal(coverage.unsupportedCells, 1);
+  assert.deepEqual(
+    coverage.cells.map((cell) => cell.state),
+    ["covered", "not-observed", "unsupported"]
+  );
+});
+
 // --- protocol/envelope validators --------------------------------------------
 
-test("assertPlaytestJsonRpcRequest accepts a valid request and rejects an unknown method", () => {
+test("method-specific adapter contracts bind resets, observations, legal actions, revisions, and outcomes", () => {
+  const resetParams = {
+    seed: "42",
+    scenarioId: "tutorial",
+    approvedVariantHash: "a".repeat(64)
+  };
+  assert.doesNotThrow(() =>
+    assertPlaytestAdapterParams("game.reset", resetParams)
+  );
+  assert.throws(
+    () =>
+      assertPlaytestAdapterParams("game.reset", {
+        ...resetParams,
+        workspaceId: "model-selected"
+      }),
+    /unsupported field/u
+  );
+
+  const stepParams = {
+    episodeId: "episode-1",
+    actionId: "advance",
+    expectedRevision: 3
+  };
+  assert.doesNotThrow(() =>
+    assertPlaytestAdapterParams("game.step", stepParams)
+  );
+  assert.doesNotThrow(() =>
+    assertPlaytestAdapterResult("game.step", stepParams, {
+      episodeId: "episode-1",
+      revision: 4,
+      acceptedActionId: "advance",
+      eventIds: [],
+      terminal: false
+    })
+  );
+  assert.throws(
+    () =>
+      assertPlaytestAdapterResult("game.step", stepParams, {
+        episodeId: "episode-1",
+        revision: 3,
+        acceptedActionId: "advance",
+        eventIds: [],
+        terminal: false
+      }),
+    /advance past expectedRevision/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestAdapterResult("game.step", stepParams, {
+        episodeId: "episode-1",
+        revision: 4,
+        acceptedActionId: "invented",
+        eventIds: [],
+        terminal: false
+      }),
+    /equal the requested legal action/u
+  );
+
+  const revisionParams = { episodeId: "episode-1", expectedRevision: 4 };
+  assert.doesNotThrow(() =>
+    assertPlaytestAdapterResult("game.legalActions", revisionParams, {
+      episodeId: "episode-1",
+      revision: 4,
+      actions: []
+    })
+  );
+  assert.throws(
+    () =>
+      assertPlaytestAdapterResult("game.legalActions", revisionParams, {
+        episodeId: "episode-1",
+        revision: 4,
+        actions: [{ actionId: "same" }, { actionId: "same" }]
+      }),
+    /action ids must be unique/u
+  );
+  assert.doesNotThrow(() =>
+    assertPlaytestAdapterResult("game.outcome", revisionParams, {
+      episodeId: "episode-1",
+      revision: 4,
+      state: "partial",
+      outcome: null,
+      metrics: { survival: null },
+      missingReasons: []
+    })
+  );
+});
+
+test("game-adapter JSON-RPC requests use versioned method names and bounded string IDs", () => {
   assert.doesNotThrow(() =>
     assertPlaytestJsonRpcRequest({
       jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: {}
+      id: "1",
+      method: "game.capabilities",
+      params: { protocolVersion: 1 }
     })
   );
   assert.throws(
@@ -1238,18 +1515,73 @@ test("assertPlaytestJsonRpcRequest accepts a valid request and rejects an unknow
       assertPlaytestJsonRpcRequest({
         jsonrpc: "2.0",
         id: 1,
+        method: "game.capabilities",
+        params: { protocolVersion: 1 }
+      }),
+    /bounded non-empty string/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestJsonRpcRequest({
+        jsonrpc: "2.0",
+        id: "1",
         method: "delete_everything",
         params: {}
       }),
     /method must be one of/u
   );
+  assert.throws(
+    () =>
+      assertPlaytestJsonRpcRequest([
+        { jsonrpc: "2.0", id: "1", method: "game.observe", params: {} }
+      ]),
+    /batch arrays are unsupported/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestJsonRpcRequest({
+        jsonrpc: "2.0",
+        id: "1",
+        method: "game.observe",
+        params: {},
+        workspaceId: "model-selected"
+      }),
+    /unsupported envelope field/u
+  );
 });
 
-test("assertPlaytestJsonRpcSuccess and assertPlaytestJsonRpcError validate the two response shapes", () => {
+test("game.event and game.progress are id-less notifications, not responses", () => {
+  assert.doesNotThrow(() =>
+    assertPlaytestJsonRpcNotification({
+      jsonrpc: "2.0",
+      method: "game.event",
+      params: { episodeId: "ep-1", revision: 3, eventSequence: 2 }
+    })
+  );
+  assert.doesNotThrow(() =>
+    assertPlaytestJsonRpcNotification({
+      jsonrpc: "2.0",
+      method: "game.progress",
+      params: { requestId: "req-1", completed: 2, total: 4 }
+    })
+  );
+  assert.throws(
+    () =>
+      assertPlaytestJsonRpcNotification({
+        jsonrpc: "2.0",
+        id: "not-a-notification",
+        method: "game.event",
+        params: {}
+      }),
+    /must not carry an id/u
+  );
+});
+
+test("JSON-RPC responses contain exactly one result or error and use standard/application codes", () => {
   assert.doesNotThrow(() =>
     assertPlaytestJsonRpcSuccess({
       jsonrpc: "2.0",
-      id: 1,
+      id: "1",
       result: { ok: true }
     })
   );
@@ -1257,7 +1589,22 @@ test("assertPlaytestJsonRpcSuccess and assertPlaytestJsonRpcError validate the t
     assertPlaytestJsonRpcError({
       jsonrpc: "2.0",
       id: null,
-      error: { code: "invalid_request", message: "bad" }
+      error: { code: -32_700, message: "parse error" }
+    })
+  );
+  assert.doesNotThrow(() =>
+    assertPlaytestJsonRpcError({
+      jsonrpc: "2.0",
+      id: "step-1",
+      error: {
+        code: -32_002,
+        message: "stale revision",
+        data: {
+          category: "stale_revision",
+          retryable: false,
+          episodeDisposition: "unchanged"
+        }
+      }
     })
   );
   assert.throws(
@@ -1265,67 +1612,211 @@ test("assertPlaytestJsonRpcSuccess and assertPlaytestJsonRpcError validate the t
       assertPlaytestJsonRpcError({
         jsonrpc: "2.0",
         id: null,
-        error: { code: "not_a_real_code", message: "bad" }
+        error: { code: -32_002, message: "stale revision" }
       }),
-    /error code must be/u
+    /must retain their request id/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestJsonRpcError({
+        jsonrpc: "2.0",
+        id: "step-1",
+        error: { code: -32_002, message: "stale revision" }
+      }),
+    /Application error data/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestJsonRpcError({
+        jsonrpc: "2.0",
+        id: "step-1",
+        error: { code: -32_008, message: "unknown app code" }
+      }),
+    /error code must be one of/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestJsonRpcResponse({
+        jsonrpc: "2.0",
+        id: "1",
+        result: {},
+        error: { code: -32_603, message: "both" }
+      }),
+    /both result and error/u
   );
 });
 
-test("assertPlaytestCapabilityAdvertisement rejects an unknown capability and a wrong protocol id", () => {
+test("capability negotiation requires v1 build, hashes, modes, optional operations, and bounded quotas", () => {
+  const hash = "a".repeat(64);
+  const capabilities = {
+    protocolVersion: 1,
+    schemaHashAlgorithm: "sha256-canonical-json-v1",
+    engineBuild: "fixture-build",
+    modes: ["headless"],
+    scenarioIds: ["default"],
+    observationSchema: { type: "object", additionalProperties: false },
+    actionSchema: { type: "object", additionalProperties: false },
+    eventSchema: { type: "object", additionalProperties: false },
+    observationSchemaHash: hash,
+    actionSchemaHash: hash,
+    eventSchemaHash: hash,
+    optionalOperations: ["game.snapshot", "game.replay"],
+    quotas: {
+      maxMessageBytes: 1_048_576,
+      maxQueuedRequests: 32,
+      ordinaryCallTimeoutMs: 10_000,
+      resetReplayTimeoutMs: 60_000
+    },
+    deterministic: {
+      seededRuns: true,
+      rngVersion: "pcg-v1",
+      traceReplayable: true
+    }
+  };
   assert.doesNotThrow(() =>
-    assertPlaytestCapabilityAdvertisement({
-      protocol: "autodev-playtest-adapter-v1",
-      capabilities: ["headless"],
-      supportedMethods: ["initialize"],
-      eventSchemaHash: "hash",
-      observationSchemaHash: "hash",
-      maxStep: null
-    })
+    assertPlaytestCapabilityAdvertisement(capabilities)
   );
   assert.throws(
     () =>
       assertPlaytestCapabilityAdvertisement({
-        protocol: "some-other-protocol",
-        capabilities: [],
-        supportedMethods: [],
-        eventSchemaHash: "hash",
-        observationSchemaHash: "hash",
-        maxStep: null
+        ...capabilities,
+        protocolVersion: 2
       }),
-    /protocol must be/u
+    /exactly 1/u
   );
   assert.throws(
     () =>
       assertPlaytestCapabilityAdvertisement({
-        protocol: "autodev-playtest-adapter-v1",
-        capabilities: ["teleportation"],
-        supportedMethods: [],
-        eventSchemaHash: "hash",
-        observationSchemaHash: "hash",
-        maxStep: null
+        ...capabilities,
+        modes: ["omniscient"]
       }),
-    /unknown capability/u
+    /modes must be/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestCapabilityAdvertisement({
+        ...capabilities,
+        optionalOperations: ["game.reset"]
+      }),
+    /unknown optional operation/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestCapabilityAdvertisement({
+        ...capabilities,
+        quotas: { ...capabilities.quotas, maxMessageBytes: 1_048_577 }
+      }),
+    /quota maxMessageBytes/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestCapabilityAdvertisement({
+        ...capabilities,
+        eventSchemaHash: "fixture-alias"
+      }),
+    /SHA-256/u
   );
 });
 
-test("assertPlaytestObservationDescriptor validates visibility mode and field shape", () => {
+test("assertPlaytestObservationContract enforces player-visible field and UI mapping contracts", () => {
   assert.doesNotThrow(() =>
-    assertPlaytestObservationDescriptor({
-      schemaHash: "hash",
-      fields: ["state"],
+    assertPlaytestObservationContract({
+      schemaVersion: 1,
+      schemaHash: "a".repeat(64),
+      mode: "browser",
+      cohort: "first-time",
       visibilityMode: "structured",
-      supportsReplay: true
+      fields: [
+        {
+          fieldPath: "heat",
+          unit: "points",
+          displayRounding: "integer",
+          revelationTiming: "before-action",
+          playerRuleRef: "rules/heat"
+        }
+      ],
+      uiEquivalence: "verified",
+      conformanceFixtureHash: "b".repeat(64)
     })
   );
   assert.throws(
     () =>
-      assertPlaytestObservationDescriptor({
-        schemaHash: "hash",
-        fields: ["state"],
-        visibilityMode: "omniscient",
-        supportsReplay: true
+      assertPlaytestObservationContract({
+        schemaVersion: 1,
+        schemaHash: "a".repeat(64),
+        mode: "browser",
+        cohort: "first-time",
+        visibilityMode: "structured",
+        fields: [
+          {
+            fieldPath: "future.hiddenOutcome",
+            unit: null,
+            displayRounding: null,
+            revelationTiming: "after-action",
+            playerRuleRef: null
+          }
+        ],
+        uiEquivalence: "verified",
+        conformanceFixtureHash: null
       }),
-    /visibilityMode/u
+    /verified observation requires a conformance fixture/u
+  );
+  for (const fieldPath of [
+    "room..future",
+    "__proto__.secret",
+    "collection.4096.value"
+  ]) {
+    assert.throws(
+      () =>
+        assertPlaytestObservationContract({
+          schemaVersion: 1,
+          schemaHash: "a".repeat(64),
+          mode: "headless",
+          cohort: "novice",
+          visibilityMode: "structured",
+          fields: [
+            {
+              fieldPath,
+              unit: null,
+              displayRounding: null,
+              revelationTiming: "before-action",
+              playerRuleRef: null
+            }
+          ],
+          uiEquivalence: "unverified",
+          conformanceFixtureHash: null
+        }),
+      /safe dot-separated keys/u
+    );
+  }
+  assert.throws(
+    () =>
+      assertPlaytestObservationContract({
+        schemaVersion: 1,
+        schemaHash: "a".repeat(64),
+        mode: "headless",
+        cohort: "novice",
+        visibilityMode: "structured",
+        fields: [
+          {
+            fieldPath: "player",
+            unit: null,
+            displayRounding: null,
+            revelationTiming: "before-action",
+            playerRuleRef: null
+          },
+          {
+            fieldPath: "player.health",
+            unit: null,
+            displayRounding: null,
+            revelationTiming: "before-action",
+            playerRuleRef: null
+          }
+        ],
+        uiEquivalence: "unverified",
+        conformanceFixtureHash: null
+      }),
+    /unique and non-overlapping/u
   );
 });
 
@@ -1342,4 +1833,174 @@ test("assertPlaytestEvidenceLocator rejects an unknown kind and a negative step"
       assertPlaytestEvidenceLocator({ kind: "event", id: "evt-1", step: -1 }),
     /step must be a non-negative integer/u
   );
+});
+
+test("workspace approval binds a local checkout, immutable image, command, budget, and operator", () => {
+  const approval = {
+    schema: "autodev-workspace-playtest-approval-v1",
+    workspaceId: "owner/game",
+    revision: 1,
+    approvalId: "approval-1",
+    checkoutRoot: "/workspace/game",
+    buildSha: "a".repeat(40),
+    gameBuild: "release-1",
+    playtestConfigHash: "b".repeat(64),
+    adapterImageDigest: `ghcr.io/owner/adapter@sha256:${"c".repeat(64)}`,
+    workingDirectory: ".",
+    adapterCommand: ["/usr/bin/node", "adapter.mjs"],
+    allowedScenarios: ["default"],
+    allowedPolicies: ["heuristic"],
+    limits: {
+      cpuCores: 2,
+      memoryBytes: 512 * 1024 * 1024,
+      processCount: 64,
+      wallTimeMs: 60_000,
+      artifactBytes: 32 * 1024 * 1024,
+      workerCount: 4,
+      episodeCount: 1000,
+      maxStepsPerEpisode: 500,
+      critiqueCount: 40
+    },
+    retentionDays: 30,
+    issueReporting: "disabled",
+    humanStudyAllowed: false,
+    approvedAt: "2026-10-09T12:00:00.000Z",
+    approvedBy: "operator-1",
+    revokedAt: null,
+    revokedBy: null,
+    revocationReason: null
+  };
+  assert.doesNotThrow(() => assertWorkspacePlaytestApproval(approval));
+  assert.throws(
+    () =>
+      assertWorkspacePlaytestApproval({
+        ...approval,
+        checkoutRoot: "relative/game"
+      }),
+    /absolute local path/u
+  );
+  assert.throws(
+    () =>
+      assertWorkspacePlaytestApproval({
+        ...approval,
+        workingDirectory: String.raw`C:outside`
+      }),
+    /remain inside checkout/u
+  );
+  assert.throws(
+    () =>
+      assertWorkspacePlaytestApproval({
+        ...approval,
+        adapterImageDigest: "ghcr.io/owner/adapter:latest"
+      }),
+    /pinned by SHA-256/u
+  );
+  assert.throws(
+    () =>
+      assertWorkspacePlaytestApproval({
+        ...approval,
+        adapterCommand: ["node", "adapter.mjs", "\0malformed"]
+      }),
+    /invalid or too large/u
+  );
+});
+
+test("playtest.config.json validates a bounded target-owned adapter and analysis manifest", () => {
+  const config = {
+    schemaVersion: 1,
+    adapter: {
+      transport: "stdio-jsonl",
+      command: ["pnpm", "run", "playtest:adapter"]
+    },
+    modes: ["headless", "browser"],
+    scenarios: ["default", "edge"],
+    scenarioFamilies: { default: "intro", edge: "edge-cases" },
+    policies: ["random", "heuristic"],
+    budget: {
+      episodes: 1000,
+      maxStepsPerEpisode: 500,
+      workers: 8,
+      wallTimeMinutes: 60
+    },
+    analysis: {
+      rubric: "playtest.rubric.json",
+      observationContract: "playtest.observation.json",
+      benchmark: "playtest.benchmark.json",
+      critic: "auto",
+      maxReviewedSessions: 40,
+      visualCapture: "on-anomaly",
+      counterfactuals: "targeted",
+      understandingProbes: "sampled",
+      learningCohorts: "tracked",
+      humanCalibration: "optional"
+    },
+    reporting: { githubIssues: "review" }
+  };
+  assert.doesNotThrow(() => assertPlaytestGameConfiguration(config));
+  assert.throws(
+    () =>
+      assertPlaytestGameConfiguration({
+        ...config,
+        adapter: { ...config.adapter, command: "pnpm run unsafe" }
+      }),
+    /adapter.command/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestGameConfiguration({
+        ...config,
+        analysis: { ...config.analysis, rubric: "../outside.json" }
+      }),
+    /workspace-relative/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestGameConfiguration({
+        ...config,
+        budget: { ...config.budget, workers: 33 }
+      }),
+    /budget.workers/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestGameConfiguration({
+        ...config,
+        scenarioFamilies: { default: "intro" }
+      }),
+    /scenarioFamilies/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestGameConfiguration({
+        ...config,
+        analysis: { ...config.analysis, observationContract: "../outside.json" }
+      }),
+    /analysis.observationContract.*workspace-relative/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestGameConfiguration({
+        ...config,
+        analysis: {
+          ...config.analysis,
+          observationContract: String.raw`C:outside.json`
+        }
+      }),
+    /analysis.observationContract.*workspace-relative/u
+  );
+  for (const invalidPath of [
+    ".",
+    " playtest.observation.json",
+    "x\0y",
+    "x".repeat(1025)
+  ]) {
+    assert.throws(
+      () =>
+        assertPlaytestGameConfiguration({
+          ...config,
+          analysis: { ...config.analysis, observationContract: invalidPath }
+        }),
+      /analysis.observationContract.*workspace-relative/u
+    );
+  }
 });

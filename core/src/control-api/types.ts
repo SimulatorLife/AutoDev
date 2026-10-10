@@ -21,6 +21,19 @@ import type {
 } from "../memory/types.ts";
 import type { SandboxMode } from "../permissions/types.ts";
 import type {
+  HumanPlaytestStudy,
+  PlaytestBatch,
+  PlaytestBenchmark,
+  PlaytestEpisode,
+  PlaytestExperiment,
+  PlaytestSessionReview
+} from "../playtesting/artifacts.ts";
+import type { PlaytestJsonValue } from "../playtesting/protocol-types.ts";
+import type {
+  PlaytestComparison,
+  PlaytestFinding
+} from "../playtesting/types.ts";
+import type {
   OperationHistoryEntry,
   ReconciliationDiff,
   ReconciliationStatus,
@@ -37,6 +50,7 @@ import type {
   ToolCatalogItem,
   ToolCatalogValidity
 } from "../tools/types.ts";
+import type { WorkspacePlaytestApproval } from "../workspaces/playtesting.ts";
 import type {
   WorkspaceCatalogStatus,
   WorkspaceEntry
@@ -143,8 +157,20 @@ export interface ControlApiProviderAgentLimits {
   readonly acrossSessions: number | null;
 }
 
+/**
+ * The provider's own external pages, from its routing-config `links`; `null`
+ * when that provider configures no such page.
+ */
+export interface ControlApiProviderLinks {
+  /** The provider's account usage/billing page. */
+  readonly usage: string | null;
+  /** The provider's documentation. */
+  readonly documentation: string | null;
+}
+
 export interface ControlApiProviderRecord {
   readonly id: string;
+  readonly links: ControlApiProviderLinks;
   readonly route: {
     readonly pattern: string;
     readonly baseUrl: string;
@@ -956,3 +982,279 @@ export type ControlApiMemoryInjectionUseAssessmentsResponse =
     readonly schema: "autodev-memory-injection-use-assessments-v1";
     readonly experienceId: string;
   };
+
+/** Runtime run state surfaced by authenticated Playtesting actions. */
+export type ControlApiPlaytestingRunState =
+  "running" | "persisting" | "completed" | "failed" | "cancelled";
+
+export type ControlApiPlaytestingCancellationReason =
+  "cancelled" | "approval-revoked" | "workspace-disabled";
+
+export interface ControlApiPlaytestingRunRecord {
+  readonly batchId: string;
+  readonly status: ControlApiPlaytestingRunState;
+  readonly cancellationReason: ControlApiPlaytestingCancellationReason | null;
+  readonly result: PlaytestJsonValue | null;
+  readonly error: {
+    readonly code: string;
+    readonly category: string;
+    readonly retryable: boolean;
+    readonly message: string;
+  } | null;
+}
+
+/** Safe run-form preview; raw command, checkout path, and image are omitted. */
+export interface ControlApiPlaytestingCapabilitiesResponse {
+  readonly schema: "autodev-control-playtesting-capabilities-v1";
+  readonly workspaceId: string;
+  readonly workspaceCatalog: "valid" | "invalid" | "unavailable";
+  readonly workspaceEnabled: boolean;
+  readonly operatorActionsAvailable: boolean;
+  readonly approved: boolean;
+  readonly approvalRevision: number | null;
+  readonly buildSha: string | null;
+  readonly gameBuild: string | null;
+  readonly allowedScenarios: readonly string[];
+  readonly approvedPolicies: readonly string[];
+  readonly supportedPolicies: readonly string[];
+  readonly runnablePolicies: readonly string[];
+  readonly unsupportedApprovedPolicies: readonly string[];
+  readonly configurationStatus: "validated" | "invalid" | "not-checked";
+  readonly runnableAssignments: readonly {
+    readonly scenarioId: string;
+    readonly scenarioFamily: string;
+    readonly policyId: string;
+    readonly policyVersion: string;
+    readonly cohort: string;
+    readonly strategy: string;
+    readonly maxStepsPerEpisode: number;
+  }[];
+  readonly policyProfiles: readonly {
+    readonly policyId: string;
+    readonly version: string;
+    readonly cohort: string;
+    readonly strategy: string;
+  }[];
+  readonly limits: WorkspacePlaytestApproval["limits"] | null;
+  readonly issueReporting: "disabled" | "review";
+  readonly humanStudyAllowed: boolean;
+  readonly revokedAt: string | null;
+  readonly runPreflight: "required-at-start";
+}
+
+/** Typed active-run response; Data remains the authoritative batch history. */
+export interface ControlApiPlaytestingActiveRunsResponse {
+  readonly schema: "autodev-control-playtesting-runs-v1";
+  readonly workspaceId: string;
+  readonly runs: readonly {
+    readonly batchId: string;
+    readonly scenarioId: string;
+    readonly createdAt: string;
+  }[];
+}
+
+/** One typed approved run request; never carries a command or executable path. */
+export interface ControlApiPlaytestingRunRequest {
+  readonly workspaceId: string;
+  readonly scenario: string;
+  readonly policy: string;
+  readonly seed: string;
+  readonly goal?: string;
+  readonly maxSteps?: number;
+}
+
+/** Typed run-start acknowledgement; completion is read from the run route. */
+export interface ControlApiPlaytestingRunStartedResponse {
+  readonly schema: "autodev-control-playtesting-run-started-v1";
+  readonly workspaceId: string;
+  readonly batchId: string;
+  readonly status: "running";
+}
+
+/** Typed status response; a null result while active means still running. */
+export interface ControlApiPlaytestingRunStatusResponse {
+  readonly schema: "autodev-control-playtesting-run-status-v1";
+  readonly workspaceId: string;
+  readonly run: ControlApiPlaytestingRunRecord;
+}
+
+/** Confirmation that the operator is cancelling a currently running assignment. */
+export interface ControlApiPlaytestingRunCancellationRequest {
+  readonly expectedStatus: "running";
+}
+
+/** Explicit acknowledgement that cancellation was requested, not rollback. */
+export interface ControlApiPlaytestingRunCancellationResponse {
+  readonly schema: "autodev-control-playtesting-run-cancellation-v1";
+  readonly workspaceId: string;
+  readonly batchId: string;
+  readonly cancellationRequested: boolean;
+}
+
+/** Aggregated, suppression-aware human-study read; raw responses never cross this boundary. */
+export interface ControlApiPlaytestingHumanValidationResponse {
+  readonly schema: "autodev-control-playtesting-human-validation-v1";
+  readonly workspaceId: string;
+  readonly studyId: string;
+  readonly buildSha: string;
+  readonly summary: {
+    readonly revision: number;
+    readonly benchmarkId: string | null;
+    readonly instrument: string;
+    readonly measurementVersion: string;
+    readonly suppressionState:
+      "suppressed" | "partially-suppressed" | "unsuppressed";
+    readonly retainedParticipants: number | null;
+    readonly items: readonly {
+      readonly itemId: string;
+      readonly suppressionState:
+        "suppressed" | "partially-suppressed" | "unsuppressed";
+      readonly mean: number | null;
+      readonly respondentCount: number | null;
+      readonly missingCount: number | null;
+      readonly categoryCounts: Readonly<Record<string, number | null>> | null;
+      readonly unit: string;
+    }[];
+    readonly constructs: readonly {
+      readonly constructId: string;
+      readonly suppressionState:
+        "suppressed" | "partially-suppressed" | "unsuppressed";
+      readonly mean: number | null;
+      readonly respondentCount: number | null;
+      readonly missingCount: number | null;
+      readonly unit: string;
+    }[];
+    readonly pairedDifferences: readonly {
+      readonly itemId: string;
+      readonly suppressionState: "suppressed" | "unsuppressed";
+      readonly pairedParticipants: number | null;
+      readonly meanDifference: number | null;
+    }[];
+  } | null;
+}
+
+/** Import response exposes only reason counts and suppression-aware totals. */
+export interface ControlApiPlaytestingHumanImportResponse {
+  readonly schema: "autodev-control-playtesting-human-import-v1";
+  readonly workspaceId: string;
+  readonly studyId: string;
+  readonly revision: number;
+  readonly acceptedCount: number;
+  readonly unchangedCount: number;
+  readonly rejectedCount: number;
+  readonly rejectedByReason: Readonly<Record<string, number>>;
+  readonly quarantinedCount: number;
+  readonly retainedParticipants: number | null;
+}
+
+/** Consent registration acknowledgement omits participant pseudonyms. */
+export interface ControlApiPlaytestingHumanConsentResponse {
+  readonly schema: "autodev-control-playtesting-human-consent-v1";
+  readonly workspaceId: string;
+  readonly studyId: string;
+  readonly recorded: true;
+}
+
+/** Withdrawal acknowledgement contains no participant identity. */
+export interface ControlApiPlaytestingHumanWithdrawalResponse {
+  readonly schema: "autodev-control-playtesting-human-withdrawal-v1";
+  readonly workspaceId: string;
+  readonly studyId: string;
+  readonly revision: number;
+  readonly retainedParticipants: number | null;
+}
+
+/** Quarantine read for an authorized operator; participant IDs are omitted. */
+export interface ControlApiPlaytestingHumanQuarantinesResponse {
+  readonly schema: "autodev-control-playtesting-human-quarantines-v1";
+  readonly workspaceId: string;
+  readonly studyId: string;
+  readonly quarantines: readonly {
+    readonly responseIds: readonly string[];
+    readonly instrument: string;
+    readonly reason: "duplicate-participant-episode-instrument";
+  }[];
+}
+
+/** Registration acknowledgement for an operator-approved study manifest. */
+export interface ControlApiPlaytestingHumanStudyRegistrationResponse {
+  readonly schema: "autodev-control-playtesting-human-study-registration-v1";
+  readonly workspaceId: string;
+  readonly studyId: string;
+  readonly benchmarkId: string;
+  readonly approved: true;
+  readonly idempotent: boolean;
+}
+
+/** Resource names exposed by the authenticated Playtesting API. */
+export const CONTROL_API_PLAYTESTING_RESOURCES = [
+  "batches",
+  "episodes",
+  "findings",
+  "comparisons",
+  "benchmarks",
+  "experiments",
+  "human-studies"
+] as const;
+export type ControlApiPlaytestingResource =
+  (typeof CONTROL_API_PLAYTESTING_RESOURCES)[number];
+
+/** Data's keyset page carried across the authenticated Control API boundary. */
+export interface ControlApiPlaytestingPage<T> {
+  readonly rows: readonly T[];
+  readonly total: number;
+  readonly nextCursor: string | null;
+}
+
+/** Typed read-only list response; missing/unavailable is an HTTP error, not an empty page. */
+export interface ControlApiPlaytestingPageResponse<T> {
+  readonly schema: "autodev-control-playtesting-page-v1";
+  readonly workspaceId: string;
+  readonly resource: ControlApiPlaytestingResource;
+  readonly readOnly: true;
+  readonly page: ControlApiPlaytestingPage<T>;
+}
+
+/** Workspace-bound selected episode and its newest append-only analyst review. */
+export interface ControlApiPlaytestingEpisodeDetailResponse {
+  readonly schema: "autodev-control-playtesting-detail-v1";
+  readonly workspaceId: string;
+  readonly resource: "episode";
+  readonly readOnly: true;
+  readonly record: PlaytestEpisode;
+  readonly latestReview: PlaytestSessionReview | null;
+}
+
+/** Integrity-checked, workspace-bound bounded JSONL evidence window. */
+export interface ControlApiPlaytestingWindowResponse {
+  readonly schema: "autodev-control-playtesting-window-v1";
+  readonly workspaceId: string;
+  readonly episodeId: string;
+  readonly artifactId: string;
+  readonly sha256: string;
+  readonly mediaType: string;
+  readonly startStep: number;
+  readonly endStep: number;
+  readonly sourceLineCount: number;
+  readonly omittedLineCount: number;
+  readonly entries: readonly PlaytestJsonValue[];
+}
+
+/** Compile-time entity mapping for Console/server consumers. */
+export type ControlApiPlaytestingEntityMap = {
+  readonly batches: PlaytestBatch;
+  readonly episodes: PlaytestEpisode;
+  readonly findings: PlaytestFinding;
+  readonly comparisons: PlaytestComparison;
+  readonly benchmarks: PlaytestBenchmark;
+  readonly experiments: PlaytestExperiment;
+  readonly "human-studies": HumanPlaytestStudy;
+};
+
+/** Workspaces-owned operator approval; the response never contains local secret material. */
+export interface ControlApiWorkspacePlaytestApprovalResponse {
+  readonly schema: "autodev-control-workspace-playtest-approval-v1";
+  readonly workspaceId: string;
+  readonly workspaceEnabled: boolean;
+  readonly approval: WorkspacePlaytestApproval | null;
+}

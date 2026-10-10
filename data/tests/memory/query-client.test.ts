@@ -77,7 +77,11 @@ test("a transaction that succeeds commits and returns the work's result", async 
 
   assert.equal(result, "committed");
   assert.deepEqual(recorder.statements, ["BEGIN", "WORK", "COMMIT"]);
-  assert.equal(recorder.releaseCount, 1, "the connection was not returned to the pool");
+  assert.equal(
+    recorder.releaseCount,
+    1,
+    "the connection was not returned to the pool"
+  );
 });
 
 test("work that throws rolls back and propagates the original error", async () => {
@@ -91,7 +95,11 @@ test("work that throws rolls back and propagates the original error", async () =
     (error: unknown) => {
       // Identity, not just the message: a wrapper that rethrows with its own
       // text loses the stack the caller needs to find the failing statement.
-      assert.equal(error, failure, "the error was replaced rather than propagated");
+      assert.equal(
+        error,
+        failure,
+        "the error was replaced rather than propagated"
+      );
       return true;
     }
   );
@@ -101,7 +109,11 @@ test("work that throws rolls back and propagates the original error", async () =
     ["BEGIN", "ROLLBACK"],
     "a failed transaction must not commit"
   );
-  assert.equal(recorder.releaseCount, 1, "a failed transaction leaked its connection");
+  assert.equal(
+    recorder.releaseCount,
+    1,
+    "a failed transaction leaked its connection"
+  );
 });
 
 test("a rollback that fails does not replace the error that caused it", async () => {
@@ -119,12 +131,20 @@ test("a rollback that fails does not replace the error that caused it", async ()
       throw failure;
     }),
     (error: unknown) => {
-      assert.equal(error, failure, "a failed rollback replaced the original error");
+      assert.equal(
+        error,
+        failure,
+        "a failed rollback replaced the original error"
+      );
       return true;
     }
   );
 
-  assert.equal(recorder.releaseCount, 1, "a failed rollback leaked its connection");
+  assert.equal(
+    recorder.releaseCount,
+    1,
+    "a failed rollback leaked its connection"
+  );
 });
 
 test("a commit that fails rolls back, releases, and reports the commit failure", async () => {
@@ -140,7 +160,11 @@ test("a commit that fails rolls back, releases, and reports the commit failure",
     ["BEGIN", "COMMIT", "ROLLBACK"],
     "a failed commit must be rolled back"
   );
-  assert.equal(recorder.releaseCount, 1, "a failed commit leaked its connection");
+  assert.equal(
+    recorder.releaseCount,
+    1,
+    "a failed commit leaked its connection"
+  );
 });
 
 test("a pool that cannot hand out a connection releases nothing", async () => {

@@ -122,8 +122,7 @@ export function MemoryExperiencesView({
           "a",
           {
             href: memoryDetailHref(listScope, "experienceId", exp.id),
-            className:
-              `font-mono text-xs font-semibold ${ACTION_LINK_CLASS}`,
+            className: `font-mono text-xs font-semibold ${ACTION_LINK_CLASS}`,
             "data-memory-experience-id": exp.id
           },
           exp.id

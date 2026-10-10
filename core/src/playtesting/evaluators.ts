@@ -16,7 +16,9 @@ import {
   type PlaytestMiniPxiEnjAggregation,
   type PlaytestMissingReason,
   type PlaytestNumericResult,
-  PLAYTESTS_MINIPXI_CATEGORIES
+  PLAYTESTS_MINIPXI_CATEGORIES,
+  PLAYTESTS_MINIPXI_ENJ_MAX,
+  PLAYTESTS_MINIPXI_ENJ_MIN
 } from "./types.ts";
 
 /** One fresh advertised legal-action request/response pair. */
@@ -254,15 +256,18 @@ export interface MiniPxiEnjResponseEvent {
   readonly missingReason?: PlaytestMissingReason;
 }
 
-/** Map a native -3..+3 ENJ value to its closed-vocabulary category bucket. */
+/** Preserve the official native miniPXI response category without rescaling. */
 export function categorizeMiniPxiEnjValue(
   value: number
 ): PlaytestMiniPxiCategory {
-  if (value <= -2) return "low";
-  if (value === -1) return "medium-low";
-  if (value === 0) return "neutral";
-  if (value === 1 || value === 2) return "medium-high";
-  return "high";
+  if (
+    !Number.isInteger(value) ||
+    value < PLAYTESTS_MINIPXI_ENJ_MIN ||
+    value > PLAYTESTS_MINIPXI_ENJ_MAX
+  ) {
+    throw new TypeError("miniPXI ENJ response must be an integer in [-3,3].");
+  }
+  return value as PlaytestMiniPxiCategory;
 }
 
 /**
@@ -296,18 +301,10 @@ export function aggregateMiniPxiEnj(
       missingReasons.push(response.missingReason ?? "missing-ENJ");
       continue;
     }
-    if (
-      !Number.isInteger(response.nativeValue) ||
-      response.nativeValue < -3 ||
-      response.nativeValue > 3
-    ) {
-      throw new TypeError(
-        `miniPXI ENJ value for respondent "${response.respondentId}" must be an integer in [-3,3].`
-      );
-    }
+    const category = categorizeMiniPxiEnjValue(response.nativeValue);
     sum += response.nativeValue;
     respondentCount += 1;
-    categoryCounts[categorizeMiniPxiEnjValue(response.nativeValue)] += 1;
+    categoryCounts[category] += 1;
   }
   return {
     metricId: "reported-enjoyment",

@@ -131,7 +131,10 @@ test("an unknown key on an evidence entry is refused, not dropped", async () => 
   // optional, so nothing else about the payload looks wrong.
   for (const [label, entry] of [
     ["a misspelled revision", { ...VALID_EVIDENCE, revison: "abc123" }],
-    ["a field from another shape", { ...VALID_EVIDENCE, note: "not part of a reference" }]
+    [
+      "a field from another shape",
+      { ...VALID_EVIDENCE, note: "not part of a reference" }
+    ]
   ] as const) {
     const { status, body } = await propose(withEvidence([entry]));
 
@@ -148,19 +151,22 @@ test("an unknown key on an evidence entry is refused, not dropped", async () => 
   // about refusing the richer shape.
   const { status } = await propose(
     withEvidence([
-      { ...VALID_EVIDENCE, revision: "abc123", observedAt: "2026-10-01T00:00:00.000Z" }
+      {
+        ...VALID_EVIDENCE,
+        revision: "abc123",
+        observedAt: "2026-10-01T00:00:00.000Z"
+      }
     ])
   );
-  assert.equal(status, 200, "a fully populated reference must still be accepted");
+  assert.equal(
+    status,
+    200,
+    "a fully populated reference must still be accepted"
+  );
 });
 
 test("evidence must be a non-empty array", async () => {
-  for (const evidence of [
-    { ...VALID_EVIDENCE },
-    [],
-    "trace://run-1",
-    null
-  ]) {
+  for (const evidence of [{ ...VALID_EVIDENCE }, [], "trace://run-1", null]) {
     const { status, body, audits } = await propose(withEvidence(evidence));
 
     assert.equal(
@@ -247,7 +253,9 @@ test("an observedAt that does not parse as a date is refused", async () => {
   }
 
   const valid = await propose(
-    withEvidence([{ ...VALID_EVIDENCE, observedAt: "2026-10-03T10:00:00.000Z" }])
+    withEvidence([
+      { ...VALID_EVIDENCE, observedAt: "2026-10-03T10:00:00.000Z" }
+    ])
   );
   assert.equal(valid.status, 200, JSON.stringify(valid.body));
 });
@@ -309,11 +317,7 @@ test("a refused proposal stores nothing", async () => {
   );
 
   assert.equal(response.statusCode, 400);
-  assert.equal(
-    proposed.length,
-    0,
-    "a refused proposal reached the store"
-  );
+  assert.equal(proposed.length, 0, "a refused proposal reached the store");
   assert.notEqual(audits.at(-1)?.outcome, "ok");
 });
 

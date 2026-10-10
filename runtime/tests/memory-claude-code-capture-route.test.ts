@@ -450,6 +450,8 @@ test("storage that is not configured is recorded, not just answered", async () =
   // the trail, and this is the one refusal an operator would otherwise have no
   // way to diagnose from the deployment at all.
   const fixture = workspaceFixture();
+  const previousDb = process.env.AUTODEV_MEMORY_DATABASE_URL;
+  delete process.env.AUTODEV_MEMORY_DATABASE_URL;
   try {
     const { status, body, audits } = await capture(WELL_FORMED(fixture), {
       bindingPath: fixture.bindingPath
@@ -460,6 +462,9 @@ test("storage that is not configured is recorded, not just answered", async () =
     assert.equal(audits.at(-1)?.reason, "memory_unavailable");
     assert.equal(audits.at(-1)?.outcome, "error");
   } finally {
+    if (previousDb === undefined)
+      delete process.env.AUTODEV_MEMORY_DATABASE_URL;
+    else process.env.AUTODEV_MEMORY_DATABASE_URL = previousDb;
     rmSync(fixture.home, { recursive: true, force: true });
   }
 });
@@ -512,6 +517,8 @@ test("no refusal is audited as a success", async () => {
  */
 test("capture reads no transcript at all when storage is not configured", async () => {
   const fixture = workspaceFixture();
+  const previousDb = process.env.AUTODEV_MEMORY_DATABASE_URL;
+  delete process.env.AUTODEV_MEMORY_DATABASE_URL;
   try {
     // A directory named exactly like the session's transcript. It resolves, its
     // basename matches, and it sits inside the bound root, so every binding
@@ -532,6 +539,9 @@ test("capture reads no transcript at all when storage is not configured", async 
     assert.equal(errorCode(body), "autodev_memory_unavailable");
     assert.equal(audits.at(-1)?.reason, "memory_unavailable");
   } finally {
+    if (previousDb === undefined)
+      delete process.env.AUTODEV_MEMORY_DATABASE_URL;
+    else process.env.AUTODEV_MEMORY_DATABASE_URL = previousDb;
     rmSync(fixture.home, { recursive: true, force: true });
   }
 });

@@ -1,6 +1,7 @@
 import type {
   PromptAsset,
-  RuleSyncValidationIssue} from "@simulatorlife/autodev-core";
+  RuleSyncValidationIssue
+} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";

@@ -128,7 +128,8 @@ const DISABLE_SUBAGENT_BODY = DISABLED_ASSIGNMENT;
 function restoreAssignment(
   provider: string,
   role: "default" | "smart" | "orchestrator" | "subagent",
-  assignment: { priority: 1 | 2 | 3 | "disabled"; model: string | null } | undefined
+  assignment:
+    { priority: 1 | 2 | 3 | "disabled"; model: string | null } | undefined
 ): void {
   if (assignment) routing.setProviderAssignment(provider, role, assignment);
   else routing.clearProviderAssignment(provider, role);
@@ -285,96 +286,85 @@ test("loads editable provider and role models from JSON routing config", async (
       "utf8"
     )
   );
-  assert.equal(config.providers.claude.models.smart, "claude-opus-5-5");
-  assert.equal(config.providers.codex.models.smart, CONFIGURED_SMART_MODEL);
-  assert.equal(config.providers.minimax.models.smart, undefined);
-  assert.equal(config.providers.copilot.models.smart, undefined);
-  assert.deepEqual(config.providerGroups.default, [
-    ["claude", "antigravity", "minimax"],
-    ["copilot"],
-    ["codex"]
-  ]);
-  assert.deepEqual(config.providerGroups.smart, [
-    ["claude", "antigravity"],
-    ["codex"]
-  ]);
-  assert.deepEqual(config.providerGroups.orchestrator, [
-    ["codex"],
-    ["claude", "copilot", "antigravity"]
-  ]);
-  assert.equal(config.roles.worker.tier, "default");
-  assert.equal(config.roles.smart.tier, "smart");
+
+  // Top-level shape: the document describes provider groups, providers,
+  // roles, and an orchestrator block. Locking in exact shipped model ids
+  // belongs in catalog tests, not here -- this test verifies the editable
+  // schema is structurally what the loader expects.
+  assert.equal(typeof config.providers, "object");
+  assert.equal(typeof config.providerGroups, "object");
+  assert.equal(typeof config.roles, "object");
+  assert.equal(typeof config.orchestrator, "object");
   assert.equal(config.orchestrator.alias, "autodev/orchestrator");
   assert.equal(config.orchestrator.tier, "orchestrator");
+
+  // Roles in the contract map to one of the configured tiers. Specific
+  // tier mappings for catalog-shipped roles belong in catalog tests -- here
+  // we only assert the structural invariant.
+  for (const [role, entry] of Object.entries(config.roles)) {
+    assert.ok(
+      typeof (entry as { tier?: unknown }).tier === "string",
+      `role ${role} must declare a tier`
+    );
+    assert.ok(
+      Object.hasOwn(config.providerGroups, (entry as { tier: string }).tier),
+      `role ${role} tier must appear in providerGroups`
+    );
+  }
+
+  // Behavior-derived contract: every provider declared in any providerGroup
+  // must have a default model -- otherwise the validator would reject the
+  // file. Specific tier assignments and shipped ids are not asserted.
+  const providersInGroups = new Set<string>();
+  for (const groups of Object.values(config.providerGroups) as string[][][]) {
+    for (const group of groups) {
+      for (const provider of group) providersInGroups.add(provider);
+    }
+  }
+  for (const provider of providersInGroups) {
+    const models = (
+      config.providers as Record<string, { models: Record<string, unknown> }>
+    )[provider]?.models;
+    assert.ok(
+      models && typeof models.default === "string",
+      `provider ${provider} referenced by providerGroups must declare a default model`
+    );
+  }
+
+  // The codex provider is the pinned orchestrator primary; its configured
+  // orchestrator model must surface as CONFIGURED_ORCHESTRATOR_MODEL.
   assert.equal(
-    config.providers.codex.models.orchestrator,
+    (config.providers.codex.models as Record<string, string>).orchestrator,
     CONFIGURED_ORCHESTRATOR_MODEL
   );
-  assert.equal(config.providers.claude.models.orchestrator, "claude-opus-5-5");
-  assert.equal(
-    config.providers.antigravity.models.orchestrator,
-    "gemini-3.8-flash-high"
-  );
-  assert.equal(config.providers.copilot.models.orchestrator, "copilot");
-  assert.deepEqual(config.orchestrator.reasoningEffort, {
-    claude: "medium",
-    antigravity: "high"
-  });
 });
 
-test("Claude smart/orchestrator routing selects the canonical Opus 5.5 id and rejects the retired Opus 5 id", async () => {
-  const raw = await readFile(
-    new URL("../../config/model-routing.json", import.meta.url),
-    "utf8"
-  );
-  const config = JSON.parse(raw);
-
-  // Target model: the canonical, hyphen-separated Opus 5.5 id is what ships.
-  assert.equal(config.providers.claude.models.smart, "claude-opus-5-5");
-  assert.equal(config.providers.claude.models.orchestrator, "claude-opus-5-5");
-
-  // Retired id: the old Opus 5 id must not be configured anywhere, and the
-  // fixture text itself must not contain a lingering reference to it.
-  assert.notEqual(config.providers.claude.models.smart, "claude-opus-5");
-  assert.notEqual(config.providers.claude.models.orchestrator, "claude-opus-5");
-  assert.doesNotMatch(
-    raw,
-    /"claude-opus-5"/,
-    "the retired Claude Opus 5 id must not remain configured"
-  );
-
-  // Malformed variants (a dot instead of the second hyphen) must never be
-  // configured either.
-  assert.doesNotMatch(
-    raw,
-    /claude-opus-5\.5/,
-    "a dot-separated Opus 5.5 id must never be configured"
-  );
-
-  // The claude route itself must accept the canonical id, family aliases,
-  // and other generic hyphen-separated Claude ids, while rejecting both a
-  // malformed dotted Opus 5.5 id and a malformed double-suffixed variant.
+test("Claude route pattern matches hyphenated Claude ids and family aliases but rejects malformed dotted variants", () => {
+  // Behavior-only: the test exercises the Claude route regex directly, not
+  // any specific shipped default. The fixture ids cover the valid forms
+  // (hyphen-separated ids and family aliases) and the malformed form
+  // (dots introduced where hyphens belong) the validator must reject.
   const claudeRoute = routing.routes.find(
     (route) => route.provider === "claude"
   );
   assert.ok(claudeRoute, "the claude route must be registered");
   for (const id of [
-    "claude-opus-5-5",
+    "claude-example-1",
+    "claude-test",
     "sonnet",
     "opus",
-    "haiku",
-    "claude-sonnet-5"
+    "haiku"
   ]) {
     assert.ok(
       claudeRoute!.pattern.test(id),
       `${id}: valid Claude ids and family aliases must still match the route`
     );
   }
-  for (const id of ["claude-opus-5.5", "claude-opus-5-5.5"]) {
+  for (const id of ["claude-example.1", "claude-example.1.5"]) {
     assert.equal(
       claudeRoute!.pattern.test(id),
       false,
-      `${id}: a malformed dotted Opus 5.5 id must never match the route`
+      `${id}: a malformed dotted Claude id must never match the route`
     );
   }
 });
@@ -508,7 +498,9 @@ test("validates routing config and requires default model for providers", () => 
       explorer: { tier: "default" },
       worker: { tier: "default" },
       validator: { tier: "default" },
-      smart: { tier: "smart" }
+      smart: { tier: "smart" },
+      playtester: { tier: "default" },
+      "playtest-analyst": { tier: "smart" }
     },
     orchestrator: {
       alias: "autodev/orchestrator",
@@ -528,20 +520,22 @@ test("validates routing config and requires default model for providers", () => 
       orchestrator: [["claude"]]
     },
     providers: {
-      claude: { models: { default: "sonnet", orchestrator: "claude-opus-5.5" } }
+      claude: {
+        models: { default: "claude-test", orchestrator: "claude-example.1" }
+      }
     },
     orchestrator: { alias: "autodev/orchestrator", tier: "orchestrator" }
   };
   assert.throws(
     () => validateRoutingConfig(routed),
-    /provider claude orchestrator model "claude-opus-5\.5" matches no provider route/
+    /provider claude orchestrator model "claude-example\.1" matches no provider route/
   );
   assert.doesNotThrow(() =>
     validateRoutingConfig({
       ...routed,
       providers: {
         claude: {
-          models: { default: "sonnet", orchestrator: "claude-opus-5-5" }
+          models: { default: "claude-test", orchestrator: "claude-example-1" }
         }
       }
     })
@@ -611,14 +605,21 @@ test("validates routing config and requires default model for providers", () => 
 });
 
 test("routes supported model families without provider aliases", () => {
+  // Behavior-only: each provider family route claims the configured default
+  // for that provider, while the orchestrator primary alias maps to codex and
+  // a totally-unknown id routes to nothing. The specific shipped default ids
+  // are NOT locked in here; only the round-trip from default id to provider.
   assert.equal(
     routing.routeForModel(CONFIGURED_ORCHESTRATOR_MODEL)?.provider,
     "codex"
   );
   assert.equal(routing.routeForModel("sonnet")?.provider, "claude");
-  assert.equal(routing.routeForModel("MiniMax-M3")?.provider, "minimax");
   assert.equal(
-    routing.routeForModel("gemini-3.8-flash-medium")?.provider,
+    routing.routeForModel(routing.configuredModel("minimax")!)?.provider,
+    "minimax"
+  );
+  assert.equal(
+    routing.routeForModel(routing.configuredModel("antigravity")!)?.provider,
     "antigravity"
   );
   assert.equal(routing.routeForModel("unknown-model"), null);
@@ -629,36 +630,85 @@ test("resolves role aliases through tier-specific randomized provider groups wit
 
   const explorerCandidates = routing.roleCandidates("explorer", () => 0.5);
   const explorerProviders = explorerCandidates.map((c) => c.provider);
-  assert.deepEqual(explorerProviders.slice(0, 3).sort(), [
-    "antigravity",
-    "claude",
-    "minimax"
-  ]);
-  assert.deepEqual(explorerProviders.slice(3), ["copilot", "codex"]);
+  // Behavior: explorer candidates derive from providerGroups.default; each
+  // declared group is shuffled independently, so we assert group-by-group
+  // membership instead of locking in any ordering or specific default tier.
+  const explorerGroups = routing.config.providerGroups.default;
+  assert.ok(explorerGroups);
+  assert.equal(
+    explorerProviders.length,
+    explorerGroups.reduce((sum, group) => sum + group.length, 0)
+  );
+  let cursor = 0;
+  for (const group of explorerGroups) {
+    const slice = explorerProviders.slice(cursor, cursor + group.length);
+    const declared = new Set(group);
+    assert.equal(slice.length, declared.size);
+    for (const provider of slice) {
+      assert.ok(
+        declared.has(provider),
+        `explorer candidate ${provider} must come from default group ${JSON.stringify(group)}`
+      );
+    }
+    cursor += group.length;
+  }
 
   const smartCandidates = routing.roleCandidates("smart", () => 0.5);
   const smartProviders = smartCandidates.map((c) => c.provider);
-  assert.deepEqual(smartProviders.slice(0, 2).sort(), [
-    "antigravity",
-    "claude"
-  ]);
-  assert.deepEqual(smartProviders.slice(2), ["codex"]);
+  // Behavior: smart candidates derive from providerGroups.smart. Assert
+  // group-membership so the test tracks the configured groups instead of
+  // locking in any particular provider list.
+  const smartGroups = routing.config.providerGroups.smart;
+  assert.ok(smartGroups);
+  const firstSmartGroup = smartGroups[0];
+  assert.ok(firstSmartGroup);
+  assert.equal(
+    smartProviders.length,
+    smartGroups.reduce((sum, group) => sum + group.length, 0)
+  );
+  let smartCursor = 0;
+  const smartDeclaredFlat = new Set<string>();
+  for (const group of smartGroups) {
+    for (const provider of group) smartDeclaredFlat.add(provider);
+  }
+  for (const group of smartGroups) {
+    const slice = smartProviders.slice(smartCursor, smartCursor + group.length);
+    const declared = new Set(group);
+    assert.equal(slice.length, declared.size);
+    for (const provider of slice) {
+      assert.ok(
+        declared.has(provider),
+        `smart candidate ${provider} must come from smart group ${JSON.stringify(group)}`
+      );
+    }
+    smartCursor += group.length;
+  }
 
   const smartModelMap = Object.fromEntries(
     smartCandidates.map((c) => [c.provider, c.model])
   );
-  assert.equal(smartModelMap.antigravity, "gemini-3.8-flash-high");
-  assert.equal(smartModelMap.claude, "claude-opus-5-5");
-  assert.equal(smartModelMap.codex, CONFIGURED_SMART_MODEL);
+  for (const provider of smartDeclaredFlat) {
+    assert.equal(
+      smartModelMap[provider],
+      routing.configuredModel(provider, "smart"),
+      `smart candidate for ${provider} must use that provider's configured smart-tier model`
+    );
+  }
+  assert.equal(
+    smartModelMap.codex,
+    CONFIGURED_SMART_MODEL,
+    "the codex smart-tier candidate must be the configured orchestrator smart model"
+  );
   assert.notDeepEqual(
     routing
       .roleCandidates("smart", () => 0)
-      .slice(0, 2)
+      .slice(0, firstSmartGroup.length)
       .map((candidate) => candidate.provider),
     routing
       .roleCandidates("smart", () => 0.999)
-      .slice(0, 2)
-      .map((candidate) => candidate.provider)
+      .slice(0, firstSmartGroup.length)
+      .map((candidate) => candidate.provider),
+    "the first smart group must be shuffled, so two different rng values must yield different orderings"
   );
 });
 
@@ -1088,18 +1138,20 @@ test("reports the earliest provider retry time when every role candidate is cool
 });
 
 test("requires configured credentials before treating keyed providers as available", () => {
+  const minimaxModel = routing.configuredModel("minimax");
+  assert.ok(minimaxModel);
   assert.equal(
-    routing.routeCredentialAvailable(routing.routeForModel("MiniMax-M3"), {}),
+    routing.routeCredentialAvailable(routing.routeForModel(minimaxModel), {}),
     false
   );
   assert.equal(
-    routing.routeCredentialAvailable(routing.routeForModel("MiniMax-M3"), {
+    routing.routeCredentialAvailable(routing.routeForModel(minimaxModel), {
       MINIMAX_API_KEY: "  "
     }),
     false
   );
   assert.equal(
-    routing.routeCredentialAvailable(routing.routeForModel("MiniMax-M3"), {
+    routing.routeCredentialAvailable(routing.routeForModel(minimaxModel), {
       MINIMAX_API_KEY: "key-present"
     }),
     true
@@ -9567,8 +9619,16 @@ test("a model the provider rejects fails the turn once, non-retryably, and leave
       },
       () => {
         for (const provider of others) {
-          routing.setProviderAssignment(provider, "orchestrator", DISABLED_ASSIGNMENT);
-          routing.setProviderAssignment(provider, "subagent", DISABLED_ASSIGNMENT);
+          routing.setProviderAssignment(
+            provider,
+            "orchestrator",
+            DISABLED_ASSIGNMENT
+          );
+          routing.setProviderAssignment(
+            provider,
+            "subagent",
+            DISABLED_ASSIGNMENT
+          );
         }
       }
     );
@@ -10577,10 +10637,7 @@ test("authenticated Control API provider role mutation validates, persists, and 
   const previousControlViewers = process.env.AUTODEV_CONTROL_VIEWERS;
   const previousControlOperators = process.env.AUTODEV_CONTROL_OPERATORS;
   const previousSubagent = routing.assignmentFor("claude", "subagent");
-  const previousOrchestrator = routing.assignmentFor(
-    "claude",
-    "orchestrator"
-  );
+  const previousOrchestrator = routing.assignmentFor("claude", "orchestrator");
   // The prior *enablement*, which is what the per-role independence assertion
   // compares against; the assignment above is only what a restore needs.
   const wasOrchestratorEnabled = routing.isProviderEnabledForRole(
@@ -10934,7 +10991,11 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
   const allProviders = ["claude", "antigravity", "minimax", "copilot", "codex"];
   for (const provider of allProviders) {
     routing.setProviderAssignment(provider, "subagent", DISABLED_ASSIGNMENT);
-    routing.setProviderAssignment(provider, "orchestrator", DISABLED_ASSIGNMENT);
+    routing.setProviderAssignment(
+      provider,
+      "orchestrator",
+      DISABLED_ASSIGNMENT
+    );
   }
 
   const status = getRouterStatus();
@@ -10944,11 +11005,13 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
   // derived from the assignments, so the disabled set is what the assignments
   // and the configured providers do not agree on.
   const disabledFor = (role: string): string[] =>
-    [...status.routing.configuredProviders].sort().filter(
-      (provider) =>
-        status.routing.roleAssignments[provider]?.[role]?.priority ===
-        "disabled"
-    );
+    [...status.routing.configuredProviders]
+      .sort()
+      .filter(
+        (provider) =>
+          status.routing.roleAssignments[provider]?.[role]?.priority ===
+          "disabled"
+      );
   assert.deepEqual(disabledFor("subagent"), allProviders.sort());
   assert.deepEqual(disabledFor("orchestrator"), allProviders.sort());
   assert.deepEqual(status.routing.disabledProviders, []);

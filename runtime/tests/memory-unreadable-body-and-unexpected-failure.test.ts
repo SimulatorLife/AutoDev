@@ -324,8 +324,16 @@ test("the unexpected-failure message is not echoed to the caller", async () => {
 
   assert.equal(status, 503);
   const serialised = JSON.stringify(body);
-  assert.doesNotMatch(serialised, /hunter2/u, "a credential leaked to the caller");
-  assert.doesNotMatch(serialised, /10\.0\.0\.7/u, "a host leaked to the caller");
+  assert.doesNotMatch(
+    serialised,
+    /hunter2/u,
+    "a credential leaked to the caller"
+  );
+  assert.doesNotMatch(
+    serialised,
+    /10\.0\.0\.7/u,
+    "a host leaked to the caller"
+  );
   assert.doesNotMatch(serialised, /ECONNREFUSED/u, "a driver message leaked");
 });
 

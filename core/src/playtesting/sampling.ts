@@ -244,6 +244,73 @@ export function samplePlaytestSurveillance(
   };
 }
 
+export interface PlaytestExperimentArmQuota {
+  readonly armId: string;
+  readonly assignments: number;
+}
+
+export interface PlaytestExperimentAssignment {
+  readonly independentUnitId: string;
+  readonly armId: string;
+}
+
+/**
+ * Freeze a seeded, fixed-N arm allocation before outcome labels exist. The
+ * caller supplies the independent units and exact per-arm quotas from the
+ * approved manifest; this function never reads outcomes or reallocates.
+ */
+export function allocatePlaytestExperimentArms(
+  independentUnitIds: readonly string[],
+  arms: readonly PlaytestExperimentArmQuota[],
+  seed: string
+): readonly PlaytestExperimentAssignment[] {
+  if (!seed.trim())
+    throw new TypeError("Experiment allocation seed must be non-empty.");
+  if (independentUnitIds.some((id) => !id.trim())) {
+    throw new TypeError("Experiment independent-unit ids must be non-empty.");
+  }
+  if (new Set(independentUnitIds).size !== independentUnitIds.length) {
+    throw new TypeError("Experiment independent-unit ids must be unique.");
+  }
+  if (arms.length < 2 || arms.some((arm) => !arm.armId.trim())) {
+    throw new TypeError(
+      "Experiment allocation requires at least two named arms."
+    );
+  }
+  if (new Set(arms.map((arm) => arm.armId)).size !== arms.length) {
+    throw new TypeError("Experiment arm ids must be unique.");
+  }
+  for (const arm of arms) {
+    if (!Number.isSafeInteger(arm.assignments) || arm.assignments < 0) {
+      throw new TypeError(
+        "Experiment arm quotas must be non-negative integers."
+      );
+    }
+  }
+  const expectedAssignments = arms.reduce(
+    (total, arm) => total + arm.assignments,
+    0
+  );
+  if (expectedAssignments !== independentUnitIds.length) {
+    throw new RangeError(
+      "Fixed arm quotas must equal the frozen independent-unit inventory."
+    );
+  }
+  const shuffled = seededShuffle(
+    independentUnitIds.map((id) => ({ id })),
+    seed
+  );
+  const assignments: PlaytestExperimentAssignment[] = [];
+  let offset = 0;
+  for (const arm of arms) {
+    for (const unit of shuffled.slice(offset, offset + arm.assignments)) {
+      assignments.push({ independentUnitId: unit.id, armId: arm.armId });
+    }
+    offset += arm.assignments;
+  }
+  return assignments;
+}
+
 /** One candidate episode for discovery ranking by a versioned anomaly signal. */
 export interface PlaytestDiscoveryCandidate {
   readonly id: string;

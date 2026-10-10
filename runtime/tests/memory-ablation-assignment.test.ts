@@ -58,7 +58,9 @@ test("one session is always assigned the same arm", () => {
     assert.equal(armFor("session-stable"), first);
   }
   assert.ok(
-    CONTROLLED_ABLATION_ARMS.includes(first as (typeof CONTROLLED_ABLATION_ARMS)[number]),
+    CONTROLLED_ABLATION_ARMS.includes(
+      first as (typeof CONTROLLED_ABLATION_ARMS)[number]
+    ),
     `assigned an arm outside the documented set: ${first}`
   );
 });
@@ -92,11 +94,9 @@ test("every one of the four bucketing inputs changes the assignment", () => {
   // The spec names all four. An input the hash ignored would leave a whole class
   // of sessions indistinguishable -- two experiments in one repository, say,
   // would share arms and their cohorts would merge.
-  const vary = (index: number): string =>
-    armFor(`session-vary-${index}`);
+  const vary = (index: number): string => armFor(`session-vary-${index}`);
 
-  const spread = (arms: readonly string[]): boolean =>
-    new Set(arms).size > 1;
+  const spread = (arms: readonly string[]): boolean => new Set(arms).size > 1;
 
   assert.ok(
     spread(Array.from({ length: 60 }, (_, i) => vary(i))),
@@ -197,8 +197,14 @@ function context(
   };
 }
 
-function env(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
-  return { AUTODEV_MEMORY_ABLATION: "1", AUTODEV_MEMORY_EXPERIMENT_ID: EXPERIMENT, ...overrides } as NodeJS.ProcessEnv;
+function env(
+  overrides: Record<string, string | undefined> = {}
+): NodeJS.ProcessEnv {
+  return {
+    AUTODEV_MEMORY_ABLATION: "1",
+    AUTODEV_MEMORY_EXPERIMENT_ID: EXPERIMENT,
+    ...overrides
+  } as NodeJS.ProcessEnv;
 }
 
 test("an experiment that is trusted end to end assigns an arm", () => {
@@ -230,10 +236,7 @@ test("an experiment without the ablation gate is refused, not defaulted", () => 
   // configured mode would be indistinguishable in the data from an arm, and the
   // operator's experiment would appear to run while never comparing anything.
   assert.equal(
-    resolveRouterMemoryMode(
-      env({ AUTODEV_MEMORY_ABLATION: "0" }),
-      context()
-    ),
+    resolveRouterMemoryMode(env({ AUTODEV_MEMORY_ABLATION: "0" }), context()),
     "invalid"
   );
 });
@@ -273,7 +276,10 @@ test("a blank experiment ID means no experiment, not a refusal", () => {
   // experiment that never ran, rather than a refusal that would have told them.
   for (const blank of ["", "   "]) {
     assert.equal(
-      resolveRouterMemoryMode(env({ AUTODEV_MEMORY_EXPERIMENT_ID: blank }), context()),
+      resolveRouterMemoryMode(
+        env({ AUTODEV_MEMORY_EXPERIMENT_ID: blank }),
+        context()
+      ),
       "jit",
       `${JSON.stringify(blank)} should read as no experiment configured`
     );
@@ -404,7 +410,10 @@ test("trust requires an identified session with a usable workspace", () => {
   // The scope is what distinguishes a real session from a shared process.
   assert.equal(isTrustedSession("session-x", "unidentified", WORKSPACE), false);
   assert.equal(isTrustedSession("session-x", null, WORKSPACE), false);
-  assert.equal(isTrustedSession("session-x", "process-scope", WORKSPACE), false);
+  assert.equal(
+    isTrustedSession("session-x", "process-scope", WORKSPACE),
+    false
+  );
   // An over-long key is refused rather than stored.
   assert.equal(
     isTrustedSession("k".repeat(257), "identified", WORKSPACE),
@@ -412,9 +421,18 @@ test("trust requires an identified session with a usable workspace", () => {
   );
   // And the workspace is re-checked here, not only at registration.
   assert.equal(isTrustedSession("session-x", "identified", null), false);
-  assert.equal(isTrustedSession("session-x", "identified", { key: "unknown", cwd: REPO_ROOT }), false);
   assert.equal(
-    isTrustedSession("session-x", "identified", { key: REPOSITORY_ID, cwd: "relative" }),
+    isTrustedSession("session-x", "identified", {
+      key: "unknown",
+      cwd: REPO_ROOT
+    }),
+    false
+  );
+  assert.equal(
+    isTrustedSession("session-x", "identified", {
+      key: REPOSITORY_ID,
+      cwd: "relative"
+    }),
     false
   );
 });

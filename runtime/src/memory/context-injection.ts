@@ -225,7 +225,8 @@ function retrievalOnlyPacket(
         (reference) =>
           reference.uri.length <= MAX_PACKET_EVIDENCE_URI_CHARACTERS &&
           (reference.revision === undefined ||
-            reference.revision.length <= MAX_PACKET_EVIDENCE_REVISION_CHARACTERS)
+            reference.revision.length <=
+              MAX_PACKET_EVIDENCE_REVISION_CHARACTERS)
       )
     };
     const entryCharacters = JSON.stringify(entry).length;

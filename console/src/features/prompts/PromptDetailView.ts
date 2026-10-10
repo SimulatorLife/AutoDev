@@ -575,8 +575,7 @@ export function PromptDetailView({
               "a",
               {
                 href: `/agents/${encodeURIComponent(prompt.name)}`,
-                className:
-                  `text-xs font-semibold ${ACTION_LINK_CLASS} block mb-1`
+                className: `text-xs font-semibold ${ACTION_LINK_CLASS} block mb-1`
               },
               `Agent: ${prompt.name} →`
             )

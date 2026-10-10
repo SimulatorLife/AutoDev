@@ -19,7 +19,7 @@
  * refreshed provider state is authoritative.
  */
 
-import { type NextRequest,NextResponse } from "next/server.js";
+import { type NextRequest, NextResponse } from "next/server.js";
 
 import {
   isProvidersReturnPath,
@@ -47,8 +47,7 @@ const MAX_AGENT_LIMIT = 999;
  * with a malformed value.
  */
 type SubmittedLimit =
-  | { readonly ok: true; readonly value: number | null }
-  | { readonly ok: false };
+  { readonly ok: true; readonly value: number | null } | { readonly ok: false };
 
 /**
  * The single change a submission makes, as a partial limits pair. A malformed

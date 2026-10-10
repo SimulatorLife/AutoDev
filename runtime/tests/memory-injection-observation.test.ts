@@ -50,7 +50,12 @@ function capturingRepository(
     appendExperience: async () => undefined,
     getExperience: async () => null,
     searchExperiences: async () => [],
-    listExperiences: async () => ({ items: [], total: 0, limit: 50, offset: 0 }),
+    listExperiences: async () => ({
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0
+    }),
     listExpiredExperiences: async () => [],
     purgeExperience: async () => "not_visible",
     proposeMemory: async () => undefined,
@@ -218,7 +223,9 @@ function request(
     payload: {
       model: "autodev/orchestrator",
       instructions: "Authoritative root policy.",
-      input: [{ type: "message", role: "user", content: "Raise the retry budget." }]
+      input: [
+        { type: "message", role: "user", content: "Raise the retry budget." }
+      ]
     },
     requestId: "request-observation",
     sessionKey: SESSION,
@@ -260,7 +267,9 @@ async function observe(options: {
   readonly payload: Record<string, unknown>;
 }> {
   const captured: MemoryRecordInjectionCapture[] = [];
-  const saved = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+  const saved = Object.fromEntries(
+    ENV_KEYS.map((key) => [key, process.env[key]])
+  );
   try {
     for (const key of ENV_KEYS) delete process.env[key];
     process.env.AUTODEV_MEMORY_MODE = options.mode;
@@ -356,7 +365,9 @@ test("the retrieval-only arm is refused without the ablation gate", async () => 
   // without the flag does not run the arm and does not fall back to jit, it
   // becomes `invalid` and is recorded as a skip. An operator who typed the mode
   // would otherwise see "retrieval-only" in their config and a skip in the data.
-  const event = only((await observe({ mode: "retrieval-only", hits: [] })).events);
+  const event = only(
+    (await observe({ mode: "retrieval-only", hits: [] })).events
+  );
 
   assert.equal(event.injectionResult, "skipped");
   assert.equal(event.reasonCode, "memory_mode_invalid");
@@ -375,17 +386,24 @@ test("packet markers already in the base instructions are never credited as this
   // worth pinning is the end-to-end one: nothing the caller put in its own
   // instructions is ever recorded as memory the model received.
   for (const [label, instructions] of [
-    ["an unterminated marker", "Authoritative root policy.\n--- AUTODEV MEMORY PACKET V1 ---\nquoted example only"],
+    [
+      "an unterminated marker",
+      "Authoritative root policy.\n--- AUTODEV MEMORY PACKET V1 ---\nquoted example only"
+    ],
     [
       "a reversed marker pair",
       "--- END AUTODEV MEMORY PACKET ---\npolicy quoting a closed packet\n--- AUTODEV MEMORY PACKET V1 ---"
     ],
     [
       "a complete stale packet",
-      "--- AUTODEV MEMORY PACKET V1 ---\n{\"memoryId\":\"memory-not-really-injected\"}\n--- END AUTODEV MEMORY PACKET ---"
+      '--- AUTODEV MEMORY PACKET V1 ---\n{"memoryId":"memory-not-really-injected"}\n--- END AUTODEV MEMORY PACKET ---'
     ]
   ] as const) {
-    const { events, payload } = await observe({ mode: "jit", hits: [], instructions });
+    const { events, payload } = await observe({
+      mode: "jit",
+      hits: [],
+      instructions
+    });
 
     const event = only(events);
     assert.equal(
@@ -412,7 +430,10 @@ test("packet markers already in the base instructions are never credited as this
 });
 
 test("a disabled mode records a skip under its own reason code", async () => {
-  const { events, payload } = await observe({ mode: "disabled", hits: [searchHit()] });
+  const { events, payload } = await observe({
+    mode: "disabled",
+    hits: [searchHit()]
+  });
   const event = only(events);
 
   assert.equal(event.injectionResult, "skipped");
@@ -425,7 +446,9 @@ test("a disabled mode records a skip under its own reason code", async () => {
 });
 
 test("an unparseable mode records a skip under the invalid reason code", async () => {
-  const event = only((await observe({ mode: "not-a-real-mode", hits: [] })).events);
+  const event = only(
+    (await observe({ mode: "not-a-real-mode", hits: [] })).events
+  );
 
   assert.equal(event.injectionResult, "skipped");
   assert.equal(event.reasonCode, "memory_mode_invalid");
@@ -436,8 +459,16 @@ test("the observation carries no packet or claim text", async () => {
   const serialised = JSON.stringify(
     only((await observe({ mode: "jit", hits: [searchHit()] })).events)
   );
-  assert.doesNotMatch(serialised, /retry budget/u, "the claim leaked into the event");
-  assert.doesNotMatch(serialised, /feature\.ts/u, "an evidence URI leaked into the event");
+  assert.doesNotMatch(
+    serialised,
+    /retry budget/u,
+    "the claim leaked into the event"
+  );
+  assert.doesNotMatch(
+    serialised,
+    /feature\.ts/u,
+    "an evidence URI leaked into the event"
+  );
   assert.doesNotMatch(
     serialised,
     /Raise the retry budget/u,

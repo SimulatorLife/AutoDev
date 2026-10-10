@@ -44,7 +44,8 @@ const EXPERIENCES = "/control/memory/experiences";
 const TASK_HISTORY_ENV = "AUTODEV_MEMORY_READ_TASK_HISTORY";
 
 /** Use assessments are repository-scoped; session outcomes are not. */
-const REPO_SCOPE = "workspaceId=ws-1&repositoryId=owner/repo-1&includeTaskHistory=true";
+const REPO_SCOPE =
+  "workspaceId=ws-1&repositoryId=owner/repo-1&includeTaskHistory=true";
 const WORKSPACE_SCOPE = "workspaceId=ws-1&includeTaskHistory=true";
 
 interface AuditEntry {
@@ -153,7 +154,9 @@ async function call(
   const audits: AuditEntry[] = [];
   const response: RecordedResponse = responseRecorder();
   const pathname = `${EXPERIENCES}/${EXPERIENCE_ID}/${action}`;
-  const query = options.query ?? (action === "use-assessments" ? REPO_SCOPE : WORKSPACE_SCOPE);
+  const query =
+    options.query ??
+    (action === "use-assessments" ? REPO_SCOPE : WORKSPACE_SCOPE);
   const previous = process.env[TASK_HISTORY_ENV];
   if (options.grant === false) delete process.env[TASK_HISTORY_ENV];
   else process.env[TASK_HISTORY_ENV] = "1";
@@ -221,18 +224,28 @@ test("a use assessment records how many memories were used, never which", async 
 test("a use assessment is refused without repository scope", async () => {
   // Which memories a repository's session used is a repository-scoped question,
   // so the route refuses rather than widening to the whole workspace.
-  const { status, body } = await call("POST", "use-assessments", USE_ASSESSMENT, {
-    query: WORKSPACE_SCOPE
-  });
+  const { status, body } = await call(
+    "POST",
+    "use-assessments",
+    USE_ASSESSMENT,
+    {
+      query: WORKSPACE_SCOPE
+    }
+  );
 
   assert.equal(status, 400);
   assert.equal(errorCode(body), "autodev_memory_invalid_filter");
 });
 
 test("a use assessment is stopped at the filter gate without the grant", async () => {
-  const { status, body } = await call("POST", "use-assessments", USE_ASSESSMENT, {
-    grant: false
-  });
+  const { status, body } = await call(
+    "POST",
+    "use-assessments",
+    USE_ASSESSMENT,
+    {
+      grant: false
+    }
+  );
 
   assert.equal(status, 403);
   assert.equal(errorCode(body), "autodev_memory_scope_forbidden");
@@ -255,7 +268,10 @@ test("a session outcome answers the same missing grant with a different code", a
   assert.equal(use.status, 403);
   assert.equal(session.status, 403);
   assert.equal(errorCode(use.body), "autodev_memory_scope_forbidden");
-  assert.equal(errorCode(session.body), "autodev_memory_task_history_forbidden");
+  assert.equal(
+    errorCode(session.body),
+    "autodev_memory_task_history_forbidden"
+  );
   assert.equal(session.audits.at(-1)?.reason, "task_history_not_granted");
 });
 
@@ -322,9 +338,14 @@ test("a session outcome is refused for a repository-less experience", async () =
   // A session's outcome is a statement about work against a repository, so with
   // no repository the statement has nothing to be about. The use assessment has
   // no such requirement, which is why assuming one rule for both would be wrong.
-  const { status, body, recorded } = await call("POST", "session-outcome", SESSION_OUTCOME, {
-    overrides: { repositoryId: undefined }
-  });
+  const { status, body, recorded } = await call(
+    "POST",
+    "session-outcome",
+    SESSION_OUTCOME,
+    {
+      overrides: { repositoryId: undefined }
+    }
+  );
 
   assert.equal(status, 400);
   assert.equal(errorCode(body), "autodev_memory_invalid_request");
@@ -341,7 +362,8 @@ test("a session outcome is named by the session, not by the caller", async () =>
   assert.equal(first.status, 200);
   assert.equal(second.status, 200);
   const firstReport = first.recorded?.["report"] as { id?: string } | undefined;
-  const secondReport = second.recorded?.["report"] as { id?: string } | undefined;
+  const secondReport = second.recorded?.["report"] as
+    { id?: string } | undefined;
   assert.ok(firstReport?.id, "no report reached the service");
   assert.equal(secondReport?.id, firstReport.id);
   assert.match(String(firstReport.id), /^memory-session-outcome-/u);
@@ -360,7 +382,8 @@ test("a different session gets a different session-outcome identity", async () =
     overrides: { taskId: "task-2" }
   });
 
-  const firstId = (first.recorded?.["report"] as { id?: string } | undefined)?.id;
+  const firstId = (first.recorded?.["report"] as { id?: string } | undefined)
+    ?.id;
   const secondId = (second.recorded?.["report"] as { id?: string } | undefined)
     ?.id;
   assert.ok(firstId && secondId, "a report never reached the service");
@@ -382,7 +405,8 @@ test("the same session in a different repository gets a different identity", asy
     overrides: { repositoryId: "owner/repo-2" }
   });
 
-  const firstId = (first.recorded?.["report"] as { id?: string } | undefined)?.id;
+  const firstId = (first.recorded?.["report"] as { id?: string } | undefined)
+    ?.id;
   const secondId = (second.recorded?.["report"] as { id?: string } | undefined)
     ?.id;
   assert.ok(firstId && secondId, "a report never reached the service");
@@ -401,7 +425,8 @@ test("the same session id in another workspace gets another identity", async () 
     overrides: { workspaceId: "ws-2" }
   });
 
-  const firstId = (first.recorded?.["report"] as { id?: string } | undefined)?.id;
+  const firstId = (first.recorded?.["report"] as { id?: string } | undefined)
+    ?.id;
   const secondId = (second.recorded?.["report"] as { id?: string } | undefined)
     ?.id;
   assert.ok(firstId && secondId, "a report never reached the service");
@@ -415,8 +440,7 @@ test("a session outcome names the reporter who filed it", async () => {
   // cannot be.
   const { recorded } = await call("POST", "session-outcome", SESSION_OUTCOME);
   const report = recorded?.["report"] as
-    | { reporterId?: string; reporterAuthority?: string }
-    | undefined;
+    { reporterId?: string; reporterAuthority?: string } | undefined;
 
   assert.equal(report?.reporterId, "test-operator");
   assert.equal(report?.reporterAuthority, "root");
@@ -452,8 +476,7 @@ test("a claimed session outcome needs evidence, and `unknown` stands alone", asy
   assert.equal(claimed.status, 400);
   assert.equal(unknown.status, 200);
   const report = unknown.recorded?.["report"] as
-    | { outcomeKind?: string; reasonCode?: string }
-    | undefined;
+    { outcomeKind?: string; reasonCode?: string } | undefined;
   assert.equal(report?.outcomeKind, "unknown");
   assert.equal(report?.reasonCode, "reporter_unknown");
 });

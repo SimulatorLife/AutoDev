@@ -65,6 +65,7 @@ import {
   type GithubActionsRuntimeSnapshot,
   type GithubApiWorkflow,
   GithubWorkflowRepository,
+  PlaytestRepository,
   reconcileDiffSummary,
   reconcileDiffWithIdentifier,
   RuleSyncCommandConflictError,
@@ -73,6 +74,7 @@ import {
   RuleSyncRepository,
   ToolCatalogAdapter
 } from "@simulatorlife/autodev-data";
+import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data/workspaces";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
 import { getDefaultRouterLifecycle } from "@simulatorlife/autodev-runtime/router/lifecycle";
@@ -89,6 +91,8 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 import { materializeCommands } from "../platform/install-materializer.ts";
+import type { PlaytestRunControl } from "../playtesting/mcp.ts";
+import { getDefaultPlaytestRunControl } from "../playtesting/run-control-service.ts";
 import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "../router/proxy.ts";
 import {
   executionContractFile,
@@ -98,6 +102,20 @@ import {
 import { routerTelemetryTracer } from "../router/telemetry.ts";
 import { readControlApiJsonObject } from "./body.ts";
 import { handleMemoryControlApiRequest } from "./memory.ts";
+import {
+  handlePlaytestingControlApiRequest,
+  type PlaytestingReadRepository
+} from "./playtesting.ts";
+import { handlePlaytestingRunControlRequest } from "./playtesting-run-control.ts";
+import {
+  handlePlaytestingHumanStudyControlApiRequest,
+  type PlaytestingHumanStudyRepository
+} from "./playtesting-human-studies.ts";
+import {
+  getDefaultRestrictedHumanResponseRepository,
+  type RestrictedHumanResponseRepository
+} from "@simulatorlife/autodev-data/playtesting";
+import { handleWorkspacePlaytestingApprovalRequest } from "./workspace-playtesting.ts";
 
 export const CONTROL_API_BASE = "/control";
 export const CONTROL_API_PATHS = {
@@ -115,7 +133,8 @@ export const CONTROL_API_PATHS = {
   runtime: "/control/runtime",
   memory: "/control/memory",
   evaluations: "/control/evaluations",
-  github: "/control/github"
+  github: "/control/github",
+  playtesting: "/control/playtesting"
 } as const;
 
 const PROVIDER_ROLE_PATH = new RegExp(
@@ -175,11 +194,20 @@ export type ControlApiRole = "viewer" | "operator";
 export interface ControlApiRequestOptions {
   readonly repositoryRoot?: string;
   readonly codexHome?: string;
+  /** Test seams for Data-owned readers; never supplied by a request. */
+  readonly playtestingRepository?: PlaytestingReadRepository;
+  readonly playtestingHumanStudyRepository?: PlaytestingHumanStudyRepository;
+  readonly restrictedHumanResponseRepository?: RestrictedHumanResponseRepository;
+  /** Must be the same Runtime run-control instance exposed by the MCP facade. */
+  readonly playtestingRunControl?: PlaytestRunControl;
+  readonly workspacePlaytestApprovalRepository?: WorkspacePlaytestApprovalRepository;
 }
 
 export interface ControlApiActor {
   actor: string;
   role: ControlApiRole;
+  /** Private Playtesting-only credential, accepted solely on typed run routes. */
+  readonly playtestingService?: true;
 }
 export interface ControlApiConfig {
   serviceToken: string;
@@ -536,8 +564,13 @@ function providersView(now: number): Record<string, unknown> {
         ROUTING_POLICY.assignmentFor(provider, role)
       ])
     );
+    const links = ROUTING_POLICY.config.providers[provider]?.links;
     return {
       id: provider,
+      links: {
+        usage: links?.usage ?? null,
+        documentation: links?.documentation ?? null
+      },
       route: route
         ? {
             pattern: route.pattern.source,
@@ -3510,6 +3543,191 @@ async function promptDetailRoute(
   return true;
 }
 
+function workspacePlaytestingApprovalRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  pathname: string,
+  actor: ControlApiActor,
+  options: ControlApiRequestOptions
+): Promise<boolean> {
+  return handleWorkspacePlaytestingApprovalRequest(
+    request,
+    response,
+    pathname,
+    actor,
+    {
+      ...(options.repositoryRoot === undefined
+        ? {}
+        : { repositoryRoot: options.repositoryRoot }),
+      ...(options.workspacePlaytestApprovalRepository === undefined
+        ? {}
+        : { repository: options.workspacePlaytestApprovalRepository }),
+      audit: (event) =>
+        auditMutation({
+          actor: actor.actor,
+          actorVerified: true,
+          role: actor.role,
+          action: event.action,
+          resource: `/control/workspaces/${event.workspaceId}/playtesting-approval`,
+          outcome: event.outcome,
+          changes: event.changes,
+          ...(event.reason ? { reason: event.reason } : {})
+        })
+    }
+  );
+}
+
+function playtestingHumanStudyRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  pathname: string,
+  actor: ControlApiActor,
+  options: ControlApiRequestOptions
+): Promise<boolean> {
+  if (!pathname.startsWith(CONTROL_API_PATHS.playtesting + "/human-studies/")) {
+    return Promise.resolve(false);
+  }
+  const configRepository = new ConfigRepository(options.repositoryRoot);
+  return handlePlaytestingHumanStudyControlApiRequest(
+    request,
+    response,
+    pathname,
+    actor,
+    {
+      repository:
+        options.playtestingHumanStudyRepository ?? new PlaytestRepository(),
+      responses:
+        options.restrictedHumanResponseRepository ??
+        getDefaultRestrictedHumanResponseRepository(),
+      workspaceApprovals:
+        options.workspacePlaytestApprovalRepository ??
+        new WorkspacePlaytestApprovalRepository(),
+      readWorkspaceCatalog: () => configRepository.readWorkspaceCatalog(),
+      audit: (event) =>
+        auditMutation({
+          actor: actor.actor,
+          actorVerified: true,
+          role: actor.role,
+          action: event.action,
+          resource: `/control/playtesting/human-studies/${event.workspaceId}`,
+          outcome: event.outcome,
+          changes: event.changes,
+          ...(event.reason ? { reason: event.reason } : {})
+        })
+    }
+  );
+}
+
+function playtestingRunControlRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  pathname: string,
+  actor: ControlApiActor,
+  options: ControlApiRequestOptions
+): Promise<boolean> {
+  return handlePlaytestingRunControlRequest(
+    request,
+    response,
+    pathname,
+    actor,
+    {
+      ...(options.repositoryRoot === undefined
+        ? {}
+        : { repositoryRoot: options.repositoryRoot }),
+      runControl:
+        options.playtestingRunControl ?? getDefaultPlaytestRunControl(),
+      requireSessionHeader: actor.playtestingService === true,
+      ...(actor.playtestingService
+        ? {
+            trustedSessionRole:
+              process.env.AUTODEV_PLAYTEST_CONTROL_API_ROLE?.trim() ?? ""
+          }
+        : {}),
+      audit: (event) =>
+        auditMutation({
+          actor: actor.actor,
+          actorVerified: true,
+          role: actor.role,
+          action: event.action,
+          resource: `/control/playtesting/runs/${event.workspaceId}`,
+          outcome: event.outcome,
+          changes: event.changes,
+          ...(event.reason ? { reason: event.reason } : {})
+        })
+    }
+  );
+}
+
+async function playtestingRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  pathname: string,
+  actor: ControlApiActor,
+  options: ControlApiRequestOptions
+): Promise<boolean> {
+  if (!pathname.startsWith(CONTROL_API_PATHS.playtesting + "/")) return false;
+  await handlePlaytestingControlApiRequest(request, response, pathname, actor, {
+    ...(options.repositoryRoot === undefined
+      ? {}
+      : { repositoryRoot: options.repositoryRoot }),
+    ...(options.playtestingRepository === undefined
+      ? {}
+      : { repository: options.playtestingRepository })
+  });
+  return true;
+}
+
+function authorizePlaytestingRunService(
+  request: IncomingMessage,
+  response: ServerResponse,
+  pathname: string
+):
+  | { readonly kind: "not-matched" }
+  | { readonly kind: "denied" }
+  | { readonly kind: "authorized"; readonly actor: ControlApiActor } {
+  if (
+    pathname !== "/control/playtesting/runs" &&
+    !pathname.startsWith("/control/playtesting/runs/")
+  ) {
+    return { kind: "not-matched" };
+  }
+  const token = process.env.AUTODEV_PLAYTEST_CONTROL_API_TOKEN?.trim() ?? "";
+  const authorization = header(request, "authorization");
+  if (
+    !token ||
+    !authorization ||
+    !secretMatches(authorization, "Bearer " + token)
+  ) {
+    return { kind: "not-matched" };
+  }
+  const actor = process.env.AUTODEV_PLAYTEST_CONTROL_API_ACTOR?.trim() ?? "";
+  if (!ACTOR_ID_PATTERN.test(actor)) {
+    sendControlError(
+      response,
+      503,
+      "autodev_control_playtesting_actor_unconfigured",
+      "The trusted Playtesting Control API actor is not configured."
+    );
+    return { kind: "denied" };
+  }
+  return {
+    kind: "authorized",
+    actor: { actor, role: "operator", playtestingService: true }
+  };
+}
+
+function actorForControlRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  method: string,
+  pathname: string
+): ControlApiActor | null {
+  const scoped = authorizePlaytestingRunService(request, response, pathname);
+  if (scoped.kind === "denied") return null;
+  if (scoped.kind === "authorized") return scoped.actor;
+  return authorizeRequest(request, response, method, pathname);
+}
+
 export async function handleControlApiRequest(
   request: IncomingMessage,
   response: ServerResponse,
@@ -3518,8 +3736,19 @@ export async function handleControlApiRequest(
 ): Promise<boolean> {
   if (!pathname.startsWith(CONTROL_API_BASE + "/")) return false;
   const method = request.method ?? "GET";
-  const actor = authorizeRequest(request, response, method, pathname);
+  const actor = actorForControlRequest(request, response, method, pathname);
   if (!actor) return true;
+  if (
+    await workspacePlaytestingApprovalRoute(
+      request,
+      response,
+      pathname,
+      actor,
+      options
+    )
+  ) {
+    return true;
+  }
   if (pathname.startsWith(CONTROL_API_PATHS.memory + "/")) {
     await handleMemoryControlApiRequest(
       request,
@@ -3540,6 +3769,30 @@ export async function handleControlApiRequest(
     );
     return true;
   }
+  if (
+    await playtestingHumanStudyRoute(
+      request,
+      response,
+      pathname,
+      actor,
+      options
+    )
+  ) {
+    return true;
+  }
+  if (
+    await playtestingRunControlRoute(
+      request,
+      response,
+      pathname,
+      actor,
+      options
+    )
+  ) {
+    return true;
+  }
+  if (await playtestingRoute(request, response, pathname, actor, options))
+    return true;
   const providerMatch = pathname.match(PROVIDER_ROLE_PATH);
   if (providerMatch) {
     await providerRoleRoute(

@@ -9,7 +9,9 @@
     ".": "./src/index.ts",
     "./evaluations": "./src/evaluations/index.ts",
     "./openlit": "./src/openlit/index.ts",
-    "./usage": "./src/usage/index.ts"
+    "./usage": "./src/usage/index.ts",
+    "./workspaces": "./src/workspaces/index.ts",
+    "./playtesting": "./src/playtesting/index.ts"
   },
   "dependencies": {
     "@simulatorlife/autodev-core": "workspace:*",

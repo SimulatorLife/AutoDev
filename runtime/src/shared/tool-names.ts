@@ -82,6 +82,7 @@ export const MCP_SERVER_CODEGRAPHCONTEXT = "codegraphcontext" as const;
 export const MCP_SERVER_PLAYWRIGHT = "playwright" as const;
 export const MCP_SERVER_OPENAI_DEVELOPER_DOCS = "openaiDeveloperDocs" as const;
 export const MCP_SERVER_CONTEXT7 = "context7" as const;
+export const MCP_SERVER_PLAYTEST = "playtest" as const;
 
 /**
  * Bridge-injected spawn shim attached by provider CLI bridges (Copilot,

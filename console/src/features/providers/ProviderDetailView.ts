@@ -32,6 +32,7 @@ import {
 import { ModelToggle } from "./ModelToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
+import { ProviderExternalLinks } from "./ProviderExternalLinks.ts";
 import { ProviderRoleControls } from "./ProviderRoleControls.ts";
 
 export interface ProviderDetailViewProps {
@@ -452,8 +453,12 @@ export function ProviderDetailView({
               href: `/usage?provider=${encodeURIComponent(provider.id)}`,
               className: "text-xs text-accent underline underline-offset-2"
             },
-            "View usage"
-          )
+            "View AutoDev usage"
+          ),
+          React.createElement(ProviderExternalLinks, {
+            provider: provider.id,
+            links: provider.links
+          })
         )
       )
     ),

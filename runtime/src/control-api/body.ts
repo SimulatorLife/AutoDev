@@ -13,8 +13,12 @@ const MAX_CONTROL_BODY_BYTES = 65_536;
 
 /** Shared bounded JSON-object reader for Control API mutation routes. */
 export async function readControlApiJsonObject(
-  request: IncomingMessage
+  request: IncomingMessage,
+  maximumBytes = MAX_CONTROL_BODY_BYTES
 ): Promise<ControlApiJsonObjectResult> {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) {
+    throw new TypeError("Control API body bound must be a positive integer.");
+  }
   const rawContentType = request.headers["content-type"];
   const contentType = Array.isArray(rawContentType)
     ? rawContentType[0]
@@ -40,7 +44,7 @@ export async function readControlApiJsonObject(
   for await (const chunk of request) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += bytes.length;
-    if (size > MAX_CONTROL_BODY_BYTES) {
+    if (size > maximumBytes) {
       return {
         ok: false,
         status: 413,

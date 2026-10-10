@@ -340,8 +340,10 @@ async function withObservedSession(
   await mkdir(sessionsRoot, { recursive: true });
   const previousCodexHome = process.env.CODEX_HOME;
   const previousMode = process.env.AUTODEV_MEMORY_MODE;
+  const previousDb = process.env.AUTODEV_MEMORY_DATABASE_URL;
   process.env.CODEX_HOME = codexHome;
   process.env.AUTODEV_MEMORY_MODE = "jit";
+  delete process.env.AUTODEV_MEMORY_DATABASE_URL;
   clearTrustedMemoryContextsForTest();
   try {
     // A `null` host makes the injection return immediately; the session is
@@ -382,6 +384,9 @@ async function withObservedSession(
     else process.env.CODEX_HOME = previousCodexHome;
     if (previousMode === undefined) delete process.env.AUTODEV_MEMORY_MODE;
     else process.env.AUTODEV_MEMORY_MODE = previousMode;
+    if (previousDb === undefined)
+      delete process.env.AUTODEV_MEMORY_DATABASE_URL;
+    else process.env.AUTODEV_MEMORY_DATABASE_URL = previousDb;
     await rm(root, { recursive: true, force: true });
   }
 }

@@ -1,0 +1,68 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req-0001",
+  "result": {
+    "protocolVersion": 1,
+    "schemaHashAlgorithm": "sha256-canonical-json-v1",
+    "engineBuild": "golden-fixture-1.0.0",
+    "modes": [
+      "headless"
+    ],
+    "scenarioIds": [
+      "tutorial"
+    ],
+    "observationSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "room": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "room"
+      ]
+    },
+    "actionSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "actionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "actionId"
+      ]
+    },
+    "eventSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "observationSchemaHash": "a4654f7fae58dc28d1f5ad541efe42768acbd851755ddcfe5594a64cfd3da012",
+    "actionSchemaHash": "22e4a3b73cfe95d3a70172d637aed29574eef4488dfb94c8e30aa075acfa5b40",
+    "eventSchemaHash": "83b222c141d0ac9cf15696947e3cdcfeecf54fb985c94ca96b411e0e8e44f65e",
+    "optionalOperations": [
+      "game.invariants"
+    ],
+    "quotas": {
+      "maxMessageBytes": 65536,
+      "maxQueuedRequests": 8,
+      "ordinaryCallTimeoutMs": 2000,
+      "resetReplayTimeoutMs": 5000
+    },
+    "deterministic": {
+      "seededRuns": true,
+      "rngVersion": "fixture-rng-v1",
+      "traceReplayable": false
+    }
+  }
+}

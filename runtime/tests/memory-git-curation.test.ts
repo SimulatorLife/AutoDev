@@ -1044,7 +1044,9 @@ test("GitHub CLI resolver queries same-repository merge, review, and check state
           reviewThreads: { totalCount: 0, nodes: [] },
           // A merged PR closes without naming an outside closer, which is what
           // every normally merged and hand-closed PR reports.
-          timelineItems: { nodes: [{ __typename: "ClosedEvent", closer: null }] }
+          timelineItems: {
+            nodes: [{ __typename: "ClosedEvent", closer: null }]
+          }
         },
         issue: {
           state: "CLOSED",
@@ -1327,7 +1329,9 @@ async function assessAgainstGitHubResponse(input: {
 }
 
 /** The merged, approved, green PR every supersession case starts from. */
-function mergedPullRequestPayload(mergeCommit: string): Record<string, unknown> {
+function mergedPullRequestPayload(
+  mergeCommit: string
+): Record<string, unknown> {
   return {
     state: "CLOSED",
     isDraft: false,
@@ -1439,7 +1443,9 @@ test("a PR closed by a commit is superseded, and is not given an address nobody 
       pullRequest: {
         ...mergedPullRequestPayload(sourceCommit),
         timelineItems: {
-          nodes: [{ __typename: "ClosedEvent", closer: { __typename: "Commit" } }]
+          nodes: [
+            { __typename: "ClosedEvent", closer: { __typename: "Commit" } }
+          ]
         }
       }
     });
@@ -1447,7 +1453,9 @@ test("a PR closed by a commit is superseded, and is not given an address nobody 
     assert.equal(assessment.compatibility, "contradicted");
     assert.equal(assessment.reasonCode, "superseded");
     assert.deepEqual(
-      assessment.evidence.filter((reference) => reference.kind === "pull_request"),
+      assessment.evidence.filter(
+        (reference) => reference.kind === "pull_request"
+      ),
       [],
       "an unattributable supersession must not invent a pull request to cite"
     );
@@ -1521,7 +1529,10 @@ test("an unreadable close event is unknown, never an observed absence of superse
     const unreadable: readonly { label: string; timelineItems?: unknown }[] = [
       { label: "timeline absent" },
       { label: "timeline is not an object", timelineItems: "closed" },
-      { label: "timeline has no nodes array", timelineItems: { totalCount: 1 } },
+      {
+        label: "timeline has no nodes array",
+        timelineItems: { totalCount: 1 }
+      },
       {
         label: "nodes is not an array",
         timelineItems: { nodes: { __typename: "ClosedEvent" } }
@@ -1545,10 +1556,15 @@ test("an unreadable close event is unknown, never an observed absence of superse
         label: "node is not a close event",
         timelineItems: { nodes: [{ __typename: "MergedEvent" }] }
       },
-      { label: "closer is not an object", timelineItems: { nodes: [{ __typename: "ClosedEvent", closer: 7 }] } },
+      {
+        label: "closer is not an object",
+        timelineItems: { nodes: [{ __typename: "ClosedEvent", closer: 7 }] }
+      },
       {
         label: "closer type is unknown",
-        timelineItems: { nodes: [{ __typename: "ClosedEvent", closer: { __typename: "Bot" } }] }
+        timelineItems: {
+          nodes: [{ __typename: "ClosedEvent", closer: { __typename: "Bot" } }]
+        }
       },
       {
         label: "closer PR has no merged flag",

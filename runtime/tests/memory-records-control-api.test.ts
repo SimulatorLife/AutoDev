@@ -135,11 +135,12 @@ function mockService(
       statusCounts: ALL_STATUSES
     }),
     get: async () => record(),
-    why: async () => ({
-      memory: record(),
-      relatedMemories: [],
-      sourceExperiences: []
-    }) as unknown as MemoryWhyResult,
+    why: async () =>
+      ({
+        memory: record(),
+        relatedMemories: [],
+        sourceExperiences: []
+      }) as unknown as MemoryWhyResult,
     history: async () => null as MemoryHistory | null,
     ...overrides
   } as unknown as MemoryService;
@@ -160,10 +161,14 @@ test("GET /control/memory/records returns the page with a whole-collection statu
     }
   });
 
-  const { response, body } = await callRoute(service, "/control/memory/records", {
-    workspaceId: "ws-1",
-    repositoryId: "repo-1"
-  });
+  const { response, body } = await callRoute(
+    service,
+    "/control/memory/records",
+    {
+      workspaceId: "ws-1",
+      repositoryId: "repo-1"
+    }
+  );
 
   assert.equal(response.statusCode, 200);
   assert.equal(body?.schema, "autodev-memory-records-v1");
@@ -220,10 +225,14 @@ test("GET /control/memory/records reports an empty collection as a page, not a f
     })
   });
 
-  const { response, body } = await callRoute(service, "/control/memory/records", {
-    workspaceId: "ws-1",
-    repositoryId: "repo-1"
-  });
+  const { response, body } = await callRoute(
+    service,
+    "/control/memory/records",
+    {
+      workspaceId: "ws-1",
+      repositoryId: "repo-1"
+    }
+  );
 
   assert.equal(response.statusCode, 200);
   assert.equal(body?.schema, "autodev-memory-records-v1");
@@ -232,11 +241,15 @@ test("GET /control/memory/records reports an empty collection as a page, not a f
 });
 
 test("GET /control/memory/records rejects an unbounded status with 400", async () => {
-  const { response } = await callRoute(serviceOrEmpty(), "/control/memory/records", {
-    workspaceId: "ws-1",
-    repositoryId: "repo-1",
-    status: "everything"
-  });
+  const { response } = await callRoute(
+    serviceOrEmpty(),
+    "/control/memory/records",
+    {
+      workspaceId: "ws-1",
+      repositoryId: "repo-1",
+      status: "everything"
+    }
+  );
 
   assert.equal(response.statusCode, 400);
 });
@@ -274,9 +287,7 @@ test("POST /control/memory/records refuses a viewer with 403", async () => {
 
 /** `errorBody` nests the machine-readable code one level down. */
 function errorCode(response: RecordedResponse): unknown {
-  const body = responseBody(response) as
-    | { error?: { code?: unknown } }
-    | null;
+  const body = responseBody(response) as { error?: { code?: unknown } } | null;
   return body?.error?.code;
 }
 
@@ -400,8 +411,5 @@ test("POST /control/memory/records is refused by the body checks before the meth
     { method: "POST", body: {} }
   );
   assert.equal(withBody.response.statusCode, 400);
-  assert.equal(
-    errorCode(withBody.response),
-    "autodev_memory_invalid_request"
-  );
+  assert.equal(errorCode(withBody.response), "autodev_memory_invalid_request");
 });

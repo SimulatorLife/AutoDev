@@ -69,7 +69,9 @@ test("a configured database that is not answering reads as unreachable", async (
   // database is not. Nothing is listening on this port, so the probe's own
   // deadline is what decides, which is why it is given a short one — and why
   // the caller's deadline is asserted back rather than assumed.
-  setDatabaseUrl("postgres://memory:memory@127.0.0.1:1/memory?connect_timeout=1");
+  setDatabaseUrl(
+    "postgres://memory:memory@127.0.0.1:1/memory?connect_timeout=1"
+  );
 
   const status = await observeMemoryStorageStatus(250);
 
@@ -98,7 +100,9 @@ test("reconfiguring the database URL does not silently reuse the old pool", asyn
   // must not silently open the new one either — the cached pool was never built
   // for it. Failing closed leaves the operator to restart, which is the only
   // point at which a new URL can be honoured honestly.
-  setDatabaseUrl("postgres://memory:memory@127.0.0.1:2/other?connect_timeout=1");
+  setDatabaseUrl(
+    "postgres://memory:memory@127.0.0.1:2/other?connect_timeout=1"
+  );
 
   assert.equal(
     createOrchestratorMemoryService(),
@@ -124,7 +128,9 @@ test("a close in flight suppresses every later construction", async () => {
   // claim shutdown is permanent — only that nothing is opened underneath it.
   // That residue is real but harmless here: the pool is idle and built with
   // `allowExitOnIdle`, so it does not hold the process open.
-  setDatabaseUrl("postgres://memory:memory@127.0.0.1:1/memory?connect_timeout=1");
+  setDatabaseUrl(
+    "postgres://memory:memory@127.0.0.1:1/memory?connect_timeout=1"
+  );
 
   const closing = closeOrchestratorMemoryHost();
 

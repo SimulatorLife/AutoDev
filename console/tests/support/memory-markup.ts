@@ -114,14 +114,15 @@ export function allOptions(
   markup: string,
   name: string
 ): { value: string; label: string }[][] {
-  return [...markup.matchAll(new RegExp(`<select\\b[^>]*name="${name}"[^>]*>`, "gu"))]
-    .map((match) => {
-      const body = markup.slice(
-        match.index,
-        markup.indexOf("</select>", match.index)
-      );
-      return [...body.matchAll(/<option[^>]*value="([^"]*)"[^>]*>([^<]*)</gu)].map(
-        (option) => ({ value: option[1]!, label: option[2]! })
-      );
-    });
+  return [
+    ...markup.matchAll(new RegExp(`<select\\b[^>]*name="${name}"[^>]*>`, "gu"))
+  ].map((match) => {
+    const body = markup.slice(
+      match.index,
+      markup.indexOf("</select>", match.index)
+    );
+    return [
+      ...body.matchAll(/<option[^>]*value="([^"]*)"[^>]*>([^<]*)</gu)
+    ].map((option) => ({ value: option[1]!, label: option[2]! }));
+  });
 }

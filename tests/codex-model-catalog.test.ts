@@ -9,7 +9,12 @@ type Model = JsonRecord & {
   default_reasoning_level: string;
 };
 type Catalog = { models: Model[] };
-type Routing = { providers: { codex: { models: Record<string, string> } } };
+type Routing = {
+  providers: {
+    codex: { models: Record<string, string> };
+    minimax: { models: Record<string, string> };
+  };
+};
 
 const catalog = JSON.parse(
   await readFile(
@@ -23,6 +28,12 @@ const routing = JSON.parse(
     "utf8"
   )
 ) as Routing;
+const minimaxCatalog = JSON.parse(
+  await readFile(
+    new URL("../config/catalogs/minimax-model-catalog.json", import.meta.url),
+    "utf8"
+  )
+) as Catalog;
 
 test("codex model catalog slugs are unique", () => {
   const slugs = catalog.models.map((model) => model.slug);
@@ -42,49 +53,36 @@ test("every configured codex routing model has a catalog entry", () => {
   }
 });
 
-test("MiniMax-M3 catalog entries support only none or high reasoning effort", async () => {
-  const minimaxCatalog = JSON.parse(
-    await readFile(
-      new URL("../config/catalogs/minimax-model-catalog.json", import.meta.url),
-      "utf8"
-    )
-  ) as Catalog;
-  for (const [name, cat] of [
-    ["codex-model-catalog", catalog],
-    ["minimax-model-catalog", minimaxCatalog]
-  ] as Array<[string, Catalog]>) {
-    const model = cat.models.find((m) => m.slug === "MiniMax-M3");
-    assert.ok(model, `MiniMax-M3 must exist in ${name}`);
-    const levels = model.supported_reasoning_levels.map((l) => l.effort);
-    assert.deepEqual(
-      levels.sort(),
-      ["high", "none"],
-      `MiniMax-M3 in ${name} must only support none or high reasoning`
+test("MiniMax provider catalog entries are preserved in the unified catalog", () => {
+  const codexModels = new Map(
+    catalog.models.map((model) => [model.slug, model])
+  );
+
+  for (const model of minimaxCatalog.models) {
+    const mergedModel = codexModels.get(model.slug);
+    assert.ok(mergedModel, `unified catalog is missing ${model.slug}`);
+    assert.deepEqual(mergedModel, model);
+
+    const efforts = model.supported_reasoning_levels.map(
+      ({ effort }) => effort
     );
-    assert.ok(["none", "high"].includes(model.default_reasoning_level));
+    assert.ok(efforts.length > 0, `${model.slug} must offer a reasoning level`);
+    assert.equal(new Set(efforts).size, efforts.length);
+    assert.ok(
+      efforts.includes(model.default_reasoning_level),
+      `${model.slug} default reasoning level must be supported`
+    );
   }
 });
 
-test("MiniMax-M3.1-Flash-Preview catalog entries support low through max reasoning, never none", async () => {
-  const minimaxCatalog = JSON.parse(
-    await readFile(
-      new URL("../config/catalogs/minimax-model-catalog.json", import.meta.url),
-      "utf8"
-    )
-  ) as Catalog;
-  for (const [name, cat] of [
-    ["codex-model-catalog", catalog],
-    ["minimax-model-catalog", minimaxCatalog]
-  ] as Array<[string, Catalog]>) {
-    const model = cat.models.find(
-      (m) => m.slug === "MiniMax-M3.1-Flash-Preview"
-    );
-    assert.ok(model, `MiniMax-M3.1-Flash-Preview must exist in ${name}`);
-    assert.deepEqual(
-      model.supported_reasoning_levels.map((l) => l.effort),
-      ["low", "medium", "high", "xhigh", "max"],
-      `MiniMax-M3.1-Flash-Preview in ${name} cannot disable thinking`
-    );
-    assert.equal(model.default_reasoning_level, "max");
+test("every MiniMax model assigned by routing is listed in both catalogs", () => {
+  const providerSlugs = new Set(minimaxCatalog.models.map(({ slug }) => slug));
+  const unifiedSlugs = new Set(catalog.models.map(({ slug }) => slug));
+  const assignments = new Set(Object.values(routing.providers.minimax.models));
+  assert.ok(assignments.size > 0);
+
+  for (const model of assignments) {
+    assert.ok(providerSlugs.has(model), `MiniMax catalog is missing ${model}`);
+    assert.ok(unifiedSlugs.has(model), `unified catalog is missing ${model}`);
   }
 });

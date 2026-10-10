@@ -9,7 +9,10 @@ import {
   MONO_ID_LINK_CLASS
 } from "../src/components/ui/text-classes.ts";
 
-const FEATURES = resolve(dirname(fileURLToPath(import.meta.url)), "../src/features");
+const FEATURES = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../src/features"
+);
 
 /**
  * The Console's link to a named entity — a provider, model, agent, prompt or
@@ -39,8 +42,16 @@ const ENTITY_LINK_VIEWS = [
 ];
 
 test("the entity link signals both, not one or the other", () => {
-  assert.match(ENTITY_LINK_CLASS, /hover:text-accent/u, "the accent shift is one half");
-  assert.match(ENTITY_LINK_CLASS, /hover:underline/u, "the underline is the other");
+  assert.match(
+    ENTITY_LINK_CLASS,
+    /hover:text-accent/u,
+    "the accent shift is one half"
+  );
+  assert.match(
+    ENTITY_LINK_CLASS,
+    /hover:underline/u,
+    "the underline is the other"
+  );
   assert.match(ENTITY_LINK_CLASS, /underline-offset-4/u);
 });
 

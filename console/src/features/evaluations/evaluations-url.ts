@@ -503,7 +503,9 @@ export const EVALUATIONS_DETAIL_ANCHOR_ID = "evaluation-detail-drawer";
  * focused and in view.
  */
 function listArrivalAnchor(tab: EvaluationsTabId): string {
-  return tab === DEFAULT_EVALUATIONS_TAB ? `#${EVALUATIONS_HISTORY_ANCHOR_ID}` : "";
+  return tab === DEFAULT_EVALUATIONS_TAB
+    ? `#${EVALUATIONS_HISTORY_ANCHOR_ID}`
+    : "";
 }
 
 /** The list for a filter state, with whatever is currently open still open. */

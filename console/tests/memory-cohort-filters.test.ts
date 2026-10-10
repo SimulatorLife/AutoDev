@@ -12,10 +12,7 @@ import {
 } from "@simulatorlife/autodev-core";
 
 import { MemoryCohortsView } from "../src/features/memory/MemoryCohortsView.ts";
-import {
-  selectEntries,
-  selectOptions
-} from "./support/memory-markup.ts";
+import { selectEntries, selectOptions } from "./support/memory-markup.ts";
 import {
   MEMORY_COHORT_MODE_LABEL,
   MEMORY_INJECTION_RESULT_LABEL,
@@ -99,7 +96,7 @@ const FILTERS: readonly {
   }
 ];
 
-test("every cohort filter offers Core's vocabulary behind an \"all\"", async () => {
+test('every cohort filter offers Core\'s vocabulary behind an "all"', async () => {
   for (const filter of FILTERS) {
     assert.deepEqual(
       selectOptions(render(), filter.name),
@@ -135,7 +132,8 @@ test("a cohort filter's word is the same one its cells read", async () => {
   const markup = render();
   assert.ok(
     selectEntries(markup, "useKind").some(
-      ({ value, label }) => value === "used" && label === MEMORY_USE_KIND_LABEL.used
+      ({ value, label }) =>
+        value === "used" && label === MEMORY_USE_KIND_LABEL.used
     ),
     "the use filter must use the same label the cohort cells render"
   );

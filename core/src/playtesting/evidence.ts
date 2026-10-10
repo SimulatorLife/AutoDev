@@ -10,11 +10,11 @@
  * real, relevant data.
  */
 
+import type { PlaytestSessionReview } from "./artifacts.ts";
 import type {
   PlaytestEvidenceLocator,
   PlaytestEvidenceVerdict,
-  PlaytestFinding,
-  PlaytestReview
+  PlaytestFinding
 } from "./types.ts";
 
 /** What the caller's evidence store can resolve a locator to. */
@@ -195,9 +195,12 @@ export function assertNoContradictingLocator(
  * review itself must carry at least one. A review without evidence
  * locators is invalid -- not a successful empty report.
  */
-export function assertPlaytestReviewHasEvidence(
-  review: Pick<PlaytestReview, "reviewId" | "evidenceRefs"> & {
-    readonly findings: readonly Pick<PlaytestFinding, "findingId" | "evidenceRefs">[];
+export function assertPlaytestSessionReviewHasEvidence(
+  review: Pick<PlaytestSessionReview, "reviewId" | "evidenceRefs"> & {
+    readonly findings: readonly Pick<
+      PlaytestFinding,
+      "findingId" | "evidenceRefs"
+    >[];
   }
 ): void {
   if (review.evidenceRefs.length === 0) {
@@ -221,7 +224,10 @@ export function assertPlaytestReviewHasEvidence(
  * secondary locators; `not observed` requires zero locators.
  */
 export function assertPlaytestFindingEvidenceStatusConsistent(
-  finding: Pick<PlaytestFinding, "findingId" | "evidenceStatus" | "evidenceRefs">,
+  finding: Pick<
+    PlaytestFinding,
+    "findingId" | "evidenceStatus" | "evidenceRefs"
+  >,
   index: PlaytestKnownEvidenceIndex
 ): void {
   if (finding.evidenceStatus === "not observed") {

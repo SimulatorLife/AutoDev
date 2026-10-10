@@ -186,7 +186,10 @@ test("OpenLITUsageClient keeps the recent trace list bounded and privacy-filtere
       }
     ]
   });
-  assert.equal(JSON.stringify(result.data.traceList).includes("must not reach"), false);
+  assert.equal(
+    JSON.stringify(result.data.traceList).includes("must not reach"),
+    false
+  );
 });
 
 test("OpenLITUsageClient keeps authentication and HTTP failures explicit", async () => {

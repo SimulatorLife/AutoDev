@@ -154,7 +154,10 @@ test("the Runtime's not_found reaches the Console under the code the page reads"
  */
 const REJECTIONS: ReadonlyArray<readonly [string, unknown]> = [
   ["a body that is not an object", null],
-  ["a different schema", projection({ schema: "autodev-memory-experiences-v1" })],
+  [
+    "a different schema",
+    projection({ schema: "autodev-memory-experiences-v1" })
+  ],
   ["a report that is not an object", projection({ report: null as never })],
   [
     // A wrong *type*, not a missing key. Both of these fixtures would satisfy

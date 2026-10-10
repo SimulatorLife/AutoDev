@@ -199,7 +199,11 @@ test("a caller cannot smuggle its own session identity through the body", async 
   // `exactKeys` is the enforcement. Without it these fields would simply be
   // ignored by the current handler — and the first time someone wires them up,
   // they would quietly start winning over the experience's own identity.
-  const { status, body, report: filed } = await report({
+  const {
+    status,
+    body,
+    report: filed
+  } = await report({
     ...CLAIMED,
     taskId: "attacker-run",
     agentId: "attacker-agent",
@@ -223,13 +227,21 @@ test("the session identity may not arrive in the query either", async () => {
     "taskId=attacker-task&runId=attacker-run",
     "taskId=attacker-task&runId=attacker-run&agentId=attacker-agent"
   ]) {
-    const { status, body, report: filed } = await report(CLAIMED, {
+    const {
+      status,
+      body,
+      report: filed
+    } = await report(CLAIMED, {
       query: `${SCOPE}&${identity}`
     });
 
     assert.equal(status, 400, `query identity accepted: ${identity}`);
     assert.equal(errorCode(body), "autodev_memory_invalid_filter");
-    assert.equal(filed, undefined, `query identity reached the service: ${identity}`);
+    assert.equal(
+      filed,
+      undefined,
+      `query identity reached the service: ${identity}`
+    );
   }
 });
 
@@ -237,7 +249,11 @@ test("an outcome other than unknown cannot be claimed without evidence", async (
   // The load-bearing rule of the whole system. "success" with nothing behind it
   // is indistinguishable from a guess, and a guess that enters history as
   // evidence will be believed later.
-  const { status, body, report: filed } = await report({
+  const {
+    status,
+    body,
+    report: filed
+  } = await report({
     ...CLAIMED,
     evidence: []
   });
@@ -274,7 +290,11 @@ test("a claimed outcome is marked as reporter-supplied", async () => {
 });
 
 test("an unknown outcome kind is refused rather than stored verbatim", async () => {
-  const { status, body, report: filed } = await report({
+  const {
+    status,
+    body,
+    report: filed
+  } = await report({
     ...CLAIMED,
     outcomeKind: "spectacular"
   });
@@ -346,7 +366,11 @@ test("a refused filter is audited rather than vanishing", async () => {
 test("an experience the caller cannot see is reported as not found", async () => {
   // Not "forbidden": the caller is an operator, and telling them the record
   // exists but is invisible would leak the shape of what they cannot reach.
-  const { status, body, report: filed } = await report(CLAIMED, {
+  const {
+    status,
+    body,
+    report: filed
+  } = await report(CLAIMED, {
     visible: false
   });
 

@@ -107,10 +107,7 @@ function isMemoryReasonCode(value: string): value is string {
 
 /** The payload fields a report names the single thing it acts on. */
 type MemorySubjectField =
-  | "recordId"
-  | "experienceId"
-  | "correlationToken"
-  | "injectionEventId";
+  "recordId" | "experienceId" | "correlationToken" | "injectionEventId";
 
 interface MemoryActionTarget {
   /** The tab the operator came from and is sent back to. */
@@ -142,9 +139,7 @@ interface MemoryActionTarget {
  * is what a single `isPurge` boolean invites — got the identifier gate wrong for
  * two of the three actions it was meant to describe.
  */
-const MEMORY_ACTION_TARGETS: Readonly<
-  Record<string, MemoryActionTarget>
-> = {
+const MEMORY_ACTION_TARGETS: Readonly<Record<string, MemoryActionTarget>> = {
   verify: {
     tab: "records",
     subjectField: "recordId",

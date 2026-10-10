@@ -1260,9 +1260,7 @@ export interface MemoryRepository {
   searchMemories(
     request: MemorySearchRequest
   ): Promise<readonly MemorySearchHit[]>;
-  listMemories(
-    request: MemoryListRequest
-  ): Promise<MemoryRecordPage>;
+  listMemories(request: MemoryListRequest): Promise<MemoryRecordPage>;
   getMemoryHistory(
     id: string,
     context: MemoryReadContext

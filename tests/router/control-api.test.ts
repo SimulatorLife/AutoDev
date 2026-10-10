@@ -81,6 +81,10 @@ function restoreEnv(saved: Record<string, string | undefined>): void {
 }
 
 function configure(): void {
+  delete process.env.AUTODEV_GITHUB_TOKEN;
+  delete process.env.AUTODEV_GITHUB_REPOSITORY;
+  delete process.env.GITHUB_REPOSITORY;
+  delete process.env.AUTODEV_MEMORY_DATABASE_URL;
   process.env.AUTODEV_CONTROL_API_TOKEN = SERVICE_TOKEN;
   process.env.AUTODEV_CONTROL_VIEWERS = "viewer-a";
   process.env.AUTODEV_CONTROL_OPERATORS = "operator-a";
@@ -290,6 +294,17 @@ test("viewer reads control resources; MCP and Skills views contain configuration
     });
     assert.equal(providers.response.statusCode, 200);
     assert.equal(providers.body.schema, "autodev-control-providers-v2");
+    // Each provider's external links are its routing config's, unchanged.
+    for (const provider of providers.body.providers as Array<{
+      id: string;
+      links: { usage: string | null; documentation: string | null };
+    }>) {
+      const configured = ROUTING_POLICY.config.providers[provider.id]?.links;
+      assert.deepEqual(provider.links, {
+        usage: configured?.usage ?? null,
+        documentation: configured?.documentation ?? null
+      });
+    }
 
     const mcps = await call("GET", CONTROL_API_PATHS.mcps, {
       actor: "viewer-a"

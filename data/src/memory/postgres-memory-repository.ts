@@ -169,7 +169,9 @@ function sessionLookupIsUsable(
   identifier: string,
   options: { readonly requiresRepository: boolean }
 ): boolean {
-  return identifier.trim().length > 0 && sessionContextIsUsable(context, options);
+  return (
+    identifier.trim().length > 0 && sessionContextIsUsable(context, options)
+  );
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -640,9 +642,7 @@ export class PostgresMemoryRepository implements MemoryRepository {
     }));
   }
 
-  async listMemories(
-    request: MemoryListRequest
-  ): Promise<MemoryRecordPage> {
+  async listMemories(request: MemoryListRequest): Promise<MemoryRecordPage> {
     const query = buildMemoryListQuery(request);
     const [rollup, rows] = await Promise.all([
       this.pool.query<{ status: string; status_total: string | number }>(
@@ -1434,9 +1434,7 @@ export class PostgresMemoryRepository implements MemoryRepository {
       taskId: request.context.taskId ?? "",
       canReadGlobal: false
     };
-    if (
-      !sessionContextIsUsable(sessionLookup, { requiresRepository: false })
-    ) {
+    if (!sessionContextIsUsable(sessionLookup, { requiresRepository: false })) {
       return { items: [], total: 0, limit, offset };
     }
     const filterParams = new SqlParams();

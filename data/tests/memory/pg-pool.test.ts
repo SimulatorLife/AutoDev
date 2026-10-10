@@ -67,7 +67,10 @@ test("a black-holed database fails its connect instead of hanging forever", asyn
         (error: unknown) => error
       ),
       new Promise<typeof neverSettled>((resolve) => {
-        const timer = setTimeout(() => resolve(neverSettled), MAX_ACCEPTABLE_CONNECT_MS);
+        const timer = setTimeout(
+          () => resolve(neverSettled),
+          MAX_ACCEPTABLE_CONNECT_MS
+        );
         timer.unref();
       })
     ]);
@@ -79,7 +82,10 @@ test("a black-holed database fails its connect instead of hanging forever", asyn
       `the connect had not settled after ${MAX_ACCEPTABLE_CONNECT_MS}ms: the pool must bound how long a connection attempt may hang`
     );
     assert.notEqual(outcome, "connected");
-    assert.ok(outcome instanceof Error, `expected a driver error, got ${String(outcome)}`);
+    assert.ok(
+      outcome instanceof Error,
+      `expected a driver error, got ${String(outcome)}`
+    );
 
     // Not immediate. An instant failure would mean the connect broke for some
     // other reason and the bound did nothing; this asserts the configured
@@ -112,7 +118,13 @@ test("rows and rowCount from the real driver reach the caller", async () => {
     new Map([
       [
         "SELECT id, label",
-        { columns: ["id", "label"], rows: [["1", "alpha"], ["2", "beta"]] }
+        {
+          columns: ["id", "label"],
+          rows: [
+            ["1", "alpha"],
+            ["2", "beta"]
+          ]
+        }
       ]
     ])
   );
@@ -134,10 +146,7 @@ test("rows and rowCount from the real driver reach the caller", async () => {
 test("parameters are handed to the driver in order, and an empty list is still a list", async () => {
   const host = await startFakePostgresServer(
     new Map([
-      [
-        "SELECT id FROM memory_records",
-        { columns: ["id"], rows: [["42"]] }
-      ],
+      ["SELECT id FROM memory_records", { columns: ["id"], rows: [["42"]] }],
       [
         "DELETE FROM memory_records",
         { columns: [], rows: [], commandComplete: "DELETE 3" }
@@ -146,10 +155,10 @@ test("parameters are handed to the driver in order, and an empty list is still a
   );
   const pool = createPgMemoryPool(host.url);
   try {
-    await pool.query("SELECT id FROM memory_records WHERE id = $1 AND kind = $2", [
-      42,
-      "pattern"
-    ]);
+    await pool.query(
+      "SELECT id FROM memory_records WHERE id = $1 AND kind = $2",
+      [42, "pattern"]
+    );
     // An empty array is not the same as "no parameters" to `runQuery`, which
     // branches on exactly that, so both are exercised rather than assumed.
     await pool.query("SELECT id FROM memory_records", []);
@@ -162,7 +171,11 @@ test("parameters are handed to the driver in order, and an empty list is still a
       "DELETE FROM memory_records WHERE id = ANY($1)",
       ["{1,2,3}"]
     );
-    assert.equal(deleted.rowCount, 3, "the DELETE answer must be the one that was used");
+    assert.equal(
+      deleted.rowCount,
+      3,
+      "the DELETE answer must be the one that was used"
+    );
     assert.deepEqual(deleted.rows, []);
 
     assert.deepEqual(
@@ -195,7 +208,9 @@ test("a command that returns no rows still reports the row count it affected", a
   );
   const pool = createPgMemoryPool(host.url);
   try {
-    const result = await pool.query("INSERT INTO memory_records VALUES ($1)", ["x"]);
+    const result = await pool.query("INSERT INTO memory_records VALUES ($1)", [
+      "x"
+    ]);
 
     // This is why the pool does not derive `rowCount` from `rows.length`:
     // `pg` reports the tag's count, so a write that affected a row and
@@ -294,7 +309,10 @@ test("end() closes the pool's connections", async () => {
   const pool = createPgMemoryPool(host.url);
   const connection = await pool.connect();
   await connection.query("SELECT 1 AS n");
-  assert.ok(host.openConnections() > 0, "the connection must be open before end()");
+  assert.ok(
+    host.openConnections() > 0,
+    "the connection must be open before end()"
+  );
 
   // Released first, and that ordering is the point. `pg-pool`'s `end()` waits
   // for every checked-out client, so a caller that forgets one `release()`
@@ -310,6 +328,10 @@ test("end() closes the pool's connections", async () => {
   // process open; the socket's FIN may still be in flight, so this is about the
   // pool having released it, not about the OS closing it synchronously.
   await new Promise((resolve) => setTimeout(resolve, 50));
-  assert.equal(host.openConnections(), 0, "end() must close every connection the pool holds");
+  assert.equal(
+    host.openConnections(),
+    0,
+    "end() must close every connection the pool holds"
+  );
   await host.close();
 });

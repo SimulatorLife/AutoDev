@@ -121,16 +121,32 @@ test("renderModelCatalog dynamically generates complete codex-model-catalog from
     default_reasoning_level?: string;
   }>;
   const slugs = new Set(models.map((m) => m.slug));
+  const config = JSON.parse(
+    await readFile(ROUTING_CONFIG_PATH, "utf8")
+  ) as RoutingConfig;
 
-  // Both configured models must be rendered in the catalog
-  assert.ok(
-    slugs.has(CONFIGURED_ORCHESTRATOR_MODEL),
-    `Catalog must contain orchestrator model ${CONFIGURED_ORCHESTRATOR_MODEL}`
-  );
-  assert.ok(
-    slugs.has(CONFIGURED_SMART_MODEL),
-    `Catalog must contain smart model ${CONFIGURED_SMART_MODEL}`
-  );
+  // Every configured provider assignment must be exposed by the rendered
+  // model catalog; changing a model id must not require a test update.
+  for (const model of Object.values(config.providers.codex!.models)) {
+    assert.ok(
+      slugs.has(model),
+      `Catalog must contain configured Codex model ${model}`
+    );
+  }
+  for (const providerCatalog of ["claude", "minimax", "antigravity"]) {
+    const source = JSON.parse(
+      await readFile(
+        join(CATALOGS_DIR, `${providerCatalog}-model-catalog.json`),
+        "utf8"
+      )
+    ) as { models: Array<{ slug: string }> };
+    for (const model of source.models) {
+      assert.ok(
+        slugs.has(model.slug),
+        `Catalog must preserve ${providerCatalog} model ${model.slug}`
+      );
+    }
+  }
 
   // Verify reasoning levels match requirements
   const orchestratorEntry = models.find(
@@ -143,9 +159,7 @@ test("renderModelCatalog dynamically generates complete codex-model-catalog from
   assert.ok(smartEntry);
   assert.equal(smartEntry.default_reasoning_level, "high");
 
-  // Verify external providers and role aliases are also rendered
-  assert.ok(slugs.has("sonnet"));
-  assert.ok(slugs.has("MiniMax-M3"));
+  // Role aliases are also rendered independently from provider catalog rows.
   assert.ok(slugs.has("autodev/orchestrator"));
   assert.ok(slugs.has("autodev/smart"));
 });

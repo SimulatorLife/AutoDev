@@ -65,6 +65,8 @@ import {
   type ControlApiSkillsResponse,
   type ControlApiToolsResponse,
   type ControlApiWorkspacesResponse,
+  type ControlApiWorkspacePlaytestApprovalResponse,
+  assertWorkspacePlaytestApproval,
   type ConvergenceStatus,
   isSandboxMode,
   LOCAL_CONTROL_API_ACTOR,
@@ -214,20 +216,18 @@ export interface FetchControlApiOptions {
 const TRANSPORT_FAILURE_MESSAGES: Readonly<Record<string, string>> = {
   ECONNREFUSED:
     "Nothing is listening at the configured AutoDev Control API address.",
-  ENOTFOUND:
-    "The configured AutoDev Control API host could not be resolved.",
+  ENOTFOUND: "The configured AutoDev Control API host could not be resolved.",
   EAI_AGAIN:
     "The configured AutoDev Control API host could not be resolved right now.",
-  ECONNRESET:
-    "The AutoDev Control API closed the connection before answering.",
+  ECONNRESET: "The AutoDev Control API closed the connection before answering.",
   EHOSTUNREACH:
     "The configured AutoDev Control API address could not be reached.",
-  ETIMEDOUT:
-    "The connection to the AutoDev Control API did not open in time."
+  ETIMEDOUT: "The connection to the AutoDev Control API did not open in time."
 };
 
 function describeTransportFailure(error: unknown): string {
-  const cause = (error as { readonly cause?: unknown } | null | undefined)?.cause;
+  const cause = (error as { readonly cause?: unknown } | null | undefined)
+    ?.cause;
   const code = (cause as { readonly code?: unknown } | null | undefined)?.code;
   if (typeof code !== "string") {
     return "The Console could not open a connection to the AutoDev Control API.";
@@ -312,19 +312,183 @@ export async function fetchControlApi<T>(
     }
   }
 
+  return readControlApiFailure(response);
+}
+
+export interface ControlApiBinaryData {
+  readonly bytes: Uint8Array;
+  readonly mediaType: "image/png" | "image/jpeg" | "image/webp";
+}
+
+const BINARY_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
+const CONTENT_LENGTH_PATTERN = /^\d+$/u;
+const PLAYTEST_FRAME_ROUTE_PATTERN =
+  /^\/control\/playtesting\/episodes\/([^/]+)\/media\/([^/]+)$/u;
+const FRAME_ID_PATTERN = /^[A-Za-z0-9._:%-]{1,512}$/u;
+const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
+const DISPLAYABLE_FRAME_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/webp"
+] as const;
+
+function validPlaytestFramePath(path: string): boolean {
+  const url = new URL(path, "http://127.0.0.1");
+  const match = url.pathname.match(PLAYTEST_FRAME_ROUTE_PATTERN);
+  const workspaceValues = url.searchParams.getAll("workspaceId");
+  return (
+    url.origin === "http://127.0.0.1" &&
+    match !== null &&
+    FRAME_ID_PATTERN.test(match[1]!) &&
+    FRAME_ID_PATTERN.test(match[2]!) &&
+    workspaceValues.length === 1 &&
+    WORKSPACE_ID_PATTERN.test(workspaceValues[0]!) &&
+    [...url.searchParams.keys()].every((key) => key === "workspaceId")
+  );
+}
+
+async function readBoundedBinary(
+  response: Response,
+  maximumBytes: number
+): Promise<Uint8Array> {
+  const body = response.body;
+  if (body === null) {
+    throw new TypeError("The Control API returned an empty image body.");
+  }
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  const readNextChunk = async (): Promise<void> => {
+    const { done, value } = await reader.read();
+    if (done) return;
+    totalBytes += value.byteLength;
+    if (totalBytes > maximumBytes) {
+      await reader.cancel();
+      throw new RangeError("The Control API image exceeded the display bound.");
+    }
+    chunks.push(value);
+    await readNextChunk();
+  };
+  await readNextChunk();
+  if (totalBytes === 0) {
+    throw new TypeError("The Control API returned an empty image body.");
+  }
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+/**
+ * Authenticated, bounded image read for an episode-linked Playtesting frame.
+ * Only the fixed local Control API route and inert raster image types are
+ * accepted; the service credential never reaches the browser.
+ */
+export async function fetchControlApiBinary(
+  path: string,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiBinaryData>> {
+  if (!validPlaytestFramePath(path)) {
+    return {
+      kind: INVALID_RESPONSE_KIND,
+      code: "autodev_control_api_invalid_playtesting_frame_path",
+      message: "The Console refused an invalid Playtesting frame path."
+    };
+  }
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const controller = new AbortController();
+  const timeoutMs = options.timeoutMs ?? CONTROL_API_TIMEOUT_MS;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(`${config.baseUrl}${path}`, {
+      method: "GET",
+      redirect: "error",
+      headers: {
+        Authorization: `Bearer ${config.serviceToken}`,
+        "X-AutoDev-Actor": LOCAL_CONTROL_API_ACTOR,
+        Accept: DISPLAYABLE_FRAME_TYPES.join(", ")
+      },
+      signal: options.signal ?? controller.signal
+    });
+    if (!response.ok) return readControlApiFailure(response);
+    const contentType = response.headers.get("content-type") ?? "";
+    const separator = contentType.indexOf(";");
+    const mediaType = (
+      separator === -1 ? contentType : contentType.slice(0, separator)
+    )
+      .trim()
+      .toLowerCase();
+    if (
+      !(DISPLAYABLE_FRAME_TYPES as readonly string[]).includes(mediaType ?? "")
+    ) {
+      return {
+        kind: INVALID_RESPONSE_KIND,
+        code: "autodev_control_api_invalid_playtesting_frame_type",
+        message:
+          "The Control API returned a non-displayable Playtesting frame type."
+      };
+    }
+    const length = response.headers.get("content-length");
+    if (
+      length !== null &&
+      CONTENT_LENGTH_PATTERN.test(length) &&
+      Number(length) > BINARY_RESPONSE_MAX_BYTES
+    ) {
+      return {
+        kind: "http-error",
+        status: 413,
+        code: "autodev_control_api_playtesting_frame_too_large",
+        message: "The selected frame exceeds the Console display bound."
+      };
+    }
+    let bytes: Uint8Array;
+    try {
+      bytes = await readBoundedBinary(response, BINARY_RESPONSE_MAX_BYTES);
+    } catch (error) {
+      if (error instanceof RangeError) {
+        return {
+          kind: "http-error",
+          status: 413,
+          code: "autodev_control_api_playtesting_frame_too_large",
+          message: "The selected frame exceeds the Console display bound."
+        };
+      }
+      return {
+        kind: INVALID_RESPONSE_KIND,
+        code: "autodev_control_api_invalid_playtesting_frame_body",
+        message: "The Control API returned an unreadable Playtesting frame."
+      };
+    }
+    return {
+      kind: "ok",
+      data: { bytes, mediaType: mediaType as ControlApiBinaryData["mediaType"] }
+    };
+  } catch (error) {
+    return transportFailure(error, controller.signal.aborted, timeoutMs);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readControlApiFailure<T>(
+  response: Response
+): Promise<ControlApiResult<T>> {
   let body: Partial<ControlApiError> = {};
   try {
     const raw = (await response.json()) as
       Partial<ControlApiError> | { readonly error?: Partial<ControlApiError> };
     if (raw && typeof raw === "object") {
-      if ("error" in raw && raw.error && typeof raw.error === "object") {
-        body = raw.error;
-      } else {
-        body = raw as Partial<ControlApiError>;
-      }
+      body =
+        "error" in raw && raw.error && typeof raw.error === "object"
+          ? raw.error
+          : (raw as Partial<ControlApiError>);
     }
   } catch {
-    // Non-JSON error body; fall through with empty error.
+    // HTTP status is authoritative even when the error body is unreadable.
   }
   return {
     kind:
@@ -391,33 +555,7 @@ async function mutateControlApi<T>(
     }
   }
 
-  let body: Partial<ControlApiError> = {};
-  try {
-    const raw = (await response.json()) as
-      Partial<ControlApiError> | { readonly error?: Partial<ControlApiError> };
-    if (raw && typeof raw === "object") {
-      if ("error" in raw && raw.error && typeof raw.error === "object") {
-        body = raw.error;
-      } else {
-        body = raw as Partial<ControlApiError>;
-      }
-    }
-  } catch {
-    // Non-JSON error body
-  }
-  return {
-    kind:
-      response.status === 401 || response.status === 403
-        ? "unauthorized"
-        : "http-error",
-    status: response.status,
-    code: body.code ?? "autodev_control_api_" + response.status,
-    message:
-      body.message ??
-      "AutoDev Control API rejected the request with status " +
-        response.status +
-        "."
-  };
+  return readControlApiFailure(response);
 }
 
 /**
@@ -447,6 +585,7 @@ export const CONTROL_API_PATHS = {
   runtime: "/control/runtime",
   evaluations: "/control/evaluations",
   github: "/control/github",
+  playtesting: "/control/playtesting",
   memoryRecords: "/control/memory/records",
   memoryExperiences: "/control/memory/experiences",
   memoryCohorts: "/control/memory/cohorts",
@@ -465,7 +604,9 @@ export function controlApiFailureCode(
   // answering. Reporting it under `autodev_unreachable` tells an operator their
   // Control API is down when it is merely slow, and every dashboard that reads
   // this code would file the two together.
-  return result.timedOut === true ? "autodev_control_api_timeout" : "autodev_unreachable";
+  return result.timedOut === true
+    ? "autodev_control_api_timeout"
+    : "autodev_unreachable";
 }
 
 export async function fetchAgents(
@@ -693,6 +834,14 @@ function isProviderHealth(value: unknown): boolean {
   );
 }
 
+function isProviderLinks(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    (value.usage === null || typeof value.usage === "string") &&
+    (value.documentation === null || typeof value.documentation === "string")
+  );
+}
+
 function isControlApiProvidersResponse(
   value: unknown
 ): value is ControlApiProvidersResponse {
@@ -713,6 +862,7 @@ function isControlApiProvidersResponse(
       (provider) =>
         isRecord(provider) &&
         typeof provider.id === "string" &&
+        isProviderLinks(provider.links) &&
         isRecord(provider.roles) &&
         isProviderRoles(provider.roles) &&
         typeof provider.disabled === "boolean" &&
@@ -2460,6 +2610,80 @@ export async function fetchWorkspaces(
   };
 }
 
+function isWorkspacePlaytestApprovalResponse(
+  value: unknown,
+  workspaceId: string
+): value is ControlApiWorkspacePlaytestApprovalResponse {
+  if (
+    !isRecord(value) ||
+    value.schema !== "autodev-control-workspace-playtest-approval-v1" ||
+    value.workspaceId !== workspaceId ||
+    typeof value.workspaceEnabled !== "boolean"
+  ) {
+    return false;
+  }
+  if (value.approval === null) return true;
+  try {
+    assertWorkspacePlaytestApproval(value.approval);
+  } catch {
+    return false;
+  }
+  return value.approval.workspaceId === workspaceId;
+}
+
+function workspacePlaytestApprovalPath(workspaceId: string): string {
+  return `${CONTROL_API_PATHS.workspaces}/${encodeURIComponent(workspaceId)}/playtesting-approval`;
+}
+
+export async function fetchWorkspacePlaytestApproval(
+  workspaceId: string,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiWorkspacePlaytestApprovalResponse>> {
+  const result = await fetchControlApi<unknown>(
+    workspacePlaytestApprovalPath(workspaceId),
+    config,
+    options
+  );
+  if (result.kind !== "ok") return result;
+  return isWorkspacePlaytestApprovalResponse(result.data, workspaceId)
+    ? { kind: "ok", data: result.data }
+    : {
+        kind: INVALID_RESPONSE_KIND,
+        code: "autodev_control_api_invalid_workspace_playtest_approval",
+        message:
+          "AutoDev Control API returned an incompatible Workspace Playtesting approval response."
+      };
+}
+
+export function postWorkspacePlaytestApproval(
+  workspaceId: string,
+  payload: unknown,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiWorkspacePlaytestApprovalResponse>> {
+  return postControlApi(
+    workspacePlaytestApprovalPath(workspaceId),
+    payload,
+    config,
+    options
+  );
+}
+
+export function postWorkspacePlaytestRevocation(
+  workspaceId: string,
+  payload: unknown,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiWorkspacePlaytestApprovalResponse>> {
+  return postControlApi(
+    workspacePlaytestApprovalPath(workspaceId) + "/revoke",
+    payload,
+    config,
+    options
+  );
+}
+
 export async function fetchGithubWorkflows(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
@@ -2824,7 +3048,10 @@ function isMemorySessionOutcomeResponse(
     typeof report.reasonCode === "string" &&
     Array.isArray(report.evidence) &&
     report.evidence.every(
-      (entry) => isRecord(entry) && typeof entry.kind === "string" && typeof entry.uri === "string"
+      (entry) =>
+        isRecord(entry) &&
+        typeof entry.kind === "string" &&
+        typeof entry.uri === "string"
     )
   );
 }

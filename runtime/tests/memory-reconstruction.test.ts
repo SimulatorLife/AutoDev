@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { EvidenceReference, MemoryRecord } from "@simulatorlife/autodev-core";
+import type {
+  EvidenceReference,
+  MemoryRecord
+} from "@simulatorlife/autodev-core";
 
 import type { CurrentStateAssessment } from "../src/memory/service.ts";
 
@@ -22,7 +25,10 @@ import { RoutedMemoryReconstructor } from "../src/router/memory-reconstruction.t
  */
 
 const TIME = "2026-10-01T12:00:00.000Z";
-const EVIDENCE: EvidenceReference = { kind: "file", uri: "file:///repo/src/feature.ts" };
+const EVIDENCE: EvidenceReference = {
+  kind: "file",
+  uri: "file:///repo/src/feature.ts"
+};
 
 const ENV_KEYS = [
   "CODEX_MODEL_ROUTER_PORT",
@@ -34,7 +40,9 @@ function withEnv<T>(
   overrides: Record<string, string | undefined>,
   run: () => T
 ): T {
-  const saved = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+  const saved = Object.fromEntries(
+    ENV_KEYS.map((key) => [key, process.env[key]])
+  );
   try {
     for (const key of ENV_KEYS) delete process.env[key];
     // Assigned one at a time: `Object.assign(process.env, { K: undefined })`
@@ -54,7 +62,9 @@ function withEnv<T>(
   }
 }
 
-function memory(claim = "The retry budget lives in config/runtime.yaml."): MemoryRecord {
+function memory(
+  claim = "The retry budget lives in config/runtime.yaml."
+): MemoryRecord {
   return {
     id: "memory-review",
     kind: "semantic",
@@ -103,7 +113,10 @@ function rig(
   } = {}
 ): {
   readonly reconstructor: RoutedMemoryReconstructor;
-  readonly requests: Array<{ readonly url: string; readonly init: RequestInit }>;
+  readonly requests: Array<{
+    readonly url: string;
+    readonly init: RequestInit;
+  }>;
 } {
   const requests: Array<{ url: string; init: RequestInit }> = [];
   const reconstructor = new RoutedMemoryReconstructor({
@@ -138,7 +151,11 @@ async function review(
     readonly task?: string;
     readonly assessment?: CurrentStateAssessment;
   } = {}
-): Promise<{ readonly disposition: string; readonly guidance?: string; readonly rationale: string }> {
+): Promise<{
+  readonly disposition: string;
+  readonly guidance?: string;
+  readonly rationale: string;
+}> {
   return reconstructor.reconstruct({
     memory: memory(overrides.claim ?? memory().claim),
     task: overrides.task ?? "Raise the retry budget.",
@@ -148,12 +165,16 @@ async function review(
 
 test("the endpoint defaults to the local router and is built once", () => {
   withEnv({}, () => {
-    const { reconstructor, requests } = rig({ body: reviewResponse(VALID_REVIEW) });
+    const { reconstructor, requests } = rig({
+      body: reviewResponse(VALID_REVIEW)
+    });
     void reconstructor;
     assert.equal(requests.length, 0, "constructing must not make a request");
   });
   withEnv({ CODEX_MODEL_ROUTER_PORT: "5999" }, () => {
-    const { reconstructor, requests } = rig({ body: reviewResponse(VALID_REVIEW) });
+    const { reconstructor, requests } = rig({
+      body: reviewResponse(VALID_REVIEW)
+    });
     void review(reconstructor);
     assert.equal(requests[0]?.url, "http://127.0.0.1:5999/v1/responses");
   });
@@ -167,7 +188,9 @@ test("the endpoint defaults to the local router and is built once", () => {
   // guards apart.
   for (const port of ["", "abc", "-1", "70000", "4100.5", "1e3", "0x1004"]) {
     withEnv({ CODEX_MODEL_ROUTER_PORT: port }, () => {
-      const { reconstructor, requests } = rig({ body: reviewResponse(VALID_REVIEW) });
+      const { reconstructor, requests } = rig({
+        body: reviewResponse(VALID_REVIEW)
+      });
       void review(reconstructor);
       assert.equal(
         requests[0]?.url,
@@ -215,16 +238,26 @@ test("an endpoint that is not local, plain HTTP, and credential-free is refused"
 
 test("a well-formed review is returned with its guidance trimmed", async () => {
   const { reconstructor, requests } = rig({
-    body: reviewResponse({ ...VALID_REVIEW, guidance: `  ${VALID_REVIEW.guidance}  ` })
+    body: reviewResponse({
+      ...VALID_REVIEW,
+      guidance: `  ${VALID_REVIEW.guidance}  `
+    })
   });
 
   const result = await review(reconstructor);
 
   assert.equal(result.disposition, "retain");
-  assert.equal(result.guidance, VALID_REVIEW.guidance, "guidance must be trimmed");
+  assert.equal(
+    result.guidance,
+    VALID_REVIEW.guidance,
+    "guidance must be trimmed"
+  );
   assert.equal(result.rationale, VALID_REVIEW.rationale);
 
-  const body = JSON.parse(String(requests[0]?.init.body)) as Record<string, unknown>;
+  const body = JSON.parse(String(requests[0]?.init.body)) as Record<
+    string,
+    unknown
+  >;
   assert.equal(body.stream, false);
   assert.equal(body.max_output_tokens, 512);
   assert.deepEqual(body.tools, []);
@@ -239,7 +272,9 @@ test("a well-formed review is returned with its guidance trimmed", async () => {
 });
 
 test("the review request carries no more than the bounded context", async () => {
-  const { reconstructor, requests } = rig({ body: reviewResponse(VALID_REVIEW) });
+  const { reconstructor, requests } = rig({
+    body: reviewResponse(VALID_REVIEW)
+  });
 
   // Twenty references, so the cap at twelve is doing something. A fixture with
   // one reference passes the cap check whether or not it exists.
@@ -252,9 +287,17 @@ test("the review request carries no more than the bounded context", async () => 
     })
   });
 
-  const body = JSON.parse(String(requests[0]?.init.body)) as Record<string, unknown>;
-  const message = (body.input as Array<{ content: Array<{ text: string }> }>)[0];
-  const context = JSON.parse(message?.content[0]?.text ?? "{}") as Record<string, unknown>;
+  const body = JSON.parse(String(requests[0]?.init.body)) as Record<
+    string,
+    unknown
+  >;
+  const message = (
+    body.input as Array<{ content: Array<{ text: string }> }>
+  )[0];
+  const context = JSON.parse(message?.content[0]?.text ?? "{}") as Record<
+    string,
+    unknown
+  >;
   const currentState = context.currentState as {
     readonly evidence: ReadonlyArray<Record<string, unknown>>;
   };
@@ -269,20 +312,33 @@ test("a memory whose current state cannot support a review is never sent", async
   // Failing closed here means no request at all -- the claim and its evidence
   // do not leave the process for a review that could not have changed the
   // answer.
-  const cases: ReadonlyArray<readonly [string, Parameters<typeof review>[1]]> = [
-    ["a contradicted assessment", { assessment: assessment({ compatibility: "contradicted" }) }],
-    ["an assessment with no evidence", { assessment: assessment({ evidence: [] }) }],
-    ["an empty claim", { claim: "   " }],
-    ["an empty task", { task: "   " }],
-    ["a claim past the bound", { claim: "c".repeat(4001) }]
-  ];
+  const cases: ReadonlyArray<readonly [string, Parameters<typeof review>[1]]> =
+    [
+      [
+        "a contradicted assessment",
+        { assessment: assessment({ compatibility: "contradicted" }) }
+      ],
+      [
+        "an assessment with no evidence",
+        { assessment: assessment({ evidence: [] }) }
+      ],
+      ["an empty claim", { claim: "   " }],
+      ["an empty task", { task: "   " }],
+      ["a claim past the bound", { claim: "c".repeat(4001) }]
+    ];
 
   for (const [label, overrides] of cases) {
-    const { reconstructor, requests } = rig({ body: reviewResponse(VALID_REVIEW) });
+    const { reconstructor, requests } = rig({
+      body: reviewResponse(VALID_REVIEW)
+    });
     const result = await review(reconstructor, overrides);
 
     assert.equal(requests.length, 0, `${label} must not be sent to the router`);
-    assert.equal(result.disposition, "uncertain", `${label} must fall back to uncertain`);
+    assert.equal(
+      result.disposition,
+      "uncertain",
+      `${label} must fall back to uncertain`
+    );
   }
 });
 
@@ -295,7 +351,9 @@ test("a reference is truncated to what a memory packet may carry", async () => {
   // 512 and 128 are written out on purpose. Read from the constant, this would
   // assert only that the code applies whatever number it currently holds, which
   // is exactly the property that could not be assumed.
-  const { reconstructor, requests } = rig({ body: reviewResponse(VALID_REVIEW) });
+  const { reconstructor, requests } = rig({
+    body: reviewResponse(VALID_REVIEW)
+  });
   await review(reconstructor, {
     assessment: assessment({
       evidence: [
@@ -313,9 +371,17 @@ test("a reference is truncated to what a memory packet may carry", async () => {
     1,
     "one over-long reference still fits inside the request"
   );
-  const body = JSON.parse(String(requests[0]?.init.body)) as Record<string, unknown>;
-  const message = (body.input as Array<{ content: Array<{ text: string }> }>)[0];
-  const context = JSON.parse(message?.content[0]?.text ?? "{}") as Record<string, unknown>;
+  const body = JSON.parse(String(requests[0]?.init.body)) as Record<
+    string,
+    unknown
+  >;
+  const message = (
+    body.input as Array<{ content: Array<{ text: string }> }>
+  )[0];
+  const context = JSON.parse(message?.content[0]?.text ?? "{}") as Record<
+    string,
+    unknown
+  >;
   const currentState = context.currentState as {
     readonly evidence: ReadonlyArray<{
       readonly uri?: string;
@@ -336,7 +402,9 @@ test("a reference is truncated to what a memory packet may carry", async () => {
 
 test("an over-long context is refused rather than sent", async () => {
   const long = "u".repeat(600);
-  const { reconstructor, requests } = rig({ body: reviewResponse(VALID_REVIEW) });
+  const { reconstructor, requests } = rig({
+    body: reviewResponse(VALID_REVIEW)
+  });
 
   const result = await review(reconstructor, {
     claim: "c".repeat(4000),
@@ -364,15 +432,22 @@ test("an over-long task is truncated for the review, not refused", async () => {
   // asserting a refusal -- would pass for a reason the code never produces.
   // The bound below is written out rather than imported from the shared
   // constant, so that raising it has to be a deliberate edit here too.
-  const { reconstructor, requests } = rig({ body: reviewResponse(VALID_REVIEW) });
+  const { reconstructor, requests } = rig({
+    body: reviewResponse(VALID_REVIEW)
+  });
 
   const result = await review(reconstructor, { task: "t".repeat(9000) });
 
   assert.equal(requests.length, 1, "a bounded task must still be reviewed");
   assert.equal(result.disposition, "retain");
 
-  const body = JSON.parse(String(requests[0]?.init.body)) as Record<string, unknown>;
-  const message = (body.input as Array<{ content: Array<{ text: string }> }>)[0];
+  const body = JSON.parse(String(requests[0]?.init.body)) as Record<
+    string,
+    unknown
+  >;
+  const message = (
+    body.input as Array<{ content: Array<{ text: string }> }>
+  )[0];
   const context = JSON.parse(message?.content[0]?.text ?? "{}") as {
     readonly task: string;
   };
@@ -380,8 +455,14 @@ test("an over-long task is truncated for the review, not refused", async () => {
     context.task.length <= 4000,
     `the task reached the router at ${context.task.length} characters`
   );
-  assert.ok(context.task.startsWith("t".repeat(50)), "the opening constraint must survive");
-  assert.ok(context.task.endsWith("t".repeat(50)), "the final constraint must survive");
+  assert.ok(
+    context.task.startsWith("t".repeat(50)),
+    "the opening constraint must survive"
+  );
+  assert.ok(
+    context.task.endsWith("t".repeat(50)),
+    "the final constraint must survive"
+  );
 });
 
 test("the router's authorization header appears only when a token is configured", () => {
@@ -392,7 +473,11 @@ test("the router's authorization header appears only when a token is configured"
     const without = rig({ body: reviewResponse(VALID_REVIEW) });
     void review(without.reconstructor);
     const plain = without.requests[0]?.init.headers as Record<string, string>;
-    assert.equal(plain.authorization, undefined, "no token means no bearer header");
+    assert.equal(
+      plain.authorization,
+      undefined,
+      "no token means no bearer header"
+    );
   });
   withEnv({ CODEX_ROUTER_AUTH_TOKEN: undefined }, () => {
     const withToken = rig({
@@ -400,7 +485,10 @@ test("the router's authorization header appears only when a token is configured"
       authToken: `  router-token  `
     });
     void review(withToken.reconstructor);
-    const authenticated = withToken.requests[0]?.init.headers as Record<string, string>;
+    const authenticated = withToken.requests[0]?.init.headers as Record<
+      string,
+      string
+    >;
     assert.equal(
       authenticated.authorization,
       "Bearer router-token",
@@ -414,14 +502,24 @@ test("a review carrying a key the Console does not expect is uncertain", async (
   // refused rather than partially read, because a shape this parser did not
   // anticipate is one the caller also did not anticipate.
   const withExtra = await review(
-    rig({ body: reviewResponse({ ...VALID_REVIEW, confidence: 0.9 }) }).reconstructor
+    rig({ body: reviewResponse({ ...VALID_REVIEW, confidence: 0.9 }) })
+      .reconstructor
   );
-  assert.equal(withExtra.disposition, "uncertain", "an extra key must be refused");
+  assert.equal(
+    withExtra.disposition,
+    "uncertain",
+    "an extra key must be refused"
+  );
 
   const missing = await review(
-    rig({ body: reviewResponse({ disposition: "retain", guidance: "x" }) }).reconstructor
+    rig({ body: reviewResponse({ disposition: "retain", guidance: "x" }) })
+      .reconstructor
   );
-  assert.equal(missing.disposition, "uncertain", "a missing key must be refused");
+  assert.equal(
+    missing.disposition,
+    "uncertain",
+    "a missing key must be refused"
+  );
 });
 
 test("a disposition that keeps or rewrites a memory must come with guidance", async () => {
@@ -442,16 +540,28 @@ test("a disposition that keeps or rewrites a memory must come with guidance", as
 
     const blankGuidance = await review(
       rig({
-        body: reviewResponse({ disposition, guidance: "   ", rationale: "looks fine" })
+        body: reviewResponse({
+          disposition,
+          guidance: "   ",
+          rationale: "looks fine"
+        })
       }).reconstructor
     );
-    assert.equal(blankGuidance.disposition, "uncertain", `blank guidance for ${disposition}`);
+    assert.equal(
+      blankGuidance.disposition,
+      "uncertain",
+      `blank guidance for ${disposition}`
+    );
   }
 
   // A rejection has nothing to guide, so it needs none.
   const rejected = await review(
     rig({
-      body: reviewResponse({ disposition: "reject", guidance: null, rationale: "stale" })
+      body: reviewResponse({
+        disposition: "reject",
+        guidance: null,
+        rationale: "stale"
+      })
     }).reconstructor
   );
   assert.equal(rejected.disposition, "reject");
@@ -460,10 +570,22 @@ test("a disposition that keeps or rewrites a memory must come with guidance", as
 
 test("everything else that is not a usable review is uncertain", async () => {
   const unusable: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
-    ["a disposition outside the vocabulary", { disposition: "keep", guidance: "g", rationale: "r" }],
-    ["an empty rationale", { disposition: "retain", guidance: "g", rationale: "   " }],
-    ["a rationale past the bound", { disposition: "retain", guidance: "g", rationale: "r".repeat(2001) }],
-    ["a non-string rationale", { disposition: "retain", guidance: "g", rationale: 42 }],
+    [
+      "a disposition outside the vocabulary",
+      { disposition: "keep", guidance: "g", rationale: "r" }
+    ],
+    [
+      "an empty rationale",
+      { disposition: "retain", guidance: "g", rationale: "   " }
+    ],
+    [
+      "a rationale past the bound",
+      { disposition: "retain", guidance: "g", rationale: "r".repeat(2001) }
+    ],
+    [
+      "a non-string rationale",
+      { disposition: "retain", guidance: "g", rationale: 42 }
+    ],
     [
       // `reject`, not `retain`: a retain with unusable guidance is caught by the
       // "a kept memory must come with guidance" rule, which would mask the type
@@ -526,10 +648,21 @@ test("a router that cannot answer is uncertain, and the task is unaffected", asy
     const errored = await review(
       rig({ body: reviewResponse(VALID_REVIEW), status }).reconstructor
     );
-    assert.equal(errored.disposition, "uncertain", `HTTP ${status} must be uncertain`);
+    assert.equal(
+      errored.disposition,
+      "uncertain",
+      `HTTP ${status} must be uncertain`
+    );
   }
 
-  for (const payload of ["", "not json", "[]", "null", '{"output_text":"not json"}', "{}"]) {
+  for (const payload of [
+    "",
+    "not json",
+    "[]",
+    "null",
+    '{"output_text":"not json"}',
+    "{}"
+  ]) {
     const unusable = await review(rig({ text: payload }).reconstructor);
     assert.equal(
       unusable.disposition,
@@ -540,24 +673,38 @@ test("a router that cannot answer is uncertain, and the task is unaffected", asy
 });
 
 test("the review text is read from either response shape", async () => {
-  const viaOutputText = await review(rig({ body: reviewResponse(VALID_REVIEW) }).reconstructor);
+  const viaOutputText = await review(
+    rig({ body: reviewResponse(VALID_REVIEW) }).reconstructor
+  );
   assert.equal(viaOutputText.disposition, "retain");
 
   const viaOutput = await review(
     rig({
       body: {
         output: [
-          { content: [{ type: "output_text", text: JSON.stringify(VALID_REVIEW) }] }
+          {
+            content: [
+              { type: "output_text", text: JSON.stringify(VALID_REVIEW) }
+            ]
+          }
         ]
       }
     }).reconstructor
   );
-  assert.equal(viaOutput.disposition, "retain", "the content-array shape must be read");
+  assert.equal(
+    viaOutput.disposition,
+    "retain",
+    "the content-array shape must be read"
+  );
 
   // A different content type carries no review text and must not be scraped.
   const wrongType = await review(
     rig({
-      body: { output: [{ content: [{ type: "refusal", text: JSON.stringify(VALID_REVIEW) }] }] }
+      body: {
+        output: [
+          { content: [{ type: "refusal", text: JSON.stringify(VALID_REVIEW) }] }
+        ]
+      }
     }).reconstructor
   );
   assert.equal(wrongType.disposition, "uncertain");

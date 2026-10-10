@@ -1032,7 +1032,10 @@ test("a row whose status is outside the vocabulary leaves the rollup rather than
   const onPage = makeMemoryRecord({ id: "on-page" });
   const offPage = makeMemoryRecord({ id: "off-page" });
   for (const record of [onPage, offPage]) {
-    await repo.proposeMemory(record, makeLifecycleEvent({ memoryId: record.id }));
+    await repo.proposeMemory(
+      record,
+      makeLifecycleEvent({ memoryId: record.id })
+    );
   }
   const stored = pool.tables.memory_records.get(offPage.id);
   assert.ok(stored, "the second record should be stored");
@@ -1439,7 +1442,9 @@ test("searchExperiences ranks by the execution metadata the experience carries",
       id: "exp-branch",
       branch: "hotfix-ledger",
       trajectory: { format: "codex-v1", uri: "trajectory://gamma" },
-      evidence: [{ kind: "file", uri: "file:///workspace/repo-1/docs/CHANGELOG.md" }]
+      evidence: [
+        { kind: "file", uri: "file:///workspace/repo-1/docs/CHANGELOG.md" }
+      ]
     })
   );
 
@@ -1570,7 +1575,10 @@ test("a revision proposal is only accepted when it is a revision of one same-sco
   // The prior record a revision is measured against: active, semantic,
   // workspace-scoped in ws-1.
   const prior = makeMemoryRecord({ id: "mem-prior" });
-  await repo.proposeMemory(prior, makeLifecycleEvent({ memoryId: "mem-prior" }));
+  await repo.proposeMemory(
+    prior,
+    makeLifecycleEvent({ memoryId: "mem-prior" })
+  );
   await repo.transitionMemories(
     [
       {
@@ -1601,7 +1609,10 @@ test("a revision proposal is only accepted when it is a revision of one same-sco
   // active" would pass the superseded case and miss the boundary.
   await repo.proposeMemory(
     makeMemoryRecord({ id: "mem-prior-proposed" }),
-    makeLifecycleEvent({ id: "evt-prior-proposed", memoryId: "mem-prior-proposed" })
+    makeLifecycleEvent({
+      id: "evt-prior-proposed",
+      memoryId: "mem-prior-proposed"
+    })
   );
 
   const superseded = makeMemoryRecord({ id: "mem-superseded" });
@@ -1689,7 +1700,11 @@ test("a revision proposal is only accepted when it is a revision of one same-sco
     {
       why: "a revision names no target",
       candidate: { id: "mem-bad-none" },
-      event: { id: "evt-bad-none", memoryId: "mem-bad-none", relatedMemoryIds: [] },
+      event: {
+        id: "evt-bad-none",
+        memoryId: "mem-bad-none",
+        relatedMemoryIds: []
+      },
       error: MemoryLifecycleError
     },
     {
@@ -1805,11 +1820,19 @@ test("a memory citing an experience the store does not hold is refused", async (
   });
 
   await assert.rejects(
-    () => repo.proposeMemory(cited, makeLifecycleEvent({ memoryId: "mem-cites-missing" })),
+    () =>
+      repo.proposeMemory(
+        cited,
+        makeLifecycleEvent({ memoryId: "mem-cites-missing" })
+      ),
     /references unknown experience ids: exp-not-in-the-store/u,
     "provenance that names an experience the store cannot produce is not provenance"
   );
-  assert.equal(pool.tables.memory_records.size, 0, "no record row should be left behind");
+  assert.equal(
+    pool.tables.memory_records.size,
+    0,
+    "no record row should be left behind"
+  );
   assert.equal(
     pool.tables.memory_lifecycle_events.length,
     0,

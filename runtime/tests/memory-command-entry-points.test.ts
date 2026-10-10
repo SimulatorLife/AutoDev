@@ -53,7 +53,11 @@ const COMMANDS = [
  * `input: ""` closes stdin so a stdio server that somehow got past configuration
  * would end rather than hanging the suite.
  */
-function run(entry: string): { status: number | null; stdout: string; stderr: string } {
+function run(entry: string): {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+} {
   const result = spawnSync(process.execPath, [join(PACKAGE_ROOT, entry)], {
     encoding: "utf8",
     timeout: 30_000,
@@ -68,7 +72,11 @@ function run(entry: string): { status: number | null; stdout: string; stderr: st
       AUTODEV_MEMORY_EMBEDDING_MODEL: ""
     }
   });
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr
+  };
 }
 
 for (const { entry, prefix, expected } of COMMANDS) {
@@ -126,7 +134,8 @@ test("a configured command that fails still reports one line, not a trace", () =
       input: "",
       env: {
         ...process.env,
-        AUTODEV_MEMORY_DATABASE_URL: "postgres://memory:memory@127.0.0.1:1/memory",
+        AUTODEV_MEMORY_DATABASE_URL:
+          "postgres://memory:memory@127.0.0.1:1/memory",
         AUTODEV_MEMORY_WORKSPACE_ID: "SimulatorLife/AutoDev",
         AUTODEV_MEMORY_REPOSITORY_ID: "SimulatorLife/AutoDev",
         AUTODEV_MEMORY_RETENTION_ENABLED: "1",
@@ -141,7 +150,11 @@ test("a configured command that fails still reports one line, not a trace", () =
   );
   const lines = (result.stderr ?? "").trim().split("\n").filter(Boolean);
 
-  assert.equal(result.status, 1, "an invalid retention age must fail the command");
+  assert.equal(
+    result.status,
+    1,
+    "an invalid retention age must fail the command"
+  );
   assert.equal(
     lines.length,
     1,

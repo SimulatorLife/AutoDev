@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 
 const repositoryRoot = new URL("../", import.meta.url);
@@ -47,10 +47,13 @@ test("game-playtesting and playtest-analysis declare distinct names and triggers
 // discriminates the three required cases. It does not exercise a live
 // model's routing decision, which only the running agent can do.
 function exampleTriggerPhrases(descriptionText: string): string[] {
-  const phrases = [...descriptionText.matchAll(/"([^"]+)"/gu)].map((match) =>
-    match[1].toLowerCase()
+  const phrases = Array.from(descriptionText.matchAll(/"([^"]+)"/gu), (match) =>
+    match[1]?.toLowerCase()
+  ).filter(Boolean) as string[];
+  assert.ok(
+    phrases.length > 0,
+    "description must include quoted trigger examples"
   );
-  assert.ok(phrases.length > 0, "description must include quoted trigger examples");
   return phrases;
 }
 
@@ -59,8 +62,12 @@ function matchesTrigger(prompt: string, examplePhrases: string[]): boolean {
   return examplePhrases.some((phrase) => lowered.includes(phrase));
 }
 
-const gamePlaytestingExamples = exampleTriggerPhrases(gamePlaytestingDescription);
-const playtestAnalysisExamples = exampleTriggerPhrases(playtestAnalysisDescription);
+const gamePlaytestingExamples = exampleTriggerPhrases(
+  gamePlaytestingDescription
+);
+const playtestAnalysisExamples = exampleTriggerPhrases(
+  playtestAnalysisDescription
+);
 
 test("positive trigger: 'play ten episodes' matches game-playtesting, not playtest-analysis", () => {
   const prompt = "play ten episodes of the target game";
@@ -69,7 +76,8 @@ test("positive trigger: 'play ten episodes' matches game-playtesting, not playte
 });
 
 test("positive trigger: 'analyze this existing trace' matches playtest-analysis, not game-playtesting", () => {
-  const prompt = "analyze this existing trace and explain why the player got confused";
+  const prompt =
+    "analyze this existing trace and explain why the player got confused";
   assert.equal(matchesTrigger(prompt, playtestAnalysisExamples), true);
   assert.equal(matchesTrigger(prompt, gamePlaytestingExamples), false);
 });
@@ -92,7 +100,7 @@ test("playtest-analysis owns the normative 8-step procedure and required report 
   for (let step = 1; step <= 8; step += 1) {
     assert.match(
       playtestAnalysisBody,
-      new RegExp(`^${step}\\. `, "mu"),
+      new RegExp(String.raw`^${step}\. `, "mu"),
       `missing step ${step}`
     );
   }
@@ -144,7 +152,10 @@ test("human validation stays a conditional reference, not a third skill", () => 
   const playtestingSkillDirs = readdirSync(
     new URL(".rulesync/skills", repositoryRoot)
   ).filter((name) => /playtest|gameplay/i.test(name));
-  assert.deepEqual(playtestingSkillDirs.sort(), ["game-playtesting", "playtest-analysis"]);
+  assert.deepEqual(playtestingSkillDirs.sort(), [
+    "game-playtesting",
+    "playtest-analysis"
+  ]);
 });
 
 test("neither new skill duplicates orchestration/delegation policy", () => {
@@ -157,4 +168,3 @@ test("neither new skill duplicates orchestration/delegation policy", () => {
     );
   }
 });
-
