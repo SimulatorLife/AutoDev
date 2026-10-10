@@ -133,6 +133,27 @@ All operations need timeouts, clear error categories, bounded payload sizes, and
 
 **Episode identity:** workspace/repository, git SHA, game build, scenario/config hash, initial seed, deterministic RNG state/version, policy/model/checkpoint version, tool/runtime versions, and protocol version. For nondeterministic engines, label episodes as trace-replayable or non-reproducible instead of claiming exact seed replay.
 
+### Versioned game-adapter stdio contract
+
+The game adapter exchanges **one UTF-8 JSON-RPC 2.0 envelope per stdout line**, with messages bounded in size. Reuse the JSON-line framing/validation conventions in [AutoDev's existing MCP tool filter](../runtime/src/mcp/tool-filter.ts) when they match, plus tested JSON-RPC schema helpers; the **game adapter is a separate operation protocol, not automatically an MCP server**. Publish and test the following minimum version-1 contract in `core/src/playtesting/`:
+
+~~~json
+{"jsonrpc":"2.0","id":"1","method":"game.capabilities","params":{"protocolVersion":1}}
+{"jsonrpc":"2.0","id":"1","result":{"protocolVersion":1,"engineBuild":"sha","modes":["headless"],"supportsSnapshot":false}}
+{"jsonrpc":"2.0","id":"2","method":"game.reset","params":{"seed":"42","scenario":"default"}}
+{"jsonrpc":"2.0","id":"2","error":{"code":-32001,"message":"unsupported_scenario","data":{"retryable":false}}}
+~~~
+
+**Behavior:** The first successful request negotiates version, engine build, observation/action schema hashes, engine-specific capabilities and execution limits. Request IDs are unique and correlate to exactly one response; game-state-changing calls are serialized per episode and reject stale revisions. Specify strict schemas for `game.observe`, `game.legalActions`, `game.step`, `game.outcome` and advertised optional snapshot/replay/fork/capture operations, stable episode IDs, legal actions, time/seed provenance and structured error codes. Progress/event notifications have no request ID and use a separate typed envelope. Stdout contains only protocol lines; stderr carries diagnostics. Enforce deadlines, per-line/payload limits, queue bounds, cancellation and child termination, EOF/process-crash handling, version negotiation, malformed/duplicate/late responses and explicit unsupported operations. Frames/audio/video are separately stored **bounded artifact references**, never inline base64. Run golden protocol fixtures against both a Node and a non-Node adapter, including invalid revision, partial JSONL, concurrency, cancellation, hidden-state leak, wrong version and unsupported media.
+
+### Player-visible observation guarantees
+
+Each game mode/cohort has a **game-authored, versioned allowlist** of observable fields, units, display rounding, revelation timing and mapping to real UI/accessible gameplay rules. Structured observations may contain only information available to the represented player; hidden engine/debug state is retained separately for authorized diagnoses. A target-owned conformance fixture compares screenshots/native accessibility state with structured observations across representative decisions and must reject extra precision, hidden future outcomes, omitted warnings, post-choice information and mismatched timestamps. Record observation schema hash and policy visibility mode (`structured` vs `visual-only`); label unsupported equivalence as `unverified` and avoid human-comprehension conclusions from it.
+
+### Approved target-game execution
+
+The game-owned `adapter.command` runs only after **Workspaces** approves the exact workspace/checkout/build, working directory and executable/argument allowlist. The authorized runner enforces path containment, symlink escape checks, no inherited credentials, process-tree isolation, filesystem/network permissions, memory/CPU/GPU/wall-time and log/artifact quotas, cancellation and approval revocation. Reuse [AutoDev's existing authenticated Control API](../runtime/src/control-api/index.ts), role permissions and sandbox context where proven effective, while adding an explicit **OS/process** isolation mechanism where missing; [agent bridge sandbox hints](../runtime/src/agents/bridge-sandbox.ts) are not a security boundary for executing arbitrary repository commands. Test command substitution, symlink escape, credential inheritance, repository mutation, changed SHA, unauthorized workspace and timeout. Console actions invoke typed approved run requests rather than raw shell commands.
+
 ## 5. Target-owned configuration example
 
 A game can opt in with a checked-in `playtest.config.json`. This illustrates a **proposed schema**, not an existing command/API:
