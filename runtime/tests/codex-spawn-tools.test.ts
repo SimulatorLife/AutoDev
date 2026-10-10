@@ -6,6 +6,7 @@ import {
   EXEC_TOOL,
   MULTI_AGENT_SPAWN_TOOL
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
+
 import {
   buildSpawnScript,
   carriesPendingSpawnResult,
@@ -14,7 +15,7 @@ import {
   mintCallItemId,
   parseSpawnResults,
   pendingToolCallOutputs
-} from "../runtime/src/agents/spawn-tools.ts";
+} from "../src/agents/spawn-tools.ts";
 
 type ScriptTask = {
   agent_type?: string;
