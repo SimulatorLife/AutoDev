@@ -7,6 +7,7 @@ export * from "./hooks/types.ts";
 export * from "./mcps/types.ts";
 export * from "./memory/types.ts";
 export * from "./navigation.ts";
+export * from "./playtesting/index.ts";
 export * from "./permissions/types.ts";
 export * from "./prompts/types.ts";
 export * from "./reconciliation/index.ts";

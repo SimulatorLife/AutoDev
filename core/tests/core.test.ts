@@ -16,21 +16,15 @@ import {
   validateAgentDefinition
 } from "../src/index.ts";
 
-test("CANONICAL_NAV_GROUPS defines Configure/Observe/Operate with exact 13 sections in canonical order", () => {
+test("CANONICAL_NAV_GROUPS defines Configure/Observe/Operate with exact 14 sections in canonical order", () => {
   // The grouped definition is the single source of truth.
   assert.deepEqual(
     CANONICAL_NAV_GROUPS.map((group) => group.id),
     ["Configure", "Observe", "Operate"]
   );
 
-  // `Providers` is the thirteenth resource and belongs in Configure, directly
-  // after `Agents`: `docs/autodev-console-target-state.md` §2 "Canonical
-  // resource surface" lists it there and calls it one of the thirteen, and
-  // `tests/autodev-console-target-state.test.ts` derives Configure's members
-  // from that tree and so already requires it. This file used to pin twelve
-  // sections without it and was the only thing left disagreeing -- the
-  // implementation, the target doc, the Console nav-icon check, and the
-  // thirteen-route link audit had all moved together.
+  // This definition is the source of truth for resource grouping and route
+  // ownership. The target Console contract places Playtesting in Observe.
   assert.deepEqual(CANONICAL_NAV_GROUPS[0]?.sections, [
     "Agents",
     "Providers",
@@ -44,6 +38,7 @@ test("CANONICAL_NAV_GROUPS defines Configure/Observe/Operate with exact 13 secti
   assert.deepEqual(CANONICAL_NAV_GROUPS[1]?.sections, [
     "Usage",
     "Evaluations",
+    "Playtesting",
     "Memory"
   ]);
   assert.deepEqual(CANONICAL_NAV_GROUPS[2]?.sections, ["Workspaces", "GitHub"]);
@@ -60,12 +55,13 @@ test("CANONICAL_NAV_GROUPS defines Configure/Observe/Operate with exact 13 secti
     "Tools",
     "Usage",
     "Evaluations",
+    "Playtesting",
     "Memory",
     "Workspaces",
     "GitHub"
   ] as const;
   assert.deepEqual(CANONICAL_NAVIGATION, expected);
-  assert.equal(CANONICAL_NAVIGATION.length, 13);
+  assert.equal(CANONICAL_NAVIGATION.length, 14);
 
   for (const [index, element] of expected.entries()) {
     const section = element!;

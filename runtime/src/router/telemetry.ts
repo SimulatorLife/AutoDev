@@ -164,7 +164,9 @@ const METRIC_AGENT_ROLES = new Set([
   "validator",
   "default",
   "smart",
-  "browser-tester"
+  "browser-tester",
+  "playtester",
+  "playtest-analyst"
 ]);
 
 interface RouterTelemetryState {

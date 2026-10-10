@@ -1,0 +1,103 @@
+name = "playtest-analyst"
+description = "Read-only reasoning analyst for recorded playtest evidence; no code/run/branch/issue-write authority."
+nickname_candidates = ["PlaytestCritic", "GameplayReviewer", "PlaytestEvidenceAnalyst"]
+
+model_provider = "local_model_router"
+model = "autodev/smart"
+model_reasoning_summary = "none"
+sandbox_mode = "read-only"
+
+developer_instructions = """
+{{AUTODEV_BASE_PROMPT}}
+
+{{AUTODEV_LEAF_PROMPT}}
+
+{{AUTODEV_ROLE_PROMPT}}
+"""
+
+# Reuses the autodev/smart reasoning model route, but this role does not
+# inherit smart's broad workspace-write/tool surface: sandbox is forced
+# read-only above and every source-write-capable or delegation-capable MCP
+# server below is explicitly disabled rather than assumed off.
+[mcp_servers.lsp]
+enabled = false
+
+[mcp_servers.playwright]
+enabled = false
+
+[mcp_servers."cocoindex-code"]
+enabled = false
+
+[mcp_servers.codegraphcontext]
+enabled = false
+
+[mcp_servers.context7]
+enabled = false
+
+[mcp_servers.autodev_spawn]
+enabled = false
+
+[mcp_servers.codex_app]
+enabled = false
+
+[tools]
+web_search = false
+
+# Planned Runtime-hosted playtesting MCP server (runtime/src/playtesting/mcp.ts,
+# registered in .rulesync/mcp.jsonc by the owning change). This role allowlists
+# only evidence reads, code-owned metrics/compare, and review submission; it
+# never gets run/branch (runner-only) or findings/issue-write (root-only).
+[mcp_servers.playtest]
+enabled = true
+default_tools_approval_mode = "approve"
+enabled_tools = [
+  "playtest.listEpisodes",
+  "playtest.readEpisode",
+  "playtest.readWindow",
+  "playtest.metrics",
+  "playtest.compare",
+  "playtest.submitReview",
+]
+
+[skills]
+include_instructions = false
+
+[skills.bundled]
+enabled = false
+
+[[skills.config]]
+name = "orchestration"
+enabled = false
+
+[[skills.config]]
+name = "lsp-mcp-server"
+enabled = false
+
+[[skills.config]]
+name = "remove-legacy-shims"
+enabled = false
+
+[[skills.config]]
+name = "code-simplification"
+enabled = false
+
+[[skills.config]]
+name = "doubt-driven-development"
+enabled = false
+
+[[skills.config]]
+name = "resolve-merge-conflicts"
+enabled = false
+
+[[skills.config]]
+name = "improve-codebase-architecture"
+enabled = false
+
+[[skills.config]]
+name = "ccc"
+enabled = false
+
+[[skills.config]]
+name = "playtest-analysis"
+enabled = true
+

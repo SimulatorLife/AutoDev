@@ -10723,6 +10723,7 @@ test("Canonical nav order matches Configure/Observe/Operate grouping", () => {
     "Tools",
     "Usage",
     "Evaluations",
+    "Playtesting",
     "Memory",
     "Workspaces",
     "GitHub"

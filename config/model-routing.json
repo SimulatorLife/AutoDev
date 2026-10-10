@@ -132,6 +132,12 @@
     },
     "smart": {
       "tier": "smart"
+    },
+    "playtester": {
+      "tier": "default"
+    },
+    "playtest-analyst": {
+      "tier": "smart"
     }
   },
   "orchestrator": {

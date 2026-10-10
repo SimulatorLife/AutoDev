@@ -67,7 +67,7 @@ const TOOL = {
             agent_type: {
               type: "string",
               description:
-                "Configured role: explorer, worker, validator, docs-researcher, browser-tester, smart, or default."
+                "Configured role: explorer, worker, validator, docs-researcher, browser-tester, smart, playtester, playtest-analyst, or default."
             },
             message: {
               type: "string",

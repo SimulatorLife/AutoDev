@@ -57,6 +57,13 @@ export const ICON_PATHS = {
   ],
   Usage: ["M18 20V10", "M12 20V4", "M6 20v-6"],
   Evaluations: ["M22 11.08V12a10 10 0 1 1-5.93-9.14", "M22 4 12 14.01l-3-3"],
+  Playtesting: [
+    "M6 8h12a4 4 0 0 1 4 4v1a3 3 0 0 1-3 3h-1l-3-3H9l-3 3H5a3 3 0 0 1-3-3v-1a4 4 0 0 1 4-4z",
+    "M7 11h4",
+    "M9 9v4",
+    "M16 11h.01",
+    "M19 13h.01"
+  ],
   Memory: [
     "M12 2a9 3 0 1 0 0 6 9 3 0 0 0 0-6",
     "M21 12c0 1.66-4 3-9 3s-9-1.34-9-3",
@@ -161,6 +168,7 @@ const NAV_ICON_SOURCES = [
   "Tools",
   "Usage",
   "Evaluations",
+  "Playtesting",
   "Memory",
   "Workspaces",
   "GitHub"

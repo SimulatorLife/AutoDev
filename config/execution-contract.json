@@ -145,6 +145,45 @@
         "optionalMcp": []
       }
     },
+    "playtest-analyst": {
+      "kind": "leaf",
+      "readOnly": true,
+      "mcp": [
+        "playtest"
+      ],
+      "skills": [
+        "playtest-analysis"
+      ],
+      "mcpTools": {
+        "playtest": [
+          "playtest.listEpisodes",
+          "playtest.readEpisode",
+          "playtest.readWindow",
+          "playtest.metrics",
+          "playtest.compare",
+          "playtest.submitReview"
+        ]
+      }
+    },
+    "playtester": {
+      "kind": "leaf",
+      "readOnly": true,
+      "mcp": [
+        "playtest"
+      ],
+      "skills": [
+        "game-playtesting"
+      ],
+      "mcpTools": {
+        "playtest": [
+          "playtest.capabilities",
+          "playtest.run",
+          "playtest.listEpisodes",
+          "playtest.readEpisode",
+          "playtest.readWindow"
+        ]
+      }
+    },
     "smart": {
       "kind": "leaf",
       "readOnly": false,

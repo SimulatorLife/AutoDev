@@ -44,4 +44,34 @@ test("provider-attempt spans carry only validated workspace and role context", (
   const unsafeAttributes = getFinishedSpans()[0]?.attributes;
   assert.equal(unsafeAttributes?.["autodev.workspace"], undefined);
   assert.equal(unsafeAttributes?.["autodev.agent.role"], undefined);
+
+  resetTelemetryExporter();
+  const playtesterAttempt = startAttemptSpan({
+    provider: "local_model_router",
+    model: "autodev/playtester",
+    selection: "primary",
+    attemptNumber: 1,
+    workspace: { key: "SimulatorLife/AutoDev" },
+    role: "playtester"
+  });
+  endAttemptSpan(playtesterAttempt, { status: "ok" });
+  assert.equal(
+    getFinishedSpans()[0]?.attributes?.["autodev.agent.role"],
+    "playtester"
+  );
+
+  resetTelemetryExporter();
+  const analystAttempt = startAttemptSpan({
+    provider: "local_model_router",
+    model: "autodev/smart",
+    selection: "primary",
+    attemptNumber: 1,
+    workspace: { key: "SimulatorLife/AutoDev" },
+    role: "playtest-analyst"
+  });
+  endAttemptSpan(analystAttempt, { status: "ok" });
+  assert.equal(
+    getFinishedSpans()[0]?.attributes?.["autodev.agent.role"],
+    "playtest-analyst"
+  );
 });

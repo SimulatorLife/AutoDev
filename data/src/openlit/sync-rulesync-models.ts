@@ -410,6 +410,32 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       capabilities: ["chat", "tools"],
       isDefault: false
     },
+    {
+      provider: "autodev",
+      modelId: "autodev/playtester",
+      displayName: "AutoDev Playtester Role",
+      modelType: "chat",
+      contextWindow: 200_000,
+      inputPricePerMToken: 0,
+      outputPricePerMToken: 0,
+      cacheReadPricePerMToken: 0,
+      cacheCreationPricePerMToken: 0,
+      capabilities: ["chat", "tools"],
+      isDefault: false
+    },
+    {
+      provider: "autodev",
+      modelId: "autodev/playtest-analyst",
+      displayName: "AutoDev Playtest Analyst Role",
+      modelType: "chat",
+      contextWindow: 200_000,
+      inputPricePerMToken: 0,
+      outputPricePerMToken: 0,
+      cacheReadPricePerMToken: 0,
+      cacheCreationPricePerMToken: 0,
+      capabilities: ["chat", "tools", "reasoning"],
+      isDefault: false
+    },
 
     // Aliases under canonical provider names for trace attribution
     {

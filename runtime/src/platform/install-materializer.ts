@@ -221,6 +221,8 @@ export const ROLES = [
   "default",
   "docs-researcher",
   "explorer",
+  "playtest-analyst",
+  "playtester",
   "smart",
   "validator",
   "worker"

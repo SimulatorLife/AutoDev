@@ -3,14 +3,14 @@
  *
  * The grouping below is the single authoritative definition of the Console
  * resource surface. Configure/Observe/Operate are presentation groups; the
- * 13 resources remain first-class routes. Any flattened section list, route
+ * 14 resources remain first-class routes. Any flattened section list, route
  * slug lookup, or section-order helper is derived from this definition so
  * membership and order can never diverge between parallel declarations.
  *
  * Authority: docs/autodev-console-target-state.md §2 "Canonical resource
  * surface" — Configure = Agents, Providers, MCPs, Skills, Hooks, Prompts,
- * Permissions, Tools; Observe = Usage, Evaluations, Memory; Operate =
- * Workspaces, GitHub.
+ * Permissions, Tools; Observe = Usage, Evaluations, Playtesting, Memory;
+ * Operate = Workspaces, GitHub.
  */
 
 export type CanonicalNavGroupId = "Configure" | "Observe" | "Operate";
@@ -41,8 +41,9 @@ export const CANONICAL_NAV_GROUPS = [
   {
     id: "Observe",
     label: "Observe",
-    description: "Telemetry, memory, and historical behavior surfaces.",
-    sections: ["Usage", "Evaluations", "Memory"]
+    description:
+      "Telemetry, evaluations, playtesting, and historical behavior.",
+    sections: ["Usage", "Evaluations", "Playtesting", "Memory"]
   },
   {
     id: "Operate",

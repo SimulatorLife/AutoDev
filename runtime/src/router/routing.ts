@@ -18,7 +18,9 @@ export const ROLE_NAMES = [
   "explorer",
   "worker",
   "validator",
-  "smart"
+  "smart",
+  "playtester",
+  "playtest-analyst"
 ] as const;
 
 export interface RawRouteConfig {
