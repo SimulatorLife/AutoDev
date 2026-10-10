@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync
 } from "node:fs";
@@ -169,7 +170,9 @@ test("runMcp serves cocoindex-code from the declared workspace, not the caller's
       AUTODEV_MCP_WORKSPACE: workspace
     });
     assert.equal(status, 0);
-    assert.equal(readFileSync(seenCwd, "utf8").trim(), workspace);
+    // macOS may spell a temp workspace as /tmp or /private/tmp; the spawned
+    // process reports the physical cwd, which must still be the declared workspace.
+    assert.equal(readFileSync(seenCwd, "utf8").trim(), realpathSync(workspace));
     assert.equal(existsSync(join(workspace, ".cocoindex_code")), true);
     assert.equal(existsSync(join(elsewhere, ".cocoindex_code")), false);
   } finally {

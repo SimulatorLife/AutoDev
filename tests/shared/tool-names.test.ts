@@ -159,6 +159,20 @@ test("every CLI exception is documented and lives in the right family", () => {
   }
 });
 
+test("Antigravity's lazy MCP dispatcher is a documented native exception", () => {
+  assert.equal(ANTIGRAVITY_NATIVE_TOOL_EXCEPTIONS.callMcpTool, "call_mcp_tool");
+  assert.deepEqual(
+    auditToolNames([ANTIGRAVITY_NATIVE_TOOL_EXCEPTIONS.callMcpTool]),
+    {
+      canonical: [],
+      exceptions: [
+        { provider: "antigravity:callMcpTool", tool: "call_mcp_tool" }
+      ],
+      unrecognised: []
+    }
+  );
+});
+
 test("the audit classifier routes names to the right bucket", () => {
   const audit = auditToolNames([
     EXEC_TOOL,

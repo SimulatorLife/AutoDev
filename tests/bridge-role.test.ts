@@ -539,6 +539,12 @@ test("web research policy and Playwright boundaries are enforced in role prompts
     /Playwright is strictly for UI and browser testing/
   );
   assert.match(browserTester, /do not invent a generic browser substitute/);
+  assert.match(browserTester, /provider's native MCP\s+interface/i);
+  assert.match(browserTester, /generic MCP-call operation/i);
+  assert.match(
+    browserTester,
+    /absence of direct `browser_\*` declarations alone is not an exposure failure/i
+  );
   assert.match(browserTester, /Remain Playwright-only/);
 });
 

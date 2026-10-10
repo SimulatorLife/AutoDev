@@ -196,7 +196,9 @@ export const CLAUDE_NATIVE_TOOL_EXCEPTIONS = {
  * `web_search` / `web_fetch` to the model. `bash`, `read_file`, `write_file`,
  * `edit_file`, `glob`, `grep` and the others are Antigravity's local file
  * system tools; the bridge translates them into Codex's `exec_command` and
- * the role's MCP tools.
+ * the role's MCP tools. `call_mcp_tool` is the provider-native lazy dispatcher
+ * for servers in Antigravity's MCP manifest; it does not flatten each server
+ * tool into a separate function.
  */
 export const ANTIGRAVITY_NATIVE_TOOL_EXCEPTIONS = {
   searchWeb: "search_web",
@@ -207,6 +209,7 @@ export const ANTIGRAVITY_NATIVE_TOOL_EXCEPTIONS = {
   editFile: "edit_file",
   glob: "glob",
   grep: "grep",
+  callMcpTool: "call_mcp_tool",
   invokeSubagent: "invoke_subagent"
 } as const;
 
