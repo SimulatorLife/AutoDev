@@ -1031,13 +1031,34 @@ function compositeHex(
 }
 
 function parseThemeColorTokens(css: string): Record<string, string> {
-  const tokens: Record<string, string> = {};
-  for (const match of css.matchAll(
-    /--color-([a-z0-9-]+):\s*(#[0-9a-fA-F]{6})\s*;/gu
+  const declarations = new Map<string, string>();
+  const cleanCss = css.replaceAll(/\/\*[\s\S]*?\*\//gu, "");
+  for (const match of cleanCss.matchAll(
+    /--color-([a-z0-9-]+):\s*(#[0-9a-fA-F]{6}|var\(\s*--color-[a-z0-9-]+\s*\))\s*;/gu
   )) {
     const name = match[1];
-    const hex = match[2];
-    if (name && hex) tokens[name] = hex;
+    const value = match[2];
+    if (name && value) declarations.set(name, value);
+  }
+
+  const resolve = (
+    name: string,
+    visiting = new Set<string>()
+  ): string | null => {
+    if (visiting.has(name)) return null;
+    const value = declarations.get(name);
+    if (!value) return null;
+    if (/^#[0-9a-fA-F]{6}$/u.test(value)) return value;
+    const reference = /^var\(\s*--color-([a-z0-9-]+)\s*\)$/u.exec(value)?.[1];
+    if (!reference) return null;
+    visiting.add(name);
+    return resolve(reference, visiting);
+  };
+
+  const tokens: Record<string, string> = {};
+  for (const name of declarations.keys()) {
+    const value = resolve(name);
+    if (value) tokens[name] = value;
   }
   return tokens;
 }
@@ -1083,6 +1104,28 @@ test("Console globals.css defines the required dark-only semantic token set", ()
     "neutral"
   ]) {
     assert.ok(tokens[required], `globals.css must define --color-${required}`);
+  }
+
+  // Semantic roles keep their utility names while sharing canonical colors.
+  for (const [alias, canonical] of [
+    ["input", "surface-raised"],
+    ["border", "surface-raised"],
+    ["border-strong", "hover"],
+    ["fg-inverse", "background"],
+    ["neutral", "fg-secondary"]
+  ] as const) {
+    assert.match(
+      css,
+      new RegExp(
+        String.raw`--color-${alias}:\s*var\(--color-${canonical}\);`,
+        "u"
+      )
+    );
+    assert.equal(
+      tokens[alias],
+      tokens[canonical],
+      `--color-${alias} must resolve to --color-${canonical}`
+    );
   }
 
   const chartTokens = Object.keys(tokens).filter((name) =>

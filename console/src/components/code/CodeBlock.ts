@@ -27,16 +27,17 @@ import React from "react";
  * lose to whichever cap the stylesheet happens to emit last. Height is applied
  * through `CODE_BLOCK_HEIGHT_CLASS` instead, which is a closed set.
  */
-export const CODE_BLOCK_CLASS =
-  "overflow-auto whitespace-pre-wrap rounded border border-border bg-background p-4 font-mono text-xs leading-relaxed text-fg-secondary";
+const CODE_BLOCK_BASE_CLASS =
+  "overflow-auto whitespace-pre-wrap rounded border border-border bg-background font-mono text-xs leading-relaxed text-fg-secondary";
+
+export const CODE_BLOCK_CLASS = `${CODE_BLOCK_BASE_CLASS} p-4`;
 
 /**
  * A fenced code block inside rendered prose. Tighter padding and no height cap,
  * because it flows with the surrounding paragraph rather than owning a section
  * of the page.
  */
-export const CODE_SNIPPET_CLASS =
-  "overflow-auto whitespace-pre-wrap rounded border border-border bg-background p-3 font-mono text-xs leading-relaxed text-fg-secondary";
+export const CODE_SNIPPET_CLASS = `${CODE_BLOCK_BASE_CLASS} p-3`;
 
 /**
  * The editable source surface.

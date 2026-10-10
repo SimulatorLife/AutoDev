@@ -21,26 +21,26 @@
   --color-background: #020617;
   --color-surface: #0f172a;
   --color-surface-raised: #1e293b;
-  --color-input: #1e293b;
+  --color-input: var(--color-surface-raised);
   --color-hover: #334155;
   --color-selected: #123244;
 
   /* Borders */
-  --color-border: #1e293b;
-  --color-border-strong: #334155;
+  --color-border: var(--color-surface-raised);
+  --color-border-strong: var(--color-hover);
 
   /* Text */
   --color-fg: #f1f5f9;
   --color-fg-secondary: #cbd5e1;
   --color-fg-muted: #94a3b8;
-  --color-fg-inverse: #020617;
+  --color-fg-inverse: var(--color-background);
 
   /* Accent and status */
   --color-accent: #22d3ee;
   --color-success: #34d399;
   --color-warning: #fde68a;
   --color-error: #fecdd3;
-  --color-neutral: #cbd5e1;
+  --color-neutral: var(--color-fg-secondary);
 
   /* Chart series (categorical/data-visualization palette) */
   --color-chart-1: #909afa;
