@@ -5,6 +5,7 @@ export * from "./bridge-spawn-session.ts";
 export {
   buildRecoveryScript,
   buildSpawnScript,
+  buildSpawnToolCallOutput,
   carriesPendingSpawnResult,
   type CustomToolCallItem,
   type ExecToolCallSseEvent,
@@ -14,5 +15,6 @@ export {
   parseSpawnResults,
   pendingToolCallOutputs,
   type SpawnResult,
-  type SpawnScriptOptions
+  type SpawnScriptOptions,
+  type SpawnToolCallOutput
 } from "./spawn-tools.ts";

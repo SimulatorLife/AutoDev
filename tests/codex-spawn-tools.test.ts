@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildRecoveryScript,
   buildSpawnScript,
+  buildSpawnToolCallOutput,
   carriesPendingSpawnResult,
   execToolCallSseEvents,
   mintCallId,
@@ -263,6 +264,26 @@ test("call ids are stable per session and unique per call", () => {
   // The raw session key must not travel back through the model's context.
   assert.doesNotMatch(mintCallId("sess-a", 1), /sess-a/);
   assert.notEqual(mintCallItemId(), mintCallItemId());
+});
+
+test("a collected batch becomes one indexed Codex spawn tool call", () => {
+  const output = buildSpawnToolCallOutput(
+    [{ agentType: "explorer", message: "audit" }, { message: "verify" }],
+    "parent-1",
+    4
+  );
+
+  assert.ok(output);
+  assert.equal(output.childCount, 2);
+  const [, completed] = output.events[3];
+  assert.equal(completed.output_index, 4);
+  assert.equal(completed.item.call_id, mintCallId("parent-1", 4));
+  assert.deepEqual(scriptTasks(completed.item.input), [
+    { agent_type: "explorer", message: "audit" },
+    { message: "verify" }
+  ]);
+  assert.match(completed.item.input, /recoveryParentId = "parent-1"/);
+  assert.equal(buildSpawnToolCallOutput([], "parent-1", 4), null);
 });
 
 test("the exec call is emitted as a complete custom_tool_call", () => {

@@ -260,8 +260,9 @@ delegation paths:
     concurrency limit rejects one child; the tool output names that rejected child
     instead of collapsing the whole batch into an opaque `Failed creating` error.
     The canonical `orchestration` skill documents this contract, and
-    `runtime/src/agents/spawn-tools.ts` builds the call for any component
-    that needs to emit one.
+    `buildSpawnToolCallOutput` in `runtime/src/agents/spawn-tools.ts` owns the
+    shared script-and-event assembly; provider bridges only drain their
+    per-turn delegation and attach the returned events.
 
 - **Bridge-native spawn** (`antigravity`): the CLI behind the bridge
   delegates inside its own runtime -- Antigravity's `invoke_subagent` -- and no

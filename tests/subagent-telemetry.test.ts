@@ -764,6 +764,17 @@ test("provider bridges import the Runtime-owned telemetry contract", () => {
   }
 });
 
+test("Codex-spawning bridges share the Runtime-owned tool-call output builder", () => {
+  for (const sourcePath of [
+    "runtime/src/providers/antigravity.ts",
+    "runtime/src/providers/copilot.ts"
+  ]) {
+    const source = read(sourcePath);
+    assert.match(source, /return buildSpawnToolCallOutput\(/);
+    assert.doesNotMatch(source, /execToolCallSseEvents\(/);
+  }
+});
+
 // The two `invoke_subagent` step_updates agy really emitted for one dispatch,
 // captured from `agy -p ... --output-format stream-json`. The turn ran 45s and
 // the child genuinely did the work; the dispatch step reports 43ms.
@@ -1039,13 +1050,11 @@ test("the Antigravity bridge delegates through Codex when the turn can reach it"
     source,
     /spawnSessions\.open\(spawnSession, \{ orchestrator: isOrchestratorRole\(agentRole\) \}\)/
   );
-  assert.match(source, /recoverParentId: spawnSession/);
   // The collected batch becomes one exec call appended to the turn's output.
   assert.match(
     source,
-    /buildSpawnScript\(spawnChildren, \{ recoverParentId: spawnSession \}\)/
+    /buildSpawnToolCallOutput\(\s*spawnSessions\.close\(spawnSession\),\s*spawnSession,\s*outputIndex\s*\)/
   );
-  assert.match(source, /execToolCallSseEvents\(/);
   // And the registry never outlives the turn, on any path.
   assert.match(
     source,

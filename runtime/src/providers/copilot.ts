@@ -16,16 +16,13 @@ import { pathToFileURL } from "node:url";
 
 import {
   bridgeSkillContext,
-  buildSpawnScript,
+  buildSpawnToolCallOutput,
   composeProviderPrompt,
-  type ExecToolCallSseEvent,
-  execToolCallSseEvents,
   isOrchestratorRole,
-  mintCallId,
-  mintCallItemId,
   readOnlySystemPromptInjection,
   resolveAgentRole,
-  SpawnSessionRegistry
+  SpawnSessionRegistry,
+  type SpawnToolCallOutput
 } from "@simulatorlife/autodev-runtime/agents";
 import {
   type RoleContract,
@@ -1152,11 +1149,6 @@ interface CopilotRequestContext {
   sandboxModeHeader: "read-only" | "workspace-write" | null;
 }
 
-interface CopilotSpawnOutput {
-  count: number;
-  events: ExecToolCallSseEvent;
-}
-
 class CopilotResponseStream {
   readonly responseId = "resp_" + randomBytes(12).toString("hex");
   readonly reasoningId = "rs_" + randomBytes(12).toString("hex");
@@ -1253,7 +1245,9 @@ class CopilotResponseStream {
         this.emit(eventName, body);
       output.push(spawnOutput.events[3][1].item);
       writeErrorLine(
-        "copilot delegating " + spawnOutput.count + " subagent(s) through Codex"
+        "copilot delegating " +
+          spawnOutput.childCount +
+          " subagent(s) through Codex"
       );
     }
     this.emit("response.completed", {
@@ -1524,20 +1518,14 @@ function copilotErrorExitCode(error: unknown): number | null {
 function buildCopilotSpawnOutput(
   context: CopilotRequestContext,
   outputIndex: number
-): CopilotSpawnOutput | null {
+): SpawnToolCallOutput | null {
   const session = context.spawnSession;
   if (!session) return null;
-  const children = spawnSessions.close(session);
-  if (children.length === 0) return null;
-  return {
-    count: children.length,
-    events: execToolCallSseEvents({
-      itemId: mintCallItemId(),
-      callId: mintCallId(session, outputIndex),
-      source: buildSpawnScript(children, { recoverParentId: session }),
-      outputIndex
-    })
-  };
+  return buildSpawnToolCallOutput(
+    spawnSessions.close(session),
+    session,
+    outputIndex
+  );
 }
 
 function appendCopilotSpawnItem(
@@ -1548,7 +1536,9 @@ function appendCopilotSpawnItem(
   if (!spawnOutput) return;
   output.push(spawnOutput.events[3][1].item);
   writeErrorLine(
-    "copilot delegating " + spawnOutput.count + " subagent(s) through Codex"
+    "copilot delegating " +
+      spawnOutput.childCount +
+      " subagent(s) through Codex"
   );
 }
 

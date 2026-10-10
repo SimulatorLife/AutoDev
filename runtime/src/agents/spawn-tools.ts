@@ -105,6 +105,11 @@ export type ExecToolCallSseEvent = readonly [
   ["response.output_item.done", CompletedToolCallPayload]
 ];
 
+export interface SpawnToolCallOutput {
+  childCount: number;
+  events: ExecToolCallSseEvent;
+}
+
 /**
  * JavaScript preflight that recovers terminal child handles owned by the
  * current parent when the Codex App MCP is available inside code mode.
@@ -316,6 +321,24 @@ export function execToolCallSseEvents({
       }
     ]
   ];
+}
+
+/** Build the one Codex exec call that dispatches a collected child batch. */
+export function buildSpawnToolCallOutput(
+  children: readonly SpawnChild[],
+  parentId: string,
+  outputIndex: number
+): SpawnToolCallOutput | null {
+  if (children.length === 0) return null;
+  return {
+    childCount: children.length,
+    events: execToolCallSseEvents({
+      itemId: mintCallItemId(),
+      callId: mintCallId(parentId, outputIndex),
+      source: buildSpawnScript(children, { recoverParentId: parentId }),
+      outputIndex
+    })
+  };
 }
 
 /**

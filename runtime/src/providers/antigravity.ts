@@ -26,15 +26,13 @@ import { pathToFileURL } from "node:url";
 
 import {
   bridgeSkillContext,
-  buildSpawnScript,
+  buildSpawnToolCallOutput,
   composeProviderPrompt,
-  execToolCallSseEvents,
   isOrchestratorRole,
-  mintCallId,
-  mintCallItemId,
   readOnlySystemPromptInjection,
   resolveAgentRole,
-  SpawnSessionRegistry
+  SpawnSessionRegistry,
+  type SpawnToolCallOutput
 } from "@simulatorlife/autodev-runtime/agents";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
@@ -2947,20 +2945,13 @@ function runTurnAgy(
 function closeSpawnDelegation(
   spawnSession: string | null,
   outputIndex: number
-): {
-  childCount: number;
-  events: ReturnType<typeof execToolCallSseEvents>;
-} | null {
+): SpawnToolCallOutput | null {
   if (!spawnSession) return null;
-  const spawnChildren = spawnSessions.close(spawnSession);
-  if (spawnChildren.length === 0) return null;
-  const events = execToolCallSseEvents({
-    itemId: mintCallItemId(),
-    callId: mintCallId(spawnSession, outputIndex),
-    source: buildSpawnScript(spawnChildren, { recoverParentId: spawnSession }),
+  return buildSpawnToolCallOutput(
+    spawnSessions.close(spawnSession),
+    spawnSession,
     outputIndex
-  });
-  return { childCount: spawnChildren.length, events };
+  );
 }
 
 async function runNonStreamingTurn(
