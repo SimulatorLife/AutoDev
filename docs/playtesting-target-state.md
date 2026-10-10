@@ -54,7 +54,7 @@ Existing AutoDev orchestrator
 - **Core:** versioned game-independent observation/decision, event, evidence packet, rubric, critic result and finding contracts.
 - **Runtime:** bounded runner, upstream adapters, policy selection, event capture, evidence selector, critic invocation using existing model routing, cohorts and counterfactual verification.
 - **Data:** existing evaluation history plus indexed episode summaries, immutable bounded raw traces, clips/screenshots and provenance links.
-- **Agents/RuleSync:** read-only `playtester` role for gameplay; reusable playtesting skill for the **separate analyst/critic** delegation (existing `smart` capability is sufficient initially) and independent `validator`. Keep existing orchestration authoritative.
+- **Agents/RuleSync:** two bounded, **read-only specialized roles**—`playtester` (execute and observe) and `playtest-analyst` (interpret and compare)—and two distinct conditional skills described in Section 6. The analyst can route to the existing `autodev/smart` *model tier*, but must not inherit the existing `smart` role's full-access sandbox. Reuse `validator`, `browser-tester` and the root orchestration skill; keep final gates with the root.
 - **Console:** show runs, critique, dimension scoring, evidence windows and comparisons under existing **Evaluations**; link Usage/OpenLIT, Workspaces and GitHub without adding a new top-level resource.
 - **Target game:** actual engine, legal actions, player-visible state, event labels, authoritative rules/outcomes/invariants, scenarios and game-quality rubric.
 
@@ -66,7 +66,12 @@ runtime/src/playtesting/
 data/src/playtesting/
 agents/roles/playtester.toml
 agents/prompts/roles/playtester.md
-.rulesync/skills/playtesting/SKILL.md
+agents/roles/playtest-analyst.toml
+agents/prompts/roles/playtest-analyst.md
+.rulesync/skills/game-playtesting/SKILL.md
+.rulesync/skills/playtest-analysis/SKILL.md
+.rulesync/skills/playtest-analysis/references/  # only when useful
+.rulesync/mcp.jsonc              # one shared playtest tool surface
 console/src/features/evaluations/  # current resource
 ~~~
 
@@ -137,7 +142,7 @@ For RacingGame, example scenarios are Heat-heavy decisions, qualifying vs. skipp
 
 Keep **agent role**, **player policy**, and **inference backend** distinct:
 
-- **Playtester (AutoDev role):** Runs assigned gameplay sessions and records their results. A **separate, reasoning-capable gameplay critic** reviews selected completed sessions and an independent validator checks consequential findings. Read-only for source code; isolated artifact writes only. Cannot fix issues, commit, push or open issues without a separately authorized reporting step.
+- **Playtester (AutoDev role):** Runs assigned gameplay sessions and records their results. A **separate, reasoning-capable `playtest-analyst`** reviews selected completed sessions and an independent `validator` checks consequential findings. Both specialized roles are read-only for source code and use bounded runner-generated artifacts; neither can fix issues, commit, push or open issues without a separately authorized reporting step.
 - **Policies (per episode):** Random/fuzz, simple beginner, conservative, aggressive, economy-oriented, team-focused, adaptive expert and deliberately fallible/stress policies. A persona can use heuristics, NanoJev, PlayJev or another backend. **Separate player skill/knowledge from strategic preference**: aggressive is an objective, while novice/learning/expert describes information, experience and competence.
 - **Inference:** Pluggable scored-choice interface taking observation, legal option IDs and goal. Record full probability/confidence information when available, selected action, fallback and latency. Never assume provider confidence is calibrated.
 - **Strategy author/refiner:** Optional stronger LLM periodically creates candidate feature extractors, policy prompts or strategies using training traces (JevHarness pattern); freeze accepted versions and compare on held-out seeds. It cannot rewrite evaluation rules, look at privileged state, or cherry-pick the final test set.
@@ -157,6 +162,84 @@ Do not simulate novices by merely instructing an expert model to “act dumb.”
 | **Visual-only / UI-first** | Screenshot/accessible UI actions, not engine internals or invisible labels | Can a player discover controls, warnings and feedback from presentation? |
 
 Use **jev-arcade's** random/heuristic baselines and confidence analysis, **JevHarness's** policy refinement/frozen variants and train/test discipline, **PlayJev's** visual policy environment, and the explicit rule-grounding lesson from **jev-plays-balatro**. AutoDev adds the generic cohort and memory/visibility controls, not a second policy trainer. Do not assign a human-like label or report a human-proxy difficulty result unless policy competence has been checked and its limitations stated. For a fair novice-vs-expert comparison, control scenario distributions and record what each policy actually saw.
+
+### Exact AutoDev additions: agents, skills, tools and configuration
+
+**Implement these named components—not just a generic instruction to 'analyze a playtest'.** The roles execute procedures and interpret evidence; deterministic tools enforce schemas, scoring calculations, comparisons, isolation and issue gates. Keep the existing orchestrator as the only scheduler/delegator and do not create a separate mini-agent framework.
+
+| Proposed addition | Canonical source / integration | Required responsibility |
+| --- | --- | --- |
+| **New agent: `playtester`** | `agents/roles/playtester.toml` + `agents/prompts/roles/playtester.md`; register through the existing role/config projection | Run bounded, isolated sessions; choose a configured player policy; verify adapter capabilities; capture exact decisions/events/frames; return run IDs and observed failures. Never invent game outcomes or critique its own play. |
+| **New agent: `playtest-analyst`** | `agents/roles/playtest-analyst.toml` + `agents/prompts/roles/playtest-analyst.md`; may use existing `autodev/smart` model routing with a **read-only sandbox** | Retrieve recorded evidence, inspect experience against the game-authored rubric, score supported dimensions, compare sessions, identify confounders and produce actionable, falsifiable hypotheses. Cannot modify gameplay, rewrite metrics, run unapproved experiments or publish issues. |
+| **New skill: `game-playtesting`** | `.rulesync/skills/game-playtesting/SKILL.md` | Trigger when asked to **execute/play/simulate a game**. Brief workflow: preflight adapter, establish seed/cohort/policy/limits, run, preserve authoritative trace/replay, report completeness/failures and hand off evidence IDs. It does **not** contain analysis or GitHub publication policy. |
+| **New skill: `playtest-analysis`** | `.rulesync/skills/playtest-analysis/SKILL.md` with optional `references/session-review.md`, `references/scoring.md`, `references/comparisons.md` | Trigger on **reviewing, interpreting, scoring, comparing, diagnosing or verifying a recorded gameplay session**. Own the precise procedure and output/evidence standards below, including session critique, learning/clarity, fun proxies, cohort comparison and experiment design. No duplicate orchestration rules. |
+| **Extend existing orchestration** | `.rulesync/skills/orchestration/SKILL.md` | Document when the root delegates gameplay to `playtester`, criticism to `playtest-analyst`, independent evidence verification to existing `validator`, and optional real-UI checks to `browser-tester`. Root owns publish/approval decisions. |
+| **One shared playtesting tool surface** | Runtime handlers exposed via RuleSync-owned `.rulesync/mcp.jsonc` and existing MCP launcher/tool filters; optional `pnpm autodev -- playtest ...` CLI projection | Narrow, authorized structured access to run jobs, read episode windows, retrieve evidence, compute aggregates, compare cohorts, branch/replay scenarios, and write validated review artifacts; **not** raw shell access to games from a critic. |
+| **Core/data and Console integration** | `core/src/playtesting/`, `runtime/src/playtesting/`, `data/src/playtesting/`, existing `console/src/features/evaluations/` | Versioned episode/rubric/review/experiment schemas; bounded artifact storage and replay provenance; measurable comparisons and optional human feedback. Avoid second dashboard, scorer, inference router or data backend. |
+| **Target-owned inputs** | Game adapter + `playtest.config.json` + optional `playtest.rubric.json` in each target repo | Explain controls, mechanics, intended experience, warnings, observable consequences, expected difficulty curves, authoritative invariants, measured metrics and optional human rating questions. No RacingGame-specific assumptions in generic AutoDev skills. |
+
+**Agent access:** `playtester` gets only the approved playtest runner and constrained artifact/result tools, not code-write/GitHub issue privileges. `playtest-analyst` gets evidence **read** and review **submit** functions plus model inference, not game-step/code-edit/issue-write operations. Use a separate read-only analyst role because the current `smart` role is configured with broad workspace access. The existing `validator` receives source-independent evidence to check (not a preconceived critic verdict); `browser-tester` keeps its existing Playwright-only policy for UI validation. Role configuration must follow AutoDev's canonical RuleSync/model-role ownership and regenerate provider projections, not introduce a fifth fixed provider-model tier. All tool permissions and sandbox limitations need executable tests, not just prompt assertions.
+
+**Skill design:** Follow the existing [writing-agent-skills](../.rulesync/skills/writing-agent-skills/SKILL.md) guidance: each skill has a specific trigger, required inputs/outputs, safety boundaries, concise steps and behavior tests. Keep detailed criteria in shallow references only where they improve discoverability. Test positive and negative triggers (e.g. “play ten episodes” should load execution, “analyze this existing trace” should load analysis, “fix this code” should load neither by default) and baseline/with-skill performance; avoid a third overlapping `gameplay-critic` skill.
+
+### Required `playtest-analysis` skill: how to read and interpret a session
+
+This **normative procedure** must be translated into the actual skill and tested when implemented. It is not enough to ask a model “Was it fun?” or to summarize the episode's ending.
+
+1. **Verify and read the source:** Check game/adapter/policy/rubric hashes, run completeness, timeline revisions, replay validation, visible-vs-privileged state, event/frame index and coverage. Retrieve a chronological overview of phase changes, decisions, resources and result. If state or frames are unavailable, name the missing evidence instead of filling it in.
+2. **Reconstruct decisions in context:** For each sampled key moment, inspect **before-state, player-visible rules/alerts, legal alternatives, chosen action, stated intention or pre-action prediction (if actually collected), and authoritative after-state**. Trace how prior choices constrain later ones; do not infer confusion solely from a bad result.
+3. **Separate observations from interpretations:** Deterministic evaluators establish *what happened*. The critic suggests *why it may be a problem*. Compare predicted-vs-actual outcomes, repeated ineffective actions, limited viable alternatives, warning visibility, teachability and learnability against the **target game's goals**, not universal norms.
+4. **Evaluate both interesting and routine play:** Sample abnormal moments **and** representative ordinary phases to avoid selection bias. Distinguish novice learning failure, strong-policy strategic dominance, bad AI calibration, intended difficulty and actual usability defects. Ask for additional windows/frames through bounded tools if evidence is insufficient.
+5. **Score dimensions only where supported:** Produce separately evidenced scores or `null` for agency, depth/strategy, pacing/repetition, tension/recovery and clarity/fairness. Record score anchors, metric/source, coverage, uncertainty, critic rationale and applicability; never substitute model confidence or win rate for fun.
+6. **Compare when necessary:** Use code-computed aggregates (matched seeds, comparable policy skill, sample counts and uncertainty) before explaining group patterns. Distinguish change in player skill from change in game design. Single sessions cannot establish a systemic trend.
+7. **Propose discriminating experiments:** For each high-value concern list competing causes, a minimal test (pre-action comprehension probe, same-state alternative, counterfactual branch, repeated learner, game-owned UI A/B), metric, controls, budget and what would *refute* the theory. Request execution via the root, not the analyst's own permissions.
+8. **Publish an evidence-linked review artifact:** Separate verified bug vs statistically supported regression vs *unverified game-design hypothesis*; include event/frame/replay locators and observations, uncertainty, reproducibility, priority and proposed next investigation. Do not produce a GitHub issue directly.
+
+**Required report sections:** provenance/coverage, chronological episode summary, authoritative metrics, scored experience dimensions, evidence-linked observations, alternative explanations, cross-session context (if available), testable hypotheses/experiments, decision on evidence status (`verified`/`corroborated`/`hypothesis`/`not observed`), and suggested follow-up. A review without evidence locators is **invalid**, not a successful empty report.
+
+### Scoring rubric and interpretation rules
+
+The game provides *what good gameplay means* and which mechanics are intentionally risky/repetitive. AutoDev supplies general **score semantics** and evidence validation, not RacingGame-specific weights. For a provisional rubric, use **0–4 ordinal anchors**, per dimension:
+
+| Score | Required evidence-based interpretation |
+| --- | --- |
+| `0` | Strong repeated evidence the dimension fails its game-authored intent under measured conditions |
+| `1` | Multiple material problems with limited counterevidence |
+| `2` | Mixed/uncertain experience: both supportive and adverse observations |
+| `3` | Mostly meets the stated intent with some localized concerns |
+| `4` | Strong, replicated evidence the intent is met under tested conditions |
+| `null` | **Not observed / insufficient or inapplicable evidence**; must include a reason |
+
+Anchors express **ordinal quality of evidence against intended goals**, not a measurement of human enjoyment. Require named metrics and events underpinning each judgment; use uncertainty/coverage separately, not as an arbitrary substitute for evidence. For example, `agency=1` requires verified limited *competitive* options, not just a low legal-action count; `clarity=1` needs player-visible UI or comprehension evidence, not a structured state log; `tension=4` cannot follow solely from a large lead change. Evaluators compute quantitative signals (e.g. decision diversity, regret proxies when alternatives can be simulated, repeat frequency, transition/warning observability, learning curves) with named denominator/scenario and known baseline. The critic explains possible design significance; it does **not** silently modify those metrics. Prefer retaining separate sub-scores and time/phase segmentation. A weighted 0–100 *experimental enjoyment proxy* is optional only when configured weights, calibration/coverage status, and human-rating limitations are displayed; never convert missing dimensions to zero or silently renormalize.
+
+**Example of interpretation (hypothetical):** At step 14, an aggressive RacingGame policy chooses an action at high Heat, predicts that both cars survive, then sees double DNF. This establishes only a forecast mismatch for that model; it could reflect ambiguous warning, weak knowledge, or intentional danger. Check what the player could see, look at the prior safer choices, compare independently initialized novice/visual observers, and branch the earlier state under controlled RNG. Report clarity or unfairness concerns only when the corroborating evidence actually exists.
+
+### Comparing sessions and deciding what matters
+
+`playtest-analysis` must support **single-session critique**, **matched cohort comparison**, and **before/after regression review** with the same evidence schema.
+
+| Comparison | Controlled dimensions | What to compute and report |
+| --- | --- | --- |
+| Same state, different legal choice | State/revision, known information, replayable RNG and continuation policy | Changes in immediate consequences, feasible escape routes and eventual outcome; label causal limits |
+| Novice vs expert/learning policy | Scenario/seed distribution, visibility, model/checkpoint and player skill definition | Misunderstanding rate, repeat mistakes, survival/completion, learner improvement across attempts; avoid blaming game for weaker policy |
+| Aggressive vs conservative/economic | Matched scenario/seed, games played, equal skill/compute where possible | Outcome differences and confidence intervals, risk/reward, policy selection/fallback frequency; avoid treating a poor strategy as broken mechanics |
+| Previous vs current build | Comparable config, action/rubric contracts, policy versions, environment, matched seeds | Changes in bug frequency, choice diversity, phase durations, calibrated sub-scores, uncertainty and detected regressions |
+
+Require **cohort sizes/denominators, sampling method, policy identity, missing/invalid runs, measured effect and uncertainty** in every comparison. Use paired differences/intervals when seeds match; when they do not, label comparison observational and expose confounders. Do not claim significance from a single replay or from repeated correlated episodes; avoid metric fishing and post-hoc thresholds. The LLM must cite the deterministic comparison output and representative trace windows rather than perform arithmetic from a wall of logs.
+
+### Structured inputs/outputs and MCP/CLI tool contracts
+
+**Versioned artifacts** (proposed, not implemented):
+
+- `PlaytestEpisode`: revision, scenario/seed and RNG provenance, policy identity, action/observation/event timeline, phase index, outcomes, replay/visual links and completeness.
+- `PlaytestEvidencePacket`: rubric/version, audience and intent, metrics/baselines, selected windows and coverage, visible evidence refs, critic input provenance; full trace remains fetchable.
+- `PlaytestSessionReview`: version, episode/rubric/critic identity, observed-vs-inferred separation, scored dimensions with `null` support, evidence references, hypotheses, alternatives, falsifiers, proposed experiments and status.
+- `PlaytestComparison`: policies/builds/scenarios, matched seed pairs, valid/invalid denominators, metrics, uncertainty intervals, differences, confounders and linked sessions.
+- `PlaytestFinding`: one deduplicated problem hypothesis/verified failure with trace witnesses, severity, calibration/evidence status, cross-session impact, test/replay history, issue link and follow-up.
+
+**One tool gateway** exposes narrowly scoped commands, name/version finalized in implementation: `playtest.capabilities`, `playtest.run`, `playtest.listEpisodes`, `playtest.readEpisode`, `playtest.readWindow`, `playtest.metrics`, `playtest.compare`, `playtest.branch`, `playtest.submitReview` and `playtest.findings`. The read methods offer deterministic pagination/time ranges and return explicit `not observed`/missing artifacts rather than fabricated empty success. `metrics`/`compare` do code-owned numeric calculations; `submitReview` validates all cited IDs and schema before accepting a model's prose. `run` and `branch` require runner authorization and bounded budgets. Issue creation uses **existing AutoDev GitHub integration by the authorized root**, never an unreviewed model write tool. Expose only the minimum role-permitted commands through the RuleSync MCP tool allowlist (player: `run` and result reads; analyst: evidence/metrics/compare and review submit; root: conditional experiment and issue approval; independent validator: read-only evidence and replay-verification results). Add CLI equivalents only when a real operator workflow needs them, and do not create redundant CLI/MCP implementations.
+
+**Required implementation validation:** Unit/contract tests for schemas, revisions, hidden-state isolation, episode completeness, evidence pagination, nonexistent citation rejection, false “success” on missing media, `null` scoring, metric denominators, paired comparisons and policy/model drift; read-only permission/blocked-write tests for both new roles; behavioral tests for both skill triggering **and** analysis quality with/without skill; adversarial examples covering a bad bot mistaken for a bad game, a correct engine with misleading visual feedback, an unreplayable RNG run, empty cohorts, a high but uncalibrated “fun” score and an LLM hallucinating an event. Acceptance is an evidence-supported analysis with appropriately qualified scores and an executable verification suggestion—not a long persuasive review.
 
 Begin with random and deterministic heuristic baselines **before** adding local neural inference. Benchmark NanoJev on RTX 3090 separately; use CPU workers for cheap high-volume simulation and GPU inference only where it improves action quality or coverage. Visual model weights are optional downloads, not AutoDev installation requirements.
 
@@ -309,14 +392,14 @@ Rate-limit, deduplicate, and batch issue creation. Do not create one issue per f
 
 | Phase | Concrete reuse and limited customization | Acceptance evidence |
 | --- | --- | --- |
-| **1. Recorder and runner** | Reuse Jev Playtest Lab action/revision guards and jev-arcade seeded runner/replay/baselines; implement only generic game adapter bridge | Real episodes, legal actions, full indexed traces, reproducible result/seed where guaranteed |
-| **2. Analyzer and critic MVP** | Reuse jev-arcade consequence analysis and JevHarness full-trajectory/evaluation discipline; add **AutoDev-specific gameplay critic prompt/schema + evidence packet** | Full run -> deterministic facts -> event-cited reasoning critique against game design goals -> verifiable hypothesis; malformed citations rejected |
+| **1. Recorder and runner** | Add `playtester` role and `game-playtesting` skill; reuse Jev Playtest Lab action/revision guards and jev-arcade seeded runner/replay/baselines | Real episodes, legal actions, full indexed traces, reproducible result/seed where guaranteed; read-only execution role enforced |
+| **2. Analyzer and critic MVP** | Add read-only `playtest-analyst` role, `playtest-analysis` skill, indexed evidence-reading tools, and reuse jev-arcade/JevHarness analysis principles | Full run -> source-verified timeline -> null-safe anchored scoring -> event-cited reasoning critique -> testable hypothesis; malformed citations and missing evidence rejected |
 | **3. Local AI and comprehension cohorts** | Integrate NanoJev via optional sidecar, frozen JevHarness policies if permitted, Jev Playtest Lab shadow probes and PlayJev visual-only input | Skill-calibrated novice/learning/expert cohorts; timestamped pre-action forecast vs outcome; matched stateless vs learning trajectories; inference costs measured |
 | **4. Hypothesis experiments and issues** | Reuse existing Evaluations/GitHub pipelines, benchmarks and replay; add critic-proposed controlled tests, branching/optional A/B coordination and deduplication | Tested explanation distinguishes avoidable loss, insufficient warning, poor model comprehension and intended difficulty; one verified actionable finding |
 | **5. Visual critique and human calibration** | Integrate PlayJev's Playwright/frame capture, compare visual-only vs structured-state probes, link clips to multimodal critic; integrate voluntary human moment ratings | UI findings cite actual frames, human-vs-model disagreement reported, missing visual evidence omitted, experimental fun proxies calibrated on held-out humans when feasible |
 | **6. Portability** | Run a second, mechanically different game with same AutoDev infrastructure | Only game adapter/scenarios/rubric change; no gameplay logic leaks into AutoDev |
 
-**First milestone:** at least 1,000 headless episodes (later 10,000), two independent player policies, deterministic objective metrics, **selected complete-session AI critiques against game design goals**, a bounded sample of pre-action expectation-vs-outcome probes, matched-cohort summary, and one reproduced or explicitly unverified hypothesis. Measure performance and critic costs empirically; no assumptions of instant throughput.
+**First milestone:** at least 1,000 headless episodes (later 10,000), two independent player policies, deterministic objective metrics, **complete-session AI critiques that follow the `playtest-analysis` skill and cite exact evidence IDs**, a bounded sample of pre-action expectation-vs-outcome probes, matched-cohort comparisons, null-safe calibrated/provisional sub-scores, and one reproduced or explicitly unverified hypothesis. Both specialized roles and both skills must pass access-control, trigger and behavioral tests. Measure performance and critic costs empirically; no assumptions of instant throughput.
 
 ## 11. Decisions to resolve during implementation
 
